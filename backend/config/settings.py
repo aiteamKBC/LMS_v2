@@ -56,6 +56,10 @@ def load_env_file(path):
 load_env_file(BASE_DIR / '.env')
 
 SAFEGUARDING_SSO_SECRET = os.environ.get("SAFEGUARDING_SSO_SECRET", "").strip()
+INCLUSION_SSO_SECRET = os.environ.get("INCLUSION_SSO_SECRET", "").strip()
+INCLUSION_SSO_CALLBACK_URL = os.environ.get(
+    "INCLUSION_SSO_CALLBACK_URL", "https://admin.kentbusinesscollege.net/login/lms/callback",
+).strip()
 SAFEGUARDING_SSO_CALLBACK_URL = os.environ.get(
     "SAFEGUARDING_SSO_CALLBACK_URL",
     "https://safeguarding.kentbusinesscollege.net/auth/lms/callback",
@@ -173,40 +177,80 @@ RUN_APP_ON_TEST_BRANCH = (
     and os.environ.get("RUN_APP_ON_TEST_BRANCH", "").strip().lower()
     in {"1", "true", "yes", "on"}
 )
-if RUN_APP_ON_TEST_BRANCH:
-    _branch_url = os.environ.get("security_Database_url")  # case-sensitive key
-    if not _branch_url:
+# Aliases whose env vars must be blank in test-branch mode, so the alias is
+# never built and the production database behind it is simply unreachable.
+TEST_BRANCH_BLANK_KEYS = (
+    "AUDIT_DATABASE_URL", "AUDIT_CLONE_DATABASE_URL", "LASR-ADUTIOD-CLNE",
+    "KBC_ATTENDANCE_DATABASE_URL",
+)
+
+
+def assert_test_branch_databases(environ):
+    """Every database this process could reach must be the sanitised branch.
+
+    Returns the approved branch host, or raises ImproperlyConfigured naming the
+    offending variable. Takes the environment as an argument and reads no
+    module state, so the guard can be proven directly instead of by booting
+    Django against a real database.
+    """
+    branch_url = environ.get("security_Database_url")  # case-sensitive key
+    if not branch_url:
         raise ImproperlyConfigured(
             "RUN_APP_ON_TEST_BRANCH is set but 'security_Database_url' is absent."
         )
-    _branch_host = (urlparse(_branch_url).hostname or "").lower()
-    if not _branch_host:
+    branch_host = (urlparse(branch_url).hostname or "").lower()
+    if not branch_host:
         raise ImproperlyConfigured(
             "security_Database_url has no parseable host; refusing to start."
         )
-    # `default` and `enrolment` must BOTH resolve to the branch host. Fail closed
-    # on unset/unparseable, before any connection is opened.
-    for _key in ("DATABASE_URL", "Database_url"):
-        _u = os.environ.get(_key)
-        _h = (urlparse(_u).hostname or "").lower() if _u else ""
-        if not _h:
+    # `default` must resolve to the branch host. Fail closed on unset or
+    # unparseable, before any connection is opened.
+    for key in ("DATABASE_URL", "Database_url"):
+        url = environ.get(key)
+        host = (urlparse(url).hostname or "").lower() if url else ""
+        if not host:
             raise ImproperlyConfigured(
-                f"RUN_APP_ON_TEST_BRANCH: {_key} is unset or unparseable; refusing to start."
+                f"RUN_APP_ON_TEST_BRANCH: {key} is unset or unparseable; refusing to start."
             )
-        if _h != _branch_host:
+        if host != branch_host:
             raise ImproperlyConfigured(
-                f"RUN_APP_ON_TEST_BRANCH: {_key} host ({_h!r}) is not the test branch "
-                f"({_branch_host!r}); refusing to run the app against a non-branch database."
+                f"RUN_APP_ON_TEST_BRANCH: {key} host ({host!r}) is not the test branch "
+                f"({branch_host!r}); refusing to run the app against a non-branch database."
+            )
+    # `enrolment` is where learner progress, curriculum reads and every
+    # completion write actually land, and the alias resolves from its OWN
+    # variable FIRST (see the DATABASES['enrolment'] block below), so the loop
+    # above does not cover it: a branch-mode process could otherwise be writing
+    # learner completions straight into production. Unset is safe and stays
+    # allowed -- the alias then falls through to Database_url, already proven
+    # above -- but any value it does carry must be the branch.
+    enrolment_url = environ.get("ENROLMENT_DATABASE_URL")
+    if enrolment_url:
+        enrolment_host = (urlparse(enrolment_url).hostname or "").lower()
+        if not enrolment_host:
+            raise ImproperlyConfigured(
+                "RUN_APP_ON_TEST_BRANCH: ENROLMENT_DATABASE_URL is set but has no "
+                "parseable host; refusing to start."
+            )
+        if enrolment_host != branch_host:
+            raise ImproperlyConfigured(
+                f"RUN_APP_ON_TEST_BRANCH: ENROLMENT_DATABASE_URL host ({enrolment_host!r}) "
+                f"is not the test branch ({branch_host!r}); refusing to run the app "
+                f"against a non-branch database."
             )
     # The audit / audit_clone / attendance databases must be UNREACHABLE: their
     # env vars must be blank so those aliases are never built at all.
-    for _key in ("AUDIT_DATABASE_URL", "AUDIT_CLONE_DATABASE_URL", "LASR-ADUTIOD-CLNE",
-                 "KBC_ATTENDANCE_DATABASE_URL"):
-        if os.environ.get(_key):
+    for key in TEST_BRANCH_BLANK_KEYS:
+        if environ.get(key):
             raise ImproperlyConfigured(
-                f"RUN_APP_ON_TEST_BRANCH: {_key} must be empty so its production alias "
+                f"RUN_APP_ON_TEST_BRANCH: {key} must be empty so its production alias "
                 f"is never created; refusing to start."
             )
+    return branch_host
+
+
+if RUN_APP_ON_TEST_BRANCH:
+    assert_test_branch_databases(os.environ)
     # Hermetic: no outbound third-party calls from the baseline (WordPress / AI).
     os.environ["KBC_LMS_API_KEY"] = ""
     os.environ["OPENAI_API_KEY"] = ""
@@ -286,6 +330,9 @@ OPENAI_REFLECTION_MODEL = os.environ.get("OPENAI_REFLECTION_MODEL", "gpt-4o-mini
 # Assignment proofreading uses the existing OpenAI API key again. Ignore any
 # leftover local-trial environment setting when starting the application.
 PROOFREAD_PROVIDER = "openai"
+# The assignment AI-writing check also uses the OpenAI API key and reflection
+# model. Set to "local" only where the offline detector is provisioned.
+AI_CHECK_PROVIDER = "openai"
 OLLAMA_BASE_URL = os.environ.get("OLLAMA_BASE_URL", "http://127.0.0.1:11434")
 OLLAMA_PROOFREAD_MODEL = os.environ.get("OLLAMA_PROOFREAD_MODEL", "qwen2.5:1.5b")
 OLLAMA_PROOFREAD_TIMEOUT = int(os.environ.get("OLLAMA_PROOFREAD_TIMEOUT", "120"))
@@ -336,7 +383,11 @@ INSTALLED_APPS = [
     'engagement_api',
     'enrolment_api',
     'progress_reviews_api',
+    'knowledge_base',
     'chat',
+    # One shared projection table, one transactional outbox and one short-lived
+    # performance-sample table for aggregate screens across every workspace.
+    'read_models',
     # Platform authentication (auth schema on the Neon enrolment database).
     # Its tables are unmanaged and created by `manage.py apply_login_tables`.
     'login',
@@ -391,6 +442,12 @@ MIDDLEWARE = [
 
 PERFORMANCE_DIAGNOSTICS = os.environ.get('PERFORMANCE_DIAGNOSTICS', 'false').lower() == 'true'
 SLOW_REQUEST_THRESHOLD_MS = int(os.environ.get('SLOW_REQUEST_THRESHOLD_MS', '750'))
+PERFORMANCE_DIAGNOSTIC_ACCOUNT_IDS = frozenset(
+    value.strip()
+    for value in os.environ.get('PERFORMANCE_DIAGNOSTIC_ACCOUNT_IDS', '').split(',')
+    if value.strip()
+)
+PERFORMANCE_SAMPLE_RETENTION_DAYS = int(os.environ.get('PERFORMANCE_SAMPLE_RETENTION_DAYS', '14'))
 
 ROOT_URLCONF = 'config.urls'
 
@@ -453,19 +510,78 @@ else:
         },
     }
 
+# Final serialized Coach Dashboard response. Keep this short because some
+# attendance/progress sources are external and cannot emit local invalidation
+# events. Production may override it without requiring Redis in development.
+COACH_DASHBOARD_CACHE_TTL = int(os.environ.get('COACH_DASHBOARD_CACHE_TTL', '30'))
+COACH_DASHBOARD_SNAPSHOT_MAX_AGE = int(os.environ.get('COACH_DASHBOARD_SNAPSHOT_MAX_AGE', '30'))
+COACH_DASHBOARD_REFRESH_DEBOUNCE = float(os.environ.get('COACH_DASHBOARD_REFRESH_DEBOUNCE', '0.25'))
+COACH_DASHBOARD_REFRESH_LOCK_TTL = int(os.environ.get('COACH_DASHBOARD_REFRESH_LOCK_TTL', '300'))
+COACH_DASHBOARD_BACKGROUND_REFRESH_ENABLED = (
+    os.environ.get('COACH_DASHBOARD_BACKGROUND_REFRESH_ENABLED', 'true').lower() == 'true'
+)
+
+# Shared read models are additive and roll out behind flags. Apply the migration
+# on a Neon child branch, verify parity, then enable outbox/dual-write before
+# switching reads. The legacy Coach table remains the fallback throughout.
+READ_MODEL_OUTBOX_ENABLED = os.environ.get('READ_MODEL_OUTBOX_ENABLED', 'false').lower() == 'true'
+READ_MODEL_DUAL_WRITE_ENABLED = os.environ.get('READ_MODEL_DUAL_WRITE_ENABLED', 'false').lower() == 'true'
+COACH_DASHBOARD_SHARED_READ_MODEL_ENABLED = (
+    os.environ.get('COACH_DASHBOARD_SHARED_READ_MODEL_ENABLED', 'false').lower() == 'true'
+)
+LEARNER_HOME_SHARED_READ_MODEL_ENABLED = (
+    os.environ.get('LEARNER_HOME_SHARED_READ_MODEL_ENABLED', 'false').lower() == 'true'
+)
+LEARNER_HOME_READ_MODEL_TTL_SECONDS = int(os.environ.get('LEARNER_HOME_READ_MODEL_TTL_SECONDS', '30'))
+CURRICULUM_HOME_SHARED_READ_MODEL_ENABLED = (
+    os.environ.get('CURRICULUM_HOME_SHARED_READ_MODEL_ENABLED', 'false').lower() == 'true'
+)
+CURRICULUM_HOME_READ_MODEL_TTL_SECONDS = int(os.environ.get('CURRICULUM_HOME_READ_MODEL_TTL_SECONDS', '30'))
+RECORD_MONITOR_SHARED_READ_MODEL_ENABLED = (
+    os.environ.get('RECORD_MONITOR_SHARED_READ_MODEL_ENABLED', 'false').lower() == 'true'
+)
+RECORD_MONITOR_READ_MODEL_TTL_SECONDS = int(
+    os.environ.get('RECORD_MONITOR_READ_MODEL_TTL_SECONDS', '30')
+)
+READ_MODEL_WORKER_LEASE_SECONDS = int(os.environ.get('READ_MODEL_WORKER_LEASE_SECONDS', '300'))
+READ_MODEL_OUTBOX_RETENTION_DAYS = int(os.environ.get('READ_MODEL_OUTBOX_RETENTION_DAYS', '7'))
+
 
 # Share expensive curriculum payloads between Django workers in production.
-# Django's built-in Redis backend uses the already-installed ``redis`` package,
-# so no additional cache dependency is required. Development and tests retain a
+# The backend subclasses Django's built-in Redis cache, which uses the
+# already-installed ``redis`` package, so no additional cache dependency is
+# required. It degrades to a process-local cache while Redis is unreachable --
+# a developer machine with no Redis running behaves like the branch below
+# instead of raising on every read. Development and tests retain a
 # process-local cache when no Redis URL is configured.
 CACHE_URL = os.environ.get('CACHE_URL') or os.environ.get('REDIS_URL')
 if CACHE_URL:
+    from redis.backoff import NoBackoff
+    from redis.retry import Retry
+
+    # Redis is an accelerator, never a dependency for serving a page. Bound
+    # connection/read waits so an unavailable cache falls through to the latest
+    # valid Postgres projection inside the API latency budget.
+    CACHE_SOCKET_CONNECT_TIMEOUT_SECONDS = float(
+        os.environ.get('CACHE_SOCKET_CONNECT_TIMEOUT_SECONDS', '0.2')
+    )
+    CACHE_SOCKET_TIMEOUT_SECONDS = float(
+        os.environ.get('CACHE_SOCKET_TIMEOUT_SECONDS', '0.2')
+    )
     CACHES = {
         'default': {
-            'BACKEND': 'django.core.cache.backends.redis.RedisCache',
+            'BACKEND': 'config.cache_backends.ResilientRedisCache',
             'LOCATION': CACHE_URL,
             'KEY_PREFIX': os.environ.get('CACHE_KEY_PREFIX', 'kbc-lms'),
             'TIMEOUT': int(os.environ.get('CACHE_DEFAULT_TIMEOUT', '300')),
+            'OPTIONS': {
+                'socket_connect_timeout': CACHE_SOCKET_CONNECT_TIMEOUT_SECONDS,
+                'socket_timeout': CACHE_SOCKET_TIMEOUT_SECONDS,
+                # A cache miss/failure must immediately fall through to the
+                # durable Postgres projection; retrying Redis belongs outside
+                # an end-user request.
+                'retry': Retry(NoBackoff(), 0),
+            },
         }
     }
 else:
@@ -642,12 +758,19 @@ if _kbc_attendance_database_url and not USE_SQLITE_FOR_TESTS:
 # branch. Nothing here can reach the production database. USE_SECURITY_TEST_BRANCH
 # is defined near the top of this file (the MIGRATION_MODULES block consults it).
 SECURITY_TEST_BRANCH_HOST = ""
+SECURITY_TEST_BRANCH_ID = ""
 if USE_SECURITY_TEST_BRANCH:
     _branch_url = os.environ.get("security_Database_url")  # case-sensitive key
     if not _branch_url:
         raise ImproperlyConfigured(
             "USE_SECURITY_TEST_BRANCH is set but 'security_Database_url' is absent "
             "from the environment."
+        )
+    SECURITY_TEST_BRANCH_ID = os.environ.get("SECURITY_TEST_BRANCH_ID", "").strip()
+    if not SECURITY_TEST_BRANCH_ID:
+        raise ImproperlyConfigured(
+            "USE_SECURITY_TEST_BRANCH is set but SECURITY_TEST_BRANCH_ID is absent. "
+            "The exact Neon branch must be declared before write tests can run."
         )
     # BARRIER 2 — hard, early host-inequality assertion, before any connection is
     # opened. Case-insensitive. Fails closed if either host is missing/unparseable
@@ -812,6 +935,10 @@ AZURE_APPROVED_CONTAINER = os.environ.get("AZURE_APPROVED_CONTAINER", "evidence-
 AZURE_REJECTED_CONTAINER = os.environ.get("AZURE_REJECTED_CONTAINER", "evidence-rejected")
 AZURE_SAS_TTL_MINUTES = int(os.environ.get("AZURE_SAS_TTL_MINUTES", "15"))
 AZURE_LEARNER_PHOTOS_CONTAINER = os.environ.get("AZURE_LEARNER_PHOTOS_CONTAINER") or "learner-photos"
+AZURE_MATERIALS_STORAGE_ACCOUNT = os.environ.get("AZURE_MATERIALS_STORAGE_ACCOUNT", "")
+AZURE_MATERIALS_STORAGE_KEY = os.environ.get("AZURE_MATERIALS_STORAGE_KEY", "")
+AZURE_MATERIALS_CONTAINER = os.environ.get("AZURE_MATERIALS_CONTAINER") or "activity-media-backups"
+AZURE_MATERIALS_SAS_TTL_MINUTES = int(os.environ.get("AZURE_MATERIALS_SAS_TTL_MINUTES", "15"))
 
 # Generated/signed enrolment paperwork (ILR and the other compliance documents)
 # — see enrolment_api/documents.py. Separate from the evidence containers: these
@@ -869,6 +996,7 @@ AZURE_RECORDING_CONTAINERS_BY_TYPE = {
     "eligibility-review": os.environ.get("AZURE_RECORDINGS_ELIGIBILITY_CONTAINER") or "recordings-eligibility-review",
     "workspace": os.environ.get("AZURE_RECORDINGS_WORKSPACE_CONTAINER") or "recordings-workspace",
     "training-plan": os.environ.get("AZURE_RECORDINGS_TRAINING_PLAN_CONTAINER") or "recordings-training-plan",
+    "uln-privacy": os.environ.get("AZURE_RECORDINGS_ULN_PRIVACY_CONTAINER") or "recordings-uln-privacy",
     "other": os.environ.get("AZURE_RECORDINGS_OTHER_CONTAINER") or "recordings-other",
     # Curriculum live sessions are taught classes, not one-to-one coaching.
     "live-session": os.environ.get("AZURE_RECORDINGS_LIVE_SESSION_CONTAINER") or "recordings-live-session",

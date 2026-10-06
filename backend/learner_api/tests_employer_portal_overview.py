@@ -78,9 +78,10 @@ class EmployerPortalOverviewTests(SimpleTestCase):
 
     def test_hours_returns_monthly_totals_only(self):
         summary = {
-            "learner": {"id": 101, "aptem_id": 55, "name": "Learner", "coach_name": "Coach"},
+            "learner": {"id": 101, "aptem_id": 55, "name": "Learner", "coach_name": "Coach", "planned_end_date": "2027-07-31"},
             "months": [{"month": "2026-08", "source": "lms", "training_plan_target": 10, "not_accepted_hours": 1,
                         "actual_hours": 7, "student_signature": {"name": "x"}, "row_count": 4}],
+            "training_plan_totals": {"accepted_hours": 7, "planned_hours": 120},
         }
         with mock.patch("old_otjh.service.resolve_record", return_value={"id": 101}), \
                 mock.patch("learner_api.monthly_log_sources.profile", return_value={}), \
@@ -89,9 +90,10 @@ class EmployerPortalOverviewTests(SimpleTestCase):
         self.assertEqual(response.status_code, 200)
         self.assertTrue(summary_data.call_args.args[0]["_view_as"])
         self.assertEqual(json.loads(response.content), {
-            "learner": {"aptem_id": 55},
+            "learner": {"aptem_id": 55, "planned_end_date": "2027-07-31"},
             "months": [{"month": "2026-08", "source": "lms", "training_plan_target": 10,
                         "not_accepted_hours": 1, "actual_hours": 7}],
+            "training_plan_totals": {"accepted_hours": 7, "planned_hours": 120},
         })
 
     def test_another_employers_learner_is_refused(self):

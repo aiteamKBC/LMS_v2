@@ -47,6 +47,13 @@ class CompletedActualTests(unittest.TestCase):
         self.assertEqual(calculate([], [entry(claimedSeconds=3600, timeTrackingSource='reading:input')], [], 12), 13)
         self.assertEqual(calculate([], [entry(reportedTime='45 minutes')], [], 12), 12.75)
 
+    def test_quiz_reflection_minutes_are_not_read_as_hours(self):
+        # The quiz reflection submits its minutes field with an explicit unit.
+        quiz = entry(kind='quiz', passed=True, verifiedSeconds=3)
+        self.assertAlmostEqual(calculate([], [{**quiz, 'reportedTime': '14 minutes'}], [], 12), 12 + 14 / 60, places=4)
+        # A bare number is still the hours convention used by other reflections.
+        self.assertEqual(calculate([], [{**quiz, 'reportedTime': '14'}], [], 12), 26)
+
     def test_same_activity_is_not_added_twice(self):
         self.assertEqual(calculate([], [entry(), entry()], [], 12), 12.5)
         self.assertEqual(calculate([], [entry(sourceRef='progress:1'), entry(sourceRef='progress:2')],

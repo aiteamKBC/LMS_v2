@@ -77,4 +77,22 @@ describe('ImportedReviewHistory', () => {
     expect(screen.getByText('No reviews match these filters.')).toBeInTheDocument();
     expect(screen.queryByText('Progress Review August')).not.toBeInTheDocument();
   });
+
+  it('opens only the requested Aptem form by its stable Aptem review id', async () => {
+    render(<ImportedReviewHistory kind="commercial" learnerId="125" category="reviews" reviewId="A72" />);
+
+    expect(await screen.findByRole('heading', { name: 'Progress Review August' })).toBeInTheDocument();
+    expect(screen.getByText('Overall progress')).toBeInTheDocument();
+    expect(screen.getByText('64%')).toBeInTheDocument();
+    expect(screen.queryByText('Progress Review September')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Search reviews')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Back to reviews/i })).not.toBeInTheDocument();
+  });
+
+  it('does not fuzzy-match a missing requested form id', async () => {
+    render(<ImportedReviewHistory kind="commercial" learnerId="125" category="reviews" reviewId="A7" />);
+
+    expect(await screen.findByText('The requested imported review form could not be found.')).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Progress Review August' })).not.toBeInTheDocument();
+  });
 });

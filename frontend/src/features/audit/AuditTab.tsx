@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import { jsPDF } from 'jspdf';
 import { EmptyState } from '@/pages/users/components/ui';
-import { formatDisplayDate, type CaseFileTabProps } from '@/pages/coach/learner-case-file/data';
+import { formatDisplayDate } from '@/pages/coach/learner-case-file/data';
+import type { CaseFileTabProps } from '@/pages/coach/learner-case-file/types';
 import { formatHoursMinutes } from '@/lib/format';
 import { fetchLearnerAudit, type AuditActivityItem, type LearnerAuditResponse } from './api';
 

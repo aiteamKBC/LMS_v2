@@ -1,26 +1,37 @@
 // Imported explicitly rather than left to unplugin-auto-import: the Vitest
 // config deliberately does not load that plugin, so a page that relies on it
 // cannot be rendered in a test at all. Every page with tests spells these out.
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
-import { auditEventHref, auditFieldValueLabel, auditValueLabel, auditValueTitle, stampLabel, timeMetaLabel } from './activityTime';
+import { auditEventHref, auditFieldLabel, auditFieldValueLabel, auditValueLabel, auditValueTitle, clockLabel, durationLabel, spanLabel, stampLabel, timeMetaLabel } from './activityTime';
 import { useAuditRecordNames } from './auditNames';
-import { personHref, type AuditTrailScope } from './scope';
+import { actionMeaning, changeStory } from './changeStory';
+import {
+  DEFAULT_WINDOW_DAYS, changeWindowLimitFor, changeWindowOptionsFor, personHref, windowLimitFor, windowOptionsFor,
+  type AuditTrailScope,
+} from './scope';
 import { ActivityPrefetcher } from './prefetch';
 import {
   fetchActivityPeople,
   fetchCurriculumAuditTrail,
+  fetchPersonActivity,
+  type CurriculumActivityAction,
+  type CurriculumActivityPage,
   type CurriculumActivityPeople,
   type CurriculumActivityPerson,
+  type CurriculumActivitySignIn,
+  type CurriculumActivityVisit,
   type CurriculumAuditEvent,
   type CurriculumAuditTrail,
+  type CurriculumPersonActivity,
 } from '@/lib/curriculumApi';
 import {
   EntityEmptyState,
   EntityFilterBar,
   EntityHero,
+  EntityPagination,
   EntityTable,
   HeroSecondaryButton,
   InlineError,
@@ -48,23 +59,23 @@ import {
  * — a scheduled job or a management command — never attributed to a person who
  * happened to be nearby.
  *
- * The page opens on People rather than on the change feed, because the question
- * it is most often asked is "who has been in here?" and the feed cannot answer
- * it: a save is the only thing it can see, so somebody who read all afternoon
- * and changed nothing does not appear in it at all. People is built from the
+ * The page opens on Changes, the feed this file is named for, and People sits
+ * behind it. The feed cannot answer "who has been in here?" on its own: a save
+ * is the only thing it can see, so somebody who read all afternoon and changed
+ * nothing never appears in it. That is what People is for. It is built from the
  * recorded visits instead (`curriculum.activity_events`), with the changes and
  * the account's sign-ins folded in. Each of those three sources is reported
  * separately, so a source that is switched off reads as "not recorded" rather
  * than as nobody having done anything.
  */
 
-const WINDOW_OPTIONS = [
-  { value: '1', label: 'Today (last 24 hours)' },
-  { value: '7', label: 'Last 7 days' },
-  { value: '30', label: 'Last 30 days' },
-  { value: '90', label: 'Last 90 days' },
-  { value: '365', label: 'Last 12 months' },
-];
+/**
+ * The Role filter's value for people with no role recorded. A reserved word
+ * rather than an empty string, which the filter bar cannot tell apart from the
+ * filter being unset — it has to match `NO_ROLE` in `system_audit/activity.py`.
+ */
+const NO_ROLE = '__none__';
+
 
 /**
  * The record types offered by the Record type filter, until the server has
@@ -102,7 +113,7 @@ const ACTION_OPTIONS = [
   { value: 'file_removed', label: 'Removed file' },
   { value: 'recalculated', label: 'Recalculated' },
   { value: 'imported', label: 'Imported' },
-  { value: 'recorded', label: 'First activity recorded' },
+  { value: 'recorded', label: 'First seen (timestamp)' },
 ];
 
 /**
@@ -137,7 +148,7 @@ const ACTION_STYLE: Record<string, { label: string; icon: string; dot: string; c
   archived: { label: 'Archived', icon: 'ri-archive-line', dot: 'bg-amber-500', chip: 'border-amber-200 bg-amber-50 text-amber-700' },
   restored: { label: 'Restored', icon: 'ri-arrow-go-back-line', dot: 'bg-teal-500', chip: 'border-teal-200 bg-teal-50 text-teal-700' },
   deleted: { label: 'Deleted', icon: 'ri-delete-bin-line', dot: 'bg-rose-500', chip: 'border-rose-200 bg-rose-50 text-rose-700' },
-  recorded: { label: 'First activity recorded', icon: 'ri-history-line', dot: 'bg-background-400', chip: 'border-background-200 bg-background-100 text-foreground-500' },
+  recorded: { label: 'First seen (timestamp)', icon: 'ri-history-line', dot: 'bg-background-400', chip: 'border-background-200 bg-background-100 text-foreground-500' },
   file_uploaded: { label: 'Uploaded file', icon: 'ri-upload-2-line', dot: 'bg-cyan-500', chip: 'border-cyan-200 bg-cyan-50 text-cyan-700' },
   file_replaced: { label: 'Replaced file', icon: 'ri-file-transfer-line', dot: 'bg-cyan-600', chip: 'border-cyan-200 bg-cyan-50 text-cyan-700' },
   file_removed: { label: 'Removed file', icon: 'ri-delete-bin-6-line', dot: 'bg-orange-500', chip: 'border-orange-200 bg-orange-50 text-orange-700' },
@@ -145,6 +156,125 @@ const ACTION_STYLE: Record<string, { label: string; icon: string; dot: string; c
   recalculated: { label: 'Recalculated', icon: 'ri-calculator-line', dot: 'bg-slate-400', chip: 'border-slate-200 bg-slate-50 text-slate-600' },
   imported: { label: 'Imported', icon: 'ri-download-cloud-line', dot: 'bg-fuchsia-500', chip: 'border-fuchsia-200 bg-fuchsia-50 text-fuchsia-700' },
 };
+
+const MODULE_CREATION_ENTITIES = new Set(['module', 'module_details', 'module_completion']);
+const MODULE_CREATION_HIDDEN_FIELDS = new Set([
+  'id', 'uuid', 'created_at', 'updated_at', 'deleted_at', 'deleted_by', 'deleted_via_parent',
+]);
+
+function moduleCreationGroupKey(event: CurriculumAuditEvent): string {
+  const moduleId = String(event.moduleCatalogueId || event.entityId || '').trim();
+  if (!moduleId) return '';
+  // These records are written in one request and share the same displayed
+  // minute and actor. Including both prevents a later repair that creates a
+  // missing child record from being folded into the original module create.
+  const minute = String(event.at || '').slice(0, 16);
+  const actor = String(event.actorEmail || event.actorName || '').trim().toLowerCase();
+  return `${moduleId}\u0000${minute}\u0000${actor}`;
+}
+
+function moduleCreationSummaryEvent(
+  representative: CurriculumAuditEvent,
+  group: CurriculumAuditEvent[] | undefined,
+  names: ReadonlyMap<string, string>,
+): CurriculumAuditEvent {
+  if (!group || group.length < 2) return representative;
+  const moduleId = String(representative.moduleCatalogueId || representative.entityId || '').trim();
+  const moduleEvent = group.find(item => item.entity === 'module');
+  const source = moduleEvent || representative;
+  return {
+    ...source,
+    // Keep the visible row keyed to the chosen representative while describing
+    // the user's single action rather than whichever storage row came first.
+    id: representative.id,
+    action: 'created',
+    actionLabel: 'Created',
+    entity: 'module',
+    entityLabel: 'Module',
+    entityId: moduleId || source.entityId,
+    moduleCatalogueId: moduleId || source.moduleCatalogueId,
+    title: moduleEvent?.title || names.get(moduleId) || source.title || moduleId,
+    changes: [],
+  };
+}
+
+/**
+ * The log's columns, in the order the header bar and every row lay them out.
+ *
+ * One grid template shared by both, so a column can never drift out of line
+ * with its own heading. `Change` is the only flexible one: the rest are fixed
+ * widths, because columns that resize to their contents make the whole log
+ * shift sideways as you page through it.
+ */
+type AuditSortKey = 'action' | 'entity' | 'change' | 'user' | 'time';
+
+const AUDIT_COLUMNS: Array<{ key: AuditSortKey; label: string; align?: string }> = [
+  { key: 'action', label: 'Action' },
+  { key: 'entity', label: 'Entity' },
+  { key: 'change', label: 'Change' },
+  { key: 'user', label: 'User' },
+  { key: 'time', label: 'Time' },
+];
+
+const AUDIT_GRID = 'lg:grid lg:grid-cols-[7.5rem_7.5rem_minmax(0,1fr)_9.5rem_5rem_1.75rem] lg:items-start lg:gap-x-4';
+
+/**
+ * What a column sorts on, as text so every column sorts the same way.
+ *
+ * Time is the stored instant rather than the time on screen, which is a local
+ * rendering of it: sorting the rendered string would put 12:05 AM after 11:00 PM.
+ */
+function auditSortValue(event: CurriculumAuditEvent, key: AuditSortKey): string {
+  switch (key) {
+    case 'action': return (event.actionLabel || event.action || '').toLowerCase();
+    case 'entity': return (event.entityLabel || event.entity || '').toLowerCase();
+    case 'change': return (event.title || event.context || '').toLowerCase();
+    case 'user': return (event.actorName || event.actorEmail || event.actorTypeLabel || '').toLowerCase();
+    default: return event.at || '';
+  }
+}
+
+/**
+ * What moved, as one line, above the field-by-field detail.
+ *
+ * Built from the fields themselves rather than from a count, because "2 fields
+ * changed" tells a reader nothing they could not see from the badge beside it.
+ * The field names are deliberately not marked up individually -- this is a
+ * sentence, and the cards below are where each field is addressed on its own.
+ */
+function changeSummarySentence(event: CurriculumAuditEvent, snapshotCount: number): string {
+  const subject = (event.entityLabel || 'record').toLowerCase();
+  if (event.changes.length) {
+    const labels = event.changes.map(change => auditFieldLabel(change.label));
+    const named = labels.length === 1
+      ? labels[0]
+      : labels.length <= 3
+        ? `${labels.slice(0, -1).join(', ')} and ${labels[labels.length - 1]}`
+        : `${labels.slice(0, 3).join(', ')} and ${labels.length - 3} more`;
+    return `${named} changed on this ${subject}.`;
+  }
+  if (!snapshotCount) return '';
+  if (event.action === 'deleted') {
+    return `This ${subject} was removed. The ${snapshotCount} recorded ${snapshotCount === 1 ? 'value' : 'values'} below are the last copy of what it held.`;
+  }
+  return `Recorded with ${snapshotCount} ${snapshotCount === 1 ? 'value' : 'values'}.`;
+}
+
+/**
+ * Metadata the panel does not show, because the row above already says it
+ * better or because it describes the HTTP request rather than the change.
+ *
+ * `page_label` and `page_path` are the page, which the row names in words.
+ * The four request keys are transport: `request_path` in particular rendered
+ * as a chip reading `/curriculum_api/curriculum/modules/MOD-2026092113431576…
+ * /structure/`, which hands a reader a database id and a route where the row
+ * beside it had already told them a cohort was edited on the Cohort builder.
+ * They are still recorded against the revision for anyone querying the log.
+ */
+const HIDDEN_METADATA = new Set([
+  'page_label', 'page_path', 'page_source', 'page_workspace',
+  'request_path', 'request_method',
+]);
 
 /** A metadata key as words: `file_name` -> `File name`. */
 function metadataLabel(key: string): string {
@@ -159,22 +289,48 @@ function displayValue(value: unknown): string {
   return text.trim() ? text : '(empty)';
 }
 
-type AuditTab = 'people' | 'changes';
+type AuditTab = 'changes' | 'people';
 
 export default function AuditTrailView({ scope }: { scope: AuditTrailScope }) {
-  const [tab, setTab] = useState<AuditTab>('people');
+  const [tab, setTab] = useState<AuditTab>('changes');
   // The workspace being read. On the system-wide door this is a filter the
   // person can change; on a workspace's own door it is fixed to that workspace
   // and no filter is offered, because a Curriculum page that could be switched
   // to show Safeguarding is not a scoped page, it is a mislabelled one.
   const [workspace, setWorkspace] = useState(scope.workspace);
-  const [windowDays, setWindowDays] = useState('30');
+  const [windowDays, setWindowDays] = useState(String(DEFAULT_WINDOW_DAYS));
+  // Leaving Curriculum Studio for a workspace kept for seven days brings a
+  // longer period back inside what that workspace still holds.
+  useEffect(() => {
+    if (Number(windowDays) > windowLimitFor(workspace || scope.workspace)) setWindowDays(String(DEFAULT_WINDOW_DAYS));
+  }, [workspace, windowDays, scope.workspace]);
+  // The Changes feed has a period of its own. Saved history is kept, page
+  // activity is not, so Changes may read 30 or 60 days where People cannot --
+  // and sharing one select would have offered People a window it has no data
+  // for, or held Changes to the seven days People keeps.
+  const [changeWindowDays, setChangeWindowDays] = useState(String(DEFAULT_WINDOW_DAYS));
+  useEffect(() => {
+    if (Number(changeWindowDays) > changeWindowLimitFor(workspace || scope.workspace)) {
+      setChangeWindowDays(String(DEFAULT_WINDOW_DAYS));
+    }
+  }, [workspace, changeWindowDays, scope.workspace]);
   const [entity, setEntity] = useState('');
   const [action, setAction] = useState('');
   const [actor, setActor] = useState('');
   const [source, setSource] = useState('');
   const [actorType, setActorType] = useState('');
   const [search, setSearch] = useState('');
+  const [serverSearch, setServerSearch] = useState('');
+  const [changesPage, setChangesPage] = useState(1);
+  // How the log is ordered, and which days are folded shut.
+  //
+  // Both are about the logs already on screen. The endpoint answers newest-first
+  // and offers no ordering of its own, so a column sort reorders this page and
+  // the header says so rather than letting it read as though it had reordered
+  // every change in the window.
+  const [sortKey, setSortKey] = useState<AuditSortKey>('time');
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
+  const [collapsedDays, setCollapsedDays] = useState<ReadonlySet<string>>(() => new Set<string>());
 
   const [trail, setTrail] = useState<CurriculumAuditTrail | null>(null);
   const [loading, setLoading] = useState(true);
@@ -185,34 +341,29 @@ export default function AuditTrailView({ scope }: { scope: AuditTrailScope }) {
   const [peopleLoading, setPeopleLoading] = useState(true);
   const [peopleError, setPeopleError] = useState<string | null>(null);
   const [peopleSearch, setPeopleSearch] = useState('');
-  // Whether this window has more people in it than one response carries.
-  // Latched rather than read from the current response: a server search narrows
-  // its own result below the cap, so reading `truncated` back off it would turn
-  // the server search off again on the very next keystroke.
-  const [peopleCapped, setPeopleCapped] = useState(false);
+  const [peopleRole, setPeopleRole] = useState('');
+  const [peoplePage, setPeoplePage] = useState(1);
   const [serverPeopleSearch, setServerPeopleSearch] = useState('');
 
   // Each tab loads only its own data, and only once it is being looked at. The
   // two reads are unrelated and one of them sweeps a window of visits, so
   // fetching both on arrival would make the page slower at answering the
   // question it opened on.
-  // A different window or workspace is a different population, so the cap has
-  // to be established again rather than carried over from the last one.
-  useEffect(() => { setPeopleCapped(false); }, [windowDays, workspace]);
-
-  // Below the cap the search stays on the client, where it costs nothing. Above
-  // it, the list on screen is not the whole window and a client filter would
-  // report "no matches" for somebody who is simply on a later page, so the
-  // search goes to the server -- debounced, so it is still not a request per
+  // The search goes to the server, because the client only holds one page:
+  // filtering the rows on screen would report "nobody matches" for somebody who
+  // is simply on a later page. Debounced, so it is still not a request per
   // keystroke.
   useEffect(() => {
-    if (!peopleCapped) {
-      setServerPeopleSearch('');
-      return undefined;
-    }
     const timer = setTimeout(() => setServerPeopleSearch(peopleSearch.trim()), 350);
     return () => clearTimeout(timer);
-  }, [peopleCapped, peopleSearch]);
+  }, [peopleSearch]);
+
+  // Any change to what is being asked for puts the reader back on page one.
+  // Staying on page seven of the old result would show page seven of something
+  // they have not asked for, or nothing at all when the new answer is shorter.
+  useEffect(() => {
+    setPeoplePage(1);
+  }, [windowDays, workspace, serverPeopleSearch, peopleRole]);
 
   useEffect(() => {
     if (tab !== 'people') return undefined;
@@ -222,13 +373,18 @@ export default function AuditTrailView({ scope }: { scope: AuditTrailScope }) {
       days: Number(windowDays),
       workspace,
       search: serverPeopleSearch || undefined,
+      role: peopleRole || undefined,
+      page: peoplePage,
       signal: controller.signal,
       revalidate: reloadToken > 0,
     })
       .then(result => {
         if (controller.signal.aborted) return;
         setPeople(result);
-        if (result.truncated) setPeopleCapped(true);
+        // The server clamps a page past the end to the last one, so the control
+        // is told where it actually landed rather than left claiming a page
+        // nobody is looking at.
+        if (result.page && result.page !== peoplePage) setPeoplePage(result.page);
         setPeopleError(null);
       })
       .catch((err: unknown) => {
@@ -239,7 +395,7 @@ export default function AuditTrailView({ scope }: { scope: AuditTrailScope }) {
         if (!controller.signal.aborted) setPeopleLoading(false);
       });
     return () => controller.abort();
-  }, [tab, windowDays, workspace, serverPeopleSearch, reloadToken, scope.subjectLabel]);
+  }, [tab, windowDays, workspace, serverPeopleSearch, peopleRole, peoplePage, reloadToken, scope.subjectLabel]);
 
   // A person's activity is the slow read and the list is the fast one, so the
   // list is never made to wait for it. It is warmed behind the list instead:
@@ -267,15 +423,29 @@ export default function AuditTrailView({ scope }: { scope: AuditTrailScope }) {
     prefetcher.current.prefetch({ email, days: Number(windowDays), workspace: scope.workspace });
   }, [windowDays, scope.workspace]);
 
-  // The window and the two selects are answered by the backend, so they refetch.
-  // Search is not: it is applied to the events already on screen so typing does
-  // not fire a request per keystroke against a query the page can answer itself.
+  // The search is answered by the backend now that the feed is paged: applied
+  // to the events on screen it would search one page of fifty and report that
+  // as the window. Debounced, so it is still not a request per keystroke.
+  useEffect(() => {
+    const timer = setTimeout(() => setServerSearch(search.trim()), 350);
+    return () => clearTimeout(timer);
+  }, [search]);
+
+  // A different question puts the reader back on page one — see the People half.
+  useEffect(() => {
+    setChangesPage(1);
+  }, [changeWindowDays, workspace, entity, action, actor, source, actorType, serverSearch]);
+
+  // The window, the selects and the search are all answered by the backend, so
+  // each of them refetches.
   useEffect(() => {
     if (tab !== 'changes') return undefined;
     const controller = new AbortController();
     setLoading(true);
     fetchCurriculumAuditTrail({
-      days: Number(windowDays),
+      days: Number(changeWindowDays),
+      page: changesPage,
+      search: serverSearch || undefined,
       // The same scope the People half uses. Without it the scoped door would
       // show every workspace's saves the moment a second workspace started
       // recording them.
@@ -291,6 +461,7 @@ export default function AuditTrailView({ scope }: { scope: AuditTrailScope }) {
       .then(result => {
         if (controller.signal.aborted) return;
         setTrail(result);
+        if (result.page && result.page !== changesPage) setChangesPage(result.page);
         setError(null);
       })
       .catch((err: unknown) => {
@@ -301,23 +472,21 @@ export default function AuditTrailView({ scope }: { scope: AuditTrailScope }) {
         if (!controller.signal.aborted) setLoading(false);
       });
     return () => controller.abort();
-  }, [tab, windowDays, workspace, entity, action, actor, source, actorType, reloadToken, scope.subjectLabel]);
+  }, [
+    tab, changeWindowDays, workspace, entity, action, actor, source, actorType,
+    serverSearch, changesPage, reloadToken, scope.subjectLabel,
+  ]);
 
-  const events = useMemo(() => {
-    const rows = trail?.events ?? [];
-    const query = search.trim().toLowerCase();
-    if (!query) return rows;
-    return rows.filter(event => (
-      event.title.toLowerCase().includes(query)
-      || event.context.toLowerCase().includes(query)
-      || event.entityId.toLowerCase().includes(query)
-      || event.actorName.toLowerCase().includes(query)
-    ));
-  }, [trail?.events, search]);
+  // Searched and paged by the server. Filtering again here would hide rows the
+  // count beside them still counts.
+  // Held steady across renders, because the sort below and the name lookup
+  // beside it both key off this array: a fresh `[]` on every render would
+  // re-sort the log and re-request the names on every keystroke in the search.
+  const events = useMemo(() => trail?.events ?? [], [trail?.events]);
 
   // Names for the ids a save refers to, so a link field reads as the records it
   // points at rather than as a count of them.
-  const names = useAuditRecordNames(useMemo(() => trail?.events ?? [], [trail?.events]));
+  const names = useAuditRecordNames(events);
 
   // Offered only when the trail can actually name people. On the timestamp
   // fallback there is nobody to filter by, and an empty select would imply the
@@ -330,8 +499,37 @@ export default function AuditTrailView({ scope }: { scope: AuditTrailScope }) {
     [trail?.actors],
   );
 
-  // What this workspace records, as the server names it.
-  const entityOptions = trail?.entityTypes?.length ? trail.entityTypes : FALLBACK_ENTITY_OPTIONS;
+  // Facets are narrowed by the server's whole-window counts. The catalogue
+  // may know that an entity/action exists somewhere in the LMS while the
+  // current workspace and period contain none of it; showing that option here
+  // makes a valid click look like a broken feed. Keep the selected value in the
+  // list so an already-applied filter can always be cleared.
+  const actionOptions = useMemo(() => {
+    const counts = trail?.actionCounts;
+    const hasCounts = counts && Object.values(counts).some(value => Number(value) > 0);
+    if (!hasCounts) return ACTION_OPTIONS;
+    return ACTION_OPTIONS.filter(option => option.value === action || Number(counts?.[option.value as keyof typeof counts] ?? 0) > 0);
+  }, [trail?.actionCounts, action]);
+
+  // What this workspace records, as the server names it, narrowed to the
+  // selected period/workspace/action rather than the catalogue's full list.
+  const entityOptions = useMemo(() => {
+    const options = trail?.entityTypes?.length ? trail.entityTypes : FALLBACK_ENTITY_OPTIONS;
+    const counts = trail?.entityCounts;
+    const hasCounts = counts && Object.values(counts).some(value => Number(value) > 0);
+    if (!hasCounts) return options;
+    return options.filter(option => option.value === entity || Number(counts?.[option.value] ?? 0) > 0);
+  }, [trail?.entityTypes, trail?.entityCounts, entity]);
+
+  // If a workspace/entity change makes the previous action impossible, clear
+  // it before issuing a request that would only produce an empty feed. A
+  // zero-count response with no positive facets is left alone: that can be a
+  // legitimate search with no matches, and the empty-state message explains it.
+  useEffect(() => {
+    const counts = trail?.actionCounts;
+    const hasCounts = counts && Object.values(counts).some(value => Number(value) > 0);
+    if (action && hasCounts && Number(counts?.[action as keyof typeof counts] ?? 0) === 0) setAction('');
+  }, [trail?.actionCounts, action]);
 
   // A record type the new workspace does not have. Cleared rather than left
   // applied: switching from Curriculum to Coaching with `component` selected
@@ -355,38 +553,129 @@ export default function AuditTrailView({ scope }: { scope: AuditTrailScope }) {
     return `${labels.slice(0, 3).join(', ')} and ${labels.length - 3} other kinds of record`;
   }, [entityOptions]);
 
-  const days = useMemo(() => groupByDay(events), [events]);
+  // Sorted here because there is no ordering to ask the server for: this is the
+  // page it answered with, newest-first. Ties keep the order they arrived in,
+  // so two saves in the same second do not swap places on every render.
+  const sortedEvents = useMemo(() => {
+    if (sortKey === 'time' && sortDir === 'desc') return events;
+    const ordered = events.map((event, index) => ({ event, index }));
+    ordered.sort((left, right) => {
+      const a = auditSortValue(left.event, sortKey);
+      const b = auditSortValue(right.event, sortKey);
+      if (a !== b) return sortDir === 'asc' ? a.localeCompare(b) : b.localeCompare(a);
+      return left.index - right.index;
+    });
+    return ordered.map(entry => entry.event);
+  }, [events, sortKey, sortDir]);
+
+  // Creating a module writes its catalogue row, details row and completion
+  // rule as three audited records. Keep those sibling creates together in the
+  // reader, so opening any one of them still answers the useful question:
+  // "what did the author enter in the module drawer?"
+  const moduleCreationEvents = useMemo(() => {
+    const grouped = new Map<string, CurriculumAuditEvent[]>();
+    events.forEach(event => {
+      if (event.action !== 'created' || !MODULE_CREATION_ENTITIES.has(event.entity)) return;
+      const key = moduleCreationGroupKey(event);
+      if (!key) return;
+      const current = grouped.get(key) || [];
+      current.push(event);
+      grouped.set(key, current);
+    });
+    return grouped;
+  }, [events]);
+
+  // One module create produces a catalogue row plus linked details and
+  // completion rows. They are useful evidence, but they are not three user
+  // actions. Keep one representative in the feed and show the linked records
+  // inside that representative's expanded details.
+  const moduleCreationRepresentatives = useMemo(() => {
+    const representatives = new Map<string, string>();
+    moduleCreationEvents.forEach((group, key) => {
+      if (group.length < 2) return;
+      representatives.set(key, (group.find(item => item.entity === 'module') || group[0]).id);
+    });
+    return representatives;
+  }, [moduleCreationEvents]);
+
+  const visibleEvents = useMemo(() => sortedEvents.filter(event => {
+    if (event.action !== 'created' || !MODULE_CREATION_ENTITIES.has(event.entity)) return true;
+    const key = moduleCreationGroupKey(event);
+    const representative = moduleCreationRepresentatives.get(key);
+    return !representative || representative === event.id;
+  }), [sortedEvents, moduleCreationRepresentatives]);
+
+  // Day headings only while the log is in time order. Sorted by person or by
+  // record they would cut the very grouping the sort was asked for in half, so
+  // that reading is one list and each row carries its own date instead.
+  const days = useMemo(() => {
+    if (sortKey === 'time') return groupByDay(visibleEvents);
+    const column = AUDIT_COLUMNS.find(entry => entry.key === sortKey);
+    return [{
+      key: `sorted:${sortKey}:${sortDir}`,
+      label: `Sorted by ${(column?.label ?? sortKey).toLowerCase()}`,
+      events: visibleEvents,
+    }];
+  }, [visibleEvents, sortKey, sortDir]);
   const counts = trail?.actionCounts;
 
-  // Which workspaces the Changes half can speak for, named from the People
-  // response rather than hard-coded here: the page should start telling the
-  // truth about a newly-wired workspace the day the backend does, not the day
-  // somebody remembers to edit this list.
+  // Which workspaces the Changes half can speak for, as the server reports it
+  // rather than hard-coded here: the page should start telling the truth about
+  // a newly-wired workspace the day the backend does, not the day somebody
+  // remembers to edit this list. Named from the trail's own answer first --
+  // that is the reading on screen -- and from People only before it arrives.
   const changeCoverage = useMemo(() => {
-    const all = people?.workspaces ?? [];
-    const coveredKeys = new Set(people?.changeWorkspaces ?? []);
+    const all = trail?.workspaces ?? people?.workspaces ?? [];
+    const coveredKeys = new Set(trail?.changeWorkspaces ?? people?.changeWorkspaces ?? []);
+    const uncoveredKeys = trail?.uncoveredWorkspaces
+      ? new Set(trail.uncoveredWorkspaces)
+      : new Set(all.filter(entry => !coveredKeys.has(entry.value)).map(entry => entry.value));
     const covered = all.filter(entry => coveredKeys.has(entry.value));
-    const missing = all.filter(entry => !coveredKeys.has(entry.value));
+    const missing = all.filter(entry => uncoveredKeys.has(entry.value));
+    const names = (entries: { value: string; label: string }[]) => (entries.length > 3
+      ? `${entries.slice(0, 3).map(entry => auditWorkspaceLabel(entry.value, entry.label)).join(', ')} and ${entries.length - 3} others`
+      : entries.map(entry => auditWorkspaceLabel(entry.value, entry.label)).join(', '));
     return {
       complete: all.length > 0 && missing.length === 0,
-      covered: covered.map(entry => entry.label).join(', ') || 'no workspace',
-      missing: missing.length > 3
-        ? `${missing.slice(0, 3).map(entry => entry.label).join(', ')} and ${missing.length - 3} others`
-        : missing.map(entry => entry.label).join(', '),
+      covered: names(covered) || 'no workspace',
+      missing: names(missing),
     };
-  }, [people?.workspaces, people?.changeWorkspaces]);
+  }, [
+    trail?.workspaces, trail?.changeWorkspaces, trail?.uncoveredWorkspaces,
+    people?.workspaces, people?.changeWorkspaces,
+  ]);
 
   // Filtered here rather than server-side for the same reason the change feed
   // is: the window is already loaded, and a request per keystroke would answer
   // a question the page can answer itself.
-  const peopleRows = useMemo(() => {
-    const rows = people?.people ?? [];
-    const query = serverPeopleSearch ? '' : peopleSearch.trim().toLowerCase();
-    if (!query) return rows;
-    return rows.filter(person => (
-      person.name.toLowerCase().includes(query) || person.email.toLowerCase().includes(query)
-    ));
-  }, [people?.people, peopleSearch, serverPeopleSearch]);
+  // Named by the server from the whole window, not gathered from the rows on
+  // screen: one page can only name the roles of the people it carries, and a
+  // filter built from it would be missing every role held further down.
+  const peopleRoleOptions = useMemo(() => {
+    const options = (people?.roles ?? []).map(role => ({
+      value: role,
+      label: role.charAt(0).toUpperCase() + role.slice(1),
+    }));
+    return people?.rolesIncludeBlank
+      ? [...options, { value: NO_ROLE, label: 'No role recorded' }]
+      : options;
+  }, [people?.roles, people?.rolesIncludeBlank]);
+
+  // A role that this window does not hold — cleared rather than left applied,
+  // so a stale selection cannot silently filter the list down to nobody.
+  useEffect(() => {
+    if (!people || !peopleRole) return;
+    const held = peopleRole === NO_ROLE
+      ? people.rolesIncludeBlank
+      : people.roles?.includes(peopleRole);
+    if (!held) setPeopleRole('');
+  }, [people, peopleRole]);
+
+  // Already filtered, searched and paged by the server. Nothing is filtered
+  // here: doing it twice would hide rows the count beside them still counts.
+  const peopleRows = people?.people ?? [];
+
+  const overviewWorkspaces = trail?.workspaces ?? people?.workspaces ?? [];
 
   return (
     <WorkspaceShell
@@ -398,46 +687,49 @@ export default function AuditTrailView({ scope }: { scope: AuditTrailScope }) {
       pageSubtitle={`Who used ${scope.subjectLabel}, and what they changed`}
     >
       <div className="min-h-full space-y-4 bg-background-100 p-4 sm:p-5 lg:p-6">
-        <EntityHero
-          eyebrow="Record activity"
-          title="Audit Trail"
-          description={
-            tab === 'people'
-              ? people && !people.visitsRecorded
+        <AuditTrailOverview
+          scope={scope}
+          trail={trail}
+          people={people}
+          workspaces={overviewWorkspaces}
+          workspace={workspace}
+          windowDays={Number(tab === 'changes' ? changeWindowDays : windowDays)}
+          onWorkspace={scope.showWorkspaceFilter ? setWorkspace : undefined}
+        />
+        {/* The reading half keeps the hero and its four counts. The Changes
+            half has its own compact header below, immediately above the log it
+            describes — stat tiles pushed the first row of a 1,694-row log
+            below the fold on every laptop. */}
+        {tab === 'people' && (
+          <EntityHero
+            eyebrow="Record activity"
+            title="Audit Trail"
+            description={
+              people && !people.visitsRecorded
                 ? `Who used ${scope.subjectLabel}. Page opens are not being recorded yet, so this is read from recorded changes and account sign-ins alone — it can say who saved something and when they signed in, never which pages they looked at.`
                 : `Who used ${scope.subjectLabel}: when they were here, which pages they opened, what they did on each, and what they changed. Open a person to see their visits in full.`
-            : trail?.source === 'timestamps'
-              ? 'Read from the timestamps on the records themselves — every create, edit and archive inside the window, newest first. This reading cannot name who made a change.'
-              // The record types are named from what this workspace actually
-              // records, not listed here: the sentence used to name the
-              // curriculum's six and read as a lie on every other door.
-              : `Every recorded change to ${recordTypeSentence} — who made it, when, and exactly which fields moved. Newest first.`
-          }
-          stats={tab === 'people' ? [
-            { icon: 'ri-group-line', label: 'People', value: people?.totals.people ?? 0, detail: `Used ${scope.subjectLabel} in this period` },
-            { icon: 'ri-file-list-3-line', label: 'Pages opened', value: people?.totals.pageViews ?? 0, detail: 'Across everyone' },
-            { icon: 'ri-cursor-line', label: 'Actions', value: (people?.totals.readActions ?? 0) + (people?.totals.changes ?? 0), detail: 'Searches, exports and saves' },
-            { icon: 'ri-time-line', label: 'Window', value: `${people?.windowDays ?? windowDays}d`, detail: 'Period being read' },
-          ] : [
-            { icon: 'ri-add-circle-line', label: 'Created', value: counts?.created ?? 0, detail: 'New records' },
-            { icon: 'ri-edit-2-line', label: 'Edited', value: counts?.updated ?? 0, detail: 'Saved again after creation' },
-            { icon: 'ri-archive-line', label: 'Archived', value: counts?.archived ?? 0, detail: 'Soft-deleted, still restorable' },
-            { icon: 'ri-time-line', label: 'Window', value: `${trail?.windowDays ?? windowDays}d`, detail: 'Period being read' },
-          ]}
-          loading={tab === 'people' ? peopleLoading && !people : loading && !trail}
-          secondaryActions={(
-            <HeroSecondaryButton
-              icon="ri-refresh-line"
-              label="Refresh"
-              onClick={() => setReloadToken(token => token + 1)}
-            />
-          )}
-        />
+            }
+            stats={[
+              { icon: 'ri-group-line', label: 'People', value: people?.totals.people ?? 0, detail: `Used ${scope.subjectLabel} in this period` },
+              { icon: 'ri-file-list-3-line', label: 'Pages opened', value: people?.totals.pageViews ?? 0, detail: 'Across everyone' },
+              { icon: 'ri-cursor-line', label: 'Actions', value: (people?.totals.readActions ?? 0) + (people?.totals.changes ?? 0), detail: 'Searches, exports and saves' },
+              { icon: 'ri-time-line', label: 'Window', value: `${people?.windowDays ?? windowDays}d`, detail: 'Period being read' },
+            ]}
+            loading={peopleLoading && !people}
+            secondaryActions={(
+              <HeroSecondaryButton
+                icon="ri-refresh-line"
+                label="Refresh"
+                onClick={() => setReloadToken(token => token + 1)}
+              />
+            )}
+          />
+        )}
 
         <WorkspaceTabs
           tabs={[
-            { key: 'people', label: 'People', icon: 'ri-group-line', count: people?.totals.people },
             { key: 'changes', label: 'Changes', icon: 'ri-history-line', count: trail?.total },
+            { key: 'people', label: 'People', icon: 'ri-group-line', count: people?.totals.people },
           ]}
           active={tab}
           onChange={key => setTab(key as AuditTab)}
@@ -453,15 +745,39 @@ export default function AuditTrailView({ scope }: { scope: AuditTrailScope }) {
             error={peopleError}
             search={peopleSearch}
             onSearch={setPeopleSearch}
+            role={peopleRole}
+            onRole={setPeopleRole}
+            roleOptions={peopleRoleOptions}
             windowDays={windowDays}
             onWindowDays={setWindowDays}
             workspace={workspace}
             onWorkspace={setWorkspace}
+            page={peoplePage}
+            onPage={setPeoplePage}
             onRetry={() => setReloadToken(token => token + 1)}
           />
         )}
 
         {tab === 'changes' && (<>
+        <AuditLogsHeader
+          shown={events.length}
+          total={trail?.total ?? events.length}
+          counts={counts}
+          action={action}
+          onAction={value => setAction(current => current === value ? '' : value)}
+          windowDays={trail?.windowDays ?? Number(changeWindowDays)}
+          description={
+            trail?.source === 'timestamps'
+              ? 'Read from the timestamps on the records themselves — every create, edit and archive inside the window. This reading cannot name who made a change.'
+              // The record types are named from what this workspace actually
+              // records, not listed here: the sentence used to name the
+              // curriculum's six and read as a lie on every other door.
+              : `Clear change history across ${recordTypeSentence}: who changed what, when, and what was added or removed.`
+          }
+          loading={loading}
+          onRefresh={() => setReloadToken(token => token + 1)}
+        />
+
         {error && <InlineError message={error} onRetry={() => setReloadToken(token => token + 1)} />}
 
         {/* The reading half covers every workspace; the writing half does not
@@ -475,8 +791,11 @@ export default function AuditTrailView({ scope }: { scope: AuditTrailScope }) {
             </span>
             <p className="min-w-0 text-[11px] leading-5 text-amber-900">
               <span className="font-bold">This feed covers {changeCoverage.covered} only.</span>{' '}
-              Saves made in {changeCoverage.missing} are not in it — those workspaces are not yet
-              writing to the shared revision log, so nothing anywhere records what their saves changed.
+              {trail?.source === 'timestamps'
+                ? <>Saves made in {changeCoverage.missing} are not in it — none of their records keeps a
+                  timestamp this database can read, so nothing here can say what changed there.</>
+                : <>Saves made in {changeCoverage.missing} are not in it — those workspaces are not yet
+                  writing to the shared revision log, so nothing anywhere records what their saves changed.</>}{' '}
               The People tab above does cover every workspace: it can say who was in them and what they
               opened, just not what they saved.
             </p>
@@ -489,12 +808,40 @@ export default function AuditTrailView({ scope }: { scope: AuditTrailScope }) {
               <AppIcon className="ri-user-unfollow-line text-base"></AppIcon>
             </span>
             <p className="min-w-0 text-[11px] leading-5 text-foreground-500">
-              <span className="font-bold text-foreground-700">No author is recorded against these changes.</span>{' '}
-              The revision log is not switched on for this database, so the trail falls back to the records' own
-              created, updated and deleted timestamps. Those record what changed and when, never who. An archive
-              shows the reason code the write handler used, which names the operation, not a person. This reading
-              covers the curriculum's authoring tables only — no other workspace has timestamps it can fall back to.
+              <span className="font-bold text-foreground-700">These changes are read from timestamps, so most name no author.</span>{' '}
+              The revision log is not switched on for this database, so the trail falls back to the created,
+              updated and archived times the records themselves keep. Those say what moved and when — never what
+              it held before, and who only where the record itself names a person. &ldquo;First recorded&rdquo; means
+              the record was there at that moment; whether it began then, the record does not say. An archive
+              shows the reason code the write handler used, which names the operation, not a person.
             </p>
+          </div>
+        )}
+
+        {/* One feed, two kinds of evidence. Each record type's revision log
+            began on a different day; before it, events are recovered from
+            the records' own timestamps, and this says what that costs. */}
+        {trail && trail.source !== 'timestamps' && trail.recoveredHistory
+          && (trail.provenanceCounts?.timestamps ?? 0) > 0 && (
+          <div className="flex items-start gap-3 rounded-2xl border border-background-200 bg-background-50 px-4 py-3">
+            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-background-100 text-foreground-400">
+              <AppIcon className="ri-history-line text-base"></AppIcon>
+            </span>
+            <p className="min-w-0 text-[11px] leading-5 text-foreground-500">
+              <span className="font-bold text-foreground-700">
+                Older changes here are recovered from timestamps.
+              </span>{' '}
+              The revision log began recording each kind of record on a different day. Before that day, this
+              feed shows what the records&rsquo; own created, updated and archived times prove, marked
+              &ldquo;recovered from timestamps&rdquo;. Those events may not name who made them, and never show
+              what a field held before and after.
+            </p>
+          </div>
+        )}
+
+        {trail?.recoveryFailed && (
+          <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-[11px] font-semibold text-amber-800">
+            History from before the revision log could not be read this time, so only the revision log is shown.
           </div>
         )}
 
@@ -508,35 +855,37 @@ export default function AuditTrailView({ scope }: { scope: AuditTrailScope }) {
         <EntityFilterBar
           search={search}
           onSearch={setSearch}
-          placeholder="Search by record name, parent or id..."
+          placeholder="Search by record name, person or id..."
           selects={[
-            { label: 'Period', value: windowDays, onChange: setWindowDays, options: WINDOW_OPTIONS },
-            { label: 'Record type', value: entity, onChange: setEntity, options: entityOptions },
-            { label: 'Change', value: action, onChange: setAction, options: ACTION_OPTIONS },
+            { label: 'Period', value: changeWindowDays, onChange: setChangeWindowDays, options: changeWindowOptionsFor(workspace || scope.workspace) },
+            ...(scope.showWorkspaceFilter ? [{ label: 'Workspace', value: workspace, onChange: setWorkspace, options: trail?.workspaces ?? people?.workspaces ?? [], includeSelectAll: true }] : []),
+            { label: 'Record type', value: entity, onChange: setEntity, options: entityOptions, includeSelectAll: true },
+            { label: 'Action', value: action, onChange: setAction, options: actionOptions, includeSelectAll: true },
             ...(actorOptions.length
-              ? [{ label: 'Who', value: actor, onChange: setActor, options: actorOptions }]
+              ? [{ label: 'Who', value: actor, onChange: setActor, options: actorOptions, includeSelectAll: true }]
               : []),
             // Offered only once the audit metadata lives in its own columns.
             // Before that there is nothing to filter on, and a select that
             // silently matched nothing would imply the data exists.
             ...(trail?.structuredMetadata
               ? [
-                  { label: 'Made by', value: actorType, onChange: setActorType, options: ACTOR_TYPE_OPTIONS },
-                  { label: 'How', value: source, onChange: setSource, options: SOURCE_OPTIONS },
+                  { label: 'Made by', value: actorType, onChange: setActorType, options: ACTOR_TYPE_OPTIONS, includeSelectAll: true },
+                  { label: 'How', value: source, onChange: setSource, options: SOURCE_OPTIONS, includeSelectAll: true },
                 ]
               : []),
           ]}
           onReset={() => {
             setSearch(''); setEntity(''); setAction(''); setActor('');
-            setSource(''); setActorType(''); setWindowDays('30');
+            setSource(''); setActorType(''); setChangeWindowDays(String(DEFAULT_WINDOW_DAYS)); setWorkspace(scope.workspace);
           }}
-          isDirty={Boolean(search || entity || action || actor || source || actorType) || windowDays !== '30'}
+          isDirty={Boolean(search || entity || action || actor || source || actorType) || changeWindowDays !== String(DEFAULT_WINDOW_DAYS) || workspace !== scope.workspace}
+          loading={loading}
           summary={
             loading
-              ? 'Reading record timestamps...'
-              : trail?.truncated
-                ? `Showing the ${trail.events.length} most recent of ${trail.total} changes in this window. Narrow the period or the record type to see the rest.`
-                : `${events.length} ${events.length === 1 ? 'change' : 'changes'} in this window`
+              ? 'Reading audit records...'
+              // The whole window, not the page: the pagination below says which
+              // part of it is on screen.
+              : `${trail?.total ?? events.length} ${(trail?.total ?? events.length) === 1 ? 'change' : 'changes'} in this window`
           }
         />
 
@@ -561,21 +910,74 @@ export default function AuditTrailView({ scope }: { scope: AuditTrailScope }) {
             />
           </div>
         ) : (
-          <div className="space-y-4">
-            {days.map(day => (
-              <section key={day.key} className="overflow-hidden rounded-2xl border border-foreground-200/60 bg-background-50">
-                <div className="flex items-center justify-between gap-3 border-b border-background-200 px-4 py-2.5">
-                  <h2 className="font-heading text-[13px] font-bold text-foreground-900">{day.label}</h2>
-                  <span className="text-[11px] font-semibold text-foreground-400">
-                    {day.events.length} {day.events.length === 1 ? 'change' : 'changes'}
-                  </span>
-                </div>
-                <ol>
-                  {day.events.map(event => <AuditRow key={event.id} event={event} names={names} />)}
-                </ol>
-              </section>
-            ))}
+          <div className="overflow-hidden rounded-2xl border border-foreground-200/60 bg-background-50">
+            <AuditColumnHeader
+              sortKey={sortKey}
+              sortDir={sortDir}
+              onSort={key => {
+                if (key === sortKey) {
+                  setSortDir(current => (current === 'asc' ? 'desc' : 'asc'));
+                  return;
+                }
+                setSortKey(key);
+                // Time opens newest-first, which is what a log is for. Every
+                // other column opens A-Z, which is what a name sorts to.
+                setSortDir(key === 'time' ? 'desc' : 'asc');
+              }}
+            />
+            {days.map(day => {
+              const folded = collapsedDays.has(day.key);
+              return (
+                <section key={day.key} className="border-b border-background-200 last:border-0">
+                  <h2>
+                    <button
+                      type="button"
+                      onClick={() => setCollapsedDays(current => {
+                        const next = new Set(current);
+                        if (!next.delete(day.key)) next.add(day.key);
+                        return next;
+                      })}
+                      aria-expanded={!folded}
+                      className="flex w-full items-center justify-between gap-3 bg-background-100/70 px-4 py-2.5 text-left transition-smooth hover:bg-background-200/60"
+                    >
+                      <span className="font-heading text-[12px] font-bold uppercase tracking-wide text-foreground-900">{day.label}</span>
+                      <span className="flex items-center gap-2 text-[11px] font-semibold text-foreground-400">
+                        {day.events.length} {day.events.length === 1 ? 'log' : 'logs'}
+                        <AppIcon className={`${folded ? 'ri-arrow-down-s-line' : 'ri-arrow-up-s-line'} text-[14px]`}></AppIcon>
+                      </span>
+                    </button>
+                  </h2>
+                  {!folded && (
+                    <ol>
+                      {day.events.map(event => {
+                        const relatedEvents = moduleCreationEvents.get(moduleCreationGroupKey(event));
+                        return (
+                          <AuditRow
+                            key={event.id}
+                            event={moduleCreationSummaryEvent(event, relatedEvents, names)}
+                            names={names}
+                            withDate={sortKey !== 'time'}
+                            relatedEvents={relatedEvents}
+                          />
+                        );
+                      })}
+                    </ol>
+                  )}
+                </section>
+              );
+            })}
           </div>
+        )}
+
+        {events.length > 0 && (
+          <EntityPagination
+            page={changesPage}
+            pages={trail?.pages ?? 1}
+            total={trail?.total ?? 0}
+            pageSize={trail?.pageSize ?? events.length}
+            noun="logs"
+            onPage={setChangesPage}
+          />
         )}
         </>)}
       </div>
@@ -584,6 +986,156 @@ export default function AuditTrailView({ scope }: { scope: AuditTrailScope }) {
 }
 
 
+
+const WORKSPACE_ICONS: Record<string, string> = {
+  admin: 'ri-shield-user-line',
+  coach: 'ri-user-star-line',
+  enrolment: 'ri-user-add-line',
+  engagement: 'ri-megaphone-line',
+  tutor: 'ri-presentation-line',
+  curriculum: 'ri-book-open-line',
+  employer: 'ri-briefcase-4-line',
+  audit: 'ri-file-search-line',
+  learner: 'ri-graduation-cap-line',
+  mis: 'ri-bar-chart-box-line',
+  leadership: 'ri-line-chart-line',
+  qa: 'ri-checkbox-circle-line',
+  safeguarding: 'ri-heart-pulse-line',
+  support: 'ri-customer-service-2-line',
+  finance: 'ri-bank-card-line',
+  'record-monitor': 'ri-radar-line',
+  platform: 'ri-settings-4-line',
+};
+
+function auditWorkspaceLabel(value: string, label: string): string {
+  // The audit catalogue calls this route "admin"; the product's workspace
+  // switcher calls the same surface "Super Admin". Keep the audit language
+  // aligned with the workspace people see everywhere else.
+  return value === 'admin' ? 'Super Admin' : label;
+}
+
+function workspaceStatus(
+  key: string,
+  trail: CurriculumAuditTrail | null,
+  people: CurriculumActivityPeople | null,
+): 'revision' | 'timestamps' | 'uncovered' | 'pending' {
+  if (!trail && !people) return 'pending';
+  if (trail?.revisionWorkspaces?.includes(key) || people?.changeWorkspaces?.includes(key)) return 'revision';
+  if (trail?.derivedWorkspaces?.includes(key)) return 'timestamps';
+  if (trail?.uncoveredWorkspaces?.includes(key)) return 'uncovered';
+  if (trail?.changeWorkspaces?.includes(key)) return 'revision';
+  return 'uncovered';
+}
+
+function AuditTrailOverview({
+  scope, trail, people, workspaces, workspace, windowDays, onWorkspace,
+}: {
+  scope: AuditTrailScope;
+  trail: CurriculumAuditTrail | null;
+  people: CurriculumActivityPeople | null;
+  workspaces: { value: string; label: string }[];
+  workspace: string;
+  windowDays: number;
+  onWorkspace?: (value: string) => void;
+}) {
+  const covered = trail?.changeWorkspaces?.length ?? people?.changeWorkspaces?.length ?? 0;
+  const workspaceCount = workspaces.length;
+  const total = trail?.total;
+  const statusLabel: Record<ReturnType<typeof workspaceStatus>, string> = {
+    revision: 'Full history',
+    timestamps: 'Timestamp history',
+    uncovered: 'Not connected',
+    pending: 'Loading',
+  };
+  const statusTone: Record<ReturnType<typeof workspaceStatus>, string> = {
+    revision: 'border-emerald-200 bg-emerald-50 text-emerald-700',
+    timestamps: 'border-amber-200 bg-amber-50 text-amber-700',
+    uncovered: 'border-background-200 bg-background-100 text-foreground-500',
+    pending: 'border-background-200 bg-background-100 text-foreground-400',
+  };
+
+  return (
+    <section className="overflow-hidden rounded-3xl border border-primary-200/70 bg-background-50 shadow-sm">
+      <div className="relative overflow-hidden bg-[radial-gradient(circle_at_88%_-30%,rgba(124,58,237,0.22),transparent_42%),linear-gradient(135deg,#24104f_0%,#4c1d95_58%,#6d28d9_100%)] px-5 py-5 text-white sm:px-6 sm:py-6">
+        <div className="relative flex flex-col gap-5 xl:flex-row xl:items-end xl:justify-between">
+          <div className="max-w-3xl">
+            <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-violet-200">System oversight</p>
+            <h1 className="mt-2 font-heading text-2xl font-black tracking-tight sm:text-3xl">
+              {scope.showWorkspaceFilter ? 'Everything happening across the LMS' : `${scope.workspaceLabel} activity`}
+            </h1>
+            <p className="mt-2 max-w-2xl text-[13px] leading-6 text-violet-100/80">
+              Follow the people, records and actions behind every workspace in one place. Open any change for the exact fields, evidence and source behind it.
+            </p>
+          </div>
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 xl:min-w-[470px]">
+            <OverviewStat label="Changes" value={total == null ? '—' : total.toLocaleString()} detail="in this window" />
+            <OverviewStat label="Workspaces" value={workspaceCount || '—'} detail="available to review" />
+            <OverviewStat label="Coverage" value={workspaceCount ? `${covered}/${workspaceCount}` : '—'} detail="with change history" />
+            <OverviewStat label="Window" value={`${windowDays}d`} detail="period being read" />
+          </div>
+        </div>
+      </div>
+
+      <div className="border-t border-background-200 px-4 py-4 sm:px-5">
+        <div className="flex flex-wrap items-end justify-between gap-3">
+          <div>
+            <h2 className="font-heading text-[14px] font-bold text-foreground-950">Workspace coverage</h2>
+            <p className="mt-0.5 text-[11px] text-foreground-500">Choose a workspace to focus the feed. Status tells you how much evidence is available for it.</p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2 text-[10px] font-semibold text-foreground-500">
+            <span className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-emerald-500" /> Full history</span>
+            <span className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-amber-500" /> Timestamp history</span>
+            <span className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-foreground-300" /> Not connected</span>
+          </div>
+        </div>
+        <div className="mt-3 grid max-h-56 gap-2 overflow-y-auto pr-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+          {scope.showWorkspaceFilter && (
+            <button
+              type="button"
+              onClick={() => onWorkspace?.('')}
+              aria-pressed={!workspace}
+              className={`flex min-w-0 items-center gap-2.5 rounded-xl border px-3 py-2.5 text-left transition-smooth ${!workspace ? 'border-primary-300 bg-primary-50 shadow-sm' : 'border-background-200 bg-background-50 hover:border-primary-200 hover:bg-primary-50/50'}`}
+            >
+              <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary-100 text-primary-700"><AppIcon className="ri-apps-2-line text-base" /></span>
+              <span className="min-w-0"><span className="block truncate text-[12px] font-bold text-foreground-900">All workspaces</span><span className="block text-[10px] text-foreground-500">System-wide view</span></span>
+              {!workspace && <AppIcon className="ml-auto shrink-0 text-primary-600 ri-check-line" />}
+            </button>
+          )}
+          {workspaces.map(entry => {
+            const status = workspaceStatus(entry.value, trail, people);
+            const selected = workspace === entry.value;
+            const label = auditWorkspaceLabel(entry.value, entry.label);
+            return (
+              <button
+                key={entry.value}
+                type="button"
+                onClick={() => onWorkspace?.(entry.value)}
+                disabled={!onWorkspace}
+                aria-pressed={selected}
+                className={`flex min-w-0 items-center gap-2.5 rounded-xl border px-3 py-2.5 text-left transition-smooth ${selected ? 'border-primary-300 bg-primary-50 shadow-sm' : 'border-background-200 bg-background-50 hover:border-primary-200 hover:bg-primary-50/50'} disabled:cursor-default`}
+              >
+                <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${selected ? 'bg-primary-100 text-primary-700' : 'bg-background-100 text-foreground-500'}`}><AppIcon className={`${WORKSPACE_ICONS[entry.value] || 'ri-layout-grid-line'} text-base`} /></span>
+                <span className="min-w-0 flex-1"><span className="block truncate text-[12px] font-bold text-foreground-900">{label}</span><span className={`mt-0.5 inline-flex max-w-full truncate rounded-full border px-1.5 py-0.5 text-[9px] font-bold ${statusTone[status]}`}>{statusLabel[status]}</span></span>
+                {selected && <AppIcon className="shrink-0 text-primary-600 ri-check-line" />}
+              </button>
+            );
+          })}
+          {!workspaces.length && <div className="col-span-full rounded-xl border border-dashed border-background-200 bg-background-50 px-3 py-4 text-[11px] text-foreground-400">Workspace coverage is loading…</div>}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function OverviewStat({ label, value, detail }: { label: string; value: string | number; detail: string }) {
+  return (
+    <div className="rounded-2xl border border-white/15 bg-white/10 px-3 py-2.5 backdrop-blur-sm">
+      <p className="text-[9px] font-bold uppercase tracking-[0.14em] text-violet-200">{label}</p>
+      <p className="mt-1 text-xl font-black tabular-nums text-white">{value}</p>
+      <p className="mt-0.5 truncate text-[10px] text-violet-100/70">{detail}</p>
+    </div>
+  );
+}
 
 /**
  * Everyone who used Curriculum Studio in the window.
@@ -600,8 +1152,8 @@ export default function AuditTrailView({ scope }: { scope: AuditTrailScope }) {
  * person who did nothing.
  */
 function PeopleView({
-  scope, people, rows, onPersonIntent, loading, error, search, onSearch, windowDays, onWindowDays,
-  workspace, onWorkspace, onRetry,
+  scope, people, rows, onPersonIntent, loading, error, search, onSearch, role, onRole, roleOptions,
+  windowDays, onWindowDays, workspace, onWorkspace, page, onPage, onRetry,
 }: {
   scope: AuditTrailScope;
   people: CurriculumActivityPeople | null;
@@ -612,14 +1164,69 @@ function PeopleView({
   error: string | null;
   search: string;
   onSearch: (value: string) => void;
+  role: string;
+  onRole: (value: string) => void;
+  roleOptions: { value: string; label: string }[];
   windowDays: string;
   onWindowDays: (value: string) => void;
   workspace: string;
   onWorkspace: (value: string) => void;
+  page: number;
+  onPage: (page: number) => void;
   onRetry: () => void;
 }) {
   const navigate = useNavigate();
   const visitsRecorded = people?.visitsRecorded ?? true;
+
+  // Which number on which row is open. One at a time: two panels of somebody
+  // else's afternoon stacked on top of each other is not a comparison, it is a
+  // scroll.
+  const [open, setOpen] = useState<{ email: string; metric: CountMetric } | null>(null);
+  const [detail, setDetail] = useState<CurriculumPersonActivity | null>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [detailError, setDetailError] = useState<string | null>(null);
+
+  // The numbers are counted over a window, in a workspace, so the panel behind
+  // one has to be read over the same window and workspace. Closing on a change
+  // rather than refetching: the count the reader clicked is gone, so a panel
+  // still open under it would be answering a question nobody asked.
+  useEffect(() => {
+    setOpen(null);
+  }, [windowDays, workspace, page, search, role]);
+
+  useEffect(() => {
+    if (!open) { setDetail(null); setDetailError(null); return undefined; }
+    const controller = new AbortController();
+    setDetailLoading(true);
+    setDetailError(null);
+    fetchPersonActivity(open.email, {
+      days: Number(windowDays),
+      workspace: workspace || undefined,
+      signal: controller.signal,
+    })
+      .then(result => {
+        if (controller.signal.aborted) return;
+        setDetail(result);
+      })
+      .catch((err: unknown) => {
+        if (controller.signal.aborted) return;
+        setDetail(null);
+        setDetailError(err instanceof Error ? err.message : 'Could not load this activity.');
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setDetailLoading(false);
+      });
+    return () => controller.abort();
+    // `open.email` alone: reopening the same person on a different number is
+    // the same request, and the panel already has its answer.
+  }, [open?.email, windowDays, workspace]);
+
+  const toggle = (email: string, metric: CountMetric) => {
+    setOpen(current => (current && current.email === email && current.metric === metric
+      ? null
+      : { email, metric }));
+  };
+
   // Offered only on the system-wide door, and built from what the server says
   // it recognises rather than from a list held here — a filter the backend
   // would refuse is a filter that silently shows nothing.
@@ -660,20 +1267,24 @@ function PeopleView({
         onSearch={onSearch}
         placeholder="Search by name or email..."
         selects={[
-          { label: 'Period', value: windowDays, onChange: onWindowDays, options: WINDOW_OPTIONS },
+          { label: 'Period', value: windowDays, onChange: onWindowDays, options: windowOptionsFor(workspace || scope.workspace) },
+          ...(roleOptions.length
+            ? [{ label: 'Role', value: role, onChange: onRole, options: roleOptions, includeSelectAll: true }]
+            : []),
           ...(scope.showWorkspaceFilter && workspaceOptions.length
-            ? [{ label: 'Workspace', value: workspace, onChange: onWorkspace, options: workspaceOptions }]
+            ? [{ label: 'Workspace', value: workspace, onChange: onWorkspace, options: workspaceOptions, includeSelectAll: true }]
             : []),
         ]}
-        onReset={() => { onSearch(''); onWindowDays('30'); onWorkspace(scope.workspace); }}
-        isDirty={Boolean(search) || windowDays !== '30' || workspace !== scope.workspace}
+        onReset={() => { onSearch(''); onRole(''); onWindowDays(String(DEFAULT_WINDOW_DAYS)); onWorkspace(scope.workspace); }}
+        isDirty={Boolean(search) || Boolean(role) || windowDays !== String(DEFAULT_WINDOW_DAYS) || workspace !== scope.workspace}
+        loading={loading}
         summary={
           loading
             ? `Reading who used ${scope.subjectLabel}...`
-            : people?.truncated
-              ? `${people.totals.people} people used ${scope.subjectLabel} in this period. `
-                + `Showing the ${rows.length} most recently active — search to reach the rest.`
-              : `${rows.length} ${rows.length === 1 ? 'person' : 'people'} used ${scope.subjectLabel} in this period`
+            // The total across every page, not the rows on screen: which of
+            // them is being shown is what the pagination below says.
+            : `${people?.total ?? rows.length} ${(people?.total ?? rows.length) === 1 ? 'person' : 'people'}`
+              + ` used ${scope.subjectLabel} in this period`
         }
       />
 
@@ -695,6 +1306,18 @@ function PeopleView({
           : 'grid grid-cols-[minmax(200px,2fr)_110px_minmax(150px,1fr)_70px_100px_100px_80px_80px_150px]'}
         rows={rows}
         rowKey={person => person.email}
+        isRowExpanded={person => open?.email === person.email}
+        renderRowDetail={person => (
+          <CountDetail
+            metric={open?.metric ?? 'pages'}
+            person={person}
+            activity={detail}
+            loading={detailLoading}
+            error={detailError}
+            onClose={() => setOpen(null)}
+            onOpenPerson={() => navigate(href(person.email))}
+          />
+        )}
         getRowHref={person => href(person.email)}
         onRowIntent={person => onPersonIntent(person.email)}
         loading={loading && !people}
@@ -725,11 +1348,26 @@ function PeopleView({
             )}
             {/* A dash, not a zero, wherever the source behind the column is not
                 being recorded: zero would be a claim that nothing happened. */}
-            <PlainCell align="right">{visitsRecorded ? person.visits : '—'}</PlainCell>
-            <PlainCell align="right">{visitsRecorded ? person.pageViews : '—'}</PlainCell>
-            <PlainCell align="right">{visitsRecorded ? person.readActions : '—'}</PlainCell>
-            <PlainCell align="right">{people?.changesRecorded ? person.changes : '—'}</PlainCell>
-            <PlainCell align="right">{people?.signInsRecorded ? person.signIns : '—'}</PlainCell>
+            <CountCell recorded={visitsRecorded} value={person.visits} label="visits"
+              person={person.name || person.email}
+              open={open?.email === person.email && open.metric === 'visits'}
+              onToggle={() => toggle(person.email, 'visits')} />
+            <CountCell recorded={visitsRecorded} value={person.pageViews} label="pages opened"
+              person={person.name || person.email}
+              open={open?.email === person.email && open.metric === 'pages'}
+              onToggle={() => toggle(person.email, 'pages')} />
+            <CountCell recorded={visitsRecorded} value={person.readActions} label="read actions"
+              person={person.name || person.email}
+              open={open?.email === person.email && open.metric === 'actions'}
+              onToggle={() => toggle(person.email, 'actions')} />
+            <CountCell recorded={people?.changesRecorded ?? false} value={person.changes} label="changes"
+              person={person.name || person.email}
+              open={open?.email === person.email && open.metric === 'changes'}
+              onToggle={() => toggle(person.email, 'changes')} />
+            <CountCell recorded={people?.signInsRecorded ?? false} value={person.signIns} label="sign-ins"
+              person={person.name || person.email}
+              open={open?.email === person.email && open.metric === 'signIns'}
+              onToggle={() => toggle(person.email, 'signIns')} />
             <NamedActions
               actions={[{
                 icon: 'ri-arrow-right-line',
@@ -743,10 +1381,14 @@ function PeopleView({
         empty={
           <EntityEmptyState
             icon="ri-group-line"
-            title={search ? 'Nobody matches that search' : `Nobody used ${scope.subjectLabel} in this window`}
+            title={
+              search || role
+                ? 'Nobody matches these filters'
+                : `Nobody used ${scope.subjectLabel} in this window`
+            }
             message={
-              search
-                ? 'Clear the search, or widen the period above.'
+              search || role
+                ? 'Clear the search or the role, or widen the period above.'
                 : visitsRecorded
                   ? 'No page was opened, nothing was saved, and nobody signed in over this period.'
                   : 'Page opens are not being recorded yet, and nobody saved anything or signed in over this period.'
@@ -754,13 +1396,462 @@ function PeopleView({
           />
         }
       />
+
+      <EntityPagination
+        page={page}
+        pages={people?.pages ?? 1}
+        total={people?.total ?? 0}
+        pageSize={people?.pageSize ?? rows.length}
+        noun="people"
+        onPage={onPage}
+      />
     </>
   );
 }
 
-function AuditRow({ event, names }: { event: CurriculumAuditEvent; names: ReadonlyMap<string, string> }) {
+/**
+ * Which number a reader opened, and therefore what the panel under the row is
+ * answering. Named rather than free text so a cell and its panel cannot drift
+ * into asking and answering different questions.
+ */
+type CountMetric = 'visits' | 'pages' | 'actions' | 'changes' | 'signIns';
+
+/**
+ * One count in the people list, as something you can open.
+ *
+ * Three states, because a number in this table means three different things.
+ * Not recorded at all is a dash: the source behind the column is switched off,
+ * and a zero would be a claim that nothing happened. Recorded and zero is a
+ * plain zero, not a button — offering to open an empty panel is a promise the
+ * list cannot keep. Anything else is a button, because there is something
+ * underneath it to read.
+ *
+ * The click is stopped from bubbling: the whole row already navigates to the
+ * person's own page, and without this, opening a count would leave the list.
+ */
+function CountCell({
+  value, recorded, open, onToggle, label, person,
+}: {
+  value: number;
+  recorded: boolean;
+  open: boolean;
+  onToggle: () => void;
+  label: string;
+  person: string;
+}) {
+  if (!recorded) return <PlainCell align="right">—</PlainCell>;
+  if (!value) return <PlainCell align="right">0</PlainCell>;
+  return (
+    <span className="min-w-0 self-center text-right text-[12px]">
+      <button
+        type="button"
+        onClick={event => { event.stopPropagation(); onToggle(); }}
+        onKeyDown={event => event.stopPropagation()}
+        aria-expanded={open}
+        title={`${open ? 'Hide' : 'Show'} the ${label} recorded for ${person} in this period`}
+        className={`inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 font-semibold tabular-nums transition-smooth ${
+          open
+            ? 'bg-primary-500 text-white'
+            : 'text-primary-600 hover:bg-primary-50 hover:text-primary-700'
+        }`}
+      >
+        {value}
+        <AppIcon className={`text-[11px] ${open ? 'ri-arrow-up-s-line' : 'ri-arrow-down-s-line'}`}></AppIcon>
+      </button>
+    </span>
+  );
+}
+
+const METRIC_TITLE: Record<CountMetric, string> = {
+  visits: 'Visits',
+  pages: 'Pages opened',
+  actions: 'Read actions',
+  changes: 'Changes',
+  signIns: 'Sign-ins',
+};
+
+/** How many lines a panel inside a row carries before it stops being a row. */
+const DETAIL_LIMIT = 50;
+
+/**
+ * What sits behind one number, under the row it belongs to.
+ *
+ * Read from the same person endpoint their own page reads, over the same window
+ * and workspace the list was counted over — so the panel is the number spelled
+ * out, rather than a second answer that happens to be nearby.
+ *
+ * It deliberately does not try to be that page. A panel in a row has room for
+ * the list and the times; the full sitting-by-sitting record, with each page's
+ * actions and diffs, stays where it already lives, and the link at the bottom
+ * goes there.
+ */
+function CountDetail({
+  metric, person, activity, loading, error, onClose, onOpenPerson,
+}: {
+  metric: CountMetric;
+  person: CurriculumActivityPerson;
+  activity: CurriculumPersonActivity | null;
+  loading: boolean;
+  error: string | null;
+  onClose: () => void;
+  onOpenPerson: () => void;
+}) {
+  const pages = useMemo(
+    () => (activity?.visits ?? []).flatMap(visit => visit.pages),
+    [activity],
+  );
+  const actions = useMemo(
+    () => pages.flatMap(page => page.actions.map(action => ({ action, page }))),
+    [pages],
+  );
+
+  return (
+    <div
+      // The panel sits inside a row that navigates on click. Without this, a
+      // click anywhere in it — on a page name, on empty space — would open the
+      // person's page and throw away what the reader just opened.
+      onClick={event => event.stopPropagation()}
+      onKeyDown={event => event.stopPropagation()}
+      role="region"
+      aria-label={`${METRIC_TITLE[metric]} for ${person.name || person.email}`}
+    >
+      <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+        <h3 className="font-heading text-[12px] font-bold text-foreground-800">
+          {METRIC_TITLE[metric]}
+          <span className="ml-1.5 font-sans text-[11px] font-semibold text-foreground-400">
+            {person.name || person.email}
+          </span>
+        </h3>
+        <button
+          type="button"
+          onClick={onClose}
+          className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] font-semibold text-foreground-500 transition-smooth hover:bg-background-200/70 hover:text-foreground-700"
+        >
+          <AppIcon className="ri-close-line text-[12px]"></AppIcon>
+          Close
+        </button>
+      </div>
+
+      {loading && !activity && (
+        <div className="space-y-1.5">
+          {Array.from({ length: 4 }).map((_, index) => (
+            <div key={index} className="h-8 animate-pulse rounded-lg bg-background-200/70" />
+          ))}
+        </div>
+      )}
+
+      {error && !loading && (
+        <p className="rounded-lg border border-danger-200 bg-danger-50 px-3 py-2 text-[11px] font-semibold text-danger-700">
+          {error}
+        </p>
+      )}
+
+      {activity && !loading && (
+        <>
+          {metric === 'visits' && <VisitLines visits={activity.visits} />}
+          {metric === 'pages' && <PageLines pages={pages} />}
+          {metric === 'actions' && <ActionLines actions={actions} />}
+          {metric === 'changes' && <ChangeLines changes={activity.changes} />}
+          {metric === 'signIns' && <SignInLines signIns={activity.signIns} />}
+          <button
+            type="button"
+            onClick={onOpenPerson}
+            className="mt-2 inline-flex items-center gap-1 text-[11px] font-semibold text-primary-600 transition-smooth hover:text-primary-700"
+          >
+            Open their full activity
+            <AppIcon className="ri-arrow-right-line text-[12px]"></AppIcon>
+          </button>
+        </>
+      )}
+    </div>
+  );
+}
+
+/** Shared shell for the five lists, so they read alike and cap alike. */
+function DetailList({ children, shown, total, noun }: { children: ReactNode; shown: number; total: number; noun: string }) {
+  if (!total) {
+    return (
+      <p className="text-[11px] text-foreground-400">
+        Nothing recorded here in this period.
+      </p>
+    );
+  }
+  return (
+    <>
+      <ol className="divide-y divide-background-200/70 overflow-hidden rounded-lg border border-background-200 bg-background-50">
+        {children}
+      </ol>
+      {shown < total && (
+        // Said, not silently cut: a list that stops at fifty without saying so
+        // reads as the whole answer.
+        <p className="mt-1.5 text-[11px] text-foreground-400">
+          Showing the first {shown} of {total} {noun}. The rest are on their own page.
+        </p>
+      )}
+    </>
+  );
+}
+
+function DetailLine({ at, children }: { at: string; children: ReactNode }) {
+  return (
+    <li className="flex items-start gap-3 px-3 py-2">
+      <span
+        className="mt-px w-32 shrink-0 text-[11px] font-semibold tabular-nums text-foreground-400"
+        title={timeMetaLabel(at)}
+      >
+        {stampLabel(at)}
+      </span>
+      <span className="min-w-0 flex-1 text-[12px] text-foreground-700">{children}</span>
+    </li>
+  );
+}
+
+function VisitLines({ visits }: { visits: CurriculumActivityVisit[] }) {
+  const shown = visits.slice(0, DETAIL_LIMIT);
+  return (
+    <DetailList shown={shown.length} total={visits.length} noun="visits">
+      {shown.map(visit => {
+        const span = spanLabel(visit.startedAt, visit.endedAt);
+        return (
+          <DetailLine key={visit.id} at={visit.startedAt}>
+            <span className="font-semibold text-foreground-800">
+              {visit.pageCount} {visit.pageCount === 1 ? 'page' : 'pages'}
+            </span>
+            {visit.actionCount > 0 && <> · {visit.actionCount} {visit.actionCount === 1 ? 'action' : 'actions'}</>}
+            {visit.changeCount > 0 && <> · {visit.changeCount} {visit.changeCount === 1 ? 'change' : 'changes'}</>}
+            {span && <> · lasted {span}</>}
+            {visit.ip && <span className="ml-1.5 font-mono text-[10px] text-foreground-400">{visit.ip}</span>}
+          </DetailLine>
+        );
+      })}
+    </DetailList>
+  );
+}
+
+function PageLines({ pages }: { pages: CurriculumActivityPage[] }) {
+  const shown = pages.slice(0, DETAIL_LIMIT);
+  return (
+    <DetailList shown={shown.length} total={pages.length} noun="page opens">
+      {shown.map(page => {
+        const duration = durationLabel(page.durationMs);
+        return (
+          <DetailLine key={page.id} at={page.at}>
+            <Link
+              to={page.path}
+              onClick={event => event.stopPropagation()}
+              className="font-semibold text-primary-600 hover:text-primary-700"
+            >
+              {page.pageLabel || page.path}
+            </Link>
+            {page.targetLabel && <span className="text-foreground-500"> · {page.targetLabel}</span>}
+            {duration && <span className="text-foreground-400"> · open {duration}</span>}
+          </DetailLine>
+        );
+      })}
+    </DetailList>
+  );
+}
+
+function ActionLines({ actions }: { actions: Array<{ action: CurriculumActivityAction; page: CurriculumActivityPage }> }) {
+  const shown = actions.slice(0, DETAIL_LIMIT);
+  return (
+    <DetailList shown={shown.length} total={actions.length} noun="read actions">
+      {shown.map(({ action, page }) => {
+        const detail = Object.values(action.detail || {}).filter(Boolean).join(' · ');
+        return (
+          <DetailLine key={action.id} at={action.at}>
+            <span className="font-semibold text-foreground-800">{action.label || action.kind}</span>
+            {detail && <span className="text-foreground-600"> · {detail}</span>}
+            <span className="text-foreground-400"> · on {page.pageLabel || page.path}</span>
+          </DetailLine>
+        );
+      })}
+    </DetailList>
+  );
+}
+
+function ChangeLines({ changes }: { changes: CurriculumAuditEvent[] }) {
+  const shown = changes.slice(0, DETAIL_LIMIT);
+  return (
+    <DetailList shown={shown.length} total={changes.length} noun="changes">
+      {shown.map(change => (
+        <DetailLine key={change.id} at={change.at}>
+          <span className="font-semibold text-foreground-800">{change.actionLabel || change.action}</span>
+          <span className="text-foreground-600"> · {change.entityLabel || change.entity}</span>
+          {change.title && <span className="text-foreground-600"> · {change.title}</span>}
+          {change.changes?.length ? (
+            <span className="text-foreground-400">
+              {' '}· {change.changes.length} {change.changes.length === 1 ? 'field' : 'fields'}
+            </span>
+          ) : null}
+        </DetailLine>
+      ))}
+    </DetailList>
+  );
+}
+
+function SignInLines({ signIns }: { signIns: CurriculumActivitySignIn[] }) {
+  const shown = signIns.slice(0, DETAIL_LIMIT);
+  return (
+    <DetailList shown={shown.length} total={signIns.length} noun="sign-ins">
+      {shown.map((signIn, index) => (
+        <DetailLine key={`${signIn.at}-${index}`} at={signIn.at}>
+          <span className="font-semibold text-foreground-800">Signed in</span>
+          {signIn.ip && <span className="ml-1.5 font-mono text-[10px] text-foreground-400">{signIn.ip}</span>}
+        </DetailLine>
+      ))}
+    </DetailList>
+  );
+}
+
+/**
+ * The log's own header: what this page is, and how much of the window is on it.
+ *
+ * The count is deliberately two numbers. One page of a 1,694-change window read
+ * as the whole answer for as long as the page showed only its own rows, and a
+ * reader who sorted a column then had no way to tell that the sort had reached
+ * fifty of them.
+ */
+function AuditLogsHeader({ shown, total, counts, action, onAction, windowDays, description, loading, onRefresh }: {
+  shown: number;
+  total: number;
+  counts: Record<string, number> | undefined;
+  action: string;
+  onAction: (value: string) => void;
+  windowDays: number;
+  description: string;
+  loading: boolean;
+  onRefresh: () => void;
+}) {
+  const created = counts?.created ?? 0;
+  const edited = counts?.updated ?? 0;
+  const archived = counts?.archived ?? 0;
+  const other = Math.max(0, total - created - edited - archived);
+  const pills = [
+    { key: 'created', icon: 'ri-add-circle-line', label: 'Created', value: created, tone: 'text-emerald-700', bg: 'bg-emerald-50', border: 'border-emerald-100' },
+    { key: 'updated', icon: 'ri-edit-2-line', label: 'Edited', value: edited, tone: 'text-sky-700', bg: 'bg-sky-50', border: 'border-sky-100' },
+    { key: 'archived', icon: 'ri-archive-line', label: 'Archived', value: archived, tone: 'text-amber-700', bg: 'bg-amber-50', border: 'border-amber-100' },
+    { key: '', icon: 'ri-more-line', label: 'Other actions', value: other, tone: 'text-violet-700', bg: 'bg-violet-50', border: 'border-violet-100' },
+  ];
+  return (
+    // Stacked below `sm`, side by side above it. Sharing one wrapping row with
+    // the count and Refresh squeezed the description into a six-word-tall
+    // column on a phone.
+    <div className="rounded-2xl border border-foreground-200/60 bg-background-50 p-4 shadow-sm sm:p-5">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-primary-100 text-primary-700"><AppIcon className="ri-pulse-line text-base" /></span>
+            <div>
+              <h2 className="font-heading text-[17px] font-bold text-foreground-900">Audit logs</h2>
+              <p className="text-[11px] font-semibold text-foreground-400">A readable history of what changed and why</p>
+            </div>
+          </div>
+          <p className="mt-3 max-w-3xl text-[12px] leading-5 text-foreground-500">{description}</p>
+        </div>
+      <div className="flex shrink-0 items-center gap-2">
+        <span
+          role={loading ? 'status' : undefined}
+          aria-live="polite"
+          aria-label={loading ? 'Reading logs...' : undefined}
+          className={`inline-flex h-11 items-center gap-2 rounded-xl border px-3 text-[12px] font-bold tabular-nums ${loading
+            ? 'border-primary-200 bg-primary-50 text-primary-700'
+            : 'border-foreground-200/70 bg-background-100 text-foreground-700'}`}
+        >
+          {loading && <AppIcon className="ri-loader-4-line animate-spin text-base text-primary-600" />}
+          {loading ? 'Reading logs...' : `${shown} of ${total} ${total === 1 ? 'log' : 'logs'}`}
+        </span>
+        <HeroSecondaryButton icon="ri-refresh-line" label="Refresh" onClick={onRefresh} />
+      </div>
+      </div>
+      <div className="mt-4 grid gap-2 border-t border-background-200 pt-4 sm:grid-cols-2 lg:grid-cols-4">
+        {pills.map(pill => {
+          const selected = Boolean(pill.key) && action === pill.key;
+          const content = (
+            <>
+              <span className="flex items-center gap-2 text-[11px] font-bold text-foreground-600"><AppIcon className={`${pill.icon} text-sm ${pill.tone}`} />{pill.label}</span>
+              <span className="flex items-center gap-1 text-base font-black tabular-nums text-foreground-900">{pill.value.toLocaleString()}{pill.key && <AppIcon className={`text-[13px] ${selected ? 'ri-filter-fill text-primary-600' : 'ri-filter-2-line text-foreground-300'}`} />}</span>
+            </>
+          );
+          return pill.key ? (
+            <button
+              key={pill.label}
+              type="button"
+              onClick={() => onAction(pill.key)}
+              aria-pressed={selected}
+              aria-label={`Filter audit logs by ${pill.label}`}
+              className={`flex items-center justify-between rounded-xl border px-3 py-2.5 text-left transition-smooth hover:-translate-y-px hover:shadow-sm ${pill.bg} ${pill.border} ${selected ? 'ring-2 ring-primary-300 ring-offset-1' : ''}`}
+            >
+              {content}
+            </button>
+          ) : (
+            <div key={pill.label} className={`flex items-center justify-between rounded-xl border px-3 py-2.5 ${pill.bg} ${pill.border}`}>
+              {content}
+            </div>
+          );
+        })}
+      </div>
+      <p className="mt-3 flex flex-wrap items-center gap-x-1.5 gap-y-1 text-[11px] font-semibold text-foreground-400"><AppIcon className="ri-time-line text-[12px]" /> Last {windowDays} {windowDays === 1 ? 'day' : 'days'} · counts cover the full filtered window{action && <> · <span className="text-primary-700">Showing {ACTION_OPTIONS.find(option => option.value === action)?.label || action}</span></>}</p>
+    </div>
+  );
+}
+
+/**
+ * The column headings, which are also the sort controls.
+ *
+ * Each says which way it is pointing, and the one in force says so in words as
+ * well as with an arrow -- an arrow alone is not something a screen reader can
+ * announce, and on a log that is grouped by day it is not obvious which column
+ * the grouping follows.
+ */
+function AuditColumnHeader({ sortKey, sortDir, onSort }: {
+  sortKey: AuditSortKey;
+  sortDir: 'asc' | 'desc';
+  onSort: (key: AuditSortKey) => void;
+}) {
+  return (
+    // Hidden below `lg`, where the rows stop being columns and wrap instead —
+    // headings over a stack of wrapped rows label nothing.
+    <div className={`hidden border-b border-background-200 bg-background-50 px-4 py-2 ${AUDIT_GRID}`}>
+      {AUDIT_COLUMNS.map(column => {
+        const active = column.key === sortKey;
+        return (
+          <button
+            key={column.key}
+            type="button"
+            onClick={() => onSort(column.key)}
+            aria-label={`${column.label}, sorted ${active ? (sortDir === 'asc' ? 'A to Z' : 'Z to A') : 'by time'}`}
+            // Deliberately not a flex container. The browser's own stylesheet
+            // centres a button's contents, and as a grid item that floated
+            // every heading into the middle of its column, away from the cells
+            // it labels. A plain button with `text-left` has no such opinion.
+            className={`block w-full text-left text-[10px] font-bold uppercase tracking-[0.1em] transition-smooth hover:text-primary-700 ${active ? 'text-foreground-900' : 'text-foreground-400'}`}
+          >
+            <span className="inline-flex items-center gap-1">
+              {column.label}
+              <AppIcon
+                className={`${active ? (sortDir === 'asc' ? 'ri-arrow-up-line' : 'ri-arrow-down-line') : 'ri-arrow-up-down-line'} text-[12px] ${active ? 'text-primary-700' : 'text-foreground-300'}`}
+              ></AppIcon>
+            </span>
+          </button>
+        );
+      })}
+      <span aria-hidden="true" />
+    </div>
+  );
+}
+
+function AuditRow({ event, names, withDate, relatedEvents }: {
+  event: CurriculumAuditEvent;
+  names: ReadonlyMap<string, string>;
+  /** True when the log is not grouped by day, so each row has to carry its own. */
+  withDate?: boolean;
+  /** Sibling records written by the same module create save. */
+  relatedEvents?: CurriculumAuditEvent[];
+}) {
   const [open, setOpen] = useState(false);
   const style = ACTION_STYLE[event.action] || ACTION_STYLE.updated;
+  const story = changeStory(event);
   // A create has no diff (nothing moved, it arrived) and a delete has no after,
   // so both are explained by the snapshot instead. Everything else is explained
   // by the fields that moved.
@@ -768,58 +1859,81 @@ function AuditRow({ event, names }: { event: CurriculumAuditEvent; names: Readon
     ? Object.entries(event.snapshot).filter(([, value]) => value !== null && value !== '')
     : [];
   const metadataEntries = Object.entries(event.metadata || {})
-    .filter(([, value]) => value !== null && value !== '');
-  const expandable = event.changes.length > 0 || snapshotEntries.length > 0 || metadataEntries.length > 0;
+    .filter(([key, value]) => value !== null && value !== '' && !HIDDEN_METADATA.has(key));
+  // A recovered event has nothing to unfold but where it came from -- and that
+  // is the one thing a reader must be able to check before trusting it.
+  const recovered = event.provenance === 'timestamps';
+  const expandable = event.changes.length > 0 || snapshotEntries.length > 0 || metadataEntries.length > 0 || recovered;
+  // The chevron's accessible name. A bare "expand" would make every row in the
+  // log announce identically, and the one thing worth knowing before opening a
+  // row is how much is inside it.
+  const expandLabel = event.changes.length
+    ? `${event.changes.length} changed ${event.changes.length === 1 ? 'field' : 'fields'}`
+    : event.action === 'deleted' ? 'What was deleted'
+    : snapshotEntries.length ? 'What was created'
+    : recovered ? 'How this was recovered'
+    : 'Details';
+  const actionLabel = event.action === 'recorded'
+    ? 'First seen (timestamp)'
+    : event.actionLabel || style.label;
 
   return (
     <li className="border-b border-background-200/60 last:border-0">
-      <div className="flex items-start gap-3 px-4 py-3 hover:bg-background-100/40">
-        <span className="mt-1 flex w-14 shrink-0 justify-end text-[11px] font-semibold tabular-nums text-foreground-400">
-          <span title={timeMetaLabel(event.at)} aria-label={timeMetaLabel(event.at)}>{timeLabel(event.at)}</span>
+      <div className={`flex flex-wrap items-start gap-x-3 gap-y-1.5 px-4 py-3 transition-smooth ${open ? 'bg-background-100/50' : 'hover:bg-background-100/40'} ${AUDIT_GRID}`}>
+        {/* ACTION. The badge wraps rather than truncating: "First activity
+            recorded" is the action whose meaning is most often misread, and
+            "First activ…" would not help anybody read it right. */}
+        <span className={`inline-flex max-w-full shrink-0 items-start gap-1 self-start rounded-md border px-2 py-0.5 text-left text-[10px] font-bold uppercase leading-4 tracking-wide lg:justify-self-start ${style.chip}`}>
+          <AppIcon className={`${style.icon} mt-px shrink-0 text-[11px]`}></AppIcon>
+          {actionLabel}
         </span>
-        <span className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${style.dot}`} aria-hidden="true" />
-        <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-2">
-            <span className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${style.chip}`}>
-              <AppIcon className={`${style.icon} text-[11px]`}></AppIcon>
-              {event.actionLabel || style.label}
-            </span>
-            <span className="rounded-full bg-background-100 px-2 py-0.5 text-[10px] font-bold text-foreground-500">
-              {event.entityLabel}
-            </span>
-            <Link
-              to={auditEventHref(event)}
-              className="min-w-0 truncate text-[12px] font-bold text-foreground-900 hover:text-primary-700 hover:underline"
-            >
-              {event.title}
-            </Link>
-            {/* Who, said plainly. A write no person directly made is marked as
-                the system rather than credited to anybody -- and where a person
-                caused it, they are named as the cause, not as the author. */}
-            {event.actorType && event.actorType !== 'user' ? (
-              <span className="inline-flex items-center gap-1 rounded-full border border-background-200 bg-background-100 px-2 py-0.5 text-[10px] font-bold text-foreground-500">
-                <AppIcon className="ri-settings-3-line text-[11px]"></AppIcon>
-                {event.actorName || event.actorTypeLabel || 'System'}
-              </span>
-            ) : event.actorName ? (
-              <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-foreground-600">
-                <AppIcon className="ri-user-line text-[11px] text-foreground-400"></AppIcon>
-                {event.actorName}
-              </span>
-            ) : null}
-            {event.triggeredByName && (
-              <span className="inline-flex items-center gap-1 text-[11px] text-foreground-500">
-                <AppIcon className="ri-arrow-right-up-line text-[11px] text-foreground-400"></AppIcon>
-                Triggered by <span className="font-semibold">{event.triggeredByName}</span>
+
+        {/* ENTITY — what kind of record this was, not which one. */}
+        <span className="min-w-0 truncate text-[12px] font-semibold text-foreground-700" title={event.entityLabel || event.entity}>
+          {event.entityLabel || event.entity || 'Record'}
+        </span>
+
+        {/* CHANGE */}
+        <div className="min-w-0 basis-full lg:basis-auto">
+          <p className="flex min-w-0 flex-wrap items-center gap-x-1.5 text-[12px] text-foreground-600">
+            {/* The sentence, with only the record's own name as the link: a
+                link named after a whole sentence is one a reader cannot scan
+                for and a screen reader cannot announce usefully. */}
+            <span title={actionMeaning(event)}>{story.verb} {story.subject}</span>
+            {story.named && (
+              <Link
+                to={auditEventHref(event)}
+                className="min-w-0 truncate font-bold text-foreground-900 hover:text-primary-700 hover:underline"
+              >
+                {event.title}
+              </Link>
+            )}
+            {/* Why a record nobody touched went away. Shown only when the
+                handler code has a known meaning, never as a paraphrase. */}
+            {story.cause && <span className="text-[11px] text-foreground-500">{story.cause}</span>}
+          </p>
+          <p className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-foreground-400">
+            {event.workspaceLabel && (
+              <span className="inline-flex items-center gap-1 rounded-full border border-violet-100 bg-violet-50 px-1.5 py-0.5 text-[10px] font-bold text-violet-700">
+                <AppIcon className={`${WORKSPACE_ICONS[event.workspace || ''] || 'ri-layout-grid-line'} text-[10px]`} />
+                {auditWorkspaceLabel(event.workspace || '', event.workspaceLabel)}
               </span>
             )}
-          </div>
-          <p className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-foreground-400">
             {/* The record's own ancestry, or — where it has none recorded —
                 what kind of record it is. It used to fall back to the words
                 "Curriculum record", which was wrong on every learner, staff,
                 employer and coaching row in the feed. */}
             <span className="truncate">{event.context || event.entityLabel || 'Record'}</span>
+            {/* The page's NAME. The raw path is recorded beside it and stays in
+                the tooltip, but a reader should not have to parse a URL to
+                learn where a change was made. */}
+            {story.page
+              ? <span title={String(event.metadata?.page_path || '')}>on {story.page}</span>
+              : recovered
+                // Said quietly, so the feed reads as one, but said: this row is
+                // weaker evidence than the ones the log saw.
+                ? <span className="italic">recovered from timestamps</span>
+                : <span className="italic">no page recorded</span>}
             {/* Auto-save is how the save arrived, not what happened. */}
             {event.source && (
               <>
@@ -829,99 +1943,360 @@ function AuditRow({ event, names }: { event: CurriculumAuditEvent; names: Readon
                 </span>
               </>
             )}
+            {relatedEvents && relatedEvents.length > 1 && (
+              <>
+                <span aria-hidden="true">·</span>
+                <span className="rounded bg-violet-50 px-1.5 py-0.5 text-[10px] font-semibold text-violet-700">
+                  {relatedEvents.length} linked records · 1 module create
+                </span>
+              </>
+            )}
             {event.viaParent && (
               <>
                 <span aria-hidden="true">·</span>
                 <span>archived with its parent {event.viaParent}</span>
               </>
             )}
-            {expandable && (
-              <>
-                <span aria-hidden="true">·</span>
-                <button
-                  type="button"
-                  onClick={() => setOpen(current => !current)}
-                  aria-expanded={open}
-                  className="inline-flex items-center gap-1 rounded text-[11px] font-bold text-primary-700 hover:underline"
-                >
-                  <AppIcon className={`${open ? 'ri-arrow-up-s-line' : 'ri-arrow-down-s-line'} text-[12px]`}></AppIcon>
-                  {event.changes.length
-                    ? `${event.changes.length} changed ${event.changes.length === 1 ? 'field' : 'fields'}`
-                    : event.action === 'deleted' ? 'What was deleted'
-                    : snapshotEntries.length ? 'What was created'
-                    : 'Details'}
-                </button>
-              </>
-            )}
           </p>
+          {/* A change no person made says so, rather than sitting under
+              somebody's name and reading as their edit. */}
+          {story.systemNote && (
+            <p className="mt-1 flex items-start gap-1.5 text-[11px] text-amber-700">
+              <AppIcon className="ri-robot-2-line mt-0.5 shrink-0 text-[11px]"></AppIcon>
+              <span>{story.systemNote}</span>
+            </p>
+          )}
         </div>
+
+        {/* USER — said plainly. A write no person directly made is marked as
+            the system rather than credited to anybody, and where a person
+            caused it, they are named as the cause, not as the author. */}
+        <div className="flex min-w-0 flex-col gap-0.5">
+          {event.actorType && event.actorType !== 'user' ? (
+            <span className="inline-flex w-fit items-center gap-1 rounded-full border border-background-200 bg-background-100 px-2 py-0.5 text-[10px] font-bold text-foreground-500">
+              <AppIcon className="ri-settings-3-line text-[11px]"></AppIcon>
+              {event.actorName || event.actorTypeLabel || 'System'}
+            </span>
+          ) : event.actorName ? (
+            <span className="inline-flex min-w-0 items-center gap-1 truncate text-[12px] font-semibold text-foreground-700">
+              <AppIcon className="ri-user-line shrink-0 text-[11px] text-foreground-400"></AppIcon>
+              {event.actorName}
+            </span>
+          ) : (
+            <span className="text-[11px] italic text-foreground-400">No author recorded</span>
+          )}
+          {/* Ordinary inline text, and no icon. In a column this narrow the
+              icon took a line of its own and pushed "Triggered by" away from
+              the name it belongs to; the words say it without help. */}
+          {event.triggeredByName && (
+            <span className="text-[11px] leading-4 text-foreground-500">
+              Triggered by <span className="font-semibold">{event.triggeredByName}</span>
+            </span>
+          )}
+        </div>
+
+        {/* TIME */}
+        <span className="shrink-0 text-[11px] font-semibold tabular-nums text-foreground-500">
+          <span title={timeMetaLabel(event.at)} aria-label={timeMetaLabel(event.at)}>
+            {withDate ? `${dateLabel(event.at)} ` : ''}{timeLabel(event.at)}
+          </span>
+        </span>
+
+        {expandable ? (
+          <button
+            type="button"
+            onClick={() => setOpen(current => !current)}
+            aria-expanded={open}
+            aria-label={expandLabel}
+            className="ml-auto flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-transparent text-foreground-400 transition-smooth hover:border-background-200 hover:bg-background-50 hover:text-primary-700 lg:ml-0"
+          >
+            <AppIcon className={`${open ? 'ri-arrow-up-s-line' : 'ri-arrow-down-s-line'} text-[16px]`}></AppIcon>
+          </button>
+        ) : (
+          <span className="ml-auto h-7 w-7 shrink-0 lg:ml-0" aria-hidden="true" />
+        )}
       </div>
       {open && (
-        <div className="border-t border-background-200/60 bg-background-100/40 px-4 py-3 pl-[4.75rem]">
-          {event.changes.length > 0 && (
-            <dl className="space-y-2">
-              {event.changes.map(change => (
-                <div key={change.field} className="rounded-lg border border-background-200 bg-background-50 px-3 py-2">
-                  <dt className="text-[10px] font-bold uppercase tracking-wide text-foreground-500">
-                    {change.label}
-                  </dt>
-                  <dd className="mt-1 grid gap-1 sm:grid-cols-2">
-                    <span className="min-w-0 break-words rounded bg-rose-50 px-2 py-1 text-[11px] text-rose-800">
-                      <span className="font-bold">Before:</span> <span title={auditValueTitle(change.before)}>{auditFieldValueLabel(change.label, change.before, event.changes, 'before', names)}</span>
-                    </span>
-                    <span className="min-w-0 break-words rounded bg-emerald-50 px-2 py-1 text-[11px] text-emerald-800">
-                      <span className="font-bold">After:</span> <span title={auditValueTitle(change.after)}>{auditFieldValueLabel(change.label, change.after, event.changes, 'after', names)}</span>
-                    </span>
-                  </dd>
-                  {change.truncated && (
-                    <p className="mt-1 text-[10px] text-foreground-400">
-                      Shortened for display. The full value is kept in the record's own history.
-                    </p>
-                  )}
-                </div>
-              ))}
-            </dl>
-          )}
-          {/* The stored record. For a delete this is the only copy that still
-              exists anywhere, which is the whole reason it is captured before
-              the row goes rather than looked up afterwards. */}
-          {!event.changes.length && snapshotEntries.length > 0 && (
-            <dl className="grid gap-1 sm:grid-cols-2">
-              {snapshotEntries.map(([key, value]) => (
-                <div key={key} className="flex min-w-0 gap-2 rounded bg-background-50 px-2 py-1">
-                  <dt className="shrink-0 text-[10px] font-bold uppercase tracking-wide text-foreground-500">{key}</dt>
-                  <dd className="min-w-0 break-words text-[11px] text-foreground-700"><span title={auditValueTitle(value)}>{displayValue(value)}</span></dd>
-                </div>
-              ))}
-            </dl>
-          )}
-          {/* What the write itself carried: the file an upload attached, the
-              batch an import belonged to. Allowlisted server-side, so it is
-              never content and never a credential. */}
-          {metadataEntries.length > 0 && (
-            <dl className="mt-2 flex flex-wrap gap-2">
-              {metadataEntries.map(([key, value]) => (
-                <div key={key} className="flex min-w-0 items-baseline gap-1.5 rounded-lg border border-background-200 bg-background-50 px-2 py-1">
-                  <dt className="shrink-0 text-[10px] font-bold uppercase tracking-wide text-foreground-500">
-                    {metadataLabel(key)}
-                  </dt>
-                  <dd className="min-w-0 break-words text-[11px] text-foreground-700"><span title={auditValueTitle(value)}>{displayValue(value)}</span></dd>
-                </div>
-              ))}
-            </dl>
-          )}
-          <p className="mt-2 text-[10px] text-foreground-400">
-            Event type: <span className="font-mono">{event.action}</span>
-            {event.revisionNo > 0 && <> · revision {event.revisionNo}</>}
-            {event.actorTypeLabel && <> · {event.actorTypeLabel}</>}
-            {event.sourceLabel && <> · via {event.sourceLabel}</>}
-            {event.reason && <> · handler <span className="font-mono">{event.reason}</span></>}
-            {event.actorEmail && <> · {event.actorEmail}</>}
-            {event.triggeredByEmail && <> · triggered by {event.triggeredByEmail}</>}
-          </p>
-        </div>
+        <AuditRowDetails
+          event={event}
+          names={names}
+          story={story}
+          metadataEntries={metadataEntries}
+          snapshotEntries={snapshotEntries}
+          relatedEvents={relatedEvents}
+        />
       )}
     </li>
+  );
+}
+
+/**
+ * One log entry, opened out: what it means, what it carried, and what moved.
+ *
+ * The order is the order the question is usually asked in -- what happened,
+ * under what, how much, then field by field. The provenance line stays at the
+ * bottom, because the event name and the handler code are what you read when
+ * the sentence above them is not enough, not before it.
+ */
+function AuditRowDetails({ event, names, story, metadataEntries, snapshotEntries, relatedEvents }: {
+  event: CurriculumAuditEvent;
+  names: ReadonlyMap<string, string>;
+  story: ReturnType<typeof changeStory>;
+  metadataEntries: Array<[string, unknown]>;
+  snapshotEntries: Array<[string, unknown]>;
+  relatedEvents?: CurriculumAuditEvent[];
+}) {
+  // Amber is reserved for a caveat. Every action can explain itself, but "a
+  // saved change was made to this record" is not a warning and must not be
+  // painted as one, or the colour stops meaning anything on the rows that are.
+  //
+  // A plain edit gets no note at all: the row above already says who edited
+  // what, and the summary below says which fields moved, so a note there was
+  // a box that restated both and told the reader nothing.
+  const note = story.systemNote || (event.action === 'updated' ? '' : actionMeaning(event));
+  const caution = Boolean(story.systemNote)
+    || ['deleted', 'archived', 'recorded', 'recalculated'].includes(event.action);
+  const summary = changeSummarySentence(event, snapshotEntries.length);
+  const siblingCreates = (relatedEvents || []).filter(item => item.id !== event.id && item.snapshot);
+  const recordedKind = (event.entityLabel || event.entity || 'record').toLowerCase();
+
+  return (
+    <div className="border-t border-background-200/60 bg-background-100/50 px-3 py-3 sm:px-4 lg:pl-8">
+      <div className="rounded-xl border border-foreground-200/60 bg-background-50 p-3 shadow-sm sm:p-4">
+        <h3 className="font-heading text-[13px] font-bold text-foreground-900">
+          {story.verb} {story.named ? event.title : story.subject}
+        </h3>
+        <p className="mt-0.5 text-[11px] text-foreground-400">{event.context || event.entityLabel || 'Record'}</p>
+
+        {event.provenance === 'timestamps' && (
+          <p className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] leading-5 text-amber-900">
+            <span className="font-bold">{event.provenanceLabel || 'Recovered from timestamps'}.</span>{' '}
+            This happened before the revision log began recording this kind of record, so it is read back from a
+            time the record itself keeps. It shows that the record moved and when — never what it held before or
+            after, and who only where the record itself names a person.
+          </p>
+        )}
+
+        {note && (
+          <p className={`mt-3 rounded-lg border px-3 py-2 text-[11px] leading-5 ${caution ? 'border-amber-200 bg-amber-50 text-amber-900' : 'border-background-200 bg-background-100/70 text-foreground-600'}`}>
+            <span className="font-bold">Note:</span> {note}
+          </p>
+        )}
+
+        {event.action === 'recorded' && (
+          <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50/80 p-3">
+            <h4 className="text-[10px] font-bold uppercase tracking-[0.12em] text-amber-800">
+              What this first-seen event means
+            </h4>
+            <p className="mt-1 text-[11px] leading-5 text-amber-900/85">
+              The audit could first see this record at the timestamp above. This is useful evidence that the
+              {recordedKind} was present in the system, but it is not a create confirmation and it does not contain
+              the exact field values that were entered at that time.
+            </p>
+            <dl className="mt-2 grid gap-1 sm:grid-cols-2">
+              <div className="flex min-w-0 gap-2 rounded-lg border border-amber-200/80 bg-background-50/70 px-2 py-1">
+                <dt className="shrink-0 text-[10px] font-bold uppercase tracking-wide text-amber-800">Record</dt>
+                <dd className="min-w-0 break-words text-[11px] font-semibold text-amber-950">
+                  {event.title || 'Unnamed component'}
+                </dd>
+              </div>
+              <div className="flex min-w-0 gap-2 rounded-lg border border-amber-200/80 bg-background-50/70 px-2 py-1">
+                <dt className="shrink-0 text-[10px] font-bold uppercase tracking-wide text-amber-800">Record ID</dt>
+                <dd className="min-w-0 break-words font-mono text-[11px] text-amber-950">{event.entityId || '—'}</dd>
+              </div>
+              <div className="flex min-w-0 gap-2 rounded-lg border border-amber-200/80 bg-background-50/70 px-2 py-1 sm:col-span-2">
+                <dt className="shrink-0 text-[10px] font-bold uppercase tracking-wide text-amber-800">Module / location</dt>
+                <dd className="min-w-0 break-words text-[11px] text-amber-950">
+                  {event.context || event.moduleCatalogueId || 'Location not captured'}
+                </dd>
+              </div>
+              <div className="flex min-w-0 gap-2 rounded-lg border border-amber-200/80 bg-background-50/70 px-2 py-1 sm:col-span-2">
+                <dt className="shrink-0 text-[10px] font-bold uppercase tracking-wide text-amber-800">Field values</dt>
+                <dd className="min-w-0 break-words text-[11px] text-amber-950">
+                  Not captured in this timestamp-based history
+                </dd>
+              </div>
+            </dl>
+          </div>
+        )}
+
+        {/* What the write itself carried: the file an upload attached, the
+            batch an import belonged to. Allowlisted server-side, so it is
+            never content and never a credential. */}
+        {metadataEntries.length > 0 && (
+          <dl className="mt-3 flex flex-wrap gap-2">
+            {metadataEntries.map(([key, value]) => (
+              <div key={key} className="flex min-w-0 items-baseline gap-1.5 rounded-lg border border-background-200 bg-background-100/60 px-2 py-1">
+                <dt className="shrink-0 text-[10px] font-bold uppercase tracking-wide text-foreground-500">
+                  {metadataLabel(key)}
+                </dt>
+                <dd className="min-w-0 break-words text-[11px] font-semibold text-foreground-700">
+                  <span title={auditValueTitle(value)}>{displayValue(value)}</span>
+                </dd>
+              </div>
+            ))}
+          </dl>
+        )}
+
+        {summary && (
+          <p className="mt-3 rounded-lg border border-sky-100 bg-sky-50 px-3 py-2 text-[11px] font-bold leading-5 text-sky-800">
+            {summary}
+          </p>
+        )}
+
+        {siblingCreates.length > 0 && (
+          <div className="mt-3 rounded-xl border border-violet-100 bg-violet-50/60 p-3">
+            <h4 className="text-[10px] font-bold uppercase tracking-[0.12em] text-violet-700">
+              All module creation details
+            </h4>
+            <p className="mt-1 text-[11px] leading-5 text-violet-900/75">
+              The module drawer saves the catalogue, advanced details and completion rule as linked records.
+              They are shown together here as one user action, so the technical child records do not look like extra creates.
+            </p>
+            <div className="mt-2 space-y-2">
+              {siblingCreates.map(sibling => {
+                const entries = Object.entries(sibling.snapshot || {}).filter(([key, value]) => (
+                  !key.startsWith('_')
+                  && !MODULE_CREATION_HIDDEN_FIELDS.has(key)
+                  && value !== null
+                  && value !== ''
+                ));
+                if (!entries.length) return null;
+                return (
+                  <section key={sibling.id} className="rounded-lg border border-violet-100 bg-background-50/80 p-2">
+                    <p className="text-[10px] font-bold uppercase tracking-wide text-foreground-600">
+                      {sibling.entityLabel || sibling.entity}
+                    </p>
+                    <dl className="mt-1 grid gap-1 sm:grid-cols-2">
+                      {entries.map(([key, value]) => (
+                        <div key={`${sibling.id}:${key}`} className="flex min-w-0 gap-2 rounded-md border border-background-200 bg-background-100/60 px-2 py-1">
+                          <dt className="shrink-0 text-[10px] font-bold uppercase tracking-wide text-foreground-500">{metadataLabel(key)}</dt>
+                          <dd className="min-w-0 break-words text-[11px] text-foreground-700">
+                            <span title={auditValueTitle(value)}>{displayValue(value)}</span>
+                          </dd>
+                        </div>
+                      ))}
+                    </dl>
+                  </section>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {event.changes.length > 0 && (
+          <>
+            <h4 className="mt-4 text-[10px] font-bold uppercase tracking-[0.12em] text-primary-700">Changed fields</h4>
+            <ChangedFieldsCard event={event} names={names} />
+          </>
+        )}
+
+        {/* The stored record. For a delete this is the only copy that still
+            exists anywhere, which is the whole reason it is captured before
+            the row goes rather than looked up afterwards. */}
+        {!event.changes.length && snapshotEntries.length > 0 && (
+          <>
+            <h4 className="mt-4 text-[10px] font-bold uppercase tracking-[0.12em] text-primary-700">
+              {event.action === 'deleted' ? 'What was deleted' : 'What was recorded'}
+            </h4>
+            <dl className="mt-2 grid gap-1 sm:grid-cols-2">
+              {snapshotEntries.map(([key, value]) => (
+                <div key={key} className="flex min-w-0 gap-2 rounded-lg border border-background-200 bg-background-100/60 px-2 py-1">
+                  <dt className="shrink-0 text-[10px] font-bold uppercase tracking-wide text-foreground-500">{metadataLabel(key)}</dt>
+                  <dd className="min-w-0 break-words text-[11px] text-foreground-700">
+                    <span title={auditValueTitle(value)}>{displayValue(value)}</span>
+                  </dd>
+                </div>
+              ))}
+            </dl>
+          </>
+        )}
+
+        <p className="mt-3 border-t border-background-200 pt-2 text-[10px] text-foreground-400">
+          Event type: <span className="font-mono">{event.action}</span>
+          {event.provenanceLabel && <> · {event.provenanceLabel}</>}
+          {event.revisionNo > 0 && <> · revision {event.revisionNo}</>}
+          {event.actorTypeLabel && <> · {event.actorTypeLabel}</>}
+          {event.sourceLabel && <> · via {event.sourceLabel}</>}
+          {event.reason && <> · handler <span className="font-mono">{event.reason}</span></>}
+          {event.actorEmail && <> · {event.actorEmail}</>}
+          {event.triggeredByEmail && <> · triggered by {event.triggeredByEmail}</>}
+        </p>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * The record that moved, and the fields that moved on it.
+ *
+ * Open by default: a reader who has already opened the row has asked what
+ * changed, and making them click twice to find out answers nothing. The field
+ * names stay visible once it is folded shut, so a closed card still says what
+ * is inside it rather than becoming a button with no subject.
+ */
+function ChangedFieldsCard({ event, names }: {
+  event: CurriculumAuditEvent;
+  names: ReadonlyMap<string, string>;
+}) {
+  const [showDetails, setShowDetails] = useState(true);
+  return (
+    <div className="mt-2 rounded-xl border border-sky-100 bg-sky-50/70 p-3">
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <div className="min-w-0">
+          <p className="font-heading text-[12px] font-bold text-foreground-900">
+            {event.title || event.entityLabel || 'Record'}
+          </p>
+          <p className="mt-0.5 text-[11px] text-foreground-500">{event.context || event.entityLabel || 'Record'}</p>
+        </div>
+        <span className="shrink-0 rounded-md border border-sky-200 bg-background-50 px-2 py-0.5 text-[10px] font-bold tabular-nums text-sky-800">
+          {event.changes.length} {event.changes.length === 1 ? 'field' : 'fields'}
+        </span>
+      </div>
+      <div className="mt-2 flex flex-wrap items-center gap-2">
+        {event.changes.map(change => (
+          <span
+            key={change.field}
+            className="rounded-md border border-sky-200 bg-background-50 px-2 py-0.5 text-[11px] font-bold text-foreground-700"
+          >
+            {auditFieldLabel(change.label)}
+          </span>
+        ))}
+        <button
+          type="button"
+          onClick={() => setShowDetails(current => !current)}
+          aria-expanded={showDetails}
+          className="ml-auto inline-flex items-center gap-1 rounded-lg bg-foreground-900 px-2.5 py-1.5 text-[11px] font-bold text-background-50 transition-smooth hover:bg-foreground-800"
+        >
+          {showDetails ? 'Hide details' : 'Show details'}
+          <AppIcon className={`${showDetails ? 'ri-arrow-up-s-line' : 'ri-arrow-down-s-line'} text-[13px]`}></AppIcon>
+        </button>
+      </div>
+      {showDetails && (
+        <dl className="mt-3 grid gap-2 sm:grid-cols-2">
+          {event.changes.map(change => (
+            <div key={change.field} className="rounded-lg border border-background-200 bg-background-50 px-3 py-2">
+              <dt className="text-[10px] font-bold uppercase tracking-wide text-foreground-500">{auditFieldLabel(change.label)}</dt>
+              <dd className="mt-1 space-y-1">
+                <p className="min-w-0 break-words rounded bg-rose-50 px-2 py-1 text-[11px] text-rose-800">
+                  <span className="font-bold">Before:</span>{' '}
+                  <span title={auditValueTitle(change.before)}>{auditFieldValueLabel(change.label, change.before, event.changes, 'before', names)}</span>
+                </p>
+                <p className="min-w-0 break-words rounded bg-emerald-50 px-2 py-1 text-[11px] text-emerald-800">
+                  <span className="font-bold">After:</span>{' '}
+                  <span title={auditValueTitle(change.after)}>{auditFieldValueLabel(change.label, change.after, event.changes, 'after', names)}</span>
+                </p>
+              </dd>
+              {change.truncated && (
+                <p className="mt-1 text-[10px] text-foreground-400">
+                  Shortened for display. The full value is kept in the record's own history.
+                </p>
+              )}
+            </div>
+          ))}
+        </dl>
+      )}
+    </div>
   );
 }
 
@@ -968,14 +2343,29 @@ function groupByDay(events: CurriculumAuditEvent[]): AuditDay[] {
   return [...days.values()];
 }
 
+/**
+ * The day a group of logs belongs to.
+ *
+ * The full date is always written out, with Today and Yesterday in front of it
+ * rather than instead of it. A heading that said only "Today" left a reader who
+ * had the page open across midnight, or who was reading an exported screenshot
+ * of it, with no way to tell which day they were looking at.
+ */
 function dayLabel(parsed: Date): string {
   const today = new Date();
   const startOfToday = new Date(today.getFullYear(), today.getMonth(), today.getDate());
   const startOfDay = new Date(parsed.getFullYear(), parsed.getMonth(), parsed.getDate());
   const diffDays = Math.round((startOfToday.getTime() - startOfDay.getTime()) / 86_400_000);
-  if (diffDays === 0) return 'Today';
-  if (diffDays === 1) return 'Yesterday';
-  return parsed.toLocaleDateString('en-GB', { weekday: 'long', day: '2-digit', month: 'short', year: 'numeric' });
+  const full = parsed.toLocaleDateString('en-GB', { weekday: 'short', day: '2-digit', month: 'short', year: 'numeric' });
+  if (diffDays === 0) return `Today · ${full}`;
+  if (diffDays === 1) return `Yesterday · ${full}`;
+  return full;
+}
+
+/** The date beside a time, for the readings that are not grouped by day. */
+function dateLabel(value: string): string {
+  const parsed = parseStamp(value);
+  return parsed ? parsed.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' }) : '';
 }
 
 function timeLabel(value: string): string {

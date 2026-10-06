@@ -1,10 +1,12 @@
-import { useEffect, useId, useMemo, useRef } from 'react';
+import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { ArrowLeft, ArrowRight, CalendarDays, ChevronDown, FileText, List, Video } from 'lucide-react';
 import type { LearnerCalendarEvent } from '@/api/learnerCalendar';
 import type { MeetingAttendance } from '@/api/meetingAttendance';
 import MeetingAttendanceActions from '../reviews/MeetingAttendanceActions';
 import { meetingBookingWarning, meetingCalendarHref } from '../reviews/meetingBooking';
+import ProgrammeReviewTimeline from '../reviews/ProgrammeReviewTimeline';
+import { completedReviewTimelineStatus, reviewTimelineStatus } from '../reviews/reviewTimelineStatus';
 import { reviewOverview, reviewsListHref, type ReviewDefinitions, type ReviewFilter, type ReviewPresentation } from './reviewPresentation';
 import styles from './reviewsHome.module.css';
 
@@ -24,6 +26,7 @@ export interface ReviewsHomeProps {
   onSchedule: (session: LearnerCalendarEvent) => void;
   onAttend: (id: string) => void;
   onReport: (session: MeetingAttendance) => void;
+  basePath?: string;
 }
 
 const filters: { id: ReviewFilter; label: string }[] = [{ id: 'all', label: 'All' }, { id: 'upcoming', label: 'Upcoming' }, { id: 'past', label: 'Past' }];
@@ -33,9 +36,16 @@ const dateLabel = (value: string | null) => {
   return Number.isFinite(date.getTime()) ? new Intl.DateTimeFormat('en-GB', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' }).format(date) : 'Date to be confirmed';
 };
 
+const progressTimelineStatus = (state: ReviewPresentation, definitions?: ReviewDefinitions) => {
+  if (state.session.source !== 'progress-review') return reviewTimelineStatus(state.session, state.attendance);
+  const definition = definitions?.[state.session.eventKey] || definitions?.[state.session.id];
+  return completedReviewTimelineStatus(state.session, state.attendance, definition?.instance?.status);
+};
+
 export default function ReviewsHome(props: ReviewsHomeProps) {
   const { sessions, attendance, definitions, learner, today, titleOf } = props;
   const overview = useMemo(() => reviewOverview(sessions, attendance, today, definitions), [sessions, attendance, today, definitions]);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
   const [params, setParams] = useSearchParams();
   const allView = params.get('view') === 'all';
   const filter = filters.find(item => item.id === params.get('filter'))?.id || 'all';
@@ -48,19 +58,26 @@ export default function ReviewsHome(props: ReviewsHomeProps) {
     if (previousView.current !== allView) heading.current?.focus();
     previousView.current = allView;
   }, [allView]);
-  const viewHref = (all: boolean) => reviewsListHref(learner, new URLSearchParams(all ? 'view=all' : ''));
+  const basePath = props.basePath || '/learner/progress-reviews';
+  const viewHref = (all: boolean) => reviewsListHref(learner, new URLSearchParams(all ? 'view=all' : ''), basePath);
   const detailHref = (state: ReviewPresentation) => {
-    const next = new URLSearchParams(reviewsListHref(learner, params).split('?')[1]);
+    const next = new URLSearchParams(reviewsListHref(learner, params, basePath).split('?')[1]);
     if (allView) { next.set('filter', filter); next.set('page', String(page)); }
-    return `/learner/progress-reviews/${encodeURIComponent(state.session.id)}?${next}`;
+    return `${basePath}/${encodeURIComponent(state.session.id)}?${next}`;
   };
   const updateView = (selected: ReviewFilter, selectedPage = 1) => {
     const next = new URLSearchParams({ kind: learner.kind, learner: learner.id, view: 'all', filter: selected });
     if (selectedPage > 1) next.set('page', String(selectedPage));
     setParams(next);
   };
-  const current = overview.current;
-  const reminders = overview.attention.filter(item => item.session.id !== current?.session.id);
+  const selected = overview.all.find(item => item.session.id === selectedId);
+  const current = selected || overview.current;
+  const isSelected = Boolean(selected && selected.session.id !== overview.current?.session.id);
+  const selectTimelineItem = (id: string) => {
+    setSelectedId(id);
+    if (allView) setParams(new URLSearchParams({ kind: learner.kind, learner: learner.id }));
+  };
+  const reminders = overview.attention.filter(item => item.session.id !== overview.current?.session.id);
   const attentionId = useId();
 
   function status(state: ReviewPresentation) {
@@ -104,8 +121,12 @@ export default function ReviewsHome(props: ReviewsHomeProps) {
 
   return <section className={styles.home} aria-label="Reviews sessions">
     <header className={styles.header}><div><h1 ref={heading} tabIndex={-1}>{allView ? 'All reviews' : 'My reviews'}</h1><p className={styles.intro}>{allView ? 'Find a review, check its status or read a previous record.' : 'Your next review and anything that needs your attention.'}</p></div>
-      <div className={styles.headerLinks}>{allView ? <Link className={styles.secondaryButton} to={viewHref(false)}><ArrowLeft size={19} aria-hidden="true"/>Back to current review</Link> : <Link className={styles.secondaryButton} to={viewHref(true)}><List size={19} aria-hidden="true"/>View all reviews ({sessions.length})</Link>}</div>
+      <div className={styles.headerLinks}>{allView ? <Link className={styles.secondaryButton} to={viewHref(false)} onClick={() => setSelectedId(null)}><ArrowLeft size={19} aria-hidden="true"/>Back to current review</Link> : <Link className={styles.secondaryButton} to={viewHref(true)}><List size={19} aria-hidden="true"/>View all reviews ({sessions.length})</Link>}</div>
     </header>
+    {sessions.length > 0 && <ProgrammeReviewTimeline label="Progress review" activeId={current?.session.id || null} onSelect={selectTimelineItem} items={overview.all.map(state => ({
+      id: state.session.id, title: titleOf(state.session), date: state.date,
+      status: progressTimelineStatus(state, definitions),
+    }))} />}
     {props.loading && !sessions.length ? <div className={styles.loading} role="status">Loading your reviews…</div>
       : props.error && !sessions.length ? <div className={styles.empty}><h2>Your reviews could not be loaded</h2><p>Use Try again above to reload your reviews.</p></div>
       : <>
@@ -122,8 +143,8 @@ export default function ReviewsHome(props: ReviewsHomeProps) {
           {pages > 1 && <nav className={styles.pagination} aria-label="Review pages"><span>Page {page} of {pages}</span><div><button type="button" disabled={page === 1} onClick={() => updateView(filter, page - 1)}><ArrowLeft size={17} aria-hidden="true"/>Previous</button><button type="button" disabled={page === pages} onClick={() => updateView(filter, page + 1)}>Next<ArrowRight size={17} aria-hidden="true"/></button></div></nav>}
         </section> : <>
           {reminders.length > 0 && <p className={styles.refreshStatus}><a className={styles.textLink} href={`#${attentionId}`}>{reminders.length} {reminders.length === 1 ? 'review needs' : 'reviews need'} your attention<ArrowRight size={17} aria-hidden="true"/></a></p>}
-          {current ? <article className={styles.current} aria-label="Current review">
-            <div className={styles.currentTop}><p className={styles.eyebrow}>{current.isToday ? "Today's review" : current.action === 'sign' || current.past ? 'Your next step' : 'Your next review'}</p>{status(current)}</div>
+          {current ? <article className={styles.current} aria-label={isSelected ? 'Selected review' : 'Current review'}>
+            <div className={styles.currentTop}><p className={styles.eyebrow}>{isSelected ? 'Selected review' : current.isToday ? "Today's review" : current.action === 'sign' || current.past ? 'Your next step' : 'Your next review'}</p>{status(current)}</div>
             <h2 className={styles.title}>{titleOf(current.session)}</h2>
             <div className={styles.appointment}><span className={styles.appointmentIcon}><CalendarDays size={28} aria-hidden="true"/></span><div><p className={styles.dateLabel}>{dateLabel(current.date)}</p><p className={styles.timeLabel}>{current.action === 'schedule' ? 'Target date — a meeting time has not been booked' : current.booked ? `${current.attendance?.startTime || current.session.scheduledTime || 'Time to be confirmed'}${props.timeZone ? ` · ${props.timeZone}` : ''}` : 'Review record'}</p></div></div>
             <div className={styles.meta}><div><small>Reviewer / Coach</small><strong>{current.session.coachName || 'Not assigned yet'}</strong></div>{props.lineManager && <div><small>Line manager</small><strong>{props.lineManager}</strong></div>}{current.booked && <div><small>Meeting</small><strong>{current.attendance?.meetingProvider || current.session.meetingProvider || 'Location to be confirmed'}{(current.attendance?.durationMinutes ?? current.session.durationMinutes) > 0 ? ` · ${current.attendance?.durationMinutes ?? current.session.durationMinutes} minutes` : ''}</strong></div>}</div>

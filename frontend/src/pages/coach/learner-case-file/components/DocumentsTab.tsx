@@ -5,7 +5,8 @@ import { MetricCard } from '@/components/ui/MetricCard';
 import { Panel } from '@/components/ui/Panel';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { toneStyle, type StatusTone } from '@/lib/statusTone';
-import { formatDisplayDate, resolveQuizAttemptTitle, type CaseFileTabProps } from '../data';
+import { formatDisplayDate, resolveQuizAttemptTitle } from '../data';
+import type { CaseFileTabProps } from '../types';
 
 interface LiveRecordRow {
   id: string;

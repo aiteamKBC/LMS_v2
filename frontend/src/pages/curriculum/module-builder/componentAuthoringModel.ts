@@ -1,3 +1,4 @@
+import { assignmentTopics, topicHasContent } from '@/lib/assignmentTopics';
 export type ModuleStatus = 'draft' | 'review' | 'published' | string;
 export type KsbMappingType = 'main' | 'secondary' | 'possible';
 export type ModuleComponentType =
@@ -135,7 +136,7 @@ const definitions: ComponentAuthoringDefinition[] = [
       teamsProvider: '',
       teamsRepeat: 'none',
       teamsRepeatOccurrences: 1,
-      teamsLobbyBypass: 'invited',
+      teamsLobbyBypass: 'everyone',
       teamsRecording: 'record-transcribe',
       teamsSpokenLanguage: 'en-GB',
       teamsMeetingType: 'live-session',
@@ -196,7 +197,7 @@ const definitions: ComponentAuthoringDefinition[] = [
     supportedSources: PODCAST_SOURCE_TYPES,
     requiredSettings: [],
     capabilities: ['media', 'preview', 'ksb-mapping', 'reflection', 'tutor-validation'],
-    defaultSettings: { ...advancedDefaults('podcast'), podcastSource: 'External URL', podcastUrl: '', embedCode: '', shortcode: '', uploadedFileName: '', uploadedFileUrl: '', uploadedFileSize: 0, uploadedFileContentType: '', uploadSource: '', durationMinutes: 20, requiredProgressPercentage: 0, listeningFocus: '', podcastReflectionQuestion: '', transcript: '' },
+    defaultSettings: { ...advancedDefaults('podcast'), podcastSource: 'External URL', podcastUrl: '', embedCode: '', shortcode: '', componentFiles: '', uploadedFileName: '', uploadedFileUrl: '', uploadedFileSize: 0, uploadedFileContentType: '', uploadSource: '', durationMinutes: 20, requiredProgressPercentage: 0, listeningFocus: '', podcastReflectionQuestion: '', transcript: '' },
   },
   {
     type: 'reading',
@@ -218,6 +219,7 @@ const definitions: ComponentAuthoringDefinition[] = [
       requirement: 'Required',
       readingSource: 'Written in LMS',
       resourceUrl: '',
+      componentFiles: '',
       uploadedFileName: '',
       uploadedFileUrl: '',
       uploadedFileSize: 0,
@@ -260,7 +262,7 @@ const definitions: ComponentAuthoringDefinition[] = [
     supportedSources: ['External URL', 'LMS resource', 'Device upload'],
     requiredSettings: [],
     capabilities: ['preview', 'ksb-mapping', 'reflection', 'tutor-validation'],
-    defaultSettings: { ...advancedDefaults('powerpoint'), fileName: '', presentationUrl: '', uploadedFileName: '', uploadedFileUrl: '', uploadedFileSize: 0, uploadedFileContentType: '', uploadSource: '', slideRange: '', speakerNotes: '', downloadAllowed: true },
+    defaultSettings: { ...advancedDefaults('powerpoint'), fileName: '', presentationUrl: '', componentFiles: '', uploadedFileName: '', uploadedFileUrl: '', uploadedFileSize: 0, uploadedFileContentType: '', uploadSource: '', slideRange: '', speakerNotes: '', downloadAllowed: true },
   },
   {
     type: 'quiz',
@@ -295,6 +297,7 @@ const definitions: ComponentAuthoringDefinition[] = [
     defaultSettings: {
       ...advancedDefaults('assignment'),
       assignmentBrief: '',
+      assignmentTopics: '',
       submissionInstructions: '',
       dueTiming: 'End of week',
       markingRubric: '',
@@ -439,10 +442,30 @@ const WEEK_BUILDER_SHARED_KEYS = [
 
 // These are persisted per occurrence by the Teams attachment path. Keeping
 // them only in legacySettings disconnects previews and subsequent saves.
+// `teamsMeetingScope` is which calendar runs the session (main or additional);
+// the Teams dialog sets it and the server keeps the stored one on every save.
 const LIVE_SESSION_TRACKING_SETTING_KEYS = [
   'teamsOccurrenceId', 'teamsSessionNumber', 'teamsOnlineMeetingId',
   'teamsMeetingUrl', 'teamsWebLink', 'teamsStartDateTimeUtc',
   'teamsDurationMinutes', 'sessionDay', 'sessionRescheduled',
+  'teamsMeetingScope',
+] as const;
+
+/**
+ * The one-off meeting booked onto a single week, under its own keys.
+ *
+ * Deliberately not `liveSessionUrl`/`teamsMeetingUrl`: those two name the
+ * MODULE's calendar, and the backend rewrites them on every live-session
+ * component each time a module with a calendar is saved. An extra meeting
+ * stored there would be replaced by the module's link without a word. Here it
+ * survives, and the module's own calendar behaves exactly as it always did.
+ */
+export const ADDITIONAL_TEAMS_MEETING_SETTING_KEYS = [
+  'extraTeamsMeetingUrl', 'extraTeamsLiveSessionId', 'extraTeamsEventId',
+  'extraTeamsOnlineMeetingId', 'extraTeamsWebLink', 'extraTeamsMeetingOptionsUrl',
+  'extraTeamsOrganizerEmail', 'extraTeamsAttendees', 'extraTeamsPresenters',
+  'extraTeamsCoOrganizers', 'extraTeamsStartDateTimeUtc', 'extraTeamsDurationMinutes',
+  'extraTeamsSubject',
 ] as const;
 
 export function allowedSettingKeysForType(type: ModuleComponentType) {
@@ -450,7 +473,7 @@ export function allowedSettingKeysForType(type: ModuleComponentType) {
   return new Set([
     ...Object.keys(definition.defaultSettings),
     ...WEEK_BUILDER_SHARED_KEYS,
-    ...(type === 'live-session' ? LIVE_SESSION_TRACKING_SETTING_KEYS : []),
+    ...(type === 'live-session' ? [...LIVE_SESSION_TRACKING_SETTING_KEYS, ...ADDITIONAL_TEAMS_MEETING_SETTING_KEYS] : []),
     'legacySettings',
     'legacySourceType',
     'legacyUnsupportedSource',
@@ -636,7 +659,8 @@ export function validateComponentAuthoring(component: ComponentValidationTarget,
       .replace(/<[^>]*>/g, '')
       .replace(/&nbsp;|&#160;/gi, ' ')
       .trim();
-    if (!assignmentQuestion) issues.push({ path: `${pathPrefix}.settings.assignmentContent`, message: 'An assignment question is required.' });
+    const topics = assignmentTopics(settings.assignmentTopics);
+    if (String(settings.assignmentTopics || '').trim() ? !topics.some(topicHasContent) : !assignmentQuestion) issues.push({ path: `${pathPrefix}.settings.assignmentContent`, message: 'An assignment question is required.' });
   }
   Object.keys(settings).forEach(key => {
     if (!allowed.has(key)) issues.push({ path: `${pathPrefix}.settings.${key}`, message: `Unsupported setting "${key}" for ${component.type}.` });
@@ -803,18 +827,19 @@ function settingValuesMatch(left: unknown, right: unknown) {
  * programme's points rules at creation, so a component nobody has opened can
  * already hold a number the definition does not.
  */
-export function componentLooksUnedited(component: ComponentAuthoringSnapshot, typeLabel?: string): boolean {
+export function componentLooksUnedited(component: ComponentAuthoringSnapshot, typeLabel?: string | readonly string[]): boolean {
   const definition = getComponentDefinition(component.type);
   const title = String(component.title || '').trim();
-  // The auto-generated title an author never touched depends on where the
-  // component was added from: the module builder stamps `definition.label`
-  // ("Video 3"), but the week builder's rail -- which both surfaces share --
-  // stamps its own display label instead ("Recorded Session 1" for the same
-  // `video` type; see `weekTypeLabel`). A caller using a different label
-  // convention passes it in; otherwise this falls back to the definition's.
-  const label = typeLabel || definition.label;
+  // The auto-generated title an author never touched depends on where and when
+  // the component was added: the module builder stamps `definition.label`
+  // ("Video 3"), while the week builder's rail -- which both surfaces share --
+  // stamps its own display label, which for `video` was "Recorded Session 1"
+  // until that type took the shared model's own name (see `weekTypeLabel` and
+  // `weekAutoTitleLabels`). A caller using other label conventions passes them
+  // in, one or several; otherwise this falls back to the definition's own.
+  const labels = typeLabel === undefined ? [] : typeof typeLabel === 'string' ? [typeLabel] : typeLabel;
   const autoTitlePattern = (text: string) => new RegExp(`^${text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?:\\s+\\d+)?$`, 'i');
-  const matchesAutoTitle = autoTitlePattern(definition.label).test(title) || autoTitlePattern(label).test(title);
+  const matchesAutoTitle = [definition.label, ...labels].some(text => Boolean(text) && autoTitlePattern(text).test(title));
   if (title && !matchesAutoTitle) return false;
   const description = String(component.description || '').trim();
   // Same story as the title: one add button leaves this empty, the other

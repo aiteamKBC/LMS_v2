@@ -92,5 +92,50 @@ class DirectoryTests(unittest.TestCase):
         self.assertEqual(self.request('delete', {}, pk=1).status_code, 400)
 
 
+    def test_one_to_one_is_a_booking_type_and_older_rows_report_it_blank(self):
+        name, links = views.validated({'name': 'Example Coach', 'links': {'one_to_one': 'https://example.org/1to1'}})
+        self.assertEqual(links['one_to_one'], 'https://example.org/1to1')
+        with self.assertRaises(ValueError):
+            views.validated({'name': 'Example Coach', 'links': {'one_to_one': 'javascript:alert(1)'}})
+        self.cursor.fetchall.return_value = [(1, 'Example Coach', 'example', {'first_session': 'https://example.org/b'}, 1)]
+        links = json.loads(views.public_coach(self.factory.get('/'), 'example').content)['links']
+        self.assertEqual(links['one_to_one'], '')
+        self.assertEqual(links['first_session'], 'https://example.org/b')
+
+    def test_one_to_one_page_matches_one_coach_by_name_with_a_one_to_one_link(self):
+        self.cursor.fetchall.return_value = [(1, 'Example Coach', 'example-coach', {'one_to_one': 'https://example.org/1'}, 1)]
+        self.assertEqual(views.one_to_one_page(' example coach '), {'name': 'Example Coach', 'slug': 'example-coach'})
+        sql, params = self.cursor.execute.call_args.args
+        self.assertEqual(params, ['example coach', 'example-coach'])
+        # No one-to-one link, no page, or two pages for one name: nothing is offered.
+        for found in ([(1, 'Example Coach', 'example-coach', {'first_session': 'https://example.org/1'}, 1)], [],
+                      [(1, 'Example Coach', 'example-coach', {'one_to_one': 'https://example.org/1'}, 1),
+                       (2, 'Example Coach', 'example-coach-2', {'one_to_one': 'https://example.org/2'}, 1)]):
+            self.cursor.fetchall.return_value = found
+            self.assertIsNone(views.one_to_one_page('Example Coach'))
+        self.cursor.reset_mock()
+        self.assertIsNone(views.one_to_one_page('  '))
+        self.cursor.execute.assert_not_called()
+
+    def test_one_to_one_page_falls_back_to_a_unique_first_name_page(self):
+        page = (1, 'Example', 'example', {'one_to_one': 'https://example.org/1'}, 1)
+        other = (2, 'Example', 'example-2', {'one_to_one': 'https://example.org/2'}, 1)
+        self.cursor.fetchall.side_effect = [[], [page]]
+        self.assertEqual(views.one_to_one_page('Example  Coach'), {'name': 'Example', 'slug': 'example'})
+        self.assertEqual([c.args[1] for c in self.cursor.execute.call_args_list],
+                         [['Example  Coach', 'example-coach'], ['Example', 'example']])
+        # Two first-name pages are ambiguous; a full-name page, even one without a
+        # one-to-one link, is the owner's page and the first name is never tried.
+        for results in ([[], [page, other]], [[(3, 'Example Coach', 'example-coach', {}, 1)], [page]]):
+            self.cursor.reset_mock()
+            self.cursor.fetchall.side_effect = results
+            self.assertIsNone(views.one_to_one_page('Example Coach'))
+        self.assertEqual(self.cursor.execute.call_count, 1)
+        # A single-word owner with no page is not looked up twice.
+        self.cursor.reset_mock()
+        self.cursor.fetchall.side_effect = [[]]
+        self.assertIsNone(views.one_to_one_page('Example'))
+        self.assertEqual(self.cursor.execute.call_count, 1)
+
 if __name__ == '__main__':
     unittest.main()

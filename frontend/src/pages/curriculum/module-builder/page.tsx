@@ -1,3 +1,4 @@
+import { AssignmentTopicsEditor } from '../shared/AssignmentTopicsEditor';
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import Swal from 'sweetalert2';
@@ -12,15 +13,18 @@ import { useCurriculumProgrammes } from '@/hooks/useCurriculumProgrammes';
 import { useLiveRefresh } from '@/hooks/useRefreshOnReturn';
 import { formatHoursMinutes } from '@/lib/format';
 import { curriculumNavItems } from '@/mocks/navigation';
-import { fetchLearnerAssignments, type LearnerAssignmentTarget } from '@/api/curriculumLearnerAssignments';
+import { applyCurriculumLearnerAssignments, fetchLearnerAssignments, unassignCurriculumLearners, type LearnerAssignmentTarget } from '@/api/curriculumLearnerAssignments';
 import {
   curriculumErrorMessage,
   fetchCurriculumHolidays,
+  fetchCurriculumKsbSets,
   fetchCurriculumOverview,
+  fetchCurriculumScopeLearnerRoster,
   fetchCurriculumScopeLearnerKsbImpact,
   fetchCurriculumStandards,
   fetchCurriculumTeamsMeetingSummaries,
   fetchCurriculumTutors,
+  curriculumLearnerAssignmentId,
   type CurriculumCohort,
   type CurriculumGroup,
   type CurriculumHoliday,
@@ -41,9 +45,11 @@ import {
   cleanText,
   findByIdentifierThenName,
   formatDateLabel,
+  formatDateTimeLabel,
   moduleIdentity,
   namedCurriculumWorkspacePath,
   sortEntities,
+  workspaceEditPath,
   MODULE_SORT_OPTIONS,
 } from '../shared/entities/model';
 import { COMPONENT_UPLOAD_MAX_LABEL } from '../shared/componentUploadPolicy';
@@ -64,6 +70,7 @@ import { WeekHolidayNotice } from '../shared/entities/sessionShiftPreview';
 import { showFullTextWhenTruncated } from '../shared/entities/truncationTitle';
 import { moduleCountForGroup, moduleMatchesGroup } from '../shared/entities/groupModuleMatch';
 import { CoverImageControl, EntityDrawer } from '../shared/entities/ui';
+import { mergeModuleStructures } from '../shared/entities/mergeModuleStructure';
 import { ComponentLibraryModal } from './ComponentLibraryModal';
 import { PlaceWeekDrawer } from './PlaceWeekDrawer';
 import {
@@ -106,6 +113,13 @@ import {
   // Live sessions left behind on an old date when their week was re-planned.
   // States the fact; the correction is a button the author presses.
   moduleLiveSessionDateDrift,
+  // Adding more live sessions to a week than its group has delivery days for.
+  // The extras are allowed, they simply have no date to run on -- so the
+  // author is told before it happens rather than finding "No date yet" later.
+  liveSessionSlotOverflow,
+  liveSessionSlotOverflowNotice,
+  weekDeliverySlotCapacity,
+  type LiveSessionSlotOverflow,
   resequenceWeekSessionDates,
   makeAuthoringId,
   recalculateModule,
@@ -119,6 +133,8 @@ import {
   type AdvancedModuleDetails,
   type CompletionCriteria,
   type KsbMapping,
+  type DuplicateKsbSource,
+  type KsbRemapReport,
   type KsbMappingType,
   type KsbWeightClass,
   type KsbOption,
@@ -143,7 +159,7 @@ import { appendWeekTemplateCopies } from './weekTemplateImport';
 // Round-trip the module's components to Excel so KSBs can be filled in ChatGPT
 // and imported back. xlsx is dynamically imported inside these helpers, so it
 // stays off this page's initial bundle.
-import { buildKsbMappingPrompt, describeKsbImport, exportModuleKsbWorkbook, importModuleKsbWorkbook, type KsbProfileEntry } from './ksbExcel';
+import { buildKsbMappingPrompt, describeKsbImport, exportModuleKsbWorkbook, importModuleKsbWorkbook, type KsbImportSource, type KsbProfileEntry } from './ksbExcel';
 // Shared labelled form atoms and the Teams meeting modal live in their own files
 // so the modal (rendered by the shared week editor, which the Week Builder also
 // uses) can reuse them without importing this page.
@@ -163,6 +179,7 @@ import {
   validateModuleAuthoringStructure,
 } from './componentAuthoringModel';
 import { RichTextDraft } from './RichTextEditor';
+import { componentTypeCounts, mergeFilteredComponents } from './courseStructureFilter';
 
 // Course structure accordion: whether expanding a week collapses the others.
 // false = classic single-open accordion (the current default look/feel).
@@ -221,7 +238,10 @@ const WORKSPACE_SAVE_STATUS: Record<WorkspaceSaveStatus, { text: string; tone: s
   // claim they were.
   'saving-more': { text: 'Saving... later edits still pending', tone: 'text-amber-700', icon: 'ri-loader-4-line animate-spin' },
   failed: { text: 'Save failed - your changes are still here', tone: 'text-rose-700', icon: 'ri-error-warning-line' },
-  conflict: { text: 'Conflict - load the saved version to continue', tone: 'text-rose-700', icon: 'ri-git-branch-line' },
+  // Reached only when a refused save could not be merged because the stored
+  // version would not read. An ordinary conflict never gets this far: it is
+  // merged and re-sent, and the footer goes back to saying "Saving...".
+  conflict: { text: 'Not saved - the saved version could not be read', tone: 'text-rose-700', icon: 'ri-git-branch-line' },
   locked: { text: 'Read-only - archived programme', tone: 'text-amber-700', icon: 'ri-lock-line' },
 };
 
@@ -237,8 +257,49 @@ type WorkspaceSaveFailure = { kind: 'error' | 'conflict'; message: string };
  * mapping for a module the size of the one this was found on -- so a busy hour
  * elsewhere in the LMS must not turn into one of those per write. Writes to
  * this module survive the wait: the next tick still finds them.
+ *
+ * 3s rather than the 8s it was set to while a write to this module only ever
+ * produced a notice. It now produces a merge -- the other editor's weeks land
+ * in front of this reader -- and that is a thing people wait for, so the floor
+ * is the slowest it can be without being felt. It stays a floor and not a
+ * timer: a quiet module costs nothing at all, because nothing asks.
  */
-const LIVE_SYNC_MIN_INTERVAL_MS = 8_000;
+const LIVE_SYNC_MIN_INTERVAL_MS = 3_000;
+
+/**
+ * What the reader is told when a refused save cannot be merged.
+ *
+ * Reached only when the stored module would not read back, so there is nothing
+ * to merge with -- the network, or the module having been deleted underneath
+ * this workspace. It says what happened and what is safe, and nothing about
+ * revisions or fingerprints, which are our problem and not the reader's.
+ */
+const MODULE_CONFLICT_UNREADABLE_NOTICE = 'Someone else saved this module and their version could not be read just now, so your changes were not saved. Everything you typed is still here. Check your connection and press Save again.';
+
+/**
+ * How many times one save may rebase onto a newer stored version before it
+ * gives up and puts the decision to the reader.
+ *
+ * Each attempt re-reads what is stored and merges onto THAT, so a chain of
+ * them is not the same request being fired again -- it is the save following a
+ * module that is moving underneath it. Bounded because the module can be
+ * written to faster than this tab can answer, and a save that chased it for
+ * ever would be a loop with a human watching it.
+ */
+const MODULE_CONFLICT_REBASE_LIMIT = 3;
+
+/** Said when the module moved again during every one of those attempts. */
+const MODULE_CONFLICT_BUSY_NOTICE = 'This module is being saved by someone else faster than your changes can be added to it. Nothing of yours is lost -- everything you typed is still on this screen. Press Save to try again, or load their version to start from it.';
+
+/**
+ * The same fact as the banner puts it, which is not the same sentence.
+ *
+ * The save panel above it is already carrying the explanation; repeating it
+ * word for word in the banner made the screen say one thing twice and the
+ * reader read it twice to check it was the same thing. The banner's job here is
+ * the button beside it, so it says only what that button is for.
+ */
+const MODULE_CONFLICT_BUSY_BANNER = 'Your changes are all still here and were not saved. Load their version to start again from it.';
 
 const ALLOW_MULTIPLE_EXPANDED_WEEKS = false;
 
@@ -339,6 +400,23 @@ function moduleSnapshot(module: ModuleCatalogueItem | null) {
   return module ? JSON.stringify(recalculateModule(module)) : '';
 }
 
+/**
+ * Does this module already have a Teams calendar?
+ *
+ * The button that opens the calendar says what it will do. Once a calendar
+ * exists, the dialog it opens is the calendar's own view -- update it, edit
+ * the dates, cancel a session or the series -- so calling it "Create" promised
+ * a second calendar that pressing it never makes.
+ */
+function moduleHasTeamsCalendar(module: ModuleCatalogueItem | null) {
+  if (!module) return false;
+  return module.weekStructure.some(week => week.components.some(component => (
+    component.type === 'live-session'
+    && Boolean(String(component.settings?.teamsLiveSessionId || component.settings?.liveSessionUrl
+      || component.settings?.teamsMeetingUrl || '').trim())
+  )));
+}
+
 function moduleNeedsTeamsRestore(module: ModuleCatalogueItem | null) {
   if (!module) return false;
   return module.weekStructure.some(week => week.components.some(component => (
@@ -376,6 +454,193 @@ async function showBuilderDeleteSwal({
   });
 }
 
+type DuplicateDestination = {
+  programme: CurriculumProgramme;
+  cohort: CurriculumCohort;
+  group: CurriculumGroup;
+};
+
+type DuplicateDialogResult = DuplicateDestination & {
+  teamsCopyMode: 'shared' | 'independent';
+  startDate: string;
+};
+
+function htmlEscape(value: unknown) {
+  return String(value || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
+function curriculumProgrammeId(programme: CurriculumProgramme) {
+  return String(programme.sourceId || programme.id || '').trim();
+}
+
+function curriculumProgrammeMatches(record: { programmeId?: string; programme?: string }, programme: CurriculumProgramme) {
+  const values = [record.programmeId, record.programme].map(normaliseDeepLinkValue).filter(Boolean);
+  return values.includes(normaliseDeepLinkValue(curriculumProgrammeId(programme)))
+    || values.includes(normaliseDeepLinkValue(programme.id))
+    || values.includes(normaliseDeepLinkValue(programme.name));
+}
+
+function duplicateTargetKsbSource(programme: CurriculumProgramme, ksbSets: CurriculumKsbSet[], standards: CurriculumStandard[]): DuplicateKsbSource | undefined {
+  const configured = cleanKsbSourceId(programme.ksbProfileSourceId);
+  const set = ksbSets.find(candidate => (
+    (configured && ksbSourceIdsMatch(ksbSetSourceId(candidate), configured))
+      || (!configured && ([candidate.programmeId, ...(candidate.programmeIds || []), candidate.programmeName].map(normaliseDeepLinkValue).includes(normaliseDeepLinkValue(curriculumProgrammeId(programme)))
+        || normaliseDeepLinkValue(candidate.programmeName) === normaliseDeepLinkValue(programme.name)))
+  ));
+  if (set) {
+    return {
+      sourceType: 'framework',
+      sourceId: ksbSetSourceId(set),
+      programmeId: curriculumProgrammeId(programme),
+      programmeName: programme.name,
+      entries: flattenKsbEntries(set.ksbs),
+    };
+  }
+  const standard = standards.find(candidate => {
+    const keys = [candidate.id, candidate.code, candidate.standardRef, candidate.name].map(normaliseDeepLinkValue);
+    return (configured && ksbSourceIdsMatch(ksbStandardSourceId(candidate), configured))
+      || keys.includes(normaliseDeepLinkValue(programme.standard))
+      || keys.includes(normaliseDeepLinkValue(programme.name));
+  });
+  if (!standard) return undefined;
+  return {
+    sourceType: 'standard',
+    sourceId: ksbStandardSourceId(standard),
+    programmeId: curriculumProgrammeId(programme),
+    programmeName: programme.name,
+    entries: standardToKsbOptions(standard),
+  };
+}
+
+async function showDuplicateModuleSwal(
+  module: ModuleCatalogueItem,
+  options: { programmes: CurriculumProgramme[]; cohorts: CurriculumCohort[]; groups: CurriculumGroup[] },
+): Promise<DuplicateDialogResult | null> {
+  const liveProgrammes = options.programmes.filter(programme => !programmeRecordArchived(programme));
+  const sourceProgramme = liveProgrammes.find(programme => (
+    normaliseDeepLinkValue(curriculumProgrammeId(programme)) === normaliseDeepLinkValue(module.programmeId)
+      || normaliseDeepLinkValue(programme.id) === normaliseDeepLinkValue(module.programmeId)
+      || normaliseDeepLinkValue(programme.name) === normaliseDeepLinkValue(module.programmeName)
+  ));
+  if (!sourceProgramme) {
+    await showCurriculumAlert({ title: 'Choose a destination Programme first', text: 'No active Programme is available for this duplicate.', icon: 'warning', confirmButtonText: 'Close' });
+    return null;
+  }
+  const sourceProgrammeValue = curriculumProgrammeId(sourceProgramme);
+  const programmeOptions = liveProgrammes.map(programme => `<option value="${htmlEscape(curriculumProgrammeId(programme))}" ${curriculumProgrammeId(programme) === sourceProgrammeValue ? 'selected' : ''}>${htmlEscape(programme.name)}</option>`).join('');
+  const sourceCohort = options.cohorts.find(cohort => cohort.id === module.cohortId && curriculumProgrammeMatches(cohort, sourceProgramme));
+  const sourceGroup = options.groups.find(group => group.id === module.groupId && group.cohortId === sourceCohort?.id);
+  const cohortOptions = (programme: CurriculumProgramme, selectedId = '') => options.cohorts
+    .filter(cohort => curriculumProgrammeMatches(cohort, programme) && cohort.status !== 'archived')
+    .map(cohort => `<option value="${htmlEscape(cohort.id)}" ${cohort.id === selectedId ? 'selected' : ''}>${htmlEscape(cohort.name)}</option>`).join('');
+  const groupOptions = (cohortId: string, selectedId = '') => options.groups
+    .filter(group => group.cohortId === cohortId && group.status !== 'archived')
+    .map(group => `<option value="${htmlEscape(group.id)}" ${group.id === selectedId ? 'selected' : ''}>${htmlEscape(group.name)}</option>`).join('');
+  const destination = await Swal.fire({
+    title: `Duplicate ${module.title}`,
+    html: `
+      <p style="margin:0 0 12px;text-align:left">Choose where the new module will run. The current learners of the selected Group will be assigned, and future Group learners will inherit it.</p>
+      <p style="margin:0 0 12px;text-align:left">Progress, submissions, attendance and files are never copied.</p>
+      <label style="display:block;text-align:left;font-weight:700;margin:10px 0 4px">Programme</label>
+      <select id="duplicate-programme" class="swal2-select" style="display:flex;width:100%;margin:0">${programmeOptions}</select>
+      <label style="display:block;text-align:left;font-weight:700;margin:10px 0 4px">Cohort</label>
+      <select id="duplicate-cohort" class="swal2-select" style="display:flex;width:100%;margin:0">${cohortOptions(sourceProgramme, sourceCohort?.id || '')}</select>
+      <label style="display:block;text-align:left;font-weight:700;margin:10px 0 4px">Group</label>
+      <select id="duplicate-group" class="swal2-select" style="display:flex;width:100%;margin:0">${groupOptions(sourceCohort?.id || '', sourceGroup?.id || '')}</select>
+    `,
+    icon: 'question',
+    width: 600,
+    showCancelButton: true,
+    confirmButtonText: 'Continue',
+    cancelButtonText: 'Cancel',
+    reverseButtons: true,
+    focusCancel: true,
+    buttonsStyling: false,
+    customClass: { popup: 'kbc-standard-swal-popup', title: 'kbc-standard-swal-title', htmlContainer: 'kbc-standard-swal-text', actions: 'kbc-standard-swal-actions', confirmButton: 'kbc-standard-swal-confirm', cancelButton: 'kbc-standard-swal-cancel', validationMessage: 'kbc-standard-swal-validation' },
+    didOpen: () => {
+      const popup = Swal.getPopup();
+      const programmeSelect = popup?.querySelector<HTMLSelectElement>('#duplicate-programme');
+      const cohortSelect = popup?.querySelector<HTMLSelectElement>('#duplicate-cohort');
+      const groupSelect = popup?.querySelector<HTMLSelectElement>('#duplicate-group');
+      const refreshCohorts = () => {
+        const programme = liveProgrammes.find(item => curriculumProgrammeId(item) === programmeSelect?.value);
+        if (!programme || !cohortSelect || !groupSelect) return;
+        cohortSelect.innerHTML = cohortOptions(programme);
+        groupSelect.innerHTML = '';
+      };
+      const refreshGroups = () => {
+        if (groupSelect && cohortSelect) groupSelect.innerHTML = groupOptions(cohortSelect.value);
+      };
+      programmeSelect?.addEventListener('change', refreshCohorts);
+      cohortSelect?.addEventListener('change', refreshGroups);
+    },
+    preConfirm: () => {
+      const popup = Swal.getPopup();
+      const programmeId = popup?.querySelector<HTMLSelectElement>('#duplicate-programme')?.value || '';
+      const cohortId = popup?.querySelector<HTMLSelectElement>('#duplicate-cohort')?.value || '';
+      const groupId = popup?.querySelector<HTMLSelectElement>('#duplicate-group')?.value || '';
+      const programme = liveProgrammes.find(item => curriculumProgrammeId(item) === programmeId);
+      const cohort = options.cohorts.find(item => item.id === cohortId);
+      const group = options.groups.find(item => item.id === groupId);
+      if (!programme || !cohort || !group || group.cohortId !== cohort.id || !curriculumProgrammeMatches(cohort, programme) || !curriculumProgrammeMatches(group, programme)) {
+        Swal.showValidationMessage('Choose a valid Programme, Cohort and Group combination.');
+        return false;
+      }
+      return { programme, cohort, group };
+    },
+  });
+  if (!destination.isConfirmed || !destination.value) return null;
+  const selected = destination.value as DuplicateDestination;
+  const teams = await Swal.fire({
+    title: 'Teams meeting and dates',
+    html: '<p style="margin:0 0 12px;text-align:left">Choose whether the duplicate shares the original Teams meeting.</p><label style="display:block;text-align:left;margin:8px 0"><input id="duplicate-teams-shared" type="radio" name="duplicate-teams" value="shared" checked> Share the same Teams meeting and record</label><label style="display:block;text-align:left;margin:8px 0"><input id="duplicate-teams-independent" type="radio" name="duplicate-teams" value="independent"> Create an independent Teams meeting later</label><div id="duplicate-start-date-wrap" style="display:none;text-align:left;margin-top:12px"><label style="font-weight:700">Start Date</label><input id="duplicate-start-date" type="date" class="swal2-input" style="width:100%;margin:4px 0"></div>',
+    icon: 'question',
+    width: 560,
+    showCancelButton: true,
+    confirmButtonText: 'Duplicate module',
+    cancelButtonText: 'Back',
+    reverseButtons: true,
+    focusCancel: true,
+    buttonsStyling: false,
+    customClass: { popup: 'kbc-standard-swal-popup', title: 'kbc-standard-swal-title', htmlContainer: 'kbc-standard-swal-text', actions: 'kbc-standard-swal-actions', confirmButton: 'kbc-standard-swal-confirm', cancelButton: 'kbc-standard-swal-cancel', validationMessage: 'kbc-standard-swal-validation' },
+    didOpen: () => {
+      const popup = Swal.getPopup();
+      const independent = popup?.querySelector<HTMLInputElement>('#duplicate-teams-independent');
+      const wrap = popup?.querySelector<HTMLElement>('#duplicate-start-date-wrap');
+      independent?.addEventListener('change', () => { if (wrap) wrap.style.display = independent.checked ? 'block' : 'none'; });
+    },
+    preConfirm: () => {
+      const popup = Swal.getPopup();
+      const independent = popup?.querySelector<HTMLInputElement>('#duplicate-teams-independent')?.checked;
+      const startDate = popup?.querySelector<HTMLInputElement>('#duplicate-start-date')?.value || '';
+      if (independent && !startDate) {
+        Swal.showValidationMessage('Choose the Start Date for the independent module.');
+        return false;
+      }
+      return { teamsCopyMode: independent ? 'independent' : 'shared', startDate };
+    },
+  });
+  if (!teams.isConfirmed || !teams.value) return null;
+  const teamsValue = teams.value as { teamsCopyMode: 'shared' | 'independent'; startDate: string };
+  if (teamsValue.teamsCopyMode === 'shared') {
+    const accepted = await showCurriculumConfirm({
+      title: 'Share the Teams meeting?',
+      text: 'The original and duplicate will use the same meeting identity. Links, attendees, invitations, attendance, recordings and later meeting changes can affect both modules.',
+      icon: 'warning',
+      confirmButtonText: 'Yes, share the meeting',
+      cancelButtonText: 'Go back',
+      onConfirm: async () => {},
+    });
+    if (!accepted) return null;
+  }
+  return { ...selected, ...teamsValue };
+}
+
 export default function ModuleBuilder() {
   const { auth } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -400,8 +665,31 @@ export default function ModuleBuilder() {
   // Both run the same clash check and the same assignment notification, so the
   // catalogue no longer carries a third change-tutor drawer of its own.
   const [workingModule, setWorkingModule] = useState<ModuleCatalogueItem | null>(null);
+  /**
+   * The module as it is *right now*, readable from inside a callback that has
+   * already started.
+   *
+   * The live merge reads the stored copy over the network and then folds it
+   * into the reader's. Between those two moments the reader keeps typing, and a
+   * merge that folded into the copy captured before the request would drop
+   * every keystroke made while it was in the air -- the same out-of-order
+   * overwrite the save path guards against, arriving by a different door.
+   */
+  const workingModuleRef = useRef<ModuleCatalogueItem | null>(null);
+  workingModuleRef.current = workingModule;
+  /**
+   * The fetched session plan, for the same reason: the add/reuse/import
+   * callbacks are declared above the state that holds it and run long after
+   * the render that filled it. Null while it is still loading, which the
+   * delivery-slot capacity reads as "fall back to the module's own pattern".
+   */
+  const sessionPlanRef = useRef<ModuleWeekSessionPlan | null>(null);
   const [selection, setSelection] = useState<Selection | null>(null);
   const [focusedComponentId, setFocusedComponentId] = useState('');
+  // Said when a link (the audit trail's "archived" row) names an item archived
+  // out of this module: it is no longer on screen, so without this the reader
+  // lands on its week and sees nothing of what they followed.
+  const [archivedItemNotice, setArchivedItemNotice] = useState('');
   const [expandedWeekIds, setExpandedWeekIds] = useState<Set<string>>(new Set());
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [placementModule, setPlacementModule] = useState<ModuleFormTarget | null>(null);
@@ -419,7 +707,7 @@ export default function ModuleBuilder() {
   const [aiMaterialOpen, setAiMaterialOpen] = useState(false);
   const [deletingModuleId, setDeletingModuleId] = useState<string | null>(null);
   const [hiddenModuleIds, setHiddenModuleIds] = useState<Set<string>>(new Set());
-  const [noticeAlert, setNoticeAlert] = useState<{ title: string; message: string } | null>(null);
+  const [noticeAlert, setNoticeAlert] = useState<{ title: string; message: string; downloadableModule?: ModuleCatalogueItem } | null>(null);
   const [lessonPickerWeekId, setLessonPickerWeekId] = useState<string | null>(null);
   const [reusePickerWeekId, setReusePickerWeekId] = useState<string | null>(null);
   const [weekTemplateImportOpen, setWeekTemplateImportOpen] = useState(false);
@@ -453,15 +741,20 @@ export default function ModuleBuilder() {
   const [saving, setSaving] = useState(false);
   const [saveFailure, setSaveFailure] = useState<WorkspaceSaveFailure | null>(null);
   /**
-   * Somebody else's save landed on the module this workspace is holding, and
-   * the workspace has edits of its own so it cannot simply take it.
+   * Somebody else's save landed on the module this workspace is holding.
    *
-   * Set only in that case. With nothing unsaved the new version is adopted
-   * silently -- there is no decision to put to the reader -- and this stays
-   * null. `revision` is what was seen, so the same write is not announced twice
-   * while the reader keeps working.
+   * With nothing unsaved the stored version is adopted silently -- there is no
+   * decision to put to the reader -- and this stays null. With edits in the
+   * workspace the two copies are merged instead: their weeks and components
+   * arrive, the reader's stay, and this is the receipt.
+   *
+   * `notices` is one sentence per field they *both* changed, which is the only
+   * case the reader has to know about; the reader's version is what survived
+   * each one. An empty `notices` with a non-zero `adopted` is the quiet case --
+   * work arrived and nothing of the reader's was in its way. `revision` is what
+   * was seen, so the same write is not announced twice.
    */
-  const [remoteUpdate, setRemoteUpdate] = useState<{ revision: string } | null>(null);
+  const [remoteUpdate, setRemoteUpdate] = useState<{ revision: string; notices: string[]; adopted: number } | null>(null);
   /**
    * When the live sync last asked the server for this module's structure.
    *
@@ -476,6 +769,19 @@ export default function ModuleBuilder() {
   const liveSyncPendingRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   /** Read through a ref so the trailing tick runs today's callback, not the one that scheduled it. */
   const liveSyncRef = useRef<() => void | Promise<void>>(() => undefined);
+  /** The live merge, reachable from the save path that is declared above it. */
+  const mergeStoredRef = useRef<(structureId: string) => Promise<boolean>>(async () => false);
+  /**
+   * Which live read is the newest one to have been started.
+   *
+   * The floor above keeps these 3s apart, but a forced structure rebuild can
+   * take longer than that, so two can be in the air at once. Whichever replies
+   * last would otherwise decide what the workspace holds -- and if that is the
+   * older one, it reinstates the values the newer read had just corrected and
+   * puts the workspace back onto a superseded revision. Only the newest read
+   * applies; an older one that arrives late is dropped.
+   */
+  const liveSyncSequenceRef = useRef(0);
   // The state the in-flight save is carrying. Anything the reader types after
   // this is not in that request, which is what the footer has to be able to say.
   const [savingSnapshot, setSavingSnapshot] = useState('');
@@ -979,7 +1285,7 @@ export default function ModuleBuilder() {
     groupName: workingModule?.group || '',
   }), [workingModule?.programmeId, workingModule?.programmeName, workingModule?.title, workingModule?.group]);
   const uploadComponentForModule = useCallback<WeekComponentUploader>(
-    (componentId, file, componentType) => uploadComponentResource({ moduleCatalogueId: workingModule?.catalogueId || '', componentId, componentType, file }),
+    (componentId, file, componentType, topicResource) => uploadComponentResource({ moduleCatalogueId: workingModule?.catalogueId || '', componentId, componentType, file, topicResource }),
     [workingModule?.catalogueId],
   );
 
@@ -1277,6 +1583,9 @@ export default function ModuleBuilder() {
         const params = new URLSearchParams(previous);
         if (next.catalogueId) params.set('module', next.catalogueId);
         params.delete('moduleTitle');
+        // Read into the notice above; left in the address they would follow the
+        // reader into the next module they open.
+        ['archived', 'archivedName', 'archivedAt'].forEach(key => params.delete(key));
         return params;
       }, { replace: historyMode === 'replace' });
       setWorkingModule(next);
@@ -1285,12 +1594,13 @@ export default function ModuleBuilder() {
         ? deepLinkTarget.selection.componentId
         : '');
       setSettingsOpen(openSettings || deepLinkTarget.openSettings);
+      setArchivedItemNotice(archivedItemNoticeFor(next, new URLSearchParams(window.location.search)));
       await finishLoadingProgress(setOpeningModuleComplete);
     } catch (err) {
       setActionMessage(err instanceof Error ? err.message : 'Unable to load module structure.');
       // Whatever failed was reading this same module's structure, so the same
       // click tried again is a real retry, not a guess.
-      setActionMessageRetry(() => () => { void openModule(module, openSettings); });
+      setActionMessageRetry(() => () => { void openModule(module, openSettings, historyMode); });
     } finally {
       setOpeningModule(null);
       setOpeningModuleComplete(false);
@@ -1572,17 +1882,78 @@ export default function ModuleBuilder() {
     setWorkingModule(current => (current ? recalculateModule(updater(current)) : current));
   }, [workingModuleProgrammeArchived]);
 
+  // A week can plan as many live sessions as its group has delivery days. Past
+  // that there is no date to give one, so the author is asked before it
+  // happens instead of discovering a "No date yet" row afterwards. Nothing is
+  // refused -- an unplanned live session is a legitimate thing to author, it
+  // just has to be dated by hand -- so a yes goes ahead exactly as before.
+  //
+  // Read through a ref because the fetched plan is state declared further
+  // down; these callbacks run long after the render that filled it.
+  const confirmLiveSessionSlotOverflow = useCallback(async (overflow: LiveSessionSlotOverflow | null) => {
+    if (!overflow) return true;
+    const notice = liveSessionSlotOverflowNotice(overflow);
+    return showCurriculumConfirm({
+      title: notice.title,
+      text: notice.text,
+      icon: 'warning',
+      confirmButtonText: overflow.beyond === 1 ? 'Add it anyway' : 'Add them anyway',
+      cancelButtonText: 'Cancel',
+      onConfirm: async () => {},
+    });
+  }, []);
+
+  /** The overflow of adding live sessions to a week this module already has. */
+  const weekSlotOverflow = useCallback((weekId: string, adding: number) => {
+    const module = workingModuleRef.current;
+    if (!module) return null;
+    return liveSessionSlotOverflow(
+      module,
+      module.weekStructure.findIndex(week => week.id === weekId),
+      adding,
+      sessionPlanRef.current?.sessions,
+    );
+  }, []);
+
+  /**
+   * The overflow of a week that does not exist yet — a template copy or a
+   * clone. It lands at the end, past anything the fetched plan covers, so its
+   * capacity is the group's own delivery pattern.
+   */
+  const newWeekSlotOverflow = useCallback((liveSessions: number): LiveSessionSlotOverflow | null => {
+    const module = workingModuleRef.current;
+    if (!module || liveSessions <= 0) return null;
+    const capacity = weekDeliverySlotCapacity(module, module.weekStructure.length);
+    const beyond = Math.max(0, liveSessions - capacity);
+    if (!beyond) return null;
+    return {
+      weekNumber: module.weekStructure.length + 1,
+      capacity,
+      existing: 0,
+      adding: liveSessions,
+      beyond,
+    };
+  }, []);
+
   // One state update appends the requested number of independent template copies.
-  const importWeekTemplateAsNewWeek = useCallback((template: WeekTemplate, count: number) => {
+  const importWeekTemplateAsNewWeek = useCallback(async (template: WeekTemplate, count: number) => {
+    // Every copy is the same week, so they all raise the same question: ask it
+    // once, about the week the template describes.
+    const liveSessions = (template.components || []).filter(component => component.type === 'live-session').length;
+    if (!(await confirmLiveSessionSlotOverflow(newWeekSlotOverflow(liveSessions)))) return;
     updateWorkingModule(module => appendWeekTemplateCopies(module, template, count));
     setWeekTemplateImportOpen(false);
-  }, [updateWorkingModule]);
+  }, [updateWorkingModule, confirmLiveSessionSlotOverflow, newWeekSlotOverflow]);
 
   // Copy components chosen from the reuse library into an existing week. The
   // copies land in client state and are persisted by the normal module save -
   // a per-component write would be undone by it, because saving re-upserts the
   // module's whole week structure.
-  const addLibraryComponentsToWeek = useCallback((weekId: string, picked: LibraryComponent[]) => {
+  const addLibraryComponentsToWeek = useCallback(async (weekId: string, picked: LibraryComponent[]) => {
+    // `componentType` is the authoring type; `type` carries a human label that
+    // several activity types share (see LibraryComponent).
+    const liveSessions = picked.filter(source => source.componentType === 'live-session').length;
+    if (!(await confirmLiveSessionSlotOverflow(weekSlotOverflow(weekId, liveSessions)))) return;
     let lastComponentId = '';
     updateWorkingModule(module => ({
       ...module,
@@ -1595,13 +1966,19 @@ export default function ModuleBuilder() {
     }));
     if (lastComponentId) setSelection({ kind: 'component', weekId, componentId: lastComponentId });
     setReusePickerWeekId(null);
-  }, [updateWorkingModule]);
+  }, [updateWorkingModule, confirmLiveSessionSlotOverflow, weekSlotOverflow]);
 
   // Clone a week in place: the twin lands directly beneath its source, carrying
   // every component in full except the live session (`duplicateWeekInModule`
   // says why). Client state only -- the normal module save writes the whole week
   // structure, so a per-week write here would only be undone by it.
-  const duplicateWeek = useCallback((weekId: string) => {
+  const duplicateWeek = useCallback(async (weekId: string) => {
+    // The clone is a week of its own at the end of the run, so it faces the
+    // same question the source did -- and answers it differently only when the
+    // source was already carrying more live sessions than a week can date.
+    const source = workingModuleRef.current?.weekStructure.find(week => week.id === weekId);
+    const liveSessions = (source?.components || []).filter(component => component.type === 'live-session').length;
+    if (!(await confirmLiveSessionSlotOverflow(newWeekSlotOverflow(liveSessions)))) return;
     let copyId = '';
     updateWorkingModule(module => {
       const next = duplicateWeekInModule(module, weekId);
@@ -1613,7 +1990,7 @@ export default function ModuleBuilder() {
     // Open it straight away: the point of a clone is the edit you make to it.
     setExpandedWeekIds(prev => new Set(prev).add(copyId));
     setSelection({ kind: 'week', weekId: copyId });
-  }, [updateWorkingModule]);
+  }, [updateWorkingModule, confirmLiveSessionSlotOverflow, newWeekSlotOverflow]);
 
   // The clone button's "copy to another week" option: the twin lands at the
   // end of the target week, carrying the source in full except a live
@@ -1678,20 +2055,37 @@ export default function ModuleBuilder() {
   // alone, and the auto-save effect names itself so its writes are recorded as
   // ordinary edits with an auto-save source rather than as an action of their
   // own. Never passed straight to an onClick -- see the note above.
-  const persistWorkingModule = useCallback(async (source: 'auto-save' | 'manual' = 'manual') => {
+  const persistWorkingModule = useCallback(async (
+    source: 'auto-save' | 'manual' = 'manual',
+    // How many more times this save may rebase onto a newer stored version. It
+    // counts down across the chain, so a module being written to in a tight
+    // loop somewhere else cannot turn one click into an unbounded run of saves.
+    rebasesLeft = MODULE_CONFLICT_REBASE_LIMIT,
+  ) => {
     if (!workingModule) return null;
+    // Set in the catch below when the refusal is one a merge can answer. Acted
+    // on after the `finally` has released the in-flight guard, because the
+    // retry is a second save and the overlap guard would otherwise refuse it.
+    let retryAfterMerge = '';
     // The backend refuses this with a 400 anyway; saying so here keeps the
     // reader's unsaved work in the workspace instead of round-tripping it.
     if (workingModuleProgrammeArchived) {
       setActionMessage(ARCHIVED_PROGRAMME_BUILDER_NOTICE);
       return null;
     }
+    // The ref rather than the state: identical on an ordinary save, and the
+    // difference on a retry after a merge, where the merged module exists but
+    // the render carrying it has not happened yet. Sending the state there
+    // would write back the very payload the server had just refused.
+    const liveModule = workingModuleRef.current?.catalogueId === workingModule.catalogueId
+      ? workingModuleRef.current
+      : workingModule;
     const scopedWorkingModule = workingModuleScopeLock?.locked ? {
-      ...workingModule,
-      programmeId: workingModuleScopeLock.programmeId || workingModule.programmeId,
-      programmeName: workingModuleScopeLock.programmeName || workingModule.programmeName,
-      ksbProfileSourceId: workingModuleScopeLock.ksbSourceId || workingModule.ksbProfileSourceId,
-    } : workingModule;
+      ...liveModule,
+      programmeId: workingModuleScopeLock.programmeId || liveModule.programmeId,
+      programmeName: workingModuleScopeLock.programmeName || liveModule.programmeName,
+      ksbProfileSourceId: workingModuleScopeLock.ksbSourceId || liveModule.ksbProfileSourceId,
+    } : liveModule;
     const validationIssues = validateModuleAuthoringStructure(scopedWorkingModule);
     if (validationIssues.length) {
       setActionMessage(firstValidationMessage(validationIssues));
@@ -1775,27 +2169,45 @@ export default function ModuleBuilder() {
       // authored exactly where they are -- `savedModuleSnapshotRef` is left
       // alone too, so the workspace still knows it has unsaved work.
       if (err instanceof ModuleStructureConflictError) {
-        // Somebody else's write is already in the module. Re-sending this
-        // payload would replace every week and component with the pre-edit
-        // ones, so the auto-save is disarmed until the module is read again --
-        // the reader is told what happened and keeps everything they typed.
-        autoSaveArmedRef.current = false;
-        setSaveFailure({ kind: 'conflict', message: err.message });
-        setActionMessage(err.message);
-        // The refusal names the revision that is stored now, so the way out is
-        // offered here rather than several seconds later when the live sync
-        // gets to it: the banner's "Load their version" is what re-arms this
-        // workspace, and it is the same choice either route arrives at.
-        if (err.currentRevision) setRemoteUpdate({ revision: err.currentRevision });
+        // Somebody else's write got there first. Re-sending this payload as it
+        // stands would replace every week and component with the pre-edit ones,
+        // so it is not re-sent: the stored version is merged into the workspace
+        // and the merged module -- which contains both editors' work -- is what
+        // goes next. The reader is told only about the fields both of them
+        // changed, and only once the merge knows what those are.
+        const mergeTarget = rebasesLeft > 0 ? moduleStructureIdentifier(moduleToSave) : '';
+        if (mergeTarget) {
+          retryAfterMerge = mergeTarget;
+        } else {
+          // Out of attempts. The reader's work is intact and already merged
+          // with everything that was read along the way, so the auto-save is
+          // disarmed -- not because the payload is unsafe, but because a timer
+          // must not keep chasing a module that is moving this fast. The Save
+          // button still works and still rebases.
+          autoSaveArmedRef.current = false;
+          setSaveFailure({ kind: 'conflict', message: MODULE_CONFLICT_BUSY_NOTICE });
+          setActionMessage(MODULE_CONFLICT_BUSY_NOTICE);
+          // Carries a sentence rather than an empty list, because the banner
+          // reads the list to decide what it is: a list makes it the amber
+          // "here is what you have to decide", which is what this is, and it is
+          // what puts "Load their version" back on screen.
+          if (err.currentRevision) {
+            setRemoteUpdate({
+              revision: err.currentRevision,
+              notices: [MODULE_CONFLICT_BUSY_BANNER],
+              adopted: 0,
+            });
+          }
+        }
+      } else {
+        // `curriculumErrorMessage` unwraps the handler's own sentence -- the
+        // archived-programme refusal among them -- from the "Curriculum API
+        // returned 400 for /path:" diagnostic CurriculumApiError carries.
+        const message = curriculumErrorMessage(err, err instanceof Error ? err.message : 'Unable to save module structure.');
+        setSaveFailure({ kind: 'error', message });
+        setActionMessage(message);
         return null;
       }
-      // `curriculumErrorMessage` unwraps the handler's own sentence -- the
-      // archived-programme refusal among them -- from the "Curriculum API
-      // returned 400 for /path:" diagnostic CurriculumApiError carries.
-      const message = curriculumErrorMessage(err, err instanceof Error ? err.message : 'Unable to save module structure.');
-      setSaveFailure({ kind: 'error', message });
-      setActionMessage(message);
-      return null;
     } finally {
       if (saveRequestRef.current === requestId) {
         savingRef.current = false;
@@ -1804,7 +2216,32 @@ export default function ModuleBuilder() {
         setSavingSnapshot('');
       }
     }
+    // Only reachable from the conflict branch above: every other path has
+    // already returned. The merge installs the stored weeks alongside the
+    // reader's and moves the workspace onto the revision that refused this
+    // save, which is what makes the second attempt a legal one.
+    if (retryAfterMerge) {
+      const merged = await mergeStoredRef.current(retryAfterMerge).catch(() => false);
+      if (merged) return persistRef.current(source, rebasesLeft - 1);
+      // The stored version could not be read, so the refusal stands and the
+      // reader is told, exactly as it was before there was a merge to try.
+      autoSaveArmedRef.current = false;
+      setSaveFailure({ kind: 'conflict', message: MODULE_CONFLICT_UNREADABLE_NOTICE });
+      setActionMessage(MODULE_CONFLICT_UNREADABLE_NOTICE);
+    }
+    return null;
   }, [curriculumProgrammes, ksbSets, reload, standards, workingModule, workingModuleProgrammeArchived, workingModuleScopeLock]);
+  /**
+   * `persistWorkingModule` and the live merge, readable from inside each other.
+   *
+   * They call each other -- a refused save merges, and a merge finishes a
+   * refused save -- and they are declared pages apart. Naming either directly
+   * would put the later one in a dependency array that is evaluated before it
+   * exists, so each is reached through a ref that is re-pointed on every
+   * render and therefore always the current one.
+   */
+  const persistRef = useRef(persistWorkingModule);
+  persistRef.current = persistWorkingModule;
 
   /**
    * The state the auto-save has already tried, so a refused one cannot loop.
@@ -1916,29 +2353,140 @@ export default function ModuleBuilder() {
     setActionMessage(null);
     setNoticeAlert(null);
     try {
-      const { module: nextModule, summary } = await importModuleKsbWorkbook(file, workingModule);
+      // The workbook is authored against the module's locked KSB source. Pass
+      // that source into the import so codes already present on a component do
+      // not bring a stale source identity back into the new mapping. The API
+      // validates both the code and its source, not the code alone.
+      const sourceId = cleanKsbSourceId(
+        workingModuleScopeLock?.ksbSourceId
+        || workspaceKsbProfileValue
+        || workingModule.ksbProfileSourceId,
+      );
+      const source: KsbImportSource | undefined = sourceId
+        ? {
+          sourceType: sourceId.startsWith('standard:') ? 'standard' : 'framework',
+          sourceId,
+          allowedCodes: workspaceKsbProfileEntries.map(entry => entry.code),
+        }
+        : undefined;
+      const { module: nextModule, summary } = await importModuleKsbWorkbook(file, workingModule, source);
       if (!summary.rowsWithKsbs) {
         setActionMessage('No KSBs were found in the uploaded sheet. Fill the KSBs column before re-uploading.');
         return;
       }
       updateWorkingModule(() => nextModule);
-      setNoticeAlert({ title: 'KSB sheet imported', message: describeKsbImport(summary) });
+      setNoticeAlert({ title: 'KSB sheet imported', message: describeKsbImport(summary), downloadableModule: nextModule });
     } catch (err) {
       setActionMessage(err instanceof Error ? err.message : 'Unable to read the uploaded KSB sheet.');
     }
-  }, [updateWorkingModule, workingModule]);
+  }, [updateWorkingModule, workingModule, workingModuleScopeLock?.ksbSourceId, workspaceKsbProfileEntries, workspaceKsbProfileValue]);
 
-  const duplicateModule = async (module: ModuleCatalogueItem) => {
+  const duplicateModule = async (module: ModuleCatalogueItem, dialog: DuplicateDialogResult) => {
     setDuplicatingModule(module);
     setDuplicatingModuleComplete(false);
     setActionMessage(null);
+    setActionMessageRetry(null);
     setNoticeAlert(null);
     try {
       const source = getDefaultStructure((await loadModuleStructure(moduleStructureIdentifier(module))) || module);
-      const duplicate = await duplicateModuleStructure(source);
+      const sourceProgrammeId = normaliseDeepLinkValue(module.programmeId || module.programmeName || '');
+      const targetProgrammeId = normaliseDeepLinkValue(curriculumProgrammeId(dialog.programme));
+      const sameProgramme = sourceProgrammeId === targetProgrammeId
+        || sourceProgrammeId === normaliseDeepLinkValue(dialog.programme.name);
+      if (dialog.teamsCopyMode === 'shared' && source.startDate && dialog.cohort.startDate && source.startDate < dialog.cohort.startDate) {
+        throw new Error('The original dates start before the selected Cohort. Choose an independent Teams meeting or a Cohort that contains the original dates.');
+      }
+      if (dialog.teamsCopyMode === 'shared' && source.endDate && dialog.cohort.endDate && source.endDate > dialog.cohort.endDate) {
+        throw new Error('The original dates end after the selected Cohort. Choose an independent Teams meeting or a Cohort that contains the original dates.');
+      }
+      const roster = await fetchCurriculumScopeLearnerRoster('group', dialog.group.id, { learnerStatus: 'active' });
+      // The scope roster is sourced from LearnerProfile rows.  Assignment
+      // endpoints write the enrolment record, so always prefer the explicit
+      // bridge id; falling back to the profile id keeps old environments
+      // readable while they are being backfilled.
+      const learnerIds = roster.assignedLearners
+        .map(curriculumLearnerAssignmentId)
+        .filter(Boolean);
+      let ksbSource: DuplicateKsbSource | undefined;
+      if (!sameProgramme) {
+        const [allKsbSets, allStandards] = await Promise.all([
+          fetchCurriculumKsbSets(undefined, { all: true }),
+          fetchCurriculumStandards(),
+        ]);
+        ksbSource = duplicateTargetKsbSource(dialog.programme, allKsbSets, allStandards)
+          || { sourceType: '', sourceId: '', programmeId: curriculumProgrammeId(dialog.programme), programmeName: dialog.programme.name, entries: [] };
+      }
+      const duplicate = await duplicateModuleStructure(source, {
+        learnerRosterMode: 'inherited',
+        teamsCopyMode: dialog.teamsCopyMode,
+        keepDates: dialog.teamsCopyMode === 'shared',
+        startDate: dialog.startDate,
+        programmeId: curriculumProgrammeId(dialog.programme),
+        programmeName: dialog.programme.name,
+        cohortId: dialog.cohort.id,
+        cohortName: dialog.cohort.name,
+        groupId: dialog.group.id,
+        groupName: dialog.group.name,
+        ksbSource,
+        deliveryMetadata: dialog.teamsCopyMode === 'independent'
+          ? {
+              ...(source.deliveryMetadata || {}),
+              cohortId: dialog.cohort.id,
+              cohort: dialog.cohort.name,
+              groupId: dialog.group.id,
+              group: dialog.group.name,
+              weekDays: dialog.group.weekDays || source.deliveryMetadata?.weekDays || '',
+              startTime: dialog.group.startTime || source.deliveryMetadata?.startTime || '',
+              endTime: dialog.group.endTime || source.deliveryMetadata?.endTime || '',
+            }
+          : undefined,
+      });
+      const moduleTarget: LearnerAssignmentTarget = { scope: 'module', id: duplicate.catalogueId, name: duplicate.title };
+      const applyAssignments = async (ids: string[]) => applyCurriculumLearnerAssignments(moduleTarget, { add: ids, remove: [] });
+      const assignment = learnerIds.length
+        ? await applyAssignments(learnerIds)
+        : { added: [], removed: [], failed: [], failureMessage: null, abandoned: false, changedCount: 0, moduleCount: 1 };
+      const report = duplicate.ksbRemapReport as KsbRemapReport | null | undefined;
+      const ksbMessage = report && report.unmatched?.length
+        ? ` ${report.matchedCount} KSBs matched; ${report.unmatched.length} need review in the saved remap report.`
+        : '';
+      if (assignment.failed.length) {
+        const failed = [...assignment.failed];
+        const retryAssignments = async (failedIds: string[]) => {
+          // Re-read the Group before retrying.  This also upgrades failures
+          // from an older bundle that sent profile ids to the enrolment ids
+          // now accepted by the assignment endpoint.
+          const latestRoster = await fetchCurriculumScopeLearnerRoster(
+            'group', dialog.group.id, { learnerStatus: 'active' },
+          );
+          const wanted = new Set(failedIds.map(String));
+          const retryIds = latestRoster.assignedLearners
+            .filter(learner => wanted.has(String(learner.id)) || wanted.has(String(learner.enrolmentId)))
+            .map(curriculumLearnerAssignmentId);
+          if (!retryIds.length) {
+            throw new Error('No active learners from the selected Group are available to retry.');
+          }
+          return applyAssignments([...new Set(retryIds)]);
+        };
+        setActionMessage(`Module created, but ${failed.length} learner assignment${failed.length === 1 ? '' : 's'} failed.${assignment.failureMessage ? ` ${assignment.failureMessage}` : ''}`);
+        setActionMessageRetry(() => () => {
+          void retryAssignments(failed).then(retry => {
+            if (retry.failed.length) {
+              setActionMessage(`Retry completed with ${retry.failed.length} learner assignment failure${retry.failed.length === 1 ? '' : 's'}.`);
+              setActionMessageRetry(() => () => {
+                void retryAssignments(retry.failed).catch(error => setActionMessage(error instanceof Error ? error.message : 'Unable to retry learner assignments.'));
+              });
+            } else {
+              setActionMessage(null);
+              setActionMessageRetry(null);
+              void reload({ silent: true });
+            }
+          }).catch(error => setActionMessage(error instanceof Error ? error.message : 'Unable to retry learner assignments.'));
+        });
+      }
       setNoticeAlert({
         title: 'Module duplicated',
-        message: `${duplicate.title} was created as a draft with its authoring structure.`,
+        message: `${duplicate.title} was created in ${dialog.programme.name} / ${dialog.cohort.name} / ${dialog.group.name}. ${assignment.added.length} active Group learner${assignment.added.length === 1 ? '' : 's'} assigned.${ksbMessage}`,
       });
       reload();
       await finishLoadingProgress(setDuplicatingModuleComplete);
@@ -1948,6 +2496,17 @@ export default function ModuleBuilder() {
       setDuplicatingModule(null);
       setDuplicatingModuleComplete(false);
     }
+  };
+
+  const confirmDuplicateModule = async (module: ModuleCatalogueItem) => {
+    if (duplicatingModule) return;
+    const dialog = await showDuplicateModuleSwal(module, {
+      programmes: curriculumProgrammes,
+      cohorts: scopeCohorts,
+      groups: scopeGroups,
+    });
+    if (!dialog) return;
+    await duplicateModule(module, dialog);
   };
 
   const deleteModule = async (module: ModuleCatalogueItem) => {
@@ -2002,6 +2561,7 @@ export default function ModuleBuilder() {
     // Announced about the module being left. Carrying it into the next one
     // would report somebody else's write on a module it never happened to.
     setRemoteUpdate(null);
+    setArchivedItemNotice('');
     liveSyncReadAtRef.current = 0;
     setSaveFailure(null);
     setSavingSnapshot('');
@@ -2023,7 +2583,8 @@ export default function ModuleBuilder() {
     // with it: they only mean anything inside the module that owns them.
     setSearchParams(previous => {
       const params = new URLSearchParams(previous);
-      ['module', 'moduleId', 'catalogueId', 'moduleTitle', 'week', 'weekId', 'component', 'componentId', 'settings', 'focus']
+      ['module', 'moduleId', 'catalogueId', 'moduleTitle', 'week', 'weekId', 'component', 'componentId', 'settings', 'focus',
+        'archived', 'archivedName', 'archivedAt']
         .forEach(key => params.delete(key));
       return params;
     }, { replace: true });
@@ -2092,12 +2653,30 @@ export default function ModuleBuilder() {
     if (!current) return;
     const structureId = moduleStructureIdentifier(current);
     if (!structureId) return;
+    // The read can overlap an import or another authoring edit. Capture the
+    // exact copy we started reading; installing the response unconditionally
+    // would put the workspace back onto the older server copy and make a just-
+    // imported KSB mapping appear for a moment before disappearing.
+    const snapshotAtRead = moduleSnapshot(current);
     liveSyncReadAtRef.current = Date.now();
+    const sequence = liveSyncSequenceRef.current + 1;
+    liveSyncSequenceRef.current = sequence;
     // Fresh for the same reason opening a module is: this copy is the one the
     // next save writes back in full, and a cached answer would put pre-write
     // weeks into a workspace that then stores them.
     const remote = await loadModuleStructure(structureId, { skipCache: true });
+    // Overtaken while this was in the air. Installing it now would put the
+    // workspace back onto a version that has already been superseded, and onto
+    // the revision that goes with it -- so the newer read stands and this one
+    // is dropped. Not an error: the workspace is up to date, by another route.
+    if (liveSyncSequenceRef.current !== sequence) return;
     if (!remote) throw new Error('The saved version of this module could not be read.');
+    const latest = workingModuleRef.current;
+    if (
+      !latest
+      || latest.catalogueId !== current.catalogueId
+      || moduleSnapshot(latest) !== snapshotAtRead
+    ) return;
     const stored = recalculateModule(getDefaultStructure({
       ...current,
       ...remote,
@@ -2122,26 +2701,79 @@ export default function ModuleBuilder() {
   }, [applySelectionSafely, selection, workingModule]);
 
   /**
-   * Read the stored revision, and say so if it is not the one this workspace is
-   * based on. Nothing the reader is holding is touched.
+   * Fold the stored module into the one the reader is editing.
    *
-   * Deliberately NOT paired with taking the remote revision: a workspace with
-   * unsaved weeks that adopts the stored fingerprint is a false valid state.
-   * Its next save then carries local content under a revision it never read,
-   * the guard has nothing left to refuse, and the other writer's work is
-   * replaced with no error raised anywhere. The local revision stays the local
-   * revision until the reader chooses to load the stored version, and the
-   * remote one is held separately, as an announcement.
+   * This is what makes two people on one module work. The copy this workspace
+   * was last agreed on with the server is the base; the reader's copy and the
+   * stored copy are compared against it field by field, week by week, component
+   * by component. A field only they changed arrives. A field only the reader
+   * changed stays. A field they both changed keeps the reader's and is said out
+   * loud -- that sentence is the whole of what the reader has to know.
+   *
+   * Taking the stored revision afterwards is safe here, and only here, because
+   * the copy now in the workspace *contains* their write. The state the old
+   * code refused to enter was {revision: theirs, weeks: mine}, which let the
+   * next save replace their work with no error raised. This is {revision:
+   * theirs, weeks: theirs merged with mine}, which is the thing the revision is
+   * supposed to certify.
+   *
+   * Returns false when nothing was read, so a caller can leave the workspace
+   * exactly as it was.
    */
-  const noteRemoteRevision = useCallback(async (structureId: string) => {
+  const mergeStoredIntoWorkspace = useCallback(async (structureId: string): Promise<boolean> => {
     liveSyncReadAtRef.current = Date.now();
+    const sequence = liveSyncSequenceRef.current + 1;
+    liveSyncSequenceRef.current = sequence;
     const remote = await loadModuleStructure(structureId, { skipCache: true }).catch(() => null);
+    // A later read has already answered while this one was in the air, so this
+    // reply describes a version of the module that has since been superseded.
+    // Reported as a success rather than a failure: the workspace HAS been
+    // brought up to date, just not by this call, so a save waiting on it is
+    // right to go ahead.
+    if (liveSyncSequenceRef.current !== sequence) return true;
     const revision = remote?.structureRevision || '';
     // The write was somewhere else in the curriculum: this module is still the
-    // one this workspace read, so there is nothing to tell the reader about.
-    if (!revision || revision === serverRevisionRef.current) return;
-    setRemoteUpdate(existing => (existing && existing.revision === revision ? existing : { revision }));
-  }, []);
+    // one this workspace read, so there is nothing to merge or to mention.
+    if (!remote || !revision || revision === serverRevisionRef.current) return false;
+    // Read after the await, never before: the reader has been typing into this
+    // the whole time the request was in the air.
+    const current = workingModuleRef.current;
+    if (!current || moduleStructureIdentifier(current) !== structureId) return false;
+    const stored = recalculateModule(getDefaultStructure({
+      ...current,
+      ...remote,
+      sessionsNumber: remote.sessionsNumber || current.sessionsNumber,
+      weeks: remote.weeks || current.weeks,
+      sourceModule: current.sourceModule || remote.sourceModule,
+      deliveryUsages: (remote as ModuleBuilderListItem).deliveryUsages || (current as ModuleBuilderListItem).deliveryUsages,
+    } as ModuleBuilderListItem));
+    const base = savedModuleSnapshotRef.current
+      ? JSON.parse(savedModuleSnapshotRef.current) as ModuleCatalogueItem
+      : null;
+    const { module: merged, notices, adopted } = mergeModuleStructures(base, current, stored);
+    // What the server holds is the stored copy, so that is what "saved" means
+    // from here: the difference between it and the merged copy is exactly the
+    // reader's outstanding work, which is what keeps the footer honest.
+    savedModuleSnapshotRef.current = moduleSnapshot(stored);
+    serverRevisionRef.current = revision;
+    // The stored structure has been read back, which is the condition that
+    // makes saving unprompted safe again -- including for a workspace a
+    // conflict had disarmed.
+    autoSaveArmedRef.current = true;
+    // Ahead of the render, because a save refused for a conflict merges and
+    // then re-sends immediately: the retry has to carry the merged module, and
+    // the state it would otherwise read is still a render away.
+    if (workingModuleRef.current?.catalogueId === current.catalogueId) workingModuleRef.current = merged;
+    setWorkingModule(latest => (latest && latest.catalogueId === current.catalogueId ? merged : latest));
+    if (selection) applySelectionSafely(selection, merged);
+    // A refusal from before this read has been answered by it: the payload that
+    // was turned down has since been merged with what turned it down.
+    setSaveFailure(null);
+    if (!adopted && !notices.length) return true;
+    setRemoteUpdate({ revision, notices, adopted });
+    return true;
+  }, [applySelectionSafely, selection]);
+  mergeStoredRef.current = mergeStoredIntoWorkspace;
 
   /**
    * The placement drawer PATCHes the name, dates, tutor and group straight to
@@ -2151,10 +2783,9 @@ export default function ModuleBuilder() {
    *
    * Which it does depends on the same question everything else here turns on.
    * Nothing unsaved: take the stored module whole -- content and revision
-   * together, from one read. Unsaved edits: keep every one of them and say the
-   * module moved, because a merge that kept local weeks while adopting the
-   * stored revision would hand this workspace a licence to overwrite the very
-   * write it was told about.
+   * together, from one read. Unsaved edits: merge, so the drawer's new dates,
+   * tutor and group arrive without the weeks the reader is part-way through
+   * being thrown away or held back.
    */
   const syncWorkingModuleFromStore = useCallback(async () => {
     const current = workingModule;
@@ -2168,8 +2799,8 @@ export default function ModuleBuilder() {
       await adoptStoredModule().catch(() => undefined);
       return;
     }
-    await noteRemoteRevision(structureId);
-  }, [adoptStoredModule, noteRemoteRevision, workingModule]);
+    await mergeStoredIntoWorkspace(structureId);
+  }, [adoptStoredModule, mergeStoredIntoWorkspace, workingModule]);
 
   /**
    * What this workspace does when a write lands somewhere else -- another tab,
@@ -2179,10 +2810,11 @@ export default function ModuleBuilder() {
    * editing one, and a screen that quietly disagrees with the database is the
    * whole complaint this answers.
    *
-   * Unsaved edits: say so and change nothing. Their weeks and components stay
-   * exactly where they are -- adopting over them is the overwrite the save
-   * guard exists to prevent, and doing it silently would be worse than the
-   * stale screen was. The banner offers the two honest ways out.
+   * Unsaved edits: merge the two copies. Their weeks and components arrive,
+   * the reader's stay, and the only thing put on screen is the list of fields
+   * both of them changed -- where the reader's version is the one kept. That
+   * is what lets two people build one module at the same time without either
+   * of them losing work or being told to reload.
    */
   const liveSyncWorkingModule = useCallback(async () => {
     const current = workingModule;
@@ -2217,8 +2849,9 @@ export default function ModuleBuilder() {
       reload({ silent: true });
       return;
     }
-    await noteRemoteRevision(structureId);
-  }, [adoptStoredModule, noteRemoteRevision, reload, workingModule]);
+    await mergeStoredIntoWorkspace(structureId);
+    reload({ silent: true });
+  }, [adoptStoredModule, mergeStoredIntoWorkspace, reload, workingModule]);
 
   liveSyncRef.current = liveSyncWorkingModule;
   useEffect(() => () => {
@@ -2233,7 +2866,7 @@ export default function ModuleBuilder() {
   const loadRemoteModuleVersion = useCallback(async () => {
     await showCurriculumConfirm({
       title: 'Load the saved version?',
-      text: 'The edits you have made here since your last save are replaced by the version that was just saved by someone else. This cannot be undone.',
+      text: 'Your unsaved edits are dropped and this screen starts again from the version stored now, including the changes the other editor made where the two of you disagreed. This cannot be undone.',
       icon: 'warning',
       confirmButtonText: 'Yes, load it',
       cancelButtonText: 'Keep my edits',
@@ -2316,6 +2949,7 @@ export default function ModuleBuilder() {
   const workingModuleSessionPlan = weekSessionPlanState?.catalogueId === workingModuleCatalogueId
     ? weekSessionPlanState.plan
     : null;
+  sessionPlanRef.current = workingModuleSessionPlan;
   const [sessionPreviewOpen, setSessionPreviewOpen] = useState(false);
   useEffect(() => {
     if (!workingModuleCatalogueId || !workingModuleWeekCount) {
@@ -2327,7 +2961,7 @@ export default function ModuleBuilder() {
     const countChanged = planned?.catalogueId === workingModuleCatalogueId;
     plannedWeekCountRef.current = { catalogueId: workingModuleCatalogueId, weeks: workingModuleWeekCount, sessions: workingModuleFlatSessionCount };
     let active = true;
-    void loadModuleWeekSessionPlan(workingModuleCatalogueId, workingModuleWeekCount, workingModuleFlatSessionCount).then(plan => {
+    void loadModuleWeekSessionPlan(workingModuleCatalogueId, workingModuleWeekCount).then(plan => {
       if (!active || !plan) return;
       setWeekSessionPlanState({ catalogueId: workingModuleCatalogueId, plan });
       setWorkingModule(current => (
@@ -2386,66 +3020,6 @@ export default function ModuleBuilder() {
     return byWeekId;
   }, [workingModule, weekSessionPlanState, workingModuleCatalogueId]);
 
-  /**
-   * Put a freshly created module-wide Teams series onto the live sessions it was
-   * created for.
-   *
-   * One create from the Course structure rail covers every live session in the
-   * module, so the join link each one keeps is the link for the day it actually
-   * runs on -- not the first day's link copied down the module. A series with no
-   * entry for a session's day leaves that session alone rather than handing it
-   * somebody else's meeting.
-   *
-   * Only the meeting's own facts are written. Dates, durations and titles stay
-   * as authored: the calendar was built from them, so reading them back would be
-   * a round trip that can only lose.
-   */
-  const applyModuleTeamsSeries = useCallback((result: TeamsMeetingResult, input: TeamsMeetingInput) => {
-    const meeting = result.meeting;
-    const series = meeting.calendarSeries || [];
-    updateWorkingModule(module => ({
-      ...module,
-      weekStructure: module.weekStructure.map(week => ({
-        ...week,
-        components: week.components.map(component => {
-          if (component.type !== 'live-session') return component;
-          const date = String(component.settings.sessionDate || liveSessionDateByWeekId.get(week.id) || week.sessionDate || '');
-          const day = /^\d{4}-\d{2}-\d{2}$/.test(date)
-            ? new Intl.DateTimeFormat('en-US', { weekday: 'long', timeZone: 'UTC' }).format(new Date(`${date}T12:00:00Z`))
-            : '';
-          const daySeries = series.find(item => item.day === day);
-          if (series.length && !daySeries) return component;
-          const joinUrl = daySeries?.joinUrl || meeting.joinUrl || meeting.webLink;
-          if (!joinUrl) return component;
-          return {
-            ...component,
-            settings: {
-              ...component.settings,
-              liveSessionUrl: joinUrl,
-              teamsMeetingUrl: joinUrl,
-              teamsCalendarSeries: JSON.stringify(series),
-              teamsEventId: daySeries?.eventId || meeting.eventId,
-              teamsOnlineMeetingId: daySeries?.onlineMeetingId || meeting.onlineMeetingId || '',
-              teamsLiveSessionId: meeting.liveSessionId,
-              teamsMeetingOptionsUrl: meeting.meetingOptionsUrl,
-              teamsOrganizerEmail: meeting.organizerEmail,
-              teamsAttendees: meeting.attendees,
-              teamsPresenters: meeting.presenters,
-              teamsCoOrganizers: meeting.coOrganizers,
-              teamsProvider: meeting.provider,
-              teamsRepeat: meeting.repeat,
-              teamsRepeatOccurrences: meeting.repeatOccurrences,
-              teamsLobbyBypass: input.lobbyBypass,
-              teamsRecording: input.recording,
-              teamsSpokenLanguage: input.spokenLanguage,
-              teamsMeetingType: input.meetingType,
-            },
-          };
-        }),
-      })),
-    }));
-  }, [liveSessionDateByWeekId, updateWorkingModule]);
-
   // Whichever week is selected (directly, or via one of its components) is
   // always expanded in the Course structure accordion — this is the single
   // source of "make sure the active week's parts are visible."
@@ -2475,8 +3049,13 @@ export default function ModuleBuilder() {
       title: noticeAlert.title,
       text: noticeAlert.message,
       icon: 'success',
-      timer: 2600,
-      confirmButtonText: 'Done',
+      confirmButtonText: 'OK',
+      denyButtonText: noticeAlert.downloadableModule ? 'Download valid file' : undefined,
+      onDeny: noticeAlert.downloadableModule
+        ? async () => {
+          await exportModuleKsbWorkbook(noticeAlert.downloadableModule!, { fileNameSuffix: '-valid' });
+        }
+        : undefined,
     }).finally(() => {
       if (active) setNoticeAlert(null);
     });
@@ -2525,6 +3104,24 @@ export default function ModuleBuilder() {
           </div>
           {sessionResultsOpen && <SessionResultsDialog moduleId={workingModule.catalogueId || workingModule.id} onClose={() => setSessionResultsOpen(false)} />}
           {aiMaterialOpen && <AiMaterialModal moduleCatalogueId={workingModule.catalogueId || workingModule.id} moduleTitle={workingModule.title} onClose={() => setAiMaterialOpen(false)} />}
+          {archivedItemNotice && (
+            <div
+              data-testid="module-builder-archived-item"
+              className="flex items-start justify-between gap-3 rounded-xl border border-amber-200/70 bg-amber-50 px-4 py-3 text-[12px] font-medium text-amber-800"
+            >
+              <span className="flex min-w-0 items-start gap-2">
+                <AppIcon className="ri-archive-line mt-0.5 shrink-0 text-base"></AppIcon>
+                <span className="min-w-0">{archivedItemNotice}</span>
+              </span>
+              <button
+                type="button"
+                onClick={() => setArchivedItemNotice('')}
+                className="shrink-0 rounded-lg border border-amber-200 bg-white px-3 py-1.5 font-bold text-amber-800 hover:bg-amber-100"
+              >
+                Dismiss
+              </button>
+            </div>
+          )}
           {(saving || (actionMessage && !deletingModuleId)) && (
             <SaveStatusPanel
               saving={saving}
@@ -2533,31 +3130,73 @@ export default function ModuleBuilder() {
               module={workingModule}
             />
           )}
+          {workingModule.ksbRemapReport?.unmatched?.length ? (
+            <details data-testid="module-ksb-remap-report" className="rounded-xl border border-amber-200/70 bg-amber-50 px-4 py-3 text-[12px] text-amber-900">
+              <summary className="cursor-pointer font-bold">KSB remap review required ({workingModule.ksbRemapReport.unmatched.length} unmatched)</summary>
+              <p className="mt-2">This duplicate was created successfully, but the following source mappings were not found in the destination Programme:</p>
+              <ul className="mt-2 list-disc space-y-1 pl-5">
+                {workingModule.ksbRemapReport.unmatched.map((entry, index) => <li key={`${entry.path || entry.code}-${index}`}>{entry.code || 'Unknown code'} — {entry.reason || 'Review this mapping.'}</li>)}
+              </ul>
+            </details>
+          ) : null}
 
-          {/* Only ever on screen with unsaved edits in the workspace: with
-              nothing to lose the new version is already installed and there is
-              nothing to ask. Neither button is destructive by accident --
-              loading confirms first, and keeping simply dismisses. */}
+          {/* The receipt for a merge that has already happened -- their work is
+              in the weeks on screen by the time this renders.
+
+              Two shapes, because there are two different things to say. With
+              no disagreement it is a quiet line that the screen caught up, in
+              the calm colour, because nothing needs deciding. With a
+              disagreement it names each field both editors changed and says
+              whose version survived, in amber, and offers the one way back:
+              dropping this reader's side of it and starting from theirs.
+              Neither button is destructive by accident -- loading confirms
+              first, and dismissing changes nothing at all. */}
           {remoteUpdate && (
-            <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-200/70 bg-amber-50 px-4 py-3 text-[12px] font-medium text-amber-800">
-              <span className="flex items-center gap-2">
-                <AppIcon className="ri-refresh-line shrink-0 text-base"></AppIcon>
-                This module was saved somewhere else while you were editing. Your edits are still here - load their version to start from it, or keep editing.
+            <div
+              data-testid="module-builder-remote-update"
+              className={`flex flex-wrap items-start justify-between gap-3 rounded-xl border px-4 py-3 text-[12px] font-medium ${
+                remoteUpdate.notices.length
+                  ? 'border-amber-200/70 bg-amber-50 text-amber-800'
+                  : 'border-primary-200/70 bg-primary-50 text-primary-800'
+              }`}
+            >
+              <span className="flex min-w-0 items-start gap-2">
+                <AppIcon className="ri-refresh-line mt-0.5 shrink-0 text-base"></AppIcon>
+                <span className="min-w-0">
+                  {remoteUpdate.notices.length ? (
+                    <>
+                      <span className="block font-bold">
+                        Someone else saved this module while you were editing. Their changes are now on this screen, and yours are still here.
+                      </span>
+                      <ul className="mt-1 list-disc space-y-0.5 pl-4">
+                        {remoteUpdate.notices.map(notice => <li key={notice}>{notice}</li>)}
+                      </ul>
+                    </>
+                  ) : (
+                    <>
+                      {remoteUpdate.adopted === 1
+                        ? 'One change someone else saved has been added to this screen. Nothing of yours was affected.'
+                        : `${remoteUpdate.adopted} changes someone else saved have been added to this screen. Nothing of yours was affected.`}
+                    </>
+                  )}
+                </span>
               </span>
               <span className="flex shrink-0 items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => { void loadRemoteModuleVersion(); }}
-                  className="rounded-lg border border-amber-300 bg-white px-3 py-1.5 font-bold text-amber-800 hover:bg-amber-100"
-                >
-                  Load their version
-                </button>
+                {remoteUpdate.notices.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => { void loadRemoteModuleVersion(); }}
+                    className="rounded-lg border border-amber-300 bg-white px-3 py-1.5 font-bold text-amber-800 hover:bg-amber-100"
+                  >
+                    Load their version
+                  </button>
+                )}
                 <button
                   type="button"
                   onClick={() => setRemoteUpdate(null)}
-                  className="rounded-lg px-3 py-1.5 font-bold text-amber-700 hover:bg-amber-100"
+                  className={`rounded-lg px-3 py-1.5 font-bold ${remoteUpdate.notices.length ? 'text-amber-700 hover:bg-amber-100' : 'text-primary-700 hover:bg-primary-100'}`}
                 >
-                  Keep editing
+                  {remoteUpdate.notices.length ? 'Keep editing' : 'Got it'}
                 </button>
               </span>
             </div>
@@ -2796,11 +3435,13 @@ export default function ModuleBuilder() {
           <ComponentTypeModal
             description="Select one or more component types — use Select all for a blank set of everything. Each becomes an empty component to fill in; nothing is copied from a saved template."
             onClose={() => setLessonPickerWeekId(null)}
-            onAdd={types => {
+            onAdd={async types => {
               const week = workingModule.weekStructure.find(item => item.id === lessonPickerWeekId);
               if (!week) return;
               const components = createNamedComponents(week, types);
               if (!components.length) return;
+              const liveSessions = components.filter(component => component.type === 'live-session').length;
+              if (!(await confirmLiveSessionSlotOverflow(weekSlotOverflow(week.id, liveSessions)))) return;
               updateWorkingModule(module => ({
                 ...module,
                 weekStructure: module.weekStructure.map(item => item.id === week.id ? { ...item, components: [...item.components, ...components] } : item),
@@ -2833,7 +3474,6 @@ export default function ModuleBuilder() {
               setWorkingModule(next);
             }}
             onClose={() => setModuleTeamsMeetingOpen(false)}
-            onCreated={applyModuleTeamsSeries}
           />
         )}
         {reusePickerWeekId && (
@@ -3049,9 +3689,12 @@ export default function ModuleBuilder() {
                     onKsbMap={() => { void openKsbMap(module); }}
                     ksbMapLoading={ksbMapLoadingId === (module.catalogueId || moduleStructureIdentifier(module) || module.title)}
                     onLearners={() => openLearnerAction(module)}
-                    onBuild={() => openModule(module)}
+                    // Opening a module from the catalogue is a real drill-in:
+                    // keep the catalogue entry in browser history so Back
+                    // returns to this list instead of the page that led here.
+                    onBuild={() => openModule(module, false, 'push')}
                     onSettings={() => openPlacementForm(module)}
-                    onDuplicate={() => duplicateModule(module)}
+                    onDuplicate={() => void confirmDuplicateModule(module)}
                     onDelete={() => confirmDeleteModule(module)}
                   />
                 ))}
@@ -3141,7 +3784,7 @@ export default function ModuleBuilder() {
             onBuild={() => {
               const module = ksbMapDisplayModule;
               setKsbMapModule(null);
-              void openModule(module);
+              void openModule(module, false, 'push');
             }}
           />
         )}
@@ -3172,6 +3815,25 @@ export default function ModuleBuilder() {
             onAssignMore={() => {
               setLearnerProgress(null);
               setLearnerAssignmentTarget(learnerProgress.target);
+            }}
+            onRemoveLearner={async learner => {
+              const learnerId = String(learner.id);
+              const result = await unassignCurriculumLearners(learnerProgress.target, [learnerId]);
+              const failedIds = new Set((result.failedIds || []).map(String));
+              if (failedIds.has(learnerId)) {
+                throw new Error(result.failureMessage || 'Unable to remove this learner from the module.');
+              }
+              setLearnerProgress(current => current
+                ? { ...current, assignedLearners: current.assignedLearners.filter(row => String(row.id) !== learnerId) }
+                : current);
+              const catalogueId = learnerAssignmentModuleIdRef.current;
+              if (catalogueId) {
+                setLearnerCountOverrides(previous => ({
+                  ...previous,
+                  [catalogueId]: Math.max(0, (previous[catalogueId] ?? learnerProgress.assignedLearners.length) - 1),
+                }));
+              }
+              void reload({ silent: true });
             }}
           />
         )}
@@ -3551,6 +4213,13 @@ function CourseStructure({ module, selection, dragState, onDragState, onSelectWe
     ? new Intl.DateTimeFormat('en-US', { weekday: 'long', timeZone: 'UTC' }).format(new Date(`${moduleStartDate}T12:00:00Z`))
     : '';
   const firstDeliveryDate = module.weekStructure.flatMap(sessionDatesOf).find(Boolean) || '';
+  // The module's own end date, as typed on its Edit drawer. A week whose
+  // delivery date lands after it is not wrong -- the author may have set the
+  // end date by hand, ahead of or behind the delivery pattern -- so this only
+  // ever states the mismatch; it never moves the week or the end date to
+  // agree. It clears itself the moment either one is edited to cover the
+  // other, because the check re-runs off both live values every render.
+  const moduleEndDate = cleanText(module.endDate).slice(0, 10);
 
   // The weeks, split into the months they run in. A module is authored week by
   // week but delivered and reported on by month, so the rail says which month
@@ -3604,7 +4273,40 @@ function CourseStructure({ module, selection, dragState, onDragState, onSelectWe
     });
   };
 
+  // The component-type filter. Empty is "All". A type that no longer exists in
+  // the module (its last component was deleted) reads as All rather than an
+  // empty rail. While filtering, every week holding a match is open; the
+  // author can still fold one away without touching the normal accordion.
+  const typeCounts = componentTypeCounts(module.weekStructure);
+  const [typeFilter, setTypeFilter] = useState('');
+  const activeTypeFilter = typeCounts.some(item => item.type === typeFilter) ? typeFilter : '';
+  const activeTypeLabel = typeCounts.find(item => item.type === activeTypeFilter)?.label || '';
+  const [filterFoldedWeekIds, setFilterFoldedWeekIds] = useState<Set<string>>(new Set());
+  const chooseTypeFilter = (type: string) => {
+    setTypeFilter(type);
+    setFilterFoldedWeekIds(new Set());
+  };
+  const shownComponentsOf = (week: ModuleWeek) => (activeTypeFilter
+    ? week.components.filter(component => component.type === activeTypeFilter)
+    : week.components);
+  // With a filter on, a month's heading moves to the first week of that month
+  // still shown, so hiding the month's opening week does not lose its label.
+  const filteredMonthHeadingWeekIds = new Map<string, string>();
+  if (activeTypeFilter) {
+    monthGroups.forEach(group => {
+      const first = group.weeks[0];
+      const shown = group.weeks.find(week => shownComponentsOf(week).length > 0);
+      if (first && shown) filteredMonthHeadingWeekIds.set(shown.id, first.id);
+    });
+  }
+
   const toggleExpanded = (weekId: string) => {
+    if (activeTypeFilter) {
+      const folded = new Set(filterFoldedWeekIds);
+      if (folded.has(weekId)) folded.delete(weekId); else folded.add(weekId);
+      setFilterFoldedWeekIds(folded);
+      return;
+    }
     const next = new Set(expandedWeekIds);
     if (next.has(weekId)) {
       next.delete(weekId);
@@ -3673,7 +4375,7 @@ function CourseStructure({ module, selection, dragState, onDragState, onSelectWe
       window.removeEventListener('resize', updateStructureScrollbar);
       observer?.disconnect();
     };
-  }, [expandedWeekIds.size, module.weekStructure.length, updateStructureScrollbar]);
+  }, [expandedWeekIds.size, module.weekStructure.length, activeTypeFilter, filterFoldedWeekIds.size, updateStructureScrollbar]);
 
   useEffect(() => {
     if (!focusedComponentId) return;
@@ -3717,11 +4419,13 @@ function CourseStructure({ module, selection, dragState, onDragState, onSelectWe
             <button
               type="button"
               onClick={onCreateTeamsMeeting}
-              title="Create one Teams meeting on each of this module's live-session dates, without leaving the builder"
+              title={moduleHasTeamsCalendar(module)
+                ? "Open this module's Teams calendar to update it, edit session dates or cancel a session, without leaving the builder"
+                : "Create one Teams meeting on each of this module's live-session dates, without leaving the builder"}
               className="inline-flex h-8 items-center justify-center gap-1.5 rounded-lg bg-primary-500 px-2.5 text-[11px] font-bold text-white transition-smooth hover:bg-primary-600"
             >
               <AppIcon className="ri-calendar-event-line"></AppIcon>
-              Create Teams meeting
+              {moduleHasTeamsCalendar(module) ? 'Update Teams meeting' : 'Create Teams meeting'}
             </button>
             <Link
               to={`/curriculum/teams-meetings?module=${encodeURIComponent(module.catalogueId)}`}
@@ -3754,16 +4458,37 @@ function CourseStructure({ module, selection, dragState, onDragState, onSelectWe
           <MiniStructureMetric label="OTJH" value={module.totalOtjh.toFixed(1)} />
           <MiniStructureMetric label="KSBs" value={String(module.ksbCount)} />
         </div>
+        {typeCounts.length > 1 && (
+          <div role="group" aria-label="Show components by type" className="mt-2.5 flex flex-wrap gap-1">
+            {[{ type: '', label: 'All', icon: 'ri-stack-line', count: totalComponents }, ...typeCounts].map(item => {
+              const pressed = activeTypeFilter === item.type;
+              return (
+                <button
+                  key={item.type || 'all'}
+                  type="button"
+                  aria-pressed={pressed}
+                  onClick={() => chooseTypeFilter(item.type)}
+                  title={item.type ? `Show only ${item.label} components, across every week` : 'Show every component'}
+                  className={`inline-flex h-7 items-center gap-1 rounded-full border px-2.5 text-[10px] font-bold transition-smooth ${pressed ? 'border-primary-500 bg-primary-500 text-white' : 'border-background-200 bg-background-50 text-foreground-600 hover:border-primary-200 hover:text-primary-700'}`}
+                >
+                  <AppIcon className={item.icon}></AppIcon>
+                  {item.label}
+                  <span className={`tabular-nums ${pressed ? 'text-white/80' : 'text-foreground-400'}`}>{item.count}</span>
+                </button>
+              );
+            })}
+          </div>
+        )}
       </div>
       <div className="relative min-h-0 flex-1">
         {structureScrollbar.visible && (
           <div
             aria-hidden
             onPointerDown={startStructureScrollbarDrag}
-            className="absolute bottom-2.5 left-1 top-2.5 z-20 w-2 cursor-pointer rounded-full bg-background-200 shadow-inner"
+            className="kbc-scrollbar-track absolute bottom-2.5 left-1 top-2.5 z-20 w-2 cursor-pointer rounded-full shadow-inner"
           >
             <div
-              className="absolute left-0 right-0 rounded-full bg-foreground-500 shadow-sm"
+              className="kbc-scrollbar-thumb absolute left-0 right-0 rounded-full shadow-sm"
               style={{ height: `${structureScrollbar.height}px`, transform: `translateY(${structureScrollbar.top}px)` }}
             />
           </div>
@@ -3775,16 +4500,26 @@ function CourseStructure({ module, selection, dragState, onDragState, onSelectWe
           const selectedChild = selection?.kind === 'component' && selection.weekId === week.id;
           const active = selected || selectedChild;
           const dragging = dragState?.type === 'week' && dragState.weekId === week.id;
-          const expanded = expandedWeekIds.has(week.id);
+          const shownComponents = shownComponentsOf(week);
+          if (activeTypeFilter && !shownComponents.length) return null;
+          const expanded = activeTypeFilter ? !filterFoldedWeekIds.has(week.id) : expandedWeekIds.has(week.id);
           const totalOtjh = weekExpectedOtjhTotal(week);
-          const monthHeading = monthHeadings.get(week.id);
+          const monthHeading = activeTypeFilter
+            ? monthHeadings.get(filteredMonthHeadingWeekIds.get(week.id) || '')
+            : monthHeadings.get(week.id);
           const monthId = monthGroupIdByWeekId.get(week.id);
           const monthCollapsed = Boolean(monthId && collapsedMonthIds.has(monthId));
           const weekHolidayNotices = holidayNoticesByWeekId.get(week.id) || [];
           // A module can start part-way through a calendar week. If no delivery
           // day falls in that short opening window, this week is intentionally
           // undated rather than failed or unsaved.
-          const hasDeliveryDate = sessionDatesOf(week).length > 0;
+          const weekDeliveryDates = sessionDatesOf(week);
+          const hasDeliveryDate = weekDeliveryDates.length > 0;
+          // The latest of the week's own delivery days, compared against the
+          // module's end date -- not the first, so a Mon+Fri week whose Friday
+          // alone spills past it still gets the note.
+          const latestWeekDeliveryDate = weekDeliveryDates.reduce((latest, date) => (date > latest ? date : latest), '');
+          const pastModuleEndDate = Boolean(moduleEndDate && latestWeekDeliveryDate && latestWeekDeliveryDate > moduleEndDate);
           // A copied live session carries no meeting of its own, and nothing
           // about the row says so -- so the week says it, until it is booked.
           const unbookedCopiedSessions = week.components.filter(isUnbookedCopiedLiveSession).length;
@@ -3846,7 +4581,7 @@ function CourseStructure({ module, selection, dragState, onDragState, onSelectWe
                 <button onClick={() => onSelectWeek(week.id)} className="min-w-0 flex-1 text-left">
                   <p onMouseEnter={showFullTextWhenTruncated} className="truncate text-[12px] font-bold text-foreground-900">{week.title || `Week ${week.weekNumber}`}</p>
                   <p className="mt-0.5 flex items-center gap-1.5 text-[10px] font-medium text-foreground-400">
-                    <span>{week.components.length} components</span>
+                    <span>{activeTypeFilter ? `${shownComponents.length} ${activeTypeLabel} of ${week.components.length}` : `${week.components.length} components`}</span>
                     <span className="h-1 w-1 rounded-full bg-foreground-300"></span>
                     <span>{totalOtjh.toFixed(1)}h</span>
                     {week.sessionDate && (
@@ -3920,6 +4655,7 @@ function CourseStructure({ module, selection, dragState, onDragState, onSelectWe
                   } : undefined}
                 />
               ))}
+              {pastModuleEndDate && <WeekPastEndDateNotice weekDate={latestWeekDeliveryDate} moduleEndDate={moduleEndDate} />}
               {unbookedCopiedSessions > 0 && <CopiedLiveSessionNotice count={unbookedCopiedSessions} />}
               {expanded && (
                 <div className="border-t border-background-200 pb-2 pl-11 pr-2 pt-2">
@@ -3930,11 +4666,13 @@ function CourseStructure({ module, selection, dragState, onDragState, onSelectWe
                       week and its Teams meeting. */}
                   <WeekComponentRail
                     weekId={week.id}
-                    components={week.components}
+                    components={shownComponents}
                     selectedId={selection?.kind === 'component' && selection.weekId === week.id ? selection.componentId : null}
                     focusedId={focusedComponentId}
                     onSelectId={componentId => { if (componentId) onSelectComponent(week.id, componentId); }}
-                    onChange={next => onComponentsChange(week.id, next)}
+                    onChange={next => onComponentsChange(week.id, activeTypeFilter
+                      ? mergeFilteredComponents(week.components, new Set(shownComponents.map(component => component.id)), next)
+                      : next)}
                     pointsByType={pointsByType}
                     variant="nested"
                     weekSessionDate={week.sessionDate}
@@ -3956,6 +4694,33 @@ function CourseStructure({ module, selection, dragState, onDragState, onSelectWe
         </div>
       </div>
     </aside>
+  );
+}
+
+/**
+ * The note a week carries when its own delivery date runs past the module's
+ * end date.
+ *
+ * The end date can be typed by hand on the Edit module drawer, ahead of or
+ * behind what the delivery pattern actually generates, so the two disagreeing
+ * is not an error to fix here -- it is a fact for the author to see and act on
+ * (stretch the end date, or trim the week). This states it and stops there:
+ * the week keeps its date, its components and its live session exactly as
+ * authored. It clears itself the moment the end date is edited to cover it.
+ */
+function WeekPastEndDateNotice({ weekDate, moduleEndDate }: { weekDate: string; moduleEndDate: string }) {
+  return (
+    <div data-testid="week-past-end-date-notice" className="relative border-t border-rose-200 bg-rose-50/70 px-2.5 py-1.5">
+      <span aria-hidden className="pointer-events-none absolute inset-y-0 left-0 w-[3px] bg-rose-400"></span>
+      <p className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[10px] font-semibold text-rose-900">
+        <AppIcon className="ri-calendar-close-line shrink-0 text-sm text-rose-600"></AppIcon>
+        <span>This week runs past the module's end date</span>
+      </p>
+      <p className="mt-0.5 text-[10px] leading-snug text-rose-900">
+        This week delivers on {formatDateLabel(weekDate)}, after the module's end date of {formatDateLabel(moduleEndDate)}.
+        Extend the end date on Edit module, or trim the week count, to bring them back in line.
+      </p>
+    </div>
   );
 }
 
@@ -4063,10 +4828,10 @@ function ModuleBuilderScrollArea({ children, className = '', contentClassName = 
         <div
           aria-hidden
           onPointerDown={startScrollbarDrag}
-          className="absolute bottom-2.5 left-1 top-2.5 z-20 w-2 cursor-pointer rounded-full bg-background-200 shadow-inner"
+          className="kbc-scrollbar-track absolute bottom-2.5 left-1 top-2.5 z-20 w-2 cursor-pointer rounded-full shadow-inner"
         >
           <div
-            className="absolute left-0 right-0 rounded-full bg-foreground-500 shadow-sm"
+            className="kbc-scrollbar-thumb absolute left-0 right-0 rounded-full shadow-sm"
             style={{ height: `${scrollbar.height}px`, transform: `translateY(${scrollbar.top}px)` }}
           />
         </div>
@@ -4143,7 +4908,7 @@ function ComponentTypeChecklist({ selectedTypes, onToggle }: {
 
 function ComponentTypeModal({ onClose, onAdd, title = 'What do you want to add?', description = 'Select one or more component types. You can edit the details after.', submitLabel = 'Add', initialSelectedTypes = [] }: {
   onClose: () => void;
-  onAdd: (types: ModuleComponentType[]) => void;
+  onAdd: (types: ModuleComponentType[]) => void | Promise<void>;
   title?: string;
   description?: string;
   submitLabel?: string;
@@ -4790,7 +5555,10 @@ function TypeSpecificFields({
               className="inline-flex h-9 shrink-0 items-center justify-center gap-1.5 rounded-lg bg-primary-500 px-4 text-[11px] font-bold text-white shadow-sm transition-smooth hover:bg-primary-600"
             >
               <AppIcon className="ri-calendar-event-line"></AppIcon>
-              {getString('liveSessionUrl') ? 'Create another meeting' : 'Create Teams meeting'}
+              {/* The same dialog either way. With a calendar already booked it
+                  opens on that calendar, so this updates it rather than
+                  making a second one. */}
+              {getString('liveSessionUrl') ? 'Update Teams meeting' : 'Create Teams meeting'}
             </button>
           </div>
           {getString('liveSessionUrl') && (
@@ -4798,42 +5566,37 @@ function TypeSpecificFields({
               <TextInput label="Teams meeting URL" value={getString('liveSessionUrl')} onChange={value => onSettingChange('liveSessionUrl', value)} />
             </div>
           )}
+          {/* This live session is delivered by its own additional meeting, so
+              that meeting IS its Teams link — the module's calendar skips this
+              session entirely and never writes its link here. Read-only: the
+              meeting lives in Microsoft, booked with its own organiser and
+              guests from the Additional week meeting tab. */}
+          {getString('extraTeamsMeetingUrl') && (
+            <div className="mt-3 rounded-lg border border-violet-200 bg-violet-50/70 px-3 py-2.5">
+              <p className="text-[10px] font-bold uppercase text-violet-700">This session runs as an additional meeting</p>
+              <a href={getString('extraTeamsMeetingUrl')} target="_blank" rel="noreferrer" className="mt-1 block truncate text-[12px] font-bold text-primary-600 hover:text-primary-700">
+                <AppIcon className="ri-microsoft-teams-line mr-1"></AppIcon>
+                {getString('extraTeamsSubject') || 'Open the additional meeting link'}
+              </a>
+              <p className="mt-1 truncate text-[10px] font-semibold text-foreground-500">
+                {getString('extraTeamsOrganizerEmail') ? `Organizer: ${getString('extraTeamsOrganizerEmail')} · ` : ''}
+                Not on this module&rsquo;s Teams calendar, and not counted among its sessions.
+              </p>
+            </div>
+          )}
         </div>
         <TextArea label="Session outline" value={getString('sessionPurpose')} onChange={value => onSettingChange('sessionPurpose', value)} rows={3} />
         {teamsMeetingOpen && (
           <TeamsMeetingModal
-            component={component}
             module={module}
+            /* Opened from this live session, so the additional-meeting tab
+               starts on the week this live session actually belongs to. */
+            initialWeekId={component.weekId}
             onRestored={restored => {
               const saved = restored.weekStructure.flatMap(item => item.components).find(item => item.id === component.id);
               if (saved) onChange({ settings: { ...component.settings, ...saved.settings } });
             }}
             onClose={() => setTeamsMeetingOpen(false)}
-            onCreated={(result, input) => {
-              const meeting = result.meeting;
-              onSettingChange('liveSessionUrl', meeting.joinUrl || meeting.webLink);
-              onSettingChange('teamsMeetingUrl', meeting.joinUrl || meeting.webLink);
-              onSettingChange('teamsCalendarSeries', JSON.stringify(meeting.calendarSeries || []));
-              onSettingChange('teamsOnlineMeetingId', meeting.onlineMeetingId);
-              onSettingChange('teamsEventId', meeting.eventId);
-              onSettingChange('teamsLiveSessionId', meeting.liveSessionId);
-              onSettingChange('teamsMeetingOptionsUrl', meeting.meetingOptionsUrl);
-              onSettingChange('teamsOrganizerEmail', meeting.organizerEmail);
-              onSettingChange('teamsAttendees', meeting.attendees);
-              onSettingChange('teamsPresenters', meeting.presenters);
-              onSettingChange('sessionDateTimeUtc', meeting.startDateTimeUtc);
-              onSettingChange('durationMinutes', meeting.durationMinutes);
-              onSettingChange('teamsProvider', meeting.provider);
-              onSettingChange('teamsRepeat', meeting.repeat);
-              onSettingChange('teamsRepeatOccurrences', meeting.repeatOccurrences);
-              onSettingChange('teamsLobbyBypass', input.lobbyBypass);
-              onSettingChange('teamsRecording', input.recording);
-              onSettingChange('teamsSpokenLanguage', input.spokenLanguage);
-              onSettingChange('teamsMeetingType', input.meetingType);
-              onSettingChange('teamsRequestResponses', input.requestResponses);
-              onSettingChange('teamsAllowTimeProposals', input.allowNewTimeProposals);
-              onSettingChange('teamsHideAttendees', input.hideAttendees);
-            }}
           />
         )}
       </EditorBlock>
@@ -4995,18 +5758,12 @@ function TypeSpecificFields({
   if (component.type === 'assignment') {
     return (
       <EditorBlock title="Assignment">
-        <TextArea label="Assignment brief" value={getString('assignmentBrief')} onChange={value => onSettingChange('assignmentBrief', value)} rows={4} />
-        <ComponentResourceUpload
-          label="Upload assignment file"
-          accept=".doc,.docx,.pdf,.ppt,.pptx,.xls,.xlsx,.csv,.txt,.zip,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.ms-powerpoint,application/vnd.openxmlformats-officedocument.presentationml.presentation,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/plain,text/csv,application/zip"
-          uploadedName={getString('uploadedFileName') || getString('assignmentFileName')}
-          uploadedUrl={getString('uploadedFileUrl') || getString('assignmentFileUrl')}
-          uploadedSize={getNumber('uploadedFileSize')}
-          uploading={uploadingResource}
-          error={uploadError}
-          onUpload={file => handleResourceUpload(file, 'assignment')}
-        />
-        <TextArea label="Submission instructions" value={getString('submissionInstructions')} onChange={value => onSettingChange('submissionInstructions', value)} rows={3} />
+        <AssignmentTopicsEditor value={component.settings.assignmentTopics}
+          legacyQuestion={getString('assignmentBrief') || getString('assignmentContent')}
+          legacyInstructions={getString('submissionInstructions')}
+          legacyResources={(getString('assignmentFileUrl') || getString('uploadedFileUrl')) ? [{ fileName: getString('assignmentFileName') || getString('uploadedFileName'), url: getString('assignmentFileUrl') || getString('uploadedFileUrl'), size: getNumber('uploadedFileSize'), contentType: getString('uploadedFileContentType') }] : []}
+          onChange={value => onSettingChange('assignmentTopics', value)}
+          onUpload={async file => (await uploadComponentResource({ moduleCatalogueId: module.catalogueId, componentId: component.id, componentType: 'assignment', file, topicResource: true })).file} />
         <TextInput label="Due timing relative to week" value={getString('dueTiming')} onChange={value => onSettingChange('dueTiming', value)} />
       </EditorBlock>
     );
@@ -7782,13 +8539,20 @@ const FACT_TONE_CLASSES: Record<FactTone, string> = {
   info: 'border-sky-200 bg-sky-50 text-sky-700',
 };
 
-/** The same labelled fact as a badge, for the delivery rows under the card. */
-function ModuleFact({ icon, label, value, tone = 'default', title }: {
+/**
+ * The same labelled fact as a badge, for the delivery rows under the card.
+ *
+ * `value` stays the plain text of the fact even when `children` render it, so
+ * the hover title still reads the whole fact in one line.
+ */
+function ModuleFact({ icon, label, value, tone = 'default', title, children }: {
   icon: string;
   label: string;
   value: string;
   tone?: FactTone;
   title?: string;
+  /** A richer rendering of the same `value` — links, for instance. */
+  children?: ReactNode;
 }) {
   return (
     <span
@@ -7797,7 +8561,52 @@ function ModuleFact({ icon, label, value, tone = 'default', title }: {
     >
       <AppIcon className={`${icon} text-[12px] opacity-70`}></AppIcon>
       <span className="text-[9px] font-bold uppercase tracking-wide opacity-70">{label}</span>
-      <span className="font-bold">{value}</span>
+      <span className="font-bold">{children || value}</span>
+    </span>
+  );
+}
+
+/**
+ * The delivery's cohort and group, each one a link to that record's own
+ * workspace with its edit drawer open.
+ *
+ * A reader who notices the wrong group or the wrong cohort dates here wants to
+ * correct them, and both are edited on their own page — this card never becomes
+ * a second place to edit them. A part without an id stays plain text: there is
+ * nothing to open.
+ */
+function DeliveryScopeValue({ usage }: { usage: ModuleDeliveryUsage }) {
+  const cohort = cleanModuleMeta(usage.cohort);
+  const group = cleanModuleMeta(usage.group);
+  if (!cohort && !group) return <>{formatDeliveryUsage(usage)}</>;
+  const cohortId = String(usage.cohortId || '').trim();
+  const groupId = String(usage.groupId || '').trim();
+  const linkClass = 'rounded-sm underline decoration-dotted underline-offset-2 transition-smooth hover:decoration-solid hover:text-primary-900 focus:outline-none focus:ring-2 focus:ring-primary-300';
+  return (
+    <span className="inline-flex items-center gap-1">
+      {cohort && (cohortId ? (
+        <Link
+          to={workspaceEditPath(`/curriculum/cohorts/${encodeURIComponent(cohortId)}`)}
+          className={linkClass}
+          title={`Open ${cohort} and edit this cohort`}
+        >
+          {cohort}
+        </Link>
+      ) : (
+        <span>{cohort}</span>
+      ))}
+      {cohort && group && <span className="opacity-50" aria-hidden="true">/</span>}
+      {group && (groupId ? (
+        <Link
+          to={workspaceEditPath(namedCurriculumWorkspacePath('groups', groupId, group))}
+          className={linkClass}
+          title={`Open ${group} and edit this group`}
+        >
+          {group}
+        </Link>
+      ) : (
+        <span>{group}</span>
+      ))}
     </span>
   );
 }
@@ -7861,7 +8670,9 @@ function ModuleDeliveryRows({ module, teamsSummary, expectedSessions }: {
               label="Cohort / group"
               value={formatDeliveryUsage(usage)}
               tone="accent"
-            />
+            >
+              <DeliveryScopeValue usage={usage} />
+            </ModuleFact>
             <ModuleFact
               icon="ri-calendar-event-line"
               label="Runs"
@@ -8317,6 +9128,43 @@ function moduleStructureIdentifier(module: ModuleCatalogueItem) {
   if (canonicalId) return canonicalId;
   const sourceId = String(module.sourceModule?.id || module.id || '');
   return sourceId.startsWith('training-module-') ? sourceId : module.catalogueId;
+}
+
+/**
+ * The sentence for an item a link says was archived out of this module, or ''
+ * when there is nothing to say: no such link, or the item is back on screen
+ * because it has been restored since.
+ */
+function archivedItemNoticeFor(module: ModuleCatalogueItem, params: URLSearchParams): string {
+  const kind = String(params.get('archived') || '').trim();
+  if (!['week', 'component', 'ksb_mapping'].includes(kind)) return '';
+  // Only about the module the link named, never one opened after it.
+  if (String(params.get('module') || '').trim() !== module.catalogueId) return '';
+  const name = String(params.get('archivedName') || '').trim();
+  const at = String(params.get('archivedAt') || '').trim();
+  const weekId = String(params.get('week') || '').trim();
+  const componentId = String(params.get('component') || '').trim();
+  const week = module.weekStructure.find(item => item.id === weekId);
+  const component = module.weekStructure
+    .flatMap(item => item.components)
+    .find(item => item.id === componentId);
+  const when = at ? ` on ${formatDateTimeLabel(at)}` : '';
+  if (kind === 'ksb_mapping') {
+    const named = name ? `The KSB mapping ${name}` : 'A KSB mapping';
+    return component
+      ? `${named} was archived from the component "${component.title}"${when}. The component is selected below.`
+      : `${named} was archived${when}. The component it belonged to is no longer in this module either.`;
+  }
+  if (kind === 'component') {
+    if (component) return '';
+    const named = name ? `The component "${name}"` : 'This component';
+    return week
+      ? `${named} was archived${when}, so it is no longer in this module. The week it was in is selected below.`
+      : `${named} was archived${when}, so it is no longer in this module.`;
+  }
+  if (week) return '';
+  const named = name ? `The week "${name}"` : 'This week';
+  return `${named} was archived${when}, so it is no longer in this module.`;
 }
 
 function moduleBuilderDeepLinkTarget(module: ModuleCatalogueItem, params: URLSearchParams): { selection: Selection | null; openSettings: boolean } {

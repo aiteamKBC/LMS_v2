@@ -130,11 +130,16 @@ class AssignmentEndpointTests(SimpleTestCase):
         self.atomic = self.enterContext(patch.object(assignments.transaction, 'atomic', side_effect=lambda **kw: nullcontext()))
         self.model = self.enterContext(patch.object(assignments, 'EnrolmentUser'))
         self.model.all_learners.db = 'enrolment'
-        self.model.all_learners.select_for_update.return_value.filter.return_value.order_by.return_value = [learner([])]
+        self.model.all_learners.filter.return_value.count.return_value = 1
+        self.model.all_learners.select_for_update.return_value.filter.return_value.first.return_value = learner([])
         self.invalidate = self.enterContext(patch('curriculum_api.views.invalidate_curriculum_cache'))
 
     def post(self, data):
         return assignments.module_learner_assignments(self.factory.post('/', json.dumps(data), content_type='application/json'), 'MOD-1')
+
+    def delete(self, data):
+        request = self.factory.delete('/', json.dumps(data), content_type='application/json')
+        return assignments.module_learner_assignments(request, 'MOD-1')
 
     def test_post_adds_only_selected_learners_with_row_locks(self):
         with patch.object(assignments, '_assign', return_value=True) as assign:
@@ -142,7 +147,17 @@ class AssignmentEndpointTests(SimpleTestCase):
         self.assertEqual(response.status_code, 200)
         assign.assert_called_once()
         self.atomic.assert_called_once_with(using='enrolment')
-        self.model.all_learners.select_for_update.return_value.filter.assert_called_once_with(pk__in=[1])
+        self.model.all_learners.select_for_update.return_value.filter.assert_called_once_with(pk=1)
+        self.invalidate.assert_called_once()
+
+    def test_delete_removes_only_selected_learners(self):
+        with patch.object(assignments, '_unassign', return_value=True) as unassign:
+            response = self.delete({'learnerIds': ['1']})
+        self.assertEqual(response.status_code, 200)
+        # Four, like _assign: three left `cache` unbound and raised TypeError.
+        self.assertEqual(len(unassign.call_args.args), 4)
+        self.assertEqual(unassign.call_args.args[1], MODULE)
+        self.atomic.assert_called_once_with(using='enrolment')
         self.invalidate.assert_called_once()
 
     def test_malformed_or_empty_ids_do_not_write(self):
@@ -153,6 +168,7 @@ class AssignmentEndpointTests(SimpleTestCase):
         assign.assert_not_called()
 
     def test_unknown_id_aborts_whole_selection_before_writing(self):
+        self.model.all_learners.filter.return_value.count.return_value = 1
         with patch.object(assignments, '_assign') as assign:
             self.assertEqual(self.post({'learnerIds': ['1', '2']}).status_code, 400)
         assign.assert_not_called()
@@ -222,16 +238,24 @@ class AssignmentTransactionTests(TransactionTestCase):
         self.enterContext(patch.object(assignments, '_target', return_value=MODULE))
         self.enterContext(patch.object(assignments.plans, '_all_modules', return_value=list(CATALOGUE.values())))
         self.enterContext(patch('curriculum_api.views.invalidate_curriculum_cache'))
-        model = self.enterContext(patch.object(assignments, 'EnrolmentUser'))
-        model.all_learners.db = 'default'
-        model.all_learners.select_for_update.return_value.filter.return_value.order_by.return_value = [learner([]), learner([], pk=2)]
+        self.model = self.enterContext(patch.object(assignments, 'EnrolmentUser'))
+        self.model.all_learners.db = 'default'
+        self.model.all_learners.filter.return_value.count.return_value = 2
+        rows = {1: learner([]), 2: learner([], pk=2)}
+        self.model.all_learners.select_for_update.return_value.filter.side_effect = (
+            lambda pk: SimpleNamespace(first=lambda: rows.get(pk)))
 
     def tearDown(self):
         with connections['default'].cursor() as cursor:
             cursor.execute('DROP TABLE assignment_atomic_probe')
         super().tearDown()
 
-    def test_failure_on_second_learner_rolls_back_first_learner(self):
+    def test_failure_on_one_learner_keeps_the_others_saved_and_names_it(self):
+        # This used to assert the opposite -- one failure rolled the whole
+        # selection back. Holding every learner's plan write open in a single
+        # transaction is what ran a fifteen-learner save past the gateway
+        # timeout, so each learner now commits alone and the response names the
+        # ones to retry. Changed deliberately with the module builder redesign.
         def save(row, *_):
             if row.pk == 2:
                 raise DatabaseError('Second learner failed')
@@ -239,6 +263,23 @@ class AssignmentTransactionTests(TransactionTestCase):
                 cursor.execute('INSERT INTO assignment_atomic_probe (learner_id) VALUES (%s)', [row.pk])
             return True
         request = RequestFactory().post('/', json.dumps({'learnerIds': ['1', '2']}), content_type='application/json')
+        with patch.object(assignments, '_assign', side_effect=save):
+            response = assignments.module_learner_assignments(request, 'MOD-1')
+        self.assertEqual(response.status_code, 200)
+        body = json.loads(response.content)
+        self.assertEqual(body['failedIds'], ['2'])
+        self.assertEqual(body['changedCount'], 1)
+        with connections['default'].cursor() as cursor:
+            cursor.execute('SELECT learner_id FROM assignment_atomic_probe')
+            self.assertEqual([row[0] for row in cursor.fetchall()], [1])
+
+    def test_a_failing_learner_leaves_no_half_written_row_of_its_own(self):
+        self.model.all_learners.filter.return_value.count.return_value = 1
+        def save(row, *_):
+            with connections['default'].cursor() as cursor:
+                cursor.execute('INSERT INTO assignment_atomic_probe (learner_id) VALUES (%s)', [row.pk])
+            raise DatabaseError('Failed after writing')
+        request = RequestFactory().post('/', json.dumps({'learnerIds': ['1']}), content_type='application/json')
         with patch.object(assignments, '_assign', side_effect=save):
             response = assignments.module_learner_assignments(request, 'MOD-1')
         self.assertEqual(response.status_code, 503)

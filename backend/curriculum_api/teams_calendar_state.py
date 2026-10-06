@@ -22,13 +22,35 @@ def calendar_reader():
     if base != 'https://graph.microsoft.com/v1.0':
         raise CalendarStateError('The configured Microsoft calendar endpoint is not supported.')
     token = microsoft_graph_token()
-    deadline = time.monotonic() + 30
+    # Reviews can read a master and its instances (and, for a calendar with
+    # several day-specific roots, do that more than once).  Keep the whole
+    # read bounded, but allow a transient Graph socket timeout to be retried
+    # before the UI turns it into a generic 502.
+    deadline = time.monotonic() + 60
     with httpx.Client(base_url=base + '/', headers={'Authorization': f'Bearer {token}'}, follow_redirects=False) as client:
         def read(path):
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 raise CalendarStateError('Calendar verification took too long. Retry; no cancellation changes were applied.')
-            response = client.get(path, timeout=min(10, remaining))
+            response = None
+            for attempt in range(3):
+                try:
+                    response = client.get(path, timeout=min(15, remaining))
+                    break
+                except httpx.HTTPError:
+                    # This is a read-only request. Retrying it cannot create a
+                    # duplicate meeting or notification, and is safe for the
+                    # short-lived network failures that otherwise strand the
+                    # review before the user can even confirm it.
+                    remaining = deadline - time.monotonic()
+                    if attempt == 2 or remaining <= 0:
+                        raise
+                    time.sleep(min(0.25 * (2 ** attempt), remaining))
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        raise CalendarStateError('Calendar verification took too long. Retry; no cancellation changes were applied.')
+            if response is None:
+                raise CalendarStateError('Microsoft did not return a calendar response. Retry the status check.')
             if response.status_code == 404:
                 # Only a missing event is cancellation evidence. A missing user,
                 # inaccessible mailbox, failed pagination or permission is not.
@@ -37,7 +59,12 @@ def calendar_reader():
                     if code == 'ErrorItemNotFound':
                         return None
             if response.status_code != 200:
-                raise CalendarStateError(f'Microsoft calendar status could not be verified (HTTP {response.status_code}).')
+                error = CalendarStateError(f'Microsoft calendar status could not be verified (HTTP {response.status_code}).')
+                # Carried, not parsed back out of the message: a caller that has
+                # to tell "Microsoft refused us" from "Microsoft is busy" can
+                # read it without the two ever being told apart by their prose.
+                error.status_code = response.status_code
+                raise error
             return response.json()
         yield read
 
@@ -110,7 +137,9 @@ def reconcile_calendar(live_id):
         v.invalidate_curriculum_cache()
     return {'changed': changed, 'seriesStatus': 'cancelled' if plan['seriesCancelled'] else 'active',
             'cancelledSessions': [row['session_number'] for row in rows if row['id'] in plan['cancelledIds']],
-            'errors': plan['errors']}
+            'errors': plan['errors'],
+            # Reported for a person to decide on; nothing here cancels them.
+            'leftovers': plan.get('leftovers') or []}
 
 
 @transaction.non_atomic_requests

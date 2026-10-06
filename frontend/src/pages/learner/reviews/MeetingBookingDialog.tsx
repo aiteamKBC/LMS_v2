@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState, type FormEvent } from 'react';
+import { Component, useEffect, useId, useRef, useState, type ErrorInfo, type FormEvent, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { Link } from 'react-router-dom';
 import { AppIcon } from '@/components/feature/AppIcon';
@@ -9,7 +9,7 @@ import {
   rescheduleLearnerCalendarSession, type BookingCalendarRules, type BookSessionResponse,
   type CalendarBusySlot, type LearnerCalendarEvent, type PersonalCalendarConnection,
 } from '@/api/learnerCalendar';
-import { bookingDateRestrictionMessage, firstAvailableBookingDate, isoDate } from './bookingDates';
+import { bookingDateRestrictionMessage, firstAvailableBookingDate, isoDate, parseBookingDay } from './bookingDates';
 import styles from './meetingBooking.module.css';
 
 type Props = {
@@ -31,8 +31,55 @@ function overlaps(start: number, end: number, otherStart: number, otherEnd: numb
   return start < otherEnd && end > otherStart;
 }
 
+/** Keeps a failure inside the booking form from taking the whole page down
+ * (RouteErrorBoundary would otherwise replace the page). Mirrors that
+ * boundary's pattern; the fallback is an inline dialog the learner can close. */
+class BookingFormBoundary extends Component<{ children: ReactNode; onClose: () => void }, { failed: boolean }> {
+  state = { failed: false };
+
+  static getDerivedStateFromError() {
+    return { failed: true };
+  }
+
+  componentDidCatch(error: Error, info: ErrorInfo) {
+    console.error('Unhandled error in the meeting booking form', error, info.componentStack);
+  }
+
+  render() {
+    return this.state.failed ? <BookingFormFailure onClose={this.props.onClose} /> : this.props.children;
+  }
+}
+
+function BookingFormFailure({ onClose }: { onClose: () => void }) {
+  const dialog = useRef<HTMLDialogElement>(null);
+  const titleId = useId();
+  useEffect(() => {
+    const element = dialog.current!;
+    const previousOverflow = document.body.style.overflow;
+    if (!element.open) element.showModal();
+    document.body.style.overflow = 'hidden';
+    return () => {
+      element.close();
+      document.body.style.overflow = previousOverflow;
+    };
+  }, []);
+  return createPortal(<dialog ref={dialog} aria-labelledby={titleId} className={styles.dialog}
+    onCancel={event => { event.preventDefault(); onClose(); }}>
+    <header className={styles.header}>
+      <div><p className={styles.eyebrow}>Meeting booking</p><h2 id={titleId}>Booking form unavailable</h2></div>
+      <button type="button" aria-label="Close booking dialog" className={styles.close} onClick={onClose}><AppIcon className="ri-close-line" /></button>
+    </header>
+    <p role="alert" className={styles.error}>Something went wrong in the booking form. Close this window and refresh the page to check your meeting before trying again.</p>
+    <footer className={styles.footer}><button type="button" onClick={onClose}>Close</button></footer>
+  </dialog>, document.body);
+}
+
 /** The compact Book session form shared by the two meeting lists. */
-export default function MeetingBookingDialog({ session, title, learner, rules, attendance, onClose, onBooked }: Props) {
+export default function MeetingBookingDialog(props: Props) {
+  return <BookingFormBoundary onClose={props.onClose}><MeetingBookingForm {...props} /></BookingFormBoundary>;
+}
+
+function MeetingBookingForm({ session, title, learner, rules, attendance, onClose, onBooked }: Props) {
   const dialog = useRef<HTMLDialogElement>(null);
   const titleId = useId();
   const descriptionId = useId();
@@ -58,7 +105,8 @@ export default function MeetingBookingDialog({ session, title, learner, rules, a
   const edited = useRef({ date: false, time: false, duration: false, notes: false });
   const mounted = useRef(false);
   const monthly = session.source === 'mcr';
-  const meetingType = monthly ? 'monthly coaching' : 'progress review';
+  const curriculumReview = session.source === 'review';
+  const meetingType = monthly ? 'monthly coaching' : curriculumReview ? 'review' : 'progress review';
   const rescheduling = Boolean(target?.scheduledDate && target.status === 'scheduled');
   const isExisting = rescheduling || Boolean(session.scheduledDate && session.status === 'scheduled');
   const durationLocked = Boolean(session.importedReview?.id && monthly);
@@ -94,12 +142,12 @@ export default function MeetingBookingDialog({ session, title, learner, rules, a
       if (session.importedReview && !allowedTypes.includes(session.importedReview.type.trim().toLowerCase())) {
         throw new Error('Choose a Monthly Coaching Meeting or Progress Review to schedule.');
       }
-      const durableKey = attendance?.calendarEventKey || session.eventKey;
+      const durableKey = session.calendarEventKey || attendance?.calendarEventKey || session.eventKey;
       // Resolve only this learner's exact booking. Dates are not identities.
       const saved = calendar.events.find(event => event.source === session.source && (
-        event.eventKey === durableKey || Boolean(reviewId && event.reviewId === reviewId)
+        event.eventKey === durableKey || event.calendarEventKey === durableKey || Boolean(reviewId && event.reviewId === reviewId)
       ));
-      if (!saved && !reviewId) throw new Error('This meeting is no longer available. Close this window and refresh the page.');
+      if (!saved) throw new Error('This meeting is no longer available. Close this window and refresh the page.');
       if (saved && !['scheduled', 'not-scheduled'].includes(saved.status)) {
         throw new Error('This meeting can no longer be scheduled. Close this window and refresh the page.');
       }
@@ -108,7 +156,7 @@ export default function MeetingBookingDialog({ session, title, learner, rules, a
       setTarget(resolved);
       setCalendarRules(nextRules);
       setCalendarEvents(calendar.events);
-      setConnections(calendarConnections.connections);
+      setConnections(Array.isArray(calendarConnections?.connections) ? calendarConnections.connections : []);
       if (!edited.current.date) setDate(resolved.scheduledDate || firstAvailableBookingDate(resolved.targetDate || resolved.date, nextRules));
       if (!edited.current.time) setTime(resolved.scheduledTime || '09:00');
       if (!edited.current.duration) setDuration(String(resolved.durationMinutes || 60));
@@ -120,21 +168,25 @@ export default function MeetingBookingDialog({ session, title, learner, rules, a
   }, [learner.kind, learner.id, initialBooking, revision]);
 
   useEffect(() => {
-    if (!connections.length || !date) {
+    // An unparseable day (e.g. a five-digit year typed into the date field)
+    // has no instant; `toISOString()` would throw and blank the page. The
+    // inline date restriction already tells the learner to fix it.
+    const day = parseBookingDay(date);
+    if (!connections.length || !day) {
       setBusySlots([]);
       setAvailabilityError('');
       return;
     }
-    const start = new Date(`${date}T00:00:00`).toISOString();
-    const end = new Date(`${date}T23:59:59`).toISOString();
+    const start = new Date(day.getFullYear(), day.getMonth(), day.getDate(), 0, 0, 0).toISOString();
+    const end = new Date(day.getFullYear(), day.getMonth(), day.getDate(), 23, 59, 59).toISOString();
     let cancelled = false;
     setAvailabilityLoading(true);
     setAvailabilityError('');
     void fetchPersonalCalendarAvailability(learner.kind, learner.id, start, end)
       .then(result => {
         if (cancelled) return;
-        setBusySlots(result.busy);
-        if (result.errors.length) setAvailabilityError('Some connected calendars could not be checked. The server will check again before booking.');
+        setBusySlots(Array.isArray(result?.busy) ? result.busy : []);
+        if (!Array.isArray(result?.busy) || result.errors?.length) setAvailabilityError('Some connected calendars could not be checked. The server will check again before booking.');
       })
       .catch(() => {
         if (!cancelled) {
@@ -169,10 +221,10 @@ export default function MeetingBookingDialog({ session, title, learner, rules, a
     setError('');
     try {
       const reviewId = session.importedReview?.id || target.reviewId;
-      const eventKey = target.eventKey.startsWith('imported-review:') ? attendance?.calendarEventKey || target.eventKey : target.eventKey;
+      const eventKey = target.calendarEventKey || attendance?.calendarEventKey || target.eventKey;
       // An imported review may have a scheduled date before its first LMS
       // booking. Only a durable calendar key can be sent to reschedule.
-      const update = rescheduling && !eventKey.startsWith('imported-review:');
+      const update = rescheduling && (Boolean(target.calendarEventKey) || !eventKey.startsWith('imported-review:'));
       const input = {
         scheduledDate: date,
         scheduledTime: time,
@@ -184,7 +236,7 @@ export default function MeetingBookingDialog({ session, title, learner, rules, a
       const response = update
         ? await rescheduleLearnerCalendarSession(learner.kind, learner.id, { ...input, eventKey, reviewId })
         : await bookLearnerCalendarSession(learner.kind, learner.id, {
-          ...input, sessionType: monthly ? 'mcr' : 'progress-review',
+          ...input, sessionType: monthly ? 'mcr' : curriculumReview ? 'review' : 'progress-review',
           eventKey: reviewId ? undefined : eventKey, reviewId,
           assignmentMonth: reviewId ? target.assignmentMonth || (session.targetDate || session.date || date).slice(0, 7) : undefined,
         });
@@ -198,14 +250,14 @@ export default function MeetingBookingDialog({ session, title, learner, rules, a
   }
 
   const plannedDate = session.targetDate || session.date;
-  const sessionLabel = `${monthly ? 'Monthly Coaching Meeting' : 'Progress Review'}${plannedDate ? ` · ${new Date(`${plannedDate}T12:00:00`).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}` : ''}`;
+  const sessionLabel = `${monthly ? 'Monthly Coaching Meeting' : curriculumReview ? (session.reviewTypeName || session.title || 'Review') : 'Progress Review'}${plannedDate ? ` · ${new Date(`${plannedDate}T12:00:00`).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}` : ''}`;
   const calendarHref = `/learner/calendar?kind=${encodeURIComponent(learner.kind)}&learner=${encodeURIComponent(learner.id)}&connect=calendar`;
   const canSubmit = !loading && !saving && !availabilityLoading && !loadError && !dateRestriction && !bookingConflict && Boolean(target && date && time);
   return createPortal(<dialog ref={dialog} aria-labelledby={titleId} aria-describedby={descriptionId} className={styles.dialog}
     onCancel={event => { event.preventDefault(); close(); }} onClick={event => { if (event.target === event.currentTarget) close(); }}>
     <form onSubmit={submit} aria-busy={loading || saving}>
       <header className={styles.header}>
-        <div><p className={styles.eyebrow}>{monthly ? 'Monthly coaching booking' : 'Progress review booking'}</p>
+        <div><p className={styles.eyebrow}>{monthly ? 'Monthly coaching booking' : curriculumReview ? 'Curriculum review booking' : 'Progress review booking'}</p>
           <h2 id={titleId}>{isExisting ? 'Reschedule' : 'Book'} {meetingType}</h2>
           <p id={descriptionId} className={styles.description}>Choose the day and time for {title}.</p></div>
         <button type="button" aria-label="Close booking dialog" className={styles.close} onClick={close} disabled={saving}><AppIcon className="ri-close-line" /></button>

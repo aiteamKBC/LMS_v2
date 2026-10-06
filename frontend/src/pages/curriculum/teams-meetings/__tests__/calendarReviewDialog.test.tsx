@@ -30,6 +30,15 @@ it('shows the schedule and requires review before confirming', async () => {
   await waitFor(() => expect(confirmed).toBe(true));
 });
 
+it('does not offer a silent update choice for an existing calendar', async () => {
+  const pending = reviewCalendar({ ...calendar, joinUrl: 'https://teams.microsoft.com/meet/synthetic', notifyOnUpdate: true }, 'Europe/London');
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Save and send' })).toBeVisible());
+  expect(screen.queryByRole('checkbox', { name: /Email attendees and organisers/ })).toBeNull();
+  await userEvent.click(screen.getByRole('checkbox', { name: /I checked the dates/ }));
+  await userEvent.click(screen.getByRole('button', { name: 'Save and send' }));
+  await expect(pending).resolves.toEqual({ notifyAttendees: true });
+});
+
 it('returns to editing without confirmation', async () => {
   const pending = reviewCalendar(calendar, 'Europe/London');
   const cancelled = expect(pending).rejects.toBeInstanceOf(TeamsReviewCancelled);

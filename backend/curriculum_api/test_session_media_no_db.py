@@ -4,6 +4,7 @@ import json
 import types
 import unittest
 from contextlib import nullcontext
+from datetime import datetime
 from unittest.mock import Mock, patch
 
 from test_session_results_no_db import ROOT, functions
@@ -82,6 +83,30 @@ class MediaPolicyTests(unittest.TestCase):
         self.assertEqual(saved['metadata']['lmsTranscriptTimeline'], timeline)
         self.assertEqual(saved['occurrence_id'], 'O')
         self.assertEqual(saved['graph_artifact_id'], 'G')
+
+    def test_a_recording_reissued_under_a_new_graph_id_updates_the_saved_row(self):
+        cursor = Mock(); cursor.__enter__ = Mock(return_value=cursor); cursor.__exit__ = Mock(return_value=False)
+        timeline = {'version': 1, 'cues': [{'start': 1, 'end': 2, 'text': 'Saved'}]}
+        # No row under the new id; the same call and window is saved as ART-OLD.
+        cursor.fetchone.side_effect = [None, ('ART-OLD', {'lmsHiddenFromLearners': True, 'lmsTranscriptTimeline': timeline})]
+        ns = {'hashlib': hashlib, 'clean_str': lambda value: str(value or ''), 'parse_graph_datetime': instant,
+              'json_db_value': lambda value: value, 'parse_json_value': lambda value, default: value or default,
+              'LIVE_SESSION_ARTIFACTS_TABLE': 'live_session_artifacts', 'authoring_table_name': lambda name: name,
+              'authoring_upsert': Mock(), 'transaction': types.SimpleNamespace(atomic=nullcontext),
+              'connection': types.SimpleNamespace(vendor='postgresql', cursor=lambda: cursor), 'datetime': datetime}
+        functions(ROOT / 'views.py', {'upsert_live_session_artifact', '_same_artifact_under_new_graph_id'}, ns)
+        artifact = {'id': 'G-NEW', 'callId': 'CALL', 'createdDateTime': '2026-09-17T10:50:39Z',
+                    'endDateTime': '2026-09-17T12:55:09Z', 'recordingContentUrl': 'https://graph.example/new'}
+        self.assertTrue(ns['upsert_live_session_artifact']({'id': 'O'}, 'recording', artifact))
+        ns['authoring_upsert'].assert_not_called()
+        lookup = cursor.execute.call_args_list[1].args
+        self.assertIn('call_id=%s AND created_datetime=%s', lookup[0])
+        self.assertEqual(lookup[1][:3], ['O', 'recording', 'CALL'])
+        update_sql, update_params = cursor.execute.call_args.args
+        self.assertIn('UPDATE live_session_artifacts SET graph_artifact_id=%s', update_sql)
+        self.assertEqual((update_params[0], update_params[1], update_params[-1]), ('G-NEW', 'https://graph.example/new', 'ART-OLD'))
+        self.assertTrue(update_params[3]['lmsHiddenFromLearners'])
+        self.assertEqual(update_params[3]['lmsTranscriptTimeline'], timeline)
 
 
 if __name__ == '__main__':

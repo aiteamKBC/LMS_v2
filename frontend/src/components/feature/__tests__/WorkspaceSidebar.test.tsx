@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { fireEvent, render, screen, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter, useLocation } from 'react-router-dom';
 import { WorkspaceShell } from '../WorkspaceShell';
 import { roleNavMap } from '@/mocks/navigation';
@@ -55,11 +55,60 @@ beforeEach(() => {
   sessionStorage.clear();
 });
 
-it('groups learner progress pages in the same menu while keeping direct destinations fixed', () => {
+it.each(['coach', 'learner', 'curriculum'])(
+  'shows the shared back button by default in the %s workspace', role => {
+    showWorkspace(role);
+    expect(screen.getByRole('button', { name: 'Back to previous page' })).toBeVisible();
+  },
+);
+
+it('does not add the shared back button to other workspaces', () => {
+  showWorkspace('admin');
+  expect(screen.queryByRole('button', { name: 'Back to previous page' })).toBeNull();
+});
+
+it('allows a focused learner page to hide the shared back button explicitly', () => {
+  const config = roleNavMap.learner;
+  render(
+    <MemoryRouter initialEntries={['/learner/onboarding']}>
+      <WorkspaceShell role="learner" roleLabel={config.label} navItems={config.items} pageTitle="Onboarding" showBackButton={false}>
+        <CurrentRoute />
+      </WorkspaceShell>
+    </MemoryRouter>,
+  );
+  expect(screen.queryByRole('button', { name: 'Back to previous page' })).toBeNull();
+});
+
+it.each(['commercial', 'apprenticeship'] as const)('highlights Dashboard after opening it from %s Home', kind => {
+  const path = `/workspace/learner/${kind}/101/dashboard`;
+  const { rail } = showWorkspace('learner', path);
+  expect(within(rail).getByRole('link', { name: 'Dashboard' })).toHaveAttribute('href', path);
+  expect(within(rail).getByRole('link', { name: 'Dashboard' })).toHaveAttribute('aria-current', 'page');
+  expect(within(rail).getByRole('link', { name: 'Home' })).not.toHaveAttribute('aria-current');
+});
+
+it('keeps Home active on the learner landing page and Dashboard active on its other route', () => {
+  const { rail } = showWorkspace('learner', '/workspace/learner/commercial/101');
+  expect(within(rail).getByRole('link', { name: 'Home' })).toHaveAttribute('aria-current', 'page');
+  expect(within(rail).getByRole('link', { name: 'Dashboard' })).not.toHaveAttribute('aria-current');
+});
+
+it('keeps the alternate learner Dashboard route active', () => {
+  const { rail } = showWorkspace('learner', '/workspace/learner/dashboard/commercial/101');
+  expect(within(rail).getByRole('link', { name: 'Dashboard' })).toHaveAttribute('aria-current', 'page');
+  expect(within(rail).getByRole('link', { name: 'Home' })).not.toHaveAttribute('aria-current');
+});
+
+it('groups learner progress pages in the same menu while keeping direct destinations fixed', async () => {
   const { sidebar, rail, panel } = showWorkspace('learner', '/learner/clubs/events');
-  expect(within(rail).getByRole('button', { name: 'My Progress' })).toHaveAttribute('aria-expanded', 'false');
-  for (const name of ['Monthly Submission', 'Monthly Logs', 'Monthly Coaching Meeting', 'Reviews']) {
-    expect(within(rail).queryByRole('link', { name })).not.toBeInTheDocument();
+  expect(sidebar.style.width).toBe('240px');
+  expect(sidebar.closest<HTMLElement>('.workspace-shell')?.style.getPropertyValue('--kbc-sidebar-width')).toBe('240px');
+  const progressToggle = within(rail).getByRole('button', { name: 'My Progress' });
+  const progressWasOpen = progressToggle.getAttribute('aria-expanded') === 'true';
+  if (!progressWasOpen) {
+    for (const name of ['Monthly Submission', 'Monthly Logs', 'Monthly Coaching Meeting', 'Progress Review', 'Reviews']) {
+      expect(within(rail).queryByRole('link', { name })).not.toBeInTheDocument();
+    }
   }
   expect(within(rail).getByRole('link', { name: 'Dashboard' })).toHaveAttribute('aria-current', 'page');
   for (const name of ['Readiness', 'Community', 'Help']) {
@@ -67,29 +116,40 @@ it('groups learner progress pages in the same menu while keeping direct destinat
   }
   expect(within(rail).queryByRole('link', { name: /training plan/i })).not.toBeInTheDocument();
   expect(panel).toBeNull();
-  fireEvent.mouseEnter(within(rail).getByRole('link', { name: 'Dashboard' }));
-  fireEvent.focus(within(rail).getByRole('link', { name: 'Dashboard' }));
-  expect(sidebar.style.width).toBe('88px');
-  fireEvent.click(within(rail).getByRole('button', { name: 'My Progress' }));
+  if (!progressWasOpen) await act(async () => { fireEvent.click(progressToggle); });
   expect(within(sidebar).getAllByRole('link', { name: 'Dashboard' })).toHaveLength(1);
   expect(within(rail).getByRole('button', { name: 'My Progress' })).toHaveAttribute('aria-expanded', 'true');
   const destinations = within(rail).getAllByRole('link').map(link => link.getAttribute('href'));
-  for (const name of ['Monthly Submission', 'Monthly Logs', 'Monthly Coaching Meeting', 'Reviews', 'Dashboard']) {
+  for (const name of ['Monthly Submission', 'Monthly Logs', 'Monthly Coaching Meeting', 'Progress Review', 'Reviews', 'Dashboard']) {
     const link = within(rail).getByRole('link', { name });
-    fireEvent.mouseEnter(link);
-    fireEvent.focus(link);
-    fireEvent.click(link);
+    await act(async () => { fireEvent.click(link); });
     expect(screen.getByTestId('route')).toHaveTextContent(link.getAttribute('href')!);
     expect(link).toHaveAttribute('aria-current', 'page');
-    expect(sidebar.style.width).toBe('338px');
     expect(within(rail).getAllByRole('link').map(item => item.getAttribute('href'))).toEqual(destinations);
   }
-  fireEvent.mouseLeave(sidebar, { relatedTarget: document.body });
-  expect(sidebar.style.width).toBe('338px');
-  fireEvent.click(within(rail).getByRole('button', { name: 'My Progress' }));
-  expect(within(rail).getByRole('button', { name: 'My Progress' })).toHaveAttribute('aria-expanded', 'false');
-  expect(within(rail).queryByRole('link', { name: 'Monthly Logs' })).not.toBeInTheDocument();
+  if (!progressWasOpen) {
+    await act(async () => { fireEvent.click(within(rail).getByRole('button', { name: 'My Progress' })); });
+    expect(within(rail).getByRole('button', { name: 'My Progress' })).toHaveAttribute('aria-expanded', 'false');
+    expect(within(rail).queryByRole('link', { name: 'Monthly Logs' })).not.toBeInTheDocument();
+  }
   expect(within(rail).getByRole('link', { name: 'Dashboard' })).toBeVisible();
+});
+
+it('keeps the learner drawer keyboard accessible and restores focus on close', async () => {
+  const { sidebar } = showWorkspace('learner', '/workspace/learner/dashboard');
+  const opener = screen.getByRole('button', { name: 'Open mobile navigation' });
+  opener.focus();
+  fireEvent.click(opener);
+  const drawer = document.getElementById('learner-mobile-navigation')!;
+  expect(drawer).toHaveAttribute('aria-hidden', 'false');
+  expect(document.body.style.overflow).toBe('hidden');
+  await waitFor(() => expect(within(drawer).getByRole('button', { name: 'Close navigation' })).toHaveFocus());
+
+  fireEvent.keyDown(document, { key: 'Escape' });
+  await waitFor(() => expect(drawer).toHaveAttribute('aria-hidden', 'true'));
+  expect(document.body.style.overflow).toBe('');
+  expect(opener).toHaveFocus();
+  expect(sidebar).toBeInTheDocument();
 });
 
 it.each(['/users', '/users/42', '/users/42/wizard/introduction', '/employers/8', '/employers/8/learner/commercial/42'])(
@@ -126,10 +186,14 @@ it('keeps an administrator in the selected coach workspace', () => {
   viewer.isAdmin = true;
   const { sidebar, rail } = showWorkspace('coach', '/workspace/coach');
   expect(sidebar.closest('.workspace-shell')).toHaveAttribute('data-workspace-role', 'coach');
+  expect(within(sidebar).getByRole('img', { name: 'Kent Business College' })).toBeVisible();
   expect(within(rail).getAllByRole('link').slice(0, 3).map(link => link.textContent)).toEqual(['Dashboard', 'Attendance', 'Marking']);
+  expect(within(rail).queryByRole('link', { name: 'Notifications' })).toBeNull();
   expect(within(rail).getByRole('button', { name: 'Meetings' })).toBeVisible();
   expect(within(rail).getByRole('link', { name: 'Marking' })).toHaveAttribute('href', '/coach/marking-queue');
+  expect(within(rail).queryByRole('link', { name: 'Absence Reports' })).toBeNull();
   expect(within(rail).getByRole('link', { name: 'Marking' }).querySelector('svg')).not.toBeNull();
+  expect(within(sidebar).queryByRole('button', { name: 'Open account settings' })).toBeNull();
 });
 
 it.each([
@@ -164,7 +228,7 @@ describe.each(Object.keys(roleNavMap))('%s shared workspace sidebar', role => {
       expect(sidebar).toHaveAttribute('data-collapsed', 'false');
       fireEvent.click(within(sidebar).getByRole('button', { name: 'Collapse coach sidebar' }));
       expect(sidebar).toHaveAttribute('data-collapsed', 'true');
-      expect(shell.style.getPropertyValue('--kbc-sidebar-width')).toBe('76px');
+      expect(shell.style.getPropertyValue('--kbc-sidebar-width')).toBe('64px');
       expect(localStorage.getItem('kbc_coach_sidebar_collapsed')).toBe('true');
       const group = roleNavMap.coach.items.find(item => item.children?.length)!;
       const toggle = within(sidebar).getByRole('button', { name: group.label });
@@ -179,10 +243,16 @@ describe.each(Object.keys(roleNavMap))('%s shared workspace sidebar', role => {
       expect(shell.style.getPropertyValue('--kbc-sidebar-width')).toBe('240px');
       return;
     }
+    if (role === 'learner') {
+      expect(sidebar.style.width).toBe('240px');
+      expect(shell.style.getPropertyValue('--kbc-sidebar-width')).toBe('240px');
+      expect(panel).toBeNull();
+      expect(within(sidebar).queryByRole('button', { name: 'Expand navigation' })).toBeNull();
+      return;
+    }
     expect(sidebar.style.width).toBe('88px');
     expect(shell.style.getPropertyValue('--kbc-sidebar-width')).toBe('112px');
-    if (role === 'learner') expect(panel).toBeNull();
-    else expect(panel).toHaveAttribute('inert');
+    expect(panel).toHaveAttribute('inert');
 
     fireEvent.click(within(sidebar).getByRole('button', { name: 'Expand navigation' }));
     expect(sidebar.style.width).toBe('338px');
@@ -191,16 +261,12 @@ describe.each(Object.keys(roleNavMap))('%s shared workspace sidebar', role => {
     expect(localStorage.getItem('kbc_sidebar_pinned')).toBe('true');
 
     fireEvent.mouseLeave(sidebar, { relatedTarget: document.body });
-    if (role === 'learner') {
-      expect(sidebar.style.width).toBe('338px');
-      fireEvent.click(within(sidebar).getByRole('button', { name: 'Collapse navigation' }));
-    }
     expect(sidebar.style.width).toBe('88px');
     expect(shell.style.getPropertyValue('--kbc-sidebar-width')).toBe('112px');
     if (role !== 'learner') expect(panel).toHaveAttribute('inert');
   });
 
-  it('keeps role-specific destinations, route highlighting and navigation', () => {
+  it('keeps role-specific destinations, route highlighting and navigation', async () => {
     const config = roleNavMap[role];
     const item = config.items.find(item => item.children?.length) || config.items[0];
     const destination = item.children?.[0] || item;
@@ -212,7 +278,10 @@ describe.each(Object.keys(roleNavMap))('%s shared workspace sidebar', role => {
       expect(screen.getByTestId('route')).toHaveTextContent(destination.href!);
       return;
     }
-    fireEvent.click(within(sidebar).getByRole('button', { name: 'Expand navigation' }));
+    if (role !== 'learner') fireEvent.click(within(sidebar).getByRole('button', { name: 'Expand navigation' }));
+    if (role === 'learner' && item.children?.length) {
+      await act(async () => { fireEvent.click(within(rail).getByRole('button', { name: item.label })); });
+    }
     const link = within(role === 'learner' ? rail : panel).getAllByRole('link').find(link => link.getAttribute('href') === destination.href)!;
     expect(link).toHaveAttribute('aria-current', 'page');
     expect(within(rail).getAllByRole(role !== 'learner' && item.children?.length ? 'button' : 'link')
@@ -229,7 +298,7 @@ describe.each(Object.keys(roleNavMap))('%s shared workspace sidebar', role => {
     expect(drawer).not.toHaveAttribute('inert');
     fireEvent.click(within(drawer).getAllByRole('link')[0]);
     expect(drawer).toHaveAttribute('inert');
-  expect(shell.style.getPropertyValue('--kbc-sidebar-width')).toBe(role === 'coach' ? '240px' : '112px');
+  expect(shell.style.getPropertyValue('--kbc-sidebar-width')).toBe(role === 'coach' ? '240px' : role === 'learner' ? '240px' : '112px');
   });
 });
 

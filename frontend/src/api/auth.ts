@@ -208,15 +208,35 @@ async function send<T>(path: string, init?: globalThis.RequestInit): Promise<T> 
 // Session
 // ---------------------------------------------------------------------------
 
+/**
+ * A learner signed in with the shared first-sign-in password: no session was
+ * opened, only their own single-use set-password link. The login page sends
+ * them to it; they are signed in once they have chosen their own password.
+ */
+export class PasswordSetupRequired extends Error {
+  setPasswordPath: string;
+
+  constructor(setPasswordPath: string) {
+    super('Choose your own password to finish signing in.');
+    this.name = 'PasswordSetupRequired';
+    this.setPasswordPath = setPasswordPath;
+  }
+}
+
 export async function apiLogin(
   email: string,
   password: string,
   remember = false,
 ): Promise<AuthUser> {
-  const data = await request<{ user: AuthUser }>('/login/', {
+  const data = await request<{ user?: AuthUser; passwordSetupRequired?: boolean; setPasswordPath?: string }>('/login/', {
     method: 'POST',
     body: JSON.stringify({ email, password, remember }),
   });
+  // Only ever an in-app path from our own server; never follow anything else.
+  if (data.passwordSetupRequired && data.setPasswordPath?.startsWith('/set-password?token=')) {
+    throw new PasswordSetupRequired(data.setPasswordPath);
+  }
+  if (!data.user) throw new AuthError('Something went wrong signing in. Please try again.', 500);
   return data.user;
 }
 
@@ -346,6 +366,25 @@ export function apiInviteAccount(
   return request<InviteResult>('/accounts/invite/', {
     method: 'POST',
     body: JSON.stringify({ subjectType, subjectId }),
+  });
+}
+
+export interface InvitationLinkResult {
+  ok: boolean;
+  link: string;
+  expiresAt: string;
+  accountCreated: boolean;
+}
+
+/**
+ * (Staff) A learner's set-password link to send another way (Teams, WhatsApp,
+ * SMS) when their employer's mail filter blocks our email. Replaces any
+ * earlier invitation link; never cache or log the result.
+ */
+export function apiInvitationLink(subjectId: number): Promise<InvitationLinkResult> {
+  return request<InvitationLinkResult>('/accounts/invitation-link/', {
+    method: 'POST',
+    body: JSON.stringify({ subjectType: 'learner', subjectId }),
   });
 }
 

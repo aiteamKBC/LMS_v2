@@ -4,9 +4,11 @@ import logging
 from collections import defaultdict
 
 import psycopg
+from . import journal_sources
 from django.db import DatabaseError, connections
 from django.http import JsonResponse
 from django.views.decorators.http import require_GET
+from .projection_performance import measure_projection
 
 from audit_api.last_audit_ledger_views import _is_completed
 from login.permissions import learner_self_or_staff
@@ -19,6 +21,8 @@ from .learning_plan import _effective_plan_ids
 from .training_plan_contract import selected_contract
 from .training_plan_dashboard import find_contract, number, rows
 from .otjh_totals import completed_otjh, completed_actual_otjh
+from old_otjh.service import ServiceError
+from . import canonical_learning
 
 log = logging.getLogger(__name__)
 _MISSING = object()
@@ -81,16 +85,17 @@ def programme_totals(historical, native, progress, attempts, links):
 
 def read_accepted_ksb_rows(cursor, source, kind):
     """Read accepted monthly activities using explicit learner/activity identity."""
-    cursor.execute('''SELECT r.id, r.group_id, r.activity_id, r.source_ref,
+    cursor.execute(f'''SELECT r.id, r.group_id, r.activity_id, r.source_ref,
             coalesce(p.component_ref, s.component_ref) AS component_ref,
+            coalesce(nullif(r.title, ''), nullif(a.title, '')) AS activity_title,
             coalesce(j.ksbs, CASE WHEN lk.source_preference='learner' THEN lk.ksbs ELSE ak.ksbs END,
-                     a.raw #> '{live_lms_component,ksbs}') AS ksb_mappings
-        FROM structured_manual_activities.manual_learner_activities r
-        LEFT JOIN structured_manual_activities.learner_journal_row_ksbs j
+                     a.raw #> '{{live_lms_component,ksbs}}') AS ksb_mappings
+        FROM {journal_sources.table('manual_learner_activities')} r
+        LEFT JOIN {journal_sources.table('learner_journal_row_ksbs')} j
           ON j.row_id=r.id AND j.aptem_id=r.aptem_id
-        LEFT JOIN structured_manual_activities.learner_activity_ksbs lk
+        LEFT JOIN {journal_sources.table('learner_activity_ksbs')} lk
           ON lk.activity_id=r.activity_id AND lk.aptem_id=r.aptem_id
-        LEFT JOIN structured_manual_activities.activity_ksbs ak ON ak.activity_id=r.activity_id
+        LEFT JOIN {journal_sources.table('activity_ksbs')} ak ON ak.activity_id=r.activity_id
         LEFT JOIN "Last_audit".activities a ON a.activity_id=r.activity_id
         LEFT JOIN "Learner".learners l ON l.enrolment_id=%s
         LEFT JOIN "Learner".learner_progress_entries p
@@ -231,6 +236,8 @@ def metrics_from_loaded(source, kind, *, migrated, native, progress,
     activity and export-link reads outside this function lets the Dashboard
     load them once without changing the metric definitions used elsewhere.
     """
+    if canonical_learning.enabled(source.pk):
+        return canonical_learning.metrics(source.pk)
     with connections['enrolment'].cursor() as cursor:
         planned_document = (preloaded or {}).get('planned_hours_document', _MISSING)
         planned_contract = (preloaded or {}).get('planned_hours_contract', _MISSING)
@@ -247,8 +254,8 @@ def metrics_from_loaded(source, kind, *, migrated, native, progress,
             if manual_hours is not _MISSING:
                 old_hours = manual_hours
             else:
-                cursor.execute('''SELECT SUM(actual_hours), array_agg(source_ref)
-                    FROM structured_manual_activities.manual_learner_activities
+                cursor.execute(f'''SELECT SUM(actual_hours), array_agg(source_ref)
+                    FROM {journal_sources.table('manual_learner_activities')}
                     WHERE aptem_id=%s AND accepted=true AND deleted_at IS NULL''',
                     [int(str(source.aptem_id).strip())])
                 retained = cursor.fetchone()
@@ -326,7 +333,8 @@ def metrics_from_loaded(source, kind, *, migrated, native, progress,
     }
 
 
-def read_metrics(source, kind, preloaded=None):
+def _read_legacy_metrics(source, kind, preloaded=None):
+    """Retained only for isolated migration comparisons; never used by live endpoints."""
     migrated = student_activity_available(source.aptem_id)
     direct_progress = (preloaded or {}).get('direct_progress') if preloaded is not None else None
     if direct_progress is None:
@@ -376,21 +384,21 @@ def read_metrics(source, kind, preloaded=None):
                 if audit_input is not None:
                     historical = audit_input.get('historical', [])
                 else:
-                    cursor.execute('''SELECT gl.group_id,ga.activity_id,
+                    cursor.execute(f'''SELECT gl.group_id,ga.activity_id,
                     r.status,r.video_completed,
                     r.reading_viewed,r.quiz_passed,a.quiz_id,a.reading_type,ph.planned_hours AS expected_hours,
                     CASE WHEN nullif(a.reading_iframe_url,'') IS NOT NULL THEN 'present' ELSE '' END AS reading_iframe_url,
                     CASE WHEN jsonb_typeof(a.quiz_questions)='array' AND a.quiz_questions<>'[]'::jsonb
-                         THEN '[{}]'::jsonb ELSE '[]'::jsonb END AS quiz_questions,
+                         THEN '[{{}}]'::jsonb ELSE '[]'::jsonb END AS quiz_questions,
                     jsonb_path_query_array(CASE WHEN lk.source_preference='learner' THEN lk.ksbs ELSE ak.ksbs END,
                                            '$[*].code') AS ksb_mappings
                     FROM "Last_audit".learners l
                     JOIN "Last_audit".group_learners gl ON gl.learner_id=l.learner_id
                     JOIN "Last_audit".group_activities ga ON ga.group_id=gl.group_id
                     JOIN "Last_audit".activities a ON a.activity_id=ga.activity_id
-                    LEFT JOIN structured_manual_activities.learner_activity_ksbs lk
+                    LEFT JOIN {journal_sources.table('learner_activity_ksbs')} lk
                         ON lk.aptem_id=l.aptem_id AND lk.activity_id=ga.activity_id
-                    LEFT JOIN structured_manual_activities.activity_ksbs ak ON ak.activity_id=ga.activity_id
+                    LEFT JOIN {journal_sources.table('activity_ksbs')} ak ON ak.activity_id=ga.activity_id
                     LEFT JOIN "Last_audit".activity_results r ON r.learner_id=l.learner_id
                         AND r.group_id=gl.group_id AND r.activity_id=ga.activity_id
                     LEFT JOIN "Last_audit".activity_planned_hours ph ON ph.learner_id=l.learner_id AND ph.aptem_id=l.aptem_id
@@ -463,20 +471,40 @@ def read_metrics(source, kind, preloaded=None):
     return result
 
 
+def read_metrics(source, kind, preloaded=None):
+    """Return programme totals exclusively from the consolidated SSOT."""
+    return canonical_learning.metrics(source.pk)
+
+
 @require_GET
 @learner_self_or_staff(kwarg='pk')
+@journal_sources.learner_journal_view
 def learner_metrics(request, kind, pk):
     model = SOURCE_MODELS.get(kind)
     if model is None:
         return JsonResponse({'error': 'Unknown learner kind.'}, status=404)
     try:
-        source = model.all_learners.only('id', 'aptem_id', 'email').get(pk=pk)
-        payload = read_metrics(source, kind)
+        with measure_projection('metrics', kind=kind, learner_id=pk) as measurement:
+            source = model.all_learners.only('id', 'aptem_id', 'email').get(pk=pk)
+            with measurement.stage('metrics'):
+                if request.GET.get('view') == 'coach-ksb-breakdown':
+                    from .aptem_ksb_breakdown import read_learner_breakdown
+                    payload = read_learner_breakdown(connections['enrolment'], source.pk)
+                elif request.GET.get('view') == 'learner-overview':
+                    payload = canonical_learning.metrics_bulk(
+                        [source.pk], learner_workspace=True, include_ksb_points=True,
+                    ).get(source.pk)
+                    if payload is None:
+                        raise ValueError('Learner identity is unavailable.')
+                else:
+                    payload = read_metrics(source, kind)
     except model.DoesNotExist:
         return JsonResponse({'error': 'Learner not found.'}, status=404)
+    except ServiceError as error:
+        return JsonResponse({'error': str(error)}, status=error.status)
     except ValueError as error:
         return JsonResponse({'error': str(error)}, status=409)
-    except DatabaseError as error:
+    except (DatabaseError, psycopg.Error) as error:
         log.warning(
             '[learner_metrics] learner=%s stage=read_metrics failed exception=%s message=%s',
             pk, type(error).__name__, str(error), exc_info=True,
@@ -513,8 +541,8 @@ def load_manual_hours_bulk(aptem_ids):
     if not ids:
         return {}
     with connections['enrolment'].cursor() as cursor:
-        cursor.execute('''SELECT aptem_id, SUM(actual_hours)
-            FROM structured_manual_activities.manual_learner_activities
+        cursor.execute(f'''SELECT aptem_id, SUM(actual_hours)
+            FROM {journal_sources.table('manual_learner_activities')}
             WHERE aptem_id=ANY(%s) AND accepted=true AND deleted_at IS NULL
             GROUP BY aptem_id''', [ids])
         return {int(aptem_id): number(total) for aptem_id, total in cursor.fetchall()}
@@ -567,11 +595,11 @@ def load_audit_inputs_bulk(aptem_ids):
             )
             audit['identity'] = (matches[0][0],)
             audit['aptem_planned_total'] = number(matches[0][1]) if len(matches) == 1 else None
-        cursor.execute('''SELECT l.aptem_id,gl.group_id,ga.activity_id,r.status,r.video_completed,
+        cursor.execute(f'''SELECT l.aptem_id,gl.group_id,ga.activity_id,r.status,r.video_completed,
             r.reading_viewed,r.quiz_passed,a.quiz_id,a.reading_type,ph.planned_hours AS expected_hours,
             CASE WHEN nullif(a.reading_iframe_url,'') IS NOT NULL THEN 'present' ELSE '' END AS reading_iframe_url,
             CASE WHEN jsonb_typeof(a.quiz_questions)='array' AND a.quiz_questions<>'[]'::jsonb
-                 THEN '[{}]'::jsonb ELSE '[]'::jsonb END AS quiz_questions,
+                 THEN '[{{}}]'::jsonb ELSE '[]'::jsonb END AS quiz_questions,
             jsonb_path_query_array(CASE WHEN lk.source_preference='learner' THEN lk.ksbs ELSE ak.ksbs END,
                                    '$[*].code') AS ksb_mappings,
             g.group_name AS module_title,a.title AS activity_title,a.activity_date
@@ -580,9 +608,9 @@ def load_audit_inputs_bulk(aptem_ids):
             JOIN "Last_audit".group_activities ga ON ga.group_id=gl.group_id
             JOIN "Last_audit".activities a ON a.activity_id=ga.activity_id
             LEFT JOIN "Last_audit".groups g ON g.group_id=gl.group_id
-            LEFT JOIN structured_manual_activities.learner_activity_ksbs lk
+            LEFT JOIN {journal_sources.table('learner_activity_ksbs')} lk
                 ON lk.aptem_id=l.aptem_id AND lk.activity_id=ga.activity_id
-            LEFT JOIN structured_manual_activities.activity_ksbs ak ON ak.activity_id=ga.activity_id
+            LEFT JOIN {journal_sources.table('activity_ksbs')} ak ON ak.activity_id=ga.activity_id
             LEFT JOIN "Last_audit".activity_results r ON r.learner_id=l.learner_id
                 AND r.group_id=gl.group_id AND r.activity_id=ga.activity_id
             LEFT JOIN "Last_audit".activity_planned_hours ph ON ph.learner_id=l.learner_id AND ph.aptem_id=l.aptem_id
@@ -637,19 +665,20 @@ def load_accepted_ksb_rows_bulk(keys):
     placeholders = ','.join(['(%s,%s,%s)'] * len(triples))
     params = [value for triple in triples for value in triple]
     with connections['enrolment'].cursor() as cursor:
-        cursor.execute(f'''WITH requested(enrolment_id,aptem_id,learner_kind) AS (VALUES {placeholders})
+        cursor.execute(f'''WITH requested(enrolment_id,aptem_id,learner_kind) AS (VALUES {placeholders}f)
             SELECT requested.enrolment_id,r.id,r.group_id,r.activity_id,r.source_ref,
                 coalesce(p.component_ref,s.component_ref) AS component_ref,
+                coalesce(nullif(r.title, ''),nullif(a.title, '')) AS activity_title,
                 coalesce(j.ksbs,CASE WHEN lk.source_preference='learner' THEN lk.ksbs ELSE ak.ksbs END,
-                         a.raw #> '{{live_lms_component,ksbs}}') AS ksb_mappings
+                         a.raw #> '{{{{live_lms_component,ksbs}}}}') AS ksb_mappings
             FROM requested
-            JOIN structured_manual_activities.manual_learner_activities r
+            JOIN {journal_sources.table('manual_learner_activities')} r
               ON r.aptem_id=requested.aptem_id
-            LEFT JOIN structured_manual_activities.learner_journal_row_ksbs j
+            LEFT JOIN {journal_sources.table('learner_journal_row_ksbs')} j
               ON j.row_id=r.id AND j.aptem_id=r.aptem_id
-            LEFT JOIN structured_manual_activities.learner_activity_ksbs lk
+            LEFT JOIN {journal_sources.table('learner_activity_ksbs')} lk
               ON lk.activity_id=r.activity_id AND lk.aptem_id=r.aptem_id
-            LEFT JOIN structured_manual_activities.activity_ksbs ak ON ak.activity_id=r.activity_id
+            LEFT JOIN {journal_sources.table('activity_ksbs')} ak ON ak.activity_id=r.activity_id
             LEFT JOIN "Last_audit".activities a ON a.activity_id=r.activity_id
             LEFT JOIN "Learner".learners l ON l.enrolment_id=requested.enrolment_id
             LEFT JOIN "Learner".learner_progress_entries p

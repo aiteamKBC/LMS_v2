@@ -78,6 +78,53 @@ def local_calendar_recurrence(targets, repeat, zone_name, graph_zone):
             'numberOfOccurrences': slots, 'recurrenceTimeZone': graph_zone}}
 
 
+def sessions_a_rewrite_would_drop(targets, recurring, rows, zone_name, now=None):
+    """Future tracked sessions a new recurrence would silently take off Teams.
+
+    Rewriting a series' recurrence regenerates its instances from the pattern:
+    a session outside the new range, or on a weekday the pattern no longer
+    fires on, simply stops existing, and Exchange tells everyone invited. That
+    is a cancellation nobody pressed Cancel for, so the caller refuses the
+    update and names these sessions instead.
+
+    ``rows`` are the calendar's stored occurrences. Only scheduled sessions that
+    have not started and are absent from ``targets`` count; a session that
+    already ran is history and is left alone either way.
+    """
+    now = now or datetime.now(timezone.utc)
+    zone = ZoneInfo(zone_name)
+    wanted = {target['start'] for target in targets}
+    local = [target['start'].astimezone(zone) for target in targets]
+    first, last = (min(local).date(), max(local).date()) if local else (None, None)
+    weekdays = {item.weekday() for item in local}
+    dropped = []
+    for row in rows or ():
+        if str(row.get('status') or 'scheduled') != 'scheduled':
+            continue
+        try:
+            start = utc_datetime(row.get('scheduled_start'))
+        except (CalendarMismatch, TypeError, ValueError):
+            continue
+        if start <= now or start in wanted:
+            continue
+        day = start.astimezone(zone)
+        covered = bool(recurring and first and first <= day.date() <= last and day.weekday() in weekdays)
+        if not covered:
+            dropped.append(row)
+    return dropped
+
+
+def dropped_sessions_sentence(rows, zone_name):
+    zone = ZoneInfo(zone_name)
+    named = ', '.join(
+        f"Session {row.get('session_number')} ({utc_datetime(row.get('scheduled_start')).astimezone(zone).strftime('%a %d %b %Y, %H:%M')})"
+        for row in rows
+    )
+    return (f'This update would take {named} off the Teams calendar, and Microsoft would email everyone invited '
+            'that it is cancelled. Nothing was sent. Cancel it by hand first with Cancel session, or keep it in '
+            'the module plan.')
+
+
 def safe_teams_join_url(value):
     try:
         parsed = urlparse(str(value or ''))
@@ -139,19 +186,114 @@ def verify_calendar(request, owner, event_id, targets, expected_join_url='', rec
         if match.get('hideAttendees') is False:
             raise CalendarMismatch(f"Session {target['session_number']} exposes its attendee list.")
         available.remove(match)
-    if available:
-        raise CalendarMismatch('Microsoft still contains extra sessions. Invitations were not updated.')
+    # A slot Microsoft holds that the plan does not -- weekly filler in a gap, a
+    # week handed to its own additional meeting, a session dropped from the
+    # plan -- is not a failure and is never removed here: removing it is a
+    # cancellation Exchange emails to everyone invited, and only the explicit
+    # Cancel may send one. It is reported so the screen can flag it.
+    unplanned = [item for item in available if item.get('isCancelled') is not True]
+    if unplanned:
+        event = {**event, 'unplannedInstances': [
+            {'eventId': item.get('id') or '', 'occurrenceId': item.get('occurrenceId') or '',
+             'startDateTimeUtc': event_instant(item, 'start').isoformat(),
+             'endDateTimeUtc': event_instant(item, 'end').isoformat()}
+            for item in unplanned
+        ]}
     return event
 
 
-def publish_attendees(request, owner, event, attendees):
-    """An attendee-only patch avoids reapplying the recurrence on people saves."""
-    def addresses(items):
-        return {str((item.get('emailAddress') or {}).get('address') or '').strip().lower() for item in items}
-    if addresses(event.get('attendees') or []) == addresses(attendees):
-        return
+def attendee_addresses(items):
+    """The email addresses on an invitation list, however each entry is written."""
+    found = set()
+    for item in items or []:
+        raw = (item.get('emailAddress') or {}).get('address') if isinstance(item, dict) else item
+        address = str(raw or '').strip().lower()
+        if address:
+            found.add(address)
+    return found
+
+
+def event_organizer_address(event):
+    """The mailbox that owns an event, as Microsoft reports it."""
+    organizer = (event or {}).get('organizer') or {}
+    return str((organizer.get('emailAddress') or {}).get('address') or '').strip().lower()
+
+
+def attendees_already_match(requested, confirmed, organizer=''):
+    """Whether an event already holds exactly the people a save wants on it.
+
+    Strict, because this decides whether to write at all: swapping one invitee
+    for another is a real change to make, and only the organizer -- who is
+    never an attendee of their own event -- is left out of the comparison.
+    """
+    owner = {str(organizer or '').strip().lower()} - {''}
+    return attendee_addresses(requested) - owner == attendee_addresses(confirmed) - owner
+
+
+def attendee_differences(requested, confirmed, organizer=''):
+    """What is really missing from, or extra on, Microsoft's copy of a list.
+
+    Microsoft does not always store an address exactly as it was sent. An
+    internal alias comes back as that mailbox's primary address, and a
+    meeting's own organizer is never listed among its attendees. Neither means
+    an invitation was lost, yet a character-by-character comparison read both
+    as a failed publish -- so one pasted alias could block every later people
+    save on that module, including removing somebody.
+
+    So the organizer is not expected back, and each requested address
+    Microsoft answered with an address of its own is paired with it: one
+    mailbox under the spelling Microsoft chose, not a lost learner and not a
+    gate-crasher. Whatever is still unaccounted for is returned, and it is
+    genuinely wrong.
+    """
+    owner = {str(organizer or '').strip().lower()} - {''}
+    wanted = attendee_addresses(requested) - owner
+    held = attendee_addresses(confirmed) - owner
+    missing, extra = sorted(wanted - held), sorted(held - wanted)
+    paired = min(len(missing), len(extra))
+    return missing[paired:], extra[paired:]
+
+
+def unconfirmed_attendee_detail(missing, extra):
+    """Name the addresses, so a real failure can be acted on from the message."""
+    parts = []
+    if missing:
+        parts.append('not invited: ' + ', '.join(missing))
+    if extra:
+        parts.append('invited but not requested: ' + ', '.join(extra))
+    return '; '.join(parts)
+
+
+def publish_attendees(request, owner, event, attendees, *, extra_headers=None, always=False):
+    """An attendee-only patch avoids reapplying the recurrence on people saves.
+
+    Returns whether the invitation list was actually written. A caller that
+    re-verifies the calendar afterwards only has to do so when something was
+    sent; an unchanged list leaves the calendar exactly as the verification
+    before this call found it -- and, because nothing is written, Microsoft has
+    nothing to mail either.
+
+    ``extra_headers`` carries the caller's invitation preference, so that
+    correcting who belongs to a meeting and deciding whether Microsoft announces
+    it stay two separate decisions. Membership is never traded for silence.
+
+    ``always`` writes even when the list already matches. A session created
+    silently already has its people on it, and skipping the write there would
+    leave a meeting whose attendees are correct and whose attendees were never
+    told -- Microsoft only delivers a meeting to someone when something is sent.
+    """
+    organizer = event_organizer_address(event)
+    if not always and attendees_already_match(attendees, event.get('attendees'), organizer):
+        return False
     path = f'users/{owner}/events/{quote(event["id"], safe="")}'
-    request('PATCH', path, payload={'attendees': attendees})
+    request('PATCH', path, payload={'attendees': attendees}, extra_headers=extra_headers)
     confirmed = request('GET', path)
-    if addresses(confirmed.get('attendees') or []) != addresses(attendees):
-        raise RuntimeError('Microsoft did not confirm the full invitation list. Check the calendar before retrying.')
+    missing, extra = attendee_differences(
+        attendees, confirmed.get('attendees'), organizer or event_organizer_address(confirmed),
+    )
+    if missing or extra:
+        raise RuntimeError(
+            'Microsoft did not confirm the full invitation list '
+            f'({unconfirmed_attendee_detail(missing, extra)}). Check the calendar before retrying.'
+        )
+    return True

@@ -3,27 +3,27 @@
 .week { display: flex; flex-direction: column; }
 .heading { display: flex; justify-content: space-between; align-items: flex-start; gap: 1rem; margin-bottom: 1.5rem; }
 .eyebrow { color: var(--learner-purple); font-size: .65rem; font-weight: 700; letter-spacing: .09em; text-transform: uppercase; }
-.grid .heading h2 { margin: .25rem 0 .375rem; color: var(--kbc-text); font-size: 1.125rem; font-weight: 700; letter-spacing: -.02em; }
+.grid .heading h2 { margin: .25rem 0 .375rem; color: var(--kbc-learner-primary-dark, #362055); font-size: 1.125rem; font-weight: 700; letter-spacing: -.02em; }
 .heading p, .weekLabel { color: var(--kbc-muted); font-size: .8125rem; line-height: 1.6; }
 .headingIcon { display: grid; flex: 0 0 2.75rem; width: 2.75rem; height: 2.75rem; place-items: center; border-radius: .875rem; background: var(--learner-accent-soft); color: var(--learner-purple); }
 .moduleHeading { margin-bottom: 1.25rem; min-width: 0; }
-.grid .moduleHeading h3 { color: var(--kbc-text); font-size: 1rem; font-weight: 650; overflow-wrap: anywhere; }
+.grid .moduleHeading h3 { color: var(--kbc-learner-primary-dark, #362055); font-size: 1rem; font-weight: 650; overflow-wrap: anywhere; }
 .moduleSelect { display: grid; gap: .5rem; font-size: .75rem; color: var(--kbc-muted); }
-.grid .moduleSelect select { width: 100%; min-width: 0; min-height: 2.75rem; padding: .5rem 2rem .5rem .75rem; border: 1px solid var(--kbc-border); border-radius: .625rem; background: var(--learner-soft); color: var(--kbc-text); font-size: .875rem; font-weight: 600; text-overflow: ellipsis; }
+.grid .moduleSelect select { width: 100%; min-width: 0; min-height: 2.75rem; padding: .5rem 2rem .5rem .75rem; border: 1px solid var(--kbc-border); border-radius: .625rem; background: var(--learner-soft); color: var(--kbc-learner-primary-dark, #362055); font-size: .875rem; font-weight: 600; text-overflow: ellipsis; }
 .weekLabel { margin-top: .5rem; overflow-wrap: anywhere; }
 .progressLabel { display: flex; justify-content: space-between; gap: 1rem; font-size: .8125rem; color: var(--kbc-muted); }
-.progressLabel strong { color: var(--learner-navy); font-variant-numeric: tabular-nums; }
+.progressLabel strong { color: var(--kbc-learner-primary, #4f2d7f); font-variant-numeric: tabular-nums; }
 .meter { height: .5625rem; margin-top: .75rem; border-radius: 999px; overflow: hidden; background: var(--learner-soft); }
-.meter > span { display: block; height: 100%; border-radius: inherit; background: var(--learner-navy); transition: width 180ms ease; }
+.meter > span { display: block; height: 100%; border-radius: inherit; background: var(--kbc-learner-primary, #4f2d7f); transition: width 180ms ease; }
 .facts { display: grid; grid-template-columns: minmax(0, 1fr); gap: .75rem; margin: 1.25rem 0; }
 .grid .fact { min-width: 0; padding: 1rem; border: 1px solid var(--kbc-border); border-radius: .75rem; background: var(--learner-soft); }
 .fact > span { display: flex; align-items: center; gap: .5rem; color: var(--kbc-muted); font-size: .75rem; }
-.fact > strong { display: block; margin-top: .5rem; color: var(--kbc-text); font-size: .875rem; font-weight: 600; line-height: 1.55; overflow-wrap: anywhere; }
+.fact > strong { display: block; margin-top: .5rem; color: var(--kbc-learner-primary-dark, #362055); font-size: .875rem; font-weight: 600; line-height: 1.55; overflow-wrap: anywhere; }
 .fact small { display: block; margin-top: .375rem; font-size: .6875rem; color: var(--kbc-muted); line-height: 1.6; }
 .divider { padding: 0 .25rem; color: var(--kbc-muted); font-weight: 400; }
 .weekFooter { display: flex; flex-wrap: wrap; align-items: center; gap: 1rem; padding-top: .5rem; }
 .weekFooter > span { font-size: .75rem; color: var(--kbc-muted); }
-.grid .primary { display: inline-flex; justify-content: center; align-items: center; gap: 1.25rem; min-height: 2.875rem; padding: .75rem 1.125rem; border-radius: .75rem; background: var(--learner-navy); color: #fff; font-size: .8125rem; font-weight: 600; text-decoration: none; transition: background 150ms; }
+.grid .primary { display: inline-flex; justify-content: center; align-items: center; gap: 1.25rem; min-height: 2.875rem; padding: .75rem 1.125rem; border-radius: .75rem; background: var(--kbc-learner-primary, #4f2d7f); color: #fff; font-size: .8125rem; font-weight: 600; text-decoration: none; transition: background 150ms; }
 .grid .primary:hover { background: var(--learner-purple); }
 .empty { display: flex; align-items: flex-start; gap: .875rem; padding: 1rem 0; color: var(--kbc-muted); }
 .empty > svg { flex-shrink: 0; }

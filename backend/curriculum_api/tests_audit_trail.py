@@ -629,3 +629,235 @@ class SafetyTests(AuditHarness):
         self.assertNotIn('meeting_options_url', columns)
         # Its identity is still traceable, which the Teams invariants require.
         self.assertIn('graph_event_id', columns)
+
+
+class CalendarMoveAuditTests(AuditHarness):
+    """Moving a booked session is an edit to the session, so it leaves a record.
+
+    ``persist_move`` used to write its components with a raw UPDATE, which never
+    reached the recorder: a session moved to a different day left the trail
+    saying nothing had happened. It now writes through ``update_authoring_rows``
+    like every other authoring change, and these assertions are the difference
+    between the two. The Teams identifiers it stamps in the same breath are
+    still left out -- that exclusion is the log's own rule and is asserted here
+    so routing the write through the recorder cannot quietly start publishing
+    join links.
+    """
+
+    SETTINGS = {
+        'version': '0.1', 'contentStatus': 'Draft',
+        'sessionDate': '2026-10-08', 'sessionDay': 'Thursday', 'sessionTime': '09:00',
+        'durationMinutes': 120, 'teamsDurationMinutes': 120,
+        'sessionDateTimeUtc': '2026-10-08T08:00:00+00:00',
+        'teamsStartDateTimeUtc': '2026-10-08T08:00:00+00:00',
+        'teamsEventId': 'event-before', 'teamsOccurrenceId': 'OCC-1',
+        'teamsLiveSessionId': 'LIVE-1', 'teamsSessionNumber': 1,
+    }
+
+    def save_session(self, **overrides):
+        payload = {
+            'id': 'COMP-LIVE', 'module_catalogue_id': 'MOD-A', 'week_id': 'WEEK-1',
+            'type': 'live_session', 'title': 'Live Teams Session 1', 'display_order': 0,
+            'settings_json': views.json_db_value(dict(self.SETTINGS)),
+        }
+        payload.update(overrides)
+        return self.committed(
+            lambda: views.authoring_upsert(views.AUTHORING_COMPONENTS_TABLE, ['id'], payload)
+        )
+
+    def restamp(self, **settings):
+        """One write of the merged settings, the way ``persist_move`` makes it."""
+        return self.committed(lambda: views.update_authoring_rows(
+            views.AUTHORING_COMPONENTS_TABLE, 'id = %s', ['COMP-LIVE'],
+            {'settings_json': views.json_db_value({**self.SETTINGS, **settings})},
+        ))
+
+    def test_moving_a_session_to_another_day_is_recorded(self):
+        self.sign_in()
+        self.save_session()
+        self.restamp(
+            sessionDate='2026-10-15', sessionDay='Thursday',
+            sessionDateTimeUtc='2026-10-15T08:00:00+00:00',
+            teamsStartDateTimeUtc='2026-10-15T08:00:00+00:00',
+            teamsEventId='event-after',
+        )
+        rows = self.revisions('component', 'COMP-LIVE')
+        self.assertEqual(len(rows), 2)
+        changes = self.changed_fields(rows[-1])
+        # The day it now runs on, and the confirmed instant behind it.
+        self.assertEqual(changes['settings.sessionDate'], ('2026-10-08', '2026-10-15'))
+        self.assertIn('settings.sessionDateTimeUtc', changes)
+        # The Teams event id moved in the same write and is deliberately absent.
+        self.assertNotIn('settings.teamsEventId', changes)
+
+    def test_moving_a_session_within_the_day_is_recorded(self):
+        self.sign_in()
+        self.save_session()
+        self.restamp(
+            sessionTime='14:00',
+            sessionDateTimeUtc='2026-10-08T13:00:00+00:00',
+            teamsStartDateTimeUtc='2026-10-08T13:00:00+00:00',
+        )
+        changes = self.changed_fields(self.revisions('component', 'COMP-LIVE')[-1])
+        self.assertEqual(changes['settings.sessionTime'], ('09:00', '14:00'))
+
+    def test_a_longer_session_is_recorded(self):
+        self.sign_in()
+        self.save_session()
+        self.restamp(durationMinutes=180, teamsDurationMinutes=180)
+        changes = self.changed_fields(self.revisions('component', 'COMP-LIVE')[-1])
+        self.assertEqual(changes['settings.durationMinutes'], ('120', '180'))
+
+    def test_restamping_only_teams_identifiers_records_nothing(self):
+        """The exclusion this fix must not disturb."""
+        self.sign_in()
+        self.save_session()
+        self.restamp(
+            teamsEventId='event-after',
+            teamsOccurrenceId='OCC-2',
+            teamsMeetingUrl='https://teams.microsoft.com/meet/synthetic',
+            liveSessionUrl='https://teams.microsoft.com/meet/synthetic',
+        )
+        self.assertEqual(len(self.revisions('component', 'COMP-LIVE')), 1)
+
+    def test_one_move_records_one_revision(self):
+        """The write helper reads and writes each row once; history says so too."""
+        self.sign_in()
+        self.save_session()
+        self.restamp(sessionDate='2026-10-15')
+        rows = self.revisions('component', 'COMP-LIVE')
+        self.assertEqual([row['revision_no'] for row in rows], [1, 2])
+
+    def test_the_moved_values_are_what_the_component_now_holds(self):
+        """History is the addition; the saved record must be untouched by it."""
+        self.sign_in()
+        self.save_session()
+        self.restamp(sessionDate='2026-10-15', teamsEventId='event-after')
+        row = views.authoring_fetch_all(
+            views.AUTHORING_COMPONENTS_TABLE, 'id = %s', ['COMP-LIVE'])[0]
+        settings = views.as_json_value(row.get('settings_json'), {})
+        self.assertEqual(settings['sessionDate'], '2026-10-15')
+        self.assertEqual(settings['teamsEventId'], 'event-after')
+        # Everything the move did not name survives the merge.
+        self.assertEqual(settings['contentStatus'], 'Draft')
+        self.assertEqual(settings['teamsOccurrenceId'], 'OCC-1')
+
+
+class AuditTrailPaginationTests(AuditHarness):
+    """One page of a long feed, and the arithmetic that says which page it is.
+
+    The feed the Audit Trail opens on runs to tens of thousands of rows, so it
+    is read a page at a time. Every assertion here guards a failure that looks
+    like a working page: a second page that repeats the first, a total counted
+    over the fifty rows on screen rather than the window, a filter applied
+    after the page was cut -- each of them renders without an error and each of
+    them is a lie about the history being read.
+    """
+
+    def trail(self, query=''):
+        response = self.client.get(f'/curriculum_api/curriculum/quality/audit-trail/{query}')
+        self.assertEqual(response.status_code, 200, response.content)
+        return response.json()
+
+    def write(self, index, title=None):
+        self.committed(lambda: views.authoring_upsert(views.AUTHORING_COMPONENTS_TABLE, ['id'], {
+            'id': f'COMP-P{index:02d}', 'module_catalogue_id': 'MOD-PAGE', 'week_id': 'WEEK-1',
+            'type': 'quiz', 'title': title or f'Quiz {index:02d}', 'display_order': index,
+        }))
+
+    def setUp(self):
+        super().setUp()
+        self.sign_in()
+        for index in range(1, 8):
+            self.write(index)
+
+    def ids(self, payload):
+        return [event['entityId'] for event in payload['events']]
+
+    def test_a_page_is_cut_from_the_window_and_says_how_long_the_window_is(self):
+        payload = self.trail('?limit=3')
+        self.assertEqual(len(payload['events']), 3)
+        self.assertEqual(payload['page'], 1)
+        self.assertEqual(payload['pageSize'], 3)
+        # The window, not the page. The count beside the feed reads from this.
+        self.assertEqual(payload['total'], 7)
+        self.assertEqual(payload['pages'], 3)
+
+    def test_each_page_carries_different_rows(self):
+        """A page control that re-serves page one is the silent failure here."""
+        first = self.ids(self.trail('?limit=3&page=1'))
+        second = self.ids(self.trail('?limit=3&page=2'))
+        third = self.ids(self.trail('?limit=3&page=3'))
+        self.assertEqual(len(first), 3)
+        self.assertEqual(len(second), 3)
+        self.assertEqual(len(third), 1)
+        self.assertEqual(len(set(first + second + third)), 7)
+
+    def test_the_pages_in_order_are_the_whole_window_newest_first(self):
+        whole = self.ids(self.trail('?limit=50'))
+        paged = []
+        for page in (1, 2, 3):
+            paged.extend(self.ids(self.trail(f'?limit=3&page={page}')))
+        self.assertEqual(paged, whole)
+
+    def test_a_page_past_the_end_is_answered_with_the_last_one(self):
+        """Said in the response, so the control stops claiming page 900."""
+        payload = self.trail('?limit=3&page=900')
+        self.assertEqual(payload['page'], 3)
+        self.assertEqual(len(payload['events']), 1)
+
+    def test_a_filter_narrows_the_whole_window_not_just_the_page(self):
+        """Filtered after the cut, this would report 7 and show 2."""
+        self.write(3, title='Quiz 03 revised')
+        self.write(5, title='Quiz 05 revised')
+        payload = self.trail('?limit=3&action=updated')
+        self.assertEqual(payload['total'], 2)
+        self.assertEqual(payload['pages'], 1)
+        self.assertEqual(sorted(self.ids(payload)), ['COMP-P03', 'COMP-P05'])
+
+    def test_a_search_is_answered_over_the_window_not_over_the_page(self):
+        payload = self.trail('?limit=2&search=quiz 07')
+        self.assertEqual(payload['total'], 1)
+        self.assertEqual(self.ids(payload), ['COMP-P07'])
+
+    def test_the_headline_counts_describe_the_window_not_the_page(self):
+        """They must not change as somebody pages through the feed."""
+        first = self.trail('?limit=3&page=1')
+        last = self.trail('?limit=3&page=3')
+        self.assertEqual(first['actionCounts']['created'], 7)
+        self.assertEqual(first['actionCounts'], last['actionCounts'])
+        self.assertEqual(first['entityCounts'], last['entityCounts'])
+
+    def test_the_timestamp_fallback_pages_too(self):
+        """The reading used where there is no revision log pages the same way."""
+        with self.connection_cursor() as cursor:
+            cursor.execute(f'drop table {versioning.qualified(versioning.VERSIONS_TABLE)}')
+            cursor.execute(f'drop table {versioning.qualified(versioning.REVISIONS_TABLE)}')
+        versioning.reset_availability()
+        # Counted rather than asserted at 7: this reading reports a create and
+        # an edit per row, so the number of events is not the number of
+        # records. What matters is that the pages add back up to it.
+        total = self.trail('?limit=200')['total']
+        payload = self.trail('?limit=3')
+        self.assertEqual(payload['source'], 'timestamps')
+        self.assertEqual(payload['total'], total)
+        self.assertEqual(payload['pages'], -(-total // 3))
+        self.assertEqual(len(payload['events']), 3)
+        seen = []
+        for page in range(1, payload['pages'] + 1):
+            seen.extend(
+                (event['entityId'], event['action'])
+                for event in self.trail(f'?limit=3&page={page}')['events']
+            )
+        self.assertEqual(len(seen), total)
+        self.assertEqual(len(set(seen)), total)
+
+    def test_the_timestamp_fallback_names_the_workspaces_as_well(self):
+        """The page opens on Changes, so its filter and notice read from these."""
+        with self.connection_cursor() as cursor:
+            cursor.execute(f'drop table {versioning.qualified(versioning.VERSIONS_TABLE)}')
+            cursor.execute(f'drop table {versioning.qualified(versioning.REVISIONS_TABLE)}')
+        versioning.reset_availability()
+        payload = self.trail()
+        self.assertIn('curriculum', [option['value'] for option in payload['workspaces']])
+        self.assertEqual(payload['changeWorkspaces'], ['curriculum'])

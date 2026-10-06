@@ -36,11 +36,14 @@ from .mappers import _s, to_employer_row
 from .models import Employer, EnrolmentReview
 from .review_form import (
     MAX_SIGNATURE_CHARS,
+    _lookup as _lookup_enrolment_review,
+    _serialize_form as _serialize_enrolment_review,
     employer_signature_required,
     sections_for,
 )
 from .views import _error, _parse_body
-from coach_api.models import CoachCalendarEvent
+from coach_api.models import CoachAbsenceReport, CoachCalendarEvent, ImportedReviewInstance
+from coach_api.migrated_completion import signature_states
 from curriculum_api import review_instances
 
 logger = logging.getLogger(__name__)
@@ -67,9 +70,12 @@ def _review_signing_rows(kind, learner_id, *, employer_only=True):
     signature — the employer has no business being shown the RPL review.
     """
     try:
+        # A cancelled booking's review belongs to a meeting that is not
+        # happening -- the learner re-books, and that new review is the one to
+        # sign. Same rule as the board's and the coach's review documents.
         reviews = EnrolmentReview.objects.filter(
             learner_kind=kind, learner_id=learner_id
-        ).order_by("scheduled_date", "id")
+        ).exclude(status=EnrolmentReview.STATUS_CANCELLED).order_by("scheduled_date", "id")
     except DatabaseError:
         logger.exception("_review_signing_rows: lookup failed for %s/%s", kind, learner_id)
         return []
@@ -153,6 +159,33 @@ def _review_signing_rows(kind, learner_id, *, employer_only=True):
             "signedAt": employer_state.get('signedAt'),
             "learnerSigned": bool(signatures.get('participant', {}).get('signed')),
             "adminSigned": bool(signatures.get('advisor', {}).get('signed')),
+        })
+    # Imported Aptem continuations have their own overlay and signature store.
+    # Only this learner's profile ids are queried; native review rows above
+    # keep their existing behavior and document identity.
+    for overlay in ImportedReviewInstance.objects.select_related("migrated_template").filter(
+        learner_id__in=[int(value) for value in instance_learner_ids],
+        source_review_id__isnull=False,
+        status__in=[ImportedReviewInstance.STATUS_AWAITING_SIGNATURE, ImportedReviewInstance.STATUS_COMPLETED],
+    ):
+        if not overlay.migrated_template_id or overlay.migrated_template.review_family != "PR":
+            continue
+        signatures = signature_states(overlay)
+        employer_state = signatures["employer"]
+        rows.append({
+            "kind": "review", "eventKey": overlay.event_key,
+            "reviewInstanceId": overlay.event_key, "migratedForm": True,
+            "reviewType": "aptem_progress_review",
+            "label": overlay.template_snapshot.get("name") or "Migrated Progress Review",
+            "scheduledDate": "", "signable": overlay.status == ImportedReviewInstance.STATUS_AWAITING_SIGNATURE,
+            "completed": overlay.status == ImportedReviewInstance.STATUS_COMPLETED,
+            "sectionsTotal": len(overlay.template_snapshot.get("sections") or []),
+            "employerSignatureRequired": True,
+            "signed": employer_state["signed"],
+            "signedName": employer_state["signedName"] or "",
+            "signedAt": employer_state["signedAt"],
+            "learnerSigned": signatures["participant"]["signed"],
+            "adminSigned": signatures["advisor"]["signed"],
         })
     return rows
 
@@ -400,6 +433,46 @@ def _learner_cards(employer_id):
     return cards
 
 
+def _recording_absence_notification(report, employer_id):
+    return {
+        "id": f"recorded-absence:{report.pk}",
+        "text": (
+            f"{report.learner_name} reported they will miss {report.session_title} "
+            "and watch the recording. Attendance will remain absent."
+        ),
+        "createdAt": _iso(report.created_at),
+        "type": "attendance",
+        "category": "Attendance",
+        "link": f"/employers/{employer_id}",
+    }
+
+
+@csrf_exempt
+@employer_or_staff()
+def employer_absence_notifications(request, employer_id):
+    """Recording-choice absence alerts for this employer's own learners."""
+    if request.method != "GET":
+        return _error("Method not allowed.", 405)
+
+    try:
+        learner_ids = list(
+            SOURCE_MODELS["apprenticeship"].all_learners
+            .filter(employer_id=employer_id)
+            .values_list("id", flat=True)
+        )
+        reports = (
+            CoachAbsenceReport.objects
+            .filter(learner_id__in=learner_ids, recovery_method="recorded")
+            .order_by("-created_at")[:50]
+        )
+        items = [_recording_absence_notification(report, employer_id) for report in reports]
+    except DatabaseError:
+        logger.exception("Could not load absence notifications for employer %s", employer_id)
+        return _error("Could not load absence notifications.", 502)
+
+    return JsonResponse({"items": items})
+
+
 @csrf_exempt
 @employer_or_staff()
 def employer_portal(request, employer_id):
@@ -601,6 +674,36 @@ def employer_review_instance(request, employer_id, kind, learner_id, event_key):
 
 @csrf_exempt
 @employer_or_staff()
+def employer_enrolment_review(request, employer_id, kind, learner_id, event_key):
+    """One legacy Enrolment_Reviews document, read by the learner's employer.
+
+    Backs "Show document" on a signed review. The learner-side read
+    (review_form.enrolment_review_form) is limited to the learner and staff, and
+    its GET stamps started_at, so the employer gets this read-only view instead,
+    limited to the reviews their signing list offers them.
+    """
+    if request.method != "GET":
+        return _error("Method not allowed.", 405)
+    employer, err = _employer_or_404(employer_id)
+    if err:
+        return err
+    try:
+        learner, review, event, failure = _lookup_enrolment_review(kind, learner_id, event_key)
+    except DatabaseError as exc:
+        return _error(f"Database error: {exc}", 502)
+    if failure is not None:
+        return failure
+    if learner.employer_id != employer.pk:
+        return _error("That learner does not belong to this employer.", 403)
+    # Same filter as _review_signing_rows: a review that wants no employer
+    # sign-off (the RPL review) is not the employer's to read.
+    if not employer_signature_required(review):
+        return _error("Review not found.", 404)
+    return JsonResponse(_serialize_enrolment_review(review, learner, event))
+
+
+@csrf_exempt
+@employer_or_staff()
 def employer_portal_learner_plan(request, employer_id, kind, learner_id):
     """The learner's own training plan, hours and KSBs — for their employer.
 
@@ -687,8 +790,9 @@ def _overview_part(part, learner):
         include_open=True,
     )
     return {
-        "learner": {"aptem_id": summary["learner"].get("aptem_id")},
+        "learner": {key: summary["learner"].get(key) for key in ("aptem_id", "planned_end_date")},
         "months": [{key: month.get(key) for key in _HOURS_MONTH_FIELDS} for month in summary["months"]],
+        "training_plan_totals": summary.get("training_plan_totals"),
     }
 
 

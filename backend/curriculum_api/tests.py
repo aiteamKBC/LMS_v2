@@ -643,6 +643,7 @@ class CurriculumTeamsMeetingTests(TestCase):
                 'organizerEmail': 'tutor@example.com',
                 'attendees': ['student1@example.com', 'student2@example.com'],
                 'presenters': ['presenter@example.com'],
+                'coOrganizers': ['co-organizer@example.com'],
                 'localStartDateTime': '2026-07-30T15:30',
                 'startDateTimeUtc': '2026-07-30T12:30:00.000Z',
                 'durationMinutes': 60,
@@ -690,7 +691,7 @@ class CurriculumTeamsMeetingTests(TestCase):
         self.assertEqual(create_call.args[:2], ('POST', 'users/tutor%40example.com/events'))
         event_payload = create_call.kwargs['payload']
         self.assertTrue(event_payload['isOnlineMeeting'])
-        self.assertEqual(len(event_payload['attendees']), 3)
+        self.assertEqual(len(event_payload['attendees']), 4)
         self.assertEqual(event_payload['recurrence']['range']['numberOfOccurrences'], 6)
         meeting_patch = next(
             call for call in graph_request.call_args_list
@@ -722,6 +723,11 @@ class CurriculumTeamsMeetingTests(TestCase):
         # way every production reader does rather than asserting one vendor's
         # physical storage encoding.
         self.assertEqual(views.as_json_value(live_session['presenters'], []), ['presenter@example.com'])
+        self.assertEqual(views.as_json_value(live_session['co_organizers'], []), ['co-organizer@example.com'])
+        self.assertEqual(
+            views.as_json_value(live_session['attendees'], []),
+            ['student1@example.com', 'student2@example.com'],
+        )
         occurrences = views.authoring_fetch_all(
             views.LIVE_SESSION_OCCURRENCES_TABLE,
             'live_session_id = %s',
@@ -3440,6 +3446,38 @@ class CurriculumPayloadPerformanceTests(SimpleTestCase):
         for field in ('programmeId', 'cohortId', 'groupId', 'status'):
             self.assertIn(field, views.COMPACT_MODULE_LIST_FIELDS)
 
+    def test_operational_payload_drops_archived_authoring_module_from_delivery_list(self):
+        """A soft-archived authoring row must not leak through compact delivery rows."""
+        rows = {
+            'training': [],
+            'modules': [],
+            'authoring_modules': [
+                {'module_catalogue_id': 'MOD-ARCHIVED', 'status': 'archived'},
+                {'module_catalogue_id': 'MOD-LIVE', 'status': 'draft'},
+            ],
+            'ksb_profiles': [],
+            'program_configs': [],
+            'holidays': [],
+            'tutors': [],
+            'coaches': [],
+            'tutor_modules': [],
+        }
+        delivery_rows = [
+            {'id': 'MOD-ARCHIVED', 'moduleCatalogueId': 'MOD-ARCHIVED', 'catalogueId': 'MOD-ARCHIVED'},
+            {'id': 'MOD-LIVE', 'moduleCatalogueId': 'MOD-LIVE', 'catalogueId': 'MOD-LIVE'},
+        ]
+        with patch.object(views, 'build_modules', return_value=delivery_rows), \
+             patch.object(views, 'build_programmes', return_value=[]), \
+             patch.object(views, 'build_cohorts_and_groups', return_value=([], [])), \
+             patch.object(views, 'build_ksb_data', return_value=([], [])), \
+             patch.object(views, 'attach_module_assignment_counts'):
+            payload = views.build_curriculum_payload_from_rows(rows, compact=True)
+
+        self.assertEqual(
+            [module['moduleCatalogueId'] for module in payload['modules']],
+            ['MOD-LIVE'],
+        )
+
     def test_pagination_is_opt_in_and_reports_total_count(self):
         request = RequestFactory().get('/curriculum/modules/', {'page': 2, 'page_size': 2})
         results, metadata = views.paginate_curriculum_results(request, ['a', 'b', 'c', 'd', 'e'])
@@ -5576,16 +5614,196 @@ class TutorAssignmentNotificationTests(TestCase):
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]['status'], 'seeded')
 
-    def test_the_wizard_module_step_triggers_the_mail_on_commit(self):
-        """save_tree_group_modules reaches this through notify_staff_assignment_change."""
+    def test_assigning_a_tutor_no_longer_mails_them(self):
+        """Assignment emails are sent from the module workspace, never on save.
+
+        save_tree_group_modules and every other assignment path still reach
+        notify_staff_assignment_change; it now schedules nothing.
+        """
         self.seed_tutor()
         self.seed_delivery(tutor_name='Amira Hassan')
 
         with self.sent_mail() as send:
-            with self.captureOnCommitCallbacks(execute=True):
+            with self.captureOnCommitCallbacks(execute=True) as callbacks:
                 views.notify_staff_assignment_change()
+        send.assert_not_called()
+        self.assertEqual(callbacks, [])
+        self.assertEqual(tutor_notifications.ledger_rows(), [])
+
+    def test_staff_email_the_tutor_of_one_module_on_request(self):
+        self.seed_tutor()
+        self.seed_delivery(tutor_name='Amira Hassan')
+        self.assertEqual(tutor_notifications.module_tutor_status('MOD-ALPHA'), {
+            'moduleId': 'MOD-ALPHA', 'tutor': {'name': 'Amira Hassan', 'hasEmail': True}, 'lastSent': None,
+        })
+
+        with self.sent_mail() as send:
+            payload, status = tutor_notifications.send_module_tutor_email('MOD-ALPHA')
+        self.assertEqual((status, payload['sent'], payload['tutor']), (200, True, 'Amira Hassan'))
         send.assert_called_once()
         self.assertEqual(send.call_args.kwargs['to'], 'amira@example.com')
+        self.assertIn('Data Handling', send.call_args.kwargs['text_body'])
+        self.assertEqual(tutor_notifications.module_tutor_status('MOD-ALPHA')['lastSent']['status'], 'sent')
+
+        # Sending again is allowed (the button asks first) and still one row.
+        with self.sent_mail() as send:
+            tutor_notifications.send_module_tutor_email('MOD-ALPHA')
+        send.assert_called_once()
+        self.assertEqual(len(tutor_notifications.ledger_rows()), 1)
+
+    def test_several_deliveries_of_one_module_are_one_email(self):
+        """A drawer save that attaches three groups is one decision, not three.
+
+        The tutor is put on one delivery per group in a single save, and
+        `email_azure.tutor_assignment_message` has always taken a list for
+        exactly this. Three mails in the same second would describe the same
+        assignment three times.
+        """
+        self.seed_tutor()
+        self.seed_delivery(module_id='MOD-ALPHA', title='Data Handling', tutor_name='Amira Hassan')
+        self.seed_delivery(module_id='MOD-BETA', title='Statistics', tutor_name='Amira Hassan')
+
+        with self.sent_mail() as send:
+            payload, status = tutor_notifications.send_tutor_email(['MOD-ALPHA', 'MOD-BETA'])
+
+        self.assertEqual((status, payload['sent'], payload['modules']), (200, True, 2))
+        send.assert_called_once()
+        body = send.call_args.kwargs['text_body']
+        self.assertIn('Data Handling', body)
+        self.assertIn('Statistics', body)
+        # One mail, but each module keeps its own ledger row so the workspace can
+        # still say when that module last went out.
+        self.assertEqual(len(tutor_notifications.ledger_rows()), 2)
+        for module_id in ('MOD-ALPHA', 'MOD-BETA'):
+            self.assertEqual(tutor_notifications.module_tutor_status(module_id)['lastSent']['status'], 'sent')
+
+    def test_the_same_delivery_named_twice_is_still_one_entry(self):
+        self.seed_tutor()
+        self.seed_delivery(tutor_name='Amira Hassan')
+        with self.sent_mail() as send:
+            payload, status = tutor_notifications.send_tutor_email(['MOD-ALPHA', 'MOD-ALPHA', ''])
+        self.assertEqual((status, payload['modules']), (200, 1))
+        send.assert_called_once()
+        self.assertEqual(len(tutor_notifications.ledger_rows()), 1)
+
+    def test_modules_with_different_tutors_are_refused_not_split(self):
+        """Who the one mail is addressed to has to be unambiguous."""
+        amira = staff_user_row('Amira Hassan', 'amira@example.com', access='tutor', row_id=1)
+        amira['Email'] = 'amira@example.com'
+        ben = staff_user_row('Ben Carter', 'ben@example.com', access='tutor', row_id=2)
+        ben['Email'] = 'ben@example.com'
+        self.directory = [amira, ben]
+        views.invalidate_curriculum_cache()
+        self.seed_delivery(module_id='MOD-ALPHA', title='Data Handling', tutor_name='Amira Hassan')
+        self.seed_delivery(module_id='MOD-BETA', title='Statistics', tutor_name='Ben Carter')
+
+        with self.sent_mail() as send:
+            payload, status = tutor_notifications.send_tutor_email(['MOD-ALPHA', 'MOD-BETA'])
+        self.assertEqual(status, 409)
+        self.assertIn('same tutor', payload['error'])
+        send.assert_not_called()
+        self.assertEqual(tutor_notifications.ledger_rows(), [])
+
+    def test_naming_no_module_sends_nothing(self):
+        self.seed_tutor()
+        self.seed_delivery(tutor_name='Amira Hassan')
+        with self.sent_mail() as send:
+            payload, status = tutor_notifications.send_tutor_email([])
+        self.assertEqual(status, 400)
+        send.assert_not_called()
+
+    def test_the_tick_reads_its_state_from_the_ledger_not_from_the_drawer(self):
+        """Nothing sent yet reads as unchecked; a send makes it checked."""
+        self.seed_tutor()
+        self.seed_delivery(tutor_name='Amira Hassan')
+
+        before = tutor_notifications.tutor_email_status(['MOD-ALPHA'], 'Amira Hassan')
+        self.assertEqual((before['total'], before['emailed'], before['lastSentAt']), (1, 0, None))
+        self.assertEqual(before['tutor'], {'name': 'Amira Hassan', 'hasEmail': True})
+
+        with self.sent_mail():
+            tutor_notifications.send_tutor_email(['MOD-ALPHA'])
+
+        after = tutor_notifications.tutor_email_status(['MOD-ALPHA'], 'Amira Hassan')
+        self.assertEqual((after['total'], after['emailed']), (1, 1))
+        self.assertTrue(after['lastSentAt'])
+        self.assertTrue(after['deliveries'][0]['emailed'])
+
+    def test_a_failed_send_does_not_count_as_emailed(self):
+        """The ledger records the attempt; the tutor still heard nothing."""
+        self.seed_tutor()
+        self.seed_delivery(tutor_name='Amira Hassan')
+        with patch.object(tutor_notifications.email_azure, 'send_mail', return_value=(False, 'graph 503')):
+            _payload, status = tutor_notifications.send_tutor_email(['MOD-ALPHA'])
+        self.assertEqual(status, 502)
+
+        state = tutor_notifications.tutor_email_status(['MOD-ALPHA'], 'Amira Hassan')
+        self.assertEqual(state['emailed'], 0)
+        self.assertIsNone(state['lastSentAt'])
+        # The attempt is visible, but it is not a notification.
+        self.assertEqual(state['deliveries'][0]['lastSent']['status'], 'failed')
+
+    def test_the_previous_tutor_emailed_state_never_carries_over(self):
+        amira = staff_user_row('Amira Hassan', 'amira@example.com', access='tutor', row_id=1)
+        amira['Email'] = 'amira@example.com'
+        ben = staff_user_row('Ben Carter', 'ben@example.com', access='tutor', row_id=2)
+        ben['Email'] = 'ben@example.com'
+        self.directory = [amira, ben]
+        views.invalidate_curriculum_cache()
+        self.seed_delivery(tutor_name='Amira Hassan')
+        with self.sent_mail():
+            tutor_notifications.send_tutor_email(['MOD-ALPHA'])
+
+        self.assertEqual(tutor_notifications.tutor_email_status(['MOD-ALPHA'], 'Amira Hassan')['emailed'], 1)
+        # The drawer asking about the tutor somebody just picked, before it is
+        # saved onto the module. Amira's record is hers and says nothing here.
+        handed_over = tutor_notifications.tutor_email_status(['MOD-ALPHA'], 'Ben Carter')
+        self.assertEqual((handed_over['emailed'], handed_over['lastSentAt']), (0, None))
+        self.assertEqual(handed_over['tutor'], {'name': 'Ben Carter', 'hasEmail': True})
+
+    def test_a_partly_notified_module_reports_the_mix(self):
+        """Two deliveries, one told: neither "emailed" nor "not emailed"."""
+        self.seed_tutor()
+        self.seed_delivery(module_id='MOD-ALPHA', title='Data Handling', tutor_name='Amira Hassan')
+        self.seed_delivery(module_id='MOD-BETA', title='Statistics', tutor_name='Amira Hassan')
+        with self.sent_mail():
+            tutor_notifications.send_tutor_email(['MOD-ALPHA'])
+
+        mixed = tutor_notifications.tutor_email_status(['MOD-ALPHA', 'MOD-BETA'], 'Amira Hassan')
+        self.assertEqual((mixed['total'], mixed['emailed']), (2, 1))
+        self.assertEqual(
+            {d['moduleId']: d['emailed'] for d in mixed['deliveries']},
+            {'MOD-ALPHA': True, 'MOD-BETA': False},
+        )
+
+        # Finishing the job covers both in one message, and the mix resolves.
+        with self.sent_mail() as send:
+            tutor_notifications.send_tutor_email(['MOD-ALPHA', 'MOD-BETA'])
+        send.assert_called_once()
+        done = tutor_notifications.tutor_email_status(['MOD-ALPHA', 'MOD-BETA'], 'Amira Hassan')
+        self.assertEqual((done['total'], done['emailed']), (2, 2))
+
+    def test_a_manual_send_explains_why_it_cannot_go(self):
+        self.seed_delivery(tutor_name='')
+        with self.sent_mail() as send:
+            payload, status = tutor_notifications.send_module_tutor_email('MOD-ALPHA')
+            self.assertEqual(status, 409)
+            self.assertIn('Assign a tutor', payload['error'])
+            self.seed_tutor(email='')
+            self.seed_delivery(tutor_name='Amira Hassan')
+            payload, status = tutor_notifications.send_module_tutor_email('MOD-ALPHA')
+            self.assertEqual(status, 409)
+            self.assertIn('no email address', payload['error'])
+            self.assertEqual(tutor_notifications.send_module_tutor_email('MOD-MISSING')[1], 404)
+        send.assert_not_called()
+
+    def test_a_failed_manual_send_is_reported_and_recorded(self):
+        self.seed_tutor()
+        self.seed_delivery(tutor_name='Amira Hassan')
+        with patch.object(tutor_notifications.email_azure, 'send_mail', return_value=(False, 'mailbox unavailable')):
+            payload, status = tutor_notifications.send_module_tutor_email('MOD-ALPHA')
+        self.assertEqual((status, payload['code']), (502, 'send_failed'))
+        self.assertEqual(tutor_notifications.module_tutor_status('MOD-ALPHA')['lastSent']['status'], 'failed')
 
     def test_nothing_is_sent_while_the_transaction_is_still_open(self):
         """A save that rolls back must not have told anybody it happened."""

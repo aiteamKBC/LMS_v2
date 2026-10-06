@@ -1,24 +1,71 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type ComponentType, type ReactNode } from 'react';
 import { useToast } from '@/hooks/useToast';
 import { WIZARD_STEPS } from '../types';
 import { btnDestructive, btnPrimary, btnSuccess, btnSecondary } from '../components/ui';
 import { isStepComplete, missingForStep } from './validation';
 import { useWizard } from './WizardContext';
+import { StepErrorsContext } from './stepErrors';
 import Introduction from './steps/Introduction';
+import BeforeYouBegin from './steps/BeforeYouBegin';
 import PersonalDetails from './steps/PersonalDetails';
+import IlrLearnerDetails from './steps/IlrLearnerDetails';
 import SkillsRadar from './steps/SkillsRadar';
 import Ilr from './steps/Ilr';
 import Plr from './steps/Plr';
 import CvJob from './steps/CvJob';
 import Policies from './steps/Policies';
 import NextSteps from './steps/NextSteps';
+import { StepHeading } from './steps/fields';
+import { StepItems } from './layout/StepItems';
 
 /**
  * The step bodies are mode-agnostic — every one reads and writes only through
  * useWizard(), so the same components serve the staff wizard and the learner's
  * own onboarding form. Only the chrome around them differs (see WizardShell).
  */
-export const STEP_BODIES = [Introduction, PersonalDetails, SkillsRadar, Ilr, Plr, CvJob, Policies, NextSteps];
+const BODIES_BY_SLUG: Record<string, ComponentType> = {
+  introduction: Introduction,
+  'before-you-begin': BeforeYouBegin,
+  'personal-details': PersonalDetails,
+  'ilr-details': IlrLearnerDetails,
+  ilr: Ilr,
+  'cv-job': CvJob,
+  plr: Plr,
+  'skills-radar': SkillsRadar,
+  policies: Policies,
+  'next-steps': NextSteps,
+};
+
+/**
+ * One body per WIZARD_STEPS entry, in its order. Matched on the slug rather
+ * than written out positionally, so reordering the steps cannot put one step's
+ * page under another step's name.
+ */
+export const STEP_BODIES: ComponentType[] = WIZARD_STEPS.map((step) => {
+  const body = BODIES_BY_SLUG[step.slug];
+  if (!body) throw new Error(`No wizard step body for '${step.slug}'`);
+  return body;
+});
+
+/**
+ * Steps whose built-in body is a single block (Welcome, PLR, Skills Radar,
+ * Policies, …). Those blocks can be moved, so these steps render whatever the
+ * layout now puts on them rather than their original component.
+ */
+const BLOCK_STEPS = new Set(['introduction', 'before-you-begin', 'plr', 'skills-radar', 'policies', 'next-steps']);
+
+/** A step added in the wizard builder, or a block step: its items, in layout order. */
+function LayoutStepBody({ slug, label, custom }: { slug: string; label: string; custom: boolean }) {
+  if (!custom) return <StepItems slug={slug} />;
+  return (
+    <div>
+      <StepHeading title={label} />
+      <div className="max-w-3xl">
+        <StepItems slug={slug} />
+      </div>
+    </div>
+  );
+}
 
 /**
  * Shared wizard chrome: step tabs, progress, body, prev/next and finish.
@@ -47,7 +94,7 @@ export function WizardShell({
   header?: ReactNode;
   sidebar?: ReactNode;
 }) {
-  const { draft, hydrated, ready, saveIlr, ilrSaving } = useWizard();
+  const { draft, hydrated, ready, saveIlr, ilrSaving, layout, steps } = useWizard();
   const { success, error } = useToast();
   // Learners save by moving on — Next writes the step as it advances, so a
   // separate Save progress button would only be a second name for the same
@@ -72,18 +119,43 @@ export function WizardShell({
    */
   const gated = mode === 'learner' && ready;
   const stepComplete = useMemo(
-    () => WIZARD_STEPS.map((_, i) => isStepComplete(i, draft)),
-    [draft]
+    () => steps.map((_, i) => isStepComplete(i, draft, layout)),
+    [draft, steps, layout]
   );
   /** First step before `target` that is still unfilled, or -1 if the path is clear. */
   const blockingStep = (target: number) => stepComplete.slice(0, target).findIndex((c) => !c);
   const locked = (i: number) => gated && i > currentIndex && blockingStep(i) !== -1;
 
+  // What the rail and the progress count call complete. Next Steps has nothing
+  // to answer, so validation always passes it — which ticked it off before the
+  // learner had done anything. Here it only counts once every earlier step is
+  // finished and it has actually been opened; until then it reads like any
+  // other step (locked, then "Not started"). Gating still uses stepComplete.
+  const lastIndex = steps.length - 1;
+  const earlierStepsComplete = stepComplete.slice(0, lastIndex).every(Boolean);
+  const [reachedLastStep, setReachedLastStep] = useState(false);
+  useEffect(() => {
+    if (currentIndex === lastIndex && earlierStepsComplete) setReachedLastStep(true);
+  }, [currentIndex, lastIndex, earlierStepsComplete]);
+  const shownComplete = stepComplete.map((complete, i) =>
+    i === lastIndex ? complete && earlierStepsComplete && reachedLastStep : complete
+  );
+
   // What the current step is still missing, recomputed live so the list shrinks
   // as the learner fills it in. Only shown once they've tried to move on.
   const [showErrors, setShowErrors] = useState(false);
-  const currentMissing = mode === 'learner' ? missingForStep(currentIndex, draft) : [];
+  const currentMissing = mode === 'learner' ? missingForStep(currentIndex, draft, layout) : [];
   useEffect(() => setShowErrors(false), [currentIndex]);
+  // Each refused Next brings the first red box into view — it may be far above
+  // the footer the learner just clicked.
+  const [blockedAttempt, setBlockedAttempt] = useState(0);
+  const bodyRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!blockedAttempt) return;
+    const first = bodyRef.current?.querySelector<HTMLElement>('[aria-invalid="true"]');
+    first?.scrollIntoView?.({ block: 'center', behavior: 'smooth' });
+    first?.focus({ preventScroll: true });
+  }, [blockedAttempt]);
 
   const save = async () => {
     try {
@@ -113,7 +185,7 @@ export function WizardShell({
    * redundant request. The last thing they do always writes the current draft.
    */
   const navigateTo = (target: number) => {
-    if (target < 0 || target >= WIZARD_STEPS.length) return;
+    if (target < 0 || target >= steps.length) return;
     /** Write this step behind the move; a failure is reported, never blocking. */
     const saveInBackground = () =>
       saveIlr().catch((e: unknown) =>
@@ -130,13 +202,14 @@ export function WizardShell({
       const blocking = blockingStep(target);
       if (blocking === currentIndex) {
         setShowErrors(true);
+        setBlockedAttempt((n) => n + 1);
         error('This step isn’t finished', 'Please answer everything highlighted below before moving on.');
         return;
       }
       if (blocking !== -1) {
         // A step further back is unfinished — name it and stay put rather than
         // moving the learner somewhere they didn't ask to go.
-        error('Earlier step incomplete', `Please finish “${WIZARD_STEPS[blocking].label}” first.`);
+        error('Earlier step incomplete', `Please finish “${steps[blocking].label}” first.`);
         return;
       }
     }
@@ -145,9 +218,13 @@ export function WizardShell({
     onNavigateStep(target);
   };
 
-  const Body = STEP_BODIES[currentIndex];
+  const currentStep = steps[Math.min(currentIndex, steps.length - 1)];
+  const BuiltinBody = currentStep && currentStep.builtin && !BLOCK_STEPS.has(currentStep.slug) ? BODIES_BY_SLUG[currentStep.slug] : undefined;
+  const body = !currentStep ? null : BuiltinBody ? <BuiltinBody /> : (
+    <LayoutStepBody slug={currentStep.slug} label={currentStep.label} custom={!currentStep.builtin} />
+  );
   const isFirst = currentIndex === 0;
-  const isLast = currentIndex === WIZARD_STEPS.length - 1;
+  const isLast = currentIndex === steps.length - 1;
 
   // How far through the form the learner is. Counted from finished steps rather
   // than the step they happen to be looking at, so flicking backwards to re-read
@@ -166,8 +243,8 @@ export function WizardShell({
   // assessments map has nothing unrated in it) until seeding landed — so the
   // total ticked up twice. Unknown is shown as unknown instead.
   const statusKnown = ready;
-  const doneCount = stepComplete.filter(Boolean).length;
-  const pct = Math.round((doneCount / WIZARD_STEPS.length) * 100);
+  const doneCount = shownComplete.filter(Boolean).length;
+  const pct = steps.length ? Math.round((doneCount / steps.length) * 100) : 0;
 
   const scrollTabs = (dir: number) => tabScrollRef.current?.scrollBy({ left: dir * 220, behavior: 'smooth' });
 
@@ -210,17 +287,17 @@ export function WizardShell({
                 </div>
                 <p className="mt-2 text-[11px] text-foreground-400">
                   {statusKnown
-                    ? `${doneCount} of ${WIZARD_STEPS.length} steps complete`
+                    ? `${doneCount} of ${steps.length} steps complete`
                     : 'Loading your answers…'}
                 </p>
               </div>
               <div role="tablist" aria-label="Enrolment steps" aria-orientation="vertical" className="p-2">
-                {WIZARD_STEPS.map((step, i) => {
+                {steps.map((step, i) => {
                   const active = i === currentIndex;
                   const isLocked = locked(i);
                   // The tick tracks the answers themselves in both modes, and is
                   // not trusted before the draft has hydrated — see statusKnown.
-                  const done = statusKnown && stepComplete[i];
+                  const done = statusKnown && shownComplete[i];
                   return (
                     <button
                       key={step.slug}
@@ -284,8 +361,8 @@ export function WizardShell({
                 steps; the rail above owns the tablist role. */}
             <div className="border-b border-foreground-100 px-3 py-3 sm:px-4 lg:hidden">
               <div className="mb-2 flex items-center justify-between gap-3">
-                <span className="text-[11px] font-semibold uppercase tracking-wider text-foreground-400">Step {currentIndex + 1} of {WIZARD_STEPS.length}</span>
-                <span className="truncate text-xs font-semibold text-primary-700">{WIZARD_STEPS[currentIndex].label}</span>
+                <span className="text-[11px] font-semibold uppercase tracking-wider text-foreground-400">Step {currentIndex + 1} of {steps.length}</span>
+                <span className="truncate text-xs font-semibold text-primary-700">{currentStep?.label}</span>
               </div>
               <div className="flex items-center gap-2">
                 <button onClick={() => scrollTabs(-1)} aria-label="Scroll tabs left" className="hidden h-8 w-8 shrink-0 cursor-pointer items-center justify-center rounded-lg border border-foreground-200 text-foreground-500 hover:bg-background-100 sm:flex">
@@ -293,10 +370,10 @@ export function WizardShell({
                 </button>
                 <div ref={tabScrollRef} className="min-w-0 flex-1 snap-x snap-mandatory overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden sm:scrollbar-thin">
                   <div className="flex min-w-max items-center gap-1.5">
-                    {WIZARD_STEPS.map((step, i) => {
+                    {steps.map((step, i) => {
                       const active = i === currentIndex;
                       const isLocked = locked(i);
-                      const done = statusKnown && stepComplete[i];
+                      const done = statusKnown && shownComplete[i];
                       return (
                         <button
                           key={step.slug}
@@ -330,7 +407,7 @@ export function WizardShell({
                 </button>
               </div>
               <div className="mt-2.5 h-1 overflow-hidden rounded-full bg-background-200">
-                <div className="h-full rounded-full bg-primary-500 transition-all duration-300" style={{ width: `${((currentIndex + 1) / WIZARD_STEPS.length) * 100}%` }} />
+                <div className="h-full rounded-full bg-primary-500 transition-all duration-300" style={{ width: `${steps.length ? ((currentIndex + 1) / steps.length) * 100 : 0}%` }} />
               </div>
             </div>
 
@@ -339,9 +416,9 @@ export function WizardShell({
             <div className="hidden items-center justify-between gap-4 border-b border-foreground-100 px-5 py-3.5 md:px-6 lg:flex">
               <div className="min-w-0">
                 <p className="text-[11px] font-semibold uppercase tracking-wider text-foreground-400">
-                  Step {currentIndex + 1} of {WIZARD_STEPS.length}
+                  Step {currentIndex + 1} of {steps.length}
                 </p>
-                <p className="truncate text-[15px] font-heading font-semibold text-foreground-900">{WIZARD_STEPS[currentIndex].label}</p>
+                <p className="truncate text-[15px] font-heading font-semibold text-foreground-900">{currentStep?.label}</p>
               </div>
               {/* Same gate as the footer Next — this arrow is a second way
                   forward, so it cannot be allowed to skip the check. */}
@@ -355,8 +432,10 @@ export function WizardShell({
                 half-typed row) doesn't leak into the next one. That makes every
                 switch a fresh mount, so the entrance has to be cheap — a 0.7s
                 slide-from-invisible replayed here read as a page reload. */}
-            <div key={currentIndex} className="animate-step-in p-4 sm:p-5 md:p-6 lg:px-8 lg:py-7">
-              <Body />
+            <div key={currentIndex} ref={bodyRef} className="animate-step-in p-4 sm:p-5 md:p-6 lg:px-8 lg:py-7">
+              <StepErrorsContext.Provider value={{ show: showErrors, missing: currentMissing }}>
+                {body}
+              </StepErrorsContext.Provider>
             </div>
 
             {/* Outstanding answers on this step, once the learner has tried to

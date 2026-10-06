@@ -13,7 +13,7 @@ from types import SimpleNamespace
 
 from django.db import DatabaseError, transaction
 from django.conf import settings
-from django.http import HttpResponse, JsonResponse
+from django.http import HttpResponse, JsonResponse, HttpResponseRedirect
 from django.utils.http import content_disposition_header
 from django.utils import timezone
 from django.middleware.csrf import get_token
@@ -24,6 +24,9 @@ from old_otjh import repository as old_repo, service as old, storage
 from old_otjh.views import public_detail, public_state
 from . import monthly_log_sources as sources
 from . import monthly_log_history as history
+from . import canonical_learning as canonical
+from .journal_sources import learner_journal_view
+from . import journal_sources
 from .subject_content import ContentUnavailable
 
 logger = logging.getLogger(__name__)
@@ -38,7 +41,7 @@ def endpoint(*methods):
             try:
                 if request.method not in methods:
                     raise old.ServiceError('Method not allowed.', 'method_not_allowed', 405)
-                response = view(request, *args, **kwargs)
+                response = learner_journal_view(view)(request, *args, **kwargs)
             except old.ServiceError as error:
                 response = JsonResponse({'error': str(error), 'code': error.code}, status=error.status)
             except DatabaseError:
@@ -55,20 +58,41 @@ def endpoint(*methods):
     return decorate
 
 
+def is_own_learner_record(account, learner_id):
+    """A staff member or administrator who is also studying, on their own record.
+
+    Resolved on the server from the account's address, the same lookup that
+    offers them the Learner workspace (login.identity), never from a client id.
+    """
+    if account.role == 'learner' or account.subject_type != 'staff' or not account.is_active:
+        return False
+    from login.learner_enrolment import existing_learner_record
+    record = existing_learner_record(account.email)
+    return record is not None and str(record.pk) == str(learner_id)
+
+
 def scope(request, learner_id):
     account = request.login_account
     if account.role == 'learner':
-        if account.subject_type != 'learner' or str(account.subject_id) != str(learner_id):
+        if not account.is_active or account.subject_type != 'learner' or str(account.subject_id) != str(learner_id):
             raise old.ServiceError('Learner not found.', 'not_found', 404)
-        learner = old.resolve_authenticated_learner(account)
+        role = 'learner'
+    elif request.GET.get('perspective') == 'learner' and is_own_learner_record(account, learner_id):
+        # Their own record in the learner workspace is the ordinary learner
+        # experience; every other record keeps the coach/admin rules below.
         role = 'learner'
     else:
         actor = old.coach_actor(account)
         if actor['role'] == 'monitor':
             raise old.ServiceError('Coach access is required.', 'forbidden', 403)
-        learner = old.resolve_record(learner_id)
         role = actor['role']
-    profile = sources.profile(learner_id)
+    canonical_profile = canonical.require_profile(learner_id)
+    learner = {**canonical_profile, 'id': learner_id}
+    if role == 'learner' and old.normalize(account.email) != old.normalize(learner.get('email')):
+        raise old.ServiceError('Learner not found.', 'not_found', 404)
+    profile = canonical_profile
+    learner = {**learner, 'aptem_id': profile['aptem_id'], 'name': profile['name'],
+               'programme': profile['programme']}
     coach_email = old.normalize((profile or {}).get('coach_email') or learner.get('coach_email'))
     if role == 'coach' and coach_email != actor['email']:
         raise old.ServiceError('Learner not found.', 'not_found', 404)
@@ -84,11 +108,19 @@ def scope(request, learner_id):
         raise old.ServiceError('This coach workspace is read-only.', 'forbidden', 403)
     request.admin_learner_action = admin_action
     request.admin_learner_id = learner_id
-    return {**learner, '_profile': profile, '_view_as': bool(view_as) or (learner_preview and not admin_action)}, 'learner' if admin_action else role
+    return {**learner, '_profile': profile, '_canonical_profile': canonical_profile,
+            '_view_as': bool(view_as) or (learner_preview and not admin_action)}, 'learner' if admin_action else role
 
 
 def valid_month(month):
-    if not re.fullmatch(r'[0-9]{4}-(0[1-9]|1[0-2])', month or '') or month > timezone.localdate().strftime('%Y-%m'):
+    valid_month_key(month)
+    if month > timezone.localdate().strftime('%Y-%m'):
+        raise old.ServiceError('Choose a valid report month.')
+
+
+def valid_month_key(month):
+    """Validate a YYYY-MM key without applying the ordinary future-month gate."""
+    if not re.fullmatch(r'[0-9]{4}-(0[1-9]|1[0-2])', month or ''):
         raise old.ServiceError('Choose a valid report month.')
 
 
@@ -98,6 +130,8 @@ def require_closed_month(month):
 
 
 def legacy_summary(learner):
+    if canonical.enabled(learner['id']):
+        return {'months': []}
     if not learner.get('aptem_id'):
         return {'months': []}
     if history.enabled(learner):
@@ -133,6 +167,8 @@ def signed_training_plan_targets(learner):
 
 
 def signatures(learner):
+    if canonical.enabled(learner['id']):
+        return canonical.signatures(learner['id'])
     return old_repo.query(f'''SELECT report_month, signer_role, signer_name,
         signed_at, snapshot_hash,
         CASE WHEN signature_data LIKE '{{%%' THEN signature_data::jsonb->>'url'
@@ -144,6 +180,15 @@ def signatures(learner):
 
 def lock_state(learner_id, month):
     """Return the explicit lock without making old deployments unusable."""
+    if canonical.enabled(learner_id):
+        owner = canonical.profile(learner_id)
+        records = old_repo.query('''SELECT locked_at,unlocked_at,unlocked_by
+            FROM "Learner".learner_monthly_locks WHERE learner_id=%s AND report_month=%s''', [owner['id'], month])
+        record = records[0] if records else {}
+        return {'locked': bool(record.get('locked_at') and not record.get('unlocked_at')),
+                'locked_at': record['locked_at'].isoformat() if record.get('locked_at') else None,
+                'unlocked_at': record['unlocked_at'].isoformat() if record.get('unlocked_at') else None,
+                'unlocked_by': record.get('unlocked_by')}
     try:
         rows = old_repo.query(
             f'''SELECT locked_at, unlocked_at, unlocked_by FROM {MONTH_LOCKS}
@@ -161,8 +206,53 @@ def lock_state(learner_id, month):
     }
 
 
+def lock_states(learner_id, months, *, canonical_owner=None):
+    """Read summary lock state in one round trip instead of once per month."""
+    month_keys = sorted(set(months or []))
+    def empty():
+        return {'locked': False, 'locked_at': None, 'unlocked_at': None, 'unlocked_by': None}
+    result = {month: empty() for month in month_keys}
+    if not month_keys:
+        return result
+    if canonical_owner is not None:
+        records = old_repo.query('''SELECT report_month,locked_at,unlocked_at,unlocked_by
+            FROM "Learner".learner_monthly_locks
+            WHERE learner_id=%s AND report_month=ANY(%s)''', [canonical_owner['id'], month_keys])
+    elif canonical.enabled(learner_id):
+        owner = canonical.profile(learner_id)
+        records = old_repo.query('''SELECT report_month,locked_at,unlocked_at,unlocked_by
+            FROM "Learner".learner_monthly_locks
+            WHERE learner_id=%s AND report_month=ANY(%s)''', [owner['id'], month_keys])
+    else:
+        try:
+            records = old_repo.query(f'''SELECT report_month,locked_at,unlocked_at,unlocked_by
+                FROM {MONTH_LOCKS} WHERE learner_id=%s AND report_month=ANY(%s)''',
+                [str(learner_id), month_keys])
+        except DatabaseError:
+            return result
+    for record in records:
+        month = record.get('report_month')
+        if month in result:
+            result[month] = {
+                'locked': bool(record.get('locked_at') and not record.get('unlocked_at')),
+                'locked_at': record['locked_at'].isoformat() if record.get('locked_at') else None,
+                'unlocked_at': record['unlocked_at'].isoformat() if record.get('unlocked_at') else None,
+                'unlocked_by': record.get('unlocked_by'),
+            }
+    return result
+
+
 def lock_if_fully_signed(learner_id, month):
     """Lock only after both independent signatures exist; never overwrite either."""
+    if canonical.enabled(learner_id):
+        signs = canonical.signatures(learner_id)
+        if {s['signer_role'] for s in signs if s['report_month'] == month} >= {'learner', 'coach'}:
+            old_repo.query('''INSERT INTO "Learner".learner_monthly_locks
+                (learner_id,report_month,locked_at,source_system) VALUES (%s,%s,now(),'lms')
+                ON CONFLICT (learner_id,report_month) DO UPDATE
+                SET locked_at=now(),unlocked_at=NULL,unlocked_by=NULL,updated_at=now()''',
+                [canonical.profile(learner_id)['id'], month])
+        return
     try:
         rows = old_repo.query(
             f'''SELECT signer_role FROM {old_repo.SIGNOFFS}
@@ -183,8 +273,14 @@ def lock_if_fully_signed(learner_id, month):
         logger.warning('Monthly log lock table is unavailable; signatures remain valid.')
 
 
-def month_state(month, rows, signs, training_plan_target=None, *, learner_id=None):
-    digest = old.digest(rows)
+def month_state(month, rows, signs, training_plan_target=None, *, learner_id=None, lock=None):
+    # ``source_system`` is a read-only classification added to canonical rows
+    # for the unified Actual predicate.  It is not learner-entered content and
+    # must not invalidate an existing signed month's snapshot hash.
+    digest_rows = [{key: value for key, value in item.items() if key != 'source_system'} for item in rows]
+    digest = old.digest(digest_rows)
+    actual_rows = [r for r in rows if canonical.counts_as_actual(r)]
+    counted_rows = list(rows)
     # As in Previous learning record, source updates never erase a saved
     # signature or revoke completion. Each capture retains its reviewed rows.
     matching = [s for s in signs if s['report_month'] == month]
@@ -192,35 +288,53 @@ def month_state(month, rows, signs, training_plan_target=None, *, learner_id=Non
         return next(({k: s[k] for k in ('signed_at', 'signer_name', 'url')}
                      for s in matching if s['signer_role'] == role), None)
     student, coach = sign('learner'), sign('coach')
-    lock = lock_state(learner_id, month) if learner_id is not None else {'locked': False, 'locked_at': None, 'unlocked_at': None, 'unlocked_by': None}
+    lock = lock if lock is not None else (
+        lock_state(learner_id, month) if learner_id is not None
+        else {'locked': False, 'locked_at': None, 'unlocked_at': None, 'unlocked_by': None}
+    )
     return {'month': month, 'source': 'lms', 'is_required': False,
             'is_open': month == timezone.localdate().strftime('%Y-%m'),
             'status': 'complete' if student else 'awaiting_signature',
             'student_signature': student, 'coach_signature': coach,
-            'row_count': len(rows), 'planned_hours': sum(float(r['planned_hours'] or 0) for r in rows),
-            'actual_hours': sum(float(r['actual_hours'] or 0) for r in rows if r['accepted']),
-            'not_accepted_hours': sum(float(r['actual_hours'] or 0) for r in rows if not r['accepted']),
-            'total_actual_hours': sum(float(r['actual_hours'] or 0) for r in rows),
+            'row_count': len({r.get('progress_id') or r.get('source_ref') for r in rows}),
+            'planned_hours': sum(float(r['planned_hours'] or 0) for r in rows),
+            'actual_hours': sum(float(r['actual_hours'] or 0) for r in actual_rows),
+            'estimated_hours': sum(float(r['actual_hours'] or 0) for r in rows
+                                   if r.get('actual_estimated') is True),
+            'not_accepted_hours': sum(float(r['actual_hours'] or 0) for r in counted_rows if not r['accepted']),
+            'total_actual_hours': sum(float(r['actual_hours'] or 0) for r in counted_rows
+                                      if r.get('actual_estimated') is not True),
             'training_plan_target': training_plan_target, 'pending_revisions': 0, 'can_complete': False,
             'source_finalization': None, 'snapshot_digest': digest,
             'locked': lock['locked'], 'locked_at': lock['locked_at'],
             'can_unlock': False}
 
 
-def current_months(learner, signs=(), *, include_open=False):
+def current_months(learner, signs=(), *, include_open=False, include_future=False, ensure_month=None):
     grouped = defaultdict(list)
     open_month = timezone.localdate().strftime('%Y-%m')
-    # A signed month remains in the journal even if its last source row is
-    # subsequently removed, just as retained previous-record months do.
+    def allowed_month(month):
+        return month < open_month or (include_open and month == open_month) or (include_future and month > open_month)
+
+    if canonical.enabled(learner['id']):
+        for item in canonical.activity_rows(learner['id']):
+            month = item.get('reporting_month')
+            if month and allowed_month(month):
+                grouped[month].append(item)
+        for month in {*canonical.targets(learner['id']), *(s['report_month'] for s in signs)}:
+            if allowed_month(month):
+                grouped.setdefault(month, [])
+        if ensure_month and allowed_month(ensure_month):
+            grouped.setdefault(ensure_month, [])
+        return grouped
     for signature in signs:
         month = signature['report_month']
-        if (month < open_month or (include_open and month == open_month)) and (not learner.get('aptem_id') or month > old_repo.CUTOFF):
+        if allowed_month(month) and (not learner.get('aptem_id') or month > old_repo.CUTOFF):
             grouped[month] = []
     for row in sources.activity_rows(learner):
         month = row['activity_date'][:7]
         if month > open_month or (month == open_month and not include_open):
             continue
-        # Historical months continue to use the Previous learning record source.
         if learner.get('aptem_id') and month <= old_repo.CUTOFF:
             continue
         grouped[month].append(row)
@@ -228,33 +342,84 @@ def current_months(learner, signs=(), *, include_open=False):
         for month, audit_rows in history.later_rows(learner, open_month).items():
             if month == open_month and not include_open:
                 continue
-            # Resolve the existing owner-scoped document URLs before merging.
             public_detail(learner, {'rows': audit_rows})
             grouped[month] = history.merge_rows(grouped.get(month, []), audit_rows)
     for rows in grouped.values():
         rows.sort(key=lambda row: (str(row['activity_date'] or ''), row['source_ref'] or ''))
+    # An MCM can be signed before any learning activity has been recorded for
+    # its target month.  Keep that month visible in the read-only MCM-linked
+    # view without creating a database row; the real signature is mirrored only
+    # when the learner signs the MCM itself.
+    if ensure_month and (not learner.get('aptem_id') or ensure_month > old_repo.CUTOFF):
+        if allowed_month(ensure_month):
+            grouped.setdefault(ensure_month, [])
     return grouped
 
 
-def summary_data(learner, *, include_open=False):
-    retained = legacy_summary(learner)
-    signs = signatures(learner)
-    months = [{**m, 'source': 'legacy'} for m in retained['months']]
-    months.extend(month_state(month, rows, signs, sources.monthly_target(learner, month), learner_id=learner['id'])
-                  for month, rows in current_months(learner, signs, include_open=include_open).items())
+def summary_data(learner, *, include_open=False, include_future=False, ensure_month=None):
+    canonical_owner = learner.get('_canonical_profile')
+    if canonical_owner is not None:
+        retained = {'months': []}
+        records = canonical.entries_for(canonical_owner)
+        signs = canonical.signatures_for(canonical_owner)
+        targets = canonical.targets_for(canonical_owner)
+        grouped = defaultdict(list)
+        open_month = timezone.localdate().strftime('%Y-%m')
+        def allowed_month(month):
+            return (
+                month < open_month
+                or (include_open and month == open_month)
+                or (include_future and month > open_month)
+            )
+        for item in canonical.rows_for(canonical_owner, records):
+            month = item.get('reporting_month')
+            if month and allowed_month(month):
+                grouped[month].append(item)
+        for month in {*targets, *(sign['report_month'] for sign in signs)}:
+            if allowed_month(month):
+                grouped.setdefault(month, [])
+        if ensure_month and allowed_month(ensure_month):
+            grouped.setdefault(ensure_month, [])
+        locks = lock_states(learner['id'], grouped, canonical_owner=canonical_owner)
+        months = [month_state(month, rows, signs, targets.get(month), learner_id=learner['id'],
+                              lock=locks[month])
+                  for month, rows in grouped.items()]
+        programme_metrics = canonical.metrics_from_records(records, targets)['otjh']
+        training_plan_totals = {
+            'accepted_hours': programme_metrics.get('completed_actual', programme_metrics.get('actual')),
+            'planned_hours': programme_metrics['planned'],
+        }
+    else:
+        retained = legacy_summary(learner)
+        signs = signatures(learner)
+        months = [{**m, 'source': 'legacy'} for m in retained['months']]
+        current = current_months(learner, signs, include_open=include_open,
+                                 include_future=include_future, ensure_month=ensure_month)
+        locks = lock_states(learner['id'], current)
+        months.extend(month_state(month, rows, signs, sources.monthly_target(learner, month),
+                                  learner_id=learner['id'], lock=locks[month])
+                      for month, rows in current.items())
+        training_plan_totals = {
+            'accepted_hours': round(sum(float(month.get('actual_hours') or 0) for month in months), 4),
+            'planned_hours': round(sum(float(month.get('training_plan_target') or 0) for month in months), 4),
+        }
     months.sort(key=lambda m: m['month'])
     profile = learner.get('_profile') or {}
+    audit_profile = retained.get('profile') or {}
     return {'learner': {'id': learner['id'], 'aptem_id': learner.get('aptem_id'),
                        'name': learner['name'], 'programme': learner['programme'],
-                       'coach_name': profile.get('coach_name') or learner.get('coach_name')},
+                       'coach_name': profile.get('coach_name') or learner.get('coach_name'),
+                       'planned_end_date': audit_profile.get('planned_end_date') or profile.get('end_date')},
             'months': months, 'total_months': len(months),
             'completed_months': sum(m['status'] == 'complete' for m in months),
+            'training_plan_totals': training_plan_totals,
             'read_only': learner['_view_as']}
 
 
-def detail_data(learner, month, *, include_open=False, demo=False):
-    valid_month(month)
-    if learner.get('aptem_id') and month <= old_repo.CUTOFF:
+def detail_data(learner, month, *, include_open=False, include_future=False, demo=False, ensure_month=None):
+    (valid_month_key if include_future else valid_month)(month)
+    consolidated = canonical.enabled(learner['id'])
+    if not consolidated and learner.get('aptem_id') and month <= old_repo.CUTOFF:
         if history.enabled(learner):
             detail = public_detail(learner, history.detail(learner, month, demo=demo))
         else:
@@ -267,15 +432,113 @@ def detail_data(learner, month, *, include_open=False, demo=False):
     if not include_open:
         require_closed_month(month)
     signs = signatures(learner)
-    rows = current_months(learner, signs, include_open=include_open).get(month)
+    rows = current_months(learner, signs, include_open=include_open, include_future=include_future,
+                          ensure_month=ensure_month).get(month)
     if rows is None:
         raise old.ServiceError('No activities are recorded for this month.', 'not_found', 404)
     profile = learner.get('_profile') or {}
-    report_profile = old_repo.report_profile(learner) if learner.get('aptem_id') else {
+    report_profile = old_repo.report_profile(learner) if learner.get('aptem_id') and not consolidated else {
         'start_date': profile.get('start_date'), 'planned_end_date': profile.get('end_date'),
-        'first_evidence_date': sources.first_evidence_date(learner['id'])}
-    return {**month_state(month, rows, signs, sources.monthly_target(learner, month), learner_id=learner['id']), 'rows': rows,
+        'first_evidence_date': None if consolidated else sources.first_evidence_date(learner['id'])}
+    target = canonical.targets(learner['id']).get(month, 0 if journal_sources.enabled() else None) if consolidated else sources.monthly_target(learner, month)
+    return {**month_state(month, rows, signs, target, learner_id=learner['id']), 'rows': rows,
             'profile': report_profile}
+
+
+def _canonical_signature_scope(learner, owner):
+    """Return the lineage keys required by canonical monthly signatures.
+
+    ``learner_id`` is the consolidated profile id, while the table's unique
+    scope is the source learner plus programme/enrolment key.  New LMS
+    records may not have an Aptem id, so the enrolment id is the stable
+    source identity fallback.
+    """
+    enrolment_id = owner.get('enrolment_id') or learner.get('id')
+    source_learner_id = str(owner.get('aptem_id') or enrolment_id or learner.get('id') or '')
+    programme_key = f'lms:{enrolment_id or learner.get("id")}'
+    return source_learner_id, programme_key
+
+
+def mirror_mcm_learner_signature(learner, month, signature, name):
+    """Copy a learner's MCM signature into that MCM's monthly log.
+
+    The MCM and monthly-log records live in different parts of the LMS, so the
+    copy is deliberately idempotent and never replaces an existing monthly
+    learner signature.  ``include_open=True`` is intentional: an MCM may be
+    signed while its reporting month is still in progress, but the ordinary
+    monthly-log signing endpoint remains closed until month end.
+    """
+    # An MCM can be completed before the curriculum target month starts. The
+    # ordinary Monthly Logs view still blocks future months, but this mirror
+    # must accept the MCM's own target month so the two signatures stay linked.
+    valid_month_key(month)
+    if not str(signature or '').startswith('data:image/'):
+        raise old.ServiceError('A valid learner signature is required.')
+
+    if not canonical.enabled(learner['id']) and learner.get('aptem_id') and month <= old_repo.CUTOFF:
+        return {'status': 'skipped', 'reason': 'legacy_month', 'month': month}
+
+    try:
+        report = detail_data(learner, month, include_open=True, include_future=True, ensure_month=month)
+    except old.ServiceError as error:
+        # A month with no activity rows is still a valid MCM sign-off. Keep an
+        # empty, immutable snapshot so the signed month appears in the log list.
+        if error.code != 'not_found':
+            raise
+        report = {
+            'source': 'lms', 'rows': [], 'profile': None,
+            'snapshot_digest': old.digest([]),
+        }
+
+    if report.get('source') != 'lms':
+        return {'status': 'skipped', 'reason': 'legacy_month', 'month': month}
+
+    signed_name = str(name or '').strip() or str(learner.get('name') or '').strip() or 'Learner'
+    capture = json.dumps({
+        'url': signature,
+        'rows': report.get('rows') or [],
+        'profile': report.get('profile'),
+        'capture_method': 'mcm',
+    }, default=str)
+    snapshot_digest = report.get('snapshot_digest') or old.digest(report.get('rows') or [])
+    source_ref = f'lms-mcm:{learner["id"]}:{month}:{snapshot_digest}'
+
+    with transaction.atomic(using='enrolment'):
+        # The learner row lock serializes this copy with an ordinary monthly
+        # sign request, so a coach/learner race cannot overwrite history.
+        old_repo.query('SELECT id FROM enrolment."Created_users" WHERE id=%s FOR UPDATE', [learner['id']])
+        if canonical.enabled(learner['id']):
+            owner = canonical.profile(learner['id'])
+            source_learner_id, programme_key = _canonical_signature_scope(learner, owner)
+            existing = old_repo.query('''SELECT id FROM "Learner".learner_monthly_signatures
+                WHERE learner_id=%s AND report_month=%s AND signer_role='learner'
+                  AND review_confirmed IS TRUE LIMIT 1''', [owner['id'], month])
+            if existing:
+                return {'status': 'already-synced', 'month': month}
+            old_repo.query('''INSERT INTO "Learner".learner_monthly_signatures
+                (learner_id,report_month,signer_role,signer_name,review_confirmed,
+                 signature_url,signature_data,capture_method,signed_at,snapshot_digest,
+                 source_system,source_ref,source_learner_id,programme_key)
+                VALUES (%s,%s,'learner',%s,true,%s,%s,'mcm',now(),%s,'lms',%s,%s,%s)
+                ON CONFLICT (source_learner_id,programme_key,report_month,signer_role) DO NOTHING''',
+                [owner['id'], month, signed_name, signature, capture, snapshot_digest, source_ref,
+                 source_learner_id, programme_key])
+        else:
+            learner_key = f'lms:{learner["id"]}'
+            existing = old_repo.query(f'''SELECT id FROM {old_repo.SIGNOFFS}
+                WHERE learner_id=%s AND report_month=%s AND signer_role='learner'
+                  AND audit_version=%s AND review_confirmed IS TRUE LIMIT 1''',
+                [learner_key, month, VERSION])
+            if existing:
+                return {'status': 'already-synced', 'month': month}
+            old_repo.query(f'''INSERT INTO {old_repo.SIGNOFFS}
+                (learner_id,programme_key,report_month,signer_role,signer_name,
+                 review_confirmed,signature_data,signed_at,snapshot_hash,audit_version)
+                VALUES (%s,%s,%s,'learner',%s,true,%s,now(),%s,%s)
+                ON CONFLICT (learner_id,programme_key,report_month,signer_role) DO NOTHING''',
+                [learner_key, source_ref, month, signed_name, capture, snapshot_digest, VERSION])
+
+    return {'status': 'synced', 'month': month, 'snapshot_digest': snapshot_digest}
 
 
 @endpoint('GET')
@@ -283,18 +546,36 @@ def summary(request, learner_id):
     learner, _ = scope(request, learner_id)
     # The current month is useful as a live activity log even though its final
     # signatures remain unavailable until month-end.
-    return JsonResponse({**summary_data(learner, include_open=True), 'csrf_token': get_token(request)})
+    ensure_month = request.GET.get('month') if request.GET.get('workflow') == 'mcm' else None
+    if ensure_month and not re.fullmatch(r'[0-9]{4}-(0[1-9]|1[0-2])', ensure_month):
+        ensure_month = None
+    mcm_workflow = request.GET.get('workflow') == 'mcm'
+    return JsonResponse({**summary_data(learner, include_open=True, include_future=mcm_workflow,
+                                         ensure_month=ensure_month), 'csrf_token': get_token(request)})
 
 
 @endpoint('GET')
 def detail(request, learner_id, month):
     learner, _ = scope(request, learner_id)
-    return JsonResponse(detail_data(learner, month, include_open=True, demo=request.GET.get('demo') == '1'))
+    mcm_workflow = request.GET.get('workflow') == 'mcm'
+    return JsonResponse(detail_data(learner, month, include_open=True, include_future=mcm_workflow,
+                                   demo=request.GET.get('demo') == '1',
+                                   ensure_month=month if mcm_workflow else None))
 
 
 @endpoint('GET')
 def content(request, learner_id, month, row_id):
     learner, _ = scope(request, learner_id)
+    if canonical.enabled(learner_id):
+        valid_month(month)
+        row, record = canonical.content_row(learner['_profile'], month, row_id)
+        payload = canonical.content(row, learner['_profile'], record)
+        for part in payload['parts']:
+            if part.get('url'):
+                part['url'] = f'/learner_api/monthly-logs/{learner_id}/{month}/activities/{row_id}/materials/{part["id"]}/'
+        response = JsonResponse(payload)
+        response['Cache-Control'] = 'private, no-store'
+        return response
     report = detail_data(learner, month, include_open=True)
     if report['source'] == 'legacy':
         return JsonResponse(old.activity_content({**learner, '_read_only': True}, month, row_id))
@@ -315,6 +596,46 @@ def content(request, learner_id, month, row_id):
         if resolved is not None:
             return JsonResponse({'id': row_id, 'parts': resolved['parts']})
     return JsonResponse(sources.activity_content(learner, row))
+
+
+@endpoint('GET')
+def canonical_material(request, learner_id, month, row_id, material_id):
+    learner, _ = scope(request, learner_id)
+    if not canonical.enabled(learner_id):
+        raise old.ServiceError('Material not found.', 'not_found', 404)
+    valid_month(month)
+    row, record = canonical.content_row(learner['_profile'], month, row_id)
+    part = next((p for p in canonical.material_parts(row, learner['_profile'], record)
+                 if p['id'] == material_id and p.get('url')), None)
+    if part is None:
+        raise old.ServiceError('Material is not available for this activity.', 'not_found', 404)
+    response = HttpResponseRedirect(part['url'])
+    response['Cache-Control'] = 'private, no-store'
+    response['Referrer-Policy'] = 'no-referrer'
+    return response
+
+
+@endpoint('GET')
+def canonical_document(request, learner_id, file_id):
+    scope(request, learner_id)
+    owner = canonical.profile(learner_id)
+    if owner is None:
+        raise old.ServiceError('Document not found.', 'not_found', 404)
+    records = old_repo.query('''SELECT d.container,d.blob_name,d.display_name,d.content_type
+        FROM "Learner".learner_activity_documents d
+        JOIN "Learner".learner_progress_entries p ON p.id=d.progress_id AND p.learner_id=d.learner_id
+        WHERE d.id=%s AND d.learner_id=%s AND d.deleted_at IS NULL AND p.deleted_at IS NULL
+          ''', [file_id, owner['id']])
+    if not records:
+        raise old.ServiceError('Document not found.', 'not_found', 404)
+    from .evidence_storage import download_blob_bytes
+    doc = records[0]
+    response = HttpResponse(download_blob_bytes(doc['container'], doc['blob_name']),
+                            content_type=doc['content_type'] or 'application/octet-stream')
+    response['Content-Disposition'] = content_disposition_header(False, doc['display_name'])
+    response['X-Content-Type-Options'] = 'nosniff'
+    response['Content-Security-Policy'] = 'sandbox'
+    return response
 
 
 @endpoint('GET')
@@ -346,7 +667,7 @@ def sign(request, learner_id, month):
         raise old.ServiceError('Confirm your own signature before saving.')
     image = storage.sanitize(request.FILES['signature'])
     valid_month(month)
-    if learner.get('aptem_id') and month <= old_repo.CUTOFF:
+    if not canonical.enabled(learner_id) and learner.get('aptem_id') and month <= old_repo.CUTOFF:
         old.start(learner, request.login_account, role)
         return JsonResponse({**public_detail(learner, old.sign(learner, month, request.login_account,
             role, image, data.get('snapshot_digest'), {'capture_method': data['capture_method']})), 'source': 'legacy'})
@@ -370,7 +691,19 @@ def sign(request, learner_id, month):
         capture = json.dumps({'url': 'data:image/png;base64,' + base64.b64encode(image).decode('ascii'),
             'rows': report['rows'], 'profile': report.get('profile'),
             'actor_account_id': request.login_account.id, 'capture_method': data['capture_method']}, default=str)
-        old_repo.query(f'''INSERT INTO {old_repo.SIGNOFFS}
+        if canonical.enabled(learner_id):
+            owner = canonical.profile(learner_id)
+            source_learner_id, programme_key = _canonical_signature_scope(learner, owner)
+            old_repo.query('''INSERT INTO "Learner".learner_monthly_signatures
+                (learner_id,report_month,signer_role,signer_name,review_confirmed,signature_url,
+                 signature_data,capture_method,signed_at,snapshot_digest,source_system,source_ref,
+                 source_learner_id,programme_key)
+                VALUES (%s,%s,%s,%s,true,%s,%s,%s,now(),%s,'lms',%s,%s,%s)
+                ON CONFLICT (source_learner_id,programme_key,report_month,signer_role) DO NOTHING''',
+                [owner['id'], month, signer_role, name, json.loads(capture)['url'], capture,
+                 data['capture_method'], report['snapshot_digest'], key, source_learner_id, programme_key])
+        else:
+            old_repo.query(f'''INSERT INTO {old_repo.SIGNOFFS}
             (learner_id, programme_key, report_month, signer_role, signer_name,
              review_confirmed, signature_data, signed_at, snapshot_hash, audit_version)
             VALUES (%s,%s,%s,%s,%s,true,%s,now(),%s,%s)
@@ -386,7 +719,7 @@ def complete(request, learner_id, month):
     if role != 'learner':
         raise old.ServiceError('Open the learner workspace to complete this month.', 'forbidden', 403)
     valid_month(month)
-    if learner.get('aptem_id') and month <= old_repo.CUTOFF:
+    if not canonical.enabled(learner_id) and learner.get('aptem_id') and month <= old_repo.CUTOFF:
         result = old.complete(learner, month, request.login_account, role)
         return JsonResponse({**public_detail(learner, result), 'source': 'legacy'})
     # Current LMS months complete when their learner signature is saved.
@@ -404,6 +737,12 @@ def unlock(request, learner_id, month):
     if getattr(account, 'role', None) != 'admin' or request.GET.get('perspective') != 'learner':
         raise old.ServiceError('Only an administrator in the learner workspace can unlock this log.', 'forbidden', 403)
     valid_month(month)
+    if canonical.enabled(learner_id):
+        old_repo.query('''UPDATE "Learner".learner_monthly_locks
+            SET unlocked_at=now(),unlocked_by=%s,updated_at=now()
+            WHERE learner_id=%s AND report_month=%s''',
+            [str(account.id), canonical.profile(learner_id)['id'], month])
+        return JsonResponse(detail_data(learner, month, include_open=request.GET.get('workflow') == 'mcm'))
     old_repo.query(
         f'''UPDATE {MONTH_LOCKS} SET unlocked_at=now(), unlocked_by=%s
             WHERE learner_id=%s AND report_month=%s''',

@@ -1,6 +1,7 @@
 import json
 import os
 from datetime import date, datetime, timezone
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 from django.test import Client, SimpleTestCase, override_settings
@@ -82,7 +83,7 @@ class GenerateForLearnerTests(SimpleTestCase):
         self.addCleanup(patcher.stop)
         self.mock_window.return_value = (date(2025, 1, 1), date(2026, 6, 30), "apprenticeship", MagicMock())
 
-        for name in ("create_run", "insert_snapshot", "save_warnings", "mark_run_completed", "mark_run_failed", "insert_pptx_file"):
+        for name in ("create_run", "insert_snapshot", "save_warnings", "mark_run_completed", "mark_run_draft", "mark_run_failed", "insert_pptx_file"):
             patcher = patch(f"progress_reviews_api.views.runs.{name}")
             setattr(self, f"mock_{name}", patcher.start())
             self.addCleanup(patcher.stop)
@@ -107,6 +108,18 @@ class GenerateForLearnerTests(SimpleTestCase):
         with self.assertRaises(GenerationError) as ctx:
             _generate_for_learner(42)
         self.assertEqual(ctx.exception.status, 422)
+
+    @patch("progress_reviews_api.views.storage")
+    @patch("progress_reviews_api.views.generate_progress_review_pptx", return_value=b"PPTX-BYTES")
+    @patch("progress_reviews_api.views.build_review_pack", return_value=SUCCESS_PACK)
+    def test_draft_generation_stores_the_deck_without_publishing_it(self, mock_build_pack, mock_generate_pptx, mock_storage):
+        mock_storage.storage_configured.return_value = True
+
+        result = _generate_for_learner(42, generated_by="coach@kbc.example", save_as_draft=True)
+
+        self.assertEqual(result["generationStatus"], "draft")
+        self.mock_mark_run_draft.assert_called_once()
+        self.mock_mark_run_completed.assert_not_called()
 
     def test_unresolvable_learner_raises_404(self):
         self.mock_window.return_value = (None, None, None, None)
@@ -165,6 +178,7 @@ class EndpointTests(SimpleTestCase):
         response = self.client.post("/progress_reviews_api/42/generate/", data={}, content_type="application/json")
         self.assertEqual(response.status_code, 201)
         self.assertEqual(json.loads(response.content)["reviewId"], "run-1")
+        mock_generate.assert_called_once_with(42, review_date=None, generated_by="system", save_as_draft=True)
 
     @patch("progress_reviews_api.views._generate_for_learner", side_effect=GenerationError("Not active.", 409))
     def test_generate_endpoint_surfaces_generation_error_status(self, mock_generate):
@@ -190,6 +204,62 @@ class EndpointTests(SimpleTestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn("url", json.loads(response.content))
 
+    def _preview_run(self, mock_runs, mock_storage):
+        mock_runs.get_run.return_value = {"id": "run-1", "generation_status": "completed"}
+        mock_runs.get_pptx_file_for_run.return_value = {
+            "container": "progress-review-decks", "blob_name": "a/b/c.pptx", "original_filename": "deck.pptx",
+        }
+        mock_storage.storage_configured.return_value = True
+
+    @patch("progress_reviews_api.views.pdf_preview.convert_pptx_to_pdf", return_value=b"%PDF-new")
+    @patch("progress_reviews_api.views.storage")
+    @patch("progress_reviews_api.views.runs")
+    def test_preview_converts_once_and_caches_the_pdf(self, mock_runs, mock_storage, mock_convert):
+        self._preview_run(mock_runs, mock_storage)
+        mock_storage.blob_exists.return_value = False
+        mock_storage.download_bytes.return_value = b"PPTX"
+
+        response = self.client.get("/progress_reviews_api/run-1/preview/")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response["Content-Type"], "application/pdf")
+        self.assertEqual(response.content, b"%PDF-new")
+        mock_convert.assert_called_once_with(b"PPTX")
+        self.assertEqual(mock_storage.upload_pdf.call_args[0][1], "a/b/c.pptx.pdf")
+
+    @patch("progress_reviews_api.views.pdf_preview.convert_pptx_to_pdf")
+    @patch("progress_reviews_api.views.storage")
+    @patch("progress_reviews_api.views.runs")
+    def test_preview_serves_the_cached_pdf_without_converting(self, mock_runs, mock_storage, mock_convert):
+        self._preview_run(mock_runs, mock_storage)
+        mock_storage.blob_exists.return_value = True
+        mock_storage.download_bytes.return_value = b"%PDF-cached"
+
+        response = self.client.get("/progress_reviews_api/run-1/preview/")
+
+        self.assertEqual(response.content, b"%PDF-cached")
+        mock_convert.assert_not_called()
+
+    @patch("progress_reviews_api.views.pdf_preview.convert_pptx_to_pdf")
+    @patch("progress_reviews_api.views.storage")
+    @patch("progress_reviews_api.views.runs")
+    def test_preview_reports_a_missing_converter(self, mock_runs, mock_storage, mock_convert):
+        from .pdf_preview import PreviewUnavailable
+
+        self._preview_run(mock_runs, mock_storage)
+        mock_storage.blob_exists.return_value = False
+        mock_convert.side_effect = PreviewUnavailable("PDF preview needs LibreOffice installed on the server.")
+
+        response = self.client.get("/progress_reviews_api/run-1/preview/")
+
+        self.assertEqual(response.status_code, 503)
+        self.assertIn("LibreOffice", json.loads(response.content)["error"])
+
+    @patch("progress_reviews_api.views.runs")
+    def test_preview_404s_for_an_unknown_run(self, mock_runs):
+        mock_runs.get_run.return_value = None
+        self.assertEqual(self.client.get("/progress_reviews_api/nope/preview/").status_code, 404)
+
     @patch("progress_reviews_api.views.runs")
     def test_download_endpoint_404s_for_an_unknown_run(self, mock_runs):
         mock_runs.get_run.return_value = None
@@ -202,15 +272,15 @@ class EndpointTests(SimpleTestCase):
 
     @patch("progress_reviews_api.views.runs")
     def test_latest_run_endpoint_reports_no_existing_deck(self, mock_runs):
-        mock_runs.get_latest_run_for_period.return_value = None
+        mock_runs.get_latest_completed_run_for_period.return_value = None
         response = self.client.get("/progress_reviews_api/42/runs/latest/?review_date=2026-10-26")
         self.assertEqual(response.status_code, 200)
         self.assertEqual(json.loads(response.content), {"exists": False})
-        mock_runs.get_latest_run_for_period.assert_called_once_with(42, date(2026, 10, 26))
+        mock_runs.get_latest_completed_run_for_period.assert_called_once_with(42, date(2026, 10, 26))
 
     @patch("progress_reviews_api.views.runs")
     def test_latest_run_endpoint_reports_an_existing_deck(self, mock_runs):
-        mock_runs.get_latest_run_for_period.return_value = {
+        mock_runs.get_latest_completed_run_for_period.return_value = {
             "id": "run-1", "generation_status": "completed",
             "generated_at": datetime(2026, 10, 26, 9, 0, tzinfo=timezone.utc), "created_at": None,
         }
@@ -221,12 +291,70 @@ class EndpointTests(SimpleTestCase):
         self.assertEqual(body["generationStatus"], "completed")
 
     @patch("progress_reviews_api.views.runs")
+    def test_publish_endpoint_promotes_a_draft(self, mock_runs):
+        draft = {
+            "id": "draft-1", "learner_id": 42, "generation_status": "draft",
+            "review_number": 1, "review_date": date(2026, 10, 26),
+            "review_period_start": date(2026, 8, 4), "review_period_end": date(2026, 10, 26),
+            "revision_source": "generated", "source_warnings": [],
+        }
+        saved = {**draft, "generation_status": "completed"}
+        mock_runs.get_run.side_effect = [draft, saved]
+        mock_runs.publish_run.return_value = True
+        mock_runs.get_snapshot.return_value = {"source_warnings": []}
+
+        response = self.client.post("/progress_reviews_api/draft-1/publish/", data=b"{}", content_type="application/json")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(json.loads(response.content)["generationStatus"], "completed")
+        mock_runs.publish_run.assert_called_once_with("draft-1")
+
+    @patch("progress_reviews_api.views.runs")
     def test_latest_run_endpoint_scopes_strictly_to_the_requested_review_date(self, mock_runs):
         """Regression guard: a learner's second review must never show as
         already generated just because their first review's deck exists."""
-        mock_runs.get_latest_run_for_period.return_value = None
+        mock_runs.get_latest_completed_run_for_period.return_value = None
         self.client.get("/progress_reviews_api/42/runs/latest/?review_date=2027-01-18")
-        mock_runs.get_latest_run_for_period.assert_called_once_with(42, date(2027, 1, 18))
+        mock_runs.get_latest_completed_run_for_period.assert_called_once_with(42, date(2027, 1, 18))
+
+    @patch("progress_reviews_api.views.authenticate_request", return_value=SimpleNamespace(role="coach", is_staff=True))
+    @patch("progress_reviews_api.views.runs")
+    def test_staff_can_request_the_owner_only_draft(self, mock_runs, mock_auth):
+        mock_runs.get_latest_run_for_period.return_value = {
+            "id": "draft-1", "generation_status": "draft", "generated_at": None,
+            "revision_source": "generated",
+        }
+
+        response = self.client.get("/progress_reviews_api/42/runs/latest/?review_date=2026-10-26&include_draft=1")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(json.loads(response.content)["generationStatus"], "draft")
+        mock_runs.get_latest_run_for_period.assert_called_once_with(42, date(2026, 10, 26))
+
+    @patch("progress_reviews_api.views.authenticate_request", return_value=SimpleNamespace(role="learner", subject_id=42))
+    @patch("progress_reviews_api.views.runs")
+    def test_progress_review_draft_is_hidden_from_the_learner(self, mock_runs, mock_auth):
+        mock_runs.get_latest_completed_run_for_period.return_value = None
+
+        response = self.client.get("/progress_reviews_api/42/runs/latest/?review_date=2026-10-26")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(json.loads(response.content), {"exists": False})
+        mock_runs.get_latest_completed_run_for_period.assert_called_once_with(42, date(2026, 10, 26))
+
+    @patch("progress_reviews_api.views.storage")
+    @patch("progress_reviews_api.views.runs")
+    @patch("progress_reviews_api.views.authenticate_request", return_value=SimpleNamespace(role="learner", subject_id=42))
+    def test_progress_review_draft_cannot_be_downloaded_by_its_learner(self, mock_auth, mock_runs, mock_storage):
+        mock_runs.get_run.return_value = {
+            "id": "draft-1", "learner_id": 42, "review_kind": "progress_review", "generation_status": "draft",
+        }
+        with patch.dict(os.environ, {"LEARNER_API_REQUIRE_AUTH": "1"}):
+            response = self.client.get("/progress_reviews_api/draft-1/download/")
+
+        self.assertEqual(response.status_code, 404)
+        mock_runs.get_pptx_file_for_run.assert_not_called()
+        mock_storage.download_sas_for.assert_not_called()
 
     @patch("progress_reviews_api.views._generate_for_learner")
     def test_bulk_generate_isolates_one_learner_failure_from_the_rest(self, mock_generate):

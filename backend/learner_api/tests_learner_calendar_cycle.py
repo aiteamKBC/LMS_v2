@@ -80,6 +80,35 @@ class CurriculumCycleFixture:
 
 
 class GeneratedCycleTests(CurriculumCycleFixture, SimpleTestCase):
+    def test_stored_rows_reuse_generated_review_metadata(self):
+        key = review_calendar_event_key(248, 'REV-MCM', 1)
+        record = _record(event_key=key)
+        record.learner_email = _learner().email
+        record.review_template_id = 'REV-MCM'
+        record.occurrence_number = 1
+        queryset = Mock()
+        queryset.order_by.return_value = [record]
+        generated = [{
+            'id': key, 'eventKey': key, 'learnerId': '248',
+            'reviewTemplateId': 'REV-MCM', 'occurrenceNumber': 1,
+            'title': 'Coaching conversation', 'source': 'mcr', 'type': 'coaching',
+            'sequence': 1, 'targetDate': '2026-09-14',
+            'reviewTypeId': 'REVT-MCM', 'reviewTypeCode': 'mcm',
+            'reviewTypeName': 'Monthly Coaching Meeting', 'reviewTypeIsSystem': True,
+        }]
+        with patch('learner_api.calendar.CoachCalendarEvent.objects.filter', return_value=queryset), \
+             patch('learner_api.calendar._generated_cycle_events', return_value=generated), \
+             patch('curriculum_api.reviews.get_review_template_rows') as read_templates, \
+             patch('learner_api.calendar.review_type_rows_by_template') as read_types, \
+             patch('learner_api.calendar._serialize_event', return_value={'eventKey': key}) as serialize:
+            events = coaching_events_for_learner(_learner(), _mirror())
+
+        self.assertEqual(events[0]['title'], 'Coaching conversation')
+        read_templates.assert_not_called()
+        read_types.assert_not_called()
+        self.assertEqual(serialize.call_args.kwargs['templates_by_id']['REV-MCM']['name'], 'Coaching conversation')
+        self.assertEqual(serialize.call_args.kwargs['review_types_by_template']['REV-MCM']['code'], 'mcm')
+
     def test_shared_coaching_source_rejects_another_email_with_a_colliding_numeric_id(self):
         mine=_record();mine.learner_email='AYA.KHATER@example.com'
         foreign=_record(event_key='someone-else');foreign.learner_email='another@example.com'
@@ -448,3 +477,77 @@ class AssignedModuleLiveSessionTests(SimpleTestCase):
                 '', '', require_coach_access=False, include_past=True,
                 learner_module_ids=[],
             ), [])
+
+    def test_content_only_week_does_not_consume_the_next_teams_occurrence(self):
+        from coach_api import views
+        weeks = [
+            # Archived/library copies of an earlier week must not shift the
+            # current week-to-occurrence mapping.
+            {'id': 'W1-ARCHIVED', 'module_catalogue_id': 'MOD-1', 'week_number': 1,
+             'title': 'Old Week 1', 'deleted_at': '2026-09-01T00:00:00Z'},
+            *[
+                {'id': f'W{i}', 'module_catalogue_id': 'MOD-1', 'week_number': i,
+                 'title': f'Week {i}'}
+                for i in range(1, 5)
+            ],
+        ]
+        components = [
+            {'type': 'live_session', 'module_catalogue_id': 'MOD-1', 'week_id': week_id,
+             'live_sessions_link': 'https://teams.microsoft.com/meet/one'}
+            for week_id in ('W1', 'W2', 'W4')
+        ]
+        components.append({
+            'type': 'live_session', 'module_catalogue_id': 'MOD-1', 'week_id': 'W3',
+            'live_sessions_link': 'https://teams.microsoft.com/meet/old',
+            'deleted_at': '2026-09-01T00:00:00Z',
+        })
+        series = [{'id': 'LIVE-1', 'module_catalogue_id': 'MOD-1', 'status': 'active'}]
+        occurrences = [
+            {'id': f'OCC-{i}', 'live_session_id': 'LIVE-1', 'session_number': i}
+            for i in range(1, 4)
+        ]
+        plan = {'warnings': [], 'sessions': [
+            {'sessionNumber': 1, 'date': '2026-09-18', 'skippedHolidays': []},
+            {'sessionNumber': 2, 'date': '2026-09-25', 'skippedHolidays': []},
+            {'sessionNumber': 3, 'date': '2026-10-02', 'skippedHolidays': ['2026-10-02']},
+            {'sessionNumber': 4, 'date': '2026-10-09', 'skippedHolidays': []},
+        ]}
+
+        def fetch(table, *args, **kwargs):
+            return {
+                views.AUTHORING_WEEKS_TABLE: weeks,
+                views.AUTHORING_COMPONENTS_TABLE: components,
+                views.LIVE_SESSIONS_TABLE: series,
+                views.LIVE_SESSION_OCCURRENCES_TABLE: occurrences,
+            }.get(table, [])
+
+        row = {
+            'module_name': 'MarTech', 'start_date': '2026-09-18', 'sessions_number': 4,
+            'session_week_day': 'Friday',
+            '_meta': {'module_catalogue_id': 'MOD-1', 'cohort_id': 'COHORT-1'},
+        }
+        with patch.object(views, 'get_program_config_rows', return_value=[]), \
+             patch.object(views, 'authoring_fetch_all', side_effect=fetch), \
+             patch.object(views, 'authoring_modules_as_training_rows', return_value=[row]), \
+             patch.object(views, 'is_operational_training_row', return_value=True), \
+             patch.object(views, 'programme_identity', return_value={'name': 'Programme', 'sourceId': 'P'}), \
+             patch.object(views, 'actual_cohort_identity', return_value={'name': 'Cohort', 'id': 'COHORT-1'}), \
+             patch.object(views, 'actual_group_identity', return_value={'name': 'Group', 'id': 'GROUP-1'}), \
+             patch.object(views, 'fetch_cohort_selected_holidays', return_value=[]), \
+             patch.object(views, 'delivery_days_per_week', return_value=1), \
+             patch.object(views, 'build_module_session_plan', return_value=plan), \
+             patch.object(views, 'build_live_session_calendar_event', side_effect=lambda _row, session, **kwargs: {
+                 'date': session['date'],
+                 'sessionNumber': session['sessionNumber'],
+                 'occurrenceId': (kwargs.get('tracked_occurrence') or {}).get('id'),
+             }):
+            events = views.collect_live_session_events(
+                '', '', require_coach_access=False, include_past=True,
+                learner_module_ids=['MOD-1'],
+            )
+
+        self.assertEqual(events, [
+            {'date': '2026-09-18', 'sessionNumber': 1, 'occurrenceId': 'OCC-1'},
+            {'date': '2026-09-25', 'sessionNumber': 2, 'occurrenceId': 'OCC-2'},
+            {'date': '2026-10-09', 'sessionNumber': 3, 'occurrenceId': 'OCC-3'},
+        ])

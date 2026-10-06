@@ -15,14 +15,14 @@ vi.mock('@/api/reflectionSubmission', () => ({
 vi.mock('@/components/feature/AssignmentEvidence', () => ({ AssignmentEvidence: () => <div>Evidence uploader</div> }));
 vi.mock('@/api/learnerDetail', () => ({ fetchLearnerDetail: vi.fn().mockResolvedValue({ ksbs: [], activityFeed: [] }) }));
 vi.mock('@/api/learnerCalendar', () => ({ fetchLearnerCalendarEvents: vi.fn().mockResolvedValue({ events: [], bookingCalendar: { coveredYears: [2026], bankHolidays: [] } }), bookLearnerCalendarSession: vi.fn() }));
+vi.mock('@/api/reviewHistory', () => ({ fetchReviewHistory: vi.fn().mockResolvedValue({ learnerId: null, category: 'monthly-coaching', reviews: [] }) }));
 vi.mock('@/api/monthlyAssignment', async importOriginal => ({ ...await importOriginal<typeof import('@/api/monthlyAssignment')>(), checkMonthlyAssignment: vi.fn() }));
 
 const props = {
   kind: 'commercial' as const, learnerId: '1', learnerName: 'Learner', programmeName: 'Programme',
   componentId: 'COMP-1', title: 'Monthly assignment', moduleTitle: 'Module', weekTitle: 'Week 1',
   plannedOtjh: 2, questionText: 'Describe your work.', ksbMappings: [], evidenceFiles: [], evidenceDetails: {},
-  timeSeconds: 28800, timeControl: <div>Automatic timer</div>, outsideWorkingHours: false,
-  outsideWorkingHoursConfirmed: false, submittingProgress: false,
+  timeSeconds: 28800, timeControl: <div>Automatic timer</div>, submittingProgress: false,
   onEvidenceChanged: vi.fn(), onRestoreTime: vi.fn(), onSubmitProgress: vi.fn().mockResolvedValue(undefined),
 };
 
@@ -60,6 +60,22 @@ function confirmLearning() {
   for (const name of learningDeclarations) fireEvent.click(screen.getByRole('checkbox', { name }));
 }
 describe('monthly assignment drafts', () => {
+  it('keeps a partially accepted topic locked without repeating its question', async () => {
+    vi.mocked(loadLearningReflectionSubmission).mockResolvedValue({
+      status: 'partial', assignmentTopicId: '2', assignmentQuestion: 'The original Topic 2 question.',
+      assignmentAnswer: 'The submitted topic answer.',
+      monthlyAssignment: emptyMonthlyAssignment([], '2026-10'),
+    } as Awaited<ReturnType<typeof loadLearningReflectionSubmission>>);
+    render(<AssignmentSubmissionWizard {...props} assignmentTopicId="2" questionText="A later edited question." />);
+    await screen.findByDisplayValue('The submitted topic answer.');
+    expect(screen.queryByText('Assignment question')).not.toBeInTheDocument();
+    expect(screen.queryByText('The original Topic 2 question.')).not.toBeInTheDocument();
+    expect(screen.getByLabelText(/Your answer \(/)).toBeDisabled();
+    expect(screen.queryByRole('button', { name: 'Save draft' })).not.toBeInTheDocument();
+    cleanup();
+    expect(saveLearningReflectionSubmission).not.toHaveBeenCalled();
+  });
+
   it('shows the personal booking exemption while keeping presentation and validation', async () => {
     render(<AssignmentSubmissionWizard {...props} learnerId="pl.7.study.MOD-A" />);
     fireEvent.click(await screen.findByRole('button', { name: /Presentation/ }));
@@ -393,7 +409,7 @@ it('discards in-flight quality results if submission data changes before the res
   let resolveChecks!: (checks: Awaited<ReturnType<typeof checkMonthlyAssignment>>) => void;
   vi.mocked(checkMonthlyAssignment).mockImplementationOnce(() => new Promise(resolve => { resolveChecks = resolve; }));
   fireEvent.click(screen.getByRole('button', { name: 'Run quality checks' }));
-  view.rerender(<AssignmentSubmissionWizard {...props} outsideWorkingHoursConfirmed />);
+  view.rerender(<AssignmentSubmissionWizard {...props} weekTitle="Week 2" />);
   await act(async () => resolveChecks(Array.from({ length: 13 }, (_, i) => ({ key: String(i), label: `Old check ${i}`, passed: true }))));
   expect(screen.getByText('Quality checks not run yet')).toBeInTheDocument();
   expect(screen.queryByText('Old check 0')).not.toBeInTheDocument();

@@ -5,6 +5,13 @@ class LearnerApiConfig(AppConfig):
     name = 'learner_api'
 
     def ready(self):
+        from .read_model import register_learner_home_read_model
+        register_learner_home_read_model()
+
+        # Additive read-model events only; every receiver fails open while the
+        # feature flags/outbox remain disabled during staged deployment.
+        from . import read_model_signals  # noqa: F401
+
         # psycopg3 reads `json` columns as dicts, but Django only text-loads
         # `jsonb`, so JSONField 500s on `json` columns (SECURITY_AUDIT.md A22).
         # Register a text loader for both, before any connection is used.

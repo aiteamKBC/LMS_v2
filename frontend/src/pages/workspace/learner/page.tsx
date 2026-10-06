@@ -1,6 +1,7 @@
+import { learnerRecordedDates } from '@/lib/learnerRecordedDates';
 import { useState, useEffect, useMemo } from 'react';
-import { BookOpen, CalendarCheck, Clock3, BarChart3, type LucideIcon } from 'lucide-react';
-import { useParams, useNavigate, Link } from 'react-router-dom';
+import { useParams, useNavigate } from 'react-router-dom';
+import { ClipboardList, FileText, Monitor } from 'lucide-react';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { roleNavMap } from '@/mocks/navigation';
 import { useLearnerSummaryParam } from '@/hooks/useLearnerSummaryParam';
@@ -9,24 +10,43 @@ import { useResolvedLearner } from '@/hooks/useMyLearner';
 import { type LearnerKind } from '@/api/learnerDetail';
 import { isOwnLearnerRecord } from '@/api/auth';
 import { useFreshUserRedirect, useOnboardingRedirect } from '@/hooks/useOnboardingRedirect';
+import { useFirstLoginDetailsRedirect } from '@/hooks/useFirstLoginDetailsRedirect';
 import { syncLearnerStatus } from '@/hooks/useLearnerNavGate';
 import { useLearnerAttendance } from '@/hooks/useLearnerAttendance';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { PageSkeleton } from '@/components/feature/Skeletons';
 import { LearnerLoadError } from '@/components/feature/LearnerLoadError';
 import { PageContainer } from '@/components/ui/PageContainer';
-import { ProgressBar } from '@/components/ui/ProgressMetric';
 import { LearnerProfilePhoto } from '@/components/feature/LearnerProfilePhoto';
-import { toneStyle, type StatusTone } from '@/lib/statusTone';
+import { LearnerDashboardHero } from './LearnerDashboardHero';
 import { canViewAssignedProgramme, waitingCopy } from '@/utils/learnerAccessGate';
 import { displayValue, EMPTY_VALUE } from '@/lib/format';
 import overviewStyles from './Overview.module.css';
-import { DashboardTrainingPlan } from './DashboardTrainingPlan';
-import { DashboardActivities } from './DashboardActivities';
-import { formatProgrammeStartDate, learnerHeaderPlan, learnerModuleHref } from './learnerHeaderPlan';
+import { DashboardTabs } from './DashboardTabs';
+import { learnerHeaderPlan, learnerModuleHref } from './learnerHeaderPlan';
 import { useDashboardPlan } from './useDashboardPlan';
 import { useLearnerMetrics } from '@/hooks/useLearnerMetrics';
-import { ProfileFact } from './ProfileFact';
+import { upcomingEvents, upcomingReviewOrMcm } from '@/pages/learner/home/homeData';
+import type { SeasonCardProps } from '@/components/lightswind/seasonal-hover-cards';
+import { useLearnerDetailParam } from '@/hooks/useLearnerDetailParam';
+import { learnerLiveSessionHref } from './liveSessionRoute';
+import type { LearnerCalendarEvent } from '@/api/learnerCalendar';
+import MeetingBookingDialog from '@/pages/learner/reviews/MeetingBookingDialog';
+
+function formatProgrammeStartDate(value?: string | null): string {
+  if (!value) return '';
+  const date = new Date(`${value.slice(0, 10)}T00:00:00`);
+  return Number.isNaN(date.getTime())
+    ? value
+    : new Intl.DateTimeFormat('en-GB', { day: 'numeric', month: 'long', year: 'numeric' }).format(date);
+}
+
+function formatSessionTime(value?: string | null): string {
+  if (!value) return '';
+  const date = new Date(value);
+  return Number.isNaN(date.getTime())
+    ? '' : new Intl.DateTimeFormat('en-GB', { hour: '2-digit', minute: '2-digit', hourCycle: 'h23', timeZone: 'Europe/London' }).format(date);
+}
 
 export default function LearnerOverview() {
   const navigate = useNavigate();
@@ -84,6 +104,13 @@ export default function LearnerOverview() {
   /* ── A learner whose enrolment hasn't been started yet gets the waiting page ──
      Same gating as above: `!loading` so an unresolved status never reads as fresh. */
   const isFreshUser = useFreshUserRedirect(real?.programmeStatus, isRealMode && !loading && !reviewingLearner);
+
+  /* ── A new apprentice gives their details and signature before anything else ──
+     Learner accounts only: the endpoint is the learner's own, never staff's. */
+  const checkingFirstLogin = useFirstLoginDetailsRedirect(
+    kind, id, real?.programmeStatus,
+    isRealMode && !loading && auth.account?.role === 'learner',
+  );
   const isCommercialWaiting = isCommercialPreStart && !loading;
 
   /* The sidebar caches the programme status for the whole browser session and
@@ -113,26 +140,120 @@ export default function LearnerOverview() {
   const ksbProgressHref = kind && id ? `/learner/ksbs/${kind}/${id}` : '/learner/ksbs';
   const displayLearnerName = heroFullName;
   const displayCohort = heroCohort || EMPTY_VALUE;
-  const headerDescription = [heroProgramme, heroEmployer].filter(Boolean).join(' · ') || undefined;
-  const programmeStartDate = dashboardPlan.data?.programmeStartDate
-    ?? real?.learningAccess?.startDate ?? real?.programmeStartDate;
-  const programmeEndDate = dashboardPlan.data?.programmeEndDate ?? real?.programmeEndDate;
-  const startDateDisplay = formatProgrammeStartDate(programmeStartDate) || (loading ? 'Loading…' : EMPTY_VALUE);
-  const plannedEndDisplay = formatProgrammeStartDate(programmeEndDate) || (loading ? 'Loading…' : EMPTY_VALUE);
+  const headerDescription = heroProgramme || undefined;
+  const programmeStartDate = real?.learnerStartDate
+    ?? real?.learningAccess?.startDate
+    ?? dashboardPlan.data?.programmeStartDate
+    ?? real?.programmeStartDate;
+  const programmeEndDate = dashboardPlan.plannedEndDate
+    ?? real?.programmeEndDate
+    ?? dashboardPlan.data?.programmeEndDate
+    ?? real?.learnerEndDate;
+  const recordedDates = learnerRecordedDates(real);
+  const startDateDisplay = formatProgrammeStartDate(recordedDates.start) || (loading ? 'Loading…' : EMPTY_VALUE);
+  const plannedEndDisplay = formatProgrammeStartDate(recordedDates.end) || (loading ? 'Loading…' : EMPTY_VALUE);
   const plan = learnerHeaderPlan(scheduleRead.data?.modules || [], knownLearner || {},
     new Date(now).toLocaleDateString('en-CA', { timeZone: 'Europe/London' }));
   const planPlaceholder = scheduleRead.loading ? 'Loading...' : scheduleRead.error ? 'Unavailable' : EMPTY_VALUE;
   const coachDisplayName = scheduleRead.data?.coach.name || (scheduleRead.data ? 'Not yet assigned' : planPlaceholder);
-  const currentModuleLabel = plan.modules.map(module => module.title).join(' · ') || planPlaceholder;
   const continueLearningHref = learnerModuleHref(kind, id, plan.modules[0]?.id, scheduleRead.data?.moduleLinks);
 
+  // "Your next action" reuses the training-plan module already resolved above; the
+  // other two cards share the same nearest-lecture/nearest-assignment selection
+  // Student Home uses, so all three destinations and empty-state copy stay in sync.
+  const weekRead = dashboardPlan.week;
+  const events = useMemo(() => upcomingEvents(scheduleRead.data, weekRead.data, new Date(now)),
+    [scheduleRead.data, weekRead.data, now]);
+  const [nextLecture, nextAssignment] = events;
+  const nextReviewOrMcm = useMemo(() => upcomingReviewOrMcm(scheduleRead.data, new Date(now)),
+    [scheduleRead.data, now]);
+  const [bookingSession, setBookingSession] = useState<LearnerCalendarEvent | null>(null);
+  const learnerDetailRead = useLearnerDetailParam(kind, id);
+  const nextLectureActivityHref = learnerLiveSessionHref(learnerDetailRead.real, nextLecture, kind, id)
+    || (nextLecture.moduleId
+      ? learnerModuleHref(kind, id, nextLecture.moduleId, scheduleRead.data?.moduleLinks)
+      : continueLearningHref);
+  const reviewOrMcmHref = nextReviewOrMcm && kind && id
+    ? `/learner/calendar?kind=${encodeURIComponent(kind)}&learner=${encodeURIComponent(id)}&event=${encodeURIComponent(nextReviewOrMcm.eventKey)}${nextReviewOrMcm.scheduledDate ? '' : '&action=schedule'}`
+    : '/learner/calendar';
+  const reviewPageHref = nextReviewOrMcm
+    ? `/learner/${nextReviewOrMcm.source === 'mcr' ? 'monthly-coaching' : 'progress-reviews'}/${encodeURIComponent(nextReviewOrMcm.sessionId)}`
+    : undefined;
+  const reviewBookingSession = useMemo<LearnerCalendarEvent | null>(() => {
+    if (!nextReviewOrMcm) return null;
+    const source = nextReviewOrMcm.source;
+    return {
+      id: nextReviewOrMcm.eventKey,
+      eventKey: nextReviewOrMcm.eventKey,
+      title: nextReviewOrMcm.title,
+      source,
+      type: source === 'mcr' ? 'coaching' : 'review',
+      sequence: 1,
+      status: nextReviewOrMcm.scheduledDate ? 'scheduled' : 'not-scheduled',
+      date: nextReviewOrMcm.date,
+      targetDate: nextReviewOrMcm.date,
+      scheduledDate: nextReviewOrMcm.scheduledDate,
+      scheduledTime: nextReviewOrMcm.scheduledTime,
+      durationMinutes: 60,
+      coachName: scheduleRead.data?.coach.name || '',
+      coachEmail: scheduleRead.data?.coach.email || '',
+      meetingProvider: 'teams',
+      meetingLink: nextReviewOrMcm.meetingLink || '',
+      notes: '',
+    };
+  }, [nextReviewOrMcm, scheduleRead.data?.coach.email, scheduleRead.data?.coach.name]);
+  const reviewActionHref = nextReviewOrMcm?.scheduledDate
+    ? reviewPageHref
+    : nextReviewOrMcm ? (reviewBookingSession ? undefined : reviewOrMcmHref) : reviewOrMcmHref;
+  const reviewDateLabel = nextReviewOrMcm?.date
+    ? `${formatProgrammeStartDate(nextReviewOrMcm.date)}${nextReviewOrMcm.scheduledTime ? ` · ${nextReviewOrMcm.scheduledTime.slice(0, 5)} UK time` : ''}`
+    : '';
+  const actionCards: SeasonCardProps[] = [
+    {
+      title: nextReviewOrMcm?.source === 'mcr' ? 'MCM' : 'Review',
+      subtitle: nextReviewOrMcm?.title || 'No upcoming review or MCM',
+      description: reviewDateLabel || 'Your next review or MCM will appear here.',
+      cta: nextReviewOrMcm?.scheduledDate ? 'Attend' : 'Schedule',
+      status: nextReviewOrMcm ? (nextReviewOrMcm.scheduledDate ? 'Scheduled' : 'Ready to schedule') : planPlaceholder,
+      icon: FileText,
+      variant: 'action',
+      href: reviewActionHref || (!nextReviewOrMcm ? reviewOrMcmHref : undefined),
+      onClick: !nextReviewOrMcm?.scheduledDate && reviewBookingSession ? () => setBookingSession(reviewBookingSession) : undefined,
+      imageSrc: '/assets/dashboard-cards/next-action.svg',
+      imageAlt: 'Continue learning artwork',
+    },
+    {
+      title: 'Next live session',
+      subtitle: nextLecture.date ? nextLecture.title : scheduleRead.loading ? 'Loading…' : 'No upcoming session',
+      description: nextLecture.date
+        ? `${formatProgrammeStartDate(nextLecture.date)} · ${formatSessionTime(nextLecture.date)}`
+        : scheduleRead.loading ? 'Loading…' : 'Check back once your next session is scheduled.',
+      cta: nextLecture.date ? 'Attend' : 'View schedule',
+      status: nextLecture.date ? 'Scheduled' : scheduleRead.loading ? 'Loading…' : 'No session scheduled',
+      icon: Monitor,
+      variant: 'session',
+      href: nextLecture.date ? nextLectureActivityHref : nextLecture.href,
+      imageSrc: '/assets/dashboard-cards/next-session.svg',
+      imageAlt: 'Next live session artwork',
+    },
+    {
+      title: 'Due soon',
+      subtitle: nextAssignment.date ? nextAssignment.title : weekRead.loading ? 'Loading…' : 'No upcoming assignment',
+      description: nextAssignment.date ? `Due ${formatProgrammeStartDate(nextAssignment.date)}`
+        : weekRead.loading ? 'Loading…' : 'You’re all caught up — nothing due soon.',
+      cta: nextAssignment.date ? 'Open assignment' : 'View assignments',
+      status: nextAssignment.date ? 'Pending' : weekRead.loading ? 'Loading…' : 'Nothing due',
+      icon: ClipboardList,
+      variant: 'due',
+      href: nextAssignment.href,
+      imageSrc: '/assets/dashboard-cards/due-soon.svg',
+      imageAlt: 'Assignment due soon artwork',
+    },
+  ];
   const programme = metrics.data?.programme;
   const programmeProgressPercent = programme?.percent ?? null;
   const programmeProgressValue = programmeProgressPercent == null ? EMPTY_VALUE : `${programmeProgressPercent}%`;
-  const programmeProgressCaption = programme?.total != null ? `${programme.completed}/${programme.total} activities complete`
-    : metrics.loading ? 'Loading progress...' : 'Progress unavailable';
-  const programmeTargetDetail = programme?.total != null && programme.total > 0
-    ? `${programme.total.toLocaleString('en-GB')} activities` : 'All assigned activities';
+  const programmeProgressSummary = programme?.total != null ? `${programme.completed} / ${programme.total}` : EMPTY_VALUE;
 
   const attendanceReady = !!attendance || (!attendanceLoading && !attendanceRead.error);
   const attendanceSessions = attendance?.sessions ?? (attendanceReady ? 0 : null);
@@ -140,17 +261,16 @@ export default function LearnerOverview() {
   const attendancePercent = attendance?.attendanceRate ?? null;
   const attendanceValue = attendancePresent?.toLocaleString('en-GB') ?? EMPTY_VALUE;
   const attendanceTotalValue = attendanceSessions?.toLocaleString('en-GB') ?? EMPTY_VALUE;
-  const attendanceCaption = attendancePercent != null ? `${attendancePercent}% attendance`
-    : attendanceLoading ? 'Loading attendance…'
-      : attendanceRead.error ? 'Attendance unavailable' : 'No attendance records yet';
-  const attendanceTone: StatusTone = attendancePercent == null ? 'neutral' : 'brand';
+  const attendanceSummary = attendancePresent == null || attendanceSessions == null
+    ? EMPTY_VALUE : `${attendanceValue} / ${attendanceTotalValue}`;
 
   const otjPlannedHours = !metrics.data ? null : metrics.data.migrated
-    ? metrics.data.aptem_planned_total ?? null : dashboardPlan.otjh.planned;
+    ? metrics.data.aptem_planned_total ?? metrics.data.otjh.planned ?? null : dashboardPlan.otjh.planned;
   const otjPlannedLoading = metrics.loading || (!metrics.data?.migrated && dashboardPlan.otjh.plannedLoading);
-  // The headline is the canonical whole-programme metric. Monthly-log values
-  // remain available inside Monthly Focus, but must not replace this total.
-  const otjActualHours = metrics.data?.otjh.completed_actual ?? null;
+  // Use the same canonical Actual total as the OTJ Hours page. Monthly Logs is
+  // still the per-month view, but it can omit the open month and must not leave
+  // this programme-wide headline showing an older partial total.
+  const otjActualHours = metrics.data?.otjh.actual ?? null;
   const otjPercent = otjActualHours != null && otjPlannedHours != null && otjPlannedHours > 0
     ? Math.round((otjActualHours / otjPlannedHours) * 100)
     : null;
@@ -158,18 +278,10 @@ export default function LearnerOverview() {
     : otjPlannedLoading ? 'Loading…' : 'Unavailable';
   const otjActualValue = otjActualHours != null ? `${otjActualHours.toFixed(2)} h`
     : metrics.loading ? 'Loading...' : 'Unavailable';
-  const otjCaption = metrics.loading || otjPlannedLoading ? 'Loading recorded time...' : otjActualHours == null ? 'Recorded time unavailable'
-    : otjPlannedHours == null ? 'Training plan target hours are not available yet.' : 'Across your programme';
-  const otjTone: StatusTone = 'brand';
   const ksb = metrics.data?.ksb;
   const ksbPercent = ksb?.percent ?? null;
   const ksbValue = ksbPercent == null ? EMPTY_VALUE : `${ksbPercent}%`;
-  const ksbCaption = ksb?.total != null ? `${ksb.completed} of ${ksb.total} points achieved`
-    : ksb?.status === 'unavailable' ? 'KSB progress unavailable.'
-    : metrics.loading ? 'Loading KSB progress...' : 'KSB details unavailable';
-  const ksbTone: StatusTone = ksbPercent == null ? 'neutral'
-    : ksbPercent >= 50 ? 'positive' : ksbPercent >= 30 ? 'caution' : 'critical';
-
+  const ksbSummary = ksb?.total != null ? `${ksb.completed} / ${ksb.total}` : EMPTY_VALUE;
   if (!isRealMode || !learnerKind || !id) {
     return (
       <WorkspaceShell
@@ -192,7 +304,7 @@ export default function LearnerOverview() {
     );
   }
 
-  if (isRealMode && (loading || redirectingToOnboarding)) {
+  if (isRealMode && (loading || redirectingToOnboarding || checkingFirstLogin)) {
     // Only the small identity read gates the page; cards load independently.
     return <PageSkeleton workspaceRole="learner" />;
   }
@@ -298,7 +410,7 @@ export default function LearnerOverview() {
       userName={heroFullName}
       userRole={heroProgramme ? `${heroProgramme} Learner` : 'Learner'}
     >
-      <PageContainer className={overviewStyles.overview}>
+      <PageContainer className={`${overviewStyles.overview} learner-dashboard`}>
         {loadError && <LearnerLoadError error={loadError} onRetry={refresh} />}
         {startDatePending && (
           <div role="status" className="rounded-xl border border-primary-200 bg-primary-50 px-4 py-3 text-sm text-foreground-700">
@@ -318,55 +430,38 @@ export default function LearnerOverview() {
         {/* ================================================================
             PROFILE HEADER
             ================================================================ */}
-        <div>
-            <header
-              className={`learner-super-admin-hero ${overviewStyles.hero}`}
-              aria-label="Learner programme"
-            >
-            <div aria-hidden="true" className={overviewStyles.heroArtwork} />
-            <div className={overviewStyles.heroTop}>
-              <div className={overviewStyles.identity}>
-                <LearnerProfilePhoto
-                  kind={learnerKind} learnerId={id} name={displayLearnerName}
-                  className={overviewStyles.avatar}
-                />
-                <div className="min-w-0">
-                  <p className={overviewStyles.eyebrow}>Learner</p>
-                  <h1 className={`${overviewStyles.name} font-heading`}>{displayLearnerName}</h1>
-                  {headerDescription ? <p className={overviewStyles.description}>{headerDescription}</p> : null}
-                </div>
-              </div>
-              <div className={overviewStyles.heroActions}>
-                <button
-                  type="button"
-                  onClick={() => navigate(continueLearningHref)}
-                  disabled={scheduleRead.loading}
-                  aria-busy={scheduleRead.loading}
-                  className={`${overviewStyles.heroAction} ${overviewStyles.primaryAction}`}
-                >
-                  <AppIcon className="ri-play-line" />
-                  Continue learning
-                </button>
-                <button
-                  type="button"
-                  onClick={() => navigate(weeklyPlanHref)}
-                  className={overviewStyles.heroAction}
-                >
-                  <AppIcon className="ri-road-map-line" />
-                  Learner's Map
-                </button>
-              </div>
-            </div>
-            <dl className={overviewStyles.facts}>
-              <ProfileFact icon="ri-group-line" label="Cohort" value={displayCohort} />
-              <ProfileFact icon="ri-book-2-line" label={plan.label} value={currentModuleLabel} />
-              <ProfileFact icon="ri-user-line" label="Coach" value={coachDisplayName} />
-              <ProfileFact icon="ri-calendar-event-line" label="Start date" value={startDateDisplay} />
-              <ProfileFact label="Status" value={displayValue(knownLearner?.programmeStatus)} status />
-              <ProfileFact icon="ri-calendar-event-line" label="Planned end" value={plannedEndDisplay} />
-            </dl>
-            </header>
-        </div>
+        <LearnerDashboardHero
+          avatar={<LearnerProfilePhoto kind={learnerKind} learnerId={id} name={displayLearnerName} />}
+          name={displayLearnerName}
+          description={headerDescription}
+          cohort={displayCohort}
+          moduleLabel={plan.label}
+          modules={plan.modules.map(module => ({ id: module.id, title: module.title,
+            href: learnerModuleHref(kind, id, module.id, scheduleRead.data?.moduleLinks) }))}
+          modulePlaceholder={planPlaceholder}
+          allModulesHref={programmeProgressHref}
+          actionCards={actionCards}
+          employer={knownLearner?.employer || EMPTY_VALUE}
+          organization={knownLearner?.organization || EMPTY_VALUE}
+          coach={coachDisplayName}
+          coachEmail={scheduleRead.data?.coach.email}
+          coachPhone={scheduleRead.data?.coach.phone}
+          status={displayValue(knownLearner?.programmeStatus)}
+          startDate={startDateDisplay}
+          plannedEnd={plannedEndDisplay}
+          loading={scheduleRead.loading}
+          onContinue={() => navigate(continueLearningHref)}
+          onOpenMap={() => navigate(weeklyPlanHref)}
+        />
+
+        {bookingSession && kind && id && <MeetingBookingDialog
+          session={bookingSession}
+          title={bookingSession.title}
+          learner={{ kind, id }}
+          rules={null}
+          onClose={() => setBookingSession(null)}
+          onBooked={() => { setBookingSession(null); dashboardPlan.refresh(); }}
+        />}
 
         {metrics.error && <div role="alert" className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm">
           {metrics.error} <button className="ml-2 font-semibold underline" onClick={metrics.refresh}>Try again</button>
@@ -375,88 +470,12 @@ export default function LearnerOverview() {
           Attendance could not refresh. {attendanceRead.error}
           <button className="ml-2 font-semibold underline" onClick={attendanceRead.refresh}>Retry attendance</button>
         </div>}
-        {/* ================================================================
-            PROGRAMME PROGRESS CARDS
-            ================================================================ */}
-        <div>
-            <div className={overviewStyles.metrics}>
-              <ProgressStat href={programmeProgressHref} icon={BookOpen} label="Programme Progress" value={programmeProgressValue} targetValue="100%" targetDetail={programmeTargetDetail} percent={programmeProgressPercent} caption={programmeProgressCaption} tone="brand" />
-              <ProgressStat href="/learner/attendance" icon={CalendarCheck} label="Attendance" value={attendanceValue} valueLabel="Attended" targetValue={attendanceTotalValue} targetLabel="Sessions to date" percent={attendancePercent} caption={attendanceCaption} tone={attendanceTone} />
-              <ProgressStat
-                href={otjhProgressHref}
-                icon={Clock3}
-                label="OTJ Hours"
-                value={otjActualValue}
-                valueLabel="Actual"
-                targetValue={otjPlannedValue}
-                targetLabel="Planned hours"
-                percent={otjPercent}
-                caption={otjCaption}
-                tone={otjTone}
-              />
-              <ProgressStat href={ksbProgressHref} icon={BarChart3} label="KSB Progress" value={ksbValue} percent={ksbPercent} caption={ksbCaption} tone={ksbTone} />
-            </div>
-        </div>
-
-        {real && <DashboardActivities kind={learnerKind} programmeStatus={real.programmeStatus} canSeeNavItem={canSeeNavItem} />}
-        <DashboardTrainingPlan key={`plan:${learnerKind}:${id}`} kind={learnerKind} learnerId={id} plan={dashboardPlan} canOpenActivities
-          programmeStartDate={programmeStartDate}
-          programmeEndDate={programmeEndDate}
-          canOpenRewards={!reviewingLearner} />
+        <DashboardTabs kind={learnerKind} learnerId={id} plan={dashboardPlan} programmeStartDate={programmeStartDate} programmeEndDate={programmeEndDate}
+          canOpenRewards={!reviewingLearner} real={real || undefined} canSeeNavItem={canSeeNavItem} pageError={loadError}
+          metrics={{ programmeValue: programmeProgressValue, programmeSummary: programmeProgressSummary, programmePercent: programmeProgressPercent,
+            attendanceValue, attendanceSummary, attendanceTotalValue, attendancePercent, otjActualValue, otjSummary: `${otjActualHours?.toFixed(2) ?? EMPTY_VALUE} / ${otjPlannedHours?.toFixed(2) ?? EMPTY_VALUE} h`,
+            otjPlannedValue, otjPercent, ksbValue, ksbSummary, ksbPercent }} />
       </PageContainer>
     </WorkspaceShell>
-  );
-}
-
-/* ─────────────────────────────────────────────
-   SUB-COMPONENTS
-   ───────────────────────────────────────────── */
-
-/** Shared linked summary cards; presentation does not change the metric sources. */
-function ProgressStat({ href, icon: Icon, label, value, valueLabel = 'Current', targetValue, targetLabel = 'Target', targetDetail, percent, caption, tone = 'neutral' }: {
-  href: string;
-  icon: LucideIcon;
-  label: string;
-  value: string;
-  valueLabel?: string;
-  targetValue?: string;
-  targetLabel?: string;
-  targetDetail?: string;
-  percent: number | null;
-  caption?: string;
-  tone?: StatusTone;
-}) {
-  const style = toneStyle(tone);
-  return (
-    <Link
-      to={href}
-      aria-label={`Open ${label}`}
-      data-tone={tone}
-      className={`group ${overviewStyles.metric}`}
-    >
-      <div className={overviewStyles.metricTop}>
-        <span className={overviewStyles.metricIcon}>
-          <Icon aria-hidden="true" />
-        </span>
-        <p className={overviewStyles.metricLabel}>{label}</p>
-        <AppIcon aria-hidden="true" className={`ri-arrow-right-s-line ${overviewStyles.metricArrow}`} />
-      </div>
-      <dl className={overviewStyles.metricValues}>
-        <div className={targetValue == null ? 'col-span-2' : undefined}>
-          <dt className={overviewStyles.metricSubLabel}>{valueLabel}</dt>
-          <dd className={`${overviewStyles.metricValue} ${tone === 'neutral' ? 'text-foreground-900' : style.text}`}>{value}</dd>
-        </div>
-        {targetValue != null && <div>
-          <dt className={overviewStyles.metricSubLabel}>{targetLabel}</dt>
-          <dd className={`${overviewStyles.metricValue} text-foreground-900`}>{targetValue}
-            {targetDetail && <span className={overviewStyles.metricValueDetail}>{targetDetail}</span>}
-          </dd>
-        </div>}
-      </dl>
-      <ProgressBar percent={percent} tone={percent == null || tone === 'neutral' ? undefined : style.dot} height="h-3" className={overviewStyles.metricBar} />
-      {caption ? <p className={overviewStyles.metricCaption}>
-        <span>{caption}</span>
-      </p> : null}
-    </Link>
   );
 }

@@ -45,5 +45,57 @@ export function personHref(scope: AuditTrailScope, email: string, days?: number)
   return days && days !== DEFAULT_WINDOW_DAYS ? `${path}?days=${days}` : path;
 }
 
-/** The window both halves of the Audit Trail open on. */
-export const DEFAULT_WINDOW_DAYS = 30;
+/** The window both halves of the Audit Trail open on, and the longest one:
+ * page activity older than seven days is deleted. */
+export const DEFAULT_WINDOW_DAYS = 7;
+
+/** Curriculum Studio keeps its whole history, so it offers longer periods. */
+export const UNLIMITED_WORKSPACES = new Set(['curriculum']);
+
+const LONG_WINDOW_OPTIONS = [
+  { value: '30', label: 'Last 30 days' },
+  { value: '90', label: 'Last 90 days' },
+  { value: '365', label: 'Last 12 months' },
+  { value: '3650', label: 'All time' },
+];
+
+export function windowOptionsFor(workspace: string | undefined) {
+  const short = [
+    { value: '1', label: 'Today (last 24 hours)' },
+    { value: String(DEFAULT_WINDOW_DAYS), label: 'Last 7 days' },
+  ];
+  return workspace && UNLIMITED_WORKSPACES.has(workspace) ? [...short, ...LONG_WINDOW_OPTIONS] : short;
+}
+
+/** The longest period a workspace's Audit Trail can read, in days. */
+export function windowLimitFor(workspace: string | undefined): number {
+  return workspace && UNLIMITED_WORKSPACES.has(workspace) ? 3650 : DEFAULT_WINDOW_DAYS;
+}
+
+/**
+ * The Changes feed reads saved history -- the revision log, and the records'
+ * own timestamps before it -- which is kept, unlike page activity. So every
+ * workspace, and the system-wide door, may look back 30 or 60 days. Seven
+ * stays the default so an ordinary page load reads no more than it did.
+ * Matches `MAX_CHANGE_WINDOW_DAYS` on the server.
+ */
+export const MAX_CHANGE_WINDOW_DAYS = 60;
+
+const CHANGE_WINDOW_OPTIONS = [
+  { value: '30', label: 'Last 30 days' },
+  { value: '60', label: 'Last 60 days' },
+];
+
+export function changeWindowOptionsFor(workspace: string | undefined) {
+  const short = windowOptionsFor(undefined);
+  if (workspace && UNLIMITED_WORKSPACES.has(workspace)) {
+    const [thirty, ...longer] = LONG_WINDOW_OPTIONS;
+    return [...short, thirty, CHANGE_WINDOW_OPTIONS[1], ...longer];
+  }
+  return [...short, ...CHANGE_WINDOW_OPTIONS];
+}
+
+export function changeWindowLimitFor(workspace: string | undefined): number {
+  return workspace && UNLIMITED_WORKSPACES.has(workspace) ? 3650 : MAX_CHANGE_WINDOW_DAYS;
+}
+

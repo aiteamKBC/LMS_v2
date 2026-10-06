@@ -1,0 +1,40 @@
+/* Only the coach case file overrides the shared weekly-plan presentation.
+   Reserve room for labels and controls; the title takes the remaining width. */
+:global(.dashboard-theme[data-workspace-role="coach"] .workspace-main) .root :global(section[aria-labelledby="weekly-activities-heading"]) table {
+  min-width: 1080px;
+  table-layout: fixed;
+}
+
+.root :global(section[aria-labelledby="weekly-activities-heading"]) col:nth-child(1) { width: 48px; }
+.root :global(section[aria-labelledby="weekly-activities-heading"]) col:nth-child(2) { width: 170px; }
+.root :global(section[aria-labelledby="weekly-activities-heading"]) col:nth-child(4) { width: 120px; }
+.root :global(section[aria-labelledby="weekly-activities-heading"]) col:nth-child(5) { width: 150px; }
+.root :global(section[aria-labelledby="weekly-activities-heading"]) col:nth-child(6) { width: 140px; }
+.root :global(section[aria-labelledby="weekly-activities-heading"]) col:nth-child(7) { width: 120px; }
+
+:global(.dashboard-theme[data-workspace-role="coach"] .workspace-main) .root :global(section[aria-labelledby="weekly-activities-heading"]) :is(th, td) {
+  padding: 12px;
+  font-size: 13px;
+  line-height: 1.5;
+  overflow-wrap: normal;
+}
+
+:global(.dashboard-theme[data-workspace-role="coach"] .workspace-main) .root :global(section[aria-labelledby="weekly-activities-heading"]) :is(th, td):is(:nth-child(2), :nth-child(3)) {
+  text-align: left;
+}
+
+.root :global(section[aria-labelledby="weekly-activities-heading"]) th { white-space: nowrap; }
+.root :global(section[aria-labelledby="weekly-activities-heading"]) td:nth-child(2) > div { gap: 10px; }
+.root :global(section[aria-labelledby="weekly-activities-heading"]) td:nth-child(2) span[title] {
+  overflow: visible;
+  white-space: normal;
+  font-size: 13px;
+}
+.root :global(section[aria-labelledby="weekly-activities-heading"]) td:nth-child(3) p {
+  display: block;
+  overflow: visible;
+  overflow-wrap: anywhere;
+  font-size: 13px;
+  line-height: 1.5;
+}
+.root :global(section[aria-labelledby="weekly-activities-heading"]) td:last-child :is(a, span) { font-size: 12px; }

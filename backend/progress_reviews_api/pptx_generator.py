@@ -44,9 +44,9 @@ from pptx import Presentation
 
 from . import slide_cloner as sc
 from . import text_fit as fit
-from .evidence_images import ImageFetcher, default_image_fetcher
+from .evidence_images import ImageFetcher, default_image_fetcher, fit_to_frame, placeholder, transparent_image
 from .pptx_theme import THEME
-from .review_pack import NOT_AVAILABLE
+from .review_pack import NOT_AVAILABLE, evidence_pool_keys
 
 logger = logging.getLogger(__name__)
 
@@ -91,6 +91,12 @@ def _pct(value) -> str:
     return f"{value}%" if value not in (None, NOT_AVAILABLE) else NOT_AVAILABLE
 
 
+def _hours(value) -> str:
+    """'{value}h', or NOT_AVAILABLE untouched -- appending the unit straight
+    to _s()'s output would otherwise read as the malformed "Not availableh"."""
+    return f"{value}h" if value not in (None, NOT_AVAILABLE) else NOT_AVAILABLE
+
+
 def _shapes(slide):
     return list(slide.shapes)
 
@@ -110,6 +116,22 @@ def _set(slide, index: int, text: str) -> None:
     shapes = _shapes(slide)
     if index < len(shapes):
         sc.set_all_text(shapes[index], fit.clamp(text, 400))
+
+
+#: Short form for the deck's big-number "stat card" shapes (see _set_stat).
+_STAT_NOT_AVAILABLE = "N/A"
+
+
+def _set_stat(slide, index: int, text: str) -> None:
+    """Like _set(), but for a big-number stat-card shape the template sizes
+    for a short value (e.g. "74%", "195h", "Strong"). These shapes autosize
+    to fit their text by growing taller rather than shrinking the font, so
+    the full review_pack.NOT_AVAILABLE phrase grows the card tall enough to
+    overlap the label sitting directly beneath it. Swap in a short marker
+    instead -- the card's own label/sub-caption underneath already says what
+    is missing."""
+    value = _STAT_NOT_AVAILABLE if text == NOT_AVAILABLE else fit.clamp(text, 16)
+    _set(slide, index, value)
 
 
 def _set_in_group(slide, group_index: int, child_index: int, text: str) -> None:
@@ -180,7 +202,8 @@ def _rag_label_and_tone(otj_status: str):
 
 def _breadcrumb(pack) -> str:
     learner = pack["learner"]
-    return f"{_s(learner.get('programme'))} | Progress Review | {_s(learner.get('full_name'))}"
+    label = pack["review"].get("review_label") or "Progress Review"
+    return f"{_s(learner.get('programme'))} | {label} | {_s(learner.get('full_name'))}"
 
 
 def _set_breadcrumb(slide, pack, *, index: int = 3) -> None:
@@ -227,20 +250,20 @@ def _populate_snapshot(slide, pack):
     )
     _set(slide, 5, headline)
 
-    _set(slide, 8, _pct(attendance.get("attendance_percentage")))
+    _set_stat(slide, 8, _pct(attendance.get("attendance_percentage")))
     _set(slide, 9, f"Attendance across {month_label}")
     catch_ups_needed = attendance.get("catch_ups_needed")
     _set(slide, 10, "Catch-ups used where needed" if not catch_ups_needed else f"{catch_ups_needed} catch-up(s) still needed")
 
-    _set(slide, 13, _pct(progress.get("current_programme_progress_percentage")))
+    _set_stat(slide, 13, _pct(progress.get("current_programme_progress_percentage")))
     _set(slide, 15, f"Target: {_pct(progress.get('target_progress_percentage'))}")
 
-    _set(slide, 18, f"{_s(otj.get('completed_otj_hours'))}h")
-    _set(slide, 20, f"Variance: {_s(otj.get('variance'))}h")
+    _set_stat(slide, 18, _hours(otj.get("completed_otj_hours")))
+    _set(slide, 20, f"Variance: {_hours(otj.get('variance'))}")
 
     ksb_progress_all = ksbs.get("knowledge_evidenced", []) + ksbs.get("skills_evidenced", []) + ksbs.get("behaviours_evidenced", [])
     module_pct = pack["lms_modules"][0]["completion_percentage"] if pack["lms_modules"] else None
-    _set(slide, 23, _pct(module_pct) if module_pct is not None else NOT_AVAILABLE)
+    _set_stat(slide, 23, _pct(module_pct) if module_pct is not None else NOT_AVAILABLE)
     _set(slide, 24, "Key LMS module" if not pack["lms_modules"] else pack["lms_modules"][0]["module"])
     _set(slide, 25, "Keep clicking complete")
 
@@ -250,7 +273,7 @@ def _populate_snapshot(slide, pack):
 
     coach_summary = [
         f"KSB coverage: {len(ksb_progress_all)} KSB(s) fully evidenced to date.",
-        f"OTJ status: {_s(otj.get('risk_status'))}, forecast {_s(otj.get('forecast_hours'))}h.",
+        f"OTJ status: {_s(otj.get('risk_status'))}, forecast {_hours(otj.get('forecast_hours'))}.",
         f"Evidence this period: {len(pack['evidence'])} item(s) uploaded.",
     ]
     _set_bullets(slide, 31, coach_summary, header_count=1)
@@ -337,7 +360,7 @@ def _populate_attendance(slide, pack):
             _set(slide, pct_idx, f"Attendance: {_pct(rate)}")
             _set(slide, note_idx, "Engagement sustained" if entry.get("absent", 0) == 0 else "Catch-up approach used")
         else:
-            _set(slide, month_idx, NOT_AVAILABLE)
+            _set_stat(slide, month_idx, NOT_AVAILABLE)
             _set(slide, pct_idx, NOT_AVAILABLE)
             _set(slide, note_idx, NOT_AVAILABLE)
 
@@ -366,9 +389,9 @@ def _populate_progress_otj_lms(slide, pack):
     current_pct = progress.get("current_programme_progress_percentage")
     target_pct = progress.get("target_progress_percentage")
     _set(slide, 10, f"Current: {_pct(current_pct)}")
-    _set(slide, 11, _pct(current_pct))
+    _set_stat(slide, 11, _pct(current_pct))
     _set(slide, 14, f"Target: {_pct(target_pct)}")
-    _set(slide, 15, _pct(target_pct))
+    _set_stat(slide, 15, _pct(target_pct))
     if isinstance(current_pct, (int, float)):
         sc.set_proportional_fill_width(shapes[9], shapes[8], current_pct / 100)
     if isinstance(target_pct, (int, float)):
@@ -376,8 +399,8 @@ def _populate_progress_otj_lms(slide, pack):
     rag_label, _tone = _rag_label_and_tone(otj.get("risk_status"))
     _set(slide, 16, f"{_s(pack['learner'].get('full_name'))} is {rag_label.lower()} with progress." if rag_label != NOT_AVAILABLE else NOT_AVAILABLE)
 
-    _set(slide, 21, _s(otj.get("completed_otj_hours")))
-    _set(slide, 25, _s(otj.get("variance")))
+    _set_stat(slide, 21, _s(otj.get("completed_otj_hours")))
+    _set_stat(slide, 25, _s(otj.get("variance")))
     _set(slide, 26, "Ahead of track" if isinstance(otj.get("variance"), (int, float)) and otj["variance"] >= 0 else "Behind target")
     _set(slide, 30, "Healthy pace" if rag_label == "Green" else rag_label)
     _set(slide, 31, _s(otj.get("duplicate_or_weak_otj_warning")))
@@ -417,9 +440,7 @@ def _populate_epa(slide, pack):
 
 
 def _evidence_blocks(pack, limit=3):
-    pool = pack["assignments"] + pack["workplace_activities"]
-    if not pool:
-        pool = pack["evidence"]
+    pool = [item for key in evidence_pool_keys(pack) for item in pack.get(key) or []]
     kept, _overflow = fit.cap_list(pool, limit)
     return kept
 
@@ -460,15 +481,15 @@ def _populate_portfolio_review(slide, pack):
     for i, (strength_idx, title_idx, note_idx) in enumerate(slots):
         if i < len(blocks):
             item = blocks[i]
-            _set(slide, strength_idx, item.get("evidence_strength", NOT_AVAILABLE).title())
+            _set_stat(slide, strength_idx, item.get("evidence_strength", NOT_AVAILABLE).title())
             _set(slide, title_idx, fit.clamp(item.get("evidence_title"), 40))
             _set(slide, note_idx, "Good for " + ", ".join(item.get("ksb_mappings") or []) if item.get("ksb_mappings") else NOT_AVAILABLE)
         else:
-            _set(slide, strength_idx, NOT_AVAILABLE)
+            _set_stat(slide, strength_idx, NOT_AVAILABLE)
             _set(slide, title_idx, NOT_AVAILABLE)
             _set(slide, note_idx, NOT_AVAILABLE)
 
-    _set(slide, 23, _s(pack["epa"].get("current_readiness")))
+    _set_stat(slide, 23, _s(pack["epa"].get("current_readiness")))
     _set(slide, 25, "Upload & map evidence")
 
     accepted = sum(1 for e in evidence if e.get("manager_verification_status") == "accepted")
@@ -511,19 +532,22 @@ def _populate_evidence_detail(slide, pack, slot_offset: int, month_index: int, f
 
     photos = _photo_shapes(slide)
     for i, caption_idx in enumerate(caption_indices):
-        if i < len(items):
-            _set(slide, caption_idx, fit.clamp(items[i].get("evidence_title"), 45))
-            if i < len(photos):
-                shape, _blip = photos[i]
-                url = items[i].get("image_or_screenshot_link")
-                data = fetch_image(url) if url and url != NOT_AVAILABLE else None
-                if data:
-                    try:
-                        sc.replace_picture_fill(shape, data, slide.part)
-                    except Exception as exc:
-                        logger.warning("Progress review PPTX: could not embed evidence image: %s", exc)
-        else:
-            _set(slide, caption_idx, NOT_AVAILABLE)
+        item = items[i] if i < len(items) else None
+        _set(slide, caption_idx, fit.clamp(item.get("evidence_title"), 45) if item else NOT_AVAILABLE)
+        if i >= len(photos):
+            continue
+        shape, _blip = photos[i]
+        data = None
+        if item:
+            url = item.get("image_or_screenshot_link")
+            raw = fetch_image(url) if url and url != NOT_AVAILABLE else None
+            data = fit_to_frame(raw, shape.width, shape.height) if raw else None
+        if data is None:
+            data = placeholder(shape.width, shape.height, "No image uploaded" if item else "No evidence")
+        try:
+            sc.replace_picture_fill(shape, data, slide.part)
+        except Exception as exc:
+            logger.warning("Progress review PPTX: could not embed evidence image: %s", exc)
 
     bar = _shape_in_group(slide, layout["bar_group"], 1)
     if bar is not None:
@@ -687,13 +711,52 @@ def _populate_manager_questions(slide, pack):
         ))
 
 
+def _set_document_properties(prs, pack) -> None:
+    """The file's own title/author metadata, which PDF viewers show as the
+    document name. The template still carries its source deck's (another
+    learner's file name), so every field is reset for this learner."""
+    props = prs.core_properties
+    label = pack["review"].get("review_label") or "Progress Review"
+    props.title = f"{label} — {_s(pack['learner'].get('full_name'))}"
+    props.subject = f"{_s(pack['learner'].get('programme'))} | {label}"
+    props.author = "Kent Business College"
+    props.last_modified_by = _s(pack["review"].get("generated_by"))
+    props.keywords = props.comments = props.category = ""
+
+
+def _remove_source_employer_logos(prs) -> None:
+    """Drop the top-right employer logo (Spinnaker / Exceed Learning
+    Partnership) the template inherited from its source decks — it would
+    otherwise brand every learner's deck with another employer. The image is
+    made transparent rather than the shape deleted, so no shape index moves."""
+    width, height = prs.slide_width, prs.slide_height
+    for slide in prs.slides:
+        for shape in slide.shapes:
+            if shape.left is None or shape.top is None:
+                continue
+            if shape.left > width * 0.7 and shape.top < height * 0.1 and shape.width < width * 0.25:
+                for picture, _blip in sc._picture_fill_shapes_in([shape]):
+                    sc.replace_picture_fill(picture, transparent_image(), slide.part)
+
+
 # --------------------------------------------------------------------------- #
 # entry point
 # --------------------------------------------------------------------------- #
 
 def generate_progress_review_pptx(pack: dict, *, fetch_image: ImageFetcher = default_image_fetcher) -> bytes:
     """Clone the KBC template and populate all 19 slides from `pack`."""
+    prs = render_progress_review(pack, fetch_image=fetch_image)
+    _remove_source_employer_logos(prs)
+    buffer = io.BytesIO()
+    prs.save(buffer)
+    return buffer.getvalue()
+
+
+def render_progress_review(pack: dict, *, fetch_image: ImageFetcher = default_image_fetcher):
+    """The populated Presentation, before source-deck logos are removed —
+    callers that address shapes by index (mcm.py) must do so at this stage."""
     prs = Presentation(str(resolve_template_path()))
+    _set_document_properties(prs, pack)
     slides = list(prs.slides)
     if len(slides) != 19:
         raise RuntimeError(f"Progress Review template must have 19 slides, found {len(slides)}.")
@@ -741,6 +804,4 @@ def generate_progress_review_pptx(pack: dict, *, fetch_image: ImageFetcher = def
     if knowledge_overflow:
         logger.info("Progress review PPTX: %s Knowledge KSB row(s) did not fit the template table.", knowledge_overflow)
 
-    buffer = io.BytesIO()
-    prs.save(buffer)
-    return buffer.getvalue()
+    return prs

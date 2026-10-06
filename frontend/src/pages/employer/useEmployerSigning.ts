@@ -1,14 +1,17 @@
 import { useEffect, useState } from 'react';
 import {
+  fetchEmployerEnrolmentReview,
   fetchEmployerReviewInstance,
   saveEmployerReviewAnswers,
   signAgreementAsEmployer,
   signDocumentAsEmployer,
+  signEnrolmentReviewAsEmployer,
   signReviewAsEmployer,
   signTrainingPlanAsEmployer,
   signWrittenAgreementAsEmployer,
   type SignableItem,
 } from '@/api/employerPortal';
+import { downloadMigratedReviewForParty, fetchMigratedReviewForParty, signMigratedReviewAsParty } from '@/api/learnerCalendar';
 import { fetchReviewForm } from '@/api/reviewForm';
 import { getEnrolmentDocumentUrl } from '@/api/enrolmentDocuments';
 import type { LearnerKind } from '@/api/extendedIlr';
@@ -51,7 +54,9 @@ export function useEmployerSigning(employerId: string, onSigned: () => void) {
       return;
     }
     let active = true;
-    fetchEmployerReviewInstance(employerId, signing.kind, signing.learnerId, item.eventKey)
+    (item.migratedForm
+      ? fetchMigratedReviewForParty(item.eventKey)
+      : fetchEmployerReviewInstance(employerId, signing.kind, signing.learnerId, item.eventKey))
       .then(value => { if (active) setReviewDefinition(value); })
       .catch(() => { if (active) setReviewDefinition(null); });
     return () => { active = false; };
@@ -61,7 +66,15 @@ export function useEmployerSigning(employerId: string, onSigned: () => void) {
     if (!signing) return;
     const { item, kind, learnerId } = signing;
     if (item.kind === 'review') {
-      await signReviewAsEmployer(employerId, kind, learnerId, item.eventKey, { name, signature });
+      // Curriculum review instances and legacy enrolment reviews share this
+      // list but not a sign endpoint.
+      if (item.migratedForm) {
+        await signMigratedReviewAsParty(item.eventKey, signature);
+      } else if (item.reviewInstanceId) {
+        await signReviewAsEmployer(employerId, kind, learnerId, item.eventKey, { name, signature });
+      } else {
+        await signEnrolmentReviewAsEmployer(kind, learnerId, item.eventKey, { name, signature });
+      }
     } else if (item.kind === 'written-agreement') {
       await signWrittenAgreementAsEmployer(learnerId, { name, signature });
     } else if (item.kind === 'training-plan') {
@@ -90,7 +103,15 @@ export function useEmployerSigning(employerId: string, onSigned: () => void) {
     setOpening(targetKey(target));
     try {
       if (item.kind === 'review') {
-        const review = await fetchReviewForm(kind, learnerId, item.eventKey);
+        if (item.migratedForm) {
+          await downloadMigratedReviewForParty(item.eventKey);
+          return;
+        }
+        // Legacy enrolment reviews are read through the employer portal; the
+        // learner-side read refuses employers.
+        const review = item.reviewInstanceId
+          ? await fetchReviewForm(kind, learnerId, item.eventKey)
+          : await fetchEmployerEnrolmentReview(employerId, kind, learnerId, item.eventKey);
         downloadReviewPdf(review, REVIEW_QUESTION_LABELS);
       } else {
         const url = await getEnrolmentDocumentUrl(kind, learnerId, item.id);
@@ -104,7 +125,7 @@ export function useEmployerSigning(employerId: string, onSigned: () => void) {
   };
 
   const signingItem = signing?.item;
-  const saveReviewAnswers = signing && signingItem?.kind === 'review'
+  const saveReviewAnswers = signing && signingItem?.kind === 'review' && !signingItem.migratedForm
     ? (answers: Record<string, unknown>) =>
         saveEmployerReviewAnswers(employerId, signing.kind, signing.learnerId, signingItem.eventKey, answers)
     : undefined;

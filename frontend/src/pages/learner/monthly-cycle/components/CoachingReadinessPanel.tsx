@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { COACHING_READINESS_DATA } from '@/mocks/monthly-cycle';
+import { AnimatedProgressCircle } from '@/components/ui/AnimatedProgressCircle';
 
 export default function CoachingReadinessPanel() {
   const d = COACHING_READINESS_DATA;
@@ -32,7 +33,7 @@ export default function CoachingReadinessPanel() {
           <div className="relative w-16 h-16 flex items-center justify-center">
             <svg className="w-full h-full -rotate-90" viewBox="0 0 72 72">
               <circle cx="36" cy="36" r="30" fill="none" stroke="oklch(var(--background-200))" strokeWidth="6" />
-              <circle
+              <AnimatedProgressCircle
                 cx="36" cy="36" r="30" fill="none"
                 stroke={progress >= 80 ? 'oklch(var(--primary-500))' : progress >= 50 ? 'oklch(var(--accent-500))' : 'oklch(var(--secondary-500))'}
                 strokeWidth="6" strokeLinecap="round"

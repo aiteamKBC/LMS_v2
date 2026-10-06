@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor, cleanup } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, cleanup, within } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -22,11 +22,12 @@ const current: LogDetail = { source: 'lms', month: '2026-09', status: 'awaiting_
   source_finalization: null, student_signature: null, coach_signature: null, snapshot_digest: 'reviewed-digest',
   rows: [{ id: 44, title: 'Completed reading', category: 'Reading', activity_date: '2026-09-12', activity_time: '10:00',
     timestamp_label: '10:00', planned_hours: 2, actual_hours: 1, accepted: true, completion_note: 'Saved reflection', documents: [], results: [] }] };
-const retained: LogDetail = { ...current, source: 'legacy', month: '2026-08', status: 'complete',
+const retained: LogDetail = { ...current, source: 'lms', month: '2026-08', status: 'complete',
   student_signature: { url: '/saved-learner.png', signer_name: 'Example learner', signed_at: '2026-09-01' },
   coach_signature: { url: '/saved-coach.png', signer_name: 'Coach', signed_at: '2026-09-01' } };
 const summary: LogSummary = { learner: { id: 7, aptem_id: 42, name: 'Example learner', programme: 'Programme', coach_name: 'Coach' },
-  months: [current, retained], total_months: 2, completed_months: 1, read_only: false, csrf_token: 'csrf' };
+  months: [current, retained], total_months: 2, completed_months: 1,
+  training_plan_totals: { accepted_hours: 517.32, planned_hours: 576 }, read_only: false, csrf_token: 'csrf' };
 
 function page(path = '/learner/monthly-logs') {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
@@ -49,12 +50,37 @@ beforeEach(() => {
   Object.assign(account, { role: 'learner', subjectId: 7, access: 'learner' });
   vi.mocked(getLogSummary).mockResolvedValue(summary);
   vi.mocked(getLogMonth).mockImplementation(async (_id, month) => month === '2026-08' ? retained : current);
+  vi.mocked(getLogLearners).mockResolvedValue({ learners: [
+    { id: 7, name: 'Example learner', programme: 'Programme' },
+    { id: 8, name: 'Second learner', programme: 'Data Technician' },
+  ] });
   vi.mocked(getLogContent).mockResolvedValue({ id: 44, parts: [{ id: 44, title: 'Original material', category: 'Reading',
     url: 'https://example.org/reading', html: null, quiz: null }] });
 });
 afterEach(cleanup);
 
 describe('monthly logs', () => {
+  it.each(['learner', 'coach'] as const)('orders %s activities by date and time without changing the saved report', async role => {
+    const rows = [
+      { ...current.rows[0], id: 101, title: 'Later day', activity_date: '2026-09-20', activity_time: '08:00' },
+      { ...current.rows[0], id: 102, title: 'Unknown date', activity_date: '', activity_time: '' },
+      { ...current.rows[0], id: 103, title: 'Afternoon reading', activity_date: '2026-09-02', activity_time: '14:00' },
+      { ...current.rows[0], id: 104, title: 'Morning reading', activity_date: '2026-09-02', activity_time: '09:00' },
+    ];
+    const report = { ...current, rows, row_count: rows.length };
+    vi.mocked(getLogMonth).mockResolvedValue(report);
+    if (role === 'coach') Object.assign(account, { role: 'coach', access: 'coach' });
+    page(role === 'coach' ? '/coach/monthly-logs/7/2026-09' : '/learner/monthly-logs/2026-09');
+    const table = await screen.findByRole('table', { name: 'Monthly activity log' });
+    expect(within(table).getAllByRole('button').map(button => button.textContent)).toEqual([
+      'Morning reading', 'Afternoon reading', 'Later day', 'Unknown date',
+    ]);
+    expect(report.rows.map(row => row.id)).toEqual([101, 102, 103, 104]);
+    expect(report.snapshot_digest).toBe('reviewed-digest');
+    expect(report.month).toBe('2026-09');
+    expect(report.actual_hours).toBe(current.actual_hours);
+  });
+
   it('replaces both learner cards and gives coaches a monthly logs destination', () => {
     const learnerItems = learnerNavItems.flatMap(item => [item, ...(item.children || [])]);
     expect(learnerItems.filter(item => item.label === 'Monthly Logs')).toHaveLength(1);
@@ -69,6 +95,50 @@ describe('monthly logs', () => {
     expect(getLogSummary).toHaveBeenCalledWith('7', expect.any(AbortSignal), 'learner');
     expect(screen.getAllByRole('link', { name: /Review month/ }).map(link => link.getAttribute('href')))
       .toEqual(['/learner/monthly-logs/2026-08', '/learner/monthly-logs/2026-09']);
+  });
+
+  it('shows one programme total card from accepted SSOT hours and the full Training Plan', async () => {
+    page();
+    const card = await screen.findByRole('region', { name: 'Training Plan OTJ hours' });
+    expect(card).toHaveTextContent('517.32 h');
+    expect(card).toHaveTextContent('Accepted');
+    expect(card).toHaveTextContent('576.00 h');
+    expect(card).toHaveTextContent('Planned');
+  });
+
+  it('shows the SSOT monthly target and keeps the all-months tab selected', async () => {
+    vi.mocked(getLogSummary).mockResolvedValue({ ...summary, months: [{ ...current, training_plan_target: 20 }] });
+    page();
+    expect(await screen.findByText('September 2026')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /All months/ })).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByText('20.00 h')).toBeVisible();
+  });
+
+  it('does not substitute an external contract when an SSOT target is unavailable', async () => {
+    rememberLearner('apprenticeship', '7');
+    vi.mocked(getLogSummary).mockResolvedValue({ ...summary, months: [
+      { ...retained, training_plan_target: null, target_warning: 'The signed Training Plan could not be read.' },
+      { ...current, training_plan_target: 12 },
+    ] });
+    page();
+    expect(await screen.findByText('Unavailable')).toBeVisible();
+    expect(screen.getByText('12.00 h')).toBeVisible();
+    expect(screen.getByText('The signed Training Plan could not be read.')).toBeInTheDocument();
+  });
+
+  it('keeps a missing SSOT target unavailable', async () => {
+    rememberLearner('apprenticeship', '7');
+    vi.mocked(getLogSummary).mockResolvedValue({ ...summary, months: [{ ...current, training_plan_target: null }] });
+    page();
+    expect(await screen.findByText('Unavailable')).toBeVisible();
+  });
+
+  it('shows the SSOT warning in the month report when its target is missing', async () => {
+    rememberLearner('apprenticeship', '7');
+    vi.mocked(getLogMonth).mockResolvedValue({ ...retained, training_plan_target: null,
+      target_warning: 'The signed Training Plan could not be read.' });
+    page('/learner/monthly-logs/2026-08');
+    expect(await screen.findByText(/Target hours: Unavailable/)).toBeVisible();
   });
 
   it('shows the current month as an in-progress live log, not as an unsigned closed month', async () => {
@@ -87,6 +157,37 @@ describe('monthly logs', () => {
     expect(screen.getAllByText('Available after month-end')).toHaveLength(2);
     expect(screen.queryByRole('button', { name: /Sign as/ })).not.toBeInTheDocument();
     expect(screen.getByText(/Signing opens after the month ends/)).toBeVisible();
+  });
+
+  it('shows an MCM-linked log before the learner signs the MCM', async () => {
+    const emptyMcmMonth = { ...current, rows: [], row_count: 0, actual_hours: 0, planned_hours: 0 };
+    vi.mocked(getLogSummary).mockResolvedValue({ ...summary, months: [emptyMcmMonth] });
+    vi.mocked(getLogMonth).mockResolvedValue(emptyMcmMonth);
+    page('/learner/monthly-logs/apprenticeship/7/2026-09?workflow=mcm&source=mcm');
+    expect(await screen.findByText('September 2026')).toBeVisible();
+    expect(screen.queryByRole('button', { name: /Sign as learner/ })).not.toBeInTheDocument();
+    expect(screen.getByText(/learner signs the MCM once/i)).toBeVisible();
+    expect(getLogSummary).toHaveBeenCalledWith('7', expect.any(AbortSignal), 'learner', '2026-09', 'mcm');
+  });
+
+  it('loads a future MCM-linked month so its signature can be mirrored', async () => {
+    const futureMcmMonth = { ...current, month: '2999-01', rows: [], row_count: 0, actual_hours: 0, planned_hours: 0 };
+    vi.mocked(getLogSummary).mockResolvedValue({ ...summary, months: [futureMcmMonth] });
+    vi.mocked(getLogMonth).mockResolvedValue(futureMcmMonth);
+    page('/learner/monthly-logs/apprenticeship/7/2999-01?workflow=mcm&source=mcm');
+    expect(await screen.findByText('January 2999')).toBeVisible();
+    expect(screen.queryByText('January 2999 has not started yet')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Sign as learner/ })).not.toBeInTheDocument();
+    expect(getLogMonth).toHaveBeenCalledWith('7', '2999-01', expect.any(AbortSignal), 'learner', false, 'mcm');
+  });
+
+  it('shows a friendly scheduled state instead of requesting a future monthly log', async () => {
+    page('/learner/monthly-logs/commercial/7/2999-01?source=attendance%3Aocc-8');
+    expect(await screen.findByText('January 2999 has not started yet')).toBeVisible();
+    expect(screen.getByText(/monthly log will become available when the month begins/i)).toBeVisible();
+    expect(screen.getByRole('link', { name: /Back to Attendance/ })).toHaveAttribute('href', '/learner/attendance');
+    expect(screen.getByRole('link', { name: /View available months/ })).toHaveAttribute('href', '/learner/monthly-logs');
+    expect(getLogMonth).not.toHaveBeenCalled();
   });
 
   it('filters the year and unsigned learner months while keeping historical reports reachable', async () => {
@@ -254,14 +355,13 @@ describe('monthly logs', () => {
     await waitFor(() => expect(signLogMonth).toHaveBeenCalledWith('7', '2026-09', 'reviewed-digest', expect.any(Blob), 'draw', 'csrf', 'learner'));
   });
 
-  it('completes the selected learner month from admin view, not the admin account', async () => {
+  it('does not expose the retired legacy completion action for an SSOT month', async () => {
     Object.assign(account, { role: 'admin', subjectId: 999, access: 'super-admin' });
     vi.mocked(getLogMonth).mockResolvedValue({ ...retained, status: 'awaiting_signature', can_complete: true });
-    vi.mocked(completeLogMonth).mockResolvedValue(retained);
     page('/learner/monthly-logs/commercial/7/2026-08');
-    fireEvent.click(await screen.findByRole('button', { name: 'Complete month' }));
-    await waitFor(() => expect(completeLogMonth).toHaveBeenCalledWith('7', '2026-08', 'csrf', 'learner'));
-    expect(await screen.findByText('This month has been reviewed, signed and completed.')).toBeInTheDocument();
+    expect(await screen.findByText('August 2026')).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'Complete month' })).not.toBeInTheDocument();
+    expect(completeLogMonth).not.toHaveBeenCalled();
   });
 
   it('shows the assigned coach learner list', async () => {
@@ -269,7 +369,31 @@ describe('monthly logs', () => {
     vi.mocked(getLogLearners).mockResolvedValue({ learners: [{ id: 7, name: 'Example learner', programme: 'Programme' }] });
     page('/coach/monthly-logs');
     expect(await screen.findByRole('link', { name: /Example learner/ })).toHaveAttribute('href', '/coach/monthly-logs/7');
-    expect(getLogSummary).not.toHaveBeenCalled();
+    expect(screen.getByRole('link', { name: /Example learner/ })).toHaveAttribute('aria-current', 'page');
+    expect(await screen.findByRole('region', { name: 'Example learner monthly logs' })).toBeVisible();
+    expect(getLogSummary).toHaveBeenCalledWith('7', expect.any(AbortSignal), 'coach');
+  });
+
+  it('uses a coach loading layout without the decorative background image', () => {
+    Object.assign(account, { role: 'staff', access: 'coach' });
+    vi.mocked(getLogLearners).mockReturnValue(new Promise(() => undefined));
+    page('/coach/monthly-logs');
+    const loading = screen.getByRole('status', { name: 'Loading coach monthly logs' });
+    expect(loading.querySelector('img')).toBeNull();
+  });
+
+  it('keeps the learner list visible and updates the selected learner in the same coach workspace', async () => {
+    Object.assign(account, { role: 'staff', access: 'coach' });
+    vi.mocked(getLogSummary).mockImplementation(async id => id === '8'
+      ? { ...summary, learner: { ...summary.learner!, id: 8, name: 'Second learner', programme: 'Data Technician' } }
+      : summary);
+    page('/coach/monthly-logs/7');
+    await screen.findByRole('region', { name: 'Example learner monthly logs' });
+    fireEvent.click(screen.getByRole('link', { name: /Second learner/ }));
+    expect(await screen.findByRole('region', { name: 'Second learner monthly logs' })).toBeVisible();
+    expect(screen.getByRole('navigation', { name: 'Choose a learner' })).toBeVisible();
+    expect(screen.getByRole('link', { name: /Second learner/ })).toHaveAttribute('aria-current', 'page');
+    expect(getLogSummary).toHaveBeenCalledWith('8', expect.any(AbortSignal), 'coach');
   });
 
   it('disables signing for the admin read-only coach view', async () => {

@@ -1,6 +1,6 @@
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { MemoryRouter } from 'react-router-dom';
+import { createMemoryRouter, MemoryRouter, RouterProvider, useLocation } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ReactNode } from 'react';
 import type { CurriculumCohort, CurriculumGroup, CurriculumModule, CurriculumProgramme } from '@/lib/curriculumApi';
@@ -217,11 +217,20 @@ function cardFor(title: string) {
 /**
  * One delivery line inside a card, identified by its cohort / group label. The
  * row is a link when the delivery has an id to open, so match either element.
+ *
+ * The label is read from the chip's title rather than its own text: the cohort
+ * and group names inside it are each a link to that record's workspace now, so
+ * the visible label is split across elements.
  */
 function deliveryRowFor(title: string, deliveryLabel: string) {
-  const row = cardFor(title).getByText(deliveryLabel).closest('a, div') as HTMLElement | null;
+  const row = cardFor(title).getByTitle(`Cohort / group: ${deliveryLabel}`).closest('a, div') as HTMLElement | null;
   if (!row) throw new Error(`No delivery row rendered for ${deliveryLabel}`);
   return within(row);
+}
+
+function HistoryProbe() {
+  const location = useLocation();
+  return <output data-testid="history-location">{location.pathname}{location.search}</output>;
 }
 
 describe('Module Builder delivery catalogue', { timeout: 15000 }, () => {
@@ -340,6 +349,19 @@ describe('Module Builder delivery catalogue', { timeout: 15000 }, () => {
     expect(cardFor('Data Foundations').getByText('5 KSBs')).toBeInTheDocument();
   });
 
+  // A reader who spots the wrong cohort or group here wants to correct it, and
+  // both are edited on their own page. The name is the way there, with the
+  // drawer that page already owns opened on arrival.
+  it('links the delivery cohort and group to their own workspaces, ready to edit', async () => {
+    await renderCatalogue();
+    const delivery = deliveryRowFor('Data Foundations', 'Sept 2026 / Group A');
+
+    expect(delivery.getByRole('link', { name: 'Sept 2026' }))
+      .toHaveAttribute('href', '/curriculum/cohorts/COHORT-1?edit=1');
+    expect(delivery.getByRole('link', { name: 'Group A' }))
+      .toHaveAttribute('href', '/curriculum/groups/GROUP-1?groupName=Group+A&edit=1');
+  });
+
   it('puts the delivery workspace in the named action bar', async () => {
     await renderCatalogue();
     const card = cardFor('Data Foundations');
@@ -365,6 +387,29 @@ describe('Module Builder delivery catalogue', { timeout: 15000 }, () => {
 
     expect(await screen.findByTitle('Back to week overview')).toBeInTheDocument();
     expect(screen.queryByText('Select a part on the rail to edit it.')).not.toBeInTheDocument();
+  });
+
+  it('returns to the module catalogue when the browser goes back from the builder', async () => {
+    const user = userEvent.setup();
+    window.history.replaceState({}, '', '/curriculum/module-builder');
+    const { default: ModuleBuilder } = await import('../page');
+    const router = createMemoryRouter([{
+      path: '*',
+      element: <><ModuleBuilder /><HistoryProbe /></>,
+    }], {
+      initialEntries: ['/curriculum/delivery', '/curriculum/module-builder'],
+      initialIndex: 1,
+    });
+    render(<RouterProvider router={router} />);
+
+    await screen.findByText('Data Foundations');
+    await user.click(cardFor('Data Foundations').getByRole('button', { name: /Edit components/ }));
+    await screen.findByText('Course structure');
+    expect(screen.getByTestId('history-location')).toHaveTextContent('/curriculum/module-builder');
+
+    await act(async () => { await router.navigate(-1); });
+    await waitFor(() => expect(screen.getByTestId('history-location')).toHaveTextContent('/curriculum/module-builder'));
+    expect(screen.getByTestId('history-location')).not.toHaveTextContent('/curriculum/delivery');
   });
 
   it('waits for a component added by the week rail before opening its settings', async () => {

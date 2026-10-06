@@ -3,8 +3,8 @@ import {
   fetchLearnerCalendarEvents,
   rescheduleLearnerCalendarSession,
   type LearnerCalendarEvent,
-  type LearnerKind,
 } from '@/api/learnerCalendar';
+import type { LearnerKind } from '@/api/learnerDetail';
 
 // ============================================================================
 // Move a learner's first session, from the enrolment header.

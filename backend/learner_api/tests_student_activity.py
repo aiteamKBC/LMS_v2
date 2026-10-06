@@ -15,6 +15,7 @@ from learner_api.student_activity import (
 )
 from learner_api.student_activity_data import (
     read_audit_hour_totals, read_student_activity, summarize_activities, read_student_material,
+    read_activity_source_issues,
 )
 from learner_api.subject_dates import activity_schedule
 from learner_api.student_activity_access import student_activity_available
@@ -22,6 +23,18 @@ from learner_api.subject_content import ContentUnavailable, build_material, grad
 
 
 class StudentActivityTests(SimpleTestCase):
+    def test_activity_source_issues_distinguish_missing_and_ambiguous_lineage(self):
+        cursor = MagicMock()
+        cursor.fetchall.side_effect = [
+            [('COMP-1',), ('COMP-2',), ('COMP-3',)],
+            [('COMP-1', 10, None), ('COMP-2', 10, '20'), ('COMP-2', 11, '21')],
+        ]
+        self.assertEqual(read_activity_source_issues(cursor, [10, 11], ['MOD-1']), {
+            'COMP-1': 'missing_source_component_id',
+            'COMP-2': 'ambiguous_lineage',
+            'COMP-3': 'missing_source_component_id',
+        })
+
     @patch('login.permissions._auth_gate_enabled', return_value=True)
     @patch('login.permissions.authenticate_request')
     def test_material_request_resolves_iframe_attachments_without_a_server_error(self, authenticate, _gate):
@@ -204,6 +217,7 @@ class StudentActivityTests(SimpleTestCase):
     def setUp(self):
         self.factory = RequestFactory()
         self.enterContext(patch('learner_api.student_activity._activity_sources', return_value={}))
+        self.enterContext(patch('learner_api.student_activity._activity_source_issues', return_value={}))
         live_patch = patch('learner_api.student_activity._live_subjects', return_value=None)
         live_patch.start()
         self.addCleanup(live_patch.stop)

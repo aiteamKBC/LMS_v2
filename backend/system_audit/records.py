@@ -18,15 +18,9 @@ status, dates and access level are what an audit is for. Their address, phone
 number and national insurance number are not, and an audit log that copied them
 would be a second, less-guarded copy of the very data it exists to protect.
 
-**The Coach workspace is an exception, made deliberately.** Its free text --
-meeting notes, absence reasons, review answers and marking feedback -- is
-recorded in full rather than redacted, because the question that workspace's
-trail exists to answer is what a coach actually wrote before somebody changed
-it, and a digest cannot answer it. The cost is real and belongs here in writing:
-those words are a learner's health, home circumstances and assessed work, and
-they now live in the history table as well as in the record, for as long as the
-history is kept. Reversing it is a one-line change per record type -- name the
-columns in `redact` again.
+Free-text notes and answers about learners are redacted too. The trail records
+that they changed, not their sensitive contents. Operational status, ownership,
+dates, scheduling and scores remain available as before/after values.
 
 Left out of the allowlists entirely, rather than redacted, because they are a
 capability rather than a fact: meeting join links and evidence image URLs. A
@@ -40,6 +34,13 @@ import logging
 from .writes import attach_bulk_capture, register, register_model
 
 logger = logging.getLogger(__name__)
+
+#: The model attributes that say when a row was made and last saved. Passed as
+#: ``timestamps=`` rather than listed in ``columns``: they decide whether a save
+#: is reported as a create or as "first recorded", and must not show up as a
+#: changed field on every edit. Named only for models that genuinely store both
+#: -- a record type without the pair stays "first recorded" on its first sight.
+ROW_TIMESTAMPS = ('created_at', 'updated_at')
 
 
 def register_enrolment_records():
@@ -247,13 +248,7 @@ def register_coach_records():
             'notes', 'review_responses',
         ),
         json_columns={'review_responses'},
-        # Recorded in full, by an explicit decision of the project owner: the
-        # Coach trail is meant to answer "what did the coach actually write
-        # here before it was changed", which a digest cannot. That is a
-        # departure from the redaction rule this module otherwise applies, and
-        # it means `notes` and `review_responses` -- a coach's words about a
-        # learner -- now exist in the history table as well as in the record.
-        # Narrowing it again is a one-line change: add them back to `redact`.
+        redact=('notes', 'review_responses'),
     )
 
     register_model(
@@ -284,10 +279,7 @@ def register_coach_records():
             'created_at', 'updated_at',
             'reason', 'evidence_text', 'coach_note',
         ),
-        # Recorded in full, by the same explicit decision as `coach_meeting`
-        # above. Worth knowing what it costs: why somebody was absent is often
-        # a health or home circumstance, so this history now holds that
-        # circumstance in plain text, for as long as the history is kept.
+        redact=('reason', 'evidence_text', 'coach_note'),
     )
 
     # Bulk writes, which no signal sees. A coach meeting reaching
@@ -367,6 +359,7 @@ def register_coach_review_records():
         # Parsed before diffing, so editing one value inside the blob reads as
         # that value moving rather than as "the answer changed".
         json_columns={'answer'},
+        redact=('answer',),
         columns=(
             'id', 'review_instance_id', 'field_id', 'answer',
             'answered_by', 'answered_at',
@@ -411,6 +404,7 @@ def register_coach_review_records():
             'previous_status', 'new_status', 'reason_code', 'note',
             'changed_by', 'changed_at',
         ),
+        redact=('note',),
     )
 
     register(
@@ -431,6 +425,7 @@ def register_coach_review_records():
             'previous_status', 'new_status', 'reason_code', 'note',
             'changed_by', 'changed_at', 'manual_started_at',
         ),
+        redact=('note',),
     )
 
     register(
@@ -440,7 +435,7 @@ def register_coach_review_records():
         label='Extra review for one learner',
         href='/coach/progress-reviews',
         key='id',
-        title='reason',
+        title='reason_code',
         title_fallback='reason_code',
         context=('target_date', 'reason_code', 'created_by'),
         parent='learner_id',
@@ -449,6 +444,7 @@ def register_coach_review_records():
             'target_date', 'reason_code', 'reason',
             'created_by', 'updated_by', 'deleted_at', 'deleted_by',
         ),
+        redact=('reason',),
     )
 
     # One row, two authors: the learner creates it by handing work in and the
@@ -481,9 +477,7 @@ def register_coach_review_records():
         status='status',
         using='enrolment',
         columns=submission_audit_columns(),
-        # `coach_feedback` in full, by the same explicit decision recorded on
-        # `coach_meeting` above: what a learner was told, and what it said
-        # before somebody rewrote it, is the question this is here to answer.
+        redact=('coach_feedback',),
     )
 
 
@@ -551,6 +545,7 @@ def register_enrolment_journey_records():
         EnrolmentReview,
         workspace='admin',
         entity_type='enrolment_review',
+        timestamps=ROW_TIMESTAMPS,
         label='Enrolment review',
         href='/users',
         key='id',
@@ -586,6 +581,7 @@ def register_enrolment_journey_records():
             'employer_signed_name', 'employer_signed_at', 'employer_signature_required',
             'booked_at', 'cancelled_at',
         ),
+        redact=('notes', 'form_answers'),
     )
 
     # The three detail sheets. Each is one row per review, projected out of
@@ -600,6 +596,7 @@ def register_enrolment_journey_records():
         EligibilityReviewDetail,
         workspace='admin',
         entity_type='eligibility_review',
+        timestamps=ROW_TIMESTAMPS,
         label='Eligibility review sheet',
         href='/users',
         key='id',
@@ -631,6 +628,7 @@ def register_enrolment_journey_records():
         RplReviewDetail,
         workspace='admin',
         entity_type='rpl_review',
+        timestamps=ROW_TIMESTAMPS,
         label='RPL review sheet',
         href='/users',
         key='id',
@@ -658,6 +656,7 @@ def register_enrolment_journey_records():
         HealthSafetyReviewDetail,
         workspace='admin',
         entity_type='health_safety_review',
+        timestamps=ROW_TIMESTAMPS,
         label='Health & safety declaration',
         href='/users',
         key='id',
@@ -684,6 +683,7 @@ def register_enrolment_journey_records():
         ApprenticeshipAgreement,
         workspace='admin',
         entity_type='apprenticeship_agreement',
+        timestamps=ROW_TIMESTAMPS,
         label='Apprenticeship agreement',
         href='/users',
         key='id',
@@ -712,6 +712,7 @@ def register_enrolment_journey_records():
         IlrDocument,
         workspace='admin',
         entity_type='ilr_document',
+        timestamps=ROW_TIMESTAMPS,
         label='ILR document',
         href='/users',
         key='id',
@@ -733,6 +734,7 @@ def register_enrolment_journey_records():
         TrainingPlanDocument,
         workspace='admin',
         entity_type='training_plan_document',
+        timestamps=ROW_TIMESTAMPS,
         label='Training plan document',
         href='/users',
         key='id',
@@ -755,6 +757,7 @@ def register_enrolment_journey_records():
         WrittenAgreement,
         workspace='admin',
         entity_type='written_agreement',
+        timestamps=ROW_TIMESTAMPS,
         label='Written agreement',
         href='/users',
         key='id',
@@ -777,6 +780,7 @@ def register_enrolment_journey_records():
         LearnerProfile,
         workspace='admin',
         entity_type='learner_profile',
+        timestamps=ROW_TIMESTAMPS,
         label='Learner delivery profile',
         href='/users',
         record_href='/users/{id}',
@@ -864,6 +868,7 @@ def register_enrolment_wizard_records():
         ExtendedIlr,
         workspace='admin',
         entity_type='extended_ilr',
+        timestamps=ROW_TIMESTAMPS,
         label='Extended ILR',
         href='/users',
         key='id',
@@ -886,6 +891,7 @@ def register_enrolment_wizard_records():
         WizardPersonalDetails,
         workspace='admin',
         entity_type='wizard_personal_details',
+        timestamps=ROW_TIMESTAMPS,
         label='Enrolment: personal details',
         href='/users',
         key='id',
@@ -909,6 +915,7 @@ def register_enrolment_wizard_records():
         WizardSkillsRadar,
         workspace='admin',
         entity_type='wizard_skills_radar',
+        timestamps=ROW_TIMESTAMPS,
         label='Enrolment: skills radar',
         href='/users',
         key='id',
@@ -922,6 +929,7 @@ def register_enrolment_wizard_records():
         WizardKsbAssessment,
         workspace='admin',
         entity_type='wizard_ksb_assessment',
+        timestamps=ROW_TIMESTAMPS,
         label='Enrolment: KSB self-assessment',
         href='/users',
         key='id',
@@ -945,6 +953,7 @@ def register_enrolment_wizard_records():
         WizardPlr,
         workspace='admin',
         entity_type='wizard_plr',
+        timestamps=ROW_TIMESTAMPS,
         label='Enrolment: personal learning record',
         href='/users',
         key='id',
@@ -959,6 +968,7 @@ def register_enrolment_wizard_records():
         WizardPlrRecord,
         workspace='admin',
         entity_type='wizard_plr_record',
+        timestamps=ROW_TIMESTAMPS,
         label='Enrolment: prior qualification',
         href='/users',
         key='id',
@@ -975,6 +985,8 @@ def register_enrolment_wizard_records():
             'id', 'learner_kind', 'learner_id', 'record_ref',
             'place_of_study', 'qualification_type', 'subject', 'level',
             'award_date', 'credits', 'grade', 'record_type',
+            # Not `evidence`: its blob paths locate files rather than describe them.
+            'start_date', 'end_date',
         ),
     )
 
@@ -982,6 +994,7 @@ def register_enrolment_wizard_records():
         WizardCvJob,
         workspace='admin',
         entity_type='wizard_cv_job',
+        timestamps=ROW_TIMESTAMPS,
         label='Enrolment: CV and job role',
         href='/users',
         key='id',
@@ -992,6 +1005,10 @@ def register_enrolment_wizard_records():
             'id', 'learner_kind', 'learner_id',
             'pm_qualifications', 'functional_skills_enrol',
             'cv_file', 'experience_text',
+            # Not `documents`: its blob paths locate files rather than describe them.
+            'highest_qualification', 'highest_qualification_field',
+            'has_field_qualification', 'highest_field_qualification',
+            'gcse_english', 'gcse_maths',
         ),
         # A CV and a free-text work history are a person's own account of
         # themselves, held here only to be read during enrolment. That they were
@@ -1003,6 +1020,7 @@ def register_enrolment_wizard_records():
         WizardPolicyAck,
         workspace='admin',
         entity_type='wizard_policy_ack',
+        timestamps=ROW_TIMESTAMPS,
         label='Enrolment: policy acknowledgement',
         href='/users',
         key='id',
@@ -1085,6 +1103,31 @@ def register_learner_records():
       would report one booking as two events.
     """
     register(
+        # Not a table: the attempt lives inside the learner's progress, with
+        # every answer they gave. The trail records the outcome of the attempt
+        # and none of the answers -- see learner_api.quizzes.record_quiz_attempt.
+        'learner_quiz_attempts',
+        workspace='learner',
+        entity_type='quiz_attempt',
+        label='Quiz attempt',
+        href='/learner',
+        key='id',
+        title=('learner_name', 'quiz_title'),
+        title_join=' — ',
+        title_fallback='quiz_id',
+        context=('module_title', 'week_title', 'attempt', 'result'),
+        parent='learner_id',
+        status='result',
+        using='enrolment',
+        columns=(
+            'id', 'learner_kind', 'learner_id', 'learner_name', 'quiz_id', 'quiz_title',
+            'module_title', 'week_title', 'attempt', 'result', 'score_percent',
+            'correct_answers', 'total_questions', 'time_taken', 'submitted_at',
+            'created_at', 'updated_at',
+        ),
+    )
+
+    register(
         'learner_monthly_reports',
         workspace='learner',
         entity_type='monthly_report',
@@ -1103,13 +1146,12 @@ def register_learner_records():
         columns=(
             'id', 'learner_kind', 'learner_id', 'learner_name', 'programme_name',
             'month_key', 'month_label', 'status',
-            # The learner's own account of the month. Kept in full: a monthly
-            # report is evidence for off-the-job hours, and "what did it say
-            # before it was resubmitted" is a funding question, not a curiosity.
+            # Changes remain visible without copying private learner narratives.
             'learned_summary',
             'summary_metrics', 'selected_ksbs', 'submitted_at',
             'signed_name', 'signed_at',
         ),
+        redact=('learned_summary',),
     )
 
     register(
@@ -1275,6 +1317,7 @@ def register_engagement_records():
     register_model(
         Reward,
         workspace='engagement', entity_type='reward', label='Reward',
+        timestamps=ROW_TIMESTAMPS,
         href='/engagement/rewards', key='id',
         title='name', context=('category', 'points', 'active'), status='category',
         columns=(
@@ -1319,6 +1362,7 @@ def register_engagement_records():
     register_model(
         Event,
         workspace='engagement', entity_type='engagement_event', label='Event',
+        timestamps=ROW_TIMESTAMPS,
         href='/engagement/events', key='id',
         title='title', context=('date', 'location', 'status'), status='status',
         columns=(
@@ -1421,6 +1465,7 @@ def register_engagement_records():
     register_model(
         PointsRule,
         workspace='engagement', entity_type='points_rule', label='Points rule',
+        timestamps=ROW_TIMESTAMPS,
         href='/engagement/points', key='id',
         title='name', title_fallback='key',
         context=('category', 'points', 'active'), status='category',
@@ -1446,6 +1491,7 @@ def register_engagement_records():
     register_model(
         FlashCardDeck,
         workspace='engagement', entity_type='flash_card_deck', label='Flash card deck',
+        timestamps=ROW_TIMESTAMPS,
         href='/engagement/flash-cards', key='id',
         title='title',
         context=('programme', 'module', 'status'),
@@ -1459,6 +1505,7 @@ def register_engagement_records():
     register_model(
         FlashCard,
         workspace='engagement', entity_type='flash_card', label='Flash card',
+        timestamps=ROW_TIMESTAMPS,
         href='/engagement/flash-cards', key='id',
         title='question',
         context=('category', 'difficulty'),
@@ -1624,6 +1671,7 @@ def register_quiz_records():
     register_model(
         QuizPackage,
         workspace='curriculum', entity_type='quiz', label='Quiz',
+        timestamps=ROW_TIMESTAMPS,
         href='/curriculum/quizzes', key='id',
         title='title',
         context=('programme', 'module', 'status'),
@@ -1648,6 +1696,7 @@ def register_quiz_records():
     register_model(
         QuizQuestion,
         workspace='curriculum', entity_type='quiz_question', label='Quiz question',
+        timestamps=ROW_TIMESTAMPS,
         href='/curriculum/quizzes', key='id',
         title='question_text',
         context=('question_type', 'points', 'is_archived'),
@@ -1661,6 +1710,7 @@ def register_quiz_records():
     register_model(
         QuizAnswer,
         workspace='curriculum', entity_type='quiz_answer', label='Quiz answer',
+        timestamps=ROW_TIMESTAMPS,
         href='/curriculum/quizzes', key='id',
         title='answer_text',
         # Whether this is the right answer is the whole point of the record, so
@@ -1707,6 +1757,7 @@ def register_chat_records():
     register_model(
         Conversation,
         workspace='platform', entity_type='chat_conversation', label='Conversation',
+        timestamps=ROW_TIMESTAMPS,
         href='/messages', key='id',
         parents=('coach_id', 'learner_id'),
         columns=('id', 'coach_id', 'learner_id'),

@@ -215,6 +215,22 @@ describe('Module Builder deep links', { timeout: 15000 }, () => {
     expect(screen.queryByRole('button', { name: 'Back to modules' })).not.toBeInTheDocument();
   });
 
+  it('says an archived component followed from the audit trail is gone, and shows its week', async () => {
+    loadModuleStructure.mockResolvedValueOnce({
+      weekStructure: [{ id: 'WEEK-1', weekNumber: 1, title: 'Week 1', components: [] }],
+    } as never);
+    await renderAt('?module=MOD-20260818112738930447&week=WEEK-1&component=COMP-GONE&focus=component'
+      + '&archived=component&archivedName=Old%20quiz&archivedAt=2026-10-04T10%3A56%3A00Z');
+
+    const notice = await screen.findByTestId('module-builder-archived-item');
+    expect(notice).toHaveTextContent('The component "Old quiz" was archived on');
+    expect(notice).toHaveTextContent('The week it was in is selected below.');
+    // Read once into the notice; left in the address it would follow the reader
+    // into the next module they open.
+    await waitFor(() => expect(address().get('archived')).toBeNull());
+    expect(address().get('module')).toBe('MOD-20260818112738930447');
+  });
+
   it('takes the module back out of the address when the reader leaves it', async () => {
     // Or a reload from the catalogue would re-open the module just left.
     loadModuleStructure.mockResolvedValueOnce({ weekStructure: [] } as never);

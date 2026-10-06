@@ -1,6 +1,20 @@
 import { readLearnerJson, peekLearnerJson } from './learnerRead';
 import type { LearnerKind } from './learnerDetail';
 
+export interface KsbActivityPoint {
+  activityId: string;
+  code: string;
+  ksbDefinitionId?: string | null;
+  definitionCode?: string | null;
+  completed: boolean;
+  title: string | null;
+  type: string | null;
+  module: string | null;
+  status: string | null;
+  source: string | null;
+  completedAt: string | null;
+  componentId: string | null;
+}
 export interface ProgressMetric {
   completed: number | null;
   total: number | null;
@@ -11,6 +25,7 @@ export interface ProgressMetric {
   mappedTotal?: number;
   unmappedActivities?: number;
   codes?: { code: string; completed: number; total: number; percent: number | null }[];
+  points?: KsbActivityPoint[];
 }
 export interface LearnerMetrics {
   migrated: boolean;
@@ -27,8 +42,8 @@ export const peekLearnerMetrics = (kind: LearnerKind, id: string) => {
   const data = peekLearnerJson<LearnerMetrics>(url(kind, id));
   return valid(data) ? data : undefined;
 };
-export async function fetchLearnerMetrics(kind: LearnerKind, id: string, signal?: AbortSignal, force = false) {
-  const data = await readLearnerJson<LearnerMetrics>(url(kind, id), { signal, revalidate: force, ttlMs: 30_000 });
+export async function fetchLearnerMetrics(kind: LearnerKind, id: string, signal?: AbortSignal, force = false, perspective?: 'learner-overview') {
+  const data = await readLearnerJson<LearnerMetrics>(url(kind, id) + (perspective ? `?view=${perspective}` : ''), { signal, revalidate: force, ttlMs: 30_000 });
   if (!valid(data)) {
     throw new Error('The server returned invalid programme totals. Please try again.');
   }

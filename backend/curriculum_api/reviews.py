@@ -725,8 +725,13 @@ def validate_applicability(value, programme_id, errors):
 
 def validate_review_payload(
     payload, *, partial=False, programme_id=None, current_review_type_id=None,
+    current_signature_referrer=False,
 ):
-    """Returns (cleaned, errors). ``partial`` allows PATCH to omit unset fields."""
+    """Returns (cleaned, errors). ``partial`` allows PATCH to omit unset fields.
+
+    ``current_signature_referrer`` is the stored template's value on update, so
+    a legacy template already requiring a Referrer signature can still be saved
+    unchanged while no new Referrer requirement can be introduced."""
     errors = {}
     cleaned = {}
 
@@ -770,6 +775,10 @@ def validate_review_payload(
     if not partial or 'signatures' in payload:
         for role in PARTICIPANT_ROLES:
             cleaned[f'signature_{role}'] = bool(signatures.get(role))
+        # Referrer stays a structural role, but nobody can sign as one yet, so a
+        # new Referrer requirement would leave its Reviews stuck awaiting signature.
+        if cleaned['signature_referrer'] and not current_signature_referrer:
+            errors['signatures'] = 'Referrer signatures are not currently supported.'
 
     visible_to = payload.get('visibleTo') if isinstance(payload.get('visibleTo'), dict) else {}
     if not partial or 'visibleTo' in payload:
@@ -944,6 +953,7 @@ def update_review(review_id, payload, *, actor='system'):
         partial=True,
         programme_id=row['programme_id'],
         current_review_type_id=row.get('review_type_id'),
+        current_signature_referrer=bool(row.get('signature_referrer')),
     )
     if errors:
         return None, errors

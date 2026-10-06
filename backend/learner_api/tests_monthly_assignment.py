@@ -34,7 +34,7 @@ class MonthlyAssignmentTests(SimpleTestCase):
         return payload
 
     def checks(self, payload, **kwargs):
-        return {c["key"]: c["passed"] for c in assignment_checks(payload, evidence_ids=kwargs.get("evidence_ids", {"file-1"}), meeting_booked=kwargs.get("meeting_booked", True), allowed_ksbs={"K1"})}
+        return {c["key"]: c["passed"] for c in assignment_checks(payload, evidence_ids=kwargs.get("evidence_ids", {"file-1"}), meeting_booked=kwargs.get("meeting_booked", True), allowed_ksbs={"K1"}, claimed_hours=kwargs.get("claimed_hours", {}))}
 
     def test_complete_submission_has_thirteen_passing_checks_and_no_six_hour_cap(self):
         checks = self.checks(self.payload())
@@ -75,7 +75,7 @@ class MonthlyAssignmentTests(SimpleTestCase):
         payload['monthlyAssignment']['timeEntries'][0]['date'] = '2025-12-24'
         self.assertTrue(self.checks(payload)['hours'])
 
-    def test_eight_hour_limit_is_per_topic_not_per_assignment(self):
+    def test_eight_hour_limit_is_per_working_day_not_per_assignment(self):
         payload = self.payload()
         payload['monthlyAssignment']['timeEntries'] = [dict(topic='Research', hours='8', date='2026-09-01'), dict(topic='Writing', hours='8', date='2026-09-02')]
         payload['actualTimeHours'] = '16'
@@ -146,12 +146,35 @@ class MonthlyAssignmentTests(SimpleTestCase):
         payload["monthlyAssignment"]["claims"] *= 2
         self.assertFalse(self.checks(payload)["ksbs"])
 
-    def test_outside_hours_confirmation_is_required(self):
+    def test_hours_no_longer_depend_on_a_working_hours_confirmation(self):
+        """The confirmation checkbox is gone; the Finish gate replaced it.
+
+        Working-hours validation now happens once, at Finish/Submit, against
+        the real click (see learner_api.working_rules). The quality check is
+        back to judging the time entries themselves, so an out-of-hours flag on
+        the payload -- and the legacy confirmation keys, which keep their old
+        meaning on historical records -- no longer decide it either way.
+        """
         payload = self.payload()
         payload["outsideWorkingHours"] = True
-        self.assertFalse(self.checks(payload)["hours"])
-        payload["outsideWorkingHoursConfirmed"] = True
         self.assertTrue(self.checks(payload)["hours"])
+
+        for key in ("outsideWorkingHoursConfirmed", "insideWorkingHoursConfirmed"):
+            denied = {**payload, key: False}
+            self.assertTrue(self.checks(denied)["hours"], key)
+
+    def test_hours_still_reject_a_non_working_date(self):
+        # The entry-level rule the check has always owned is untouched.
+        payload = self.payload()
+        payload["monthlyAssignment"]["timeEntries"] = [
+            {"topic": "Research", "hours": 8, "date": "2026-09-25"},   # a Friday
+        ]
+        self.assertTrue(self.checks(payload)["hours"])
+
+        payload["monthlyAssignment"]["timeEntries"] = [
+            {"topic": "Research", "hours": 8, "date": "2026-09-27"},   # a Sunday
+        ]
+        self.assertFalse(self.checks(payload)["hours"])
 
     def test_hours_reject_zero_negative_nonfinite_or_invalid(self):
         for value in ["0", "-1", "NaN", "Infinity", "bad"]:
@@ -256,12 +279,12 @@ class MonthlyDraftPersistenceTests(SimpleTestCase):
     def test_late_draft_cannot_overwrite_a_submitted_assignment(self):
         response, cursor = self.post({"learnerKind": "commercial", "learnerId": "1", "activityId": "C1", "activityType": "assignment", "submissionMode": "draft"}, ("submitted_for_tutor_review", {}))
         self.assertEqual(response.status_code, 409)
-        self.assertEqual(cursor.execute.call_count, 1)
+        self.assertEqual(cursor.execute.call_count, 2)
 
     def test_imported_history_is_not_overwritten_by_learner_form(self):
         response, cursor = self.post({"learnerKind": "commercial", "learnerId": "1", "activityId": "C1", "activityType": "assignment", "submissionMode": "draft"}, ("draft", {"submissionOrigin": "imported_legacy"}))
         self.assertEqual(response.status_code, 409)
-        self.assertEqual(cursor.execute.call_count, 1)
+        self.assertEqual(cursor.execute.call_count, 2)
 
     @patch("learner_api.monthly_assignment.assignment_checks", return_value=[{"passed": True}])
     @patch("learner_api.reflection_submissions._reflection_lineage", return_value={"progress_entry_id": "progress-1"})
@@ -275,7 +298,8 @@ class MonthlyDraftPersistenceTests(SimpleTestCase):
         record = {}
         complete_saved_assignment("commercial", "1", "C1", record, save)
         atomic.assert_called_once_with(using="enrolment")
-        self.assertIn("FOR UPDATE", cursor.execute.call_args_list[0].args[0])
+        self.assertIn("pg_advisory_xact_lock", cursor.execute.call_args_list[0].args[0])
+        self.assertIn("FOR UPDATE", cursor.execute.call_args_list[1].args[0])
         self.assertEqual(record["ksbs"], ["K1"])
         save.assert_called_once()
         self.assertIn("UPDATE", cursor.execute.call_args_list[-1].args[0])
@@ -289,7 +313,7 @@ class MonthlyDraftPersistenceTests(SimpleTestCase):
         cursor.fetchone.return_value = ("submission-1", "draft", {"monthlyAssignment": {"claims": []}})
         with self.assertRaisesRegex(ValueError, "Progress failed"):
             complete_saved_assignment("commercial", "1", "C1", {}, MagicMock(side_effect=ValueError("Progress failed")))
-        self.assertEqual(cursor.execute.call_count, 1)
+        self.assertEqual(cursor.execute.call_count, 2)
 
 
 class ExtendedCoachingWindowTests(SimpleTestCase):

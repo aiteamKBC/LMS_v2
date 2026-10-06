@@ -1,555 +1,127 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { Link } from 'react-router-dom';
-import { isTeamsReviewCancelled } from '../teams-meetings/calendarReview';
+import { useCallback, useEffect, useRef } from 'react';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { Modal } from '@/pages/users/components/Modal';
-import { finishTeamsCreation } from '../teams-meetings/creationResult';
-import {
-  fetchCurriculumHolidays,
-  type CurriculumHoliday,
-} from '@/lib/curriculumApi';
 import { cleanText } from '../shared/entities/model';
-import { InlineError } from '../shared/entities/ui';
-import {
-  buildTeamsCalendarInput,
-  DEFAULT_DURATION_MINUTES,
-  emptyTeamsCalendarForm,
-  minutesBetween,
-  sessionNaiveLocal,
-  TeamsCalendarFormBody,
-  type TeamsCalendarForm,
-  type TeamsCalendarTarget,
-} from '../teams-meetings/createCalendarForm';
-import {
-  createTeamsMeeting,
-  ApiError,
-  CurriculumRequestTimeout,
-  readModuleTeamsMeeting,
-  fetchModuleMeetingInvitees,
-  fetchModuleSessionPlan,
-  loadTeamsMeetingConfiguration,
-  moduleTeamsPlannedSessions,
-  restoreModuleTeamsMeeting,
-  updateTeamsMeetingSchedule,
-  utcIsoToCalendarParts,
-  zonedNaiveToUtcIso,
-  type ModuleCatalogueItem,
-  type ModuleComponent,
-  type ModuleTeamsPlannedSession,
-  type SavedModuleTeamsMeeting,
-  type TeamsMeetingInput,
-  type TeamsMeetingResult,
-} from './moduleAuthoringData';
+import { TeamsMeetingDialogs } from '../teams-meetings/TeamsMeetingDialogs';
+import { useTeamsMeetingsWorkspace } from '../teams-meetings/useTeamsMeetingsWorkspace';
+import { loadModuleStructure, type ModuleCatalogueItem } from './moduleAuthoringData';
+import { WeekTeamsMeetingPanel } from './WeekTeamsMeetingForm';
 
-// The module the meeting is created against. Its catalogue id keys the series
-// and asks for the plan, its title and placement name the dialog, and its
-// authored weeks are where the session dates come from — the backend stamps each
-// live-session component with its own date and clock when it serves the
-// structure, so the module the builder is already holding IS the schedule.
+// The module the calendar belongs to. Its catalogue id selects the calendar; the
+// placement fields are kept for callers that already pass them.
 export type TeamsMeetingModuleContext = ModuleCatalogueItem & {
-  /** Placement, for the dialog's subtitle. Optional: shown when the caller has it. */
   programmeName?: string;
   cohort?: string;
   group?: string;
 };
 
+const UNSAVED_WEEK_MEETING_REASON = 'This module has unsaved changes. An additional meeting is attached to a live session as it is STORED, so a week or a live session that exists only in this tab has nothing to attach to. Close this, press Save, then reopen the calendar.';
+
+const UNSAVED_REASON = 'This module has unsaved changes. The Teams calendar is built from the module’s saved sessions and writes its join links back into them, so nothing here can be sent until the module is saved. Close this, press Save, then reopen the calendar. Viewing and syncing still work.';
+
 /**
- * Create or update a module's Teams calendar, from a live-session component or from the
- * module itself.
+ * A module's Teams calendar, opened from the Module Builder.
  *
- * The form itself is the Teams Meetings page's form — same dates preview, same
- * fields, same payload — because this is the same record reached from a second
- * place, not a second feature. What stays here is only what is genuinely this
- * door's own: the component that opened it, and writing the join link back into
- * that component once the meeting exists.
+ * Exactly the Teams Meetings page's dialog, for this one module: the same
+ * create form, the same detail view, the same Update / Edit session dates /
+ * Cancel series / Edit invitations / Edit meeting settings / sync actions, the
+ * same backend calls. Both screens render `TeamsMeetingDialogs` over
+ * `useTeamsMeetingsWorkspace`, so there is one implementation to keep right.
  *
- * `component` is optional because the Course structure rail opens the same
- * dialog for the whole module. Either way one calendar is created, on the
- * module's own dates — a component only decides which settings seed the form and
- * which day's link is handed back.
+ * What is genuinely this door's own:
+ *
+ * * Unsaved work blocks every write. The calendar is created from the module's
+ *   STORED sessions and links back into them, so a session that exists only in
+ *   this tab would leave Teams holding a date the module does not have.
+ * * After any write, the module is read back from the server and handed to
+ *   `onRestored`, so the builder shows the join links and dates the write just
+ *   stored. Writes are blocked while there is unsaved work, so this never
+ *   replaces anything the author typed.
+ * * When the dialog and everything it opened have closed, `onClose` runs.
  */
 export function TeamsMeetingModal({
-  component,
   module,
   unsavedChanges = false,
+  initialWeekId = '',
   onClose,
-  onCreated,
   onRestored,
 }: {
-  component?: ModuleComponent;
   module: TeamsMeetingModuleContext;
-  /**
-   * The module has edits that are not stored yet.
-   *
-   * The dates below are read off the structure on screen, so an unsaved live
-   * session is listed — the dialog must not show a different module from the one
-   * the reader is looking at. Creating on them is refused all the same: the
-   * meetings are real, they invite real people, and the backend links each join
-   * link to the module's STORED components afterwards. A session that exists
-   * only in this tab cannot be linked, so Teams would end up holding a date the
-   * module does not have, which is exactly the state the Teams Meetings page
-   * reports as out of sync — and if the tab is closed without saving, that
-   * meeting stays in real calendars with nothing behind it.
-   */
   unsavedChanges?: boolean;
+  /** Opened from one live session's editor: the additional-meeting tab starts on that week. */
+  initialWeekId?: string;
   onClose: () => void;
-  onCreated: (result: TeamsMeetingResult, input: TeamsMeetingInput) => void;
   onRestored?: (module: ModuleCatalogueItem) => void;
 }) {
-  const settings = component?.settings ?? {};
-  const storedEmails = (key: string) => (Array.isArray(settings[key])
-    ? (settings[key] as string[]).join('\n')
-    : '');
-  const [form, setForm] = useState<TeamsCalendarForm>(() => ({
-    ...emptyTeamsCalendarForm(),
-    title: cleanText(component?.title) || cleanText(module.title) || 'Live session',
-    organizerEmail: String(settings.teamsOrganizerEmail ?? ''),
-    attendees: storedEmails('teamsAttendees'),
-    // Presenters are a separate list, not a subset of the attendee box: Teams
-    // only gives the presenter role to people named here, and everyone else
-    // joins as an attendee who cannot share.
-    presenters: storedEmails('teamsPresenters'),
-    coOrganizers: storedEmails('teamsCoOrganizers'),
-    details: String(settings.sessionPurpose ?? component?.description ?? ''),
-    lobbyBypass: String(settings.teamsLobbyBypass ?? 'invited'),
-    recording: String(settings.teamsRecording ?? 'record-transcribe'),
-    spokenLanguage: String(settings.teamsSpokenLanguage ?? 'en-GB'),
-  }));
-  const patch = useCallback((value: Partial<TeamsCalendarForm>) => {
-    setForm(current => ({ ...current, ...value }));
-  }, []);
+  const catalogueId = cleanText(module.catalogueId);
+  const onRestoredRef = useRef(onRestored);
+  onRestoredRef.current = onRestored;
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
 
-  const [configurationLoading, setConfigurationLoading] = useState(true);
-  const [graphConfigured, setGraphConfigured] = useState(true);
-  const [graphTimeZone, setGraphTimeZone] = useState('');
-  const [invitedPrefilling, setInvitedPrefilling] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState('');
-  const [creationUncertain, setCreationUncertain] = useState(false);
-  const [existingCalendar, setExistingCalendar] = useState<SavedModuleTeamsMeeting | null>(null);
-  const [calendarLoading, setCalendarLoading] = useState(true);
-  const [calendarLoadError, setCalendarLoadError] = useState('');
-  const [calendarReadAttempt, setCalendarReadAttempt] = useState(0);
-  // A module's saved schedule already knows when it runs, holiday shifts and
-  // all. Those dates are the ones the calendar has to sit on — exactly as the
-  // Teams Meetings page builds the series — so the meeting is created on them
-  // rather than on a start date and repeat typed in here.
-  const [sessions, setSessions] = useState<ModuleTeamsPlannedSession[]>([]);
-  const [holidays, setHolidays] = useState<CurriculumHoliday[]>([]);
-  // Until the plan answers we don't yet know whether the module has dates, so
-  // the "no stored session dates" warning must wait — otherwise it flashes on
-  // every open before the sessions arrive and reads as a module with no schedule.
-  const [sessionsLoading, setSessionsLoading] = useState(true);
-
-  // The module as it stood when this dialog opened. The dialog is mounted fresh
-  // each time, so this is the structure the reader pressed the button on, and
-  // reading it from a ref keeps a keystroke in the builder behind the dialog
-  // from re-planning the dates under them.
-  const openedWith = useRef(module);
-
-  useEffect(() => {
-    let active = true;
-    setCalendarLoading(true);
-    setCalendarLoadError('');
-    readModuleTeamsMeeting(module.catalogueId).then(saved => {
-      if (!active) return;
-      const held = saved.meeting;
-      if (!held?.teamsLiveSessionId || !held.teamsOrganizerEmail || !saved.calendar) {
-        throw new Error('The saved calendar details are incomplete. Reload them before updating.');
-      }
-      const zone = held.sessionTimeZone;
-      if (zone !== 'Africa/Cairo' && zone !== 'Europe/London') {
-        throw new Error('The saved calendar time zone could not be loaded. Review it in Teams Meetings.');
-      }
-      if (!Array.isArray(saved.calendar.occurrences) || saved.calendar.occurrences.some(item => (
-        !Number.isFinite(Date.parse(item.startDateTimeUtc)) || !Number.isInteger(item.sessionNumber) || item.sessionNumber < 1
-        || !Number.isFinite(item.durationMinutes) || item.durationMinutes <= 0
-      )) || (!saved.verificationPending && !saved.calendar.occurrences.length)) {
-        throw new Error('The saved calendar dates could not be loaded. Review them in Teams Meetings.');
-      }
-      const emails = (key: string) => {
-        if (!Array.isArray(held[key])) throw new Error('The saved invitation lists could not be loaded.');
-        return (held[key] as string[]).join('\n');
-      };
-      const attendeeFields = { attendees: emails('teamsAttendees'), presenters: emails('teamsPresenters'), coOrganizers: emails('teamsCoOrganizers') };
-      setExistingCalendar(saved);
-      setForm(current => ({ ...current, ...attendeeFields,
-        title: saved.calendar.title || module.title,
-        organizerEmail: String(held.teamsOrganizerEmail),
-        scheduleTimeZone: zone, seriesMode: saved.calendar.seriesMode,
-        durationMinutes: '', details: '',
-        lobbyBypass: String(held.teamsLobbyBypass || 'invited'),
-        recording: String(held.teamsRecording || 'none'),
-        spokenLanguage: String(held.teamsSpokenLanguage || 'en-GB'),
-        meetingType: String(held.teamsMeetingType || 'live-session'),
-      }));
-    }).catch(failure => {
-      if (!active) return;
-      // Only a confirmed absence allows Create. A failed read must never offer
-      // another calendar for a module whose saved meeting is still unknown.
-      if (failure instanceof ApiError && failure.status === 404 && !component?.settings.teamsLiveSessionId) return;
-      setCalendarLoadError(failure instanceof Error ? failure.message : 'Unable to load the saved Teams calendar.');
-    }).finally(() => { if (active) setCalendarLoading(false); });
-    return () => { active = false; };
-  }, [module.catalogueId, module.title, component?.settings.teamsLiveSessionId, calendarReadAttempt]);
-
-  useEffect(() => {
-    let active = true;
-    const opened = openedWith.current;
-    const catalogueId = cleanText(module.catalogueId);
-    if (!catalogueId) { setSessionsLoading(false); return () => { active = false; }; }
-    setSessionsLoading(true);
-    // This module's own plan, not the whole curriculum's session collection.
-    // The collection is one row per session in every module, and reading it past
-    // the cache forces the backend to rebuild the entire curriculum payload —
-    // seconds of Neon round trips to find the two dates this dialog needs, with
-    // no timeout, so a slow backend left this spinner up indefinitely.
-    //
-    // The dates themselves are unchanged: the plan is what the backend dates the
-    // session collection and the Teams occurrences from, and it is the same
-    // source `pushModulePlanToTeams` sends when the calendar is updated later.
-    fetchModuleSessionPlan(catalogueId, opened.weekStructure?.length, { timeoutMs: 30000 })
-      .then(plan => {
-        if (!active) return;
-        setSessions(moduleTeamsPlannedSessions(opened, plan));
-      })
-      // A module the backend has never stored has no plan to read. Its authored
-      // components still carry their own dates, so fall back to those rather
-      // than reporting a module with a visible schedule as having none.
-      .catch(() => { if (active) setSessions(moduleTeamsPlannedSessions(opened, null)); })
-      .finally(() => { if (active) setSessionsLoading(false); });
-    return () => { active = false; };
-  }, [module.catalogueId]);
-
-  // The holidays are only ever read to name the closure that moved a date, so a
-  // failed load costs the labels and nothing else.
-  useEffect(() => {
-    let active = true;
-    fetchCurriculumHolidays()
-      .then(rows => { if (active) setHolidays(rows); })
-      .catch(() => { if (active) setHolidays([]); });
-    return () => { active = false; };
-  }, []);
-
-  useEffect(() => {
-    let active = true;
-    loadTeamsMeetingConfiguration()
-      .then(configuration => {
-        if (!active) return;
-        setGraphConfigured(configuration.configured);
-        setGraphTimeZone(configuration.timeZone);
-        // The deployment value is a starting point only. Keep a component's
-        // saved organizer when present and let the user choose another mailbox.
-        setForm(current => (current.organizerEmail
-          ? current
-          : { ...current, organizerEmail: configuration.defaultOrganizer || '' }));
-      })
-      .catch(err => {
-        if (active) setError(err instanceof Error ? err.message : 'Unable to check Microsoft Teams configuration.');
-      })
-      .finally(() => { if (active) setConfigurationLoading(false); });
-    return () => { active = false; };
-  }, []);
-
-  /**
-   * The holiday that closed one skipped date.
-   *
-   * A session's `skippedHolidays` are bare ISO dates, and a date alone does not
-   * explain itself. The dates only ever come from a cohort's own ticked
-   * selection, so any stored holiday covering one is the holiday that moved it.
-   */
-  const holidayLabelFor = useCallback((date: string) => {
-    const day = cleanText(date);
-    if (!day) return '';
-    const match = holidays.find(holiday => (
-      String(holiday.startDate) <= day && day <= String(holiday.endDate || holiday.startDate)
-    ));
-    return cleanText(match?.label);
-  }, [holidays]);
-
-  const liveComponents = (openedWith.current.weekStructure || []).flatMap(week => week.components || [])
-    .filter(item => item.type === 'live-session');
-  const componentTitles = new Map(liveComponents.map(item => [item.id, item.title]));
-  const savedLiveComponents = (existingCalendar?.module.weekStructure || []).flatMap(week => week.components || [])
-    .filter(item => item.type === 'live-session');
-  // The module's own plan, whether or not a calendar is already saved: the
-  // group's delivery day and clock, applied to the weeks that actually hold a
-  // live-session component. The same rows the Teams Meetings detail modal shows
-  // through `liveSessionPlan`, and for the same reason -- these are the dates
-  // Update will send, so they are the dates worth putting in front of the
-  // reader. Listing the saved bookings instead described a calendar that was
-  // built before the module's delivery day moved: a module whose first live
-  // session sits in the week of Wed 7 Oct opened claiming Thu 1 Oct, because
-  // that is the day Teams was told about first. The stored instants stay on
-  // `teamsStarts`, where the form body compares them per row and says which
-  // ones Teams is still holding on another day.
-  //
-  // A calendar can outlive the structure that created it -- every live-session
-  // component deleted leaves a meeting with no plan to describe it -- so the
-  // saved bookings remain the fallback. Without it the dialog would show an
-  // empty list for a real calendar, and refuse the invitation-only update that
-  // is the one thing still worth doing to it.
-  const savedSessions = existingCalendar ? existingCalendar.calendar.occurrences.map(occurrence => {
-    const start = utcIsoToCalendarParts(occurrence.startDateTimeUtc, form.scheduleTimeZone);
-    const end = utcIsoToCalendarParts(new Date(Date.parse(occurrence.startDateTimeUtc) + occurrence.durationMinutes * 60000).toISOString(), form.scheduleTimeZone);
-    // Cancelled occurrences leave gaps in numbering. Match the saved identity,
-    // never the row index, then use the title currently shown in the builder.
-    const matchesOccurrence = (item: ModuleComponent) => (
-      item.settings?.teamsLiveSessionId === existingCalendar.meeting.teamsLiveSessionId
-      && Number(item.settings?.teamsSessionNumber) === occurrence.sessionNumber
-    );
-    const linked = liveComponents.find(matchesOccurrence) || savedLiveComponents.find(matchesOccurrence);
-    const componentTitle = linked ? componentTitles.get(linked.id) ?? linked.title : undefined;
-    return { ...occurrence, componentTitle, date: start.date, startTime: start.time, endTime: end.time, timeZone: form.scheduleTimeZone };
-  }) : [];
-  const plannedSessions = sessions.map(session => ({ ...session, componentTitle: componentTitles.get(session.componentId) }));
-  const displayedSessions = plannedSessions.length ? plannedSessions : savedSessions;
-  const showingPlan = Boolean(plannedSessions.length);
-  const plannedMinutes = minutesBetween(sessions[0]?.startTime || '', sessions[0]?.endTime || '');
-  const bookedMinutes = existingCalendar?.calendar.occurrences[0]?.durationMinutes || 0;
-  const row: TeamsCalendarTarget = {
-    catalogueId: cleanText(module.catalogueId),
-    name: cleanText(component?.title) || cleanText(module.title) || 'Live session',
-    sessions: displayedSessions,
-    plannedStarts: showingPlan
-      ? sessions.map(session => zonedNaiveToUtcIso(sessionNaiveLocal(session), form.scheduleTimeZone))
-      : savedSessions.map(item => item.startDateTimeUtc),
-    teamsStarts: existingCalendar?.calendar.occurrences.map(item => item.startDateTimeUtc) || [],
-    // The module's own length, not the form's. Duration is an override applied
-    // on top of these rows, so reading it back in here made the fallback follow
-    // whatever the reader had just picked and the preview could never disagree
-    // with the payload -- or agree with the module.
-    // Follows whichever list is on screen, so the fallback length can never
-    // disagree with the rows it is a fallback for.
-    durationMinutes: Math.max(
-      15,
-      (showingPlan ? plannedMinutes : bookedMinutes) || plannedMinutes || bookedMinutes || DEFAULT_DURATION_MINUTES,
-    ),
-  };
-
-  // Presenters/Attendees derived from the module itself: its assigned tutor as
-  // presenter, every learner whose training plan carries this module as
-  // attendee. Only ever a starting point — the lists stay editable afterwards.
-  const prefillInvitees = async () => {
-    if (!row.catalogueId) return;
-    setInvitedPrefilling(true);
+  const readBack = useCallback(async () => {
     try {
-      const result = await fetchModuleMeetingInvitees(row.catalogueId);
-      patch({ attendees: result.attendees.join('\n'), presenters: result.presenters.join('\n') });
+      const fresh = await loadModuleStructure(catalogueId, { skipCache: true });
+      if (fresh) onRestoredRef.current?.(fresh);
     } catch {
-      // Best-effort: the form stays usable with people typed in by hand.
-    } finally {
-      setInvitedPrefilling(false);
+      // The calendar change itself is saved; the builder catches up on its next
+      // load. Nothing here is worth interrupting the result dialog for.
     }
-  };
+  }, [catalogueId]);
 
-  const recoverLinks = async () => {
-    const saved = await readModuleTeamsMeeting(row.catalogueId);
-    if (saved.verificationPending) {
-      throw new Error('The calendar is saved, but verification is still incomplete. Review the existing calendar in Teams Meetings, then check its links again.');
-    }
-    const restored = await restoreModuleTeamsMeeting(row.catalogueId);
-    if (!restored.module) throw new Error('The saved component links could not be loaded.');
-    onRestored?.(restored.module);
-    onClose();
-  };
+  const workspace = useTeamsMeetingsWorkspace({
+    scopeModuleId: catalogueId,
+    initialSelectedId: catalogueId,
+    blockedReason: unsavedChanges ? UNSAVED_REASON : '',
+    onCalendarChanged: () => { void readBack(); },
+  });
 
-  const submit = async () => {
-    setError('');
-    if (calendarLoading || calendarLoadError || existingCalendar?.verificationPending) return;
-    // The button is already disabled for this, but the refusal lives here too:
-    // creating the calendar writes to real calendars, so it must not depend on
-    // one piece of UI state being right.
-    if (unsavedChanges) {
-      setError('Save the module before saving its Teams calendar. These dates are not stored yet.');
-      return;
-    }
-    if (!form.organizerEmail.trim()) {
-      setError('Enter the Microsoft 365 organizer email.');
-      return;
-    }
-    if (!row.sessions.length) {
-      setError('This module has no dated live sessions, so there is nothing to put on a calendar. A meeting is created for each live-session component in the Course structure, on that component’s own date — add them, or give the ones it has a date, and save.');
-      return;
-    }
-    setSaving(true);
-    try {
-      if (creationUncertain) {
-        await recoverLinks();
-        return;
-      }
-      const input = buildTeamsCalendarInput(row, form);
-      if (existingCalendar) {
-        const held = existingCalendar.meeting;
-        // "Nothing about the schedule changed" -- which is what peopleOnly
-        // promises the transport, and why it replaces the payload's dates with
-        // the ones Teams already holds. Comparing only the durations was true
-        // while the rows on screen WERE the saved bookings; now they are the
-        // module's plan, and a plan that moved to another day without changing
-        // its length would have been sent as a people-only update and silently
-        // dropped every new date the reader had just been shown.
-        //
-        // Compared as instants, never as text: the backend stamps a stored
-        // occurrence `+00:00` and the payload is built with `toISOString()`,
-        // which writes `Z`. The same moment in two spellings would never be
-        // equal as a string, so every options-only update would have been sent
-        // as a date change.
-        const booked = existingCalendar.calendar.occurrences;
-        const sameInstant = (left: string, right: string) => Date.parse(left) === Date.parse(right);
-        const peopleOnly = input.scheduledOccurrences?.length === booked.length
-          && input.scheduledOccurrences.every((item, index) => (
-            item.durationMinutes === booked[index].durationMinutes
-            && sameInstant(item.startDateTimeUtc, booked[index].startDateTimeUtc)
-          ));
-        const result = await updateTeamsMeetingSchedule(String(held.teamsLiveSessionId), {
-          title: input.title, organizerEmail: String(held.teamsOrganizerEmail), eventId: String(held.teamsEventId || ''),
-          localStartDateTime: input.localStartDateTime, startDateTimeUtc: input.startDateTimeUtc,
-          durationMinutes: input.durationMinutes, repeat: (held.teamsRepeat || input.repeat) as TeamsMeetingInput['repeat'],
-          repeatOccurrences: input.repeatOccurrences, scheduledOccurrences: input.scheduledOccurrences,
-          seriesMode: existingCalendar.calendar.seriesMode, peopleOnly,
-          attendees: input.attendees, presenters: input.presenters, coOrganizers: input.coOrganizers,
-          lobbyBypass: input.lobbyBypass, recording: input.recording, spokenLanguage: input.spokenLanguage,
-        });
-        if (!result.updated) throw new Error('Microsoft did not confirm the calendar update.');
-        if (result.warnings?.length) throw new Error(result.warnings.map(item => item.message).join(' '));
-        try {
-          const restored = await restoreModuleTeamsMeeting(row.catalogueId);
-          if (!restored.module) throw new Error('Missing component links.');
-          onRestored?.(restored.module);
-        } catch {
-          throw new Error('The calendar was updated, but its component links could not be refreshed. Use Restore Teams sessions & links.');
-        }
-        onClose();
-        return;
-      }
-      const result = await createTeamsMeeting(input);
-      let attachmentWarning = '';
-      let restoredModule: ModuleCatalogueItem | undefined;
-      try {
-        restoredModule = (await restoreModuleTeamsMeeting(row.catalogueId)).module;
-      } catch {
-        attachmentWarning = 'The calendar was created, but its component links could not be refreshed. Use Restore Teams sessions & links.';
-      }
-      // Narrowed to the day the opening component runs on, because that is the
-      // link and the instant that component keeps. Opened from the module itself
-      // there is no one day to pick, so the whole series is handed back intact
-      // and the caller places each day's link on the session that runs it.
-      const selectedIndex = component
-        ? sessions.findIndex(session => session.componentId === component.id || session.date === component.settings.sessionDate)
-        : -1;
-      const scheduled = component ? input.scheduledOccurrences?.[Math.max(0, selectedIndex)] : undefined;
-      const selectedDate = scheduled ? utcIsoToCalendarParts(scheduled.startDateTimeUtc, input.scheduleTimeZone).date : '';
-      const day = selectedDate ? new Intl.DateTimeFormat('en-US', { weekday: 'long', timeZone: 'UTC' }).format(new Date(`${selectedDate}T12:00:00Z`)) : '';
-      const daySeries = result.meeting.calendarSeries?.find(series => series.day === day);
-      onCreated({ ...result, meeting: {
-        ...result.meeting,
-        ...(daySeries ? { joinUrl: daySeries.joinUrl, eventId: daySeries.eventId, onlineMeetingId: daySeries.onlineMeetingId || '' } : {}),
-        ...(scheduled ? { startDateTimeUtc: scheduled.startDateTimeUtc, durationMinutes: scheduled.durationMinutes } : {}),
-      } }, input);
-      if (restoredModule) onRestored?.(restoredModule);
-      onClose();
-      await finishTeamsCreation(result, input, attachmentWarning);
-    } catch (err) {
-      if (isTeamsReviewCancelled(err)) return;
-      if (!existingCalendar && (err instanceof CurriculumRequestTimeout || (err instanceof ApiError && (
-        err.data?.code === 'teams_calendar_already_exists' || err.data?.meetingCreated || err.data?.partial
-      )))) {
-        setCreationUncertain(true);
-        try {
-          await recoverLinks();
-          return;
-        } catch (recoveryError) {
-          setError(recoveryError instanceof Error ? recoveryError.message : 'The saved calendar could not be checked.');
-          return;
-        }
-      }
-      setError(err instanceof Error ? err.message : 'Microsoft Teams could not save the meeting.');
-    } finally {
-      setSaving(false);
-    }
-  };
+  // Something of the workspace is on screen: the dialog, an action opened from
+  // it, one of its drawers or a recording/transcript preview.
+  const open = Boolean(workspace.selectedId || workspace.calendarActionTarget || workspace.drawerOpen
+    || workspace.preview || workspace.transcriptPreview);
+  useEffect(() => {
+    if (!open) onCloseRef.current();
+  }, [open]);
 
-  const placement = [module.cohort, module.group, module.programmeName].map(value => cleanText(value)).filter(Boolean).join(' · ');
-
-  return (
-    <Modal
-      /* Two lines rather than one long "name — Teams meeting" string: the
-         module is the subject, its cohort and group are the context. */
-      title={(
-        <span className="block min-w-0">
-          <span className="block truncate">{row.name}</span>
-          <span className="mt-1 block truncate text-[11px] font-semibold text-foreground-400">
-            {placement || 'Teams meeting'}
-          </span>
-        </span>
-      )}
-      size="max-w-3xl"
-      onClose={saving ? () => {} : onClose}
-      footer={(
-        <button
-          type="button"
-          onClick={() => void submit()}
-          disabled={saving || configurationLoading || sessionsLoading || calendarLoading || Boolean(calendarLoadError) || existingCalendar?.verificationPending || !graphConfigured || !row.sessions.length || unsavedChanges}
-          title={unsavedChanges
-            ? 'Save the module first. These dates are not stored yet, so Teams would be given a date the module does not have.'
-            : existingCalendar ? 'Update the existing Teams calendar.' : "Create one Teams meeting on each of this module's stored session dates."}
-          className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-primary-600 px-4 text-[12px] font-bold text-white transition-smooth hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          <AppIcon className={saving ? 'ri-loader-4-line animate-spin text-sm' : 'ri-calendar-check-line text-sm'}></AppIcon>
-          {calendarLoading ? 'Loading calendar…' : creationUncertain ? 'Check saved calendar & restore links' : existingCalendar ? 'Update' : calendarLoadError ? 'Calendar unavailable' : 'Create'}
-        </button>
-      )}
-    >
-      {!graphConfigured && !configurationLoading && (
-        <p className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] font-semibold text-amber-800">
-          Microsoft Graph credentials are missing from the backend, so nothing here can reach the Teams calendar.
-        </p>
-      )}
-      {/* Named before the dates rather than only on the disabled button: the
-          reader is looking at a list that includes their unsaved work, and the
-          honest thing is to say why it cannot be sent yet. */}
-      {unsavedChanges && (
-        <div className="mb-4 flex items-start gap-2.5 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5">
-          <AppIcon className="ri-error-warning-line mt-0.5 shrink-0 text-sm text-amber-700"></AppIcon>
-          <p className="text-[11px] leading-relaxed text-amber-900">
-            <span className="font-bold">This module has unsaved changes. </span>
-            The dates below include them, but a Teams meeting invites real people and is linked back to the
-            module&rsquo;s saved sessions — so a session that only exists in this tab would leave Teams holding
-            a date the module does not have. Close this, press <span className="font-bold">Save</span>, then reopen the calendar.
+  const loadingRow = !workspace.selected && (!workspace.loaded || !workspace.teamsLoaded || workspace.teamsLoading);
+  if (workspace.selectedId && !workspace.selected) {
+    return (
+      <Modal title={cleanText(module.title) || 'Teams meeting'} size="max-w-3xl" onClose={onClose}>
+        {loadingRow ? (
+          <p className="flex items-center gap-1.5 rounded-xl border border-background-200 bg-background-100/60 p-3 text-[11px] font-semibold text-foreground-500">
+            <AppIcon className="ri-loader-4-line animate-spin"></AppIcon>
+            Loading this module&rsquo;s calendar and session dates…
           </p>
-        </div>
-      )}
-      {existingCalendar?.verificationPending && <p role="alert" className="mb-4 text-sm text-amber-800">
-        This calendar exists, but verification is incomplete. <Link className="underline" to={`/curriculum/teams-meetings?module=${encodeURIComponent(row.catalogueId)}`}>Review it in Teams Meetings</Link> before updating its saved bookings.
-      </p>}
-      {calendarLoadError ? <div role="alert" className="space-y-2 text-sm text-red-700">
-        <p>{calendarLoadError}</p>
-        {/* The Graph configuration is read alongside the calendar, so one slow
-            backend fails both. Clearing that message here keeps a successful
-            retry from leaving the previous attempt's failure on screen. */}
-        <button type="button" className="font-semibold underline" onClick={() => { setError(''); setCalendarReadAttempt(value => value + 1); }}>Retry loading calendar</button>
-      </div> : sessionsLoading || calendarLoading ? (
-        <p className="flex items-center gap-1.5 rounded-xl border border-background-200 bg-background-100/60 p-3 text-[11px] font-semibold text-foreground-500">
-          <AppIcon className="ri-loader-4-line animate-spin"></AppIcon>
-          Loading this module's calendar and session dates…
-        </p>
-      ) : (
-        <TeamsCalendarFormBody
-          row={row}
-          form={form}
-          patch={patch}
-          holidayLabelFor={holidayLabelFor}
-          prefilling={invitedPrefilling}
-          onPrefill={() => void prefillInvitees()}
-          timeZoneLabel={graphTimeZone}
-          existingCalendar={Boolean(existingCalendar)}
-          showAlternateTimeZones={false}
-        />
-      )}
-      {/* Both reads leave on the same timeout, so both report it in the same
-          words. Said once, above the retry that acts on it, rather than twice
-          in two boxes that look like two separate faults. */}
-      {error && error !== calendarLoadError && <div className="mt-4"><InlineError message={error} /></div>}
-    </Modal>
+        ) : workspace.teamsError || workspace.error ? (
+          <p role="alert" className="text-sm text-red-700">{workspace.teamsError || workspace.error}</p>
+        ) : (
+          <p className="text-[12px] text-foreground-600">
+            This module is not in the saved curriculum yet, so it has no Teams calendar to show. Save the module, then open its calendar again.
+          </p>
+        )}
+      </Modal>
+    );
+  }
+  return (
+    <TeamsMeetingDialogs
+      workspace={workspace}
+      /* The second door's second door. The tab above it is the module's own
+         calendar, unchanged — this one books a separate meeting on a single
+         week and never touches that calendar. */
+      secondTab={{
+        label: 'Additional week meeting',
+        subtitle: 'A separate meeting on one week — its own organiser, guests and link',
+        render: () => (
+          <WeekTeamsMeetingPanel
+            module={module}
+            initialWeekId={initialWeekId}
+            blockedReason={unsavedChanges ? UNSAVED_WEEK_MEETING_REASON : ''}
+            graphConfigured={workspace.graphConfigured}
+            onCreated={() => { void readBack(); }}
+          />
+        ),
+      }}
+    />
   );
 }

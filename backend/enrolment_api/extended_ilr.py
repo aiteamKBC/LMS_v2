@@ -24,7 +24,14 @@ from learner_api.models import CommercialUser, EnrolmentUser
 
 from .auth import enrolment_login_required
 from .models import ExtendedIlr
-from .wizard_steps import project_draft, read_projection
+from .wizard_steps import (
+    ILR_DETAILS_KEY,
+    project_draft,
+    read_ilr_details,
+    read_projection,
+    without_ilr_details,
+)
+from .wizard_layout import project_custom_fields
 
 KINDS = {"apprenticeship": EnrolmentUser, "commercial": CommercialUser}
 
@@ -59,6 +66,16 @@ def _signature_state(answers):
         "provider_signed_date": _s(provider.get("date")) or None,
         # "Completed" means the compliance artefact is finished: both parties signed.
         "completed": learner_signed and provider_signed,
+    }
+
+
+def _next_of_kin_state(answers):
+    """The next of kin's own address as columns; cleared when it is the learner's."""
+    kin = answers.get("nextOfKin") or {}
+    own_address = kin.get("sameAddressAsLearner") is False
+    return {
+        "next_of_kin_postcode": (_s(kin.get("postcode")) or None) if own_address else None,
+        "next_of_kin_address": (_s(kin.get("address")) or None) if own_address else None,
     }
 
 
@@ -111,6 +128,16 @@ def read_extended_ilr(kind, learner_id, learner_name):
     fallbacks below or paying a second HTTP round-trip. Raises DatabaseError,
     which the caller is expected to turn into its own error response.
     """
+    payload = _read_extended_ilr_row(kind, learner_id, learner_name)
+    # The ILR Learner Details step lives in its own table, never in this row's
+    # draft snapshot, so it is read from there and handed back alongside.
+    details = read_ilr_details(kind, int(learner_id))
+    if details is not None:
+        payload["draft"] = {**(payload.get("draft") or {}), ILR_DETAILS_KEY: details}
+    return payload
+
+
+def _read_extended_ilr_row(kind, learner_id, learner_name):
     row = ExtendedIlr.objects.filter(learner_kind=kind, learner_id=learner_id).first()
     if row is None:
         # No ILR row, but the per-step tables may still hold a partly-filled
@@ -191,8 +218,11 @@ def extended_ilr(request, kind, learner_id):
             # are only recomputed when answers are actually being replaced.
             defaults["answers"] = answers
             defaults.update(_signature_state(answers))
+            defaults.update(_next_of_kin_state(answers))
         if draft is not None:
-            defaults["wizard_draft"] = draft
+            # Everything but the ILR Learner Details step, which is a separate
+            # record kept in its own table (project_draft below writes it there).
+            defaults["wizard_draft"] = without_ilr_details(draft)
         try:
             with transaction.atomic(using="enrolment"):
                 row, _ = ExtendedIlr.objects.update_or_create(
@@ -204,6 +234,9 @@ def extended_ilr(request, kind, learner_id):
                 # tables can never disagree with the draft they came from.
                 if draft is not None:
                     project_draft(kind, int(learner_id), draft)
+                    # The wizard builder's custom fields, into their own columns.
+                    # Conditions on Extended ILR questions read the stored answers.
+                    project_custom_fields(kind, int(learner_id), draft, answers=row.answers)
         except DatabaseError as exc:
             return _error(f"Database error: {exc}", 502)
 

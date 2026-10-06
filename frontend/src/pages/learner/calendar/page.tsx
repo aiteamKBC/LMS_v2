@@ -1,14 +1,15 @@
 import { useState, useMemo, useCallback, useEffect, useRef } from 'react';
-import { Link, useLocation } from 'react-router-dom';
+import { useLocation } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { AppIcon } from '@/components/feature/AppIcon';
+import { CalendarFilterScrollRow } from '@/components/feature/CalendarFilterScrollRow';
 import { roleNavMap } from '@/mocks/navigation';
 import { LEARNER_PROFILE } from '@/mocks/learner-profile';
 import { type CalendarEvent } from '@/pages/learner/clubs/data';
 import { downloadICS, downloadAllICS, createPublicFeedBlob, type ICSEvent } from '@/utils/ics-generator';
 import { useLinkedLearner } from '@/hooks/useMyLearner';
+import { invalidateLearnerReads } from '@/api/learnerRead';
 import { useLiveRefresh } from '@/hooks/useRefreshOnReturn';
-import { fetchReviewHistory, type ImportedReview } from '@/api/reviewHistory';
 import { buildSourceFilters, countBySource, filterBySource, learnerEventSource, learnerSourceMeta, type LearnerSourceFilter } from './reviewTypeFilters';
 import { moveCalendarDate } from './navigation';
 import { RowsSkeleton } from '@/components/feature/Skeletons';
@@ -17,7 +18,7 @@ import { PageContainer } from '@/components/ui/PageContainer';
 import { Panel } from '@/components/ui/Panel';
 import { SectionHeader } from '@/components/ui/SectionHeader';
 import {
-  fetchLearnerCalendarEvents, bookLearnerCalendarSession, rescheduleLearnerCalendarSession, fetchLearnerCoach,
+  fetchLearnerCalendarEvents, bookLearnerCalendarSession, rescheduleLearnerCalendarSession, cancelLearnerCalendarSession, fetchLearnerCoach,
   fetchLearnerMeetingArtifacts, learnerMeetingArtifactContentUrl, saveLearnerEventReviewAnswers,
   fetchCalendarConnections, startCalendarOAuth, connectCredentialCalendar,
   disconnectPersonalCalendar, fetchPersonalCalendarAvailability,
@@ -26,11 +27,20 @@ import {
 } from '@/api/learnerCalendar';
 import { CalendarEventDialog } from '@/components/feature/CalendarEventDialog';
 import { CoachMeetingArtifactsPanel } from '@/pages/coach/shared/CoachMeetingArtifactsPanel';
+import { CalendarColorPreferencesDrawer } from '@/pages/coach/timetable/components/CalendarColorPreferencesDrawer';
+import {
+  getMeetingTypeKey,
+  loadCalendarColors,
+  saveCalendarColors,
+  type CalendarColorPreferences,
+  type CalendarStatusKey,
+  type MeetingTypeKey,
+} from '@/pages/coach/timetable/calendarColors';
 import { meetingBookingWarning } from '../reviews/meetingBooking';
 import { useImportedMeetingBooking } from '../reviews/useImportedMeetingBooking';
-import { importedReviewsToEvents, mergeCompletedReviewHistory } from '../reviews/useReviewSessions';
 import { LearnerReviewInstanceForm, useLearnerReviewInstance } from '../reviews/LearnerReviewInstanceForm';
-import { firstAvailableBookingDate } from '../reviews/bookingDates';
+import { firstAvailableBookingDate, parseBookingDay } from '../reviews/bookingDates';
+import CoachSessionTypePicker, { COACH_APPROVAL_SESSION_TYPES } from './CoachSessionTypePicker';
 
 /** The header's secondary-actions menu — everything that isn't booking a
  * coach session (the primary action) moves in here so the toolbar stays a
@@ -197,7 +207,7 @@ function mapCoachEvent(ev: LearnerCalendarEvent): CalendarEvent | null {
       : `${ev.title} session with your coach.`),
     isoDate: iso,
     meetingLink: ev.meetingLink || undefined,
-    eventKey: ev.eventKey || ev.id,
+    eventKey: ev.calendarEventKey || ev.eventKey || ev.id,
     source: ev.source,
     reviewTemplateId: ev.reviewTemplateId,
     reviewTypeId: ev.reviewTypeId,
@@ -207,6 +217,8 @@ function mapCoachEvent(ev: LearnerCalendarEvent): CalendarEvent | null {
     importedReview: ev.importedReview,
     durationMinutes: ev.durationMinutes || 60,
     bookingStatus: ev.status,
+    meetingOutcome: ev.meetingOutcome ?? null,
+    watchedRecording: Boolean(ev.watchedRecording),
     bookingSessionType: BOOKABLE_COACH_SESSION_TYPES.has(ev.source as BookableSessionType)
       ? ev.source as CalendarEvent['bookingSessionType']
       : undefined,
@@ -214,6 +226,7 @@ function mapCoachEvent(ev: LearnerCalendarEvent): CalendarEvent | null {
     syncWarning: meetingBookingWarning(ev),
     bookingReviewId: ev.reviewId,
     assignmentMonth: ev.assignmentMonth,
+    changeClosed: Boolean(ev.changeClosed),
   };
 }
 
@@ -407,9 +420,9 @@ function restoreNotifications() {
 }
 
 type ViewMode = 'monthly' | 'weekly' | 'daily';
-type LearnerStatusFilter = 'all' | 'needs-schedule' | 'scheduled' | 'pending' | 'in-progress' | 'completed';
+type LearnerStatusFilter = 'all' | 'needs-schedule' | 'scheduled' | 'pending' | 'in-progress' | 'ended' | 'completed';
 
-const LEARNER_STATUS_FILTERS: LearnerStatusFilter[] = ['all', 'needs-schedule', 'scheduled', 'pending', 'in-progress', 'completed'];
+const LEARNER_STATUS_FILTERS: LearnerStatusFilter[] = ['all', 'needs-schedule', 'scheduled', 'pending', 'in-progress', 'ended', 'completed'];
 
 const LEARNER_STATUS_META: Record<LearnerStatusFilter, { label: string; dot: string; badge: string }> = {
   all: { label: 'All', dot: 'bg-foreground-400', badge: 'bg-background-200 text-foreground-700 ring-background-300' },
@@ -417,7 +430,18 @@ const LEARNER_STATUS_META: Record<LearnerStatusFilter, { label: string; dot: str
   scheduled: { label: 'Scheduled', dot: 'bg-primary-500', badge: 'bg-primary-100 text-primary-800 ring-primary-200' },
   pending: { label: 'Pending', dot: 'bg-amber-500', badge: 'bg-amber-100 text-amber-800 ring-amber-200' },
   'in-progress': { label: 'In Progress', dot: 'bg-secondary-500', badge: 'bg-secondary-100 text-secondary-800 ring-secondary-200' },
+  ended: { label: 'Ended', dot: 'bg-rose-500', badge: 'bg-rose-100 text-rose-800 ring-rose-200' },
   completed: { label: 'Completed', dot: 'bg-emerald-500', badge: 'bg-emerald-100 text-emerald-800 ring-emerald-200' },
+};
+
+const LEARNER_STATUS_COLOR_KEYS: Record<LearnerStatusFilter, CalendarStatusKey> = {
+  all: 'all',
+  'needs-schedule': 'not-scheduled',
+  scheduled: 'scheduled',
+  pending: 'pending-due-soon',
+  'in-progress': 'in-progress',
+  ended: 'missed-overdue',
+  completed: 'completed',
 };
 
 function todayISO(): string {
@@ -438,17 +462,6 @@ function calendarWeekKey(isoDate: string): string | null {
   const mondayOffset = value.getDay() === 0 ? -6 : 1 - value.getDay();
   value.setDate(value.getDate() + mondayOffset);
   return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, '0')}-${String(value.getDate()).padStart(2, '0')}`;
-}
-
-function describeCalendarEventSlot(event: CalendarEvent): string {
-  if (!event.isoDate) return `${event.date} at ${event.time}`;
-  const [year, month, day] = event.isoDate.split('-').map(Number);
-  const value = new Date(year, month - 1, day);
-  if (Number.isNaN(value.getTime())) return `${event.date} at ${event.time}`;
-  const dateLabel = new Intl.DateTimeFormat('en-GB', {
-    weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
-  }).format(value);
-  return `${dateLabel} at ${event.time}`;
 }
 
 function isProgrammeCycleSessionType(value?: CalendarEvent['bookingSessionType']): boolean {
@@ -477,6 +490,9 @@ function sessionTypeLabel(value?: CalendarEvent['bookingSessionType'] | Bookable
 }
 
 function learnerEventStatus(event: CalendarEvent): LearnerStatusFilter {
+  // An elapsed meeting shows Ended, or Completed once Teams shows the learner attended.
+  if (event.meetingOutcome === 'completed') return 'completed';
+  if (event.meetingOutcome === 'ended') return 'ended';
   if (event.timeToBeConfirmed || event.bookingStatus === 'not-scheduled') return 'needs-schedule';
   if (event.status === 'pending') return 'pending';
   if (event.bookingStatus === 'in-progress') return 'in-progress';
@@ -485,25 +501,21 @@ function learnerEventStatus(event: CalendarEvent): LearnerStatusFilter {
   return 'scheduled';
 }
 
+function learnerMeetingTypeColor(event: CalendarEvent, colors: CalendarColorPreferences) {
+  if (!event.source || event.type === 'Busy' || event.type === 'Personal') return null;
+  return colors.meetingTypes[getMeetingTypeKey(event)];
+}
+
+function learnerEventStatusColor(event: CalendarEvent, colors: CalendarColorPreferences) {
+  return colors.statuses[LEARNER_STATUS_COLOR_KEYS[learnerEventStatus(event)]];
+}
+
 function shouldShowMeetingArtifacts(event: CalendarEvent): boolean {
   return Boolean(
     event.eventKey
     && event.meetingLink
     && ['mcr', 'catch-up', 'progress-review', 'student-support'].includes(event.source || '')
     && ['completed', 'awaiting-signature'].includes(event.bookingStatus || '')
-  );
-}
-
-function DonutRing({ pct, size = 64, stroke = 6, color, trackClass = 'text-background-200' }: { pct: number; size?: number; stroke?: number; color: string; trackClass?: string }) {
-  const r = (size - stroke) / 2;
-  const circ = 2 * Math.PI * r;
-  const offset = circ - (Math.min(pct, 100) / 100) * circ;
-  const colorMap: Record<string, string> = { primary: 'stroke-primary-500', accent: 'stroke-accent-500', secondary: 'stroke-secondary-500', emerald: 'stroke-emerald-500', amber: 'stroke-amber-500' };
-  return (
-    <svg width={size} height={size} className="shrink-0 -rotate-90">
-      <circle cx={size / 2} cy={size / 2} r={r} fill="none" className={trackClass} strokeWidth={stroke} />
-      <circle cx={size / 2} cy={size / 2} r={r} fill="none" className={`${colorMap[color] || colorMap.primary} transition-all duration-700 ease-out`} strokeWidth={stroke} strokeLinecap="round" strokeDasharray={circ} strokeDashoffset={offset} />
-    </svg>
   );
 }
 
@@ -530,6 +542,7 @@ export function LearnerCalendarContent() {
 function LearnerCalendarBody() {
   const location = useLocation();
   const myLearner = useLinkedLearner();
+  const calendarColorOwner = `learner:${myLearner.kind}:${myLearner.id}`;
   const loadArtifacts = useCallback((eventKey: string, signal?: AbortSignal) => fetchLearnerMeetingArtifacts(myLearner.kind, myLearner.id, eventKey, signal), [myLearner.id, myLearner.kind]);
   const artifactContentUrl = useCallback((eventKey: string, artifactType: string, artifactId: string, options: { preview?: boolean } = {}) => learnerMeetingArtifactContentUrl(myLearner.kind, myLearner.id, eventKey, artifactType, artifactId, options), [myLearner.id, myLearner.kind]);
   const [viewMode, setViewMode] = useState<ViewMode>('monthly');
@@ -549,6 +562,8 @@ function LearnerCalendarBody() {
   const [searchTerm, setSearchTerm] = useState('');
   const [filterSource, setFilterSource] = useState<LearnerSourceFilter>('all');
   const [filterStatus, setFilterStatus] = useState<LearnerStatusFilter>('all');
+  const [calendarColors, setCalendarColors] = useState<CalendarColorPreferences>(() => loadCalendarColors(calendarColorOwner));
+  const [colorPreferencesOpen, setColorPreferencesOpen] = useState(false);
   const [myEvents, setMyEvents] = useState<CalendarEvent[]>([]);
   const [calendarLoading, setCalendarLoading] = useState(true);
   const [calendarError, setCalendarError] = useState<string | null>(null);
@@ -559,6 +574,8 @@ function LearnerCalendarBody() {
   const refreshCalendar = useCallback(() => setCalendarRevision(value => value + 1), []);
   useLiveRefresh(refreshCalendar);
   const [addToCalendarToast, setAddToCalendarToast] = useState<string | null>(null);
+  const [cancelBusy, setCancelBusy] = useState(false);
+  const [cancelError, setCancelError] = useState('');
   const [showEventDetails, setShowEventDetails] = useState<CalendarEvent | null>(null);
   const selectedReview = useLearnerReviewInstance(myLearner.kind, myLearner.id,
     showEventDetails?.reviewTemplateId && showEventDetails.source !== 'live-session'
@@ -627,6 +644,18 @@ function LearnerCalendarBody() {
     return Array.from(unique.values()).map(mapBusySlot).filter((event): event is CalendarEvent => event !== null);
   }, [visibleBusySlots]);
   const displayedEvents = useMemo(() => [...myEvents, ...personalBusyEvents], [myEvents, personalBusyEvents]);
+  const activeMeetingTypeKeys = useMemo<MeetingTypeKey[]>(() => (
+    Array.from(new Set(displayedEvents.filter(event => event.source).map(event => getMeetingTypeKey(event))))
+  ), [displayedEvents]);
+  useEffect(() => {
+    setCalendarColors(loadCalendarColors(calendarColorOwner));
+  }, [calendarColorOwner]);
+  const handleCalendarColorsSave = useCallback((nextColors: CalendarColorPreferences) => {
+    setCalendarColors(nextColors);
+    saveCalendarColors(calendarColorOwner, nextColors);
+    setColorPreferencesOpen(false);
+  }, [calendarColorOwner]);
+  const handleCloseColorPreferences = useCallback(() => setColorPreferencesOpen(false), []);
   const focusedEventKey = useMemo(() => new URLSearchParams(location.search).get('event') || '', [location.search]);
 
   useEffect(() => {
@@ -853,7 +882,7 @@ function LearnerCalendarBody() {
     let event: CalendarEvent | undefined;
     if (reviewId) {
       if (!importedBooking.target) return;
-      const { review, eventKey, source } = importedBooking.target;
+      const { review, eventKey } = importedBooking.target;
       if (eventKey) {
         event = myEvents.find(item => item.eventKey === eventKey);
         if (!event) {
@@ -864,7 +893,7 @@ function LearnerCalendarBody() {
         setSchedulingError('This review is no longer available for scheduling.');
         return;
       } else {
-        event = mapCoachEvent({ ...importedReviewsToEvents([review], source)[0], status: 'not-scheduled', scheduledDate: null, scheduledTime: null }) || undefined;
+        event = myEvents.find(item => item.bookingReviewId === review.id || item.importedReview?.id === review.id);
       }
       if (event) event = { ...event, title: review.name || event.title, bookingReviewId: review.id, assignmentMonth: review.plannedDate?.slice(0, 7) };
     } else {
@@ -888,10 +917,6 @@ function LearnerCalendarBody() {
       setShowEventDetails(event);
     }
   }, [location.search, myEvents, calendarLoading, calendarError, importedBooking.target, openBookSession, openRescheduleSession]);
-  const confirmedCount = myEvents.filter((ev) => ev.status === 'confirmed').length;
-  const pendingCount = myEvents.filter((ev) => ev.status === 'pending').length;
-  const totalPoints = myEvents.filter((ev) => ev.status === 'confirmed').reduce((s, ev) => s + ev.points, 0);
-
   useEffect(() => {
     if ('Notification' in window) { setNotificationPermission(Notification.permission); restoreNotifications(); }
   }, []);
@@ -931,16 +956,19 @@ function LearnerCalendarBody() {
   }, [calendarConnections.length, viewYear, viewMonth, myLearner.kind, myLearner.id]);
 
   useEffect(() => {
-    if (!showBookModal || calendarConnections.length === 0 || !bookDate) {
+    // An unparseable day has no instant (toISOString would throw and take the
+    // page down); bookDateRestriction already asks for a valid date.
+    const day = parseBookingDay(bookDate);
+    if (!showBookModal || calendarConnections.length === 0 || !day) {
       setBusySlots([]);
       return;
     }
-    const start = new Date(`${bookDate}T00:00:00`).toISOString();
-    const end = new Date(`${bookDate}T23:59:59`).toISOString();
+    const start = new Date(day.getFullYear(), day.getMonth(), day.getDate(), 0, 0, 0).toISOString();
+    const end = new Date(day.getFullYear(), day.getMonth(), day.getDate(), 23, 59, 59).toISOString();
     let cancelled = false;
     setAvailabilityLoading(true);
     fetchPersonalCalendarAvailability(myLearner.kind, myLearner.id, start, end)
-      .then((result) => { if (!cancelled) setBusySlots(result.busy); })
+      .then((result) => { if (!cancelled) setBusySlots(Array.isArray(result?.busy) ? result.busy : []); })
       .catch(() => { if (!cancelled) setBusySlots([]); })
       .finally(() => { if (!cancelled) setAvailabilityLoading(false); });
     return () => { cancelled = true; };
@@ -950,26 +978,16 @@ function LearnerCalendarBody() {
     let cancelled = false;
     const writeVersion = calendarWriteVersionRef.current;
     fetchLearnerCalendarEvents(myLearner.kind, myLearner.id, { revalidate: true })
-      .then(async (res) => {
+      .then((res) => {
         if (cancelled || writeVersion !== calendarWriteVersionRef.current) return;
         const mapEvents = (rows: LearnerCalendarEvent[]) => rows.map(mapCoachEvent).filter((event): event is CalendarEvent => event !== null);
         setMyEvents(prev => [...mapEvents(res.events), ...prev.filter(event => event.id.startsWith('custom-'))]);
         setCalendarLoading(false);
-        const histories = await Promise.allSettled([
-          fetchReviewHistory(myLearner.kind, myLearner.id, 'monthly-coaching'),
-          fetchReviewHistory(myLearner.kind, myLearner.id, 'reviews'),
-        ]);
-        if (cancelled || writeVersion !== calendarWriteVersionRef.current) return;
-        const monthly = histories[0].status === 'fulfilled' ? histories[0].value.reviews : [];
-        const progress = histories[1].status === 'fulfilled' ? histories[1].value.reviews : [];
-        const events = mapEvents(mergeCompletedReviewHistory(res.events, [
-          ...importedReviewsToEvents(monthly, 'mcr'),
-          ...importedReviewsToEvents(progress, 'progress-review'),
-        ]));
+        const events = mapEvents(res.events);
         setBookingCalendar(res.bookingCalendar || null);
         // Keep locally-created personal events; replace the DB-backed ones.
         setMyEvents((prev) => [...events, ...prev.filter((ev) => ev.id.startsWith('custom-'))]);
-        setCalendarError(histories.some(result => result.status === 'rejected') ? 'Could not load archived reviews. Please try again.' : null);
+        setCalendarError(null);
       })
       .catch((err: Error) => {
         if (!cancelled && writeVersion === calendarWriteVersionRef.current) setCalendarError(err.message);
@@ -1106,10 +1124,10 @@ function LearnerCalendarBody() {
         bookType === 'other' ? `Requested session type: ${otherSessionType.trim()}` : '',
         bookNotes.trim(),
       ].filter(Boolean).join('\n');
-      const res = rescheduleEvent && !importedReviewBooking
+      const res = rescheduleEvent
         ? await rescheduleLearnerCalendarSession(myLearner.kind, myLearner.id, {
             eventKey: rescheduleEvent.eventKey || rescheduleEvent.id,
-            reviewId: rescheduleEvent.bookingReviewId,
+            reviewId: importedReviewId,
             scheduledDate: bookDate,
             scheduledTime: bookTime,
             durationMinutes: parseInt(bookDuration),
@@ -1132,11 +1150,8 @@ function LearnerCalendarBody() {
       calendarWriteVersionRef.current += 1;
       const mapped = mapCoachEvent(res.event);
       if (mapped) {
-        const updatedImportedReview = importedReview
-          ? { ...importedReview, status: 'scheduled', plannedDate: bookDate, plannedTime: bookTime }
-          : undefined;
-        const updatedEvent = updatedImportedReview
-          ? { ...mapped, id: sourceEvent?.id || mapped.id, importedReview: updatedImportedReview }
+        const updatedEvent = importedReview
+          ? { ...mapped, id: sourceEvent?.id || mapped.id, importedReview, bookingReviewId: importedReview.id }
           : {
               ...mapped,
               bookingReviewId: sourceEvent?.bookingReviewId,
@@ -1180,19 +1195,6 @@ function LearnerCalendarBody() {
   const handleNext = () => movePeriod(1);
   const handleToday = () => { setShowDayDrawer(false); setViewYear(today.getFullYear()); setViewMonth(today.getMonth()); setSelectedDay(today.getDate()); };
 
-  const handleAddToCalendar = (event: CalendarEvent) => {
-    const alreadyIn = myEvents.some((e) => e.id === event.id);
-    if (alreadyIn) { setAddToCalendarToast(`${event.title} is already in your calendar`); }
-    else {
-      const newEvent: CalendarEvent = { ...event, status: 'confirmed' as const };
-      const conflict = hasConflict(myEvents, newEvent);
-      if (conflict) { setConflictEvent(conflict); return; }
-      setMyEvents((prev) => [...prev, newEvent]);
-      setAddToCalendarToast(`"${event.title}" added to your calendar!`);
-    }
-    setTimeout(() => setAddToCalendarToast(null), 2500);
-  };
-
   const handleRemoveFromCalendar = (eventId: string) => {
     const ev = myEvents.find((e) => e.id === eventId);
     setMyEvents((prev) => prev.filter((e) => e.id !== eventId));
@@ -1202,6 +1204,26 @@ function LearnerCalendarBody() {
     if (ev) setAddToCalendarToast(`"${ev.title}" removed from calendar`);
     setShowEventDetails(null);
     setTimeout(() => setAddToCalendarToast(null), 2500);
+  };
+
+  // A learner cancels their own catch-up; Outlook emails the cancellation to them and their coach.
+  const cancelCatchup = async (ev: CalendarEvent) => {
+    if (cancelBusy || !window.confirm('Cancel this catch-up session? Your coach will be notified.')) return;
+    setCancelBusy(true); setCancelError('');
+    try {
+      const res = await cancelLearnerCalendarSession(myLearner.kind, myLearner.id, ev.eventKey || ev.id);
+      calendarWriteVersionRef.current += 1;
+      setMyEvents(prev => prev.filter(item => item.id !== ev.id));
+      setShowEventDetails(null);
+      // The lecture this catch-up was making up needs a new recovery.
+      invalidateLearnerReads();
+      setAddToCalendarToast(res.warning ? `Catch-up cancelled. (${res.warning})` : 'Catch-up cancelled. Your coach has been notified.');
+      setTimeout(() => setAddToCalendarToast(null), 4000);
+    } catch (err) {
+      setCancelError(err instanceof Error ? err.message : 'Could not cancel the catch-up.');
+    } finally {
+      setCancelBusy(false);
+    }
   };
 
   const handleExportICS = (ev: CalendarEvent) => {
@@ -1260,7 +1282,6 @@ function LearnerCalendarBody() {
   };
 
   const handleEnableNotifications = async () => { const result = await requestNotificationPermission(); setNotificationPermission(result); if (result === 'granted') { setAddToCalendarToast('Push notifications enabled!'); setTimeout(() => setAddToCalendarToast(null), 2500); } };
-  const handleTestNotification = () => { if (Notification.permission === 'granted') { showNotification('Test Reminder', 'Test notification for event reminder.'); setAddToCalendarToast('Test notification sent!'); } else { setAddToCalendarToast('Enable notifications first.'); } setTimeout(() => setAddToCalendarToast(null), 3000); };
   const handleGeneratePublicFeed = () => { const confirmedEvents = myEvents.filter((ev) => ev.status === 'confirmed'); const icsEvents: ICSEvent[] = confirmedEvents.map((ev) => ({ title: ev.title, description: ev.description, date: ev.date, time: ev.time, location: ev.location })); const url = createPublicFeedBlob(icsEvents); setPublicFeedUrl(url); };
   const handleCopyFeedUrl = () => { if (publicFeedUrl) { navigator.clipboard.writeText(publicFeedUrl); setFeedCopied(true); setTimeout(() => setFeedCopied(false), 2000); } };
 
@@ -1268,7 +1289,7 @@ function LearnerCalendarBody() {
   const now = today;
   const currentHour = now.getHours();
 
-  const attPct = ((p.attendanceRate || 86) / 100);
+  const genericBookingNeedsApproval = !rescheduleEvent && !bookingSourceEvent && COACH_APPROVAL_SESSION_TYPES.has(bookType);
 
   return (
     <>
@@ -1344,7 +1365,7 @@ function LearnerCalendarBody() {
                 : bookingSourceEvent
                   ? <>Choose a date and time for <strong className="text-foreground-700">{bookingSourceEvent.title}</strong>. This will book the official {sessionTypeLabel(bookingSourceEvent.bookingSessionType)} session for you and your coach.</>
                 : coach
-                  ? <>Choose the support you need. Catch-up and Student Support requests go to <strong className="text-foreground-700">{coach.name}</strong> for approval. Monthly Coaching Meeting and Progress Review sessions are scheduled from their calendar cards.</>
+                  ? <>Choose the support you need. Catch-up bookings are scheduled immediately with <strong className="text-foreground-700">{coach.name}</strong>. Student Support, Gateway, and Other requests need coach approval. Monthly Coaching Meeting and Progress Review sessions use their official curriculum calendar cards.</>
                   : 'No coach has been assigned to you yet — please contact your programme team.'}
             </p>
             <div className="space-y-4">
@@ -1357,32 +1378,13 @@ function LearnerCalendarBody() {
               )}
               {!rescheduleEvent && !bookingSourceEvent && <div>
                 <label className="text-xs font-semibold text-foreground-500 mb-1.5 block">Session Type <span className="text-red-400">*</span></label>
-                <div className="grid grid-cols-2 gap-3">
-                  {([
-                    { value: 'catch-up' as BookableSessionType, label: 'Catch-up', icon: 'ri-chat-3-line', desc: 'Quick check-in on your progress' },
-                    { value: 'student-support' as BookableSessionType, label: 'Student Support', icon: 'ri-heart-2-line', desc: 'Help with challenges or wellbeing' },
-                    // No First Session tile: it is booked with the case owner
-                    // when the learner is enrolled, before they can sign in, so
-                    // there is nothing here for a learner to request. Existing
-                    // first sessions still display, reschedule and cancel — only
-                    // the way to ask for a new one has moved.
-                    { value: 'progress-review' as BookableSessionType, label: 'PR', icon: 'ri-line-chart-line', desc: 'Progress Review' },
-                    { value: 'mcr' as BookableSessionType, label: 'MCM', icon: 'ri-calendar-check-line', desc: 'Monthly Coaching Meeting' },
-                    { value: 'gateway' as BookableSessionType, label: 'Gateway', icon: 'ri-flag-line', desc: 'Gateway review or assessment' },
-                    { value: 'other' as BookableSessionType, label: 'Other', icon: 'ri-more-line', desc: 'Request another session type' },
-                  ]).map((t, index, list) => (
-                    <button key={t.value} type="button" onClick={() => {
-                      setBookType(t.value);
-                      setBookError(null);
-                    }}
-                      /* A lone trailing tile leaves a visible gap, so let it span the row. */
-                      className={`p-3 rounded-xl border-2 text-left transition-all cursor-pointer ${index === list.length - 1 && list.length % 2 === 1 ? 'col-span-2' : ''} ${bookType === t.value ? 'border-primary-400 bg-primary-50/40' : 'border-background-300 hover:border-background-400'}`}>
-                      <span className={`w-8 h-8 rounded-lg flex items-center justify-center mb-2 ${bookType === t.value ? 'bg-primary-100 text-primary-600' : 'bg-background-100 text-foreground-500'}`}><AppIcon className={t.icon}></AppIcon></span>
-                      <p className="text-sm font-semibold text-foreground-900">{t.label}</p>
-                      <p className="text-xs text-foreground-400 mt-0.5">{t.desc}</p>
-                    </button>
-                  ))}
-                </div>
+                <CoachSessionTypePicker
+                  value={bookType}
+                  onChange={(value) => {
+                    setBookType(value);
+                    setBookError(null);
+                  }}
+                />
                 {bookType === 'other' && <div className="mt-3"><label htmlFor="other-session-type" className="text-xs font-semibold text-foreground-500">Other <span className="text-red-400">*</span></label><input id="other-session-type" type="text" value={otherSessionType} onChange={(e) => { setOtherSessionType(e.target.value); setBookError(null); }} maxLength={100} placeholder="Write the session type you need" className="mt-1.5 w-full bg-background-100 border border-background-300 rounded-lg px-3 py-2 text-sm text-foreground-800 placeholder:text-foreground-400 focus:outline-none focus:ring-1 focus:ring-primary-400/40 focus:border-primary-300/50 transition-all" /></div>}
               </div>}
               <div className="grid grid-cols-2 gap-3">
@@ -1478,7 +1480,7 @@ function LearnerCalendarBody() {
             <div className="flex gap-2 mt-5">
               <button onClick={() => setShowBookModal(false)} className="flex-1 px-4 py-2.5 rounded-xl border border-background-300 text-sm font-semibold text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap">Cancel</button>
               <button onClick={handleBookSession} disabled={bookSubmitting || availabilityLoading || selectedSlotConflicts || Boolean(sameWeekSession) || Boolean(selectedLmsConflict) || Boolean(bookDateRestriction) || !bookDate || !bookTime} className="flex-1 px-4 py-2.5 rounded-xl bg-primary-500 text-white text-sm font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed">
-                {bookSubmitting ? <><AppIcon className="ri-loader-4-line animate-spin mr-1"></AppIcon>{rescheduleEvent ? 'Rescheduling...' : bookingSourceEvent ? 'Booking...' : 'Sending...'}</> : <><AppIcon className={rescheduleEvent || bookingSourceEvent ? 'ri-calendar-check-line mr-1' : 'ri-check-line mr-1'}></AppIcon>{rescheduleEvent ? 'Save New Time' : bookingSourceEvent ? 'Book Session' : 'Send Request'}</>}
+                {bookSubmitting ? <><AppIcon className="ri-loader-4-line animate-spin mr-1"></AppIcon>{rescheduleEvent ? 'Rescheduling...' : bookingSourceEvent || !genericBookingNeedsApproval ? 'Booking...' : 'Sending...'}</> : <><AppIcon className={rescheduleEvent || bookingSourceEvent ? 'ri-calendar-check-line mr-1' : 'ri-check-line mr-1'}></AppIcon>{rescheduleEvent ? 'Save New Time' : bookingSourceEvent || !genericBookingNeedsApproval ? 'Book Session' : 'Send Request'}</>}
               </button>
             </div>
           </div>
@@ -1516,13 +1518,15 @@ function LearnerCalendarBody() {
       {showEventDetails && !conflictEvent && (
         <CalendarEventDialog
           title={showEventDetails.title}
-          onClose={() => setShowEventDetails(null)}
+          onClose={() => { setShowEventDetails(null); setCancelError(''); }}
           badges={<>
             <span className="rounded-full bg-primary-100 px-2.5 py-1 text-primary-700">{learnerSourceMeta(showEventDetails).label}</span>
             <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 ring-1 ring-inset ${LEARNER_STATUS_META[learnerEventStatus(showEventDetails)].badge}`}>
               <span className={`h-1.5 w-1.5 rounded-full ${LEARNER_STATUS_META[learnerEventStatus(showEventDetails)].dot}`}></span>
               {LEARNER_STATUS_META[learnerEventStatus(showEventDetails)].label}
             </span>
+            {showEventDetails.watchedRecording && <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-50 px-2.5 py-1 text-emerald-800 ring-1 ring-inset ring-emerald-200">
+              <AppIcon className="ri-play-circle-line" />Watched the full recording</span>}
           </>}
           actions={<>
 
@@ -1540,11 +1544,17 @@ function LearnerCalendarBody() {
                   <span>Schedule {sessionTypeLabel(showEventDetails.bookingSessionType)}</span>
                 </button>
               )}
-              {showEventDetails.meetingLink && (
+              {showEventDetails.meetingLink && showEventDetails.meetingOutcome && (
+                <button type="button" disabled title="This meeting has ended." className="meeting-join-action inline-flex flex-1 items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold whitespace-nowrap text-center cursor-not-allowed opacity-60"><AppIcon className="ri-video-chat-line h-4 w-4 shrink-0"></AppIcon><span>Meeting ended</span></button>
+              )}
+              {showEventDetails.meetingLink && !showEventDetails.meetingOutcome && (
                 <a href={showEventDetails.meetingLink} target="_blank" rel="noreferrer" className="meeting-join-action inline-flex flex-1 items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold transition-smooth cursor-pointer whitespace-nowrap text-center"><AppIcon className="ri-video-chat-line h-4 w-4 shrink-0"></AppIcon><span>Join Meeting</span></a>
               )}
               {showEventDetails.bookingStatus === 'scheduled' && showEventDetails.bookingSessionType && (
-                <button type="button" onClick={() => openRescheduleSession(showEventDetails)} className="inline-flex flex-1 items-center justify-center gap-2 rounded-xl border border-primary-200 bg-primary-50 px-4 py-2.5 text-sm font-semibold text-primary-700 transition-smooth hover:bg-primary-100 cursor-pointer whitespace-nowrap"><AppIcon className="ri-calendar-schedule-line h-4 w-4 shrink-0" /><span>Reschedule</span></button>
+                <button type="button" disabled={showEventDetails.changeClosed} title={showEventDetails.changeClosed ? 'Catch-ups can be changed up to 12 hours before they start.' : undefined} onClick={() => openRescheduleSession(showEventDetails)} className="inline-flex flex-1 items-center justify-center gap-2 rounded-xl border border-primary-200 bg-primary-50 px-4 py-2.5 text-sm font-semibold text-primary-700 transition-smooth hover:bg-primary-100 cursor-pointer whitespace-nowrap disabled:cursor-not-allowed disabled:opacity-60"><AppIcon className="ri-calendar-schedule-line h-4 w-4 shrink-0" /><span>Reschedule</span></button>
+              )}
+              {showEventDetails.bookingStatus === 'scheduled' && showEventDetails.source === 'catch-up' && (
+                <button type="button" disabled={showEventDetails.changeClosed || cancelBusy} title={showEventDetails.changeClosed ? 'Catch-ups can be cancelled up to 12 hours before they start.' : undefined} onClick={() => void cancelCatchup(showEventDetails)} className="inline-flex flex-1 items-center justify-center gap-2 rounded-xl border border-red-200 px-4 py-2.5 text-sm font-semibold text-red-600 transition-smooth hover:bg-red-50 cursor-pointer whitespace-nowrap disabled:cursor-not-allowed disabled:opacity-60"><AppIcon className="ri-calendar-close-line h-4 w-4 shrink-0" /><span>{cancelBusy ? 'Cancelling…' : 'Cancel catch-up'}</span></button>
               )}
               {!showEventDetails.timeToBeConfirmed && <button onClick={() => handleExportICS(showEventDetails)} className="inline-flex flex-1 items-center justify-center gap-2 px-4 py-2.5 rounded-xl border border-background-300 text-sm font-semibold text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap"><AppIcon className="ri-download-line h-4 w-4 shrink-0"></AppIcon><span>Export .ics</span></button>}
               {showEventDetails.id.startsWith('custom-') && (
@@ -1554,6 +1564,8 @@ function LearnerCalendarBody() {
           </>}
         >
           {addToCalendarToast && <p role="status" className="mb-4 rounded-xl border border-primary-200 bg-primary-50 px-3 py-2.5 text-sm text-primary-800">{addToCalendarToast}</p>}
+          {cancelError && <p role="alert" className="mb-4 rounded-xl border border-red-200 bg-red-50 px-3 py-2.5 text-sm text-red-700">{cancelError}</p>}
+          {showEventDetails.source === 'catch-up' && showEventDetails.bookingStatus === 'scheduled' && showEventDetails.changeClosed && <p role="status" className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5 text-sm text-amber-800">This catch-up starts in less than 12 hours, so it can no longer be changed or cancelled here. Please contact your coach.</p>}
           <dl className="mb-5 grid grid-cols-1 gap-4 text-sm sm:grid-cols-2">
             <div><dt className="mb-1 flex items-center gap-2 text-xs text-foreground-500"><AppIcon className="ri-calendar-line" />Date</dt><dd className="font-semibold">{showEventDetails.isoDate ? new Date(`${showEventDetails.isoDate}T12:00:00`).toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }) : `${showEventDetails.dayName}, ${showEventDetails.date}`}</dd></div>
             <div><dt className="mb-1 flex items-center gap-2 text-xs text-foreground-500"><AppIcon className="ri-time-line" />Time</dt><dd className="font-semibold">{showEventDetails.timeToBeConfirmed ? 'Time to be confirmed' : showEventDetails.time}</dd>{showEventDetails.durationMinutes && <dd className="mt-1 text-xs text-foreground-500">{showEventDetails.durationMinutes} minutes</dd>}</div>
@@ -1575,7 +1587,11 @@ function LearnerCalendarBody() {
             {!showEventDetails.timeToBeConfirmed && !showEventDetails.meetingLink && !showEventDetails.syncWarning && showEventDetails.club !== 'Personal' && (
               <div className="mb-4 flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5 text-amber-800">
                 <AppIcon className="ri-error-warning-line mt-0.5 shrink-0" />
-                <p className="text-xs font-semibold">{showEventDetails.bookingStatus === 'not-scheduled' ? 'Your preferred time has been sent to your coach. A Teams link will be created after coach approval.' : 'The meeting time is scheduled, but the Teams link is not available yet. Please contact your coach.'}</p>
+                <p className="text-xs font-semibold">{showEventDetails.bookingStatus === 'not-scheduled'
+                  ? showEventDetails.source === 'catch-up'
+                    ? 'Choose a date and time to schedule this catch-up.'
+                    : 'Your preferred time has been sent to your coach. A Teams link will be created after coach approval.'
+                  : 'The meeting time is scheduled, but the Teams link is not available yet. Please contact your coach.'}</p>
               </div>
             )}
         </CalendarEventDialog>
@@ -1631,23 +1647,26 @@ function LearnerCalendarBody() {
                 <div className="space-y-2">
                   {selectedDaySorted.map((ev) => {
                     const [startTime, endTime] = ev.time.split('–');
+                    const meetingColor = learnerMeetingTypeColor(ev, calendarColors);
+                    const statusColor = learnerEventStatusColor(ev, calendarColors);
                     return (
                       <button
                         key={ev.id}
                         type="button"
                         onClick={() => { setShowEventDetails(ev); setShowDayDrawer(false); }}
                         className="group flex w-full items-start gap-3 rounded-xl border border-background-200 bg-background-50 p-3 text-left transition-smooth hover:border-primary-200 hover:bg-primary-50/20 cursor-pointer"
+                        style={meetingColor ? { backgroundColor: meetingColor.background, borderColor: `${meetingColor.accent}55` } : undefined}
                       >
                         <div className="w-12 shrink-0 pt-0.5">
                           <p className="text-[11px] font-bold leading-tight text-foreground-700">{startTime}</p>
                           {endTime && <p className="text-[10px] leading-tight text-foreground-400">{endTime}</p>}
                         </div>
-                        <span className={`mt-1 h-2 w-2 shrink-0 rounded-full ${getEventDotColor(ev.type, ev.color)}`}></span>
+                        <span className={`mt-1 h-2 w-2 shrink-0 rounded-full ${meetingColor ? '' : getEventDotColor(ev.type, ev.color)}`} style={meetingColor ? { backgroundColor: meetingColor.accent } : undefined}></span>
                         <div className="min-w-0 flex-1">
                           <p className="truncate text-sm font-semibold text-foreground-900 transition-colors group-hover:text-primary-700">{ev.title}</p>
                           <div className="mt-0.5 flex items-center gap-2">
                             <span className="text-[10px] font-semibold uppercase tracking-wide text-foreground-400">{ev.type}</span>
-                            <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-semibold ${statusConfig[ev.status].cls}`}>{statusConfig[ev.status].label}</span>
+                            <span className="rounded-full px-1.5 py-0.5 text-[10px] font-semibold" style={{ backgroundColor: statusColor.background, color: statusColor.accent }}>{statusConfig[ev.status].label}</span>
                           </div>
                         </div>
                         <AppIcon className="ri-arrow-right-s-line mt-1 shrink-0 text-foreground-300 transition-colors group-hover:text-primary-500"></AppIcon>
@@ -1735,7 +1754,7 @@ function LearnerCalendarBody() {
           </div>
         </Panel>
 
-        <Panel padding="sm" className="border border-foreground-200/70 shadow-sm">
+        <Panel padding="sm" className="calendar-filter-host min-w-0 border border-[#E8DDF3] shadow-[0_4px_18px_rgba(79,45,127,0.06)]">
           <div className="flex flex-col gap-3">
             <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
               <div className="relative w-full xl:max-w-md">
@@ -1757,53 +1776,63 @@ function LearnerCalendarBody() {
                   Clear filters
                 </button>
               )}
+              <button type="button" onClick={() => setColorPreferencesOpen(true)}
+                className="inline-flex h-9 shrink-0 items-center justify-center gap-1.5 rounded-lg border-0 bg-[#F1ECF8] px-2.5 text-[11px] font-bold text-[#4F2D7F] shadow-sm transition hover:bg-[#E8DDF3] focus:outline-none focus:ring-2 focus:ring-[#4F2D7F]/25">
+                <AppIcon className="ri-palette-fill text-[13px]" />
+                Customise colours
+              </button>
             </div>
-            <div className="grid gap-3 xl:grid-cols-[minmax(0,1.45fr)_minmax(0,1fr)]">
-              <div className="min-w-0 rounded-xl bg-background-50/70 p-2">
-                <p className="mb-2 px-1 text-[11px] font-bold uppercase tracking-wide text-foreground-500">Source</p>
-                <div className="flex max-h-24 flex-wrap content-start gap-2 overflow-y-auto pr-1">
+            <div className="calendar-filter-layout mt-3 min-w-0">
+              <section className="calendar-filter-card flex min-w-0 flex-col overflow-hidden rounded-2xl border border-[#E8DDF3] bg-white shadow-[0_4px_18px_rgba(79,45,127,0.06)]" aria-labelledby="learner-calendar-source-filters-title">
+                <div>
+                  <h3 id="learner-calendar-source-filters-title" className="text-sm font-heading font-bold text-slate-900">Filter by source</h3>
+                  <p className="mt-0.5 text-[11px] text-slate-500">View events by source.</p>
+                </div>
+                <CalendarFilterScrollRow ariaLabel="Calendar source filters">
                   {sourceFilters.map((option) => {
                     const source = option.key;
-                    const meta = { label: option.longLabel, short: option.label, dot: option.dot };
                     const isActive = filterSource === source;
+                    const matchingEvent = displayedEvents.find(event => learnerEventSource(event) === source && event.source);
+                    const fallbackMeetingType: MeetingTypeKey = source === 'live-session' ? 'live-session'
+                      : source === 'catch-up' ? 'catch-up'
+                        : source === 'student-support' ? 'support'
+                          : 'other';
+                    const sourceColor = source === 'all'
+                      ? calendarColors.statuses.all
+                      : calendarColors.meetingTypes[matchingEvent ? getMeetingTypeKey(matchingEvent) : fallbackMeetingType];
                     return (
-                      <button
-                        key={source}
-                        type="button"
-                        onClick={() => setFilterSource(source)}
-                        className={`inline-flex shrink-0 items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-bold transition-smooth cursor-pointer ${isActive ? 'border-primary-500 bg-primary-600 text-white shadow-sm' : 'border-foreground-200 bg-white text-foreground-700 hover:border-primary-200 hover:bg-primary-50'}`}
-                        title={`${meta.label} (${sourceFilterCounts[source]})`}
-                      >
-                        <span className={`h-1.5 w-1.5 rounded-full ${isActive ? 'bg-white' : meta.dot}`}></span>
-                        {meta.short}
-                        <span className={isActive ? 'text-white/80' : 'text-foreground-400'}>{sourceFilterCounts[source]}</span>
+                      <button key={source} type="button" onClick={() => setFilterSource(source)} title={`${option.longLabel} (${sourceFilterCounts[source]})`}
+                        className={`calendar-filter-pill inline-flex items-center gap-2 rounded-xl border text-[11px] font-semibold transition focus:outline-none focus:ring-2 focus:ring-[#4F2D7F]/20 ${isActive ? 'border-[#C9B9DD] bg-[#F7F3FB] text-[#4F2D7F] shadow-sm' : 'border-slate-200 bg-white text-slate-700 hover:border-[#D8CCE8] hover:bg-slate-50'}`}>
+                        <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: isActive ? '#4F2D7F' : sourceColor.accent }} />
+                        <span>{option.label}</span>
+                        <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-bold ${isActive ? 'bg-[#E8DDF3] text-[#4F2D7F]' : 'bg-slate-100 text-slate-500'}`}>{sourceFilterCounts[source]}</span>
                       </button>
                     );
                   })}
+                </CalendarFilterScrollRow>
+              </section>
+              <section className="calendar-filter-card flex min-w-0 flex-col overflow-hidden rounded-2xl border border-[#E8DDF3] bg-white shadow-[0_4px_18px_rgba(79,45,127,0.06)]" aria-labelledby="learner-calendar-status-filters-title">
+                <div>
+                  <h3 id="learner-calendar-status-filters-title" className="text-sm font-heading font-bold text-slate-900">Status colours</h3>
+                  <p className="mt-0.5 text-[11px] text-slate-500">Track your sessions at a glance.</p>
                 </div>
-              </div>
-              <div className="min-w-0 rounded-xl bg-background-50/70 p-2">
-                <p className="mb-2 px-1 text-[11px] font-bold uppercase tracking-wide text-foreground-500">Status</p>
-                <div className="flex flex-wrap gap-2">
+                <CalendarFilterScrollRow ariaLabel="Calendar status filters">
                   {LEARNER_STATUS_FILTERS.map((status) => {
                     const meta = LEARNER_STATUS_META[status];
+                    const color = calendarColors.statuses[LEARNER_STATUS_COLOR_KEYS[status]];
                     const isActive = filterStatus === status;
                     return (
-                      <button
-                        key={status}
-                        type="button"
-                        onClick={() => setFilterStatus(status)}
-                        className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-bold transition-smooth cursor-pointer ${isActive ? 'border-primary-500 bg-primary-600 text-white shadow-sm' : 'border-foreground-200 bg-white text-foreground-700 hover:border-primary-200 hover:bg-primary-50'}`}
-                        title={`${meta.label} (${statusFilterCounts[status]})`}
-                      >
-                        <span className={`h-1.5 w-1.5 rounded-full ${isActive ? 'bg-white' : meta.dot}`}></span>
-                        {meta.label}
-                        <span className={isActive ? 'text-white/80' : 'text-foreground-400'}>{statusFilterCounts[status]}</span>
+                      <button key={status} type="button" onClick={() => setFilterStatus(status)} title={`${meta.label} (${statusFilterCounts[status]})`} aria-pressed={isActive}
+                        className="calendar-filter-pill inline-flex items-center gap-2 rounded-xl text-[11px] font-bold shadow-sm transition hover:brightness-[0.98] focus:outline-none focus:ring-2 focus:ring-[#4F2D7F]/20"
+                        style={{ backgroundColor: isActive ? '#4F2D7F' : color.background, color: isActive ? '#FFFFFF' : color.accent, border: `1px solid ${isActive ? '#4F2D7F' : color.accent}40` }}>
+                        <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: isActive ? '#FFFFFF' : color.accent }} />
+                        <span>{meta.label}</span>
+                        <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-bold ${isActive ? 'bg-white/20 text-white' : 'bg-white/70'}`}>{statusFilterCounts[status]}</span>
                       </button>
                     );
                   })}
-                </div>
-              </div>
+                </CalendarFilterScrollRow>
+              </section>
             </div>
           </div>
         </Panel>
@@ -1883,6 +1912,8 @@ function LearnerCalendarBody() {
                             }
                             const sourceMeta = learnerSourceMeta(ev);
                             const statusMeta = LEARNER_STATUS_META[learnerEventStatus(ev)];
+                            const meetingColor = learnerMeetingTypeColor(ev, calendarColors);
+                            const statusColor = learnerEventStatusColor(ev, calendarColors);
                             return (
                               <button
                                 type="button"
@@ -1890,6 +1921,7 @@ function LearnerCalendarBody() {
                                 key={ev.id}
                                 onClick={(event) => { event.stopPropagation(); setShowEventDetails(ev); }}
                                 className={`w-full rounded-lg border px-2 py-1 text-left shadow-sm transition-all duration-150 hover:-translate-y-0.5 hover:brightness-95 ${getEventColorClass(ev.type, ev.color).replace('border-l-', 'border-')}`}
+                                style={meetingColor ? { backgroundColor: meetingColor.background, borderColor: `${meetingColor.accent}55`, color: meetingColor.accent } : undefined}
                                 title={`${learnerSourceMeta(ev).label} · ${ev.title}`}
                               >
                                 <div className="flex min-w-0 items-center gap-1.5">
@@ -1901,9 +1933,10 @@ function LearnerCalendarBody() {
                                   {(ev.host || ev.club) && <span className="min-w-0 truncate text-[10px] font-medium opacity-75">{ev.host || ev.club}</span>}
                                   <span
                                     aria-label={`${statusMeta.label} status`}
-                                    className={`ml-auto inline-flex shrink-0 items-center gap-1 rounded-full px-1.5 py-0.5 text-[8px] font-extrabold leading-none ring-1 ring-inset sm:text-[9px] ${statusMeta.badge}`}
+                                    className="ml-auto inline-flex shrink-0 items-center gap-1 rounded-full px-1.5 py-0.5 text-[8px] font-extrabold leading-none ring-1 ring-inset sm:text-[9px]"
+                                    style={{ backgroundColor: statusColor.background, color: statusColor.accent, borderColor: `${statusColor.accent}40` }}
                                   >
-                                    <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${statusMeta.dot}`}></span>
+                                    <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ backgroundColor: statusColor.accent }}></span>
                                     {statusMeta.label}
                                   </span>
                                 </div>
@@ -1943,27 +1976,30 @@ function LearnerCalendarBody() {
                       const eventSource = ev.source;
                       const sourceMeta = learnerSourceMeta(ev);
                       const statusMeta = LEARNER_STATUS_META[learnerEventStatus(ev)];
+                      const meetingColor = learnerMeetingTypeColor(ev, calendarColors);
+                      const statusColor = learnerEventStatusColor(ev, calendarColors);
                       return (
                         <button
                           key={ev.id}
                           type="button"
                           onClick={() => setShowEventDetails(ev)}
                           className={`group flex w-full items-center gap-3 rounded-xl border px-3 py-3 text-left transition-all duration-150 hover:-translate-y-0.5 hover:shadow-sm cursor-pointer ${getEventColorClass(ev.type, ev.color).replace('border-l-', 'border-')}`}
+                          style={meetingColor ? { backgroundColor: meetingColor.background, borderColor: `${meetingColor.accent}55`, color: meetingColor.accent } : undefined}
                         >
                           <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-white/75 shadow-sm">
                             <AppIcon className={`${eventSource === 'live-session' ? 'ri-video-chat-line' : ev.reviewTemplateId ? 'ri-file-list-3-line' : eventSource === 'student-support' ? 'ri-heart-2-line' : eventSource === 'other' ? 'ri-more-line' : ev.type === 'Busy' ? 'ri-lock-line' : 'ri-chat-3-line'} text-primary-600`}></AppIcon>
                           </span>
                           <div className="min-w-0 flex-1">
                             <div className="mb-1 flex min-w-0 items-center gap-1.5">
-                              <span className={`h-2 w-2 shrink-0 rounded-full ${sourceMeta.dot}`}></span>
+                              <span className={`h-2 w-2 shrink-0 rounded-full ${meetingColor ? '' : sourceMeta.dot}`} style={meetingColor ? { backgroundColor: meetingColor.accent } : undefined}></span>
                               <p className="truncate text-sm font-heading font-bold text-foreground-950">{ev.title}</p>
                             </div>
                             <p className="truncate text-xs font-medium text-foreground-500">
                               {ev.timeToBeConfirmed ? 'Time to be confirmed' : ev.time} · {ev.club}
                             </p>
                           </div>
-                          <span aria-label={`${statusMeta.label} status`} className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-bold ring-1 ring-inset ${statusMeta.badge}`}>
-                            <span className={`h-1.5 w-1.5 rounded-full ${statusMeta.dot}`}></span>
+                          <span aria-label={`${statusMeta.label} status`} className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-bold ring-1 ring-inset" style={{ backgroundColor: statusColor.background, color: statusColor.accent, borderColor: `${statusColor.accent}40` }}>
+                            <span className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: statusColor.accent }}></span>
                             {statusMeta.label}
                           </span>
                         </button>
@@ -2073,12 +2109,15 @@ function LearnerCalendarBody() {
                           <div className="space-y-1">
                             {eventsInSlot.map((ev) => {
                               const typeColor = getEventColorClass(ev.type, ev.color);
+                              const meetingColor = learnerMeetingTypeColor(ev, calendarColors);
+                              const statusColor = learnerEventStatusColor(ev, calendarColors);
                               return (
                                 <button type="button" aria-haspopup="dialog" key={ev.id} className={`w-full text-left p-3 rounded-xl cursor-pointer hover:shadow-sm hover:brightness-95 transition-all duration-200 border-l-[3px] ${typeColor}`}
+                                  style={meetingColor ? { backgroundColor: meetingColor.background, borderColor: `${meetingColor.accent}55`, borderLeftColor: meetingColor.accent } : undefined}
                                   onClick={() => setShowEventDetails(ev)}>
                                   <div className="flex items-center justify-between mb-1">
                                     <span className="text-sm font-semibold text-foreground-900">{ev.title}</span>
-                                    <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${statusConfig[ev.status].cls}`}>{statusConfig[ev.status].label}</span>
+                                    <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full" style={{ backgroundColor: statusColor.background, color: statusColor.accent }}>{statusConfig[ev.status].label}</span>
                                   </div>
                                   <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-foreground-500">
                                     <span className="flex items-center gap-1"><AppIcon className="ri-time-line text-foreground-400 text-xs"></AppIcon>{ev.time}</span>
@@ -2141,6 +2180,13 @@ function LearnerCalendarBody() {
 
         </div>
       </PageContainer>
+      <CalendarColorPreferencesDrawer
+        open={colorPreferencesOpen}
+        value={calendarColors}
+        onClose={handleCloseColorPreferences}
+        onSave={handleCalendarColorsSave}
+        activeMeetingTypeKeys={activeMeetingTypeKeys}
+      />
     </>
   );
 }

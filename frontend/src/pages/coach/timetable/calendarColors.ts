@@ -10,6 +10,7 @@ export type MeetingTypeKey =
   | 'other';
 
 export type CalendarStatusKey =
+  | 'all'
   | 'missed-overdue'
   | 'pending-due-soon'
   | 'awaiting-signature'
@@ -75,13 +76,14 @@ export const DEFAULT_CALENDAR_COLORS: CalendarColorPreferences = {
     other: { accent: '#6B7280', background: '#F9FAFB' },
   },
   statuses: {
+    all: { accent: '#4F2D7F', background: '#F1ECF8' },
     'missed-overdue': { accent: '#DC2626', background: '#FEF2F2' },
     'pending-due-soon': { accent: '#D97706', background: '#FFFBEB' },
-    'awaiting-signature': { accent: '#D97706', background: '#FFFBEB' },
-    'in-progress': { accent: '#D97706', background: '#FFFBEB' },
+    'awaiting-signature': { accent: '#C2410C', background: '#FFF7ED' },
+    'in-progress': { accent: '#B45309', background: '#FEF3C7' },
     scheduled: { accent: '#059669', background: '#ECFDF5' },
-    completed: { accent: '#059669', background: '#ECFDF5' },
-    'not-scheduled': { accent: '#6B7280', background: '#F3F4F6' },
+    completed: { accent: '#047857', background: '#D1FAE5' },
+    'not-scheduled': { accent: '#DC2626', background: '#FEF2F2' },
   },
 };
 
@@ -219,6 +221,7 @@ export const PASTEL_CALENDAR_COLORS: CalendarColorPreferences = {
     other: { accent: '#9CA3AF', background: '#FAFAFA' },
   },
   statuses: {
+    all: { accent: '#FFFFFF', background: '#8B5CF6' },
     'missed-overdue': { accent: '#F87171', background: '#FFF5F5' },
     'pending-due-soon': { accent: '#FBBF24', background: '#FFFDF4' },
     'awaiting-signature': { accent: '#FBBF24', background: '#FFFDF4' },
@@ -242,6 +245,7 @@ export const HIGH_CONTRAST_CALENDAR_COLORS: CalendarColorPreferences = {
     other: { accent: '#374151', background: '#E5E7EB' },
   },
   statuses: {
+    all: { accent: '#FFFFFF', background: '#5B21B6' },
     'missed-overdue': { accent: '#B91C1C', background: '#FEE2E2' },
     'pending-due-soon': { accent: '#B45309', background: '#FEF3C7' },
     'awaiting-signature': { accent: '#B45309', background: '#FEF3C7' },

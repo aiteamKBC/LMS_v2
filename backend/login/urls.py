@@ -1,13 +1,17 @@
 """URLs for the login app, mounted at /login_api/ (see config/urls.py)."""
 from django.urls import path
 from . import safeguarding_sso
+from . import inclusion_sso
 from . import coach_directory
+from . import lms_introduction
 
-from . import admin_evidence, access_requests, microsoft_sso, platform_admin, views
+from . import admin_evidence, access_requests, microsoft_sso, platform_admin, saved_signature, views
 from old_otjh.entry import entry_status
 
 urlpatterns = [
+    path("inclusion/authorize/", inclusion_sso.authorize, name="inclusion-authorize"),
     path('public/coaches/<slug:slug>/', coach_directory.public_coach, name='public-coach-booking'),
+    path('public/lms-introduction/', lms_introduction.public_request, name='public-lms-introduction'),
     path('admin/coach-directory/', coach_directory.directory, name='admin-coach-directory'),
     path('admin/coach-directory/<int:pk>/', coach_directory.directory, name='admin-coach-directory-item'),
     path("safeguarding/authorize/", safeguarding_sso.authorize, name="safeguarding-authorize"),
@@ -17,6 +21,8 @@ urlpatterns = [
     path("login/", views.login, name="login"),
     path("logout/", views.logout, name="logout"),
     path("me/", views.me, name="login-me"),
+    # The signed-in person's own saved signature, offered wherever they sign.
+    path("me/signature/", saved_signature.my_signature, name="login-my-signature"),
     path("learner-entry/", entry_status, name="learner-entry"),
 
     # --- sign in with Microsoft (see microsoft_sso.py) ---
@@ -33,6 +39,7 @@ urlpatterns = [
     path("invitation/", views.invitation_info, name="login-invitation-info"),
     path("accept-invitation/", views.accept_invitation_view, name="login-accept-invitation"),
     path("accounts/invite/", views.invite_account, name="login-invite-account"),
+    path("accounts/invitation-link/", views.invitation_link_view, name="login-invitation-link"),
 
     # --- a signed-in account with no access grant asking for one ---
     path("request-access/", access_requests.request_access, name="login-request-access"),

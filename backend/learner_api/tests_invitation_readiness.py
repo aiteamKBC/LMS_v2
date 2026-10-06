@@ -156,6 +156,22 @@ class InvitationReleaseTests(SimpleTestCase):
         self.assertFalse(result[1])
         advance.assert_not_called()
 
+    def test_invitation_is_kept_in_sent_items(self):
+        account = SimpleNamespace(id=7, subject_id=132, subject_type="staff",
+                                  display_name="Staff member", email="staff@example.test")
+        with patch.object(invitations, "create_invitation", return_value=(SimpleNamespace(save=Mock()), "t")),                 patch.object(invitations.email_azure, "invitation_message", return_value=("s", "h", "t")),                 patch.object(invitations.email_azure, "send_mail", return_value=(True, None)) as send_mail,                 patch.object(invitations, "record"):
+            invitations.send_invitation(account)
+        self.assertTrue(send_mail.call_args.kwargs["save_to_sent"])
+
+    def test_password_reset_is_kept_in_sent_items(self):
+        account = SimpleNamespace(id=7, display_name="Staff member", email="staff@example.test")
+        with patch.object(invitations, "create_reset", return_value=(SimpleNamespace(save=Mock()), "t")), \
+                patch.object(invitations.email_azure, "reset_message", return_value=("s", "h", "t")), \
+                patch.object(invitations.email_azure, "send_mail", return_value=(True, None)) as send_mail, \
+                patch.object(invitations, "record"):
+            invitations.send_reset(account)
+        self.assertTrue(send_mail.call_args.kwargs["save_to_sent"])
+
     def test_staff_invitation_never_changes_learner_status(self):
         _, _, advance = self.send(True, subject_type="staff")
         advance.assert_not_called()

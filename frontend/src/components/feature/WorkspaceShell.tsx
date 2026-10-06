@@ -1,6 +1,7 @@
 import { useState, useRef, useCallback, type CSSProperties, type ReactNode, useEffect } from 'react';
 import { useLocation, useNavigate, Link } from 'react-router-dom';
 import { Sidebar, SidebarIcon, SIDEBAR_RAIL_WIDTH, SIDEBAR_EXPANDED_WIDTH, SIDEBAR_CONTENT_GAP, type SidebarNavItem } from './Sidebar';
+import { LEARNER_SIDEBAR_COLLAPSED_WIDTH, LEARNER_SIDEBAR_WIDTH } from './learnerShellAssets';
 import { CoachViewAsBar } from './CoachViewAsBar';
 import { CoachSidebar } from './CoachSidebar';
 import { Header } from './Header';
@@ -12,9 +13,10 @@ import { useLearnerNavGate } from '@/hooks/useLearnerNavGate';
 import { getRememberedLearner } from '@/hooks/useMyLearner';
 import { ArrowLeft } from 'lucide-react';
 import design from './WorkspaceDesign.module.css';
+import './CoachResponsive.css';
 import { activePersonalLearning } from '@/lib/personalLearning';
 import { PersonalLearningBanner } from './PersonalLearningBanner';
-import { learnerHref, learnerIdentityFromPath, type LearnerRoutePage } from '@/lib/learnerRoutes';
+import { bareLearnerPath, learnerHref, learnerIdentityFromPath, type LearnerRoutePage } from '@/lib/learnerRoutes';
 
 interface WorkspaceShellProps {
   children: ReactNode;
@@ -23,6 +25,8 @@ interface WorkspaceShellProps {
   navItems: SidebarNavItem[];
   pageTitle: string;
   pageSubtitle?: string;
+  /** Optional page-specific actions rendered inside the shared header. */
+  headerExtras?: ReactNode;
   userName?: string;
   userRole?: string;
   workspaceLabel?: string;
@@ -53,8 +57,9 @@ interface BreadcrumbItem {
 const ROUTE_HISTORY_KEY = 'lmsRouteHistory';
 const SIDEBAR_PINNED_KEY = 'kbc_sidebar_pinned';
 const COACH_SIDEBAR_COLLAPSED_KEY = 'kbc_coach_sidebar_collapsed';
+const LEARNER_SIDEBAR_COLLAPSED_KEY = 'kbc_learner_sidebar_collapsed';
 const COACH_SIDEBAR_WIDTH = 240;
-const COACH_SIDEBAR_COLLAPSED_WIDTH = 76;
+const COACH_SIDEBAR_COLLAPSED_WIDTH = LEARNER_SIDEBAR_COLLAPSED_WIDTH;
 
 /**
  * Whether the sidebar's secondary navigation is open.
@@ -73,6 +78,14 @@ function readPinnedPreference() {
 function readCoachSidebarCollapsed() {
   try {
     return localStorage.getItem(COACH_SIDEBAR_COLLAPSED_KEY) === 'true';
+  } catch {
+    return false;
+  }
+}
+
+function readLearnerSidebarCollapsed() {
+  try {
+    return localStorage.getItem(LEARNER_SIDEBAR_COLLAPSED_KEY) === 'true';
   } catch {
     return false;
   }
@@ -178,10 +191,11 @@ export function WorkspaceShell({
   navItems: navItemsProp,
   pageTitle,
   pageSubtitle,
+  headerExtras,
   userName,
   userRole,
   workspaceLabel,
-  showBackButton = false,
+  showBackButton,
   backFallbackHref,
   breadcrumbCurrentLabel,
   hidePageChrome = false,
@@ -222,9 +236,12 @@ export function WorkspaceShell({
     'learner-overview': 'dashboard', 'learner-my-learning': 'my-learning',
     'learner-group-monthly': 'my-progress',
     'learner-monthly-submission': 'monthly-submission', 'learner-monthly-logs': 'monthly-logs',
-    'learner-monthly-coaching': 'monthly-coaching', 'learner-progress-reviews': 'reviews',
+    'learner-monthly-coaching': 'monthly-coaching', 'learner-progress-reviews': 'progress-reviews', 'learner-reviews': 'reviews',
     'learner-attendance': 'attendance', 'learner-evidence': 'evidence', 'learner-calendar': 'calendar',
   };
+  const homeDashboardPath = routeLearner
+    ? `/workspace/learner/${routeLearner.kind}/${routeLearner.id}/dashboard`
+    : null;
   const stableNavItems = routeLearner
     ? navItems.map(item => {
       const page = learnerPageById[item.id];
@@ -232,21 +249,29 @@ export function WorkspaceShell({
         const childPage = learnerPageById[child.id];
         return childPage ? { ...child, href: learnerHref(childPage, routeLearner.kind, routeLearner.id) } : child;
       });
-      return page ? { ...item, href: learnerHref(page, routeLearner.kind, routeLearner.id), children } : children ? { ...item, children } : item;
+      return page ? { ...item, href: page === 'dashboard' && location.pathname === homeDashboardPath
+        ? homeDashboardPath : learnerHref(page, routeLearner.kind, routeLearner.id), children } : children ? { ...item, children } : item;
     })
     : navItems;
   const workspaceNavItems = auth.account?.role === 'admin' && !navItems.some(item => item.id === 'personal-courses')
     ? [...stableNavItems, { id: 'personal-courses', label: 'My Courses', icon: 'ri-graduation-cap-line', href: '/my-courses' }]
     : stableNavItems;
   const navigate = useNavigate();
+  const displayBackButton = showBackButton ?? ['coach', 'learner', 'curriculum'].includes(role);
   const [searchOpen, setSearchOpen] = useState(false);
   const [previousRoute, setPreviousRoute] = useState('');
 
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const closeMobileSidebar = useCallback(() => setMobileSidebarOpen(false), []);
+  const mobileMenuButtonRef = useRef<HTMLButtonElement>(null);
+  const mobileFocusBeforeOpenRef = useRef<HTMLElement | null>(null);
+  const mobileSidebarWasOpenRef = useRef(false);
+  const mobileBodyOverflowRef = useRef<string | null>(null);
+  const mobileFocusTimerRef = useRef<number | null>(null);
   const accountButtonRef = useRef<HTMLButtonElement>(null);
   const [sidebarPinned, setSidebarPinned] = useState(readPinnedPreference);
   const [coachSidebarCollapsed, setCoachSidebarCollapsed] = useState(readCoachSidebarCollapsed);
+  const [learnerSidebarCollapsed, setLearnerSidebarCollapsed] = useState(readLearnerSidebarCollapsed);
 
   const handlePinChange = (pinned: boolean) => {
     setSidebarPinned(pinned);
@@ -262,14 +287,119 @@ export function WorkspaceShell({
     } catch { /* Ignore unavailable browser storage. */ }
   };
 
+  const handleLearnerSidebarCollapsedChange = (collapsed: boolean) => {
+    setLearnerSidebarCollapsed(collapsed);
+    try {
+      localStorage.setItem(LEARNER_SIDEBAR_COLLAPSED_KEY, String(collapsed));
+    } catch { /* Ignore unavailable browser storage. */ }
+  };
+
   const displayName = (isAdminDirectory ? auth.account?.displayName || auth.user?.fullName : userName) || auth.user?.fullName || 'User';
-  const displayRole = personal ? 'Admin · Learner' : userRole || auth.roles[0]?.name || roleLabel;
+  const displayRole = personal ? 'Admin · Learner' : userRole || auth.roles?.[0]?.name || roleLabel;
   const defaultWorkspaceLabel = workspaceLabel || roleLabel + ' Workspace';
 
   // Close mobile sidebar on route change
   useEffect(() => {
     setMobileSidebarOpen(false);
   }, [location.pathname]);
+
+  // A learner on their own sign-in never sees their type or id in the address
+  // bar: the page already resolves them from the session (useMyLearner), so a
+  // link naming them is swapped for its bare route. Staff and admin previews
+  // keep the ids -- for them the URL is what says which learner is shown.
+  const ownAccount = auth.account?.role === 'learner' ? auth.account : null;
+  const ownBarePath = ownAccount && routeLearner
+    && routeLearner.id === String(ownAccount.subjectId)
+    && routeLearner.kind === (ownAccount.learnerType === 'commercial' ? 'commercial' : 'apprenticeship')
+    ? bareLearnerPath(location.pathname, routeLearner.kind, routeLearner.id)
+    : null;
+  useEffect(() => {
+    if (ownBarePath) navigate(`${ownBarePath}${location.search}${location.hash}`, { replace: true, state: location.state });
+  }, [ownBarePath, location.search, location.hash, location.state, navigate]);
+
+  useEffect(() => {
+    if (role !== 'learner') return;
+    if (mobileSidebarOpen) {
+      if (!mobileSidebarWasOpenRef.current) {
+        mobileSidebarWasOpenRef.current = true;
+        mobileFocusBeforeOpenRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+        mobileBodyOverflowRef.current = document.body.style.overflow;
+        document.body.style.overflow = 'hidden';
+      }
+      if (mobileFocusTimerRef.current !== null) window.clearTimeout(mobileFocusTimerRef.current);
+      mobileFocusTimerRef.current = window.setTimeout(() => {
+        document.querySelector<HTMLButtonElement>(`#${role}-mobile-navigation button[aria-label="Close navigation"]`)?.focus();
+      }, 0);
+      return () => {
+        if (mobileFocusTimerRef.current !== null) {
+          window.clearTimeout(mobileFocusTimerRef.current);
+          mobileFocusTimerRef.current = null;
+        }
+      };
+    }
+
+    if (mobileSidebarWasOpenRef.current) {
+      document.body.style.overflow = mobileBodyOverflowRef.current ?? '';
+      if (!document.body.style.overflow) document.body.style.removeProperty('overflow');
+      if (mobileFocusBeforeOpenRef.current && document.body.contains(mobileFocusBeforeOpenRef.current)) {
+        mobileFocusBeforeOpenRef.current.focus();
+      } else {
+        mobileMenuButtonRef.current?.focus();
+      }
+    }
+    mobileSidebarWasOpenRef.current = false;
+    mobileFocusBeforeOpenRef.current = null;
+    mobileBodyOverflowRef.current = null;
+    return () => {
+      if (mobileFocusTimerRef.current !== null) window.clearTimeout(mobileFocusTimerRef.current);
+    };
+  }, [mobileSidebarOpen, role]);
+
+  useEffect(() => {
+    if (role !== 'learner' || !mobileSidebarOpen) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        setMobileSidebarOpen(false);
+        return;
+      }
+      if (event.key !== 'Tab') return;
+      const drawer = document.getElementById(`${role}-mobile-navigation`);
+      if (!drawer) return;
+      const focusable = Array.from(drawer.querySelectorAll<HTMLElement>(
+        'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+      )).filter(element => !element.hasAttribute('inert') && element.offsetParent !== null);
+      if (focusable.length === 0) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    document.addEventListener('keydown', onKeyDown);
+    return () => document.removeEventListener('keydown', onKeyDown);
+  }, [mobileSidebarOpen, role]);
+
+  useEffect(() => () => {
+    if (mobileBodyOverflowRef.current === null) return;
+    document.body.style.overflow = mobileBodyOverflowRef.current;
+    if (!document.body.style.overflow) document.body.style.removeProperty('overflow');
+    mobileBodyOverflowRef.current = null;
+    mobileSidebarWasOpenRef.current = false;
+  }, []);
+
+  useEffect(() => {
+    if (role !== 'learner') return;
+    const onResize = () => {
+      if (window.innerWidth >= 1024) setMobileSidebarOpen(false);
+    };
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, [role]);
 
   useEffect(() => {
     const currentRoute = `${location.pathname}${location.search}${location.hash}`;
@@ -313,7 +443,9 @@ export function WorkspaceShell({
       // The offset itself is applied under a `lg` media query in index.css —
       // below that breakpoint the sidebar is an off-canvas drawer and must
       // reserve nothing.
-      style={{ '--kbc-sidebar-width': role === 'coach'
+      style={{ '--kbc-sidebar-width': role === 'learner'
+        ? `${learnerSidebarCollapsed ? LEARNER_SIDEBAR_COLLAPSED_WIDTH : LEARNER_SIDEBAR_WIDTH}px`
+        : role === 'coach'
         ? `${coachSidebarCollapsed ? COACH_SIDEBAR_COLLAPSED_WIDTH : COACH_SIDEBAR_WIDTH}px`
         : `${(sidebarPinned ? SIDEBAR_EXPANDED_WIDTH : SIDEBAR_RAIL_WIDTH) + SIDEBAR_CONTENT_GAP}px` } as CSSProperties}
     >
@@ -329,12 +461,16 @@ export function WorkspaceShell({
         userRole={displayRole}
         pinned={sidebarPinned}
         onPinChange={handlePinChange}
+        learnerCollapsed={learnerSidebarCollapsed}
+        onLearnerCollapsedChange={handleLearnerSidebarCollapsedChange}
         mobileOpen={mobileSidebarOpen}
         onCloseMobile={() => setMobileSidebarOpen(false)}
       />}
       {/* Reserve the shared sidebar width and gutters for every workspace. */}
       <div
         className="workspace-content flex-1 flex flex-col min-w-0 transition-[margin] duration-300 ease-out motion-reduce:transition-none"
+        aria-hidden={role === 'learner' && mobileSidebarOpen ? true : undefined}
+        inert={role === 'learner' && mobileSidebarOpen ? true : undefined}
         style={{ marginLeft: 'var(--kbc-sidebar-offset, 0px)' }}
       >
         {personal && <PersonalLearningBanner context={personal} />}
@@ -344,10 +480,12 @@ export function WorkspaceShell({
             pageTitle={pageTitle}
             pageIcon={headerNavItem ? <SidebarIcon id={headerNavItem.id} label={headerNavItem.label} sourceIcon={headerNavItem.icon} className="h-5 w-5" /> : undefined}
             pageSubtitle={pageSubtitle}
+            headerExtras={headerExtras}
             onOpenSearch={() => setSearchOpen(true)}
             userName={displayName}
             onToggleMobileSidebar={handleToggleMobileSidebar}
             mobileSidebarOpen={mobileSidebarOpen}
+            mobileMenuButtonRef={mobileMenuButtonRef}
             role={chromeRole}
             workspaceLabel={personal ? 'Learner' : roleLabel}
             personalLearning={Boolean(personal)}
@@ -355,24 +493,24 @@ export function WorkspaceShell({
         )}
 
         {/* Breadcrumbs */}
-        {!hidePageChrome && (showBackButton || (!hideBreadcrumbs && breadcrumbs.length > 0)) && (
-          <div className={`workspace-breadcrumbs mx-2 flex ${showBackButton ? 'min-h-12 gap-3 py-1.5' : 'h-8'} shrink-0 items-center overflow-hidden rounded-xl border-b border-background-300/40 bg-background-200 px-3 md:px-5 lg:ml-0 lg:mr-3`}>
-            {showBackButton && <button type="button" onClick={handleReturnToPreviousWindow} disabled={!canGoBack}
+        {!hidePageChrome && (displayBackButton || (!hideBreadcrumbs && breadcrumbs.length > 0)) && (
+          <div className={`workspace-breadcrumbs mx-2 flex ${displayBackButton ? 'min-h-12 gap-3 py-1.5' : 'h-8'} shrink-0 items-center overflow-hidden rounded-xl border-b border-background-300/40 bg-background-200 px-3 md:px-5 lg:ml-0 lg:mr-3`}>
+            {displayBackButton && <button type="button" onClick={handleReturnToPreviousWindow} disabled={!canGoBack}
               className="kbc-workspace-back" aria-label="Back to previous page"
               title={!canGoBack ? 'You are on the first page' : previousRoute ? 'Back to the previous page' : 'Back'}>
               <ArrowLeft size={16} aria-hidden="true" /><span>Back</span>
             </button>}
-            {!hideBreadcrumbs && <nav className="flex min-w-0 items-center gap-1.5 overflow-x-auto text-xs [scrollbar-width:none] [&::-webkit-scrollbar]:hidden" aria-label="Breadcrumb">
+            {!hideBreadcrumbs && <nav className={`flex min-w-0 items-center gap-1.5 overflow-x-auto text-xs [scrollbar-width:none] [&::-webkit-scrollbar]:hidden ${role === 'learner' || role === 'coach' ? 'learner-step-breadcrumb' : ''}`} aria-label="Breadcrumb">
               {roleLabel !== 'Super Admin' && (
                 <>
-                  <Link to="/" className="text-foreground-300 hover:text-foreground-500 transition-smooth">
+                  <Link to="/" className="workspace-breadcrumb-home text-foreground-300 hover:text-foreground-500 transition-smooth">
                     <AppIcon className="ri-home-3-line text-base"></AppIcon>
                   </Link>
-                  <AppIcon className="ri-arrow-right-s-line text-foreground-200 text-xs"></AppIcon>
+                  <AppIcon className="workspace-breadcrumb-home-separator ri-arrow-right-s-line text-foreground-200 text-xs"></AppIcon>
                 </>
               )}
               {breadcrumbs.map((crumb, index) => (
-                <span key={`${crumb.href}-${index}`} className="flex items-center gap-1.5">
+                <span key={`${crumb.href}-${index}`} className={`workspace-breadcrumb-step flex items-center gap-1.5 ${index < breadcrumbs.length - 1 ? 'is-complete' : 'is-current'}`}>
                   {index < breadcrumbs.length - 1 ? (
                     <>
                       {crumb.isLink ? (

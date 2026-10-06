@@ -1,14 +1,15 @@
 import { useState, useEffect } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
-import { AuthError, apiAuthHealth, apiMicrosoftStart } from '@/api/auth';
+import { AuthError, PasswordSetupRequired, apiAuthHealth, apiMicrosoftStart } from '@/api/auth';
 import { AppIcon } from '@/components/feature/AppIcon';
 // Shared with RequireAuth, so the page you are sent to after signing in and
 // the page you are sent back to when refused are decided by one definition.
 import { postLoginRouteFor } from '@/lib/routeAccess';
 import styles from './page.module.css';
 
-const CAMPUS_IMAGE_URL = '/kent-business-college-campus.png';
+const BOOK_IMAGE_URL = '/login-open-book.png';
+const SIDEBAR_LOGO_URL = 'https://jokdxsdbxorzciulkdyl.supabase.co/storage/v1/object/public/images/16480272afc94729b2911a62d1bbf85d.webp';
 
 export default function LoginPage() {
   const { login, auth, isInitialized } = useAuth();
@@ -80,6 +81,10 @@ export default function LoginPage() {
       const account = await login(email, password, rememberMe);
       navigate(postLoginRouteFor(account), { replace: true });
     } catch (err) {
+      if (err instanceof PasswordSetupRequired) {
+        navigate(err.setPasswordPath, { replace: true, state: { firstSignIn: true } });
+        return;
+      }
       setError(
         err instanceof AuthError
           ? err.message
@@ -109,14 +114,28 @@ export default function LoginPage() {
   return (
     <main className={styles.page}>
       <section className={styles.card} aria-labelledby="login-heading">
-        <span className={styles.curveBand} aria-hidden="true" />
-        <div className={styles.formPanel}>
-          <div className={styles.formContent}>
+        <div className={styles.bookStage}>
+          <div className={styles.patterns} aria-hidden="true">
+            <span className={styles.patternTopLeft} />
+            <span className={styles.patternBottomRight} />
+          </div>
+
+          <img
+            className={styles.bookImage}
+            src={BOOK_IMAGE_URL}
+            alt="Kent Business College learning journey illustration"
+          />
+
+          <div className={styles.logoOverlay}>
             <img
-              src="/assets/kbc-logo.png"
-              alt="Kent Business College"
+              src={SIDEBAR_LOGO_URL}
+              alt="KENT logo"
               className={styles.logo}
             />
+          </div>
+
+          <div className={styles.formPanel}>
+            <div className={styles.formContent}>
 
             <header className={styles.intro}>
               <h1 id="login-heading">Welcome back</h1>
@@ -221,8 +240,8 @@ export default function LoginPage() {
               </button>
             </form>
 
-            {ssoAvailable && (
-              <div className={styles.ssoBlock}>
+              {ssoAvailable && (
+                <div className={styles.ssoBlock}>
                 <div className={styles.divider} aria-hidden="true">
                   <span />
                   <strong>OR</strong>
@@ -256,8 +275,8 @@ export default function LoginPage() {
                 <p className={styles.ssoHint}>
                   Use your work account. You must already have access to this platform.
                 </p>
-              </div>
-            )}
+                </div>
+              )}
 
             <footer className={styles.secureFooter}>
               <span>
@@ -265,41 +284,9 @@ export default function LoginPage() {
                 Secure sign-in
               </span>
             </footer>
+            </div>
           </div>
         </div>
-
-        <aside className={styles.visualPanel} aria-label="Kent Business College campus">
-          <img
-            className={styles.campusImage}
-            src={CAMPUS_IMAGE_URL}
-            alt="Kent Business College campus building at dusk"
-          />
-          <div className={styles.visualShade} aria-hidden="true" />
-
-          <div className={styles.visualTopCard}>
-            <span className={styles.visualIcon} aria-hidden="true">
-              <AppIcon className="ri-shield-check-line" />
-            </span>
-            <p>
-              <span>Empowering learners.</span>
-              <span>Building futures.</span>
-            </p>
-          </div>
-
-          <div className={styles.visualFooterCard}>
-            <span className={styles.footerBrand}>
-              <AppIcon className="ri-shield-check-line" aria-hidden="true" />
-              <span>
-                <strong>Kent Business College</strong>
-                <small>{'\u00a9'} 2026 All rights reserved.</small>
-              </span>
-            </span>
-            <span className={styles.supportLine}>
-              <span>Need help?</span>
-              <b>Contact support</b>
-            </span>
-          </div>
-        </aside>
       </section>
     </main>
   );

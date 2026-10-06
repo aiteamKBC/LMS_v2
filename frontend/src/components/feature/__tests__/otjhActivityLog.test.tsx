@@ -160,6 +160,34 @@ describe('OTJ hours activity log', () => {
     expect(screen.queryByText('Progress against current target')).toBeNull();
   });
 
+  it('uses the complete canonical ledger for the log without mixing legacy and direct rows', () => {
+    const activityData = {
+      learner_name: 'Test Learner', count: 1, unique_activity_count: 1, module_count: 1,
+      completed_count: 1, actual_total: 99, recorded_otjh_total: 1.5,
+      planned_total: 2, mapped_count: 1, planned_mapped_count: 1,
+      activities: [{
+        activity_id: 'legacy:1', source_activity_id: 1, group_id: 1, group_name: 'Old',
+        date: '2026-01-01', category: 'Reading', activity: 'Must not be mixed', status: 'complete',
+        completed: true, actual: 99, planned: 99, planned_hours_mapped: true, hours_mapped: true,
+        quiz_score: null, quiz_maximum_score: null,
+      }],
+      direct_otjh_activities: [{ kind: 'component', componentTitle: 'Must not be mixed either', reportedTime: '2h' }],
+      canonical_otjh_activities: [{
+        id: '44:0', kind: 'component', componentId: 'COMP-44', componentTitle: 'Canonical reading',
+        componentType: 'reading', actualSeconds: 5400, expectedOtjh: 2,
+        submittedAt: '2026-09-10T09:00:00Z', passed: true, ksbs: ['K1'],
+      }],
+    } as StudentActivityResponse;
+
+    render(<OtjhBody real={detail()} loading={false} showHero={false} activityData={activityData} />);
+
+    expect(screen.getByText(/1 entry.*1h 30m/)).toBeTruthy();
+    expect(screen.getByText('Canonical reading')).toBeTruthy();
+    expect(screen.getByText('K1')).toBeTruthy();
+    expect(screen.queryByText('Must not be mixed')).toBeNull();
+    expect(screen.queryByText('Must not be mixed either')).toBeNull();
+  });
+
   it('allocates rounded category minutes so the breakdown equals the visible total', () => {
     const makeActivity = (id: number, category: string) => ({
       activity_id: `la:1:${id}`, source_activity_id: id, group_id: 1, group_name: 'Subject',

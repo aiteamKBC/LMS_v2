@@ -1,3 +1,5 @@
+import { assignmentTopics } from '@/lib/assignmentTopics';
+import { componentFileList, legacyComponentFile } from '@/lib/componentFiles';
 import type { JourneyComponent } from '@/utils/learnerJourney';
 import { embeddedSrc } from '@/components/feature/VideoPlayer';
 import type { ModuleComponent } from './moduleAuthoringData';
@@ -23,6 +25,15 @@ export function previewComponent(component: ModuleComponent): JourneyComponent {
     contentHtml: setting('readingContent'), hasReadingContent: Boolean(setting('readingContent')),
     resourceUrl: resource,
     fileName: setting('fileName') || setting('uploadedFileName') || setting('assignmentFileName'),
+    // The whole ordered set, falling back to the single file the component has
+    // always carried -- the same resolution the learner API applies, so the
+    // preview shows the attachments in the order the learner will get them.
+    files: componentFileList(
+      component.settings.componentFiles,
+      legacyComponentFile(resource, setting('fileName') || setting('uploadedFileName') || setting('assignmentFileName'),
+        component.settings.uploadedFileSize, setting('uploadedFileContentType')),
+    ),
+    assignmentTopics: assignmentTopics(component.settings.assignmentTopics),
     assignmentBrief: setting('assignmentBrief') || (!assignmentHtml ? assignmentContent : ''), assignmentBriefHtml: assignmentHtml,
     downloadAllowed: Boolean(component.settings.downloadAllowed),
     reflectionPrompt: setting('reflectionPrompt') || setting('podcastReflectionQuestion') || setting('readingReflectionPrompts') || component.description,

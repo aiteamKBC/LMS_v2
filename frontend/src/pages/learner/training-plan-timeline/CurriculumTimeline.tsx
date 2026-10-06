@@ -51,12 +51,12 @@ export function CurriculumTimeline({
       <ol className={layout.rows}>
         {group.rows.map(row => row.kind === 'reading-week'
           ? <li key={`slot-${row.slotNumber}`} className={layout.readingWeek} data-testid="learner-reading-week">
+            <div className={layout.readingHeader}>Reading Week</div>
             <CalendarOff size={15} aria-hidden="true" />
             <div>
               <p className={layout.rowTitle}>
                 <span className={layout.weekNumber}>Week {row.slotNumber}</span>
                 <span className={layout.rowDate}>{dateLabel(row.date)}</span>
-                <span className={layout.readingBadge}>Reading Week</span>
               </p>
               {row.holidays.map((holiday, index) => <p key={`${holiday.id || holiday.label}-${index}`} className={layout.holiday}>
                 <strong>Holiday:</strong> {holiday.label || 'Holiday'}

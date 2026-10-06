@@ -82,7 +82,7 @@ export function reviewOverview(sessions: readonly LearnerCalendarEvent[], attend
 }
 
 /** Only carry recognised presentation parameters; identity always comes from the resolved learner. */
-export function reviewsListHref(learner: { kind: string; id: string }, params: URLSearchParams) {
+export function reviewsListHref(learner: { kind: string; id: string }, params: URLSearchParams, basePath = '/learner/progress-reviews') {
   const next = new URLSearchParams({ kind: learner.kind, learner: learner.id });
   if (params.get('view') === 'all') {
     next.set('view', 'all');
@@ -91,5 +91,5 @@ export function reviewsListHref(learner: { kind: string; id: string }, params: U
     const page = params.get('page');
     if (page && /^\d+$/.test(page) && Number.isSafeInteger(Number(page)) && Number(page) > 0) next.set('page', page);
   }
-  return `/learner/progress-reviews?${next}`;
+  return `${basePath}?${next}`;
 }

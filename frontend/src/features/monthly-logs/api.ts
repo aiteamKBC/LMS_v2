@@ -6,30 +6,33 @@ export type LogMonth = MonthState & { source: 'legacy' | 'lms'; is_open?: boolea
 export type LogDetail = MonthDetail & { source: 'legacy' | 'lms'; is_open?: boolean; target_warning?: string | null; demo_only?: boolean };
 export type LogSummary = Omit<JournalSummary, 'months'> & {
   months: LogMonth[]; total_months: number; completed_months: number; read_only: boolean; csrf_token: string;
+  training_plan_totals?: { accepted_hours: number; planned_hours: number | null };
 };
 /** The per-month hour totals the dashboard reads; a LogSummary satisfies it. */
 export type MonthlyLogHours = {
-  learner?: { aptem_id?: number | null } | null;
+  learner?: { aptem_id?: number | null; planned_end_date?: string | null } | null;
   months: Pick<LogMonth, 'month' | 'source' | 'training_plan_target' | 'not_accepted_hours' | 'actual_hours'>[];
+  training_plan_totals?: LogSummary['training_plan_totals'];
 };
 export type LogLearner = { id: number; name: string; programme: string };
 export type LogPerspective = 'learner' | 'coach';
 
-function url(path: string, perspective: LogPerspective) {
+function url(path: string, perspective: LogPerspective, month?: string, workflow?: string) {
   const params = new URLSearchParams();
   params.set('perspective', perspective);
-  const workflow = new URLSearchParams(window.location.search).get('workflow');
-  if (workflow) params.set('workflow', workflow);
+  const queryWorkflow = workflow ?? new URLSearchParams(window.location.search).get('workflow');
+  if (queryWorkflow) params.set('workflow', queryWorkflow);
+  if (month) params.set('month', month);
   const selected = perspective === 'coach' ? coachViewAs() : null;
   if (selected) params.set('viewAsCoach', selected.email);
   return `/learner_api/monthly-logs/${path}${params.size ? `?${params}` : ''}`;
 }
-const read = <T,>(path: string, signal?: AbortSignal, perspective: LogPerspective = 'coach') => readLearnerJson<T>(url(path, perspective), { signal, ttlMs: 0 });
-export const getLogSummary = (id: string, signal?: AbortSignal, perspective: LogPerspective = 'coach') => read<LogSummary>(`${id}/`, signal, perspective);
-export const getLogMonth = (id: string, month: string, signal?: AbortSignal, perspective: LogPerspective = 'coach', demo = false) =>
-  read<LogDetail>(`${id}/${month}/${demo ? '?demo=1' : ''}`, signal, perspective);
-export async function getLogContent(id: string, month: string, rowId: number, perspective: LogPerspective = 'coach') {
-  const content = await read<ActivityContent>(`${id}/${month}/activities/${rowId}/`, undefined, perspective);
+const read = <T,>(path: string, signal?: AbortSignal, perspective: LogPerspective = 'coach', month?: string, workflow?: string) => readLearnerJson<T>(url(path, perspective, month, workflow), { signal, ttlMs: 0 });
+export const getLogSummary = (id: string, signal?: AbortSignal, perspective: LogPerspective = 'coach', month?: string, workflow?: string) => read<LogSummary>(`${id}/`, signal, perspective, month, workflow);
+export const getLogMonth = (id: string, month: string, signal?: AbortSignal, perspective: LogPerspective = 'coach', demo = false, workflow?: string) =>
+  read<LogDetail>(`${id}/${month}/${demo ? '?demo=1' : ''}`, signal, perspective, undefined, workflow);
+export async function getLogContent(id: string, month: string, rowId: number, perspective: LogPerspective = 'coach', workflow?: string) {
+  const content = await read<ActivityContent>(`${id}/${month}/activities/${rowId}/`, undefined, perspective, undefined, workflow);
   return { ...content, parts: content.parts.map(part => ({ ...part,
     url: part.url?.startsWith('/') && !part.url.startsWith('//') ? new URL(part.url, window.location.origin).href : part.url,
   })) };

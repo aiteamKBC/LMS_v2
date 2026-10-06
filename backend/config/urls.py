@@ -20,6 +20,7 @@ from django.contrib import admin
 from django.urls import include, path
 
 from .batch import api_get_batch
+from system_audit import performance as system_performance
 
 urlpatterns = [
     path('api/batch/', api_get_batch, name='api-get-batch'),
@@ -28,6 +29,11 @@ urlpatterns = [
     # URL for compatibility and expose the transport below a forwarded prefix.
     path('coach_api/_batch/', api_get_batch, name='api-get-batch-proxied'),
     path('django_admin/', admin.site.urls),
+    # Kept below an established production-forwarded prefix. Collection is
+    # server-allowlisted and contains no payloads, query strings or identities.
+    path('curriculum_api/performance/record/', system_performance.performance_record, name='performance-record'),
+    path('curriculum_api/performance/report/', system_performance.performance_report, name='performance-report'),
+    path('curriculum_api/knowledge-base/', include('knowledge_base.urls')),
     path('curriculum_api/', include('curriculum_api.urls')),
     path('coach_api/', include('coach_api.urls')),
     path('quiz_api/', include('quiz_api.urls')),
@@ -50,4 +56,4 @@ urlpatterns = [
 if settings.DEBUG:
     urlpatterns += static('/media/absence-evidence/', document_root=settings.BASE_DIR / 'media' / 'absence-evidence')
     urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
-   
+

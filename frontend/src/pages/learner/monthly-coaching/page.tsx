@@ -1,15 +1,16 @@
+import { ImportedReviewSection } from '../reviews/imported/ImportedReviewSection';
 import { useCallback, useMemo, useState, type ReactNode } from 'react';
-import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { roleNavMap } from '@/mocks/navigation';
-import { downloadLearnerMcmPdf, fetchLearnerMeetingArtifacts, learnerMeetingArtifactContentUrl, saveLearnerEventReviewAnswers, signLearnerProgressReview, type LearnerCalendarEvent } from '@/api/learnerCalendar';
+import { downloadLearnerMcmPdf, downloadMigratedReviewForParty, fetchLearnerMeetingArtifacts, learnerMeetingArtifactContentUrl, saveLearnerEventReviewAnswers, signLearnerProgressReview, signMigratedReviewAsParty, type LearnerCalendarEvent } from '@/api/learnerCalendar';
 import { useLinkedLearner } from '@/hooks/useMyLearner';
 import { useLearnerWorkspaceAccess } from '@/hooks/useLearnerWorkspaceAccess';
 import { monthlyCoachingAnswers } from '@/pages/shared/monthlyCoachingForm';
 import type { ProgressReviewResponses } from '@/pages/shared/progressReviewForm';
 import { RowsSkeleton } from '@/components/feature/Skeletons';
 import { CoachMeetingArtifactsPanel } from '@/pages/coach/shared/CoachMeetingArtifactsPanel';
-import { useReviewSessions } from '@/pages/learner/reviews/useReviewSessions';
+import { isMigratedContinuationEvent, useReviewSessions } from '@/pages/learner/reviews/useReviewSessions';
 import type { ImportedReview } from '@/api/reviewHistory';
 import { isoDate } from '@/pages/learner/reviews/bookingDates';
 import {
@@ -24,12 +25,16 @@ import AbsenceReportDialog from '../attendance/components/AbsenceReportDialog';
 import AbsenceReportForm from '../attendance/components/AbsenceReportForm';
 import { useMeetingBooking } from '../reviews/useMeetingBooking';
 import { LearnerReviewInstanceForm, useLearnerReviewInstance } from '../reviews/LearnerReviewInstanceForm';
+import { ReviewPdfDownload } from '@/components/reviews/ReviewPdfDownload';
 
 import CoachingHome from './CoachingHome';
-import CurrentMonthLogLink from './CurrentMonthLogLink';
+import ProgressReviewPptxModal from '@/pages/coach/progress-reviews/components/ProgressReviewPptxModal';
 import { useCoachingReviewDefinitions } from './useCoachingReviewDefinitions';
 
 const learnerNav = roleNavMap.learner;
+const learnerMcmNavItems = learnerNav.items.map(item => item.children
+  ? { ...item, children: item.children.filter(child => child.id !== 'learner-monthly-logs') }
+  : item);
 
 function dateOf(session?: LearnerCalendarEvent | null): string | null {
   return session?.scheduledDate || session?.targetDate || session?.date || null;
@@ -51,9 +56,10 @@ function monthlyCoachingTitle(session?: LearnerCalendarEvent | null): string {
   if (session?.importedReview) {
     return session.importedReview.name || session.title || 'Monthly Coaching Meeting';
   }
-  if (session?.reviewTemplateId) return `${session.title} #${session.occurrenceNumber || session.sequence}`;
+  const occurrence = session?.occurrenceNumber ?? session?.sequence;
+  if (session?.reviewTemplateId) return `${session.title}${occurrence != null ? ` #${occurrence}` : ' — Manual Review'}`;
   const month = monthLabel(dateOf(session));
-  return `Monthly Coaching Meeting${month ? ` — ${month}` : ''}${session?.sequence ? ` #${session.sequence}` : ''}`;
+  return `Monthly Coaching Meeting${month ? ` — ${month}` : ''}${occurrence != null ? ` #${occurrence}` : ''}`;
 }
 
 function shouldShowLearnerMeetingRecording(session?: LearnerCalendarEvent | null): boolean {
@@ -103,19 +109,6 @@ function importedValue(value: unknown): string {
   try { return JSON.stringify(value, null, 2); } catch { return String(value); }
 }
 
-/** Older Aptem exports kept question/answer pairs only in raw_text. */
-function rawTextFields(rawText: string): Array<{ label: string; value: string }> {
-  const blocks = rawText.split(/\r?\n\s*\r?\n+/)
-    .map((block) => block.split(/\r?\n/).map((line) => line.trim()).filter(Boolean))
-    .filter((lines) => lines.length);
-  return blocks.flatMap((lines) => {
-    const first = lines[0];
-    const separator = first.indexOf(':');
-    if (separator > 0) return [{ label: first.slice(0, separator).trim(), value: [first.slice(separator + 1).trim(), ...lines.slice(1)].filter(Boolean).join('\n') || '-' }];
-    return [{ label: first, value: lines.slice(1).join('\n') || '-' }];
-  });
-}
-
 function importedFieldValue(review: ImportedReview, labels: string[]): unknown {
   const wanted = labels.map((label) => label.toLowerCase());
   for (const section of review.sections) {
@@ -136,16 +129,13 @@ function importedDate(value?: unknown): string {
 }
 
 function ImportedSectionBody({ section }: { section: ImportedReview['sections'][number] }) {
-  const fields = section.fields.length ? section.fields : rawTextFields(section.rawText);
   const links = section.fields.flatMap((field) => 'links' in field && Array.isArray(field.links) ? field.links : []);
   const [preview, setPreview] = useState<{ url: string; name: string } | null>(null);
   return <div className="space-y-3">
-    {fields.map((field, index) => <div key={`${field.label || 'field'}:${index}`} className="rounded-lg border border-slate-200 bg-white p-3"><p className="text-[10px] font-bold uppercase tracking-wide text-slate-500">{field.label || 'Response'}</p><p className="mt-1 whitespace-pre-wrap break-words text-sm leading-6 text-slate-700">{importedValue(field.value)}</p></div>)}
+    <ImportedReviewSection section={{ ...section, fields: section.fields.map(({ links: _links, ...field }) => field) }} />
     {links.length > 0 && <div className="space-y-1">{links.map((link, index) => { const url = link.azure_url || link.url || link.href; const name = link.text || link.title || `Attachment ${index + 1}`; return url ? <button key={index} type="button" onClick={() => setPreview({ url, name })} className="block max-w-full truncate text-left text-xs font-semibold text-primary-600 underline">{name}</button> : null; })}</div>}
-    {section.tables.map((table, index) => <div key={index} className="overflow-x-auto rounded-lg border border-slate-200 bg-white"><table className="min-w-full text-left text-xs"><tbody className="divide-y divide-slate-200">{(table.rows || []).map((row, rowIndex) => <tr key={rowIndex} className={rowIndex === 0 ? 'bg-slate-100 font-bold text-slate-800' : 'text-slate-700'}>{(Array.isArray(row) ? row : [row]).map((cell, cellIndex) => <td key={cellIndex} className="whitespace-pre-wrap px-3 py-2.5 align-top">{importedValue(cell)}</td>)}</tr>)}</tbody></table></div>)}
-    {!fields.length && section.rawText && section.rawText !== 'EMPTY_STRING' && <p className="whitespace-pre-wrap rounded-lg border border-slate-200 bg-white p-3 text-sm leading-6 text-slate-700">{section.rawText}</p>}
     {preview && <div className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-950/70 p-4" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setPreview(null); }}><div role="dialog" aria-modal="true" aria-label={preview.name} className="flex h-[min(88vh,900px)] w-full max-w-5xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl"><div className="flex items-center justify-between gap-3 border-b border-slate-200 px-4 py-3"><p className="truncate text-sm font-bold text-slate-900">{preview.name}</p><button type="button" aria-label="Close attachment preview" onClick={() => setPreview(null)} className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100"><AppIcon className="ri-close-line" /></button></div><iframe title={preview.name} src={preview.url} className="min-h-0 flex-1 bg-slate-100" /></div></div>}
-    {!fields.length && !section.tables.length && (!section.rawText || section.rawText === 'EMPTY_STRING') && <Empty>No response was recorded for this section.</Empty>}
+
   </div>;
 }
 
@@ -169,7 +159,7 @@ function ImportedMcmAccordion({ id, title, open, onToggle, children }: { id: str
   </section>;
 }
 
-function ImportedMcmView({ selected, learner, openSections, toggle, onBack }: { selected: LearnerCalendarEvent; learner: ReturnType<typeof useReviewSessions>['learner']; openSections: string[]; toggle: (id: string) => void; onBack: () => void }) {
+function ImportedMcmView({ selected, learner, openSections, toggle, onBack, onDownload }: { selected: LearnerCalendarEvent; learner: ReturnType<typeof useReviewSessions>['learner']; openSections: string[]; toggle: (id: string) => void; onBack: () => void; onDownload: () => Promise<void> }) {
   const review = selected.importedReview;
   if (!review) return null;
   const programmeStart = learner?.programmeStartDate || importedFieldValue(review, ['programme start date']);
@@ -195,13 +185,14 @@ function ImportedMcmView({ selected, learner, openSections, toggle, onBack }: { 
       <button type="button" onClick={onBack} aria-label="Back to coaching meetings" className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-100 text-slate-600 hover:bg-slate-200"><AppIcon className="ri-arrow-left-line" /></button>
       <h1 className="text-xl font-bold text-slate-800 sm:text-2xl">Monthly Coaching Meeting <span className="font-normal text-slate-600">- {importedDate(date)}</span></h1>
       <p className="ml-auto text-xs text-slate-500">Reviewed by: <span className="font-semibold text-slate-600">{review.reviewerName || selected.coachName || '-'}</span></p>
+      <ReviewPdfDownload availability={{ available: true, reason: '' }} label="Download PDF" onDownload={onDownload} />
     </header>
 
     <ImportedMcmAccordion id="learner-information" title="Learner Information" open={openSections.includes('learner-information')} onToggle={toggle}>
-      <div className="grid gap-6 md:grid-cols-[280px_1fr]">
-        <div className="flex flex-col items-center justify-center border-b border-slate-200 pb-6 md:border-b-0 md:border-r md:pb-0 md:pr-8"><span className="flex h-20 w-20 items-center justify-center rounded-full bg-slate-400 text-xl font-bold text-white">{initials(learner?.name)}</span><p className="mt-3 text-xl font-bold text-slate-800">{learner?.name || '-'}</p></div>
-        <div className="grid gap-x-8 gap-y-4 sm:grid-cols-[minmax(210px,1fr)_minmax(260px,2fr)]">{infoRows.map(([label, value]) => <div key={label} className="contents"><p className="text-xs font-semibold text-slate-600">{label}:</p><p className="text-sm text-slate-500">{label.toLowerCase().includes('date') ? importedDate(value) : importedValue(value)}</p></div>)}</div>
-      </div>
+      <ImportedReviewSection section={review.sections.find(section => section.name.toLowerCase().includes('learner information')) || {
+        id: 'learner-information', name: 'Learner Information', order: 0, tables: [], rawText: '',
+        fields: [{ label: 'Name', value: learner?.name }, ...infoRows.map(([label, value]) => ({ label, value }))],
+      }} />
     </ImportedMcmAccordion>
 
     {detailSections.length ? detailSections.map((section) => <ImportedMcmAccordion key={section.id} id={`imported-section:${section.id}`} title={section.name} open={openSections.includes(`imported-section:${section.id}`)} onToggle={toggle}><ImportedSectionBody section={section} /></ImportedMcmAccordion>) : <ImportedMcmAccordion id="imported-review" title="Review Details" open={openSections.includes('imported-review')} onToggle={toggle}><ImportedMcmSections review={review} /></ImportedMcmAccordion>}
@@ -314,15 +305,20 @@ export default function MonthlyCoachingPage() {
   // Keep the data-driven Aptem review details visible on first open while
   // preserving the existing learning-summary default for legacy meetings.
   const [openSections, setOpenSections] = useState<string[]>(['learning', 'imported-review']);
-  const selected = sessions.find((session) => session.id === sessionId) || null;
+  const [slidesOpen, setSlidesOpen] = useState(false);
+  const selected = sessions.find((session) => session.id === sessionId) || sessions.find(session => session.reviewSource === 'aptem' && `imported-review:${session.reviewId}` === sessionId) || null;
+  const migratedEvent = isMigratedContinuationEvent(selected);
+  const selectedDate = dateOf(selected);
   const reviewInstance = useLearnerReviewInstance(
     myLearner.kind,
     myLearner.id,
-    selected?.reviewTemplateId || selected?.reviewInstanceId ? (selected.eventKey || selected.id) : '',
+    selected?.reviewTemplateId || selected?.reviewInstanceId || migratedEvent ? (selected?.formEventKey || selected?.eventKey || selected?.id || '') : '',
   );
-  const meetingMonth = dateOf(selected)?.slice(0, 7) || '';
+  // Monthly Logs belong to the curriculum target month. The scheduled date
+  // is only the actual appointment date and may fall in another month.
+  const targetMonth = (selected?.targetDate || selected?.scheduledDate || selected?.date || '').slice(0, 7);
   const completedMcm = Boolean(
-    selected && meetingMonth && (selected.source === 'mcr' || selected.reviewTypeCode === 'mcm') &&
+    selected && targetMonth && (selected.source === 'mcr' || selected.reviewTypeCode === 'mcm') &&
     ['completed', 'awaiting-signature'].includes(reviewInstance.definition?.instance?.status || selected.status),
   );
   const backParams = new URLSearchParams({ kind: myLearner.kind, learner: myLearner.id });
@@ -335,12 +331,14 @@ export default function MonthlyCoachingPage() {
   }
   const backHref = `/learner/monthly-coaching?${backParams}`;
   const refreshReview = reviewInstance.refresh;
-  const signLearnerReview = useCallback((signature: string) => signLearnerProgressReview(
+  const signLearnerReview = useCallback((signature: string, options?: { applyMonthlyLogSignature?: boolean }) => (migratedEvent
+    ? signMigratedReviewAsParty(selected.formEventKey || selected.eventKey || selected.id, signature)
+    : signLearnerProgressReview(
     myLearner.kind,
     myLearner.id,
-    selected?.eventKey || selected?.id || '',
-    { name: learner?.name || 'Learner', signature },
-  ).then(() => { refresh(); refreshReview(); }), [learner?.name, myLearner.id, myLearner.kind, refresh, refreshReview, selected?.eventKey, selected?.id]);
+    selected?.formEventKey || selected?.eventKey || selected?.id || '',
+    { name: learner?.name || 'Learner', signature, ...options },
+  )).then(() => { refresh(); refreshReview(); }), [learner?.name, myLearner.id, myLearner.kind, refresh, refreshReview, selected?.eventKey, selected?.formEventKey, selected?.id, migratedEvent]);
   const index = selected ? sessions.findIndex((session) => session.id === selected.id) : -1;
   const previous = index > 0 ? sessions[index - 1] : null;
 
@@ -382,24 +380,26 @@ export default function MonthlyCoachingPage() {
   const artifactContentUrl = useCallback((eventKey: string, artifactType: string, artifactId: string, options: { preview?: boolean } = {}) => learnerMeetingArtifactContentUrl(myLearner.kind, myLearner.id, eventKey, artifactType, artifactId, options), [myLearner.id, myLearner.kind]);
 
   return (
-    <WorkspaceShell role="learner" roleLabel={learnerNav.label} navItems={learnerNav.items} workspaceLabel={learnerNav.workspaceLabel} pageTitle="Monthly Coaching Meeting" pageSubtitle="Coaching meeting" userName={learner?.name || 'Learner'} userRole={learner?.programme ? `${learner.programme} Learner` : 'Learner'}>
+    <WorkspaceShell role="learner" roleLabel={learnerNav.label} navItems={learnerMcmNavItems} workspaceLabel={learnerNav.workspaceLabel} pageTitle="Monthly Coaching Meeting" pageSubtitle="Coaching meeting" userName={learner?.name || 'Learner'} userRole={learner?.programme ? `${learner.programme} Learner` : 'Learner'}>
       <div className=" page-container min-w-0 w-full space-y-3 p-3 md:space-y-4 md:p-6">
-        {completedMcm && meetingMonth && <aside className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-background-200 bg-background-50 p-4" aria-label="Monthly learning log">
-          <div><p className="text-sm font-semibold text-foreground-900">Your monthly learning log</p><p className="mt-1 text-sm text-foreground-600">You can also review your learning activities for {monthLabel(`${meetingMonth}-01`)}.</p></div>
-          <Link className="rounded-lg border border-background-300 bg-white px-4 py-3 text-sm font-semibold text-primary-700" to={`/learner/monthly-logs/${myLearner.kind}/${myLearner.id}/${meetingMonth}?workflow=mcm&source=mcm`}>Open monthly log</Link>
-        </aside>}
         {error && <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700"><AppIcon className="ri-error-warning-line mr-2" />{error}<button type="button" onClick={refresh} className="ml-3 font-bold underline">Try again</button></div>}
         <div className="flex flex-wrap items-center justify-between gap-3">
           <button type="button" onClick={() => navigate(backHref)} className="inline-flex items-center gap-1.5 text-xs font-bold text-primary-600 hover:text-primary-800"><AppIcon className="ri-arrow-left-line" />Back to coaching meetings</button>
-          <CurrentMonthLogLink learner={myLearner} className="inline-flex min-h-11 items-center gap-2 rounded-lg border border-background-300 bg-white px-4 py-3 text-sm font-semibold text-primary-700 hover:bg-primary-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary-600" />
+          {/* The learner prepares and presents their MCM slides; a read-only
+              workspace viewer can open them but not create or edit them. */}
+          {selected && !selected.importedReview && selectedDate && (
+            <button type="button" onClick={() => setSlidesOpen(true)} className="inline-flex min-h-11 items-center gap-2 rounded-lg border border-background-300 bg-white px-4 py-3 text-sm font-semibold text-primary-700 hover:bg-primary-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary-600">
+              <AppIcon className="ri-slideshow-2-line" />My slides
+            </button>
+          )}
         </div>
-        {loading ? <div className="rounded-xl border border-background-200 bg-white p-5"><RowsSkeleton rows={4} /></div> : !selected ? <div className="rounded-xl border border-background-200 bg-white p-5"><Empty>This monthly coaching session was not found.</Empty></div> : reviewInstance.loading ? <div className="rounded-xl border border-background-200 bg-white p-5"><RowsSkeleton rows={4} /></div> : reviewInstance.error ? <p role="alert" className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">{reviewInstance.error}<button type="button" onClick={reviewInstance.refresh} className="ml-3 underline">Retry review</button></p> : reviewInstance.definition ? <LearnerReviewInstanceForm definition={reviewInstance.definition} onDownload={() => downloadLearnerMcmPdf(myLearner.kind, myLearner.id, selected.eventKey || selected.id)} signatoryName={learner?.name || 'Learner'} onSign={canProgress ? signLearnerReview : undefined} onSaveAnswers={answers => saveLearnerEventReviewAnswers(myLearner.kind, myLearner.id, selected.eventKey || selected.id, answers)} /> : selected.importedReview ? <ImportedMcmView selected={selected} learner={learner} openSections={openSections} toggle={toggle} onBack={() => navigate(backHref)} /> : (
+        {loading ? <div className="rounded-xl border border-background-200 bg-white p-5"><RowsSkeleton rows={4} /></div> : !selected ? <div className="rounded-xl border border-background-200 bg-white p-5"><Empty>This monthly coaching session was not found.</Empty></div> : reviewInstance.loading ? <div className="rounded-xl border border-background-200 bg-white p-5"><RowsSkeleton rows={4} /></div> : reviewInstance.error ? <p role="alert" className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">{reviewInstance.error}<button type="button" onClick={reviewInstance.refresh} className="ml-3 underline">Retry review</button></p> : reviewInstance.definition ? <LearnerReviewInstanceForm definition={reviewInstance.definition} mcmMonthlyLog={!migratedEvent && completedMcm && targetMonth ? { id: String(myLearner.id), month: targetMonth, contractKind: myLearner.kind } : undefined} onDownload={migratedEvent ? () => downloadMigratedReviewForParty(selected.formEventKey || selected.eventKey || selected.id) : () => downloadLearnerMcmPdf(myLearner.kind, myLearner.id, selected.eventKey || selected.id)} signatoryName={learner?.name || 'Learner'} onSign={canProgress ? signLearnerReview : undefined} onSaveAnswers={migratedEvent ? undefined : answers => saveLearnerEventReviewAnswers(myLearner.kind, myLearner.id, selected.eventKey || selected.id, answers)} /> : selected.importedReview ? <ImportedMcmView selected={selected} learner={learner} openSections={openSections} toggle={toggle} onBack={() => navigate(backHref)} onDownload={() => downloadLearnerMcmPdf(myLearner.kind, myLearner.id, selected.eventKey || selected.id)} /> : (
           <>
             <section className="overflow-hidden rounded-2xl border border-background-200 bg-white shadow-sm">
               <div className="learner-super-admin-hero p-5 text-primary-800 sm:p-6 workspace-page-hero"><span className="rounded-full border border-primary-200/60 bg-primary-100/60 px-2.5 py-1 text-[10px] font-bold text-foreground-500">{statusLabel(selected.status)}</span><div className="mt-3 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between"><div><p className="text-[10px] font-bold uppercase tracking-[0.14em] text-primary-600">30-day coaching meeting</p><h1 className="mt-1 text-xl font-bold text-primary-800">{monthlyCoachingTitle(selected)}</h1><p className="mt-1 text-sm text-foreground-500">{formatDate(dateOf(selected), true)} at {formatTime(selected.scheduledTime)}</p></div>{selected.meetingLink && <a href={selected.meetingLink} target="_blank" rel="noopener noreferrer" className="meeting-join-action rounded-lg px-4 py-2 text-xs font-bold"><AppIcon className="ri-video-chat-line mr-1.5" />Join meeting</a>}</div></div>
               <div className="space-y-5 p-5 sm:p-6">
                 {shouldShowLearnerMeetingRecording(selected) ? (
-                  <CoachMeetingArtifactsPanel event={{ ...selected, eventKey: selected.eventKey || selected.id }} fetchArtifacts={loadArtifacts} contentUrl={artifactContentUrl} showAttendance={false} visibleArtifactTypes={['recording']} className="border-primary-100 bg-primary-50/30" />
+                  <CoachMeetingArtifactsPanel event={{ ...selected, eventKey: selected.calendarEventKey || selected.eventKey || selected.id }} fetchArtifacts={loadArtifacts} contentUrl={artifactContentUrl} showAttendance={false} visibleArtifactTypes={['recording']} className="border-primary-100 bg-primary-50/30" />
                 ) : null}
                 <div><p className="mb-3 text-[10px] font-bold uppercase tracking-[0.14em] text-foreground-400">Session participants</p><div className="grid gap-3 sm:grid-cols-2"><div className="flex items-center gap-3 rounded-xl border border-background-200 p-3.5"><span className="flex h-10 w-10 items-center justify-center rounded-full bg-primary-100 text-xs font-bold text-primary-700">{initials(learner?.name)}</span><div><p className="text-[10px] font-semibold uppercase text-foreground-400">Learner</p><p className="text-sm font-bold text-foreground-900">{learner?.name || '-'}</p></div></div><div className="flex items-center gap-3 rounded-xl border border-background-200 p-3.5"><span className="flex h-10 w-10 items-center justify-center rounded-full bg-accent-100 text-xs font-bold text-accent-700">{initials(selected.coachName)}</span><div><p className="text-[10px] font-semibold uppercase text-foreground-400">Coach</p><p className="text-sm font-bold text-foreground-900">{selected.coachName || '-'}</p></div></div></div></div>
                 <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">{[['Duration', `${selected.durationMinutes || 60} minutes`], ['Meeting type', selected.meetingProvider || '-'], ['Scheduled time', formatTime(selected.scheduledTime)], ['Learning window', previous ? `Since session #${previous.sequence}` : 'First 30-day period']].map(([label, value]) => <div key={label} className="rounded-xl bg-background-100 p-3.5"><p className="text-[9px] font-semibold uppercase tracking-wider text-foreground-400">{label}</p><p className="mt-1 text-xs font-bold text-foreground-800">{value}</p></div>)}</div>
@@ -436,6 +436,16 @@ export default function MonthlyCoachingPage() {
           </>
         )}
       </div>
+      {slidesOpen && selected && selectedDate && (
+        <ProgressReviewPptxModal
+          open kind="mcm" access={canProgress ? 'owner' : 'viewer'}
+          target={{
+            learnerId: myLearner.id, meetingDate: selectedDate, learnerName: learner?.name,
+            programme: learner?.programme, completed: selected.status === 'completed',
+          }}
+          onClose={() => setSlidesOpen(false)}
+        />
+      )}
     </WorkspaceShell>
   );
 }

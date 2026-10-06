@@ -21,6 +21,7 @@ each answer_text's "left -> right" pairing; ordering uses sort_order as the
 correct sequence; keywords accepts any N of the listed answer_texts.
 """
 import json
+import logging
 import random
 import re
 
@@ -34,7 +35,14 @@ from .identity import learner_profile_for_source
 from .active_users import ComponentReferenceError, save_progress_record
 from .models import CommercialUser, EnrolmentUser
 from .time_tracking import TrackingSessionError, tracking_session_already_used, verify_tracking_session
+from .working_rules import (
+    DeclaredCompletionError,
+    resolve_completion_instants,
+    validation_response_payload,
+)
 from login.permissions import learner_self_or_admin
+
+logger = logging.getLogger(__name__)
 
 SOURCE_MODELS = {
     "commercial": CommercialUser,
@@ -47,6 +55,45 @@ IMAGE_SOURCE_PATTERN = re.compile(r"\.(png|jpe?g|gif|webp|svg)(?:[?#].*)?$", fla
 
 def _conn():
     return connections["enrolment"]
+
+
+def record_quiz_attempt(*, kind, learner_id, source, quiz, attempt_number, passed, grade_pct,
+                        correct_count, question_count, time_taken, submitted_at, module_title, week_title):
+    """One line in the Audit Trail for a quiz attempt. Never raises.
+
+    The outcome only: which quiz, which attempt, the score and whether it
+    passed. The answers stay in the learner's progress record, where marking
+    reads them; the trail has no use for them.
+    """
+    try:
+        from system_audit.writes import record_table_rows
+
+        record_table_rows(
+            'learner_quiz_attempts',
+            [{
+                'id': f'{kind}:{learner_id}:{quiz["id"]}:{attempt_number}',
+                'learner_kind': kind,
+                'learner_id': learner_id,
+                'learner_name': getattr(source, 'username', '') or getattr(source, 'email', '') or learner_id,
+                'quiz_id': quiz['id'],
+                'quiz_title': quiz.get('title') or '',
+                'module_title': module_title or quiz.get('module') or '',
+                'week_title': week_title or '',
+                'attempt': attempt_number,
+                'result': 'Passed' if passed else 'Not passed',
+                'score_percent': grade_pct,
+                'correct_answers': correct_count,
+                'total_questions': question_count,
+                'time_taken': time_taken,
+                'submitted_at': submitted_at,
+                # The same instant twice: the attempt came into being now.
+                'created_at': submitted_at,
+                'updated_at': submitted_at,
+            }],
+            using='enrolment',
+        )
+    except Exception:
+        logger.warning('Could not record a quiz attempt in the Audit Trail.', exc_info=True)
 
 
 def _error(message, status):
@@ -390,6 +437,21 @@ def submit_quiz_attempt(request, quiz_id):
     except (ValueError, UnicodeDecodeError) as exc:
         return _error(f"Invalid JSON body: {exc}", 400)
 
+    # Working rules are decided here, before the quiz is fetched, graded or
+    # persisted: a refusal must leave no attempt, no progress record, no audit
+    # line and no OTJH credit behind. The learner's answers stay in the browser
+    # and are re-posted unchanged with a declared instant, so the correction
+    # never costs them a retake and grades to exactly the same score.
+    submitted_at_dt = timezone.now()
+    try:
+        declared_at, validation_reason = resolve_completion_instants(
+            payload, submitted_at_dt, quiz_id=quiz_id,
+        )
+    except DeclaredCompletionError as exc:
+        return JsonResponse(validation_response_payload(exc), status=409)
+    except DatabaseError:
+        return _error("Could not verify the working-hours holiday calendar. Please try again.", 503)
+
     submitted_answers = payload.get("answers") or {}
     time_taken_seconds = payload.get("timeTakenSeconds")
     week_title = payload.get("week")
@@ -399,6 +461,7 @@ def submit_quiz_attempt(request, quiz_id):
     ksbs = payload.get("ksbs") if isinstance(payload.get("ksbs"), list) else []
     feedback = payload.get("feedback") or ""
     reported_time = payload.get("reportedTime") or ""
+    reflection_skipped = payload.get("skipReflection") is True
 
     try:
         quiz = _fetch_quiz(quiz_id)
@@ -474,7 +537,6 @@ def submit_quiz_attempt(request, quiz_id):
     )
     attempt_number = prior + 1
 
-    submitted_at_dt = timezone.now()
     try:
         tracking = verify_tracking_session(
             payload.get("trackingToken"),
@@ -507,6 +569,7 @@ def submit_quiz_attempt(request, quiz_id):
         "ksbs": ksbs,                          # KSB codes the learner selected
         "feedback": feedback,
         "reportedTime": reported_time,
+        "reflectionSkipped": reflection_skipped,
         "questions": stored_questions,         # id-referenced (see above)
         "startedAt": started_at,
         "submittedAt": submitted_at,
@@ -517,6 +580,11 @@ def submit_quiz_attempt(request, quiz_id):
         "claimedSeconds": tracking["claimedSeconds"],
         "serverSessionSeconds": tracking["serverSessionSeconds"],
         "verifiedSeconds": tracking["verifiedSeconds"],
+        # submittedAt stays the real Submit click; declaredCompletedAt is the
+        # working instant OTJH and reporting count the attempt at when that
+        # click had to be corrected, and the reason says why it was corrected.
+        "declaredCompletedAt": declared_at.isoformat() if declared_at else None,
+        "submissionValidationReason": validation_reason,
     }
 
     if active is not None:
@@ -541,6 +609,12 @@ def submit_quiz_attempt(request, quiz_id):
             return _error(f"Database error saving attempt: {exc}", 502)
         except DatabaseError as exc:
             return _error(f"Database error saving attempt: {exc}", 502)
+        record_quiz_attempt(
+            kind=kind, learner_id=learner_id, source=source, quiz=quiz,
+            attempt_number=attempt_number, passed=passed, grade_pct=grade_pct,
+            correct_count=correct_count, question_count=question_count, time_taken=time_taken,
+            submitted_at=submitted_at_dt, module_title=module_title, week_title=week_title,
+        )
         # Engagement points award themselves: save_progress_record registers a
         # post-commit hook (engagement_api.hooks.award_for_progress) that fires
         # once this save actually commits — see active_users.save_progress_record.

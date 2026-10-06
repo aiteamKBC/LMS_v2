@@ -78,6 +78,12 @@ describe('Coach working week', () => {
 });
 
 describe('Coach calendar status and month boundaries', () => {
+  it('recognizes a confirmed imported event with a booked date and time as reschedulable', async () => {
+    const { hasScheduledSlot } = await import('./calendarEvents');
+    expect(hasScheduledSlot({ status: 'confirmed', scheduledDate: '2026-09-23', scheduledTime: '11:00' } as never)).toBe(true);
+    expect(hasScheduledSlot({ status: 'confirmed', scheduledDate: '2026-09-23' } as never)).toBe(false);
+  });
+
   it('treats only completed as completed while retaining legacy confirmed as a distinct status', async () => {
     const { isCompletedEvent } = await import('./calendarEvents');
     expect(isCompletedEvent({ status: 'completed' } as never)).toBe(true);

@@ -1,0 +1,96 @@
+/* Meetings header palette; the dark theme swaps the variables only. */
+.hero {
+  --hero-bg-start: #fbfaff;
+  --hero-bg-mid: #f3efff;
+  --hero-bg-end: #e9e1ff;
+  --hero-border: #e4dcfb;
+  --hero-dot: rgb(91 33 182 / 14%);
+  --hero-glow: rgb(167 139 250 / 30%);
+  --hero-wave-a: #8b5cf6;
+  --hero-wave-b: #6d28d9;
+  --hero-wave-c: #f0abfc;
+  --hero-wave-line: rgb(124 58 237 / 18%);
+  --hero-title: #17113a;
+  --hero-text: #6b6385;
+  --hero-strong: #17113a;
+  --hero-card-bg: rgb(255 255 255 / 72%);
+  --hero-card-border: rgb(255 255 255 / 85%);
+  --hero-card-title: #4f2d7f;
+  --hero-card-text: #6b6385;
+
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  border: 1px solid var(--hero-border);
+  border-radius: 24px;
+  background: linear-gradient(90deg, var(--hero-bg-start), var(--hero-bg-mid) 50%, var(--hero-bg-end));
+  box-shadow: 0 14px 40px -28px rgb(76 29 149 / 45%);
+}
+
+:global(html[data-theme="dark"]) .hero {
+  --hero-bg-start: #182d48;
+  --hero-bg-mid: #1e344d;
+  --hero-bg-end: #24405d;
+  --hero-border: #3b526c;
+  --hero-dot: rgb(191 163 238 / 13%);
+  --hero-glow: rgb(111 82 162 / 30%);
+  --hero-wave-a: #a78bfa;
+  --hero-wave-b: #8b5cf6;
+  --hero-wave-c: #e879f9;
+  --hero-wave-line: rgb(196 181 253 / 28%);
+  --hero-title: #f5f3ff;
+  --hero-text: #b6c4d5;
+  --hero-strong: #ffffff;
+  --hero-card-bg: rgb(16 30 48 / 52%);
+  --hero-card-border: rgb(99 115 136 / 48%);
+  --hero-card-title: #ddd6fe;
+  --hero-card-text: #b6c4d5;
+  box-shadow: 0 14px 40px -24px rgb(0 0 0 / 70%);
+}
+
+.dots {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background-image: radial-gradient(var(--hero-dot) 1px, transparent 1.2px);
+  background-size: 18px 18px;
+  mask-image: linear-gradient(90deg, black, transparent 55%);
+}
+
+.waves {
+  position: absolute;
+  inset-block: 0;
+  right: 0;
+  z-index: -1;
+  width: 75%;
+  min-width: 520px;
+  height: 100%;
+  pointer-events: none;
+}
+
+.glow {
+  position: absolute;
+  top: -4rem;
+  right: -2.5rem;
+  z-index: -1;
+  width: 11rem;
+  height: 11rem;
+  border-radius: 999px;
+  background: var(--hero-glow);
+  filter: blur(40px);
+  pointer-events: none;
+}
+
+.title { color: var(--hero-title); }
+.text { color: var(--hero-text); }
+.text strong { color: var(--hero-strong); }
+
+.card {
+  border: 1px solid var(--hero-card-border);
+  background: var(--hero-card-bg);
+  box-shadow: 0 12px 30px -20px rgb(76 29 149 / 50%);
+  backdrop-filter: blur(8px);
+}
+.cardTitle { color: var(--hero-card-title); }
+.cardText { color: var(--hero-card-text); }

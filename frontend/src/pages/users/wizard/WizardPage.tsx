@@ -1,17 +1,25 @@
 import { useEffect, useState } from 'react';
 import { Navigate, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useToast } from '@/hooks/useToast';
+import { useResetWorkspaceScroll } from '@/hooks/useResetWorkspaceScroll';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { roleNavMap } from '@/mocks/navigation';
 import { fetchEnrolmentBoard, updateEnrolmentUser } from '@/api/enrolmentUsers';
 import { fetchCommercialBoard, updateCommercialBoard } from '@/api/commercialUsers';
-import { WIZARD_STEPS, type EnrolmentBoard } from '../types';
+import type { EnrolmentBoard } from '../types';
 import { btnSecondary } from '../components/ui';
 import { WizardProvider, useWizard } from './WizardContext';
 import { WizardShell } from './WizardShell';
+import { DEFAULT_LAYOUT, visibleSteps } from './layout/resolve';
 
-function WizardInner({ currentIndex }: { currentIndex: number }) {
-  const { userId, isCommercial, board, draft, saveIlr } = useWizard();
+const DEFAULT_STEPS = visibleSteps(DEFAULT_LAYOUT);
+
+function WizardInner({ stepSlug }: { stepSlug: string }) {
+  const { userId, isCommercial, board, draft, saveIlr, steps = DEFAULT_STEPS } = useWizard();
+  // Resolved against the published layout's steps, so a step added in the
+  // wizard builder has an address and a removed one falls back to the first.
+  const idx = steps.findIndex((s) => s.slug === stepSlug);
+  const currentIndex = idx === -1 ? 0 : idx;
   const navigate = useNavigate();
   const { success, error } = useToast();
 
@@ -20,7 +28,7 @@ function WizardInner({ currentIndex }: { currentIndex: number }) {
   const suffix = isCommercial ? '?source=commercial' : '';
   const profileHref = `/users/${userId}${suffix}`;
 
-  const goTo = (i: number) => navigate(`/users/${userId}/wizard/${WIZARD_STEPS[i].slug}${suffix}`);
+  const goTo = (i: number) => navigate(`/users/${userId}/wizard/${steps[i].slug}${suffix}`);
 
   const finish = async () => {
     const pd = draft.personalDetails;
@@ -63,7 +71,11 @@ function WizardInner({ currentIndex }: { currentIndex: number }) {
       onNavigateStep={goTo}
       onFinish={finish}
       header={
-        <div className="relative rounded-2xl overflow-hidden mb-4 animate-fade-in-up" style={{ background: 'linear-gradient(180deg, oklch(var(--primary-950)) 0%, oklch(var(--primary-900)) 50%, oklch(var(--primary-800)) 100%)' }}>
+        // Solid purple via a class, not an inline gradient: index.css replaces any
+        // workspace surface whose inline style names primary-950/900 with the
+        // shared hero gradient, which fades to near-white on the right and left
+        // the white text and Close button unreadable.
+        <div data-testid="staff-wizard-banner" className="relative rounded-2xl overflow-hidden mb-4 animate-fade-in-up bg-primary-800">
           <div className="absolute inset-x-0 top-0 h-px bg-white/10" />
           <div className="relative px-6 py-5 flex items-center justify-between gap-4">
             <div className="flex items-center gap-3 min-w-0">
@@ -73,7 +85,7 @@ function WizardInner({ currentIndex }: { currentIndex: number }) {
                 <p className="text-[15px] font-heading font-semibold text-white truncate">You are viewing: {board.user.name}{board.user.reference ? <span className="text-white/60 font-normal"> ({board.user.reference})</span> : null}</p>
               </div>
             </div>
-            <button onClick={() => navigate(profileHref)} className="inline-flex items-center gap-1.5 px-3 py-2 bg-white/15 backdrop-blur-sm text-white rounded-lg text-[12px] font-medium hover:bg-white/25 transition-smooth cursor-pointer shrink-0"><AppIcon className="ri-close-line" />Close wizard</button>
+            <button onClick={() => navigate(profileHref)} className="inline-flex items-center gap-1.5 px-3 py-2 border border-white/70 bg-transparent text-white rounded-lg text-[12px] font-medium hover:bg-white/15 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white transition-smooth cursor-pointer shrink-0"><AppIcon className="ri-close-line" />Close wizard</button>
           </div>
         </div>
       }
@@ -111,9 +123,8 @@ function WizardPageContent() {
   if (!stepSlug) return <Navigate to={`/users/${userId}/wizard/introduction${suffix}`} replace />;
   // Commercial delivery has no funded ILR trail. If an old bookmark or a
   // generic next-step link reaches the ILR route, land on the next real step.
-  const resolvedStepSlug = isCommercial && stepSlug === 'ilr' ? 'plr' : stepSlug;
-  const idx = WIZARD_STEPS.findIndex((s) => s.slug === resolvedStepSlug);
-  const currentIndex = idx === -1 ? 0 : idx;
+  // Neither ILR step applies to commercial delivery.
+  const resolvedStepSlug = isCommercial && (stepSlug === 'ilr' || stepSlug === 'ilr-details') ? 'plr' : stepSlug;
 
   if (loading || loadError || !board) {
     return (
@@ -138,17 +149,23 @@ function WizardPageContent() {
     /* readOnlyLearnerSteps: the Skills Radar is the learner's own self-assessment,
        so staff review it here rather than edit it. */
     <WizardProvider userId={userId} isCommercial={isCommercial} board={board} readOnlyLearnerSteps>
-      <WizardInner currentIndex={currentIndex} />
+      <WizardInner stepSlug={resolvedStepSlug} />
     </WizardProvider>
   );
 }
 
 export default function WizardPage() {
   const config = roleNavMap.compliance;
+  const { stepSlug } = useParams();
+  // Each step opens at its top rather than at the previous step's position.
+  // `contents`, so the anchor adds no box to the layout.
+  const topRef = useResetWorkspaceScroll<HTMLDivElement>(stepSlug);
   return (
     <WorkspaceShell role="compliance" roleLabel={config.label} navItems={config.items}
       workspaceLabel={config.workspaceLabel} pageTitle="Enrolment Wizard">
-      <WizardPageContent />
+      <div ref={topRef} className="contents">
+        <WizardPageContent />
+      </div>
     </WorkspaceShell>
   );
 }

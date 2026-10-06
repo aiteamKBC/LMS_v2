@@ -1,5 +1,8 @@
 import type { SidebarNavItem } from '@/components/feature/Sidebar';
 import { CHAT_ENABLED } from '@/lib/featureFlags';
+import { inclusionLoginUrl } from '@/features/inclusion/navigation';
+
+const inclusionLoginHref = inclusionLoginUrl();
 
 // ============================================================================
 // Learner tools reached from the dashboard, with the same permission IDs as
@@ -31,7 +34,8 @@ export const learnerNavItems: SidebarNavItem[] = [
       { id: 'learner-monthly-submission', label: 'Monthly Submission', icon: 'ri-file-upload-line', href: '/learner/monthly-submission' },
       { id: 'learner-monthly-logs', label: 'Monthly Logs', icon: 'ri-file-list-3-line', href: '/learner/monthly-logs', matchPaths: ['/learner/monthly-cycle'] },
       { id: 'learner-monthly-coaching', label: 'Monthly Coaching Meeting', icon: 'ri-chat-smile-2-line', href: '/learner/monthly-coaching' },
-      { id: 'learner-progress-reviews', label: 'Reviews', icon: 'ri-file-chart-line', href: '/learner/progress-reviews' },
+      { id: 'learner-progress-reviews', label: 'Progress Review', icon: 'ri-file-chart-line', href: '/learner/progress-reviews' },
+      { id: 'learner-reviews', label: 'Reviews', icon: 'ri-file-list-3-line', href: '/learner/reviews' },
     ],
   },
 
@@ -62,6 +66,21 @@ export const learnerNavItems: SidebarNavItem[] = [
 // ============================================================================
 // COACH WORKSPACE — Grouped sidebar
 // ============================================================================
+// Gated to the audit roles in `rbac.ts`, so a coach reading their own workspace
+// never sees it: this door reads every coach's activity, not the signed-in
+// one's.
+//
+// Named on its own because it is the one Coach destination that does not read
+// the selected coach. That makes it the only item the picker at
+// `/workspace/coach` can offer before a coach has been chosen.
+export const coachAuditTrailNavItem: SidebarNavItem = {
+  id: 'coach-audit-trail',
+  label: 'Audit Trail',
+  icon: 'ri-history-line',
+  href: '/coach/audit-trail',
+  matchPaths: ['/coach/audit-trail/people'],
+};
+
 export const coachNavItems: SidebarNavItem[] = [
   { id: 'coach-dashboard', label: 'Dashboard', icon: 'ri-dashboard-line', href: '/workspace/coach' },
   {
@@ -95,6 +114,8 @@ export const coachNavItems: SidebarNavItem[] = [
     href: '/coach/monthly-logs',
     matchPaths: ['/coach/monthly-cycle'],
   },
+  { id: 'coach-inclusion', label: 'Inclusion Ticket System', icon: 'ri-heart-pulse-line', href: inclusionLoginHref, external: true },
+  { id: 'coach-support-tickets', label: 'Support Tickets', icon: 'ri-lifebuoy-line', href: '/coach/support-tickets' },
 ];
 
 // ============================================================================
@@ -182,6 +203,7 @@ export const employerNavItems: SidebarNavItem[] = [
     label: 'Communication',
     icon: 'ri-mail-line',
     children: [
+      { id: 'employer-notifications', label: 'Notifications', icon: 'ri-notification-3-line', href: '/notifications' },
       { id: 'employer-messages', label: 'Messages', icon: 'ri-mail-line', href: '/messages', statusDot: 'blue' },
       { id: 'employer-support', label: 'Support Requests', icon: 'ri-question-line', href: '/employer/support' },
     ],
@@ -229,6 +251,7 @@ export const curriculumNavItems: SidebarNavItem[] = [
       '/curriculum/standards',
       '/curriculum/ksb-frameworks',
       '/curriculum/quiz-xml',
+      '/curriculum/knowledge-base',
       '/curriculum/question-bank',
       '/curriculum/checkpoints',
     ],
@@ -325,6 +348,7 @@ export const engagementNavItems: SidebarNavItem[] = [
  */
 export const apprenticeNavItems: SidebarNavItem[] = [
   { id: 'apprenticeNavItems-coach-directory', label: 'Coach directory', icon: 'ri-team-line', href: '/users/coach-directory' },
+  { id: 'apprenticeNavItems-first-sessions', label: 'First sessions', icon: 'ri-calendar-check-line', href: '/users/first-sessions' },
   { id: 'apprentice-users', label: 'Users', icon: 'ri-group-line', href: '/users', statusDot: 'blue' },
 ];
 
@@ -334,6 +358,7 @@ export const apprenticeNavItems: SidebarNavItem[] = [
  */
 export const enrolmentNavItems: SidebarNavItem[] = [
   { id: 'enrolmentNavItems-coach-directory', label: 'Coach directory', icon: 'ri-team-line', href: '/users/coach-directory' },
+  { id: 'enrolmentNavItems-first-sessions', label: 'First sessions', icon: 'ri-calendar-check-line', href: '/users/first-sessions' },
   { id: 'enrolment-users', label: 'Users', icon: 'ri-group-line', href: '/users', statusDot: 'blue' },
 ];
 
@@ -609,6 +634,18 @@ export const adminNavItems: SidebarNavItem[] = [
 
   // Every headline count in one place, each row naming its source table.
   { id: 'admin-platform-report', label: 'Platform Report', icon: 'ri-bar-chart-box-line', href: '/admin/platform-report' },
+
+  // College sites outside the LMS — open in a new tab.
+  {
+    id: 'admin-group-external',
+    label: 'External tools',
+    icon: 'ri-external-link-line',
+    children: [
+      { id: 'admin-positive-moments', label: 'Positive Moments', icon: 'ri-heart-line', href: 'https://positive-moments.kentbusinesscollege.net', external: true },
+      { id: 'admin-tutor-dashboard', label: 'Tutor Dashboard', icon: 'ri-dashboard-line', href: 'https://tutordashboard.kentbusinesscollege.net', external: true },
+    ],
+  },
+  { id: 'admin-inclusion', label: 'Inclusion System', icon: 'ri-heart-pulse-line', href: inclusionLoginHref, external: true },
 ];
 
 // ============================================================================

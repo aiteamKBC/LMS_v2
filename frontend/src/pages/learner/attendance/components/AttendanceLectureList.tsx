@@ -14,8 +14,43 @@ export type AttendanceFilter = 'all' | 'attended' | 'absent' | 'covered' | 'upco
 const STATUS: Record<AttendanceLecture['status'], { label: string; tone: StatusTone }> = {
   completed: { label: 'Attended', tone: 'positive' }, late: { label: 'Late', tone: 'caution' },
   absent: { label: 'Missed', tone: 'critical' }, upcoming: { label: 'Upcoming', tone: 'info' },
+  unmarked: { label: 'Unmarked', tone: 'neutral' },
   in_progress: { label: 'In progress', tone: 'info' }, pending: { label: 'Awaiting attendance', tone: 'neutral' },
 };
+const shortDate = (date: string | null | undefined) => date && /^\d{4}-\d{2}-\d{2}$/.test(date)
+  ? new Date(`${date}T00:00:00`).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }) : '';
+
+/** One final outcome per lecture, plus at most one detail worth showing. */
+function lectureOutcome(row: AttendanceLecture): {
+  madeUp: boolean; alternative: boolean; catchupBooked: boolean;
+  detail: { label: string; tone: StatusTone } | null; plan?: string; upcomingReport?: boolean;
+} {
+  const method = row.recovery?.method;
+  const alternative = method === 'alternative';
+  const madeUp = row.status === 'absent' && row.effectiveAttendance === 1;
+  const when = shortDate(row.recovery?.date);
+  if (madeUp) {
+    return { madeUp, alternative, catchupBooked: false,
+      detail: { label: alternative ? 'Alternative session' : when ? `Catch-up · ${when}` : 'Catch-up', tone: 'neutral' } };
+  }
+  // The learner's chosen make-up plan for a reported lecture that has not happened yet.
+  const plan = alternative ? 'Alternative session booked'
+    : method === 'catch-up' && when ? `Catch-up booked · ${when}`
+      : method === 'recorded' ? 'Watch the recording' : undefined;
+  if (row.status === 'absent') {
+    const catchupBooked = method === 'catch-up' && row.catchupStatus === 'pending';
+    const detail: { label: string; tone: StatusTone } = row.catchupStatus === 'missed' ? { label: 'Catch-up missed', tone: 'critical' }
+      : catchupBooked ? { label: when ? `Catch-up booked · ${when}` : 'Catch-up booked', tone: 'caution' }
+        : alternative ? { label: 'Alternative session booked', tone: 'caution' }
+          : row.catchupStatus === 'completed' ? { label: 'Catch-up completed', tone: 'positive' }
+            : { label: 'Make-up needed', tone: 'caution' };
+    return { madeUp, alternative, catchupBooked, detail };
+  }
+  const reported = row.absenceReport && ['upcoming', 'in_progress', 'pending'].includes(row.status);
+  return { madeUp, alternative, catchupBooked: false, plan, upcomingReport: Boolean(reported),
+    detail: reported ? { label: 'Absence reported', tone: 'neutral' } : null };
+}
+
 const monthKey = (date: string) => /^\d{4}-\d{2}-\d{2}$/.test(date) && !Number.isNaN(new Date(`${date}T00:00:00`).getTime()) ? date.slice(0, 7) : 'undated';
 const monthLabel = (month: string) => month === 'undated' ? 'Date not recorded' : new Date(`${month}-01T00:00:00`).toLocaleDateString('en-GB', { month: 'long', year: 'numeric' });
 
@@ -149,11 +184,58 @@ function MonthGroup({ now, month, rows, expanded, onToggle, onOpen, onReport, on
   </div>;
 }
 
+const minutesLabel = (seconds: number) => {
+  const minutes = Math.round(seconds / 60);
+  return minutes >= 60 ? `${Math.floor(minutes / 60)}h${minutes % 60 ? ` ${minutes % 60}m` : ''}` : `${minutes} min`;
+};
+
+/** How much of the lecture recording the learner has played (informational; it does not make the lecture up). */
+function watchedLabel(watched = 0, length = 0) {
+  if (watched < 60) return 'Not watched yet';
+  const seen = length > 0 ? Math.min(watched, length) : watched;
+  return length > 0 ? `Watched ${minutesLabel(seen)} of ${minutesLabel(length)}` : `Watched ${minutesLabel(seen)}`;
+}
+
+const PLAN_COPY: Record<string, { label: string; join: string; icon: string }> = {
+  'catch-up': { label: 'Catch-up session', join: 'Join catch-up', icon: 'ri-calendar-event-line' },
+  alternative: { label: 'Alternative session', join: 'Join alternative session', icon: 'ri-calendar-event-line' },
+  recorded: { label: 'Watch the recording', join: 'Watch the recording', icon: 'ri-play-circle-line' },
+};
+
+function RecoveryPlanLink({ recovery, recordingHref }: { recovery: NonNullable<AttendanceLecture['recovery']>; recordingHref?: string }) {
+  const copy = PLAN_COPY[recovery.method] || PLAN_COPY['catch-up'];
+  const date = recovery.date ? new Date(`${recovery.date}T00:00:00`).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' }) : '';
+  const time = recovery.startTime ? `${recovery.startTime}${recovery.endTime && recovery.method !== 'recorded' ? `–${recovery.endTime}` : ''}` : '';
+  const when = [date, time].filter(Boolean).join(' · ');
+  const details = <>
+    <AppIcon className={recovery.joinUrl ? 'ri-video-chat-line' : copy.icon} />
+    <span className={styles.alternativeText}>
+      <strong>{recovery.joinUrl ? copy.join : copy.label}</strong>
+      {recovery.method === 'recorded' && when && <span>{recovery.ended ? 'Planned for' : 'Planned'}</span>}
+      {when && <span>{when}</span>}
+      {recovery.group && <span>{recovery.group}</span>}
+      {recovery.method === 'recorded' && <span className={styles.watchProgress}>{watchedLabel(recovery.watchedSeconds, recovery.recordingSeconds)}</span>}
+    </span>
+  </>;
+  // Live now: straight into Teams. A recording opens the lecture's own component (its recording
+  // is shown there); otherwise open the plan in the calendar (details and Join).
+  const to = recovery.method === 'recorded' && recordingHref ? recordingHref
+    : `/learner/calendar?event=${encodeURIComponent(recovery.calendarKey || '')}`;
+  return recovery.joinUrl
+    ? <a className={styles.alternativeLink} href={recovery.joinUrl} target="_blank" rel="noopener noreferrer">{details}</a>
+    : <Link className={styles.alternativeLink} to={to}>{details}</Link>;
+}
+
 function LectureRow({ now, row, onOpen, onReport, onCatchup }: { now: number; row: AttendanceLecture; onOpen: (row: AttendanceLecture) => void; onReport: (row: AttendanceLecture) => void; onCatchup: (row: AttendanceLecture) => void }) {
   const titleId = useId();
   const live = isLectureLive(row, now);
   const joinUrl = lectureJoinUrl(row);
   const date = monthKey(row.date) === 'undated' ? null : new Date(`${row.date}T00:00:00`);
+  const outcome = lectureOutcome(row);
+  // A booked plan the learner can still go to: open it in the calendar, or join it when live.
+  // A recording can be watched at any time, so its card stays after the planned time passes.
+  const planOpen = Boolean(row.recovery?.calendarKey && (!row.recovery.ended || row.recovery.method === 'recorded') && !outcome.madeUp
+    && row.catchupStatus !== 'missed' && (row.status === 'absent' || outcome.upcomingReport));
   return <article aria-labelledby={titleId} className={styles.lectureRow} data-status={row.status}>
     <div className={styles.lectureInfo}>
       <span className={styles.lectureIcon} aria-hidden="true"><AppIcon className={row.source === 'microsoft-teams' ? 'ri-vidicon-line' : 'ri-book-open-line'} /></span>
@@ -166,15 +248,24 @@ function LectureRow({ now, row, onOpen, onReport, onCatchup }: { now: number; ro
     <div className={styles.lectureHours} data-label="Hours">{row.durationMinutes == null ? <span title="Duration not recorded">—</span> : Number((row.durationMinutes / 60).toFixed(2))}</div>
     <div className={styles.lectureContent} data-label="Key Content">{row.contentSummary || <span className={styles.unmapped}>Content not recorded</span>}</div>
     <div className={styles.lectureKsbs} data-label="KSBs"><KsbChips row={row} /></div>
-    <div className={styles.lectureStatus} data-label="Status"><StatusBadge {...STATUS[row.status]} />
-      {row.excused && row.status === 'absent' && <StatusBadge tone="caution" label="Excused - catch-up required" />}
-      {row.catchupStatus && <StatusBadge tone={row.catchupStatus === 'completed' ? 'positive' : 'caution'} label={row.catchupStatus === 'completed' ? 'Catch-up completed' : 'Catch-up pending'} />}
-      {row.absenceReport && <StatusBadge tone="neutral" label={`Absence ${row.absenceReport.status}`} />}
+    <div className={styles.lectureStatus} data-label="Status">
+      <StatusBadge {...(outcome.madeUp ? { label: 'Made up', tone: 'positive' as StatusTone } : STATUS[row.status])} />
+      {outcome.detail && <StatusBadge tone={outcome.detail.tone} label={outcome.detail.label} />}
     </div>
     <div className={styles.lectureAttendanceAction} data-label="Attendance action">
-      {row.status === 'absent' ? <button type="button" className={styles.catchupButton} onClick={() => onCatchup(row)}><AppIcon className="ri-calendar-event-line" />Book Catchup Session</button>
+      {outcome.madeUp ? <span className={styles.unmapped}>{outcome.alternative ? 'Made up via alternative' : 'Made up via catch-up'}</span>
+        : planOpen && row.recovery ? <div className={styles.planStack}>
+            <RecoveryPlanLink recovery={row.recovery} recordingHref={row.componentHref} />
+            {/* A booked catch-up can be moved; a recording plan does not make the lecture up. */}
+            {row.status === 'absent' && row.recovery.method !== 'alternative' && <button type="button" className={styles.planSecondary} onClick={() => onCatchup(row)}>
+              {row.recovery.method === 'catch-up' ? 'Change catch-up' : 'Book catch-up'}</button>}
+          </div>
+        : row.status === 'absent' && row.catchupStatus !== 'completed' ? <button type="button" className={styles.catchupButton} onClick={() => onCatchup(row)}><AppIcon className="ri-calendar-event-line" />{outcome.catchupBooked ? 'Change catch-up' : 'Book Catchup Session'}</button>
         : row.canReportAbsence ? <button type="button" className={styles.reportButton} onClick={() => onReport(row)}><AppIcon className="ri-calendar-close-line" />Report Absence</button>
-        : <span className={styles.unmapped}>{row.absenceReport ? 'Absence reported' : '—'}</span>}
+        : outcome.upcomingReport && row.recovery?.method === 'catch-up' && !row.recovery.date
+          ? <button type="button" className={styles.catchupButton} onClick={() => onCatchup(row)}><AppIcon className="ri-calendar-event-line" />Book Catchup Session</button>
+        : outcome.upcomingReport && outcome.plan ? <span className={styles.unmapped}>{outcome.plan}</span>
+        : <span className={styles.unmapped}>{row.absenceReport && !['completed', 'late'].includes(row.status) ? 'Absence reported' : '—'}</span>}
     </div>
     <div className={styles.lectureActions}>
       {live ? joinUrl ? <a className={`primary-action ${styles.activityButton}`} href={joinUrl} target="_blank" rel="noopener noreferrer">Join session<AppIcon className="ri-video-chat-line" /></a>

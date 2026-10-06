@@ -44,7 +44,25 @@ def month_bounds(month):
         return None, None
 
 
-def valid_time_entries(monthly, hours):
+def _completion_date(record):
+    """The date this assignment counts on.
+
+    The declared working instant when the learner's Finish click fell outside
+    the working rules and had to be corrected, otherwise today. The real click
+    stays on the progress record's ``submittedAt`` either way.
+    """
+    from django.utils import timezone
+    from django.utils.dateparse import parse_datetime
+
+    declared = str((record or {}).get("declaredCompletedAt") or "").strip()
+    if declared:
+        parsed = parse_datetime(declared)
+        if parsed is not None:
+            return parsed.date().isoformat()
+    return timezone.localdate().isoformat()
+
+
+def valid_time_entries(monthly, hours, *, daily_limit=False):
     # Older submissions retain their original aggregate time.
     if "timeEntries" not in monthly:
         return True
@@ -52,6 +70,10 @@ def valid_time_entries(monthly, hours):
     start, end = month_bounds(monthly.get("month"))
     if not start or not isinstance(entries, list) or not entries:
         return False
+    if daily_limit:
+        from .assignment_hours import daily_limit_error
+        if daily_limit_error(entries):
+            return False
     total = 0
     for entry in entries:
         if not isinstance(entry, dict) or not text(entry.get("topic")):
@@ -157,8 +179,8 @@ def resubmission_booking_satisfied(payload):
     with connections["enrolment"].cursor() as cur:
         cur.execute(
             'SELECT status, full_submission FROM "Learner"."learning_reflection_submissions" '
-            "WHERE learner_kind = %s AND learner_id = %s AND activity_type = 'assignment' AND activity_id = %s",
-            [payload.get("learnerKind"), str(payload.get("learnerId")), payload.get("activityId")],
+            "WHERE learner_kind = %s AND learner_id = %s AND activity_type = 'assignment' AND activity_id = %s AND assignment_topic_id = %s",
+            [payload.get("learnerKind"), str(payload.get("learnerId")), payload.get("activityId"), payload.get("assignmentTopicId") or ""],
         )
         row = cur.fetchone()
     if not row or row[0] not in ("rejected", "draft"):
@@ -192,7 +214,7 @@ def available_ksb_codes(payload):
     return set(component_ksb_codes(payload.get("activityId"))) | {k["code"] for k in (programme_items or (profile.ksbs if profile else []))}
 
 
-def assignment_checks(payload, *, evidence_ids=None, meeting_booked=None, allowed_ksbs=None):
+def assignment_checks(payload, *, evidence_ids=None, meeting_booked=None, allowed_ksbs=None, claimed_hours=None):
     """Dependencies are injectable for schema-free tests; production verifies DB ownership."""
     monthly = mapping(payload.get("monthlyAssignment"))
     evidence = [mapping(e) for e in items(monthly.get("evidence"))]
@@ -222,6 +244,20 @@ def assignment_checks(payload, *, evidence_ids=None, meeting_booked=None, allowe
     except (TypeError, ValueError):
         hours = 0
     booked = booked_coaching(payload) if meeting_booked is None else meeting_booked
+    # Personal study has its own account-owned storage; extra activities retain
+    # their existing rules. Neither participates in official assignment claims.
+    daily_limit = payload.get("activityType") == "assignment" and str(payload.get("learnerId", "")).isdigit()
+    hours_error = ""
+    if daily_limit and "timeEntries" in monthly:
+        from .assignment_hours import daily_totals, daily_limit_error, saved_daily_totals
+        if claimed_hours is None and daily_totals(monthly["timeEntries"]):
+            with connections["enrolment"].cursor() as cur:
+                claimed_hours = saved_daily_totals(cur, payload["learnerKind"], payload["learnerId"],
+                                                  payload["activityId"], payload.get("assignmentTopicId"))
+        hours_error = daily_limit_error(monthly["timeEntries"], claimed_hours)
+    hours_label = ("Record positive hours with a maximum of 8 per day across all assignments, including saved drafts"
+                   if daily_limit else "Record each topic with positive hours (maximum 8 per topic)")
+    hours_label += " and a working date in the assignment month (no weekends or bank holidays)"
     checks = [
         ("answer", "Assignment answer: at least 120 words", words(payload.get("assignmentAnswer")) >= 120),
         ("learning", "Learned, understood and gained skills: at least 20 words each", all(words(v) >= 20 for v in [payload.get("whatYouLearned"), monthly.get("understood"), monthly.get("gainedSkills")])),
@@ -229,7 +265,7 @@ def assignment_checks(payload, *, evidence_ids=None, meeting_booked=None, allowe
         ("ksbs", "Every claimed programme KSB has a 20-word explanation; evidence links are optional and must be valid if selected", bool(claims) and len(set(claimed_codes)) == len(claimed_codes) and set(claimed_codes) <= allowed and all(words(c.get("explanation")) >= 20 and set(str(e) for e in items(c.get("evidenceIds"))) <= linked_ids for c in claims)),
         ("planned", "Planned hours and KSBs reviewed", monthly.get("plannedReviewed") is True),
         ("declarations", "New learning, skills and employer evidence-sharing declarations confirmed", all(monthly.get(k) is True for k in ["newKnowledge", "newSkills", "sharingConsent"])),
-        ("hours", "Record each topic with positive hours (maximum 8 per topic) and a working date in the assignment month (no weekends or bank holidays); confirm any out-of-hours work", math.isfinite(hours) and hours > 0 and valid_time_entries(monthly, hours) and (not payload.get("outsideWorkingHours") or payload.get("outsideWorkingHoursConfirmed") is True)),
+        ("hours", hours_error or hours_label, math.isfinite(hours) and hours > 0 and valid_time_entries(monthly, hours, daily_limit=daily_limit) and not hours_error),
         ("reflection", "Monthly LMS reflection and integrated understanding: at least 20 words each", all(words(monthly.get(k)) >= 20 for k in ["lmsReflection", "integratedReflection"])),
         ("benefit", "Employer benefit confirmed and measurable outcomes described (20 words)", monthly.get("employerBenefit") is True and words(payload.get("businessImpact")) >= 20),
         ("impact", "Career, job and employer impacts: at least 20 words each", all(words(monthly.get(k)) >= 20 for k in ["careerImpact", "jobImpact", "employerImpact"])),
@@ -305,7 +341,7 @@ def export_presentation(request):
         return JsonResponse({"error": str(exc)}, status=400)
 
 
-def complete_saved_assignment(kind, learner_id, component_id, record, save_progress):
+def complete_saved_assignment(kind, learner_id, component_id, record, save_progress, assignment_topic=""):
     """Progress and final submission commit together; failed completion leaves a draft.
 
     The row lock also prevents a delayed autosave from overwriting submission.
@@ -315,20 +351,22 @@ def complete_saved_assignment(kind, learner_id, component_id, record, save_progr
     from django.utils import timezone
     with transaction.atomic(using="enrolment"):
         with connections["enrolment"].cursor() as cur:
+            from .assignment_hours import lock_assignment_hours
+            lock_assignment_hours(cur, kind, learner_id)
             cur.execute(
                 'SELECT id, status, full_submission, coach_feedback, reviewed_by, reviewed_at, submitted_at FROM "Learner"."learning_reflection_submissions" '
-                "WHERE learner_kind = %s AND learner_id = %s AND activity_type = 'assignment' AND activity_id = %s FOR UPDATE",
-                [kind, str(learner_id), component_id],
+                "WHERE learner_kind = %s AND learner_id = %s AND activity_type = 'assignment' AND activity_id = %s AND assignment_topic_id = %s FOR UPDATE",
+                [kind, str(learner_id), component_id, assignment_topic],
             )
             row = cur.fetchone()
-            if not row or row[1] in ("accepted", "submitted_for_tutor_review"):
+            if not row or row[1] in ("accepted", "submitted_for_tutor_review") or (assignment_topic and row[1] == "partial"):
                 raise ValueError("This assignment is missing or has already been submitted. Reload the page to see its current status.")
             payload = mapping(json.loads(row[2]) if isinstance(row[2], str) else row[2])
             if payload.get("submissionOrigin") == "imported_legacy":
                 raise ValueError("Historical imported assignments cannot be completed again.")
             if row[1] != "draft":
                 preserve_attempts(payload, payload, status=row[1], feedback=row[3], reviewer=row[4], reviewed_at=row[5], submitted_at=row[6])
-            payload.update(learnerKind=kind, learnerId=str(learner_id), activityId=component_id)
+            payload.update(learnerKind=kind, learnerId=str(learner_id), activityType="assignment", activityId=component_id, assignmentTopicId=assignment_topic)
             checks = assignment_checks(payload)
             if not all(c["passed"] for c in checks):
                 raise ValueError("Some monthly submission requirements changed. Your draft is safe; recheck before submitting.")
@@ -337,10 +375,15 @@ def complete_saved_assignment(kind, learner_id, component_id, record, save_progr
             save_progress()
             lineage = _reflection_lineage(learner_id, component_id)
             payload.update(submissionMode="submit", qualityScore=100, qualityChecks=checks,
-                           otjhConfirmed=True, signedDeclaration=True, dateCompleted=timezone.localdate().isoformat(),
+                           otjhConfirmed=True, signedDeclaration=True,
+                           dateCompleted=_completion_date(record),
                            outsideWorkingHours=record.get("outsideWorkingHours", False),
+                           insideWorkingHoursConfirmed=record.get("insideWorkingHoursConfirmed", False),
+                           insideWorkingHoursConfirmedAt=record.get("insideWorkingHoursConfirmedAt"),
                            outsideWorkingHoursConfirmed=record.get("outsideWorkingHoursConfirmed", False),
-                           outsideWorkingHoursConfirmedAt=record.get("outsideWorkingHoursConfirmedAt"))
+                           outsideWorkingHoursConfirmedAt=record.get("outsideWorkingHoursConfirmedAt"),
+                           declaredCompletedAt=record.get("declaredCompletedAt"),
+                           submissionValidationReason=record.get("submissionValidationReason", ""))
             cur.execute(
                 'UPDATE "Learner"."learning_reflection_submissions" '
                 "SET status = 'submitted_for_tutor_review', full_submission = %s::jsonb, quality_score = 100, "

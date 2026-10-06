@@ -32,6 +32,7 @@ STEPS = (
     ("apply_staff_users_table", True, "staff directory"),
     ("apply_employer_tables", True, "Organisations + Employers"),
     ("apply_created_users_employer_id", False, "Created_users.Employer_id"),
+    ("apply_created_users_attendance_type", True, "Created_users.Attendance_type"),
     ("apply_learning_plan_jsonb", False, "Learning_plan text -> jsonb"),
     # Wizard + ILR capture.
     ("apply_extended_ilr_table", False, "Extended_ILR"),
@@ -50,6 +51,7 @@ STEPS = (
     ("apply_employer_signing", True, "employer sign-off columns"),
     ("apply_document_learner_signature", False, "learner sign-off columns"),
     ("apply_progress_time_tracking_schema", True, "verified learner-time provenance"),
+    ("apply_inside_working_hours_schema", True, "inside-working-hours declaration"),
 )
 
 

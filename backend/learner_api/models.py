@@ -23,6 +23,7 @@ from functools import lru_cache
 
 from django.db import DatabaseError, connections, models
 from django.db.models.functions import Lower, Trim
+from system_audit.writes import AuditedQuerySet
 
 
 class SafeJSONField(models.JSONField):
@@ -65,7 +66,7 @@ def learner_activity_events_relation_exists(using: str) -> bool:
 
 @lru_cache(maxsize=None)
 def learner_ksbs_relation_exists(using: str) -> bool:
-    """Is the legacy per-learner KSB snapshot table still present?
+    """Is the legacy per-learner KSB snapshot compatible with its ORM model?
 
     ``LearnerKsb`` / ``LearnerProfile.assigned_ksbs`` map the pre-normalisation
     snapshot, kept as a read/rollback fallback. It is absent from the current
@@ -76,13 +77,26 @@ def learner_ksbs_relation_exists(using: str) -> bool:
     ``prefetch_related("assigned_ksbs")`` raises before any of that runs, so
     callers probe here first — same shape as the activity-events check above.
     """
+    required_columns = {
+        "id", "learner_id", "position", "code", "number", "ksb_type", "description",
+    }
     try:
         with connections[using].cursor() as cursor:
-            cursor.execute("select to_regclass(%s)", [LEARNER_KSBS_RELATION])
+            cursor.execute(
+                """
+                select array_agg(attribute.attname)
+                from pg_attribute attribute
+                where attribute.attrelid = to_regclass(%s)
+                  and attribute.attnum > 0
+                  and not attribute.attisdropped
+                """,
+                [LEARNER_KSBS_RELATION],
+            )
             result = cursor.fetchone()
     except DatabaseError:
         return False
-    return bool(result and result[0])
+    available_columns = set(result[0] or []) if result else set()
+    return required_columns.issubset(available_columns)
 
 
 def _serialise_quiz_ref(value):
@@ -162,7 +176,7 @@ def _progress_entry_activity(entry):
     return item
 
 
-class LearnerTypeQuerySet(models.QuerySet):
+class LearnerTypeQuerySet(AuditedQuerySet):
     """Queryset for the merged learner table, scoped by "Learner_type"."""
 
     def apprenticeship(self):
@@ -329,6 +343,9 @@ class EnrolmentUser(models.Model):
     mentor = models.TextField(db_column="Mentor", null=True, blank=True)
     reference_number = models.TextField(db_column="Reference_number", null=True, blank=True)
     extended_break = models.TextField(db_column="Extended_break", null=True, blank=True)
+    # "Recorded" / "Not recorded" (ATTENDANCE_TYPE_CHOICES); NULL when not given.
+    # Added by the apply_created_users_attendance_type command.
+    attendance_type = models.TextField(db_column="Attendance_type", null=True, blank=True)
     employer_address = models.TextField(db_column="Employer_address", null=True, blank=True)
     target_programme = models.TextField(db_column="Target_programme", null=True, blank=True)
     invite_to_platform = models.BooleanField(db_column="Invite_to_platform", null=True, blank=True)
@@ -765,6 +782,7 @@ class LearnerProfile(models.Model):
                 "passed": entry.passed,
                 "feedback": entry.feedback,
                 "reportedTime": entry.reported_time,
+                "reflectionSkipped": entry.reflection_skipped,
                 "startedAt": entry.started_at.isoformat() if entry.started_at else "",
                 "submittedAt": entry.submitted_at.isoformat() if entry.submitted_at else "",
                 "timeTaken": entry.time_taken,
@@ -775,11 +793,21 @@ class LearnerProfile(models.Model):
                 "serverSessionSeconds": entry.server_session_seconds,
                 "verifiedSeconds": entry.verified_seconds,
                 "outsideWorkingHours": entry.outside_working_hours,
+                "insideWorkingHoursConfirmed": entry.inside_working_hours_confirmed,
+                "insideWorkingHoursConfirmedAt": (
+                    entry.inside_working_hours_confirmed_at.isoformat()
+                    if entry.inside_working_hours_confirmed_at else ""
+                ),
                 "outsideWorkingHoursConfirmed": entry.outside_working_hours_confirmed,
                 "outsideWorkingHoursConfirmedAt": (
                     entry.outside_working_hours_confirmed_at.isoformat()
                     if entry.outside_working_hours_confirmed_at else ""
                 ),
+                "declaredCompletedAt": (
+                    entry.declared_completed_at.isoformat()
+                    if entry.declared_completed_at else ""
+                ),
+                "submissionValidationReason": entry.submission_validation_reason,
                 "ksbs": [
                     row.ksb_code
                     for row in entry.ksb_links.all()
@@ -1038,6 +1066,7 @@ class LearnerProgressEntry(models.Model):
     passed = models.BooleanField(null=True, blank=True)
     feedback = models.TextField(blank=True)
     reported_time = models.TextField(blank=True)
+    reflection_skipped = models.BooleanField(default=False)
     started_at = models.DateTimeField(null=True, blank=True)
     submitted_at = models.DateTimeField(null=True, blank=True)
     time_taken = models.TextField(blank=True)
@@ -1050,6 +1079,13 @@ class LearnerProgressEntry(models.Model):
     outside_working_hours = models.BooleanField(default=False)
     outside_working_hours_confirmed = models.BooleanField(default=False)
     outside_working_hours_confirmed_at = models.DateTimeField(null=True, blank=True)
+    inside_working_hours_confirmed = models.BooleanField(default=False)
+    inside_working_hours_confirmed_at = models.DateTimeField(null=True, blank=True)
+    # The working instant the learner declared after their real Finish click
+    # failed the working rules, and why that click failed. ``submitted_at``
+    # keeps the real click and is never rewritten.
+    declared_completed_at = models.DateTimeField(null=True, blank=True)
+    submission_validation_reason = models.CharField(max_length=32, blank=True, default='')
     feed_kind = models.CharField(max_length=30, blank=True)
     feed_action = models.TextField(blank=True)
     feed_title = models.TextField(blank=True)
@@ -1532,6 +1568,22 @@ class HealthSafetyReviewDetail(_ReviewDetail):
 
     def __str__(self):
         return f"Health & safety review {self.event_key}"
+
+
+class UlnPrivacyReviewDetail(_ReviewDetail):
+    """enrolment."Review_ULN_Privacy" — ULN Privacy Notice & Learner Acknowledgement."""
+
+    # "Yes" once the learner has read the ULN privacy notice / confirmed the
+    # acknowledgement; saving each panel records it.
+    privacy_notice_read = models.TextField(db_column="Privacy_notice_read", blank=True)
+    learner_acknowledged = models.TextField(db_column="Learner_acknowledged", blank=True)
+
+    class Meta:
+        managed = False
+        db_table = 'enrolment"."Review_ULN_Privacy'
+
+    def __str__(self):
+        return f"ULN privacy review {self.event_key}"
 
 
 class Organisation(models.Model):

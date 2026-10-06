@@ -6,6 +6,7 @@ import { RightSlidePanel } from '@/components/feature/RightSlidePanel';
 import { ProgrammeFilter } from '@/components/feature/ProgrammeFilter';
 import { useToast } from '@/hooks/useToast';
 import { useOperatorIdentity } from '@/hooks/useOperatorIdentity';
+import { useListQueryState } from '@/hooks/useListQueryState';
 import { roleNavMap } from '@/mocks/navigation';
 import { countByProgramme, filterByProgramme, type VoucherClaim, type ProgrammeFilterValue } from '@/mocks/engagement-data';
 import { fetchVoucherClaims, updateVoucherClaim } from '@/api/engagement';
@@ -18,6 +19,7 @@ import { EmptyState } from '@/components/feature/EmptyState';
 const engagementNav = roleNavMap.engagement;
 
 type SortKey = 'points' | 'name';
+const QUERY_DEFAULTS = { search: '', status: 'all', programme: 'all', sort: 'points', direction: 'desc' };
 
 // Every reward is digital now — always the learner's own real, on-file
 // email. Never a manually typed address, and never prompted for again.
@@ -32,11 +34,12 @@ export default function VoucherClaimsPage() {
   const [claims, setClaims] = useState<VoucherClaim[]>([]);
   const [directory, setDirectory] = useState<Map<string, UserListRow>>(new Map());
   const [loading, setLoading] = useState(true);
-  const [search, setSearch] = useState('');
-  const [statusFilter, setStatusFilter] = useState<'all' | 'pending' | 'approved' | 'rejected' | 'fulfilled'>('all');
-  const [programmeFilter, setProgrammeFilter] = useState<ProgrammeFilterValue>('all');
-  const [sortKey, setSortKey] = useState<SortKey>('points');
-  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
+  const { state: query, setValues: setQueryValues } = useListQueryState(QUERY_DEFAULTS);
+  const search = String(query.search);
+  const statusFilter = String(query.status) as 'all' | 'pending' | 'approved' | 'rejected' | 'fulfilled';
+  const programmeFilter = String(query.programme) as ProgrammeFilterValue;
+  const sortKey = String(query.sort) as SortKey;
+  const sortDir = String(query.direction) as 'asc' | 'desc';
   const [reviewId, setReviewId] = useState<string | null>(null);
   const [profileId, setProfileId] = useState<string | null>(null);
   const [profileMeta, setProfileMeta] = useState<{ name: string; programme: string; cohort: string } | null>(null);
@@ -85,8 +88,10 @@ export default function VoucherClaimsPage() {
   }, [programmeScoped, statusFilter, search, sortKey, sortDir]);
 
   function handleSort(key: SortKey) {
-    if (sortKey === key) setSortDir(d => (d === 'asc' ? 'desc' : 'asc'));
-    else { setSortKey(key); setSortDir(key === 'name' ? 'asc' : 'desc'); }
+    setQueryValues({
+      sort: key,
+      direction: sortKey === key ? (sortDir === 'asc' ? 'desc' : 'asc') : (key === 'name' ? 'asc' : 'desc'),
+    });
   }
 
   async function approveClaim(claim: VoucherClaim) {
@@ -159,16 +164,16 @@ export default function VoucherClaimsPage() {
         </div>
 
         {/* Programme Filter */}
-        <ProgrammeFilter value={programmeFilter} onChange={setProgrammeFilter} counts={programmeCounts} />
+        <ProgrammeFilter value={programmeFilter} onChange={value => setQueryValues({ programme: value })} counts={programmeCounts} />
 
         <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3">
           <div className="relative flex-1 w-full sm:max-w-sm">
             <AppIcon className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400 text-sm"></AppIcon>
-            <input type="text" placeholder="Search learner or reward..." value={search} onChange={e => setSearch(e.target.value)} className="w-full pl-9 pr-3 py-2 bg-background-50 border border-foreground-200/60 rounded-lg text-[12px] text-foreground-700 focus:outline-none focus:ring-2 focus:ring-primary-300" />
+            <input type="text" placeholder="Search learner or reward..." value={search} onChange={e => setQueryValues({ search: e.target.value })} className="w-full pl-9 pr-3 py-2 bg-background-50 border border-foreground-200/60 rounded-lg text-[12px] text-foreground-700 focus:outline-none focus:ring-2 focus:ring-primary-300" />
           </div>
           <div className="flex items-center gap-1 bg-background-100 rounded-xl p-1 overflow-x-auto">
             {(['all', 'pending', 'approved', 'rejected', 'fulfilled'] as const).map(f => (
-              <button key={f} onClick={() => setStatusFilter(f)} className={`flex items-center gap-2 px-4 py-2 rounded-lg text-[12px] font-semibold transition-smooth whitespace-nowrap cursor-pointer ${statusFilter === f ? 'bg-[#541EA0] text-white shadow-sm' : 'text-foreground-500 hover:text-foreground-700'}`}>
+              <button key={f} onClick={() => setQueryValues({ status: f })} className={`flex items-center gap-2 px-4 py-2 rounded-lg text-[12px] font-semibold transition-smooth whitespace-nowrap cursor-pointer ${statusFilter === f ? 'bg-[#541EA0] text-white shadow-sm' : 'text-foreground-500 hover:text-foreground-700'}`}>
                 <AppIcon className={`${f === 'pending' ? 'ri-time-line' : f === 'approved' ? 'ri-check-line' : f === 'rejected' ? 'ri-close-line' : f === 'fulfilled' ? 'ri-check-double-line' : 'ri-list-check'} text-sm`}></AppIcon>
                 {f === 'all' ? 'All' : f.charAt(0).toUpperCase() + f.slice(1)}
                 {f === 'pending' && pendingCount > 0 && <span className="bg-amber-500 text-white text-[10px] px-1.5 py-0.5 rounded-full leading-none">{pendingCount}</span>}

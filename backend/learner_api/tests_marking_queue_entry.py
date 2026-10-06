@@ -83,6 +83,10 @@ class QueueForMarkingTests(SimpleTestCase):
 
         self.assertEqual(result, "sub-1")
 
+    def test_component_clock_is_stored_as_decimal_hours(self):
+        self.assertEqual(entry._actual_time_hours("02:00"), 2 / 60)
+        self.assertEqual(entry._actual_time_hours("2"), 2.0)
+
     def test_the_uploaded_evidence_travels_with_it(self):
         # The evidence is the submission -- without it the coach has a queue row
         # naming work they cannot open.

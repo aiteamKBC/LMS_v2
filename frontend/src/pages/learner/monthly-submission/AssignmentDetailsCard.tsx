@@ -23,8 +23,8 @@ export function AssignmentDetailsCard({ assignment, group, kind, learnerId }: {
     <div className={styles.heroHeader}>
       <div className={styles.heroHeading}><span className={styles.heroIcon}><FileText size={24} aria-hidden="true" /></span><div>
         <p className={styles.eyebrow}>Your monthly assignment</p>
-        <h2 id="assignment-details-title">{group.label}</h2>
-        {group.topics.length > 0 && <p className={styles.focus}>{group.topics.join(' · ')}</p>}
+        <h2 id="assignment-details-title">{monthName(group.month)}</h2>
+        {(group.label !== monthName(group.month) || group.topics.length > 0) && <p className={styles.focus}>{[group.label !== monthName(group.month) ? group.label : '', ...group.topics].filter(Boolean).join(' · ')}</p>}
       </div></div>
       <span className={styles.status} data-status={assignment.status}>
         {assignment.submitted && <CheckCircle2 size={14} aria-hidden="true" />}{statusLabels[assignment.status] || assignment.status.replaceAll('_', ' ') || 'Status unavailable'}
@@ -51,6 +51,7 @@ export function AssignmentDetailsCard({ assignment, group, kind, learnerId }: {
           <div><dt><CalendarDays size={16} aria-hidden="true" />Training Plan month</dt><dd>{group.label}{group.month && group.label !== monthName(group.month) && <small>{monthName(group.month)}</small>}</dd></div>
           <div><dt><Clock3 size={16} aria-hidden="true" />Expected OTJ hours</dt><dd>{assignment.expectedOtjh != null ? `${assignment.expectedOtjh} hours` : 'Not specified'}</dd></div>
           <div><dt>Planned date</dt><dd>{assignment.date ? new Date(`${assignment.date}T12:00:00Z`).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'Europe/London' }) : 'Not scheduled'}</dd></div>
+          {assignment.dueDate && <div><dt>Due date</dt><dd>{new Date(`${assignment.dueDate}T12:00:00Z`).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'Europe/London' })}</dd></div>}
           {assignment.module && <div><dt>Module</dt><dd>{assignment.module}</dd></div>}
           {assignment.week && <div><dt>Week / topic</dt><dd>{assignment.week}</dd></div>}
         </dl>

@@ -117,7 +117,7 @@ class SubjectSourceTests(SimpleTestCase):
 
     def test_alias_uses_its_saved_email_and_merges_earlier_completion(self):
         cursor = MagicMock()
-        cursor.fetchall.return_value = [(7, 7, 'learner@example.org'), (7, 8, 'Former@Example.org')]
+        cursor.fetchall.return_value = [(7, 7, 'learner@example.org', True), (7, 8, 'Former@Example.org', False)]
         old, current = course(), course()
         current['results'] = []
         with patch.object(source, '_read_identity', side_effect=[[current], [old]]) as fetch:
@@ -127,10 +127,14 @@ class SubjectSourceTests(SimpleTestCase):
         self.assertEqual(len(live['groups']), 1)
         result = source.overlay_subjects(self.empty, live, {})
         self.assertTrue(all(row['completed'] for row in result['activities']))
+        identity_sql = cursor.execute.call_args.args[0]
+        self.assertIn('"Learner".learner_external_identities', identity_sql)
+        self.assertIn('"Last_audit".learner_lms_aliases', identity_sql)
+        self.assertNotIn('"Learner".source_lms_learner_aliases', identity_sql)
 
     def test_missing_or_conflicting_alias_email_is_not_guessed(self):
         cursor = MagicMock()
-        for identities in [[(7, 8, '')], [(7, 8, 'a@example.org'), (7, 8, 'b@example.org')]]:
+        for identities in [[(7, 8, '', False)], [(7, 8, 'a@example.org', False), (7, 8, 'b@example.org', False)]]:
             cursor.fetchall.return_value = identities
             with patch.object(source, '_read_identity') as fetch:
                 self.assertIsNone(source.read_learner(cursor, 77, 'learner@example.org'))
@@ -138,7 +142,7 @@ class SubjectSourceTests(SimpleTestCase):
 
     def test_primary_source_can_use_current_verified_email_after_email_change(self):
         cursor = MagicMock()
-        cursor.fetchall.return_value = [(7, 7, 'former@example.org')]
+        cursor.fetchall.return_value = [(7, 7, 'former@example.org', True)]
         with patch.object(source, 'hints', return_value={'7': 3}), patch.object(source, '_page', return_value=page()):
             live = source.read_learner(cursor, 77, 'learner@example.org')
         self.assertIsNotNone(live)
@@ -146,7 +150,7 @@ class SubjectSourceTests(SimpleTestCase):
 
     def test_primary_email_fallback_cannot_accept_an_unverified_source_email(self):
         cursor = MagicMock()
-        cursor.fetchall.return_value = [(7, 7, 'former@example.org')]
+        cursor.fetchall.return_value = [(7, 7, 'former@example.org', True)]
         with patch.object(source, 'hints', return_value={'7': 3}), patch.object(source, '_page', return_value=page(email='unverified@example.org')):
             self.assertIsNone(source.read_learner(cursor, 77, 'learner@example.org'))
 
@@ -189,7 +193,7 @@ class SubjectSourceTests(SimpleTestCase):
 
     def test_scoped_cache_avoids_repeated_fetch_and_cannot_mix_learners(self):
         cursor = MagicMock()
-        cursor.fetchall.return_value = [(7, 7, 'learner@example.org')]
+        cursor.fetchall.return_value = [(7, 7, 'learner@example.org', True)]
         with patch.object(source, '_read_identity', return_value=[course()]) as fetch:
             first = source.read_learner(cursor, 77, 'learner@example.org')
             first['groups'][0]['name'] = 'Changed outside cache'
@@ -246,7 +250,7 @@ class SubjectSourceTests(SimpleTestCase):
 
     def test_alias_failure_cannot_publish_partial_results(self):
         cursor = MagicMock()
-        cursor.fetchall.return_value = [(7, 7, 'learner@example.org'), (7, 8, 'former@example.org')]
+        cursor.fetchall.return_value = [(7, 7, 'learner@example.org', True), (7, 8, 'former@example.org', False)]
         with patch.object(source, '_read_identity', side_effect=[[course()], ValueError('unmatched')]):
             self.assertIsNone(source.read_learner(cursor, 77, 'learner@example.org'))
 

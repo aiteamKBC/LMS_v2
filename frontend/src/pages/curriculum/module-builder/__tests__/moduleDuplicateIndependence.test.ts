@@ -2,10 +2,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   applyModuleWeekSessionPlan,
   createEmptyComponent,
-  createEmptyWeek,
   createLocalModuleDraft,
   duplicateModuleStructure,
   moduleAuthoredLiveSessions,
+  remapModuleKsbMappings,
   recalculateModule,
   type ModuleCatalogueItem,
   type ModuleWeekSessionPlan,
@@ -165,9 +165,45 @@ afterEach(() => {
 });
 
 describe('a duplicated module is its own module', () => {
+  it('remaps module, week and component KSBs and records unmatched codes', () => {
+    const source = recalculateModule({
+      ...bookedModule(),
+      moduleKsbMappings: [{ id: 'm1', ksbId: 'old-1', code: 'K1', description: 'Old K1', type: 'main', classification: 'main', weight: 2, weightClass: 'hard' }],
+      weekStructure: bookedModule().weekStructure.map(week => ({
+        ...week,
+        ksbMappings: [{ id: 'w1', ksbId: 'old-2', code: 'S1', description: 'Old S1', type: 'secondary', classification: 'secondary', weight: 1, weightClass: 'soft' }],
+        components: week.components.map(component => ({
+          ...component,
+          ksbMappings: [{ id: 'c1', ksbId: 'old-3', code: 'B9', description: 'Missing B9', type: 'possible', classification: 'possible', weight: 1, weightClass: 'possible' }],
+        })),
+      })),
+    });
+    const result = remapModuleKsbMappings(source, {
+      sourceType: 'framework', sourceId: 'TARGET-KSB',
+      entries: [
+        { id: 'new-k1', code: 'K1', description: 'Target K1', type: 'Knowledge' },
+        { id: 'new-s1', code: 'S1', description: 'Target S1', type: 'Skill' },
+      ],
+    }, {
+      sourceProgrammeId: 'SOURCE', sourceProgrammeName: 'Source',
+      targetProgrammeId: 'TARGET', targetProgrammeName: 'Target',
+      targetType: 'framework', targetId: 'TARGET-KSB',
+    });
+
+    expect(result.module.moduleKsbMappings[0]).toMatchObject({ code: 'K1', ksbId: 'new-k1', sourceId: 'TARGET-KSB', description: 'Target K1' });
+    expect(result.module.weekStructure[0].ksbMappings[0]).toMatchObject({ code: 'S1', ksbId: 'new-s1', sourceId: 'TARGET-KSB' });
+    expect(result.module.weekStructure[0].components[0].ksbMappings).toHaveLength(0);
+    expect(result.report.status).toBe('partial');
+    expect(result.report.matchedCount).toBe(3);
+    expect(result.report.unmatched[0]).toMatchObject({ code: 'B9', location: 'component' });
+  });
+
   it('copies no date and no Teams meeting from the module it was duplicated from', async () => {
     const source = bookedModule();
     await duplicateModuleStructure(source);
+
+    expect(savedStructure.learnerRosterMode).toBe('manual');
+    expect(savedStructure.teamsSharedSourceModuleId).toBe('');
 
     const copied = savedStructure.weekStructure.flatMap(week => (
       week.components.filter(component => component.type === 'live-session')
@@ -302,5 +338,43 @@ describe('a duplicated module is its own module', () => {
       '2026-09-18',
       '2026-09-25',
     ]);
+  });
+
+  it('can explicitly share the source Teams record without copying provider ids', async () => {
+    const source = bookedModule();
+    await duplicateModuleStructure(source, { teamsCopyMode: 'shared' });
+
+    expect(savedStructure.learnerRosterMode).toBe('manual');
+    expect(savedStructure.teamsSharedSourceModuleId).toBe(source.catalogueId);
+    const metadata = (savedStructure.deliveryMetadata || {}) as Record<string, unknown>;
+    expect(metadata.teamsLiveSessionId || '').toBe('');
+    expect(savedStructure.weekStructure.flatMap(week => week.components).every(component => (
+      !String(component.settings?.teamsLiveSessionId || '')
+    ))).toBe(true);
+  });
+
+  it('writes a destination hierarchy, inherited roster and independent start date', async () => {
+    await duplicateModuleStructure(bookedModule(), {
+      programmeId: 'PROG-TARGET', programmeName: 'Target programme',
+      cohortId: 'COHORT-TARGET', cohortName: 'Target cohort',
+      groupId: 'GROUP-TARGET', groupName: 'Target group',
+      learnerRosterMode: 'inherited', teamsCopyMode: 'independent', startDate: '2026-09-18',
+      ksbSource: { sourceType: 'framework', sourceId: 'TARGET-KSB', entries: [] },
+    });
+
+    expect(savedStructure.programmeId).toBe('PROG-TARGET');
+    expect(savedStructure.cohortId).toBe('COHORT-TARGET');
+    expect(savedStructure.groupId).toBe('GROUP-TARGET');
+    expect(savedStructure.learnerRosterMode).toBe('inherited');
+    expect(savedStructure.startDate).toBe('2026-09-18');
+    expect(savedStructure.teamsSharedSourceModuleId).toBe('');
+    expect(savedStructure.ksbRemapReport?.status).toBe('complete');
+  });
+
+  it('keeps inherited roster mode for the group/cohort clone path', async () => {
+    const source = bookedModule();
+    await duplicateModuleStructure(source, { keepDates: true, renameCopy: false, learnerRosterMode: 'inherited' });
+
+    expect(savedStructure.learnerRosterMode).toBe('inherited');
   });
 });

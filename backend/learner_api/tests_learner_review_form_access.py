@@ -146,11 +146,20 @@ class LearnerReviewSigningTests(LearnerReviewFormAccessTestCase):
         record.save(update_fields=['status'])
         return record
 
-    def _sign(self, record, mark):
-        request = SimpleNamespace(method='POST', body=json.dumps({
-            'name': 'Learner One', 'signature': mark,
-        }).encode())
-        with patch('learner_api.calendar._learner_calendar_record', return_value=record):
+    def _sign(self, record, mark, apply_monthly_log=None):
+        payload = {'name': 'Learner One', 'signature': mark}
+        if apply_monthly_log is not None:
+            payload['applyMonthlyLogSignature'] = apply_monthly_log
+        request = SimpleNamespace(method='POST', body=json.dumps(payload).encode(), login_account=SimpleNamespace(role='learner'))
+        with patch('learner_api.calendar._learner_calendar_record', return_value=record), \
+             patch('old_otjh.service.resolve_record', return_value={
+                 'id': 101, 'aptem_id': None, 'name': 'Learner One',
+                 'programme': 'Programme', 'email': 'learner@example.com',
+             }), \
+             patch('learner_api.monthly_logs.mirror_mcm_learner_signature', return_value={
+                 'status': 'synced', 'month': record.scheduled_date.strftime('%Y-%m'),
+             }), \
+             patch('learner_api.monthly_logs.old_repo.query', return_value=[]):
             response = learner_progress_review_sign.__wrapped__.__wrapped__(
                 request, 'apprenticeship', 101, record.event_key,
             )
@@ -170,6 +179,7 @@ class LearnerReviewSigningTests(LearnerReviewFormAccessTestCase):
         self.assertEqual(status, 200, payload)
         self.assertEqual(payload['event']['status'], CoachCalendarEvent.STATUS_COMPLETED)
         self.assertEqual(payload['review']['instance']['status'], review_instances.STATUS_COMPLETED)
+        self.assertEqual(payload['monthlyLogSync']['status'], 'synced')
         record.refresh_from_db()
         self.assertEqual(record.status, CoachCalendarEvent.STATUS_COMPLETED)
         status, reloaded = self._view(record)
@@ -188,6 +198,15 @@ class LearnerReviewSigningTests(LearnerReviewFormAccessTestCase):
         self.assertTrue(payload['review']['signatures']['participant']['signed'])
         self.assertFalse(payload['review']['signatures']['advisor']['signed'])
         self.assertIsNone(payload['review']['signatures']['advisor']['signature'])
+
+    def test_learner_can_sign_mcm_without_copying_monthly_log(self):
+        record = self._finished_meeting()
+
+        status, payload = self._sign(record, 'data:image/png;base64,bGVhcm5lcg==', apply_monthly_log=False)
+
+        self.assertEqual(status, 200, payload)
+        self.assertEqual(payload['monthlyLogSync']['status'], 'skipped')
+        self.assertEqual(payload['monthlyLogSync']['reason'], 'learner_choice')
 
 
 class UnscheduledOccurrenceTests(LearnerReviewFormAccessTestCase):

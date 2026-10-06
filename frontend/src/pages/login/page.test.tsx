@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { MemoryRouter, Route, Routes } from 'react-router-dom';
+import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 import LoginPage from './page';
-import { AuthError, apiAuthHealth, apiMicrosoftStart, type AuthUser } from '@/api/auth';
+import { AuthError, PasswordSetupRequired, apiAuthHealth, apiMicrosoftStart, type AuthUser } from '@/api/auth';
 
 const { login, authState } = vi.hoisted(() => ({ login: vi.fn(), authState: {
   account: null as Pick<AuthUser, 'role' | 'access' | 'accessHome' | 'subjectId' | 'hasLegacyRecord'> | null,
@@ -37,6 +37,23 @@ function openForm() {
 function autofill(input: HTMLInputElement, value: string) {
   Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, value);
 }
+
+it('sends a learner using the first-sign-in password straight to set their own', async () => {
+  login.mockRejectedValueOnce(new PasswordSetupRequired('/set-password?token=T'));
+  function Destination() {
+    const location = useLocation();
+    return <output data-testid="destination">{location.pathname}{location.search}|{JSON.stringify(location.state)}</output>;
+  }
+  render(<MemoryRouter initialEntries={['/login']}><Routes>
+    <Route path="/login" element={<LoginPage />} />
+    <Route path="/set-password" element={<Destination />} />
+  </Routes></MemoryRouter>);
+  autofill(screen.getByLabelText('Email address', { exact: true }) as HTMLInputElement, 'learner@kbc.test');
+  autofill(screen.getByLabelText('Password', { exact: true }) as HTMLInputElement, 'changeme_password');
+  fireEvent.click(screen.getByRole('button', { name: 'Sign in to Workspace' }));
+  expect(await screen.findByTestId('destination')).toHaveTextContent('/set-password?token=T|{"firstSignIn":true}');
+  expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+});
 
 it('submits the visible autofilled values instead of stale React state', async () => {
   const { email, password, submit } = openForm();

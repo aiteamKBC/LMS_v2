@@ -1,7 +1,8 @@
 import { act, fireEvent, render, screen } from '@testing-library/react';
-import { MemoryRouter, Route, Routes } from 'react-router-dom';
+import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import QuizTakePage from './page';
+import { CompletionValidationError } from '@/lib/completionValidation';
 
 const mocks = vi.hoisted(() => ({
   detail: vi.fn(), quiz: vi.fn(), start: vi.fn(), submit: vi.fn(),
@@ -20,11 +21,12 @@ vi.mock('@/hooks/useLearnerWorkspaceAccess', () => ({ useLearnerWorkspaceAccess:
 vi.mock('@/hooks/useComponentAccessWindow', () => ({ useComponentAccessWindow: () => ({ open: true }) }));
 vi.mock('@/components/feature/WorkspaceShell', () => ({ WorkspaceShell: ({ children }: { children: React.ReactNode }) => <>{children}</> }));
 vi.mock('@/components/feature/ReflectionWindow', () => ({
-  ReflectionWindow: () => <div>Reflection form</div>,
+  ReflectionWindow: ({ onSubmit, onClose }: { onSubmit: (value: { ksbs: string[]; feedback: string; reportedTime: string }) => void; onClose?: () => void }) => <div>My Learning Evidence and Reflection<button onClick={onClose}>Close reflection</button><button onClick={() => onSubmit({ ksbs: ['K1'], feedback: 'Reflection', reportedTime: '1' })}>Submit reflection</button></div>,
   formatClock: (seconds: number) => `${String(Math.floor(seconds / 60)).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}`,
 }));
 const detail = { modules: [], week: [], ksbs: [], componentProgress: [], videoProgress: [], quizAttempts: [], components: [{ quizMeta: { quizId: 1 }, reflectionRequired: false }] };
-const renderPage = () => render(<MemoryRouter initialEntries={['/quiz/commercial/501/1']}><Routes><Route path="/quiz/:kind/:id/:quizId" element={<QuizTakePage />} /></Routes></MemoryRouter>);
+function Location() { return <span data-testid="location">{useLocation().pathname}</span>; }
+const renderPage = () => render(<MemoryRouter initialEntries={['/quiz/commercial/501/1']}><Location /><Routes><Route path="/quiz/:kind/:id/:quizId" element={<QuizTakePage />} /></Routes></MemoryRouter>);
 
 describe('quiz requirements loading', () => {
   beforeEach(() => {
@@ -79,6 +81,73 @@ describe('quiz requirements loading', () => {
     expect(screen.queryByRole('button', { name: 'Start Quiz' })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Retry quiz' }));
     expect(await screen.findByRole('button', { name: 'Start Quiz' })).toBeEnabled();
+  });
+
+  it('offers the existing reflection page or a no-reflection quiz submission', async () => {
+    mocks.detail.mockResolvedValue({
+      ...detail,
+      modules: ['Campaigns'],
+      week: [{ module: 'Campaigns', week: 'Week 1' }],
+      components: [
+        { module: 'Campaigns', week: 'Week 1', component: 'Campaign quiz', componentId: 'QUIZ-COMP', type: 'quiz', isQuiz: true, quizMeta: { quizId: 1, questions: 1 }, reflectionRequired: true },
+      ],
+    });
+    mocks.submit.mockResolvedValue({
+      attempt: {
+        kind: 'quiz', quizId: 1, attempt: 1, grade: 1, achievedScore: 1, totalScore: 1,
+        passed: true, questions: [], startedAt: '2026-09-26T12:00:00Z',
+        submittedAt: '2026-09-26T12:01:00Z', timeTaken: '01:00',
+        timeTrackingSource: 'signed', claimedSeconds: 60, serverSessionSeconds: 60, verifiedSeconds: 60,
+      },
+      breakdown: [], earned: 1, possible: 1, grade: 1, achievedScore: 1, totalScore: 1, passed: true,
+    });
+    const firstView = renderPage();
+    fireEvent.click(await screen.findByRole('button', { name: 'Start Quiz' }));
+    fireEvent.click(screen.getByRole('button', { name: /Measured outcome/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Finish Quiz' }));
+    const choiceDialog = await screen.findByRole('dialog', { name: 'Do you want to complete a reflection?' });
+    expect(choiceDialog).toBeVisible();
+    expect(choiceDialog.parentElement).toHaveClass('fixed', 'inset-0', 'z-[100]');
+    expect(choiceDialog.previousElementSibling).toHaveClass('absolute', 'inset-0', 'bg-black/40', 'backdrop-blur-[3px]');
+    expect(screen.getByRole('button', { name: /Measured outcome/ })).toBeVisible();
+    expect(mocks.submit).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Yes, add reflection' }));
+    expect(screen.getByText('My Learning Evidence and Reflection')).toBeVisible();
+    expect(screen.queryByText('Before we finish…')).not.toBeInTheDocument();
+    expect(screen.getByTestId('location')).toHaveTextContent('/quiz/commercial/501/1');
+    fireEvent.click(screen.getByRole('button', { name: 'Close reflection' }));
+    expect(screen.queryByText('My Learning Evidence and Reflection')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Measured outcome/ })).toBeVisible();
+    expect(mocks.submit).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Finish Quiz' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Yes, add reflection' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Submit reflection' }));
+    expect(mocks.submit).toHaveBeenCalledOnce();
+
+    firstView.unmount();
+    mocks.submit.mockClear();
+    renderPage();
+    fireEvent.click(await screen.findByRole('button', { name: 'Start Quiz' }));
+    fireEvent.click(screen.getByRole('button', { name: /Measured outcome/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Finish Quiz' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'No, finish without reflection' }));
+    expect(mocks.submit).toHaveBeenCalledWith(1, 'commercial', '501', expect.objectContaining({
+      feedback: '', ksbs: [], reportedTime: '', skipReflection: true,
+    }));
+    expect(await screen.findByText(/Quiz Passed/)).toBeVisible();
+  });
+
+  it('keeps reflection optional for tutor-validated quizzes', async () => {
+    mocks.detail.mockResolvedValue({
+      ...detail,
+      components: [{ quizMeta: { quizId: 1 }, reflectionRequired: true, tutorValidationRequired: true }],
+    });
+    renderPage();
+    fireEvent.click(await screen.findByRole('button', { name: 'Start Quiz' }));
+    fireEvent.click(screen.getByRole('button', { name: /Measured outcome/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Finish Quiz' }));
+    expect(await screen.findByRole('dialog', { name: 'Do you want to complete a reflection?' })).toBeVisible();
+    expect(screen.queryByText('Reflection form')).not.toBeInTheDocument();
   });
 
   it('restores the latest saved result and keeps a separate retake action after refresh', async () => {
@@ -160,5 +229,73 @@ describe('quiz requirements loading', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Confirm' }));
     expect(await screen.findByText(/05:00 added to actual time/)).toBeVisible();
     expect(mocks.completeReading).toHaveBeenCalledWith(1, 'commercial', '501', 2, 'test', 150, 'manual');
+  });
+});
+
+describe('quiz submit working rules', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.detail.mockResolvedValue(detail);
+    mocks.quiz.mockResolvedValue({ id: 1, title: 'Campaign quiz', questions: [{ id: 1, text: 'Choose an outcome', points: 1, type: 'single_choice', answers: [{ id: 1, text: 'Measured outcome' }] }] });
+    mocks.start.mockResolvedValue({ trackingToken: 'test', startedAt: '2026-09-13T00:00:00Z' });
+  });
+
+  const answerAndFinish = async () => {
+    renderPage();
+    fireEvent.click(await screen.findByRole('button', { name: 'Start Quiz' }));
+    fireEvent.click(screen.getByRole('button', { name: /Measured outcome/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Finish Quiz' }));
+    await act(async () => {});
+  };
+
+  it('opens the completion dialog and re-posts the same answers when the Submit click is refused', async () => {
+    mocks.submit
+      .mockRejectedValueOnce(new CompletionValidationError('Saturday is not a working day.', 'weekend', ''))
+      .mockResolvedValue({ passed: true, achievedScore: 1, totalScore: 1, breakdown: [], attempt: { attempt: 1 } });
+
+    await answerAndFinish();
+
+    // Nothing was completed: the learner is asked for a working instant.
+    expect(await screen.findByText('Please review your completion date and time')).toBeVisible();
+    expect(screen.getByText(/Reason:/)).toBeVisible();
+
+    fireEvent.change(screen.getByLabelText('Completion date'), { target: { value: '2026-01-15' } });
+    fireEvent.change(screen.getByLabelText('Completion time'), { target: { value: '14:30' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Final Submit' }));
+    await act(async () => {});
+
+    expect(mocks.submit).toHaveBeenCalledTimes(2);
+    const [first, second] = mocks.submit.mock.calls.map(call => call[3]);
+    // The answers and the frozen timer go back unchanged, so the attempt
+    // grades to exactly the score the refused click would have produced.
+    expect(second.answers).toEqual(first.answers);
+    expect(second.timeTakenSeconds).toBe(first.timeTakenSeconds);
+    expect(second.trackingToken).toBe(first.trackingToken);
+    expect(second.declaredCompletedAt).toBe('2026-01-15T14:30:00');
+    expect(screen.queryByText('Please review your completion date and time')).not.toBeInTheDocument();
+  });
+
+  it('keeps the dialog open and shows the server reason when the declared instant is also refused', async () => {
+    mocks.submit
+      .mockRejectedValueOnce(new CompletionValidationError('Sunday is not a working day.', 'weekend', ''))
+      .mockRejectedValueOnce(new CompletionValidationError('Outside official working hours.', 'outside_working_hours', ''));
+
+    await answerAndFinish();
+    fireEvent.change(await screen.findByLabelText('Completion date'), { target: { value: '2026-01-15' } });
+    fireEvent.change(screen.getByLabelText('Completion time'), { target: { value: '14:30' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Final Submit' }));
+    await act(async () => {});
+
+    expect(screen.getByText('Please review your completion date and time')).toBeVisible();
+    expect(screen.getByRole('alert')).toHaveTextContent('Outside official working hours.');
+  });
+
+  it('a valid Submit completes with no dialog and no declared instant', async () => {
+    mocks.submit.mockResolvedValue({ passed: true, achievedScore: 1, totalScore: 1, breakdown: [], attempt: { attempt: 1 } });
+
+    await answerAndFinish();
+
+    expect(screen.queryByText('Please review your completion date and time')).not.toBeInTheDocument();
+    expect(mocks.submit.mock.calls[0][3].declaredCompletedAt).toBeUndefined();
   });
 });

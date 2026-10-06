@@ -2,10 +2,13 @@ import * as React from 'react';
 import { MemoryRouter, useLocation } from 'react-router-dom';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import AttendancePage, { lectureCounts } from './page';
+import AttendancePage from './page';
+import { lectureCounts } from './lectureCounts';
 import AbsenceReportForm from './components/AbsenceReportForm';
 import { AppIcon } from '@/components/feature/AppIcon';
 import type { AttendanceLecture, AttendanceWorkspace } from '@/api/attendanceLectures';
+import type { LearningSchedule } from '@/api/learnerOverview';
+import type { PlanModule } from '@/api/trainingPlanDashboard';
 import { clearAllCachedResources } from '@/api/cachedRequest';
 
 vi.mock('@/hooks/useMyLearner', () => ({ useMyLearner: () => ({ kind: 'apprenticeship', id: '12' }) }));
@@ -19,7 +22,11 @@ const lecture = (overrides: Partial<AttendanceLecture> = {}): AttendanceLecture 
   catchupStatus: null, updatedAt: null, canReportAbsence: false, absenceReport: null, ...overrides,
 });
 let payload: AttendanceWorkspace;
+let schedulePayload: LearningSchedule;
 let posts: { url: string; body: unknown }[];
+const planModule = (id: string, title: string, overrides: Partial<PlanModule> = {}): PlanModule => ({
+  id, title, description: '', start_date: '2020-01-01', end_date: '2099-12-31', tutor_name: '', coach_name: '', ...overrides,
+});
 beforeEach(() => {
   clearAllCachedResources(); posts = [];
   Object.defineProperties(HTMLDialogElement.prototype, {
@@ -37,6 +44,7 @@ beforeEach(() => {
     summary: null, recentActivity: [],
     mode: { available: true, mode: 'live', requestedMode: null, status: 'active', emailSent: false, managerAvailable: true, remindersEnabled: true, updatedAt: null },
   };
+  schedulePayload = { modules: [], moduleLinks: {}, generatedAt: '2026-09-01T00:00:00Z' };
   vi.stubGlobal('fetch', vi.fn(async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
     const url = String(input);
     if (init?.method === 'POST') {
@@ -53,6 +61,7 @@ beforeEach(() => {
       return new Response(JSON.stringify({ id: 1, sessionTitle: 'Future lecture', sessionDate: '2026-10-01', reference: 'AR-0001', status: 'pending' }), { status: 201 });
     }
     if (url.includes('/calendar/')) return new Response(JSON.stringify({ events: [] }));
+    if (url.includes('/training-plan-dashboard/')) return new Response(JSON.stringify(schedulePayload));
     if (url.includes('/absence-reports/')) return new Response(JSON.stringify({ results: [], missedSessions: [
       { id: 'future', sessionId: 'teams:future', reportId: '8000000000000000013', title: 'Future lecture', dateIso: '2026-10-01',
         startTime: '10:00', endTime: '11:00', module: 'New module', sessionType: 'live_session', coach: '', status: 'upcoming' },
@@ -72,6 +81,13 @@ function CurrentLocation() {
 const mount = () => render(<MemoryRouter><AttendancePage /><CurrentLocation /></MemoryRouter>);
 
 describe('Attendance lecture workspace', () => {
+  it('shows ended unmarked attendance without changing the percentage denominator', async () => {
+    payload.lectures = [lecture(), lecture({ id: 'unmarked', title: 'Unverified lecture', status: 'unmarked' })];
+    expect(lectureCounts(payload.lectures)).toMatchObject({ attended: 1, absent: 0, rate: 100 });
+    mount();
+    expect(await screen.findByText('Unmarked')).toBeInTheDocument();
+  });
+
   it('features today ahead of future lectures and credits its full hours once', async () => {
     vi.spyOn(Date, 'now').mockReturnValue(Date.parse('2026-09-14T08:00:00Z'));
     payload.lectures = [lecture({ id: 'later', date: '2026-10-01', status: 'upcoming' }),
@@ -108,6 +124,70 @@ describe('Attendance lecture workspace', () => {
     await waitFor(() => expect(screen.getByLabelText('Lecture *')).toHaveValue('future'));
   });
 
+  it('shows the approved alternative session link in the attendance popup', async () => {
+    const originalFetch = vi.mocked(fetch).getMockImplementation()!;
+    vi.mocked(fetch).mockImplementation(async (input, init) => {
+      if (!init?.method && String(input).includes('/absence-reports/')) return new Response(JSON.stringify({
+        results: [{
+          id: 29, reference: 'AR-0029', sessionTitle: 'MM21 copy — Session 8', sessionDate: '2026-09-23',
+          sessionTime: '07:00', reasonCategory: 'emergency', reason: 'Family or personal emergency',
+          status: 'approved', evidenceProvided: false, evidenceKind: '', evidenceUrl: '', evidenceText: '',
+          coachNote: '', recoveryMethod: 'alternative', catchupEventKey: 'alternative:target-occurrence',
+          alternativeSession: { id: 'target-occurrence', title: 'MM21 — Session 8', dateIso: '2026-09-25',
+            startTime: '06:00', endTime: '08:00', groupId: 'group-2', group: 'Aya Group', cohortId: 'cohort-1',
+            cohort: 'Final Cohort', status: 'scheduled', joinUrl: 'https://teams.microsoft.com/l/meetup-join/approved' },
+          attendanceRate: 0, previousAbsences: 4, createdAt: '2026-09-21T10:00:00Z', updatedAt: '2026-09-21T11:00:00Z',
+        }],
+        missedSessions: [],
+      }));
+      return originalFetch(input, init);
+    });
+
+    mount();
+    await screen.findByText('Attendance');
+    fireEvent.click(screen.getByRole('button', { name: 'Report absence' }));
+    const join = await screen.findByRole('link', { name: 'Join approved session' });
+    expect(join).toHaveAttribute('href', 'https://teams.microsoft.com/l/meetup-join/approved');
+    expect(screen.getByText('Alternative: Aya Group')).toBeInTheDocument();
+  });
+
+  it('shows the learner selected recovery plans with calendar and join actions', async () => {
+    const originalFetch = vi.mocked(fetch).getMockImplementation()!;
+    vi.mocked(fetch).mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (!init?.method && url.includes('/absence-reports/')) return new Response(JSON.stringify({
+        results: [{
+          id: 31, reference: 'AR-0031', sessionTitle: 'MM21 — Session 8', sessionDate: '2026-09-23',
+          sessionTime: '07:00', reasonCategory: 'emergency', reason: 'Family or personal emergency',
+          status: 'approved', evidenceProvided: false, evidenceKind: '', evidenceUrl: '', evidenceText: '',
+          coachNote: '', recoveryMethod: 'catch-up', catchupEventKey: 'catch-up:12:1', alternativeSession: null,
+          attendanceRate: 0, previousAbsences: 4, createdAt: '2026-09-21T10:00:00Z', updatedAt: '2026-09-21T11:00:00Z',
+        }], missedSessions: [],
+      }));
+      if (!init?.method && url.includes('/calendar/')) return new Response(JSON.stringify({ learner: { kind: 'apprenticeship', id: 12 }, events: [{
+        id: 'catch-up:12:1', eventKey: 'catch-up:12:1', title: 'Catch-up Session', source: 'catch-up', type: 'coaching',
+        sequence: 1, status: 'scheduled', date: '2026-09-25', targetDate: '2026-09-25', scheduledDate: '2026-09-25',
+        scheduledTime: '11:00', durationMinutes: 30, coachName: 'Coach', coachEmail: 'coach@example.test',
+        meetingProvider: 'teams', meetingLink: 'https://teams.microsoft.com/l/meetup-join/catch-up', notes: '',
+      }] }));
+      return originalFetch(input, init);
+    });
+
+    mount();
+    fireEvent.click(await screen.findByRole('button', { name: 'My recovery plans' }));
+    const dialog = await screen.findByRole('dialog', { name: 'My recovery plans' });
+    expect(within(dialog).getByText('Coach catch-up')).toBeInTheDocument();
+    expect(within(dialog).getByText('MM21 — Session 8')).toBeInTheDocument();
+    expect(within(dialog).getByText('25 Sept 2026 at 11:00')).toBeInTheDocument();
+    expect(within(dialog).getByText('Confirmed')).toBeInTheDocument();
+    expect(within(dialog).getByRole('link', { name: 'View in calendar' })).toHaveAttribute(
+      'href', '/learner/calendar?kind=apprenticeship&learner=12&event=catch-up%3A12%3A1');
+    expect(within(dialog).getByRole('link', { name: 'Join session' })).toHaveAttribute(
+      'href', 'https://teams.microsoft.com/l/meetup-join/catch-up');
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Close my recovery plans' }));
+    expect(screen.queryByRole('dialog', { name: 'My recovery plans' })).not.toBeInTheDocument();
+  });
+
   it('opens catch-up booking for a missed lecture even after absence was reported', async () => {
     payload.lectures = [lecture({ id: 'missed', title: 'Missed lecture', status: 'absent',
       canReportAbsence: false, absenceReport: { id: 1, status: 'pending' } })];
@@ -119,6 +199,171 @@ describe('Attendance lecture workspace', () => {
     expect(within(dialog).getByText(/Missed lecture/)).toBeInTheDocument();
     expect(within(dialog).getByLabelText('Catch-up date')).toBeInTheDocument();
     expect(within(dialog).queryByLabelText('Main reason')).not.toBeInTheDocument();
+  });
+
+  it('shows a missed catch-up and still lets the learner book another one', async () => {
+    payload.lectures = [lecture({ id: 'missed', title: 'Missed lecture', status: 'absent', catchupStatus: 'missed',
+      canReportAbsence: false, absenceReport: { id: 1, status: 'approved' } })];
+    mount();
+    const row = await screen.findByRole('article', { name: 'Missed lecture' });
+    expect(within(row).getByText('Catch-up missed')).toBeInTheDocument();
+    expect(within(row).queryByText('Catch-up pending')).not.toBeInTheDocument();
+    expect(within(row).getByRole('button', { name: 'Book Catchup Session' })).toBeEnabled();
+  });
+
+  it('shows one final outcome per lecture instead of stacked report badges', async () => {
+    payload.lectures = [
+      lecture({ id: 'made-up', title: 'Made up lecture', status: 'absent', catchupStatus: 'completed', effectiveAttendance: 1,
+        absenceReport: { id: 1, status: 'approved' }, recovery: { method: 'catch-up', date: '2026-09-26' } }),
+      lecture({ id: 'booked', title: 'Booked lecture', status: 'absent', catchupStatus: 'pending',
+        absenceReport: { id: 2, status: 'approved' }, recovery: { method: 'catch-up', date: '2026-09-28' } }),
+      lecture({ id: 'attended', title: 'Attended lecture', absenceReport: { id: 3, status: 'pending' },
+        recovery: { method: 'catch-up', date: '2026-09-17' } }),
+      lecture({ id: 'future', title: 'Future reported lecture', status: 'upcoming',
+        absenceReport: { id: 4, status: 'approved' }, recovery: { method: 'alternative', date: '2026-09-30',
+          startTime: '09:00', endTime: '11:00', group: 'Group B', calendarKey: 'absence-alternative:4', ended: false } }),
+      lecture({ id: 'catchup-card', title: 'Catch-up card lecture', status: 'absent', catchupStatus: 'pending',
+        absenceReport: { id: 6, status: 'approved' }, recovery: { method: 'catch-up', date: '2026-10-02',
+          startTime: '10:40', endTime: '11:10', calendarKey: 'catch-up:248:8:2026-10-02', ended: false } }),
+      lecture({ id: 'recording-card', title: 'Recording plan lecture', status: 'upcoming',
+        componentHref: '/learner/component/apprenticeship/12/COMP-LIVE-1', absenceReport: { id: 7, status: 'approved' }, recovery: { method: 'recorded', date: '2026-10-03',
+          startTime: '18:00', endTime: '19:00', calendarKey: 'absence-recording:7', ended: false,
+          watchedSeconds: 2820, recordingSeconds: 7200 } }),
+      lecture({ id: 'past-recording', title: 'Past recording plan lecture', status: 'absent', catchupStatus: 'pending',
+        componentHref: '/learner/component/apprenticeship/12/COMP-LIVE-2', absenceReport: { id: 8, status: 'approved' },
+        recovery: { method: 'recorded', date: '2026-09-10', startTime: '18:00', endTime: '19:00',
+          calendarKey: 'absence-recording:8', ended: true, watchedSeconds: 0, recordingSeconds: 0 } }),
+      lecture({ id: 'live-alt', title: 'Live alternative lecture', status: 'absent',
+        absenceReport: { id: 5, status: 'approved' }, recovery: { method: 'alternative', date: '2026-09-14',
+          startTime: '10:00', endTime: '12:00', calendarKey: 'absence-alternative:5', joinUrl: 'https://teams.example/alt', ended: false } }),
+    ];
+    mount();
+    const madeUp = await screen.findByRole('article', { name: 'Made up lecture' });
+    expect(within(madeUp).getByText('Made up')).toBeInTheDocument();
+    expect(within(madeUp).getByText('Catch-up · 26 Sept')).toBeInTheDocument();
+    expect(within(madeUp).getByText('Made up via catch-up')).toBeInTheDocument();
+    expect(within(madeUp).queryByText('Missed')).not.toBeInTheDocument();
+    expect(within(madeUp).queryByText('Absence approved')).not.toBeInTheDocument();
+
+    const booked = screen.getByRole('article', { name: 'Booked lecture' });
+    expect(within(booked).getByText('Missed')).toBeInTheDocument();
+    expect(within(booked).getByText('Catch-up booked · 28 Sept')).toBeInTheDocument();
+    expect(within(booked).getByRole('button', { name: 'Change catch-up' })).toBeEnabled();
+
+    const attended = screen.getByRole('article', { name: 'Attended lecture' });
+    expect(within(attended).getByText('Attended')).toBeInTheDocument();
+    expect(within(attended).queryByText('Absence pending')).not.toBeInTheDocument();
+    expect(within(attended).queryByText(/Catch-up booked/)).not.toBeInTheDocument();
+    expect(within(attended).queryByText('Absence reported')).not.toBeInTheDocument();
+
+    const future = screen.getByRole('article', { name: 'Future reported lecture' });
+    expect(within(future).getByText('Absence reported')).toBeInTheDocument();
+    const plan = within(future).getByRole('link', { name: /Alternative session/ });
+    expect(plan).toHaveAttribute('href', '/learner/calendar?event=absence-alternative%3A4');
+    expect(plan).toHaveTextContent('Wed 30 Sept · 09:00–11:00');
+    expect(plan).toHaveTextContent('Group B');
+
+    const catchupCard = screen.getByRole('article', { name: 'Catch-up card lecture' });
+    expect(within(catchupCard).getByRole('link', { name: /Catch-up session/ }))
+      .toHaveAttribute('href', '/learner/calendar?event=catch-up%3A248%3A8%3A2026-10-02');
+    expect(within(catchupCard).getByRole('link', { name: /Catch-up session/ })).toHaveTextContent('Fri 2 Oct · 10:40–11:10');
+    expect(within(catchupCard).getByRole('button', { name: 'Change catch-up' })).toBeEnabled();
+
+    const recordingCard = screen.getByRole('article', { name: 'Recording plan lecture' });
+    const recording = within(recordingCard).getByRole('link', { name: /Watch the recording/ });
+    expect(recording).toHaveTextContent('Planned');
+    expect(recording).toHaveTextContent('Sat 3 Oct · 18:00');
+    expect(recording).toHaveTextContent('Watched 47 min of 2h');
+    expect(recording).toHaveAttribute('href', '/learner/component/apprenticeship/12/COMP-LIVE-1');
+
+    // The planned watch time has passed, but the recording can still be watched.
+    const pastRecording = screen.getByRole('article', { name: 'Past recording plan lecture' });
+    const pastLink = within(pastRecording).getByRole('link', { name: /Watch the recording/ });
+    expect(pastLink).toHaveTextContent('Planned for');
+    expect(pastLink).toHaveTextContent('Not watched yet');
+    expect(pastLink).toHaveAttribute('href', '/learner/component/apprenticeship/12/COMP-LIVE-2');
+    expect(within(pastRecording).getByRole('button', { name: 'Book catch-up' })).toBeEnabled();
+
+    const liveAlternative = screen.getByRole('article', { name: 'Live alternative lecture' });
+    expect(within(liveAlternative).getByRole('link', { name: /Join alternative session/ })).toHaveAttribute('href', 'https://teams.example/alt');
+    expect(within(liveAlternative).queryByRole('button', { name: 'Book Catchup Session' })).not.toBeInTheDocument();
+  });
+
+  it('links a catch-up to a reported absence with the workspace request token', async () => {
+    payload.lectures = [lecture({ id: 'missed', sessionId: 'teams:missed', title: 'Reported lecture', date: '2026-09-11',
+      status: 'absent', catchupStatus: 'pending', canReportAbsence: false, absenceReport: { id: 7, status: 'approved' } })];
+    const booked = { id: 'catch-up:12:5', eventKey: 'catch-up:12:5', title: 'Catch-up Session', source: 'catch-up', type: 'coaching',
+      sequence: 5, status: 'scheduled', date: '2099-01-05', targetDate: '2099-01-05', scheduledDate: '2099-01-05', scheduledTime: '11:00',
+      durationMinutes: 30, coachName: 'Coach', coachEmail: 'coach@example.test', meetingProvider: '', meetingLink: '', notes: '' };
+    const originalFetch = vi.mocked(fetch).getMockImplementation()!;
+    vi.mocked(fetch).mockImplementation(async (input, init) => String(input).includes('/calendar/') && !init?.method
+      ? new Response(JSON.stringify({ events: [booked] })) : originalFetch(input, init));
+    mount();
+    const row = await screen.findByRole('article', { name: 'Reported lecture' });
+    fireEvent.click(within(row).getByRole('button', { name: 'Book Catchup Session' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Book Catchup Session' });
+    fireEvent.change(await within(dialog).findByLabelText('Catch-up booking'), { target: { value: booked.eventKey } });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Link catch-up to this absence' }));
+    await waitFor(() => expect(posts.some(post => post.url.includes('/session-catchup/'))).toBe(true));
+    const call = vi.mocked(fetch).mock.calls.find(([url]) => String(url).includes('/session-catchup/'))!;
+    expect(new Headers(call[1]?.headers).get('X-CSRFToken')).toBe('test-csrf');
+    expect(JSON.parse(String(call[1]?.body))).toEqual({ reportId: 7, eventKey: booked.eventKey });
+    expect(screen.queryByText('Unable to initialise request verification.')).not.toBeInTheDocument();
+  });
+
+  it('books a catch-up for a reported absence and links it in the same request', async () => {
+    payload.lectures = [lecture({ id: 'missed', sessionId: 'teams:missed', title: 'Reported lecture', date: '2026-09-11',
+      status: 'absent', catchupStatus: 'missed', canReportAbsence: false, absenceReport: { id: 7, status: 'approved' } })];
+    const booked = { id: 'catch-up:12:9', eventKey: 'catch-up:12:9', title: 'Catch-up Session', source: 'catch-up', type: 'coaching',
+      sequence: 9, status: 'scheduled', date: '2099-01-05', targetDate: '2099-01-05', scheduledDate: '2099-01-05', scheduledTime: '11:00',
+      durationMinutes: 30, coachName: 'Coach', coachEmail: 'coach@example.test', meetingProvider: '', meetingLink: '', notes: '' };
+    const originalFetch = vi.mocked(fetch).getMockImplementation()!;
+    vi.mocked(fetch).mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url.includes('/coach-availability/')) return new Response(JSON.stringify({ times: ['11:00'] }));
+      if (url.includes('/calendar/') && init?.method === 'POST') {
+        posts.push({ url, body: init.body });
+        return new Response(JSON.stringify({ event: booked, linkedReportId: 7 }), { status: 201 });
+      }
+      if (url.includes('/calendar/')) return new Response(JSON.stringify({ events: [],
+        bookingCalendar: { division: 'england-and-wales', today: '2026-09-30', coveredYears: [2099], bankHolidays: [] } }));
+      return originalFetch(input, init);
+    });
+    mount();
+    const row = await screen.findByRole('article', { name: 'Reported lecture' });
+    fireEvent.click(within(row).getByRole('button', { name: 'Book Catchup Session' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Book Catchup Session' });
+    fireEvent.change(await within(dialog).findByLabelText('Catch-up date'), { target: { value: '2099-01-05' } });
+    await within(within(dialog).getByLabelText('Catch-up time')).findByRole('option', { name: '11:00' });
+    fireEvent.change(within(dialog).getByLabelText('Catch-up time'), { target: { value: '11:00' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Book Catch-up Session' }));
+    // One booking request carries the absence; the server links it, so no separate link call.
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Book Catchup Session' })).not.toBeInTheDocument());
+    const booking = posts.find(post => post.url.includes('/calendar/') && post.url.endsWith('/book/'))!;
+    expect(JSON.parse(String(booking.body))).toMatchObject({ sessionType: 'catch-up', absenceReportId: 7 });
+    expect(posts.some(post => post.url.includes('/session-catchup/'))).toBe(false);
+  });
+
+  it('starts a linked absence report when booking recovery for an unreported missed lecture', async () => {
+    payload.lectures = [lecture({ id: 'missed', sessionId: 'teams:missed', title: 'Missed lecture',
+      date: '2026-09-01', status: 'absent', catchupStatus: null, canReportAbsence: true, absenceReport: null })];
+    const originalFetch = vi.mocked(fetch).getMockImplementation()!;
+    vi.mocked(fetch).mockImplementation(async (input, init) => {
+      if (!init?.method && String(input).includes('/absence-reports/')) return new Response(JSON.stringify({
+        results: [], missedSessions: [{ id: 'missed', sessionId: 'teams:missed', reportId: '8000000000000000012',
+          title: 'Missed lecture', dateIso: '2026-09-01', startTime: '10:00', endTime: '11:00',
+          module: 'Business', sessionType: 'live_session', coach: 'Coach', status: 'absent' }],
+      }));
+      return originalFetch(input, init);
+    });
+
+    mount();
+    const row = await screen.findByRole('article', { name: 'Missed lecture' });
+    fireEvent.click(within(row).getByRole('button', { name: 'Book Catchup Session' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Book Catchup Session' });
+    await waitFor(() => expect(within(dialog).getByLabelText('Lecture *')).toHaveValue('missed'));
+    expect(within(dialog).getByLabelText('Main reason')).toBeInTheDocument();
+    expect(within(dialog).getByRole('radio', { name: /Coach catch-up/ })).toBeChecked();
   });
 
   it('keeps Attend retryable when saving fails and does not display credited hours', async () => {
@@ -145,10 +390,50 @@ describe('Attendance lecture workspace', () => {
     expect(screen.getByText('No completed attendance records yet')).toBeInTheDocument();
   });
 
+  it('opens on the current teaching module and lets the learner choose all modules', async () => {
+    schedulePayload.modules = [
+      planModule('old', 'Old module', { start_date: '2019-01-01', end_date: '2019-12-31' }),
+      planModule('new', 'New module'),
+    ];
+    mount();
+    await waitFor(() => expect(screen.getByRole('combobox', { name: 'Module' })).toHaveValue('native:new'));
+    expect(screen.getByRole('option', { name: 'New module' })).toBeInTheDocument();
+    expect(screen.getByRole('article', { name: 'Future lecture' })).toBeInTheDocument();
+    expect(screen.queryByRole('article', { name: 'First lecture' })).not.toBeInTheDocument();
+    fireEvent.change(screen.getByRole('combobox', { name: 'Module' }), { target: { value: 'all' } });
+    expect(screen.getByRole('combobox', { name: 'Module' })).toHaveValue('all');
+    expect(screen.getByRole('article', { name: 'First lecture' })).toBeInTheDocument();
+  });
+
+  it('lists the current module even before any of its lectures appear', async () => {
+    schedulePayload.modules = [planModule('assigned', 'Assigned module', {
+      end_date: '2021-01-01', effectiveEndDate: '2099-12-31',
+    })];
+    mount();
+    await waitFor(() => expect(screen.getByRole('combobox', { name: 'Module' })).toHaveValue('native:assigned'));
+    expect(screen.getByRole('option', { name: 'Assigned module' })).toBeInTheDocument();
+    expect(screen.getByText('No lectures match this filter')).toBeInTheDocument();
+  });
+
+  it('keeps all modules selected when the plan has no current teaching module', async () => {
+    schedulePayload.modules = [planModule('future-module', 'Future module', {
+      start_date: '2099-01-01', end_date: '2099-12-31',
+    })];
+    mount();
+    await screen.findByRole('article', { name: 'First lecture' });
+    expect(screen.getByRole('combobox', { name: 'Module' })).toHaveValue('all');
+  });
+
   it('shows 67 percent when two of three finalised lectures were attended', () => {
     const lectures = [lecture({ id: 'first' }), lecture({ id: 'second' }),
       lecture({ id: 'missed', status: 'absent' })];
     expect(lectureCounts(lectures)).toEqual({ all: 3, attended: 2, absent: 1, covered: 0, upcoming: 0, rate: 67 });
+  });
+
+  it('counts a lecture made up by catch-up or alternative session as attended', () => {
+    const lectures = [lecture({ id: 'first' }), lecture({ id: 'missed', status: 'absent' }),
+      lecture({ id: 'made-up', status: 'absent', catchupStatus: 'completed', effectiveAttendance: 1 })];
+    expect(lectureCounts(lectures)).toEqual({ all: 3, attended: 2, absent: 1, covered: 1, upcoming: 0, rate: 67 });
   });
 
   it('opens the same attendance source in Monthly Logs and searches KSBs', async () => {
@@ -174,6 +459,28 @@ describe('Attendance lecture workspace', () => {
     const destination = new URL(screen.getByTestId('location').textContent!, 'http://localhost');
     expect(destination.pathname).toBe(`/learner/monthly-logs/apprenticeship/12/${month}`);
     expect(destination.searchParams.get('source')).toBe(expected);
+  });
+
+  it('opens an upcoming lecture in its exact My Learning component', async () => {
+    payload.lectures = [lecture({ status: 'upcoming', date: '2027-01-10', source: 'microsoft-teams',
+      sessionId: 'teams:occ-8', componentHref: '/learner/component/apprenticeship/12/live-session-9' })];
+    mount();
+    const row = await screen.findByRole('article', { name: 'First lecture' });
+    fireEvent.click(within(row).getByRole('button', { name: 'Open Activities' }));
+    expect(screen.getByTestId('location')).toHaveTextContent('/learner/component/apprenticeship/12/live-session-9');
+    expect(screen.getByTestId('location')).not.toHaveTextContent('/monthly-logs/');
+  });
+
+  it('keeps an unmapped upcoming lecture in its My Learning module instead of Monthly Logs', async () => {
+    payload.lectures = [lecture({ status: 'upcoming', date: '2027-01-10', source: 'microsoft-teams',
+      sessionId: 'teams:unmapped', moduleId: 'native:test-teams' })];
+    mount();
+    const row = await screen.findByRole('article', { name: 'First lecture' });
+    fireEvent.click(within(row).getByRole('button', { name: 'Open Activities' }));
+    const destination = new URL(screen.getByTestId('location').textContent!, 'http://localhost');
+    expect(destination.pathname).toBe('/learner/my-learning/apprenticeship/12');
+    expect(destination.searchParams.get('subject')).toBe('current:test-teams');
+    expect(destination.pathname).not.toContain('/monthly-logs/');
   });
 
   it('requests manager approval and keeps Live Sessions effective while pending', async () => {
@@ -206,7 +513,7 @@ describe('Attendance lecture workspace', () => {
       window.dispatchEvent(new Event('focus'));
       document.dispatchEvent(new Event('visibilitychange'));
     });
-    expect(fetch).toHaveBeenCalledTimes(initialRequests + 1);
+    expect(fetch).toHaveBeenCalledTimes(initialRequests + 2);
     expect(screen.getByText('First lecture')).toBeInTheDocument();
     await act(async () => {
       finishRefresh(new Response(JSON.stringify({ ...payload, lectures: [lecture({ title: 'Updated lecture' })] })));
@@ -231,7 +538,7 @@ describe('Attendance lecture workspace', () => {
     visibility.mockReturnValue('visible');
     await act(async () => { document.dispatchEvent(new Event('visibilitychange')); });
     expect(await screen.findByText('Updated lecture')).toBeInTheDocument();
-    expect(fetch).toHaveBeenCalledTimes(initialRequests + 1);
+    expect(fetch).toHaveBeenCalledTimes(initialRequests + 2);
     expect(posts).toEqual([]);
   });
 
@@ -307,7 +614,9 @@ describe('Attendance lecture workspace', () => {
     render(<MemoryRouter><AbsenceReportForm preselectMatch={{ id: 'future', dateIso: '2026-10-01', title: 'Future lecture' }} showHistory={false} /></MemoryRouter>);
     await waitFor(() => expect(screen.getByLabelText('Lecture *')).toHaveValue('future'));
     fireEvent.click(screen.getByText('Illness or medical appointment'));
-    fireEvent.click(screen.getByRole('radio', { name: 'Watch the recording' }));
+    fireEvent.click(screen.getByRole('radio', { name: /Watch the recording/ }));
+    fireEvent.change(screen.getByLabelText('Recording viewing date'), { target: { value: '2026-10-02' } });
+    fireEvent.change(screen.getByLabelText('Recording viewing time'), { target: { value: '18:00' } });
     fireEvent.click(screen.getByRole('checkbox'));
     fireEvent.click(screen.getByRole('button', { name: /Submit absence report/ }));
     await waitFor(() => expect(posts).toHaveLength(1));
@@ -315,6 +624,8 @@ describe('Attendance lecture workspace', () => {
     expect(body.get('sessionId')).toBe('teams:future');
     expect(body.get('explanation')).toBe('');
     expect(body.get('recoveryMethod')).toBe('recorded');
+    expect(body.get('recordingDate')).toBe('2026-10-02');
+    expect(body.get('recordingTime')).toBe('18:00');
     expect(body.has('catchupEventKey')).toBe(false);
     expect(await screen.findByText(/has been saved for your coach to review/)).toBeInTheDocument();
   });

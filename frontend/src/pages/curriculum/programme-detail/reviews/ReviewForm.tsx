@@ -158,12 +158,13 @@ function emptyRoleFlags(): ReviewRoleFlags {
 
 // ------------------------------------------------------------- small pieces
 
-function CheckboxRow({ label, checked, onChange, hint }: { label: string; checked: boolean; onChange: (value: boolean) => void; hint?: string }) {
+function CheckboxRow({ label, checked, onChange, hint, disabled = false }: { label: string; checked: boolean; onChange: (value: boolean) => void; hint?: string; disabled?: boolean }) {
   return (
-    <label className="flex items-start gap-2.5 rounded-lg border border-background-200 bg-background-50 px-3 py-2.5 transition-smooth hover:bg-background-100">
+    <label className={`flex items-start gap-2.5 rounded-lg border border-background-200 bg-background-50 px-3 py-2.5 transition-smooth ${disabled ? 'cursor-not-allowed opacity-60' : 'hover:bg-background-100'}`}>
       <input
         type="checkbox"
         checked={checked}
+        disabled={disabled}
         onChange={event => onChange(event.target.checked)}
         className="mt-0.5 h-4 w-4 shrink-0 rounded border-background-300 text-primary-600 focus:ring-primary-300"
       />
@@ -175,7 +176,13 @@ function CheckboxRow({ label, checked, onChange, hint }: { label: string; checke
   );
 }
 
-function RoleFlagGrid({ label, hint, value, onChange }: { label: string; hint?: string; value: ReviewRoleFlags; onChange: (value: ReviewRoleFlags) => void }) {
+// Referrer stays a recognised role, but no Referrer signing flow exists yet, so
+// requiring its signature would leave Reviews stuck awaiting signature. The
+// stored value is still shown and sent back unchanged (the API rejects only a
+// new Referrer requirement), so saving a legacy template never rewrites it.
+const UNSUPPORTED_SIGNATURE_ROLES: Partial<Record<ReviewParticipantRole, string>> = { referrer: 'Coming soon' };
+
+function RoleFlagGrid({ label, hint, value, onChange, disabledRoles = {} }: { label: string; hint?: string; value: ReviewRoleFlags; onChange: (value: ReviewRoleFlags) => void; disabledRoles?: Partial<Record<ReviewParticipantRole, string>> }) {
   return (
     <FormField label={label} hint={hint} as="group">
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
@@ -184,6 +191,8 @@ function RoleFlagGrid({ label, hint, value, onChange }: { label: string; hint?: 
             key={role}
             label={ROLE_LABEL[role]}
             checked={value[role]}
+            disabled={role in disabledRoles}
+            hint={disabledRoles[role]}
             onChange={checked => onChange({ ...value, [role]: checked })}
           />
         ))}
@@ -344,7 +353,7 @@ function FieldRow({ field, path, index, total, depth, errors, allowMeetingSummar
   };
 
   return (
-    <div className={`rounded-xl border p-3 transition-smooth ${isCaseBlock ? 'border-primary-200 bg-primary-50/40' : 'border-background-200 bg-background-50'}`}>
+    <div className={`rounded-xl border p-3 transition-smooth ${isCaseBlock ? 'border-amber-300 bg-amber-50/50' : 'border-sky-200 bg-sky-50/35'}`}>
       {depth > 0 && (
         <p className="mb-2 text-[10px] font-bold uppercase tracking-wider text-foreground-400">
           Nested level {depth}{atMaxDepth ? ` of ${MAX_FIELD_NESTING_DEPTH} (deepest allowed)` : ''}
@@ -656,18 +665,18 @@ function SectionCard({ section, index, total, errors, allowMeetingSummary, onCha
   };
 
   return (
-    <div className="rounded-xl border border-background-200 bg-white">
-      <div className="flex flex-wrap items-start gap-3 p-3">
+    <div className="rounded-xl border border-primary-200 bg-primary-50/30">
+      <div className="flex flex-wrap items-start gap-3 bg-primary-50/70 p-3">
         <button
           type="button"
           onClick={() => setExpanded(prev => !prev)}
           aria-expanded={expanded}
           aria-label={expanded ? `Collapse section ${index + 1}` : `Expand section ${index + 1}`}
-          className="mt-6 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-background-200 bg-background-50 text-foreground-500 hover:bg-background-100"
+          className="mt-6 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-primary-200 bg-white text-primary-700 hover:bg-primary-100"
         >
           <AppIcon className={expanded ? 'ri-arrow-down-s-line' : 'ri-arrow-right-s-line'}></AppIcon>
         </button>
-        <span className="mt-7 shrink-0 text-[11px] font-bold text-foreground-400">[{index + 1}]</span>
+        <span className="mt-7 shrink-0 text-[11px] font-bold text-primary-700">[{index + 1}]</span>
         <div className="min-w-[220px] flex-1">
           <FormField label="Section title" error={titleError}>
             <TextControl value={section.title} onChange={title => onChange({ ...section, title })} placeholder="e.g. Meeting & Close" />
@@ -679,10 +688,10 @@ function SectionCard({ section, index, total, errors, allowMeetingSummary, onCha
           </FormField>
         </div>
         <div className="flex gap-1 pt-6">
-          <button type="button" aria-label={`Move section ${index + 1} up`} disabled={index === 0} onClick={() => onMove(-1)} className="flex h-10 w-9 items-center justify-center rounded-lg border border-background-200 bg-white text-foreground-500 disabled:cursor-not-allowed disabled:opacity-40 hover:bg-background-100">
+          <button type="button" aria-label={`Move section ${index + 1} up`} disabled={index === 0} onClick={() => onMove(-1)} className="flex h-10 w-9 items-center justify-center rounded-lg border border-primary-100 bg-white text-primary-700 disabled:cursor-not-allowed disabled:opacity-40 hover:bg-primary-100">
             <AppIcon className="ri-arrow-up-s-line"></AppIcon>
           </button>
-          <button type="button" aria-label={`Move section ${index + 1} down`} disabled={index === total - 1} onClick={() => onMove(1)} className="flex h-10 w-9 items-center justify-center rounded-lg border border-background-200 bg-white text-foreground-500 disabled:cursor-not-allowed disabled:opacity-40 hover:bg-background-100">
+          <button type="button" aria-label={`Move section ${index + 1} down`} disabled={index === total - 1} onClick={() => onMove(1)} className="flex h-10 w-9 items-center justify-center rounded-lg border border-primary-100 bg-white text-primary-700 disabled:cursor-not-allowed disabled:opacity-40 hover:bg-primary-100">
             <AppIcon className="ri-arrow-down-s-line"></AppIcon>
           </button>
           <button type="button" onClick={handleRemove} aria-label={`Delete section: ${section.title || 'untitled'}`} title="Delete section" className="flex h-10 w-9 items-center justify-center rounded-lg border border-red-100 bg-red-50 text-red-600 hover:bg-red-100">
@@ -692,9 +701,9 @@ function SectionCard({ section, index, total, errors, allowMeetingSummary, onCha
       </div>
 
       {expanded && (
-        <div className="space-y-3 border-t border-background-100 p-3">
+        <div className="space-y-3 border-t border-primary-100 bg-white/85 p-3">
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <p className="text-[11px] font-semibold text-foreground-400">{fieldCount} field{fieldCount === 1 ? '' : 's'} in this section</p>
+            <p className="text-[11px] font-semibold text-primary-700">{fieldCount} field{fieldCount === 1 ? '' : 's'} in this section</p>
             {fieldCount > 0 && (
               <div className="flex flex-wrap items-center gap-1.5">
                 <span className="text-[11px] font-semibold text-foreground-400">Set every field in this section:</span>
@@ -1248,7 +1257,7 @@ export function ReviewFormModal({ programmeId, review, defaultStartDate, onClose
 
           {section === 'Participants & Permissions' && (
             <div className="space-y-5">
-              <RoleFlagGrid label="Signatures required from" value={signatures} onChange={setSignatures} />
+              <RoleFlagGrid label="Signatures required from" value={signatures} onChange={setSignatures} disabledRoles={UNSUPPORTED_SIGNATURE_ROLES} />
               <RoleFlagGrid label="Visible to" value={visibleTo} onChange={setVisibleTo} />
               <CheckboxRow label="Record time spent" checked={recordTimeSpent} onChange={setRecordTimeSpent} />
               <div className="flex flex-wrap items-end gap-4">

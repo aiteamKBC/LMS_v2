@@ -1,4 +1,11 @@
-"""Email a tutor when a module is assigned to them.
+"""Email a tutor about a module they are assigned to.
+
+Sent on request only: staff press "Email tutor" on the module workspace
+(``module_tutor_email`` below). Assigning a tutor no longer mails them -- see
+``schedule_assignment_notifications``, kept as a no-op so the write paths that
+call it need not change. The reconcile machinery described next is retained
+for ``dispatch_assignment_notifications`` and the ledger, which still records
+every manual send.
 
 Why a reconcile pass instead of a hook per write
 ------------------------------------------------
@@ -46,12 +53,16 @@ notification bug, not a data-loss bug, and is recoverable on the next pass.
 """
 from __future__ import annotations
 
+import json
 import logging
 import os
 import threading
 from datetime import datetime
 
 from django.db import connection, transaction
+from django.http import JsonResponse
+
+from login.permissions import require_role
 
 from login import email_azure
 
@@ -371,8 +382,10 @@ def schedule_assignment_notifications():
     skipped; because it is a full diff rather than an increment, the next
     curriculum write picks up whatever it missed.
     """
-    if not notifications_enabled():
-        return
+    # Automatic assignment emails are switched off: staff send them from the
+    # module workspace when they choose to. Every assignment write still calls
+    # this, so it stays callable and does nothing.
+    return
     token = getattr(_state, 'token', 0) + 1
     _state.token = token
 
@@ -518,3 +531,284 @@ def _forget_stale_rows(live_ids, ledger):
             views.delete_rows(NOTIFICATION_TABLE, 'id = %s', [row_id])
         except Exception:
             logger.debug('Could not drop stale ledger row %s.', row_id, exc_info=True)
+
+
+# ---------------------------------------------------------------------------
+# Manual send, from the module workspace
+# ---------------------------------------------------------------------------
+
+def _module_tutor(module_id):
+    """``(module_row, tutor or None, tutor_key)`` for a live module, or ``(None, None, '')``."""
+    views = _views()
+    module_id = views.clean_str(module_id)
+    module_row = next((
+        row for row in views.safe_authoring_module_rows() or []
+        if views.clean_str(row.get('module_catalogue_id')) == module_id
+        and not views.truthy(row.get('is_programme_deleted')) and not views.row_has_deleted_at(row)
+    ), None)
+    if module_row is None:
+        return None, None, ''
+    tutor_key = views.staff_assignment_key(module_row.get('tutor_name'))
+    if not tutor_key or tutor_key == 'unassigned':
+        return module_row, None, ''
+    for profile in views.get_staff_profile_rows('tutor') or []:
+        name = views.staff_profile_name(profile)
+        if views.staff_assignment_key(name) == tutor_key:
+            return module_row, {
+                'id': views.clean_str(profile.get('id')), 'name': name,
+                'email': views.staff_profile_email(profile),
+            }, tutor_key
+    return module_row, {'id': '', 'name': views.clean_str(module_row.get('tutor_name')), 'email': ''}, tutor_key
+
+
+def _last_send(tutor_key, module_id):
+    views = _views()
+    ensure_notification_table()
+    row = next((r for r in ledger_rows() if views.clean_str(r.get('id')) == ledger_id(tutor_key, module_id)), None)
+    if row is None:
+        return None
+    updated = row.get('updated_at')
+    return {
+        'status': views.clean_str(row.get('status')).lower() or None,
+        'at': updated.isoformat() if hasattr(updated, 'isoformat') else (views.clean_str(updated) or None),
+    }
+
+
+def module_tutor_status(module_id):
+    module_row, tutor, tutor_key = _module_tutor(module_id)
+    if module_row is None:
+        return None
+    return {
+        'moduleId': module_id,
+        'tutor': {'name': tutor['name'], 'hasEmail': bool(tutor['email'])} if tutor else None,
+        'lastSent': _last_send(tutor_key, module_id) if tutor else None,
+    }
+
+
+def _tutor_profile_by_key(tutor_key):
+    """The staff directory row for a tutor key, or None."""
+    views = _views()
+    if not tutor_key or tutor_key == 'unassigned':
+        return None
+    for profile in views.get_staff_profile_rows('tutor') or []:
+        name = views.staff_profile_name(profile)
+        if views.staff_assignment_key(name) == tutor_key:
+            return {
+                'id': views.clean_str(profile.get('id')), 'name': name,
+                'email': views.staff_profile_email(profile),
+            }
+    return None
+
+
+def tutor_email_status(module_ids, tutor_name=''):
+    """Which of these deliveries this tutor has already been emailed about.
+
+    The ledger is the only record of that, and it is keyed on (tutor, module),
+    so the answer is per tutor by construction: a module whose tutor changed
+    reports nothing for the new name, and the row the previous tutor earned is
+    never read for them. That is what keeps the drawer's tick from carrying one
+    tutor's "already notified" over to the next.
+
+    ``tutor_name`` evaluates the state against a name that is not stored yet.
+    The module drawer asks while the author is still choosing, and the honest
+    answer for a tutor they have only selected is that tutor's record, not the
+    one still written on the module row.
+
+    Only a ``sent`` row counts as emailed. A ``failed`` one is a record that the
+    attempt happened, not that the tutor heard anything -- so a delivery whose
+    send failed reads as not emailed, and the drawer offers to send it again.
+    """
+    views = _views()
+    ordered = []
+    for value in module_ids or []:
+        module_id = views.clean_str(value)
+        if module_id and module_id not in ordered:
+            ordered.append(module_id)
+
+    override_key = views.staff_assignment_key(tutor_name) if views.clean_str(tutor_name) else ''
+    tutor = _tutor_profile_by_key(override_key) if override_key else None
+    if override_key and tutor is None:
+        # A name the directory does not hold is still the name this module
+        # carries; it simply has no address to write to.
+        tutor = {'id': '', 'name': views.clean_str(tutor_name), 'email': ''}
+
+    deliveries = []
+    for module_id in ordered:
+        if override_key:
+            tutor_key = override_key
+        else:
+            _row, stored_tutor, tutor_key = _module_tutor(module_id)
+            if tutor is None and stored_tutor is not None:
+                tutor = stored_tutor
+        last = _last_send(tutor_key, module_id) if tutor_key else None
+        deliveries.append({
+            'moduleId': module_id,
+            'emailed': bool(last and last.get('status') == 'sent'),
+            'lastSent': last,
+        })
+
+    sent_at = [
+        d['lastSent']['at'] for d in deliveries
+        if d['emailed'] and (d.get('lastSent') or {}).get('at')
+    ]
+    return {
+        'tutor': {'name': tutor['name'], 'hasEmail': bool(tutor['email'])} if tutor else None,
+        'total': len(deliveries),
+        'emailed': sum(1 for d in deliveries if d['emailed']),
+        # The most recent one the tutor actually received, so a module whose
+        # deliveries were notified on different days reports the latest.
+        'lastSentAt': max(sent_at) if sent_at else None,
+        'deliveries': deliveries,
+    }
+
+
+def send_tutor_email(module_ids):
+    """Email one tutor about these modules now. Returns ``(payload, http_status)``.
+
+    One mail covers the whole list, because that is what being put on three
+    groups' deliveries of the same module in one save actually is -- see
+    ``email_azure.tutor_assignment_message``, which has always taken a list.
+    Three separate mails arriving in the same second would describe the same
+    decision three times.
+
+    Every module must belong to the same tutor. The two callers both satisfy
+    that by construction (one module, or one drawer save that put one name on
+    all of them), so a mixed list is a programming error rather than something
+    to paper over by sending several mails.
+
+    Re-sending is allowed -- the workspace button asks first, and the drawer
+    only sends what a person ticked -- and each module gets its own ledger row,
+    so the workspace can still say when that module last went out.
+    """
+    views = _views()
+    ordered = []
+    for value in module_ids or []:
+        module_id = views.clean_str(value)
+        if module_id and module_id not in ordered:
+            ordered.append(module_id)
+    if not ordered:
+        return {'error': 'No module was named.'}, 400
+
+    resolved = []
+    for module_id in ordered:
+        module_row, tutor, tutor_key = _module_tutor(module_id)
+        if module_row is None:
+            return {'error': 'Module not found.'}, 404
+        if tutor is None:
+            return {'error': 'Assign a tutor to this module before emailing them.'}, 409
+        if not tutor['email']:
+            return {'error': f"{tutor['name']} has no email address in the staff directory."}, 409
+        resolved.append((module_id, module_row, tutor, tutor_key))
+
+    first_key = resolved[0][3]
+    if any(key != first_key for _id, _row, _tutor, key in resolved):
+        return {'error': 'These modules do not all have the same tutor.'}, 409
+    tutor = resolved[0][2]
+
+    groups = {views.clean_str(r.get('group_id')): r for r in views.authoring_fetch_all(views.GROUPS_TABLE)}
+    cohorts = {views.clean_str(r.get('cohort_id')): r for r in views.authoring_fetch_all(views.COHORT_AUTHORING_DETAILS_TABLE)}
+    details = [
+        describe_module(
+            module_row,
+            groups.get(views.clean_str(module_row.get('group_id'))),
+            cohorts.get(views.clean_str(module_row.get('cohort_id'))),
+        )
+        for _id, module_row, _tutor, _key in resolved
+    ]
+
+    ensure_notification_table()
+    rows = ledger_rows()
+    attempts_by_row = {}
+    for module_id, _row, _tutor, tutor_key in resolved:
+        row_id = ledger_id(tutor_key, module_id)
+        previous = next((r for r in rows if views.clean_str(r.get('id')) == row_id), None)
+        attempts_by_row[row_id] = (module_id, int((previous or {}).get('attempts') or 0))
+
+    subject, html, text = email_azure.tutor_assignment_message(
+        tutor_name=tutor['name'], modules=details, workspace_url=workspace_url(),
+    )
+    sent, failure = email_azure.send_mail(to=tutor['email'], subject=subject, html_body=html, text_body=text)
+    # One mail, so one verdict: every module in it is recorded the same way.
+    for row_id, (module_id, attempts) in attempts_by_row.items():
+        _upsert_ledger_row(row_id, tutor, module_id, 'sent' if sent else 'failed', attempts + 1,
+                           '' if sent else (failure or '')[:500])
+    if not sent:
+        logger.warning('Could not email %s about modules %s: %s', tutor['email'], ', '.join(ordered), failure)
+        return {'error': f'The email to {tutor["name"]} could not be sent. Please try again.', 'code': 'send_failed'}, 502
+    logger.info('Emailed %s about %d module(s) on request.', tutor['email'], len(ordered))
+    return {
+        'sent': True,
+        'tutor': tutor['name'],
+        'modules': len(ordered),
+        'lastSent': _last_send(first_key, ordered[0]),
+    }, 200
+
+
+def send_module_tutor_email(module_id):
+    """Email this one module's tutor about it now. See ``send_tutor_email``."""
+    return send_tutor_email([module_id])
+
+
+@require_role('admin', 'staff')
+def modules_tutor_email(request):
+    """GET: whether this tutor has been emailed about these deliveries yet.
+    POST: one mail to one tutor covering several modules (CSRF protected).
+
+    The module drawer's "email the tutor" tick, both halves. The tick is not a
+    form field the drawer remembers -- it reads its state from here every time
+    it opens, because the ledger is the only place that knows whether the tutor
+    was actually written to, and it has to still know next week.
+
+    One drawer save can attach the module to several groups at once -- one
+    delivery per group, all carrying the same tutor -- so both halves take a
+    list: the tutor hears about that once, and the tick reports "2 of 3" rather
+    than pretending the module is one thing.
+
+    Deliberately a route of its own rather than a body on the per-module one:
+    that endpoint's URL names the module it acts on, and the workspace button
+    depends on it staying that way.
+    """
+    if request.method == 'GET':
+        raw = request.GET.get('moduleIds') or ''
+        module_ids = [part for part in raw.split(',') if part.strip()]
+        try:
+            return JsonResponse(tutor_email_status(module_ids, request.GET.get('tutor') or ''), status=200)
+        except Exception:
+            logger.exception('Could not read the tutor email status for modules %s', module_ids)
+            return JsonResponse({'error': 'The tutor email status could not be loaded.'}, status=502)
+    if request.method != 'POST':
+        return JsonResponse({'error': 'Method not allowed.'}, status=405)
+    body = {}
+    try:
+        body = json.loads((request.body or b'').decode('utf-8') or '{}')
+    except (ValueError, UnicodeDecodeError):
+        return JsonResponse({'error': 'Invalid JSON body.'}, status=400)
+    module_ids = body.get('moduleIds') if isinstance(body, dict) else None
+    if not isinstance(module_ids, list):
+        return JsonResponse({'error': 'moduleIds must be a list.'}, status=400)
+    try:
+        payload, status = send_tutor_email(module_ids)
+    except Exception:
+        logger.exception('Could not email the tutor of modules %s', module_ids)
+        return JsonResponse({'error': 'The email could not be sent. Please try again.'}, status=502)
+    return JsonResponse(payload, status=status)
+
+
+@require_role('admin', 'staff')
+def module_tutor_email(request, module_id):
+    """GET: who the tutor is and when they were last emailed. POST: email them now (CSRF protected)."""
+    if request.method == 'GET':
+        try:
+            status = module_tutor_status(module_id)
+        except Exception:
+            logger.exception('Could not read the tutor email status for module %s', module_id)
+            return JsonResponse({'error': 'The tutor email status could not be loaded.'}, status=502)
+        return JsonResponse(status, status=200) if status else JsonResponse({'error': 'Module not found.'}, status=404)
+    if request.method != 'POST':
+        return JsonResponse({'error': 'Method not allowed.'}, status=405)
+    try:
+        payload, status = send_module_tutor_email(module_id)
+    except Exception:
+        logger.exception('Could not email the tutor of module %s', module_id)
+        return JsonResponse({'error': 'The email could not be sent. Please try again.'}, status=502)
+    return JsonResponse(payload, status=status)

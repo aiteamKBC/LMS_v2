@@ -284,6 +284,49 @@ function renderWorkspace(path: string, view: 'map' | 'catalogue' = 'map') {
 }
 
 describe('map and My Learning navigation', () => {
+  it('opens a canonical evidence record without confusing it with a source material ID', async () => {
+    vi.spyOn(api, 'subjectRequest').mockImplementation(async <T,>(url: string) => (url.includes('subject-covers') ? metadata : material) as T);
+    const recorded = { ...data, activities: [
+      { ...data.activities[0], activity_id: 'record:1:2', source_activity_id: 99 },
+      { ...data.activities[1], activity_id: 'record:1:88', source_activity_id: 2 },
+    ] };
+    render(<MemoryRouter initialEntries={['/learner/my-learning/commercial/132?activity=record%3A2']}><StudentActivityPanel view="catalogue" kind="commercial" learnerId="132" data={recorded} loading={false} error={null} onRetry={() => {}} /></MemoryRouter>);
+    expect(await screen.findByRole('region', { name: 'First reading content' })).toBeVisible();
+    expect(screen.queryByRole('region', { name: 'Second reading content' })).not.toBeInTheDocument();
+  });
+
+  it.each(['record%3A2', 'record%3A99'])('does not fall back to a coincident source ID or choose an ambiguous record (%s)', async target => {
+    vi.spyOn(api, 'subjectRequest').mockResolvedValue(metadata);
+    const recorded = { ...data, activities: [
+      { ...data.activities[0], activity_id: 'record:1:99', source_activity_id: 2 },
+      { ...data.activities[1], activity_id: 'record:2:99', group_id: 2 },
+    ] };
+    render(<MemoryRouter initialEntries={[`/learner/my-learning/commercial/132?activity=${target}`]}><StudentActivityPanel view="catalogue" kind="commercial" learnerId="132" data={recorded} loading={false} error={null} onRetry={() => {}} /></MemoryRouter>);
+    expect(await screen.findByRole('alert')).toHaveTextContent(target.endsWith('99') ? 'This evidence matches more than one learning activity.' : 'This evidence activity is not available in My Learning.');
+    expect(screen.queryByRole('region', { name: /content/ })).not.toBeInTheDocument();
+  });
+
+  it('opens the evidence activity in its My Learning week', async () => {
+    renderWorkspace('/learner/my-learning/commercial/132?activity=2', 'catalogue');
+    expect(await screen.findByRole('region', { name: 'Second reading content' })).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Second reading' })).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.queryByRole('button', { name: 'First reading' })).not.toBeInTheDocument();
+  });
+
+  it('reports unavailable evidence instead of selecting another activity', async () => {
+    renderWorkspace('/learner/my-learning/commercial/132?activity=missing', 'catalogue');
+    expect(await screen.findByRole('alert')).toHaveTextContent('This evidence activity is not available in My Learning.');
+    expect(screen.queryByRole('region', { name: /content/ })).not.toBeInTheDocument();
+  });
+
+  it('refuses a source activity shared by different courses', async () => {
+    vi.spyOn(api, 'subjectRequest').mockResolvedValue(metadata);
+    const ambiguous = { ...data, activities: [...data.activities, { ...data.activities[1], activity_id: 'la:2:2', group_id: 2, group_name: 'Other course' }] };
+    render(<MemoryRouter initialEntries={['/learner/my-learning/commercial/132?activity=2']}><StudentActivityPanel kind="commercial" learnerId="132" data={ambiguous} loading={false} error={null} onRetry={() => {}} /></MemoryRouter>);
+    expect(await screen.findByRole('alert')).toHaveTextContent('This evidence matches more than one learning activity.');
+    expect(screen.queryByRole('region', { name: /content/ })).not.toBeInTheDocument();
+  });
+
   it.each(['legacy%3A1', 'current%3AM1', ''])('resolves a current-week Continue link from activity dates (%s)', async subject => {
     vi.useFakeTimers({ toFake: ['Date'] });
     vi.setSystemTime(new Date('2026-09-15T12:00:00Z'));
@@ -430,9 +473,9 @@ describe('map and My Learning navigation', () => {
   it('keeps headline totals unchanged by filters and switches grid/list accessibly', async () => {
     renderWorkspace('/learner/my-learning/commercial/132', 'catalogue');
     await screen.findByRole('button', { name: /Open subject/ });
-    fireEvent.change(screen.getByRole('combobox', { name: 'Filter by progress' }), { target: { value: 'complete' } });
+    fireEvent.change(screen.getByRole('combobox', { name: 'Status' }), { target: { value: 'complete' } });
     expect(screen.queryByRole('button', { name: /Open subject/ })).not.toBeInTheDocument();
-    expect(within(screen.getByText('Total activities').parentElement!).getByText('2')).toBeVisible();
+    expect(within(screen.getByText('Learning activities').parentElement!).getByText('2')).toBeVisible();
     fireEvent.click(screen.getByRole('button', { name: 'Clear filters' }));
     expect(screen.getByRole('button', { name: 'List' })).toHaveAttribute('aria-pressed', 'true');
     fireEvent.click(screen.getByRole('button', { name: 'Grid' }));
@@ -442,11 +485,15 @@ describe('map and My Learning navigation', () => {
     expect(screen.getByRole('button', { name: /Open subject/ })).toBeVisible();
   });
 
-  it('uses the authoritative activity total everywhere and opens deadlines as assignments', async () => {
+  it('uses the authoritative activity total everywhere and opens deadline components', async () => {
     vi.spyOn(api, 'subjectRequest').mockResolvedValue({ ...metadata, activity_dates: {
       'ASSIGNMENT-1': { date: '2050-10-04', month: '2050-10', week_start: '2050-10-04', week_end: '2050-10-10', due_timing: 'end of week' },
+      'CHECKPOINT-1': { date: '2050-10-04', month: '2050-10', week_start: '2050-10-04', week_end: '2050-10-10', due_timing: 'end of week' },
     } });
-    const real = { components: [{ moduleId: 'M1', module: 'Leadership', componentId: 'ASSIGNMENT-1', component: 'Due assignment', type: 'assignment' }] } as LearnerDetail;
+    const real = { components: [
+      { moduleId: 'M1', module: 'Leadership', componentId: 'ASSIGNMENT-1', component: 'Due assignment', type: 'assignment' },
+      { moduleId: 'M1', module: 'Leadership', componentId: 'CHECKPOINT-1', component: 'Due checkpoint', type: 'checkpoint' },
+    ] } as LearnerDetail;
     render(<MemoryRouter><StudentActivityPanel view="catalogue" kind="commercial" learnerId="132" data={data} real={real} loading={false} error={null} onRetry={() => {}}
       metrics={{ migrated: true,
         programme: { completed: 35, total: 304, percent: 11.51, status: 'ready' },
@@ -456,7 +503,8 @@ describe('map and My Learning navigation', () => {
 
     await screen.findByRole('button', { name: /Open subject/ });
     expect(screen.getByText('1 subjects · 304 activities')).toBeVisible();
-    expect(screen.getByRole('link', { name: 'View all assignments' })).toHaveAttribute('href', '/learner/my-learning/commercial/132?tab=assignments');
-    expect(screen.getByRole('link', { name: /Due assignment/ })).toHaveAttribute('href', '/learner/monthly-submission/commercial/132/ASSIGNMENT-1');
+    expect(screen.getByRole('heading', { name: 'Upcoming' })).toBeVisible();
+    expect(screen.getByRole('link', { name: /Due assignment/ })).toHaveAttribute('href', '/learner/component/commercial/132/ASSIGNMENT-1');
+    expect(screen.getByRole('link', { name: /Due checkpoint/ })).toHaveAttribute('href', '/learner/component/commercial/132/CHECKPOINT-1');
   });
 });

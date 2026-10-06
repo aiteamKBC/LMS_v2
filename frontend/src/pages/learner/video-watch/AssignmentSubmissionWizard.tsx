@@ -1,3 +1,6 @@
+import type { ComponentProps } from 'react';
+import type { AssignmentTopic } from '@/lib/assignmentTopics';
+import { TopicAssignment } from './TopicAssignment';
 import { useEffect, useMemo, useRef, useState, type ReactNode, type SetStateAction } from 'react';
 import DOMPurify from 'dompurify';
 import type { ComponentKsbMapping, LearnerKind } from '@/api/learnerDetail';
@@ -25,11 +28,13 @@ import { assignmentTimeHours } from './AssignmentTimeEntries';
 import { HistoricalAssignmentCards } from './HistoricalAssignmentCards';
 import { useLearningStatements } from '@/hooks/useLearningStatements';
 import { parsePersonalLearning } from '@/lib/personalLearning';
+import styles from './assignmentWizard.module.css';
 
 export type AssignmentAnswers = {
   assignmentAnswer: string;
   whatYouLearned: string;
   businessImpact: string;
+  assignmentTopicId?: string;
 };
 
 const EMPTY_ANSWERS: AssignmentAnswers = {
@@ -49,7 +54,7 @@ function londonDate(): string {
   return `${value.year}-${value.month}-${value.day}`;
 }
 
-export function AssignmentSubmissionWizard({
+export function AssignmentSubmissionForm({
   kind,
   learnerId,
   learnerName,
@@ -70,8 +75,6 @@ export function AssignmentSubmissionWizard({
   timeSeconds,
   timeSource = 'timer',
   timeControl,
-  outsideWorkingHours,
-  outsideWorkingHoursConfirmed,
   submittingProgress,
   onEvidenceChanged,
   onRestoreTime,
@@ -80,6 +83,7 @@ export function AssignmentSubmissionWizard({
   resolveEvidenceUrl,
   renderEvidencePreview,
   historicalContent,
+  assignmentTopicId, elapsedSeconds, onRestoreElapsed, onManualDraftSaved, onShowInstructions, onTopicSubmitted,
 }: {
   kind: LearnerKind;
   learnerId: string;
@@ -101,8 +105,6 @@ export function AssignmentSubmissionWizard({
   timeSeconds: number | null;
   timeSource?: 'timer' | 'input';
   timeControl: ReactNode;
-  outsideWorkingHours: boolean;
-  outsideWorkingHoursConfirmed: boolean;
   submittingProgress: boolean;
   onEvidenceChanged: (files: EvidenceRecord[]) => void;
   onRestoreTime: (seconds: number, source: 'timer' | 'input') => void;
@@ -111,6 +113,12 @@ export function AssignmentSubmissionWizard({
   resolveEvidenceUrl?: (file: EvidenceRecord) => Promise<string>;
   renderEvidencePreview?: (file: EvidenceRecord, url: string) => ReactNode;
   historicalContent?: HistoricalAssignmentContent;
+  assignmentTopicId?: string;
+  elapsedSeconds?: number;
+  onRestoreElapsed?: (seconds: number) => void;
+  onManualDraftSaved?: () => void;
+  onShowInstructions?: () => void;
+  onTopicSubmitted?: () => void;
 }) {
   const personalStudy = parsePersonalLearning(learnerId)?.mode === 'study';
   const steps = MONTHLY_STEPS.map((label, index) => personalStudy && index === 7 ? 'Presentation' : label);
@@ -131,6 +139,7 @@ export function AssignmentSubmissionWizard({
     }
     setQualityTarget(null);
   }, [step, qualityTarget]);
+  const [savedTopicQuestion, setSavedTopicQuestion] = useState<string | null>(null);
   const [answers, setAnswers] = useState<AssignmentAnswers>(EMPTY_ANSWERS);
   // The Training Plan month seeds a new assignment; a saved draft always wins.
   const [defaultMonth] = useState(() => initialMonth && /^\d{4}-(0[1-9]|1[0-2])$/.test(initialMonth) ? initialMonth : londonDate().slice(0, 7));
@@ -162,14 +171,16 @@ export function AssignmentSubmissionWizard({
   const onRestoreTimeRef = useRef(onRestoreTime);
   const ksbMappingsRef = useRef(ksbMappings);
   ksbMappingsRef.current = ksbMappings;
-  const recoveryKey = `monthly-assignment-draft:${kind}:${learnerId}:${componentId}`;
+  const restoreElapsedRef = useRef(onRestoreElapsed);
+  restoreElapsedRef.current = onRestoreElapsed;
+  const recoveryKey = `monthly-assignment-draft:${kind}:${learnerId}:${componentId}${assignmentTopicId ? `:topic:${assignmentTopicId}` : ''}`;
 
   useEffect(() => { onRestoreTimeRef.current = onRestoreTime; }, [onRestoreTime]);
   useEffect(() => {
     if (detailedSeconds !== null) onRestoreTimeRef.current(detailedSeconds, 'input');
   }, [detailedSeconds]);
 
-  const locked = historicalReadOnly || imported || status === 'submitted_for_tutor_review' || status === 'accepted';
+  const locked = historicalReadOnly || imported || status === 'submitted_for_tutor_review' || status === 'accepted' || Boolean(assignmentTopicId && status === 'partial');
   const readOnly = locked || loadFailed || submittingProgress;
   const learningConfirmed = monthly.plannedReviewed === true && monthly.newKnowledge === true
     && monthly.newSkills === true && monthly.sharingConsent === true;
@@ -192,14 +203,22 @@ export function AssignmentSubmissionWizard({
   const cleanQuestionHtml = useMemo(
     () => {
       // Older briefs can contain rich text in the plain-text API field.
-      const html = questionHtml || (/<[a-zA-Z][^>]*>/.test(questionText || '') ? questionText : '');
+      const html = locked && savedTopicQuestion !== null ? savedTopicQuestion : questionHtml || (/<[a-zA-Z][^>]*>/.test(questionText || '') ? questionText : '');
       return html ? DOMPurify.sanitize(html) : '';
     },
-    [questionHtml, questionText],
+    [questionHtml, questionText, locked, savedTopicQuestion],
+  );
+  // Stable object identity: React 19 re-applies innerHTML whenever it changes,
+  // which would recreate an embedded <video> on every parent timer tick.
+  const questionInnerHtml = useMemo(
+    () => ({ __html: cleanQuestionHtml }),
+    [cleanQuestionHtml],
   );
 
   const payload = (mode: 'draft' | 'submit'): LearningReflectionSubmissionInput => ({
     learnerKind: kind,
+    ...(assignmentTopicId ? { assignmentTopicId } : {}),
+    ...(elapsedSeconds !== undefined ? { assignmentElapsedSeconds: elapsedSeconds } : {}),
     learnerId,
     learnerName,
     programmeName,
@@ -231,17 +250,15 @@ export function AssignmentSubmissionWizard({
     assignmentAnswer: answers.assignmentAnswer,
     whatYouLearned: answers.whatYouLearned,
     businessImpact: answers.businessImpact,
-    outsideWorkingHours,
-    outsideWorkingHoursConfirmed,
     monthlyAssignment: { ...monthly, step },
     assignmentTimeSource: detailedSeconds !== null ? 'input' : timeSource,
   });
   latestDraftRef.current = payload('draft');
-  const qualitySnapshot = JSON.stringify({ ...payload('draft'), monthlyAssignment: { ...monthly, step: 0 } });
+  const qualitySnapshot = JSON.stringify({ ...payload('draft'), assignmentElapsedSeconds: undefined, monthlyAssignment: { ...monthly, step: 0 } });
   const qualitySnapshotRef = useRef(qualitySnapshot);
   qualitySnapshotRef.current = qualitySnapshot;
   useEffect(() => { setChecks([]); }, [qualitySnapshot]);
-  const stepCheck = useAssignmentStepCheck(JSON.stringify(payload('draft')), step, !locked && !loading && !loadFailed);
+  const stepCheck = useAssignmentStepCheck(JSON.stringify({ ...payload('draft'), assignmentElapsedSeconds: undefined }), step, !locked && !loading && !loadFailed);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -267,6 +284,7 @@ export function AssignmentSubmissionWizard({
       learnerId,
       activityType: 'assignment',
       activityId: componentId,
+      ...(assignmentTopicId ? { assignmentTopicId } : {}),
     })
       .then(submission => {
         if (!active) return;
@@ -275,13 +293,15 @@ export function AssignmentSubmissionWizard({
         // network failure. It never supersedes a submitted/server-newer record.
         try {
           const local = JSON.parse(sessionStorage.getItem(recoveryKey) || 'null');
-          const serverLocked = submission?.status === 'submitted_for_tutor_review' || submission?.status === 'accepted' || ['imported_legacy', 'classified_legacy'].includes(submission?.submissionOrigin || '');
+          const serverLocked = submission?.status === 'submitted_for_tutor_review' || submission?.status === 'accepted' || Boolean(assignmentTopicId && submission?.status === 'partial') || ['imported_legacy', 'classified_legacy'].includes(submission?.submissionOrigin || '');
           if (local?.payload?.activityId === componentId && !serverLocked && Number(local.at) > (Date.parse(submission?.submittedAt || '') || 0)) {
             submission = { ...submission, ...local.payload, status: submission?.status || 'draft' };
             setRecoveredDraft(true);
           } else if (serverLocked) sessionStorage.removeItem(recoveryKey);
         } catch { /* Storage is optional; the server draft is authoritative. */ }
         if (!submission) return;
+        if (submission.assignmentQuestion !== undefined) setSavedTopicQuestion(submission.assignmentQuestion);
+        if (submission.assignmentElapsedSeconds !== undefined) restoreElapsedRef.current?.(submission.assignmentElapsedSeconds);
         setAnswers({
           assignmentAnswer: submission.assignmentAnswer || '',
           whatYouLearned: submission.whatYouLearned || submission.learningReflection || '',
@@ -314,7 +334,7 @@ export function AssignmentSubmissionWizard({
         }
       });
     return () => { active = false; };
-  }, [kind, learnerId, componentId, defaultMonth, recoveryKey]);
+  }, [kind, learnerId, componentId, defaultMonth, recoveryKey, assignmentTopicId]);
 
   const saveDraft = async (_showSaved = true): Promise<boolean> => {
     if (locked || !loadedRef.current || submittingRef.current) return false;
@@ -355,7 +375,7 @@ export function AssignmentSubmissionWizard({
     return () => window.clearTimeout(timeout);
     // The identifying fields are stable for the lifetime of this wizard.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [answers, monthly, step, evidenceFiles, Math.floor((timeSeconds || 0) / 30), outsideWorkingHoursConfirmed, locked]);
+  }, [answers, monthly, step, evidenceFiles, Math.floor((timeSeconds || 0) / 30), Math.floor((elapsedSeconds || 0) / 30), locked]);
 
   useEffect(() => {
     const warn = (event: BeforeUnloadEvent) => {
@@ -398,9 +418,9 @@ export function AssignmentSubmissionWizard({
   const goNext = async () => {
     if (!locked && (!stepCheck.ready || savingDraft || submittingProgress)) return;
     const from = step;
-    const snapshot = JSON.stringify(payload('draft'));
+    const snapshot = JSON.stringify({ ...payload('draft'), assignmentElapsedSeconds: undefined });
     if (locked) { setStep(current => Math.min(7, current + 1)); return; }
-    if (await saveDraft() && JSON.stringify(latestDraftRef.current) === snapshot) {
+    if (await saveDraft() && JSON.stringify({ ...latestDraftRef.current, assignmentElapsedSeconds: undefined }) === snapshot) {
       setStep(current => current === from ? Math.min(7, current + 1) : current);
     }
   };
@@ -414,10 +434,6 @@ export function AssignmentSubmissionWizard({
     }
     if (!claimedSeconds || claimedSeconds <= 0) {
       setSaveError('Enter the time spent on this assignment before submitting.');
-      return;
-    }
-    if (outsideWorkingHours && !outsideWorkingHoursConfirmed) {
-      setSaveError('Confirm that you completed this assignment outside UK working hours before submitting.');
       return;
     }
     submittingRef.current = true;
@@ -437,16 +453,17 @@ export function AssignmentSubmissionWizard({
         return;
       }
       setSavedTimeSeconds(claimedSeconds);
-      await onSubmitProgress(answers);
+      await onSubmitProgress({ ...answers, ...(assignmentTopicId ? { assignmentTopicId } : {}) });
       setStatus('submitted_for_tutor_review');
       try {
-        const saved = await loadLearningReflectionSubmission({ learnerKind: kind, learnerId, activityType: 'assignment', activityId: componentId });
+        const saved = await loadLearningReflectionSubmission({ learnerKind: kind, learnerId, activityType: 'assignment', activityId: componentId, ...(assignmentTopicId ? { assignmentTopicId } : {}) });
         if (mountedRef.current && saved?.submissionAttempts) setSubmissionAttempts(saved.submissionAttempts);
       } catch {
         setSaveError('Your assignment was submitted. Reload to refresh the submission history.');
       }
       try { sessionStorage.removeItem(recoveryKey); } catch { /* Optional recovery copy. */ }
-      setPreviewOpen(true);
+      if (onTopicSubmitted) onTopicSubmitted();
+      else setPreviewOpen(true);
     } catch (error) {
       setSaveError(error instanceof Error ? error.message : 'Could not submit the assignment.');
     } finally {
@@ -485,7 +502,7 @@ export function AssignmentSubmissionWizard({
   return (
     <AssignmentAiCheckContext.Provider value={{ learnerId, learnerKind: kind, enabled: !readOnly }}>
       <AssignmentAttemptHistory attempts={submissionAttempts} />
-      <section ref={wizardRef} className="overflow-hidden rounded-2xl border border-slate-200 bg-white font-sans shadow-sm">
+      <section ref={wizardRef} className={`${styles.assignmentWizard} overflow-hidden rounded-2xl border border-slate-200 bg-white font-sans shadow-sm`}>
         <div className="border-b border-slate-200 bg-sky-50/50 px-5 py-4">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
@@ -493,7 +510,7 @@ export function AssignmentSubmissionWizard({
               <h2 className="mt-1 font-heading text-lg font-bold text-foreground-950">{title}</h2>
             </div>
             <div className="flex items-center gap-2">
-              {!locked && <button type="button" disabled={savingDraft || loadFailed || submittingProgress} onClick={() => void saveDraft()} className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold shadow-sm">Save draft</button>}
+              {!locked && <button type="button" disabled={savingDraft || loadFailed || submittingProgress} onClick={() => void saveDraft().then(saved => { if (saved) onManualDraftSaved?.(); })} className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold shadow-sm">Save draft</button>}
               {(savingDraft || draftSaved) && !locked && !saveError && (
                 <span className="text-[11px] font-semibold text-foreground-500">
                   <AppIcon className={savingDraft ? 'ri-loader-4-line mr-1 animate-spin' : 'ri-check-line mr-1 text-emerald-600'} />
@@ -519,11 +536,12 @@ export function AssignmentSubmissionWizard({
 
           <div className="mt-4 flex flex-wrap items-center justify-between gap-3 text-sm text-slate-700">
             <label>Submission month <input aria-label="Submission month" type="month" value={monthly.month} disabled={readOnly || savingDraft} onChange={e => { if (e.target.value) changeMonthly(m => ({ ...m, month: e.target.value, meetingKey: '', presentationToken: '' })); }} className="ml-2 rounded-lg border border-slate-200 px-2 py-1" /></label>
-            <span>Step {step + 1} of 8 — {steps[step]}</span>
+            <span>Step {step + (assignmentTopicId ? 2 : 1)} of {assignmentTopicId ? 9 : 8} — {steps[step]}</span>
             <span>{imported ? 'Historical record — new submission checks do not apply' : checks.length ? `${checks.filter(c => c.passed).length}/13 checks passed at last check` : 'Quality checks not run yet'}</span>
           </div>
           <div className="mt-4 h-2 overflow-hidden rounded-full bg-slate-200"><div className="h-full bg-slate-900 transition-all" style={{ width: `${(step + 1) / 8 * 100}%` }} /></div>
           <div className="mt-4 flex flex-wrap gap-2">
+            {onShowInstructions && <button type="button" disabled={!locked} onClick={onShowInstructions} className="rounded-lg border px-3 py-2 text-xs font-bold disabled:opacity-40">1 Instructions</button>}
             {steps.map((label, index) => (
               <button
                 key={label}
@@ -532,7 +550,7 @@ export function AssignmentSubmissionWizard({
                 className={`rounded-lg border px-3 py-2 text-left text-xs shadow-sm transition-colors ${step === index ? 'border-slate-900 bg-slate-900 text-white' : 'border-slate-200 bg-white text-slate-700 hover:bg-sky-50'}`}
               >
                 <span className="flex items-center gap-2 text-[11px] font-bold">
-                  <span className={`grid h-6 w-6 place-items-center rounded-full ${step === index ? 'bg-white/15 text-white' : 'bg-background-200 text-foreground-500'}`}>{index + 1}</span>
+                  <span className={`grid h-6 w-6 place-items-center rounded-full ${step === index ? 'bg-white/15 text-white' : 'bg-background-200 text-foreground-500'}`}>{index + (assignmentTopicId ? 2 : 1)}</span>
                   <span>{label}</span>
                 </span>
               </button>
@@ -550,16 +568,16 @@ export function AssignmentSubmissionWizard({
 
           {historicalContent ? <HistoricalAssignmentCards content={orderedHistoricalContent!} step={step} files={evidenceFiles} onPreviewFile={file => { setPreviewOpen(true); void openEvidence(file); }} /> : step === 0 && (
             <div className="space-y-5">
-              <div>
+              {!assignmentTopicId && <div>
                 <p className="text-[10px] font-black uppercase tracking-[0.14em] text-primary-600">Assignment question</p>
                 <div className="mt-2 rounded-xl border border-background-200 bg-background-50 p-4 text-sm leading-6 text-foreground-800">
                   {cleanQuestionHtml ? (
-                    <div className="max-w-none [&_p]:mb-3 [&_ul]:list-disc [&_ul]:pl-5" dangerouslySetInnerHTML={{ __html: cleanQuestionHtml }} />
+                    <div className="max-w-none [&_p]:mb-3 [&_ul]:list-disc [&_ul]:pl-5" dangerouslySetInnerHTML={questionInnerHtml} />
                   ) : (
                     <p className="whitespace-pre-line">{questionText || (questionFileUrl ? 'Preview the attached file for your assignment question.' : 'Your tutor has not added the assignment question yet.')}</p>
                   )}
                 </div>
-              </div>
+              </div>}
               {questionFileUrl && <AssignmentAttachment key={questionFileUrl} url={questionFileUrl} fileName={questionFileName} title={title} />}
               <MonthlyAnswerField qualityTarget="answer" title={title} label="Your answer (at least 120 words; one point per line)" value={answers.assignmentAnswer} onChange={value => setAnswer('assignmentAnswer', value)} disabled={readOnly || submittingRef.current} rows={10} minimumWords={120} onePointPerLine generation={{ enabled: learningGeneration.canGenerate, busy: learningGeneration.generating, onGenerate: () => { if (!(answers.whatYouLearned || monthly.understood || monthly.gainedSkills) || window.confirm('Replace the three learning statements with new drafts from your answer?')) void learningGeneration.generate(); } }} />
               <p className="rounded-xl border border-blue-100 bg-blue-50 px-4 py-3 text-sm leading-6 text-blue-900">Write at least 120 words, then click Generate learning statements to draft the three fields below. Review and edit the generated text before submitting.</p>
@@ -596,7 +614,7 @@ export function AssignmentSubmissionWizard({
           {!locked && step < 7 && !stepCheck.ready && <div id="assignment-step-required" role="status" aria-live="polite" className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
             {stepCheck.pending ? <p>Checking this step's requirements...</p> : stepCheck.error ? <><p>{stepCheck.error}</p><button type="button" className="mt-2 underline" onClick={stepCheck.retry}>Retry step check</button></> : <><p className="font-semibold">Complete the following before selecting Next:</p><ul className="mt-2 list-disc space-y-1 pl-5">{stepCheck.missing.map(check => <li key={check.key}>{check.label}</li>)}</ul></>}
           </div>}
-          <div className="mt-6 flex items-center justify-between gap-3 border-t border-background-200 pt-4">
+          <div className="mt-6 flex flex-wrap items-center justify-between gap-3 border-t border-background-200 pt-4">
             <button
               type="button"
               onClick={() => setStep(current => Math.max(0, current - 1))}
@@ -605,33 +623,37 @@ export function AssignmentSubmissionWizard({
             >
               <AppIcon className="ri-arrow-left-line" />Back
             </button>
-            {step < 7 ? (
-              <button
-                type="button"
-                onClick={() => void goNext()}
-                disabled={loadFailed || savingDraft || submittingProgress || !stepCheck.ready}
-                aria-describedby={!locked && !stepCheck.ready ? 'assignment-step-required' : undefined}
-                className="inline-flex items-center gap-1.5 rounded-xl bg-slate-900 px-5 py-2.5 text-sm font-bold text-white disabled:cursor-not-allowed disabled:opacity-40"
-              >
-                Next<AppIcon className="ri-arrow-right-line" />
-              </button>
-            ) : locked ? (
-              <button type="button" onClick={() => setPreviewOpen(true)} className="inline-flex items-center gap-1.5 rounded-xl bg-primary-600 px-5 py-2.5 text-sm font-bold text-white">
-                <AppIcon className="ri-eye-line" />Preview submission
-              </button>
-            ) : (
-              <button
-                type="button"
-                onClick={() => void submit()}
-                aria-describedby={!learningConfirmed ? 'learning-confirmation-required' : undefined}
-                disabled={loadFailed || checking || savingDraft || submittingProgress || !learningConfirmed || checks.length !== 13 || checks.some(check => !check.passed)}
-                className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-600 px-5 py-2.5 text-sm font-bold text-white disabled:cursor-not-allowed disabled:opacity-40"
-              >
-                <AppIcon className={savingDraft || submittingProgress ? 'ri-loader-4-line animate-spin' : 'ri-send-plane-fill'} />
-                {savingDraft || submittingProgress ? 'Submitting…' : 'Submit assignment'}
-              </button>
-            )}
-            {!locked && step === 7 && !learningConfirmed && <p id="learning-confirmation-required" className="text-sm text-amber-800">Confirm all four learning declarations in Step 3 before submitting your assignment.</p>}
+            <div className="flex min-w-0 flex-1 flex-col items-end gap-3 sm:flex-row sm:items-center sm:justify-end">
+              <div className="shrink-0">
+                {step < 7 ? (
+                  <button
+                    type="button"
+                    onClick={() => void goNext()}
+                    disabled={loadFailed || savingDraft || submittingProgress || !stepCheck.ready}
+                    aria-describedby={!locked && !stepCheck.ready ? 'assignment-step-required' : undefined}
+                    className="inline-flex items-center gap-1.5 rounded-xl bg-slate-900 px-5 py-2.5 text-sm font-bold text-white disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    Next<AppIcon className="ri-arrow-right-line" />
+                  </button>
+                ) : locked ? (
+                  <button type="button" onClick={() => setPreviewOpen(true)} className="inline-flex items-center gap-1.5 rounded-xl bg-primary-600 px-5 py-2.5 text-sm font-bold text-white">
+                    <AppIcon className="ri-eye-line" />Preview submission
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => void submit()}
+                    aria-describedby={!learningConfirmed ? 'learning-confirmation-required' : undefined}
+                    disabled={loadFailed || checking || savingDraft || submittingProgress || !learningConfirmed || checks.length !== 13 || checks.some(check => !check.passed)}
+                    className="inline-flex items-center gap-1.5 rounded-xl bg-primary-600 px-5 py-2.5 text-sm font-bold text-white hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    <AppIcon className={savingDraft || submittingProgress ? 'ri-loader-4-line animate-spin' : 'ri-send-plane-fill'} />
+                    {savingDraft || submittingProgress ? 'Submitting…' : 'Submit assignment'}
+                  </button>
+                )}
+              </div>
+            </div>
+            {!locked && step === 7 && !learningConfirmed && <p id="learning-confirmation-required" className="w-full text-sm text-amber-800">Confirm all four learning declarations in Step 3 before submitting your assignment.</p>}
           </div>
         </div>
       </section>
@@ -740,4 +762,10 @@ export function AssignmentSubmissionWizard({
       )}
     </AssignmentAiCheckContext.Provider>
   );
+}
+
+export function AssignmentSubmissionWizard(props: ComponentProps<typeof AssignmentSubmissionForm> & { topics?: AssignmentTopic[] }) {
+  return props.topics?.length && !props.historicalReadOnly && !parsePersonalLearning(props.learnerId)
+    ? <TopicAssignment key={`${props.kind}:${props.learnerId}:${props.componentId}`} {...props} topics={props.topics} />
+    : <AssignmentSubmissionForm {...props} />;
 }

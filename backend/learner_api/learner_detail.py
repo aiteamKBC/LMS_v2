@@ -23,6 +23,7 @@ from urllib.parse import urlparse
 from django.db import DatabaseError, connections
 from django.db.models import prefetch_related_objects
 from django.http import JsonResponse
+from .projection_performance import measure_projection
 from django.utils import timezone
 
 from login.permissions import learner_self_or_staff
@@ -30,11 +31,13 @@ from login.permissions import learner_self_or_staff
 from .active_users import completed_hours_from_progress, fmt_hours, hydrate_source_training_plan, target_by_elapsed_time, week_by_elapsed_time
 from .identity import learner_profile_for_source
 from .aptem_status import programme_status
+from .constants import DEFAULT_PROGRAMME_STATUS
 from .learner_progression import access_gate, advance_learner
 from .learning_plan import effective_training_plan
 from .programme_access import learning_access
 from .mappers import _s, get_training_plan, to_learner_detail
 from .models import EnrolmentUser, LearnerProfile
+from .retained_quiz_progress import retain_quiz_progress
 from .student_activity_access import student_activity_available
 
 logger = logging.getLogger(__name__)
@@ -1274,6 +1277,51 @@ def _component_resource_url(settings):
     return None
 
 
+_COMPONENT_FILE_URL_PREFIXES = ("https://", "http://", "/curriculum_api/curriculum/uploads/")
+
+
+def _component_files(settings, resource_url, file_name):
+    """Every file attached to this component, in the order the author set.
+
+    ``componentFiles`` is the ordered list the Module Builder writes once a
+    component holds more than one attachment: index 0 is the first upload, and
+    it is the same file ``resourceUrl`` already resolves to, so the learner page
+    can keep serving ``resourceUrl`` as the primary document and read the rest
+    from here.
+
+    A component authored before the list existed has no list at all, and nothing
+    re-saves a component on its own -- so the single file already resolved
+    stands in for it and the page behaves exactly as it did.
+    """
+    stored = (settings or {}).get("componentFiles")
+    if isinstance(stored, str):
+        try:
+            stored = json.loads(stored) if stored.strip() else []
+        except (TypeError, ValueError):
+            stored = []
+    files = []
+    seen = set()
+    if isinstance(stored, list):
+        for entry in stored:
+            if not isinstance(entry, dict):
+                continue
+            url = _s(entry.get("url"))
+            # Same rule the authoring side enforces: our own upload path or a
+            # plain web link. Anything else is not something to hand a learner.
+            if not url.startswith(_COMPONENT_FILE_URL_PREFIXES) or url in seen:
+                continue
+            seen.add(url)
+            files.append({
+                "fileName": _s(entry.get("fileName")) or None,
+                "url": url,
+                "size": entry.get("size") if isinstance(entry.get("size"), (int, float)) else 0,
+                "contentType": _s(entry.get("contentType")) or None,
+            })
+    if files:
+        return files
+    return [{"fileName": file_name, "url": resource_url, "size": 0, "contentType": None}] if resource_url else []
+
+
 def _cohort_schedule(cohort_name, programme_name):
     """The dates the learner's cohort runs to, or an empty dict.
 
@@ -1615,11 +1663,13 @@ def _resolve_from_master(modules, weeks, components, assigned_modules=None, *, c
             linked_quiz or content_html or resource_url or audio_url or live_session_url
         ):
             continue
+        from .assignment_topics import topics_from_settings
         comps_by_week.setdefault(week_id, []).append({
             "componentId": comp_id,
             "display": _display_quiz_title(linked_quiz["title"]) if linked_quiz else _display_component_title(ctype, ctitle),
             "type": ctype,
             "description": _s(cdesc) or None,
+            "assignmentTopics": topics_from_settings(settings) if normalised_type == "assignment" else [],
             "assignmentBrief": assignment_brief,
             "assignmentBriefHtml": assignment_brief_html,
             "videoUrl": video_url,
@@ -1627,6 +1677,10 @@ def _resolve_from_master(modules, weeks, components, assigned_modules=None, *, c
             "contentHtml": content_html,
             **({"hasReadingContent": bool(settings.get("_readingContentAvailable"))} if compact else {}),
             "fileName": file_name,
+            # Everything attached, in the author's order. `resourceUrl` above is
+            # this list's first entry; the rest are new and additive, so a client
+            # that does not read `files` keeps showing exactly what it showed.
+            "files": _component_files(settings, resource_url, file_name),
             "downloadAllowed": download_allowed,
             "reflectionPrompt": reflection_prompt,
             "reflectionRequired": bool(reflection_required),
@@ -1689,6 +1743,7 @@ def _resolve_from_master(modules, weeks, components, assigned_modules=None, *, c
                     "moduleId": mid, "weekId": week_id, "componentId": comp["componentId"],
                     "type": comp["type"],
                     "description": comp["description"],
+                    "assignmentTopics": comp["assignmentTopics"],
                     "assignmentBrief": comp["assignmentBrief"],
                     "assignmentBriefHtml": comp["assignmentBriefHtml"],
                     "videoUrl": comp["videoUrl"],
@@ -1810,6 +1865,10 @@ def build_learner_detail(source, pk, *, compact=False):
             persist_live_otjh_snapshot(learner_profile, snapshot)
         except DatabaseError as exc:
             logger.warning("Could not persist hours columns for learner %s: %s", pk, exc)
+    # After the hours snapshot so OTJH persistence is unaffected; this only
+    # re-attaches earned quiz results to slots an author has since re-linked
+    # or removed.
+    retain_quiz_progress(detail)
 
     if compact:
         # Nullable optional fields dominate the JSON for large plans. Omission
@@ -1874,9 +1933,25 @@ def learner_detail(request, kind, pk):
             response['Cache-Control'] = 'private, no-store'
             return response
         options = {"compact": True} if request.GET.get("content") == "summary" else {}
-        return JsonResponse(build_learner_detail(source, pk, **options))
+        with measure_projection(
+            'learner-detail', kind=kind, learner_id=pk,
+            section=request.GET.get('content') or 'complete',
+        ) as measurement:
+            with measurement.stage('detail'):
+                return JsonResponse(build_learner_detail(source, pk, **options))
     except DatabaseError as exc:
         return _error(f"Database error: {exc}", 502)
+
+
+def _first_session_unlocked(source, status):
+    if status.strip().casefold() != "delivery":
+        return False
+    learner_type = _s(getattr(source, "learner_type", "")) or "apprenticeship"
+    if learner_type.casefold() != "apprenticeship":
+        return False
+    from .learner_progression import learner_signed_compliance_documents
+
+    return learner_signed_compliance_documents(learner_type, source.id)
 
 
 @learner_self_or_staff(kwarg="pk")
@@ -1896,12 +1971,17 @@ def learner_summary(request, kind, pk):
     try:
         source = model.all_learners.only(
             "id", "username", "email", "phone_number", "programme",
-            "programme_status", "cohort", "group", "employer", "employer_id",
+            "programme_status", "cohort", "group", "employer", "employer_id", "organization",
             "learner_type", "aptem_id", "start_date", "end_date",
             "learner_start_date",
             "practical_period_end_date", "apprenticeship_end_date",
+            "onboarding_status",
         ).get(pk=pk)
-        resolved_status = programme_status(source)
+        # A blank status is an account nobody has moved on yet: 'Fresh user',
+        # as learner detail and the first-login check already read it. Left
+        # blank here, the learner workspace took it for "status unknown" and
+        # opened the full dashboard instead of the first-login screens.
+        resolved_status = programme_status(source) or DEFAULT_PROGRAMME_STATUS
     except model.DoesNotExist:
         return _error("Learner not found.", 404)
     except DatabaseError as exc:
@@ -1917,10 +1997,17 @@ def learner_summary(request, kind, pk):
         "phone": _s(source.phone_number),
         "programme": _s(source.programme),
         "programmeStatus": resolved_status,
+        # 'Submitted' once the learner hands in their enrolment wizard,
+        # 'Completed' once staff sign it off; the learner's Reviews unlock then.
+        "onboardingStatus": _s(getattr(source, "onboarding_status", "")),
+        # A Delivery apprentice's First Learning Session tab unlocks once they
+        # have signed all four compliance documents (the sidebar reads this).
+        "firstSessionUnlocked": _first_session_unlocked(source, resolved_status),
         "cohort": _s(source.cohort),
         "group": _s(source.group),
         "employer": _s(source.employer),
         "employerId": source.employer_id,
+        "organization": _s(getattr(source, "organization", "")),
         "learnerType": _s(getattr(source, "learner_type", "")) or "apprenticeship",
         "isActive": resolved_status.casefold() == "active",
         "programmeStartDate": _iso_date(start),

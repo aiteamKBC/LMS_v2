@@ -24,6 +24,10 @@ def reporting_months(start):
 
 
 def contract_targets(learner):
+    from . import journal_sources, canonical_learning
+    if journal_sources.enabled():
+        return {month: {'planned': planned}
+                for month, planned in canonical_learning.targets(learner['id']).items()}
     candidates = repo.source_query('''SELECT c.id, c.azure_path, c.document_name AS original_name,
         coalesce(nullif(a.display_name,''),c.document_name) AS document_name,
         c.date, c.fetched_at, c.training_plan_planned_hours, c.raw AS extraction_metadata
@@ -93,6 +97,7 @@ def summary(learner):
                        'training_plan_target': targets.get(month, {}).get('planned', 0.0) if targets is not None else None,
                        'target_warning': target_warning})
     record['months'] = result
+    record['profile'] = profile
     return record
 
 

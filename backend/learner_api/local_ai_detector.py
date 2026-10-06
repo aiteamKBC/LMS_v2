@@ -83,16 +83,31 @@ def _predict(text):
         return torch.sigmoid(model(encoded['input_ids'], encoded['attention_mask'])).item()
 
 
-def check_text(text, *, predict=None):
+def screen_text(text, base):
+    """Return (windows, early result); the early result is set when the text cannot be assessed."""
     if not isinstance(text, str) or not text.strip() or len(text) > MAX_CHARACTERS:
         raise ValueError(f'Enter text up to {MAX_CHARACTERS:,} characters.')
     windows = text_windows(text)
-    base = {'model': MODEL_ID, 'revision': MODEL_REVISION, 'advisoryOnly': True, 'segments': []}
     if not windows:
-        return {**base, 'status': 'insufficient_text', 'message': 'At least 80 words are required. Short answers cannot be assessed by this local checker.'}
+        return windows, {**base, 'status': 'insufficient_text', 'message': 'At least 80 words are required. Short answers cannot be assessed by this checker.'}
     letters = [c for c in text if c.isalpha()]
     if letters and sum('a' <= c.lower() <= 'z' for c in letters) / len(letters) < .9:
-        return {**base, 'status': 'unsupported_text', 'message': 'This model is intended for English text only.'}
+        return windows, {**base, 'status': 'unsupported_text', 'message': 'This check is intended for English text only.'}
+    return windows, None
+
+
+def segment(text, start, end, flagged):
+    # JavaScript indexes UTF-16, unlike Python's Unicode code-point indexes.
+    return {'start': len(text[:start].encode('utf-16-le')) // 2,
+            'end': len(text[:end].encode('utf-16-le')) // 2,
+            'flagged': flagged}
+
+
+def check_text(text, *, predict=None):
+    base = {'model': MODEL_ID, 'revision': MODEL_REVISION, 'advisoryOnly': True, 'segments': []}
+    windows, early = screen_text(text, base)
+    if early:
+        return early
     if not _lock.acquire(blocking=False):
         raise DetectorBusy('The local checker is busy. Please retry shortly.')
     try:
@@ -103,10 +118,7 @@ def check_text(text, *, predict=None):
                 return {**base, 'status': 'unsupported_text', 'message': 'This text cannot be assessed without truncation. No result has been issued.'}
             if not math.isfinite(score) or not 0 <= score <= 1:
                 raise DetectorUnavailable('The local checker returned an invalid result.')
-            # JavaScript indexes UTF-16, unlike Python's Unicode code-point indexes.
-            segments.append({'start': len(text[:start].encode('utf-16-le')) // 2,
-                             'end': len(text[:end].encode('utf-16-le')) // 2,
-                             'flagged': score >= .5})
+            segments.append(segment(text, start, end, score >= .5))
         return {**base, 'status': 'review_suggested' if any(s['flagged'] for s in segments) else 'no_signal',
                 'segments': segments,
                 'message': 'Highlighted passages are model estimates, not proof of AI use. A tutor must review any concern. No signal does not prove human authorship.'}

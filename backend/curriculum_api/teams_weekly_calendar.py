@@ -5,7 +5,12 @@ from zoneinfo import ZoneInfo
 import uuid
 
 from django.http import JsonResponse
-from .teams_calendar_checks import CalendarMismatch, calendar_targets, verify_calendar, publish_attendees
+from .teams_calendar_checks import (CalendarMismatch, calendar_targets, dropped_sessions_sentence, publish_attendees,
+                                    sessions_a_rewrite_would_drop, verify_calendar)
+
+
+class DroppedSessions(RuntimeError):
+    """A weekday rewrite would take a future session off Teams; nothing for that day was sent."""
 
 
 def graph_event_utc(event):
@@ -84,6 +89,26 @@ def save_weekday_calendar(payload, graph_settings, series=None):
         **payload,
         'hideAttendees': True,
     }
+    # A change to the meeting itself is announced to everyone already invited.
+    # A save that only corrects who is invited, or how the meeting runs, is not:
+    # it goes to Microsoft silently and the people it adds are forwarded the
+    # meeting on their own, so nobody already on the calendar is mailed about a
+    # learner joining it. The LMS schedule email to those added is separate.
+    people_only = bool(combined.get('peopleOnly'))
+    notify_attendees = not people_only
+    newly_invited = v.teams_newly_invited(
+        [
+            *v.teams_series_email_list(series.get('attendees')),
+            *v.teams_series_email_list(series.get('presenters')),
+            *v.teams_series_email_list(series.get('co_organizers')),
+            v.clean_str(series.get('organizer_email')),
+        ],
+        [
+            *v.teams_series_email_list(combined.get('coOrganizers')),
+            *v.teams_series_email_list(combined.get('presenters')),
+            *v.teams_series_email_list(combined.get('attendees')),
+        ],
+    ) if existing else []
     # An existing calendar always belongs to its stored organizer's mailbox.
     organizer = v.clean_str(series.get('organizer_email')) or v.teams_new_meeting_organizer(combined.get('organizerEmail'))
     if not organizer:
@@ -117,9 +142,9 @@ def save_weekday_calendar(payload, graph_settings, series=None):
                 'repeat': 'weekly' if len(items) > 1 else 'none', 'repeatOccurrences': len(items),
                 'transactionId': f"{combined.get('transactionId') or 'TEAMS-' + str(combined.get('moduleCatalogueId') or series.get('id'))}-{day}",
             }
-            event_body, attendees, presenters, co_organizers, start, duration, repeat, count = v.teams_event_payload(day_payload, graph_settings)
+            event_body, invited_people, presenters, co_organizers, stored_attendees, start, duration, repeat, count = v.teams_event_payload(day_payload, graph_settings)
             event_body.setdefault('recurrence', None)
-            prepared.append((day, day_payload, event_body, attendees, presenters, co_organizers))
+            prepared.append((day, day_payload, event_body, invited_people, stored_attendees, presenters, co_organizers))
         if co_organizers and not v.has_column(v.LIVE_SESSIONS_TABLE, 'co_organizers'):
             return v.json_error('The co-organizers schema must be applied before creating this meeting.', status=409)
     except (TypeError, ValueError, KeyError) as exc:
@@ -132,8 +157,11 @@ def save_weekday_calendar(payload, graph_settings, series=None):
     first_event = None
     tracked_numbers = set()
     publish_queue = []
+    leftover_slots = []
+    requested_numbers = {item['sessionNumber'] for _, items in groups for item in items}
+    stored_rows = v.authoring_fetch_all(v.LIVE_SESSION_OCCURRENCES_TABLE, 'live_session_id = %s', [live_id]) if live_id else []
     try:
-        for index, (day, day_payload, body, attendees, presenters, co_organizers) in enumerate(prepared):
+        for index, (day, day_payload, body, invited_people, stored_attendees, presenters, co_organizers) in enumerate(prepared):
             previous = next((item for item in manifest if item.get('day') == day), {})
             # When splitting a legacy calendar, keep its first link for the first day.
             if not previous and not existing and series and index == 0:
@@ -158,8 +186,23 @@ def save_weekday_calendar(payload, graph_settings, series=None):
                     patch = {'subject': body['subject']} if event.get('subject') != body['subject'] else {}
                 except CalendarMismatch:
                     pass
+                if 'recurrence' in patch:
+                    # Rewriting this day's recurrence regenerates it from the
+                    # pattern. A future session of this day that is no longer
+                    # planned anywhere, and falls outside the new range, would
+                    # simply stop existing -- a cancellation nobody pressed.
+                    own = set(previous.get('sessionNumbers') or [])
+                    candidates = [row for row in stored_rows
+                                  if row.get('session_number') in own and row.get('session_number') not in requested_numbers]
+                    dropped = sessions_a_rewrite_would_drop(targets, day_payload['repeat'] != 'none', candidates,
+                                                            v.graph_timezone_iana(graph_settings))
+                    if dropped:
+                        raise DroppedSessions(dropped_sessions_sentence(dropped, v.graph_timezone_iana(graph_settings)))
                 if patch:
-                    event = microsoft_graph_request('PATCH', f'users/{owner}/events/{quote(event_id, safe="")}', payload=patch) or {}
+                    event = microsoft_graph_request(
+                        'PATCH', f'users/{owner}/events/{quote(event_id, safe="")}', payload=patch,
+                        extra_headers=v.GRAPH_SILENT_INVITE_HEADERS,
+                    ) or {}
                 event = {**event, 'id': event_id}
             else:
                 event = microsoft_graph_request('POST', f'users/{owner}/events', payload={**body, 'attendees': []})
@@ -169,22 +212,22 @@ def save_weekday_calendar(payload, graph_settings, series=None):
             if not (event.get('onlineMeeting') or {}).get('joinUrl'):
                 event = microsoft_graph_request('GET', f'users/{owner}/events/{quote(event_id, safe="")}')
             join_url = v.clean_str((event.get('onlineMeeting') or {}).get('joinUrl')) or v.clean_str(previous.get('joinUrl'))
-            entry = {**previous, 'day': day, 'eventId': event_id, 'joinUrl': join_url, 'verified': False,
+            entry = {**previous, 'day': day, 'eventId': event_id, 'joinUrl': join_url, 'verified': False, 'unplanned': False,
                      'sessionNumbers': [item['sessionNumber'] for item in day_payload['scheduledOccurrences']]}
             manifest = [item for item in manifest if item.get('day') != day] + [entry]
             if not live_id:
                 # Do not manufacture tracked occurrences before Graph confirms them.
                 live_id, _ = v.persist_live_session_series(
                     {**combined, 'scheduledOccurrences': [], 'repeat': 'none'}, event, [], graph_settings,
-                    organizer, attendees, presenters, co_organizers=co_organizers, persist_occurrences=False,
+                    organizer, stored_attendees, presenters, co_organizers=co_organizers, persist_occurrences=False,
                 )
             v.update_authoring_rows(v.LIVE_SESSIONS_TABLE, 'id = %s', [live_id], {'calendar_series': v.json_db_value(manifest)})
             if first_event is None:
                 first_event = event
             applied, meeting, option_warnings = v.apply_teams_meeting_options(
                 organizer, join_url, recording=combined.get('recording') or 'none',
-                lobby_bypass=combined.get('lobbyBypass') or 'invited', spoken_language=combined.get('spokenLanguage') or 'en-GB',
-                attendees=attendees, presenters=presenters, co_organizers=co_organizers,
+                lobby_bypass=combined.get('lobbyBypass') or v.DEFAULT_TEAMS_LOBBY_BYPASS, spoken_language=combined.get('spokenLanguage') or 'en-GB',
+                attendees=invited_people, presenters=presenters, co_organizers=co_organizers,
                 online_meeting_id=previous.get('onlineMeetingId'),
             )
             settings_applied = settings_applied and applied
@@ -193,7 +236,18 @@ def save_weekday_calendar(payload, graph_settings, series=None):
             warnings.extend(option_warnings)
             if day_payload['repeat'] != 'none':
                 if not combined.get('peopleOnly') and not dates_already_verified:
-                    shift_warnings, _ = v.apply_teams_occurrence_shifts(owner, quote(event_id, safe=''), body['subject'], targets, attendees)
+                    # The third value is the occurrences the shift PROVED removable:
+                    # here, with no stored rows handed in, only the recurrence's own
+                    # weekly filler. A week this calendar actually owns is never in
+                    # it -- see `vacated_occurrence_keys` / `tracked_occurrence_keys`.
+                    shift_warnings, _, stale = v.apply_teams_occurrence_shifts(owner, quote(event_id, safe=''), body['subject'], targets, invited_people)
+                    # Reported, never deleted: see flag_teams_occurrence_leftovers.
+                    leftover_slots.extend(v.flag_teams_occurrence_leftovers(
+                        stale,
+                        live_session_id=v.clean_str(body.get('liveSessionId')),
+                        module_catalogue_id=v.clean_str(combined.get('moduleCatalogueId')),
+                        source='weekday_series_cleanup',
+                    ))
                     warnings.extend(shift_warnings)
                 query = urlencode({'startDateTime': (min(item['start'] for item in targets) - timedelta(days=7)).isoformat(),
                                    'endDateTime': (max(item['end'] for item in targets) + timedelta(days=7)).isoformat(), '$top': 200})
@@ -232,18 +286,41 @@ def save_weekday_calendar(payload, graph_settings, series=None):
         if warnings or not settings_applied:
             raise RuntimeError('Microsoft did not accept every reviewed session or meeting option. New invitations remain pending.')
         # Every weekday must pass before any new invitation list is published.
+        # The list itself is always published: who is on a meeting is not the
+        # author's email choice to make. Only whether Microsoft announces it is,
+        # and an unchanged list is skipped inside publish_attendees, so a save
+        # that moves nobody sends nothing.
         for checked, recipients, targets, recurring in publish_queue:
-            publish_attendees(microsoft_graph_request, owner, checked, recipients)
-            verify_calendar(microsoft_graph_request, owner, checked['id'], targets,
-                            (checked.get('onlineMeeting') or {}).get('joinUrl'), recurring)
+            written = publish_attendees(
+                microsoft_graph_request, owner, checked, recipients,
+                extra_headers=None if notify_attendees else v.GRAPH_SILENT_INVITE_HEADERS,
+            )
+            if written:
+                verify_calendar(microsoft_graph_request, owner, checked['id'], targets,
+                                (checked.get('onlineMeeting') or {}).get('joinUrl'), recurring)
+
+        if not notify_attendees and newly_invited:
+            # Every day's series, and only after all of them are verified: the
+            # first thing someone added sees should be the finished calendar.
+            warnings.extend(v.forward_teams_invitation(
+                microsoft_graph_request, owner,
+                [v.clean_str(checked.get('id')) for checked, _r, _t, _rec in publish_queue],
+                newly_invited,
+                comment=f"You have been added to {v.teams_calendar_subject(combined, series)}.",
+            ))
 
         days = {day for day, _ in groups}
         for old in list(manifest):
             if old['day'] not in days:
-                microsoft_graph_request('DELETE', f'users/{owner}/events/{quote(old["eventId"], safe="")}')
-                manifest.remove(old)
+                # A weekday the plan no longer uses keeps its Teams series. It
+                # is not deleted -- that is a cancellation Exchange emails to
+                # everyone invited -- but kept in the manifest, holding no
+                # sessions, and flagged so a person can cancel it by hand.
+                index = manifest.index(old)
+                manifest[index] = {**old, 'sessionNumbers': [], 'unplanned': True}
+                leftover_slots.append({'eventId': old.get('eventId') or '', 'day': old['day'], 'kind': 'series',
+                                       'reason': 'weekday_no_longer_planned'})
                 v.update_authoring_rows(v.LIVE_SESSIONS_TABLE, 'id = %s', [live_id], {'calendar_series': v.json_db_value(manifest)})
-        requested_numbers = {item['sessionNumber'] for _, items in groups for item in items}
         for row in v.authoring_fetch_all(v.LIVE_SESSION_OCCURRENCES_TABLE, 'live_session_id = %s', [live_id]):
             if row['session_number'] not in requested_numbers:
                 v.update_authoring_rows(v.LIVE_SESSION_OCCURRENCES_TABLE, 'id = %s', [row['id']], {'status': 'cancelled'})
@@ -255,9 +332,9 @@ def save_weekday_calendar(payload, graph_settings, series=None):
             'start_datetime': v.parse_graph_datetime(combined.get('startDateTimeUtc')),
             'duration_minutes': combined.get('durationMinutes') or 60, 'repeat_pattern': 'weekly',
             'repeat_occurrences': len(requested_numbers), 'module_title': v.teams_calendar_subject(combined, series),
-            'attendees': v.json_db_value(attendees), 'presenters': v.json_db_value(presenters), 'co_organizers': v.json_db_value(co_organizers),
+            'attendees': v.json_db_value(stored_attendees), 'presenters': v.json_db_value(presenters), 'co_organizers': v.json_db_value(co_organizers),
             'recording': combined.get('recording') or 'none',
-            'lobby_bypass': combined.get('lobbyBypass') or 'invited',
+            'lobby_bypass': combined.get('lobbyBypass') or v.DEFAULT_TEAMS_LOBBY_BYPASS,
             'spoken_language': combined.get('spokenLanguage') or 'en-GB',
             'warnings': v.json_db_value(warnings), 'updated_at': datetime.utcnow(),
             'hide_attendees': True,
@@ -266,7 +343,14 @@ def save_weekday_calendar(payload, graph_settings, series=None):
         if module_id and v.authoring_module_exists(module_id):
             saved = v.authoring_fetch_all(v.LIVE_SESSIONS_TABLE, 'id = %s', [live_id])[0]
             occurrences = v.authoring_fetch_all(v.LIVE_SESSION_OCCURRENCES_TABLE, "live_session_id = %s and status <> 'cancelled'", [live_id], 'session_number')
-            v.attach_teams_meeting_to_module_weeks(module_id, saved, v.live_session_row_to_component_settings(saved), occurrences)
+            # Creating or updating a calendar only attaches it to live-session
+            # components the author already placed. New components belong to
+            # the explicit Restore/Re-attach action, never to Send itself.
+            v.attach_teams_meeting_to_module_weeks(module_id, saved, v.live_session_row_to_component_settings(saved), occurrences,
+                                                   create_missing=False)
+    except DroppedSessions as exc:
+        return v.json_error(str(exc), status=409, code='teams_update_would_drop_sessions', liveSessionId=live_id,
+                            calendarSeries=manifest)
     except RuntimeError as exc:
         if live_id:
             v.update_authoring_rows(v.LIVE_SESSIONS_TABLE, 'id = %s', [live_id], {
@@ -280,12 +364,17 @@ def save_weekday_calendar(payload, graph_settings, series=None):
         'liveSessionId': live_id, 'eventId': main['eventId'], 'joinUrl': main['joinUrl'],
         'onlineMeetingId': main.get('onlineMeetingId') or '', 'meetingOptionsUrl': main.get('meetingOptionsUrl') or '',
         'webLink': (first_event or {}).get('webLink') or '', 'organizerEmail': organizer,
-        'attendees': attendees, 'presenters': presenters, 'coOrganizers': co_organizers,
+        'attendees': stored_attendees, 'presenters': presenters, 'coOrganizers': co_organizers,
         'startDateTimeUtc': combined.get('startDateTimeUtc'), 'durationMinutes': combined.get('durationMinutes'),
         'repeat': 'weekly', 'repeatOccurrences': len(requested_numbers), 'trackedOccurrences': len(tracked_numbers),
         'settingsApplied': settings_applied, 'trackingReady': all(item.get('onlineMeetingId') for item in manifest),
         'provider': 'Microsoft Teams', 'calendarSeries': manifest,
     }
+    for checked, _recipients, _targets, _recurring in publish_queue:
+        leftover_slots.extend(checked.get('unplannedInstances') or [])
+    # One entry per Microsoft event, however many checks noticed it.
+    leftover_slots = list({slot.get('eventId') or str(index): slot for index, slot in enumerate(leftover_slots)}.values())
     if not series:
-        return JsonResponse({'created': True, 'meeting': meeting_result, 'warnings': [item.get('message') or str(item) for item in warnings]}, status=201)
-    return JsonResponse({'updated': True, 'meeting': meeting_result, 'warnings': warnings})
+        return JsonResponse({'created': True, 'meeting': meeting_result, 'warnings': [item.get('message') or str(item) for item in warnings],
+                             'leftoverSlots': leftover_slots}, status=201)
+    return JsonResponse({'updated': True, 'meeting': meeting_result, 'warnings': warnings, 'leftoverSlots': leftover_slots})

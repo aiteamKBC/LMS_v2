@@ -23,6 +23,9 @@ export interface FreeCourseActivity {
   resourceUrl?: string | null;
   contentHtml?: string | null;  // reading rich text (sanitised on render)
   fileName?: string | null;
+  /** Every file the author attached, in their order. Entry 0 is the same
+   *  file `resourceUrl` points at. */
+  files?: import('@/lib/componentFiles').ComponentFile[];
   downloadAllowed?: boolean;
   /** The linked quiz id for a quiz activity (settings.linkedQuizId); null when
    *  no quiz is linked, which reads as "not available". */

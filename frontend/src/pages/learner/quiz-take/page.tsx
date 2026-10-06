@@ -22,6 +22,7 @@ import { placeActivity } from '@/pages/learner/video-watch/weekPreview';
 import { ActivitySidebar } from '@/pages/learner/video-watch/ActivitySidebar';
 import { componentRoute } from '@/pages/learner/video-watch/componentRoute';
 import { ReflectionWindow, formatClock } from '@/components/feature/ReflectionWindow';
+import { ReflectionChoicePopup } from '@/components/feature/ReflectionChoicePopup';
 import { rememberLearner } from '@/hooks/useMyLearner';
 import { useLearnerWorkspaceAccess } from '@/hooks/useLearnerWorkspaceAccess';
 import { ReadOnlyLearnerNotice } from '@/components/feature/ReadOnlyLearnerNotice';
@@ -29,6 +30,8 @@ import { RowsSkeleton } from '@/components/feature/Skeletons';
 import { startTimeTracking, type TimeTrackingSession } from '@/api/timeTracking';
 import { ComponentAccessNotice } from '@/components/feature/ComponentAccessNotice';
 import { useComponentAccessWindow } from '@/hooks/useComponentAccessWindow';
+import { CompletionTimeDialog } from '@/components/feature/CompletionTimeDialog';
+import { CompletionValidationError, type WorkingRuleReason } from '@/lib/completionValidation';
 
 const learnerNav = roleNavMap.learner;
 
@@ -138,7 +141,9 @@ export default function QuizTakePage() {
   // though the plan rows no longer link here. Sitting the quiz would file an
   // attempt in the learner's name, so they get the read-only panel instead.
   const { canProgress } = useLearnerWorkspaceAccess(id);
-  const componentAccess = useComponentAccessWindow();
+  // Scoped to this quiz so the correction dialog can name the learner's own
+  // closures. Nothing here gates taking the quiz -- `open` is always true.
+  const componentAccess = useComponentAccessWindow(null, quizId);
   const canUseComponent = canProgress && componentAccess.open;
   const moduleTitle = searchParams.get('module');
   const weekTitle = searchParams.get('week');
@@ -149,6 +154,7 @@ export default function QuizTakePage() {
   const [programmeName, setProgrammeName] = useState('Programme not set');
   const [reflectionRequired, setReflectionRequired] = useState(true);
   const [reflectionQuestion, setReflectionQuestion] = useState<string | null>(null);
+  const [reflectionChoiceOpen, setReflectionChoiceOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [detailLoading, setDetailLoading] = useState(true);
@@ -161,8 +167,16 @@ export default function QuizTakePage() {
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
+  // Open only after the server refused the Submit click's instant.
+  const [correction, setCorrection] = useState<{ reason: WorkingRuleReason | ''; holidayName: string } | null>(null);
+  const [correctionError, setCorrectionError] = useState('');
+  const lastSubmissionRef = useRef<{
+    reflection: { ksbs: string[]; feedback: string; reportedTime: string };
+    skipReflection: boolean;
+  } | null>(null);
   const [result, setResult] = useState<QuizAttemptResult | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const completionInFlightRef = useRef(false);
   const trackingSessionRef = useRef<TimeTrackingSession | null>(null);
   const trackingPromiseRef = useRef<Promise<TimeTrackingSession> | null>(null);
 
@@ -172,6 +186,7 @@ export default function QuizTakePage() {
     setLoading(true);
     setLoadError(null);
     setPhase('intro');
+    setReflectionChoiceOpen(false);
     setAnswers({});
     setResult(null);
     fetchQuiz(Number(quizId), id)
@@ -211,12 +226,12 @@ export default function QuizTakePage() {
   }, [kind, id, quizId, loadAttempt]);
 
   useEffect(() => {
-    if (phase !== 'quiz' || !componentAccess.open) return;
+    if (phase !== 'quiz' || reflectionChoiceOpen || !componentAccess.open) return;
     timerRef.current = setInterval(() => {
       if (document.visibilityState === 'visible') setElapsedSeconds((s) => s + 1);
     }, 1000);
     return () => { if (timerRef.current) clearInterval(timerRef.current); };
-  }, [phase, componentAccess.open]);
+  }, [phase, reflectionChoiceOpen, componentAccess.open]);
 
   useEffect(() => {
     if (phase !== 'quiz') return;
@@ -251,6 +266,7 @@ export default function QuizTakePage() {
   const startQuiz = () => {
     if (!quiz || !kind || !id || !canUseComponent || detailLoading || detailError) return;
     setSubmitError(null);
+    setReflectionChoiceOpen(false);
     trackingSessionRef.current = null;
     const pending = startTimeTracking(
       'quiz', quiz.id, kind as LearnerKind, id, 'active_quiz',
@@ -279,15 +295,16 @@ export default function QuizTakePage() {
   const goNext = () => setCurrent((c) => Math.min(c + 1, (quiz?.questions.length || 1) - 1));
   const goPrev = () => setCurrent((c) => Math.max(c - 1, 0));
 
-  // Finishing the quiz stops the timer and opens the reflection window;
-  // the attempt is only persisted once the learner completes that window.
+  // A configured reflection is optional. The attempt is persisted only after
+  // the learner chooses a path and completes it.
   const handleFinishQuiz = () => {
     if (timerRef.current) clearInterval(timerRef.current);
+    setSubmitError(null);
     if (!reflectionRequired) {
       void finalizeSubmit({ ksbs: [], feedback: '', reportedTime: '' });
       return;
     }
-    setPhase('reflect');
+    setReflectionChoiceOpen(true);
   };
 
   // The quiz's time limit as hours, for presetting "Actual time spent (minutes)".
@@ -298,10 +315,19 @@ export default function QuizTakePage() {
     ? (quiz.duration * (quiz.timeUnit === 'seconds' ? 1 : 60)) / 3600
     : undefined;
 
-  const finalizeSubmit = async (reflection: { ksbs: string[]; feedback: string; reportedTime: string }) => {
-    if (!quiz || !kind || !id || submitting || !canUseComponent) return;
+  const finalizeSubmit = async (
+    reflection: { ksbs: string[]; feedback: string; reportedTime: string },
+    options: { skipReflection?: boolean; declaredCompletedAt?: string } = {},
+  ) => {
+    if (!quiz || !kind || !id || completionInFlightRef.current || !canUseComponent) return;
+    completionInFlightRef.current = true;
     setSubmitting(true);
     setSubmitError(null);
+    // Remembered so a correction re-posts the SAME submission. The answers and
+    // the frozen timer go back unchanged, so the server grades the attempt to
+    // exactly the score it would have given the refused click -- the learner
+    // never retakes anything and nothing they typed is lost.
+    lastSubmissionRef.current = { reflection, skipReflection: options.skipReflection === true };
     try {
       const tracking = trackingSessionRef.current || await trackingPromiseRef.current;
       if (!tracking) throw new Error('Quiz timing did not start. Reopen the quiz and try again.');
@@ -315,14 +341,38 @@ export default function QuizTakePage() {
         ksbs: reflection.ksbs,
         feedback: reflection.feedback,
         reportedTime: reflection.reportedTime,
+        skipReflection: options.skipReflection === true,
+        declaredCompletedAt: options.declaredCompletedAt,
       });
+      setReflectionChoiceOpen(false);
       setResult(res);
       setPhase('results');
+      setCorrection(null);
+      setCorrectionError('');
     } catch (e) {
+      // A working-rules refusal wrote nothing: no attempt, no progress, no
+      // OTJH. The dialog collects a working instant and the same submission
+      // goes back. A refusal OF the declared instant keeps the dialog open.
+      if (e instanceof CompletionValidationError) {
+        if (options.declaredCompletedAt) setCorrectionError(e.message);
+        else { setCorrection({ reason: e.reason, holidayName: e.holidayName }); setCorrectionError(''); }
+        setSubmitError(null);
+        return;
+      }
       setSubmitError(e instanceof Error ? e.message : 'Could not submit quiz');
     } finally {
+      completionInFlightRef.current = false;
       setSubmitting(false);
     }
+  };
+
+  const submitDeclared = (declaredAt: string) => {
+    const last = lastSubmissionRef.current;
+    if (!last) return;
+    void finalizeSubmit(last.reflection, {
+      skipReflection: last.skipReflection,
+      declaredCompletedAt: declaredAt,
+    });
   };
 
   return (
@@ -336,7 +386,7 @@ export default function QuizTakePage() {
       userName="Learner"
       userRole="Learner"
     >
-      <div className={`p-3 md:p-6 ${showSidebar ? 'max-w-7xl' : 'max-w-5xl'} mx-auto`}>
+      <div className={`p-3 md:p-6 ${phase === 'reflect' ? 'max-w-none' : showSidebar ? 'max-w-7xl' : 'max-w-5xl'} mx-auto`}>
         <div className={showSidebar ? 'grid gap-4 lg:grid-cols-[minmax(0,1fr)_320px] lg:gap-6 items-start' : ''}>
         <div className="min-w-0">
         {loading || detailLoading ? (
@@ -375,22 +425,23 @@ export default function QuizTakePage() {
             noun="quiz"
             plannedTimeLabel={quiz.duration ? `${quiz.duration} ${quiz.timeUnit || 'min'}` : ''}
             plannedHours={quizPlannedHours}
+            actualTimeUnit="minutes"
             learnerKsbs={learnerKsbs}
             elapsedSeconds={elapsedSeconds}
-              submitting={submitting}
-              submitError={submitError}
-              onSubmit={finalizeSubmit}
-              activityTitle={quiz.title}
-              weekLabel={weekTitle || ''}
-              moduleLabel={moduleTitle || ''}
-              learnerName={learnerName}
-              programmeName={programmeName}
-              learnerKind={kind as LearnerKind}
-              learnerId={id}
-              evidenceSectionRef={`quiz-${quiz.id}`}
-              reflectionQuestion={reflectionQuestion}
-              onClose={() => navigate(-1)}
-            />
+            submitting={submitting}
+            submitError={submitError}
+            onSubmit={finalizeSubmit}
+            activityTitle={quiz.title}
+            weekLabel={weekTitle || ''}
+            moduleLabel={moduleTitle || ''}
+            learnerName={learnerName}
+            programmeName={programmeName}
+            learnerKind={kind as LearnerKind}
+            learnerId={id}
+            evidenceSectionRef={`quiz-${quiz.id}`}
+            reflectionQuestion={reflectionQuestion}
+            onClose={() => setPhase('quiz')}
+          />
         ) : (
           result && (
             <ResultsScreen
@@ -419,6 +470,30 @@ export default function QuizTakePage() {
               kind, id, component, placement.moduleTitle, week,
             )}
             accessOpen={componentAccess.open}
+          />
+        )}
+        {correction && (
+          <CompletionTimeDialog
+            reason={correction.reason}
+            holidayName={correction.holidayName}
+            holidays={componentAccess.holidays ?? []}
+            submitting={submitting}
+            serverError={correctionError}
+            onSubmit={submitDeclared}
+            onClose={() => { setCorrection(null); setCorrectionError(''); }}
+          />
+        )}
+        {reflectionChoiceOpen && (
+          <ReflectionChoicePopup
+            noun="quiz"
+            submitting={submitting}
+            error={submitError}
+            onCancel={() => setReflectionChoiceOpen(false)}
+            onAddReflection={() => { setReflectionChoiceOpen(false); setPhase('reflect'); }}
+            onFinishWithoutReflection={() => void finalizeSubmit(
+              { ksbs: [], feedback: '', reportedTime: '' },
+              { skipReflection: true },
+            )}
           />
         )}
         </div>

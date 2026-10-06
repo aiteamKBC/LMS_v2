@@ -59,6 +59,12 @@ SECTIONS_BY_REVIEW = {
         # "Workplace Health & Safety Declaration"
         "healthSafetyVetting",
     ),
+    "uln-privacy": (
+        # "ULN Privacy Notice & Learner Acknowledgement": the learner reads the
+        # ULN privacy notice, then confirms the acknowledgement.
+        "ulnPrivacyNotice",
+        "learnerAcknowledgement",
+    ),
 }
 
 # Every section name the API accepts, across all reviews.
@@ -106,8 +112,8 @@ def _learner_information(learner):
     return {
         "name": _s(getattr(learner, "username", "")),
         "programmeName": _s(getattr(learner, "programme", "")),
-        "programmeStartDate": _s(getattr(learner, "start_date", "")),
-        "plannedEndDate": _s(getattr(learner, "end_date", "")),
+        "programmeStartDate": _s(getattr(learner, "learner_start_date", "")) or "--",
+        "plannedEndDate": _s(getattr(learner, "learner_end_date", "")) or "--",
         "programmeStatus": _s(getattr(learner, "programme_status", "")),
         "employer": _s(getattr(learner, "employer", "")),
         "manager": _s(getattr(learner, "line_manager", "")),
@@ -237,7 +243,7 @@ def _plr_context(review, learner):
 # Every onboarding review: the employer is a party to the whole onboarding record,
 # not only the parts that name them. Per-row `Employer_signature_required` still
 # overrides this, so a specific review can be opted out without changing code.
-EMPLOYER_SIGNED_REVIEWS = ("training-plan", "eligibility-review", "workspace")
+EMPLOYER_SIGNED_REVIEWS = ("training-plan", "eligibility-review", "workspace", "uln-privacy")
 
 
 def employer_signature_required(review):
@@ -494,6 +500,47 @@ def _sign_authorization_error(request, pk, learner, party):
     return None
 
 
+def record_signature(review, party, signature, name):
+    """Save (or, with an empty signature, clear) one party's sign-off.
+
+    The one place a review signature is written, so the learner's page, the
+    board and the coach's case file all behave alike. Returns the new programme
+    status when this signature finished onboarding, else None. Raises
+    DatabaseError when the save fails; the caller has already authorised it.
+    """
+    now = timezone.now() if signature else None
+    if party == "learner":
+        review.learner_signature = signature
+        review.learner_signed_name = name if signature else ""
+        review.learner_signed_at = now
+    elif party == "employer":
+        review.employer_signature = signature
+        review.employer_signed_name = name if signature else ""
+        review.employer_signed_at = now
+    else:
+        review.admin_signature = signature
+        review.admin_signed_name = name if signature else ""
+        review.admin_signed_at = now
+    review.save()
+
+    # Signing the last outstanding review finishes onboarding, which moves the
+    # learner into Delivery. Deliberately after the signature is committed and
+    # non-fatal: the sign-off is the user's action and must stand on its own.
+    from .learning_plan import promote_to_delivery_if_ready
+
+    return promote_to_delivery_if_ready(review) if signature else None
+
+
+def serialize_review_form(review, learner, event):
+    """The review document payload, for callers outside this module."""
+    return _serialize_form(review, learner, event)
+
+
+def lookup_review(kind, pk, event_key):
+    """(learner, review, calendar_event, error) for one learner's review."""
+    return _lookup(kind, pk, event_key)
+
+
 @csrf_exempt
 def enrolment_review_sign(request, kind, pk, event_key):
     """Sign a completed review, as the learner or as staff.
@@ -545,31 +592,11 @@ def enrolment_review_sign(request, kind, pk, event_key):
         if not name:
             return _error("name is required when signing.", 400)
 
-    now = timezone.now() if signature else None
     try:
-        if party == "learner":
-            review.learner_signature = signature
-            review.learner_signed_name = name if signature else ""
-            review.learner_signed_at = now
-        elif party == "employer":
-            review.employer_signature = signature
-            review.employer_signed_name = name if signature else ""
-            review.employer_signed_at = now
-        else:
-            review.admin_signature = signature
-            review.admin_signed_name = name if signature else ""
-            review.admin_signed_at = now
-        review.save()
+        promoted = record_signature(review, party, signature, name)
     except DatabaseError as exc:
         logger.exception("enrolment_review_sign: save failed")
         return _error(f"Database error: {exc}", 502)
-
-    # Signing the last outstanding review finishes onboarding, which moves the
-    # learner into Delivery. Deliberately after the signature is committed and
-    # non-fatal: the sign-off is the user's action and must stand on its own.
-    from .learning_plan import promote_to_delivery_if_ready
-
-    promoted = promote_to_delivery_if_ready(review) if signature else None
 
     payload = _serialize_form(review, learner, event)
     if promoted:
@@ -582,6 +609,31 @@ def _progress(review):
     sections = sections_for(review.review_type)
     status = review.section_status if isinstance(review.section_status, dict) else {}
     return sum(1 for name in sections if status.get(name)), len(sections)
+
+
+def review_document_rows(rows):
+    """The started or finished reviews among `rows`, as listed under Review documents."""
+    documents = []
+    for row in rows:
+        # started_at is stamped when the form is first opened; form_completed when
+        # Finish is clicked. Neither means there is nothing to file yet.
+        if not row.started_at and not row.form_completed:
+            continue
+        done, total = _progress(row)
+        documents.append({
+            "eventKey": row.event_key,
+            "reviewType": row.review_type,
+            "label": row.review_label or row.review_type,
+            "scheduledDate": _iso(row.scheduled_date),
+            "reviewedBy": _s(row.reviewed_by) or _s(row.coach_name),
+            "completed": bool(row.form_completed),
+            "completedAt": _iso(row.form_completed_at),
+            "startedAt": _iso(row.started_at),
+            "sectionsDone": done,
+            "sectionsTotal": total,
+            "signatures": _signatures(row, include_saved=False),
+        })
+    return documents
 
 
 @learner_self_or_staff(kwarg="pk")
@@ -616,26 +668,7 @@ def enrolment_review_documents(request, kind, pk):
         logger.exception("enrolment_review_documents: lookup failed")
         return _error(f"Database error: {exc}", 502)
 
-    documents = []
-    for row in rows:
-        # started_at is stamped when the form is first opened; form_completed when
-        # Finish is clicked. Neither means there is nothing to file yet.
-        if not row.started_at and not row.form_completed:
-            continue
-        done, total = _progress(row)
-        documents.append({
-            "eventKey": row.event_key,
-            "reviewType": row.review_type,
-            "label": row.review_label or row.review_type,
-            "scheduledDate": _iso(row.scheduled_date),
-            "reviewedBy": _s(row.reviewed_by) or _s(row.coach_name),
-            "completed": bool(row.form_completed),
-            "completedAt": _iso(row.form_completed_at),
-            "startedAt": _iso(row.started_at),
-            "sectionsDone": done,
-            "sectionsTotal": total,
-            "signatures": _signatures(row, include_saved=False),
-        })
+    documents = review_document_rows(rows)
 
     return JsonResponse({
         "programme": _s(getattr(learner, "programme", "")),

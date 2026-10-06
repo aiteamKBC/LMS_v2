@@ -203,15 +203,15 @@ export function monthMetrics(month: string, modules: TimelineModule[], data: Tra
   const weeks = new Set(dates.map(weekKey)).size;
   const monthlyLog = data.monthlyLogOtjh?.[month];
   const current = data.monthlyOtjh?.[month];
-  const useAudit = !!data.auditOtjhCutoffMonth && month <= data.auditOtjhCutoffMonth;
-  // Monthly Logs is the authoritative per-month total when it exists. It
-  // already combines retained Audit history and current LMS completions, so
-  // adding `actual` rows or `monthlyOtjh.actual` here would double-count.
-  const planned = monthlyLog ? monthlyLog.target : useAudit ? null : data.months[month]?.planned ?? current?.planned ?? null;
-  const historicalActual = data.actual.filter(row => row.month === month).reduce((sum, row) => sum + row.hours, 0);
+  // Monthly Logs is the authoritative SSOT per-month total when it exists.
+  // The canonical actual projection is the only completed-hours fallback.
+  const planned = monthlyLog?.target ?? data.months[month]?.planned ?? current?.planned ?? null;
+  const canonicalRows = data.actual.filter(row => row.month === month);
+  const canonicalActual = canonicalRows.reduce((sum, row) => sum + row.hours, 0);
   const actual = monthlyLog ? monthlyLog.completed
-    : useAudit ? null
-      : data.actualAvailable === false && !data.monthlyOtjh ? null : historicalActual + (current?.actual || 0);
+    : data.actualAvailable === false && !data.monthlyOtjh ? null
+      : current?.includesHistorical ? current.actual
+        : canonicalActual + (current?.actual ?? 0);
   const explicit = data.months[month]?.weeklyTarget;
   return { planned, actual, remaining: planned === null || actual === null ? null : Math.max(0, planned - actual), weeks,
     weekly: explicit ?? (planned !== null && weeks > 0 ? planned / weeks : null), progress: planned === null || actual === null ? null : percent(actual, planned) };
@@ -238,8 +238,33 @@ export function barPosition(start: string, end: string, year: number, startMonth
   return { left: position(first), width: position(last) - position(first) };
 }
 
+/** Position a date range against the same twelve-month period using weekly columns. */
+export function periodPosition(start: string, end: string, year: number, startMonth = 0) {
+  const from = Date.UTC(year, startMonth, 1), to = Date.UTC(year + 1, startMonth, 1);
+  const first = Date.parse(start), last = Date.parse(end) + 86400000;
+  if (!Number.isFinite(first) || !Number.isFinite(last) || first >= to || last <= from || last < first) return null;
+  const position = (time: number) => Math.min(100, Math.max(0, (time - from) / (to - from) * 100));
+  return { left: position(first), width: position(last) - position(first) };
+}
+
+/** Position a date range against weekly columns anchored to the first real programme week. */
+export function weeklyPosition(start: string, end: string, anchor: string, weekCount: number) {
+  const from = Date.parse(anchor), to = from + weekCount * 7 * 86400000;
+  const first = Date.parse(start), last = Date.parse(end) + 86400000;
+  if (!Number.isFinite(from) || !Number.isFinite(first) || !Number.isFinite(last) || first >= to || last <= from || last < first) return null;
+  const position = (time: number) => Math.min(100, Math.max(0, (time - from) / (to - from) * 100));
+  return { left: position(first), width: position(last) - position(first) };
+}
+
 export function timelineMonthKeys(year: number, startMonth = 0) {
   return Array.from({ length: 12 }, (_, index) => new Date(Date.UTC(year, startMonth + index, 1)).toISOString().slice(0, 7));
+}
+
+export function timelineWeekKeys(year: number, startMonth = 0, anchor?: string) {
+  const from = anchor && Number.isFinite(Date.parse(anchor)) ? Date.parse(anchor) : Date.UTC(year, startMonth, 1);
+  const to = anchor ? from + 52 * 7 * 86400000 : Date.UTC(year + 1, startMonth, 1);
+  const count = anchor ? 52 : Math.ceil((to - from) / (7 * 86400000));
+  return Array.from({ length: count }, (_, index) => new Date(from + index * 7 * 86400000).toISOString().slice(0, 10));
 }
 
 export function timelinePeriodYear(month: string, startMonth = 0) {

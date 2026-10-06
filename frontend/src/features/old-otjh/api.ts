@@ -11,6 +11,7 @@ export type MonthState = {
   row_count: number;
   planned_hours: number | string;
   actual_hours: number | string;
+  estimated_hours?: number | string;
   not_accepted_hours: number | string;
   total_actual_hours?: number | string;
   training_plan_target?: number | string | null;
@@ -42,6 +43,8 @@ export type Activity = {
   id: number; category: string; title: string; activity_date: string | null;
   activity_time: string | null; planned_hours: string | number; actual_hours: string | number;
   actual_pending?: boolean;
+  actual_estimated?: boolean;
+  actual_status_label?: string;
   provisional?: boolean;
   provisional_fields?: string[];
   provisional_source?: string | null;
@@ -61,7 +64,8 @@ export type MonthDetail = MonthState & { rows: Activity[]; snapshot_digest: stri
   demo_only?: boolean; provisional?: boolean };
 /** Presentation data shared by retained and current monthly journals. */
 export type JournalSummary = {
-  learner?: { id: number; aptem_id?: number | null; name: string; programme: string; coach_name: string };
+  learner?: { id: number; aptem_id?: number | null; name: string; programme: string; coach_name: string;
+    planned_end_date?: string | null };
   months: MonthState[];
 };
 export type ActivityContent = { id: number; parts: { id: number; title: string; category: string;

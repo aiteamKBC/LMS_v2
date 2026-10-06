@@ -18,16 +18,43 @@ existing log collector; they are not a claim that dashboards or alerts exist.
 
 ## Async Graph deployment blocker
 
-The repository currently has no durable task-queue framework, worker entrypoint,
-process supervisor configuration, or documented production worker lifecycle.
-Redis is configured for Channels and caching only; that does not make a reliable
-background job processor. Calendar Graph calls therefore remain synchronous.
+The repository now has a PostgreSQL-outbox worker for shared read models (documented
+in `PERFORMANCE_READ_MODELS_OPERATIONS.md`), but it is intentionally not a general
+Graph task queue. Redis is configured for Channels and caching only; that does not
+make a reliable background job processor. Calendar Graph calls therefore remain
+synchronous.
 
-Before implementing the transactional outbox, operations must approve and provide
-a continuously supervised worker process (for example, a chosen queue framework or
-a dedicated PostgreSQL-outbox worker service), including startup, health checks,
-restart policy, and deployment ownership. The HTTP `202` contract must not be
-enabled until that worker is deployed and verified.
+Before moving Graph work off-request, operations must approve and provide a
+continuously supervised Graph-capable worker process, including startup, health
+checks, restart policy, and deployment ownership. The HTTP `202` contract must not
+be enabled until that worker is deployed and verified.
+
+## Hourly Coach Dashboard snapshots
+
+The Coach Dashboard page reads the persisted `CoachDashboardSnapshot`; the full
+build reads many remote tables and is far too slow to run inside a request. Each
+serving process (Daphne/ASGI or WSGI) starts one background thread on its first
+HTTP request (`coach_api/dashboard_snapshot_scheduler.py`, wired in
+`config/asgi.py` and `config/wsgi.py`), exactly like the session-results and
+catch-up reminder runners. Every 5 minutes it rebuilds each Coach whose snapshot
+is older than one hour, or was built by an older schema version. Each Coach is
+claimed with one conditional `UPDATE` first, so several processes never rebuild
+the same Coach, and one Coach failing never stops the others. A Coach with no
+snapshot yet is still built once on their first visit.
+
+- Interval: `COACH_DASHBOARD_SNAPSHOT_INTERVAL_SECONDS` (default `3600`, minimum `300`).
+- Opt out (e.g. if an external scheduler runs the command instead):
+  `COACH_DASHBOARD_SNAPSHOT_SCHEDULE=false`.
+- Immediate rebuild by hand: `python manage.py refresh_coach_dashboard_snapshots`
+  (all Coaches, or `--coach <email>`); `--due` applies the same hourly rule and
+  claim as the background schedule, so it is also safe as a cron entry:
+
+  ```cron
+  0 * * * * cd /path/to/LMS/backend && .venv/bin/python manage.py refresh_coach_dashboard_snapshots --due
+  ```
+
+- Verify: log lines `coach_dashboard_snapshot_schedule refreshed=N skipped=N failed=N`,
+  and each snapshot's `refreshed_at` in `Coach.coach_dashboard_snapshot` moving forward hourly.
 
 ## Scheduled Teams artifact sync
 

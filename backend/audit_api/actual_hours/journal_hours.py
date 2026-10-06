@@ -1,7 +1,7 @@
 """Calculated actual hours for the Learner Journal's **Activity log** rows.
 
 The journal's Activity log is the employee-arranged ledger
-(``structured_manual_activities.manual_learner_activities``) — a different table
+(``Learner.learner_journal_rows``) — a different table
 from ``Last_audit.activity_actual_hours``, with its own ``actual_hours`` column,
 which is the one shown in the report.
 
@@ -57,8 +57,8 @@ from . import rules
 from .service import ServiceError
 
 
-MANUAL_ROWS = '"structured_manual_activities"."manual_learner_activities"'
-JOURNAL_REVISION = '"structured_manual_activities"."manual_activity_hours_revision"'
+MANUAL_ROWS = '"Learner"."learner_journal_rows"'
+JOURNAL_REVISION = '"Learner"."manual_activity_hours_revision"'
 ACTIVITIES = '"Last_audit"."activities"'
 # Aptem's own plan components (name, type, planned hours, month).
 # Aptem's own learning plan, as fetched: one JSON array of components per
@@ -181,7 +181,7 @@ def journal_tables_present(cursor) -> bool:
     cursor.execute(
         """
         select count(*) from information_schema.tables
-        where table_schema = 'structured_manual_activities'
+        where table_schema = 'Learner'
           and table_name = 'manual_activity_hours_revision'
         """
     )

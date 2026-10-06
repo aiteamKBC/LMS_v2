@@ -8,7 +8,7 @@ come only from ``Last_audit.learners.planned_hours_monthly``; actual hours have
 no automatic source at all.
 
 Everything the employees arrange is stored in its own schema,
-``structured_manual_activities``, so the ``Last_audit`` mirror stays a pure
+``Learner.learner_journal_rows``, so the ``Last_audit`` mirror stays a pure
 read-only import target.  Both schemas live in the same Neon database (the
 ``audit`` connection alias), which keeps the joins to ``Last_audit`` cheap.
 """
@@ -54,9 +54,9 @@ from .last_audit_ledger_views import (
     _session_key,
 )
 
-MANUAL_ROWS = '"structured_manual_activities"."manual_learner_activities"'
-MANUAL_DOCS = '"structured_manual_activities"."manual_activity_documents"'
-READING_QUIZ_PAIRS = '"structured_manual_activities"."reading_quiz_pairs"'
+MANUAL_ROWS = '"Learner"."learner_journal_rows"'
+MANUAL_DOCS = '"Learner"."manual_activity_documents"'
+READING_QUIZ_PAIRS = '"curriculum"."source_reading_quiz_pairs"'
 GROUP_ACTIVITIES = '"Last_audit"."group_activities"'
 # Aptem evidence files, already mirrored to Azure by the fetch service — the
 # source that lets ANY assignment row carry an in-system preview.
@@ -92,99 +92,15 @@ ROW_COLUMNS = (
 
 # The schema DDL is idempotent but costs six server round trips; running it
 # once per process keeps every manual endpoint fast on the remote database.
-_MANUAL_TABLES_READY = False
 
 
 def _ensure_manual_tables(cursor):
-    global _MANUAL_TABLES_READY
-    if _MANUAL_TABLES_READY:
-        return
-    cursor.execute('CREATE SCHEMA IF NOT EXISTS "structured_manual_activities"')
-    cursor.execute(f"""
-        CREATE TABLE IF NOT EXISTS {MANUAL_ROWS} (
-            id              bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-            aptem_id        bigint NOT NULL,
-            learner_id      bigint,
-            month           text   NOT NULL CHECK (month ~ '^\\d{{4}}-\\d{{2}}$'),
-            category        text   NOT NULL CHECK (category IN
-                                ('attendance','video','audio','reading+quiz','assignment')),
-            source_ref      text,
-            group_id        bigint,
-            activity_id     bigint,
-            title           text   NOT NULL,
-            activity_date   date,
-            planned_hours   numeric NOT NULL DEFAULT 0 CHECK (planned_hours BETWEEN 0 AND 50),
-            actual_hours    numeric NOT NULL DEFAULT 0 CHECK (actual_hours BETWEEN 0 AND 50),
-            timestamp_label text   NOT NULL DEFAULT '',
-            completion_note text,
-            accepted        boolean NOT NULL DEFAULT true,
-            created_by      text,
-            updated_by      text,
-            created_at      timestamptz NOT NULL DEFAULT now(),
-            updated_at      timestamptz NOT NULL DEFAULT now(),
-            deleted_at      timestamptz
-        )
-    """)
-    cursor.execute(f"""
-        CREATE UNIQUE INDEX IF NOT EXISTS uq_manual_la_live
-            ON {MANUAL_ROWS} (aptem_id, month, source_ref)
-            WHERE deleted_at IS NULL AND source_ref IS NOT NULL
-    """)
-    cursor.execute(f"""
-        CREATE INDEX IF NOT EXISTS idx_manual_la_aptem_month
-            ON {MANUAL_ROWS} (aptem_id, month)
-    """)
-    cursor.execute(f"""
-        CREATE INDEX IF NOT EXISTS idx_manual_la_activity
-            ON {MANUAL_ROWS} (activity_id) WHERE activity_id IS NOT NULL
-    """)
-    cursor.execute(f"""
-        CREATE TABLE IF NOT EXISTS {MANUAL_DOCS} (
-            id                 bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-            manual_activity_id bigint NOT NULL
-                               REFERENCES {MANUAL_ROWS}(id) ON DELETE CASCADE,
-            aptem_id           bigint NOT NULL,
-            month              text   NOT NULL,
-            container          text   NOT NULL DEFAULT '{ASSIGNMENT_CONTAINER}',
-            blob_name          text   NOT NULL,
-            display_name       text   NOT NULL,
-            content_type       text,
-            size_bytes         bigint,
-            uploaded_by        text,
-            uploaded_at        timestamptz NOT NULL DEFAULT now(),
-            deleted_at         timestamptz
-        )
-    """)
-    cursor.execute(f"""
-        CREATE INDEX IF NOT EXISTS idx_manual_docs_row
-            ON {MANUAL_DOCS} (manual_activity_id)
-    """)
-    cursor.execute(f"""
-        CREATE TABLE IF NOT EXISTS {READING_QUIZ_PAIRS} (
-            id                  bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-            group_id            bigint NOT NULL,
-            reading_activity_id bigint NOT NULL,
-            quiz_activity_id    bigint NOT NULL,
-            created_by          text,
-            created_at          timestamptz NOT NULL DEFAULT now(),
-            UNIQUE (group_id, reading_activity_id, quiz_activity_id),
-            UNIQUE (group_id, reading_activity_id),
-            UNIQUE (group_id, quiz_activity_id),
-            CHECK (reading_activity_id <> quiz_activity_id)
-        )
-    """)
-    # Older installs allowed only one row per reading_activity_id, which made
-    # every bundle exactly two items.  Keep the existing table/data, but let
-    # one anchor activity own as many additional items as the user selects.
-    cursor.execute(
-        'ALTER TABLE "structured_manual_activities"."reading_quiz_pairs" '
-        'DROP CONSTRAINT IF EXISTS reading_quiz_pairs_group_id_reading_activity_id_key'
-    )
-    cursor.execute(f"CREATE INDEX IF NOT EXISTS idx_rq_pairs_group ON {READING_QUIZ_PAIRS} (group_id)")
-    # Assignments carry the source submission time so the journal can show
-    # date AND time per row (older installs get the column on the fly).
-    cursor.execute(f"ALTER TABLE {MANUAL_ROWS} ADD COLUMN IF NOT EXISTS activity_time time")
-    _MANUAL_TABLES_READY = True
+    """The migrated journal is provisioned centrally; reads never create it."""
+    cursor.execute("SELECT to_regclass(%s),to_regclass(%s),to_regclass(%s)",
+                   [MANUAL_ROWS, MANUAL_DOCS, READING_QUIZ_PAIRS])
+    if not all(cursor.fetchone()):
+        raise DatabaseError('The learner journal tables are not available.')
+
 
 
 def _month_label(month):
@@ -708,7 +624,7 @@ def summary(request: HttpRequest) -> JsonResponse:
             "row_count": int(row["row_count"]) if row else 0,
         })
     return JsonResponse({
-        "source": "structured_manual_activities",
+        "source": "Learner.learner_journal_rows",
         "ledger_end_month": LEDGER_END_MONTH,
         "aptem_id": aptem_id,
         "learner_id": int(learner["learner_id"]) if learner.get("learner_id") is not None else None,
@@ -781,7 +697,7 @@ def cohort_totals(request: HttpRequest) -> JsonResponse:
         for field in ("planned", "actual", "not_accepted"):
             entry[field] = round(entry[field], 2)
     return JsonResponse({
-        "source": "structured_manual_activities",
+        "source": "Learner.learner_journal_rows",
         "count": len(by_learner),
         "items": list(by_learner.values()),
     })

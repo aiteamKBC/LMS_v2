@@ -13,6 +13,8 @@ import {
   createGroupModule,
   previewModuleSessionPlan,
   previewTutorAvailabilityRoster,
+  fetchTutorAssignmentEmailStatus,
+  sendTutorAssignmentEmail,
   updateCurriculumModule,
 } from '@/lib/curriculumApi';
 import { createNewModule } from '@/pages/curriculum/module-builder/moduleAuthoringData';
@@ -37,6 +39,14 @@ vi.mock('@/lib/curriculumApi', async importOriginal => ({
   ...(await importOriginal<typeof import('@/lib/curriculumApi')>()),
   createGroupModule: vi.fn(async () => ({ created: [{ moduleCatalogueId: 'MOD-NEW' }] })),
   updateCurriculumModule: vi.fn(async () => ({ updated: true })),
+  sendTutorAssignmentEmail: vi.fn(async () => ({ sent: true, tutor: 'Tutor One', modules: 1 })),
+  // Nothing emailed, which is what an unnotified module answers. Tests about
+  // the notified states say so per case.
+  fetchTutorAssignmentEmailStatus: vi.fn(async () => ({
+    tutor: { name: 'Tutor One', hasEmail: true },
+    total: 1, emailed: 0, lastSentAt: null,
+    deliveries: [{ moduleId: 'MOD-1', emailed: false, lastSent: null }],
+  })),
   previewModuleSessionPlan: vi.fn(async () => ({
     sessions: [
       { sessionNumber: 1, date: '2026-09-02', day: 'Wednesday', skippedHolidays: [] },
@@ -110,6 +120,8 @@ const previewModuleSessionPlanMock = vi.mocked(previewModuleSessionPlan);
 const previewTutorAvailabilityRosterMock = vi.mocked(previewTutorAvailabilityRoster);
 const updateCurriculumModuleMock = vi.mocked(updateCurriculumModule);
 const createNewModuleMock = vi.mocked(createNewModule);
+const sendTutorAssignmentEmailMock = vi.mocked(sendTutorAssignmentEmail);
+const tutorEmailStatusMock = vi.mocked(fetchTutorAssignmentEmailStatus);
 
 function renderDrawer(props: Partial<Parameters<typeof ModuleFormDrawer>[0]> = {}) {
   const onSaved = vi.fn(async () => undefined);
@@ -149,6 +161,8 @@ describe('ModuleFormDrawer', () => {
     previewTutorAvailabilityRosterMock.mockClear();
     updateCurriculumModuleMock.mockClear();
     createNewModuleMock.mockClear();
+    sendTutorAssignmentEmailMock.mockClear();
+    tutorEmailStatusMock.mockClear();
   });
 
   it('reopens imported session rows as eight teaching weeks and keeps the module closure in its preview', async () => {
@@ -226,6 +240,173 @@ describe('ModuleFormDrawer', () => {
       weekDays: 'Monday, Thursday',
       startTime: '14:00',
     }));
+  });
+
+  // Outbound mail to a real person, so the default is the part worth pinning:
+  // this is the whole reason automatic assignment emails were switched off.
+  it('tells nobody about the assignment unless the box is ticked', async () => {
+    renderDrawer({ defaults: { programmeId: 'PROG-DATA', cohortId: 'COHORT-1' } });
+
+    await userEvent.type(screen.getByPlaceholderText('e.g. Data Modelling'), 'Data Modelling');
+    await userEvent.click(screen.getByRole('button', { name: /Group A/ }));
+    await choose('Tutor', 'Tutor One');
+    // Offered, and off.
+    expect(screen.getByRole('checkbox', { name: /Email Tutor One about this module/ })).not.toBeChecked();
+    await userEvent.click(screen.getByRole('button', { name: 'Create module' }));
+
+    await waitFor(() => expect(createGroupModuleMock).toHaveBeenCalledTimes(1));
+    expect(sendTutorAssignmentEmailMock).not.toHaveBeenCalled();
+  });
+
+  it('emails the tutor once about every delivery the save created', async () => {
+    const twoGroups = [
+      ...groups,
+      {
+        id: 'GROUP-2', name: 'Group B', cohortId: 'COHORT-1', cohort: 'Sept 2026',
+        programme: 'Data Analyst', weekDays: 'Monday', startTime: '14:00', endTime: '16:00',
+      },
+    ] as unknown as CurriculumGroup[];
+    // Each attach answers with its own delivery, so the ids differ.
+    createGroupModuleMock
+      .mockResolvedValueOnce({ created: [{ moduleCatalogueId: 'MOD-A' }] } as never)
+      .mockResolvedValueOnce({ created: [{ moduleCatalogueId: 'MOD-B' }] } as never);
+    renderDrawer({ groups: twoGroups, defaults: { programmeId: 'PROG-DATA', cohortId: 'COHORT-1' } });
+
+    await userEvent.type(screen.getByPlaceholderText('e.g. Data Modelling'), 'Data Modelling');
+    await userEvent.click(screen.getByRole('button', { name: /Group A/ }));
+    await userEvent.click(screen.getByRole('button', { name: /Group B/ }));
+    await choose('Tutor', 'Tutor One');
+    await userEvent.click(screen.getByRole('checkbox', { name: /Email Tutor One/ }));
+    await userEvent.click(screen.getByRole('button', { name: 'Create module' }));
+
+    await waitFor(() => expect(sendTutorAssignmentEmailMock).toHaveBeenCalledTimes(1));
+    // One call naming both deliveries -- not one call per group.
+    expect(sendTutorAssignmentEmailMock).toHaveBeenCalledWith(['MOD-A', 'MOD-B']);
+  });
+
+  it('still reports the module as saved when the email cannot be sent', async () => {
+    sendTutorAssignmentEmailMock.mockRejectedValueOnce(new Error('Graph is unavailable.'));
+    const { onSaved } = renderDrawer({ defaults: { programmeId: 'PROG-DATA', cohortId: 'COHORT-1' } });
+
+    await userEvent.type(screen.getByPlaceholderText('e.g. Data Modelling'), 'Data Modelling');
+    await userEvent.click(screen.getByRole('button', { name: /Group A/ }));
+    await choose('Tutor', 'Tutor One');
+    await userEvent.click(screen.getByRole('checkbox', { name: /Email Tutor One/ }));
+    await userEvent.click(screen.getByRole('button', { name: 'Create module' }));
+
+    // The module is written and the caller is told, even though the mail failed.
+    await waitFor(() => expect(onSaved).toHaveBeenCalled());
+    expect(createGroupModuleMock).toHaveBeenCalledTimes(1);
+  });
+
+  /** An edit-mode module with one delivery, for the notification-state tests. */
+  function assignedModule(overrides: Record<string, unknown> = {}) {
+    return {
+      id: 'MOD-1',
+      name: 'Data Foundations',
+      programmeId: 'PROG-DATA',
+      cohortId: 'COHORT-1',
+      groupId: 'GROUP-1',
+      sessionsNumber: 5,
+      startDate: '2026-09-02',
+      endDate: '2026-09-30',
+      tutor: 'Tutor One',
+      status: 'published',
+      deliveryUsages: [{
+        deliveryModuleId: 'MOD-1',
+        programmeId: 'PROG-DATA', programme: 'Data Analyst',
+        cohortId: 'COHORT-1', cohort: 'Sept 2026',
+        groupId: 'GROUP-1', group: 'Group A',
+        startDate: '2026-09-02', endDate: '2026-09-30', sessions: 5, tutor: 'Tutor One',
+      }],
+      ...overrides,
+    };
+  }
+
+  const emailedStatus = {
+    tutor: { name: 'Tutor One', hasEmail: true },
+    total: 1, emailed: 1, lastSentAt: '2026-10-01T09:30:00Z',
+    deliveries: [{ moduleId: 'MOD-1', emailed: true, lastSent: { status: 'sent', at: '2026-10-01T09:30:00Z' } }],
+  };
+
+  it('still shows the tick for a tutor who has not changed, reading its state from the ledger', async () => {
+    tutorEmailStatusMock.mockResolvedValue(emailedStatus as never);
+    renderDrawer({ module: assignedModule() as never });
+
+    // Asked about this delivery, for the tutor currently selected.
+    await waitFor(() => expect(tutorEmailStatusMock).toHaveBeenCalledWith(['MOD-1'], 'Tutor One', expect.anything()));
+    const box = await screen.findByRole('checkbox', { name: /Tutor One has been emailed about this module/ });
+    // Checked because the ledger says so -- nothing in the drawer remembered it.
+    expect(box).toBeChecked();
+    // And not a control any more: there is nothing left to send, and unticking
+    // cannot unsend.
+    expect(box).toBeDisabled();
+    expect(screen.getByText(/Last emailed 1 Oct 2026/)).toBeInTheDocument();
+  });
+
+  it('reads the state again for a tutor swapped in, never carrying the old one over', async () => {
+    tutorEmailStatusMock.mockResolvedValue(emailedStatus as never);
+    renderDrawer({ module: assignedModule() as never, tutorNames: ['Tutor One', 'Tutor Two'] });
+    await screen.findByRole('checkbox', { name: /has been emailed/ });
+
+    // The new tutor has never been written to about this module.
+    tutorEmailStatusMock.mockResolvedValue({
+      tutor: { name: 'Tutor Two', hasEmail: true },
+      total: 1, emailed: 0, lastSentAt: null,
+      deliveries: [{ moduleId: 'MOD-1', emailed: false, lastSent: null }],
+    } as never);
+    await choose('Tutor', 'Tutor Two');
+
+    await waitFor(() => expect(tutorEmailStatusMock).toHaveBeenCalledWith(['MOD-1'], 'Tutor Two', expect.anything()));
+    const box = await screen.findByRole('checkbox', { name: /Email Tutor Two about this module/ });
+    expect(box).not.toBeChecked();
+    expect(box).toBeEnabled();
+    expect(screen.queryByText(/Last emailed/)).not.toBeInTheDocument();
+  });
+
+  it('reports a partly notified module as a mix rather than either answer', async () => {
+    tutorEmailStatusMock.mockResolvedValue({
+      tutor: { name: 'Tutor One', hasEmail: true },
+      total: 2, emailed: 1, lastSentAt: '2026-10-01T09:30:00Z',
+      deliveries: [
+        { moduleId: 'MOD-1', emailed: true, lastSent: { status: 'sent', at: '2026-10-01T09:30:00Z' } },
+        { moduleId: 'MOD-2', emailed: false, lastSent: null },
+      ],
+    } as never);
+    renderDrawer({ module: assignedModule() as never });
+
+    expect(await screen.findByText(/1 of 2 deliveries emailed/)).toBeInTheDocument();
+    const box = screen.getByRole('checkbox', { name: /Email Tutor One about this module/ });
+    // Neither "done" nor "nothing sent": the browser's own mixed state.
+    expect(box).toBePartiallyChecked();
+    expect(box).toBeEnabled();
+  });
+
+  it('covers every delivery in one message when the mix is finished off', async () => {
+    tutorEmailStatusMock.mockResolvedValue({
+      tutor: { name: 'Tutor One', hasEmail: true },
+      total: 2, emailed: 1, lastSentAt: '2026-10-01T09:30:00Z',
+      deliveries: [
+        { moduleId: 'MOD-1', emailed: true, lastSent: { status: 'sent', at: '2026-10-01T09:30:00Z' } },
+        { moduleId: 'MOD-2', emailed: false, lastSent: null },
+      ],
+    } as never);
+    renderDrawer({
+      module: assignedModule({
+        deliveryUsages: [
+          { deliveryModuleId: 'MOD-1', groupId: 'GROUP-1', group: 'Group A', tutor: 'Tutor One' },
+          { deliveryModuleId: 'MOD-2', groupId: 'GROUP-2', group: 'Group B', tutor: 'Tutor One' },
+        ],
+      }) as never,
+    });
+
+    await screen.findByText(/1 of 2 deliveries emailed/);
+    await userEvent.click(screen.getByRole('checkbox', { name: /Email Tutor One/ }));
+    await userEvent.click(screen.getByRole('button', { name: 'Save module' }));
+
+    await waitFor(() => expect(sendTutorAssignmentEmailMock).toHaveBeenCalledTimes(1));
+    // Both deliveries in the one message, not just the outstanding one.
+    expect(sendTutorAssignmentEmailMock).toHaveBeenCalledWith(['MOD-1', 'MOD-2']);
   });
 
   it('filters a long group list without changing the selected groups', async () => {
@@ -306,21 +487,37 @@ describe('ModuleFormDrawer', () => {
     await waitFor(() => expect(onSavingChange).toHaveBeenLastCalledWith(false));
   });
 
-  it('shows the end date the backend calculated by default', async () => {
-    // The end date is the last session of the generated plan, so the drawer
-    // displays it until the user picks a different date.
+  it('shows the end date calculated from the start date and the weeks entered', async () => {
+    // The end date is the module's calendar span -- the cohort's start date
+    // (2026-09-01) plus the 1 default week -- not the generated plan's last
+    // session, so the drawer displays it until the user picks a different date.
     renderDrawer({ lockGroup: true, defaults: { programmeId: 'PROG-DATA', cohortId: 'COHORT-1', groupId: 'GROUP-1' } });
 
     const endDate = screen.getByRole('combobox', { name: 'End date' });
     expect(endDate).toBeEnabled();
-    await waitFor(() => expect(endDate).toHaveValue('07/10/2026'));
+    await waitFor(() => expect(endDate).toHaveValue('07/09/2026'));
+  });
+
+  it('keeps the cohort start date but clears the calculated end date when weeks are emptied', async () => {
+    renderDrawer({ lockGroup: true, defaults: { programmeId: 'PROG-DATA', cohortId: 'COHORT-1', groupId: 'GROUP-1' } });
+
+    const weeks = screen.getByRole('spinbutton', { name: /weeks/i });
+    const startDate = screen.getByRole('combobox', { name: 'Start date' });
+    const endDate = screen.getByRole('combobox', { name: 'End date' });
+    await waitFor(() => expect(endDate).toHaveValue('07/09/2026'));
+    expect(startDate).toHaveValue('01/09/2026');
+
+    await userEvent.clear(weeks);
+
+    expect(startDate).toHaveValue('01/09/2026');
+    expect(endDate).toHaveValue('');
   });
 
   it('saves a manually adjusted module end date', async () => {
     renderDrawer({ lockGroup: true, defaults: { programmeId: 'PROG-DATA', cohortId: 'COHORT-1', groupId: 'GROUP-1' } });
 
     const endDate = screen.getByRole('combobox', { name: 'End date' });
-    await waitFor(() => expect(endDate).toHaveValue('07/10/2026'));
+    await waitFor(() => expect(endDate).toHaveValue('07/09/2026'));
     await userEvent.clear(endDate);
     await userEvent.type(endDate, '14/10/2026');
     await userEvent.type(screen.getByPlaceholderText('e.g. Data Modelling'), 'Manual End');
@@ -336,7 +533,7 @@ describe('ModuleFormDrawer', () => {
   it('has no session date preview button any more -- the Session dates panel was removed', async () => {
     renderDrawer({ lockGroup: true, defaults: { programmeId: 'PROG-DATA', cohortId: 'COHORT-1', groupId: 'GROUP-1' } });
 
-    await waitFor(() => expect(screen.getByRole('combobox', { name: 'End date' })).toHaveValue('07/10/2026'));
+    await waitFor(() => expect(screen.getByRole('combobox', { name: 'End date' })).toHaveValue('07/09/2026'));
     expect(screen.queryByRole('button', { name: /view sessions/i })).not.toBeInTheDocument();
     expect(screen.queryByText('Session dates')).not.toBeInTheDocument();
   });
@@ -543,19 +740,10 @@ describe('ModuleFormDrawer', () => {
     expect(updateCurriculumModuleMock).not.toHaveBeenCalled();
   });
 
-  it('refuses a generated session plan that runs past the cohort end', async () => {
-    // Nobody typed this end date: it is the plan's own last session, which is
-    // why the field's own bounds cannot catch it.
-    previewModuleSessionPlanMock.mockResolvedValueOnce({
-      sessions: [
-        { sessionNumber: 1, date: '2027-08-25', day: 'Wednesday', skippedHolidays: [] },
-        { sessionNumber: 2, date: '2027-09-15', day: 'Wednesday', skippedHolidays: [] },
-      ],
-      skippedHolidays: [],
-      finalEndDate: '2027-09-15',
-      warnings: [],
-    });
-
+  it('refuses a calculated end date that runs past the cohort end', async () => {
+    // Nobody typed this end date: it is the module's own calendar span (start
+    // date plus its weeks), which is why the field's own bounds cannot catch
+    // it -- only the cohort-window check on save does.
     renderDrawer({
       module: {
         id: 'MOD-1',
@@ -570,7 +758,7 @@ describe('ModuleFormDrawer', () => {
     });
 
     const endDate = screen.getByRole('combobox', { name: 'End date' });
-    await waitFor(() => expect(endDate).toHaveValue('15/09/2027'));
+    await waitFor(() => expect(endDate).toHaveValue('07/09/2027'));
     await userEvent.click(screen.getByRole('button', { name: 'Save module' }));
 
     expect(await screen.findAllByText(/cannot finish after the cohort end date/)).not.toHaveLength(0);

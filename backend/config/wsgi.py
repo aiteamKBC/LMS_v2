@@ -15,6 +15,8 @@ os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'config.settings')
 
 application = get_wsgi_application()
 
+from coach_api.dashboard_snapshot_scheduler import CoachDashboardSnapshotWSGI
 from curriculum_api.session_sync_runtime import SessionSyncWSGI
+from learner_api.catchup_reminders import CatchupReminderWSGI
 
-application = SessionSyncWSGI(application)
+application = CoachDashboardSnapshotWSGI(CatchupReminderWSGI(SessionSyncWSGI(application)))

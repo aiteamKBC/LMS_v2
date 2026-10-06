@@ -4,9 +4,25 @@ import type { LearnerKind } from './learnerDetail';
 
 export interface SessionPerson {
   email: string; name: string; seconds: number; expected: boolean;
+  /** Result of the original Teams occurrence. Recovery never changes this. */
   status: 'present' | 'absent' | 'pending' | 'review' | 'excused' | 'recovered';
   attendance: 0 | 1 | null; excused: boolean; catchupCompleted: boolean;
+  rawStatus?: 'present' | 'absent' | 'pending' | 'review';
+  rawAttendance?: 0 | 1 | null;
+  excuseStatus?: 'none' | 'pending' | 'approved' | 'declined';
+  absenceReported?: boolean;
+  recoveryStatus?: 'none' | 'requested' | 'catchup_booked' | 'completed';
+  recoveryType?: 'none' | 'recorded' | 'alternative' | 'catch-up';
+  recoveryReference?: string;
+  effectiveStatus?: 'present' | 'absent' | 'pending' | 'review' | 'absent_excused' | 'made_up';
+  effectiveAttendance?: 0 | 1 | null;
+  finalOutcome?: 'present' | 'absent' | 'pending' | 'review' | 'absent_excused' | 'made_up';
   intervals?: { joinedAt: string; leftAt: string }[];
+  sourceRecordIds?: string[];
+  suggestedLearnerProfileId?: number | null;
+}
+export interface AttendanceCandidate {
+  learnerProfileId: number; email: string; name: string;
 }
 export interface SessionFile {
   id: string; type: 'recording' | 'transcript'; state: 'pending' | 'ready' | 'failed';
@@ -22,7 +38,8 @@ export interface SessionResult {
   title?: string; actualStartsAt?: string | null; actualEndsAt?: string | null;
   runs?: { startsAt: string; endsAt: string }[];
   state: string; reportReady: boolean; syncedAt?: string; fileCount?: number; archiveReady?: boolean;
-  attendance?: SessionPerson[]; artifacts?: SessionFile[];
+  attendance?: SessionPerson[]; unmatchedAttendance?: SessionPerson[];
+  attendanceCandidates?: AttendanceCandidate[]; artifacts?: SessionFile[];
 }
 export interface ModuleSessionResults {
   syncAvailable?: boolean;
@@ -60,6 +77,25 @@ export const loadSessionResult = (seriesId: string, number: number, learner?: Se
   read<{ sessions: SessionResult[]; job?: SessionSyncJob | null }>(`${sessionBase(seriesId, learner)}/sessions/${number}/`, signal);
 export const sessionFileUrl = (seriesId: string, file: SessionFile, learner?: SessionLearner, text = false) =>
   personalLearningUrl(`${sessionBase(seriesId, learner)}/artifacts/${encodeURIComponent(file.id)}/${text ? '?format=txt' : ''}`);
+export interface RecordingWatchState { watchedSeconds: number; durationSeconds: number; csrfToken?: string }
+const watchUrl = (seriesId: string, file: SessionFile, learner: SessionLearner) =>
+  `${sessionBase(seriesId, learner)}/artifacts/${encodeURIComponent(file.id)}/watch/`;
+/** Viewing so far, plus the CSRF token for reports (learners cannot read /coach_api/csrf). */
+export async function loadRecordingWatch(seriesId: string, file: SessionFile, learner: SessionLearner, signal?: AbortSignal) {
+  const response = await fetch(watchUrl(seriesId, file, learner), { credentials: 'include', signal });
+  if (!response.ok) throw new Error(`Viewing time is unavailable (${response.status}).`);
+  return response.json() as Promise<RecordingWatchState>;
+}
+/** Report seconds of a recording the learner played since the last report (learner view only). */
+export async function recordRecordingWatch(seriesId: string, file: SessionFile, learner: SessionLearner,
+  watch: { watchedSeconds: number; position: number; duration: number }, csrfToken: string, keepalive = false) {
+  const response = await fetch(watchUrl(seriesId, file, learner), {
+    method: 'POST', credentials: 'include', keepalive, body: JSON.stringify(watch),
+    headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrfToken, 'X-Requested-With': 'XMLHttpRequest' },
+  });
+  if (!response.ok) throw new Error(`Viewing time could not be saved (${response.status}).`);
+  return response.json() as Promise<{ watchedSeconds: number; durationSeconds: number }>;
+}
 export const loadTranscriptCues = (seriesId: string, artifactId: string, learner?: SessionLearner, signal?: AbortSignal) =>
   read<{ cues: TranscriptCue[] }>(`${sessionBase(seriesId, learner)}/artifacts/${encodeURIComponent(artifactId)}/?format=cues`, signal);
 export const sessionAttendanceUrl = (session: SessionResult, format: 'csv' | 'pdf' = 'csv') =>
@@ -69,6 +105,16 @@ export async function requestSessionSync(seriesId: string) {
   const result = await response.json();
   if (!response.ok) throw new Error(result.error || 'Could not request synchronization.');
   return result as { state: 'queued'; message: string };
+}
+
+export async function linkAttendanceAlias(seriesId: string, sessionNumber: number, aliasEmail: string, learnerProfileId: number, sourceRecordIds: string[] = []) {
+  const response = await coachFetch(`${adminBase}/${encodeURIComponent(seriesId)}/sessions/${sessionNumber}/attendance-alias/`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ aliasEmail, learnerProfileId, sourceRecordIds }),
+  });
+  const result = await response.json();
+  if (!response.ok) throw new Error(result.error || 'Could not link the reported email.');
+  return result as { aliasEmail: string; sourceRecordIds: string[]; learnerProfileId: number; learnerEmail: string; learnerName: string };
 }
 
 export async function setRecordingVisibility(seriesId: string, artifactId: string, hidden: boolean) {

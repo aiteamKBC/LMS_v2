@@ -13,7 +13,7 @@
 // values for them.
 // ============================================================================
 
-export type PerformanceStatus = 'at-risk' | 'on-track' | 'high' | 'new-starter';
+export type PerformanceStatus = 'at-risk' | 'on-track' | 'high' | 'new-starter' | 'unavailable';
 export type EnrollmentStatus = 'all' | 'active' | 'break' | 'withdrawn' | 'ready-to-enrol' | 'unknown';
 export type AttendanceRisk = 'green' | 'amber' | 'red';
 
@@ -30,6 +30,7 @@ export type StatusFilter =
 export type SortKey =
   | 'risk'
   | 'name'
+  | 'start-date'
   | 'activity'
   | 'progress-review'
   | 'monthly-coaching'
@@ -71,8 +72,11 @@ export interface Learner {
   /** Component completion percentage. Misleadingly named on the wire. */
   attendanceRate: number;
   attendanceRateAvailable?: boolean;
-  componentsCompleted?: number;
-  componentsPlanned?: number;
+  attendanceAvailable?: boolean;
+  activityProgress?: number | null;
+  activityProgressAvailable?: boolean;
+  componentsCompleted?: number | null;
+  componentsPlanned?: number | null;
 
   otjhCompleted: number;
   /** Cumulative planned hours up to and including the current week. */
@@ -80,6 +84,13 @@ export interface Learner {
   /** Total planned hours for the whole programme. */
   otjhPlanned?: number;
   otjhMinimum?: number;
+  /** API-owned target/RAG contract, paced to the business date. */
+  otjhTargetAsOfToday?: number | null;
+  otjhProgressAsOfToday?: number | null;
+  otjhShortfallHours?: number | null;
+  otjhDeltaHours?: number | null;
+  otjhRagStatus?: 'at-risk' | 'need-attention' | 'on-track' | 'unavailable' | null;
+  otjhRagSource?: string | null;
   /** completed - target, as a string. Negative means behind the current target. */
   otjhProgressHours?: string;
   otjhStatus?: string;
@@ -88,10 +99,10 @@ export interface Learner {
    *  rather than the training-plan reflection totals. */
   otjhSource?: 'audit';
 
-  ksbCompleted?: number;
-  ksbTarget?: number;
+  ksbCompleted?: number | null;
+  ksbTarget?: number | null;
   ksbStatus?: string;
-  ksbProgress: number;
+  ksbProgress: number | null;
   ksbProgressAvailable?: boolean;
   knowledgeCompleted?: number;
   knowledgeTarget?: number;
@@ -136,6 +147,10 @@ export interface Learner {
   recentFlag: string | null;
   progressVariance: string;
   startDate: string;
+  /** Contract window used by existing OTJH/review pacing, separate from Profile date. */
+  otjhProgrammeStartDate?: string;
+  displayStartDate?: string;
+  displayEndDate?: string;
   gatewayReviewDate: string;
   plannedEndDate: string;
   coachName?: string;
@@ -152,7 +167,7 @@ export interface CaseloadApiLearner extends Omit<Learner, 'enrollmentStatus' | '
   employerEmail?: string | null;
   employerPhone?: string | null;
   progressVariance?: string;
-  startDate?: string;
+  startDate?: string | null;
   gatewayReviewDate?: string;
   plannedEndDate?: string;
   lastPr?: string | null;
@@ -167,6 +182,21 @@ export interface CaseloadApiResponse {
     email?: string;
   };
   learners?: CaseloadApiLearner[];
+  results?: CaseloadApiLearner[];
+  pagination?: {
+    page: number;
+    pageSize: number;
+    total: number;
+    totalPages: number;
+    hasNext: boolean;
+    hasPrevious: boolean;
+  };
+  filterOptions?: {
+    cohort: FilterOption[];
+    group: FilterOption[];
+    programStatus: FilterOption[];
+    employer: FilterOption[];
+  };
 }
 
 export interface AttendanceApiLearner {

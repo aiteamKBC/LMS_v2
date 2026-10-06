@@ -52,7 +52,7 @@ function daysFromToday(date: string | null, today: string): number | null {
 function signatureState(session: LearnerCalendarEvent, review?: LearnerReviewDefinition | null): CoachingSignature {
   // An archive is read-only. A calendar flag alone does not tell us whether
   // Curriculum requires the participant's signature on this particular form.
-  if (session.importedReview) return 'none';
+  if (session.importedReview && !session.migratedForm) return 'none';
   if (!review) return normalize(session.status) === 'awaiting-signature' ? 'unknown' : 'none';
   const status = normalize(review.instance?.status);
   const submitted = ['awaiting-signature', 'completed'].includes(status);
@@ -76,9 +76,12 @@ export function coachingSessionState(
   const cancelled = ['cancelled', 'deleted', 'superseded'].includes(bookingStatus)
     || normalize(session.status) === 'cancelled';
   const calendarStatus = normalize(session.status);
+  const attendanceStatus = normalize(attendance?.status);
+  const eventBookingStatus = normalize(session.bookingStatus);
   const status = ['completed', 'awaiting-signature'].includes(reviewStatus)
     ? reviewStatus : ['completed', 'awaiting-signature'].includes(calendarStatus)
-      ? calendarStatus : normalize(attendance?.status) || calendarStatus;
+      ? calendarStatus : [attendanceStatus, eventBookingStatus, calendarStatus].includes('in-progress')
+        ? 'in-progress' : attendanceStatus || eventBookingStatus || calendarStatus;
   const scheduledDate = attendance ? validDate(attendance.date) : validDate(session.scheduledDate);
   const targetDate = validDate(session.targetDate) || validDate(session.date);
   const date = scheduledDate || targetDate;
@@ -132,11 +135,11 @@ export function coachingSessionState(
   if (booked && scheduledDate && scheduledDate < today) {
     // A past date cannot prove absence if attendance has not loaded or has no
     // matching row. Only the attendance endpoint can mark a meeting missed.
-    return result('past', 'Awaiting update', 'Open this meeting to check the attendance and next steps.', 'view', 'View meeting');
+    return result('past', status === 'in-progress' ? 'In Progress' : 'Awaiting update', 'Open this meeting to check the attendance and next steps.', 'view', 'View meeting');
   }
   if (booked) {
     const canJoin = isToday && Boolean(joinUrl);
-    return result('upcoming', isToday ? 'Today' : 'Scheduled',
+    return result('upcoming', status === 'in-progress' ? 'In Progress' : isToday ? 'Today' : 'Scheduled',
       isToday ? 'Have your learning updates and questions ready for your coach.' : 'Make a note of your progress and anything you want to discuss.',
       canJoin ? 'join' : 'prepare', canJoin ? 'Join meeting' : 'Prepare for meeting');
   }
@@ -166,8 +169,8 @@ export function coachingOverview(
 ): CoachingOverview {
   const all = sessions.map(session => {
     // Join only by durable identity. Two meetings on one day may have the same title.
-    const matched = attendance.find(item => item.id === session.id)
-      || attendance.find(item => Boolean(item.calendarEventKey) && item.calendarEventKey === session.eventKey);
+    const matched = attendance.find(item => item.id === session.id || (session.reviewId && item.id === `imported-review:${session.reviewId}`))
+      || attendance.find(item => Boolean(item.calendarEventKey) && item.calendarEventKey === (session.calendarEventKey || session.eventKey));
     return coachingSessionState(session, matched, today, reviews[session.eventKey] || reviews[session.id]);
   }).sort(chronological);
   const needsAction = all.filter(item => item.needsAction).sort((a, b) =>

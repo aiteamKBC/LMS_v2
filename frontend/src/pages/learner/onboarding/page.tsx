@@ -4,15 +4,17 @@ import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { roleNavMap } from '@/mocks/navigation';
 import { useToast } from '@/hooks/useToast';
 import { useMyLearner } from '@/hooks/useMyLearner';
+import { useResetWorkspaceScroll } from '@/hooks/useResetWorkspaceScroll';
 import { updateEnrolmentUser } from '@/api/enrolmentUsers';
 import { updateCommercialBoard } from '@/api/commercialUsers';
 import { fetchWizardBootstrap } from '@/api/extendedIlr';
-import { WIZARD_STEPS, type EnrolmentBoard } from '@/pages/users/types';
+import type { EnrolmentBoard } from '@/pages/users/types';
 import { btnSecondary } from '@/pages/users/components/ui';
 import { WizardProvider, useWizard } from '@/pages/users/wizard/WizardContext';
 import { WizardShell } from '@/pages/users/wizard/WizardShell';
 import { maxReachableStep, missingAcrossWizard } from '@/pages/users/wizard/validation';
 import { ONBOARDING_REVIEWS_ROUTE } from '@/hooks/useOnboardingRedirect';
+import { markEnrolmentSubmitted } from '@/hooks/useLearnerNavGate';
 import { RowsSkeleton } from '@/components/feature/Skeletons';
 
 const learnerNav = roleNavMap.learner;
@@ -27,34 +29,38 @@ const learnerNav = roleNavMap.learner;
  * banner, no admin quick actions, and Finish marks the enrolment submitted
  * instead of complete (staff still verify evidence and countersign).
  */
-function LearnerWizard({ currentIndex, onDone }: { currentIndex: number; onDone: () => void }) {
-  const { userId, isCommercial, board, draft, ready, saveIlr } = useWizard();
+function LearnerWizard({ stepSlug, onDone }: { stepSlug: string | undefined; onDone: () => void }) {
+  const { userId, isCommercial, board, draft, ready, saveIlr, layout, steps } = useWizard();
   const navigate = useNavigate();
   const { success, error } = useToast();
 
-  const goTo = (i: number) => navigate(`/learner/onboarding/${WIZARD_STEPS[i].slug}`);
+  // Resolved against the published layout's steps (see the wizard builder).
+  const idx = steps.findIndex((s) => s.slug === stepSlug);
+  const currentIndex = idx === -1 ? 0 : idx;
+  const goTo = (i: number) => navigate(`/learner/onboarding/${steps[i].slug}`);
 
   // The step tabs are gated, but the URL is not — typing a later step's slug
   // would otherwise walk straight past the steps in between. Held until the
   // draft is worth measuring (`ready`, not just `hydrated` — the competencies
   // land in a second request), or a returning learner is bounced to step one on
   // answers that hadn't loaded yet.
-  const reachable = maxReachableStep(draft, WIZARD_STEPS.length);
+  const reachable = maxReachableStep(draft, steps.length, layout);
+  const reachableSlug = steps[reachable]?.slug;
   useEffect(() => {
-    if (ready && currentIndex > reachable) {
-      navigate(`/learner/onboarding/${WIZARD_STEPS[reachable].slug}`, { replace: true });
+    if (ready && currentIndex > reachable && reachableSlug) {
+      navigate(`/learner/onboarding/${reachableSlug}`, { replace: true });
     }
-  }, [ready, currentIndex, reachable, navigate]);
+  }, [ready, currentIndex, reachable, reachableSlug, navigate]);
 
   const finish = async () => {
     // Backstop to the step gating: completeness is judged live, so the whole
     // form is re-checked before anything is marked submitted.
-    const gaps = missingAcrossWizard(draft, WIZARD_STEPS.length);
+    const gaps = missingAcrossWizard(draft, steps.length, layout);
     if (gaps.length > 0) {
       const first = gaps[0];
       error(
         'Your enrolment isn’t complete',
-        `${gaps.length} ${gaps.length === 1 ? 'answer is' : 'answers are'} still outstanding, starting with “${first.label}” on ${WIZARD_STEPS[first.stepIndex].label}.`
+        `${gaps.length} ${gaps.length === 1 ? 'answer is' : 'answers are'} still outstanding, starting with “${first.label}” on ${steps[first.stepIndex].label}.`
       );
       goTo(first.stepIndex);
       return;
@@ -83,6 +89,8 @@ function LearnerWizard({ currentIndex, onDone }: { currentIndex: number; onDone:
           dob: pd.dob,
           onboardingStatus: 'Submitted',
         });
+        // Opens the Reviews tab now, rather than on the learner's next session.
+        markEnrolmentSubmitted('apprenticeship', userId);
       }
       success('Enrolment submitted', 'Thank you — your enrolment has been sent to the team for review.');
       onDone();
@@ -163,9 +171,11 @@ export default function LearnerOnboardingPage() {
     return () => { cancelled = true; };
   }, [learnerId, isCommercial, reloadToken]);
 
-  const resolvedStepSlug = isCommercial && stepSlug === 'ilr' ? 'plr' : stepSlug;
-  const idx = WIZARD_STEPS.findIndex((s) => s.slug === resolvedStepSlug);
-  const currentIndex = idx === -1 ? 0 : idx;
+  // Neither ILR step applies to commercial delivery.
+  const resolvedStepSlug = isCommercial && (stepSlug === 'ilr' || stepSlug === 'ilr-details') ? 'plr' : stepSlug;
+
+  // Each step opens at its top rather than at the previous step's position.
+  const topRef = useResetWorkspaceScroll<HTMLElement>(resolvedStepSlug);
 
   if (isCommercial) return null;
 
@@ -186,7 +196,7 @@ export default function LearnerOnboardingPage() {
     >
       {/* w-full, matching the other learner pages — the shell already offsets for
           the collapsed sidebar rail, so an extra centred max-width fought it. */}
-      <main className="page-container min-w-0 w-full space-y-3 p-3 md:space-y-4 md:p-6">
+      <main ref={topRef} className="page-container min-w-0 w-full space-y-3 p-3 md:space-y-4 md:p-6">
         {loading && (
           <div className="rounded-2xl border border-foreground-200/60 bg-background-50 p-5">
             <RowsSkeleton rows={5} />
@@ -201,8 +211,8 @@ export default function LearnerOnboardingPage() {
         {!loading && !loadError && board && (
           <WizardProvider userId={myLearner.id} isCommercial={isCommercial} board={board}>
             {/* Straight to the reviews they now need to book, not the profile —
-                booking all three is what completes their enrolment. */}
-            <LearnerWizard currentIndex={currentIndex} onDone={() => navigate(ONBOARDING_REVIEWS_ROUTE)} />
+                booking all four is what completes their enrolment. */}
+            <LearnerWizard stepSlug={resolvedStepSlug} onDone={() => navigate(ONBOARDING_REVIEWS_ROUTE)} />
           </WizardProvider>
         )}
       </main>

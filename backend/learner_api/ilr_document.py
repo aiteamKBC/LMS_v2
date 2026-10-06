@@ -80,6 +80,25 @@ def _rpl_detail(learner_id):
         return None
 
 
+def _wizard_ilr_details(learner_id):
+    """The wizard's ILR Learner Details step, if the learner reached it."""
+    try:
+        from enrolment_api.models import WizardIlrLearnerDetails
+
+        return WizardIlrLearnerDetails.objects.filter(learner_id=learner_id).first()
+    except DatabaseError:
+        logger.exception("_wizard_ilr_details: lookup failed")
+        return None
+
+
+def _years_at_address(details):
+    if details is None:
+        return ""
+    if details.at_address_since_birth:
+        return "Since birth"
+    return "" if details.years_at_address is None else str(details.years_at_address)
+
+
 def _extended_ilr(learner_id):
     """The Extended ILR questionnaire the learner completed in the wizard."""
     try:
@@ -95,6 +114,9 @@ def derive_learner_details(learner):
     """Page 1 of the form. Blank where we hold no source, never guessed."""
     personal = _wizard_personal(learner.pk)
     rpl = _rpl_detail(learner.pk)
+    # The ILR Learner Details step: the answers the record itself has no column
+    # for. The record still wins wherever it holds a value.
+    details = _wizard_ilr_details(learner.pk)
 
     # The wizard's own name/DOB win: the learner entered them on their own
     # record, whereas the console row may carry a single display name.
@@ -122,25 +144,27 @@ def derive_learner_details(learner):
         "address2": address_lines[1],
         "address3": address_lines[2],
         "address4": address_lines[3],
-        "yearsAtAddress": "",
+        "yearsAtAddress": _years_at_address(details),
         "telephone": _s(learner.phone_number) or _s(getattr(personal, "phone", "")),
         "email": _s(learner.email) or _s(getattr(personal, "email", "")),
         "currentPostcode": _s(learner.current_postcode),
-        "postcodePriorToEnrolment": "",
-        "nationalInsuranceNumber": _s(learner.national_insurance_number),
-        "sex": _s(getattr(personal, "sex", "")) or _s(learner.legal_sex),
-        "ethnicity": "",
-        # Health / education / employment: prior attainment comes from the RPL
-        # review; the rest have no source yet.
-        "longTermDisability": None,
-        "priorAttainment": _s(getattr(rpl, "reported_attainment", "")),
-        "employmentStatus": "",
-        "employmentStartDate": "",
+        "postcodePriorToEnrolment": _s(getattr(details, "postcode_prior_to_enrolment", "")),
+        "nationalInsuranceNumber": _s(learner.national_insurance_number)
+        or _s(getattr(details, "national_insurance_number", "")),
+        "sex": _s(getattr(personal, "sex", "")) or _s(learner.legal_sex) or _s(getattr(details, "legal_sex", "")),
+        "ethnicity": _s(getattr(details, "ethnicity", "")),
+        # Health / education / employment: from the ILR Learner Details step.
+        # Prior attainment prefers the RPL review, where it is assessed.
+        "longTermDisability": getattr(details, "long_term_disability", None),
+        "priorAttainment": _s(getattr(rpl, "reported_attainment", ""))
+        or _s(getattr(details, "highest_qualification", "")),
+        "employmentStatus": _s(getattr(details, "employment_status", "")),
+        "employmentStartDate": _iso(getattr(details, "employment_start_date", None)),
         "dateStatusApplies": "",
-        "jobTitle": "",
+        "jobTitle": _s(getattr(details, "job_title", "")),
         "edrsErn": "",
-        "selfEmployed": None,
-        "fullTimeEducationPrior": None,
+        "selfEmployed": getattr(details, "self_employed", None),
+        "fullTimeEducationPrior": getattr(details, "full_time_education", None),
         "contractedHoursPerWeek": "",
         "isSmallEmployer": None,
     }

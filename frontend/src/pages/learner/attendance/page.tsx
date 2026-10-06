@@ -1,4 +1,3 @@
-import { coachFetch } from '@/lib/coachFetch';
 import { invalidateLearnerReads } from '@/api/learnerRead';
 import { useCallback, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
@@ -7,6 +6,7 @@ import { AppIcon } from '@/components/feature/AppIcon';
 import { roleNavMap } from '@/mocks/navigation';
 import { useMyLearner } from '@/hooks/useMyLearner';
 import { useLiveLearnerRead } from '@/hooks/useLiveLearnerRead';
+import { learningSchedule } from '@/api/learnerOverview';
 import { useRefreshOnReturn } from '@/hooks/useRefreshOnReturn';
 import { useLearnerWorkspaceAccess } from '@/hooks/useLearnerWorkspaceAccess';
 import { RowsSkeleton } from '@/components/feature/Skeletons';
@@ -26,31 +26,31 @@ import AttendanceModePanel from './components/AttendanceModePanel';
 import AttendanceLectureList, { type AttendanceFilter } from './components/AttendanceLectureList';
 import FeaturedLecture from './components/FeaturedLecture';
 import CatchupBooking from './components/CatchupBooking';
+import RecoveryPlansDialog from './components/RecoveryPlansDialog';
 import type { LearnerCalendarEvent } from '@/api/learnerCalendar';
 import { featuredLecture, useLectureClock } from './liveLecture';
+import { learnerHeaderPlan } from '@/pages/workspace/learner/learnerHeaderPlan';
+import { learningToday } from '../my-learning/subjectLearning';
+import { dateKey } from '../training-plan-timeline/model';
 import styles from './attendance.module.css';
+import { lectureCounts } from './lectureCounts';
 
 const learnerNav = roleNavMap.learner;
 
-export function lectureCounts(lectures: AttendanceLecture[]) {
-  const attended = lectures.filter(row => ['completed', 'late'].includes(row.status)).length;
-  const absent = lectures.filter(row => row.status === 'absent').length;
-  return { all: lectures.length, attended, absent,
-    covered: lectures.filter(row => row.catchupStatus === 'completed').length,
-    upcoming: lectures.filter(row => row.status === 'upcoming').length,
-    rate: attended + absent ? Math.round(100 * attended / (attended + absent)) : null };
-}
 
 export default function AttendancePage() {
   const learner = useMyLearner();
   const access = useLearnerWorkspaceAccess(learner.id);
   const navigate = useNavigate();
   const read = useLiveLearnerRead(learner.kind, learner.id, true, fetchAttendanceWorkspace, peekAttendanceWorkspace);
-  useRefreshOnReturn(read.refresh, { enabled: Boolean(learner.kind && learner.id) });
+  const schedule = useLiveLearnerRead(learner.kind, learner.id, true, learningSchedule.read, learningSchedule.peek);
+  useRefreshOnReturn(() => { read.refresh(); schedule.refresh(); }, { enabled: Boolean(learner.kind && learner.id) });
   const data = read.data;
-  const [moduleId, setModuleId] = useState('all');
+  const learnerKey = `${learner.kind}:${learner.id}`;
+  const [moduleSelection, setModuleSelection] = useState<{ learnerKey: string; moduleId: string } | null>(null);
   const [filter, setFilter] = useState<AttendanceFilter>('all');
   const [report, setReport] = useState<AttendanceLecture | 'choose' | null>(null);
+  const [showRecoveryPlans, setShowRecoveryPlans] = useState(false);
   const [showAllActivity, setShowAllActivity] = useState(false);
   const [modeBusy, setModeBusy] = useState(false);
   const [modeError, setModeError] = useState('');
@@ -70,7 +70,27 @@ export default function AttendancePage() {
   }), [data, confirmations, learner.kind, learner.id]);
   const now = useLectureClock(allLectures);
   const featured = featuredLecture(allLectures, now, data?.timeZone);
-  const selectedModule = data?.modules.some(module => module.id === moduleId) ? moduleId : 'all';
+  const today = learningToday();
+  const currentModule = useMemo(() => {
+    if (!schedule.data) return null;
+    const modules = schedule.data.modules.map(module => {
+      const storedEnd = dateKey(module.end_date);
+      const deliveryEnd = dateKey(module.effectiveEndDate);
+      return deliveryEnd > storedEnd ? { ...module, end_date: deliveryEnd } : module;
+    });
+    const plan = learnerHeaderPlan(modules, {}, today);
+    return plan.label.startsWith('Current') ? plan.modules[0] || null : null;
+  }, [schedule.data, today]);
+  const moduleOptions = useMemo(() => {
+    const options = data?.modules || [];
+    if (!currentModule || options.some(module => module.id === `native:${currentModule.id}`)) return options;
+    return [...options, { id: `native:${currentModule.id}`, title: currentModule.title }];
+  }, [data, currentModule]);
+  const requestedModule = moduleSelection?.learnerKey === learnerKey ? moduleSelection.moduleId : null;
+  const selectedModule = requestedModule === 'all' ? 'all'
+    : requestedModule && moduleOptions.some(module => module.id === requestedModule) ? requestedModule
+      : currentModule ? `native:${currentModule.id}` : 'all';
+  const setModuleId = (moduleId: string) => setModuleSelection({ learnerKey, moduleId });
   const lectures = useMemo(() => allLectures.filter(row => selectedModule === 'all' || row.moduleId === selectedModule), [allLectures, selectedModule]);
   const counts = useMemo(() => lectureCounts(lectures), [lectures]);
   const tabs: PageTabItem[] = [
@@ -92,6 +112,17 @@ export default function AttendancePage() {
     finally { setModeBusy(false); }
   };
   const openActivities = (row: AttendanceLecture) => {
+    if (row.status === 'upcoming') {
+      const activityHref = row.componentHref ?? row.activities.find(activity => activity.href)?.href;
+      if (activityHref) {
+        navigate(activityHref);
+        return;
+      }
+      const moduleRef = row.moduleId.replace(/^native:/, '');
+      const search = new URLSearchParams({ subject: `current:${moduleRef}` });
+      navigate(`/learner/my-learning/${learner.kind}/${learner.id}?${search}`);
+      return;
+    }
     const log = row.monthlyLog ?? {
       month: row.date.slice(0, 7),
       sourceRef: row.source === 'kbc-attendance' ? `att:${row.sessionId}` : `attendance:${row.sessionId.replace(/^teams:/, '')}`,
@@ -111,19 +142,27 @@ export default function AttendancePage() {
     } catch (error) { setAttendError(error instanceof Error ? error.message : 'Could not save attendance. Please try again.'); }
     finally { attendInFlight.current = false; setAttendBusy(false); }
   };
-  const saveCatchup = async () => {
-    if (!catchup?.absenceReport || !catchupBooking) return;
+  // Links a catch-up to the reported absence: an existing booking the learner picks,
+  // or (passed in) one just booked here, which is linked straight away.
+  const saveCatchup = async (booking: LearnerCalendarEvent | null = catchupBooking): Promise<boolean> => {
+    if (!catchup?.absenceReport || !booking) return false;
     setBookingBusy(true); setAttendError('');
     try {
-      const response = await coachFetch(`/learner_api/session-catchup/${learner.kind}/${learner.id}/`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ reportId: catchup.absenceReport.id, eventKey: catchupBooking.eventKey }),
+      // The attendance workspace carries its own CSRF token: learners cannot read /coach_api/csrf.
+      if (!data?.csrfToken) throw new Error('Please refresh the page before linking the catch-up.');
+      const response = await fetch(`/learner_api/session-catchup/${learner.kind}/${learner.id}/`, {
+        method: 'POST', credentials: 'include',
+        headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest', 'X-CSRFToken': data.csrfToken },
+        body: JSON.stringify({ reportId: catchup.absenceReport.id, eventKey: booking.eventKey }),
       });
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || 'Could not link catch-up.');
       invalidateLearnerReads(); setAttendNotice(result.message); setCatchup(null); read.refresh();
-    } catch (reason) { setAttendError(reason instanceof Error ? reason.message : 'Could not link catch-up.'); }
-    finally { setBookingBusy(false); }
+      return true;
+    } catch (reason) {
+      setAttendError(reason instanceof Error ? reason.message : 'Could not link catch-up.');
+      return false;
+    } finally { setBookingBusy(false); }
   };
   const selectCatchupBooking = useCallback((event: LearnerCalendarEvent | null) => {
     setCatchupBooking(event);
@@ -134,7 +173,10 @@ export default function AttendancePage() {
     userName={data?.summary?.learnerName || 'Learner'} userRole="Learner">
     <PageContainer className={styles.page}>
       <SectionHeader title="Attendance" description="Your scheduled lectures, attendance status and learning resources." icon="ri-calendar-check-line"
-        actions={data ? <RowAction label="Report absence" icon="ri-calendar-close-line" emphasis="primary" onClick={() => setReport('choose')} /> : undefined} />
+        actions={data ? <div className="flex flex-wrap items-center gap-2">
+          <RowAction label="My recovery plans" icon="ri-calendar-todo-line" onClick={() => setShowRecoveryPlans(true)} />
+          <RowAction label="Report absence" icon="ri-calendar-close-line" emphasis="primary" onClick={() => setReport('choose')} />
+        </div> : undefined} />
       {read.error && data && <div role="alert" className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm">
         Lectures could not refresh. Showing the last loaded record. <button onClick={read.refresh} className="font-semibold underline">Retry</button>
       </div>}
@@ -147,13 +189,13 @@ export default function AttendancePage() {
               <label className={styles.moduleField}><span>Select Module</span>
                 <select className={styles.moduleSelect} aria-label="Module" value={selectedModule} onChange={event => { setModuleId(event.target.value); setFilter('all'); }}>
                   <option value="all">All modules</option>
-                  {data.modules.map(module => <option key={module.id} value={module.id}>{module.title}</option>)}
+                  {moduleOptions.map(module => <option key={module.id} value={module.id}>{module.title}</option>)}
                 </select>
               </label>
               <div className={styles.moduleOverview}>
                 <h2>Module Overview</h2>
-                <p className={styles.selectedModule} title={data.modules.find(module => module.id === selectedModule)?.title || 'All modules'}>
-                  {data.modules.find(module => module.id === selectedModule)?.title || 'All modules'}
+                <p className={styles.selectedModule} title={moduleOptions.find(module => module.id === selectedModule)?.title || 'All modules'}>
+                  {moduleOptions.find(module => module.id === selectedModule)?.title || 'All modules'}
                 </p>
                 <p className={styles.rateDescription} title="Includes late attendance">{counts.rate == null ? 'No completed attendance records yet' : <>{counts.rate}% attendance<span className="sr-only"> · includes late attendance</span></>}</p>
               </div>
@@ -164,6 +206,7 @@ export default function AttendancePage() {
                 <Stat label="Covered Missed" value={counts.covered} total={counts.all} icon="ri-star-fill" tone="covered" />
               </div>
             </Panel>
+            {schedule.error && <p role="alert" className={styles.scheduleError}>Current module could not be identified. <button type="button" onClick={schedule.refresh}>Retry schedule</button></p>}
             <AttendanceLectureList key={selectedModule} lectures={lectures} moduleId={selectedModule} onModuleChange={setModuleId}
               filter={filter} onFilterChange={setFilter} tabs={tabs} onOpen={openActivities} onReport={setReport}
               onCatchup={row => { setCatchup(row); setCatchupBooking(null); }} />
@@ -196,24 +239,36 @@ export default function AttendancePage() {
     {report && <AbsenceReportDialog onClose={() => setReport(null)}>
       <AbsenceReportForm key={typeof report === 'string' ? report : report.id}
         preselectMatch={typeof report === 'string' ? null : { id: report.id, dateIso: report.date, title: report.title }}
-        onSubmitted={() => read.refresh()} onCancel={() => setReport(null)} showGuidance={false} showHistory={false} compact />
+        onSubmitted={() => read.refresh()} onCancel={() => setReport(null)} showGuidance={false} showHistory compact />
+    </AbsenceReportDialog>}
+    {showRecoveryPlans && <AbsenceReportDialog title="My recovery plans" onClose={() => setShowRecoveryPlans(false)}>
+      <RecoveryPlansDialog />
     </AbsenceReportDialog>}
     {catchup && <AbsenceReportDialog title="Book Catchup Session" onClose={() => { setCatchup(null); read.refresh(); }}>
-      <p className={styles.catchupLectureTitle}>{catchup.title} · {catchup.date}</p>
-      <CatchupBooking key={catchup.id} lecture={{ ...catchup, status: 'absent', dateIso: catchup.date,
-        sessionType: 'live_session', coach: catchup.coach || '' }} selectedKey={catchupBooking?.eventKey || ''}
-        onSelect={selectCatchupBooking} onBusyChange={setBookingBusy} standalone />
-      {attendError && <p role="alert">{attendError}</p>}
-      {catchup.absenceReport ? <button type="button" className={styles.catchupDone} disabled={bookingBusy || !catchupBooking} onClick={() => void saveCatchup()}>Link catch-up to this absence</button>
-        : <p className="mt-3 text-sm">Submit an absence report to link your catch-up booking. Attendance changes after approval and coach-confirmed completion.</p>}
-      <button type="button" className={styles.catchupDone} disabled={bookingBusy} onClick={() => { setCatchup(null); read.refresh(); }}>Close</button>
+      {catchup.absenceReport ? <>
+        <p className={styles.catchupLectureTitle}>{catchup.title} · {catchup.date}</p>
+        <CatchupBooking key={catchup.id} lecture={{ ...catchup, status: 'absent', dateIso: catchup.date,
+          sessionType: 'live_session', coach: catchup.coach || '' }} selectedKey={catchupBooking?.eventKey || ''}
+          onSelect={selectCatchupBooking} onBusyChange={setBookingBusy} standalone
+          onLinked={() => {
+            // Booked and linked by the server in one request.
+            invalidateLearnerReads(); setAttendNotice('Catch-up booked and linked to this absence.'); setCatchup(null); read.refresh();
+          }}
+          reportId={catchup.absenceReport.id} />
+        {attendError && <p role="alert">{attendError}</p>}
+        <button type="button" className={styles.catchupDone} disabled={bookingBusy || !catchupBooking} onClick={() => void saveCatchup()}>Link catch-up to this absence</button>
+        <button type="button" className={styles.catchupDone} disabled={bookingBusy} onClick={() => { setCatchup(null); read.refresh(); }}>Close</button>
+      </> : <AbsenceReportForm key={catchup.id} initialRecoveryMethod="catch-up"
+        preselectMatch={{ id: catchup.id, dateIso: catchup.date, title: catchup.title }}
+        onSubmitted={() => { setCatchup(null); read.refresh(); }}
+        onCancel={() => { setCatchup(null); read.refresh(); }} showGuidance={false} showHistory={false} compact />}
     </AbsenceReportDialog>}
   </WorkspaceShell>;
 }
 
 function Stat({ label, value, total, icon, tone }: { label: string; value: number; total: number; icon: string; tone: 'total' | 'attended' | 'absent' | 'covered' }) {
-  return <div className={styles.metric} data-tone={tone} style={{ '--metric-progress': `${total ? value / total * 100 : 0}%` } as CSSProperties}>
-    <span className={styles.metricRing} aria-hidden="true"><span><AppIcon className={icon} /></span></span>
+  return <div className={styles.metric} data-tone={tone}>
+    <span key={`${value}:${total}`} className={`${styles.metricRing} kbc-animated-conic-ring`} aria-hidden="true" style={{ '--kbc-ring-target': `${total ? value / total * 100 : 0}%` } as CSSProperties}><span><AppIcon className={icon} /></span></span>
     <div><p className={styles.value}>{value}</p><p className={styles.metricLabel}>{label}</p></div>
   </div>;
 }

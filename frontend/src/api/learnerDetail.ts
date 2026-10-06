@@ -55,6 +55,7 @@ export interface LearnerComponentEntry {
   componentId?: string | null;
   type?: string | null;                 // master component type, e.g. 'video', 'live_session'
   description?: string | null;
+  assignmentTopics?: import('@/lib/assignmentTopics').AssignmentTopic[];
   assignmentBrief?: string | null;      // assignment brief authored as plain text (Module Builder)
   assignmentBriefHtml?: string | null;  // assignment brief authored as rich text (Week Builder)
   videoUrl?: string | null;             // present on video components authored with a URL
@@ -62,6 +63,10 @@ export interface LearnerComponentEntry {
   contentHtml?: string | null;          // reading rich-text content
   hasReadingContent?: boolean;         // list response; HTML is loaded when opened
   fileName?: string | null;             // powerpoint / document file name
+  /** Every file attached to the component, in the author's order. Entry 0
+   *  is the same file `resourceUrl` points at; the rest are the extra
+   *  attachments a reading / deck / podcast can now carry. */
+  files?: import('@/lib/componentFiles').ComponentFile[];
   downloadAllowed?: boolean;            // powerpoint download flag
   reflectionPrompt?: string | null;     // authored reflection prompt / learner guidance
   reflectionRequired?: boolean;         // false completes the activity without the reflection flow
@@ -82,6 +87,8 @@ export interface LearnerComponentEntry {
   durationMinutes?: number | null;
   isQuiz?: boolean;
   quizMeta?: { quizId: number; questions: number | null; duration: number | null; timeUnit: string | null };
+  /** A passed quiz whose slot an author has since removed from the module. */
+  retired?: boolean;
 }
 export interface LearnerKsbItem {
   code: string;
@@ -155,6 +162,10 @@ export interface LearnerDetail {
   phone: string;
   programme: string;
   programmeStatus: string;
+  /** The enrolment wizard: 'Submitted' by the learner, 'Completed' by staff; older payloads omit it. */
+  onboardingStatus?: string;
+  /** A Delivery apprentice who has signed all four compliance documents may book their first session. */
+  firstSessionUnlocked?: boolean;
   learnerType?: LearnerKind;
   programmeStartDate?: string;
   /** The learner's own recorded start, from Created_users.Learner_start_date.
@@ -178,11 +189,15 @@ export interface LearnerDetail {
   group: string;
   employer: string;
   employerId?: number | null;
+  organization?: string;
   lineManager: string;
   isActive: boolean;
   modules: string[];
   week: LearnerWeekEntry[];
   components: LearnerComponentEntry[];
+  /** Passed quizzes whose slot was later removed; kept so the module still
+   *  shows the completed work. Never part of `components`. */
+  retiredQuizComponents?: LearnerComponentEntry[];
   ksbs: LearnerKsbItem[];
   progressKsbCodes?: string[];
   quizAttempts: LearnerQuizAttempt[];
@@ -213,8 +228,8 @@ export interface LearnerDetail {
 }
 
 export type LearnerSummary = Pick<LearnerDetail,
-  'id' | 'name' | 'email' | 'phone' | 'programme' | 'programmeStatus' |
-  'cohort' | 'group' | 'employer' | 'employerId' | 'learnerType' | 'isActive'
+  'id' | 'name' | 'email' | 'phone' | 'programme' | 'programmeStatus' | 'onboardingStatus' | 'firstSessionUnlocked' |
+  'cohort' | 'group' | 'employer' | 'employerId' | 'organization' | 'learnerType' | 'isActive'
 > & Pick<LearnerDetail, 'studentActivityAvailable' | 'programmeStartDate' | 'learnerStartDate' | 'learnerEndDate' | 'programmeEndDate' | 'accessGate' | 'learningAccess'>;
 
 /** Small identity response for pages that only need the learner heading. */
@@ -279,6 +294,8 @@ export interface LearnerVideoProgress {
   expectedOtjh?: number | null;
   kind: 'video';
   componentId: string;
+  /** Saved title of this completion, including historical videos no longer in the current plan. */
+  componentTitle?: string;
   attempt?: number;
   ksbs?: string[];
   feedback?: string;

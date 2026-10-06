@@ -202,7 +202,9 @@ export function DocumentRow({
             employer={item.parties?.includes('employer') !== false ? item.signed : undefined}
           />
         )}
-        {item.signed ? (
+        {item.kind === 'review' && item.migratedForm && item.signed && !item.completed ? (
+          <span className="text-[11px] text-foreground-500">Signed · awaiting final completion</span>
+        ) : item.signed ? (
           <>
             {/* Opens the saved document — the signed artefact, carrying every
                 party's signature. Not the sign dialog: this row is done, and

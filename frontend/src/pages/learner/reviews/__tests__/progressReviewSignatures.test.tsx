@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from 'react';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import ProgressReviewsPage from '../../progress-reviews/page';
@@ -12,11 +12,9 @@ vi.mock('@/components/feature/WorkspaceShell', () => ({ WorkspaceShell: ({ child
 vi.mock('@/api/learnerCalendar', async (importOriginal) => ({
   ...await importOriginal<typeof import('@/api/learnerCalendar')>(), fetchLearnerEventReviewInstance: vi.fn(), signLearnerProgressReview: vi.fn(),
 }));
-vi.mock('@/api/evidence', () => ({ fetchEvidence: vi.fn(async () => []) }));
-vi.mock('@/pages/coach/progress-reviews/page', () => ({ buildProgressReviewSlidesDeck: () => ({}) }));
 vi.mock('@/pages/coach/shared/CoachMeetingArtifactsPanel', () => ({ CoachMeetingArtifactsPanel: () => null }));
-vi.mock('@/pages/coach/progress-reviews/components/ProgressReviewSlidesModal', () => ({
-  default: ({ open, primaryAction }: { open: boolean; primaryAction?: ReactNode }) => open ? <section aria-label="Review slides">Slides content{primaryAction}</section> : null,
+vi.mock('@/pages/coach/progress-reviews/components/ProgressReviewPptxModal', () => ({
+  default: ({ open }: { open: boolean }) => open ? <section aria-label="Review slides">Slides content</section> : null,
 }));
 vi.mock('@/pages/users/wizard/steps/SignaturePad', () => ({
   SignaturePad: ({ onCommit }: { onCommit: (signature: string) => void }) => <button type="button" onClick={() => onCommit('data:image/png;base64,c2F2ZWQ=')}>Confirm signature</button>,
@@ -25,6 +23,7 @@ vi.mock('@/pages/users/wizard/steps/SignaturePad', () => ({
 let selectedEvent: LearnerCalendarEvent;
 let review: LearnerReviewDefinition;
 vi.mock('@/pages/learner/reviews/useReviewSessions', () => ({
+  isMigratedContinuationEvent: (event: LearnerCalendarEvent | null) => Boolean(event?.migratedForm && event.eventKey.startsWith('imported-review:')),
   useReviewSessions: () => {
     const [sessions, setEvents] = useState([selectedEvent]);
     return { myLearner: { kind: 'apprenticeship', id: '12' },
@@ -102,17 +101,14 @@ describe('progress review instance signatures', () => {
     expect(signLearnerProgressReview).not.toHaveBeenCalled();
   });
 
-  it('retains legacy slides acknowledgement and its visible save error', async () => {
+  it('keeps legacy review slides viewable without any sign flow attached to them', async () => {
     selectedEvent.reviewTemplateId = null;
     selectedEvent.reviewInstanceId = null;
-    vi.mocked(signLearnerProgressReview).mockRejectedValueOnce(new Error('Legacy signature unavailable'));
     mount();
-    fireEvent.click(screen.getByRole('button', { name: 'Show slides & sign' }));
-    fireEvent.click(await screen.findByRole('button', { name: 'Sign slides' }));
-    fireEvent.click(screen.getByRole('checkbox', { name: /I have reviewed the slides/ }));
-    fireEvent.click(screen.getByRole('button', { name: 'Confirm signature' }));
-    await waitFor(() => expect(screen.getByRole('dialog')).toHaveTextContent('Legacy signature unavailable'));
-    expect(screen.getByRole('dialog')).toBeVisible();
-    expect(fetchLearnerEventReviewInstance).not.toHaveBeenCalled();
+    expect(screen.queryByRole('button', { name: 'Show slides & sign' })).not.toBeInTheDocument();
+    fireEvent.click(await screen.findByRole('button', { name: 'Show slides' }));
+    expect(await screen.findByLabelText('Review slides')).toHaveTextContent('Slides content');
+    expect(screen.queryByRole('button', { name: 'Sign slides' })).not.toBeInTheDocument();
+    expect(signLearnerProgressReview).not.toHaveBeenCalled();
   });
 });

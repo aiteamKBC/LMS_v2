@@ -1,3 +1,4 @@
+import json
 from datetime import date, time
 from types import SimpleNamespace
 from unittest.mock import patch, Mock
@@ -37,6 +38,39 @@ class CoachAvailabilityTests(SimpleTestCase):
         slots = self.read(records=[record])
         self.assertEqual(slots, ['09:00', '11:00'])
 
+    def test_catchup_slots_use_the_uk_working_day_not_the_coachs_outlook_hours(self):
+        # Outlook says 09:00-12:00 Monday; a catch-up uses 09:00-17:00 UK and must end by 17:00.
+        schedule = {'scheduleId': 'coach@example.com', 'availabilityView': '0' * 96,
+                    'workingHours': {'daysOfWeek': ['monday'], 'startTime': '09:00:00',
+                                     'endTime': '12:00:00', 'timeZone': {'name': 'GMT Standard Time'}}}
+        manager = Mock()
+        manager.filter.return_value.exclude.return_value = ()
+        with patch('coach_api.views.microsoft_graph_request', return_value={'value': [schedule]}), \
+             patch('coach_api.models.CoachCalendarEvent.objects', manager), \
+             patch('learner_api.booking_calendar.booking_date_restriction', return_value=None):
+            slots = free_slots('coach@example.com', date(2030, 7, 1), -60, duration=30, uk_working_hours=True)
+        self.assertEqual((slots[0], slots[-1]), ('09:00', '16:30'))
+        self.assertNotIn('08:45', slots)
+        self.assertNotIn('16:45', slots)
+
+    def test_catchup_slots_start_at_least_an_hour_from_now(self):
+        from datetime import datetime as real_datetime, timezone as dt_timezone
+        schedule = {'scheduleId': 'coach@example.com', 'availabilityView': '0' * 96,
+                    'workingHours': {'daysOfWeek': ['monday'], 'startTime': '09:00:00',
+                                     'endTime': '12:00:00', 'timeZone': {'name': 'GMT Standard Time'}}}
+        manager = Mock()
+        manager.filter.return_value.exclude.return_value = ()
+
+        class FrozenDatetime(real_datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return real_datetime(2030, 7, 1, 9, 0, tzinfo=dt_timezone.utc)  # 10:00 UK summer time
+
+        with patch('coach_api.views.microsoft_graph_request', return_value={'value': [schedule]}),              patch('coach_api.models.CoachCalendarEvent.objects', manager),              patch('learner_api.booking_calendar.booking_date_restriction', return_value=None),              patch('learner_api.coach_availability.datetime', FrozenDatetime):
+            slots = free_slots('coach@example.com', date(2030, 7, 1), -60, duration=30, uk_working_hours=True)
+        self.assertEqual(slots[0], '11:15')
+        self.assertNotIn('11:00', slots)
+
     def test_unavailable_or_incomplete_calendar_is_not_treated_as_free(self):
         with self.assertRaises(AvailabilityUnavailable):
             self.read(error=True)
@@ -62,7 +96,7 @@ class CoachAvailabilityAccessTests(SimpleTestCase):
             response = route.func(RequestFactory().get(path, {'date': '2026-09-22', 'timezoneOffsetMinutes': '-60'}), **route.kwargs)
             self.assertEqual(response.status_code, 200)
             self.assertEqual(json.loads(response.content)['times'], ['10:00'])
-            slots.assert_called_once_with('coach@example.com', date(2026, 9, 22), -60)
+            slots.assert_called_once_with('coach@example.com', date(2026, 9, 22), -60, duration=60, uk_working_hours=False)
             slots.reset_mock()
             path = '/learner_api/calendar/commercial/102/coach-availability/'
             route = resolve(path)
@@ -146,7 +180,7 @@ class FirstSessionCollegeDayTests(SimpleTestCase):
         # who has no coach yet, which is every learner at this point, would be
         # told nobody is assigned at all.
         self.call(dict(self.BASE, collegeDay='1'))
-        self.last_free.assert_called_once_with('owner@example.com', date(2026, 9, 22), -60)
+        self.last_free.assert_called_once_with('owner@example.com', date(2026, 9, 22), -60, duration=60, uk_working_hours=False)
 
     def test_a_learner_with_no_case_owner_is_told_who_to_ask(self):
         body = self.call(dict(self.BASE, collegeDay='1'), owner=('', ''), expect_status=400)
@@ -200,3 +234,26 @@ class FirstSessionCollegeDayTests(SimpleTestCase):
             response = route.func(
                 RequestFactory().get(path, dict(self.BASE, collegeDay='1')), **route.kwargs)
         self.assertEqual(response['Cache-Control'], 'private, no-store')
+
+
+class CatchupAvailabilityTests(SimpleTestCase):
+    def test_catchup_slots_use_its_own_length_and_uk_time(self):
+        from .coach_availability import catchup_slot_is_free
+        with patch('learner_api.coach_availability.free_slots', return_value=['10:00', '10:15']) as slots:
+            self.assertTrue(catchup_slot_is_free('coach@example.com', date(2026, 10, 15), time(10, 15), 30))
+            self.assertFalse(catchup_slot_is_free('coach@example.com', date(2026, 10, 15), time(19, 0), 30))
+        # UK summer time: JavaScript-style offset -60; winter: 0.
+        self.assertEqual(slots.call_args.args[2], -60)
+        self.assertEqual(slots.call_args.kwargs['duration'], 30)
+        from .coach_availability import uk_offset_minutes
+        self.assertEqual(uk_offset_minutes(date(2026, 12, 1)), 0)
+
+    def test_a_busy_or_after_hours_catchup_is_refused_by_the_server(self):
+        from . import calendar as module
+        with patch('learner_api.coach_availability.catchup_slot_is_free', return_value=False):
+            response = module._catchup_time_error('coach@example.com', date(2026, 10, 15), time(21, 0), 30)
+        self.assertEqual(response.status_code, 409)
+        self.assertIn('not available', json.loads(response.content)['error'])
+        from .coach_availability import AvailabilityUnavailable
+        with patch('learner_api.coach_availability.catchup_slot_is_free', side_effect=AvailabilityUnavailable('Could not check the coach calendar.')):
+            self.assertEqual(module._catchup_time_error('coach@example.com', date(2026, 10, 15), time(10, 0), 30).status_code, 503)

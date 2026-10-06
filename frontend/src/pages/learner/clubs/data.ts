@@ -731,6 +731,8 @@ export interface CalendarEvent {
   durationMinutes?: number;
   /** Backend booking lifecycle status; kept separate from the display badge. */
   bookingStatus?: string;
+  meetingOutcome?: 'ended' | 'completed' | null;
+  watchedRecording?: boolean;
   /** Full imported Aptem review record, when this event came from review history. */
   importedReview?: ImportedReview;
   /** Session type used to turn an unscheduled coaching-cycle item into a real booking. */
@@ -746,6 +748,8 @@ export interface CalendarEvent {
   /** Imported review identity carried through the same Calendar booking form. */
   bookingReviewId?: string;
   assignmentMonth?: string;
+  /** Catch-up only: starts too soon for the learner to reschedule or cancel it. */
+  changeClosed?: boolean;
 }
 
 export interface ClubResource {

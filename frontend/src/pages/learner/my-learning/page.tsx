@@ -29,7 +29,7 @@ import type { LearnerKind } from '@/api/learnerDetail';
 import { LearningHero } from './LearningCatalogue';
 import { useLiveLearnerRead } from '@/hooks/useLiveLearnerRead';
 import { useAuth } from '@/hooks/useAuth';
-import { learningSchedule } from '@/api/learnerOverview';
+import { learningSchedule, overviewSchedule } from '@/api/learnerOverview';
 import learningStyles from './SubjectWorkspace.module.css';
 
 const learnerNav = roleNavMap.learner;
@@ -140,7 +140,7 @@ export default function MyLearningPage({ view = 'catalogue' }: { view?: 'catalog
           ) : (
             <>
               {view === 'catalogue' && <LearningHero />}
-              {view === 'catalogue' && <PageTabs items={tabs} value={tab} onChange={(v) => setTab(v as TabKey)} label="My Learning section" />}
+              {view === 'catalogue' && <PageTabs className={learningStyles.catalogueTabs} items={tabs} value={tab} onChange={(v) => setTab(v as TabKey)} label="My Learning section" />}
 
               {tab === 'modules' ? (
                 <ModulesTab key={`${kind}:${id}`} real={real} loading={loading} loadError={loadError} kind={kind} id={id} showReadOnlyNotice={showReadOnlyNotice} view={view} onRefresh={refresh} />
@@ -176,10 +176,12 @@ export function ModulesTab({ real, loading, loadError, kind, id, showReadOnlyNot
   const primaryReady = !!real && !loading && (!activityAvailable || !!activityData);
   const metrics = useLearnerMetrics(kind, id, primaryReady);
   const schedule = useLiveLearnerRead(kind, id, primaryReady, learningSchedule.read, learningSchedule.peek);
+  const upcomingSchedule = useLiveLearnerRead(kind, id, primaryReady && view === 'catalogue', overviewSchedule.read, overviewSchedule.peek);
 
   return (
     <div className="space-y-3">
       {schedule.error && view === 'map' && <p role="alert" className="text-sm text-amber-800">The current module schedule could not be loaded. Choose a module below. <button onClick={schedule.refresh} className="font-semibold underline">Retry schedule</button></p>}
+      {upcomingSchedule.error && view === 'catalogue' && <p role="alert" className="text-sm text-amber-800">Upcoming sessions could not be loaded. <button onClick={upcomingSchedule.refresh} className="font-semibold underline">Retry sessions</button></p>}
       {metrics.error && <p role="alert" className="text-sm text-amber-800">{metrics.error} <button onClick={metrics.refresh} className="font-semibold underline">Retry programme totals</button></p>}
       {showReadOnlyNotice && (
         <div className="flex items-start gap-2.5 rounded-xl border border-primary-200/70 bg-primary-50/60 px-3.5 py-2.5">
@@ -192,7 +194,7 @@ export function ModulesTab({ real, loading, loadError, kind, id, showReadOnlyNot
       )}
       <SubjectCardsPanel
         metrics={metrics.data}
-        view={view} schedule={schedule.data} scheduleLoading={schedule.loading}
+        view={view} schedule={schedule.data} scheduleLoading={schedule.loading} upcomingSessions={upcomingSchedule.data?.sessions}
         kind={kind} learnerId={id} real={real}
         data={activityData ?? null}
         loading={loading || (activityAvailable && activity.loading)}

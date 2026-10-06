@@ -48,3 +48,76 @@ it('disables bank holidays and substitute days in the month', async () => {
 it('does not count negative or non-finite hours', () => {
   expect(assignmentTimeHours([{ topic: '', hours: '-1', date: '' }, { topic: '', hours: 'Infinity', date: '' }])).toBe(0);
 });
+
+it('adjusts hours by halves with buttons and keyboard while allowing other typed values', async () => {
+  function Form() {
+    const [entries, setEntries] = useState([{ topic: 'Research', hours: '', date: '' }]);
+    return <AssignmentTimeEntries kind="commercial" learnerId="1" month="2026-09" entries={entries} onChange={setEntries} disabled={false} />;
+  }
+  render(<Form />);
+  const input = screen.getByLabelText('Hours 1');
+  const plus = screen.getByRole('button', { name: 'Increase Hours 1 by half an hour' });
+  fireEvent.click(plus);
+  expect(input).toHaveValue(0.5);
+  fireEvent.click(plus);
+  expect(input).toHaveValue(1);
+  fireEvent.keyDown(input, { key: 'ArrowUp' });
+  expect(input).toHaveValue(1.5);
+  fireEvent.keyDown(input, { key: 'ArrowDown' });
+  expect(input).toHaveValue(1);
+  fireEvent.change(input, { target: { value: '2.25' } });
+  expect(input).toBeValid();
+  expect(screen.getByText('Total learning time: 2.25 hours')).toBeVisible();
+  fireEvent.change(input, { target: { value: '8' } });
+  expect(plus).toBeDisabled();
+  fireEvent.change(input, { target: { value: '8.5' } });
+  expect(input).toBeInvalid();
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Date 1' })).toBeEnabled());
+});
+
+it('shares one daily allowance across rows and restores it when dates or rows change', async () => {
+  function Form() {
+    const [entries, setEntries] = useState([
+      { topic: 'Research', hours: '5', date: '2026-09-01' },
+      { topic: 'Writing', hours: '3', date: '2026-09-01' },
+    ]);
+    return <AssignmentTimeEntries kind="commercial" learnerId="1" month="2026-09" entries={entries} onChange={setEntries} disabled={false} />;
+  }
+  render(<Form />);
+  const input = screen.getByLabelText('Hours 2');
+  const plus = screen.getByRole('button', { name: 'Increase Hours 2 by half an hour' });
+  expect(input).toBeValid();
+  expect(plus).toBeDisabled();
+  fireEvent.change(input, { target: { value: '3.25' } });
+  expect(input).toHaveValue(3.25);
+  expect(input).toBeInvalid();
+  expect(screen.getByRole('alert')).toHaveTextContent('2026-09-01: 8.25 hours entered');
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Date 2' })).toBeEnabled());
+  fireEvent.click(screen.getByRole('button', { name: 'Date 2' }));
+  fireEvent.click(screen.getByRole('button', { name: '2026-09-02' }));
+  expect(input).toBeValid();
+  expect(plus).toBeEnabled();
+  expect(screen.queryByRole('alert')).toBeNull();
+  fireEvent.click(screen.getByRole('button', { name: 'Date 2' }));
+  fireEvent.click(screen.getByRole('button', { name: '2026-09-01' }));
+  expect(input).toBeInvalid();
+  fireEvent.click(screen.getByRole('button', { name: 'Remove topic 1' }));
+  expect(screen.getByLabelText('Hours 1')).toHaveValue(3.25);
+  expect(screen.getByLabelText('Hours 1')).toBeValid();
+  expect(screen.queryByRole('alert')).toBeNull();
+});
+
+it('allows eight hours on each of two dates and preserves the shared extra-activity option', async () => {
+  const entries = [{ topic: 'Research', hours: '8', date: '2026-09-01' }, { topic: 'Writing', hours: '8', date: '2026-09-02' }];
+  const props = { kind: 'commercial' as const, learnerId: '1', month: '2026-09', onChange: vi.fn(), disabled: false };
+  const view = render(<AssignmentTimeEntries {...props} entries={entries} />);
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Date 1' })).toBeEnabled());
+  expect(screen.queryByRole('alert')).toBeNull();
+  expect(screen.getByLabelText('Hours 1')).toBeValid();
+  expect(screen.getByLabelText('Hours 2')).toBeValid();
+  expect(screen.getByText('Total learning time: 16 hours')).toBeVisible();
+  view.rerender(<AssignmentTimeEntries {...props} entries={[entries[0], { ...entries[1], date: '2026-09-01' }]} dailyLimit={false} />);
+  expect(screen.queryByRole('alert')).toBeNull();
+  expect(screen.getByLabelText('Hours 2')).toBeValid();
+  expect(screen.queryByText(/Hours entered on different dates/)).toBeNull();
+});

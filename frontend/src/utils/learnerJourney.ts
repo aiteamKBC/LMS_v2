@@ -12,6 +12,7 @@ export interface JourneyComponent {
   componentId?: string | null;
   type?: string | null;
   description?: string | null;
+  assignmentTopics?: import('@/lib/assignmentTopics').AssignmentTopic[];
   assignmentBrief?: string | null;
   assignmentBriefHtml?: string | null;
   videoUrl?: string | null;
@@ -19,6 +20,8 @@ export interface JourneyComponent {
   contentHtml?: string | null;
   hasReadingContent?: boolean;
   fileName?: string | null;
+  /** Ordered attachments; entry 0 is `resourceUrl`. */
+  files?: import('@/lib/componentFiles').ComponentFile[];
   downloadAllowed?: boolean;
   reflectionPrompt?: string | null;
   reflectionRequired?: boolean;
@@ -37,6 +40,20 @@ export interface JourneyComponent {
   isQuiz?: boolean;
   quizMeta?: { quizId: number; questions: number | null; duration: number | null; timeUnit: string | null };
   quizAttempts?: LearnerQuizAttempt[];
+  retired?: boolean;
+}
+
+/** The attempts that belong to a quiz component: those on the quiz it links
+ * now, plus earlier ones the server traced to this same component after an
+ * author re-pointed it at a different quiz. Quiz ids compare as strings
+ * because progress rows store quiz_ref as text. */
+export function quizAttemptsFor(
+  component: Pick<JourneyComponent, 'componentId' | 'quizMeta'>,
+  attempts: LearnerQuizAttempt[] | undefined,
+): LearnerQuizAttempt[] {
+  const quizId = component.quizMeta?.quizId;
+  return (attempts || []).filter((attempt) => (quizId != null && String(attempt.quizId) === String(quizId))
+    || (!!component.componentId && attempt.componentId === component.componentId));
 }
 
 /* ═══════════════════════════════════════════════════════
@@ -51,7 +68,7 @@ export type ContentKind = 'video' | 'audio' | 'reading' | 'slides' | 'reflection
 export function componentContentKind(type: string | null | undefined): ContentKind {
   const t = (type || '').toLowerCase();
   if (t === 'video') return 'video';
-  if (t === 'podcast') return 'audio';
+  if (t === 'podcast' || t === 'audio') return 'audio';
   if (t === 'reading') return 'reading';
   if (t === 'powerpoint') return 'slides';
   if (t === 'reflection') return 'reflection';
@@ -363,7 +380,7 @@ export function hasComponentContent(c: JourneyComponent): boolean {
   // Builder rows can retain a default reflection question even when reflection
   // is disabled. That follow-up question is not the assignment's task/brief.
   if (type === 'assignment') {
-    return hasText(c.assignmentBrief) || hasText(c.assignmentBriefHtml)
+    return Boolean(c.assignmentTopics?.some(topic => topic.question.trim() || topic.resources.length)) || hasText(c.assignmentBrief) || hasText(c.assignmentBriefHtml)
       || hasUrl(c.resourceUrl) || hasText(c.contentHtml)
       || c.hasReadingContent === true || hasDescription;
   }
@@ -391,6 +408,8 @@ export interface JourneyWeek {
   components: JourneyComponent[];
 }
 export interface JourneyModule {
+  /** Canonical My Learning subject identity, when provided by that source. */
+  id?: string;
   module: string;
   weeks: JourneyWeek[];
 }
@@ -624,9 +643,9 @@ export function buildLearnerJourney(real: LearnerDetail | null): JourneyModule[]
             ksbWeightTotal: c.ksbWeightTotal, ksbMappingCount: c.ksbMappingCount,
             ksbMappings: c.ksbMappings,
             componentId: c.componentId, type: c.type, description: c.description,
-            assignmentBrief: c.assignmentBrief, assignmentBriefHtml: c.assignmentBriefHtml,
+            assignmentBrief: c.assignmentBrief, assignmentBriefHtml: c.assignmentBriefHtml, assignmentTopics: c.assignmentTopics,
             videoUrl: c.videoUrl, durationMinutes: c.durationMinutes,
-            audioUrl: c.audioUrl, contentHtml: c.contentHtml, fileName: c.fileName,
+            audioUrl: c.audioUrl, contentHtml: c.contentHtml, fileName: c.fileName, files: c.files,
             hasReadingContent: c.hasReadingContent,
             downloadAllowed: c.downloadAllowed, reflectionPrompt: c.reflectionPrompt,
             reflectionRequired: c.reflectionRequired,
@@ -642,7 +661,7 @@ export function buildLearnerJourney(real: LearnerDetail | null): JourneyModule[]
               // curriculum API exposes quiz ids as numbers. Compare their
               // canonical string values so saved attempts still decorate the
               // learner-facing quiz card with its Passed/Attempted status.
-              ? real.quizAttempts.filter((a) => String(a.quizId) === String(c.quizMeta!.quizId))
+              ? quizAttemptsFor(c, real.quizAttempts)
               : undefined,
           }));
         return {

@@ -146,6 +146,11 @@ ANY = None
 #: ``/django_admin/`` and ``/media/`` are likewise absent: the admin has its own
 #: login, and media is served by the reverse proxy rather than routed here.
 RULES = (
+    # Browser performance samples are accepted only for server-allowlisted
+    # accounts by system_audit.performance. The transport must nevertheless be
+    # reachable by every signed-in role so Learner, Employer and Tutor pages can
+    # be measured without opening the rest of curriculum_api to those roles.
+    ("/curriculum_api/performance/record/", ANY),
     # Learner pages subscribe to curriculum changes too. This endpoint returns
     # only the shared counter for learners, never staff change paths.
     ("/curriculum_api/curriculum/cache-epoch/", LEARNER_AND_STAFF),

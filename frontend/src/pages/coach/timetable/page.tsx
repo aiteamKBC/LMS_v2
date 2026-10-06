@@ -1,10 +1,10 @@
-import { useState, useMemo, useCallback, useEffect } from 'react';
+import { useState, useMemo, useCallback, useEffect, useRef } from 'react';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import Swal from 'sweetalert2';
 import 'sweetalert2/dist/sweetalert2.min.css';
-import type { ReactNode } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { CalendarEventDialog } from '@/components/feature/CalendarEventDialog';
+import { CalendarFilterScrollRow } from '@/components/feature/CalendarFilterScrollRow';
 import { PageContainer } from '@/components/ui/PageContainer';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Panel } from '@/components/ui/Panel';
@@ -14,6 +14,7 @@ import { useCoachIdentity } from '@/hooks/useCoachIdentity';
 import { coachFetch } from '@/lib/coachFetch';
 import { initialsFor } from '@/lib/format';
 import { roleNavMap } from '@/mocks/navigation';
+import { coachSessionKey, readCoachSessionCache, writeCoachSessionCache } from '@/features/coach/shared/coachSessionCache';
 import ProgressReviewCompletionModal from '@/pages/coach/shared/ProgressReviewCompletionModal';
 import { reviewInstancePath, reviewInstanceRouteState } from '@/pages/coach/shared/reviewInstanceNavigation';
 import { createLearnerReviewAddition, fetchLearnerAdditionReviewTemplates, markReviewInstanceInProgressManually, openReviewInstanceForEvent } from '@/api/reviewInstances';
@@ -98,6 +99,8 @@ interface TimetableEvent {
   endHour: number;
   timeLabel?: string;
   isTimeEstimated?: boolean;
+  /** Server-derived once the booked time has passed: learner attended (completed) or not (ended). */
+  meetingOutcome?: 'ended' | 'completed' | null;
   learner?: string;
   email?: string;
   employer?: string;
@@ -109,6 +112,7 @@ interface TimetableEvent {
   priority: 'normal' | 'urgent' | 'high';
   status: 'completed' | 'scheduled' | 'in-progress' | 'awaiting-signature' | 'confirmed' | 'pending' | 'cancelled' | 'not-scheduled';
   source?: 'mcr' | 'progress-review' | string;
+  reviewSource?: 'aptem' | 'curriculum' | string;
   sourceStatus?: string;
   sequence?: number;
   rawPlanned?: string;
@@ -467,6 +471,20 @@ function displayStatusLabel(status: TimetableEvent['status'], isOverdue: boolean
   return statusLabel(status);
 }
 
+// An elapsed meeting shows Ended, or Completed once Teams shows the learner attended.
+// Display only: the stored status still drives actions and the review lifecycle.
+function meetingStatusKey(event: TimetableEvent) {
+  if (event.meetingOutcome === 'completed') return 'completed';
+  if (event.meetingOutcome === 'ended') return 'missed-overdue';
+  return getCalendarStatusKey(event.status, isOverdueMetricEvent(event), isDueSoonMetricEvent(event));
+}
+
+function eventStatusLabel(event: TimetableEvent) {
+  if (event.meetingOutcome === 'completed') return 'Completed';
+  if (event.meetingOutcome === 'ended') return 'Ended';
+  return displayStatusLabel(event.status, isOverdueMetricEvent(event), isDueSoonMetricEvent(event));
+}
+
 function buildSummaryMetrics(events: TimetableEvent[], referenceDate = new Date()): TimetableSummaryMetrics {
   const totalEvents = events.length;
   const completedEvents = events.filter(isCompletedMetricEvent).length;
@@ -562,12 +580,12 @@ type StatusFilter = 'all' | 'overdue' | 'due-soon' | 'needs-schedule' | 'schedul
 //
 // Unchanged: these are SCHEDULING buckets, not filters. The schedule modal,
 // its copy and its icons are keyed on the routing `source`.
-type SchedulableSource = 'mcr' | 'progress-review' | 'review' | 'catch-up' | 'student-support';
+type SchedulableSource = 'mcr' | 'progress-review' | 'review' | 'catch-up' | 'student-support' | 'lms-introduction';
 const STATUS_FILTER_ORDER: StatusFilter[] = ['all', 'overdue', 'due-soon', 'needs-schedule', 'scheduled', 'in-progress', 'awaiting-signature', 'completed'];
 
 const STATUS_FILTER_LABELS: Record<StatusFilter, string> = {
   all: 'All',
-  overdue: 'Overdue',
+  overdue: 'Missed',
   'due-soon': 'Due Soon',
   'needs-schedule': 'Not Scheduled',
   scheduled: 'Scheduled',
@@ -577,7 +595,7 @@ const STATUS_FILTER_LABELS: Record<StatusFilter, string> = {
   cancelled: 'Cancelled',
 };
 
-const SCHEDULABLE_SOURCE_ORDER: SchedulableSource[] = ['mcr', 'progress-review', 'review', 'catch-up', 'student-support'];
+const SCHEDULABLE_SOURCE_ORDER: SchedulableSource[] = ['mcr', 'progress-review', 'review', 'catch-up', 'student-support', 'lms-introduction'];
 const SCHEDULABLE_SOURCE_META: Record<SchedulableSource, { description: string; icon: string; accent: string; surface: string }> = {
   mcr: {
     description: 'Monthly coaching reviews waiting for a slot.',
@@ -598,7 +616,7 @@ const SCHEDULABLE_SOURCE_META: Record<SchedulableSource, { description: string; 
     surface: 'from-secondary-500/10 via-secondary-400/5 to-transparent',
   },
   'catch-up': {
-    description: 'Learner catch-up bookings waiting for placement.',
+    description: 'Catch-up sessions available for scheduling or rescheduling.',
     icon: 'ri-timer-line',
     accent: 'text-rose-700',
     surface: 'from-rose-500/10 via-rose-400/5 to-transparent',
@@ -609,10 +627,21 @@ const SCHEDULABLE_SOURCE_META: Record<SchedulableSource, { description: string; 
     accent: 'text-blue-700',
     surface: 'from-blue-500/10 via-blue-400/5 to-transparent',
   },
+  'lms-introduction': {
+    description: 'New learners asking for a one-to-one LMS introduction.',
+    icon: 'ri-user-voice-line',
+    accent: 'text-emerald-700',
+    surface: 'from-emerald-500/10 via-emerald-400/5 to-transparent',
+  },
 };
 
 function isSchedulableSource(value?: string): value is SchedulableSource {
-  return value === 'mcr' || value === 'progress-review' || value === 'review' || value === 'catch-up' || value === 'student-support';
+  return value === 'mcr' || value === 'progress-review' || value === 'review' || value === 'catch-up' || value === 'student-support' || value === 'lms-introduction';
+}
+
+// Learner-made requests the coach approves by placing them (status not-scheduled).
+function isApprovalRequestSource(source?: string) {
+  return source === 'student-support' || source === 'lms-introduction';
 }
 
 function parseScheduleNavigationIntent(value: unknown): ScheduleNavigationIntent | null {
@@ -729,6 +758,7 @@ function scheduleLearnerOptionLabel(event: TimetableEvent) {
 }
 
 function isSelectableScheduleEvent(event: TimetableEvent) {
+  if (event.reviewSource === 'aptem') return false;
   if (!isSchedulableSource(event.source)) return false;
   if (event.source === 'catch-up') {
     return !['completed', 'confirmed', 'in-progress'].includes(event.status);
@@ -737,6 +767,7 @@ function isSelectableScheduleEvent(event: TimetableEvent) {
 }
 
 function canEditScheduleEvent(event: TimetableEvent | null | undefined): event is TimetableEvent {
+  if (event?.reviewSource === 'aptem') return false;
   if (!event || !isSchedulableSource(event.source)) return false;
   return !['completed', 'confirmed', 'in-progress', 'awaiting-signature'].includes(event.status);
 }
@@ -745,7 +776,7 @@ function scheduleActionLabel(event: TimetableEvent | null | undefined) {
   if (!event) return 'Schedule';
   if (event.status === 'cancelled') return 'Schedule Again';
   if (event.status === 'scheduled') return 'Reschedule';
-  if (event.source === 'catch-up' || event.source === 'student-support') return 'Approve & Schedule';
+  if (isApprovalRequestSource(event.source)) return 'Approve & Schedule';
   return 'Schedule';
 }
 
@@ -825,9 +856,11 @@ export default function CoachTimetablePage() {
   const [searchTerm, setSearchTerm] = useState('');
   const [calendarColors, setCalendarColors] = useState<CalendarColorPreferences>(() => loadCalendarColors(calendarColorOwner));
   const [colorPreferencesOpen, setColorPreferencesOpen] = useState(false);
-  const [events, setEvents] = useState<TimetableEvent[]>([]);
-  const [schedulerCatchUpEvents, setSchedulerCatchUpEvents] = useState<TimetableEvent[]>([]);
-  const [summary, setSummary] = useState<TimetableSummary>(EMPTY_SUMMARY);
+  const cacheKey = coachSessionKey('timetable', coach.email);
+  const initialCache = readCoachSessionCache<{ events: TimetableEvent[]; schedulerCatchUpEvents: TimetableEvent[]; summary: TimetableSummary }>(cacheKey);
+  const [events, setEvents] = useState<TimetableEvent[]>(() => initialCache?.events || []);
+  const [schedulerCatchUpEvents, setSchedulerCatchUpEvents] = useState<TimetableEvent[]>(() => initialCache?.schedulerCatchUpEvents || []);
+  const [summary, setSummary] = useState<TimetableSummary>(() => initialCache?.summary || EMPTY_SUMMARY);
   const [createSessionOpen, setCreateSessionOpen] = useState(false);
   const [createSessionType, setCreateSessionType] = useState<CoachBookableSessionType>('catch-up');
   const [createSessionLearnerId, setCreateSessionLearnerId] = useState('');
@@ -848,7 +881,7 @@ export default function CoachTimetablePage() {
   const [createSessionReviewTargetDate, setCreateSessionReviewTargetDate] = useState('');
   const [createSessionReviewReasonCode, setCreateSessionReviewReasonCode] = useState<LearnerAdditionReasonCode | ''>('');
   const [createSessionReviewReason, setCreateSessionReviewReason] = useState('');
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(() => !initialCache);
   const [error, setError] = useState<string | null>(null);
   const [eventActionBusy, setEventActionBusy] = useState(false);
   const [eventActionError, setEventActionError] = useState<string | null>(null);
@@ -937,7 +970,13 @@ export default function CoachTimetablePage() {
   const loadTimetable = useCallback(async (staleGuard: { cancelled: boolean }, signal: AbortSignal, onTimeout: () => boolean) => {
     if (!coach.isInitialized) return;
 
-    setLoading(true);
+    const cached = readCoachSessionCache<{ events: TimetableEvent[]; schedulerCatchUpEvents: TimetableEvent[]; summary: TimetableSummary }>(cacheKey);
+    if (cached) {
+      setEvents(cached.events);
+      setSchedulerCatchUpEvents(cached.schedulerCatchUpEvents);
+      setSummary(cached.summary);
+      setLoading(false);
+    } else setLoading(true);
     setError(null);
     if (!coach.email) {
       setError('Coach access is required to load timetable data.');
@@ -956,9 +995,11 @@ export default function CoachTimetablePage() {
 
       const nextEvents = data.events || [];
       const nextSummary = data.summary ? normalizeSummary(data.summary, nextEvents) : buildFallbackSummary(nextEvents);
+      const nextSchedulerCatchUpEvents = data.schedulerQueues?.catchUp || [];
 
+      writeCoachSessionCache(cacheKey, { events: nextEvents, schedulerCatchUpEvents: nextSchedulerCatchUpEvents, summary: nextSummary });
       setEvents(nextEvents);
-      setSchedulerCatchUpEvents(data.schedulerQueues?.catchUp || []);
+      setSchedulerCatchUpEvents(nextSchedulerCatchUpEvents);
       setSummary(nextSummary);
       setSelectedEvent(currentSelectedEvent => {
         if (!currentSelectedEvent) return null;
@@ -968,6 +1009,7 @@ export default function CoachTimetablePage() {
       if (staleGuard.cancelled) return;
       const timedOut = onTimeout();
       if (err instanceof DOMException && err.name === 'AbortError' && !timedOut) return;
+      if (cached) return;
 
       setError(timedOut ? TIMETABLE_LOAD_TIMEOUT_MESSAGE : err instanceof Error ? err.message : 'Unable to load timetable data');
       setEvents([]);
@@ -977,7 +1019,7 @@ export default function CoachTimetablePage() {
     } finally {
       if (!staleGuard.cancelled) setLoading(false);
     }
-  }, [coach.email, coach.isInitialized]);
+  }, [cacheKey, coach.email, coach.isInitialized]);
 
   useEffect(() => {
     const staleGuard = { cancelled: false };
@@ -1277,8 +1319,10 @@ export default function CoachTimetablePage() {
   }, [calendarColors.meetingTypes, calendarEvents]);
 
   const statusFilterColor = useCallback((status: StatusFilter) => {
-    const key = status === 'overdue'
-      ? 'missed-overdue'
+    const key = status === 'all'
+      ? 'all'
+      : status === 'overdue'
+        ? 'missed-overdue'
       : status === 'due-soon'
         ? 'pending-due-soon'
         : status === 'needs-schedule'
@@ -1292,7 +1336,7 @@ export default function CoachTimetablePage() {
                 : status === 'completed'
                   ? 'completed'
                   : null;
-    return key ? calendarColors.statuses[key] : { accent: '#6B7280', background: '#F3F4F6' };
+    return key ? calendarColors.statuses[key] : calendarColors.statuses['not-scheduled'];
   }, [calendarColors.statuses]);
 
   const sourceFilteredVisibleRangeEvents = useMemo(() => {
@@ -1739,6 +1783,12 @@ export default function CoachTimetablePage() {
     if (!event.eventKey) return;
     setEventActionError(null);
     setEventActionNotice(null);
+    if (event.reviewSource === 'aptem' && event.eventKey.startsWith('imported-review:')) {
+      navigate(reviewInstancePath(event.eventKey), {
+        state: reviewInstanceRouteState(event, `${location.pathname}${location.search}`),
+      });
+      return;
+    }
     setReviewFormBusy(true);
     try {
       const { instanceId } = await openReviewInstanceForEvent(event.eventKey);
@@ -1888,12 +1938,16 @@ export default function CoachTimetablePage() {
   const selectedEventDetailsPath = selectedEvent ? eventDetailsPath(selectedEvent) : null;
   const selectedScheduleEventNotes = sanitizeEventNotes(selectedScheduleEvent?.notes);
   const scheduleModalFeedback = sanitizeCalendarSyncMessage(scheduleModalError || scheduleModalNotice);
+  const scheduleNeedsApproval = isApprovalRequestSource(selectedScheduleEvent?.source)
+    && selectedScheduleEvent.status === 'not-scheduled';
   const scheduleModalTitle = scheduleModalCompact
     ? scheduleActionLabel(selectedScheduleEvent)
-    : 'Approve and place session';
+    : scheduleNeedsApproval ? 'Approve and place session' : 'Schedule session';
   const scheduleModalDescription = scheduleModalCompact
     ? 'Choose the new calendar slot for this event.'
-    : 'Choose source, select item, then approve the final calendar slot.';
+    : scheduleNeedsApproval
+      ? 'Choose source, select item, then approve the final calendar slot.'
+      : 'Choose the calendar slot for this session.';
 
   const openSelectedEventDetails = () => {
     if (!selectedEventDetailsPath) return;
@@ -2008,7 +2062,7 @@ export default function CoachTimetablePage() {
             className={`${showNavigationSkeleton ? 'pointer-events-none select-none opacity-0' : ''} calendar-layout-grid grid grid-cols-1 items-start gap-5 xl:gap-4`}
             aria-hidden={showNavigationSkeleton}
           >
-        <div className="rounded-2xl border border-background-200 bg-white p-3 shadow-sm ring-1 ring-black/[0.02]">
+        <div className="calendar-filter-host min-w-0 rounded-2xl border border-background-200 bg-white p-3 shadow-sm ring-1 ring-black/[0.02]">
           <div className="grid gap-3 xl:grid-cols-[auto_minmax(420px,1fr)] xl:items-center xl:justify-between">
             <div className="flex flex-wrap items-center gap-2">
               <div className="flex items-center gap-1 rounded-lg bg-background-100 p-1">
@@ -2133,47 +2187,44 @@ export default function CoachTimetablePage() {
                 className="inline-flex h-9 shrink-0 items-center justify-center gap-1.5 rounded-lg border-0 bg-[#F1ECF8] px-2.5 text-[11px] font-bold text-[#4F2D7F] shadow-sm transition hover:bg-[#E8DDF3] focus:outline-none focus:ring-2 focus:ring-[#4F2D7F]/25"
               >
                 <AppIcon className="ri-palette-fill text-[13px]" />
-                Customize colors
+                Customise colours
               </button>
             </div>
           </div>
 
-          <div className="mt-3 grid min-w-0 grid-cols-1 items-start gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(360px,0.72fr)]">
-            <section className="h-fit min-w-0 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm" aria-label="Calendar source filters">
-            <div className="px-3.5 py-3">
-                <div role="group" aria-label="Source filters" className="grid w-full max-w-none grid-cols-2 gap-1.5 bg-white p-1.5 md:grid-cols-3 xl:grid-cols-4">
-                  <p className="col-span-2 px-2.5 py-1.5 text-[10px] font-bold uppercase tracking-[0.12em] text-slate-400 md:col-span-3 xl:col-span-4">Filter by source</p>
-                  {sourceFilterOptions.filter(option => option.value !== 'other').map(option => {
-                    const isActive = filterSource === option.value;
-                    const sourceColor = sourceFilterColor(option.value);
-                    return (
-                      <button
-                        key={`menu-${option.value}`}
-                        type="button"
-                        onClick={() => setFilterSource(option.value)}
-                        className={`flex w-full min-w-0 items-center gap-2 rounded-lg px-2.5 py-2 text-left text-[11px] font-semibold shadow-sm transition ${isActive ? 'border-0 bg-[#F1ECF8] text-[#4F2D7F]' : 'bg-white text-slate-700 hover:bg-slate-50'}`}
-                      >
-                        <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: isActive ? '#4F2D7F' : sourceColor.accent }} />
-                        <span className="min-w-0 flex-1 truncate">{option.value === 'all' ? 'All Sources' : option.label}</span>
-                        <span className="text-slate-400">{option.count}</span>
-                        {isActive && <AppIcon className="ri-check-line shrink-0 text-sm text-[#4F2D7F]" />}
-                      </button>
-                    );
-                  })}
-                </div>
-            </div>
-
+          <div className="calendar-filter-layout mt-3 min-w-0">
+            <section className="calendar-filter-card flex min-w-0 flex-col overflow-hidden rounded-2xl border border-[#E8DDF3] bg-white shadow-[0_4px_18px_rgba(79,45,127,0.06)]" aria-labelledby="calendar-source-filters-title">
+              <div>
+                <h3 id="calendar-source-filters-title" className="text-sm font-heading font-bold text-slate-900">Filter by source</h3>
+                <p className="mt-0.5 text-[11px] text-slate-500">View meetings by source.</p>
+              </div>
+              <CalendarFilterScrollRow ariaLabel="Source filters">
+                {sourceFilterOptions.filter(option => option.value !== 'other').map(option => {
+                  const isActive = filterSource === option.value;
+                  const sourceColor = sourceFilterColor(option.value);
+                  return (
+                    <button
+                      key={`menu-${option.value}`}
+                      type="button"
+                      onClick={() => setFilterSource(option.value)}
+                      className={`calendar-filter-pill inline-flex items-center gap-2 rounded-xl border text-[11px] font-semibold transition focus:outline-none focus:ring-2 focus:ring-[#4F2D7F]/20 ${isActive ? 'border-[#C9B9DD] bg-[#F7F3FB] text-[#4F2D7F] shadow-sm' : 'border-slate-200 bg-white text-slate-700 hover:border-[#D8CCE8] hover:bg-slate-50'}`}
+                    >
+                      <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: isActive ? '#4F2D7F' : sourceColor.accent }} />
+                      <span>{option.value === 'all' ? 'All Sources' : option.label}</span>
+                      <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-bold ${isActive ? 'bg-[#E8DDF3] text-[#4F2D7F]' : 'bg-slate-100 text-slate-500'}`}>{option.count}</span>
+                    </button>
+                  );
+                })}
+              </CalendarFilterScrollRow>
             </section>
 
-            <section className="h-fit min-w-0 rounded-2xl border border-slate-200 bg-white px-3 py-2.5 shadow-sm" aria-labelledby="calendar-status-colours-title">
+            <section className="calendar-filter-card flex min-w-0 flex-col overflow-hidden rounded-2xl border border-[#E8DDF3] bg-white shadow-[0_4px_18px_rgba(79,45,127,0.06)]" aria-labelledby="calendar-status-colours-title">
               <div>
-                <div>
-                  <h3 id="calendar-status-colours-title" className="text-sm font-heading font-bold text-slate-900">Status colours</h3>
-                  <p className="mt-0.5 text-[11px] text-slate-500">Track meeting status at a glance.</p>
-                </div>
+                <h3 id="calendar-status-colours-title" className="text-sm font-heading font-bold text-slate-900">Status colours</h3>
+                <p className="mt-0.5 text-[11px] text-slate-500">Track meeting status at a glance.</p>
               </div>
-              <div className="mt-2.5 grid min-w-0 grid-cols-2 gap-1.5 pb-1 sm:grid-cols-3">
-                {STATUS_FILTER_ORDER.map(status => {
+              <CalendarFilterScrollRow ariaLabel="Status filters">
+                {STATUS_FILTER_ORDER.filter(status => status !== 'overdue').map(status => {
                   const isActive = filterStatus === status;
                   const statusColor = statusFilterColor(status);
                   return (
@@ -2183,19 +2234,19 @@ export default function CoachTimetablePage() {
                       onClick={() => setFilterStatus(isActive ? 'all' : status)}
                       title={`${STATUS_FILTER_LABELS[status]} (${statusFilterCounts[status]})`}
                       aria-pressed={isActive}
-                      className="inline-flex min-w-0 items-center justify-center gap-1 rounded-lg px-1.5 py-1 text-[9px] font-bold shadow-sm transition hover:brightness-[0.98] focus:outline-none focus:ring-2 focus:ring-[#4F2D7F]/20"
+                      className="calendar-filter-pill inline-flex items-center gap-2 rounded-xl text-[11px] font-bold shadow-sm transition hover:brightness-[0.98] focus:outline-none focus:ring-2 focus:ring-[#4F2D7F]/20"
                       style={{
                         backgroundColor: isActive ? '#4F2D7F' : statusColor.background,
                         color: isActive ? '#FFFFFF' : statusColor.accent,
                       }}
                     >
-                      <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: isActive ? '#FFFFFF' : statusColor.accent }} />
-                      {status === 'overdue' ? 'Missed' : STATUS_FILTER_LABELS[status]}
-                      <span className={isActive ? 'opacity-90' : 'opacity-70'}>{statusFilterCounts[status]}</span>
+                      <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: isActive ? '#FFFFFF' : statusColor.accent }} />
+                      <span>{STATUS_FILTER_LABELS[status]}</span>
+                      <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-bold ${isActive ? 'bg-white/20 text-white' : 'bg-white/70'}`}>{statusFilterCounts[status]}</span>
                     </button>
                   );
                 })}
-              </div>
+              </CalendarFilterScrollRow>
             </section>
           </div>
         </div>
@@ -2265,7 +2316,7 @@ export default function CoachTimetablePage() {
                         <div className="flex w-full flex-1 flex-col gap-1.5 overflow-hidden">
                           {eventsForDay.slice(0, 3).map(ev => {
                             const meetingType = calendarColors.meetingTypes[getMeetingTypeKey(ev)];
-                            const eventStatusKey = getCalendarStatusKey(ev.status, isOverdueMetricEvent(ev), isDueSoonMetricEvent(ev));
+                            const eventStatusKey = meetingStatusKey(ev);
                             const eventStatus = calendarColors.statuses[eventStatusKey];
                             return (
                               <button
@@ -2281,7 +2332,7 @@ export default function CoachTimetablePage() {
                                   <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: meetingType.accent }}></span>
                                   <span className="shrink-0 tabular-nums">{formatTime(ev.startHour)}</span>
                                   <span className="truncate leading-tight">{ev.title}</span>
-                                  <span className="ml-auto shrink-0 rounded-full px-1.5 py-0.5 text-[9px] font-bold leading-none" style={{ backgroundColor: eventStatus.background, color: eventStatus.accent }} title={displayStatusLabel(ev.status, isOverdueMetricEvent(ev), isDueSoonMetricEvent(ev))}>{displayStatusLabel(ev.status, isOverdueMetricEvent(ev), isDueSoonMetricEvent(ev))}</span>
+                                  <span className="ml-auto shrink-0 rounded-full px-1.5 py-0.5 text-[9px] font-bold leading-none" style={{ backgroundColor: eventStatus.background, color: eventStatus.accent }} title={eventStatusLabel(ev)}>{eventStatusLabel(ev)}</span>
                                 </div>
                                 {(ev.learner || ev.programme) && (
                                   <p className="mt-0.5 truncate text-[10px] font-medium opacity-75">
@@ -2309,7 +2360,7 @@ export default function CoachTimetablePage() {
 
             {/* WEEK VIEW */}
             {viewMode === 'week' && (
-              <div className="bg-background-50 rounded-lg border border-foreground-200/60 overflow-hidden">
+              <div className="coach-week-scroll bg-background-50 rounded-lg border border-foreground-200/60">
                 <div className="grid grid-cols-8 border-b border-foreground-200/60">
                   <div className="px-2 py-2.5 bg-background-100/50"></div>
                   {weekDates.map(wd => {
@@ -2354,7 +2405,7 @@ export default function CoachTimetablePage() {
                             >
                               {eventsInSlot.map(ev => {
                                 const meetingType = calendarColors.meetingTypes[getMeetingTypeKey(ev)];
-                                const eventStatusKey = getCalendarStatusKey(ev.status, isOverdueMetricEvent(ev), isDueSoonMetricEvent(ev));
+                                const eventStatusKey = meetingStatusKey(ev);
                                 const eventStatus = calendarColors.statuses[eventStatusKey];
                                 const duration = ev.endHour - ev.startHour;
                                 const heightPx = Math.max(24, duration * 48);
@@ -2368,7 +2419,7 @@ export default function CoachTimetablePage() {
                                     <p className="truncate text-[12px] font-semibold leading-tight" style={{ color: meetingType.accent }}>{ev.title}</p>
                                     <p className="flex items-center gap-1.5 text-[12px] text-foreground-400 truncate">
                                       <span>{formatTime(ev.startHour)} - {formatTime(ev.endHour)}</span>
-                                      <span className="rounded-full px-1 py-0.5 text-[9px] font-bold" style={{ backgroundColor: eventStatus.background, color: eventStatus.accent }}>{displayStatusLabel(ev.status, isOverdueMetricEvent(ev), isDueSoonMetricEvent(ev))}</span>
+                                      <span className="rounded-full px-1 py-0.5 text-[9px] font-bold" style={{ backgroundColor: eventStatus.background, color: eventStatus.accent }}>{eventStatusLabel(ev)}</span>
                                     </p>
                                     {ev.learner && <p className="text-[12px] text-foreground-400 truncate font-medium">{ev.learner}</p>}
                                     {ev.priority !== 'normal' && (
@@ -2420,7 +2471,7 @@ export default function CoachTimetablePage() {
                           <div className="space-y-1.5">
                             {eventsInSlot.map(ev => {
                               const meetingType = calendarColors.meetingTypes[getMeetingTypeKey(ev)];
-                              const eventStatusKey = getCalendarStatusKey(ev.status, isOverdueMetricEvent(ev), isDueSoonMetricEvent(ev));
+                              const eventStatusKey = meetingStatusKey(ev);
                               const eventStatus = calendarColors.statuses[eventStatusKey];
                               return (
                                 <button type="button" aria-haspopup="dialog"
@@ -2438,7 +2489,7 @@ export default function CoachTimetablePage() {
                                         </span>
                                       )}
                                       <span className="rounded-full px-1.5 py-0.5 text-[12px] font-semibold" style={{ backgroundColor: eventStatus.background, color: eventStatus.accent }}>
-                                        {displayStatusLabel(ev.status, isOverdueMetricEvent(ev), isDueSoonMetricEvent(ev))}
+                                        {eventStatusLabel(ev)}
                                       </span>
                                     </div>
                                   </div>
@@ -2498,7 +2549,7 @@ export default function CoachTimetablePage() {
                 <div className="space-y-2">
                   {selectedDayEvents.sort((a, b) => a.startHour - b.startHour).map(ev => {
                     const meetingType = calendarColors.meetingTypes[getMeetingTypeKey(ev)];
-                    const eventStatusKey = getCalendarStatusKey(ev.status, isOverdueMetricEvent(ev), isDueSoonMetricEvent(ev));
+                    const eventStatusKey = meetingStatusKey(ev);
                     const eventStatus = calendarColors.statuses[eventStatusKey];
                     return (
                       <button type="button" aria-haspopup="dialog"
@@ -2519,7 +2570,7 @@ export default function CoachTimetablePage() {
                           </div>
                         </div>
                         <span className="shrink-0 rounded-full px-2 py-0.5 text-[12px] font-semibold" style={{ backgroundColor: eventStatus.background, color: eventStatus.accent }}>
-                          {displayStatusLabel(ev.status, isOverdueMetricEvent(ev), isDueSoonMetricEvent(ev))}
+                          {eventStatusLabel(ev)}
                         </span>
                       </button>
                     );
@@ -2537,7 +2588,7 @@ export default function CoachTimetablePage() {
                 onClose={() => { if (!eventActionBusy) setSelectedEvent(null); }}
                 badges={<>
                   <span className="rounded-full px-2.5 py-1" style={{ backgroundColor: calendarColors.meetingTypes[getMeetingTypeKey(selectedEvent)].background, color: calendarColors.meetingTypes[getMeetingTypeKey(selectedEvent)].accent }}>{meetingTypeLabelForEvent(selectedEvent)}</span>
-                  <span className="rounded-full px-2.5 py-1" style={{ backgroundColor: calendarColors.statuses[getCalendarStatusKey(selectedEvent.status, isOverdueMetricEvent(selectedEvent), isDueSoonMetricEvent(selectedEvent))].background, color: calendarColors.statuses[getCalendarStatusKey(selectedEvent.status, isOverdueMetricEvent(selectedEvent), isDueSoonMetricEvent(selectedEvent))].accent }}>{displayStatusLabel(selectedEvent.status, isOverdueMetricEvent(selectedEvent), isDueSoonMetricEvent(selectedEvent))}</span>
+                  <span className="rounded-full px-2.5 py-1" style={{ backgroundColor: calendarColors.statuses[meetingStatusKey(selectedEvent)].background, color: calendarColors.statuses[meetingStatusKey(selectedEvent)].accent }}>{eventStatusLabel(selectedEvent)}</span>
                   {selectedEvent.priority !== 'normal' && <span className={`rounded-full border px-2.5 py-1 ${priorityBadge(selectedEvent.priority)}`}>{selectedEvent.priority === 'urgent' ? 'Urgent' : 'High'}</span>}
                 </>}
                 headerAction={selectedEventDetailsPath && (
@@ -2675,8 +2726,9 @@ export default function CoachTimetablePage() {
                         <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-primary-200/70 pt-3">
                           <button
                             onClick={handleJoinSelectedMeeting}
-                            disabled={eventActionBusy}
-                            className="meeting-join-action rounded-lg px-3.5 py-2.5 text-[12px] font-bold shadow-sm transition-smooth cursor-pointer whitespace-nowrap"
+                            disabled={eventActionBusy || Boolean(selectedEvent.meetingOutcome)}
+                            title={selectedEvent.meetingOutcome ? 'This session has ended.' : undefined}
+                            className="meeting-join-action rounded-lg px-3.5 py-2.5 text-[12px] font-bold shadow-sm transition-smooth cursor-pointer whitespace-nowrap disabled:cursor-not-allowed disabled:opacity-60"
                           >
                             <i className="ri-play-circle-line mr-1"></i>Join Session
                           </button>
@@ -2684,14 +2736,14 @@ export default function CoachTimetablePage() {
                       )}
                     </div>
                   )}
-                  {selectedEvent.reviewTemplateId && (
+                  {(selectedEvent.reviewTemplateId || selectedEvent.reviewSource === 'aptem') && (
                     <div className="mt-4 flex flex-col gap-3 rounded-2xl border border-secondary-200 bg-secondary-50 p-4 sm:flex-row sm:items-center">
                       <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-secondary-100 text-secondary-700">
                         <AppIcon className="ri-survey-line"></AppIcon>
                       </span>
                       <div className="flex-1">
                         <p className="text-xs font-bold text-secondary-900">{selectedEvent.title} form</p>
-                        <p className="mt-1 text-[12px] text-secondary-700">The questions for this review come from Curriculum. Answers save as you go and can be finished later.</p>
+                        <p className="mt-1 text-[12px] text-secondary-700">{selectedEvent.reviewSource === 'aptem' ? 'Open this migrated review to book its LMS meeting and work on the approved form.' : 'The questions for this review come from Curriculum. Answers save as you go and can be finished later.'}</p>
                       </div>
                       <button
                         type="button"
@@ -2710,7 +2762,7 @@ export default function CoachTimetablePage() {
                           <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-primary-50 text-primary-600">
                             <AppIcon className="ri-calendar-schedule-line"></AppIcon>
                           </span>
-                          {selectedEvent.status === 'not-scheduled' && (selectedEvent.source === 'catch-up' || selectedEvent.source === 'student-support') ? 'Approve & Schedule' : 'Schedule Meeting'}
+                          {selectedEvent.status === 'not-scheduled' && isApprovalRequestSource(selectedEvent.source) ? 'Approve & Schedule' : 'Schedule Meeting'}
                         </h4>
                         {selectedEvent.status === 'not-scheduled' && (
                           <span className="rounded-full bg-red-50 px-2.5 py-1 text-[12px] font-bold text-red-700">Needs scheduling</span>
@@ -2757,7 +2809,9 @@ export default function CoachTimetablePage() {
                             }
                             handleEventAction('start');
                           }}
-                          disabled={eventActionBusy || (selectedEvent.source !== 'catch-up' && !(selectedEvent.meetingLink || selectedEvent.graphWebLink))}
+                          // The booked time has passed: joining is closed.
+                          disabled={eventActionBusy || Boolean(selectedEvent.meetingOutcome) || (selectedEvent.source !== 'catch-up' && !(selectedEvent.meetingLink || selectedEvent.graphWebLink))}
+                          title={selectedEvent.meetingOutcome ? 'This meeting has ended.' : undefined}
                           className="rounded-lg bg-emerald-500 px-3.5 py-2.5 text-[12px] font-bold text-white shadow-sm transition-smooth hover:bg-emerald-600 disabled:cursor-not-allowed disabled:opacity-60 cursor-pointer whitespace-nowrap"
                         >
                           <AppIcon className="ri-play-circle-line mr-1"></AppIcon>{selectedEvent.reviewTemplateId ? 'Join' : 'Start'}
@@ -2776,8 +2830,9 @@ export default function CoachTimetablePage() {
                         {selectedEvent.status === 'in-progress' && (selectedEvent.meetingLink || selectedEvent.graphWebLink) && (
                           <button
                             onClick={handleJoinSelectedMeeting}
-                            disabled={eventActionBusy}
-                            className="meeting-join-action rounded-lg px-3.5 py-2.5 text-[12px] font-bold shadow-sm transition-smooth cursor-pointer whitespace-nowrap"
+                            disabled={eventActionBusy || Boolean(selectedEvent.meetingOutcome)}
+                            title={selectedEvent.meetingOutcome ? 'This meeting has ended.' : undefined}
+                            className="meeting-join-action rounded-lg px-3.5 py-2.5 text-[12px] font-bold shadow-sm transition-smooth cursor-pointer whitespace-nowrap disabled:cursor-not-allowed disabled:opacity-60"
                           >
                             <AppIcon className="ri-video-on-line mr-1"></AppIcon>Join
                           </button>
@@ -2848,7 +2903,7 @@ export default function CoachTimetablePage() {
                 {upcomingEvents
                   .map(ev => {
                     const meetingType = calendarColors.meetingTypes[getMeetingTypeKey(ev)];
-                    const eventStatus = calendarColors.statuses[getCalendarStatusKey(ev.status, isOverdueMetricEvent(ev), isDueSoonMetricEvent(ev))];
+                    const eventStatus = calendarColors.statuses[meetingStatusKey(ev)];
                     const sourceLabel = ev.source && isSchedulableSource(ev.source)
                       ? eventSourceLabel(ev.source)
                       : meetingTypeLabelForEvent(ev);
@@ -2881,7 +2936,7 @@ export default function CoachTimetablePage() {
                               {sourceLabel}
                             </span>
                             <span className="rounded-full px-2 py-0.5 text-[12px] font-semibold" style={{ backgroundColor: eventStatus.background, color: eventStatus.accent }}>
-                              {displayStatusLabel(ev.status, isOverdueMetricEvent(ev), isDueSoonMetricEvent(ev))}
+                              {eventStatusLabel(ev)}
                             </span>
                           </div>
                           <p className="truncate text-[12px] font-heading font-bold leading-tight text-foreground-950">{ev.title}</p>
@@ -3525,7 +3580,11 @@ export default function CoachTimetablePage() {
 
               <div className="flex flex-wrap items-center justify-between gap-3 border-t border-background-200/70 pt-3">
                 <p className="text-[12px] text-foreground-500">
-                  {scheduleModalCompact ? 'This updates the calendar slot and Teams meeting details.' : 'Learner requests become official Teams meetings after coach approval.'}
+                  {scheduleModalCompact
+                    ? 'This updates the calendar slot and Teams meeting details.'
+                    : scheduleNeedsApproval
+                      ? 'Learner support requests become official Teams meetings after coach approval.'
+                      : 'This places the session on the coach calendar and updates its Teams meeting details.'}
                 </p>
                 <div className="flex items-center gap-3">
                   <button

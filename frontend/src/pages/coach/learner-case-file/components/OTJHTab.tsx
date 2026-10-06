@@ -1,6 +1,7 @@
 import { EmptyState } from '@/components/ui/EmptyState';
 import { MetricCard } from '@/components/ui/MetricCard';
-import { formatFraction, formatHours, type CaseFileTabProps } from '../data';
+import { formatFraction, formatHours } from '../data';
+import type { CaseFileTabProps } from '../types';
 
 export default function OTJHTab({ data }: CaseFileTabProps) {
   const weekRows = data.journey.flatMap((module) =>

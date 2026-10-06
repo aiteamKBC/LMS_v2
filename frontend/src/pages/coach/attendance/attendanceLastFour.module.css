@@ -1,0 +1,30 @@
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.chips span {
+  padding: 4px 8px;
+  border: 1px solid;
+  border-radius: 999px;
+  font-weight: 750;
+  white-space: nowrap;
+}
+
+.chips span[data-status='present'] {
+  border-color: #a7ebc5;
+  background: #effcf4;
+  color: #08783f;
+}
+
+.chips span[data-status='absent'] {
+  border-color: #ffb9c0;
+  background: #fff3f4;
+  color: #d41d2d;
+}
+
+.paused {
+  color: #9a92ac;
+  font-size: 12px;
+}

@@ -1,37 +1,23 @@
-﻿"""Learner-facing calendar: coaching sessions from "Coach".coach_calendar_event.
+﻿"""Learner calendar: source-owned Reviews with local coaching bookings.
 
-    GET /learner_api/calendar/<kind>/<int:pk>/
-
-`kind` is 'commercial' or 'apprenticeship' (same vocabulary as learner-detail).
-The coach timetable stores events keyed by the "Learner"."Active_users" mirror
-id + email, so the learner is matched by email: directly against
-coach_calendar_event.learner_email, and via any Active_users mirror rows with
-the same email against coach_calendar_event.learner_id.
-
-Monthly coaching and progress reviews are *generated* from Curriculum
-review_templates rather than stored: the coach timetable resolves each
-learner's official occurrences every time it loads (see
-coach_api.views.collect_generated_timetable), and a row only exists once
-somebody schedules one. So a learner whose coach had not booked yet saw an
-empty calendar while their coach saw a column of "Not Scheduled" slots. This
-endpoint runs the same generator over the same window, then lays the stored
-rows on top by event key — the coach's own join — so both calendars name the
-same dates and the same statuses. A learner with no Curriculum programme
-mapping, or a programme with no configured review template, has zero
-generated occurrences here — there is no fixed-interval fallback.
+Native Reviews use Curriculum occurrences and native instances. Aptem Reviews
+use Learner.reviews with their existing calendar/form continuations. Stable
+enrolment and Aptem identities select the source; missing imported rows never
+generate Curriculum replacements. Other sessions retain their booking rules.
 """
 import json
 import logging
 import hashlib
 from datetime import datetime
 
-from django.db import DatabaseError, connection
+from django.db import DatabaseError, connection, connections
 from django.db.models import Q
 from django.http import JsonResponse
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 
-from coach_api.models import CoachCalendarEvent
+from coach_api.models import CoachCalendarEvent, ImportedReviewInstance
+from coach_api.review_sources import review_profile_for_source, source_for_learner
 
 from .learner_detail import SOURCE_MODELS
 from .identity import learner_profile_for_source
@@ -42,15 +28,24 @@ from .booking_calendar import booking_calendar_payload, booking_date_restriction
 # Imported rather than restated so the gate, the booking and the calendar
 # cannot disagree about either.
 from .aptem_status import programme_status
+from .constants import DEFAULT_PROGRAMME_STATUS, DELIVERY_PROGRAMME_STATUS
 from .first_session import (
     SESSION_TYPE as FIRST_SESSION_TYPE,
     imported_from_aptem as first_session_imported_from_aptem,
     uk_today as first_session_uk_today,
 )
 from login.permissions import learner_self_or_staff
+from .session_recovery import learner_change
 from login.sessions import authenticate_request
 
 logger = logging.getLogger(__name__)
+
+
+def _calendar_profile(learner, pk):
+    if source_for_learner(learner, None).kind == "aptem":
+        profile = review_profile_for_source(learner)
+        return profile if profile is None or profile.lifecycle_status == "active" else None
+    return learner_profile_for_source(learner, pk, active_only=True)
 
 EVENT_TITLES = {
     "mcr": "Monthly Coaching",
@@ -59,12 +54,16 @@ EVENT_TITLES = {
     "gateway": "Gateway",
     "other": "Other",
     "catch-up": "Catch-up Session",
+    "recorded-recovery": "Watch Recording",
     "student-support": "Student Support",
     "first-session": "First Session",
     # Onboarding reviews (see ONBOARDING_REVIEW_LABELS below).
     "eligibility-review": "Eligibility Review & FS Discussion",
     "workspace": "RPL And Experience",
     "training-plan": "Workplace Health & Safety Declaration",
+    "uln-privacy": "ULN Privacy Notice & Learner Acknowledgement",
+    # Requested from the account invitation (login.lms_introduction).
+    "lms-introduction": "LMS Introduction",
 }
 
 # JSON `type` vocabulary shared with the coach timetable frontend.
@@ -75,32 +74,60 @@ EVENT_JSON_TYPES = {
     "gateway": "review",
     "other": "coaching",
     "catch-up": "coaching",
+    "recorded-recovery": "coaching",
     "student-support": "welfare",
     "first-session": "coaching",
     "eligibility-review": "review",
     "workspace": "review",
     "training-plan": "review",
+    "uln-privacy": "review",
 }
+
+
+def assigned_curriculum_module_ids(learner):
+    """Return the learner's explicit curriculum-module assignment ids.
+
+    Calendar visibility follows the same assignment query as My Learning and
+    live lecture attendance.  It must not depend on the profile's current
+    group label: a learner can remain assigned to a module while a cohort/group
+    correction is being made, and hiding that module would hide its Teams link.
+    """
+    learner_id = getattr(learner, "id", None) or getattr(learner, "pk", None)
+    if learner_id in (None, ""):
+        return []
+    try:
+        from .student_activity import CURRENT_SUBJECTS_SQL
+
+        with connections['enrolment'].cursor() as cursor:
+            cursor.execute(CURRENT_SUBJECTS_SQL, [learner_id])
+            return sorted({str(row[0]).strip() for row in cursor.fetchall() if row and str(row[0]).strip()})
+    except DatabaseError:
+        logger.warning("learner_calendar: module assignment lookup failed", exc_info=True)
+        return []
 
 # What a learner can book for themselves. Monthly coaching and progress reviews
 # must be booked against a generated programme-cycle eventKey so the learner and
 # coach see the same official calendar row.
 BOOKABLE_TYPES = ("catch-up", "student-support", "first-session", "mcr", "progress-review", "review", "gateway", "other")
 
+# Catch-ups use the learner-selected slot immediately. These are the session
+# types whose learner-created bookings remain requests for coach placement.
+COACH_APPROVAL_TYPES = frozenset(("student-support", "gateway", "other"))
+
 # The Microsoft Graph invite subject uses the same wording as the page — see
 # coach_api.BOOKED_EVENT_TITLES, which mirrors EVENT_TITLES above.
 
-# The three onboarding reviews a learner books straight after submitting their
+# The four onboarding reviews a learner books straight after submitting their
 # enrolment. Unlike catch-up/student-support these are bookable *while still
 # Onboarding* — they are the meetings that get the learner enrolled, so requiring
 # an Active mirror + assigned coach first would be circular. They are booked with
 # the learner's case owner (the enrolment officer) instead.
-ONBOARDING_REVIEW_TYPES = ("eligibility-review", "workspace", "training-plan")
+ONBOARDING_REVIEW_TYPES = ("eligibility-review", "workspace", "training-plan", "uln-privacy")
 
 # Same wording the calendar shows for these events.
 ONBOARDING_REVIEW_LABELS = {type_: EVENT_TITLES[type_] for type_ in ONBOARDING_REVIEW_TYPES}
 
-# Reviews that have a form to fill in after booking -- all three now do; the
+# Reviews that have a form to fill in after booking -- all four do; the
 # panels each one renders live in review_form.SECTIONS_BY_REVIEW.
 REVIEW_FORM_TYPES = ONBOARDING_REVIEW_TYPES
 
@@ -283,7 +310,7 @@ def _generated_cycle_events(learner, mirror, stored_by_key):
     )
     from curriculum_api.review_instances import review_calendar_event_key
 
-    if mirror is None:
+    if mirror is None or source_for_learner(learner, mirror).kind != "curriculum":
         return []
 
     programme_id = resolve_curriculum_programme_id(
@@ -400,12 +427,25 @@ def _serialize_event(record, *, review_types_by_template=None, templates_by_id=N
         and event_type in {"mcr", "progress-review"}
         and booking_parts[2] in SOURCE_MODELS and booking_parts[5].isdigit()
     )
+    review_id = booking_parts[5] if imported_booking else ""
+    assignment_month = booking_parts[4] if imported_booking else ""
+    if event_type == "mcr" and record.event_key.startswith("imported-review:"):
+        from coach_api.local_mcm_bookings import local_mcm_metadata
+        local_review = local_mcm_metadata(record)
+        if local_review:
+            review_id, assignment_month = local_review
+    migrated_form = (record.event_key.startswith("imported-review:")
+                     and ImportedReviewInstance.objects.filter(
+                         event_key=record.event_key, learner_id=record.learner_id,
+                         source_review_id__isnull=False,
+                     ).exists())
     return {
         "id": record.event_key,
         "eventKey": record.event_key,
         "title": (template or {}).get('name') or EVENT_TITLES.get(event_type, "Coaching Session"),
         "reviewTemplateId": template_id or None,
         "reviewInstanceId": _s(getattr(record, 'review_instance_id', '')) or None,
+        "migratedForm": migrated_form,
         "occurrenceNumber": getattr(record, 'occurrence_number', None) or record.sequence,
         **review_type_event_fields({
             'reviewTypeId': type_row.get('id'), 'reviewTypeCode': type_row.get('code'),
@@ -432,47 +472,106 @@ def _serialize_event(record, *, review_types_by_template=None, templates_by_id=N
         # A row can save while the Graph sync fails (no network, non-tenant
         # mailbox, ...). Without this the UI shows a confident "Booked" for a
         # meeting that reached nobody's calendar or inbox.
-        "invited": bool(_s(record.graph_event_id)),
+        "invited": bool(_s(record.graph_event_id)) or event_type == "recorded-recovery",
         "syncError": sync_warning,
         "syncState": getattr(record, "sync_state", ""),
         "syncWarning": _friendly_sync_warning(sync_warning) if sync_warning else "",
-        "reviewId": booking_parts[5] if imported_booking else "",
-        "assignmentMonth": booking_parts[4] if imported_booking else "",
+        "reviewId": review_id,
+        "assignmentMonth": assignment_month,
+        # Catch-up only: too close to the start for the learner to move or cancel it.
+        "changeClosed": _catchup_change_closed(record),
     }
 
 
+def _booking_response_event(record, imported_event=None):
+    if not imported_event:
+        return _serialize_event(record)
+    from coach_api.review_sources import load_imported_links
+    from coach_api.views import overlay_calendar_record
+    _bookings, overlays = load_imported_links([imported_event], records=[record])
+    return overlay_calendar_record(imported_event, record, overlays.get(imported_event['eventKey']))
+
+
 def _mark_imported_review_scheduled(review_id, learner_profile_id, scheduled_date, scheduled_time):
-    """Keep the imported Reviews row in sync with a learner-booked review."""
+    """Validate legacy callers without rewriting the imported source evidence.
+
+    Effective booking state now comes from the linked calendar row. The Aptem
+    planned date/status must survive local booking and rescheduling unchanged.
+    """
     if not review_id:
         return
     try:
         review_pk = int(review_id)
     except (TypeError, ValueError):
         raise DatabaseError(f"Invalid imported review id {review_id!r}.")
-    scheduled_at = datetime.combine(scheduled_date, scheduled_time)
     with connection.cursor() as cursor:
         cursor.execute(
             '''
-            UPDATE "Learner".reviews
-               SET status = %s,
-                   planned_scheduled_date = %s
+            SELECT id FROM "Learner".reviews
              WHERE id = %s
                AND learner_id = %s
                AND LOWER(BTRIM(review_type)) IN (%s, %s, %s, %s, %s)
             ''',
-            ["scheduled", scheduled_at, review_pk, learner_profile_id,
+            [review_pk, learner_profile_id,
              "monthly coaching meeting", "monthly coaching", "mcm",
              "progress review", "progress review (+ skills radar)"],
         )
-        if cursor.rowcount == 0:
+        if cursor.fetchone() is None:
             raise DatabaseError(
                 f"Imported review {review_pk} was not found for learner profile {learner_profile_id} "
                 "or is not a schedulable review."
             )
 
 
+def _assignment_imported_mcm_month(profile_id, review_id):
+    """Validate the Aptem MCM an assignment booking names; return its month.
+
+    An Aptem-linked learner with imported Aptem MCMs gets no Curriculum MCMs
+    on the coach timetable (coach_api.views.resolve_coach_review_events), so
+    the imported row is the only MCM identity the coach can see. Only this
+    learner's own, still-open Aptem MCM row may be booked.
+
+    Returns (month or None, None) on success, or (None, (message, status)).
+    """
+    from .review_history import REVIEW_TYPES, _serialize_review
+
+    try:
+        review_pk = int(review_id)
+    except (TypeError, ValueError):
+        return None, ("reviewId must identify an imported Monthly Coaching Meeting.", 400)
+    with connection.cursor() as cursor:
+        cursor.execute(
+            '''
+            SELECT id, aptem_review_id, review_name, review_type, reviewer_name,
+                   learner_name, planned_scheduled_date, completed_date, status,
+                   review_data, extraction_status, last_error
+              FROM "Learner".reviews
+             WHERE id = %s
+               AND learner_id = %s
+               AND NULLIF(BTRIM(aptem_review_id), '') IS NOT NULL
+               AND LOWER(BTRIM(review_type)) = ANY(%s)
+            ''',
+            [review_pk, profile_id, [value.casefold() for value in REVIEW_TYPES["monthly-coaching"]]],
+        )
+        columns = [column[0] for column in cursor.description]
+        row = cursor.fetchone()
+    if row is None:
+        return None, ("This Monthly Coaching Meeting is not available for your assignment.", 404)
+    review = _serialize_review(dict(zip(columns, row)), {})
+    if review["completedDate"] or review["status"] in {
+        CoachCalendarEvent.STATUS_COMPLETED,
+        CoachCalendarEvent.STATUS_AWAITING_SIGNATURE,
+        CoachCalendarEvent.STATUS_CANCELLED,
+    }:
+        return None, ("A submitted or completed review cannot be scheduled again.", 409)
+    return (review["plannedDate"] or "")[:7] or None, None
+
+
 def coaching_events_for_learner(learner, mirror):
     """One source for the calendar and Training Plan coaching dates/statuses."""
+    if source_for_learner(learner, mirror).kind != "curriculum":
+        mirror = review_profile_for_source(learner, mirror)
+    review_source = source_for_learner(learner, mirror)
     emails = {_s(getattr(learner, 'email', '')).strip().casefold(),
               _s(getattr(mirror, 'email', '')).strip().casefold()} - {''}
     match = Q()
@@ -488,19 +587,49 @@ def coaching_events_for_learner(learner, mirror):
         # Created_users and learner profiles have different ID sequences.
         # A matching number must never override another learner's email.
         expected_id = learner.pk if _s(getattr(record, 'idempotency_key', '')).startswith('learner-book:') else getattr(mirror, 'id', None)
-        belongs = email in emails if email else expected_id is not None and str(record.learner_id) == str(expected_id)
+        imported_owned = (review_source.kind == "aptem" and mirror is not None
+                          and record.event_type in {"mcr", "progress-review"}
+                          and str(record.learner_id) in {str(mirror.id), str(learner.pk)})
+        belongs = imported_owned or (email in emails if email else expected_id is not None and str(record.learner_id) == str(expected_id))
         if belongs and _belongs_to_current_cycle(record, mirror):
             records.append(record)
     from curriculum_api import reviews, review_instances
+    if review_source.kind == "aptem":
+        from .imported_review_calendar import imported_events_for_learner
+        imported = imported_events_for_learner(learner, mirror, review_source.aptem_id, records)
+        # Persisted native rows must not become a second occurrence or fallback.
+        other = [_serialize_event(record) for record in records
+                 if record.event_type not in {"mcr", "progress-review", "review"}]
+        return [*imported, *other]
     generated = _generated_cycle_events(learner, mirror, set())
     matched = review_instances.reconcile_review_event_keys(generated, records)
-    templates = {}
+    # Generated occurrences already carry the current template title and Review
+    # Type metadata. Reuse it for stored rows from the same templates instead
+    # of reading review_templates and review_types again.
+    templates = {
+        _s(event.get('reviewTemplateId')): {
+            'id': _s(event.get('reviewTemplateId')),
+            'name': event.get('title') or '',
+        }
+        for event in generated if _s(event.get('reviewTemplateId'))
+    }
+    types = {
+        _s(event.get('reviewTemplateId')): {
+            'id': event.get('reviewTypeId'),
+            'code': event.get('reviewTypeCode'),
+            'name': event.get('reviewTypeName'),
+            'is_system': event.get('reviewTypeIsSystem'),
+        }
+        for event in generated if _s(event.get('reviewTemplateId'))
+    }
     template_ids = sorted({_s(getattr(record, 'review_template_id', '')) for record in records} - {''})
-    if template_ids:
-        templates = {row['id']: row for row in reviews.get_review_template_rows(
-            f"id in ({', '.join(['%s'] * len(template_ids))})", template_ids, include_deleted=True,
-        )}
-    types = review_type_rows_by_template(template_ids)
+    unresolved_template_ids = [template_id for template_id in template_ids if template_id not in templates]
+    if unresolved_template_ids:
+        templates.update({row['id']: row for row in reviews.get_review_template_rows(
+            f"id in ({', '.join(['%s'] * len(unresolved_template_ids))})",
+            unresolved_template_ids, include_deleted=True,
+        )})
+        types.update(review_type_rows_by_template(unresolved_template_ids))
     events = []
     for event in generated:
         record = matched.get(event['eventKey'])
@@ -524,6 +653,56 @@ def coaching_events_for_learner(learner, mirror):
         if is_review_placeholder and record.status == CoachCalendarEvent.STATUS_NOT_SCHEDULED:
             continue
         events.append(_serialize_event(record, review_types_by_template=types, templates_by_id=templates))
+    return events
+
+
+def alternative_recovery_events_for_learner(learner_id):
+    """Expose approved cross-group recovery occurrences on the learner calendar."""
+    from coach_api.models import CoachAbsenceReport
+    from .alternative_recovery import ALTERNATIVE_METHOD, alternative_target_details
+
+    events = []
+    reports = CoachAbsenceReport.objects.filter(
+        learner_id=learner_id,
+        status=CoachAbsenceReport.STATUS_APPROVED,
+        recovery_method=ALTERNATIVE_METHOD,
+    )
+    for report in reports:
+        target = alternative_target_details(report.catchup_event_key, include_join_url=True)
+        if not target:
+            continue
+        try:
+            start = datetime.fromisoformat(f"{target['dateIso']}T{target['startTime']}")
+            end = datetime.fromisoformat(f"{target['dateIso']}T{target['endTime']}") if target.get('endTime') else None
+            duration = max(1, int((end - start).total_seconds() // 60)) if end else 60
+        except (KeyError, TypeError, ValueError):
+            continue
+        key = f"absence-alternative:{report.id}"
+        events.append({
+            "id": key,
+            "eventKey": key,
+            "title": target.get("title") or report.session_title,
+            "source": "live-session",
+            "type": "live-session",
+            "sequence": 1,
+            "status": CoachCalendarEvent.STATUS_SCHEDULED,
+            "date": target["dateIso"],
+            "targetDate": target["dateIso"],
+            "scheduledDate": target["dateIso"],
+            "scheduledTime": target["startTime"],
+            "durationMinutes": duration,
+            "coachName": "",
+            "coachEmail": report.owner_email,
+            "meetingProvider": "Microsoft Teams" if target.get("joinUrl") else "",
+            "meetingLink": target.get("joinUrl") or "",
+            "notes": "Alternative group session for an approved absence recovery plan.",
+            "invited": True,
+            "syncError": "",
+            "syncState": CoachCalendarEvent.SYNC_SYNCED,
+            "module": target.get("module") or report.session_title,
+            "cohort": target.get("cohort") or "",
+            "group": target.get("group") or "",
+        })
     return events
 
 
@@ -699,6 +878,37 @@ def _resolve_assignment_month_progress_review_occurrence(learner, mirror):
     return _resolve_direct_cycle_event_key(learner, mirror, "progress-review")
 
 
+def _record_owner_ids(record, *, created_user_id, profile_id):
+    """The learner ids this learner may be stored under on ``record``.
+
+    Created_users.id and the Learner profile id are independent sequences, so
+    a number only means something in the id space its row was written in:
+
+    * Review rows -- linked to a Review Instance, or a coach-generated
+      programme-cycle slot -- carry the profile id, the same id as
+      curriculum.review_instances.learner_id. Only that id is compared.
+    * Onboarding reviews are always written with Created_users.id
+      (calendar_learner_id in learner_calendar_book), so only that id is
+      compared.
+    * Rows written by the learner's own booking flow (``learner-book:`` keys)
+      and first-session rows have no single id space: bookings stored
+      Created_users.id before 2026-09-08 and the profile id since, and
+      first_session.py still stores Created_users.id. They keep both ids until
+      the stored rows are checked.
+    """
+    event_type = _s(record.event_type)
+    booked_by_learner = _s(getattr(record, "idempotency_key", "")).startswith("learner-book:")
+    if _s(getattr(record, "review_instance_id", "")) or (
+        event_type in ("mcr", "progress-review", "review") and not booked_by_learner
+    ):
+        ids = {profile_id}
+    elif event_type in ONBOARDING_REVIEW_TYPES:
+        ids = {created_user_id}
+    else:
+        ids = {created_user_id, profile_id}
+    return {str(value) for value in ids if value is not None}
+
+
 def _learner_calendar_record(kind, pk, event_key):
     """Resolve an event only when it belongs to the requested learner."""
     model = SOURCE_MODELS.get(kind)
@@ -707,18 +917,30 @@ def _learner_calendar_record(kind, pk, event_key):
     learner = model.all_learners.filter(pk=pk).first()
     if learner is None:
         return None
-    mirror = learner_profile_for_source(learner, pk, active_only=True)
+    mirror = _calendar_profile(learner, pk)
+    if source_for_learner(learner, mirror).kind != "curriculum":
+        mirror = review_profile_for_source(learner, mirror)
+        occurrences = coaching_events_for_learner(learner, mirror)
+        imported = [item for item in occurrences if item.get("reviewSource") == "aptem"
+                    and event_key in {item["eventKey"], item.get("calendarEventKey")}]
+        if imported:
+            key = imported[0].get("calendarEventKey")
+            record = CoachCalendarEvent.objects.filter(event_key=key).first() if key else None
+            if record:
+                record._imported_review_event = imported[0]
+            return record
+        if event_key.startswith(("imported-review:", "review:", "mcr:", "progress-review:")):
+            return None
     emails = {_s(learner.email).strip().casefold()}
     if mirror:
         emails.add(_s(mirror.email).strip().casefold())
     emails.discard("")
     record = CoachCalendarEvent.objects.filter(event_key=event_key).first()
-    if not record:
+    if not record or (source_for_learner(learner, mirror).kind == "aptem"
+                      and record.event_type in {"mcr", "progress-review", "review"}):
         return None
-    learner_ids = {str(pk)}
-    if mirror:
-        learner_ids.add(str(mirror.id))
-    return record if (str(record.learner_id or "") in learner_ids or _s(record.learner_email).strip().casefold() in emails) else None
+    owner_ids = _record_owner_ids(record, created_user_id=pk, profile_id=mirror.id if mirror else None)
+    return record if (str(record.learner_id or "") in owner_ids or _s(record.learner_email).strip().casefold() in emails) else None
 
 
 def _follow_first_session_start_date(kind, pk, record, scheduled_date):
@@ -783,6 +1005,8 @@ def learner_calendar_event_review(request, kind, pk, event_key):
         return _save_learner_review_answers(request, kind, pk, event_key)
     record = _learner_calendar_record(kind, pk, event_key)
     from curriculum_api import review_instances, reviews
+    if record and isinstance(getattr(record, '_imported_review_event', None), dict):
+        return _error("Open this imported Review through its migrated form.", 409)
     instance_id = _s(getattr(record, "review_instance_id", ""))
     if not instance_id:
         template_id = _s(getattr(record, 'review_template_id', ''))
@@ -792,7 +1016,7 @@ def learner_calendar_event_review(request, kind, pk, event_key):
             learner = model.all_learners.filter(pk=pk).first() if model else None
             if learner is None:
                 return _error('Calendar event not found for this learner.', 404)
-            mirror = learner_profile_for_source(learner, pk, active_only=True)
+            mirror = _calendar_profile(learner, pk)
             event = next((event for event in _generated_cycle_events(learner, mirror, set()) if event['eventKey'] == event_key), None)
             if event is None:
                 return _error('Calendar event not found for this learner.', 404)
@@ -805,19 +1029,17 @@ def learner_calendar_event_review(request, kind, pk, event_key):
         # occurrence creates the durable instance, but the learner calendar
         # still reaches this endpoint through the generated event key. Resolve
         # that same instance by its stable identity instead of returning a
-        # blank template preview.
-        candidate_ids = [str(pk)]
+        # blank template preview. review_instances.learner_id is the learner's
+        # profile id (see _record_owner_ids), so only that id is looked up --
+        # Created_users.id is a different sequence and may equal someone
+        # else's profile id.
         model = SOURCE_MODELS.get(kind)
         learner = model.all_learners.filter(pk=pk).first() if model else None
-        if learner is not None:
-            mirror = learner_profile_for_source(learner, pk, active_only=True)
-            if mirror is not None and str(mirror.pk) not in candidate_ids:
-                candidate_ids.append(str(mirror.pk))
-        for candidate_id in candidate_ids:
-            existing = review_instances.find_review_instance(template_id, candidate_id, occurrence_number)
+        mirror = _calendar_profile(learner, pk) if learner is not None else None
+        if mirror is not None:
+            existing = review_instances.find_review_instance(template_id, str(mirror.pk), occurrence_number)
             if existing:
                 instance_id = _s(existing.get('id'))
-                break
         if instance_id:
             instance = review_instances.get_review_instance(instance_id)
             if not instance:
@@ -825,26 +1047,26 @@ def learner_calendar_event_review(request, kind, pk, event_key):
             definition = review_instances.review_instance_form_definition(instance)
             if not definition['template']['visibleTo'].get('participant', True):
                 return _error('This review is not visible to the learner.', 403)
-            return JsonResponse(_learner_visible_review_definition(definition))
+            return JsonResponse(_learner_visible_review_definition(definition, pk))
         template = reviews.get_review_template_row(template_id, include_deleted=bool(record))
         if template is None:
             return _error('Review template not found.', 404)
         snapshot = review_instances.build_definition_snapshot(template)
         if not snapshot.get('visibleTo', {}).get('participant', True):
             return _error('This review is not visible to the learner.', 403)
-        return JsonResponse({
+        return JsonResponse(_learner_visible_review_definition({
             'instance': None, 'occurrenceNumber': occurrence_number,
             'template': snapshot, 'sections': snapshot['sections'],
             'signatures': {role: {'required': bool(snapshot['signatures'].get(role)), 'signed': False}
                            for role in review_instances.SIGNATURE_ROLES},
-        })
+        }, pk))
     instance = review_instances.get_review_instance(instance_id)
     if not instance:
         return _error("Review instance not found.", 404)
     definition = review_instances.review_instance_form_definition(instance)
     if not definition['template']['visibleTo'].get('participant', True):
         return _error('This review is not visible to the learner.', 403)
-    return JsonResponse(_learner_visible_review_definition(definition))
+    return JsonResponse(_learner_visible_review_definition(definition, pk))
 
 
 def _save_learner_review_answers(request, kind, pk, event_key):
@@ -857,6 +1079,8 @@ def _save_learner_review_answers(request, kind, pk, event_key):
     from curriculum_api import review_instances
 
     record = _learner_calendar_record(kind, pk, event_key)
+    if record and isinstance(getattr(record, '_imported_review_event', None), dict):
+        return _error("Open this imported Review through its migrated form.", 409)
     instance_id = _s(getattr(record, "review_instance_id", ""))
     if not instance_id:
         return _error("This review has not been booked yet.", 404)
@@ -885,13 +1109,43 @@ def _save_learner_review_answers(request, kind, pk, event_key):
         return _error(str(exc), 403)
     except ValueError as exc:
         return _error(str(exc), 409)
-    return JsonResponse(_learner_visible_review_definition(updated))
+    return JsonResponse(_learner_visible_review_definition(updated, pk))
 
 
-def _learner_visible_review_definition(definition):
+def _saved_learner_signature(learner_id):
+    """Read the learner's reusable signature without making it mandatory.
+
+    The signature columns were added after the original learner calendar
+    endpoint. A deployment that has not applied that small migration should
+    still be able to open and sign reviews, so a missing table/column is
+    treated as an empty reusable signature.
+    """
+    try:
+        with connections["enrolment"].cursor() as cursor:
+            cursor.execute(
+                '''SELECT "Learner_signature", "Learner_signature_name"
+                     FROM enrolment."Created_users"
+                    WHERE id=%s LIMIT 1''',
+                [str(learner_id)],
+            )
+            row = cursor.fetchone()
+    except DatabaseError:
+        return {}
+    signature = _s(row[0]) if row else ""
+    if not signature.startswith("data:image/"):
+        return {}
+    return {
+        "savedSignature": signature,
+        "savedSignatureName": _s(row[1]) if row else "",
+    }
+
+
+def _learner_visible_review_definition(definition, learner_id=None):
     """Hide the formal MCM summary until the coach submits the Review."""
+    definition = dict(definition)
+    is_mcm = (definition.get('template') or {}).get('reviewTypeCode') == 'mcm'
     if (
-        (definition.get('template') or {}).get('reviewTypeCode') == 'mcm'
+        is_mcm
         and (definition.get('instance') or {}).get('status') not in {'awaiting-signature', 'completed'}
     ):
         from curriculum_api.review_instances import meeting_summary_field
@@ -900,13 +1154,35 @@ def _learner_visible_review_definition(definition):
             field['answer'] = None
             field['answeredBy'] = None
             field['answeredAt'] = None
+    if learner_id is not None and is_mcm:
+        definition.update(_saved_learner_signature(learner_id))
     return definition
 
 
 @learner_self_or_staff(kwarg="pk")
 def learner_calendar_event_review_pdf(request, kind, pk, event_key):
-    """Download the signed MCM PDF for a learner-visible calendar review."""
-    response = learner_calendar_event_review(request, kind, pk, event_key)
+    """Download a PDF for a learner-visible current or imported review."""
+    if event_key.startswith('imported-review:'):
+        from curriculum_api.review_pdf import historical_pdf_response, learner_information
+        from .aptem_review_pdf import imported_review_for_source, original_review_pdf
+
+        model = SOURCE_MODELS.get(kind)
+        source = model.all_learners.filter(pk=pk).first() if model else None
+        review = imported_review_for_source(source, event_key.split(':', 1)[-1], kind=kind)
+        if not review:
+            return _error("Imported review not found for this learner.", 404)
+        information = learner_information(source, name=review.get('learnerName', ''), programme='')
+        return historical_pdf_response(
+            review,
+            information,
+            identifier=event_key.split(':', 1)[-1],
+            original_content=original_review_pdf(review),
+        )
+
+    # The review view has its own learner_self_or_staff decorator, which reads
+    # ``pk`` from keyword arguments. Preserve that contract when delegating so
+    # the nested authorization gate can identify the learner as well.
+    response = learner_calendar_event_review(request, kind=kind, pk=pk, event_key=event_key)
     if getattr(response, "status_code", 500) != 200:
         return response
     try:
@@ -995,6 +1271,13 @@ def learner_progress_review_sign(request, kind, pk, event_key):
     record = _learner_calendar_record(kind, pk, event_key)
     if not record or record.event_type not in {"mcr", "progress-review", "review"}:
         return _error("Review not found for this learner.", 404)
+    if isinstance(getattr(record, '_imported_review_event', None), dict):
+        return _error("Sign this imported Review through its migrated form.", 409)
+    if record.event_type == 'mcr':
+        from .mcm_signoff import mcm_signoff_response
+        return mcm_signoff_response(request, record, pk)
+    if request.method != 'POST':
+        return _error("Method not allowed.", 405)
     # Curriculum Review instances are the canonical form/signature record.
     # Keep the old calendar blob only for rows created before instances existed.
     if _s(getattr(record, 'review_instance_id', '')):
@@ -1057,6 +1340,7 @@ def _serialize_live_session_event(event):
     return {
         "id": event.get("id"),
         "eventKey": event.get("eventKey") or event.get("id"),
+        "occurrenceId": event.get("occurrenceId"),
         "title": event.get("title") or "Live Session",
         "source": "live-session",
         "type": "live-session",
@@ -1077,6 +1361,100 @@ def _serialize_live_session_event(event):
         "group": event.get("group") or "",
         "module": event.get("module") or "",
     }
+
+
+def _catchup_link_precheck(learner_id, report_id, scheduled_date, *, enforce_change_cutoff=False):
+    """Refuse, before booking, a catch-up the absence report could not take."""
+    from .absence_reports import RecoveryPlanError
+    from .session_recovery import ReportNotFound, check_report_can_take_catchup
+    try:
+        report = check_report_can_take_catchup(learner_id, report_id, enforce_change_cutoff=enforce_change_cutoff)
+    except ReportNotFound:
+        return _error("Absence report not found.", 404)
+    except RecoveryPlanError as exc:
+        return _error(str(exc), 409)
+    if report.session_date and scheduled_date < report.session_date:
+        return _error("Choose a catch-up on or after the lecture date.", 400)
+    return None
+
+
+def _link_booked_catchup(record, learner, mirror, learner_id, report_id, *, enforce_change_cutoff=False):
+    """Link the new booking to the absence; if that fails, cancel the booking again."""
+    from .absence_reports import RecoveryPlanError
+    from .session_recovery import ReportNotFound, link_report_to_catchup
+    try:
+        link_report_to_catchup(learner, mirror, learner_id, report_id, record.event_key,
+                               enforce_change_cutoff=enforce_change_cutoff)
+        return None
+    except (ReportNotFound, RecoveryPlanError, DatabaseError) as exc:
+        message = str(exc) if isinstance(exc, RecoveryPlanError) else "The catch-up could not be linked to your absence."
+        logger.warning("learner_calendar_book: linking %s to report %s failed: %s", record.event_key, report_id, exc)
+    try:
+        from coach_api.views import cancel_reserved_calendar_event
+        cancel_reserved_calendar_event(record)
+    except Exception:
+        logger.exception("learner_calendar_book: could not cancel unlinked catch-up %s", record.event_key)
+        return _error(f"{message} The booking was kept; please link or cancel it from your calendar.", 409)
+    return _error(f"{message} The booking was cancelled. Please choose another time.", 409)
+
+
+def _annotate_linked_catchups(events):
+    """``linkedReportId``: the absence report a catch-up already makes up (one lecture per catch-up)."""
+    from coach_api.models import CoachAbsenceReport
+    keys = [event.get("eventKey") for event in events if event.get("source") == "catch-up" and event.get("eventKey")]
+    if not keys:
+        return
+    linked = dict(
+        CoachAbsenceReport.objects.filter(catchup_event_key__in=keys)
+        .exclude(status=CoachAbsenceReport.STATUS_DECLINED)
+        .values_list("catchup_event_key", "id")
+    )
+    for event in events:
+        if event.get("source") == "catch-up":
+            event["linkedReportId"] = linked.get(event.get("eventKey"))
+
+
+def _catchup_change_closed(record):
+    """A catch-up starting within the cut-off can no longer be moved or cancelled by the learner."""
+    from .coach_availability import catchup_change_closed
+    return (_s(record.event_type).lower() == "catch-up"
+            and catchup_change_closed(record.scheduled_date, record.scheduled_time))
+
+
+def _learner_catchup_change_error(request, record):
+    """Refuse a learner's late change to their catch-up; staff may still change it."""
+    from .coach_availability import CATCHUP_CHANGE_CLOSED_MESSAGE
+    role = getattr(getattr(request, "account", None), "role", "")
+    if role in {"admin", "staff"} or not _catchup_change_closed(record):
+        return None
+    return _error(CATCHUP_CHANGE_CLOSED_MESSAGE, 409)
+
+
+def _release_cancelled_catchup(record):
+    """The absence this catch-up was making up goes back to needing a recovery."""
+    if _s(record.event_type).lower() != "catch-up":
+        return
+    from curriculum_api.live_session_absences import release_cancelled_catchup
+    from curriculum_api.models import LiveSessionAbsence
+    from django.db import router
+    try:
+        release_cancelled_catchup(
+            database=router.db_for_write(LiveSessionAbsence) or "default", event_key=record.event_key,
+        )
+    except DatabaseError:
+        logger.exception("learner_calendar_cancel: could not release absence for %s", record.event_key)
+
+
+def _catchup_time_error(owner_email, scheduled_date, scheduled_time, duration_minutes, *, exclude_event_key=""):
+    """Refuse a catch-up outside the coach's free working time (the picker's own rule)."""
+    from .coach_availability import AvailabilityUnavailable, catchup_slot_is_free
+    try:
+        if catchup_slot_is_free(owner_email, scheduled_date, scheduled_time, duration_minutes,
+                                exclude_event_key=exclude_event_key):
+            return None
+    except AvailabilityUnavailable as exc:
+        return _error(str(exc), 503)
+    return _error("Your coach is not available at that time. Choose one of the available times.", 409)
 
 
 @learner_self_or_staff(kwarg="pk")
@@ -1101,7 +1479,7 @@ def learner_calendar(request, kind, pk):
         # The Active_users mirror carries the source row's id (see
         # active_users.sync_active_user), and coach events store that mirror's
         # id + email — so the mirror email is the authoritative one here.
-        mirror = learner_profile_for_source(learner, pk, active_only=True)
+        mirror = _calendar_profile(learner, pk)
     except DatabaseError as exc:
         logger.exception("learner_calendar: mirror lookup failed")
         return _error(f"Database error: {exc}", 502)
@@ -1125,11 +1503,25 @@ def learner_calendar(request, kind, pk):
 
     try:
         events = coaching_events_for_learner(learner, mirror)
+        events.extend(alternative_recovery_events_for_learner(pk))
 
-        # Live curriculum sessions belong to the learner's placement, not to
-        # their assigned coach. Use the same module/week/holiday planner as the
-        # coach calendar, but scope it directly to programme/cohort/group.
-        if mirror is not None and (_s(getattr(mirror, "group_id", "")) or _s(mirror.group_name)):
+        # Live curriculum sessions belong to the learner's explicit module
+        # assignment, not to a possibly stale profile group label. Fall back to
+        # placement scope only for legacy learners with no module assignment.
+        module_ids = assigned_curriculum_module_ids(learner)
+        if module_ids:
+            from coach_api.views import collect_live_session_events
+
+            live_events = collect_live_session_events(
+                "",
+                "",
+                require_coach_access=False,
+                include_past=True,
+                learner_module_ids=module_ids,
+            )
+            for event in live_events:
+                events.append(_serialize_live_session_event(event))
+        elif mirror is not None and (_s(getattr(mirror, "group_id", "")) or _s(mirror.group_name)):
             from coach_api.views import collect_live_session_events
 
             live_events = collect_live_session_events(
@@ -1163,6 +1555,16 @@ def learner_calendar(request, kind, pk):
             _s(event.get("source")),
             event.get("sequence") or 0,
         ))
+        # Elapsed meetings show Ended, or Completed when the learner attended.
+        from coach_api.meeting_outcomes import annotate_meeting_outcomes
+        annotate_meeting_outcomes(events)
+        _annotate_linked_catchups(events)
+        # Live sessions keep their own rule: Completed when this learner attended.
+        from coach_api.live_session_outcomes import annotate_live_session_outcomes
+        annotate_live_session_outcomes(
+            events, learner_profile_id=getattr(mirror, "id", None), learner_email=email,
+            recording_viewer=(kind, pk),
+        )
     except DatabaseError as exc:
         logger.exception("learner_calendar: event lookup failed")
         return _error(f"Database error: {exc}", 502)
@@ -1174,6 +1576,21 @@ def learner_calendar(request, kind, pk):
             "bookingCalendar": booking_calendar_payload(),
         }
     )
+
+
+def onboarding_review_idempotency_parts(kind, pk, session_type, cancelled_count):
+    """Logical identity of one onboarding review booking, before hashing.
+
+    The slot is left out on purpose: each review type is booked once, so a
+    retried POST replays that booking. What does make a new booking is a
+    cancellation -- the cancelled row keeps its key, so without the count a
+    rebooking would match it and be refused as a different booking. A count of 0 gives the same parts as before, so a key
+    already stored for a first booking still matches its retries.
+    """
+    parts = [kind, str(pk), session_type]
+    if cancelled_count:
+        parts.append(f"after-cancelled:{cancelled_count}")
+    return parts
 
 
 @csrf_exempt
@@ -1221,7 +1638,7 @@ def learner_calendar_book(request, kind, pk):
     try:
         # all_learners: the default manager is scoped to apprenticeship rows.
         learner = model.all_learners.filter(pk=pk).first()
-        mirror = learner_profile_for_source(learner, pk, active_only=True)
+        mirror = _calendar_profile(learner, pk)
     except DatabaseError as exc:
         logger.exception("learner_calendar_book: learner lookup failed")
         return _error(f"Database error: {exc}", 502)
@@ -1253,6 +1670,14 @@ def learner_calendar_book(request, kind, pk):
             return _error(
                 "No case owner has been assigned to you yet. Please contact your programme team.", 400
             )
+        if is_first_session and _still_enrolling(kind, learner) and not _may_book_first_session_early(kind, learner):
+            # The gate stops offering it, but the calendar still lists the type:
+            # the order is kept here, where a stale tab cannot get round it.
+            return _error(
+                "Your first learning session is booked once your enrolment is complete: "
+                "your enrolment form, your onboarding reviews and your signature on "
+                "each of your compliance documents.", 400
+            )
         if is_first_session:
             # There is only ever one first session. Without this a learner
             # could book a second from a stale tab and end up with two
@@ -1276,16 +1701,21 @@ def learner_calendar_book(request, kind, pk):
                 )
     else:
         if mirror is None:
-            # Everything else is a session *within* a running programme. A
-            # learner still waiting for their first session has one thing they
-            # may book, and this is not it -- said plainly, because "only
-            # Active learners" does not tell them what to do next.
             return _error(
                 "Only Active learners can book coach sessions. "
                 "Book your first learning session first.", 400
             )
-        owner_email = _s(mirror.coach_email)
-        owner_name = _s(mirror.coach_name) or "Coach"
+        # The source learner carries the current assignment. A mirror can lag
+        # after reassignment, and an explicitly cleared source assignment must
+        # not silently send a new invite to the former coach.
+        owner_email = _s(
+            getattr(learner, "coach_email", mirror.coach_email)
+            if hasattr(learner, "coach_email") else mirror.coach_email
+        )
+        owner_name = _s(
+            getattr(learner, "coach_name", mirror.coach_name)
+            if hasattr(learner, "coach_name") else mirror.coach_name
+        ) or "Coach"
         if not owner_email:
             return _error("No coach has been assigned to you yet. Please contact your programme team.", 400)
 
@@ -1307,6 +1737,22 @@ def learner_calendar_book(request, kind, pk):
     date_restriction = booking_date_restriction(scheduled_date)
     if date_restriction is not None:
         return _error(date_restriction.message, 400)
+    if session_type == "catch-up":
+        busy_error = _catchup_time_error(owner_email, scheduled_date, scheduled_time, duration_minutes)
+        if busy_error:
+            return busy_error
+    # Booking a catch-up for a reported absence links it in the same request, and
+    # the link is checked before anything is booked, so a refused link never
+    # leaves a stray booking (and its invitation) behind.
+    link_report_id = None
+    if session_type == "catch-up" and payload.get("absenceReportId") not in (None, ""):
+        try:
+            link_report_id = int(payload.get("absenceReportId"))
+        except (TypeError, ValueError):
+            return _error("absenceReportId must be a number.", 400)
+        link_error = _catchup_link_precheck(pk, link_report_id, scheduled_date, enforce_change_cutoff=learner_change(request))
+        if link_error:
+            return link_error
 
     notes = _s(payload.get("notes"))[:500]
     # An onboarding learner has no mirror row yet, so fall back to the source.
@@ -1315,14 +1761,64 @@ def learner_calendar_book(request, kind, pk):
     learner_email = _s(getattr(mirror, "email", "")) or _s(learner.email)
     assignment_month = _s(payload.get("assignmentMonth")) if session_type in {"mcr", "progress-review"} else ""
     imported_review_id = _s(payload.get("reviewId")) if assignment_month else ""
+    if payload.get("reviewId") and source_for_learner(learner, mirror).kind == "curriculum":
+        return _error("This learner uses Curriculum Review occurrences.", 409)
     # The assignment screen and imported reviews both send assignmentMonth.
     # An explicit context keeps their eligibility rules and identities separate.
     assignment_booking = _s(payload.get("bookingContext")) == "monthly-assignment"
-    if assignment_booking and (session_type != "mcr" or not assignment_month or _s(payload.get("reviewId"))):
-        return _error("Monthly assignment bookings require an MCM, an assignment month, and no imported review.", 400)
-    # Requests opened from the generic learner modal go to the coach for
-    # approval. Programme-cycle rows opened from an official calendar card
-    # retain their existing direct scheduling flow.
+    if assignment_booking and (
+        session_type != "mcr" or not assignment_month
+        or (imported_review_id and _s(payload.get("eventKey")))
+    ):
+        return _error(
+            "Monthly assignment bookings require an MCM, an assignment month, and either "
+            "an official slot or an imported Aptem MCM.", 400,
+        )
+    # The imported review's own month keys its booking, as on the Calendar page,
+    # so the same Aptem MCM keeps one meeting whichever screen booked it.
+    idempotency_month = assignment_month
+    if assignment_booking and imported_review_id:
+        if mirror is None:
+            return _error("Only Active learners can book programme-cycle sessions.", 400)
+        try:
+            review_month, review_error = _assignment_imported_mcm_month(mirror.id, imported_review_id)
+        except DatabaseError as exc:
+            logger.exception("learner_calendar_book: imported MCM lookup failed")
+            return _error(f"Database error: {exc}", 502)
+        if review_error:
+            message, status_code = review_error
+            return _error(message, status_code)
+        idempotency_month = review_month or assignment_month
+    aptem_target = None
+    if session_type in {"mcr", "progress-review"} and source_for_learner(learner, mirror).kind != "curriculum":
+        try:
+            mirror = review_profile_for_source(learner, mirror)
+            candidates = [item for item in coaching_events_for_learner(learner, mirror)
+                          if item.get("reviewSource") == "aptem" and item["source"] == session_type
+                          and ((payload.get("reviewId") and item["reviewId"] == str(payload["reviewId"]))
+                               or (payload.get("eventKey") and payload["eventKey"] in {
+                                   item["eventKey"], item.get("calendarEventKey")}))]
+        except DatabaseError:
+            return _error("The imported Review identity could not be resolved.", 409)
+        if len(candidates) != 1:
+            return _error("Choose an existing imported Review for this learner.", 409)
+        aptem_target = candidates[0]
+        if getattr(mirror, "lifecycle_status", "") != "active":
+            return _error("Only Active learners can schedule programme-cycle sessions.", 400)
+        if aptem_target["status"] not in {"not-scheduled", "scheduled"}:
+            return _error("A submitted or started imported Review cannot be scheduled again.", 409)
+        imported_review_id = aptem_target["reviewId"]
+        payload = {**payload, "reviewId": imported_review_id,
+                   "eventKey": aptem_target.get("calendarEventKey") or aptem_target["eventKey"]}
+        if aptem_target.get("calendarEventKey"):
+            owner_email = aptem_target["coachEmail"] or owner_email
+            existing = CoachCalendarEvent.objects.filter(event_key=aptem_target["calendarEventKey"]).first()
+            if existing and existing.sync_state == CoachCalendarEvent.SYNC_SYNCED:
+                if (existing.scheduled_date, existing.scheduled_time, existing.duration_minutes) != (scheduled_date, scheduled_time, duration_minutes):
+                    return _error("This imported Review already has an appointment. Use reschedule to move it.", 409)
+                return JsonResponse({"event": aptem_target, "warning": _friendly_sync_warning(existing.last_graph_sync_error)})
+    # Generic MCM/PR requests still resolve to an official Curriculum
+    # occurrence before they use the direct scheduling flow below.
     direct_cycle_request = session_type in {"mcr", "progress-review"} and not _s(payload.get("eventKey")) and not assignment_month
     if direct_cycle_request:
         # A generic MCM/PR request must still resolve to an official Curriculum
@@ -1338,11 +1834,7 @@ def learner_calendar_book(request, kind, pk):
             message, status_code = resolution_error
             return _error(message, status_code)
         payload = {**payload, "eventKey": resolved_event_key}
-        direct_cycle_request = False
-    requires_coach_approval = (
-        session_type in {"catch-up", "student-support", "gateway", "other"}
-        or direct_cycle_request
-    ) and not is_onboarding_review
+    requires_coach_approval = session_type in COACH_APPROVAL_TYPES and not is_onboarding_review
     calendar_learner_id = int(mirror.id) if mirror is not None and not is_onboarding_review else pk
 
     if assignment_month:
@@ -1356,7 +1848,9 @@ def learner_calendar_book(request, kind, pk):
                 if assignment_booking:
                     return _error("Book a 60-minute MCM within either monthly assignment booking window.", 400)
                 return _error("Book a 60-minute MCM from the last ten days of the submission month through the 5th of the following month.", 400)
-            if not _s(payload.get("eventKey")):
+            # A validated imported Aptem MCM is already the Review's identity
+            # (see _assignment_imported_mcm_month) and books on the imported path below.
+            if not _s(payload.get("eventKey")) and not (assignment_booking and imported_review_id):
                 # assignment_month is an eligibility gate (the window check
                 # above), never the Review's identity -- resolve the actual
                 # canonical Curriculum occurrence instead of falling through
@@ -1399,7 +1893,10 @@ def learner_calendar_book(request, kind, pk):
         if mirror is None:
             return _error("Only Active learners can schedule programme-cycle sessions.", 400)
 
-        base_event, owner_name = find_generated_timetable_event(owner_email, event_key)
+        if aptem_target is not None:
+            base_event, owner_name = aptem_target, aptem_target.get("coachName") or owner_name
+        else:
+            base_event, owner_name = find_generated_timetable_event(owner_email, event_key)
         if (
             not base_event
             or _s(base_event.get("source")) != session_type
@@ -1452,6 +1949,17 @@ def learner_calendar_book(request, kind, pk):
                     "target_date": target_date,
                 },
             )
+            if aptem_target is not None and not created:
+                from coach_api.review_sources import linked_booking
+                if linked_booking(aptem_target, [record]) is None or record.owner_email.casefold() != owner_email.casefold():
+                    return _error("The imported Review booking identity is inconsistent.", 409)
+                if (record.scheduled_date, record.scheduled_time, record.duration_minutes) != (scheduled_date, scheduled_time, duration_minutes):
+                    return _error("This imported Review already has a different booking request. Use reschedule to move it.", 409)
+                # Replay the existing operation. Never reset a successful sync
+                # or replace an organizer/idempotency identity on a retry.
+                record, warning, _attempted = synchronize_reserved_calendar_event(record.pk, base_event)
+                return JsonResponse({"event": _booking_response_event(record, aptem_target),
+                                     "warning": _friendly_sync_warning(warning)})
             review_template_id = _s(base_event.get('reviewTemplateId'))
             # A review-driven event must not become scheduled unless canonical
             # linkage is guaranteed. Rescheduling an already-linked row never
@@ -1467,7 +1975,8 @@ def learner_calendar_book(request, kind, pk):
 
             record.owner_email = owner_email
             record.owner_name = owner_name or _s(mirror.coach_name) or record.owner_name or "Coach"
-            record.learner_id = int(mirror.id)
+            if aptem_target is None or created:
+                record.learner_id = int(mirror.id)
             record.learner_name = _s(base_event.get("learner")) or learner_name
             record.learner_email = _s(base_event.get("email")) or learner_email
             record.event_type = session_type
@@ -1478,11 +1987,12 @@ def learner_calendar_book(request, kind, pk):
             record.duration_minutes = duration_minutes
             record.status = CoachCalendarEvent.STATUS_SCHEDULED
             record.notes = notes
-            record.review_template_id = review_template_id
-            record.occurrence_number = (
-                None if base_event.get('occurrenceSource') == 'manual'
-                else int(base_event.get('occurrenceNumber') or base_event.get('sequence') or 1)
-            )
+            if aptem_target is None or created:
+                record.review_template_id = review_template_id
+                record.occurrence_number = (
+                    None if aptem_target is not None or base_event.get('occurrenceSource') == 'manual'
+                    else int(base_event.get('occurrenceNumber') or base_event.get('sequence') or 1)
+                )
 
             record = persist_calendar_sync_reservation(record, review_event=base_event)
             record, warning, _attempted = synchronize_reserved_calendar_event(record.pk, base_event)
@@ -1505,7 +2015,7 @@ def learner_calendar_book(request, kind, pk):
                 record.event_key, owner_email, warning,
             )
         return JsonResponse(
-            {"event": _serialize_event(record), "warning": _friendly_sync_warning(warning)},
+            {"event": _booking_response_event(record, aptem_target), "warning": _friendly_sync_warning(warning)},
             status=201 if created else 200,
         )
 
@@ -1534,15 +2044,37 @@ def learner_calendar_book(request, kind, pk):
         supplied_key = _s(request.headers.get("Idempotency-Key"))
         if assignment_month:
             booking_kind = "mcm" if session_type == "mcr" else session_type
-            idempotency_key = f"learner-book:{booking_kind}:{kind}:{pk}:{assignment_month}:{imported_review_id or 'legacy'}"
+            idempotency_key = f"learner-book:{booking_kind}:{kind}:{pk}:{idempotency_month}:{imported_review_id or 'legacy'}"
+            if assignment_booking and imported_review_id:
+                # Booking moves the imported row's planned date, so an earlier
+                # booking of this review can carry another month. Reuse it
+                # rather than inviting the coach to a second meeting.
+                earlier = (
+                    CoachCalendarEvent.objects.filter(
+                        owner_email=owner_email.strip().lower(),
+                        idempotency_key__startswith=f"learner-book:{booking_kind}:{kind}:{pk}:",
+                        idempotency_key__endswith=f":{imported_review_id}",
+                    )
+                    .order_by("-pk")
+                    .values_list("idempotency_key", flat=True)
+                    .first()
+                )
+                idempotency_key = earlier or idempotency_key
         elif supplied_key:
             idempotency_key = calendar_idempotency_key(request)
         else:
             # Backward-compatible deterministic identity for existing learner
             # clients. Onboarding review identity intentionally ignores the
             # slot because each review type is a one-time logical operation.
-            logical_parts = [kind, str(pk), session_type]
-            if not is_onboarding_review:
+            if is_onboarding_review:
+                cancelled_count = CoachCalendarEvent.objects.filter(
+                    learner_id=pk,
+                    event_type=session_type,
+                    status=CoachCalendarEvent.STATUS_CANCELLED,
+                ).count()
+                logical_parts = onboarding_review_idempotency_parts(kind, pk, session_type, cancelled_count)
+            else:
+                logical_parts = [kind, str(pk), session_type]
                 logical_parts.extend(
                     [
                         scheduled_date.isoformat(),
@@ -1566,7 +2098,7 @@ def learner_calendar_book(request, kind, pk):
             # Reuse bookings created by the previous month-only key format.
             replay = CoachCalendarEvent.objects.filter(
                 owner_email=owner_email.strip().lower(),
-                idempotency_key=f"learner-book:{booking_kind}:{kind}:{pk}:{assignment_month}",
+                idempotency_key=f"learner-book:{booking_kind}:{kind}:{pk}:{idempotency_month}",
             ).first()
         if replay is not None:
             if assignment_month:
@@ -1607,8 +2139,14 @@ def learner_calendar_book(request, kind, pk):
             replay, warning, _attempted = synchronize_reserved_calendar_event(
                 replay.pk, build_booked_calendar_event(replay)
             )
+            if link_report_id is not None:
+                link_error = _link_booked_catchup(replay, learner, mirror, pk, link_report_id,
+                                                  enforce_change_cutoff=learner_change(request))
+                if link_error:
+                    return link_error
             return JsonResponse(
-                {"event": _serialize_event(replay), "warning": _friendly_sync_warning(warning)},
+                {"event": _serialize_event(replay), "warning": _friendly_sync_warning(warning),
+                 **({"linkedReportId": link_report_id} if link_report_id is not None else {})},
                 status=200,
             )
 
@@ -1639,6 +2177,7 @@ def learner_calendar_book(request, kind, pk):
             notes=notes,
             idempotency_key=idempotency_key,
             initial_status=CoachCalendarEvent.STATUS_NOT_SCHEDULED if requires_coach_approval else CoachCalendarEvent.STATUS_SCHEDULED,
+            **({"local_mcm_review_id": imported_review_id} if assignment_booking and imported_review_id else {}),
         )
         if requires_coach_approval:
             return JsonResponse(
@@ -1685,8 +2224,14 @@ def learner_calendar_book(request, kind, pk):
     # scheduling reads, and the enrolment header states it.
     _follow_first_session_start_date(kind, pk, record, scheduled_date)
 
+    if link_report_id is not None:
+        link_error = _link_booked_catchup(record, learner, mirror, pk, link_report_id,
+                                          enforce_change_cutoff=learner_change(request))
+        if link_error:
+            return link_error
     return JsonResponse(
-        {"event": _serialize_event(record), "warning": _friendly_sync_warning(warning)},
+        {"event": _serialize_event(record), "warning": _friendly_sync_warning(warning),
+         **({"linkedReportId": link_report_id} if link_report_id is not None else {})},
         status=201 if created else 200,
     )
 
@@ -1735,9 +2280,6 @@ def learner_calendar_reschedule(request, kind, pk):
         return _error("scheduledDate is required.", 400)
     if not scheduled_time:
         return _error("scheduledTime is required.", 400)
-    date_restriction = booking_date_restriction(scheduled_date)
-    if date_restriction is not None:
-        return _error(date_restriction.message, 400)
 
     try:
         record = _learner_booking_record(kind, pk, event_key)
@@ -1745,18 +2287,36 @@ def learner_calendar_reschedule(request, kind, pk):
             return _error("Booking not found.", 404)
         if record.status != CoachCalendarEvent.STATUS_SCHEDULED:
             return _error("Only an upcoming scheduled session can be rescheduled.", 409)
+        late_change = _learner_catchup_change_error(request, record)
+        if late_change:
+            return late_change
+        # Checked once the row is known: a first session may move to a Sunday,
+        # every other session type keeps the weekday-only calendar.
+        date_restriction = booking_date_restriction(
+            scheduled_date,
+            allow_sunday=_s(record.event_type).lower() == "first-session",
+        )
+        if date_restriction is not None:
+            return _error(date_restriction.message, 400)
+        if _s(record.event_type).lower() == "catch-up":
+            busy_error = _catchup_time_error(record.owner_email, scheduled_date, scheduled_time,
+                                             duration_minutes, exclude_event_key=record.event_key)
+            if busy_error:
+                return busy_error
         if (
             record.scheduled_date == scheduled_date
             and record.scheduled_time == scheduled_time
             and record.duration_minutes == duration_minutes
             and record.sync_state == CoachCalendarEvent.SYNC_SYNCED
         ):
-            if getattr(record, 'review_instance_id', ''):
+            imported_event = getattr(record, '_imported_review_event', None)
+            if getattr(record, 'review_instance_id', '') and not imported_event:
                 record = sync_scheduled_review_instance(record)
             _mark_imported_review_scheduled(
-                payload.get("reviewId"), record.learner_id, scheduled_date, scheduled_time,
+                imported_event.get("reviewId") if imported_event else payload.get("reviewId"),
+                int(imported_event["learnerId"]) if imported_event else record.learner_id, scheduled_date, scheduled_time,
             )
-            return JsonResponse({"event": _serialize_event(record), "warning": ""})
+            return JsonResponse({"event": _booking_response_event(record, imported_event), "warning": ""})
 
         from .calendar_connections import booking_conflicts
         if booking_conflicts(
@@ -1778,12 +2338,14 @@ def learner_calendar_reschedule(request, kind, pk):
         record.scheduled_date = scheduled_date
         record.scheduled_time = scheduled_time
         record.duration_minutes = duration_minutes
-        record = persist_calendar_sync_reservation(record)
+        imported_event = getattr(record, '_imported_review_event', None)
+        record = persist_calendar_sync_reservation(record, **({"review_event": imported_event} if imported_event else {}))
         record, warning, _attempted = synchronize_reserved_calendar_event(
-            record.pk, build_booked_calendar_event(record)
+            record.pk, imported_event or build_booked_calendar_event(record)
         )
         _mark_imported_review_scheduled(
-            payload.get("reviewId"), record.learner_id, scheduled_date, scheduled_time,
+            imported_event.get("reviewId") if imported_event else payload.get("reviewId"),
+            int(imported_event["learnerId"]) if imported_event else record.learner_id, scheduled_date, scheduled_time,
         )
         _follow_first_session_start_date(kind, pk, record, scheduled_date)
     except LearnerCalendarConflict as exc:
@@ -1796,8 +2358,24 @@ def learner_calendar_reschedule(request, kind, pk):
 
     _record_enrolment_review(record, kind=kind, learner_kind_id=pk, coach_id=None)
     return JsonResponse(
-        {"event": _serialize_event(record), "warning": _friendly_sync_warning(warning)}
+        {"event": _booking_response_event(record, imported_event), "warning": _friendly_sync_warning(warning)}
     )
+
+
+def cancel_booking(record):
+    """Delete the booking's Outlook/Teams event (Graph emails the cancellation) and keep the row as cancelled."""
+    from coach_api.views import delete_calendar_event_from_graph
+    warning = delete_calendar_event_from_graph(record)
+    record.status = CoachCalendarEvent.STATUS_CANCELLED
+    record.scheduled_date = None
+    record.scheduled_time = None
+    record.meeting_provider = ""
+    record.meeting_link = ""
+    record.graph_web_link = ""
+    record.graph_event_id = ""
+    record.last_graph_sync_error = warning
+    record.save()
+    return warning
 
 
 @csrf_exempt
@@ -1819,7 +2397,6 @@ def learner_calendar_cancel(request, kind, pk):
     """
     from coach_api.views import (
         cancel_reserved_calendar_event,
-        delete_calendar_event_from_graph,
         LearnerCalendarConflict,
     )
 
@@ -1846,6 +2423,12 @@ def learner_calendar_cancel(request, kind, pk):
             return _error("Booking not found.", 404)
         if record.status == CoachCalendarEvent.STATUS_CANCELLED:
             return JsonResponse({"event": _serialize_event(record), "warning": ""})
+        if _s(record.event_type).lower() == "catch-up":
+            if record.status != CoachCalendarEvent.STATUS_SCHEDULED:
+                return _error("Only an upcoming scheduled catch-up can be cancelled.", 409)
+            late_change = _learner_catchup_change_error(request, record)
+            if late_change:
+                return late_change
 
         is_review_booking = (
             record.event_type in {'mcr', 'progress-review', 'review'}
@@ -1858,16 +2441,7 @@ def learner_calendar_cancel(request, kind, pk):
             record, warning = cancel_reserved_calendar_event(record)
             return JsonResponse({'event': _serialize_event(record), 'warning': _friendly_sync_warning(warning)})
 
-        warning = delete_calendar_event_from_graph(record)
-        record.status = CoachCalendarEvent.STATUS_CANCELLED
-        record.scheduled_date = None
-        record.scheduled_time = None
-        record.meeting_provider = ""
-        record.meeting_link = ""
-        record.graph_web_link = ""
-        record.graph_event_id = ""
-        record.last_graph_sync_error = warning
-        record.save()
+        warning = cancel_booking(record)
     except LearnerCalendarConflict as exc:
         return _error(str(exc), 409)
     except DatabaseError as exc:
@@ -1875,6 +2449,7 @@ def learner_calendar_cancel(request, kind, pk):
         return _error(f"Database error: {exc}", 502)
 
     _cancel_enrolment_review(record)
+    _release_cancelled_catchup(record)
 
     return JsonResponse(
         {"event": _serialize_event(record), "warning": _friendly_sync_warning(warning)}
@@ -1976,6 +2551,50 @@ def _already_started(learner):
     return programme_status(learner).casefold() == "active"
 
 
+#: An apprentice's enrolment stages, before the one that books the first
+#: session. The wizard and the three onboarding reviews happen at Onboarding,
+#: the four compliance documents at Delivery; signing the last of those moves
+#: them to Ready to enrol (learner_progression), and only then is the first
+#: session theirs to book. Blank is the backend's own "Fresh user" default.
+APPRENTICE_ENROLMENT_STATUSES = frozenset(
+    status.casefold()
+    for status in ("", DEFAULT_PROGRAMME_STATUS, "Onboarding", DELIVERY_PROGRAMME_STATUS)
+)
+
+
+def _still_enrolling(kind, learner):
+    """Whether this is an apprentice who has not finished enrolling yet.
+
+    The first session comes after every enrolment step for an apprentice, so
+    until then there is nothing to book and no programme to hold them out of --
+    their own enrolment is the page they need. Commercial learners have no such
+    steps and book from the start, as before.
+
+    The record's own learner type wins over the URL's ``kind``: both kinds live
+    in one table, and the row is what says which one this learner is.
+    """
+    learner_type = _s(getattr(learner, "learner_type", "")) or _s(kind)
+    if learner_type.casefold() != "apprenticeship":
+        return False
+    return programme_status(learner).strip().casefold() in APPRENTICE_ENROLMENT_STATUSES
+
+
+def _may_book_first_session_early(kind, learner):
+    """Whether an apprentice in Delivery may already book their first session.
+
+    Delivery is the last enrolment stage: the reviews are done and the four
+    compliance documents are being signed. Once the learner's own signatures are
+    on all four, the booking opens for them — the employer's and provider's may
+    still be outstanding.
+    """
+    from .learner_progression import learner_signed_compliance_documents
+
+    if programme_status(learner).strip().casefold() != DELIVERY_PROGRAMME_STATUS.casefold():
+        return False
+    learner_type = _s(getattr(learner, "learner_type", "")) or _s(kind)
+    return learner_signed_compliance_documents(learner_type, learner.pk)
+
+
 @learner_self_or_staff(kwarg="pk")
 def learner_first_session(request, kind, pk):
     """Whether this learner has booked their first session, and when.
@@ -1983,7 +2602,8 @@ def learner_first_session(request, kind, pk):
         GET /learner_api/calendar/<kind>/<id>/first-session/
 
     -> {caseOwner: {name, email} | null, booked: bool, event: {...} | null,
-        startsOn: "YYYY-MM-DD" | null, access: "book" | "waiting" | "open"}
+        startsOn: "YYYY-MM-DD" | null,
+        access: "enrolling" | "book" | "waiting" | "open"}
 
     The first session used to be arranged by whoever enrolled the learner. It is
     now the learner's own first task: they sign in, book it with their case
@@ -1993,6 +2613,9 @@ def learner_first_session(request, kind, pk):
     browser -- a learner must not be able to reach their programme early by
     changing a date on their own machine:
 
+    * ``enrolling`` -- an apprentice still working through enrolment
+      (``_still_enrolling``). The first session comes after it, so nothing is
+      held and nothing is offered yet.
     * ``book``    -- nothing booked yet; the learner books it.
     * ``waiting`` -- booked, but the day has not arrived.
     * ``open``    -- the session day has come (or passed), so the programme runs
@@ -2040,6 +2663,12 @@ def learner_first_session(request, kind, pk):
         # permanent lockout the Aptem case above avoids, reached by a different
         # route (activated outside this booking flow, or before it existed).
         access = "open"
+    elif _still_enrolling(kind, learner):
+        # Checked before the booking itself: an apprentice who booked under the
+        # old order must not be held on the waiting screen, away from the
+        # enrolment steps still left. The booking is kept, and takes over again
+        # once they reach Ready to enrol.
+        access = "enrolling"
     elif starts_on is None:
         access = "book"
     else:
@@ -2054,6 +2683,10 @@ def learner_first_session(request, kind, pk):
         "event": _serialize_event(record) if record is not None else None,
         "startsOn": starts_on.isoformat() if starts_on else None,
         "access": access,
+        # Whether the learner may book (or has booked) it from their First
+        # Learning Session tab. ``access`` stays "enrolling" for an apprentice
+        # in Delivery, so the full-page gate never takes over mid-enrolment.
+        "canBook": access != "enrolling" or _may_book_first_session_early(kind, learner),
     })
     # Never cached: ``access`` turns over at midnight UK time, so a stored copy
     # would hold a learner out on the morning of their own session, or let them

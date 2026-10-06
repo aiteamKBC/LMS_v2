@@ -26,8 +26,8 @@ import { SearchInput } from '@/components/ui/FilterToolbar';
 import { SectionHeader } from '@/components/ui/SectionHeader';
 import { useCoachIdentity } from '@/hooks/useCoachIdentity';
 import { cn } from '@/lib/cn';
-import { coachFetch } from '@/lib/coachFetch';
 import { roleNavMap } from '@/mocks/navigation';
+import { useMonthlyCycle } from '@/features/coach/monthly-logs/hooks/useMonthlyCycle';
 
 import { CoachingDeliveryPanel } from './components/CoachingDeliveryPanel';
 import { LearnerMonthCard } from './components/LearnerMonthCard';
@@ -45,9 +45,7 @@ import {
   currentMonthKey,
   emptyCoachingDeliverySummary,
   formatMonthLabel,
-  monthlyActivityEndpoint,
   normalizeSearch,
-  readJson,
   shiftMonthKey,
 } from './lib/monthly';
 import { downloadLearnerMonthlyCyclePdf } from './lib/pdf';
@@ -55,18 +53,14 @@ import type {
   CoachingDeliveryItem,
   CoachingDeliverySummary,
   InlineActivityFilter,
-  MonthlyActivityResponse,
   MonthlyLearnerActivity,
 } from './types';
 
 const coachNav = roleNavMap.coach;
-const MONTHLY_ACTIVITY_TIMEOUT_MS = 20000;
-
 export default function CoachMonthlyCycle() {
   const navigate = useNavigate();
   const coach = useCoachIdentity();
   const [selectedMonth, setSelectedMonth] = useState(currentMonthKey());
-  const [data, setData] = useState<MonthlyActivityResponse | null>(null);
   const [selectedLearnerId, setSelectedLearnerId] = useState<string | null>(null);
   const [expandedLearnerIds, setExpandedLearnerIds] = useState<string[]>([]);
   const [learnerSearch, setLearnerSearch] = useState('');
@@ -74,64 +68,20 @@ export default function CoachMonthlyCycle() {
   const [inlineFilter, setInlineFilter] = useState<InlineActivityFilter>('all');
   const [inlineSearch, setInlineSearch] = useState('');
   const [exportingLearnerId, setExportingLearnerId] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
+  const cycle = useMonthlyCycle(selectedMonth, coach.isInitialized && Boolean(coach.email));
+  const data = cycle.data;
+  const loading = coach.isInitialized && !coach.email ? false : (!coach.isInitialized || cycle.loading);
+  const error = coach.isInitialized && !coach.email ? 'Coach access is required to load monthly activity.' : cycle.error;
 
   useEffect(() => {
-    if (!coach.isInitialized) return;
-    if (!coach.email) {
-      setData(null);
+    if (!data) {
       setSelectedLearnerId(null);
       setExpandedLearnerIds([]);
-      setError('Coach access is required to load monthly activity.');
-      setLoading(false);
       return;
     }
-    const controller = new AbortController();
-    let disposed = false;
-    let timedOut = false;
-    setLoading(true);
-    setError('');
-
-    const timeoutId = window.setTimeout(() => {
-      timedOut = true;
-      controller.abort();
-    }, MONTHLY_ACTIVITY_TIMEOUT_MS);
-
-    coachFetch(monthlyActivityEndpoint(selectedMonth), { signal: controller.signal })
-      .then(readJson<MonthlyActivityResponse>)
-      .then((payload) => {
-        if (disposed) return;
-        setData(payload);
-        setSelectedLearnerId((current) => {
-          if (current && payload.learners.some((learner) => learner.id === current)) return current;
-          return null;
-        });
-        setExpandedLearnerIds((current) => current.filter((id) => payload.learners.some((learner) => learner.id === id)));
-      })
-      .catch((requestError: unknown) => {
-        if (disposed) return;
-        if (requestError instanceof DOMException && requestError.name === 'AbortError' && !timedOut) return;
-        setData(null);
-        setSelectedLearnerId(null);
-        setExpandedLearnerIds([]);
-        setError(
-          timedOut
-            ? 'Monthly activity is taking too long to load. Please refresh or try a different month.'
-            : requestError instanceof Error ? requestError.message : 'Unable to load monthly activity.',
-        );
-      })
-      .finally(() => {
-        window.clearTimeout(timeoutId);
-        if (!disposed) setLoading(false);
-      });
-
-    return () => {
-      disposed = true;
-      window.clearTimeout(timeoutId);
-      controller.abort();
-    };
-  }, [coach.email, coach.isInitialized, selectedMonth]);
+    setSelectedLearnerId(current => current && data.learners.some(learner => learner.id === current) ? current : null);
+    setExpandedLearnerIds(current => current.filter(id => data.learners.some(learner => learner.id === id)));
+  }, [data]);
 
   const summary = data?.summary || EMPTY_SUMMARY;
   const learners = data?.learners || EMPTY_LEARNERS;

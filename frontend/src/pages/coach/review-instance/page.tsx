@@ -37,7 +37,7 @@ export default function CoachReviewInstancePage() {
   const returnTo = safeReturnTo(state.returnTo);
   const event = state.event && typeof state.event === 'object'
     ? state.event
-    : { learner: null, programme: null };
+    : undefined;
 
   const leaveReview = () => navigate(returnTo, { replace: true });
 

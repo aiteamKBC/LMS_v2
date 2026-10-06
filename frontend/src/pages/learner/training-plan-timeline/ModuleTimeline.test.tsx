@@ -9,9 +9,9 @@ import { ModuleTimeline } from './ModuleTimeline';
 const data: TrainingPlanDashboard = { months: {}, actual: [], actualAvailable: true, modules: [], moduleLinks: {}, sessions: [], reviews: [], coach: { name: 'Coach', bookingUrl: null }, contractStatus: 'ready', generatedAt: '' };
 const subjects = Array.from({ length: 36 }, (_, index) => ({ id: `current:${index}`, title: `Module ${index + 1}`, source: 'current' as const, activities: [] }));
 const modules = buildPlanModules(subjects, data).map((module, index) => ({ ...module, start: index === 35 ? '2026-09-01' : '2026-01-01', end: index === 35 ? '2026-10-31' : '2026-02-28' }));
-function Harness({ rows = modules, onSelect = vi.fn() }: { rows?: typeof modules; onSelect?: (...args: unknown[]) => void }) {
+function Harness({ rows = modules, onSelect = vi.fn(), initialId = '' }: { rows?: typeof modules; onSelect?: (...args: unknown[]) => void; initialId?: string }) {
   const [month, setMonth] = useState('2026-09');
-  const [id, setId] = useState('');
+  const [id, setId] = useState(initialId);
   return <MemoryRouter><ModuleTimeline data={data} modules={rows} kind="commercial" learnerId="125" today="2026-09-12" selectedMonth={month} selectedId={id}
     onMonthChange={setMonth} onModuleSelect={module => { setId(module.id); onSelect(module); }} /></MemoryRouter>;
 }
@@ -31,6 +31,67 @@ describe('Compact Gantt', () => {
     expect(onMonthChange).toHaveBeenCalledWith('2027-02');
     fireEvent.change(screen.getByRole('combobox', { name: 'Timeline year' }), { target: { value: '2027' } });
     expect(onMonthChange).toHaveBeenCalledWith('2027-08');
+  });
+  it('switches to a weekly view without changing the module schedule', () => {
+    const rows = [{ ...modules[35], detail: {
+      curriculumSlots: [{ slotNumber: 1, date: '2026-08-07', day: 'Friday', type: 'live-session', sessionNumber: 1, holidays: [] }],
+    } }] as typeof modules;
+    render(<Harness rows={rows} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Week' }));
+
+    expect(screen.getByRole('button', { name: 'Week' })).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByRole('button', { name: 'Week 1, starting 7 Aug' })).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Show Module 36 overview' })).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Month' })).toHaveAttribute('aria-pressed', 'false');
+  });
+  it('anchors weeks to the first scheduled session rather than an earlier module start slot', () => {
+    const rows = [{ ...modules[35], detail: {
+      curriculumSlots: [{ slotNumber: 1, date: '2026-08-05', day: 'Wednesday', type: 'live-session', sessionNumber: 1, holidays: [] }],
+    }, sessions: [{ id: 'S1', moduleId: modules[35].id, title: 'Session 1', start: '2026-08-07T09:00:00Z', end: null, minutes: 120, joinUrl: null, status: 'scheduled', attended: null }] }] as typeof modules;
+    render(<Harness rows={rows} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Week' }));
+
+    expect(screen.getByRole('button', { name: 'Week 1, starting 7 Aug' })).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'Week 1, starting 5 Aug' })).not.toBeInTheDocument();
+  });
+  it('uses the first configured delivery day when module start is earlier in the week', () => {
+    const rows = [{ ...modules[35], start: '2026-08-05', detail: {
+      session_week_day: 'Friday',
+      curriculumSlots: [{ slotNumber: 1, date: '2026-08-05', day: 'Wednesday', type: 'live-session', sessionNumber: 1, holidays: [] }],
+    } }] as typeof modules;
+    render(<Harness rows={rows} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Week' }));
+
+    expect(screen.getByRole('button', { name: 'Week 1, starting 7 Aug' })).toBeVisible();
+  });
+  it('anchors the header to the selected module so it matches its week rail', () => {
+    const rows = [
+      { ...modules[0], id: 'EARLY', start: '2026-08-05', detail: { session_week_day: 'Wednesday' } },
+      { ...modules[35], id: 'AYA', start: '2026-08-03', detail: { session_week_day: 'Friday' } },
+    ] as typeof modules;
+    render(<Harness rows={rows} initialId="AYA" />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Week' }));
+
+    expect(screen.getByRole('button', { name: 'Week 1, starting 7 Aug' })).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'Week 1, starting 5 Aug' })).not.toBeInTheDocument();
+  });
+  it('allows desktop mouse dragging across the chart surface', () => {
+    render(<Harness rows={modules.slice(35, 36)} />);
+    const plot = screen.getByLabelText('Scroll module timeline');
+    plot.scrollLeft = 100;
+    plot.scrollTop = 40;
+
+    fireEvent.pointerDown(plot, { pointerId: 1, pointerType: 'mouse', button: 0, clientX: 200, clientY: 120 });
+    fireEvent.pointerMove(plot, { pointerId: 1, pointerType: 'mouse', clientX: 150, clientY: 90 });
+
+    expect(plot.scrollLeft).toBe(150);
+    expect(plot.scrollTop).toBe(70);
+    fireEvent.pointerUp(plot, { pointerId: 1, pointerType: 'mouse' });
+    expect(plot).not.toHaveAttribute('data-panning', 'true');
   });
   it('keeps all four assigned modules visible across years and opens a future module schedule', () => {
     const rows = modules.slice(0, 4).map((module, index) => ({ ...module,

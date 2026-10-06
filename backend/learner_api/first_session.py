@@ -140,13 +140,14 @@ def validate_slot(scheduled_date, scheduled_time):
     """The reason this slot cannot be booked, or None.
 
     Reuses the booking calendar every other learner booking is checked against,
-    so weekends, bank holidays and past dates are refused with the same wording
+    so Saturdays, bank holidays and past dates are refused with the same wording
     staff and learners already see elsewhere -- against the UK working day, not
-    whatever day it happens to be where the server runs.
+    whatever day it happens to be where the server runs. Sundays are open for a
+    first session only.
     """
     if scheduled_date is None or scheduled_time is None:
         return "A first session date and time are required."
-    restriction = booking_date_restriction(scheduled_date, today=uk_today())
+    restriction = booking_date_restriction(scheduled_date, today=uk_today(), allow_sunday=True)
     return restriction.message if restriction is not None else None
 
 

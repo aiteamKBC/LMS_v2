@@ -1,9 +1,9 @@
 """Server-issued timing sessions for learner activities.
 
 The browser measures active time because it can observe playback/visibility.
-A signed server session prevents it from claiming time before the activity was
-opened: persisted time is the smaller of the browser's active counter and the
-signed server-session duration.
+A signed server session bounds verifiedSeconds by the session duration. This
+verification evidence is separate from the learner-selected Timer/Input duration
+saved by video and component completions; manual time can exceed this session.
 """
 import json
 import math
@@ -17,6 +17,7 @@ from django.utils.dateparse import parse_datetime
 from django.views.decorators.csrf import csrf_exempt
 
 from login.permissions import learner_self_or_admin
+from .working_hours_holidays import is_working_hours_holiday
 
 
 TRACKING_SALT = "learner-api.activity-time.v1"
@@ -26,7 +27,7 @@ COUNTING_MODES = {"active_quiz", "active_playback", "visible_page"}
 ALLOWED_MODES_BY_KIND = {
     "quiz": {"active_quiz"},
     "video": {"active_playback", "visible_page"},
-    "component": {"visible_page"},
+    "component": {"visible_page", "active_playback"},
 }
 
 
@@ -40,16 +41,21 @@ def component_access_is_open(at=None):
 
 
 def outside_uk_working_hours(at=None):
-    """Whether ``at`` falls outside 07:00-19:00 Monday-Friday in the UK.
+    """Outside UK weekday 07:00-19:00, including official/manual holidays.
 
-    Europe/London applies GMT/BST automatically. Components remain available;
-    callers use this only to require an explicit out-of-hours declaration.
+    Europe/London applies GMT/BST automatically. Components remain available.
+
+    No longer the completion gate: a Finish click is judged by
+    ``working_rules.working_rule_failure``, which scopes holidays to the
+    learner's own cohort and names the reason. Kept as the unscoped predicate
+    for callers that only need the coarse question.
     """
     instant = at or timezone.now()
     if timezone.is_naive(instant):
         instant = timezone.make_aware(instant, ZoneInfo("Europe/London"))
     local = instant.astimezone(ZoneInfo("Europe/London"))
-    return local.weekday() >= 5 or local.hour < 7 or local.hour >= 19
+    return (local.weekday() >= 5 or local.hour < 7 or local.hour >= 19
+            or is_working_hours_holiday(local.date()))
 
 
 def enforce_component_access_window(at=None):

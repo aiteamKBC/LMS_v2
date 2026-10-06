@@ -92,7 +92,16 @@ describe('review before sending', () => {
     expect(options.html).toContain('https://teams.microsoft.com/meet/synthetic');
     const sent = JSON.parse(fetchMock.mock.calls[1][1].body);
     expect(sent).not.toHaveProperty('attendees');
+    expect(sent.notifyAttendees).toBe(true);
     expect(fetchMock.mock.calls[1][1].method).toBe('PATCH');
+  });
+
+  it('always sends the update email for an existing calendar', async () => {
+    await updateTeamsMeetingSchedule('LIVE-SYNTHETIC', input());
+    const options = vi.mocked(Swal.fire).mock.calls[0][0] as unknown as SweetAlertOptions;
+    expect(options.html).not.toContain('Email attendees and organisers about this change');
+    const sent = JSON.parse(fetchMock.mock.calls[1][1].body);
+    expect(sent.notifyAttendees).toBe(true);
   });
 
   it('cancelling Save makes only its read request', async () => {
@@ -124,12 +133,54 @@ describe('review before sending', () => {
     ] }) });
     const values = input();
     const { attendees: _attendees, presenters: _presenters, coOrganizers: _coOrganizers, ...dates } = values;
-    await updateTeamsMeetingSchedule('LIVE-SYNTHETIC', { ...dates, peopleOnly: true });
+    // Somebody is added, so this save is reviewed: the attendees it shows are
+    // the ones decoded from the saved JSON text, not any the caller sent.
+    await updateTeamsMeetingSchedule('LIVE-SYNTHETIC',
+      { ...dates, peopleOnly: true, presenters: ['new.presenter@example.invalid'] });
     const sent = JSON.parse(fetchMock.mock.calls[1][1].body);
     expect(sent.scheduledOccurrences.map((item: { durationMinutes: number }) => item.durationMinutes)).toEqual([60, 120]);
     expect(sent).not.toHaveProperty('attendees');
     const options = vi.mocked(Swal.fire).mock.calls[0][0] as unknown as SweetAlertOptions;
     expect(options.html).toContain('existing@example.invalid');
+  });
+
+  // Taking somebody off a meeting, moving them between roles or changing the
+  // recording sends no mail to anybody -- so there is nothing for a
+  // session-by-session review and a "Save and send" button to confirm.
+  it('saves a people-only change that adds nobody without opening the review', async () => {
+    fetchMock.mockResolvedValueOnce({ ok: true, json: async () => ({ series: {
+      organizer_email: 'organizer@example.invalid', join_url: 'https://teams.microsoft.com/meet/synthetic',
+      attendees: ['existing@example.invalid'], presenters: ['tutor@example.invalid'], co_organizers: [],
+    }, occurrences: [
+      { session_number: 1, scheduled_start: '2026-09-17T11:00:00Z', scheduled_end: '2026-09-17T12:00:00Z', status: 'scheduled' },
+    ] }) });
+    const { attendees: _a, presenters: _p, coOrganizers: _c, ...dates } = input();
+    await updateTeamsMeetingSchedule('LIVE-SYNTHETIC', {
+      ...dates, peopleOnly: true, attendees: [], presenters: ['tutor@example.invalid'],
+    });
+    expect(Swal.fire).not.toHaveBeenCalled();
+    const sent = JSON.parse(fetchMock.mock.calls[1][1].body);
+    expect(sent.notifyAttendees).toBe(false);
+    expect(sent.attendees).toEqual([]);
+  });
+
+  it('still reviews a people-only save that adds somebody', async () => {
+    fetchMock.mockResolvedValueOnce({ ok: true, json: async () => ({ series: {
+      organizer_email: 'organizer@example.invalid', join_url: 'https://teams.microsoft.com/meet/synthetic',
+      attendees: ['existing@example.invalid'], presenters: ['tutor@example.invalid'], co_organizers: [],
+    }, occurrences: [
+      { session_number: 1, scheduled_start: '2026-09-17T11:00:00Z', scheduled_end: '2026-09-17T12:00:00Z', status: 'scheduled' },
+    ] }) });
+    const { attendees: _a, presenters: _p, coOrganizers: _c, ...dates } = input();
+    await updateTeamsMeetingSchedule('LIVE-SYNTHETIC', {
+      ...dates, peopleOnly: true, attendees: ['existing@example.invalid', 'joined@example.invalid'],
+    });
+    expect(Swal.fire).toHaveBeenCalledTimes(1);
+  });
+
+  it('still reviews a save that moves the calendar', async () => {
+    await updateTeamsMeetingSchedule('LIVE-SYNTHETIC', input());
+    expect(Swal.fire).toHaveBeenCalledTimes(1);
   });
 
   it('blocks Save if stored invitation details are malformed', async () => {
@@ -159,7 +210,7 @@ describe('AM/PM input and labels', () => {
   it('sends the correct instant and duration for legacy afternoon values', () => {
     const payload = buildTeamsCalendarInput({ catalogueId: 'MOD-SYNTHETIC', name: 'Synthetic', durationMinutes: 60,
       plannedStarts: [], teamsStarts: [], sessions: [{ id: 'one', date: '2026-09-17', startTime: '03:00 PM', endTime: '05:00 PM' }] as never,
-    }, { ...emptyTeamsCalendarForm(), organizerEmail: 'organizer@example.invalid' });
+    }, { ...emptyTeamsCalendarForm(), scheduleTimeZone: 'Africa/Cairo', organizerEmail: 'organizer@example.invalid' });
     expect(payload.scheduleTimeZone).toBe('Africa/Cairo');
     expect(payload.startDateTimeUtc).toBe('2026-09-17T12:00:00.000Z');
     expect(payload.durationMinutes).toBe(120);

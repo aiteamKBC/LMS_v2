@@ -1,3 +1,5 @@
+import { AssignmentTopicsEditor } from '../shared/AssignmentTopicsEditor';
+import { componentFileList, legacyComponentFile, serialiseComponentFiles, type ComponentFile } from '@/lib/componentFiles';
 import { Fragment, Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { DndContext, DragOverlay, KeyboardSensor, PointerSensor, closestCenter, useSensor, useSensors, type DragEndEvent, type DragStartEvent } from '@dnd-kit/core';
@@ -12,6 +14,8 @@ import { AppIcon } from '@/components/feature/AppIcon';
 import { roleNavMap } from '@/mocks/navigation';
 import { showCurriculumAlert, showCurriculumConfirm } from '@/components/feature/CurriculumSweetAlert';
 import { formatHoursMinutes, hoursMinutesToHours, splitHoursMinutes } from '@/lib/format';
+import { useLiveRefresh } from '@/hooks/useRefreshOnReturn';
+import { mergeWeekTemplates } from './weekTemplateMerge';
 // Deck preview below: the same one the learner's page uses, so an author sees
 // what the learner will (see UploadedDeckPreview).
 import { resolveDocEmbed } from '@/lib/docEmbed';
@@ -34,10 +38,12 @@ import {
   fetchWorkspaceQuizzes,
   toWeekTemplateInput,
   updateWeekTemplate,
+  weekTemplateConflict,
   uploadWeekComponentResource,
   validateWeekComponent,
   weekPaletteGroups,
   weekPaletteTypes,
+  weekAutoTitleLabels,
   weekTypeLabel,
   type KsbMapping,
   type ModuleComponent,
@@ -70,7 +76,7 @@ const GuidedQuizUpload = lazy(() => import('./GuidedQuizUpload').then(m => ({ de
 
 export type { WeekScope };
 export interface GroupOption { key: string; name: string; cohort?: string; cohortId?: string; programmeId?: string; programme?: string; moduleCount?: number }
-export type WeekComponentUploader = (componentId: string, file: File, componentType: 'reading' | 'podcast' | 'powerpoint' | 'assignment') => Promise<WeekComponentUploadResult>;
+export type WeekComponentUploader = (componentId: string, file: File, componentType: 'reading' | 'podcast' | 'powerpoint' | 'assignment', topicResource?: boolean) => Promise<WeekComponentUploadResult>;
 
 const curriculumNav = roleNavMap.curriculum;
 
@@ -462,7 +468,11 @@ function CreateTemplateModal({ onClose, onCreated }: { onClose: () => void; onCr
 // ---------------------------------------------------------------------------
 // Editor
 // ---------------------------------------------------------------------------
-function TemplateEditor({ initial, isNew, onClose, returnToPrevious = false }: { initial: WeekTemplate; isNew: boolean; onClose: (changed: boolean, returnToPrevious?: boolean) => void; returnToPrevious?: boolean }) {
+// Exported for the same reason WeekComponentRail, WeekOverviewPanel and
+// ComponentEditor above are: what happens when two people save this template at
+// once is decided in here, and it is not worth reaching through the library
+// page and a URL parameter to ask it.
+export function TemplateEditor({ initial, isNew, onClose, returnToPrevious = false }: { initial: WeekTemplate; isNew: boolean; onClose: (changed: boolean, returnToPrevious?: boolean) => void; returnToPrevious?: boolean }) {
   const [template, setTemplate] = useState<WeekTemplate>(initial);
   const [persistedId, setPersistedId] = useState(isNew ? '' : initial.id);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -598,6 +608,60 @@ function TemplateEditor({ initial, isNew, onClose, returnToPrevious = false }: {
 
   const dirty = JSON.stringify(template) !== savedSnapshot.current;
 
+  /**
+   * Somebody else's save landing on the template this editor is holding.
+   *
+   * The editor read this template once, when it opened, and until now that was
+   * the only read it ever did: a colleague's save was invisible here and the
+   * next save from this screen replaced it outright, because the endpoint takes
+   * the whole template and there is no revision on it to refuse with.
+   *
+   * So the stored copy is re-read and merged. `savedSnapshot` is the base --
+   * the copy this editor last agreed with the server on -- which is what tells
+   * a component the reader edited apart from one their colleague edited. Their
+   * components arrive, the reader's stay, and a field both of them changed
+   * keeps the reader's and is named on screen.
+   */
+  const [coEditNotices, setCoEditNotices] = useState<string[]>([]);
+  const templateRef = useRef(template);
+  templateRef.current = template;
+  /**
+   * Which read is the newest one to have been started. Two can be in the air at
+   * once when a colleague saves twice in quick succession, and the older reply
+   * landing last would reinstate what the newer one had just corrected.
+   */
+  const readSequence = useRef(0);
+  /**
+   * How many times a refused save will rebase and try again before it stops
+   * and says so. Three, the same bound the Module Builder uses.
+   */
+  const WEEK_TEMPLATE_REBASE_LIMIT = 3;
+  const mergeStoredTemplate = useCallback(async () => {
+    if (!persistedId || saving) return;
+    const sequence = readSequence.current + 1;
+    readSequence.current = sequence;
+    const stored = await fetchWeekTemplateDetail(persistedId).catch(() => null);
+    // A later read has already answered; this reply is a version of the
+    // template that has since been superseded.
+    if (readSequence.current !== sequence) return;
+    if (!stored) return;
+    const storedJson = JSON.stringify(stored);
+    // Nothing moved: the write that woke this up was somewhere else in the
+    // curriculum, and there is nothing to merge or to mention.
+    if (storedJson === savedSnapshot.current) return;
+    const base = JSON.parse(savedSnapshot.current) as WeekTemplate;
+    const { template: merged, notices } = mergeWeekTemplates(base, templateRef.current, stored);
+    savedSnapshot.current = storedJson;
+    // The token comes from the stored copy, never from the merge: the next save
+    // has to be checked against the version this editor has just agreed with.
+    setTemplate({ ...merged, revision: stored.revision });
+    // A component the other editor deleted takes the selection with it, rather
+    // than leaving the panel on the right editing something that is gone.
+    setSelectedId(prev => (prev && merged.components.some(component => component.id === prev) ? prev : null));
+    setCoEditNotices(notices);
+  }, [persistedId, saving]);
+  useLiveRefresh(mergeStoredTemplate, { enabled: Boolean(persistedId) });
+
   const update = useCallback((updater: (prev: WeekTemplate) => WeekTemplate) => {
     setTemplate(prev => recalcWeekTemplate(updater(prev)));
   }, []);
@@ -620,8 +684,38 @@ function TemplateEditor({ initial, isNew, onClose, returnToPrevious = false }: {
     }
     setSaving(true);
     try {
-      const input = toWeekTemplateInput(template);
-      const result = persistedId ? await updateWeekTemplate(persistedId, input) : await createWeekTemplate(input);
+      // The server refuses a save built on a version somebody else has already
+      // replaced -- it has to, because this PATCH deletes every component row
+      // the template owns and re-inserts the list it was sent, so a stale save
+      // used to take a colleague's whole afternoon with it. The refusal carries
+      // the stored template, which is merged here and sent again.
+      //
+      // Bounded at three, like the Module Builder: a busy template is the normal
+      // reason to be here, so one attempt is too few, and an unbounded chain is
+      // an editor that never finishes saving and never says why.
+      let working = template;
+      let result: WeekTemplate | null = null;
+      for (let rebases = 0; ; rebases += 1) {
+        try {
+          const input = toWeekTemplateInput(working);
+          result = persistedId
+            ? await updateWeekTemplate(persistedId, working.revision ? { ...input, expectedRevision: working.revision } : input)
+            : await createWeekTemplate(input);
+          break;
+        } catch (err) {
+          const conflict = weekTemplateConflict(err);
+          // Nothing to rebase onto, or this template is being written faster
+          // than one person can answer. Either way the work is still on screen.
+          if (!conflict?.template || rebases >= WEEK_TEMPLATE_REBASE_LIMIT) throw err;
+          const base = JSON.parse(savedSnapshot.current) as WeekTemplate;
+          const merged = mergeWeekTemplates(base, working, conflict.template);
+          working = { ...merged.template, revision: conflict.currentRevision };
+          savedSnapshot.current = JSON.stringify(conflict.template);
+          setTemplate(working);
+          setSelectedId(prev => (prev && working.components.some(item => item.id === prev) ? prev : null));
+          setCoEditNotices(merged.notices);
+        }
+      }
       setPersistedId(result.id);
       setTemplate(result);
       savedSnapshot.current = JSON.stringify(result);
@@ -703,6 +797,27 @@ function TemplateEditor({ initial, isNew, onClose, returnToPrevious = false }: {
 
   return (
     <div className="px-5 lg:px-8 py-6 space-y-6">
+      {/* The receipt for a merge that has already happened: their components
+          are in the rail by the time this renders, and the ones the reader had
+          also changed still hold what they typed. It reports rather than asks,
+          so dismissing is the only button it needs. */}
+      {coEditNotices.length > 0 && (
+        <div
+          data-testid="week-builder-co-edit"
+          className="flex items-start justify-between gap-3 rounded-xl border border-amber-200/70 bg-amber-50 px-4 py-3 text-[12px] font-medium text-amber-800"
+        >
+          <span className="flex min-w-0 items-start gap-2">
+            <AppIcon className="ri-refresh-line mt-0.5 shrink-0 text-base"></AppIcon>
+            <span className="min-w-0">
+              <span className="block font-bold">Someone else saved this week template while you were editing. Their changes are on this screen; yours are still here.</span>
+              <ul className="mt-1 list-disc space-y-0.5 pl-4">
+                {coEditNotices.map(notice => <li key={notice}>{notice}</li>)}
+              </ul>
+            </span>
+          </span>
+          <button type="button" onClick={() => setCoEditNotices([])} className="shrink-0 rounded-lg px-2 py-1 font-bold text-amber-700 hover:bg-amber-100">Got it</button>
+        </div>
+      )}
       {/* Header band — the hero identity + at-a-glance flow */}
       <div className="relative rounded-2xl border border-background-200 bg-background-50 overflow-hidden">
         <span className={`absolute left-0 top-0 bottom-0 w-1.5 ${course.bar}`} />
@@ -954,7 +1069,7 @@ function RailNodeCard({ component, index, selected, focused = false, issues, wee
   // the empty settings that adding it produced. Said on the row so a week of
   // twenty components shows at a glance which ones are still placeholders --
   // it is a hint and nothing else, and it disappears on the first real edit.
-  const unedited = componentLooksUnedited(component, weekTypeLabel(component.type));
+  const unedited = componentLooksUnedited(component, weekAutoTitleLabels(component.type));
   return (
     <div id={`node-${component.id}`} data-focused={focused || undefined} className="group/node">
       {/* Its own row above the card rather than beside the title: the title
@@ -1001,11 +1116,11 @@ function RailNodeCard({ component, index, selected, focused = false, issues, wee
                 in the session's own settings would. */}
             {dateDrift && (
               <span
-                title={`Teams has this meeting on ${formatDateLabel(dateDrift.storedDate)}, but this week now runs on ${dateDrift.weekDates.map(formatDateLabel).join(' and ')}. Every other live session follows its week automatically; this one is held here because real attendees were invited to the booked date. Move it from the Teams Meetings page, which asks Microsoft and mails the change.`}
+                title={`Teams calendar currently has this meeting on ${formatDateLabel(dateDrift.storedDate)}. This week is now planned for ${dateDrift.weekDates.map(formatDateLabel).join(' and ')}. Every other live session follows its week automatically; this one stays put because real attendees were invited to the booked date. Go to the Teams Meetings page and run Update there so the Teams calendar matches the date planned here -- that is what actually moves the Microsoft meeting and mails attendees the change.`}
                 className="inline-flex items-center gap-1 rounded-full border border-amber-300 bg-amber-100 px-1.5 py-px text-[9px] font-bold text-amber-800"
               >
                 <AppIcon className="ri-calendar-schedule-line text-[10px]"></AppIcon>
-                Teams holds this date · week runs {formatDateLabel(dateDrift.weekDates[0])}
+                Teams calendar: {formatDateLabel(dateDrift.storedDate)} · planned here: {formatDateLabel(dateDrift.weekDates[0])} · update Teams to match
               </span>
             )}
             {/* Says what is missing rather than filling it in: this session is
@@ -1762,7 +1877,11 @@ function LiveSessionBody({ component, onChange, setSetting, rulePoints, weekSess
   const sessionDate = s('sessionDate') || weekSessionDate || '';
   const sessionTime = s('sessionTime') || String(weekSessionTime || '').slice(0, 5) || '';
   const hasMeeting = Boolean(s('liveSessionUrl') || s('teamsMeetingUrl'));
-  const teamsLiveSessionId = s('teamsLiveSessionId');
+  // A live session delivered by its own additional meeting reads that
+  // meeting's results (a single event, so always session 1); every other live
+  // session reads its occurrence of the module's calendar.
+  const additionalLiveSessionId = s('extraTeamsMeetingUrl') ? s('extraTeamsLiveSessionId') : '';
+  const teamsLiveSessionId = additionalLiveSessionId || s('teamsLiveSessionId');
 
   return (
     <>
@@ -1792,13 +1911,13 @@ function LiveSessionBody({ component, onChange, setSetting, rulePoints, weekSess
             session={{
               liveSessionId: teamsLiveSessionId,
               title: component.title,
-              dateIso: s('sessionDateTimeUtc') || s('teamsStartDateTimeUtc') || sessionDate,
+              dateIso: (additionalLiveSessionId && s('extraTeamsStartDateTimeUtc')) || s('sessionDateTimeUtc') || s('teamsStartDateTimeUtc') || sessionDate,
               date: sessionDate,
               actualStart: '',
               artifactsSyncedAt: '',
             }}
-            sessionNumber={Number(s('teamsSessionNumber')) || undefined}
-            occurrenceId={s('teamsOccurrenceId') || undefined}
+            sessionNumber={additionalLiveSessionId ? 1 : Number(s('teamsSessionNumber')) || undefined}
+            occurrenceId={additionalLiveSessionId ? undefined : s('teamsOccurrenceId') || undefined}
           />
         </Section>
       )}
@@ -1903,6 +2022,28 @@ const READING_UPLOAD_ACCEPT = '.txt,.doc,.docx,.pdf,.rtf,.odt,text/plain,applica
 const PODCAST_UPLOAD_ACCEPT = '.mp3,.ogg,.oga,.wav,.m4a,.aac,.webm,audio/*';
 const POWERPOINT_UPLOAD_ACCEPT = '.ppt,.pptx,.pps,.ppsx,.pdf,application/vnd.ms-powerpoint,application/vnd.openxmlformats-officedocument.presentationml.presentation,application/pdf';
 
+/**
+ * The legacy single-file keys, kept in step with the list's first entry.
+ *
+ * `componentFiles` is the whole ordered set, but the learner API, the Excel
+ * export, the Module Builder's own readers and every component authored before
+ * the list existed all look at these four keys. They must therefore always
+ * describe `files[0]` -- a component whose first file changed but whose
+ * `uploadedFileUrl` did not would serve the learner a different document than
+ * the one the author put first.
+ */
+function componentFileSettings(files: ComponentFile[]) {
+  const first = files[0];
+  return {
+    componentFiles: serialiseComponentFiles(files),
+    uploadedFileName: first?.fileName || '',
+    uploadedFileUrl: first?.url || '',
+    uploadedFileSize: first?.size || 0,
+    uploadedFileContentType: first?.contentType || '',
+    uploadSource: first ? 'Device upload' : '',
+  };
+}
+
 // Bespoke Reading Material editor — the source has just two shapes: written
 // text (a plain content field, matching the Module Builder's text editor
 // intent) or an uploaded document (Word/PDF/text/RTF/OpenDocument), each with
@@ -1910,7 +2051,27 @@ const POWERPOINT_UPLOAD_ACCEPT = '.ppt,.pptx,.pps,.ppsx,.pdf,application/vnd.ms-
 function ReadingBody({ component, onChange, setSetting, rulePoints, uploadResource }: ComponentBodyProps) {
   const s = (key: string) => String(component.settings[key] ?? '');
   const sourceMode = ['File', 'LMS resource'].includes(s('readingSource')) ? 'File' : 'Text';
+  // The stored list when one exists, otherwise the single file this component
+  // has always carried: a reading authored before multi-file support keeps it
+  // in `resourceUrl`, and nothing re-saves a component on its own.
+  const readingFileList = useMemo(() => componentFileList(
+    component.settings.componentFiles,
+    legacyComponentFile(
+      component.settings.uploadedFileUrl || component.settings.resourceUrl,
+      component.settings.uploadedFileName,
+      component.settings.uploadedFileSize,
+      component.settings.uploadedFileContentType,
+    ),
+  ), [component.settings]);
   const [writtenPreviewOpen, setWrittenPreviewOpen] = useState(false);
+  // Stable innerHTML object: React 19 re-applies innerHTML on every new identity,
+  // so an inline literal would restart preview videos on each keystroke anywhere
+  // in the form. Only sanitised while the preview is open.
+  const readingContent = s('readingContent');
+  const writtenPreviewHtml = useMemo(
+    () => (writtenPreviewOpen ? { __html: DOMPurify.sanitize(normalizeAuthoredPreviewHtml(readingContent)) } : undefined),
+    [writtenPreviewOpen, readingContent],
+  );
 
   return (
     <>
@@ -1941,7 +2102,7 @@ function ReadingBody({ component, onChange, setSetting, rulePoints, uploadResour
             {writtenPreviewOpen && s('readingContent').trim() && (
               <div className="mt-3 overflow-hidden rounded-xl border border-background-200 bg-white">
                 <div className="flex items-center gap-2 border-b border-background-200 bg-background-100/60 px-3 py-2 text-[11px] font-bold text-foreground-700"><AppIcon className="ri-eye-line text-primary-600" />Learner preview</div>
-                <div className="rich-text-surface max-h-[520px] overflow-auto p-5 text-sm leading-relaxed text-foreground-800" dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(normalizeAuthoredPreviewHtml(s('readingContent'))) }} />
+                <div className="rich-text-surface max-h-[520px] overflow-auto p-5 text-sm leading-relaxed text-foreground-800" dangerouslySetInnerHTML={writtenPreviewHtml} />
               </div>
             )}
           </div>
@@ -1953,32 +2114,13 @@ function ReadingBody({ component, onChange, setSetting, rulePoints, uploadResour
               componentType="reading"
               onUpload={uploadResource}
               accept={READING_UPLOAD_ACCEPT}
-              uploadedName={s('uploadedFileName')}
-              uploadedUrl={s('uploadedFileUrl') || s('resourceUrl')}
-              uploadedSize={Number(component.settings.uploadedFileSize) || 0}
-              uploadedContentType={s('uploadedFileContentType')}
-              onUploaded={file => onChange({
+              files={readingFileList}
+              onFilesChange={files => onChange({
                 settings: {
                   ...component.settings,
                   readingSource: 'File',
-                  resourceUrl: file.url,
-                  uploadedFileName: file.fileName,
-                  uploadedFileUrl: file.url,
-                  uploadedFileSize: file.size,
-                  uploadedFileContentType: file.contentType,
-                  uploadSource: 'Device upload',
-                },
-              })}
-              onRemove={() => onChange({
-                settings: {
-                  ...component.settings,
-                  readingSource: 'File',
-                  resourceUrl: '',
-                  uploadedFileName: '',
-                  uploadedFileUrl: '',
-                  uploadedFileSize: 0,
-                  uploadedFileContentType: '',
-                  uploadSource: '',
+                  resourceUrl: files[0]?.url || '',
+                  ...componentFileSettings(files),
                 },
               })}
             />
@@ -2026,6 +2168,20 @@ const PODCAST_SOURCE_TYPES_WEEK = ['Audio File', 'External Link', 'Embed'] as co
 function PodcastBody({ component, onChange, setSetting, rulePoints, uploadResource }: ComponentBodyProps) {
   const s = (key: string) => String(component.settings[key] ?? '');
   const rawSourceType = s('podcastSource');
+  // Stable identity so typing in other fields does not re-apply innerHTML and
+  // reload the embedded player iframe (React 19 compares by reference).
+  const podcastEmbedCode = s('podcastEmbedCode');
+  const podcastEmbedHtml = useMemo(() => ({ __html: podcastEmbedCode }), [podcastEmbedCode]);
+  // Same fallback as reading, against the key a podcast keeps its audio in.
+  const podcastFileList = useMemo(() => componentFileList(
+    component.settings.componentFiles,
+    legacyComponentFile(
+      component.settings.uploadedFileUrl || component.settings.podcastUrl,
+      component.settings.uploadedFileName,
+      component.settings.uploadedFileSize,
+      component.settings.uploadedFileContentType,
+    ),
+  ), [component.settings]);
   const sourceType = rawSourceType === 'Device upload'
     ? 'Audio File'
     : rawSourceType === 'External URL'
@@ -2053,32 +2209,13 @@ function PodcastBody({ component, onChange, setSetting, rulePoints, uploadResour
               componentType="podcast"
               onUpload={uploadResource}
               accept={PODCAST_UPLOAD_ACCEPT}
-              uploadedName={s('uploadedFileName')}
-              uploadedUrl={s('uploadedFileUrl') || s('podcastUrl')}
-              uploadedSize={Number(component.settings.uploadedFileSize) || 0}
-              uploadedContentType={s('uploadedFileContentType')}
-              onUploaded={file => onChange({
+              files={podcastFileList}
+              onFilesChange={files => onChange({
                 settings: {
                   ...component.settings,
                   podcastSource: 'Audio File',
-                  podcastUrl: file.url,
-                  uploadedFileName: file.fileName,
-                  uploadedFileUrl: file.url,
-                  uploadedFileSize: file.size,
-                  uploadedFileContentType: file.contentType,
-                  uploadSource: 'Device upload',
-                },
-              })}
-              onRemove={() => onChange({
-                settings: {
-                  ...component.settings,
-                  podcastSource: 'Audio File',
-                  podcastUrl: '',
-                  uploadedFileName: '',
-                  uploadedFileUrl: '',
-                  uploadedFileSize: 0,
-                  uploadedFileContentType: '',
-                  uploadSource: '',
+                  podcastUrl: files[0]?.url || '',
+                  ...componentFileSettings(files),
                 },
               })}
             />
@@ -2092,7 +2229,7 @@ function PodcastBody({ component, onChange, setSetting, rulePoints, uploadResour
             {s('podcastEmbedCode') && (
               <div className="mt-3">
                 <span className="block text-[11px] font-semibold text-foreground-500 mb-1.5">Preview</span>
-                <div className="rich-text-surface rounded-lg border border-background-200 bg-background-50 p-3" dangerouslySetInnerHTML={{ __html: s('podcastEmbedCode') }} />
+                <div className="rich-text-surface rounded-lg border border-background-200 bg-background-50 p-3" dangerouslySetInnerHTML={podcastEmbedHtml} />
               </div>
             )}
           </div>
@@ -2164,6 +2301,17 @@ function UploadedDeckPreview({ url }: { url: string }) {
 // this editor no longer shows or writes it, but nothing here deletes it.
 function PowerPointBody({ component, onChange, setSetting, rulePoints, uploadResource }: ComponentBodyProps) {
   const s = (key: string) => String(component.settings[key] ?? '');
+  // Same fallback as reading. A deck's name lives in `fileName` when the upload
+  // predates the shared `uploadedFileName` key.
+  const deckFileList = useMemo(() => componentFileList(
+    component.settings.componentFiles,
+    legacyComponentFile(
+      component.settings.uploadedFileUrl,
+      component.settings.uploadedFileName || component.settings.fileName,
+      component.settings.uploadedFileSize,
+      component.settings.uploadedFileContentType,
+    ),
+  ), [component.settings]);
 
   return (
     <>
@@ -2177,15 +2325,9 @@ function PowerPointBody({ component, onChange, setSetting, rulePoints, uploadRes
             componentType="powerpoint"
             onUpload={uploadResource}
             accept={POWERPOINT_UPLOAD_ACCEPT}
-            uploadedName={s('uploadedFileName') || s('fileName')}
-            uploadedUrl={s('uploadedFileUrl')}
-            uploadedSize={Number(component.settings.uploadedFileSize) || 0}
-            uploadedContentType={s('uploadedFileContentType')}
-            onUploaded={file => onChange({
-              settings: { ...component.settings, uploadedFileName: file.fileName, uploadedFileUrl: file.url, uploadedFileSize: file.size, uploadedFileContentType: file.contentType },
-            })}
-            onRemove={() => onChange({
-              settings: { ...component.settings, uploadedFileName: '', fileName: '', uploadedFileUrl: '', uploadedFileSize: 0, uploadedFileContentType: '' },
+            files={deckFileList}
+            onFilesChange={files => onChange({
+              settings: { ...component.settings, fileName: files[0]?.fileName || '', ...componentFileSettings(files) },
             })}
           />
           <p className="mt-2 text-[11px] text-foreground-400">Accepted formats: PowerPoint (.ppt, .pptx, .pps, .ppsx) or PDF. The preview below is what a learner sees.</p>
@@ -2530,7 +2672,7 @@ function LinkedQuizPreviewModal({ preview, onClose }: { preview: LinkedQuizPrevi
   );
 }
 
-// Authors can write the question and attach a document for learner preview.
+// Topics share the component's planned hours and existing marking policy.
 function AssignmentBody({ component, onChange, setSetting, rulePoints, uploadResource }: ComponentBodyProps) {
   const s = (key: string) => String(component.settings[key] ?? '');
 
@@ -2541,31 +2683,12 @@ function AssignmentBody({ component, onChange, setSetting, rulePoints, uploadRes
         <Field label="Description" className="mt-4"><textarea value={component.description} onChange={e => onChange({ description: e.target.value })} rows={2} placeholder="What this assignment asks the learner to do…" className={`${inputClass} resize-none`} /></Field>
 
         <div className="mt-4">
-          <RichTextDraft label="Assignment question" value={s('assignmentContent')} onChange={value => setSetting('assignmentContent', value)} rows={14} />
-          <p className="mt-2 text-[11px] text-foreground-400">The learner answers this question in the assignment form. You can also attach the question as a file below.</p>
-        </div>
-        <div className="mt-4">
-          <h4 className="mb-2 text-[12px] font-semibold">Assignment question file (optional)</h4>
-          <WeekComponentFileUpload
-            componentId={component.id}
-            componentType="assignment"
-            onUpload={uploadResource}
-            accept={READING_UPLOAD_ACCEPT}
-            uploadedName={s('uploadedFileName') || s('assignmentFileName')}
-            uploadedUrl={s('uploadedFileUrl') || s('assignmentFileUrl')}
-            uploadedSize={Number(component.settings.uploadedFileSize) || 0}
-            uploadedContentType={s('uploadedFileContentType')}
-            onUploaded={file => onChange({ settings: { ...component.settings,
-              uploadedFileName: file.fileName, uploadedFileUrl: file.url,
-              uploadedFileSize: file.size, uploadedFileContentType: file.contentType,
-              assignmentFileName: file.fileName, assignmentFileUrl: file.url,
-            } })}
-            onRemove={() => onChange({ settings: { ...component.settings,
-              uploadedFileName: '', uploadedFileUrl: '', uploadedFileSize: 0,
-              uploadedFileContentType: '', assignmentFileName: '', assignmentFileUrl: '',
-            } })}
-          />
-          <p className="mt-2 text-[11px] text-foreground-400">Upload a PDF, Word document or text file. Learners can preview the question on the assignment page without downloading it. PDF is recommended for preserving the layout.</p>
+          <AssignmentTopicsEditor value={component.settings.assignmentTopics}
+            legacyQuestion={s('assignmentContent') || s('assignmentBrief')}
+            legacyInstructions={s('submissionInstructions')}
+            legacyResources={(s('assignmentFileUrl') || s('uploadedFileUrl')) ? [{ fileName: s('assignmentFileName') || s('uploadedFileName'), url: s('assignmentFileUrl') || s('uploadedFileUrl'), size: Number(component.settings.uploadedFileSize) || 0, contentType: s('uploadedFileContentType') }] : []}
+            onChange={value => setSetting('assignmentTopics', value)}
+            onUpload={async file => (await (uploadResource || uploadWeekComponentResource)(component.id, file, 'assignment', true)).file} />
         </div>
       </Section>
 
@@ -2598,145 +2721,232 @@ function AssignmentBody({ component, onChange, setSetting, rulePoints, uploadRes
   );
 }
 
-function WeekComponentFileUpload({ componentId, componentType, accept, uploadedName, uploadedUrl, uploadedSize, uploadedContentType, onUploaded, onRemove, onUpload = uploadWeekComponentResource }: {
+/**
+ * Every file attached to one component, in the order they were uploaded.
+ *
+ * A Reading Material, a slide deck or a podcast rarely is one file: a workbook
+ * comes with its answer sheet, a deck with the handout. The list is the whole
+ * truth — `files[0]` is the first upload and stays the one the legacy
+ * single-file keys mirror, so nothing that reads a component the old way sees
+ * a different first file than it did before.
+ *
+ * The author never types an index. Position is the order, shown as #1, #2, …
+ * one above the zero-based array so the list reads the way a person counts.
+ */
+function WeekComponentFileUpload({ componentId, componentType, accept, files, onFilesChange, onUpload = uploadWeekComponentResource }: {
   componentId: string;
   componentType: 'reading' | 'podcast' | 'powerpoint' | 'assignment';
   accept: string;
-  uploadedName: string;
-  uploadedUrl: string;
-  uploadedSize: number;
-  uploadedContentType: string;
-  onUploaded: (file: WeekComponentUploadResult['file']) => void;
-  // Clears the stored file without replacing it. Authors need this when a deck
-  // or document was attached by mistake and no replacement exists yet.
-  onRemove?: () => void;
+  /** Ordered; index 0 is the first file uploaded. */
+  files: ComponentFile[];
+  onFilesChange: (files: ComponentFile[]) => void;
   onUpload?: WeekComponentUploader;
 }) {
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState('');
-  const [failedFile, setFailedFile] = useState<File | null>(null);
-  const [previewOpen, setPreviewOpen] = useState(Boolean(uploadedUrl));
-  const [confirmRemove, setConfirmRemove] = useState(false);
+  const [failedFiles, setFailedFiles] = useState<File[]>([]);
   const inputId = useMemo(() => `week-component-upload-${Math.random().toString(36).slice(2)}`, []);
+  // The upload loop reads the list it is appending to. Reading `files` straight
+  // from props would make every file in a multi-file selection overwrite the
+  // previous one, because the parent's re-render lands after the loop.
+  const latest = useRef(files);
+  latest.current = files;
 
-  // A removal prompt left open against a file that is already gone (or has been
-  // swapped for another) would apply to the wrong thing, so drop it.
-  useEffect(() => {
-    if (!uploadedUrl && !uploadedName) setConfirmRemove(false);
-  }, [uploadedUrl, uploadedName]);
-
-  const handleRemove = () => {
-    setConfirmRemove(false);
-    setError('');
-    setFailedFile(null);
-    setPreviewOpen(false);
-    onRemove?.();
-  };
-
-  const handleFile = async (file: File) => {
+  const handleFiles = async (chosen: File[]) => {
+    if (!chosen.length) return;
     setUploading(true);
     setError('');
-    setFailedFile(null);
-    try {
-      const result = await onUpload(componentId, file, componentType);
-      onUploaded(result.file);
-      setPreviewOpen(true);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unable to upload file.');
-      setFailedFile(file);
-    } finally {
-      setUploading(false);
+    setFailedFiles([]);
+    const failed: File[] = [];
+    let lastError = '';
+    for (const file of chosen) {
+      try {
+        const result = await onUpload(componentId, file, componentType);
+        // Appended one at a time rather than collected and written once: a
+        // five-file upload that fails on the fourth keeps the three that
+        // landed, instead of discarding them with the failure.
+        const next = [...latest.current, result.file];
+        latest.current = next;
+        onFilesChange(next);
+      } catch (err) {
+        failed.push(file);
+        lastError = err instanceof Error ? err.message : 'Unable to upload file.';
+      }
     }
+    if (failed.length) {
+      setFailedFiles(failed);
+      setError(failed.length === 1 ? lastError : `${failed.length} files could not be uploaded. ${lastError}`);
+    }
+    setUploading(false);
+  };
+
+  const removeAt = (index: number) => {
+    const next = latest.current.filter((_, position) => position !== index);
+    latest.current = next;
+    onFilesChange(next);
+  };
+
+  const moveTo = (index: number, target: number) => {
+    if (target < 0 || target >= latest.current.length) return;
+    const next = [...latest.current];
+    const [moved] = next.splice(index, 1);
+    next.splice(target, 0, moved);
+    latest.current = next;
+    onFilesChange(next);
   };
 
   return (
     <div className="rounded-xl border border-background-200 bg-background-50 p-3">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="min-w-0">
-          <p className="truncate text-[12px] font-bold text-foreground-800">
-            {uploadedName || 'No file uploaded yet'}
-            {uploadedSize > 0 && <span className="ml-2 font-normal tabular-nums text-foreground-400">{formatFileSize(uploadedSize)}</span>}
+          <p className="text-[12px] font-bold text-foreground-800">
+            {files.length ? `${files.length} file${files.length === 1 ? '' : 's'} attached` : 'No file uploaded yet'}
           </p>
-          {uploadedUrl && (
-            <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1">
-              <button type="button" onClick={() => setPreviewOpen(current => !current)} className="inline-flex items-center gap-1 text-[11px] font-bold text-primary-600 hover:text-primary-700" aria-expanded={previewOpen}>
-                <AppIcon className={previewOpen ? 'ri-eye-off-line' : 'ri-eye-line'}></AppIcon>
-                {previewOpen ? 'Hide preview' : 'Preview file'}
-              </button>
-              <a href={uploadedUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-[11px] font-bold text-foreground-500 hover:text-foreground-700">
-                <AppIcon className="ri-external-link-line"></AppIcon> Open in new tab
-              </a>
-            </div>
-          )}
-          {onRemove && (uploadedUrl || uploadedName) && !confirmRemove && (
-            <button type="button" disabled={uploading} onClick={() => setConfirmRemove(true)} className="mt-1 inline-flex items-center gap-1 text-[11px] font-bold text-red-600 hover:text-red-700 disabled:opacity-50">
-              <AppIcon className="ri-delete-bin-line"></AppIcon> Remove file
-            </button>
-          )}
+          <p className="mt-0.5 text-[11px] text-foreground-400">Learners see them in this order. Upload as many as the component needs.</p>
         </div>
         <div className="w-full shrink-0 sm:w-auto">
           <input
             id={inputId}
             type="file"
             accept={accept}
+            multiple
             disabled={uploading}
             className="hidden"
             onChange={event => {
-              const file = event.target.files?.[0];
+              const chosen = Array.from(event.target.files || []);
+              // Reset first so re-picking the same file name fires change again.
               event.target.value = '';
-              if (file) void handleFile(file);
+              void handleFiles(chosen);
             }}
           />
           <label htmlFor={inputId} aria-disabled={uploading} className={`primary-action inline-flex h-9 w-full min-w-[124px] items-center justify-center gap-1.5 rounded-lg px-3 text-[11px] font-bold !text-white shadow-sm transition-smooth sm:w-auto ${uploading ? 'cursor-wait bg-foreground-300' : 'cursor-pointer bg-primary-600 hover:bg-primary-700'}`}>
             <AppIcon className={`${uploading ? 'ri-loader-4-line animate-spin' : 'ri-upload-cloud-2-line'} !text-white`}></AppIcon>
-            {uploading ? 'Uploading…' : 'Upload file'}
+            {uploading ? 'Uploading…' : files.length ? 'Add more files' : 'Upload files'}
           </label>
         </div>
       </div>
       <p className="mt-2 flex items-center gap-1 text-[10px] font-medium text-foreground-400">
         <AppIcon className="ri-information-line shrink-0"></AppIcon>
-        Maximum file size: {COMPONENT_UPLOAD_MAX_LABEL}.
+        Maximum file size: {COMPONENT_UPLOAD_MAX_LABEL} each.
       </p>
-      {onRemove && confirmRemove && (
-        <div className="mt-2 flex flex-col gap-2 rounded-lg border border-red-100 bg-red-50 px-3 py-2 sm:flex-row sm:items-center sm:justify-between">
-          <p className="flex min-w-0 items-start gap-1.5 text-[11px] font-semibold text-red-700">
-            <AppIcon className="ri-error-warning-line mt-0.5 shrink-0"></AppIcon>
-            <span>Remove this file from the component? The component keeps its other details and you can upload a new file later.</span>
-          </p>
-          <div className="flex shrink-0 items-center gap-2">
-            <button type="button" onClick={() => setConfirmRemove(false)} className="inline-flex h-8 items-center justify-center rounded-md border border-background-200 bg-background-50 px-3 text-[11px] font-bold text-foreground-600 hover:bg-background-100">
-              Cancel
-            </button>
-            <button type="button" onClick={handleRemove} className="inline-flex h-8 items-center justify-center gap-1 rounded-md bg-red-600 px-3 text-[11px] font-bold text-white hover:bg-red-700">
-              <AppIcon className="ri-delete-bin-line !text-white"></AppIcon> Remove file
-            </button>
-          </div>
-        </div>
+
+      {files.length > 0 && (
+        <ul className="mt-3 space-y-2">
+          {files.map((file, index) => (
+            <WeekComponentFileRow
+              key={`${file.url}:${index}`}
+              file={file}
+              index={index}
+              total={files.length}
+              componentType={componentType}
+              busy={uploading}
+              onRemove={() => removeAt(index)}
+              onMoveUp={() => moveTo(index, index - 1)}
+              onMoveDown={() => moveTo(index, index + 1)}
+            />
+          ))}
+        </ul>
       )}
+
       {error && (
         <div className="mt-2 flex flex-col gap-2 rounded-lg border border-red-100 bg-red-50 px-3 py-2 text-red-700 sm:flex-row sm:items-center sm:justify-between">
           <p className="flex min-w-0 items-start gap-1.5 text-[11px] font-semibold">
             <AppIcon className="ri-error-warning-line mt-0.5 shrink-0"></AppIcon>
             <span>{error}</span>
           </p>
-          {failedFile && (
-            <button type="button" disabled={uploading} onClick={() => void handleFile(failedFile)} className="inline-flex h-8 shrink-0 items-center justify-center gap-1 rounded-md border border-red-200 bg-background-50 px-3 text-[11px] font-bold text-red-700 hover:bg-red-100 disabled:opacity-50">
+          {failedFiles.length > 0 && (
+            <button type="button" disabled={uploading} onClick={() => void handleFiles(failedFiles)} className="inline-flex h-8 shrink-0 items-center justify-center gap-1 rounded-md border border-red-200 bg-background-50 px-3 text-[11px] font-bold text-red-700 hover:bg-red-100 disabled:opacity-50">
               <AppIcon className="ri-refresh-line"></AppIcon>
               Retry upload
             </button>
           )}
         </div>
       )}
+    </div>
+  );
+}
 
-      {uploadedUrl && previewOpen && (
+/** One attached file: its place in the order, its preview, and its removal. */
+function WeekComponentFileRow({ file, index, total, componentType, busy, onRemove, onMoveUp, onMoveDown }: {
+  file: ComponentFile;
+  index: number;
+  total: number;
+  componentType: 'reading' | 'podcast' | 'powerpoint' | 'assignment';
+  busy: boolean;
+  onRemove: () => void;
+  onMoveUp: () => void;
+  onMoveDown: () => void;
+}) {
+  // Only the first file opens expanded. Opening all of them at once would fetch
+  // and convert every Word document on the component the moment it is selected.
+  const [previewOpen, setPreviewOpen] = useState(index === 0);
+  const [confirmRemove, setConfirmRemove] = useState(false);
+  const label = file.fileName || 'Uploaded file';
+
+  return (
+    <li className="rounded-lg border border-background-200 bg-white p-2.5">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+        <div className="flex min-w-0 items-start gap-2">
+          <span aria-hidden="true" className="mt-0.5 grid h-5 w-6 shrink-0 place-items-center rounded bg-background-100 text-[10px] font-bold tabular-nums text-foreground-500">#{index + 1}</span>
+          <div className="min-w-0">
+            <p className="truncate text-[12px] font-bold text-foreground-800">
+              {label}
+              {file.size > 0 && <span className="ml-2 font-normal tabular-nums text-foreground-400">{formatFileSize(file.size)}</span>}
+            </p>
+            <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1">
+              <button type="button" onClick={() => setPreviewOpen(current => !current)} className="inline-flex items-center gap-1 text-[11px] font-bold text-primary-600 hover:text-primary-700" aria-expanded={previewOpen}>
+                <AppIcon className={previewOpen ? 'ri-eye-off-line' : 'ri-eye-line'}></AppIcon>
+                {previewOpen ? 'Hide preview' : 'Preview file'}
+              </button>
+              <a href={file.url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-[11px] font-bold text-foreground-500 hover:text-foreground-700">
+                <AppIcon className="ri-external-link-line"></AppIcon> Open in new tab
+              </a>
+              {!confirmRemove && (
+                <button type="button" disabled={busy} onClick={() => setConfirmRemove(true)} className="inline-flex items-center gap-1 text-[11px] font-bold text-red-600 hover:text-red-700 disabled:opacity-50">
+                  <AppIcon className="ri-delete-bin-line"></AppIcon> Remove file
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+        {total > 1 && (
+          <div className="flex shrink-0 items-center gap-1">
+            <button type="button" disabled={busy || index === 0} onClick={onMoveUp} aria-label={`Move ${label} earlier`} title="Move earlier" className="grid h-7 w-7 place-items-center rounded-md border border-background-200 text-foreground-500 hover:bg-background-100 disabled:opacity-40">
+              <AppIcon className="ri-arrow-up-line text-[13px]"></AppIcon>
+            </button>
+            <button type="button" disabled={busy || index === total - 1} onClick={onMoveDown} aria-label={`Move ${label} later`} title="Move later" className="grid h-7 w-7 place-items-center rounded-md border border-background-200 text-foreground-500 hover:bg-background-100 disabled:opacity-40">
+              <AppIcon className="ri-arrow-down-line text-[13px]"></AppIcon>
+            </button>
+          </div>
+        )}
+      </div>
+
+      {confirmRemove && (
+        <div className="mt-2 flex flex-col gap-2 rounded-lg border border-red-100 bg-red-50 px-3 py-2 sm:flex-row sm:items-center sm:justify-between">
+          <p className="flex min-w-0 items-start gap-1.5 text-[11px] font-semibold text-red-700">
+            <AppIcon className="ri-error-warning-line mt-0.5 shrink-0"></AppIcon>
+            <span>Remove {label} from the component? The other files and the component&apos;s details are kept.</span>
+          </p>
+          <div className="flex shrink-0 items-center gap-2">
+            <button type="button" onClick={() => setConfirmRemove(false)} className="inline-flex h-8 items-center justify-center rounded-md border border-background-200 bg-background-50 px-3 text-[11px] font-bold text-foreground-600 hover:bg-background-100">
+              Cancel
+            </button>
+            <button type="button" onClick={() => { setConfirmRemove(false); onRemove(); }} className="inline-flex h-8 items-center justify-center gap-1 rounded-md bg-red-600 px-3 text-[11px] font-bold text-white hover:bg-red-700">
+              <AppIcon className="ri-delete-bin-line !text-white"></AppIcon> Remove file
+            </button>
+          </div>
+        </div>
+      )}
+
+      {previewOpen && (
         <UploadedComponentFilePreview
-          url={uploadedUrl}
-          fileName={uploadedName}
-          contentType={uploadedContentType}
+          url={file.url}
+          fileName={file.fileName}
+          contentType={file.contentType}
           componentType={componentType}
         />
       )}
-    </div>
+    </li>
   );
 }
 
@@ -2862,12 +3072,11 @@ function AssignedGroupsSection({ component, onChange, groupOptions, programmeId,
   const rawSelectedKeys = component.settings.selectedGroupKeys as string[] | undefined;
   const norm = (value?: string) => String(value ?? '').trim().toLowerCase();
   // The module was built for this group, so it's never really optional — shown
-  // locked/dimmed and always included, not something the user can uncheck.
-  const lockedOption = groupName ? groupOptions.find(option => norm(option.name) === norm(groupName)) : undefined;
+  // It starts selected, but remains editable and can be cleared by the tutor.
+  const moduleGroupOption = groupName ? groupOptions.find(option => norm(option.name) === norm(groupName)) : undefined;
   const storedKeys = rawSelectedKeys ?? [];
-  const selectedKeys = lockedOption && !storedKeys.includes(lockedOption.key)
-    ? [...storedKeys, lockedOption.key]
-    : storedKeys;
+  const selectedKeys = storedKeys;
+  const hasStoredSelection = Array.isArray(component.settings.selectedGroupKeys);
   const [browsingKey, setBrowsingKey] = useState<string | null>(null);
   const setGroups = (keys: string[]) => onChange({
     settings: { ...component.settings, selectedGroupKeys: keys, selectedGroupNames: groupOptions.filter(option => keys.includes(option.key)).map(option => option.name) },
@@ -2878,9 +3087,9 @@ function AssignedGroupsSection({ component, onChange, groupOptions, programmeId,
   // week saved without ever touching this list would still store it as
   // unassigned underneath.
   useEffect(() => {
-    if (lockedOption && !storedKeys.includes(lockedOption.key)) setGroups(selectedKeys);
+    if (moduleGroupOption && !hasStoredSelection) setGroups([moduleGroupOption.key]);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [lockedOption?.key]);
+  }, [moduleGroupOption?.key, hasStoredSelection]);
 
   // Placed copies this component has produced elsewhere, one entry per copy
   // (parallel arrays — ComponentSettingValue has no object type). A single
@@ -2908,7 +3117,6 @@ function AssignedGroupsSection({ component, onChange, groupOptions, programmeId,
   };
 
   const handleToggle = async (key: string) => {
-    if (key === lockedOption?.key) return;
     if (!selectedKeys.includes(key)) {
       setGroups([...selectedKeys, key]);
       return;
@@ -2971,7 +3179,6 @@ function AssignedGroupsSection({ component, onChange, groupOptions, programmeId,
       <GroupMultiSelect
         options={groupOptions}
         selectedKeys={selectedKeys}
-        lockedKey={lockedOption?.key ?? null}
         onChange={setGroups}
         onToggle={key => void handleToggle(key)}
         browsingKey={browsingKey}
@@ -2992,12 +3199,11 @@ function AssignedGroupsSection({ component, onChange, groupOptions, programmeId,
   );
 }
 
-function GroupMultiSelect({ options, selectedKeys, onChange, onToggle, lockedKey, browsingKey, onBrowse }: {
+function GroupMultiSelect({ options, selectedKeys, onChange, onToggle, browsingKey, onBrowse }: {
   options: GroupOption[];
   selectedKeys: string[];
   onChange: (keys: string[]) => void;
   onToggle: (key: string) => void;
-  lockedKey: string | null;
   browsingKey: string | null;
   onBrowse: (key: string) => void;
 }) {
@@ -3005,7 +3211,7 @@ function GroupMultiSelect({ options, selectedKeys, onChange, onToggle, lockedKey
   // Groups now span every programme/cohort (not just this module's own), so
   // this narrows the picker in two steps — programme, then that programme's
   // cohorts — before the groups themselves are listed. The module's own
-  // (locked) group always stays visible regardless of what's picked here.
+  // The selected group list follows the active programme and cohort filters.
   const programmeChoices = useMemo(() => {
     const byId = new Map<string, string>();
     options.forEach(option => {
@@ -3054,7 +3260,7 @@ function GroupMultiSelect({ options, selectedKeys, onChange, onToggle, lockedKey
             <button onClick={() => onChange(Array.from(new Set([...selectedKeys, ...filteredOptions.map(option => option.key)])))} className="rounded-md px-2 py-0.5 text-[10px] font-bold text-primary-600 hover:bg-primary-50 transition-smooth">
               {filtering ? 'Select shown' : 'Select all'}
             </button>
-            <button onClick={() => onChange(lockedKey ? [lockedKey] : [])} className="rounded-md px-2 py-0.5 text-[10px] font-bold text-foreground-400 hover:bg-background-100 transition-smooth">Clear</button>
+            <button onClick={() => onChange([])} className="rounded-md px-2 py-0.5 text-[10px] font-bold text-foreground-400 hover:bg-background-100 transition-smooth">Clear</button>
           </div>
         )}
       </div>
@@ -3114,7 +3320,7 @@ function GroupMultiSelect({ options, selectedKeys, onChange, onToggle, lockedKey
           {filteredOptions.map(option => {
             const on = selectedSet.has(option.key);
             const browsing = browsingKey === option.key;
-            const locked = option.key === lockedKey;
+            const locked = false;
             if (locked) {
               return (
                 <div

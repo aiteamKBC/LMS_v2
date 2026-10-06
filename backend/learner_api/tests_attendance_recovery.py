@@ -3,13 +3,21 @@ from contextlib import nullcontext
 from datetime import date, datetime, time, timezone as dt_timezone
 import inspect
 import json
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
 from django.test import RequestFactory, SimpleTestCase
 from django.utils import timezone
 
-from .absence_reports import RecoveryPlanError, _catchup_booking, _fetch_missed_sessions, learner_absence_reports
+from .absence_reports import (
+    RecoveryPlanError,
+    _catchup_booking,
+    _fetch_missed_sessions,
+    _recording_recovery_event,
+    learner_absence_reports,
+)
+from .alternative_recovery import _future_instant
 from .attendance_lectures import build_lectures, read_native_occurrences
 from .tests_attendance_lectures import register_row
 
@@ -30,18 +38,37 @@ class RecoveryBookingTests(SimpleTestCase):
         self.clock.start()
         self.addCleanup(self.clock.stop)
 
-    def resolve(self, event, *, lock=False):
-        with patch('learner_api.absence_reports.CoachCalendarEvent.objects') as manager:
+    def resolve(self, event, *, lock=False, linked_elsewhere=False, for_report_id=None):
+        with patch('learner_api.absence_reports.CoachCalendarEvent.objects') as manager, \
+                patch('learner_api.absence_reports.CoachAbsenceReport.objects') as reports:
             manager.filter.return_value.first.return_value = event
             manager.select_for_update.return_value.filter.return_value.first.return_value = event
-            result = _catchup_booking(SOURCE, MIRROR, 'catch-up:99:1', date(2026, 10, 1), lock=lock)
+            linked = reports.filter.return_value.exclude.return_value
+            linked.exists.return_value = linked_elsewhere
+            linked.exclude.return_value.exists.return_value = linked_elsewhere
+            result = _catchup_booking(SOURCE, MIRROR, 'catch-up:99:1', date(2026, 10, 1), lock=lock,
+                                      for_report_id=for_report_id)
             if lock:
                 manager.select_for_update.assert_called_once()
+            self.last_reports = reports
             return result
+
+    def test_a_catchup_already_making_up_another_lecture_is_refused(self):
+        with self.assertRaisesRegex(RecoveryPlanError, 'already linked to another lecture'):
+            self.resolve(booked_event(), linked_elsewhere=True)
+        # Re-linking the same report keeps its own booking out of the check.
+        self.assertIsNotNone(self.resolve(booked_event(), for_report_id=34))
+        self.last_reports.filter.return_value.exclude.return_value.exclude.assert_called_once_with(pk=34)
 
     def test_saved_pending_approval_booking_is_valid_and_can_be_locked(self):
         event = booked_event()
         self.assertIs(self.resolve(event, lock=True), event)
+
+    def test_native_utc_occurrence_can_be_compared_with_aware_clock(self):
+        now = datetime(2026, 9, 21, 10, tzinfo=dt_timezone.utc)
+
+        self.assertTrue(_future_instant(datetime(2026, 9, 25, 8), now))
+        self.assertFalse(_future_instant(datetime(2026, 9, 20, 8), now))
 
     def test_another_learners_email_cannot_be_overridden_by_an_id_collision(self):
         event = booked_event()
@@ -60,6 +87,24 @@ class RecoveryBookingTests(SimpleTestCase):
                     self.resolve(event)
         with self.assertRaises(RecoveryPlanError):
             self.resolve(None)
+
+    def test_recording_plan_creates_a_confirmed_local_calendar_task(self):
+        report = SimpleNamespace(
+            id=7, owner_email='coach@example.test', owner_name='Coach',
+            learner_name='Learner', learner_email='learner@example.test',
+            session_title='Lecture',
+        )
+        with patch('learner_api.absence_reports.CoachCalendarEvent.objects') as manager:
+            _recording_recovery_event(
+                report, SOURCE, MIRROR, date(2026, 10, 6), time(18), 90,
+            )
+        saved = manager.create.call_args.kwargs
+        self.assertEqual(saved['event_key'], 'absence-recording:7')
+        self.assertEqual(saved['learner_id'], MIRROR.id)
+        self.assertEqual(saved['event_type'], 'recorded-recovery')
+        self.assertEqual(saved['status'], 'scheduled')
+        self.assertEqual(saved['sync_state'], 'synced')
+        self.assertEqual(saved['duration_minutes'], 90)
 
 
 class RecoverySubmissionTests(SimpleTestCase):
@@ -82,33 +127,109 @@ class RecoverySubmissionTests(SimpleTestCase):
              patch('learner_api.absence_reports.learner_profile_for_source', return_value=MIRROR), \
              patch('learner_api.absence_reports.CoachAbsenceReport.objects') as manager, \
              patch('learner_api.absence_reports._catchup_booking', side_effect=validation) as validate, \
+             patch('learner_api.absence_reports.record_reported_absence') as record_absence, \
              patch('learner_api.absence_reports.transaction.atomic', return_value=nullcontext()), \
+             patch('learner_api.absence_reports.email_azure.send_mail', return_value=(True, 'sent')) as send_mail, \
              patch('learner_api.absence_reports._serialize', return_value={'id': 1}):
             manager.filter.return_value.exists.return_value = False
             manager.filter.return_value.count.return_value = 0
+            manager.create.return_value = SimpleNamespace(
+                id=1, owner_email='coach@example.test', owner_name='Coach',
+                learner_name='Learner', learner_email='learner@example.test',
+                session_title='Lecture', recovery_method='catch-up',
+            )
             response = inspect.unwrap(learner_absence_reports)(self.request(recoveryMethod='catch-up', catchupEventKey='catch-up:99:1'), 'apprenticeship', 12)
-            return response, manager, validate
+            return response, manager, validate, send_mail, record_absence
 
     def test_catchup_choice_and_verified_event_key_are_saved(self):
-        response, manager, validate = self.submit([booked_event(), booked_event()])
+        response, manager, validate, send_mail, record_absence = self.submit([booked_event(), booked_event()])
         self.assertEqual(response.status_code, 201)
+        self.assertEqual(manager.create.call_args.kwargs['status'], 'approved')
         self.assertEqual(manager.create.call_args.kwargs['recovery_method'], 'catch-up')
         self.assertEqual(manager.create.call_args.kwargs['catchup_event_key'], 'catch-up:99:1')
         self.assertEqual(validate.call_count, 2)
         self.assertTrue(validate.call_args.kwargs['lock'])
+        self.assertIn('Catch-up session', send_mail.call_args.kwargs['text_body'])
+        self.assertNotIn('Watch the recording', send_mail.call_args.kwargs['text_body'])
+        self.assertEqual(record_absence.call_args.kwargs['occurrence_id'], 'lecture')
+        self.assertEqual(record_absence.call_args.kwargs['learner_profile_id'], MIRROR.id)
+        self.assertEqual(record_absence.call_args.kwargs['recovery_method'], 'catch-up')
 
     def test_cancellation_between_validation_and_save_prevents_submission(self):
-        response, manager, _ = self.submit([booked_event(), RecoveryPlanError('Booking cancelled.')])
+        response, manager, _, send_mail, record_absence = self.submit([booked_event(), RecoveryPlanError('Booking cancelled.')])
         self.assertEqual(response.status_code, 409)
         self.assertEqual(json.loads(response.content)['error'], 'Booking cancelled.')
         manager.create.assert_not_called()
+        record_absence.assert_not_called()
+        send_mail.assert_not_called()
+
+    def test_alternative_session_is_approved_without_coach_review(self):
+        with patch('learner_api.absence_reports._source_learner', return_value=SOURCE), \
+             patch('learner_api.absence_reports._resolve_absent_attendance', return_value=8000000000000000001), \
+             patch('learner_api.absence_reports.learner_profile_for_source', return_value=MIRROR), \
+             patch('learner_api.absence_reports.CoachAbsenceReport.objects') as manager, \
+             patch('learner_api.absence_reports.validate_alternative_occurrence', return_value={'id': 'target-occurrence'}) as validate, \
+             patch('learner_api.absence_reports._email_learner_alternative_invite') as invite, \
+             patch('learner_api.absence_reports.record_reported_absence') as record_absence, \
+             patch('learner_api.absence_reports.transaction.atomic', return_value=nullcontext()), \
+             patch('learner_api.absence_reports.email_azure.send_mail', return_value=(True, 'sent')) as send_mail, \
+             patch('learner_api.absence_reports._serialize', return_value={'id': 1, 'status': 'approved'}):
+            manager.filter.return_value.exists.return_value = False
+            manager.filter.return_value.count.return_value = 0
+            manager.create.return_value = SimpleNamespace(
+                id=1, owner_email='coach@example.test', owner_name='Coach',
+                learner_name='Learner', learner_email='learner@example.test',
+                session_title='Lecture', recovery_method='alternative',
+            )
+            response = inspect.unwrap(learner_absence_reports)(self.request(
+                recoveryMethod='alternative', targetOccurrenceId='target-occurrence'),
+                'apprenticeship', 12)
+
+        self.assertEqual(response.status_code, 201)
+        invite.assert_called_once_with(manager.create.return_value, 'target-occurrence')
+        self.assertEqual(manager.create.call_args.kwargs['status'], 'approved')
+        self.assertEqual(manager.create.call_args.kwargs['recovery_method'], 'alternative')
+        self.assertEqual(manager.create.call_args.kwargs['catchup_event_key'], 'alternative:target-occurrence')
+        self.assertEqual(validate.call_count, 2)
+        self.assertEqual(record_absence.call_args.kwargs['recovery_method'], 'alternative')
+        self.assertEqual(record_absence.call_args.kwargs['recovery_reference'], 'alternative:target-occurrence')
+        self.assertIn('Alternative group session', send_mail.call_args.kwargs['text_body'])
+        self.assertNotIn('Catch-up session', send_mail.call_args.kwargs['text_body'])
 
     def test_in_progress_lectures_can_be_reported(self):
         with patch('learner_api.absence_reports.lecture_register', return_value=[register_row(attendance_status='in_progress')]):
             self.assertEqual(_fetch_missed_sessions(SOURCE, 12)[0]['status'], 'in_progress')
 
+    def test_manual_schema_allows_occurrence_scoped_alternative_recovery(self):
+        sql = (Path(__file__).resolve().parents[1] / 'sql' / 'attendance_absence_recovery.sql').read_text()
+        self.assertIn('DROP CONSTRAINT IF EXISTS coach_absence_catchup_event_fk', sql)
+        self.assertIn("recovery_method = 'alternative'", sql)
+        self.assertIn("catchup_event_key LIKE 'alternative:%'", sql)
+
 
 class LiveLecturePayloadTests(SimpleTestCase):
+    def test_approved_alternative_is_exposed_as_a_joinable_calendar_event(self):
+        from . import calendar as calendar_module
+
+        report = SimpleNamespace(
+            id=9, catchup_event_key='alternative:target', session_title='Lecture',
+            owner_email='coach@example.test',
+        )
+        with patch('coach_api.models.CoachAbsenceReport.objects.filter', return_value=[report]), \
+             patch('learner_api.alternative_recovery.alternative_target_details', return_value={
+                 'title': 'Equivalent Lecture', 'dateIso': '2026-10-07',
+                 'startTime': '09:00', 'endTime': '11:00', 'group': 'Wednesday Group',
+                 'cohort': 'Final Cohort', 'joinUrl': 'https://teams.microsoft.com/l/meetup-join/target',
+             }):
+            events = calendar_module.alternative_recovery_events_for_learner(12)
+
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0]['eventKey'], 'absence-alternative:9')
+        self.assertEqual(events[0]['scheduledDate'], '2026-10-07')
+        self.assertEqual(events[0]['durationMinutes'], 120)
+        self.assertEqual(events[0]['meetingLink'], 'https://teams.microsoft.com/l/meetup-join/target')
+        self.assertEqual(events[0]['status'], 'scheduled')
+
     def test_native_payload_keeps_absolute_timestamps_and_the_lecture_link(self):
         row = register_row(source='microsoft-teams', session_id='occurrence', module_catalogue_id=3,
             attendance_status='upcoming', scheduled_start=datetime(2026, 10, 1, 9, tzinfo=dt_timezone.utc),
@@ -123,3 +244,274 @@ class LiveLecturePayloadTests(SimpleTestCase):
         self.assertIsNone(result['startsAt'])
         self.assertIsNone(result['endsAt'])
         self.assertEqual(result['joinUrl'], '')
+
+
+class LinkedCatchupLedgerTests(SimpleTestCase):
+    def test_catchup_linked_after_report_is_recorded_on_the_matching_absence(self):
+        from unittest.mock import MagicMock
+        from .absence_reports import _kbc_attendance_report_id
+        from .session_recovery import _record_linked_catchup
+        absences, attendance = MagicMock(), MagicMock()
+        absences.filter.return_value.values.return_value = [
+            {'id': 1, 'occurrence_id': 'occ-missed', 'learner_profile_id': 7},
+            {'id': 2, 'occurrence_id': 'occ-other', 'learner_profile_id': 7},
+        ]
+        with patch('curriculum_api.models.LiveSessionAbsence.objects') as absence_manager, \
+             patch('curriculum_api.models.LiveSessionLearnerAttendance.objects') as attendance_manager:
+            absence_manager.using.return_value = absences
+            attendance_manager.using.return_value = attendance
+            linked = _record_linked_catchup(12, _kbc_attendance_report_id('12:teams:occ-missed'), 'catchup-1')
+
+        self.assertEqual(linked, 1)
+        absences.filter.assert_any_call(source_learner_id=12)
+        absences.filter.assert_any_call(pk=1)
+        self.assertNotIn(((), {'pk': 2}), absences.filter.call_args_list)
+        update = absences.filter.return_value.update.call_args.kwargs
+        self.assertEqual((update['recovery_method'], update['recovery_reference'], update['recovery_status']),
+                         ('catch-up', 'catchup-1', 'catchup_booked'))
+        attendance.filter.assert_called_once_with(occurrence_id='occ-missed', learner_profile_id=7,
+                                                  attendance_status='absent')
+
+    def test_link_catchup_updates_the_absence_ledger(self):
+        from . import session_recovery
+        # link_catchup and catch-up booking share link_report_to_catchup.
+        self.assertIn('link_report_to_catchup(', inspect.getsource(session_recovery.link_catchup))
+        self.assertIn('_record_linked_catchup(learner_id, report.attendance_id, event_key)',
+                      inspect.getsource(session_recovery.link_report_to_catchup))
+
+    def test_linking_a_catchup_approves_the_report_without_coach_approval(self):
+        from unittest.mock import MagicMock
+        from .session_recovery import link_catchup
+        report = SimpleNamespace(pk=5, attendance_id=99, status='pending', catchup_event_key=None,
+                                 recovery_method='', session_date=date(2026, 9, 1), save=MagicMock())
+        request = RequestFactory().post('/', data=json.dumps({'reportId': 5, 'eventKey': 'catchup-1'}),
+                                        content_type='application/json')
+        with patch('coach_api.models.CoachAbsenceReport.objects') as reports, \
+             patch('coach_api.models.CoachCalendarEvent.objects'), \
+             patch('learner_api.models.LearnerProfile.objects'), \
+             patch('learner_api.absence_reports._source_learner', return_value=SimpleNamespace(id=12)), \
+             patch('learner_api.absence_reports._catchup_booking'), \
+             patch('learner_api.session_recovery._record_linked_catchup') as record, \
+             patch('learner_api.session_recovery.transaction.atomic', return_value=nullcontext()):
+            reports.select_for_update.return_value.filter.return_value.first.return_value = report
+            response = inspect.unwrap(link_catchup)(request, kind='apprenticeship', learner_id=12)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual((report.status, report.recovery_method, report.catchup_event_key),
+                         ('approved', 'catch-up', 'catchup-1'))
+        self.assertIn('status', report.save.call_args.kwargs['update_fields'])
+        record.assert_called_once_with(12, 99, 'catchup-1')
+
+
+class CatchupOutcomeTests(SimpleTestCase):
+    def test_only_catchups_whose_time_has_passed_are_completed(self):
+        from unittest.mock import MagicMock
+        from .catchup_outcomes import complete_elapsed_catchups
+        ended = SimpleNamespace(pk=1, event_key='catch-up:1', scheduled_date=date(2026, 9, 25),
+                                scheduled_time=time(17, 0), duration_minutes=60, status='in-progress')
+        upcoming = SimpleNamespace(pk=2, event_key='catch-up:2', scheduled_date=date(2026, 9, 25),
+                                   scheduled_time=time(18, 30), duration_minutes=30, status='scheduled')
+        with patch('coach_api.models.CoachCalendarEvent.objects') as events:
+            events.filter.return_value.filter.return_value.only.return_value = [ended, upcoming]
+            events.filter.return_value.update.return_value = 1
+            completed = complete_elapsed_catchups(
+                learner_email='learner@example.test',
+                now=timezone.make_aware(datetime(2026, 9, 25, 18, 5)),
+            )
+        self.assertEqual(completed, ['catch-up:1'])
+        self.assertEqual(events.filter.call_args_list[0].kwargs['event_type__iexact'], 'catch-up')
+        events.filter.assert_any_call(pk=1, status='in-progress')
+        self.assertNotIn(((), {'pk': 2, 'status': 'scheduled'}), events.filter.call_args_list)
+
+    def test_completed_catchup_the_learner_missed_does_not_recover_the_lecture(self):
+        from .session_recovery import refresh_catchup_attendance
+        with patch('coach_api.models.CoachCalendarEvent.objects') as events, \
+             patch('coach_api.models.CoachAbsenceReport.objects') as reports, \
+             patch('learner_api.catchup_outcomes.learner_attended_catchup', return_value=False):
+            events.filter.return_value.first.return_value = SimpleNamespace(learner_email='learner@example.test')
+            refresh_catchup_attendance('catch-up:1')
+        reports.filter.assert_not_called()
+
+    def test_attended_completed_catchup_is_credited(self):
+        from .catchup_outcomes import credit_attended_catchups
+        with patch('curriculum_api.models.LiveSessionAbsence.objects') as absences, \
+             patch('coach_api.models.CoachCalendarEvent.objects') as events, \
+             patch('learner_api.catchup_outcomes.learner_attended_catchup', side_effect=lambda key: key == 'catch-up:1'), \
+             patch('learner_api.session_recovery.refresh_catchup_attendance') as refresh:
+            absences.filter.return_value.filter.return_value.values_list.return_value = ['catch-up:1', 'catch-up:2']
+            events.filter.return_value.values_list.return_value = ['catch-up:1', 'catch-up:2']
+            credited = credit_attended_catchups(learner_email='learner@example.test')
+        self.assertEqual(credited, ['catch-up:1'])
+        refresh.assert_called_once_with('catch-up:1')
+
+    def test_ended_catchup_the_learner_missed_is_shown_as_missed(self):
+        from .attendance_lectures import _mark_missed_catchups
+        missed = {'source': 'microsoft-teams', 'status': 'absent', 'catchupStatus': 'pending', 'reportId': '1'}
+        attended = {**missed, 'reportId': '2'}
+        upcoming = {**missed, 'reportId': '3'}
+        reported = {'1': {'recovery_method': 'catch-up', 'catchup_event_key': 'catch-up:1'},
+                    '2': {'recovery_method': 'catch-up', 'catchup_event_key': 'catch-up:2'},
+                    '3': {'recovery_method': 'catch-up', 'catchup_event_key': 'catch-up:3'}}
+        with patch('coach_api.models.CoachCalendarEvent.objects') as events, \
+             patch('learner_api.catchup_outcomes.learner_attended_catchup', side_effect=lambda key: key == 'catch-up:2'):
+            # catch-up:3 has not finished yet, so it is not returned as completed.
+            events.filter.return_value.values_list.return_value = ['catch-up:1', 'catch-up:2']
+            _mark_missed_catchups([missed, attended, upcoming], reported)
+        self.assertEqual([missed['catchupStatus'], attended['catchupStatus'], upcoming['catchupStatus']],
+                         ['missed', 'pending', 'pending'])
+
+    def test_a_missed_catchup_can_be_replaced_but_an_attended_one_cannot(self):
+        from unittest.mock import MagicMock
+        from .session_recovery import link_catchup
+        for attended, expected in ((False, 200), (True, 409)):
+            with self.subTest(attended=attended):
+                report = SimpleNamespace(pk=5, attendance_id=99, status='approved', catchup_event_key='catch-up:old',
+                                         recovery_method='catch-up', session_date=date(2026, 9, 1), save=MagicMock())
+                request = RequestFactory().post('/', data=json.dumps({'reportId': 5, 'eventKey': 'catch-up:new'}),
+                                                content_type='application/json')
+                with patch('coach_api.models.CoachAbsenceReport.objects') as reports, \
+                     patch('coach_api.models.CoachCalendarEvent.objects') as events, \
+                     patch('learner_api.models.LearnerProfile.objects'), \
+                     patch('learner_api.absence_reports._source_learner', return_value=SimpleNamespace(id=12)), \
+                     patch('learner_api.absence_reports._catchup_booking'), \
+                     patch('learner_api.catchup_outcomes.learner_attended_catchup', return_value=attended), \
+                     patch('learner_api.session_recovery._record_linked_catchup'), \
+                     patch('learner_api.session_recovery.transaction.atomic', return_value=nullcontext()):
+                    reports.select_for_update.return_value.filter.return_value.first.return_value = report
+                    events.filter.return_value.exists.return_value = True
+                    # The old catch-up has ended, so it is no booked session the 12-hour rule protects.
+                    events.filter.return_value.only.return_value.first.return_value = None
+                    response = inspect.unwrap(link_catchup)(request, kind='apprenticeship', learner_id=12)
+                self.assertEqual(response.status_code, expected)
+
+
+class LinkedCatchupCalendarTests(SimpleTestCase):
+    def test_learner_calendar_marks_catchups_already_making_up_a_lecture(self):
+        from .calendar import _annotate_linked_catchups
+        events = [{'source': 'catch-up', 'eventKey': 'catch-up:1'}, {'source': 'catch-up', 'eventKey': 'catch-up:2'},
+                  {'source': 'mcr', 'eventKey': 'mcr:1'}]
+        with patch('coach_api.models.CoachAbsenceReport.objects') as reports:
+            reports.filter.return_value.exclude.return_value.values_list.return_value = [('catch-up:1', 40)]
+            _annotate_linked_catchups(events)
+        self.assertEqual([event.get('linkedReportId') for event in events], [40, None, None])
+        self.assertNotIn('linkedReportId', events[2])
+        reports.filter.assert_called_once_with(catchup_event_key__in=['catch-up:1', 'catch-up:2'])
+
+
+class AlternativeModuleMatchTests(SimpleTestCase):
+    def test_group_copies_named_by_weekday_or_copy_are_the_same_module(self):
+        from .alternative_recovery import _module_key
+        self.assertEqual(_module_key('Martech - Thur'), _module_key('Martech - Fri'))
+        self.assertEqual(_module_key('Martech (Fri)'), 'martech')
+        self.assertEqual(_module_key('MM21 copy'), _module_key('MM21'))
+        # Only a trailing weekday is ignored: a title that starts with one keeps it.
+        self.assertEqual(_module_key('Monday Planning'), 'monday planning')
+        self.assertNotEqual(_module_key('Martech - Thur'), _module_key('Social Media - Thur'))
+
+
+class AlternativeInviteTests(SimpleTestCase):
+    def test_learner_gets_a_calendar_invite_for_the_alternative_session_only(self):
+        from .absence_reports import _email_learner_alternative_invite, alternative_invite_ics
+        report = SimpleNamespace(id=41, learner_email='aya@example.test', session_title='Martech - Thur — Session 3',
+                                 catchup_event_key='alternative:OCC-ALT')
+        occurrence = SimpleNamespace(live_session_id='LIVE-FRI', join_url='https://teams.example/fri',
+                                     scheduled_start=datetime(2026, 10, 9, 7, 0), scheduled_end=datetime(2026, 10, 9, 9, 0))
+        session = SimpleNamespace(module_title='Martech - Fri', join_url='')
+        ics = alternative_invite_ics(report, occurrence, 'Martech - Fri — Session 3', 'https://teams.example/fri').decode()
+        self.assertIn('METHOD:PUBLISH', ics)
+        self.assertIn('DTSTART:20261009T070000Z', ics)
+        self.assertIn('DTEND:20261009T090000Z', ics)
+        self.assertIn('UID:absence-alternative-41@kbc-lms', ics)
+        self.assertNotIn('ATTENDEE', ics)
+        with patch('curriculum_api.models.LiveSessionOccurrence.objects') as occurrences, \
+                patch('curriculum_api.models.LiveSession.objects') as sessions, \
+                patch('learner_api.absence_reports.alternative_target_details', return_value={
+                    'title': 'Martech - Fri — Session 3', 'dateIso': '2026-10-09', 'startTime': '08:00',
+                    'endTime': '10:00', 'group': 'G2-MarTech', 'joinUrl': 'https://teams.example/fri'}), \
+                patch('learner_api.absence_reports.email_azure.send_mail', return_value=(True, None)) as send_mail:
+            occurrences.using.return_value.filter.return_value.first.return_value = occurrence
+            sessions.using.return_value.filter.return_value.first.return_value = session
+            _email_learner_alternative_invite(report, 'OCC-ALT')
+        kwargs = send_mail.call_args.kwargs
+        self.assertEqual(kwargs['to'], 'aya@example.test')
+        self.assertEqual(kwargs['attachments'][0]['name'], 'alternative-session.ics')
+        self.assertEqual(kwargs['attachments'][0]['content_type'], 'text/calendar')
+        self.assertIn('https://teams.example/fri', kwargs['html_body'])
+
+
+class CatchupReplaceCutoffTests(SimpleTestCase):
+    """Replacing a report's booked catch-up is a change: closed 12 hours before it starts."""
+
+    def check(self, *, closed, enforce=True, new_key='catch-up:248:13:2026-10-20'):
+        from unittest.mock import MagicMock
+        from . import session_recovery
+        report = SimpleNamespace(pk=34, status='approved', catchup_event_key='catch-up:248:12:2026-10-15')
+        current = SimpleNamespace(scheduled_date=date(2026, 10, 15), scheduled_time=time(11, 0))
+        reports, events = MagicMock(), MagicMock()
+        reports.filter.return_value.first.return_value = report
+        events.filter.return_value.exists.return_value = False
+        events.filter.return_value.only.return_value.first.return_value = current
+        with patch('coach_api.models.CoachAbsenceReport.objects', reports), \
+                patch('coach_api.models.CoachCalendarEvent.objects', events), \
+                patch('learner_api.coach_availability.catchup_change_closed', return_value=closed):
+            return session_recovery.check_report_can_take_catchup(
+                101, 34, enforce_change_cutoff=enforce, event_key=new_key)
+
+    def test_learner_cannot_replace_a_catchup_starting_within_12_hours(self):
+        from .absence_reports import RecoveryPlanError
+        with self.assertRaisesMessage(RecoveryPlanError, '12 hours'):
+            self.check(closed=True)
+
+    def test_learner_replaces_a_catchup_earlier_than_12_hours(self):
+        self.assertEqual(self.check(closed=False).pk, 34)
+
+    def test_staff_and_relinking_the_same_booking_are_not_limited(self):
+        self.assertEqual(self.check(closed=True, enforce=False).pk, 34)
+        self.assertEqual(self.check(closed=True, new_key='catch-up:248:12:2026-10-15').pk, 34)
+
+
+class ReplacedCatchupCancelTests(SimpleTestCase):
+    """Changing a lecture's catch-up cancels the old booking, so the coach is not left with it."""
+
+    def link(self, *, old_key='catch-up:248:12:2026-10-15', new_key='catch-up:248:13:2026-10-20',
+             old_booking=True, linked_elsewhere=False):
+        from unittest.mock import MagicMock
+        from . import session_recovery
+        report = SimpleNamespace(pk=34, attendance_id=99, status='approved', catchup_event_key=old_key,
+                                 session_date=date(2026, 10, 1), save=MagicMock())
+        booking = SimpleNamespace(event_key=old_key) if old_booking else None
+        events, reports = MagicMock(), MagicMock()
+        events.filter.return_value.first.return_value = booking
+        reports.filter.return_value.exclude.return_value.exists.return_value = linked_elsewhere
+        with patch.object(session_recovery, 'check_report_can_take_catchup', return_value=report), \
+                patch('learner_api.absence_reports._catchup_booking'), \
+                patch.object(session_recovery, '_record_linked_catchup'), \
+                patch('learner_api.session_recovery.transaction.atomic', return_value=nullcontext()), \
+                patch('coach_api.models.CoachCalendarEvent.objects', events), \
+                patch('coach_api.models.CoachAbsenceReport.objects', reports), \
+                patch('learner_api.calendar.cancel_booking', return_value='') as cancel:
+            session_recovery.link_report_to_catchup(None, None, 101, 34, new_key)
+        return report, cancel, booking, events
+
+    def test_the_old_booking_is_cancelled_after_the_new_one_is_linked(self):
+        report, cancel, booking, events = self.link()
+        self.assertEqual(report.catchup_event_key, 'catch-up:248:13:2026-10-20')
+        cancel.assert_called_once_with(booking)
+        self.assertEqual(events.filter.call_args.kwargs['event_key'], 'catch-up:248:12:2026-10-15')
+        self.assertEqual(set(events.filter.call_args.kwargs['status__in']), {'scheduled', 'not-scheduled'})
+
+    def test_relinking_the_same_booking_cancels_nothing(self):
+        _report, cancel, _booking, _events = self.link(new_key='catch-up:248:12:2026-10-15')
+        cancel.assert_not_called()
+
+    def test_a_finished_or_missing_old_booking_is_left_alone(self):
+        _report, cancel, _booking, _events = self.link(old_booking=False)
+        cancel.assert_not_called()
+
+    def test_an_old_booking_still_making_up_another_lecture_is_kept(self):
+        _report, cancel, _booking, _events = self.link(linked_elsewhere=True)
+        cancel.assert_not_called()
+
+    def test_a_first_catchup_has_nothing_to_cancel(self):
+        _report, cancel, _booking, _events = self.link(old_key='')
+        cancel.assert_not_called()

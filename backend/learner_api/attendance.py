@@ -1,7 +1,6 @@
 import hashlib
 import logging
 import os
-from datetime import time
 
 import psycopg
 from psycopg.conninfo import conninfo_to_dict, make_conninfo
@@ -142,6 +141,40 @@ def fetch_kbc_attendance_rows(*, aptem_id, learner_id, learner_name, learner_ema
             ]
 
 
+def fetch_kbc_attendance_rows_bulk(learners):
+    """Bulk equivalent of ``fetch_kbc_attendance_rows`` for Aptem learners."""
+    grouped = {}
+    for item in learners or []:
+        key = str(item.get('aptem_id') or '').strip()
+        if key:
+            grouped.setdefault(key, []).append(item)
+    identities = {key: values[0] for key, values in grouped.items() if len(values) == 1}
+    if not identities:
+        return []
+    dsn = _kbc_attendance_connection_string()
+    if not dsn:
+        raise RuntimeError('KBC attendance database is not configured.')
+    with psycopg.connect(dsn, row_factory=dict_row, connect_timeout=10) as conn:
+        with conn.cursor() as cursor:
+            cursor.execute('''
+                SELECT "ID"::text AS aptem_id,"key","date","Attendance",attendance_status,
+                       module,lecture_name,created_at AS updated_at
+                FROM public.kbc_attendance
+                WHERE "ID"::text=ANY(%s) AND "Attendance" IN (0,1) AND "date" IS NOT NULL
+                ORDER BY "ID"::text,"date" DESC,"key"
+            ''', [list(identities)])
+            rows = cursor.fetchall()
+    result = []
+    for row in rows:
+        identity = identities.get(row['aptem_id'])
+        if identity:
+            result.append(_normalize_kbc_attendance_row(
+                row, learner_id=identity['learner_id'], learner_name=identity['learner_name'],
+                learner_email=identity['learner_email'],
+            ))
+    return result
+
+
 def fetch_kbc_attendance_rates(aptem_ids):
     """Attendance rates for many learners in one query, keyed by Aptem id.
 
@@ -199,10 +232,76 @@ def fetch_kbc_attendance_rates(aptem_ids):
     return totals
 
 
+def fetch_recent_kbc_attendance_rows(learners, *, limit=4):
+    """Read recent dated KBC register rows for Aptem-linked learners in one query.
+
+    ``learners`` contains the LMS learner identity alongside its canonical
+    Aptem ID. The result stays keyed to the LMS learner ID so callers never
+    need to match attendance by name or email.
+    """
+    entries = [
+        {
+            'aptem_id': str(item.get('aptem_id') or '').strip(),
+            'learner_id': item.get('learner_id'),
+            'learner_name': item.get('learner_name') or '',
+            'learner_email': item.get('learner_email') or '',
+        }
+        for item in (learners or [])
+        if str(item.get('aptem_id') or '').strip() and item.get('learner_id') is not None
+    ]
+    if not entries:
+        return []
+    row_limit = max(int(limit), 1)
+    dsn = _kbc_attendance_connection_string()
+    if not dsn:
+        raise RuntimeError('KBC attendance database is not configured.')
+
+    entries_by_aptem_id = {}
+    for entry in entries:
+        entries_by_aptem_id.setdefault(entry['aptem_id'], []).append(entry)
+
+    with psycopg.connect(dsn, row_factory=dict_row, connect_timeout=10) as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                '''
+                SELECT aptem_id, "key", "date", "Attendance",
+                       attendance_status, module, lecture_name, updated_at
+                FROM (
+                    SELECT "ID"::text AS aptem_id, "key", "date", "Attendance",
+                           attendance_status, module, lecture_name,
+                           created_at AS updated_at,
+                           row_number() OVER (
+                               PARTITION BY "ID"::text
+                               ORDER BY "date" DESC, "key" DESC
+                           ) AS recent_rank
+                    FROM public.kbc_attendance
+                    WHERE "ID"::text = ANY(%s)
+                      AND "Attendance" IN (0, 1)
+                      AND "date" IS NOT NULL
+                      AND "date" <= CURRENT_DATE
+                ) recent
+                WHERE recent_rank <= %s
+                ORDER BY aptem_id, "date" DESC, "key" DESC
+                ''',
+                [list(entries_by_aptem_id), row_limit],
+            )
+            source_rows = cursor.fetchall()
+
+    result = []
+    for row in source_rows:
+        for entry in entries_by_aptem_id.get(row['aptem_id'], []):
+            result.append(_normalize_kbc_attendance_row(
+                row,
+                learner_id=entry['learner_id'],
+                learner_name=entry['learner_name'],
+                learner_email=entry['learner_email'],
+            ))
+    return result
+
+
 def _summarize_attendance(rows, *, now=None):
     """Summarize recorded attendance for sessions that have happened so far."""
-    cutoff = timezone.localtime(now)
-    cutoff_date, cutoff_time = cutoff.date(), cutoff.time().replace(tzinfo=None)
+    now = now or timezone.now()
 
     def status(row):
         return (row['attendance_status'] or '').strip().lower()
@@ -210,17 +309,19 @@ def _summarize_attendance(rows, *, now=None):
     # Late is a display distinction only: it counts as attended in both the
     # numerator and denominator. Non-attendance workflow states (for example a
     # legacy ``catchup`` row) do not silently dilute the attendance rate.
-    counted_rows = [row for row in rows
-                    if status(row) in {'present', 'late', 'absent'}
-                    and row.get('session_date') is not None
-                    and (row['session_date'], time.min if row.get('attendance_confirmed') else
-                         row.get('session_start_time') or time.min) <= (cutoff_date, cutoff_time)]
+    from .attendance_rules import attendance_outcome
+    counted_rows = [row for row in rows if attendance_outcome(row, now)[1]]
     if not counted_rows:
         return None
 
+    # A missed session recovered by a completed catch-up or an attended
+    # alternative session counts as attended; the raw Teams status is kept.
+    def missed(row):
+        return attendance_outcome(row, now)[0] == 'absent'
+
     sessions = len(counted_rows)
-    present = sum(status(row) in {'present', 'late'} for row in counted_rows)
-    absent = sum(status(row) == 'absent' for row in counted_rows)
+    absent = sum(missed(row) for row in counted_rows)
+    present = sessions - absent
     late = sum(
         status(row) == 'late' or (row['minutes_late'] or 0) > 0
         for row in counted_rows
@@ -231,7 +332,7 @@ def _summarize_attendance(rows, *, now=None):
     latest_first = sorted(counted_rows, key=lambda row: row['session_date'], reverse=True)
     consecutive_missed = 0
     for row in latest_first:
-        if status(row) != 'absent':
+        if not missed(row):
             break
         consecutive_missed += 1
 
@@ -239,21 +340,17 @@ def _summarize_attendance(rows, *, now=None):
     updated_values = [row['updated_at'] for row in counted_rows if row['updated_at']]
     updated_at = max(updated_values) if updated_values else None
 
-    def row_status(row):
-        s = status(row)
-        if s == 'absent':
-            return 'missed'
-        if s == 'late' or (row['minutes_late'] or 0) > 0:
-            return 'late'
-        return 'attended'
-
     session_history = [
         {
             'id': f"{row.get('session_id', '')}-{row['session_date'].isoformat()}",
+            'source': row.get('source', 'kbc-attendance'),
+            'sourceId': str(row.get('session_id') or ''),
             'date': row['session_date'].isoformat(),
             'title': row.get('session_title', '') or '',
             'sessionType': row.get('session_type', '') or '',
-            'status': row_status(row),
+            'status': attendance_outcome(row, now)[0],
+            'rawStatus': row.get('raw_attendance_status') or row['attendance_status'],
+            'effectiveStatus': row.get('effective_attendance_status') or row['attendance_status'],
             'startTime': row['session_start_time'].strftime('%H:%M') if row.get('session_start_time') else '',
             'endTime': row['session_end_time'].strftime('%H:%M') if row.get('session_end_time') else '',
             'module': row.get('module_title', '') or '',
@@ -295,7 +392,7 @@ def combined_attendance_rows(source):
         rows.append({**row, 'learner_id': source.id, 'source': 'microsoft-teams'})
     unique = {}
     for row in rows:
-        key = (row['source'], str(row.get('occurrence_id') or row.get('session_id')), row['session_date'])
+        key = (row['learner_id'], row['source'], str(row.get('occurrence_id') or row.get('session_id')))
         previous = unique.get(key)
         if previous is None or row['attendance_status'] in {'present', 'late'}:
             unique[key] = row
@@ -341,6 +438,10 @@ def learner_attendance(request, kind, learner_id):
         # the KBC database table and Aptem ID, never an email or Teams merge.
         rows = kbc_attendance_rows(source) if request.GET.get('source') == 'kbc' else None
         if rows is None:
+            if getattr(source, 'email', ''):
+                # Catch-ups only: settle this learner's elapsed catch-ups first.
+                from .catchup_outcomes import sync_catchup_outcomes
+                sync_catchup_outcomes(learner_email=getattr(source, 'email', ''))
             from .attendance_lectures import lecture_register
             rows = lecture_register(source)
     except Exception:

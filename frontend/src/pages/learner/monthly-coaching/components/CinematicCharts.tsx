@@ -1,4 +1,5 @@
 import { useRef, useEffect, useState } from 'react';
+import { AnimatedProgressCircle } from '@/components/ui/AnimatedProgressCircle';
 
 /* ── Donut / Ring Chart ── */
 export function DonutRing({
@@ -215,7 +216,7 @@ export function DonutSplit({
             const dashOffset = -cumulativeOffset;
             cumulativeOffset += dashLength;
             return (
-              <circle
+              <AnimatedProgressCircle
                 key={i}
                 cx={size / 2}
                 cy={size / 2}

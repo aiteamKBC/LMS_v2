@@ -113,7 +113,7 @@ describe('coach marking workspace', () => {
     expect(mocks.coachFetch).toHaveBeenCalledWith(expect.stringContaining('status=pending'));
     expect(mocks.coachFetch).toHaveBeenCalledWith(expect.stringContaining('kind=assignment'));
 
-    fireEvent.click(screen.getByRole('button', { name: /Review/i }));
+    fireEvent.click(screen.getByRole('button', { name: 'View' }));
     expect(screen.getByText('Review destination')).toBeInTheDocument();
   });
 
@@ -144,7 +144,7 @@ describe('coach marking workspace', () => {
     await waitFor(() => expect(feedback).toHaveValue('AI draft for coach review.'));
     expect(mocks.coachFetch).toHaveBeenCalledWith(`${'/coach_api/coach/marking-queue'}/${submission.id}/ai-feedback`, { method: 'POST' });
 
-    fireEvent.click(screen.getByRole('button', { name: 'Accept and send feedback' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Accept assignment and send feedback' }));
     await waitFor(() => expect(screen.getByText('Queue destination')).toBeInTheDocument());
     const patchCall = mocks.coachFetch.mock.calls.find(([, options]) => options?.method === 'PATCH');
     expect(patchCall?.[0]).toBe(`/coach_api/coach/marking-queue/${submission.id}`);

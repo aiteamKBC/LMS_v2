@@ -97,20 +97,73 @@
   --glow-gold: 45 85% 55%;
 }
 
-/* Scrollbar — thin and refined */
+/* Neutral rails inherit the active page theme, including custom scrollbars. */
+:root,
+[data-theme="light"] {
+  --scrollbar-track: #f1f2f4;
+  --scrollbar-thumb: #cbd0d6;
+  --scrollbar-thumb-hover: #aeb6c1;
+  --scrollbar-thumb-active: #8c96a4;
+}
+
+[data-theme="dark"] {
+  --scrollbar-track: var(--theme-surface-secondary, #20242e);
+  --scrollbar-thumb: #667085;
+  --scrollbar-thumb-hover: #8994a5;
+  --scrollbar-thumb-active: #a7b0bf;
+}
+
+.kbc-scrollbar-track {
+  background-color: var(--scrollbar-track);
+}
+
+.kbc-scrollbar-thumb {
+  background-color: var(--scrollbar-thumb);
+}
+
+.kbc-scrollbar-track:hover .kbc-scrollbar-thumb {
+  background-color: var(--scrollbar-thumb-hover);
+}
+
+.kbc-scrollbar-track:active .kbc-scrollbar-thumb {
+  background-color: var(--scrollbar-thumb-active);
+}
+
+/* Scrollbar — thin, always visible, and themed app-wide. Learners rely on it
+   to see that a page or panel holds more content, so workspaces must not hide
+   it globally. Chromium/Safari use the ::-webkit-scrollbar rules (which keep
+   the hover state); Firefox, which has no ::-webkit-scrollbar, uses the
+   standard properties. The standard properties are limited to Firefox
+   because Chromium ignores ::-webkit-scrollbar styling on any element that
+   sets them. Component rules that set their own scrollbar style still win. */
+:root,
+[data-theme="light"] {
+  --app-scrollbar-track: var(--scrollbar-track);
+  --app-scrollbar-thumb: var(--scrollbar-thumb);
+  --app-scrollbar-thumb-hover: var(--scrollbar-thumb-hover);
+}
 ::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+  width: 8px;
+  height: 8px;
 }
 ::-webkit-scrollbar-track {
-  background: oklch(var(--background-100));
+  background: var(--app-scrollbar-track);
 }
 ::-webkit-scrollbar-thumb {
-  background: oklch(var(--foreground-300));
-  border-radius: 3px;
+  background: var(--app-scrollbar-thumb);
+  border-radius: 999px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: oklch(var(--foreground-400));
+  background: var(--app-scrollbar-thumb-hover);
+}
+::-webkit-scrollbar-corner {
+  background: var(--app-scrollbar-track);
+}
+@supports not selector(::-webkit-scrollbar) {
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--app-scrollbar-thumb) var(--app-scrollbar-track);
+  }
 }
 
 .module-course-structure-scroll {
@@ -403,7 +456,7 @@ h4 { font-size: 1.1875rem; font-weight: 600; }
 
 .select-menu-list {
   scrollbar-width: thin;
-  scrollbar-color: oklch(var(--primary-200)) transparent;
+  scrollbar-color: var(--scrollbar-thumb) transparent;
 }
 
 .select-menu-list::-webkit-scrollbar {
@@ -415,7 +468,7 @@ h4 { font-size: 1.1875rem; font-weight: 600; }
 }
 
 .select-menu-list::-webkit-scrollbar-thumb {
-  background: oklch(var(--primary-200));
+  background: var(--scrollbar-thumb);
   border: 2px solid transparent;
   background-clip: content-box;
   border-radius: 999px;
@@ -2160,7 +2213,7 @@ table tbody td:last-child {
 
 .quiz-preview-scroll {
   scrollbar-width: thin;
-  scrollbar-color: #b8a8df #eef2f7;
+  scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
 }
 
 .quiz-preview-scroll::-webkit-scrollbar {
@@ -2168,18 +2221,18 @@ table tbody td:last-child {
 }
 
 .quiz-preview-scroll::-webkit-scrollbar-track {
-  background: #eef2f7;
+  background: var(--scrollbar-track);
   border-radius: 999px;
 }
 
 .quiz-preview-scroll::-webkit-scrollbar-thumb {
-  background: linear-gradient(180deg, #c9bdf0, #a795d4);
-  border: 2px solid #eef2f7;
+  background: var(--scrollbar-thumb);
+  border: 2px solid var(--scrollbar-track);
   border-radius: 999px;
 }
 
 .quiz-preview-scroll::-webkit-scrollbar-thumb:hover {
-  background: linear-gradient(180deg, #b8a8df, #8f7bc8);
+  background: var(--scrollbar-thumb-hover);
 }
 
 .rich-text-surface {
@@ -3273,7 +3326,7 @@ table tbody td:last-child {
 
 .calendar-more-menu {
   scrollbar-width: thin;
-  scrollbar-color: oklch(var(--primary-200)) transparent;
+  scrollbar-color: var(--scrollbar-thumb) transparent;
 }
 
 .calendar-more-menu::-webkit-scrollbar {
@@ -3285,13 +3338,13 @@ table tbody td:last-child {
 }
 
 .calendar-more-menu::-webkit-scrollbar-thumb {
-  border: 0.1rem solid white;
+  border: 0.1rem solid var(--scrollbar-track);
   border-radius: 999px;
-  background: oklch(var(--primary-200));
+  background: var(--scrollbar-thumb);
 }
 
 .calendar-more-menu::-webkit-scrollbar-thumb:hover {
-  background: oklch(var(--primary-300));
+  background: var(--scrollbar-thumb-hover);
 }
 
 /* Keep the selected-day drawer above the calendar header and make its panel
@@ -3459,6 +3512,157 @@ table tbody td:last-child {
 
 .calendar-page-header > .relative.z-10.flex > .flex > div p {
   max-width: 27rem;
+}
+
+.calendar-filter-host {
+  container: calendar-filter-host / inline-size;
+}
+
+.calendar-filter-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+  align-items: stretch;
+  gap: 0.875rem;
+}
+
+.calendar-filter-card {
+  min-height: 0;
+  padding: clamp(1rem, 2cqi, 1.25rem);
+}
+
+.calendar-filter-scroll-shell {
+  position: relative;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.calendar-filter-row {
+  min-width: 0;
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-x: contain;
+  scrollbar-color: var(--scrollbar-thumb) transparent;
+  scrollbar-width: thin;
+  margin-top: clamp(0.75rem, 1.6cqi, 1rem);
+  padding: 0.125rem 0.875rem 0.375rem;
+  scroll-behavior: smooth;
+  touch-action: pan-x pan-y;
+}
+
+:is(.learner-calendar-page, .coach-calendar-page) .calendar-filter-row {
+  scrollbar-width: none;
+}
+
+:is(.learner-calendar-page, .coach-calendar-page) .calendar-filter-row::-webkit-scrollbar {
+  display: none;
+  height: 0;
+}
+
+:is(.learner-calendar-page, .coach-calendar-page) .calendar-filter-scrollbar {
+  position: relative;
+  height: 10px;
+  margin: 0.25rem 0.875rem 0;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--scrollbar-track);
+  cursor: pointer;
+  touch-action: none;
+}
+
+:is(.learner-calendar-page, .coach-calendar-page) .calendar-filter-scrollbar:focus-visible {
+  outline: 2px solid #6B4A8F;
+  outline-offset: 2px;
+}
+
+:is(.learner-calendar-page, .coach-calendar-page) .calendar-filter-scrollbar-thumb {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  display: block;
+  border-radius: 999px;
+  background: var(--scrollbar-thumb);
+  cursor: grab;
+  touch-action: none;
+}
+
+:is(.learner-calendar-page, .coach-calendar-page) .calendar-filter-scrollbar-thumb:hover {
+  background: var(--scrollbar-thumb-hover);
+}
+
+:is(.learner-calendar-page, .coach-calendar-page) .calendar-filter-scrollbar-thumb:active {
+  cursor: grabbing;
+  background: var(--scrollbar-thumb-active);
+}
+
+.calendar-filter-row-content {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: clamp(0.375rem, 0.9cqi, 0.5rem);
+  width: max-content;
+  min-width: 100%;
+}
+
+.calendar-filter-pill {
+  flex: 0 0 auto;
+  min-width: max-content;
+  height: clamp(2.625rem, 4.2cqi, 2.75rem);
+  padding-inline: clamp(0.625rem, 1.25cqi, 0.875rem);
+  white-space: nowrap;
+}
+
+.calendar-filter-fade {
+  position: absolute;
+  z-index: 1;
+  top: 0.75rem;
+  bottom: 0.625rem;
+  width: 0.75rem;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 150ms ease;
+}
+
+:is(.learner-calendar-page, .coach-calendar-page) .calendar-filter-fade {
+  bottom: 1.25rem;
+}
+
+.calendar-filter-fade.is-visible {
+  opacity: 1;
+}
+
+.calendar-filter-fade-left {
+  left: 0;
+  background: linear-gradient(90deg, #fff 15%, rgb(255 255 255 / 0%));
+}
+
+.calendar-filter-fade-right {
+  right: 0;
+  background: linear-gradient(270deg, #fff 15%, rgb(255 255 255 / 0%));
+}
+
+@container calendar-filter-host (max-width: 56rem) {
+  .calendar-filter-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@container calendar-filter-host (max-width: 30rem) {
+  .calendar-filter-card {
+    padding: 1rem;
+  }
+
+  .calendar-filter-row {
+    padding-inline: 0.875rem;
+  }
+
+  .calendar-filter-row-content {
+    gap: 0.375rem;
+  }
+
+  .calendar-filter-pill {
+    padding-inline: 0.625rem;
+  }
 }
 
 .calendar-layout-grid > .rounded-2xl {
@@ -4389,7 +4593,7 @@ table tbody td:last-child {
 
 .kbc-sidebar-nav {
   scrollbar-width: thin;
-  scrollbar-color: rgb(124 58 237 / 0.3) transparent;
+  scrollbar-color: var(--scrollbar-thumb) transparent;
 }
 
 .kbc-sidebar-nav::-webkit-scrollbar {
@@ -4402,7 +4606,7 @@ table tbody td:last-child {
 
 .kbc-sidebar-nav::-webkit-scrollbar-thumb {
   border-radius: 999px;
-  background: rgb(124 58 237 / 0.3);
+  background: var(--scrollbar-thumb);
 }
 
 .kbc-sidebar-row {
@@ -4530,6 +4734,12 @@ table tbody td:last-child {
   box-shadow: 0 10px 22px -20px rgb(76 29 149 / 0.72);
 }
 
+@media (max-width: 1023px) {
+  .workspace-content > .kbc-workspace-topbar {
+    z-index: 10;
+  }
+}
+
 .kbc-topbar-title {
   color: white !important;
 }
@@ -4610,9 +4820,10 @@ table tbody td:last-child {
 }
 
 .kbc-workspace-switcher-button {
-  border-color: rgb(255 255 255 / 0.38) !important;
-  background: rgb(255 255 255 / 0.16) !important;
+  border-color: #5125a8 !important;
+  background: #6334bd !important;
   color: white !important;
+  box-shadow: 0 4px 12px rgb(64 35 116 / 0.2) !important;
 }
 
 /* Keep the switcher and account menu grouped at the right edge when the
@@ -4623,8 +4834,8 @@ table tbody td:last-child {
 
 .kbc-workspace-switcher-button:hover,
 .kbc-workspace-switcher-button[aria-expanded="true"] {
-  border-color: rgb(255 255 255 / 0.64) !important;
-  background: rgb(255 255 255 / 0.24) !important;
+  border-color: #3f1c88 !important;
+  background: #5125a8 !important;
 }
 
 .kbc-workspace-switcher-button :is(.text-foreground-400, .text-foreground-700) {
@@ -4680,7 +4891,7 @@ table tbody td:last-child {
 
 .dashboard-theme[data-workspace-role="curriculum"] .kbc-sidebar-nav {
   padding: 1rem 0.75rem !important;
-  scrollbar-color: rgb(124 58 237 / 0.18) transparent;
+  scrollbar-color: var(--scrollbar-thumb) transparent;
 }
 
 .dashboard-theme[data-workspace-role="curriculum"] .kbc-sidebar-expanded .kbc-sidebar-row {
@@ -5006,9 +5217,10 @@ table tbody td:last-child {
 
 /* Keep the workspace switch control consistent in every department header. */
 .dashboard-theme .kbc-workspace-switcher-button {
-  border-color: rgb(255 255 255 / 0.38) !important;
-  background: rgb(255 255 255 / 0.16) !important;
+  border-color: #5125a8 !important;
+  background: #6334bd !important;
   color: #fff !important;
+  box-shadow: 0 4px 12px rgb(64 35 116 / 0.2) !important;
 }
 
 .dashboard-theme .kbc-workspace-switcher-button :is(.text-foreground-400, .text-foreground-700) {
@@ -5022,8 +5234,8 @@ table tbody td:last-child {
 
 .dashboard-theme .kbc-workspace-switcher-button:hover,
 .dashboard-theme .kbc-workspace-switcher-button[aria-expanded="true"] {
-  border-color: rgb(255 255 255 / 0.64) !important;
-  background: rgb(255 255 255 / 0.24) !important;
+  border-color: #3f1c88 !important;
+  background: #5125a8 !important;
 }
 
 .dashboard-theme[data-workspace-role="curriculum"] .kbc-workspace-switcher-button,
@@ -5600,7 +5812,12 @@ html[data-theme="light"][data-accessibility="monochrome"] {
 }
 
 .kbc-sidebar-nav {
-  scrollbar-color: rgb(255 255 255 / 0.25) transparent !important;
+  /* Navigation retains a dark purple surface in both page themes. */
+  --scrollbar-track: transparent;
+  --scrollbar-thumb: rgb(255 255 255 / 0.35);
+  --scrollbar-thumb-hover: rgb(255 255 255 / 0.55);
+  --scrollbar-thumb-active: rgb(255 255 255 / 0.7);
+  scrollbar-color: var(--scrollbar-thumb) transparent !important;
 }
 
 .kbc-sidebar-row {
@@ -6840,16 +7057,11 @@ html[data-theme="light"][data-accessibility="monochrome"] {
   color: #FFFFFF;
 }
 
-[data-theme="dark"] ::-webkit-scrollbar-track {
-  background: var(--theme-page-bg);
-}
-
-[data-theme="dark"] ::-webkit-scrollbar-thumb {
-  background: rgb(161 161 170 / 0.38);
-}
-
-[data-theme="dark"] ::-webkit-scrollbar-thumb:hover {
-  background: rgb(196 181 253 / 0.58);
+/* Keep native and custom rails on the same palette in dark workspaces. */
+[data-theme="dark"] {
+  --app-scrollbar-track: var(--scrollbar-track);
+  --app-scrollbar-thumb: var(--scrollbar-thumb);
+  --app-scrollbar-thumb-hover: var(--scrollbar-thumb-hover);
 }
 
 /* Engagement's top-achiever card predates the shared theme and carries inline

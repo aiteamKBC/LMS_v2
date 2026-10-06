@@ -1,20 +1,17 @@
+import { ImportedReviewSection, ImportedValue } from '../reviews/imported/ImportedReviewSection';
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { roleNavMap } from '@/mocks/navigation';
-import { fetchLearnerMeetingArtifacts, learnerMeetingArtifactContentUrl, saveLearnerEventReviewAnswers, signLearnerProgressReview, type LearnerCalendarEvent } from '@/api/learnerCalendar';
-import { fetchEvidence } from '@/api/evidence';
+import { downloadLearnerMcmPdf, downloadMigratedReviewForParty, fetchLearnerMeetingArtifacts, learnerMeetingArtifactContentUrl, saveLearnerEventReviewAnswers, signLearnerProgressReview, signMigratedReviewAsParty, type LearnerCalendarEvent } from '@/api/learnerCalendar';
 import { useLinkedLearner } from '@/hooks/useMyLearner';
 import { useLearnerWorkspaceAccess } from '@/hooks/useLearnerWorkspaceAccess';
 import { responsesForSection, type ProgressReviewResponses } from '@/pages/shared/progressReviewForm';
 import { RowsSkeleton } from '@/components/feature/Skeletons';
-import { useReviewSessions } from '@/pages/learner/reviews/useReviewSessions';
+import { isMigratedContinuationEvent, useReviewSessions } from '@/pages/learner/reviews/useReviewSessions';
 import { isoDate } from '@/pages/learner/reviews/bookingDates';
 import { CoachMeetingArtifactsPanel } from '@/pages/coach/shared/CoachMeetingArtifactsPanel';
-import ProgressReviewSlidesModal, { type ProgressReviewSlidesDeck } from '@/pages/coach/progress-reviews/components/ProgressReviewSlidesModal';
-import { buildProgressReviewSlidesDeck } from '@/pages/coach/progress-reviews/page';
-import type { CoachCalendarEvent } from '@/pages/coach/shared/calendarEvents';
-import ProgressReviewSignModal from './components/ProgressReviewSignModal';
+import ProgressReviewPptxModal from '@/pages/coach/progress-reviews/components/ProgressReviewPptxModal';
 import styles from './progressReviews.module.css';
 import { useMeetingAttendance } from '../reviews/useMeetingAttendance';
 import type { MeetingAttendance } from '@/api/meetingAttendance';
@@ -25,6 +22,7 @@ import ReviewsHome from './ReviewsHome';
 import { reviewsListHref } from './reviewPresentation';
 import { useCoachingReviewDefinitions } from '../monthly-coaching/useCoachingReviewDefinitions';
 import { LearnerReviewInstanceForm, useLearnerReviewInstance } from '../reviews/LearnerReviewInstanceForm';
+import { ReviewPdfDownload } from '@/components/reviews/ReviewPdfDownload';
 
 const learnerNav = roleNavMap.learner;
 
@@ -56,33 +54,14 @@ function reviewDate(review?: LearnerCalendarEvent | null): string | null {
 
 function progressReviewTitle(review?: LearnerCalendarEvent | null): string {
   if (review?.importedReview) return review.importedReview.name || review.title || 'Review';
-  if (review?.reviewTemplateId) return `${review.title} #${review.occurrenceNumber || review.sequence}`;
+  const occurrence = review?.occurrenceNumber ?? review?.sequence;
+  if (review?.reviewTemplateId) return `${review.title}${occurrence != null ? ` #${occurrence}` : ' — Manual Review'}`;
   const month = monthLabel(reviewDate(review));
-  return `Progress Review${month ? ` — ${month}` : ''}${review?.sequence ? ` #${review.sequence}` : ''}`;
+  return `Progress Review${month ? ` — ${month}` : ''}${occurrence != null ? ` #${occurrence}` : ''}`;
 }
 
 function reviewTypeLabel(review?: LearnerCalendarEvent | null): string {
   return review?.reviewTypeName || review?.importedReview?.type || 'Formal progress review';
-}
-
-function importedValue(value: unknown): string {
-  if (value === null || value === undefined) return '-';
-  if (typeof value === 'string') return value === 'EMPTY_STRING' ? '-' : value;
-  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
-  try { return JSON.stringify(value); } catch { return String(value); }
-}
-
-/** Older Aptem exports kept question/answer pairs only in raw_text. */
-function rawTextFields(rawText: string): Array<{ label: string; value: string }> {
-  const blocks = rawText.split(/\r?\n\s*\r?\n+/)
-    .map((block) => block.split(/\r?\n/).map((line) => line.trim()).filter(Boolean))
-    .filter((lines) => lines.length);
-  return blocks.flatMap((lines) => {
-    const first = lines[0];
-    const separator = first.indexOf(':');
-    if (separator > 0) return [{ label: first.slice(0, separator).trim(), value: [first.slice(separator + 1).trim(), ...lines.slice(1)].filter(Boolean).join('\n') || '-' }];
-    return [{ label: first, value: lines.slice(1).join('\n') || '-' }];
-  });
 }
 
 function importedSectionName(name: string): string {
@@ -102,7 +81,7 @@ function ImportedAttachmentLinks({ section }: { section: NonNullable<LearnerCale
 
 function ImportedReviewsSchedule({ section }: { section: NonNullable<LearnerCalendarEvent['importedReview']>['sections'][number] }) {
   const tableRows = section.tables.flatMap((table) => table.rows || []);
-  if (tableRows.length > 1) return <div className="overflow-x-auto rounded-xl border border-background-200 bg-white"><table className="min-w-full text-left text-xs"><thead className="bg-background-100 text-[10px] uppercase tracking-wide text-foreground-500"><tr>{(tableRows[0] || []).map((cell, index) => <th key={index} className="px-4 py-3">{importedValue(cell)}</th>)}</tr></thead><tbody className="divide-y divide-background-200">{tableRows.slice(1).map((row, index) => <tr key={index}>{(Array.isArray(row) ? row : [row]).map((cell, cellIndex) => <td key={cellIndex} className="whitespace-pre-wrap px-4 py-3">{importedValue(cell)}</td>)}</tr>)}</tbody></table></div>;
+  if (tableRows.length > 1) return <div className="overflow-x-auto rounded-xl border border-background-200 bg-white"><table className="min-w-full text-left text-xs"><thead className="bg-background-100 text-[10px] uppercase tracking-wide text-foreground-500"><tr>{(tableRows[0] || []).map((cell, index) => <th key={index} className="px-4 py-3">{<ImportedValue value={cell} />}</th>)}</tr></thead><tbody className="divide-y divide-background-200">{tableRows.slice(1).map((row, index) => <tr key={index}>{(Array.isArray(row) ? row : [row]).map((cell, cellIndex) => <td key={cellIndex} className="whitespace-pre-wrap px-4 py-3">{<ImportedValue value={cell} />}</td>)}</tr>)}</tbody></table></div>;
   const dates = [...(section.rawText || '').matchAll(/\b\d{2}\/\d{2}\/\d{4}\b/g)].map((match) => match[0]);
   const rows = Array.from({ length: Math.ceil(dates.length / 2) }, (_, index) => [dates[index * 2] || '-', dates[index * 2 + 1] || '-']);
   if (!rows.length) return null;
@@ -132,19 +111,16 @@ function ImportedFunctionalSkills({ section }: { section: NonNullable<LearnerCal
 function ImportedReviewSections({ review }: { review: NonNullable<LearnerCalendarEvent['importedReview']> }) {
   if (!review.sections.length) return <Empty>No section details were imported for this review.</Empty>;
   return <div className="space-y-3">
-    {review.sections.map((section) => <section key={section.id} className="rounded-xl border border-background-200 bg-background-100/45 p-4">
-      <h3 className="text-sm font-bold text-foreground-900">{section.name.replace(/\s+(completed|incomplete)$/i, '').trim()}</h3>
-      <div className="mt-3 space-y-3">
+    {review.sections.map((section) => <div key={section.id}>
+      <div className="space-y-3">
         {importedSectionName(section.name) === 'reviews schedule' && <ImportedReviewsSchedule section={section} />}
         {importedSectionName(section.name) === 'functional skills' && <ImportedFunctionalSkills section={section} />}
         {importedSectionName(section.name) !== 'reviews schedule' && <>
-        {(section.fields.length ? section.fields : rawTextFields(section.rawText)).map((field, index) => <div key={`${field.label || 'field'}:${index}`} className="rounded-lg border border-background-200 bg-white p-3"><p className="text-[10px] font-bold uppercase tracking-wide text-foreground-400">{field.label || 'Response'}</p><p className="mt-1 whitespace-pre-wrap break-words text-sm leading-6 text-foreground-700">{importedValue(field.value)}</p></div>)}
+        <ImportedReviewSection section={{ ...section, fields: section.fields.map(({ links: _links, ...field }) => field) }} />
         <ImportedAttachmentLinks section={section} />
-        {section.tables.map((table, index) => <div key={index} className="overflow-x-auto rounded-lg border border-background-200 bg-white"><table className="min-w-full text-left text-xs"><tbody className="divide-y divide-background-200">{(table.rows || []).map((row, rowIndex) => <tr key={rowIndex} className={rowIndex === 0 ? 'bg-background-100 font-bold text-foreground-800' : 'text-foreground-700'}>{(Array.isArray(row) ? row : [row]).map((cell, cellIndex) => <td key={cellIndex} className="whitespace-pre-wrap px-3 py-2.5 align-top">{importedValue(cell)}</td>)}</tr>)}</tbody></table></div>)}
-        {!section.fields.length && !rawTextFields(section.rawText).length && section.rawText && section.rawText !== 'EMPTY_STRING' && <p className="whitespace-pre-wrap rounded-lg border border-background-200 bg-white p-3 text-sm leading-6 text-foreground-700">{section.rawText}</p>}
         </>}
       </div>
-    </section>)}
+    </div>)}
   </div>;
 }
 
@@ -298,8 +274,8 @@ function ProgressReviewsList() {
 
   return (
     <WorkspaceShell role="learner" roleLabel={learnerNav.label} navItems={learnerNav.items}
-      workspaceLabel={learnerNav.workspaceLabel} pageTitle="Reviews"
-      pageSubtitle="Your next review and previous records" userName={learner?.name || 'Learner'}
+      workspaceLabel={learnerNav.workspaceLabel} pageTitle="Progress Reviews"
+      pageSubtitle="Your next progress review and previous records" userName={learner?.name || 'Learner'}
       userRole={learner?.programme ? `${learner.programme} Learner` : 'Learner'}>
       <main className="page-container min-w-0 w-full space-y-4 p-3 md:p-6">
         {error && <div role="alert" className="rounded-xl border border-red-200 bg-red-50 p-4 text-base text-red-700">{error}<button type="button" onClick={refresh} className="ml-3 min-h-12 font-bold underline">Try again</button></div>}
@@ -332,11 +308,7 @@ export default function ProgressReviewsPage() {
   const error = loadError || actionError;
   const [selectedId, setSelectedId] = useState(reviewId || '');
   const [openSections, setOpenSections] = useState<string[]>(['progress-checks']);
-  const [slidesDeck, setSlidesDeck] = useState<ProgressReviewSlidesDeck | null>(null);
-  const [slidesBusy, setSlidesBusy] = useState(false);
-  const [signing, setSigning] = useState(false);
-  const [signatureBusy, setSignatureBusy] = useState(false);
-  const [signatureError, setSignatureError] = useState('');
+  const [showSlidesModal, setShowSlidesModal] = useState(false);
 
   const completed = useMemo(() => reviews.filter((review) => review.status === 'completed'), [reviews]);
   const planned = useMemo(() => reviews.filter((review) => !['completed', 'cancelled'].includes(review.status)), [reviews]);
@@ -351,13 +323,14 @@ export default function ProgressReviewsPage() {
   }, [reviewId, reviews, planned, completed, selectedId]);
 
   const selected = reviewId
-    ? reviews.find(review => review.id === reviewId) || null
+    ? reviews.find(review => review.id === reviewId) || reviews.find(review => review.reviewSource === 'aptem' && `imported-review:${review.reviewId}` === reviewId) || null
     : reviews.find(review => review.id === selectedId) || planned[0] || completed.at(-1) || reviews[0] || null;
-  const instanceBacked = Boolean(selected?.reviewTemplateId || selected?.reviewInstanceId);
+  const migratedEvent = isMigratedContinuationEvent(selected);
+  const instanceBacked = Boolean(selected?.reviewTemplateId || selected?.reviewInstanceId || migratedEvent);
   const reviewInstance = useLearnerReviewInstance(
     myLearner.kind,
     myLearner.id,
-    selected?.reviewTemplateId || selected?.reviewInstanceId ? (selected.eventKey || selected.id) : '',
+    instanceBacked ? (selected?.formEventKey || selected?.eventKey || selected?.id || '') : '',
   );
   const selectedIndex = selected ? reviews.findIndex((review) => review.id === selected.id) : -1;
   const previousReview = selectedIndex > 0 ? reviews[selectedIndex - 1] : null;
@@ -391,45 +364,18 @@ export default function ProgressReviewsPage() {
     learnerMeetingArtifactContentUrl(myLearner.kind, myLearner.id, eventKey, artifactType, artifactId, options)
   ), [myLearner.id, myLearner.kind]);
 
-  const showSlides = async () => {
-    if (!selected || !learner) return;
-    setSlidesBusy(true);
-    setError('');
-    try {
-      const evidence = await fetchEvidence(myLearner.kind, myLearner.id).catch(() => []);
-      const review = {
-        ...selected,
-        learner: learner.name,
-        learnerId: myLearner.id,
-        learnerType: myLearner.kind,
-        programme: learner.programme,
-        ownerName: selected.coachName,
-      } as unknown as CoachCalendarEvent;
-      setSlidesDeck(buildProgressReviewSlidesDeck(review, selected.coachName || 'Coach', myLearner.kind, learner, evidence));
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : 'Could not prepare the progress review slides.');
-    } finally {
-      setSlidesBusy(false);
-    }
-  };
+  const showSlides = () => setShowSlidesModal(true);
 
   const saveSignature = async (signature: string) => {
     if (!selected || !canProgress) return;
-    setSignatureBusy(true);
-    setSignatureError('');
-    try {
-      const result = await signLearnerProgressReview(myLearner.kind, myLearner.id, selected.eventKey || selected.id, { name: learner?.name || 'Learner', signature });
-      setEvents((current) => current.map((event) => event.id === selected.id ? { ...event, ...result.event } : event));
-      if (instanceBacked) reviewInstance.refresh();
-      setSigning(false);
-    } catch (reason) {
-      setSignatureError(reason instanceof Error ? reason.message : 'Could not save your signature.');
-      // The shared form owns its inline error/retry state. The legacy modal
-      // catches this rejection at its own call site and uses signatureError.
-      throw reason;
-    } finally {
-      setSignatureBusy(false);
+    if (migratedEvent) {
+      await signMigratedReviewAsParty(selected.formEventKey || selected.eventKey || selected.id, signature);
+      reviewInstance.refresh();
+      return;
     }
+    const result = await signLearnerProgressReview(myLearner.kind, myLearner.id, selected.eventKey || selected.id, { name: learner?.name || 'Learner', signature });
+    setEvents((current) => current.map((event) => event.id === selected.id ? { ...event, ...result.event } : event));
+    if (instanceBacked) reviewInstance.refresh();
   };
 
   return (
@@ -438,8 +384,8 @@ export default function ProgressReviewsPage() {
       roleLabel={learnerNav.label}
       navItems={learnerNav.items}
       workspaceLabel={learnerNav.workspaceLabel}
-      pageTitle="Reviews"
-      pageSubtitle="Formal reviews with your coach and line manager"
+      pageTitle="Progress Reviews"
+      pageSubtitle="Formal progress reviews with your coach and line manager"
       userName={learner?.name || 'Learner'}
       userRole={learner?.programme ? `${learner.programme} Learner` : 'Learner'}
     >
@@ -498,7 +444,8 @@ export default function ProgressReviewsPage() {
                     </div>
                     <div className="flex flex-wrap gap-2">
                       {selected?.meetingLink && <a href={selected.meetingLink} target="_blank" rel="noopener noreferrer" className={`${styles.primaryButton} meeting-join-action inline-flex items-center rounded-lg px-4 py-2.5 text-xs font-extrabold`}><AppIcon className="ri-video-chat-line mr-1.5" />Join meeting</a>}
-                      {!selected.importedReview && <button type="button" onClick={() => void showSlides()} disabled={slidesBusy} className="inline-flex items-center rounded-lg border border-primary-200/60 bg-white px-3.5 py-2 text-xs font-bold text-primary-900 shadow-sm hover:bg-primary-50 disabled:opacity-60"><AppIcon className={slidesBusy ? 'ri-loader-4-line mr-1.5 animate-spin' : 'ri-slideshow-line mr-1.5'} />{slidesBusy ? 'Preparing slides…' : 'Show slides'}</button>}
+                      {selected.importedReview && <ReviewPdfDownload availability={{ available: true, reason: '' }} label="Download PDF" onDownload={() => downloadLearnerMcmPdf(myLearner.kind, myLearner.id, selected.eventKey || selected.id)} />}
+                      {!selected.importedReview && <button type="button" onClick={showSlides} className="inline-flex items-center rounded-lg border border-primary-200/60 bg-white px-3.5 py-2 text-xs font-bold text-primary-900 shadow-sm hover:bg-primary-50 disabled:opacity-60"><AppIcon className="ri-slideshow-line mr-1.5" />Show slides</button>}
                       {!selected.importedReview && <button type="button" onClick={addToCalendar} disabled={!selected?.scheduledDate || !selected.scheduledTime} className="rounded-lg border border-primary-200/60 bg-primary-100/60 px-3.5 py-2 text-xs font-bold text-primary-800 disabled:cursor-not-allowed disabled:opacity-40"><AppIcon className="ri-calendar-check-line mr-1.5" />Add to calendar</button>}
                     </div>
                   </div>
@@ -506,14 +453,13 @@ export default function ProgressReviewsPage() {
 
                 <div className="space-y-5 p-5 sm:p-6">
                   {shouldShowLearnerMeetingPanel(selected) ? (
-                    <CoachMeetingArtifactsPanel event={{ ...selected, eventKey: selected.eventKey || selected.id }} fetchArtifacts={loadArtifacts} contentUrl={artifactContentUrl} showAttendance={false} visibleArtifactTypes={['recording']} className="border-primary-100 bg-primary-50/30" />
+                    <CoachMeetingArtifactsPanel event={{ ...selected, eventKey: selected.calendarEventKey || selected.eventKey || selected.id }} fetchArtifacts={loadArtifacts} contentUrl={artifactContentUrl} showAttendance={false} visibleArtifactTypes={['recording']} className="border-primary-100 bg-primary-50/30" />
                   ) : null}
 
-                  {selected && !selected.importedReview && !instanceBacked && ['awaiting-signature', 'completed'].includes(selected.status) ? (
+                  {selected && !selected.importedReview && !instanceBacked && selected.learnerSigned && ['awaiting-signature', 'completed'].includes(selected.status) ? (
                     <div className="flex flex-col gap-3 rounded-xl border border-violet-200 bg-violet-50 p-4 sm:flex-row sm:items-center">
-                      <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-violet-100 text-violet-700"><AppIcon className={selected.learnerSigned ? 'ri-checkbox-circle-line' : 'ri-file-sign-line'} /></span>
-                      <div className="flex-1"><p className="text-sm font-bold text-violet-950">{selected.learnerSigned ? 'Slides signed by learner' : 'Your formal acknowledgement is required'}</p><p className="mt-1 text-xs text-violet-700">{selected.learnerSigned ? `Signed ${selected.learnerSignedAt ? formatDate(selected.learnerSignedAt.split('T')[0]) : ''}` : 'Review the slides, then sign to confirm the progress review record.'}</p></div>
-                      {!selected.learnerSigned && canProgress ? <button type="button" onClick={() => void showSlides()} className="inline-flex h-10 items-center justify-center gap-2 rounded-xl bg-violet-700 px-4 text-xs font-bold text-white shadow-sm hover:bg-violet-800"><AppIcon className="ri-slideshow-line" />Show slides & sign</button> : null}
+                      <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-violet-100 text-violet-700"><AppIcon className="ri-checkbox-circle-line" /></span>
+                      <div className="flex-1"><p className="text-sm font-bold text-violet-950">Slides signed by learner</p><p className="mt-1 text-xs text-violet-700">{`Signed ${selected.learnerSignedAt ? formatDate(selected.learnerSignedAt.split('T')[0]) : ''}`}</p></div>
                     </div>
                   ) : null}
                   <div>
@@ -542,7 +488,7 @@ export default function ProgressReviewsPage() {
                 </div>
               </section>
 
-              {reviewInstance.loading ? <div className="rounded-xl border border-background-200 bg-white p-5"><RowsSkeleton rows={4} /></div> : reviewInstance.error ? <p role="alert" className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">{reviewInstance.error}<button type="button" onClick={reviewInstance.refresh} className="ml-2 underline">Retry review</button></p> : reviewInstance.definition ? <LearnerReviewInstanceForm definition={reviewInstance.definition} onSign={canProgress ? saveSignature : undefined} signatoryName={learner?.name || 'Learner'} onSaveAnswers={answers => saveLearnerEventReviewAnswers(myLearner.kind, myLearner.id, selected.eventKey || selected.id, answers)} /> : instanceBacked ? <p className="p-4 text-sm text-foreground-500">This review form is not available.</p> : <>
+              {reviewInstance.loading ? <div className="rounded-xl border border-background-200 bg-white p-5"><RowsSkeleton rows={4} /></div> : reviewInstance.error ? <p role="alert" className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">{reviewInstance.error}<button type="button" onClick={reviewInstance.refresh} className="ml-2 underline">Retry review</button></p> : reviewInstance.definition ? <LearnerReviewInstanceForm definition={reviewInstance.definition} onDownload={migratedEvent ? () => downloadMigratedReviewForParty(selected.formEventKey || selected.eventKey || selected.id) : undefined} onSign={canProgress ? saveSignature : undefined} signatoryName={learner?.name || 'Learner'} onSaveAnswers={migratedEvent ? undefined : answers => saveLearnerEventReviewAnswers(myLearner.kind, myLearner.id, selected.eventKey || selected.id, answers)} /> : instanceBacked ? <p className="p-4 text-sm text-foreground-500">This review form is not available.</p> : <>
               {selected.importedReview ? <div className="space-y-3">
                 {selected.importedReview.sections.map((section, index) => <Accordion key={section.id} id={`imported-section:${section.id}`} title={section.name.replace(/\s+(completed|incomplete)$/i, '').trim()} icon="ri-file-list-3-line" open={openSections.includes(`imported-section:${section.id}`) || (!openSections.some((id) => id.startsWith('imported-section:')) && index === 0)} onToggle={toggleSection}>
                   <ImportedReviewSections review={{ ...selected.importedReview, sections: [section] }} />
@@ -572,17 +518,17 @@ export default function ProgressReviewsPage() {
           </div>
         )}
       </div>
-      <ProgressReviewSlidesModal
-        open={Boolean(slidesDeck)}
-        deck={slidesDeck}
-        onClose={() => setSlidesDeck(null)}
-        primaryAction={canProgress && selected && !selected.importedReview && !instanceBacked && ['awaiting-signature', 'completed'].includes(selected.status) && !selected.learnerSigned ? (
-          <button type="button" onClick={() => setSigning(true)} className="inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-violet-700 px-4 text-[12px] font-bold text-white shadow-sm transition hover:bg-violet-800">
-            <AppIcon className="ri-quill-pen-line" />Sign slides
-          </button>
-        ) : null}
-      />
-      {signing ? <ProgressReviewSignModal name={learner?.name || 'Learner'} saving={signatureBusy} error={signatureError} onClose={() => setSigning(false)} onSign={(signature) => { void saveSignature(signature).catch(() => undefined); }} /> : null}
+      {showSlidesModal && selected && (
+        <ProgressReviewPptxModal
+          open kind="progress_review" access="viewer"
+          target={{
+            learnerId: myLearner.id, meetingDate: reviewDate(selected) || '', learnerName: learner?.name,
+            programme: learner?.programme, completed: selected.status === 'completed',
+            periodLabel: selected.sequence ? `Review ${selected.sequence}` : undefined,
+          }}
+          onClose={() => setShowSlidesModal(false)}
+        />
+      )}
     </WorkspaceShell>
   );
 }

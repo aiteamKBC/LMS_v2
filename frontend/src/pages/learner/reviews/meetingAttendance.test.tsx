@@ -99,7 +99,7 @@ describe.each(types)('$path meeting attendance', item => {
   });
   it('opens the same absence form from the current card and meeting list with the exact meeting selected', async () => {
     populate(item.source); mount();
-    if (item.source === 'mcr') fireEvent.click(await screen.findByText('More options', { selector: 'summary' }));
+    if (item.source === 'mcr') fireEvent.click(await screen.findByText('Details', { selector: 'summary' }));
     const buttons = await screen.findAllByRole('button', { name: item.source === 'mcr' ? 'Report absence' : 'Report Absence' });
     fireEvent.click(buttons[0]);
     let dialog = await screen.findByRole('dialog', { name: 'Report Absence' });

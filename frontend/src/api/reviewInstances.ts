@@ -8,6 +8,7 @@
  */
 import { coachFetch } from '@/lib/coachFetch';
 import { saveReviewPdfResponse } from './reviewPdf';
+import type { CoachMeetingArtifactsResponse, CoachMeetingSummary, CoachMeetingSummaryPayload } from '@/pages/coach/shared/calendarEvents';
 
 export type ReviewFieldType =
   | 'text'
@@ -157,7 +158,54 @@ export interface PreviousReviewSession {
 }
 
 export interface ReviewInstanceFormDefinition {
-  pdf?: { available: boolean; reason: string } | null;
+  /** Historical adapters can reuse the Review Workspace without enabling writes. */
+  readOnly?: boolean;
+  source?: 'curriculum' | 'aptem' | string;
+  /** Display identity from the learner linked to this review. */
+  learnerName?: string | null;
+  learnerEmail?: string | null;
+  programme?: string | null;
+  programmeId?: string | null;
+  /** Imported records can contain summary metadata without any form fields. */
+  formAvailable?: boolean;
+  summaryOnly?: boolean;
+  migratedForm?: boolean;
+  answerVersion?: string;
+  templateSync?: {
+    status: 'working' | 'frozen' | 'conflict';
+    upToDate: boolean | null;
+    fingerprint?: string;
+    synchronizedAt?: string | null;
+    source?: { id?: number; scope?: string; programmeKey?: string; family?: string };
+    code?: string;
+    message?: string;
+    fields?: string[];
+  };
+  /** Current overlay mutation version, required by explicit migrated Calculate. */
+  progressVersion?: string;
+  canCalculateProgress?: boolean;
+  summaryBinding?: CoachMeetingArtifactsResponse['summaryBinding'];
+  /** Approved template rendered for admin view-as without an LMS overlay. */
+  previewOnly?: boolean;
+  noApprovedMigratedTemplate?: boolean;
+  migratedPreviewError?: boolean;
+  canInitialize?: boolean;
+  sourceStatus?: string;
+  localStatus?: string | null;
+  booking?: {
+    booked: boolean;
+    conflict: boolean;
+    canAttach?: boolean;
+    canBook: boolean;
+    eventKey: string | null;
+    scheduledDate: string | null;
+    scheduledTime: string | null;
+    durationMinutes: number | null;
+    meetingLink: string | null;
+    syncState: string | null;
+  };
+  fieldWarnings?: { fieldKey: string; aptemType: number }[];
+  pdf?: { available: boolean; reason: string; source?: string; originalAvailable?: boolean } | null;
   /** Progress Review only, and null until a coach calculates it. */
   progressSnapshot?: ReviewProgressSnapshot | null;
   /** Progress Review only -- this learner's completed Progress Reviews,
@@ -171,7 +219,7 @@ export interface ReviewInstanceFormDefinition {
     reviewTemplateId: string;
     learnerId: number;
     programmeId: string;
-    occurrenceNumber: number;
+    occurrenceNumber: number | null;
     targetDate: string;
     status: string;
     startedAt: string | null;
@@ -209,12 +257,75 @@ async function readJsonResponse<T>(response: Response): Promise<T> {
       : typeof data.error === 'string'
         ? data.error
         : `Request failed with ${response.status}`;
-    throw new Error(message);
+    const diagnostics = [
+      typeof data.code === 'string' ? `Code: ${data.code}` : '',
+      typeof data.request_id === 'string' ? `Reference: ${data.request_id}` : '',
+    ].filter(Boolean);
+    throw new Error(diagnostics.length ? `${message} (${diagnostics.join(' · ')})` : message);
   }
   return data as T;
 }
 
 const instanceUrl = (instanceId: string) => `/coach_api/coach/reviews/${encodeURIComponent(instanceId)}`;
+const migratedUrl = (instanceId: string) => `/coach_api/migrated-reviews/${encodeURIComponent(instanceId)}`;
+
+export async function fetchMigratedReviewIntelligence(
+  instanceId: string,
+  signal?: AbortSignal,
+  options: { refresh?: boolean } = {},
+): Promise<CoachMeetingArtifactsResponse> {
+  const path = options.refresh ? 'check-session' : 'intelligence';
+  return readJsonResponse<CoachMeetingArtifactsResponse>(await coachFetch(`${migratedUrl(instanceId)}/${path}`, {
+    signal,
+    ...(options.refresh ? { method: 'POST' } : {}),
+  }));
+}
+
+type MigratedSummarySaveResponse = { meetingSummary: CoachMeetingSummary | null }
+  & Pick<CoachMeetingArtifactsResponse, 'answerVersion' | 'progressVersion' | 'reviewAnswers' | 'summaryBinding'>;
+
+export async function saveMigratedMeetingSummary(instanceId: string, summary: CoachMeetingSummaryPayload): Promise<MigratedSummarySaveResponse> {
+  return readJsonResponse<MigratedSummarySaveResponse>(
+    await coachFetch(`${migratedUrl(instanceId)}/summary`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ summary }),
+    }),
+  );
+}
+
+export async function uploadMigratedSummaryTranscript(instanceId: string, transcript: File): Promise<CoachMeetingArtifactsResponse> {
+  const body = new FormData();
+  body.append('transcript', transcript);
+  return readJsonResponse<CoachMeetingArtifactsResponse>(await coachFetch(`${migratedUrl(instanceId)}/summary/from-upload`, {
+    method: 'POST', body,
+  }));
+}
+
+export interface MigratedAnswerWrite {
+  answerVersion?: string;
+  editedFields?: string[];
+}
+
+export async function submitMigratedReview(instanceId: string, answers: Record<string, unknown>, version?: MigratedAnswerWrite) {
+  return readJsonResponse<ReviewInstanceFormDefinition>(await coachFetch(`${migratedUrl(instanceId)}/submit`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ answers, ...version }),
+  }));
+}
+
+export async function signMigratedReviewAsCoach(instanceId: string, signature: string) {
+  return readJsonResponse<ReviewInstanceFormDefinition>(await coachFetch(`${migratedUrl(instanceId)}/coach-sign`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ signature }),
+  }));
+}
+
+export async function completeMigratedReview(instanceId: string) {
+  return readJsonResponse<ReviewInstanceFormDefinition>(await coachFetch(`${migratedUrl(instanceId)}/complete`, { method: 'POST' }));
+}
+
+export async function generateMigratedReviewPdf(instanceId: string) {
+  return readJsonResponse<{ available: boolean; documentId: number }>(await coachFetch(`${migratedUrl(instanceId)}/generate-pdf`, { method: 'POST' }));
+}
 
 export async function downloadReviewInstancePdf(instanceId: string): Promise<void> {
   await saveReviewPdfResponse(await coachFetch(`${instanceUrl(instanceId)}/pdf`));
@@ -231,6 +342,14 @@ export async function downloadReviewInstancePdf(instanceId: string): Promise<voi
 export async function calculateReviewInstanceProgress(instanceId: string) {
   const response = await coachFetch(`${instanceUrl(instanceId)}/progress`, { method: 'POST' });
   return readJsonResponse<ReviewInstanceFormDefinition>(response);
+}
+
+export async function calculateMigratedReviewProgress(instanceId: string, progressVersion: string) {
+  return readJsonResponse<ReviewInstanceFormDefinition>(await coachFetch(`${migratedUrl(instanceId)}/progress`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ progressVersion }),
+  }));
 }
 
 /**
@@ -252,16 +371,46 @@ export async function fetchReviewInstanceForm(instanceId: string, signal?: Abort
   return readJsonResponse<ReviewInstanceFormDefinition>(response);
 }
 
+export async function initializeMigratedReview(instanceId: string) {
+  const response = await coachFetch(`${instanceUrl(instanceId)}/initialize`, { method: 'POST' });
+  return readJsonResponse<ReviewInstanceFormDefinition>(response);
+}
+
+export async function startMigratedReview(instanceId: string) {
+  const response = await coachFetch(`${instanceUrl(instanceId)}/local-status`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ status: 'in-progress' }),
+  });
+  return readJsonResponse<ReviewInstanceFormDefinition>(response);
+}
+
+export async function bookMigratedReview(instanceId: string, slot: {
+  scheduledDate: string;
+  scheduledTime: string;
+  durationMinutes: number;
+  timezoneOffsetMinutes: number;
+}) {
+  const response = await coachFetch(`${instanceUrl(instanceId)}/book`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(slot),
+  });
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    throw new Error(data.message || data.detail || 'The meeting could not be booked.');
+  }
+  return readJsonResponse<ReviewInstanceFormDefinition>(response);
+}
+
 export async function fetchPreviousReviewSession(instanceId: string, signal?: AbortSignal) {
   const response = await coachFetch(`${instanceUrl(instanceId)}/previous`, { signal });
   return readJsonResponse<PreviousReviewSession>(response);
 }
 
-export async function saveReviewInstanceAnswers(instanceId: string, answers: Record<string, unknown>) {
+export async function saveReviewInstanceAnswers(instanceId: string, answers: Record<string, unknown>, version?: MigratedAnswerWrite) {
   const response = await coachFetch(`${instanceUrl(instanceId)}/answers`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ answers }),
+    body: JSON.stringify({ answers, ...version }),
   });
   return readJsonResponse<ReviewInstanceFormDefinition>(response);
 }

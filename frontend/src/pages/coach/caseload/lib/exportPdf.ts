@@ -1,10 +1,9 @@
 // ============================================================================
-// Coach caseload — PDF export.
+// Coach caseload - PDF export.
 //
-// Lifted out of the page component unchanged in behaviour: same landscape A4
-// layout, same file name, same "selected learners or current view" contract.
-// The only additions are the Risk verdict and Gateway columns, because an export
-// that omits why a learner is flagged loses the point of the page it came from.
+// The export follows the Learner Journal document language: KBC branding,
+// navy table headers, soft alternating rows, compact continued-page headers,
+// and the same 12 mm page margins used by the journal.
 // ============================================================================
 import { jsPDF } from 'jspdf';
 import {
@@ -12,11 +11,27 @@ import {
   displayValue,
   formatHours,
   formatPercent,
-  formatRatio,
+  getOtjhStatusOverride,
+  isVisibleCaseloadLearner,
   learnerProgramme,
+  otjhProgressAsOfToday,
 } from './format';
-import type { InsightMap } from './attention';
 import type { Learner } from '../types';
+
+type Color = [number, number, number];
+type PdfImage = { data: Uint8Array; format: 'PNG' | 'JPEG' };
+
+const colors = {
+  navy: [24, 45, 72] as Color,
+  muted: [99, 115, 136] as Color,
+  border: [222, 226, 232] as Color,
+  soft: [246, 248, 251] as Color,
+  white: [255, 255, 255] as Color,
+};
+
+const margin = 12;
+const contentWidth = 273;
+const rowHeight = 6.2;
 
 function formatExportDate() {
   return new Intl.DateTimeFormat('en-GB', {
@@ -26,8 +41,29 @@ function formatExportDate() {
   }).format(new Date());
 }
 
+function pdfText(value: string | null | undefined) {
+  return value?.trim()
+    .replace(/[\u2010-\u2015\u2212]/g, '-')
+    .replace(/[\u2018\u2019]/g, "'")
+    .replace(/[\u201c\u201d]/g, '"') || EMPTY_VALUE;
+}
+
+function font(doc: jsPDF, size: number, bold = false, color = colors.navy) {
+  doc.setFont('helvetica', bold ? 'bold' : 'normal');
+  doc.setFontSize(size);
+  doc.setTextColor(...color);
+}
+
+function image(doc: jsPDF, asset: PdfImage, x: number, y: number, width: number, height: number) {
+  const dimensions = doc.getImageProperties(asset.data);
+  const ratio = Math.min(width / dimensions.width, height / dimensions.height);
+  const drawnWidth = dimensions.width * ratio;
+  const drawnHeight = dimensions.height * ratio;
+  doc.addImage(asset.data, asset.format, x + (width - drawnWidth) / 2, y + (height - drawnHeight) / 2, drawnWidth, drawnHeight);
+}
+
 function fitPdfCellText(doc: jsPDF, value: string, maxWidth: number) {
-  const safeValue = value || EMPTY_VALUE;
+  const safeValue = pdfText(value);
   if (doc.getTextWidth(safeValue) <= maxWidth) return safeValue;
 
   let text = safeValue;
@@ -43,120 +79,173 @@ interface PdfColumn {
   width: number;
 }
 
-function drawLearnerPdfHeader(doc: jsPDF, columns: PdfColumn[], startX: number, y: number, rowHeight: number) {
-  let x = startX;
-  const totalWidth = columns.reduce((total, column) => total + column.width, 0);
-
-  doc.setFillColor(244, 239, 255);
-  doc.rect(startX, y, totalWidth, rowHeight, 'F');
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(9);
-  doc.setTextColor(57, 37, 103);
-
-  columns.forEach((column) => {
-    doc.text(column.label, x + 1.5, y + 4.7);
-    x += column.width;
-  });
-
-  doc.setDrawColor(222, 226, 232);
-  doc.line(startX, y + rowHeight, startX + totalWidth, y + rowHeight);
-}
-
+// These widths total 273 mm, exactly matching the Learners included panel.
 const COLUMNS: PdfColumn[] = [
-  { label: 'Name', width: 30 },
-  { label: 'Risk', width: 20 },
-  { label: 'Status', width: 18 },
-  { label: 'Progress', width: 15 },
-  { label: 'OTJH', width: 20 },
-  { label: 'Attend.', width: 14 },
-  { label: 'Components', width: 19 },
-  { label: 'KSB', width: 15 },
-  { label: 'Gateway', width: 21 },
-  { label: 'Programme', width: 42 },
-  { label: 'Group', width: 22 },
+  { label: 'Name', width: 43 },
+  { label: 'Status', width: 27 },
+  { label: 'Accepted / Target OTJH', width: 46 },
+  { label: 'OTJH Progress', width: 24 },
+  { label: 'Attendence', width: 24 },
+  { label: 'Start date', width: 30 },
+  { label: 'Planned end date', width: 33 },
+  { label: 'Programme', width: 46 },
 ];
 
-export function downloadLearnersPdf(learners: Learner[], ownerName: string, insights: InsightMap) {
-  const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
-  const pageWidth = doc.internal.pageSize.getWidth();
+function formatOtjhRatio(actualHours: number | null, targetHours: number | null) {
+  if (actualHours === null) return EMPTY_VALUE;
+  return `${formatHours(actualHours)} / ${targetHours === null ? EMPTY_VALUE : formatHours(targetHours)}`;
+}
+
+function formatOtjhPercent(percent: number | null) {
+  return percent === null ? EMPTY_VALUE : `${Math.round(percent)}%`;
+}
+
+function drawDocumentHeader(doc: jsPDF, ownerName: string, logo: PdfImage | null, generated: string, learnerCount: number) {
+  if (logo) image(doc, logo, margin, 8, 38, 18);
+  else {
+    font(doc, 12, true);
+    doc.text('Kent Business College', margin, 18);
+  }
+
+  doc.setDrawColor(...colors.border);
+  doc.setLineWidth(.3);
+  doc.line(56, 8, 56, 26);
+  font(doc, 16, true);
+  doc.text('Coach Learners', 63, 13.5);
+  font(doc, 8.5, false, colors.muted);
+  doc.text('Learner caseload export', 63, 20);
+
+  doc.setFillColor(...colors.soft);
+  doc.roundedRect(242, 9, 43, 15, 3, 3, 'F');
+  font(doc, 6.5, true, colors.muted);
+  doc.text('GENERATED', 263.5, 14, { align: 'center' });
+  font(doc, 9.5, true);
+  doc.text(generated, 263.5, 20.5, { align: 'center' });
+  doc.line(margin, 31, 285, 31);
+
+  doc.setFillColor(...colors.soft);
+  doc.roundedRect(margin, 35, contentWidth, 11, 2.5, 2.5, 'F');
+  font(doc, 7, true, colors.muted);
+  doc.text('LEARNERS INCLUDED', margin + 5, 39.5);
+  doc.text('PREPARED BY', 163, 39.5);
+  font(doc, 8.5, true);
+  doc.text(String(learnerCount), margin + 5, 44);
+  doc.text(pdfText(ownerName), 163, 44, { maxWidth: 115 });
+}
+
+function drawContinuedHeader(doc: jsPDF, ownerName: string, logo: PdfImage | null, generated: string) {
+  if (logo) image(doc, logo, margin, 7, 25, 11.5);
+  else {
+    font(doc, 8.5, true);
+    doc.text('Kent Business College', margin, 13);
+  }
+  font(doc, 8.5, true);
+  doc.text(pdfText(ownerName), 44, 12, { maxWidth: 150 });
+  font(doc, 7, false, colors.muted);
+  doc.text(`Coach learners continued - ${generated}`, 44, 18);
+  doc.setDrawColor(...colors.border);
+  doc.line(margin, 23, 285, 23);
+}
+
+function drawLearnerPdfHeader(doc: jsPDF, y: number) {
+  let x = margin;
+  doc.setFillColor(...colors.navy);
+  doc.rect(margin, y, contentWidth, 8, 'F');
+  font(doc, 7, true, colors.white);
+  COLUMNS.forEach((column) => {
+    doc.text(column.label, x + 1.8, y + 5.1);
+    x += column.width;
+  });
+}
+
+function drawFooter(doc: jsPDF, page: number, pageCount: number) {
+  doc.setDrawColor(...colors.border);
+  doc.line(margin, 198, 285, 198);
+  font(doc, 6.8, false, colors.muted);
+  doc.text('Kent Business College  |  Coach learner caseload', margin, 203);
+  doc.text(`Page ${page} of ${pageCount}`, 285, 203, { align: 'right' });
+}
+
+export function buildLearnersPdf(learners: Learner[], ownerName: string, logo: PdfImage | null = null) {
+  const includedLearners = learners.filter(isVisibleCaseloadLearner);
+  const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4', compress: true });
+  const generated = formatExportDate();
   const pageHeight = doc.internal.pageSize.getHeight();
-  const marginX = 10;
-  const marginY = 12;
-  const rowHeight = 7;
-  const totalWidth = COLUMNS.reduce((total, column) => total + column.width, 0);
+  const bottomLimit = Math.min(195, pageHeight - 15);
+  let y = 51;
 
-  let y = marginY;
+  doc.setProperties({
+    title: 'Coach Learners',
+    author: 'Kent Business College',
+    subject: 'Coach learner caseload export',
+  });
+  drawDocumentHeader(doc, ownerName, logo, generated, includedLearners.length);
+  drawLearnerPdfHeader(doc, y);
+  y += 8;
+  font(doc, 7.2);
 
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(16);
-  doc.setTextColor(31, 41, 55);
-  doc.text('Coach Learners Export', marginX, y);
-
-  y += 6;
-  doc.setFont('helvetica', 'normal');
-  doc.setFontSize(9);
-  doc.setTextColor(107, 114, 128);
-  doc.text(`Generated ${formatExportDate()} by ${ownerName}`, marginX, y);
-
-  y += 6;
-  doc.setFillColor(248, 250, 252);
-  doc.roundedRect(marginX, y - 4.5, pageWidth - (marginX * 2), 8, 2, 2, 'F');
-  doc.setFontSize(9);
-  doc.setTextColor(55, 65, 81);
-  doc.text(`Learners included: ${learners.length}`, marginX + 2.5, y + 0.5);
-
-  y += 7.5;
-  drawLearnerPdfHeader(doc, COLUMNS, marginX, y, rowHeight);
-  y += rowHeight;
-
-  doc.setFont('helvetica', 'normal');
-  doc.setFontSize(8.5);
-  doc.setTextColor(31, 41, 55);
-
-  learners.forEach((learner, index) => {
-    if (y + rowHeight > pageHeight - marginY) {
+  includedLearners.forEach((learner, index) => {
+    if (y + rowHeight > bottomLimit) {
       doc.addPage();
-      y = marginY;
-      drawLearnerPdfHeader(doc, COLUMNS, marginX, y, rowHeight);
-      y += rowHeight;
-      doc.setFont('helvetica', 'normal');
-      doc.setFontSize(8.5);
-      doc.setTextColor(31, 41, 55);
+      drawContinuedHeader(doc, ownerName, logo, generated);
+      y = 27;
+      drawLearnerPdfHeader(doc, y);
+      y += 8;
+      font(doc, 7.2);
     }
 
     if (index % 2 === 0) {
-      doc.setFillColor(250, 250, 251);
-      doc.rect(marginX, y, totalWidth, rowHeight, 'F');
+      doc.setFillColor(...colors.soft);
+      doc.rect(margin, y, contentWidth, rowHeight, 'F');
     }
 
-    const insight = insights.get(learner.id);
+    const otjh = otjhProgressAsOfToday(learner);
+    const otjhStatusOverride = getOtjhStatusOverride(learner.rawProgramStatus)
+      ?? getOtjhStatusOverride(learner.enrollmentStatus);
     const row = [
       learner.name,
-      insight?.riskLabel || EMPTY_VALUE,
       displayValue(learner.rawProgramStatus),
-      learner.overallProgressAvailable ? `${learner.overallProgress}%` : EMPTY_VALUE,
-      learner.overallProgressAvailable
-        ? `${formatHours(learner.otjhCompleted)} / ${formatHours(learner.otjhTarget)}`
-        : EMPTY_VALUE,
+      otjhStatusOverride || formatOtjhRatio(otjh.actualHours, otjh.targetHours),
+      otjhStatusOverride ? EMPTY_VALUE : formatOtjhPercent(otjh.percent),
       formatPercent(learner.liveAttendanceRate),
-      formatRatio(learner.componentsCompleted, learner.componentsPlanned),
-      formatRatio(learner.ksbCompleted, learner.ksbTarget),
-      displayValue(learner.gatewayReviewDate),
+      displayValue(learner.startDate),
+      displayValue(learner.displayEndDate),
       learnerProgramme(learner),
-      displayValue(learner.group),
     ];
 
-    let x = marginX;
+    let x = margin;
     row.forEach((value, columnIndex) => {
       const column = COLUMNS[columnIndex];
-      doc.text(fitPdfCellText(doc, value, column.width - 3), x + 1.5, y + 4.5);
+      doc.text(fitPdfCellText(doc, value, column.width - 3.6), x + 1.8, y + 4.2);
       x += column.width;
     });
 
-    doc.setDrawColor(235, 238, 242);
-    doc.line(marginX, y + rowHeight, marginX + totalWidth, y + rowHeight);
+    doc.setDrawColor(...colors.border);
+    doc.setLineWidth(.15);
+    doc.line(margin, y + rowHeight, margin + contentWidth, y + rowHeight);
     y += rowHeight;
   });
 
-  doc.save('coach-learners.pdf');
+  const pageCount = doc.getNumberOfPages();
+  for (let page = 1; page <= pageCount; page += 1) {
+    doc.setPage(page);
+    drawFooter(doc, page, pageCount);
+  }
+  return doc;
+}
+
+async function loadLogo(): Promise<PdfImage> {
+  const response = await fetch(`${import.meta.env.BASE_URL}assets/kbc-logo.png`, { credentials: 'same-origin' });
+  if (!response.ok) throw new Error('The KBC report logo could not be loaded. Please try again.');
+  const data = new Uint8Array(await response.arrayBuffer());
+  const png = data[0] === 0x89 && data[1] === 0x50 && data[2] === 0x4e && data[3] === 0x47;
+  const jpeg = data[0] === 0xff && data[1] === 0xd8;
+  if (!png && !jpeg) throw new Error('The KBC report logo is invalid. Please try again.');
+  return { data, format: png ? 'PNG' : 'JPEG' };
+}
+
+export async function downloadLearnersPdf(learners: Learner[], ownerName: string) {
+  const logo = await loadLogo();
+  const doc = buildLearnersPdf(learners, ownerName, logo);
+  await doc.save('coach-learners.pdf', { returnPromise: true });
 }

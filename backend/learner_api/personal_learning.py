@@ -21,6 +21,7 @@ from django.views.decorators.csrf import csrf_exempt
 from login.permissions import authenticate_request, _unauthenticated
 from . import personal_learning_store as store
 from .personal_learning_policy import context_for, request_target, component_for, progress_detail, submission_key
+from .working_rules import DeclaredCompletionError, validation_response_payload
 
 
 def endpoint(view):
@@ -45,6 +46,8 @@ def endpoint(view):
             response = JsonResponse({'error': str(exc)}, status=403)
         except LookupError as exc:
             response = JsonResponse({'error': str(exc)}, status=404)
+        except DeclaredCompletionError as exc:
+            response = JsonResponse(validation_response_payload(exc), status=409)
         except (ValueError, TypeError) as exc:
             response = JsonResponse({'error': str(exc)}, status=400)
         except DatabaseError:
@@ -177,25 +180,39 @@ def metrics(detail, context):
 
 
 def tracking_record(context, payload, activity_id, activity_kind, history):
-    from .time_tracking import verify_tracking_session, outside_uk_working_hours
+    from .time_tracking import verify_tracking_session
+    from .working_rules import resolve_completion_instants
     tracking = verify_tracking_session(payload.get('trackingToken'), activity_kind=activity_kind,
         activity_id=activity_id, learner_kind='personal', learner_id=context['id'],
         claimed_seconds=payload.get('timeTakenSeconds', 0))
     previous = next((item for item in history if item.get('timeTrackingSessionId') == tracking['sessionId']), None)
     if previous:
         return previous, True
-    outside = activity_kind != 'quiz' and outside_uk_working_hours(tracking['submittedAt'])
-    if outside and payload.get('outsideWorkingHoursConfirmed') is not True:
-        raise ValueError('Confirm that this activity was completed outside normal working hours.')
+    # Every completion action is validated, quizzes included: the sandbox
+    # mirrors the official rule so an administrator rehearsing a course sees
+    # what a learner will see. A quiz reaches its cohort through its week, a
+    # component through its module, hence the two keyword forms. Raising here
+    # happens inside the store's atomic edit and before its UPDATE, so a
+    # refusal writes nothing.
+    owner = ({'quiz_id': activity_id} if activity_kind == 'quiz'
+             else {'component_id': activity_id})
+    declared_at, validation_reason = resolve_completion_instants(
+        payload, tracking['submittedAt'], **owner)
     seconds = tracking['verifiedSeconds']
     return {'kind': activity_kind, 'componentId': str(activity_id), 'timeTrackingSessionId': tracking['sessionId'],
             'startedAt': tracking['startedAt'].isoformat(), 'submittedAt': tracking['submittedAt'].isoformat(),
             'timeTaken': f'{seconds // 60:02d}:{seconds % 60:02d}', 'verifiedSeconds': seconds,
             'claimedSeconds': tracking['claimedSeconds'], 'serverSessionSeconds': tracking['serverSessionSeconds'],
             'timeTrackingSource': tracking['source'], 'feedback': str(payload.get('feedback') or ''),
-            'reportedTime': str(payload.get('reportedTime') or ''), 'ksbs': [], 'passed': True,
-            'outsideWorkingHours': outside, 'outsideWorkingHoursConfirmed': outside,
-            'outsideWorkingHoursConfirmedAt': tracking['submittedAt'].isoformat() if outside else None}, False
+            'reportedTime': str(payload.get('reportedTime') or ''),
+            'reflectionSkipped': payload.get('skipReflection') is True,
+            'ksbs': [], 'passed': True,
+            'outsideWorkingHours': bool(validation_reason), 'outsideWorkingHoursConfirmed': False,
+            'outsideWorkingHoursConfirmedAt': None,
+            'insideWorkingHoursConfirmed': False,
+            'insideWorkingHoursConfirmedAt': None,
+            'declaredCompletedAt': declared_at.isoformat() if declared_at else None,
+            'submissionValidationReason': validation_reason}, False
 
 
 def complete_activity(context, account, detail, activity_id, activity_kind, payload):
@@ -213,7 +230,7 @@ def complete_activity(context, account, detail, activity_id, activity_kind, payl
                 quality_checks = validate_assignment(context, detail, state, saved)
                 record['ksbs'] = [claim['code'] for claim in (saved.get('monthlyAssignment') or {}).get('claims', [])]
             validation = bool(component.get('tutorValidationRequired') or component.get('type') == 'assignment')
-            if (component.get('reflectionRequired') or validation) and not str(payload.get('feedback') or '').strip() and component.get('type') != 'assignment':
+            if (component.get('reflectionRequired') or validation) and payload.get('skipReflection') is not True and not str(payload.get('feedback') or '').strip() and component.get('type') != 'assignment':
                 raise ValueError('Complete the reflection before submitting this activity.')
             record.update({'componentType': component.get('type'), 'moduleId': context['module_id'],
                            'componentTitle': component.get('component'), 'passed': not validation,

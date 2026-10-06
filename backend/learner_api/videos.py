@@ -22,9 +22,13 @@ from .identity import learner_profile_for_source
 from .models import CommercialUser, EnrolmentUser
 from .time_tracking import (
     TrackingSessionError,
-    outside_uk_working_hours,
     tracking_session_already_used,
     verify_tracking_session,
+)
+from .working_rules import (
+    DeclaredCompletionError,
+    resolve_completion_instants,
+    validation_response_payload,
 )
 from login.permissions import learner_self_or_admin
 
@@ -84,6 +88,18 @@ def submit_video_progress(request, component_id):
     except (ValueError, UnicodeDecodeError) as exc:
         return _error(f"Invalid JSON body: {exc}", 400)
 
+    # Decided before any lookup or write, so a refusal leaves no completion,
+    # no percentage change and no history entry behind.
+    submitted_at_dt = timezone.now()
+    try:
+        declared_at, validation_reason = resolve_completion_instants(
+            payload, submitted_at_dt, component_id=component_id,
+        )
+    except DeclaredCompletionError as exc:
+        return JsonResponse(validation_response_payload(exc), status=409)
+    except DatabaseError:
+        return _error("Could not verify the working-hours holiday calendar. Please try again.", 503)
+
     week_title = payload.get("week")
     module_title = payload.get("module")
     time_taken_seconds = payload.get("timeTakenSeconds")
@@ -94,7 +110,7 @@ def submit_video_progress(request, component_id):
     if not ksbs and isinstance(payload.get("ksbs"), list):
         ksbs = payload["ksbs"]
     feedback = payload.get("feedback") or ""
-    reported_time = payload.get("reportedTime") or ""
+    reflection_skipped = payload.get("skipReflection") is True
     time_entry_source = "input" if payload.get("timeEntrySource") == "input" else "timer"
     # Client may pass the title it rendered; fall back to a live master lookup.
     video_title = payload.get("videoTitle") or None
@@ -127,15 +143,6 @@ def submit_video_progress(request, component_id):
         1 for r in history if r.get("kind") == "video" and r.get("componentId") == component_id
     ) + 1
 
-    submitted_at_dt = timezone.now()
-    outside_working_hours = outside_uk_working_hours(submitted_at_dt)
-    confirmation_received = payload.get("outsideWorkingHoursConfirmed") is True
-    if outside_working_hours and not confirmation_received:
-        return _error(
-            "Confirm that this activity was completed outside UK working hours.",
-            400,
-        )
-    outside_working_hours_confirmed = outside_working_hours and confirmation_received
     try:
         tracking = verify_tracking_session(
             payload.get("trackingToken"),
@@ -152,7 +159,11 @@ def submit_video_progress(request, component_id):
         return _error("This activity timing session has already been submitted.", 409)
     started_at = tracking["startedAt"].isoformat()
     submitted_at = submitted_at_dt.isoformat()
-    time_taken = _format_clock(tracking["verifiedSeconds"])
+    # The learner chooses Timer or Input before finishing. Keep that selection
+    # for display and actual-hours totals; verifiedSeconds remains separate
+    # signed-session evidence. Explicit units prevent hours/minutes ambiguity.
+    time_taken = _format_clock(tracking["claimedSeconds"])
+    selected_time = f'{tracking["claimedSeconds"] / 60} minutes'
 
     # Slim, id-referenced record. The videoTitle/week/module NAMES are dropped —
     # the plan tree resolves them from componentId.
@@ -162,7 +173,8 @@ def submit_video_progress(request, component_id):
         "attempt": attempt_number,
         "ksbs": ksbs,                          # KSB codes the learner selected
         "feedback": feedback,                  # reflection note
-        "reportedTime": reported_time,         # self-reported time-to-complete
+        "reportedTime": selected_time,         # selected Timer/Input duration
+        "reflectionSkipped": reflection_skipped,
         "startedAt": started_at,
         "submittedAt": submitted_at,
         "timeTaken": time_taken,
@@ -172,9 +184,13 @@ def submit_video_progress(request, component_id):
         "claimedSeconds": tracking["claimedSeconds"],
         "serverSessionSeconds": tracking["serverSessionSeconds"],
         "verifiedSeconds": tracking["verifiedSeconds"],
-        "outsideWorkingHours": outside_working_hours,
-        "outsideWorkingHoursConfirmed": outside_working_hours_confirmed,
-        "outsideWorkingHoursConfirmedAt": submitted_at if outside_working_hours_confirmed else None,
+        "outsideWorkingHours": bool(validation_reason),
+        "outsideWorkingHoursConfirmed": False,
+        "insideWorkingHoursConfirmed": False,
+        "insideWorkingHoursConfirmedAt": None,
+        "outsideWorkingHoursConfirmedAt": None,
+        "declaredCompletedAt": declared_at.isoformat() if declared_at else None,
+        "submissionValidationReason": validation_reason,
     }
 
     if active is not None:
@@ -182,7 +198,7 @@ def submit_video_progress(request, component_id):
             "kind": "video",
             "action": "Watched video",
             "title": video_title or "Video",
-            "detail": (f"{reported_time}" if reported_time else "").strip(),
+            "detail": selected_time,
             "componentId": component_id,
             "week": week_title,
             "module": module_title,

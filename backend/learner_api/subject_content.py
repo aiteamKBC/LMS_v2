@@ -205,7 +205,38 @@ def _audio_media_kind(url):
     return 'embed'
 
 
-def build_material(stored, schema=None, attachment_resolver=None):
+def original_is_pdf(url):
+    """Bounded MIME probe when the legacy schema API cannot identify a file.
+
+    Only the configured source's attachment endpoint is contacted; redirects
+    cannot escape that origin and no file bytes or signed URLs are logged.
+    """
+    target = urlsplit(url)
+    origin = urlsplit(getattr(settings, 'KBC_LMS_SCHEMA_URL', ''))
+    if (target.scheme != 'https' or (target.scheme, target.netloc) != (origin.scheme, origin.netloc)
+            or target.username or not re.fullmatch(r'/wp-json/kbc-lms/v1/material/\d+/view', target.path)
+            or not _attachment_id(url)):
+        return False
+    key = ('pdf-type', url)
+    with _lock:
+        cached = _cache.get(key)
+        if cached and cached[0] > monotonic():
+            return cached[1]
+    try:
+        request = urllib.request.Request(url, headers={'Range': 'bytes=0-4', 'User-Agent': 'KBC-LearningOS/1.0'})
+        with urllib.request.build_opener(_SameHostRedirect()).open(request, timeout=10) as response:
+            is_pdf = (response.headers.get('Content-Type', '').split(';', 1)[0].strip().lower() == 'application/pdf'
+                      and response.read(5) == b'%PDF-')
+    except (OSError, ContentUnavailable):
+        return False
+    with _lock:
+        if len(_cache) >= 256:
+            _cache.clear()
+        _cache[key] = (monotonic() + 300, is_pdf)
+    return is_pdf
+
+
+def build_material(stored, schema=None, attachment_resolver=None, pdf_checker=None):
     row = stored['_source']
     media = []
     for key, kind in (('video_url', 'video'), ('audio_url', 'audio'), ('reading_url', 'document')):
@@ -279,7 +310,12 @@ def build_material(stored, schema=None, attachment_resolver=None):
         mime_type = str(attachment.get('mime_type') or '').lower()
         is_pdf = mime_type == 'application/pdf' if mime_type else str((schema or {}).get('content_type') or '').lower() == 'pdf'
         target = urlsplit(original)
-        if is_pdf and reference and (target.scheme, target.netloc) == (source_origin.scheme, source_origin.netloc):
+        trusted_attachment = (reference and target.scheme == 'https'
+                              and (target.scheme, target.netloc) == (source_origin.scheme, source_origin.netloc)
+                              and re.fullmatch(r'/wp-json/kbc-lms/v1/material/\d+/view', target.path))
+        if trusted_attachment and not mime_type and not is_pdf and pdf_checker:
+            is_pdf = pdf_checker(original)
+        if is_pdf and trusted_attachment:
             # Office Online cannot render these PDFs. The learner API serves
             # their verified original bytes to the existing local PDF renderer.
             item.update(kind='pdf', url=original, attachment_id=reference,

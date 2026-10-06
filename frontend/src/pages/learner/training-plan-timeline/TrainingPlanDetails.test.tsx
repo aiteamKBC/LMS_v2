@@ -1,7 +1,10 @@
-import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 import type { TrainingPlanDashboard, PlanReview } from '@/api/trainingPlanDashboard';
+import { fetchAttendanceWorkspace, peekAttendanceWorkspace, type AttendanceLecture, type AttendanceWorkspace } from '@/api/attendanceLectures';
+import type { LearnerCalendarEvent } from '@/api/learnerCalendar';
+import { coachFetch } from '@/lib/coachFetch';
 import type { PlanSubjectSummary } from '@/api/learnerOverview';
 import type { Subject } from '../my-learning/SubjectWorkspace';
 import { TrainingPlanDetails } from './TrainingPlanDetails';
@@ -9,6 +12,20 @@ import { TrainingPlanDetails } from './TrainingPlanDetails';
 vi.mock('@/components/feature/WorkspaceShell', () => ({ WorkspaceShell: ({ children }: { children: React.ReactNode }) => <>{children}</> }));
 vi.mock('../reviews/MeetingBookingDialog', () => ({
   default: ({ title }: { title: string }) => <div role="dialog" aria-label="Calendar booking">{title}</div>,
+}));
+vi.mock('@/api/attendanceLectures', () => ({ fetchAttendanceWorkspace: vi.fn(), peekAttendanceWorkspace: vi.fn() }));
+vi.mock('@/lib/coachFetch', () => ({ coachFetch: vi.fn() }));
+vi.mock('../attendance/components/AbsenceReportDialog', () => ({
+  default: ({ children, onClose, title = 'Report Absence' }: { children: React.ReactNode; onClose: () => void; title?: string }) =>
+    <div role="dialog" aria-label={title}>{children}<button type="button" onClick={onClose}>Close absence report</button></div>,
+}));
+vi.mock('../attendance/components/AbsenceReportForm', () => ({
+  default: ({ preselectMatch, initialRecoveryMethod }: { preselectMatch: { id?: string; dateIso: string; title: string }; initialRecoveryMethod?: string }) =>
+    <div data-testid="absence-form-selection" data-recovery={initialRecoveryMethod || ''}>{`${preselectMatch.id}|${preselectMatch.dateIso}|${preselectMatch.title}`}</div>,
+}));
+vi.mock('../attendance/components/CatchupBooking', () => ({
+  default: ({ lecture, onSelect }: { lecture: { id: string }; onSelect: (event: LearnerCalendarEvent) => void }) =>
+    <div data-testid="catchup-booking">{lecture.id}<button type="button" onClick={() => onSelect({ eventKey: 'catchup-1' } as LearnerCalendarEvent)}>Select catch-up</button></div>,
 }));
 
 const subjects: Subject[] = [{ id: 'legacy:10', title: 'Marketing', source: 'legacy', activities: [1, 8, 15, 22].map((day, index) => ({
@@ -56,7 +73,7 @@ const fixture = (): TrainingPlanDashboard => ({
     { id: 'missed', moduleId: 'M10', title: 'Missed session', start: '2026-09-08T10:00:00Z', end: null, minutes: 60, joinUrl: null, status: 'completed', attended: false },
     { id: 'next', moduleId: 'M10', title: 'Next session', start: '2026-09-15T10:00:00Z', end: null, minutes: 45, joinUrl: 'https://teams.microsoft.com/l/meetup-join/verified', status: 'scheduled', attended: null },
   ],
-  reviews: [review('future', '2026-09-22'), review('overdue', '2026-09-08'), review('done', '2026-09-01', 'completed'), review('booked', '2026-09-15', 'scheduled')],
+  reviews: [review('future', '2026-09-28'), review('overdue', '2026-09-08'), review('done', '2026-09-01', 'completed'), review('booked', '2026-09-15', 'scheduled')],
   coach: { name: 'Assigned coach', bookingUrl: 'https://outlook.office.com/book/assigned-coach' },
   contractStatus: 'ready', generatedAt: '2026-09-10T08:00:00Z',
 });
@@ -79,6 +96,9 @@ beforeEach(() => {
   HTMLElement.prototype.scrollIntoView = vi.fn();
   vi.useFakeTimers({ toFake: ['Date'] });
   vi.setSystemTime(new Date('2026-09-10T08:00:00Z'));
+  vi.mocked(fetchAttendanceWorkspace).mockResolvedValue({ lectures: [] } as unknown as AttendanceWorkspace);
+  vi.mocked(peekAttendanceWorkspace).mockReturnValue(undefined);
+  vi.mocked(coachFetch).mockReset();
 });
 afterEach(() => {
   cleanup();
@@ -92,7 +112,10 @@ describe('Dashboard training plan controls', () => {
     renderBoard(fixture(), summarySubjects, vi.fn(), undefined, undefined, true);
 
     expect(screen.getByRole('region', { name: 'Monthly study plan' })).toBeVisible();
-    expect(screen.getByRole('region', { name: 'Module progress' })).toBeVisible();
+    const moduleProgress = screen.getByRole('region', { name: 'Module progress' });
+    expect(moduleProgress).toBeVisible();
+    expect(within(moduleProgress).getAllByRole('img')).toHaveLength(4);
+    expect(within(moduleProgress).queryByText('Reviews')).not.toBeInTheDocument();
     expect(screen.getByRole('region', { name: 'Programme module progress' })).toBeVisible();
     expect(screen.getByRole('region', { name: 'Off-the-job hours by month' })).toBeVisible();
     expect(screen.queryByText('Your training plan')).not.toBeInTheDocument();
@@ -110,6 +133,23 @@ describe('Dashboard training plan controls', () => {
     expect(within(leftColumn).getByRole('region', { name: 'Weekly learning plan' })).toBeVisible();
     expect(within(leftColumn).getByRole('region', { name: 'Module progress' })).toBeVisible();
     expect(screen.queryByRole('region', { name: 'Learner progress charts' })).not.toBeInTheDocument();
+  });
+
+  it('stacks the off-the-job hours summary under Monthly focus for apprenticeships only', () => {
+    const { rerender } = render(<MemoryRouter><TrainingPlanDetails data={fixture()} subjects={summarySubjects} kind="apprenticeship" learnerId="125"
+      onRefresh={vi.fn()} onRetryContract={vi.fn()} activityOverviewOnly
+      weeklyFocus={<section aria-label="Weekly learning plan">Weekly learning plan</section>} /></MemoryRouter>);
+    const otj = screen.getByRole('region', { name: 'Off-the-job hours summary' });
+    // Sits in the same sidebar column as Monthly focus, after it.
+    const monthlyPlan = screen.getByRole('region', { name: 'Monthly study plan' });
+    expect(otj.parentElement).toBe(monthlyPlan.parentElement);
+    expect(within(otj).getByText('Planned (ILR)')).toBeInTheDocument();
+    expect(within(otj).getByText('40h')).toBeInTheDocument();
+
+    rerender(<MemoryRouter><TrainingPlanDetails data={fixture()} subjects={summarySubjects} kind="commercial" learnerId="125"
+      onRefresh={vi.fn()} onRetryContract={vi.fn()} activityOverviewOnly
+      weeklyFocus={<section aria-label="Weekly learning plan">Weekly learning plan</section>} /></MemoryRouter>);
+    expect(screen.queryByRole('region', { name: 'Off-the-job hours summary' })).not.toBeInTheDocument();
   });
 
   it('renders only the shared module timeline when embedded in the coach learning plan', () => {
@@ -130,9 +170,45 @@ describe('Dashboard training plan controls', () => {
     expect(chart.getByText('0 / 4 sessions attended')).toBeVisible();
     expect(chart.getByText('3 / 7 completed across all modules')).toBeVisible();
     expect(chart.getByText('22.5 / 80.4 hours')).toBeVisible();
-    expect(chart.getByText('1 / 4 completed across the programme')).toBeVisible();
+    expect(chart.queryByText('Reviews')).not.toBeInTheDocument();
+    expect(chart.getByRole('img')).not.toHaveAccessibleDescription(/reviews/i);
+    expect(chart.getByRole('img')).toHaveAttribute('viewBox', '0 0 400 235');
     expect(chart.getByText('Overall', { selector: 'dt' }).parentElement).toHaveTextContent('28%');
     expect(screen.queryByRole('region', { name: 'Module progress' })).not.toBeInTheDocument();
+  });
+
+  it('can move the OTJH chart out of the coach overview without changing the programme cards', () => {
+    render(<MemoryRouter><TrainingPlanDetails data={fixture()} subjects={summarySubjects} kind="commercial" learnerId="125"
+      onRefresh={vi.fn()} onRetryContract={vi.fn()} activityOverviewOnly overviewOnly showOtjChart={false} programmeSnapshot={{
+        overall: 28, otjhActual: 22.5, otjhTarget: 80.4, ksb: 6, attendancePresent: 0, attendanceTotal: 4,
+      }} /></MemoryRouter>);
+
+    expect(screen.getByRole('region', { name: 'Whole programme progress' })).toBeVisible();
+    expect(screen.getByRole('region', { name: 'Programme module progress' })).toBeVisible();
+    expect(screen.queryByRole('region', { name: 'Off-the-job hours by month' })).not.toBeInTheDocument();
+  });
+
+  it('uses coach table activity totals instead of the module slot counts', () => {
+    render(<MemoryRouter><TrainingPlanDetails data={fixture()} subjects={summarySubjects} kind="commercial" learnerId="125"
+      onRefresh={vi.fn()} onRetryContract={vi.fn()} activityOverviewOnly programmeSnapshot={{
+        overall: 87.26, activitiesCompleted: 137, activitiesTotal: 157, activitiesPercent: 87.26,
+        otjhActual: 164.87, otjhTarget: 576, ksb: 85.27, attendancePresent: 23, attendanceTotal: 45,
+      }} /></MemoryRouter>);
+    const chart = within(screen.getByRole('region', { name: 'Whole programme progress' }));
+    expect(chart.getByText('137 / 157 completed across all modules')).toBeVisible();
+    expect(chart.queryByText('3 / 7 completed across all modules')).not.toBeInTheDocument();
+    expect(chart.getByRole('img')).toHaveAccessibleName(/Activities: 87.26%/);
+  });
+
+  it('does not replace unavailable coach totals with module counts', () => {
+    render(<MemoryRouter><TrainingPlanDetails data={fixture()} subjects={summarySubjects} kind="commercial" learnerId="125"
+      onRefresh={vi.fn()} onRetryContract={vi.fn()} activityOverviewOnly programmeSnapshot={{
+        overall: null, activitiesCompleted: null, activitiesTotal: null, activitiesPercent: null,
+        otjhActual: null, otjhTarget: null, ksb: null, attendancePresent: null, attendanceTotal: null,
+      }} /></MemoryRouter>);
+    const chart = within(screen.getByRole('region', { name: 'Whole programme progress' }));
+    expect(chart.getByText('Activity progress unavailable')).toBeVisible();
+    expect(chart.queryByText('3 / 7 completed across all modules')).not.toBeInTheDocument();
   });
 
   it('renders programme modules as selectable cards with a visible progress track', () => {
@@ -143,7 +219,7 @@ describe('Dashboard training plan controls', () => {
     expect(directSpans).toHaveLength(3);
     expect(directSpans[0]).toHaveTextContent('Marketing42.86%');
     expect(directSpans[1].firstElementChild).toHaveStyle({ width: '42.86%' });
-    expect(directSpans[2]).toHaveTextContent('3 of 5 measures available');
+    expect(directSpans[2]).toHaveTextContent('2 of 4 measures available');
     expect(marketing).toHaveAttribute('aria-pressed', 'true');
   });
 
@@ -159,6 +235,10 @@ describe('Dashboard training plan controls', () => {
     expect(progress.getByText('Difference').nextElementSibling).toHaveTextContent('-6.5 hrs');
     expect(progress.getByText('K1')).toBeVisible();
     expect(progress.getByText('S4')).toBeVisible();
+    const reviews = within(panel.getByRole('region', { name: 'Reviews this month' }));
+    expect(reviews.getByText('28 Sept')).toBeVisible();
+    expect(reviews.getByText('15 Sept')).toBeVisible();
+    expect(reviews.getByText('1 Sept')).toBeVisible();
   });
 
   it('shows monthly assignments with hours, progress and their real component links', () => {
@@ -358,7 +438,27 @@ describe('Dashboard training plan controls', () => {
     expect(within(chart).queryByRole('tooltip')).not.toBeInTheDocument();
   });
 
-  it('keeps pending hours separate from completed hours and uses the programme total for overall progress', () => {
+  it('allows desktop mouse dragging across the OTJH chart', () => {
+    const data = fixture();
+    data.monthlyOtjh = {
+      '2026-09': { planned: 18, submitted: 14, actual: 11.5, missingPlannedActivities: 0 },
+      '2026-10': { planned: 20, submitted: 8, actual: 6, missingPlannedActivities: 0 },
+    };
+    data.actual = [];
+    renderBoard(data, summarySubjects);
+    const scroll = within(screen.getByRole('region', { name: 'Off-the-job hours by month' }))
+      .getByRole('region', { name: /Monthly off-the-job hours chart/ });
+    scroll.scrollLeft = 100;
+
+    fireEvent.pointerDown(scroll, { pointerId: 1, pointerType: 'mouse', button: 0, clientX: 200 });
+    fireEvent.pointerMove(scroll, { pointerId: 1, pointerType: 'mouse', clientX: 150 });
+
+    expect(scroll.scrollLeft).toBe(150);
+    fireEvent.pointerUp(scroll, { pointerId: 1, pointerType: 'mouse' });
+    expect(scroll).not.toHaveAttribute('data-panning', 'true');
+  });
+
+  it('keeps pending hours separate from completed hours and uses target-to-date for overall progress', () => {
     const data = fixture();
     data.monthlyOtjh = {
       '2026-09': { planned: 18, submitted: 2, actual: 11.5, missingPlannedActivities: 0 },
@@ -373,17 +473,71 @@ describe('Dashboard training plan controls', () => {
     expect(chart.getByRole('tooltip')).toHaveTextContent('Completed:64% (11.5 hours)');
     const bars = september.querySelectorAll('i');
     expect(bars[0].style.bottom).toBe(bars[1].style.height);
-    expect(chart.getByRole('progressbar', { name: 'Overall off-the-job hours progress' })).toHaveAttribute('aria-valuenow', '29');
+    expect(chart.getByRole('progressbar', { name: 'Overall off-the-job hours progress' })).toHaveAttribute('aria-valuenow', '64');
     expect(chart.getByText('11.5h completed · 2h submitted')).toBeInTheDocument();
     expect(chart.queryByText('N/A')).not.toBeInTheDocument();
   });
 
-  it('uses the combined OTJH target from every module that defines one', () => {
+  it('calculates target-to-date variance when a Monthly Logs target is blank', () => {
+    const data = fixture();
+    data.monthlyLogOtjh = {
+      '2026-09': { target: null, submitted: 2, completed: 11.5 },
+      '2026-10': { target: 20, submitted: 0, completed: 0 },
+    };
+    data.monthlyOtjh = {};
+    data.actual = [];
+    renderBoard(data, summarySubjects);
+
+    const chart = within(screen.getByRole('region', { name: 'Off-the-job hours by month' }));
+    expect(chart.getByText('-36% (-6.5h)')).toBeVisible();
+    expect(chart.queryByText('N/A')).not.toBeInTheDocument();
+  });
+
+  it('uses target-to-date when a later programme month has no target yet', () => {
+    const data = fixture();
+    data.requiredOtjh = null;
+    data.months['2026-10'].planned = null;
+    data.monthlyLogOtjh = {
+      '2026-09': { target: 18, submitted: 2, completed: 11.5 },
+      '2026-10': { target: null, submitted: 0, completed: 0 },
+    };
+    data.monthlyOtjh = {};
+    data.actual = [];
+    renderBoard(data, summarySubjects);
+
+    const chart = within(screen.getByRole('region', { name: 'Off-the-job hours by month' }));
+    expect(chart.getByRole('progressbar', { name: 'Overall off-the-job hours progress' })).toHaveAttribute('aria-valuenow', '64');
+    expect(chart.getByText('-36% (-6.5h)')).toBeVisible();
+    expect(chart.queryByText('N/A')).not.toBeInTheDocument();
+  });
+
+  it('sums the available monthly targets through the current month', () => {
+    const data = fixture();
+    data.months = {
+      '2026-08': { label: '', topics: [], planned: 20, source: 'contract' },
+      '2026-09': { label: '', topics: [], planned: null, source: 'contract' },
+      '2026-10': { label: '', topics: [], planned: 20, source: 'contract' },
+    };
+    data.monthlyLogOtjh = {
+      '2026-08': { target: 20, submitted: 2, completed: 11.5 },
+      '2026-09': { target: null, submitted: 0, completed: 0 },
+      '2026-10': { target: 20, submitted: 0, completed: 0 },
+    };
+    data.monthlyOtjh = {};
+    data.actual = [];
+    renderBoard(data, summarySubjects, vi.fn(), '2026-08-01', '2026-10-31');
+
+    const chart = within(screen.getByRole('region', { name: 'Off-the-job hours by month' }));
+    expect(chart.getByText('-42% (-8.5h)')).toBeVisible();
+    expect(chart.queryByText('N/A')).not.toBeInTheDocument();
+  });
+
+  it('uses cumulative monthly targets even when module OTJH targets are zero', () => {
     const data = fixture();
     data.requiredOtjh = 999;
     data.modules = [
-      { ...data.modules[0], total_otjh: 30 },
-      { ...data.modules[1], total_otjh: 50 },
+      { ...data.modules[0], total_otjh: 0 },
+      { ...data.modules[1], total_otjh: 0 },
       { id: 'NO-OTJH', title: 'No OTJH', description: '', start_date: null, end_date: null, tutor_name: '', coach_name: '', total_otjh: null },
     ];
     data.monthlyOtjh = {
@@ -395,17 +549,16 @@ describe('Dashboard training plan controls', () => {
     renderBoard(data, summarySubjects);
 
     expect(within(screen.getByRole('region', { name: 'Off-the-job hours by month' }))
-      .getByRole('progressbar', { name: 'Overall off-the-job hours progress' })).toHaveAttribute('aria-valuenow', '50');
+      .getByRole('progressbar', { name: 'Overall off-the-job hours progress' })).toHaveAttribute('aria-valuenow', '100');
   });
 
-  it('uses Audit OTJH through August 2026 and LMS calculations from September', () => {
+  it('uses SSOT monthly logs for every programme month', () => {
     const data = fixture();
     data.months = {
       '2026-07': { label: '', topics: [], planned: 70, source: 'contract' },
       '2026-08': { label: '', topics: [], planned: 80, source: 'contract' },
       '2026-09': { label: '', topics: [], planned: 18, source: 'contract' },
     };
-    data.auditOtjhCutoffMonth = '2026-08';
     data.monthlyLogOtjh = {
       '2026-07': { target: 10, submitted: 1, completed: 8 },
       '2026-08': { target: 44, submitted: 2, completed: 15 },
@@ -436,7 +589,6 @@ describe('Dashboard training plan controls', () => {
       '2026-02': { label: '', topics: [], planned: 20, source: 'contract' },
       '2026-03': { label: '', topics: [], planned: 20, source: 'contract' },
     };
-    data.auditOtjhCutoffMonth = '2026-08';
     data.monthlyLogOtjh = {
       '2026-01': { target: 12, submitted: 1, completed: 9 },
     };
@@ -467,5 +619,192 @@ describe('Dashboard training plan controls', () => {
     expect(months[0]).toHaveAccessibleName(/August 2026:/);
     expect(months[4]).toHaveAccessibleName(/December 2026:/);
     expect(months[8]).toHaveAccessibleName(/April 2027:/);
+  });
+});
+
+describe('dashboard Monthly Plan tab layout', () => {
+  const renderMonthly = (data = fixture(), planSubjects: (Subject | PlanSubjectSummary)[] = subjects, canOpenActivities = true) => render(<MemoryRouter initialEntries={['/plan']}><Routes>
+    <Route path="/plan" element={<TrainingPlanDetails data={data} subjects={planSubjects} kind="commercial" learnerId="125"
+      onRefresh={vi.fn()} onRetryContract={vi.fn()} monthlyOnly canOpenActivities={canOpenActivities} />} />
+    <Route path="*" element={<Destination />} />
+  </Routes></MemoryRouter>);
+
+  it('shows the monthly metrics strip, reviews, assignments and lectures from the same data', () => {
+    renderMonthly(fixture(), summarySubjects);
+    const monthly = within(screen.getByRole('region', { name: 'Monthly study plan' }));
+    expect(monthly.getByRole('heading', { name: 'September 2026' })).toBeVisible();
+    const progress = within(monthly.getByRole('region', { name: 'Progress this month' }));
+    expect(progress.getByText('Required hours').nextElementSibling).toHaveTextContent('18 hrs');
+    expect(progress.getByText('Achieved hours').nextElementSibling).toHaveTextContent('11.5 hrs');
+    expect(progress.getByText('Difference').nextElementSibling).toHaveTextContent('-6.5 hrs');
+    expect(progress.getByText('K1')).toBeVisible();
+    const reviews = within(monthly.getByRole('region', { name: 'Reviews this month' }));
+    expect(reviews.getByText('28 Sept')).toBeVisible();
+    const essay = monthly.getByText('Professional Practice Essay').closest('article')!;
+    expect(within(essay).getByText('Required hours').parentElement).toHaveTextContent('10 hrs');
+    expect(within(essay).getByLabelText('0% complete')).toBeVisible();
+    expect(within(essay).getByRole('link', { name: 'Start' })).toHaveAttribute('href', '/learner/component/commercial/125/essay?week=Assignment%201');
+    const lectures = within(monthly.getByRole('region', { name: 'Lectures this month' }));
+    expect(lectures.getAllByRole('columnheader').map(cell => cell.textContent)).toEqual(['Date', 'Time', 'Session', 'Tutor', 'Duration', 'Join']);
+    expect(lectures.getByText('Attended session')).toBeVisible();
+    expect(screen.queryByLabelText('Focus month')).not.toBeInTheDocument();
+  });
+
+  it('renders the coach view without learner actions while preserving status and month navigation', () => {
+    const data = fixture();
+    data.reviews = [{ ...review('book', '2026-09-12'), reviewTemplateId: 'template-1' },
+      { ...review('join', '2026-09-15', 'scheduled'), meetingLink: 'https://teams.microsoft.com/l/meetup-join/review', invited: true }];
+    renderMonthly(data, summarySubjects, false);
+
+    expect(screen.getByRole('button', { name: 'Previous month' })).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Next month' })).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'Schedule' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'Attend' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'View form' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'Start' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: /View all activities/ })).not.toBeInTheDocument();
+    expect(within(screen.getByRole('region', { name: 'Reviews this month' })).getByText('Not booked')).toBeVisible();
+    expect(within(screen.getByRole('region', { name: 'Lectures this month' })).getAllByRole('columnheader').map(cell => cell.textContent))
+      .toEqual(['Date', 'Time', 'Session', 'Tutor', 'Duration']);
+  });
+
+  it('uses Attendance eligibility and opens the matching lecture in the absence form', async () => {
+    vi.mocked(fetchAttendanceWorkspace).mockResolvedValue({ lectures: [
+      { id: 'teams:attended-2026-09-01', sessionId: 'teams:attended', date: '2026-09-01', title: 'Attended session', source: 'microsoft-teams', canReportAbsence: false },
+      { id: 'teams:missed-2026-09-08', sessionId: 'teams:missed', date: '2026-09-08', title: 'Missed session', source: 'microsoft-teams', canReportAbsence: false, absenceReport: { id: 9, status: 'pending' } },
+      { id: 'teams:next-2026-09-15', sessionId: 'teams:next', date: '2026-09-15', title: 'Next session', source: 'microsoft-teams', canReportAbsence: true },
+      { id: 'teams:other-2026-09-15', sessionId: 'teams:other', date: '2026-09-15', title: 'Other learner session', source: 'microsoft-teams', canReportAbsence: true },
+    ] as AttendanceLecture[] } as unknown as AttendanceWorkspace);
+    renderMonthly();
+    const lectures = within(screen.getByRole('region', { name: 'Lectures this month' }));
+    const report = await lectures.findByRole('button', { name: 'Report absence' });
+    expect(report.closest('tr')).toHaveTextContent('15 Sept');
+    expect(lectures.getAllByRole('button', { name: 'Report absence' })).toHaveLength(1);
+    fireEvent.click(report);
+    expect(screen.getByRole('dialog', { name: 'Report Absence' })).toBeVisible();
+    expect(screen.getByTestId('absence-form-selection')).toHaveTextContent('teams:next-2026-09-15|2026-09-15|Next session');
+    fireEvent.click(screen.getByRole('button', { name: 'Close absence report' }));
+    expect(screen.queryByRole('dialog', { name: 'Report Absence' })).not.toBeInTheDocument();
+  });
+
+  it('offers catch-up instead of another absence report for a missed lecture', async () => {
+    vi.mocked(fetchAttendanceWorkspace).mockResolvedValue({ lectures: [
+      { id: 'teams:missed-2026-09-08', sessionId: 'teams:missed', date: '2026-09-08', title: 'Missed session', source: 'microsoft-teams', status: 'absent', catchupStatus: null, canReportAbsence: true, absenceReport: null },
+      { id: 'teams:next-2026-09-15', sessionId: 'teams:next', date: '2026-09-15', title: 'Next session', source: 'microsoft-teams', status: 'upcoming', canReportAbsence: true },
+    ] as AttendanceLecture[] } as unknown as AttendanceWorkspace);
+    renderMonthly();
+    const lectures = within(screen.getByRole('region', { name: 'Lectures this month' }));
+    const catchup = await lectures.findByRole('button', { name: 'Book Catchup Session' });
+    expect(catchup.closest('tr')).toHaveTextContent('8 Sept');
+    expect(within(catchup.closest('tr')!).queryByRole('button', { name: 'Report absence' })).not.toBeInTheDocument();
+    expect(lectures.getByRole('button', { name: 'Report absence' }).closest('tr')).toHaveTextContent('15 Sept');
+    fireEvent.click(catchup);
+    expect(screen.getByRole('dialog', { name: 'Book Catchup Session' })).toBeVisible();
+    expect(screen.getByTestId('absence-form-selection')).toHaveAttribute('data-recovery', 'catch-up');
+    expect(screen.getByTestId('absence-form-selection')).toHaveTextContent('teams:missed-2026-09-08|2026-09-08|Missed session');
+  });
+
+  it('links a catch-up booking to the existing absence report', async () => {
+    vi.mocked(fetchAttendanceWorkspace).mockResolvedValue({ lectures: [
+      { id: 'teams:missed-2026-09-08', sessionId: 'teams:missed', date: '2026-09-08', title: 'Missed session', source: 'microsoft-teams', status: 'absent', catchupStatus: null, canReportAbsence: false, absenceReport: { id: 99, status: 'approved' } },
+    ] as AttendanceLecture[] } as unknown as AttendanceWorkspace);
+    vi.mocked(coachFetch).mockResolvedValue(new Response(JSON.stringify({ message: 'Linked' }), { status: 200 }));
+    renderMonthly();
+    fireEvent.click(await screen.findByRole('button', { name: 'Book Catchup Session' }));
+    const dialog = within(screen.getByRole('dialog', { name: 'Book Catchup Session' }));
+    expect(dialog.getByTestId('catchup-booking')).toHaveTextContent('teams:missed-2026-09-08');
+    expect(dialog.getByRole('button', { name: 'Link catch-up to this absence' })).toBeDisabled();
+    fireEvent.click(dialog.getByRole('button', { name: 'Select catch-up' }));
+    fireEvent.click(dialog.getByRole('button', { name: 'Link catch-up to this absence' }));
+    await waitFor(() => expect(coachFetch).toHaveBeenCalledWith('/learner_api/session-catchup/commercial/125/', expect.objectContaining({
+      method: 'POST', body: JSON.stringify({ reportId: 99, eventKey: 'catchup-1' }),
+    })));
+  });
+
+  it('keeps Schedule, Attend, month navigation and View all activities working', () => {
+    const data = fixture();
+    data.reviews = [{ ...review('book', '2026-09-12'), reviewTemplateId: 'template-1' },
+      { ...review('join', '2026-09-15', 'scheduled'), reviewInstanceId: 'instance-1', scheduledTime: '14:00:00', meetingLink: 'https://teams.microsoft.com/l/meetup-join/review', invited: true }];
+    renderMonthly(data);
+    const reviews = within(screen.getByRole('region', { name: 'Reviews this month' }));
+    expect(reviews.getByRole('link', { name: 'Attend' })).toHaveAttribute('href', 'https://teams.microsoft.com/l/meetup-join/review');
+    const joinRow = reviews.getByRole('link', { name: 'Attend' }).closest('article')!;
+    expect(joinRow.children[1]).toHaveTextContent('14:00 · UK time');
+    expect(reviews.getByRole('button', { name: 'Schedule' }).closest('article')!.children[1]).toHaveTextContent('60 min');
+    const formLinks = reviews.getAllByRole('link', { name: 'View form' });
+    expect(formLinks.map(link => link.getAttribute('href'))).toEqual([
+      '/learner/progress-reviews/book?kind=commercial&learner=125',
+      '/learner/progress-reviews/join?kind=commercial&learner=125',
+    ]);
+    expect(formLinks[1].compareDocumentPosition(reviews.getByRole('link', { name: 'Attend' })) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    fireEvent.click(reviews.getByRole('button', { name: 'Schedule' }));
+    expect(screen.getByRole('dialog', { name: 'Calendar booking' })).toHaveTextContent('Progress Review');
+    fireEvent.keyDown(document, { key: 'Escape' });
+    cleanup();
+
+    renderMonthly();
+    expect(screen.getByRole('button', { name: 'Previous month' })).toBeDisabled();
+    const lectures = within(screen.getByRole('region', { name: 'Lectures this month' }));
+    expect(lectures.getByRole('link', { name: 'Attend' })).toHaveAttribute('href', 'https://teams.microsoft.com/l/meetup-join/verified');
+    fireEvent.click(screen.getByRole('button', { name: 'Next month' }));
+    expect(screen.getByRole('heading', { name: 'October 2026' })).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: 'Previous month' }));
+    fireEvent.click(screen.getByRole('link', { name: 'View all activities for September 2026' }));
+    expect(screen.getByTestId('destination')).toHaveTextContent('/learner/modules/commercial/125?subject=legacy%3A10');
+  });
+});
+
+describe('dashboard Training Plan tab', () => {
+  it('drops the progress charts and module schedule but keeps the timeline and module overview', () => {
+    const withSchedule = () => {
+      const data = fixture();
+      data.modules[0] = { ...data.modules[0], curriculumSlots: ['2026-09-01', '2026-09-08', '2026-09-15'].map((date, index) => ({
+        slotNumber: index + 1, date, day: 'Tuesday', type: 'live-session', cause: '', sessionNumber: index + 1, holidays: [] })) };
+      return data;
+    };
+    renderBoard(withSchedule(), summarySubjects);
+    expect(within(screen.getByRole('region', { name: 'Module overview' })).getByTestId('curriculum-timeline')).toBeInTheDocument();
+    expect(screen.getByRole('region', { name: 'Off-the-job hours by month' })).toBeInTheDocument();
+    cleanup();
+    render(<MemoryRouter initialEntries={['/plan']}><TrainingPlanDetails data={withSchedule()} subjects={summarySubjects} kind="commercial" learnerId="125"
+      onRefresh={vi.fn()} onRetryContract={vi.fn()} trainingOnly /></MemoryRouter>);
+    expect(screen.getByRole('region', { name: 'Module timeline' })).toBeVisible();
+    const overview = screen.getByRole('region', { name: 'Module overview' });
+    expect(overview).toBeVisible();
+    expect(screen.getByRole('region', { name: 'Module timeline' }).compareDocumentPosition(overview) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(screen.queryByRole('link', { name: 'View full timeline' })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Focus month')).not.toBeInTheDocument();
+    expect(screen.queryByRole('combobox', { name: 'Focus module' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Refresh monthly learning' })).not.toBeInTheDocument();
+    fireEvent.click(within(screen.getByRole('region', { name: 'Module timeline' })).getByRole('button', { name: 'New module' }));
+    expect(within(overview).getByRole('heading', { name: 'New module' })).toBeVisible();
+    for (const name of ['Module progress', 'Programme module progress', 'Off-the-job hours by month']) {
+      expect(screen.queryByRole('region', { name })).not.toBeInTheDocument();
+    }
+    expect(within(screen.getByRole('region', { name: 'Module overview' })).queryByTestId('curriculum-timeline')).not.toBeInTheDocument();
+  });
+  it('opens an MCM form on the learner Monthly Coaching page', () => {
+    const data = fixture();
+    data.reviews = [{ ...review('mcm-1', '2026-09-20', 'completed', 'mcr'), reviewInstanceId: 'mcm-instance', title: 'Monthly Coaching Meeting' }];
+    render(<MemoryRouter initialEntries={['/plan']}><TrainingPlanDetails data={data} subjects={subjects} kind="commercial" learnerId="125"
+      onRefresh={vi.fn()} onRetryContract={vi.fn()} monthlyOnly /></MemoryRouter>);
+    expect(within(screen.getByRole('region', { name: 'Reviews this month' })).getByRole('link', { name: 'View form' }))
+      .toHaveAttribute('href', '/learner/monthly-coaching/mcm-1?kind=commercial&learner=125');
+  });
+  it('shows View form only for reviews with a form and opens the matching event', () => {
+    const data = fixture();
+    data.reviews = [
+      review('no-form', '2026-09-11', 'completed'),
+      { ...review('pr-record', '2026-09-12', 'scheduled'), eventKey: 'pr-event', reviewTemplateId: 'pr-template' },
+      { ...review('mcm-record', '2026-09-13', 'completed', 'mcr'), eventKey: 'mcm-event', reviewInstanceId: 'mcm-instance' },
+    ];
+    render(<MemoryRouter initialEntries={['/plan']}><TrainingPlanDetails data={data} subjects={subjects} kind="commercial" learnerId="125"
+      onRefresh={vi.fn()} onRetryContract={vi.fn()} monthlyOnly /></MemoryRouter>);
+    const rows = within(screen.getByRole('region', { name: 'Reviews this month' }));
+    expect(within(rows.getByText('11 Sept').closest('article')!).queryByRole('link', { name: 'View form' })).not.toBeInTheDocument();
+    expect(within(rows.getByText('12 Sept').closest('article')!).getByRole('link', { name: 'View form' }))
+      .toHaveAttribute('href', '/learner/progress-reviews/pr-event?kind=commercial&learner=125');
+    expect(within(rows.getByText('13 Sept').closest('article')!).getByRole('link', { name: 'View form' }))
+      .toHaveAttribute('href', '/learner/monthly-coaching/mcm-event?kind=commercial&learner=125');
   });
 });

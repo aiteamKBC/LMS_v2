@@ -35,8 +35,8 @@ describe('learner header programme facts', () => {
   it('does not describe a finished module as current', () => {
     expect(learnerHeaderPlan([next, future], placement, '2027-06-01')).toEqual({ label: 'Last module', modules: [future] });
   });
-  it('does not choose a module from a different placement if no matching schedule exists', () => {
-    expect(learnerHeaderPlan([oldPlacement], placement, '2026-09-12').modules).toEqual([]);
+  it('keeps an assigned module visible when imported placement labels differ', () => {
+    expect(learnerHeaderPlan([oldPlacement], placement, '2026-09-12').modules).toEqual([oldPlacement]);
   });
   it('matches placement names without case or whitespace differences', () => {
     expect(learnerHeaderPlan([next], { programme: ' marketing level 4 ', cohort: 'OCTOBER 2026', group: 'g1' }, '2026-09-12').modules).toEqual([next]);

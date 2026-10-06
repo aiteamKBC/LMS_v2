@@ -1,19 +1,22 @@
+import { ImportedReviewSection } from './imported/ImportedReviewSection';
 import { useEffect, useMemo, useState } from 'react';
 import type { LearnerKind } from '@/api/learnerDetail';
 import {
   fetchReviewHistory,
   type ImportedReview,
-  type ImportedReviewField,
-  type ImportedReviewSection,
+  type ImportedReviewSection as HistorySection,
   type ReviewHistoryCategory,
 } from '@/api/reviewHistory';
 import { RowsSkeleton } from '@/components/feature/Skeletons';
+import { ReviewPdfDownload } from '@/components/reviews/ReviewPdfDownload';
 
 interface ImportedReviewHistoryProps {
   kind: LearnerKind;
   learnerId: string;
   category: ReviewHistoryCategory;
   hideHeader?: boolean;
+  reviewId?: string;
+  downloadPdf?: (review: ImportedReview) => Promise<void>;
 }
 
 const monthOptions = [
@@ -47,49 +50,7 @@ function statusStyle(value: string): string {
   return 'border-amber-200 bg-amber-50 text-amber-700';
 }
 
-function printableValue(value: unknown): string {
-  if (value === null || value === undefined || value === '') return '-';
-  if (typeof value === 'boolean') return value ? 'Yes' : 'No';
-  if (typeof value === 'string' || typeof value === 'number') return String(value);
-  if (Array.isArray(value)) return value.map(printableValue).join(', ');
-  try {
-    return JSON.stringify(value, null, 2);
-  } catch {
-    return String(value);
-  }
-}
-
-function safeLink(value?: string): string | null {
-  if (!value) return null;
-  try {
-    const url = new URL(value);
-    return url.protocol === 'https:' || url.protocol === 'http:' ? url.href : null;
-  } catch {
-    return null;
-  }
-}
-
-function Field({ field }: { field: ImportedReviewField }) {
-  const links = Array.isArray(field.links) ? field.links : [];
-  return (
-    <div className="rounded-xl border border-background-200 bg-background-100/45 p-3.5">
-      {field.label && <p className="text-[10px] font-bold uppercase tracking-wide text-foreground-400">{field.label}</p>}
-      <p className="mt-1.5 whitespace-pre-wrap break-words text-sm leading-6 text-foreground-800">{printableValue(field.value)}</p>
-      {field.description && <p className="mt-1 text-xs leading-5 text-foreground-500">{field.description}</p>}
-      {links.length > 0 && (
-        <div className="mt-2 flex flex-wrap gap-2">
-          {links.map((link, index) => {
-            const href = safeLink(link.href || link.url || link.azure_url);
-            if (!href) return null;
-            return <a key={`${href}:${index}`} href={href} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 rounded-lg border border-primary-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-primary-700 hover:bg-primary-50"><AppIcon className="ri-attachment-2" />{link.text || link.title || 'Open attachment'}</a>;
-          })}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function ReviewSection({ section, open, onToggle }: { section: ImportedReviewSection; open: boolean; onToggle: () => void }) {
+function ReviewSection({ section, open, onToggle }: { section: HistorySection; open: boolean; onToggle: () => void }) {
   return (
     <section className="overflow-hidden rounded-xl border border-background-200 bg-white">
       <button type="button" onClick={onToggle} aria-expanded={open} className="flex w-full items-center gap-3 px-4 py-3 text-left hover:bg-primary-50/40">
@@ -100,33 +61,14 @@ function ReviewSection({ section, open, onToggle }: { section: ImportedReviewSec
       </button>
       {open && (
         <div className="space-y-3 border-t border-background-200 p-3.5 sm:p-4">
-          {section.fields.map((field, index) => <Field key={`${field.label || 'field'}:${index}`} field={field} />)}
-          {section.tables.map((table, tableIndex) => {
-            const rows = Array.isArray(table.rows) ? table.rows : [];
-            if (!rows.length) return null;
-            return (
-              <div key={tableIndex} className="overflow-x-auto rounded-xl border border-background-200">
-                <table className="min-w-full text-left text-xs">
-                  <tbody className="divide-y divide-background-200">
-                    {rows.map((row, rowIndex) => (
-                      <tr key={rowIndex} className={rowIndex === 0 ? 'bg-primary-50/55 font-bold text-primary-900' : 'text-foreground-700'}>
-                        {(Array.isArray(row) ? row : [row]).map((cell, cellIndex) => <td key={cellIndex} className="max-w-[420px] whitespace-pre-wrap break-words px-3 py-2.5 align-top">{printableValue(cell)}</td>)}
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            );
-          })}
-          {section.rawText && <div className="rounded-xl border border-background-200 bg-background-100/45 p-3.5"><p className="text-[10px] font-bold uppercase tracking-wide text-foreground-400">Imported text</p><p className="mt-1.5 whitespace-pre-wrap break-words text-sm leading-6 text-foreground-700">{section.rawText}</p></div>}
-          {!section.fields.length && !section.tables.length && !section.rawText && <p className="text-sm text-foreground-400">No section details were imported.</p>}
+          <ImportedReviewSection section={section} />
         </div>
       )}
     </section>
   );
 }
 
-export function ImportedReviewHistory({ kind, learnerId, category, hideHeader = false }: ImportedReviewHistoryProps) {
+export function ImportedReviewHistory({ kind, learnerId, category, hideHeader = false, reviewId, downloadPdf }: ImportedReviewHistoryProps) {
   const [reviews, setReviews] = useState<ImportedReview[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -166,6 +108,13 @@ export function ImportedReviewHistory({ kind, learnerId, category, hideHeader = 
   const title = category === 'monthly-coaching' ? 'Imported coaching history' : category === 'reviews' ? 'Imported review history' : 'Imported progress review history';
 
   useEffect(() => {
+    if (!reviewId || loading) return;
+    const requestedReview = reviews.find((review) => review.id === reviewId || review.aptemReviewId === reviewId);
+    setSelectedId(requestedReview?.id || '');
+    setOpenSections(requestedReview?.sections[0] ? [String(requestedReview.sections[0].id)] : []);
+  }, [loading, reviewId, reviews]);
+
+  useEffect(() => {
     if (selectedId && !filtered.some((review) => review.id === selectedId)) {
       setSelectedId('');
       setOpenSections([]);
@@ -198,14 +147,15 @@ export function ImportedReviewHistory({ kind, learnerId, category, hideHeader = 
         <div className="p-5 text-center text-sm text-foreground-500">No imported {category === 'monthly-coaching' ? 'coaching meetings' : category === 'reviews' ? 'reviews' : 'progress reviews'} were found for this learner.</div>
       ) : (
         <>
-          <div className="grid gap-2 border-b border-background-200 bg-background-100/45 p-4 sm:grid-cols-2 lg:grid-cols-4">
+          {!reviewId && <div className="grid gap-2 border-b border-background-200 bg-background-100/45 p-4 sm:grid-cols-2 lg:grid-cols-4">
             <label className="relative sm:col-span-2 lg:col-span-1"><span className="sr-only">Search reviews</span><AppIcon className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400" /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search reviews" className="h-10 w-full rounded-xl border border-background-300 bg-white pl-9 pr-3 text-xs outline-none focus:border-primary-400" /></label>
             <label><span className="sr-only">Filter by status</span><select value={status} onChange={(event) => setStatus(event.target.value)} className="h-10 w-full rounded-xl border border-background-300 bg-white px-3 text-xs font-semibold text-foreground-700 outline-none focus:border-primary-400"><option value="all">All statuses</option>{statuses.map((value) => <option key={value} value={value}>{statusLabel(value)}</option>)}</select></label>
             <label><span className="sr-only">Filter by year</span><select value={year} onChange={(event) => setYear(event.target.value)} className="h-10 w-full rounded-xl border border-background-300 bg-white px-3 text-xs font-semibold text-foreground-700 outline-none focus:border-primary-400"><option value="all">All years</option>{years.map((value) => <option key={value} value={value}>{value}</option>)}</select></label>
             <label><span className="sr-only">Filter by month</span><select value={month} onChange={(event) => setMonth(event.target.value)} className="h-10 w-full rounded-xl border border-background-300 bg-white px-3 text-xs font-semibold text-foreground-700 outline-none focus:border-primary-400"><option value="all">All months</option>{monthOptions.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
-          </div>
+          </div>}
 
-          {!selected && <div className="overflow-x-auto">
+          {!selected && reviewId && <div className="p-6 text-center text-sm text-foreground-500">The requested imported review form could not be found.</div>}
+          {!selected && !reviewId && <div className="overflow-x-auto">
             <table className="w-full min-w-[760px] text-left">
               <thead className="border-b border-background-200 bg-primary-50/60 text-[10px] font-bold uppercase tracking-wide text-foreground-500">
                 <tr><th className="px-5 py-3">Review</th><th className="px-5 py-3">Type</th><th className="px-5 py-3">Reviewer</th><th className="px-5 py-3">Planned date</th><th className="px-5 py-3">Status</th><th className="px-5 py-3 text-right">Details</th></tr>
@@ -224,11 +174,11 @@ export function ImportedReviewHistory({ kind, learnerId, category, hideHeader = 
             </table>
           </div>}
           {selected && <div>
-            {selected && <button type="button" onClick={() => { setSelectedId(''); setOpenSections([]); }} className="mb-3 rounded-lg border border-background-300 bg-white px-3 py-2 text-xs font-bold text-primary-700 hover:bg-primary-50">← Back to reviews</button>}
+            {!reviewId && <button type="button" onClick={() => { setSelectedId(''); setOpenSections([]); }} className="mb-3 rounded-lg border border-background-300 bg-white px-3 py-2 text-xs font-bold text-primary-700 hover:bg-primary-50">← Back to reviews</button>}
             <div className="min-w-0 bg-background-100/25 p-4 sm:p-5">
                 <div className="space-y-4">
                   <div className="rounded-2xl border border-primary-100 bg-white p-4 shadow-sm">
-                    <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between"><div><p className="text-[10px] font-bold uppercase tracking-wide text-primary-600">Imported review</p><h3 className="mt-1 text-lg font-bold text-foreground-900">{selected.name}</h3><p className="mt-1 text-xs text-foreground-500">{selected.type}</p></div><span className={`w-fit rounded-full border px-3 py-1 text-[10px] font-bold ${statusStyle(selected.status)}`}>{statusLabel(selected.status)}</span></div>
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between"><div><p className="text-[10px] font-bold uppercase tracking-wide text-primary-600">Imported review</p><h3 className="mt-1 text-lg font-bold text-foreground-900">{selected.name}</h3><p className="mt-1 text-xs text-foreground-500">{selected.type}</p></div><div className="flex flex-wrap items-center gap-2"><span className={`w-fit rounded-full border px-3 py-1 text-[10px] font-bold ${statusStyle(selected.status)}`}>{statusLabel(selected.status)}</span>{downloadPdf && <ReviewPdfDownload availability={{ available: true, reason: '' }} label="Download PDF" onDownload={() => downloadPdf(selected)} />}</div></div>
                     <div className="mt-4 grid gap-2 sm:grid-cols-3"><div className="rounded-xl bg-background-100 p-3"><p className="text-[9px] uppercase text-foreground-400">Reviewer</p><p className="mt-1 text-xs font-bold text-foreground-800">{selected.reviewerName || '-'}</p></div><div className="rounded-xl bg-background-100 p-3"><p className="text-[9px] uppercase text-foreground-400">Planned</p><p className="mt-1 text-xs font-bold text-foreground-800">{formatDate(selected.plannedDate)}{selected.plannedTime ? ` at ${selected.plannedTime}` : ''}</p></div><div className="rounded-xl bg-background-100 p-3"><p className="text-[9px] uppercase text-foreground-400">Completed</p><p className="mt-1 text-xs font-bold text-foreground-800">{formatDate(selected.completedDate)}</p></div></div>
                     {!['success', 'complete'].includes(selected.extractionStatus.toLowerCase()) && <p className="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-[11px] text-amber-800"><AppIcon className="ri-information-line mr-1" />Some details may not have been available in the imported Aptem record.</p>}
                   </div>

@@ -1,5 +1,6 @@
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
+from unittest.mock import patch
 
 from django.test import SimpleTestCase
 from django.utils.dateparse import parse_datetime
@@ -15,6 +16,9 @@ from .time_tracking import (
 
 class TimeTrackingSessionTests(SimpleTestCase):
     def setUp(self):
+        holiday_patch = patch('learner_api.time_tracking.is_working_hours_holiday', return_value=False)
+        self.holidays = holiday_patch.start()
+        self.addCleanup(holiday_patch.stop)
         self.session = issue_tracking_session(
             activity_kind="video",
             activity_id="COMP-1",
@@ -82,6 +86,26 @@ class TimeTrackingSessionTests(SimpleTestCase):
                 issued_at=datetime(2026, 7, 15, 12, 0, tzinfo=ZoneInfo("UTC")),
             )
 
+    def test_audio_component_can_verify_active_playback_with_the_same_session_cap(self):
+        session = issue_tracking_session(
+            activity_kind="component", activity_id="AUDIO-1",
+            learner_kind="commercial", learner_id="321",
+            counting_mode="active_playback", issued_at=self.started_at,
+        )
+        result = verify_tracking_session(
+            session["trackingToken"], activity_kind="component", activity_id="AUDIO-1",
+            learner_kind="commercial", learner_id="321", claimed_seconds=999,
+            submitted_at=self.started_at + timedelta(seconds=20),
+        )
+        self.assertEqual(result["verifiedSeconds"], 20)
+        self.assertEqual(result["source"], "signed_session_capped_active_playback")
+        with self.assertRaisesRegex(TrackingSessionError, "does not match"):
+            verify_tracking_session(
+                session["trackingToken"], activity_kind="component", activity_id="AUDIO-2",
+                learner_kind="commercial", learner_id="321", claimed_seconds=20,
+                submitted_at=self.started_at + timedelta(seconds=20),
+            )
+
     def test_component_access_is_open_before_during_and_after_old_hours(self):
         self.assertTrue(component_access_is_open(datetime(2026, 1, 15, 6, 59, tzinfo=ZoneInfo("UTC"))))
         self.assertTrue(component_access_is_open(datetime(2026, 1, 15, 7, 0, tzinfo=ZoneInfo("UTC"))))
@@ -102,6 +126,11 @@ class TimeTrackingSessionTests(SimpleTestCase):
         self.assertTrue(outside_uk_working_hours(datetime(2026, 7, 15, 5, 59, tzinfo=ZoneInfo("UTC"))))
         self.assertFalse(outside_uk_working_hours(datetime(2026, 7, 15, 6, 0, tzinfo=ZoneInfo("UTC"))))
         self.assertTrue(outside_uk_working_hours(datetime(2026, 7, 18, 12, 0, tzinfo=ZoneInfo("UTC"))))
+
+    def test_weekday_holiday_requires_declaration_during_working_hours(self):
+        self.holidays.return_value = True
+        self.assertTrue(outside_uk_working_hours(datetime(2026, 12, 25, 12, tzinfo=ZoneInfo('UTC'))))
+        self.holidays.assert_called_with(datetime(2026, 12, 25).date())
 
     def test_tracking_can_start_and_submit_outside_the_old_window(self):
         started_at = datetime(2026, 1, 18, 22, 0, tzinfo=ZoneInfo("UTC"))

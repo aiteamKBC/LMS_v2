@@ -22,6 +22,7 @@ from .constants import (
     DEFAULT_PROGRAMME_STATUS,
     POSITION_CHOICES,
     LEARNER_TYPE_CHOICES,
+    ATTENDANCE_TYPE_CHOICES,
     ORGANISATION_STATUS_CHOICES,
     ORGANISATION_GROUP_TYPE_CHOICES,
     LEVY_PAYER_CHOICES,
@@ -263,9 +264,10 @@ def _employer_label(u):
 def to_board(u):
     # Imported here, not at module scope: enrolment_api.models imports from
     # learner_api.models, so a top-level import would be circular.
-    from .board_wizard import fmt_date, merge_wizard_sections
+    from .board_wizard import fmt_date, merge_wizard_sections, record_address, saved_signature
 
     enrolled_at, enrolled_by = _split_enrolled(u.enrolled_time_and_user)
+    saved_signature_value, saved_signature_date = saved_signature(u.id)
     employer_name, employer_id = _employer_label(u)
     board = {
         "user": {
@@ -294,6 +296,12 @@ def to_board(u):
             "groupMembership": _s(u.group),
             "signatureUrl": None,
             "hasMandate": False,
+            # What the learner already gave on their record (first sign-in, or
+            # the create form), so the enrolment wizard can fill its blanks
+            # rather than ask again. See WizardContext.withRecordDefaults.
+            "address": record_address(u),
+            "savedSignature": saved_signature_value,
+            "savedSignatureDate": saved_signature_date,
         },
         "activity": {
             "aptemUsage": "00:00",
@@ -373,6 +381,7 @@ APTEM_TEXT_FIELDS = {
     "mentor": "mentor",
     "referenceNumber": "reference_number",
     "extendedBreak": "extended_break",
+    "attendanceType": "attendance_type",
     "employerAddress": "employer_address",
     "targetProgramme": "target_programme",
     "legalSex": "legal_sex",
@@ -634,6 +643,7 @@ def validate_choices(payload):
         ("type", TYPE_CHOICES),
         ("programmeStatus", PROGRAMME_STATUS_CHOICES),
         ("learnerType", LEARNER_TYPE_CHOICES),
+        ("attendanceType", ATTENDANCE_TYPE_CHOICES),
     )
     for key, allowed in checks:
         val = payload.get(key)
@@ -682,6 +692,17 @@ def validate_learner_dates(fields, existing=None):
         raise ValidationError("End date must be on or after start date.")
 
 
+def _blank_attendance_type_to_null(fields):
+    """A cleared Attendance type is NULL, not ''.
+
+    The column's CHECK constraint admits only NULL or one of
+    ATTENDANCE_TYPE_CHOICES, so the empty string a cleared select sends would
+    otherwise fail at the database instead of clearing the value.
+    """
+    if fields.get("attendance_type") == "":
+        fields["attendance_type"] = None
+
+
 def write_fields(payload, *, require_create=False):
     """Validate a payload and return {model_attr: value} for the flat columns."""
     if not isinstance(payload, dict):
@@ -707,6 +728,11 @@ def write_fields(payload, *, require_create=False):
     if "trainingPlan" in payload:
         fields["learning_plan"] = _normalize_training_plan(payload["trainingPlan"])
     fields.update(_employer_id_field(payload))
+    _blank_attendance_type_to_null(fields)
+    if require_create and not _s(fields.get("programme_status")):
+        # Every account starts at 'Fresh user'. Left unset it was stored NULL,
+        # which some readers took for "status unknown" rather than new.
+        fields["programme_status"] = DEFAULT_PROGRAMME_STATUS
     validate_learner_dates(fields)
     return fields
 
@@ -798,6 +824,7 @@ def write_commercial_fields(payload, *, require_create=False):
     if "trainingPlan" in payload:
         fields["training_plan"] = _normalize_training_plan(payload["trainingPlan"])
     fields.update(_employer_id_field(payload))
+    _blank_attendance_type_to_null(fields)
     return fields
 
 
@@ -976,7 +1003,9 @@ def _component_marking_statuses(source, learner_profile):
                        activity_id, status, coach_feedback, reviewed_by, reviewed_at
                   from "Learner"."learning_reflection_submissions"
                  where learner_id::text = any(%s)
-                 order by activity_id, submitted_at desc nulls last
+                 order by activity_id, case when activity_type = 'assignment' then
+                     case status when 'accepted' then 0 when 'partial' then 1 when 'submitted_for_tutor_review' then 2 when 'rejected' then 3 else 4 end else 0 end,
+                     submitted_at desc nulls last
                 """,
                 [sorted(candidates)],
             )
@@ -1082,6 +1111,8 @@ def to_learner_detail(source, learner_profile):
         # the learner out. Deciding it here, where that ambiguity does not
         # exist, is the only place it can be decided correctly.
         "programmeStatus": programme_status(source) or DEFAULT_PROGRAMME_STATUS,
+        # Same as learner_summary: whether the enrolment wizard is handed in.
+        "onboardingStatus": _s(getattr(source, "onboarding_status", "")),
         "learnerType": _s(getattr(source, "learner_type", "")) or "apprenticeship",
         "programmeStartDate": _s(programme_start),
         # The learner's own recorded start, straight from
@@ -1100,6 +1131,7 @@ def to_learner_detail(source, learner_profile):
         "group": _s(source.group),
         "employer": _s(getattr(source, "employer", "")),
         "employerId": getattr(source, "employer_id", None),
+        "organization": _s(getattr(source, "organization", "")),
         "lineManager": _s(getattr(source, "line_manager", "")),
         "isActive": programme_status(source).casefold() == "active",
         "modules": modules,

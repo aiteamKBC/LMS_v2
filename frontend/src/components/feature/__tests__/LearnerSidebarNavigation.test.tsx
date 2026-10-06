@@ -1,5 +1,5 @@
 import { beforeEach, expect, it, vi } from 'vitest';
-import { act, fireEvent, render, screen, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter, useLocation } from 'react-router-dom';
 import { WorkspaceShell } from '../WorkspaceShell';
 import { roleNavMap } from '@/mocks/navigation';
@@ -13,6 +13,9 @@ const viewer = vi.hoisted(() => ({
   // administrator who is ALSO a learner (login/learner_enrolment.py).
   learnerRecordId: null as number | null,
   learnerRecordKind: null as string | null,
+  // A learner's own sign-in (role 'learner'): their enrolment id and type.
+  subjectId: null as number | null,
+  learnerType: null as string | null,
 }));
 vi.mock('@/hooks/useAuth', () => ({ useAuth: () => ({
   auth: {
@@ -20,6 +23,8 @@ vi.mock('@/hooks/useAuth', () => ({ useAuth: () => ({
       role: viewer.role,
       learnerRecordId: viewer.learnerRecordId,
       learnerRecordKind: viewer.learnerRecordKind,
+      subjectId: viewer.subjectId,
+      learnerType: viewer.learnerType,
     },
     user: { fullName: 'Reviewer' },
     roles: [],
@@ -53,6 +58,8 @@ beforeEach(() => {
   viewer.denied.clear();
   viewer.learnerRecordId = null;
   viewer.learnerRecordKind = null;
+  viewer.subjectId = null;
+  viewer.learnerType = null;
 });
 
 it.each([
@@ -70,8 +77,11 @@ it.each([
   // These links must already exist before ever visiting Dashboard.
   expect(sidebar().getByRole('link', { name: /^My Learning/ })).toBeVisible();
   expect(sidebar().getByRole('link', { name: 'Attendance' })).toBeVisible();
-  fireEvent.click(sidebar().getByRole('button', { name: 'My Progress' }));
-  expect(sidebar().getByRole('link', { name: 'Monthly Logs' })).toBeVisible();
+  const progressToggle = sidebar().getByRole('button', { name: 'My Progress' });
+  if (progressToggle.getAttribute('aria-expanded') !== 'true') {
+    await act(async () => { fireEvent.click(progressToggle); });
+  }
+  await waitFor(() => expect(sidebar().getByRole('link', { name: 'Monthly Logs' })).toBeVisible());
   expect(sidebar().queryByRole('link', { name: 'Evidence' })).toBeNull();
   const initialDestinations = destinations();
   expect(new Set(initialDestinations).size).toBe(initialDestinations.length);
@@ -134,3 +144,54 @@ it('still gives the full reviewing menu when the SAME admin opens a DIFFERENT le
 
   expect(sidebar().getByRole('link', { name: /^My Learning/ })).toBeVisible();
 });
+
+it('can collapse the learner sidebar and restore it from its top toggle', async () => {
+  viewer.role = 'admin';
+  rememberLearner('commercial', String(++learnerId));
+  vi.mocked(fetchLearnerSummary).mockResolvedValue({
+    learnerType: 'commercial', programmeStatus: 'Delivery', studentActivityAvailable: true,
+  } as Awaited<ReturnType<typeof fetchLearnerSummary>>);
+  render(<MemoryRouter initialEntries={['/workspace/learner/dashboard']}><LearnerPage /></MemoryRouter>);
+
+  await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Collapse learner navigation' })); });
+
+  expect(sidebar().getByRole('link', { name: /^My Learning/ })).toBeVisible();
+  expect(screen.getByRole('button', { name: 'Expand learner navigation' })).toBeVisible();
+
+  await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Expand learner navigation' })); });
+
+  expect(sidebar().getByRole('link', { name: /^My Learning/ })).toBeVisible();
+});
+
+it.each([
+  ['/learner/monthly-submission/commercial/101', '/learner/monthly-submission'],
+  ['/learner/my-learning/commercial/101?subject=M1', '/learner/my-learning?subject=M1'],
+  ['/workspace/learner/dashboard/commercial/101', '/workspace/learner/dashboard'],
+])("hides a signed-in learner's own type and id from %s", async (start, expected) => {
+  viewer.role = 'learner';
+  viewer.subjectId = 101;
+  viewer.learnerType = 'commercial';
+  vi.mocked(fetchLearnerSummary).mockResolvedValue({ learnerType: 'commercial', programmeStatus: 'Active', studentActivityAvailable: false } as Awaited<ReturnType<typeof fetchLearnerSummary>>);
+  render(<MemoryRouter initialEntries={[start]}><LearnerPage /><SearchProbe /></MemoryRouter>);
+  await waitFor(() => expect(screen.getByTestId('url')).toHaveTextContent(expected));
+  expect(screen.getByTestId('url').textContent).toBe(expected);
+});
+
+it.each([
+  ['a staff preview', 'admin', null],
+  ["another learner's id", 'learner', 101],
+] as const)('keeps the ids in the address for %s', async (_case, role, subjectId) => {
+  viewer.role = role;
+  viewer.subjectId = subjectId;
+  viewer.learnerType = 'commercial';
+  vi.mocked(fetchLearnerSummary).mockResolvedValue({ learnerType: 'commercial', programmeStatus: 'Active', studentActivityAvailable: false } as Awaited<ReturnType<typeof fetchLearnerSummary>>);
+  render(<MemoryRouter initialEntries={['/learner/monthly-submission/commercial/202']}><LearnerPage /><SearchProbe /></MemoryRouter>);
+  await screen.findByTestId('path');
+  await act(async () => { await Promise.resolve(); });
+  expect(screen.getByTestId('url')).toHaveTextContent('/learner/monthly-submission/commercial/202');
+});
+
+function SearchProbe() {
+  const { pathname, search } = useLocation();
+  return <output data-testid="url">{pathname}{search}</output>;
+}

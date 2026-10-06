@@ -54,6 +54,15 @@ function isMeetingDetailEvent(event: CoachCalendarEvent) {
     || event.source === 'student-support';
 }
 
+function meetingDisplayTitle(event: CoachCalendarEvent, isProgressReview: boolean) {
+  const fallback = isProgressReview ? 'Progress Review' : 'Monthly Coaching Meeting';
+  const title = event.title || fallback;
+  const occurrence = event.occurrenceNumber ?? event.sequence;
+  if (!['mcr', 'progress-review'].includes(event.source || '') || /\s#\d+$/i.test(title)) return title;
+  if (occurrence == null) return `${title} — Manual Review`;
+  return `${title} #${occurrence}`;
+}
+
 function HeaderFact({ icon, text }: { icon: string; text: string }) {
   return (
     <span className="inline-flex min-h-7 items-center gap-1.5 rounded-md border border-primary-100 bg-white/80 px-2.5 text-[12px] font-medium text-foreground-700">
@@ -184,7 +193,10 @@ export default function CoachMeetingDetail() {
     const controller = new AbortController();
     setLoading(true);
     setError(null);
-    fetchCoachCalendarEvents(controller.signal)
+    fetchCoachCalendarEvents(controller.signal, {
+      includeLiveSessions: false,
+      includeSchedulerQueues: false,
+    })
       .then((data) => {
         const selected = (data.events || []).find(item => {
           const identityMatches = item.reviewInstanceId === eventKey || eventIdentity(item) === eventKey;
@@ -282,6 +294,12 @@ export default function CoachMeetingDetail() {
 
   const openReviewWorkflow = async (manualOverride = false) => {
     if (!event) return;
+    if (event.reviewSource === 'aptem' && eventIdentity(event).startsWith('imported-review:')) {
+      navigate(reviewInstancePath(eventIdentity(event)), {
+        state: reviewInstanceRouteState(event, `${location.pathname}${location.search}`),
+      });
+      return;
+    }
     if (event.reviewInstanceId) {
       navigate(reviewInstancePath(event.reviewInstanceId), {
         state: reviewInstanceRouteState(event, `${location.pathname}${location.search}`),
@@ -365,21 +383,24 @@ export default function CoachMeetingDetail() {
   };
 
   const url = event ? meetingUrl(event) : '';
-  const canEditBooking = event?.status === 'not-scheduled' || event?.status === 'scheduled';
-  const showMeetingActions = canEditBooking || event?.status === 'in-progress';
+  const canEditBooking = event?.reviewSource !== 'aptem' && (event?.status === 'not-scheduled' || event?.status === 'scheduled');
+  const showMeetingActions = canEditBooking || event?.status === 'in-progress' || (event?.reviewSource === 'aptem' && event.status === 'scheduled');
   const bookingPanelTitle = event?.status === 'not-scheduled'
     ? `Schedule ${isProgressReview ? 'Review' : 'Meeting'}`
     : event?.status === 'in-progress'
       ? 'Meeting Actions'
       : `Manage ${isProgressReview ? 'Review' : 'Meeting'}`;
  const canOpenReviewFormFromHeader = Boolean(
-    event?.reviewTemplateId,
+    event?.reviewTemplateId || event?.reviewSource === 'aptem',
  );
   const reviewFormHeaderLabel = event?.status === 'completed'
     ? 'View Form'
     : event?.status === 'awaiting-signature'
       ? 'Sign Form'
       : 'Open Form';
+  const showBookingNotes = Boolean(
+    event && !isProgressReview && !['mcr', 'progress-review', 'review'].includes(event.source || ''),
+  );
 
   return (
     <WorkspaceShell role="coach" roleLabel={coachNav.label} navItems={coachNav.items} workspaceLabel={coachNav.workspaceLabel} pageTitle={isProgressReview ? 'Review Details' : 'Meeting Details'} pageSubtitle={isProgressReview ? 'Progress review workspace' : 'Monthly coaching meeting workspace'} userName={ownerName} userRole="Progress Coach">
@@ -391,7 +412,7 @@ export default function CoachMeetingDetail() {
           <>
             <PageHeader
               title={event.learner || (isProgressReview ? 'Progress Review' : 'Coaching Meeting')}
-              description={event.title || (isProgressReview ? 'Progress Review' : 'Monthly Coaching Meeting')}
+              description={meetingDisplayTitle(event, isProgressReview)}
               icon="ri-calendar-event-line"
               backTo={{ to: returnTo, label: backLabel }}
               meta={(
@@ -441,9 +462,11 @@ export default function CoachMeetingDetail() {
                 ) : null}
                 <div className={cn('flex flex-wrap items-center gap-2', canEditBooking && 'mt-5 border-t border-foreground-100 pt-4')}>
                   {canEditBooking ? <RowAction label={event.status === 'scheduled' ? 'Reschedule' : 'Schedule'} icon="ri-calendar-check-line" emphasis="primary" disabled={busy} onClick={() => { void handleSchedule(); }} /> : null}
+                  {event.reviewSource === 'aptem' ? <RowAction label="Open Review" icon="ri-file-list-3-line" emphasis="primary" disabled={busy} onClick={() => { void openReviewWorkflow(false); }} /> : null}
                   {(event.status === 'scheduled' || event.status === 'in-progress') && url ? <RowAction label="Join Meeting" icon="ri-video-on-line" emphasis="meeting" disabled={busy} onClick={() => { void handleJoin(); }} /> : null}
                   {event.status === 'scheduled' && event.reviewTemplateId ? <RowAction label="Mark In Progress" icon="ri-play-circle-line" disabled={busy} onClick={() => { void markReviewInProgress(); }} /> : null}
-                  {event.status === 'in-progress' ? <RowAction label="Form" icon="ri-file-list-3-line" disabled={busy} onClick={() => { void openReviewWorkflow(false); }} /> : null}
+                  {/* A catch-up has no coaching form; it must never open the Monthly Coaching record. */}
+                  {event.status === 'in-progress' && event.source !== 'catch-up' ? <RowAction label="Form" icon="ri-file-list-3-line" disabled={busy} onClick={() => { void openReviewWorkflow(false); }} /> : null}
                 </div>
               </Panel>
             ) : null}
@@ -463,12 +486,14 @@ export default function CoachMeetingDetail() {
                 </div>
               </Panel>
 
-              <Panel className="bg-white">
-                <SectionHeading icon="ri-sticky-note-line" title="Notes" />
-                <p className="mt-4 text-[13px] leading-6 text-foreground-600">
-                  {event.notes || `No notes have been added to this ${isProgressReview ? 'review' : 'meeting'}.`}
-                </p>
-              </Panel>
+              {showBookingNotes ? (
+                <Panel className="bg-white">
+                  <SectionHeading icon="ri-sticky-note-line" title="Notes" />
+                  <p className="mt-4 text-[13px] leading-6 text-foreground-600">
+                    {event.notes || 'No notes have been added to this meeting.'}
+                  </p>
+                </Panel>
+              ) : null}
             </div>
 
             {url ? (

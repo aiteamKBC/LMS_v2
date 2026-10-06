@@ -1,15 +1,20 @@
 import json
-from datetime import date, time, timedelta
+from time import perf_counter
+from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 from inspect import unwrap
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, call, patch
 
-from django.db import DatabaseError
+from django.db import DatabaseError, connection
+from django.core.cache import cache
 from django.db.utils import ConnectionDoesNotExist
-from django.test import RequestFactory, SimpleTestCase, override_settings
+from django.test import RequestFactory, SimpleTestCase, TestCase, override_settings
+from django.test.utils import CaptureQueriesContext
+from django.utils import timezone
+from old_otjh.service import ServiceError
 
-from coach_api.models import CoachAbsenceReport, CoachCalendarEvent
+from coach_api.models import CoachAbsenceReport, CoachCalendarEvent, CoachDashboardSnapshot
 from coach_api.views import (
     build_generated_calendar_event,
     build_graph_event_payload,
@@ -18,6 +23,9 @@ from coach_api.views import (
     build_otjh_completed_entries,
     build_monthly_activity_learner,
     coach_caseload,
+    coach_attendance_details,
+    coach_manual_attendance,
+    coach_source_attendance,
     coach_dashboard,
     coach_meeting_artifact_content_response,
     coach_meeting_expected_attendees,
@@ -35,12 +43,17 @@ from coach_api.views import (
     curriculum_monthly_target_hours_weeks,
     apply_attendance_summary,
     apply_aptem_variance_status,
+    apply_otjh_to_date_metrics,
     apply_audit_hour_totals,
     apply_canonical_learner_metrics,
+    case_file_table_metrics_snapshot,
     apply_canonical_ksb_evidence,
     apply_evidenced_ksb_count,
     caseload_audit_hour_totals,
     caseload_aptem_ids,
+    caseload_canonical_metrics,
+    caseload_canonical_attendance,
+    caseload_dashboard_progress_projections,
     caseload_evidenced_ksb_counts,
     caseload_kbc_attendance_rates,
     caseload_latest_learning_activities,
@@ -48,6 +61,7 @@ from coach_api.views import (
     dashboard_attendance_rows,
     dashboard_monthly_risk_history,
     dashboard_review_history,
+    attach_caseload_source_rows,
     fetch_caseload_learner_profiles,
     fetch_evidence_file_queue,
     fetch_source_schedule_rows,
@@ -56,12 +70,14 @@ from coach_api.views import (
     latest_learning_activity,
     monthly_event_is_between,
     reported_minutes,
+    restore_case_file_table_metrics,
     route_absence_report_evidence,
     serialize_caseload_dashboard_learner,
     serialize_caseload_learner,
     normalize_program_status,
 )
 from learner_api.learner_detail import otjh_status_from_variance
+from learner_api.models import LearnerProfile
 
 
 class CoachProgrammeStatusTests(SimpleTestCase):
@@ -70,10 +86,10 @@ class CoachProgrammeStatusTests(SimpleTestCase):
         self.assertEqual(normalize_program_status("Active"), "active")
 
 
-def call_coach_view(view, request):
+def call_coach_view(view, request, *args, **kwargs):
     """Unit-test view logic below the integration-tested auth boundary."""
     request.coach_email = "coach@example.com"
-    return unwrap(view)(request)
+    return unwrap(view)(request, *args, **kwargs)
 
 
 class AuditKsbOverlayTests(SimpleTestCase):
@@ -85,16 +101,17 @@ class AuditKsbOverlayTests(SimpleTestCase):
     workspace shows the same figure as a count for that reason.
     """
 
-    def test_the_count_is_overlaid_without_inventing_a_percentage(self):
-        payload = {"ksbCompleted": 0, "ksbTarget": 14, "ksbProgress": 0}
+    def test_audit_count_does_not_replace_comparable_curriculum_progress(self):
+        payload = {"ksbCompleted": 14, "ksbTarget": 14, "ksbProgress": 100}
 
         overlaid = apply_evidenced_ksb_count(payload, 23)
 
         self.assertEqual(overlaid["ksbEvidencedCount"], 23)
-        self.assertEqual(overlaid["ksbCompleted"], 23)
+        self.assertEqual(overlaid["ksbCompleted"], 14)
         self.assertEqual(overlaid["ksbSource"], "audit")
-        # Untouched: 23 of a 14-code curriculum target would read past 100%.
-        self.assertEqual(overlaid["ksbProgress"], 0)
+        # The ratio remains internally consistent; the raw audit figure has no
+        # compatible denominator and is exposed only through its dedicated key.
+        self.assertEqual(overlaid["ksbProgress"], 100)
         self.assertEqual(overlaid["ksbTarget"], 14)
 
     def test_learners_without_audit_ksbs_keep_their_own(self):
@@ -145,39 +162,63 @@ class CaseloadAptemIdTests(SimpleTestCase):
 
 
 class DashboardAttendanceTests(SimpleTestCase):
-    """Aptem-linked dashboard rows use KBC; other rows keep their register."""
+    """Dashboard rows reuse the learner attendance summary for every learner."""
 
-    @patch("coach_api.views.fetch_kbc_attendance_rates")
+    def setUp(self):
+        # Mock stored schedules/recoveries only; exercise the real shared
+        # register and summary without touching a database or Microsoft.
+        profiles = patch("learner_api.models.LearnerProfile.objects")
+        self.profiles = profiles.start()
+        self.addCleanup(profiles.stop)
+        profile_by_enrolment = {193: 7, **{100 + index: index for index in range(1, 26)}}
+        self.profiles.filter.side_effect = lambda *, enrolment_id: SimpleNamespace(
+            values_list=lambda *args, **kwargs: [profile_by_enrolment[enrolment_id]])
+        for target, kwargs in (
+            ("learner_api.attendance_lectures.read_native_occurrences", {"return_value": []}),
+            ("learner_api.attendance_confirmation.read_confirmations", {"return_value": {}}),
+            ("learner_api.attendance_lectures._completed_catchup_occurrences", {"return_value": set()}),
+            ("learner_api.attendance_lectures._apply_coach_source_adjustments", {"side_effect": lambda rows, learner_id: rows}),
+        ):
+            mocked = patch(target, **kwargs)
+            value = mocked.start()
+            self.addCleanup(mocked.stop)
+            if target.endswith("read_native_occurrences"):
+                self.scheduled = value
+
+    def schedule_teams(self, records):
+        self.scheduled.return_value = [
+            {**row, "scheduled_start": timezone.make_aware(datetime.combine(row["session_date"], time(9))),
+             "scheduled_end": timezone.make_aware(datetime.combine(row["session_date"], time(10)))}
+            for row in records if row.get("source") == "microsoft-teams"
+        ]
+
     @patch("coach_api.views.caseload_canonical_attendance")
-    def test_aptem_rows_carry_the_kbc_rate(self, summaries, kbc_rates):
-        kbc_rates.return_value = {"4321": {"sessions": 62, "present": 59, "absent": 3, "rate": 95, "lastSessionDate": date(2026, 9, 18)}}
+    def test_aptem_rows_carry_the_learner_dashboard_rate(self, summaries):
+        summaries.return_value = {7: {"sessions": 28, "present": 23, "absent": 5, "attendanceRate": 82, "lastSessionDate": date(2026, 9, 18)}}
         rows = [SimpleNamespace(id=7, _caseload_source=SimpleNamespace(aptem_id="4321"))]
         learners = [{"id": "7", "name": "A Learner", "email": "a@example.com"}]
 
         payload = dashboard_attendance_rows(rows, learners)
 
         self.assertEqual(len(payload), 1)
-        self.assertEqual(payload[0]["attendance"], 95)
+        self.assertEqual(payload[0]["attendance"], 82)
         self.assertTrue(payload[0]["hasAttendance"])
-        self.assertEqual(payload[0]["present"], 59)
+        self.assertEqual(payload[0]["present"], 23)
         self.assertEqual(payload[0]["lastSessionDate"], "2026-09-18")
-        summaries.assert_called_once_with([])
-        self.assertEqual(list(kbc_rates.call_args.args[0]), [4321])
+        summaries.assert_called_once_with(rows)
 
-    @patch("coach_api.views.fetch_kbc_attendance_rates", return_value={})
     @patch("coach_api.views.caseload_canonical_attendance", return_value={})
-    def test_learners_with_no_register_are_left_out(self, summaries, kbc_rates):
+    def test_learners_with_no_register_are_left_out(self, summaries):
         rows = [SimpleNamespace(id=7, _caseload_source=SimpleNamespace(aptem_id="4321"))]
         learners = [{"id": "7", "name": "A Learner", "email": "a@example.com"}]
 
         self.assertEqual(dashboard_attendance_rows(rows, learners), [])
 
-    @patch("coach_api.views.fetch_kbc_attendance_rates")
     @patch("coach_api.views.caseload_canonical_attendance")
-    def test_a_partial_learner_dict_does_not_break_the_dashboard(self, summaries, kbc_rates):
+    def test_a_partial_learner_dict_does_not_break_the_dashboard(self, summaries):
         """This helper enriches whatever the serializer produced; a missing key
         must never turn the whole dashboard into a 503."""
-        kbc_rates.return_value = {"4321": {"sessions": 4, "present": 4, "absent": 0, "rate": 100}}
+        summaries.return_value = {2: {"sessions": 4, "present": 4, "absent": 0, "attendanceRate": 100}}
         rows = [SimpleNamespace(id=2, _caseload_source=SimpleNamespace(aptem_id="4321"))]
 
         payload = dashboard_attendance_rows(rows, [{"id": "2"}])
@@ -185,16 +226,14 @@ class DashboardAttendanceTests(SimpleTestCase):
         self.assertEqual(payload[0]["learner"], None)
         self.assertEqual(payload[0]["attendance"], 100)
 
-    @patch("coach_api.views.fetch_kbc_attendance_rates", side_effect=RuntimeError("unavailable"))
     @patch("coach_api.views.caseload_canonical_attendance", return_value={})
-    def test_an_unreachable_register_leaves_the_dashboard_renderable(self, summaries, kbc_rates):
+    def test_an_unreachable_register_leaves_the_dashboard_renderable(self, summaries):
         rows = [SimpleNamespace(id=7, _caseload_source=SimpleNamespace(aptem_id="4321"))]
 
         self.assertEqual(dashboard_attendance_rows(rows, [{"id": "7", "name": "A"}]), [])
 
-    @patch("coach_api.views.fetch_kbc_attendance_rates", return_value={})
     @patch("coach_api.views.caseload_canonical_attendance")
-    def test_learner_without_aptem_keeps_existing_register(self, summaries, kbc_rates):
+    def test_learner_without_aptem_keeps_existing_register(self, summaries):
         summaries.return_value = {8: {"sessions": 3, "present": 2, "absent": 1, "attendanceRate": 67}}
         row = SimpleNamespace(id=8, _caseload_source=SimpleNamespace(aptem_id=""))
 
@@ -202,7 +241,6 @@ class DashboardAttendanceTests(SimpleTestCase):
 
         self.assertEqual(payload[0]["attendance"], 67)
         summaries.assert_called_once_with([row])
-        kbc_rates.assert_called_once()
 
     def test_no_query_runs_for_an_empty_caseload(self):
         with patch("coach_api.views.caseload_canonical_attendance") as summaries:
@@ -226,31 +264,274 @@ class DashboardAttendanceTests(SimpleTestCase):
         kbc_rates.assert_called_once()
         self.assertEqual(list(kbc_rates.call_args.args[0]), [4321, 9876])
 
+    @patch("coach_api.views.close_old_connections")
+    @patch("learner_api.attendance_lectures.combined_attendance_rows")
+    def test_caseload_counts_a_lecture_in_kbc_and_teams_once(self, combined, _close):
+        day = date(2026, 9, 3)
+        row = {"learner_id": 193, "learner_name": "A Learner", "learner_email": "learner@example.com",
+               "session_date": day, "session_start_time": None, "session_end_time": None, "minutes_late": 0,
+               "catchup_completed": False, "updated_at": None}
+        combined.return_value = [
+            {**row, "session_id": "kbc-1", "source": "kbc-attendance", "module_title": "Martech - Thur",
+             "attendance_status": "present"},
+            {**row, "session_id": "occ-1", "source": "microsoft-teams", "module_title": "Martech - Thur",
+             "attendance_status": "present"},
+            {**row, "session_id": "kbc-2", "source": "kbc-attendance", "module_title": "Social Media",
+             "attendance_status": "absent"},
+        ]
+        learner = SimpleNamespace(id=7, _caseload_source=SimpleNamespace(id=193, email="learner@example.com"))
+        self.schedule_teams(combined.return_value)
+
+        summary = caseload_canonical_attendance([learner])[7]
+
+        self.assertEqual((summary["sessions"], summary["present"], summary["attendanceRate"]), (2, 1, 50))
+        self.assertEqual(summary["absent"], 1)
+        self.assertEqual([item["status"] for item in summary["sessionHistory"]], ["present", "absent"])
+        self.profiles.filter.assert_called_once_with(enrolment_id=193)
+
+    @patch("coach_api.views.fetch_verified_teams_attendance_rows")
+    @patch("coach_api.views.fetch_kbc_attendance_rows_bulk")
+    @patch("coach_api.views.combined_attendance_rows")
+    def test_aptem_attendance_bulk_load_is_constant_for_the_caseload(self, combined, kbc_bulk, teams_bulk):
+        day = date(2026, 9, 3)
+        learners = [
+            SimpleNamespace(
+                id=index,
+                _caseload_source=SimpleNamespace(id=100 + index, aptem_id=4000 + index,
+                                                 username=f"Learner {index}", email=f"learner{index}@example.test"),
+            )
+            for index in range(1, 26)
+        ]
+        kbc_bulk.return_value = [
+            {"learner_id": 100 + index, "session_id": f"kbc-{index}", "session_date": day,
+             "module_title": "Module", "attendance_status": "present", "source": "kbc-attendance",
+             "minutes_late": 0, "catchup_completed": False, "updated_at": None,
+             "learner_name": f"Learner {index}", "learner_email": f"learner{index}@example.test"}
+            for index in range(1, 26)
+        ]
+        teams_bulk.return_value = []
+
+        result = caseload_canonical_attendance(learners)
+
+        self.assertEqual(len(result), 25)
+        kbc_bulk.assert_called_once()
+        teams_bulk.assert_called_once()
+        combined.assert_not_called()
+
+    @patch("coach_api.views.fetch_verified_teams_attendance_rows")
+    @patch("coach_api.views.fetch_kbc_attendance_rows_bulk")
+    def test_aptem_attendance_accepts_the_same_mixed_source_timestamps_as_the_learner_register(
+        self, kbc_bulk, teams_bulk,
+    ):
+        source = SimpleNamespace(id=193, aptem_id=8533, username="Learner", email="learner@example.test")
+        common = {
+            "learner_id": 193, "learner_name": "Learner", "learner_email": source.email,
+            "session_date": date(2026, 9, 3), "module_title": "Module",
+            "session_start_time": None, "session_end_time": None,
+            "minutes_late": 0, "catchup_completed": False,
+        }
+        kbc_bulk.return_value = [{**common, "session_id": "kbc", "attendance_status": "present",
+                                  "updated_at": datetime(2026, 9, 3, 10)}]
+        teams_bulk.return_value = [{**common, "enrolment_id": 193,
+                                    "session_date": date(2026, 9, 4), "module_title": "Other module",
+                                    "session_id": "teams", "occurrence_id": "teams",
+                                    "attendance_status": "absent", "updated_at": timezone.now()}]
+        self.schedule_teams([{**row, "source": "microsoft-teams"} for row in teams_bulk.return_value])
+
+        summary = caseload_canonical_attendance([
+            SimpleNamespace(id=7, _caseload_source=source),
+        ])[7]
+
+        self.assertEqual((summary["present"], summary["sessions"], summary["attendanceRate"]), (1, 2, 50))
+
+    @patch("learner_api.attendance_lectures.combined_attendance_rows", return_value=[])
+    def test_caseload_includes_elapsed_unreported_sessions_and_saved_confirmations(self, combined):
+        source = SimpleNamespace(id=193, email="learner@example.test")
+        common = {"learner_id": 193, "learner_name": "Learner", "learner_email": source.email,
+                  "source": "microsoft-teams", "session_date": date(2026, 9, 3),
+                  "session_start_time": time(9), "session_end_time": time(10),
+                  "module_title": "Module", "attendance_status": "pending", "minutes_late": 0,
+                  "catchup_completed": False, "updated_at": None}
+        self.schedule_teams([{**common, "session_id": "confirmed"}, {**common, "session_id": "missed"}])
+        with patch("learner_api.attendance_confirmation.read_confirmations", return_value={
+            "teams:confirmed-2026-09-03": {"seconds": 3600, "submitted_at": timezone.now()},
+        }):
+            summary = caseload_canonical_attendance([SimpleNamespace(id=7, _caseload_source=source)])[7]
+        # Phase 4: elapsed sessions without evidence remain unmarked and do
+        # not dilute the denominator; saved confirmation counts as present.
+        self.assertEqual((summary["sessions"], summary["present"], summary["absent"], summary["attendanceRate"]),
+                         (1, 1, 0, 100))
+        self.assertEqual([item["status"] for item in summary["sessionHistory"]], ["present"])
+        combined.assert_called_once_with(source)
+
 
 class AttendanceDetailRowsTests(SimpleTestCase):
-    @patch("learner_api.attendance_lectures.lecture_register", return_value=[{"attendance_status": "unused"}])
-    @patch("coach_api.views._summarize_attendance")
-    def test_details_use_the_same_two_of_three_summary_as_connected_pages(self, summarize, register):
-        summarize.return_value = {
-            "learnerId": 7,
-            "learnerName": "A Learner",
-            "learnerEmail": "learner@example.com",
-            "sessions": 3,
-            "present": 2,
-            "absent": 1,
-            "sessionHistory": [
-                {"id": "one", "date": "2026-09-14", "title": "Session 1", "sessionType": "live_session", "status": "attended", "startTime": "09:00", "endTime": "10:00"},
-                {"id": "two", "date": "2026-09-07", "title": "Session 2", "sessionType": "live_session", "status": "missed", "startTime": "09:00", "endTime": "10:00"},
-                {"id": "three", "date": "2026-09-02", "title": "Session 3", "sessionType": "live_session", "status": "late", "startTime": "09:00", "endTime": "10:00"},
-            ],
+    @patch("learner_api.attendance_lectures.attendance_read_contract")
+    def test_details_forward_the_authoritative_contract(self, read_contract):
+        source = SimpleNamespace(id=901)
+        summary = {"present": 2, "absent": 1, "totalCounted": 3, "attendanceRate": 67}
+        history = [{"status": "present", "rawStatus": "absent", "effectiveStatus": "made_up"}]
+        read_contract.return_value = {"summary": summary, "history": history}
+        actual_summary, sessions = canonical_attendance_detail_rows(source, learner_profile_id=315)
+        read_contract.assert_called_once_with(source, learner_profile_id=315)
+        self.assertIs(actual_summary, summary)
+        self.assertIs(sessions, history)
+
+    @patch("coach_api.views.canonical_attendance_detail_rows")
+    @patch("coach_api.views.CoachManualAttendance.objects")
+    @patch("coach_api.views.serialize_attendance_source_learner")
+    @patch("coach_api.views.attach_caseload_source_rows")
+    @patch("coach_api.views.fetch_attendance_caseload_rows")
+    def test_detail_view_fetches_only_the_requested_authorised_learner(
+        self, fetch_rows, attach_sources, serialize, manual_objects, detail_rows,
+    ):
+        source = SimpleNamespace(id=901)
+        row = SimpleNamespace(id=315, _caseload_source=source)
+        fetch_rows.return_value = [row]
+        serialize.return_value = {
+            "id": "315", "name": "A Learner", "email": "learner@example.com",
+            "programmeName": "Data", "programmeId": "programme-1",
+            "cohortName": "September", "group": "Cairo A", "groupId": "group-1",
+            "rawProgramStatus": "Active", "learnerType": "apprenticeship",
+            "enrolmentId": "901",
         }
-        source = SimpleNamespace(id=7)
+        detail_rows.return_value = (
+            {"total": 3, "present": 2, "absent": 1, "unknown": 0},
+            [
+                {"sessionId": "session-1", "status": "present", "counted": True},
+                {"sessionId": "session-2", "status": "present", "counted": True},
+                {"sessionId": "session-3", "status": "absent", "counted": True},
+            ],
+        )
+        manual_objects.filter.return_value = []
 
-        summary, sessions = canonical_attendance_detail_rows(source)
+        response = call_coach_view(
+            coach_attendance_details,
+            RequestFactory().get("/coach_api/coach/attendance/details", {"learner_id": "315"}),
+        )
+        payload = json.loads(response.content)
 
-        register.assert_called_once_with(source)
-        self.assertEqual((summary["present"], summary["sessions"]), (2, 3))
-        self.assertEqual([session["status"] for session in sessions], ["present", "absent", "present"])
+        self.assertEqual(response.status_code, 200)
+        fetch_rows.assert_called_once_with("coach@example.com", learner_id="315")
+        attach_sources.assert_called_once_with([row])
+        detail_rows.assert_called_once_with(source, learner_profile_id=315)
+        self.assertEqual(payload["learner"]["programme"], "Data")
+        self.assertEqual(payload["learner"]["enrolmentId"], "901")
+        self.assertEqual(payload["summary"], {"total": 3, "present": 2, "absent": 1, "unknown": 0})
+
+
+class ManualAttendanceMutationTests(SimpleTestCase):
+    @patch("coach_api.views._manual_attendance_learner")
+    @patch("coach_api.views.CoachManualAttendance.objects")
+    def test_create_persists_a_coach_owned_manual_record(self, objects, find_learner):
+        profile = SimpleNamespace(_caseload_source=SimpleNamespace(id=901))
+        find_learner.return_value = (profile, {
+            "id": "315", "name": "A Learner", "email": "learner@example.com",
+        })
+        created = SimpleNamespace(
+            id=9, learner_id=315, session_title="Extra session", module_name="Data",
+            session_date=date(2026, 10, 1), status="absent",
+        )
+        objects.create.return_value = created
+        objects.filter.return_value.order_by.return_value.first.return_value = None
+        request = RequestFactory().post(
+            "/coach_api/coach/attendance/manual",
+            data=json.dumps({
+                "learnerId": "315", "date": "2026-10-01", "module": "Data",
+                "sessionTitle": "Extra session", "status": "absent",
+            }),
+            content_type="application/json",
+        )
+
+        response = call_coach_view(coach_manual_attendance, request)
+        payload = json.loads(response.content)
+
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual((payload["manualId"], payload["source"]), ("9", "coach-manual"))
+        objects.create.assert_called_once_with(
+            owner_email="coach@example.com", learner_id=315, enrolment_id=901,
+            learner_name="A Learner", learner_email="learner@example.com",
+            created_by="coach@example.com", session_date=date(2026, 10, 1),
+            module_name="Data", session_title="Extra session", status="absent",
+        )
+
+    @patch("coach_api.views.CoachManualAttendance.objects")
+    def test_delete_is_scoped_to_the_authenticated_coach(self, objects):
+        record = MagicMock()
+        objects.filter.return_value.first.return_value = record
+        request = RequestFactory().delete("/coach_api/coach/attendance/manual/9")
+
+        response = call_coach_view(coach_manual_attendance, request, record_id=9)
+
+        self.assertEqual(response.status_code, 204)
+        objects.filter.assert_called_once_with(id=9, owner_email__iexact="coach@example.com")
+        record.delete.assert_called_once_with()
+
+    @patch("coach_api.views.CoachManualAttendance.objects")
+    def test_view_as_mode_cannot_mutate_attendance(self, objects):
+        request = RequestFactory().post("/coach_api/coach/attendance/manual", data="{}", content_type="application/json")
+        request.coach_view_as = True
+
+        response = call_coach_view(coach_manual_attendance, request)
+
+        self.assertEqual(response.status_code, 403)
+        objects.create.assert_not_called()
+
+    @patch("coach_api.views._manual_attendance_learner", return_value=(SimpleNamespace(id=315, _caseload_source=SimpleNamespace(id=901)), {"id": "315"}))
+    @patch("coach_api.views.CoachAttendanceSourceAdjustment.objects")
+    @patch("learner_api.attendance_lectures.lecture_register", return_value=[{"source": "microsoft-teams", "session_id": "occ-8"}])
+    def test_source_edit_is_saved_for_the_authorised_learner(self, register, objects, _find_learner):
+        request = RequestFactory().patch(
+            "/coach_api/coach/attendance/source",
+            data=json.dumps({
+                "learnerId": "315", "source": "microsoft-teams", "sourceId": "occ-8",
+                "date": "2026-10-01", "module": "Data", "sessionTitle": "Session 8",
+                "status": "present",
+            }),
+            content_type="application/json",
+        )
+
+        response = call_coach_view(coach_source_attendance, request)
+
+        self.assertEqual(response.status_code, 200)
+        objects.update_or_create.assert_called_once_with(
+            learner_id=315, source="microsoft-teams", source_id="occ-8",
+            defaults={
+                "owner_email": "coach@example.com", "session_date": date(2026, 10, 1),
+                "module_name": "Data", "session_title": "Session 8", "status": "present",
+                "is_deleted": False, "updated_by": "coach@example.com",
+            },
+        )
+
+    @patch("coach_api.views._manual_attendance_learner", return_value=(SimpleNamespace(id=315, _caseload_source=SimpleNamespace(id=901)), {"id": "315"}))
+    @patch("coach_api.views.CoachAttendanceSourceAdjustment.objects")
+    @patch("learner_api.attendance_lectures.lecture_register", return_value=[{"source": "kbc-attendance", "session_id": "kbc-1"}])
+    def test_source_delete_hides_only_that_learners_attendance(self, register, objects, _find_learner):
+        request = RequestFactory().delete(
+            "/coach_api/coach/attendance/source",
+            data=json.dumps({"learnerId": "315", "source": "kbc-attendance", "sourceId": "kbc-1"}),
+            content_type="application/json",
+        )
+
+        response = call_coach_view(coach_source_attendance, request)
+
+        self.assertEqual(response.status_code, 204)
+        objects.update_or_create.assert_called_once_with(
+            learner_id=315, source="kbc-attendance", source_id="kbc-1",
+            defaults={"owner_email": "coach@example.com", "updated_by": "coach@example.com", "is_deleted": True},
+        )
+
+    @patch("coach_api.views._manual_attendance_learner", return_value=(SimpleNamespace(id=315, _caseload_source=SimpleNamespace(id=901)), {"id": "315"}))
+    @patch("coach_api.views.CoachAttendanceSourceAdjustment.objects")
+    @patch("learner_api.attendance_lectures.lecture_register", return_value=[])
+    def test_orphan_source_edit_and_delete_are_rejected_before_writes(self, register, objects, find_learner):
+        for method in ('patch', 'delete'):
+            request = getattr(RequestFactory(), method)("/coach_api/coach/attendance/source",
+                data=json.dumps({"learnerId": "315", "source": "microsoft-teams", "sourceId": "another-learner-occurrence"}),
+                content_type="application/json")
+            self.assertEqual(call_coach_view(coach_source_attendance, request).status_code, 404)
+        objects.update_or_create.assert_not_called()
+        self.assertEqual(register.call_args.kwargs, {'learner_profile_id': 315, 'apply_adjustments': False})
 
 
 class LatestLearnerActivityTests(SimpleTestCase):
@@ -264,33 +545,45 @@ class LatestLearnerActivityTests(SimpleTestCase):
         self.assertEqual(latest["display"], "19 Sep 2026")
         self.assertEqual(latest["label"], "Latest quiz")
 
-    @patch("coach_api.views.LearnerProgressEntry.objects")
-    def test_bulk_query_loads_every_field_used_by_history_serializer(self, progress_entries):
-        queryset = MagicMock()
-        progress_entries.filter.return_value = queryset
-        queryset.only.return_value = queryset
-        queryset.order_by.return_value = []
+    @patch("coach_api.views.connections")
+    def test_bulk_query_fetches_only_latest_progress_and_feed_candidates(self, connections):
+        cursor = connections["enrolment"].cursor.return_value.__enter__.return_value
+        cursor.fetchall.return_value = []
 
         self.assertEqual(caseload_latest_learning_activities([SimpleNamespace(id=7)]), {})
 
-        loaded_fields = set(queryset.only.call_args.args)
-        self.assertEqual(loaded_fields, {
-            "learner_id",
-            "kind",
-            "component_ref",
-            "quiz_ref",
-            "attempt",
-            "module_title",
-            "week_title",
-            "component_title",
-            "expected_otjh",
-            "reported_time",
-            "submitted_at",
-            "started_at",
-            "claimed_seconds",
-            "verified_seconds",
-            "time_tracking_source",
-        })
+        query, params = cursor.execute.call_args.args
+        self.assertEqual(query.count("DISTINCT ON (learner_id)"), 2)
+        self.assertEqual(query.count("entry_order ASC, id ASC"), 2)
+        self.assertIn("COALESCE(kind, '') <> 'activity_event'", query)
+        self.assertEqual(params, [[7], [7]])
+
+    @patch("coach_api.views.connections")
+    def test_bulk_query_keeps_activity_feed_events_in_latest_activity(self, connections):
+        cursor = connections["enrolment"].cursor.return_value.__enter__.return_value
+        occurred_at = timezone.make_aware(datetime(2026, 9, 20, 11, 30))
+        cursor.fetchall.return_value = [(
+            7, "feed", "activity_event", "", None, None,
+            "video", "Latest video", occurred_at,
+        )]
+
+        latest = caseload_latest_learning_activities([SimpleNamespace(id=7)])[7]
+
+        self.assertEqual(latest["date"], occurred_at.isoformat())
+        self.assertEqual(latest["label"], "Latest video")
+
+    @patch("coach_api.views.connections")
+    def test_bulk_query_preserves_progress_timestamp_timezone_format(self, connections):
+        cursor = connections["enrolment"].cursor.return_value.__enter__.return_value
+        submitted_at = datetime.fromisoformat("2026-09-20T10:30:00+00:00")
+        cursor.fetchall.return_value = [(
+            7, "progress", "component", "Latest component", submitted_at,
+            None, "", "", None,
+        )]
+
+        latest = caseload_latest_learning_activities([SimpleNamespace(id=7)])[7]
+
+        self.assertEqual(latest["date"], submitted_at.isoformat())
 
 
 class DashboardReviewHistoryTests(SimpleTestCase):
@@ -431,6 +724,7 @@ class OtjhTargetContractTests(SimpleTestCase):
         self.assertNotIn("otjhVariance", result)
         self.assertNotIn("otjhStatus", result)
 
+
     def test_zero_target_leaves_existing_status_untouched(self):
         payload = {"otjhCompleted": 0, "otjhTarget": 0, "otjhPlanned": 576}
         result = apply_aptem_variance_status(payload, "4317")
@@ -473,7 +767,276 @@ class OtjhTargetContractTests(SimpleTestCase):
         connection.assert_not_called()
 
 
+class OtjhToDateContractTests(SimpleTestCase):
+    def test_api_emits_one_paced_target_and_rag_contract(self):
+        payload = {
+            "otjhCompleted": 40,
+            "otjhPlanned": 120,
+            "otjhTarget": 999,
+            "startDate": "01 Jun 2026",
+            "plannedEndDate": "01 Jul 2026",
+        }
+
+        result = apply_otjh_to_date_metrics(payload, today=date(2026, 6, 15))
+
+        self.assertEqual(result["otjhTargetAsOfToday"], 56.0)
+        self.assertEqual(result["otjhProgressAsOfToday"], 71.43)
+        self.assertEqual(result["otjhShortfallHours"], 16.0)
+        self.assertEqual(result["otjhDeltaHours"], -16.0)
+        self.assertEqual(result["otjhRagStatus"], "on-track")
+        self.assertEqual(result["otjhRagSource"], "ssot:programme-plan-window")
+
+    def test_missing_window_uses_explicit_api_target_fallback(self):
+        result = apply_otjh_to_date_metrics({
+            "otjhCompleted": 9,
+            "otjhPlanned": 0,
+            "otjhTarget": 50,
+            "startDate": "--",
+            "plannedEndDate": "--",
+        }, today=date(2026, 6, 15))
+
+        self.assertEqual(result["otjhTargetAsOfToday"], 50.0)
+        self.assertEqual(result["otjhRagStatus"], "at-risk")
+        self.assertEqual(result["otjhRagSource"], "ssot:api-target-fallback")
+
+
 class CanonicalCoachMetricsTests(SimpleTestCase):
+    def test_workspace_metrics_replace_case_file_values_with_learner_overview(self):
+        payload = {"otjhCompleted": 99, "otjhTarget": 123, "otjhPlanned": 123,
+                   "ksbCompleted": 16, "ksbTarget": 16, "ksbProgress": 100,
+                   "ksbProgressAvailable": True, "enrollmentStatus": "active"}
+        metrics = {"migrated": True, "aptem_planned_total": 576,
+                   "otjh": {"actual": 164.87, "completed_actual": 100, "planned": 256},
+                   "programme": {"completed": 137, "total": 157, "percent": 87.3, "status": "ready"},
+                   "ksb": {"completed": 498, "total": 584, "percent": 85.3, "status": "ready"}}
+
+        result = apply_canonical_learner_metrics(payload, metrics, learner_workspace=True)
+
+        self.assertEqual((result["otjhCompleted"], result["otjhTarget"]), (164.87, 576))
+        self.assertEqual((result["componentsCompleted"], result["componentsPlanned"], result["activityProgress"]),
+                         (137, 157, 87.3))
+        self.assertEqual((result["ksbCompleted"], result["ksbTarget"], result["ksbProgress"]), (498, 584, 85.3))
+        self.assertEqual(metrics["otjh"]["completed_actual"], 100)
+
+    def test_workspace_unavailable_metrics_do_not_fall_back_to_old_case_file_values(self):
+        for metrics in (None, {"otjh": {}, "programme": {}, "ksb": {"status": "unavailable"}}):
+            with self.subTest(metrics=metrics):
+                result = apply_canonical_learner_metrics({
+                    "otjhCompleted": 99, "otjhTarget": 123, "otjhPlanned": 123,
+                    "ksbCompleted": 16, "ksbTarget": 16, "ksbProgress": 100,
+                    "ksbProgressAvailable": True, "enrollmentStatus": "active",
+                }, metrics, learner_workspace=True)
+                self.assertIsNone(result["otjhCompleted"])
+                self.assertIsNone(result["otjhTarget"])
+                self.assertIsNone(result["ksbCompleted"])
+                self.assertFalse(result["ksbProgressAvailable"])
+                self.assertFalse(result["activityProgressAvailable"])
+
+    def test_workspace_native_metrics_use_canonical_plan_and_actual(self):
+        result = apply_canonical_learner_metrics({"ksbProgressAvailable": False}, {
+            "migrated": False, "otjh": {"actual": 4, "completed_actual": 2, "planned": 20},
+            "programme": {"completed": 1, "total": 2, "percent": 50, "status": "ready"},
+            "ksb": {"completed": 1, "total": 3, "percent": 33.3, "status": "ready"},
+        }, learner_workspace=True)
+        self.assertEqual((result["otjhCompleted"], result["otjhTarget"]), (4, 20))
+
+    def canonical_loader_patches(self, *, read_metrics):
+        mocks = {
+            "canonical_learning": SimpleNamespace(metrics_bulk=MagicMock(return_value={})),
+            "load_direct_progress_records_bulk": MagicMock(return_value={
+                10: [{"componentId": "native-null"}],
+                11: [{"componentId": "native-aptem"}],
+            }),
+            "load_subject_attempts_bulk": MagicMock(return_value={
+                (11, 42): {("group-1", "activity-1")},
+            }),
+            "load_manual_hours_bulk": MagicMock(return_value={42: 7.5}),
+            "load_reflection_submissions_bulk": MagicMock(return_value={
+                ("commercial", "10"): [{"id": "reflection-null"}],
+                ("apprenticeship", "11"): [{"id": "reflection-aptem"}],
+            }),
+            "load_audit_inputs_bulk": MagicMock(return_value={
+                42: {"identity": ("learner@example.test",), "historical": [], "aptem_planned_total": 400},
+            }),
+            "load_native_progress_bulk": MagicMock(return_value={
+                10: [{"componentId": "native-null", "passed": True}],
+                11: [{"componentId": "native-aptem", "passed": True}],
+            }),
+            "_effective_plan_ids": MagicMock(side_effect=lambda source, _cache: [source.pk * 100]),
+            "load_native_components_bulk": MagicMock(return_value={
+                "1000": [{"id": "native-null"}],
+                "1100": [{"id": "native-aptem"}],
+            }),
+            "load_planned_hours_documents_bulk": MagicMock(return_value={
+                (10, "commercial"): {"otjh": {"plannedTotal": 24}},
+            }),
+            "load_contracts_bulk": MagicMock(return_value={42: {"training_plan_planned_hours": 400}}),
+            "load_accepted_ksb_rows_bulk": MagicMock(return_value={11: [{"source_ref": "legacy"}]}),
+            "load_export_links_bulk": MagicMock(return_value={}),
+            "read_metrics": read_metrics,
+        }
+        return patch.multiple("coach_api.views", **mocks), mocks
+
+    def test_null_aptem_identity_keeps_native_metrics_and_skips_aptem_lookups(self):
+        captured = {}
+
+        def read_metrics(source, kind, preloaded):
+            captured[source.pk] = preloaded
+            return {
+                "programme": {"completed": len(preloaded["native_progress"]), "total": len(preloaded["native_components"])},
+                "otjh": {"planned": (preloaded["planned_hours_document"] or {}).get("otjh", {}).get("plannedTotal")},
+                "ksb": {"completed": len(preloaded["native_progress"])},
+            }
+
+        native = SimpleNamespace(pk=10, aptem_id=None, email="native@example.test")
+        row = SimpleNamespace(id=100, learner_type="commercial", _caseload_source=native)
+
+        patches, mocks = self.canonical_loader_patches(read_metrics=MagicMock(side_effect=read_metrics))
+        with patches:
+            result = caseload_canonical_metrics([row])
+
+        self.assertEqual(result[100]["programme"], {"completed": 1, "total": 1})
+        self.assertEqual(result[100]["otjh"]["planned"], 24)
+        self.assertEqual(result[100]["ksb"]["completed"], 1)
+        self.assertEqual(captured[10]["subject_attempts"], set())
+        self.assertIsNone(captured[10]["audit_inputs"])
+        self.assertIsNone(captured[10]["planned_hours_contract"])
+        mocks["load_subject_attempts_bulk"].assert_called_once_with([])
+        mocks["load_manual_hours_bulk"].assert_called_once_with([])
+        mocks["load_audit_inputs_bulk"].assert_called_once_with([])
+
+    def test_mixed_caseload_only_builds_external_keys_for_valid_aptem_ids(self):
+        captured = {}
+
+        def read_metrics(source, kind, preloaded):
+            captured[source.pk] = preloaded
+            return {"source": source.pk, "nativeProgress": preloaded["native_progress"]}
+
+        rows = [
+            SimpleNamespace(
+                id=100,
+                learner_type="commercial",
+                _caseload_source=SimpleNamespace(pk=10, aptem_id=None, email="native@example.test"),
+            ),
+            SimpleNamespace(
+                id=101,
+                learner_type="apprenticeship",
+                _caseload_source=SimpleNamespace(pk=11, aptem_id=" 42 ", email="learner@example.test"),
+            ),
+        ]
+
+        patches, mocks = self.canonical_loader_patches(read_metrics=MagicMock(side_effect=read_metrics))
+        with patches:
+            result = caseload_canonical_metrics(rows)
+
+        self.assertEqual(set(result), {100, 101})
+        self.assertEqual(captured[10]["subject_attempts"], set())
+        self.assertEqual(captured[11]["subject_attempts"], {("group-1", "activity-1")})
+        self.assertEqual(result[101]["source"], 11)
+        mocks["load_subject_attempts_bulk"].assert_called_once_with([(11, 42)])
+        mocks["load_accepted_ksb_rows_bulk"].assert_called_once()
+
+    def test_mixed_caseload_reuses_learner_dashboard_metrics_for_aptem(self):
+        captured = {}
+
+        def read_metrics(source, kind, preloaded):
+            captured[source.pk] = preloaded
+            return {"source": "existing", "programme": {"completed": 1, "total": 1}}
+
+        native = SimpleNamespace(pk=10, aptem_id=None)
+        aptem = SimpleNamespace(pk=11, aptem_id="42")
+        rows = [
+            SimpleNamespace(id=100, learner_type="commercial", enrolment_id=10, _caseload_source=native),
+            SimpleNamespace(id=101, learner_type="apprenticeship", enrolment_id=11, _caseload_source=aptem),
+        ]
+        patches, mocks = self.canonical_loader_patches(read_metrics=MagicMock(side_effect=read_metrics))
+        canonical = {
+            "programme": {"completed": 443, "total": 499, "percent": 88.78, "status": "ready"},
+            "otjh": {"actual": 308.11, "planned": None},
+            "ksb": {"completed": 475, "total": 711, "percent": 66.81, "status": "ready"},
+        }
+        mocks["canonical_learning"].metrics_bulk.return_value = {11: canonical}
+        with patches:
+            result = caseload_canonical_metrics(rows)
+
+        self.assertEqual(result[101]["programme"], {"completed": 443, "total": 499, "percent": 88.78, "status": "ready"})
+        self.assertEqual(result[101]["otjh"], {"actual": 308.11, "planned": None})
+        self.assertEqual(result[101]["ksb"], {"completed": 475, "total": 711, "percent": 66.81, "status": "ready"})
+        self.assertEqual(result[100]["source"], "existing")
+        self.assertEqual(set(captured), {10})
+        mocks["load_direct_progress_records_bulk"].assert_called_once_with([10])
+        mocks["canonical_learning"].metrics_bulk.assert_called_once_with([10, 11])
+
+    def test_identity_review_for_one_learner_does_not_hide_the_rest_of_the_caseload(self):
+        def read_metrics(source, kind, preloaded):
+            if source.pk == 10:
+                raise ServiceError('The consolidated learner identity needs review.',
+                                   'identity_review_required', 409)
+            return {"source": source.pk, "programme": {"completed": 1, "total": 1}}
+
+        rows = [
+            SimpleNamespace(id=100, learner_type="commercial",
+                            _caseload_source=SimpleNamespace(pk=10, aptem_id=None)),
+            SimpleNamespace(id=101, learner_type="commercial",
+                            _caseload_source=SimpleNamespace(pk=11, aptem_id=None)),
+        ]
+        patches, _ = self.canonical_loader_patches(
+            read_metrics=MagicMock(side_effect=read_metrics),
+        )
+
+        with patches:
+            result = caseload_canonical_metrics(rows)
+
+        self.assertNotIn(100, result)
+        self.assertEqual(result[101]["programme"], {"completed": 1, "total": 1})
+
+    def test_zero_learner_caseload_runs_no_metric_loaders(self):
+        read_metrics = MagicMock()
+        patches, mocks = self.canonical_loader_patches(read_metrics=read_metrics)
+        with patches:
+            self.assertEqual(caseload_canonical_metrics([]), {})
+
+        read_metrics.assert_not_called()
+        mocks["load_direct_progress_records_bulk"].assert_not_called()
+
+    def test_canonical_learners_skip_the_legacy_per_learner_loader(self):
+        canonical = {10: {"source": "canonical"}}
+        read_metrics = MagicMock(return_value={"source": "legacy"})
+        rows = [
+            SimpleNamespace(id=100, learner_type="commercial",
+                            _caseload_source=SimpleNamespace(pk=10, aptem_id=None)),
+            SimpleNamespace(id=101, learner_type="commercial",
+                            _caseload_source=SimpleNamespace(pk=11, aptem_id=None)),
+        ]
+        patches, mocks = self.canonical_loader_patches(read_metrics=read_metrics)
+        mocks["canonical_learning"].metrics_bulk.return_value = canonical
+
+        with patches:
+            result = caseload_canonical_metrics(rows)
+
+        self.assertEqual(result[100], canonical[10])
+        self.assertEqual(result[101], {"source": "legacy"})
+        read_metrics.assert_called_once()
+        self.assertEqual(read_metrics.call_args.args[0].pk, 11)
+        mocks["load_direct_progress_records_bulk"].assert_called_once_with([11])
+
+    def test_failed_canonical_identity_is_unavailable_without_legacy_fallback(self):
+        read_metrics = MagicMock(return_value={"source": "legacy"})
+        rows = [
+            SimpleNamespace(id=100, learner_type="commercial",
+                            _caseload_source=SimpleNamespace(pk=10, aptem_id=None)),
+        ]
+        patches, mocks = self.canonical_loader_patches(read_metrics=read_metrics)
+        mocks["canonical_learning"].metrics_bulk.return_value = {10: None}
+
+        with patches:
+            result = caseload_canonical_metrics(rows)
+
+        self.assertEqual(result[100]["programme"]["status"], "unavailable")
+        self.assertEqual(result[100]["ksb"]["status"], "unavailable")
+        read_metrics.assert_not_called()
+        mocks["load_direct_progress_records_bulk"].assert_not_called()
+
     def test_otjh_status_uses_agreed_variance_boundaries(self):
         self.assertEqual(otjh_status_from_variance(Decimal("-19.99")), "On track")
         self.assertEqual(otjh_status_from_variance(Decimal("-20")), "On track")
@@ -482,7 +1045,38 @@ class CanonicalCoachMetricsTests(SimpleTestCase):
         self.assertEqual(otjh_status_from_variance(Decimal("-41")), "At risk")
         self.assertEqual(otjh_status_from_variance(Decimal("5")), "On track")
 
-    def test_live_metrics_match_learner_facts_but_keep_coach_target_pacing(self):
+    def test_detailed_table_restores_the_case_file_otjh_and_ksb_figures(self):
+        enriched = {
+            "otjhCompleted": 163.2, "otjhTarget": 256,
+            "ksbCompleted": 445, "ksbTarget": 777, "ksbProgress": 57,
+            "ksbProgressAvailable": True, "ksbStatus": "In Progress",
+            "activityProgress": 70, "attendancePresent": 38, "attendanceSessions": 41,
+        }
+        case_file = {
+            "otjhTarget": 576,
+            "ksbCompleted": 14, "ksbTarget": 14, "ksbProgress": 100,
+            "ksbProgressAvailable": True, "ksbStatus": "Completed",
+        }
+
+        result = restore_case_file_table_metrics(enriched, case_file)
+
+        self.assertEqual((result["otjhCompleted"], result["otjhTarget"]), (163.2, 576))
+        self.assertEqual((result["ksbCompleted"], result["ksbTarget"], result["ksbProgress"]), (14, 14, 100))
+        self.assertEqual(result["activityProgress"], 70)
+        self.assertEqual((result["attendancePresent"], result["attendanceSessions"]), (38, 41))
+
+    def test_case_file_snapshot_uses_the_source_learner_planned_hours(self):
+        row = SimpleNamespace(_caseload_source=SimpleNamespace(planned_hours="576.00"))
+
+        snapshot = case_file_table_metrics_snapshot(row, {
+            "otjhTarget": 256, "otjhPlanned": 256,
+            "ksbCompleted": 16, "ksbTarget": 16, "ksbProgress": 100,
+            "ksbProgressAvailable": True, "ksbStatus": "Completed",
+        })
+
+        self.assertEqual((snapshot["otjhTarget"], snapshot["otjhPlanned"]), (576, 576))
+
+    def test_caseload_table_uses_the_exact_profile_source_for_all_four_metrics(self):
         payload = {
             "otjhCompleted": 56.7, "otjhTarget": 82.9, "otjhPlanned": 400,
             "overallProgress": 68, "overallProgressAvailable": True,
@@ -499,13 +1093,94 @@ class CanonicalCoachMetricsTests(SimpleTestCase):
         result = apply_canonical_learner_metrics(payload, metrics)
 
         self.assertEqual(result["otjhCompleted"], 74.71)
-        self.assertEqual(result["otjhTarget"], 120.57)
-        self.assertEqual(result["overallProgress"], 62)
+        self.assertEqual((result["otjhCompleted"], result["otjhTarget"], result["otjhPlanned"]),
+                         (74.71, 581.75, 581.75))
+        self.assertEqual(result["overallProgress"], 13)
         self.assertEqual(result["otjhStatus"], "At risk")
         self.assertEqual(result["programmeProgress"], 8.97)
         self.assertEqual((result["componentsCompleted"], result["componentsPlanned"]), (34, 379))
+        self.assertEqual((result["activityProgress"], result["activityProgressAvailable"]), (8.97, True))
         self.assertEqual((result["ksbCompleted"], result["ksbTarget"], result["ksbProgress"]), (14, 20, 70))
         self.assertEqual(result["metricsSource"], "learner-dashboard")
+
+    def test_aptem_overlay_uses_the_same_detail_plan_fallback_as_the_profile(self):
+        payload = {
+            "otjhCompleted": 111.9, "otjhTarget": 576, "otjhPlanned": 576,
+            "overallProgress": 100, "overallProgressAvailable": True,
+            "ksbCompleted": 14, "ksbTarget": 14, "ksbProgress": 100,
+            "ksbProgressAvailable": True, "enrollmentStatus": "active",
+        }
+        metrics = {
+            "migrated": True,
+            "programme": {"completed": 284, "total": 381, "percent": 74.54, "status": "ready"},
+            "otjh": {"actual": 281.9, "planned": 256},
+            "ksb": {"completed": 14, "total": 14, "percent": 100, "status": "ready"},
+        }
+
+        result = apply_canonical_learner_metrics(payload, metrics)
+
+        self.assertEqual((result["programmeCompleted"], result["programmeTarget"], result["programmeProgress"]), (284, 381, 74.54))
+        self.assertEqual((result["componentsCompleted"], result["componentsPlanned"], result["activityProgress"]), (284, 381, 74.54))
+        self.assertEqual((result["otjhCompleted"], result["otjhTarget"], result["otjhPlanned"]), (281.9, 256, 256))
+        self.assertEqual(result["otjhActual"], 281.9)
+        self.assertEqual((result["ksbCompleted"], result["ksbTarget"], result["ksbProgress"]), (14, 14, 100))
+        self.assertEqual((result["overallProgress"], result["overallProgressAvailable"]), (74.54, True))
+        self.assertEqual((result["metricsSource"], result["ksbSource"], result["otjhSource"]),
+                         ("learner-dashboard", "learner-dashboard", "learner-dashboard"))
+
+    def test_caseload_row_uses_the_case_file_metrics_instead_of_stored_fallbacks(self):
+        payload = {
+            "otjhCompleted": 70.5, "otjhTarget": None, "otjhPlanned": None,
+            "overallProgress": 100, "overallProgressAvailable": True,
+            "componentsCompleted": 27, "componentsPlanned": 27,
+            "activityProgress": 100, "activityProgressAvailable": True,
+            "ksbCompleted": 33, "ksbTarget": 33, "ksbProgress": 100,
+            "ksbProgressAvailable": True, "enrollmentStatus": "active",
+        }
+        case_file_metrics = {
+            "migrated": True,
+            "programme": {"completed": 34, "total": 244, "percent": 13.92, "status": "ready"},
+            "otjh": {"actual": 116.8, "completed_actual": 116.8, "planned": 352},
+            "ksb": {"completed": 33, "total": 33, "percent": 100, "status": "ready"},
+        }
+
+        result = apply_canonical_learner_metrics(payload, case_file_metrics)
+
+        self.assertEqual((result["otjhCompleted"], result["otjhTarget"]), (116.8, 352))
+        self.assertEqual(result["overallProgress"], 13.92)
+        self.assertEqual(
+            (result["componentsCompleted"], result["componentsPlanned"], result["activityProgress"]),
+            (34, 244, 13.92),
+        )
+        self.assertEqual((result["ksbCompleted"], result["ksbTarget"], result["ksbProgress"]), (33, 33, 100))
+
+    def test_coach_overlay_uses_shared_metrics_and_profile_plan_fallback(self):
+        from learner_api.canonical_learning import metrics_from_records
+
+        records = [
+            {"id": 1, "accepted": True, "completed": True, "actual_seconds": 5400,
+             "ksbs": ["K1", "S1"], "segments": [], "sources": []},
+            {"id": 2, "accepted": False, "completed": True, "actual_seconds": 900,
+             "ksbs": ["K1"], "segments": [], "sources": []},
+        ]
+        canonical = metrics_from_records(records, {})
+        result = apply_canonical_learner_metrics({
+            "otjhCompleted": 999, "otjhTarget": 42, "otjhPlanned": 42,
+            "ksbProgressAvailable": False, "enrollmentStatus": "active",
+        }, canonical)
+
+        self.assertEqual(
+            (result["programmeCompleted"], result["programmeTarget"], result["programmeProgress"]),
+            (canonical["programme"]["completed"], canonical["programme"]["total"], canonical["programme"]["percent"]),
+        )
+        self.assertEqual(result["otjhCompleted"], canonical["otjh"]["completed_actual"])
+        self.assertEqual(result["otjhActual"], canonical["otjh"]["actual"])
+        self.assertEqual(result["otjhPlanned"], 42)
+        self.assertEqual(result["otjhTarget"], 42)
+        self.assertEqual(
+            (result["ksbCompleted"], result["ksbTarget"], result["ksbProgress"]),
+            (canonical["ksb"]["completed"], canonical["ksb"]["total"], canonical["ksb"]["percent"]),
+        )
 
     def test_unavailable_metrics_leave_the_existing_snapshot_untouched(self):
         payload = {"otjhCompleted": 4, "otjhTarget": 5}
@@ -543,6 +1218,22 @@ class CanonicalCoachMetricsTests(SimpleTestCase):
         result = apply_canonical_learner_metrics(payload, metrics)
         self.assertNotIn("ksbStatus", result)
         self.assertEqual(result["metricsSource"], "learner-dashboard")
+
+    def test_unavailable_programme_clears_activity_ratio_and_percentage_together(self):
+        payload = {
+            "componentsCompleted": 158, "componentsPlanned": 133,
+            "activityProgress": 100, "activityProgressAvailable": True,
+            "otjhCompleted": 4, "otjhTarget": 5, "ksbProgressAvailable": False,
+        }
+        metrics = {
+            "programme": {"completed": None, "total": None, "percent": None, "status": "unavailable"},
+            "otjh": {}, "ksb": {"status": "unavailable"},
+        }
+
+        result = apply_canonical_learner_metrics(payload, metrics)
+
+        self.assertEqual((result["componentsCompleted"], result["componentsPlanned"]), (None, None))
+        self.assertEqual((result["activityProgress"], result["activityProgressAvailable"]), (None, False))
 
     def test_ready_ksb_status_is_still_derived(self):
         payload = {"otjhCompleted": 4, "otjhTarget": 5, "ksbProgressAvailable": False}
@@ -601,8 +1292,41 @@ class SourceProfileIdentityTests(SimpleTestCase):
         self.assertEqual(apprenticeship, {})
         manager.filter.assert_called_once_with(pk__in={19: 2})
 
+    @patch("coach_api.views.load_contracts_bulk")
+    @patch("coach_api.views.fetch_source_schedule_rows")
+    def test_source_attachment_adds_the_verified_contract_projection(self, fetch_sources, load_contracts):
+        source = SimpleNamespace(id=19, aptem_id="4321", learner_type="apprenticeship")
+        profile = SimpleNamespace(id=2, enrolment_id=19, programme="Apprenticeship")
+        fetch_sources.return_value = ({}, {2: source})
+        load_contracts.return_value = {4321: {
+            "training_plan_planned_hours": 576,
+            "program_start_date": "2026-08-26",
+            "planned_end_date": "2027-08-25",
+        }}
+
+        attach_caseload_source_rows([profile])
+
+        self.assertIs(profile._caseload_source, source)
+        self.assertEqual(profile._caseload_contract["training_plan_planned_hours"], 576)
+        load_contracts.assert_called_once_with([4321])
+
 
 class CoachKsbEvidenceTests(SimpleTestCase):
+    def test_video_evidence_uses_authored_component_name_instead_of_media_type(self):
+        target = [{"code": "B1", "type": "Behaviours", "description": "Behaviour 1"}]
+        progress = [{
+            "kind": "video", "componentId": "VIDEO-1", "title": "Video",
+            "passed": True, "ksbs": ["B1"],
+        }]
+        training_plan = [{"moduleTitle": "Module 1", "weeks": [{"components": [{
+            "componentId": "VIDEO-1", "componentTitle": "Agile working techniques",
+        }]}]}]
+
+        details = build_ksb_completed_details(target, {"B1"}, progress, [], training_plan)
+
+        self.assertEqual(details[0]["sources"][0]["title"], "Agile working techniques")
+        self.assertEqual(details[0]["sources"][0]["componentId"], "VIDEO-1")
+
     def test_failed_quiz_codes_do_not_count_as_completed_ksbs(self):
         completed = completed_ksb_codes(
             [
@@ -738,9 +1462,121 @@ class CoachCaseloadLegacyRelationTests(SimpleTestCase):
         self.assertIn("activity_events", names)
 
 
+@override_settings(CACHES={
+    "default": {
+        "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
+        "LOCATION": "coach-caseload-view-tests",
+    },
+})
 class CoachCaseloadViewTests(SimpleTestCase):
     def setUp(self):
         self.factory = RequestFactory()
+
+    def test_paginated_caseload_returns_workspace_metrics_without_restoring_old_snapshots(self):
+        source = SimpleNamespace(id=193, aptem_id=8533, planned_hours=999)
+        row = SimpleNamespace(id=7, _caseload_source=source)
+        metrics = {"migrated": True, "aptem_planned_total": 576,
+                   "otjh": {"actual": 164.87, "completed_actual": 100, "planned": 256},
+                   "programme": {"completed": 137, "total": 157, "percent": 87.3, "status": "ready"},
+                   "ksb": {"completed": 498, "total": 584, "percent": 85.3, "status": "ready"}}
+        mocks = {
+            "fetch_caseload_learner_profiles_by_ids": MagicMock(return_value=[row]),
+            "serialize_caseload_learner": MagicMock(return_value={
+                "id": "7", "otjhCompleted": 99, "otjhTarget": 999, "otjhPlanned": 999,
+                "ksbCompleted": 16, "ksbTarget": 16, "ksbProgress": 100,
+                "ksbProgressAvailable": True, "enrollmentStatus": "active",
+            }),
+            "caseload_canonical_metrics": MagicMock(return_value={7: metrics}),
+            "caseload_audit_hour_totals": MagicMock(return_value={}),
+            "caseload_evidenced_ksb_counts": MagicMock(return_value={}),
+            "caseload_aptem_ids": MagicMock(return_value={7: 8533}),
+            "caseload_latest_learning_activities": MagicMock(return_value={}),
+            "dashboard_latest_completed_review_dates": MagicMock(return_value={}),
+            "current_curriculum_ksb_items_for_learner": MagicMock(return_value=[]),
+            "curriculum_expected_otjh_by_component_id": MagicMock(return_value={}),
+            "coach_staff_display_name": MagicMock(return_value="Coach"),
+            "dashboard_attendance_rows": MagicMock(return_value=[{
+                "id": "7", "hasAttendance": True, "attendance": 51,
+                "present": 23, "sessions": 45, "absent": 22,
+            }]),
+        }
+        with patch.multiple("coach_api.views", **mocks), patch.object(LearnerProfile, "objects", self.PageQuery([7])):
+            response = call_coach_view(coach_caseload, self.factory.get("/coach_api/coach/caseload", {"page": 1}))
+        self.assertEqual(response.status_code, 200)
+        learner = json.loads(response.content)["results"][0]
+        self.assertEqual((learner["otjhCompleted"], learner["otjhTarget"]), (164.87, 576))
+        self.assertEqual((learner["ksbCompleted"], learner["ksbTarget"], learner["ksbProgress"]), (498, 584, 85.3))
+        self.assertEqual((learner["componentsCompleted"], learner["componentsPlanned"], learner["activityProgress"]),
+                         (137, 157, 87.3))
+        self.assertEqual((learner["attendancePresent"], learner["attendanceSessions"], learner["attendanceRate"]),
+                         (23, 45, 51))
+        mocks["caseload_canonical_metrics"].assert_called_once_with([row], learner_workspace=True)
+
+    class PageQuery:
+        class EmptyValues:
+            def distinct(self): return self
+            def order_by(self, *args): return self
+            def __iter__(self): return iter(())
+        def __init__(self, ids):
+            self.ids = ids
+        def annotate(self, **kwargs): return self
+        def filter(self, *args, **kwargs): return self
+        def exclude(self, **kwargs): return self
+        def count(self): return len(self.ids)
+        def order_by(self, *args): return self
+        def values_list(self, *fields, **kwargs):
+            if fields == ("id",): return self.ids
+            return self.EmptyValues()
+
+    @patch("coach_api.views.coach_staff_display_name", return_value="Coach Example")
+    @patch("coach_api.views.dashboard_attendance_rows", return_value=[])
+    @patch("coach_api.views.dashboard_latest_completed_review_dates", return_value={})
+    @patch("coach_api.views.caseload_aptem_ids", return_value={})
+    @patch("coach_api.views.dashboard_review_history", return_value={})
+    @patch("coach_api.views.caseload_canonical_metrics", return_value={})
+    @patch("coach_api.views.caseload_evidenced_ksb_counts", return_value={})
+    @patch("coach_api.views.caseload_audit_hour_totals", return_value={})
+    @patch("coach_api.views.caseload_latest_learning_activities", return_value={})
+    @patch("coach_api.views.current_curriculum_ksb_items_for_learner", return_value=[])
+    @patch("coach_api.views.curriculum_expected_otjh_by_component_id", return_value={})
+    @patch("coach_api.views.serialize_caseload_learner")
+    @patch("coach_api.views.fetch_caseload_learner_profiles_by_ids")
+    def test_paginated_caseload_enriches_only_requested_page(
+        self, fetch_page, serialize, *_mocks,
+    ):
+        ids = list(range(1, 33))
+        fetch_page.side_effect = lambda _owner, selected: [
+            SimpleNamespace(id=value, coach_name="Coach Example") for value in selected
+        ]
+        serialize.side_effect = lambda row, **kwargs: {"id": str(row.id), "coachName": "Coach Example"}
+
+        with patch.object(LearnerProfile, "objects", self.PageQuery(ids)):
+            first_response = call_coach_view(coach_caseload, self.factory.get(
+                "/coach_api/coach/caseload", {"owner_email": "coach@example.com", "page": 1, "page_size": 10},
+            ))
+            response = call_coach_view(coach_caseload, self.factory.get(
+                "/coach_api/coach/caseload", {"owner_email": "coach@example.com", "page": 4, "page_size": 10},
+            ))
+        first_payload = json.loads(first_response.content)
+        payload = json.loads(response.content)
+
+        self.assertEqual(len(first_payload["results"]), 10)
+        self.assertEqual(first_payload["pagination"]["totalPages"], 4)
+        self.assertEqual(payload["pagination"], {
+            "page": 4, "pageSize": 10, "total": 32, "totalPages": 4,
+            "hasNext": False, "hasPrevious": True,
+        })
+        self.assertEqual([row["id"] for row in payload["results"]], ["31", "32"])
+        self.assertEqual(fetch_page.call_args_list[-1].args, ("coach@example.com", [31, 32]))
+        self.assertEqual([call.args[0].id for call in serialize.call_args_list[-2:]], [31, 32])
+
+        with patch.object(LearnerProfile, "objects", self.PageQuery(list(range(1, 74)))):
+            large_response = call_coach_view(coach_caseload, self.factory.get(
+                "/coach_api/coach/caseload", {"owner_email": "coach@example.com", "page": 8, "page_size": 10},
+            ))
+        large_payload = json.loads(large_response.content)
+        self.assertEqual(large_payload["pagination"]["totalPages"], 8)
+        self.assertEqual([row["id"] for row in large_payload["results"]], ["71", "72", "73"])
 
     @patch("coach_api.views.serialize_caseload_dashboard_learner")
     @patch("coach_api.views.fetch_caseload_dashboard_profiles")
@@ -845,6 +1681,58 @@ class SerializeCaseloadDashboardLearnerTests(SimpleTestCase):
         self.assertIsNone(payload["attendanceRate"])
         self.assertFalse(payload["attendanceRateAvailable"])
 
+    def test_dashboard_dto_uses_aptem_backed_source_schedule_when_profile_is_blank(self):
+        row = self._row(
+            planned_hours=None,
+            _caseload_source=SimpleNamespace(
+                planned_hours="576.00",
+                start_date=None,
+                end_date=None,
+                learner_start_date="2026-08-26",
+                learner_end_date="2027-08-25",
+            ),
+        )
+
+        payload = serialize_caseload_dashboard_learner(row)
+
+        self.assertEqual(payload["otjhPlanned"], 576.0)
+        self.assertEqual(payload["startDate"], "2026-08-26")
+        self.assertEqual(payload["otjhProgrammeStartDate"], "26 Aug 2026")
+        self.assertEqual(payload["plannedEndDate"], "25 Aug 2027")
+
+    def test_dashboard_dto_prefers_the_verified_contract_schedule(self):
+        row = self._row(
+            planned_hours=None,
+            _caseload_source=SimpleNamespace(
+                planned_hours="400.00",
+                learner_start_date="2026-01-01",
+                learner_end_date="2026-12-31",
+            ),
+            _caseload_contract={
+                "training_plan_planned_hours": Decimal("576.00"),
+                "program_start_date": "2026-08-26",
+                "planned_end_date": "2027-08-25",
+            },
+        )
+
+        payload = serialize_caseload_dashboard_learner(row)
+
+        self.assertEqual(payload["otjhPlanned"], 576.0)
+        self.assertEqual(payload["startDate"], "2026-01-01")
+        self.assertEqual(payload["otjhProgrammeStartDate"], "26 Aug 2026")
+        self.assertEqual(payload["plannedEndDate"], "25 Aug 2027")
+
+    def test_dashboard_table_date_uses_enrolment_without_changing_contract_dates(self):
+        row = self._row(
+            _caseload_source=SimpleNamespace(learner_start_date="2025-10-15", start_date="2020-01-01", end_date="2027-02-14"),
+            _caseload_contract={"program_start_date": "2025-10-01", "planned_end_date": "2027-02-01"},
+        )
+        payload = serialize_caseload_dashboard_learner(row)
+        self.assertEqual(payload["displayStartDate"], "15 Oct 2025")
+        self.assertEqual(payload["startDate"], "2025-10-15")
+        self.assertEqual(payload["otjhProgrammeStartDate"], "01 Oct 2025")
+        self.assertEqual(payload["plannedEndDate"], "01 Feb 2027")
+
     def test_dashboard_dto_drops_repeated_and_obsolete_coach_fields(self):
         """coachName/coachEmail (already on `owner`) and coachRag (removed
         from the coach caseload flow) must not leak into this DTO, even
@@ -892,185 +1780,611 @@ class ApplyAttendanceSummaryTests(SimpleTestCase):
         self.assertFalse(payload["attendanceRateAvailable"])
 
 
+@override_settings(CACHES={
+    "default": {
+        "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
+        "LOCATION": "coach-dashboard-view-tests",
+    },
+})
 class CoachDashboardViewTests(SimpleTestCase):
-    @patch("coach_api.views.cache")
-    @patch("coach_api.views.collect_tracked_live_session_events")
+    def setUp(self):
+        # Cached DTOs are normalized through the same bulk source read as snapshots.
+        source_reads = patch("coach_api.views.fetch_caseload_dashboard_profiles", return_value=[])
+        source_reads.start()
+        self.addCleanup(source_reads.stop)
+
+    @patch("coach_api.dashboard_service.CoachDashboardService.build")
     @patch("coach_api.views.collect_generated_timetable")
-    @patch("coach_api.views.serialize_caseload_dashboard_learner")
-    @patch("coach_api.views.fetch_caseload_dashboard_profiles")
-    @patch("coach_api.views.dashboard_monthly_risk_history")
-    def test_dashboard_aggregates_workspace_data_with_one_timetable_collection(
-        self,
-        monthly_risk_history,
-        fetch_rows,
-        serialize_learner,
-        collect_timetable,
-        collect_live_sessions,
-        dashboard_cache,
+    @patch("coach_api.views.coach_caseload")
+    @patch("coach_api.views.coach_marking_queue")
+    def test_dashboard_uses_summary_service_and_never_detailed_loaders(
+        self, marking, caseload, timetable, build,
     ):
-        row = SimpleNamespace(id=2)
-        fetch_rows.return_value = [row]
-        serialize_learner.return_value = {"id": "2"}
-        monthly_risk_history.return_value = [
-            {"month": "2026-08", "label": "Aug", "count": 1}
-        ]
-        collect_timetable.return_value = {
-            "owner_name": "Med Maher",
-            "summary": {"total": 1},
-            "events": [{"id": "event-1"}],
+        cache.clear()
+        build.return_value = {
+            "owner": {"name": "Coach", "email": "coach@example.com"},
+            "learners": [{"id": "2"}],
+            "monthlyRisk": [],
+            "meetings": {"events": []},
+            "marking": {"summary": {"pendingItems": 0}, "items": []},
         }
-        dashboard_cache.get.return_value = None
-        collect_live_sessions.return_value = [{"id": "live-1", "date": "2026-08-09", "startHour": 9}]
-
-        response = call_coach_view(coach_dashboard,
-            RequestFactory().get("/coach_api/coach/dashboard", {"owner_email": "coach@example.com"})
+        response = call_coach_view(
+            coach_dashboard,
+            RequestFactory().get("/coach_api/coach/dashboard"),
         )
-        payload = json.loads(response.content)
-
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(payload["learners"], [{"id": "2", "lastPr": None, "lastMcm": None}])
-        self.assertEqual(payload["monthlyRisk"], [{"month": "2026-08", "label": "Aug", "count": 1}])
-        # Attendance is overlaid directly onto each learner (see
-        # CoachDashboardAttendanceOverlayTests) rather than shipped as a
-        # second, independently-mergeable dataset.
-        self.assertNotIn("attendance", payload)
-        # Full imported review history (sections/fields/tables/rawText) is
-        # not rendered by this dashboard; see CoachDashboardReviewHistoryTests.
-        self.assertNotIn("reviewHistory", payload)
-        self.assertEqual([item["id"] for item in payload["timetable"]["events"]], ["event-1", "live-1"])
-        self.assertEqual(payload["evidence"]["items"], [])
-        collect_timetable.assert_called_once_with(
-            "coach@example.com",
-            start_date=date.today(),
-            end_date=date.today() + timedelta(days=90),
-            include_live_sessions=False,
-            include_scheduler_queues=False,
-        )
-        collect_live_sessions.assert_called_once_with(
-            "coach@example.com",
-            "Med Maher",
-            start_date=date.today(),
-            end_date=date.today() + timedelta(days=90),
-        )
+        self.assertEqual(json.loads(response.content)["learners"], [{"id": "2"}])
+        build.assert_called_once_with()
+        timetable.assert_not_called()
+        caseload.assert_not_called()
+        marking.assert_not_called()
 
-    @patch("coach_api.views.cache")
-    @patch("coach_api.views.collect_tracked_live_session_events")
-    @patch("coach_api.views.collect_generated_timetable")
-    @patch("coach_api.views.dashboard_review_history")
-    @patch("coach_api.views.dashboard_attendance_rows")
-    @patch("coach_api.views.serialize_caseload_dashboard_learner")
-    @patch("coach_api.views.fetch_caseload_dashboard_profiles")
-    @patch("coach_api.views.dashboard_monthly_risk_history")
-    def test_dashboard_joins_attendance_by_id_not_name_or_email(
-        self,
-        monthly_risk_history,
-        fetch_rows,
-        serialize_learner,
-        attendance_rows,
-        review_history,
-        collect_timetable,
-        collect_live_sessions,
-        dashboard_cache,
-    ):
-        """Attendance must join on the stable learner id, never on name/email.
-
-        Two learners share a display name on purpose: if the merge ever fell
-        back to name/email matching, learner "11" would pick up learner
-        "12"'s attendance row (or vice versa).
-        """
-        rows = [SimpleNamespace(id=11), SimpleNamespace(id=12)]
-        fetch_rows.return_value = rows
-        serialize_learner.side_effect = lambda row: {
-            "id": str(row.id),
-            "name": "Sam Taylor",
-            "email": "sam@example.com",
-            "attendanceRate": None,
-            "attendanceRateAvailable": False,
-        }
-        monthly_risk_history.return_value = []
-        collect_timetable.return_value = {"owner_name": "Coach", "summary": {}, "events": []}
-        collect_live_sessions.return_value = []
-        dashboard_cache.get.return_value = None
-        attendance_rows.return_value = [
-            {
-                "id": "12",
-                "learner": "Sam Taylor",
-                "email": "sam@example.com",
-                "attendance": 90,
-                "hasAttendance": True,
-                "lastSession": "10 Sep 2026",
-                "lastSessionDate": "2026-09-10",
+    @patch("coach_api.dashboard_service.CoachDashboardService.build")
+    def test_dashboard_response_contract_is_the_service_contract(self, build):
+        cache.clear()
+        payload = {
+            "owner": {"name": "Example Coach", "email": "coach@example.com"},
+            "learners": [{
+                "id": "7", "learnerType": "commercial", "otjhCompleted": 0,
+                "otjhTarget": 40, "ksbProgress": None, "ksbProgressAvailable": False,
+                "activityProgress": 0, "activityProgressAvailable": True,
+                "attendanceRate": None, "attendanceRateAvailable": False,
+                "lastActivity": "--", "lastActivityDate": None,
+                "lastPr": None, "lastMcm": None,
+            }],
+            "monthlyRisk": [{"month": "2026-09", "label": "Sep", "count": 0}],
+            "assignedGroups": [],
+            "meetings": {
+                "events": [], "summary": {"progressReviewRows": 0, "mcrRows": 0},
+                "reviewGenerationIssues": [],
             },
-        ]
-        # dashboard_review_history is patched purely to prove it is never
-        # invoked by coach_dashboard (see below); its return value is unused.
-        review_history.return_value = {}
+            "marking": {"summary": {"pendingItems": 0}, "items": []},
+            "errors": {},
+        }
+        build.return_value = payload
 
-        response = call_coach_view(coach_dashboard,
-            RequestFactory().get("/coach_api/coach/dashboard", {"owner_email": "coach@example.com"})
-        )
-        payload = json.loads(response.content)
-
-        by_id = {learner["id"]: learner for learner in payload["learners"]}
-        self.assertEqual(by_id["12"]["attendanceRate"], 90)
-        self.assertTrue(by_id["12"]["attendanceRateAvailable"])
-        # Learner "11" has the same name/email as "12" but no attendance row
-        # of its own: it must stay unavailable, not inherit "12"'s figure.
-        self.assertIsNone(by_id["11"]["attendanceRate"])
-        self.assertFalse(by_id["11"]["attendanceRateAvailable"])
-        review_history.assert_not_called()
-
-    @patch("coach_api.views.cache")
-    @patch("coach_api.views.collect_tracked_live_session_events")
-    @patch("coach_api.views.collect_generated_timetable")
-    @patch("coach_api.views.dashboard_attendance_rows")
-    @patch("coach_api.views.serialize_caseload_dashboard_learner")
-    @patch("coach_api.views.fetch_caseload_dashboard_profiles")
-    @patch("coach_api.views.dashboard_monthly_risk_history")
-    def test_dashboard_attendance_enrichment_is_one_batch_call_not_per_learner(
-        self,
-        monthly_risk_history,
-        fetch_rows,
-        serialize_learner,
-        attendance_rows,
-        collect_timetable,
-        collect_live_sessions,
-        dashboard_cache,
-    ):
-        rows = [SimpleNamespace(id=index) for index in range(1, 101)]
-        fetch_rows.return_value = rows
-        serialize_learner.side_effect = lambda row: {"id": str(row.id), "attendanceRateAvailable": False}
-        monthly_risk_history.return_value = []
-        collect_timetable.return_value = {"owner_name": "Coach", "summary": {}, "events": []}
-        collect_live_sessions.return_value = []
-        dashboard_cache.get.return_value = None
-        attendance_rows.return_value = []
-
-        response = call_coach_view(coach_dashboard,
-            RequestFactory().get("/coach_api/coach/dashboard", {"owner_email": "coach@example.com"})
+        response = call_coach_view(
+            coach_dashboard, RequestFactory().get("/coach_api/coach/dashboard"),
         )
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(json.loads(response.content)["learners"].__len__(), 100)
-        # One call for the whole caseload, not one per learner: the batching
-        # contract the enrichment functions already follow (audit/ksb/etc.)
-        # applies to attendance too.
-        attendance_rows.assert_called_once()
+        self.assertEqual(json.loads(response.content), payload)
+        self.assertEqual(
+            set(json.loads(response.content)),
+            {"owner", "learners", "monthlyRisk", "assignedGroups", "meetings", "marking", "errors"},
+        )
 
-    @patch("coach_api.views.cache")
-    def test_dashboard_cache_key_is_scoped_per_coach(self, cache_mock):
+    @patch("coach_api.dashboard_cache.get_cached_coach_dashboard")
+    def test_dashboard_cache_key_is_scoped_per_coach(self, get_cached):
         """Rapid coach switching must never read another coach's cached payload."""
-        cache_mock.get.return_value = {"learners": [{"id": "shared-cache-guard"}]}
-        response_a = call_coach_view(coach_dashboard,
-            RequestFactory().get("/coach_api/coach/dashboard", {"owner_email": "coach-a@example.com"})
-        )
-        response_b = call_coach_view(coach_dashboard,
-            RequestFactory().get("/coach_api/coach/dashboard", {"owner_email": "coach-b@example.com"})
-        )
+        get_cached.return_value = {"learners": [{"id": "shared-cache-guard"}]}
+        request_a = RequestFactory().get("/coach_api/coach/dashboard")
+        request_a.coach_email = "coach-a@example.com"
+        request_b = RequestFactory().get("/coach_api/coach/dashboard")
+        request_b.coach_email = "coach-b@example.com"
+        response_a = unwrap(coach_dashboard)(request_a)
+        response_b = unwrap(coach_dashboard)(request_b)
         self.assertEqual(response_a.status_code, 200)
         self.assertEqual(response_b.status_code, 200)
-        cache_keys = {call.args[0] for call in cache_mock.get.call_args_list}
-        self.assertEqual(len(cache_keys), 2, "each coach must use a distinct cache key")
+        self.assertEqual(
+            [call.args[0] for call in get_cached.call_args_list],
+            ["coach-a@example.com", "coach-b@example.com"],
+        )
+
+    @patch("coach_api.dashboard_cache.get_cached_coach_dashboard")
+    def test_view_as_uses_the_resolved_effective_coach_cache_identity(self, get_cached):
+        get_cached.return_value = {"learners": []}
+        request = RequestFactory().get(
+            "/coach_api/coach/dashboard", {"viewAsCoach": "coach-a@example.com"},
+        )
+        # Installed by coach_access_required only after it validates the admin
+        # and resolves the selected coach account.
+        request.coach_email = "coach-a@example.com"
+        request.coach_view_as = True
+
+        unwrap(coach_dashboard)(request)
+
+        get_cached.assert_called_once_with("coach-a@example.com")
+
+    @override_settings(COACH_DASHBOARD_SNAPSHOT_MAX_AGE=30)
+    @patch("coach_api.dashboard_view.schedule_coach_dashboard_refresh")
+    @patch("coach_api.dashboard_cache.get_cached_coach_dashboard")
+    def test_stale_cache_hit_returns_immediately_and_schedules_refresh(self, get_cached, schedule):
+        get_cached.return_value = {
+            "learners": [],
+            "readModel": {
+                "refreshedAt": (timezone.now() - timedelta(seconds=31)).isoformat(),
+            },
+        }
+        request = RequestFactory().get("/coach_api/coach/dashboard")
+        request.coach_email = "coach@example.com"
+
+        response = unwrap(coach_dashboard)(request)
+
+        self.assertEqual(response.status_code, 200)
+        schedule.assert_called_once_with("coach@example.com", reason="stale-cache-hit")
+
+    @patch("coach_api.dashboard_cache.get_cached_coach_dashboard")
+    def test_authentication_is_checked_before_dashboard_cache_lookup(self, get_cached):
+        request = RequestFactory().get("/coach_api/coach/dashboard")
+        request.session = {}
+
+        response = coach_dashboard(request)
+
+        self.assertIn(response.status_code, {401, 403})
+        get_cached.assert_not_called()
+
+    @override_settings(COACH_DASHBOARD_CACHE_TTL=90)
+    @patch("coach_api.dashboard_service.CoachDashboardService.build")
+    def test_first_request_misses_and_second_request_hits_final_response_cache(self, build):
+        cache.clear()
+        build.return_value = {"owner": {"email": "coach@example.com"}, "learners": [
+            {"id": "1", "startDate": None, "displayStartDate": None, "otjhProgrammeStartDate": "--"},
+        ]}
+        request = RequestFactory().get("/coach_api/coach/dashboard")
+        request.coach_email = "coach@example.com"
+
+        first = unwrap(coach_dashboard)(request)
+        second = unwrap(coach_dashboard)(request)
+
+        self.assertEqual(json.loads(first.content), json.loads(second.content))
+        self.assertEqual(first["X-LMS-Cache"], "MISS")
+        self.assertEqual(second["X-LMS-Cache"], "HIT")
+        build.assert_called_once_with()
+
+    @override_settings(COACH_DASHBOARD_CACHE_TTL=90)
+    @patch("coach_api.dashboard_service.CoachDashboardService.build")
+    def test_different_effective_coaches_never_share_cached_payloads(self, build):
+        cache.clear()
+        build.side_effect = lambda: {"learners": [{"id": str(build.call_count)}]}
+        for identity in ("coach-a@example.com", "coach-b@example.com"):
+            request = RequestFactory().get("/coach_api/coach/dashboard")
+            request.coach_email = identity
+            unwrap(coach_dashboard)(request)
+        self.assertEqual(build.call_count, 2)
+
+    @override_settings(COACH_DASHBOARD_CACHE_TTL=90)
+    @patch("coach_api.dashboard_service.CoachDashboardService.build")
+    def test_expired_cache_recomputes_dashboard(self, build):
+        from coach_api.dashboard_cache import coach_dashboard_cache_key
+
+        cache.clear()
+        identity = "coach@example.com"
+        cache.set(coach_dashboard_cache_key(identity), {"learners": [{"id": "stale"}]}, timeout=-1)
+        build.return_value = {"learners": [{"id": "fresh"}]}
+        request = RequestFactory().get("/coach_api/coach/dashboard")
+        request.coach_email = identity
+
+        response = unwrap(coach_dashboard)(request)
+
+        self.assertEqual(json.loads(response.content)["learners"], [{"id": "fresh"}])
+        build.assert_called_once_with()
+
+    def test_invalidation_removes_only_the_selected_coachs_cache(self):
+        from coach_api.dashboard_cache import (
+            cache_coach_dashboard,
+            get_cached_coach_dashboard,
+            invalidate_coach_dashboard_cache,
+        )
+
+        cache.clear()
+        cache_coach_dashboard("coach-a@example.com", {"learners": [{"id": "a"}]})
+        cache_coach_dashboard("coach-b@example.com", {"learners": [{"id": "b"}]})
+        invalidate_coach_dashboard_cache("coach-a@example.com")
+
+        self.assertIsNone(get_cached_coach_dashboard("coach-a@example.com"))
+        self.assertEqual(get_cached_coach_dashboard("coach-b@example.com")["learners"], [{"id": "b"}])
+
+    @patch("coach_api.dashboard_refresh.schedule_coach_dashboard_refresh")
+    @patch("coach_api.dashboard_cache.invalidate_coach_dashboard_cache")
+    def test_successful_coach_mutation_uses_central_invalidation_hook(self, invalidate, schedule):
+        from coach_api.auth import _invalidate_dashboard_after_mutation
+
+        view = lambda request: None
+        request = RequestFactory().post("/coach_api/coach/mutation")
+        response = SimpleNamespace(status_code=200)
+
+        self.assertIs(
+            _invalidate_dashboard_after_mutation(view, request, response, "coach@example.com"),
+            response,
+        )
+        invalidate.assert_called_once_with("coach@example.com")
+        schedule.assert_called_once_with("coach@example.com", reason="coach-mutation")
+
+
+class CoachDashboardBackgroundRefreshTests(SimpleTestCase):
+    @override_settings(COACH_DASHBOARD_SNAPSHOT_MAX_AGE=30)
+    def test_only_timestamped_stale_snapshots_schedule_revalidation(self):
+        from coach_api.dashboard_refresh import snapshot_needs_refresh
+
+        now = timezone.now()
+        self.assertFalse(snapshot_needs_refresh({"learners": []}, now=now))
+        self.assertFalse(snapshot_needs_refresh({
+            "readModel": {"refreshedAt": (now - timedelta(seconds=29)).isoformat()},
+        }, now=now))
+        self.assertTrue(snapshot_needs_refresh({
+            "readModel": {"refreshedAt": (now - timedelta(seconds=30)).isoformat()},
+        }, now=now))
+        self.assertTrue(snapshot_needs_refresh({
+            "readModel": {"version": 14, "refreshedAt": now.isoformat()},
+        }, now=now))
+
+    @patch("coach_api.dashboard_cache.cache_coach_dashboard")
+    @patch("read_models.repository.put_read_model")
+    @patch("coach_api.read_model.build_coach_dashboard")
+    def test_background_worker_refreshes_snapshot_and_final_cache(self, build, put_read_model, cache_payload):
+        from coach_api.dashboard_refresh import _refresh_worker
+
+        refreshed_at = timezone.now()
+        build.return_value = {"learners": []}
+        put_read_model.return_value = SimpleNamespace(
+            schema_version=3,
+            refreshed_at=refreshed_at,
+        )
+
+        _refresh_worker("coach@example.com", "test-event")
+
+        build.assert_called_once_with("coach@example.com")
+        put_read_model.assert_called_once()
+        cache_payload.assert_called_once_with(
+            "coach@example.com",
+            {"learners": [], "readModel": {"version": 3, "refreshedAt": refreshed_at.isoformat()}},
+        )
+
+    @patch("coach_api.dashboard_cache.cache.get", side_effect=ConnectionError("redis unavailable"))
+    def test_cache_outage_falls_through_to_persistent_snapshot(self, _cache_get):
+        from coach_api.dashboard_cache import get_cached_coach_dashboard
+
+        self.assertIsNone(get_cached_coach_dashboard("coach@example.com"))
+
+    @patch("coach_api.dashboard_signals.enqueue_coach_dashboard_refresh")
+    @patch("coach_api.dashboard_signals.invalidate_coach_dashboard_cache")
+    @patch("coach_api.dashboard_signals.transaction.on_commit")
+    def test_domain_event_invalidates_and_refreshes_only_after_commit(
+        self, on_commit, invalidate, schedule,
+    ):
+        from coach_api.dashboard_signals import _enqueue_after_commit
+
+        _enqueue_after_commit(
+            " Coach@Example.com ", using="enrolment", reason="learner-progress",
+        )
+
+        on_commit.assert_called_once()
+        self.assertEqual(on_commit.call_args.kwargs, {"using": "enrolment"})
+        invalidate.assert_not_called()
+        schedule.assert_called_once_with(
+            "coach@example.com", using="enrolment", reason="learner-progress",
+        )
+
+        on_commit.call_args.args[0]()
+
+        invalidate.assert_called_once_with("coach@example.com")
+
+    @patch("coach_api.dashboard_signals._enqueue_after_commit")
+    def test_progress_event_uses_cached_learner_without_an_extra_query(self, enqueue):
+        from coach_api.dashboard_signals import learner_progress_changed
+
+        learner = SimpleNamespace(coach_email="coach@example.com")
+        progress = SimpleNamespace(
+            learner_id=7,
+            _state=SimpleNamespace(fields_cache={"learner": learner}),
+        )
+
+        learner_progress_changed(None, instance=progress, using="enrolment")
+
+        enqueue.assert_called_once_with(
+            "coach@example.com", using="enrolment", reason="learner-progress",
+        )
+
+    @patch("coach_api.dashboard_signals._enqueue_after_commit")
+    def test_profile_calendar_and_absence_events_target_the_owner(self, enqueue):
+        from coach_api.dashboard_signals import (
+            coach_absence_changed,
+            coach_calendar_changed,
+            learner_profile_changed,
+        )
+
+        learner_profile_changed(
+            None,
+            instance=SimpleNamespace(coach_email="profile@example.com"),
+            using="enrolment",
+        )
+        coach_calendar_changed(
+            None,
+            instance=SimpleNamespace(owner_email="calendar@example.com"),
+            using="default",
+        )
+        coach_absence_changed(
+            None,
+            instance=SimpleNamespace(owner_email="absence@example.com"),
+            using="default",
+        )
+
+        self.assertEqual(enqueue.call_args_list, [
+            call("profile@example.com", using="enrolment", reason="learner-profile"),
+            call("calendar@example.com", using="default", reason="coach-calendar"),
+            call("absence@example.com", using="default", reason="coach-absence"),
+        ])
+
+
+class CoachDashboardReadModelTests(SimpleTestCase):
+    def setUp(self):
+        # Snapshot date normalization performs separate read-only source reads.
+        source_reads = patch("coach_api.views.fetch_caseload_dashboard_profiles", return_value=[])
+        source_reads.start()
+        self.addCleanup(source_reads.stop)
+
+    def test_live_dashboard_uses_learner_overview_metrics_after_legacy_enrichment(self):
+        from coach_api.dashboard_service import CoachDashboardService
+
+        row = SimpleNamespace(id=7, training_plan=[])
+        canonical = {"migrated": True, "aptem_planned_total": 576,
+                     "otjh": {"actual": 164.87, "completed_actual": 100, "planned": 256},
+                     "programme": {"completed": 137, "total": 157, "percent": 87.3, "status": "ready"},
+                     "ksb": {"completed": 498, "total": 584, "percent": 85.3, "status": "ready"}}
+        mocks = {
+            "fetch_caseload_learner_profiles": MagicMock(return_value=[row]),
+            "serialize_caseload_learner": MagicMock(return_value={
+                "id": "7", "otjhCompleted": 99, "otjhTarget": 999, "otjhPlanned": 999,
+                "ksbCompleted": 16, "ksbTarget": 16, "ksbProgress": 100, "ksbProgressAvailable": True,
+            }),
+            "caseload_canonical_metrics": MagicMock(return_value={7: canonical}),
+            "caseload_dashboard_progress_projections": MagicMock(return_value={}),
+            "caseload_audit_hour_totals": MagicMock(return_value={7: {"audit_tp_planned": 999, "audit_lms_actual": 99}}),
+            "caseload_evidenced_ksb_counts": MagicMock(return_value={}),
+            "caseload_aptem_ids": MagicMock(return_value={7: 8533}),
+            "curriculum_expected_otjh_by_component_id": MagicMock(return_value={}),
+            "caseload_progress_history": MagicMock(return_value={}),
+            "build_monthly_risk_history": MagicMock(return_value=[]),
+            "coach_staff_display_name": MagicMock(return_value="Coach"),
+            "resolve_coach_review_events": MagicMock(return_value={"events": []}),
+            "fetch_standalone_event_records": MagicMock(return_value=[]),
+            "review_type_fields_by_template": MagicMock(return_value={}),
+            "collect_tracked_live_session_events": MagicMock(return_value=[]),
+            "dashboard_attendance_rows": MagicMock(return_value=[]),
+            "fetch_official_assigned_groups": MagicMock(return_value=[]),
+        }
+        with patch.multiple("coach_api.views", **mocks), patch(
+            "coach_api.services.dashboard.service.dashboard_marking_projection", return_value={"items": []},
+        ):
+            learner = CoachDashboardService("coach@example.com").build_live()["learners"][0]
+        self.assertEqual((learner["ksbCompleted"], learner["ksbTarget"], learner["ksbProgress"]), (498, 584, 85.3))
+        self.assertEqual((learner["otjhCompleted"], learner["otjhTarget"]), (164.87, 576))
+        self.assertEqual((learner["componentsCompleted"], learner["componentsPlanned"], learner["activityProgress"]),
+                         (137, 157, 87.3))
+        mocks["caseload_canonical_metrics"].assert_called_once_with([row], learner_workspace=True)
+
+    @patch("coach_api.views.caseload_latest_learning_activities", return_value={
+        7: {"display": "01 Sep 2026", "date": "2026-09-01", "label": "Reading"},
+    })
+    @patch("coach_api.views.caseload_completed_ksb_codes", return_value={7: {"K1"}})
+    def test_dashboard_projection_keeps_ksb_fallback_but_cannot_overwrite_activities(
+        self, _completed_codes, _latest,
+    ):
+        row = SimpleNamespace(id=7, ksbs=[{"code": "K1"}])
+
+        payload = caseload_dashboard_progress_projections([row])[7]
+
+        self.assertEqual(
+            (payload["ksbCompleted"], payload["ksbTarget"], payload["ksbProgress"]),
+            (1, 1, 100),
+        )
+        self.assertTrue(payload["ksbProgressAvailable"])
+        self.assertEqual(payload["lastActivityLabel"], "Reading")
+        self.assertNotIn("componentsCompleted", payload)
+        self.assertNotIn("componentsPlanned", payload)
+        self.assertNotIn("activityProgress", payload)
+        self.assertNotIn("activityProgressAvailable", payload)
+
+    @patch("coach_api.views.caseload_latest_learning_activities", return_value={})
+    @patch("coach_api.views.caseload_completed_ksb_codes", return_value={})
+    def test_dashboard_projection_limits_ksb_fallback_to_noncanonical_rows(
+        self, completed_codes, latest_activities,
+    ):
+        canonical = SimpleNamespace(id=7, ksbs=[{"code": "K1"}])
+        fallback = SimpleNamespace(id=8, ksbs=[{"code": "K2"}])
+
+        caseload_dashboard_progress_projections(
+            [canonical, fallback],
+            ksb_rows=[fallback],
+        )
+
+        completed_codes.assert_called_once_with([fallback])
+        latest_activities.assert_called_once_with([canonical, fallback])
+
+    @patch("coach_api.dashboard_service.CoachDashboardSnapshot.objects")
+    @patch("coach_api.dashboard_service.CoachDashboardService.build_live")
+    def test_snapshot_read_is_one_lookup_and_never_rebuilds_live_aggregates(self, build_live, objects):
+        from coach_api.dashboard_service import CoachDashboardService
+
+        snapshot = SimpleNamespace(
+            payload={"learners": [{"id": "1"}], "meetings": {"events": []}},
+            refreshed_at=timezone.now(),
+        )
+        objects.filter.return_value.only.return_value.first.return_value = snapshot
+
+        payload = CoachDashboardService("coach@example.com").build()
+
+        self.assertEqual(payload["learners"], [{"id": "1", "startDate": None,
+                                             "displayStartDate": None, "otjhProgrammeStartDate": "--"}])
+        self.assertIn("readModel", payload)
+        objects.filter.assert_called_once_with(owner_email="coach@example.com", schema_version=19)
+        objects.filter.return_value.only.assert_called_once_with("payload", "refreshed_at")
+        objects.filter.return_value.only.return_value.first.assert_called_once_with()
+        build_live.assert_not_called()
+
+    @patch("coach_api.dashboard_service.CoachDashboardSnapshot.objects")
+    @patch("coach_api.dashboard_service.CoachDashboardService.refresh_metric_projection")
+    def test_previous_metric_schema_snapshot_is_served_until_background_refresh(self, refresh_metrics, objects):
+        from coach_api.dashboard_service import CoachDashboardService
+
+        objects.filter.return_value.only.return_value.first.return_value = None
+        previous = SimpleNamespace(
+            payload={"learners": [{"id": "stale"}]},
+            refreshed_at=timezone.now(),
+            schema_version=13,
+        )
+        objects.filter.return_value.order_by.return_value.only.return_value.first.return_value = previous
+
+        payload = CoachDashboardService("coach@example.com").build()
+
+        self.assertEqual(payload["learners"], [{"id": "stale", "startDate": None,
+                                             "displayStartDate": None, "otjhProgrammeStartDate": "--"}])
+        self.assertEqual(payload["readModel"]["version"], 13)
+        self.assertEqual(objects.filter.call_args_list[0].kwargs,
+                         {"owner_email": "coach@example.com", "schema_version": 19})
+        self.assertEqual(objects.filter.call_args_list[1].kwargs,
+                         {"owner_email": "coach@example.com"})
+        refresh_metrics.assert_not_called()
+
+    def test_previous_response_cache_namespace_cannot_serve_legacy_metrics(self):
+        import hashlib
+        from coach_api.dashboard_cache import coach_dashboard_cache_key
+
+        identity = "coach@example.com"
+        old_hash = hashlib.sha256(identity.encode("utf-8")).hexdigest()
+        old_key = f"coach-dashboard-summary:v2:{old_hash}"
+
+        self.assertNotEqual(coach_dashboard_cache_key(identity), old_key)
+        self.assertTrue(coach_dashboard_cache_key(identity).startswith("coach-dashboard-summary:v4:"))
+
+    @patch("coach_api.dashboard_service.CoachDashboardSnapshot.objects")
+    def test_snapshot_metric_upgrade_uses_the_same_canonical_values_as_caseload(self, objects):
+        from learner_api.canonical_learning import metrics_from_records
+        from coach_api.dashboard_service import CoachDashboardService
+
+        canonical = metrics_from_records([
+            {"id": 1, "accepted": True, "completed": True, "actual_seconds": 3600,
+             "ksbs": ["K1"], "segments": [], "sources": []},
+            {"id": 2, "accepted": False, "completed": True, "actual_seconds": 0,
+             "ksbs": ["K1"], "segments": [], "sources": []},
+        ], {})
+        canonical["otjh"]["planned"] = 576
+        canonical["aptem_planned_total"] = 576
+        previous = {"learners": [{
+            "id": "7", "otjhCompleted": 111, "otjhTarget": 42,
+            "ksbCompleted": 14, "ksbTarget": 14, "ksbProgress": 100,
+            "ksbProgressAvailable": True, "enrollmentStatus": "active",
+        }], "meetings": {"events": [{"id": "preserved"}]}}
+        row = SimpleNamespace(id=7)
+        with patch.multiple(
+            "coach_api.views",
+            fetch_caseload_learner_profiles=MagicMock(return_value=[row]),
+            serialize_caseload_learner=MagicMock(return_value={
+                "otjhTarget": 42,
+                "ksbCompleted": 14, "ksbTarget": 14, "ksbProgress": 100,
+                "ksbProgressAvailable": True, "ksbStatus": "Completed",
+            }),
+            caseload_canonical_metrics=MagicMock(return_value={7: canonical}),
+            caseload_aptem_ids=MagicMock(return_value={7: 8533}),
+            dashboard_attendance_rows=MagicMock(return_value=[{
+                "id": "7", "attendance": 82, "hasAttendance": True,
+                "present": 23, "sessions": 28, "absent": 5,
+            }]),
+        ):
+            payload = CoachDashboardService("coach@example.com").refresh_metric_projection(previous)
+
+        learner = payload["learners"][0]
+        self.assertEqual(
+            (learner["programmeCompleted"], learner["programmeTarget"], learner["programmeProgress"]),
+            (canonical["programme"]["completed"], canonical["programme"]["total"], canonical["programme"]["percent"]),
+        )
+        self.assertEqual(
+            (learner["ksbCompleted"], learner["ksbTarget"], learner["ksbProgress"]),
+            (canonical["ksb"]["completed"], canonical["ksb"]["total"], canonical["ksb"]["percent"]),
+        )
+        self.assertEqual((learner["otjhCompleted"], learner["otjhTarget"]),
+                         (canonical["otjh"]["actual"], 576))
+        self.assertEqual((learner["attendancePresent"], learner["attendanceSessions"], learner["attendanceRate"]),
+                         (23, 28, 82))
+        self.assertEqual(payload["meetings"], previous["meetings"])
+        self.assertEqual(previous["learners"][0]["ksbProgress"], 100)
+        objects.update_or_create.assert_called_once()
+
+    @patch("coach_api.dashboard_service.CoachDashboardSnapshot.objects")
+    @patch("coach_api.dashboard_service.CoachDashboardService.build_live")
+    def test_refresh_returns_the_new_snapshot_timestamp(self, build_live, objects):
+        from coach_api.dashboard_service import CoachDashboardService
+
+        refreshed_at = timezone.now()
+        build_live.return_value = {"learners": []}
+        objects.update_or_create.return_value = (
+            SimpleNamespace(refreshed_at=refreshed_at), True,
+        )
+
+        payload = CoachDashboardService("coach@example.com").refresh()
+
+        self.assertEqual(payload["readModel"], {
+            "version": 19, "refreshedAt": refreshed_at.isoformat(),
+        })
+
+
+@override_settings(
+    COACH_DASHBOARD_CACHE_TTL=90,
+    CACHES={
+        "default": {
+            "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
+            "LOCATION": "coach-dashboard-performance-tests",
+        },
+    },
+)
+class CoachDashboardSnapshotPerformanceBaselineTests(TestCase):
+    databases = {"default"}
+
+    def setUp(self):
+        cache.clear()
+        self.payload = {
+            "owner": {"name": "Baseline Coach", "email": "baseline@example.com"},
+            "learners": [{
+                "id": str(index), "name": f"Learner {index}",
+                "learnerType": "commercial" if index % 2 else "apprenticeship",
+                "otjhCompleted": 0, "otjhTarget": 40,
+                "ksbProgress": None, "ksbProgressAvailable": False,
+                "activityProgress": 0, "activityProgressAvailable": True,
+                "attendanceRate": None, "attendanceRateAvailable": False,
+                "lastActivity": "--", "lastPr": None, "lastMcm": None,
+            } for index in range(1, 11)],
+            "monthlyRisk": [], "assignedGroups": [],
+            "meetings": {"events": [], "summary": {}, "reviewGenerationIssues": []},
+            "marking": {"summary": {"pendingItems": 0}, "items": []}, "errors": {},
+        }
+        CoachDashboardSnapshot.objects.create(
+            owner_email="baseline@example.com", payload=self.payload, schema_version=17,
+        )
+
+    def request(self):
+        request = RequestFactory().get("/coach_api/coach/dashboard")
+        request.coach_email = "baseline@example.com"
+        return unwrap(coach_dashboard)(request)
+
+    def test_snapshot_cache_miss_and_hit_query_baseline(self):
+        with CaptureQueriesContext(connection) as miss_queries:
+            miss_started = perf_counter()
+            miss = self.request()
+            miss_ms = (perf_counter() - miss_started) * 1000
+        with CaptureQueriesContext(connection) as hit_queries:
+            hit_started = perf_counter()
+            hit = self.request()
+            hit_ms = (perf_counter() - hit_started) * 1000
+
+        self.assertEqual(miss.status_code, 200)
+        self.assertEqual(hit.status_code, 200)
+        self.assertEqual(json.loads(miss.content)["learners"], self.payload["learners"])
+        self.assertEqual(len(miss_queries), 1)
+        self.assertEqual(len(hit_queries), 0)
+        print(json.dumps({
+            "dashboardBaseline": {
+                "database": "Django isolated test database",
+                "learners": 10,
+                "cacheMissQueries": len(miss_queries),
+                "cacheHitQueries": len(hit_queries),
+                "cacheMissMs": round(miss_ms, 3),
+                "cacheHitMs": round(hit_ms, 3),
+                "dbTimeMs": round(sum(float(query.get("time", 0)) for query in miss_queries) * 1000, 3),
+                "payloadBytes": len(miss.content),
+                "slowestSqlFingerprint": "coach_dashboard_snapshot owner_email/schema_version lookup",
+            }
+        }, sort_keys=True))
 
 
 class MonthlyRiskHistoryTests(SimpleTestCase):
@@ -1593,6 +2907,37 @@ Learner progress looks strong.
         self.assertEqual(response.content.decode(), "WEBVTT\n\n00:00:01.000 --> 00:00:03.000\nStored transcript.")
         self.assertIn("inline", response["Content-Disposition"])
         stored.assert_called_once_with(record, "transcript-1")
+
+    def test_combined_transcript_content_returns_one_text_file(self):
+        record = CoachCalendarEvent(
+            event_key="mcr:42:1:2026-09-01",
+            owner_email="coach@example.com",
+            event_type="mcr",
+        )
+        request = self.factory.get(
+            "/coach_api/coach/timetable/events/mcr:42:1:2026-09-01/artifacts/transcript/combined/content?preview=1"
+        )
+
+        with patch("coach_api.views.stored_coach_meeting_transcript_for_summary", return_value={
+            "artifactId": "transcript-1,transcript-2",
+            "text": "First transcript segment.\n\nSecond transcript segment.",
+        }) as stored:
+            response = coach_meeting_artifact_content_response(
+                request,
+                record,
+                record.event_key,
+                "transcript",
+                "combined",
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.content.decode(),
+            "First transcript segment.\n\nSecond transcript segment.",
+        )
+        self.assertIn("text/plain", response["Content-Type"])
+        self.assertIn("transcript.txt", response["Content-Disposition"])
+        stored.assert_called_once_with(record)
 
     def test_progress_review_expected_attendees_include_employer(self):
         record = CoachCalendarEvent(
@@ -2141,6 +3486,7 @@ class EvidenceQueueSnapshotTests(SimpleTestCase):
 
 
 class CaseloadOtjhSnapshotTests(SimpleTestCase):
+    @patch("coach_api.views.current_curriculum_ksb_items_for_learner", return_value=[])
     @patch("coach_api.views.learner_activity_feed_entries", return_value=[])
     @patch("coach_api.views.refresh_caseload_learner_ksb_snapshot")
     @patch("coach_api.views.refresh_learner_otjh_snapshot")
@@ -2149,6 +3495,7 @@ class CaseloadOtjhSnapshotTests(SimpleTestCase):
         refresh_snapshot,
         refresh_ksb_snapshot,
         learner_activity_feed_entries,
+        _current_ksbs,
     ):
         row = SimpleNamespace(
             id=2,
@@ -2192,13 +3539,14 @@ class CaseloadOtjhSnapshotTests(SimpleTestCase):
         payload = serialize_caseload_learner(row)
 
         refresh_ksb_snapshot.assert_called_once_with(row)
-        refresh_snapshot.assert_called_once_with(row)
+        refresh_snapshot.assert_called_once_with(row, source=None)
         learner_activity_feed_entries.assert_called_once_with(row)
         self.assertEqual(payload["otjhCompleted"], 29.0)
         self.assertEqual(payload["otjhTarget"], 41.5)
         self.assertEqual(payload["otjhPlanned"], 111.0)
         self.assertEqual(float(payload["progressVariance"]), -0.3)
 
+    @patch("coach_api.views.current_curriculum_ksb_items_for_learner", return_value=[])
     @patch("coach_api.views.learner_activity_feed_entries", return_value=[])
     @patch("coach_api.views.refresh_learner_ksb_snapshot")
     @patch("coach_api.views.refresh_learner_otjh_snapshot", return_value={})
@@ -2207,6 +3555,7 @@ class CaseloadOtjhSnapshotTests(SimpleTestCase):
         refresh_otjh_snapshot,
         refresh_ksb_snapshot,
         learner_activity_feed_entries,
+        _current_ksbs,
     ):
         row = SimpleNamespace(
             id=5,
@@ -2254,7 +3603,7 @@ class CaseloadOtjhSnapshotTests(SimpleTestCase):
             row._caseload_source,
             training_plan=row.training_plan,
         )
-        refresh_otjh_snapshot.assert_called_once_with(row)
+        refresh_otjh_snapshot.assert_called_once_with(row, source=row._caseload_source)
         learner_activity_feed_entries.assert_called_once_with(row)
         self.assertEqual(row._prefetched_objects_cache, {})
         self.assertEqual(payload["ksbCompleted"], 2)
@@ -2267,6 +3616,7 @@ class CaseloadOtjhSnapshotTests(SimpleTestCase):
         self.assertEqual(payload["behavioursCompleted"], 0)
         self.assertEqual(payload["behavioursTarget"], 1)
 
+    @patch("coach_api.views.current_curriculum_ksb_items_for_learner", return_value=[])
     @patch("coach_api.views.learner_activity_feed_entries", return_value=[])
     @patch("coach_api.views.refresh_learner_ksb_snapshot")
     @patch("coach_api.views.refresh_learner_otjh_snapshot", return_value={})
@@ -2275,6 +3625,7 @@ class CaseloadOtjhSnapshotTests(SimpleTestCase):
         refresh_otjh_snapshot,
         refresh_ksb_snapshot,
         learner_activity_feed_entries,
+        _current_ksbs,
     ):
         # Regression: a learner who already has a KsbProfileVersion pinned at
         # enrolment can never get a different one from
@@ -2302,6 +3653,7 @@ class CaseloadOtjhSnapshotTests(SimpleTestCase):
 
         refresh_ksb_snapshot.assert_not_called()
 
+    @patch("coach_api.views.current_curriculum_ksb_items_for_learner", return_value=[])
     @patch("coach_api.views.learner_activity_feed_entries", return_value=[])
     @patch("coach_api.views.refresh_learner_ksb_snapshot")
     @patch("coach_api.views.refresh_learner_otjh_snapshot", return_value={})
@@ -2312,6 +3664,7 @@ class CaseloadOtjhSnapshotTests(SimpleTestCase):
         refresh_otjh_snapshot,
         refresh_ksb_snapshot,
         learner_activity_feed_entries,
+        _current_ksbs,
     ):
         row = SimpleNamespace(
             id=6,
@@ -2387,7 +3740,7 @@ class CaseloadOtjhSnapshotTests(SimpleTestCase):
             row._caseload_source,
             training_plan=row.training_plan,
         )
-        refresh_otjh_snapshot.assert_called_once_with(row)
+        refresh_otjh_snapshot.assert_called_once_with(row, source=row._caseload_source)
         learner_activity_feed_entries.assert_called_once_with(row)
         self.assertEqual(payload["ksbCompleted"], 3)
         self.assertEqual(payload["ksbTarget"], 3)

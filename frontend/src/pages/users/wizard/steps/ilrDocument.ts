@@ -8,6 +8,9 @@
 // ============================================================================
 import jsPDF from 'jspdf';
 import type { EnrolmentBoard, IlrForm } from '../../types';
+import { IlrText } from './ilrAdditionalText';
+import { cleanTexts } from '../layout/texts';
+import { plainText } from '../layout/richFormat';
 
 // ---- Page geometry (mm, A4 portrait) ----
 const PAGE_W = 210;
@@ -86,9 +89,19 @@ function fmtList(files: string[]): string {
   return files.length ? files.join(', ') : '';
 }
 
-/** Flattens the form into the ordered rows of the printed document. */
-function buildRows(ilr: IlrForm, board: EnrolmentBoard): Row[] {
+/**
+ * Flattens the form into the ordered rows of the printed document.
+ *
+ * `texts` is the wording published from the wizard builder. A question whose
+ * wording was edited is printed as edited — as the learner was asked it;
+ * everything else keeps the document's own wording.
+ */
+export function buildRows(ilr: IlrForm, board: EnrolmentBoard, texts?: Record<string, string>): Row[] {
   const rows: Row[] = [];
+  const w = (slot: string, printed: string): string => {
+    const edited = cleanTexts(texts)?.[slot];
+    return edited ? plainText(edited) : printed;
+  };
 
   rows.push({ kind: 'section', title: 'Learner' });
   rows.push({ kind: 'text', label: 'Name', value: board.user.name });
@@ -96,75 +109,87 @@ function buildRows(ilr: IlrForm, board: EnrolmentBoard): Row[] {
   rows.push({ kind: 'text', label: 'Programme', value: board.programme.name });
   rows.push({ kind: 'text', label: 'Cohort', value: board.programme.cohort });
 
-  rows.push({ kind: 'section', title: 'Contact Preferences' });
-  rows.push({ kind: 'yesno', label: 'By post', value: ilr.contact.byPost });
-  rows.push({ kind: 'yesno', label: 'By phone', value: ilr.contact.byPhone });
-  rows.push({ kind: 'yesno', label: 'By e-mail', value: ilr.contact.byEmail });
+  rows.push({ kind: 'section', title: w('xilr.h.contact.title', 'Contact Preferences') });
+  rows.push({ kind: 'yesno', label: w('xilr.contactPost.label', 'By post'), value: ilr.contact.byPost });
+  rows.push({ kind: 'yesno', label: w('xilr.contactPhone.label', 'By phone'), value: ilr.contact.byPhone });
+  rows.push({ kind: 'yesno', label: w('xilr.contactEmail.label', 'By e-mail'), value: ilr.contact.byEmail });
 
-  rows.push({ kind: 'section', title: 'Emergency contact details/Next of kin' });
-  rows.push({ kind: 'text', label: 'Full name', value: ilr.nextOfKin.fullName });
-  rows.push({ kind: 'text', label: 'Relationship to you', value: ilr.nextOfKin.relationship });
-  rows.push({ kind: 'text', label: 'Email address', value: ilr.nextOfKin.email });
-  rows.push({ kind: 'text', label: 'Phone number', value: ilr.nextOfKin.phone });
-  rows.push({ kind: 'yesno', label: 'Address same as learner?', value: ilr.nextOfKin.sameAddressAsLearner });
+  rows.push({ kind: 'section', title: w('xilr.h.nextOfKin.title', 'Emergency contact details/Next of kin') });
+  rows.push({ kind: 'text', label: w('xilr.nokName.label', 'Full name'), value: ilr.nextOfKin.fullName });
+  rows.push({ kind: 'text', label: w('xilr.nokRelationship.label', 'Relationship to you'), value: ilr.nextOfKin.relationship });
+  rows.push({ kind: 'text', label: w('xilr.nokEmail.label', 'Email address'), value: ilr.nextOfKin.email });
+  rows.push({ kind: 'text', label: w('xilr.nokPhone.label', 'Phone number'), value: ilr.nextOfKin.phone });
+  rows.push({ kind: 'yesno', label: w('xilr.nokSameAddress.label', 'Address same as learner?'), value: ilr.nextOfKin.sameAddressAsLearner });
+  if (ilr.nextOfKin.sameAddressAsLearner === false) {
+    rows.push({ kind: 'text', label: w('xilr.nokSameAddress.postcode', 'Postcode'), value: ilr.nextOfKin.postcode ?? '' });
+    rows.push({ kind: 'text', label: w('xilr.nokSameAddress.address', 'Address'), value: ilr.nextOfKin.address ?? '' });
+  }
 
-  rows.push({ kind: 'section', title: 'Eligibility' });
-  rows.push({ kind: 'yesno', label: 'Are you primarily employed in England?', value: ilr.eligibility.employedInEngland });
-  rows.push({ kind: 'text', label: 'Country of residence', value: ilr.eligibility.countryOfResidence });
-  rows.push({ kind: 'yesno', label: 'Are you a UK/EEA National?', value: ilr.eligibility.ukEeaNational });
-  rows.push({ kind: 'text', label: 'Nationality', value: ilr.eligibility.nationality });
-  rows.push({ kind: 'yesno', label: 'Have you been resident in the UK/EEA for the previous 3 years?', value: ilr.eligibility.residentPrev3Years });
-  rows.push({ kind: 'text', label: 'How many full years have you lived in the UK?', value: ilr.eligibility.yearsInUk != null ? String(ilr.eligibility.yearsInUk) : '' });
-  rows.push({ kind: 'yesno', label: 'Do you require a Work Permit?', value: ilr.eligibility.requiresWorkPermit });
+  rows.push({ kind: 'section', title: w('xilr.h.eligibility.title', 'Eligibility') });
+  rows.push({ kind: 'yesno', label: w('xilr.employedInEngland.label', 'Are you primarily employed in England?'), value: ilr.eligibility.employedInEngland });
+  rows.push({ kind: 'text', label: w('xilr.countryOfResidence.label', 'Country of residence'), value: ilr.eligibility.countryOfResidence });
+  rows.push({ kind: 'yesno', label: w('xilr.ukEeaNational.label', 'Are you a UK/EEA National?'), value: ilr.eligibility.ukEeaNational });
+  rows.push({ kind: 'text', label: w('xilr.nationality.label', 'Nationality'), value: ilr.eligibility.nationality });
+  rows.push({ kind: 'yesno', label: w('xilr.resident3Years.label', 'Have you been resident in the UK/EEA for the previous 3 years?'), value: ilr.eligibility.residentPrev3Years });
+  rows.push({ kind: 'text', label: w('xilr.yearsInUk.label', 'How many full years have you lived in the UK?'), value: ilr.eligibility.yearsInUk != null ? String(ilr.eligibility.yearsInUk) : '' });
+  rows.push({ kind: 'yesno', label: w('xilr.workPermit.label', 'Do you require a Work Permit?'), value: ilr.eligibility.requiresWorkPermit });
   rows.push({ kind: 'text', label: 'Evidence provided', value: ilr.eligibility.evidenceDescription });
   rows.push({ kind: 'text', label: 'Evidence files', value: fmtList(ilr.eligibility.evidenceFiles) });
 
-  rows.push({ kind: 'section', title: 'Employer Details' });
-  rows.push({ kind: 'text', label: 'Organisation name', value: ilr.employer.organisationName });
-  rows.push({ kind: 'text', label: 'Organisation post code', value: ilr.employer.postcode });
-  rows.push({ kind: 'text', label: 'Organisation address', value: ilr.employer.address });
-  rows.push({ kind: 'text', label: 'Organisation city', value: ilr.employer.city });
-  rows.push({ kind: 'text', label: 'Line Manager name', value: ilr.employer.lineManagerName });
-  rows.push({ kind: 'text', label: 'Line Manager email', value: ilr.employer.lineManagerEmail });
-  rows.push({ kind: 'text', label: 'Line Manager phone', value: ilr.employer.lineManagerPhone });
+  rows.push({ kind: 'section', title: w('xilr.h.employer.title', 'Employer Details') });
+  rows.push({ kind: 'text', label: w('xilr.employerName.label', 'Organisation name'), value: ilr.employer.organisationName });
+  rows.push({ kind: 'text', label: w('xilr.employerPostcode.label', 'Organisation post code'), value: ilr.employer.postcode });
+  rows.push({ kind: 'text', label: w('xilr.employerAddress.label', 'Organisation address'), value: ilr.employer.address });
+  rows.push({ kind: 'text', label: w('xilr.employerCity.label', 'Organisation city'), value: ilr.employer.city });
+  rows.push({ kind: 'text', label: w('xilr.lineManagerName.label', 'Line Manager name'), value: ilr.employer.lineManagerName });
+  rows.push({ kind: 'text', label: w('xilr.lineManagerEmail.label', 'Line Manager email'), value: ilr.employer.lineManagerEmail });
+  rows.push({ kind: 'text', label: w('xilr.lineManagerPhone.label', 'Line Manager phone'), value: ilr.employer.lineManagerPhone });
 
-  rows.push({ kind: 'section', title: 'Other training' });
-  rows.push({ kind: 'yesno', label: 'Have you attended any other government funded training programmes in the last 12 months?', value: ilr.otherTraining.attended12m });
-  rows.push({ kind: 'text', label: 'When was it completed?', value: fmtDate(ilr.otherTraining.completedWhen) });
+  rows.push({ kind: 'section', title: w('xilr.h.otherTraining.title', 'Other training') });
+  rows.push({ kind: 'yesno', label: w('xilr.otherTraining.label', 'Have you attended any other government funded training programmes in the last 12 months?'), value: ilr.otherTraining.attended12m });
+  rows.push({ kind: 'text', label: w('xilr.otherTraining.when', 'When was it completed?'), value: fmtDate(ilr.otherTraining.completedWhen) });
 
-  rows.push({ kind: 'section', title: 'Personal Circumstances' });
-  rows.push({ kind: 'text', label: 'Do you have any caring responsibilities?', value: ilr.circumstances.caringResponsibilities });
-  rows.push({ kind: 'text', label: 'Are there any other personal circumstances you want to tell us about?', value: ilr.circumstances.other });
-  rows.push({ kind: 'yesno', label: 'Care leaver', value: ilr.circumstances.careLeaver });
+  rows.push({ kind: 'section', title: w('xilr.h.circumstances.title', 'Personal Circumstances') });
+  rows.push({ kind: 'text', label: w('xilr.caring.label', 'Do you have any caring responsibilities?'), value: ilr.circumstances.caringResponsibilities });
+  rows.push({ kind: 'text', label: w('xilr.otherCircumstances.label', 'Are there any other personal circumstances you want to tell us about?'), value: ilr.circumstances.other });
+  rows.push({ kind: 'yesno', label: w('xilr.careLeaver.label', 'Care leaver'), value: ilr.circumstances.careLeaver });
 
-  rows.push({ kind: 'section', title: 'Programme understanding' });
-  rows.push({ kind: 'text', label: 'What is your understanding of the programme you are applying for?', value: ilr.understanding.programmeUnderstanding });
-  rows.push({ kind: 'text', label: 'How will this programme help you in your career development/aspirations, and/or with your progression?', value: ilr.understanding.careerProgression });
+  rows.push({ kind: 'section', title: w('xilr.h.understanding.title', 'Programme understanding') });
+  rows.push({ kind: 'text', label: w('xilr.programmeUnderstanding.label', 'What is your understanding of the programme you are applying for?'), value: ilr.understanding.programmeUnderstanding });
+  rows.push({ kind: 'text', label: w('xilr.careerProgression.label', 'How will this programme help you in your career development/aspirations, and/or with your progression?'), value: ilr.understanding.careerProgression });
 
-  rows.push({ kind: 'section', title: 'Additional information' });
-  rows.push({ kind: 'yesno', label: 'Are you aged between 16 and 18?', value: ilr.additional.aged16to18 });
-  rows.push({ kind: 'yesno', label: 'Are you aged between 19 and 24?', value: ilr.additional.aged19to24 });
-
-  rows.push({ kind: 'section', title: 'Media Consent' });
-  rows.push({ kind: 'note', text: 'On occasion, Kent Business College may use your photograph or recordings in promotional material, on social media and other publications relating to our training provision.' });
-  rows.push({ kind: 'yesno', label: 'Do you give Kent Business College consent for the above?', value: ilr.media.consent });
-  rows.push({ kind: 'yesno', label: 'I understand that my Personal Learning Record (PLR) information will be shared with Kent Business College and other relevant organisations', value: ilr.declarations.plrShared });
-  rows.push({ kind: 'yesno', label: 'I understand that I am on programme that is part funded by the DfE. I understand that members of the qualification and funding authorities may contact me in connection to my apprenticeship', value: ilr.declarations.dfeContact });
-  rows.push({ kind: 'yesno', label: 'I understand that relevant personal details will be provided to the End Point and Awarding Organisation so that Registration and Certification can take place', value: ilr.declarations.epaoDetails });
-  rows.push({ kind: 'yesno', label: 'I understand that Kentbusinesscollege will hold any relevant copies of my certificates for audit purposes', value: ilr.declarations.kbcHoldsCerts });
-  rows.push({ kind: 'yesno', label: 'I confirm that all the information contained in this application is accurate and true', value: ilr.declarations.infoAccurate });
-  rows.push({ kind: 'yesno', label: 'Could you confirm whether you expect to spend more than 50% of your working hours in England? (The measure of 50% should exclude any time expected to be spent outside of England in remote and/or hybrid working)', value: ilr.declarations.over50PercentEngland });
-  rows.push({ kind: 'text', label: 'Please confirm your "current wage rate per hour" is equal to or higher than:', value: ilr.declarations.wageRateBand });
-  rows.push({ kind: 'yesno', label: 'Have you ever been known by any other name?', value: ilr.declarations.knownByOtherName });
-  rows.push({ kind: 'note', text: 'Your personal learning record (PLR) is a permanent online record of your qualifications and achievements. Your Training Provider needs to access your PLR records to identify if you have any qualifications that could be considered as Recognised Prior Learning or exemptions.' });
-  rows.push({ kind: 'yesno', label: 'Please confirm that you are aware your training provider will need to access your PLR:', value: ilr.declarations.plrAccessAware });
+  // Replaced the age questions, media consent and the other declarations; those
+  // answers stay on older records but are no longer printed.
+  const ai = ilr.additionalInformation;
+  rows.push({ kind: 'section', title: w('xilr.h.additional.title', 'Additional Information') });
+  rows.push({ kind: 'text', label: w('xilr.jobRoleRelevance.label', IlrText.jobRoleRelevance), value: ai?.jobRoleRelevance ?? '' });
+  rows.push({ kind: 'text', label: w('xilr.residenceNotFte.label', IlrText.residenceNotForFullTimeEducation), value: ai?.residenceNotForFullTimeEducation ?? '' });
+  rows.push({ kind: 'section', title: w('xilr.ehcp.heading', 'EHCP Status') });
+  rows.push({ kind: 'note', text: w('xilr.ehcp.sharing', IlrText.ehcpSharing) });
+  rows.push({ kind: 'text', label: w('xilr.ehcp.label', IlrText.ehcp), value: ai?.ehcp ?? '' });
+  rows.push({ kind: 'note', text: w('xilr.ehcp.use', IlrText.ehcpUse) });
+  rows.push({ kind: 'yesno', label: w('xilr.over50Percent.label', IlrText.over50PercentEngland), value: ilr.declarations.over50PercentEngland });
+  rows.push({ kind: 'text', label: w('xilr.wageRate.label', IlrText.wageRateBand), value: ilr.declarations.wageRateBand });
+  rows.push({ kind: 'yesno', label: w('xilr.knownByOtherName.label', IlrText.knownByOtherName), value: ilr.declarations.knownByOtherName });
+  if (ilr.declarations.knownByOtherName === true) {
+    rows.push({ kind: 'text', label: w('xilr.knownByOtherName.otherNames', IlrText.otherNames), value: ai?.otherNames ?? '' });
+  }
+  rows.push({ kind: 'note', text: w('xilr.plrAccessAware.record', IlrText.plrRecord) });
+  rows.push({ kind: 'note', text: w('xilr.plrAccessAware.sharing', IlrText.plrSharing) });
+  rows.push({ kind: 'yesno', label: w('xilr.plrAccessAware.label', IlrText.plrAccessAware), value: ilr.declarations.plrAccessAware });
 
   return rows;
 }
 
-/** Max drawn size of a signature image in the PDF (mm), fitted preserving aspect. */
-const SIG_MAX_W = 60;
-const SIG_MAX_H = 14;
+/**
+ * Max drawn size of a signature image in the PDF (mm), fitted preserving aspect.
+ *
+ * The row above each signature line (First Names / Print Name) is 12mm higher,
+ * so the image must stay well under that or it paints over the name: 8mm tall
+ * leaves a clear gap below that row's rule.
+ */
+const SIG_MAX_W = 45;
+const SIG_MAX_H = 8;
 
 /**
  * Render a signature just above the ruled line at (x, baselineY).
@@ -197,7 +222,7 @@ function drawSignature(doc: jsPDF, signed: string, x: number, baselineY: number)
   }
 }
 
-export async function buildIlrPdf(ilr: IlrForm, board: EnrolmentBoard): Promise<jsPDF> {
+export async function buildIlrPdf(ilr: IlrForm, board: EnrolmentBoard, texts?: Record<string, string>): Promise<jsPDF> {
   const kentLogo = await loadKentLogo();
   const raw = new jsPDF({ unit: 'mm', format: 'a4' });
 
@@ -252,7 +277,7 @@ export async function buildIlrPdf(ilr: IlrForm, board: EnrolmentBoard): Promise<
     if (y + h > PAGE_H - MARGIN_BOTTOM) newPage();
   };
 
-  for (const row of buildRows(ilr, board)) {
+  for (const row of buildRows(ilr, board, texts)) {
     if (row.kind === 'section') {
       need(12);
       y += 1.5;
@@ -434,13 +459,14 @@ export function ilrDocumentFilename(board: EnrolmentBoard): string {
   return `Extended-ILR-${safe}.pdf`;
 }
 
-export async function downloadIlrDocument(ilr: IlrForm, board: EnrolmentBoard): Promise<void> {
-  const document = await buildIlrPdf(ilr, board);
+/** `texts`: the wording published from the wizard builder (see buildRows). */
+export async function downloadIlrDocument(ilr: IlrForm, board: EnrolmentBoard, texts?: Record<string, string>): Promise<void> {
+  const document = await buildIlrPdf(ilr, board, texts);
   document.save(ilrDocumentFilename(board));
 }
 
 /** The same PDF as a Blob, for filing into the enrolment-docs container. */
-export async function ilrDocumentBlob(ilr: IlrForm, board: EnrolmentBoard): Promise<Blob> {
-  const document = await buildIlrPdf(ilr, board);
+export async function ilrDocumentBlob(ilr: IlrForm, board: EnrolmentBoard, texts?: Record<string, string>): Promise<Blob> {
+  const document = await buildIlrPdf(ilr, board, texts);
   return document.output('blob');
 }

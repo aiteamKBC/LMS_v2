@@ -267,7 +267,7 @@ export async function createAssignmentPdf(html: string) {
         try { const image = await loadImage(url); imagePage(image, image.naturalWidth, image.naturalHeight); }
         finally { URL.revokeObjectURL(url); }
       } else if (/\.docx$/i.test(name)) {
-        const mammoth = await import('mammoth');
+        const mammoth = await import('mammoth/mammoth.browser');
         const result = await mammoth.extractRawText({ arrayBuffer: bytes });
         text('Text extracted from the submitted Word document. Original layout and images are available in the original file.');
         text(result.value || 'No readable text was found in this document.');

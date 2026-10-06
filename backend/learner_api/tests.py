@@ -69,7 +69,7 @@ from .reflection_submissions import get_reflection_submission
 from .time_tracking import issue_tracking_session
 from .teams_attendance import (
     _attendance_interval_bounds,
-    _session_expected_emails,
+    _module_expected_emails,
     sync_verified_teams_attendance_reporting,
 )
 
@@ -224,7 +224,8 @@ class AssignmentFormReadinessTests(SimpleTestCase):
         self.assertEqual(checks.call_args.args[0]["learnerId"], "19")
 
         params = cursor.execute.call_args.args[1]
-        self.assertEqual(params, ["commercial", "19", "COMP-1"])
+        self.assertEqual(params, ["commercial", "19", "COMP-1", ""])
+        self.assertIn("assignment_topic_id = %s", cursor.execute.call_args.args[0])
 
 
 class LearnerProgressionTests(SimpleTestCase):
@@ -714,22 +715,37 @@ class KbcAbsenceSessionTests(SimpleTestCase):
 
 
 class TeamsAttendanceEligibilityTests(SimpleTestCase):
-    def test_reads_every_invited_email_off_the_session(self):
-        session = SimpleNamespace(attendees=['Learner@Example.com', ' second@example.com '])
+    # Eligibility moved off the session's own invite list and onto the learners
+    # actually assigned to the session's module (commit 38a6d8b5 replaced
+    # _session_expected_emails with _module_expected_emails). The cases below
+    # are the same three questions asked of the successor.
+    def test_expects_every_learner_assigned_to_the_sessions_module(self):
+        session = SimpleNamespace(module_catalogue_id='MOD-1')
+        assigned = {'MOD-1': {'learner@example.com', 'second@example.com'}}
 
         self.assertEqual(
-            _session_expected_emails(session),
+            _module_expected_emails(session, assigned),
             {'learner@example.com', 'second@example.com'},
         )
 
-    def test_missing_or_empty_invite_list_expects_nobody(self):
-        self.assertEqual(_session_expected_emails(SimpleNamespace(attendees=[])), set())
-        self.assertEqual(_session_expected_emails(SimpleNamespace(attendees=None)), set())
+    def test_a_module_with_nobody_assigned_expects_nobody(self):
+        self.assertEqual(
+            _module_expected_emails(SimpleNamespace(module_catalogue_id='MOD-1'), {}),
+            set(),
+        )
+        self.assertEqual(
+            _module_expected_emails(SimpleNamespace(module_catalogue_id=None), {'': set()}),
+            set(),
+        )
 
-    def test_blank_entries_in_the_invite_list_are_dropped(self):
-        session = SimpleNamespace(attendees=['learner@example.com', '', '   '])
+    def test_an_identity_filter_narrows_but_never_widens_the_expected_set(self):
+        session = SimpleNamespace(module_catalogue_id='MOD-1')
+        assigned = {'MOD-1': {'learner@example.com', 'second@example.com'}}
 
-        self.assertEqual(_session_expected_emails(session), {'learner@example.com'})
+        self.assertEqual(
+            _module_expected_emails(session, assigned, {'learner@example.com', 'stranger@example.com'}),
+            {'learner@example.com'},
+        )
 
     def test_tracks_first_join_and_last_leave_across_intervals(self):
         first, last = _attendance_interval_bounds([
@@ -753,8 +769,9 @@ class LearnerAttendanceEndpointTests(SimpleTestCase):
     @patch('learner_api.attendance.fetch_verified_teams_attendance_rows', return_value=[])
     @patch('learner_api.attendance.fetch_kbc_attendance_rows', return_value=[])
     def test_reads_kbc_register_with_the_enrolments_aptem_id(self, fetch_rows, fetch_teams, scheduled, confirmations):
+        enrolment_id, learner_profile_id = 19, 315
         source = SimpleNamespace(
-            id=19,
+            id=enrolment_id,
             username='Test Learner',
             email='learner@example.com',
             aptem_id='92',
@@ -763,11 +780,16 @@ class LearnerAttendanceEndpointTests(SimpleTestCase):
         source_model.DoesNotExist = type('SourceDoesNotExist', (Exception,), {})
         source_model.all_learners.only.return_value.get.return_value = source
 
-        with patch.dict(
+        with patch('learner_api.catchup_outcomes.sync_catchup_outcomes') as sync, \
+             patch('learner_api.attendance_lectures._completed_catchup_occurrences', return_value=set()), \
+             patch('learner_api.models.LearnerProfile.objects') as profiles, \
+             patch('coach_api.models.CoachAttendanceSourceAdjustment.objects') as adjustments, patch.dict(
             attendance_module.SOURCE_MODELS,
             {'apprenticeship': source_model},
             clear=True,
         ):
+            profiles.filter.return_value.values_list.return_value = [learner_profile_id]
+            adjustments.filter.return_value = []
             response = learner_attendance.__wrapped__(
                 RequestFactory().get('/learner_api/attendance/apprenticeship/19/'),
                 'apprenticeship',
@@ -775,6 +797,12 @@ class LearnerAttendanceEndpointTests(SimpleTestCase):
             )
 
         self.assertEqual(response.status_code, 200)
+        profiles.filter.assert_called_once_with(enrolment_id=enrolment_id)
+        profiles.filter.return_value.values_list.assert_called_once_with('id', flat=True)
+        adjustments.filter.assert_called_once_with(learner_id=learner_profile_id)
+        sync.assert_called_once_with(learner_email=source.email)
+        scheduled.assert_called_once_with(source, module_ids=None)
+        confirmations.assert_called_once_with(enrolment_id)
         fetch_rows.assert_called_once_with(
             aptem_id='92',
             learner_id=19,
@@ -858,7 +886,11 @@ class TeamsAttendanceSyncTests(SimpleTestCase):
             count = sync_verified_teams_attendance_reporting(module_refs=['MOD-1'])
 
         self.assertEqual(count, 0)
-        ensure_schema.assert_called_once_with('default')
+        # Synchronization validates existing columns; it must never run schema DDL.
+        ensure_schema.assert_not_called()
+        statements = [call.args[0] for call in cursor.execute.call_args_list]
+        self.assertTrue(any('SELECT attended_seconds, occurrence_id, is_expected, catchup_completed' in sql for sql in statements))
+        self.assertFalse(any(sql.lstrip().upper().startswith(('ALTER ', 'CREATE ', 'DROP ')) for sql in statements))
         cursor.executemany.assert_not_called()
         sql, params = cursor.execute.call_args.args
         self.assertIn('module_catalogue_id = ANY(%s)', sql)
@@ -1696,7 +1728,7 @@ class ComponentWriteSoftDeleteTests(SimpleTestCase):
 class ComponentWriteEndpointRejectionTests(SimpleTestCase):
     """The service-layer rejections must surface as a client error, not a 200."""
 
-    def _post(self, component_id, *, access_time=None, payload=None):
+    def _post(self, component_id, *, access_time=None, payload=None, holiday=False, calendar_error=False):
         access_time = access_time or datetime(2026, 1, 15, 12, 0, tzinfo=timezone.utc)
         tracking = issue_tracking_session(
             activity_kind="component",
@@ -1716,10 +1748,15 @@ class ComponentWriteEndpointRejectionTests(SimpleTestCase):
         view = submit_component_progress
         while hasattr(view, "__wrapped__"):
             view = view.__wrapped__
-        with patch("learner_api.components.timezone.now", return_value=access_time):
+        holidays = {access_time.date(): [{'label': 'Christmas closure'}]} if holiday else {}
+        calendar = ({'side_effect': DatabaseError} if calendar_error
+                    else {'return_value': holidays})
+        with patch("learner_api.components.timezone.now", return_value=access_time), patch(
+            'learner_api.working_rules.learner_holiday_details', **calendar,
+        ):
             return view(request, component_id)
 
-    def _run(self, save_side_effect=None, **post_options):
+    def _run(self, save_side_effect=None, tutor_validation_required=False, **post_options):
         profile = SimpleNamespace(training_plan_progress=[])
         with patch("learner_api.components.SOURCE_MODELS", {"apprenticeship": Mock()}) as models:
             models["apprenticeship"].objects.get.return_value = SimpleNamespace(id=19)
@@ -1731,8 +1768,22 @@ class ComponentWriteEndpointRejectionTests(SimpleTestCase):
                                 with patch(
                                     "learner_api.components.save_progress_record",
                                     side_effect=save_side_effect,
-                                ), patch("learner_api.components.requires_tutor_validation", return_value=False):
+                                ), patch("learner_api.components.requires_tutor_validation", return_value=tutor_validation_required), patch(
+                                    "learner_api.components.queue_for_marking"
+                                ):
                                     return self._post("COMP-UNDER-TEST", **post_options)
+
+    def test_explicit_reflection_skip_is_audited_on_the_progress_record(self):
+        save = Mock()
+        response = self._run(save, payload={"skipReflection": True})
+        self.assertEqual(response.status_code, 200)
+        self.assertIs(save.call_args.args[1]["reflectionSkipped"], True)
+
+    def test_reflection_skip_remains_optional_with_tutor_validation(self):
+        save = Mock()
+        response = self._run(save, tutor_validation_required=True, payload={"skipReflection": True})
+        self.assertEqual(response.status_code, 200)
+        self.assertIs(save.call_args.args[1]["reflectionSkipped"], True)
 
     def test_unknown_component_write_returns_400(self):
         response = self._run(OrphanComponentReferenceError("COMP-GHOST"))
@@ -1746,34 +1797,114 @@ class ComponentWriteEndpointRejectionTests(SimpleTestCase):
         self.assertIn("COMP-DEAD", payload["error"])
         self.assertIn("week", payload["error"])
 
-    def test_out_of_hours_timer_is_accepted_after_confirmation_and_audited(self):
+    # An invalid Finish must leave NOTHING behind -- no completion, no
+    # percentage change, no history entry. Each of these asserts that
+    # save_progress_record was never called.
+    def test_out_of_hours_finish_is_refused_with_a_reason_and_writes_nothing(self):
         save = Mock()
         response = self._run(
             save,
-            access_time=datetime(2026, 1, 18, 22, 0, tzinfo=timezone.utc),
-            payload={
-                "timeTakenSeconds": 10,
-                "timeEntrySource": "timer",
-                "outsideWorkingHoursConfirmed": True,
-            },
+            access_time=datetime(2026, 1, 15, 22, 0, tzinfo=timezone.utc),   # Thursday 22:00
+            payload={"timeTakenSeconds": 10, "timeEntrySource": "timer"},
+        )
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(json.loads(response.content)["validation"]["reason"], "outside_working_hours")
+        save.assert_not_called()
+
+    def test_weekend_finish_is_refused_with_a_weekend_reason(self):
+        save = Mock()
+        response = self._run(save, access_time=datetime(2026, 1, 17, 12, 0, tzinfo=timezone.utc))
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(json.loads(response.content)["validation"]["reason"], "weekend")
+        save.assert_not_called()
+
+    def test_applicable_holiday_finish_is_refused_and_names_the_holiday(self):
+        save = Mock()
+        response = self._run(save, holiday=True)
+        self.assertEqual(response.status_code, 409)
+        validation = json.loads(response.content)["validation"]
+        self.assertEqual(validation["reason"], "holiday")
+        self.assertEqual(validation["holidayName"], "Christmas closure")
+        save.assert_not_called()
+
+    def test_a_holiday_outside_this_learners_cohort_does_not_refuse_them(self):
+        # holiday=False is the scoped resolver answering "no closure for this
+        # component's cohort" even when the college has one that day.
+        save = Mock()
+        response = self._run(save, holiday=False)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(save.call_args.args[1]["submissionValidationReason"], "")
+
+    def test_declared_working_instant_completes_and_keeps_the_real_click(self):
+        save = Mock()
+        click = datetime(2026, 1, 18, 22, 0, tzinfo=timezone.utc)   # Sunday 22:00
+        response = self._run(
+            save,
+            access_time=click,
+            payload={"timeTakenSeconds": 10, "declaredCompletedAt": "2026-01-16T14:30:00"},
         )
         self.assertEqual(response.status_code, 200)
         record = save.call_args.args[1]
-        self.assertEqual(record["verifiedSeconds"], 10)
-        self.assertTrue(record["outsideWorkingHours"])
-        self.assertTrue(record["outsideWorkingHoursConfirmed"])
-        self.assertEqual(record["outsideWorkingHoursConfirmedAt"], record["submittedAt"])
+        # The click is preserved; the declaration is stored separately.
+        self.assertEqual(record["submittedAt"], click.isoformat())
+        self.assertTrue(record["declaredCompletedAt"].startswith("2026-01-16T14:30"))
+        self.assertEqual(record["submissionValidationReason"], "weekend")
 
-    def test_out_of_hours_completion_requires_confirmation(self):
+    def test_declared_instant_outside_the_rules_is_accepted(self):
+        # The dialog only warns: a declared Saturday is written as declared.
         save = Mock()
         response = self._run(
             save,
             access_time=datetime(2026, 1, 18, 22, 0, tzinfo=timezone.utc),
-            payload={"timeTakenSeconds": 10, "timeEntrySource": "timer"},
+            payload={"timeTakenSeconds": 10, "declaredCompletedAt": "2026-01-17T14:30:00"},
         )
-        self.assertEqual(response.status_code, 400)
-        self.assertIn("Confirm", json.loads(response.content)["error"])
+        self.assertEqual(response.status_code, 200)
+        record = save.call_args.args[1]
+        self.assertTrue(record["declaredCompletedAt"].startswith("2026-01-17T14:30"))
+        self.assertEqual(record["submissionValidationReason"], "weekend")
+
+    def test_declared_instant_cannot_be_in_the_future(self):
+        save = Mock()
+        response = self._run(
+            save,
+            access_time=datetime(2026, 1, 18, 22, 0, tzinfo=timezone.utc),
+            payload={"declaredCompletedAt": "2026-01-20T14:30:00"},
+        )
+        self.assertEqual(response.status_code, 409)
         save.assert_not_called()
+
+    def test_calendar_failure_does_not_save_progress(self):
+        save = Mock()
+        response = self._run(save, calendar_error=True)
+        self.assertEqual(response.status_code, 503)
+        save.assert_not_called()
+
+    def test_valid_finish_completes_immediately_with_no_declaration(self):
+        save = Mock()
+        response = self._run(save)
+        self.assertEqual(response.status_code, 200)
+        record = save.call_args.args[1]
+        self.assertFalse(record['outsideWorkingHours'])
+        self.assertIsNone(record['declaredCompletedAt'])
+        self.assertEqual(record['submissionValidationReason'], '')
+
+    def test_legacy_confirmation_fields_keep_their_meaning_and_are_not_reused(self):
+        # The old consent booleans are no longer written by the new flow, so a
+        # historical true still means exactly the consent it recorded.
+        save = Mock()
+        response = self._run(
+            save,
+            access_time=datetime(2026, 1, 18, 22, 0, tzinfo=timezone.utc),
+            payload={"declaredCompletedAt": "2026-01-16T14:30:00",
+                     "insideWorkingHoursConfirmed": True,
+                     "outsideWorkingHoursConfirmed": True},
+        )
+        self.assertEqual(response.status_code, 200)
+        record = save.call_args.args[1]
+        self.assertFalse(record["insideWorkingHoursConfirmed"])
+        self.assertFalse(record["outsideWorkingHoursConfirmed"])
+        self.assertIsNone(record["insideWorkingHoursConfirmedAt"])
+        self.assertIsNone(record["outsideWorkingHoursConfirmedAt"])
 
 
 class ProgressAchievementRuleTests(SimpleTestCase):
@@ -1826,3 +1957,171 @@ class ProgressAchievementRuleTests(SimpleTestCase):
             [name for name in dir(progress_rules) if "sql" in name.lower()],
             "a SQL variant of the completion rule would be a second implementation",
         )
+
+
+class QuizSubmitWorkingRulesTests(SimpleTestCase):
+    """A quiz Submit is a completion action, so it passes the same gate.
+
+    Taking the quiz stays unrestricted; only the Submit click is judged. A
+    refusal must grade nothing and store nothing -- no attempt, no progress
+    record, no audit line, no OTJH -- so the learner's answers stay in the
+    browser and the corrected Submit grades to exactly the same score.
+    """
+
+    QUIZ_ID = 77
+
+    def _quiz(self):
+        return {
+            "id": self.QUIZ_ID, "title": "Week 1 quiz", "module": "Module 1",
+            "programme": "P1", "weekId": "W1", "duration": 30, "timeUnit": "minutes",
+            "passingGrade": 50, "randomizeQuestions": False, "randomizeAnswers": False,
+            "questions": [{
+                "id": 1, "text": "2 + 2?", "type": "single_choice", "points": 1,
+                "sortOrder": 1, "explanation": None,
+                "answers": [
+                    {"id": 10, "text": "4", "isCorrect": True, "sortOrder": 1},
+                    {"id": 11, "text": "5", "isCorrect": False, "sortOrder": 2},
+                ],
+            }],
+        }
+
+    def _post(self, save, *, access_time=None, payload=None, holiday=False):
+        from . import quizzes as quiz_views
+
+        access_time = access_time or datetime(2026, 1, 15, 12, 0, tzinfo=timezone.utc)
+        tracking = issue_tracking_session(
+            activity_kind="quiz", activity_id=self.QUIZ_ID,
+            learner_kind="apprenticeship", learner_id="19",
+            counting_mode="active_quiz", issued_at=access_time - timedelta(seconds=20),
+        )
+        body = {
+            "trackingToken": tracking["trackingToken"], "timeTakenSeconds": 0,
+            "answers": {"1": 10},
+        }
+        body.update(payload or {})
+        request = RequestFactory().post(
+            f"/learner_api/quizzes/{self.QUIZ_ID}/submit/?kind=apprenticeship&learnerId=19",
+            data=json.dumps(body), content_type="application/json",
+        )
+        view = quiz_views.submit_quiz_attempt
+        while hasattr(view, "__wrapped__"):
+            view = view.__wrapped__
+
+        holidays = {access_time.date(): [{"label": "Christmas closure"}]} if holiday else {}
+        models = {"apprenticeship": Mock()}
+        models["apprenticeship"].objects.get.return_value = SimpleNamespace(id=19)
+        profile = SimpleNamespace(training_plan_progress=[])
+        with patch.object(quiz_views, "SOURCE_MODELS", models), \
+             patch.object(quiz_views, "_fetch_quiz", return_value=self._quiz()), \
+             patch.object(quiz_views, "learner_profile_for_source", return_value=profile), \
+             patch.object(quiz_views, "tracking_session_already_used", return_value=False), \
+             patch.object(quiz_views, "save_progress_record", save), \
+             patch.object(quiz_views, "record_quiz_attempt") as audit, \
+             patch.object(quiz_views.timezone, "now", return_value=access_time), \
+             patch("learner_api.working_rules.learner_holiday_details", return_value=holidays):
+            response = view(request, self.QUIZ_ID)
+        return response, audit
+
+    def test_valid_submit_scores_and_completes_with_no_declaration(self):
+        save = Mock()
+        response, audit = self._post(save)
+        self.assertEqual(response.status_code, 200)
+        body = json.loads(response.content)
+        self.assertTrue(body["passed"])
+        self.assertEqual(body["achievedScore"], 1)
+        self.assertEqual(body["totalScore"], 1)
+        save.assert_called_once()
+        audit.assert_called_once()
+        record = save.call_args.args[1]
+        self.assertIsNone(record["declaredCompletedAt"])
+        self.assertEqual(record["submissionValidationReason"], "")
+
+    def test_out_of_hours_submit_is_refused_and_writes_nothing(self):
+        save = Mock()
+        response, audit = self._post(
+            save, access_time=datetime(2026, 1, 15, 22, 0, tzinfo=timezone.utc),
+        )
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(
+            json.loads(response.content)["validation"]["reason"], "outside_working_hours",
+        )
+        save.assert_not_called()
+        audit.assert_not_called()
+
+    def test_weekend_submit_is_refused_and_writes_nothing(self):
+        save = Mock()
+        response, audit = self._post(
+            save, access_time=datetime(2026, 1, 17, 12, 0, tzinfo=timezone.utc),
+        )
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(json.loads(response.content)["validation"]["reason"], "weekend")
+        save.assert_not_called()
+        audit.assert_not_called()
+
+    def test_an_applicable_selected_holiday_is_refused_and_named(self):
+        save = Mock()
+        response, audit = self._post(save, holiday=True)
+        self.assertEqual(response.status_code, 409)
+        validation = json.loads(response.content)["validation"]
+        self.assertEqual(validation["reason"], "holiday")
+        self.assertEqual(validation["holidayName"], "Christmas closure")
+        save.assert_not_called()
+        audit.assert_not_called()
+
+    def test_a_holiday_outside_this_learners_cohort_does_not_refuse_them(self):
+        save = Mock()
+        response, _ = self._post(save, holiday=False)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(save.call_args.args[1]["submissionValidationReason"], "")
+
+    def test_a_declared_instant_outside_the_rules_is_accepted(self):
+        # The dialog only warns: a declared Saturday is written as declared.
+        save = Mock()
+        response, audit = self._post(
+            save,
+            access_time=datetime(2026, 1, 18, 22, 0, tzinfo=timezone.utc),
+            payload={"declaredCompletedAt": "2026-01-17T14:30:00"},
+        )
+        self.assertEqual(response.status_code, 200)
+        record = save.call_args.args[1]
+        self.assertTrue(record["declaredCompletedAt"].startswith("2026-01-17T14:30"))
+        audit.assert_called_once()
+
+    def test_a_declared_instant_cannot_be_in_the_future(self):
+        save = Mock()
+        response, _ = self._post(
+            save,
+            access_time=datetime(2026, 1, 18, 22, 0, tzinfo=timezone.utc),
+            payload={"declaredCompletedAt": "2026-01-20T14:30:00"},
+        )
+        self.assertEqual(response.status_code, 409)
+        save.assert_not_called()
+
+    def test_corrected_submit_keeps_the_score_the_attempt_and_the_real_click(self):
+        click = datetime(2026, 1, 18, 22, 0, tzinfo=timezone.utc)   # Sunday 22:00
+        refused = Mock()
+        refusal, refused_audit = self._post(refused, access_time=click)
+        self.assertEqual(refusal.status_code, 409)
+        refused.assert_not_called()
+        refused_audit.assert_not_called()
+
+        # The same answers go back with a declared working instant.
+        save = Mock()
+        response, audit = self._post(
+            save, access_time=click,
+            payload={"declaredCompletedAt": "2026-01-16T14:30:00"},
+        )
+        self.assertEqual(response.status_code, 200)
+        body = json.loads(response.content)
+        # Identical academic result to the refused click: nothing was retaken.
+        self.assertTrue(body["passed"])
+        self.assertEqual(body["achievedScore"], 1)
+        self.assertEqual(body["attempt"]["attempt"], 1)
+
+        record = save.call_args.args[1]
+        self.assertEqual(record["submittedAt"], click.isoformat())
+        self.assertTrue(record["declaredCompletedAt"].startswith("2026-01-16T14:30"))
+        self.assertEqual(record["submissionValidationReason"], "weekend")
+        audit.assert_called_once()
+        # The audit line keeps the real click, never the declaration.
+        self.assertEqual(audit.call_args.kwargs["submitted_at"], click)

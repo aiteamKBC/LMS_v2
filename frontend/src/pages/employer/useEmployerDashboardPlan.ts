@@ -1,7 +1,6 @@
 import { useMemo } from 'react';
 import type { LearnerKind } from '@/api/learnerDetail';
 import {
-  fetchEmployerLearnerContract,
   fetchEmployerLearnerHours,
   fetchEmployerLearnerSchedule,
   fetchEmployerLearnerWeek,
@@ -15,7 +14,6 @@ export function useEmployerDashboardPlan(employerId: string, kind: LearnerKind, 
   const sources = useMemo<DashboardPlanSources>(() => ({
     week: { read: (k, id, signal) => fetchEmployerLearnerWeek(employerId, k, id, signal), peek: noPeek },
     schedule: { read: (k, id, signal) => fetchEmployerLearnerSchedule(employerId, k, id, signal), peek: noPeek },
-    contract: (k, id, signal) => fetchEmployerLearnerContract(employerId, k, id, signal),
     logSummary: (k, id, signal) => fetchEmployerLearnerHours(employerId, k, id, signal),
   }), [employerId]);
   return useDashboardPlan(kind, learnerId, enabled, sources);
