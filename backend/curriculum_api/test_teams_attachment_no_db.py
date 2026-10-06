@@ -235,6 +235,45 @@ class AttachmentTests(unittest.TestCase):
         self.assertEqual(settings['COMP-1']['teamsMeetingUrl'], extra)
         self.assertNotIn('teamsOccurrenceId', settings['COMP-1'])
 
+    def test_an_additional_in_the_middle_does_not_shift_the_later_main_session(self):
+        extra = 'https://teams.microsoft.com/meet/extra-middle'
+        self.weeks = [{'id': f'WEEK-{i}'} for i in range(3)]
+        self.components = [
+            {'id': 'COMP-0', 'week_id': 'WEEK-0', 'type': 'live_session', 'settings_json': {}},
+            {'id': 'COMP-1', 'week_id': 'WEEK-1', 'type': 'live_session', 'settings_json': {
+                'extraTeamsMeetingUrl': extra, 'teamsMeetingScope': 'additional',
+            }},
+            {'id': 'COMP-2', 'week_id': 'WEEK-2', 'type': 'live_session', 'settings_json': {
+                'sessionDate': '2026-11-06',
+            }},
+        ]
+        dates = ['2026-10-23', '2026-10-30', '2026-11-06']
+        self.occurrences = [{
+            'id': f'OCC-{i}', 'session_number': i + 1, 'graph_event_id': f'EVENT-{i}',
+            'scheduled_start': f'{date}T0{6 + i}:00:00Z',
+            'scheduled_end': f'{date}T0{8 + i}:00:00Z',
+            'join_url': f'https://teams.microsoft.com/meet/{i}', 'status': 'scheduled',
+        } for i, date in enumerate(dates)]
+
+        settings = self.attach()
+
+        self.assertEqual(settings['COMP-0']['teamsOccurrenceId'], 'OCC-0')
+        self.assertEqual(settings['COMP-0']['liveSessionUrl'], self.occurrences[0]['join_url'])
+        self.assertEqual(settings['COMP-1']['liveSessionUrl'], extra)
+        self.assertNotIn('teamsOccurrenceId', settings['COMP-1'])
+        self.assertEqual(settings['COMP-2']['teamsOccurrenceId'], 'OCC-2')
+        self.assertEqual(settings['COMP-2']['liveSessionUrl'], self.occurrences[2]['join_url'])
+
+    def test_explicit_authoring_link_override_survives_calendar_reattach(self):
+        replacement = 'https://teams.microsoft.com/meet/replacement'
+        self.components[0]['settings_json']['liveSessionLinkOverride'] = replacement
+
+        settings = self.attach()
+
+        self.assertEqual(settings['COMP-0']['liveSessionUrl'], replacement)
+        self.assertEqual(settings['COMP-0']['teamsMeetingUrl'], replacement)
+        self.assertEqual(settings['COMP-0']['teamsOccurrenceId'], 'OCC-0')
+
     def test_moved_occurrence_carries_its_new_date_not_only_its_new_instant(self):
         """A rescheduled session's date follows the occurrence Microsoft holds.
 

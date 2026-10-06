@@ -502,7 +502,7 @@ export function TeamsMeetingDialogs({ workspace, secondTab }: {
                         first email was missed rather than when a date moved. */}
                     <button type="button" onClick={() => void resendSchedule(selectedForDisplay || selected)}
                       disabled={Boolean(busy) || Boolean(updateProgress) || Boolean(blockedReason) || detailLoading || updateDrawer.saving || !graphConfigured}
-                      title="Send the full schedule email -- the complete timetable and join links, the same message a new calendar sends -- to every learner this meeting invites. Every learner is emailed, including anyone who already received it. The Teams calendar is not changed."
+                      title="Send the full schedule email -- the complete timetable and join links, the same message a new calendar sends -- to every invited participant. Every invited participant is emailed, including anyone who already received it. The Teams calendar is not changed."
                       className="inline-flex h-10 items-center gap-1.5 rounded-lg border border-primary-200 bg-primary-50 px-3 text-[12px] font-bold text-primary-700 transition-colors hover:bg-primary-100 disabled:cursor-not-allowed disabled:opacity-40">
                       <AppIcon className={busy === `${selected.catalogueId}:resend` ? 'ri-loader-4-line animate-spin text-sm' : 'ri-mail-send-line text-sm'}></AppIcon>
                       Email the schedule to everyone as the original creation email (not an update)

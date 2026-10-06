@@ -21,12 +21,21 @@ type Settings = Record<string, unknown> | undefined | null;
 
 const text = (value: unknown) => (value === null || value === undefined ? '' : String(value).trim());
 
+/** A saved join link is still a calendar assignment even on older rows that
+ * predate occurrence metadata. Additional meetings are checked first by the
+ * scope reader, so their mirrored `liveSessionUrl` cannot be mistaken for the
+ * module calendar here. */
+function hasTeamsMeetingLink(settings: Settings): boolean {
+  return Boolean(text(settings?.liveSessionUrl) || text(settings?.teamsMeetingUrl));
+}
+
 /**
  * Whether the module's own series already holds a booked occurrence for it.
  *
- * `teamsOccurrenceId`/`teamsSessionNumber` are written only when a real Graph
- * occurrence was paired to the component, unlike `liveSessionUrl`, which the
- * series stamps on every live session regardless.
+ * `teamsOccurrenceId`/`teamsSessionNumber` identify newer rows whose real
+ * Graph occurrence was paired to the component. Older rows can have only the
+ * normal meeting link; `liveSessionMeetingScope` uses that link for display,
+ * while this helper remains the confirmed-booking check.
  */
 export function bookedOnModuleSeries(settings: Settings): boolean {
   return Boolean(text(settings?.teamsOccurrenceId) || Number(settings?.teamsSessionNumber || 0) > 0);
@@ -40,16 +49,22 @@ export function moduleHasBookedSeries(components: Array<{ settings?: Settings }>
 /**
  * Which calendar delivers this live session.
  *
- * A booking is the fact and outranks the stored choice. Otherwise the author's
- * choice decides. With neither, a module with no calendar yet delivers it on
- * its own series (there is nothing to overwrite); a module that already has one
- * leaves it 'pending' -- a week added since -- until someone chooses.
+ * A confirmed booking outranks the stored choice. Otherwise the author's
+ * explicit choice decides, and a legacy normal meeting link fills in the
+ * display when no choice was stored. With neither, a module with no calendar
+ * yet delivers it on its own series (there is nothing to overwrite); a module
+ * that already has one leaves it 'pending' -- a week added since -- until
+ * someone chooses.
  */
 export function liveSessionMeetingScope(settings: Settings, moduleHasSeries = true): LiveSessionMeetingScope {
   if (text(settings?.extraTeamsMeetingUrl)) return 'additional';
   if (bookedOnModuleSeries(settings)) return 'main';
   const chosen = text(settings?.[LIVE_SESSION_MEETING_SCOPE_KEY]).toLowerCase();
   if (chosen === 'main' || chosen === 'additional') return chosen;
+  // Legacy rows can retain a normal join link without occurrence metadata.
+  // The link settles what the row displays, while `meetingScopeIsOpen` keeps
+  // the existing option to move an unconfirmed link to an additional meeting.
+  if (hasTeamsMeetingLink(settings)) return 'main';
   return moduleHasSeries ? 'pending' : 'main';
 }
 
@@ -67,7 +82,7 @@ export function reservedForModuleCalendar(settings: Settings): boolean {
   return !bookedOnModuleSeries(settings) && text(settings?.[LIVE_SESSION_MEETING_SCOPE_KEY]).toLowerCase() === 'main';
 }
 
-/** Whether the choice can still be changed: nothing has been booked for it on either calendar. */
+/** Whether the choice can still change: no confirmed occurrence or extra meeting exists. */
 export function meetingScopeIsOpen(settings: Settings): boolean {
   return !text(settings?.extraTeamsMeetingUrl) && !bookedOnModuleSeries(settings);
 }
