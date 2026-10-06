@@ -107,7 +107,8 @@ import {
   // component, which is what the count in the rail and the Teams series are
   // both built from.
   moduleAuthoredLiveSessions,
-  replaceLiveSessionLinksInWeeks,
+  applyLiveSessionLinkToComponents,
+  replaceModuleTeamsLinks,
   // Which authored weeks a ticked holiday falls on. States the fact only --
   // the plan is unchanged, and what the week becomes is the author's call.
   weeksTouchedByHoliday,
@@ -1887,13 +1888,50 @@ export default function ModuleBuilder() {
     setWorkingModule(current => (current ? recalculateModule(updater(current)) : current));
   }, [workingModuleProgrammeArchived]);
 
-  const applyTeamsLinkReplacement = useCallback((weekIds: string[], link: string) => {
+  // Saved on its own, straight away, rather than left as an unsaved edit for
+  // the full structure save: on a large module that save sends and rewrites
+  // every component, and it timed out for a change touching a dozen rows. A
+  // rejection propagates to the dialog, which stays open and shows why.
+  const applyTeamsLinkReplacement = useCallback(async (weekIds: string[], link: string) => {
     const selectedWeekIds = [...new Set(weekIds.map(value => String(value || '').trim()).filter(Boolean))];
     const replacement = String(link || '').trim();
-    if (!selectedWeekIds.length || !replacement || !workingModuleRef.current) return;
-    updateWorkingModule(module => replaceLiveSessionLinksInWeeks(module, selectedWeekIds, replacement));
+    const current = workingModuleRef.current;
+    if (!selectedWeekIds.length || !replacement || !current) return;
+    if (workingModuleProgrammeArchived) throw new Error(ARCHIVED_PROGRAMME_BUILDER_NOTICE);
+    const result = await replaceModuleTeamsLinks(current.catalogueId, {
+      weekIds: selectedWeekIds,
+      link: replacement,
+      expectedRevision: serverRevisionRef.current,
+    });
+    const patch = (module: ModuleCatalogueItem) => recalculateModule(
+      applyLiveSessionLinkToComponents(module, result.updatedComponentIds, result.link),
+    );
+    // The stored copy now holds the new links, so they are part of what
+    // "saved" means: patched into the baseline as well as the workspace, they
+    // read as saved rather than as an edit still waiting, and any other unsaved
+    // work in the tab stays exactly as unsaved as it was.
+    if (savedModuleSnapshotRef.current) {
+      savedModuleSnapshotRef.current = moduleSnapshot(patch(JSON.parse(savedModuleSnapshotRef.current) as ModuleCatalogueItem));
+    }
+    // Only when nothing else had moved the module: then the new revision is
+    // exactly this workspace plus these links. Otherwise the old one stays, and
+    // the next save merges the stored module first, as for any outside write.
+    if (result.revisionWasCurrent && result.structureRevision) serverRevisionRef.current = result.structureRevision;
+    setWorkingModule(latest => (latest && latest.catalogueId === current.catalogueId ? patch(latest) : latest));
     setReplaceTeamsLinksOpen(false);
-  }, [updateWorkingModule]);
+    const weekCount = selectedWeekIds.length;
+    void showCurriculumAlert(result.updated
+      ? {
+        title: `${result.updated} Teams link${result.updated === 1 ? '' : 's'} replaced`,
+        text: `Saved across ${weekCount} week${weekCount === 1 ? '' : 's'}. The live sessions in those weeks now use the new link. The Teams meetings and their invitations were not changed.`,
+        icon: 'success',
+      }
+      : {
+        title: 'No links were replaced',
+        text: 'None of the selected weeks has a saved live session with a link to replace. Save the module first if you have just added one.',
+        icon: 'info',
+      });
+  }, [workingModuleProgrammeArchived]);
 
   // A week can plan as many live sessions as its group has delivery days. Past
   // that there is no date to give one, so the author is asked before it
@@ -2143,9 +2181,16 @@ export default function ModuleBuilder() {
     autoSaveAttemptRef.current = sentSnapshot;
     try {
       setWorkingModule(moduleToSave);
+      // The copy the server holds at that revision, so only what the reader
+      // changed since is sent and written. Without one -- a module never saved
+      // -- the whole structure goes, as it always did.
+      const base = savedModuleSnapshotRef.current
+        ? JSON.parse(savedModuleSnapshotRef.current) as ModuleCatalogueItem
+        : null;
       const saved = await saveModuleStructure(moduleToSave.catalogueId, moduleToSave, {
         expectedRevision: serverRevisionRef.current,
         source,
+        base,
       });
       if (saveRequestRef.current !== requestId) return null;
       // The write landed, so this is the version the next save is measured

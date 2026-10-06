@@ -922,7 +922,10 @@ MEDIA_ROOT = BASE_DIR / 'media'
 # Certificate templates can store a compressed background image inside their
 # JSON layout config. Django's default request-body limit is too small for that
 # and returns an HTML 400 page before the API view can respond with JSON.
-DATA_UPLOAD_MAX_MEMORY_SIZE = int(os.environ.get('DATA_UPLOAD_MAX_MEMORY_SIZE', str(12 * 1024 * 1024)))
+# Module Builder saves a module's whole structure in one PATCH, and a large
+# module (800+ components) passes 12 MB, so the ceiling is 30 MB. The frontend
+# mirrors this number in MODULE_STRUCTURE_SAVE_LIMIT_BYTES to explain a refusal.
+DATA_UPLOAD_MAX_MEMORY_SIZE = int(os.environ.get('DATA_UPLOAD_MAX_MEMORY_SIZE', str(30 * 1024 * 1024)))
 FILE_UPLOAD_MAX_MEMORY_SIZE = int(os.environ.get('FILE_UPLOAD_MAX_MEMORY_SIZE', str(12 * 1024 * 1024)))
 
 # Azure Blob Storage (learner evidence uploads — see learner_api/evidence_storage.py).
