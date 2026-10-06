@@ -97,6 +97,20 @@ describe('Saved session results', () => {
     expect(screen.getByLabelText('Session recording 1')).toHaveAttribute('src', '/learner_api/session-results/commercial/7/S1/artifacts/recording-1/');
   });
 
+  it('hides the Teams attendance card for a Recorded learner', async () => {
+    render(<MemoryRouter><SessionResults seriesId="S1" sessionNumber={1}
+      learner={{ kind: 'commercial', id: '7' }} attendanceType="Recorded" /></MemoryRouter>);
+    await screen.findByLabelText('Session recording 1');
+    expect(screen.queryByText(/Your original attendance:/)).not.toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: 'recordings' })).toBeInTheDocument();
+  });
+
+  it('keeps the Teams attendance card for a Not recorded learner', async () => {
+    render(<MemoryRouter><SessionResults seriesId="S1" sessionNumber={1}
+      learner={{ kind: 'commercial', id: '7' }} attendanceType="Not recorded" /></MemoryRouter>);
+    expect(await screen.findByText('Your original attendance: Present')).toBeInTheDocument();
+  });
+
   it('keeps a reported recovery separate from the original absence', async () => {
     fetchMock.mockImplementation(() => ok({ sessions: [{ ...session, attendance: [{ ...session.attendance[0],
       status: 'absent', attendance: 0, rawStatus: 'absent', rawAttendance: 0,

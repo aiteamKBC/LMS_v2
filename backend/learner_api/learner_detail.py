@@ -14,11 +14,12 @@ authored expected_otjh (curriculum.components) and a programme-wide total.
 import json
 import logging
 import re
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone as datetime_timezone
 from decimal import Decimal
 from html import unescape
 from pathlib import Path
 from urllib.parse import urlparse
+from zoneinfo import ZoneInfo
 
 from django.db import DatabaseError, connections
 from django.db.models import prefetch_related_objects
@@ -1371,6 +1372,54 @@ def _iso_date(value):
     return value.isoformat() if hasattr(value, "isoformat") else _s(value)[:10]
 
 
+_TEAMS_TIMEZONE_ALIASES = {
+    "GMT Standard Time": "Europe/London",
+    "UTC": "UTC",
+    "W. Europe Standard Time": "Europe/Berlin",
+    "Romance Standard Time": "Europe/Paris",
+    "Egypt Standard Time": "Africa/Cairo",
+    "Arabian Standard Time": "Asia/Dubai",
+}
+
+
+def _live_session_occurrence_fallbacks(rows):
+    """Unique ``(module, local date)`` links for learner live-session cards.
+
+    Imported/copied curriculum can contain a new live-session component whose
+    date is correct but whose Teams occurrence fields were not copied. The
+    recording still belongs to the module occurrence, so expose that existing
+    identity to the learner page. Ambiguous dates are deliberately omitted: a
+    recording must never be guessed onto the wrong component.
+    """
+    candidates = {}
+    ambiguous = set()
+    for module_id, series_id, windows_zone, occurrence_id, session_number, scheduled_start in rows:
+        try:
+            start = scheduled_start
+            if not isinstance(start, datetime):
+                start = datetime.fromisoformat(_s(start).replace("Z", "+00:00"))
+            if start.tzinfo is None:
+                start = start.replace(tzinfo=datetime_timezone.utc)
+            zone_name = _TEAMS_TIMEZONE_ALIASES.get(_s(windows_zone), _s(windows_zone) or "Europe/London")
+            local_date = start.astimezone(ZoneInfo(zone_name)).date().isoformat()
+            number = int(session_number or 0)
+        except (KeyError, TypeError, ValueError):
+            continue
+        if not (_s(module_id) and _s(series_id) and _s(occurrence_id) and number > 0):
+            continue
+        key = (_s(module_id), local_date)
+        value = {
+            "teamsLiveSessionId": _s(series_id),
+            "teamsSessionNumber": number,
+            "teamsOccurrenceId": _s(occurrence_id),
+        }
+        if key in candidates and candidates[key] != value:
+            ambiguous.add(key)
+        else:
+            candidates[key] = value
+    return {key: value for key, value in candidates.items() if key not in ambiguous}
+
+
 def _apply_cohort_schedule(detail, source):
     """Add the cohort's dates to a learner payload, without failing the page."""
     detail.update({
@@ -1416,6 +1465,7 @@ def _resolve_from_master(modules, weeks, components, assigned_modules=None, *, c
     if not module_ids:
         return modules, weeks, components  # fully legacy plan — nothing to resolve
 
+    live_session_fallbacks = {}
     try:
         with connections["enrolment"].cursor() as cur:
             cur.execute(
@@ -1470,8 +1520,9 @@ def _resolve_from_master(modules, weeks, components, assigned_modules=None, *, c
             # Resolve both so learner quiz pages receive isQuiz + quizMeta instead
             # of treating a linked quiz as an ordinary generic component.
             quiz_id_by_component = {}
+            fallback_module_ids = set()
             component_ids = [row[0] for row in master_components]
-            for comp_id, _week_id, _mid, _ctype, _ctitle, _cdesc, settings, _live_link, _order, _ksb_mappings, _reflection_required, _reflection_question, _tutor_validation in master_components:
+            for comp_id, _week_id, mid, ctype, _ctitle, _cdesc, settings, _live_link, _order, _ksb_mappings, _reflection_required, _reflection_question, _tutor_validation in master_components:
                 if isinstance(settings, str):
                     try:
                         settings = json.loads(settings) if settings else {}
@@ -1485,6 +1536,15 @@ def _resolve_from_master(modules, weeks, components, assigned_modules=None, *, c
                         quiz_id_by_component[comp_id] = int(linked_quiz_id)
                 except (TypeError, ValueError):
                     pass
+                if (
+                    _s(ctype).strip().lower().replace("-", "_") == "live_session"
+                    and _s(settings.get("sessionDate"))
+                    and not (
+                        _s(settings.get("teamsLiveSessionId"))
+                        and settings.get("teamsSessionNumber")
+                    )
+                ):
+                    fallback_module_ids.add(_s(mid))
 
             if component_ids:
                 cur.execute(
@@ -1548,6 +1608,19 @@ def _resolve_from_master(modules, weeks, components, assigned_modules=None, *, c
                 component_id: (sum(float(item.get("weight") or 0) for item in items), len(items))
                 for component_id, items in ksbs_by_component.items()
             }
+            if fallback_module_ids:
+                cur.execute(
+                    "SELECT s.module_catalogue_id, s.id, s.timezone, o.id, "
+                    "o.session_number, o.scheduled_start "
+                    "FROM curriculum.live_sessions s "
+                    "JOIN curriculum.live_session_occurrences o ON o.live_session_id = s.id "
+                    "WHERE s.module_catalogue_id = ANY(%s) "
+                    "AND s.status NOT IN ('deleted', 'superseded', 'failed') "
+                    "AND o.status NOT IN ('deleted', 'superseded', 'cancelled') "
+                    "ORDER BY s.module_catalogue_id, o.scheduled_start, o.session_number, o.id",
+                    [sorted(fallback_module_ids)],
+                )
+                live_session_fallbacks = _live_session_occurrence_fallbacks(cur.fetchall())
     except DatabaseError as exc:
         logger.warning("Could not live-resolve training plan from master: %s", exc)
         return modules, weeks, components
@@ -1576,6 +1649,17 @@ def _resolve_from_master(modules, weeks, components, assigned_modules=None, *, c
             or None
         )
         normalised_type = _s(ctype).strip().lower().replace("-", "_")
+        fallback = (
+            live_session_fallbacks.get((_s(_mid), _s(settings.get("sessionDate"))[:10]))
+            if normalised_type == "live_session" else None
+        )
+        stored_series_id = _s(settings.get("teamsLiveSessionId"))
+        if fallback and (not stored_series_id or stored_series_id == fallback["teamsLiveSessionId"]):
+            teams_live_session_id = stored_series_id or fallback["teamsLiveSessionId"]
+            teams_session_number = settings.get("teamsSessionNumber") or fallback["teamsSessionNumber"]
+        else:
+            teams_live_session_id = stored_series_id or None
+            teams_session_number = settings.get("teamsSessionNumber") or None
         # Use the shared resolver, not a bare settings["videoUrl"] read: a video
         # can be authored as an embed snippet instead of a plain URL, and the
         # removal check below must not treat that as "video removed".
@@ -1691,8 +1775,8 @@ def _resolve_from_master(modules, weeks, components, assigned_modules=None, *, c
             "reflectionQuestion": _s(reflection_question) or None,
             "resourceUrl": resource_url,
             "liveSessionUrl": live_session_url,
-            "teamsLiveSessionId": _s(settings.get("teamsLiveSessionId")) or None,
-            "teamsSessionNumber": settings.get("teamsSessionNumber") or None,
+            "teamsLiveSessionId": teams_live_session_id,
+            "teamsSessionNumber": teams_session_number,
             "sessionDate": _s(settings.get("sessionDate")) or None,
             "sessionTime": _s(settings.get("sessionTime")) or None,
             "sessionDateTimeUtc": _s(settings.get("sessionDateTimeUtc")) or None,
@@ -1839,6 +1923,10 @@ def build_learner_detail(source, pk, *, compact=False):
             logger.warning("Could not refresh learner KSB snapshot for %s: %s", pk, exc)
 
     detail = to_learner_detail(source, learner_profile)
+    # Created_users.Attendance_type is the staff-owned delivery classification.
+    # The live-session results view uses it to avoid presenting a Teams absence
+    # workflow to learners whose programme is delivered through recordings.
+    detail["attendanceType"] = _s(getattr(source, "attendance_type", "")) or None
     # Why the learner cannot start yet, if they cannot. The workspace shows this
     # instead of assuming the answer is always their start date.
     detail["accessGate"] = access_gate(source)

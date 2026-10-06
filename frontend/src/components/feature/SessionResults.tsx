@@ -30,8 +30,9 @@ const recoveryLabel = (person: SessionPerson) => {
   if (person.recoveryStatus === 'requested') return 'Recovery requested';
   return 'Not requested';
 };
-export function SessionResults({ seriesId, sessionNumber, learner, preview = false }: {
-  seriesId: string; sessionNumber: number; learner?: SessionLearner; preview?: boolean;
+export function SessionResults({ seriesId, sessionNumber, learner, attendanceType, preview = false, onRecordingWatchTimeChange }: {
+  seriesId: string; sessionNumber: number; learner?: SessionLearner; attendanceType?: string | null; preview?: boolean;
+  onRecordingWatchTimeChange?: (seconds: number) => void;
 }) {
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
@@ -43,7 +44,9 @@ export function SessionResults({ seriesId, sessionNumber, learner, preview = fal
   const [unmatchedOpen, setUnmatchedOpen] = useState(false);
   const [aliasChoices, setAliasChoices] = useState<Record<string, string>>({});
   const [aliasBusy, setAliasBusy] = useState('');
+  const [recordingWatchSeconds, setRecordingWatchSeconds] = useState<Record<string, number>>({});
   const kind = learner?.kind, learnerId = learner?.id;
+  const recordedSessionsLearner = (attendanceType || '').trim().toLowerCase() === 'recorded';
   const load = useCallback((signal: AbortSignal) =>
     loadSessionResult(seriesId, sessionNumber, kind && learnerId ? { kind, id: learnerId } : undefined, signal),
   [seriesId, sessionNumber, kind, learnerId]);
@@ -57,6 +60,8 @@ export function SessionResults({ seriesId, sessionNumber, learner, preview = fal
   const files = session?.artifacts?.filter(file => (!learner && !preview) || !file.hiddenFromLearners) || [];
   const recordings = files.filter(file => file.type === 'recording');
   const transcripts = files.filter(file => file.type === 'transcript');
+  const recordingWatchTotal = recordings.reduce((total, file) => total + (recordingWatchSeconds[file.id] || 0), 0);
+  useEffect(() => { onRecordingWatchTimeChange?.(recordingWatchTotal); }, [onRecordingWatchTimeChange, recordingWatchTotal]);
   const people = (session?.attendance || []).filter(person => `${person.name} ${person.email}`.toLowerCase().includes(query.toLowerCase()));
   const own = learner ? session?.attendance?.[0] : undefined;
   const ownRawStatus = own ? rawStatusOf(own) : undefined;
@@ -113,7 +118,7 @@ export function SessionResults({ seriesId, sessionNumber, learner, preview = fal
       ? 'Saved recordings and transcripts are not ready for playback yet. Please contact your tutor.'
       : 'Recording storage needs setup. Saved attendance is available below; synchronization and playback are unavailable until setup is complete.'}</p>}
     {loading ? <p role="status" className="p-5 text-sm">Loading saved session…</p> : !session ? !error && !saved.error && <p className="p-5 text-sm">This session has not been linked yet.</p> : <>
-      {learner && !preview && <div className="m-4 rounded-xl border bg-background-50 p-4 text-sm">
+      {learner && !preview && !recordedSessionsLearner && <div className="m-4 rounded-xl border bg-background-50 p-4 text-sm">
         <strong>Your original attendance: {ownRawStatus ? rawLabels[ownRawStatus] : session.reportReady ? 'Identity needs review' : 'Awaiting report'}</strong>
         {own && <p className="mt-1 text-foreground-500">{Math.floor(own.seconds / 60)}m {own.seconds % 60}s verified in Teams. Presence requires more than 3 minutes.</p>}
         {ownFinalOutcome && ownRawStatus && ownFinalOutcome !== ownRawStatus && <p className="mt-1 font-semibold text-primary-700">Effective outcome: {outcomeLabels[ownFinalOutcome]}</p>}
@@ -128,7 +133,8 @@ export function SessionResults({ seriesId, sessionNumber, learner, preview = fal
         {tab === 'recordings' && <div className="space-y-5">{!recordings.length && <p className="text-sm text-foreground-500">No recording is saved for this session. Check the session date; other sessions may have recordings. New saved results appear automatically.</p>}
           {recordings.map((file, index) => <div key={file.id}><div className="mb-2 flex flex-wrap items-center justify-between gap-2"><h3 className="text-sm font-bold">Recording {index + 1}{file.hiddenFromLearners ? ' · Hidden from learners' : ''}</h3>
             {!learner && !preview && <button type="button" disabled={Boolean(visibilityBusy)} onClick={() => void toggleVisibility(file)} className="rounded-lg border px-3 py-2 text-sm font-semibold disabled:opacity-50">{visibilityBusy === file.id ? 'Updating…' : file.hiddenFromLearners ? 'Show to learners' : 'Hide from learners'}</button>}</div>
-            {file.state === 'ready' ? <SessionRecordingPlayer seriesId={seriesId} file={file} transcripts={transcripts} learner={learner} label={`Session recording ${index + 1}`} trackWatch={Boolean(learner) && !preview} />
+            {file.state === 'ready' ? <SessionRecordingPlayer seriesId={seriesId} file={file} transcripts={transcripts} learner={learner} label={`Session recording ${index + 1}`} trackWatch={Boolean(learner) && !preview}
+              onWatchTimeChange={seconds => setRecordingWatchSeconds(current => current[file.id] === seconds ? current : { ...current, [file.id]: seconds })} />
               : <p role="status" className="rounded-lg bg-amber-50 p-3 text-sm">{session.archiveReady === false ? 'Teams has a recording for this session. A saved playback copy is not available yet.' : file.state === 'failed' ? 'Saving this recording needs retry. An administrator can request synchronization.' : 'Recording found. Saving a copy for playback…'}</p>}</div>)}
         </div>}
         {tab === 'transcripts' && <div className="space-y-4">{!transcripts.length && <p className="text-sm text-foreground-500">No transcript has been received yet.</p>}
