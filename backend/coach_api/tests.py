@@ -1789,7 +1789,7 @@ class ApplyAttendanceSummaryTests(SimpleTestCase):
 class CoachDashboardViewTests(SimpleTestCase):
     def setUp(self):
         # Cached DTOs are normalized through the same bulk source read as snapshots.
-        source_reads = patch("coach_api.views.fetch_caseload_dashboard_profiles", return_value=[])
+        source_reads = patch("coach_api.services.dashboard.profile_dates.fetch_dashboard_profile_dates", return_value=[])
         source_reads.start()
         self.addCleanup(source_reads.stop)
 
@@ -1919,7 +1919,7 @@ class CoachDashboardViewTests(SimpleTestCase):
     def test_first_request_misses_and_second_request_hits_final_response_cache(self, build):
         cache.clear()
         build.return_value = {"owner": {"email": "coach@example.com"}, "learners": [
-            {"id": "1", "startDate": None, "displayStartDate": None, "otjhProgrammeStartDate": "--"},
+            {"id": "1", "startDate": None, "displayStartDate": None, "displayEndDate": "--", "otjhProgrammeStartDate": "--"},
         ]}
         request = RequestFactory().get("/coach_api/coach/dashboard")
         request.coach_email = "coach@example.com"
@@ -2110,7 +2110,7 @@ class CoachDashboardBackgroundRefreshTests(SimpleTestCase):
 class CoachDashboardReadModelTests(SimpleTestCase):
     def setUp(self):
         # Snapshot date normalization performs separate read-only source reads.
-        source_reads = patch("coach_api.views.fetch_caseload_dashboard_profiles", return_value=[])
+        source_reads = patch("coach_api.services.dashboard.profile_dates.fetch_dashboard_profile_dates", return_value=[])
         source_reads.start()
         self.addCleanup(source_reads.stop)
 

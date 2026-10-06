@@ -1,8 +1,11 @@
-import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
-import { MemoryRouter } from 'react-router-dom';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { MemoryRouter, useLocation } from 'react-router-dom';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import type { ReactNode } from 'react';
-import { formatDateLabel, getCurrentWorkWeekRange, type CoachCalendarEvent } from '@/pages/coach/shared/calendarEvents';
+import { formatDateLabel, reviewScheduleAvailable, type CoachCalendarEvent } from '@/pages/coach/shared/calendarEvents';
+import { getCurrentWorkWeekRange, isEventThisWeek } from '@/features/coach/dashboard/api/dashboardWeek';
+import { isVisibleCaseloadLearner, otjhProgressAsOfToday } from '@/pages/coach/caseload/lib/format';
+import type { CaseloadApiLearner } from '@/pages/coach/caseload/types';
 import CoachDashboard, { clearCoachDashboardSessionCache, CompactWeeklyMeetingDetails } from '../page';
 
 const mocks = vi.hoisted(() => ({
@@ -10,14 +13,91 @@ const mocks = vi.hoisted(() => ({
   coach: { email: 'coach@example.invalid', name: 'Example Coach', isInitialized: true, isViewingAsCoach: false },
 }));
 vi.mock('@/components/feature/WorkspaceShell', () => ({ WorkspaceShell: ({ children }: { children: ReactNode }) => <main>{children}</main> }));
-vi.mock('@/hooks/useAuth', () => ({ useAuth: () => ({ isInitialized: true, auth: { account: { email: 'coach@example.invalid' } } }) }));
+vi.mock('@/hooks/useAuth', () => {
+  const account = { email: 'coach@example.invalid' };
+  return { useAuth: () => ({ isInitialized: true, auth: { account } }) };
+});
 vi.mock('@/hooks/useCoachIdentity', () => ({ useCoachIdentity: () => mocks.coach }));
-vi.mock('@/lib/sharedGetJson', () => ({ fetchSharedJsonGet: mocks.load }));
+vi.mock('@/lib/sharedGetJson', () => ({ fetchSharedJsonGet: async (url: string, options: unknown) => {
+  const originalFixture = await mocks.load(url, options);
+  if (originalFixture.learnerPopup) return originalFixture;
+  // Historical scenario fixtures describe the aggregate inputs. Model the
+  // new server contract here; production consumers receive these scalars.
+  const canonical = (learner: CaseloadApiLearner) => {
+    const old = otjhProgressAsOfToday({ ...learner, otjhRagStatus: undefined });
+    const target = learner.otjhTargetAsOfToday ?? old.targetHours;
+    const actual = learner.otjhCompleted ?? 0;
+    return { ...learner,
+      otjhRagStatus: learner.otjhRagStatus ?? old.status,
+      otjhTargetAsOfToday: target,
+      otjhShortfallHours: 'otjhShortfallHours' in learner ? learner.otjhShortfallHours : target === null ? null : Math.max(target - actual, 0),
+      otjhProgressAsOfToday: 'otjhProgressAsOfToday' in learner ? learner.otjhProgressAsOfToday : target && target > 0 ? Math.min(actual / target * 100, 100) : null,
+      otjhDeltaHours: 'otjhDeltaHours' in learner ? learner.otjhDeltaHours : target === null ? null : actual - target,
+    };
+  };
+  const fixture = { ...originalFixture,
+    ...(originalFixture.learners ? { learners: originalFixture.learners.map(canonical) } : {}),
+    ...(originalFixture.results ? { results: originalFixture.results.map(canonical) } : {}),
+  };
+  if (url.includes('/dashboard/summary')) {
+    const events = fixture.meetings?.events || [];
+    const ids = new Set((fixture.learners || []).filter((learner: { rawProgramStatus?: string }) => ['active', 'delivery'].includes(learner.rawProgramStatus?.toLowerCase() || '')).map((learner: { id: string }) => learner.id));
+    const week = events.filter((event: CoachCalendarEvent) => ids.has(event.learnerId) && event.status !== 'cancelled' && isEventThisWeek(event));
+    const counts = fixture.weeklyCounts || {
+      progressReviews: week.filter((event: CoachCalendarEvent) => event.source === 'progress-review').length,
+      monthlyCoaching: week.filter((event: CoachCalendarEvent) => event.source === 'mcr').length,
+      catchUps: week.filter((event: CoachCalendarEvent) => event.source === 'catch-up').length,
+      reviewsAvailable: reviewScheduleAvailable(fixture.meetings?.summary, events, fixture.meetings?.reviewGenerationIssues || []),
+    };
+    const visible = (fixture.learners || []).filter(isVisibleCaseloadLearner);
+    const active = visible.filter((learner: CaseloadApiLearner) => ['active', 'delivery'].includes(learner.rawProgramStatus?.toLowerCase() || ''));
+    const totals = fixture.totals || {
+      totalLearners: visible.length,
+      otjhAtRisk: active.filter((learner: CaseloadApiLearner) => learner.otjhRagStatus === 'at-risk').length,
+      needAttention: active.filter((learner: CaseloadApiLearner) => learner.otjhRagStatus === 'need-attention').length,
+      pendingMarking: fixture.marking?.summary?.pendingItems ?? new Set((fixture.marking?.items || []).map((item: { id: string }) => item.id)).size,
+      prThisWeek: counts.reviewsAvailable ? counts.progressReviews : null,
+      mcmThisWeek: counts.reviewsAvailable ? counts.monthlyCoaching : null,
+      catchUpsThisWeek: counts.catchUps,
+    };
+    const response = { ...fixture, totalLearners: totals.totalLearners,
+      otjh: { atRisk: totals.otjhAtRisk, needAttention: totals.needAttention },
+      pendingMarking: totals.pendingMarking,
+      meetingsThisWeek: { pr: totals.prThisWeek, mcm: totals.mcmThisWeek, catchUps: totals.catchUpsThisWeek },
+      meetings: { summary: fixture.meetings?.summary, reviewGenerationIssues: fixture.meetings?.reviewGenerationIssues },
+    };
+    delete response.weeklyCounts;
+    delete response.totals;
+    return {
+      owner: { name: response.owner?.name },
+      summary: { totalLearners: response.totalLearners, otjh: response.otjh,
+        pendingMarking: response.pendingMarking, meetingsThisWeek: response.meetingsThisWeek },
+      learnerPopup: {
+        all: visible.map((learner: CaseloadApiLearner & { programme?: string }) => ({
+          id: learner.id, name: learner.name, initials: learner.initials, learnerType: learner.learnerType, enrolmentId: learner.enrolmentId, programmeStatus: learner.rawProgramStatus, programme: learner.programmeName || learner.programme || learner.cohortName,
+          group: learner.group,
+          otjh: { completed: learner.otjhCompleted, target: learner.otjhTargetAsOfToday ?? null,
+            planned: learner.otjhPlanned ?? null, ragStatus: learner.otjhRagStatus },
+        })),
+        atRisk: active.filter((learner: CaseloadApiLearner) => learner.otjhRagStatus === 'at-risk').map((learner: CaseloadApiLearner) => learner.id),
+      },
+      markingPopup: { count: response.pendingMarking, items: response.marking?.items || [] },
+      meetingsPopup: Object.fromEntries((['pr', 'mcm', 'catchUps'] as const).map(key => [key, {
+        count: response.meetingsThisWeek[key],
+        items: week.filter((event: CoachCalendarEvent) => event.source === (key === 'pr' ? 'progress-review' : key === 'mcm' ? 'mcr' : 'catch-up'))
+          .map((event: CoachCalendarEvent) => ({ learnerId: event.learnerId, learnerName: event.learner || event.title,
+            programme: event.programme, group: event.group, date: event.scheduledDate || event.date || event.targetDate,
+            time: event.scheduledTime || event.timeLabel || null, durationMinutes: event.durationMinutes || 60, status: event.status })),
+      }])),
+    };
+  }
+  return fixture;
+} }));
 vi.mock('@/lib/coachFetch', () => ({ coachFetch: mocks.coachFetch }));
 vi.mock('@/lib/coachViewAs', () => ({
   setCoachViewAs: vi.fn(),
   withCoachViewAs: (url: string) => mocks.coach.isViewingAsCoach
-    ? `${url}?viewAsCoach=${encodeURIComponent(mocks.coach.email)}`
+    ? `${url}${url.includes('?') ? '&' : '?'}viewAsCoach=${encodeURIComponent(mocks.coach.email)}`
     : url,
 }));
 vi.mock('@/pages/coach/shared/calendarEvents', async original => ({
@@ -65,22 +145,14 @@ function expectStructuredSkeleton() {
   const skeleton = screen.getByRole('status', { name: 'Loading coach dashboard' });
   expect(skeleton).toBeVisible();
   expect(skeleton.querySelectorAll('[data-skeleton="metric"]')).toHaveLength(6);
-  expect(within(skeleton).getByRole('heading', { name: 'All Learners', hidden: true })).toBeInTheDocument();
-  expect(within(skeleton).queryByRole('heading', { name: 'Upcoming Meetings', hidden: true })).not.toBeInTheDocument();
-  expect(within(skeleton).queryByText('Risk Distribution')).not.toBeInTheDocument();
-  for (const tabLabel of ['All Learners', 'Upcoming Meetings', 'Risk Insights']) {
-    expect(within(skeleton).getAllByText(tabLabel).length).toBeGreaterThan(0);
-  }
-  const learnerTable = within(skeleton).getByRole('table', { name: 'Learners are loading', hidden: true });
+  const table = screen.getByRole('table', { name: 'Learners are loading' });
   for (const column of ['Learner', 'Status', 'Progress', 'OTJH', 'Activities', 'Attendance', 'Start Date', 'Last Activity', 'Last PR', 'Last MCM', 'Actions']) {
-    expect(within(learnerTable).getByRole('columnheader', { name: column, hidden: true })).toBeInTheDocument();
+    expect(within(table).getByRole('columnheader', { name: column })).toBeInTheDocument();
   }
-  // Two header rows plus seven learner rows.
-  expect(within(learnerTable).getAllByRole('row', { hidden: true })).toHaveLength(9);
-  expect(skeleton.querySelectorAll('[data-skeleton="meeting"]')).toHaveLength(0);
-  for (const emptyState of ['No learners assigned to you yet', 'Data not available', 'History not available', 'No learner meetings scheduled']) {
-    expect(screen.queryByText(emptyState)).not.toBeInTheDocument();
+  for (const tabLabel of ['All Learners', 'Upcoming Meetings', 'Risk Insights']) {
+    expect(screen.getByRole('tab', { name: tabLabel })).toBeVisible();
   }
+  expect(screen.queryByText('No learners assigned to you yet')).not.toBeInTheDocument();
   expect(screen.queryByRole('region', { name: 'Coach dashboard metrics' })).not.toBeInTheDocument();
 }
 
@@ -111,9 +183,9 @@ it('shows the learner table only after a successful response', async () => {
   expect(screen.getByRole('region', { name: 'Coach dashboard metrics' })).toBeVisible();
   expect(screen.queryByRole('region', { name: 'Learner risk insights' })).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole('tab', { name: 'Risk Insights' }));
-  expect(screen.getByRole('region', { name: 'Learner risk insights' })).toBeVisible();
-  expect(mocks.load).toHaveBeenCalledTimes(1);
-  expect(mocks.load).toHaveBeenCalledWith('/coach_api/coach/dashboard', expect.objectContaining({ credentials: 'include' }));
+  expect(await screen.findByRole('region', { name: 'Learner risk insights' })).toBeVisible();
+  expect(mocks.load).toHaveBeenCalledTimes(3);
+  expect(mocks.load).toHaveBeenCalledWith('/coach_api/coach/dashboard/summary', expect.objectContaining({ credentials: 'include' }));
   expect(mocks.calendar).not.toHaveBeenCalled();
   expect(mocks.coachFetch).not.toHaveBeenCalled();
 });
@@ -130,13 +202,13 @@ it('keeps the loaded dashboard visible while returning to the page and refreshin
 
   expect(screen.getByText('Example Learner')).toBeVisible();
   expect(screen.queryByRole('status', { name: 'Loading coach dashboard' })).not.toBeInTheDocument();
-  expect(mocks.load).toHaveBeenCalledTimes(2);
+  expect(mocks.load).toHaveBeenCalledTimes(3);
   await act(async () => {
     finishRefresh({ owner: { name: 'Example Coach' }, learners: [], meetings: { events: [] } });
   });
 });
 
-it('characterizes the initial dashboard request as one aggregate request with no child requests', async () => {
+it('loads only summary and all learners initially, leaving other sections on demand', async () => {
   vi.useRealTimers();
   const requestOrder: string[] = [];
   mocks.load.mockImplementation(async (url: string) => {
@@ -147,9 +219,219 @@ it('characterizes the initial dashboard request as one aggregate request with no
   render(<MemoryRouter><CoachDashboard /></MemoryRouter>);
   expect(await screen.findByText('No learners assigned to you yet')).toBeVisible();
 
-  expect(requestOrder).toEqual(['/coach_api/coach/dashboard']);
+  expect(requestOrder).toHaveLength(2);
+  expect(requestOrder).toContain('/coach_api/coach/dashboard/summary');
+  expect(requestOrder).toContain('/coach_api/coach/dashboard/learners');
   expect(mocks.calendar).not.toHaveBeenCalled();
   expect(mocks.coachFetch).not.toHaveBeenCalled();
+});
+
+it('keeps the existing request count for learner, marking and weekly meeting popups', async () => {
+  vi.useRealTimers();
+  render(<MemoryRouter><CoachDashboard /></MemoryRouter>);
+  await screen.findByRole('region', { name: 'Coach dashboard metrics' });
+  await waitFor(() => expect(mocks.load).toHaveBeenCalledTimes(2));
+  for (const [card, title] of [['Total learners', 'Learner caseload'], ['OTJH at risk', 'Learners at risk'], ['Pending marking', 'Pending marking']]) {
+    fireEvent.click(screen.getByRole('button', { name: `Open ${card} details` }));
+    const dialog = await screen.findByRole('dialog', { name: title });
+    expect(mocks.load).toHaveBeenCalledTimes(2);
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Close popup' }));
+  }
+  fireEvent.click(screen.getByRole('button', { name: 'Open MCM this week details' }));
+  await screen.findByRole('dialog', { name: 'Monthly coaching this week' });
+  // Summary supplies weekly details, so opening adds no request.
+  expect(mocks.load).toHaveBeenCalledTimes(2);
+  expect(mocks.load.mock.calls.some(([url]) => String(url).includes('/dashboard/meetings'))).toBe(false);
+});
+
+it('renders learners while summary remains pending', async () => {
+  vi.useRealTimers();
+  let finishSummary!: (value: unknown) => void;
+  mocks.load.mockImplementation((url: string) => url.includes('/summary')
+    ? new Promise(resolve => { finishSummary = resolve; })
+    : Promise.resolve({ results: [{ id: '1', name: 'Independent Learner', rawProgramStatus: 'active' }], pagination: { total: 1, totalPages: 1 } }));
+  render(<MemoryRouter><CoachDashboard /></MemoryRouter>);
+  expect(await screen.findByText('Independent Learner')).toBeVisible();
+  expect(screen.getByRole('status', { name: 'Loading coach dashboard' })).toBeVisible();
+  await act(async () => finishSummary({ learners: [], weeklyCounts: { progressReviews: 0, monthlyCoaching: 0, catchUps: 0, reviewsAvailable: true } }));
+  expect(screen.getByRole('region', { name: 'Coach dashboard metrics' })).toBeVisible();
+});
+
+it('keeps learners visible when summary fails independently', async () => {
+  vi.useRealTimers();
+  mocks.load.mockImplementation((url: string) => url.includes('/summary')
+    ? Promise.reject(new Error('Summary unavailable'))
+    : Promise.resolve({ results: [{ id: '1', name: 'Independent Learner', rawProgramStatus: 'active' }], pagination: { total: 1, totalPages: 1 } }));
+  render(<MemoryRouter><CoachDashboard /></MemoryRouter>);
+  expect(await screen.findByText('Independent Learner')).toBeVisible();
+  expect(await screen.findByRole('button', { name: 'Retry summary' })).toBeVisible();
+  expect(screen.getByText('Independent Learner')).toBeVisible();
+  expect(mocks.load.mock.calls.filter(([url]) => url.includes('/learners'))).toHaveLength(1);
+});
+
+it('loads each optional section once and reuses it when switching tabs', async () => {
+  useDashboardDate();
+  render(<MemoryRouter><CoachDashboard /></MemoryRouter>);
+  expect(await screen.findByText('Example Learner')).toBeVisible();
+  expect(mocks.load.mock.calls.filter(([url]) => /\/(meetings|risk)(?:\?|$)/.test(url))).toHaveLength(0);
+  fireEvent.click(screen.getByRole('tab', { name: 'Upcoming Meetings' }));
+  expect(await screen.findByRole('region', { name: 'Upcoming meetings and live sessions' })).toBeVisible();
+  fireEvent.click(screen.getByRole('tab', { name: 'Risk Insights' }));
+  expect(await screen.findByRole('region', { name: 'Learner risk insights' })).toBeVisible();
+  fireEvent.click(screen.getByRole('tab', { name: 'All Learners' }));
+  fireEvent.click(screen.getByRole('tab', { name: 'Upcoming Meetings' }));
+  fireEvent.click(screen.getByRole('tab', { name: 'Risk Insights' }));
+  expect(mocks.load.mock.calls.filter(([url]) => url.includes('/dashboard/meetings?'))).toHaveLength(1);
+  expect(mocks.load.mock.calls.find(([url]) => url.includes('/dashboard/meetings?'))?.[0])
+    .toBe('/coach_api/coach/dashboard/meetings?from=2026-09-21&to=2026-09-25');
+  expect(mocks.load.mock.calls.filter(([url]) => url.endsWith('/risk'))).toHaveLength(1);
+  expect(mocks.load.mock.calls.filter(([url]) => url.includes('/learners'))).toHaveLength(1);
+});
+
+it.each([{ includeStatus: false, expected: 1 }, { includeStatus: true, expected: 7 }])(
+  'strict summary contract with programme status=$includeStatus renders $expected upcoming meetings', async ({ includeStatus, expected }) => {
+    useDashboardDate();
+    const learners = ['1', '2'].map(id => ({ id, name: `Synthetic Learner ${id}`, programme: 'Programme', group: 'Group',
+      ...(includeStatus ? { programmeStatus: id === '1' ? 'Active' : 'Delivery' } : {}),
+      otjh: { completed: 100, target: 100, planned: 400, ragStatus: 'on-track' },
+    }));
+    const events = ['progress-review', 'mcm', 'catch-up'].flatMap(type => learners.map(learner => ({
+      id: `${type}-${learner.id}`, eventKey: `${type}:${learner.id}`, type,
+      date: '2026-09-23', time: '10:30', durationMinutes: 60,
+      learner: { id: learner.id, name: learner.name }, title: type, programme: 'Programme', group: 'Group', status: 'scheduled',
+    })));
+    const live = { id: 'live-no-learner', type: 'live-session', date: '2026-09-23', time: '09:00', durationMinutes: 120,
+      title: 'Synthetic Live Session', programme: 'Programme', cohort: 'Cohort', group: 'Group', status: 'scheduled',
+      timeLabel: '09:00 - 11:00', meetingLink: 'https://example.invalid/join' };
+    mocks.load.mockImplementation(async (url: string) => url.includes('/summary') ? {
+      owner: { name: 'Synthetic Coach' },
+      summary: { totalLearners: 2, otjh: { atRisk: 0, needAttention: 0 }, pendingMarking: 0,
+        meetingsThisWeek: { pr: 0, mcm: 0, catchUps: 0 } },
+      learnerPopup: { all: learners, atRisk: [] }, markingPopup: { count: 0, items: [] },
+      meetingsPopup: { pr: { count: 0, items: [] }, mcm: { count: 0, items: [] }, catchUps: { count: 0, items: [] } },
+    } : url.includes('/meetings?') ? {
+      meetings: { range: { from: '2026-09-21', to: '2026-09-25' }, events: [...events, live] }, errors: {},
+    } : { results: [] });
+    render(<MemoryRouter><CoachDashboard /></MemoryRouter>);
+    await screen.findByRole('button', { name: 'Open PR this week details' });
+    fireEvent.click(screen.getByRole('tab', { name: 'Upcoming Meetings' }));
+    const region = await screen.findByRole('region', { name: 'Upcoming meetings and live sessions' });
+    expect(region.querySelectorAll('[data-meeting-row="true"]')).toHaveLength(expected);
+    expect(within(region).getByText('Synthetic Live Session')).toBeVisible();
+    if (includeStatus) {
+      expect(within(region).getAllByText('Synthetic Learner 1', { selector: 'span' })).toHaveLength(3);
+      expect(within(region).getAllByText('Synthetic Learner 2', { selector: 'span' })).toHaveLength(3);
+    }
+    expect(mocks.load.mock.calls.filter(([url]) => url.includes('/dashboard/meetings?'))).toHaveLength(1);
+    expect(mocks.calendar).not.toHaveBeenCalled();
+    expect(mocks.coachFetch).not.toHaveBeenCalled();
+  },
+);
+
+it('updates open KPI popups and upcoming meetings automatically at London Monday midnight', async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  vi.setSystemTime(new Date('2026-09-20T22:59:59Z'));
+  const fixture = await mocks.load();
+  const events = [
+    { ...meeting, id: 'last-week', source: 'progress-review', scheduledDate: '2026-09-18', programme: 'Previous Week' },
+    { ...meeting, id: 'new-week-1', source: 'progress-review', scheduledDate: '2026-09-21', programme: 'Current Week' },
+    { ...meeting, id: 'new-week-2', source: 'progress-review', scheduledDate: '2026-09-22', programme: 'Current Week' },
+    { ...meeting, id: 'upcoming', scheduledDate: '2026-09-28', learner: 'Next Week Learner' },
+  ].map(event => ({ ...event, eventKey: event.id }));
+  mocks.load.mockImplementation(async () => ({ ...fixture, meetings: { events } }));
+  render(<MemoryRouter><CoachDashboard /></MemoryRouter>);
+  const pr = await screen.findByRole('button', { name: 'Open PR this week details' });
+  expect(pr).toHaveTextContent('1');
+  fireEvent.click(screen.getByRole('tab', { name: 'Upcoming Meetings' }));
+  await screen.findByRole('region', { name: 'Upcoming meetings and live sessions' });
+  fireEvent.click(pr);
+  expect(await screen.findByText(/Previous Week/)).toBeVisible();
+  act(() => vi.advanceTimersByTime(1000));
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Open PR this week details' })).toHaveTextContent('2'));
+  expect(screen.queryByText(/Previous Week/)).not.toBeInTheDocument();
+  expect(screen.getAllByText(/Current Week/)).toHaveLength(2);
+  fireEvent.keyDown(window, { key: 'Escape' });
+  fireEvent.click(screen.getByRole('tab', { name: 'Upcoming Meetings' }));
+  const region = await screen.findByRole('region', { name: 'Upcoming meetings and live sessions' });
+  expect(within(region).getByText('Next Week Learner', { selector: 'span' })).toBeVisible();
+  expect(mocks.load.mock.calls.some(([url]) => String(url).includes('from=2026-09-28&to=2026-10-02'))).toBe(true);
+});
+
+it('renders the compact upcoming contract and preserves forms and live calendar navigation with one section request', async () => {
+  useDashboardDate();
+  const fixture = await mocks.load();
+  mocks.load.mockImplementation(async (url: string) => url.includes('/dashboard/meetings?') ? {
+    meetings: { range: { from: '2026-09-21', to: '2026-09-25' }, events: [
+      { id: 'mcm-compact', eventKey: 'mcr:1:1', type: 'mcm', date: '2026-09-23', time: '10:30', durationMinutes: 60,
+        learner: { id: '1', name: 'Example Learner' }, title: 'Monthly Coaching', programme: 'Programme', group: 'Group',
+        status: 'scheduled', reviewInstanceId: 'instance-compact', enrolmentId: '22', startHour: 10.5 },
+      { id: 'live-compact', eventKey: 'live-focus', type: 'live-session', date: '2026-09-23', time: '09:00', durationMinutes: 120,
+        title: 'Compact Live Lesson', programme: 'Programme', cohort: 'Cohort', group: 'Group', status: 'scheduled',
+        startHour: 9, timeLabel: '09:00 - 11:00', meetingLink: 'https://example.invalid/join' },
+    ] }, errors: {},
+  } : fixture);
+  mocks.load.mockClear();
+  render(<MemoryRouter><CoachDashboard /><ModalLocationProbe /></MemoryRouter>);
+  expect(await screen.findByText('Example Learner')).toBeVisible();
+  fireEvent.click(screen.getByRole('tab', { name: 'Upcoming Meetings' }));
+  const region = await screen.findByRole('region', { name: 'Upcoming meetings and live sessions' });
+  expect(within(region).getByText('Example Learner', { selector: 'span' })).toBeVisible();
+  expect(within(region).getByText('Monthly Coaching')).toBeVisible();
+  expect(within(region).getByText('10:30 - 11:30')).toBeVisible();
+  expect(within(region).getByText('09:00 - 11:00')).toBeVisible();
+  expect(within(region).getByRole('button', { name: 'Reschedule' })).toBeEnabled();
+  expect(within(region).getByRole('button', { name: 'Send Reminder' })).toBeEnabled();
+  fireEvent.click(within(region).getByRole('button', { name: 'View Form' }));
+  await waitFor(() => expect(screen.getByLabelText('Current route')).toHaveTextContent('/coach/review-instances/instance-compact'));
+  fireEvent.click(within(region).getByRole('link', { name: 'View Compact Live Lesson in calendar' }));
+  expect(screen.getByLabelText('Current route')).toHaveTextContent('/coach/timetable');
+  expect(screen.getByLabelText('Current route')).toHaveTextContent('live-focus');
+  expect(mocks.load.mock.calls.filter(([url]) => url.includes('/dashboard/meetings?'))).toHaveLength(1);
+  expect(mocks.calendar).not.toHaveBeenCalled();
+  expect(mocks.coachFetch).not.toHaveBeenCalled();
+});
+
+it('paginates the full cached dataset without reloading learners or summary', async () => {
+  vi.useRealTimers();
+  mocks.load.mockImplementation(async (url: string) => url.includes('/learners')
+    ? { results: Array.from({ length: 16 }, (_, index) => ({ id: String(index), name: `Learner ${String(index).padStart(2, '0')}`, rawProgramStatus: 'active' })) }
+    : { learners: [], weeklyCounts: { progressReviews: 0, monthlyCoaching: 0, catchUps: 0, reviewsAvailable: true } });
+  render(<MemoryRouter><CoachDashboard /></MemoryRouter>);
+  expect(await screen.findByText('Learner 00')).toBeVisible();
+  expect(screen.queryByText('Learner 15')).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: 'Next page' }));
+  expect(await screen.findByText('Learner 15')).toBeVisible();
+  expect(screen.queryByText('Learner 00')).not.toBeInTheDocument();
+  expect(mocks.load).toHaveBeenCalledTimes(2);
+  expect(mocks.load).toHaveBeenCalledWith('/coach_api/coach/dashboard/learners', expect.anything());
+});
+
+it('uses backend global totals and canonical OTJH values independently of the learner page', async () => {
+  vi.useRealTimers();
+  const row = { id: '1', name: 'Canonical Learner', rawProgramStatus: 'active', status: 'at-risk', otjhStatus: 'at-risk',
+    otjhCompleted: 170, otjhTarget: 999, otjhTargetAsOfToday: 200, otjhShortfallHours: 30,
+    otjhProgressAsOfToday: 85, otjhDeltaHours: -30, otjhRagStatus: 'need-attention' };
+  mocks.load.mockImplementation(async (url: string) => url.includes('/summary')
+    // Global risk totals must be backed by the full popup dataset, not this page.
+    ? { learners: [row, ...Array.from({ length: 16 }, (_, index) => ({ ...row, id: `risk-${index}`,
+        name: `Global Risk ${index}`, otjhRagStatus: 'at-risk' }))], totals: { totalLearners: 32, otjhAtRisk: 16, needAttention: 8, pendingMarking: 7,
+        prThisWeek: 3, mcmThisWeek: 4, catchUpsThisWeek: 2 },
+        weeklyCounts: { progressReviews: 3, monthlyCoaching: 4, catchUps: 2, reviewsAvailable: true } }
+    : { results: [row, ...Array.from({ length: 31 }, (_, index) => ({ ...row, id: `other-${index}`, name: `Other Learner ${index}` }))] });
+  render(<MemoryRouter><CoachDashboard /></MemoryRouter>);
+  expect(await screen.findByText('Canonical Learner')).toBeVisible();
+  const totalCard = () => screen.getByRole('button', { name: 'Open Total learners details' });
+  expect(within(totalCard()).getByText('32')).toBeVisible();
+  expect(within(screen.getByRole('button', { name: 'Open OTJH at risk details' })).getByText('16')).toBeVisible();
+  expect(screen.getByText('8 need attention')).toBeVisible();
+  expect(within(screen.getByRole('button', { name: 'Open Pending marking details' })).getByText('7')).toBeVisible();
+  const learnerRow = screen.getByText('Canonical Learner').closest('tr')!;
+  expect(within(learnerRow).getByLabelText('OTJH: 85%')).toBeVisible();
+  expect(within(learnerRow).getByText('170h / 200h')).toBeVisible();
+  expect(within(learnerRow).queryByText('999')).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: 'Next page' }));
+  expect(mocks.load.mock.calls.filter(([url]) => url.includes('/learners'))).toHaveLength(1);
+  expect(within(totalCard()).getByText('32')).toBeVisible();
 });
 
 it('adds the effective coach once when an administrator views a coach dashboard', async () => {
@@ -161,30 +443,29 @@ it('adds the effective coach once when an administrator views a coach dashboard'
   render(<MemoryRouter><CoachDashboard /></MemoryRouter>);
   expect(await screen.findByRole('region', { name: 'Coach learner caseload' })).toBeVisible();
 
-  expect(mocks.load).toHaveBeenCalledTimes(1);
+  expect(mocks.load).toHaveBeenCalledTimes(2);
   expect(mocks.load).toHaveBeenCalledWith(
-    '/coach_api/coach/dashboard?viewAsCoach=selected.coach%40example.invalid',
+    '/coach_api/coach/dashboard/summary?viewAsCoach=selected.coach%40example.invalid',
     expect.objectContaining({ credentials: 'include' }),
   );
 });
 
-it('retries the aggregate request once after a transient failure', async () => {
+it('retries a failed section once while the other request can succeed', async () => {
   useDashboardDate();
-  mocks.load
-    .mockRejectedValueOnce(new Error('Temporary failure'))
-    .mockResolvedValueOnce({ owner: { name: 'Example Coach' }, learners: [], meetings: { events: [] } });
-
+  let summaryAttempts = 0;
+  mocks.load.mockImplementation(async (url: string) => {
+    if (url.endsWith('/summary') && summaryAttempts++ === 0) throw new Error('Temporary failure');
+    return { owner: { name: 'Example Coach' }, learners: [], weeklyCounts: { progressReviews: 0, monthlyCoaching: 0, catchUps: 0, reviewsAvailable: true } };
+  });
   render(<MemoryRouter><CoachDashboard /></MemoryRouter>);
   await act(async () => { await vi.advanceTimersByTimeAsync(250); });
   expect(await screen.findByText('No learners assigned to you yet')).toBeVisible();
-
-  expect(mocks.load).toHaveBeenCalledTimes(2);
-  expect(mocks.load.mock.calls.map(([url]) => url)).toEqual([
-    '/coach_api/coach/dashboard', '/coach_api/coach/dashboard',
-  ]);
+  expect(await screen.findByRole('region', { name: 'Coach dashboard metrics' })).toBeVisible();
+  expect(mocks.load.mock.calls.filter(([url]) => url.endsWith('/summary'))).toHaveLength(2);
+  expect(mocks.load.mock.calls.filter(([url]) => url.includes('/learners'))).toHaveLength(1);
 });
 
-it('aborts the previous aggregate request when the effective coach changes', async () => {
+it('aborts the previous summary and learner requests when the effective coach changes', async () => {
   vi.useRealTimers();
   const signals: AbortSignal[] = [];
   mocks.load.mockImplementation((_: string, options: { signal: AbortSignal }) => {
@@ -194,17 +475,19 @@ it('aborts the previous aggregate request when the effective coach changes', asy
   });
 
   const { rerender } = render(<MemoryRouter><CoachDashboard /></MemoryRouter>);
-  expect(signals).toHaveLength(1);
+  expect(signals).toHaveLength(2);
   Object.assign(mocks.coach, { email: 'next-coach@example.invalid', name: 'Next Coach' });
   rerender(<MemoryRouter><CoachDashboard /></MemoryRouter>);
   expect(await screen.findByText('No learners assigned to you yet')).toBeVisible();
 
-  expect(signals).toHaveLength(2);
+  expect(signals).toHaveLength(4);
   expect(signals[0].aborted).toBe(true);
-  expect(signals[1].aborted).toBe(false);
+  expect(signals[1].aborted).toBe(true);
+  expect(signals[2].aborted).toBe(false);
+  expect(signals[3].aborted).toBe(false);
 });
 
-it('renders dashboard-owned KSB, activity, and attendance metrics without a caseload request', async () => {
+it('renders only the table activity and attendance metrics without requesting KSB details', async () => {
   vi.useRealTimers();
   mocks.load.mockResolvedValue({
     owner: { name: 'Example Coach' },
@@ -222,13 +505,13 @@ it('renders dashboard-owned KSB, activity, and attendance metrics without a case
   const region = await screen.findByRole('region', { name: 'Coach learner caseload' });
   const row = (await within(region).findByText('Metric Learner')).closest('tr');
   expect(row).not.toBeNull();
-  expect(within(row!).getByText('85.3%')).toBeVisible();
+  expect(within(row!).queryByText('85.3%')).not.toBeInTheDocument();
   expect(within(row!).getByText('87.3%')).toBeVisible();
   expect(within(row!).getByText('80%')).toBeVisible();
-  expect(within(row!).getByText('498 / 584')).toBeVisible();
+  expect(within(row!).queryByText('498 / 584')).not.toBeInTheDocument();
   expect(within(row!).getByText('137 / 157')).toBeVisible();
-  expect(within(row!).getByText('8 / 10')).toBeVisible();
-  expect(mocks.load).toHaveBeenCalledTimes(1);
+  expect(within(row!).getByLabelText('Attendance: 80%')).toBeVisible();
+  expect(mocks.load).toHaveBeenCalledTimes(2);
   expect(mocks.coachFetch).not.toHaveBeenCalled();
 });
 
@@ -244,6 +527,7 @@ it('preserves zero values while rendering unavailable dashboard metrics distinct
         componentsCompleted: 0, componentsPlanned: 20, attendanceRate: 0,
         attendanceRateAvailable: true, attendanceAvailable: true, attendancePresent: 0, attendanceSessions: 10,
         lastActivity: '18 Sep 2026', lastActivityLabel: 'Quiz submitted', lastPr: '12 Sep 2026', lastMcm: '14 Sep 2026',
+        lastProgressReview: '--', lastReview: '--',
       },
       {
         id: 'missing', name: 'Unavailable Learner', rawProgramStatus: 'active', otjhStatus: 'unknown',
@@ -258,7 +542,7 @@ it('preserves zero values while rendering unavailable dashboard metrics distinct
   const region = await screen.findByRole('region', { name: 'Coach learner caseload' });
   const zeroRow = (await within(region).findByText('Zero Learner')).closest('tr')!;
   expect(within(zeroRow).getByLabelText('OTJH: 0%')).toBeVisible();
-  expect(within(zeroRow).getByLabelText('KSBs: 0%')).toBeVisible();
+  expect(within(zeroRow).queryByLabelText('KSBs: 0%')).not.toBeInTheDocument();
   expect(within(zeroRow).getByLabelText('Activities: 0%')).toBeVisible();
   expect(within(zeroRow).getByLabelText('Attendance: 0%')).toBeVisible();
   expect(within(zeroRow).getByText('18 Sep 2026')).toBeVisible();
@@ -267,7 +551,7 @@ it('preserves zero values while rendering unavailable dashboard metrics distinct
 
   const unavailableRow = (await within(region).findByText('Unavailable Learner')).closest('tr')!;
   expect(within(unavailableRow).getByLabelText('OTJH: not available')).toBeVisible();
-  expect(within(unavailableRow).getByLabelText('KSBs: not available')).toBeVisible();
+  expect(within(unavailableRow).queryByLabelText('KSBs: not available')).not.toBeInTheDocument();
   expect(within(unavailableRow).getByLabelText('Activities: not available')).toBeVisible();
   expect(within(unavailableRow).getByLabelText('Attendance: not available')).toBeVisible();
   expect(within(unavailableRow).getByText('No activity yet')).toBeVisible();
@@ -290,7 +574,7 @@ it('shows one dashboard error without a learner empty state', async () => {
   vi.useRealTimers();
   mocks.load.mockRejectedValue(new Error('Dashboard unavailable'));
   render(<MemoryRouter><CoachDashboard /></MemoryRouter>);
-  expect(await screen.findByText('Unable to load coach dashboard')).toBeVisible();
+  expect(await screen.findByText('Unable to load coach dashboard summary')).toBeVisible();
   expect(screen.queryByText('No learners assigned to you yet')).not.toBeInTheDocument();
 });
 
@@ -391,7 +675,7 @@ it('keeps the live session calendar link while showing the new actions only on c
   expect(meetings.querySelector('tr[data-day-first="true"]')).not.toBeNull();
   expect(meetings.querySelector('tr[data-day-last="true"]')).not.toBeNull();
   fireEvent.click(screen.getByRole('tab', { name: 'Risk Insights' }));
-  const insights = screen.getByRole('region', { name: 'Learner risk insights' });
+  const insights = await screen.findByRole('region', { name: 'Learner risk insights' });
   for (const title of ['Attendance Insights', 'OTJH Insights', 'Review Insights']) {
     expect(within(insights).getByRole('heading', { name: title })).toBeVisible();
     fireEvent.click(within(insights).getByRole('button', { name: `Expand ${title}` }));
@@ -399,7 +683,7 @@ it('keeps the live session calendar link while showing the new actions only on c
   expect(within(insights).getByRole('region', { name: 'Attendance risk insights' })).toBeVisible();
   expect(within(insights).getByRole('region', { name: 'OTJH risk insights' })).toBeVisible();
   expect(within(insights).getByRole('region', { name: 'Review risk insights' })).toBeVisible();
-  expect(mocks.load).toHaveBeenCalledWith('/coach_api/coach/dashboard', expect.objectContaining({ credentials: 'include' }));
+  expect(mocks.load).toHaveBeenCalledWith('/coach_api/coach/dashboard/summary', expect.objectContaining({ credentials: 'include' }));
 });
 
 it('does not show the caseload owner name as learner session activity', async () => {
@@ -521,7 +805,7 @@ it('uses the current work week for KPI cards and only the next work week for upc
   fireEvent.click(screen.getByRole('tab', { name: 'Upcoming Meetings' }));
   expect(screen.getByText('Your scheduled meetings and live sessions in the next work week')).toBeVisible();
   expect(screen.getByText(/28 Sep .* 02 Oct/)).toBeVisible();
-  const upcoming = screen.getByRole('region', { name: 'Upcoming meetings and live sessions' });
+  const upcoming = await screen.findByRole('region', { name: 'Upcoming meetings and live sessions' });
   for (const title of ['Next Monday PR', 'Next Tuesday MCM', 'Next Wednesday Catch-up', 'Next Thursday Support', 'Next Friday Live Session']) {
     expect(within(upcoming).getAllByText(title)[0]).toBeVisible();
   }
@@ -622,8 +906,9 @@ it('excludes onboarding, withdrawn and entered EPA stages from every risk insigh
   const totalLearners = within(metrics).getByRole('button', { name: 'Open Total learners details' });
   expect(totalLearners.querySelector('[class*="metricValue"]')).toHaveTextContent('5');
   fireEvent.click(screen.getByRole('tab', { name: 'Risk Insights' }));
+  await screen.findByRole('region', { name: 'Learner risk insights' });
   for (const title of ['Attendance Insights', 'OTJH Insights', 'Review Insights']) {
-    fireEvent.click(screen.getByRole('button', { name: `Expand ${title}` }));
+    fireEvent.click(await screen.findByRole('button', { name: `Expand ${title}` }));
   }
   const attendanceInsights = screen.getByRole('region', { name: 'Attendance risk insights' });
   const otjhInsights = screen.getByRole('region', { name: 'OTJH risk insights' });
@@ -728,6 +1013,189 @@ it('uses the same compact grouped layout for weekly progress reviews', () => {
 });
 
 
+function ModalLocationProbe() {
+  const location = useLocation();
+  return <output aria-label="Current route">{JSON.stringify({ pathname: location.pathname, search: location.search, state: location.state })}</output>;
+}
+
+function setCleanPopupFixture() {
+  const atRisk = Array.from({ length: 9 }, (_, index) => ({
+    id: `risk-${index}`, name: index < 2 ? 'Shared Learner Name' : `Risk Learner ${index}`,
+    programme: 'Programme A', group: `Group R${index}`,
+    otjh: { completed: index, target: 40, planned: 288, ragStatus: 'at-risk' },
+    // Removed legacy fields must not override the nested popup status.
+    ...(index === 0 ? { status: 'on-track', otjhStatus: 'on-track', otjhRagStatus: 'on-track' } : {}),
+  }));
+  const other = ['need-attention', 'on-track', 'unavailable'].map((ragStatus, index) => ({
+    id: `other-${index}`, name: `Other Learner ${index}`, programme: null, group: null,
+    otjh: { completed: null, target: null, planned: null, ragStatus },
+    status: 'at-risk', otjhStatus: 'at-risk', otjhRagStatus: 'at-risk',
+  }));
+  mocks.load.mockResolvedValue({
+    owner: { name: 'Example Coach' },
+    summary: { totalLearners: 12, otjh: { atRisk: 9, needAttention: 1 }, pendingMarking: 0,
+      meetingsThisWeek: { pr: 0, mcm: 0, catchUps: 0 } },
+    learnerPopup: { all: [...atRisk, ...other], atRisk: [] },
+    markingPopup: { count: 0, items: [] },
+    meetingsPopup: { pr: { count: 0, items: [] }, mcm: { count: 0, items: [] }, catchUps: { count: 0, items: [] } },
+  });
+}
+
+it('shows the same nine at-risk learners as the summary KPI using nested status and stable IDs without requests', async () => {
+  setCleanPopupFixture();
+  render(<MemoryRouter><CoachDashboard /><ModalLocationProbe /></MemoryRouter>);
+  const riskKpi = await screen.findByRole('button', { name: 'Open OTJH at risk details' });
+  expect(riskKpi.querySelector('[class*="metricValue"]')).toHaveTextContent('9');
+  await screen.findByRole('region', { name: 'Coach learner caseload' });
+  const calls = () => [mocks.load.mock.calls.length, mocks.coachFetch.mock.calls.length, mocks.calendar.mock.calls.length, mocks.schedule.mock.calls.length];
+  const before = calls();
+  fireEvent.click(riskKpi);
+  const dialog = within(screen.getByRole('dialog', { name: 'Learners at risk' }));
+  expect(dialog.getByLabelText('9 total')).toHaveTextContent('9');
+  expect(dialog.getByRole('list', { name: 'Learners' }).children).toHaveLength(9);
+  expect(dialog.getAllByRole('button', { name: "Open Shared Learner Name's profile" })).toHaveLength(2);
+  for (let index = 0; index < 9; index += 1) expect(dialog.getByText(`Programme A · Group R${index}`)).toBeVisible();
+  expect(dialog.queryByText('Other Learner 0')).not.toBeInTheDocument();
+  expect(dialog.queryByText('Attendance')).not.toBeInTheDocument();
+  expect(dialog.queryByText('--')).not.toBeInTheDocument();
+  expect(dialog.getAllByText('OTJH at risk')).toHaveLength(9);
+  expect(calls()).toEqual(before);
+  fireEvent.click(dialog.getAllByRole('button', { name: "Open Shared Learner Name's profile" })[1]);
+  expect(JSON.parse(screen.getByLabelText('Current route').textContent!)).toEqual({
+    pathname: '/coach/learner-case-file', search: '?id=risk-1',
+    state: { learnerId: 'risk-1', learnerName: 'Shared Learner Name' },
+  });
+});
+
+it('uses the same cleaned popup list for caseload search, status filters and cached reopening without attendance', async () => {
+  setCleanPopupFixture();
+  const firstRender = render(<MemoryRouter><CoachDashboard /></MemoryRouter>);
+  fireEvent.click(await screen.findByRole('button', { name: 'Open Total learners details' }));
+  let dialog = within(screen.getByRole('dialog', { name: 'Learner caseload' }));
+  expect(dialog.getByRole('list', { name: 'Learners' }).children).toHaveLength(12);
+  expect(dialog.queryByText('Attendance')).not.toBeInTheDocument();
+  fireEvent.click(dialog.getByRole('button', { name: 'At Risk', pressed: false }));
+  expect(dialog.getByRole('list', { name: 'Learners' }).children).toHaveLength(9);
+  expect(dialog.getByLabelText('12 total')).toHaveTextContent('12');
+  fireEvent.click(dialog.getByRole('button', { name: 'Need Attention', pressed: false }));
+  expect(dialog.getByRole('button', { name: "Open Other Learner 0's profile" })).toBeVisible();
+  fireEvent.click(dialog.getByRole('button', { name: 'On Track', pressed: false }));
+  expect(dialog.getByRole('button', { name: "Open Other Learner 1's profile" })).toBeVisible();
+  fireEvent.click(dialog.getByRole('button', { name: 'All', pressed: false }));
+  fireEvent.change(dialog.getByRole('searchbox'), { target: { value: 'Group R8' } });
+  expect(dialog.getByRole('list', { name: 'Learners' }).children).toHaveLength(1);
+  const summaryRequests = mocks.load.mock.calls.filter(([url]) => String(url).includes('/dashboard/summary')).length;
+  firstRender.unmount();
+  render(<MemoryRouter><CoachDashboard /></MemoryRouter>);
+  // Remounting already refreshes the summary; opening the cached popup must not add a request.
+  const refreshedRequests = mocks.load.mock.calls.filter(([url]) => String(url).includes('/dashboard/summary')).length;
+  expect(refreshedRequests).toBe(summaryRequests + 1);
+  fireEvent.click(await screen.findByRole('button', { name: 'Open OTJH at risk details' }));
+  dialog = within(screen.getByRole('dialog', { name: 'Learners at risk' }));
+  expect(dialog.getByRole('list', { name: 'Learners' }).children).toHaveLength(9);
+  expect(mocks.load.mock.calls.filter(([url]) => String(url).includes('/dashboard/summary'))).toHaveLength(refreshedRequests);
+});
+
+function setCaseloadModalFixture() {
+  const learners = [
+    { id: 'risk', name: 'Risk Learner', programme: 'Marketing Executive Level 4 with a long programme name', group: 'Long group name', learnerType: 'apprenticeship', enrolmentId: '101', rawProgramStatus: 'active', otjhRagStatus: 'at-risk', otjhCompleted: 20, otjhTargetAsOfToday: 40, otjhPlanned: 300 },
+    { id: 'attention', name: 'Attention Learner', programme: 'Business Admin', rawProgramStatus: 'active', otjhRagStatus: 'need-attention', otjhCompleted: 30, otjhTargetAsOfToday: 40 },
+    { id: 'track', name: 'Track Learner', programme: 'Business Admin', rawProgramStatus: 'active', otjhRagStatus: 'on-track', otjhCompleted: 40, otjhTargetAsOfToday: 40 },
+    { id: 'unknown', name: 'Unknown Learner', rawProgramStatus: 'active', otjhRagStatus: 'unavailable', otjhCompleted: null, otjhTargetAsOfToday: null },
+    ...Array.from({ length: 38 }, (_, i) => ({ id: `extra-${i}`, name: `Other Learner ${i}`, rawProgramStatus: 'active', otjhRagStatus: 'on-track', otjhCompleted: 40, otjhTargetAsOfToday: 40 })),
+  ];
+  mocks.load.mockResolvedValue({ owner: { name: 'Example Coach' }, learners });
+}
+
+it('keeps the compact caseload count and status mapping while searching and filtering without requests', async () => {
+  setCaseloadModalFixture();
+  render(<MemoryRouter><CoachDashboard /></MemoryRouter>);
+  const opener = await screen.findByRole('button', { name: 'Open Total learners details' });
+  await screen.findByRole('region', { name: 'Coach learner caseload' });
+  const requestCounts = () => [mocks.load.mock.calls.length, mocks.coachFetch.mock.calls.length, mocks.calendar.mock.calls.length, mocks.schedule.mock.calls.length];
+  const before = requestCounts();
+  opener.focus();
+  fireEvent.click(opener);
+  const dialog = within(screen.getByRole('dialog', { name: 'Learner caseload' }));
+  expect(dialog.getByLabelText('42 total')).toHaveTextContent('42');
+  expect(dialog.getByRole('list', { name: 'Learners' }).children).toHaveLength(42);
+  expect(dialog.queryByText('KSB')).not.toBeInTheDocument();
+  const row = within(dialog.getByRole('button', { name: "Open Risk Learner's profile" }));
+  expect(row.getByText('OTJH at risk')).toHaveClass('text-red-700');
+  expect(row.getByText('20 / 40h')).toBeVisible();
+  expect(row.getByText('50%')).toBeVisible();
+  expect(dialog.queryByText('Attendance')).not.toBeInTheDocument();
+  expect(within(dialog.getByRole('button', { name: "Open Attention Learner's profile" })).getByText('Need Attention')).toHaveClass('text-amber-700');
+  expect(within(dialog.getByRole('button', { name: "Open Track Learner's profile" })).getByText('On Track')).toHaveClass('text-emerald-700');
+  expect(within(dialog.getByRole('button', { name: "Open Unknown Learner's profile" })).queryByText('On Track')).not.toBeInTheDocument();
+  const search = dialog.getByRole('searchbox', { name: 'Search learners' });
+  expect(search).toHaveFocus();
+  fireEvent.click(dialog.getByRole('button', { name: 'At Risk', pressed: false }));
+  expect(dialog.getByRole('list', { name: 'Learners' }).children).toHaveLength(1);
+  expect(dialog.getByLabelText('42 total')).toHaveTextContent('42');
+  fireEvent.click(dialog.getByRole('button', { name: 'Need Attention', pressed: false }));
+  expect(dialog.getByRole('button', { name: "Open Attention Learner's profile" })).toBeVisible();
+  fireEvent.click(dialog.getByRole('button', { name: 'On Track', pressed: false }));
+  expect(dialog.getByRole('list', { name: 'Learners' }).children).toHaveLength(39);
+  fireEvent.click(dialog.getByRole('button', { name: 'All', pressed: false }));
+  fireEvent.change(search, { target: { value: ' LONG GROUP ' } });
+  expect(dialog.getByRole('list', { name: 'Learners' }).children).toHaveLength(1);
+  fireEvent.change(search, { target: { value: 'business admin' } });
+  expect(dialog.getByRole('list', { name: 'Learners' }).children).toHaveLength(2);
+  fireEvent.change(search, { target: { value: 'no match' } });
+  expect(dialog.getByText('No learners found')).toBeVisible();
+  fireEvent.change(search, { target: { value: '' } });
+  expect(dialog.getByRole('list', { name: 'Learners' }).children).toHaveLength(42);
+  const footerAction = dialog.getByRole('button', { name: 'View in caseload list' });
+  footerAction.focus();
+  fireEvent.keyDown(footerAction, { key: 'Tab' });
+  const headerClose = dialog.getAllByRole('button', { name: 'Close' })[0];
+  expect(headerClose).toHaveFocus();
+  fireEvent.keyDown(headerClose, { key: 'Tab', shiftKey: true });
+  expect(footerAction).toHaveFocus();
+  expect(requestCounts()).toEqual(before);
+  fireEvent.keyDown(window, { key: 'Escape' });
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  expect(opener).toHaveFocus();
+  fireEvent.click(opener);
+  expect(within(screen.getByRole('dialog')).getByRole('searchbox')).toHaveValue('');
+  fireEvent.click(within(screen.getByRole('dialog')).getAllByRole('button', { name: 'Close' })[1]);
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  fireEvent.click(opener);
+  fireEvent.click(screen.getByRole('button', { name: 'Close popup' }));
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+});
+
+it('keeps profile chevron navigation and learner identity from the caseload modal', async () => {
+  setCaseloadModalFixture();
+  render(<MemoryRouter><CoachDashboard /><ModalLocationProbe /></MemoryRouter>);
+  fireEvent.click(await screen.findByRole('button', { name: 'Open Total learners details' }));
+  const row = within(screen.getByRole('dialog')).getByRole('button', { name: "Open Risk Learner's profile" });
+  fireEvent.click(row.querySelector('svg.lucide-chevron-right')!);
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  expect(JSON.parse(screen.getByLabelText('Current route').textContent!)).toEqual({ pathname: '/coach/learner-case-file', search: '?id=risk', state: { learnerId: 'risk', learnerName: 'Risk Learner', kind: 'apprenticeship', enrolmentId: '101' } });
+});
+
+it('keeps View in caseload list scrolling after local modal filtering', async () => {
+  setCaseloadModalFixture();
+  const previousScroll = HTMLElement.prototype.scrollIntoView;
+  const scroll = vi.fn();
+  HTMLElement.prototype.scrollIntoView = scroll;
+  const frame = vi.spyOn(window, 'requestAnimationFrame').mockImplementation(callback => { callback(0); return 0; });
+  render(<MemoryRouter><CoachDashboard /><ModalLocationProbe /></MemoryRouter>);
+  fireEvent.click(await screen.findByRole('button', { name: 'Open Total learners details' }));
+  const dialog = within(screen.getByRole('dialog'));
+  fireEvent.click(dialog.getByRole('button', { name: 'At Risk', pressed: false }));
+  fireEvent.click(dialog.getByRole('button', { name: 'View in caseload list' }));
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  expect(screen.getByLabelText('Current route')).toHaveTextContent('"pathname":"/"');
+  expect(screen.getByRole('region', { name: 'Coach learner caseload' })).toBeVisible();
+  expect(scroll).toHaveBeenCalled();
+  frame.mockRestore();
+  if (previousScroll) HTMLElement.prototype.scrollIntoView = previousScroll;
+  else Reflect.deleteProperty(HTMLElement.prototype, 'scrollIntoView');
+});
+
 it('uses target-to-date for OTJH insights without comparing actuals to the whole plan', async () => {
   useDashboardDate();
   mocks.load.mockResolvedValue({ owner: { name: 'Example Coach' }, learners: [
@@ -743,7 +1211,7 @@ it('uses target-to-date for OTJH insights without comparing actuals to the whole
   render(<MemoryRouter><CoachDashboard /></MemoryRouter>);
   await screen.findByRole('region', { name: 'Coach dashboard metrics' });
   fireEvent.click(screen.getByRole('tab', { name: 'Risk Insights' }));
-  fireEvent.click(screen.getByRole('button', { name: 'Expand OTJH Insights' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'Expand OTJH Insights' }));
   const table = within(screen.getByRole('region', { name: 'OTJH risk insights' }));
   const warning = within(table.getByText('Warning Learner').closest('tr')!);
   expect(warning.getByText('170h')).toBeVisible();
@@ -757,4 +1225,179 @@ it('uses target-to-date for OTJH insights without comparing actuals to the whole
   expect(table.queryByText('Current Learner')).not.toBeInTheDocument();
   expect(table.queryByText('Future Learner')).not.toBeInTheDocument();
   expect(table.queryByText('576h')).not.toBeInTheDocument();
+});
+
+it.each([
+  ['mcm', 'MCM this week', 'Monthly coaching this week', 8],
+  ['pr', 'PR this week', 'Progress reviews this week', 2],
+  ['catchUps', 'Catch-ups this week', 'Catch-ups this week', 3],
+] as const)('keeps %s popup on the summary meeting set without requests or learner status', async (key, label, title, count) => {
+  const items = Array.from({ length: count }, (_, index) => ({
+    id: `${key}-${index}`, learnerId: `learner-${index}`, learnerName: `Meeting Learner ${index}`,
+    programme: null, group: null, date: '2026-09-21', time: '09:00', durationMinutes: 60, status: 'scheduled',
+  }));
+  mocks.load.mockResolvedValue({
+    owner: { name: 'Synthetic Coach' },
+    summary: { totalLearners: 1, otjh: { atRisk: 0, needAttention: 0 }, pendingMarking: 0,
+      meetingsThisWeek: { pr: 2, mcm: 8, catchUps: 3 } },
+    learnerPopup: { all: [{ id: 'different-id', name: 'Meeting Learner 0', programme: null, group: null,
+      otjh: { completed: null, target: null, planned: null, ragStatus: 'unavailable' } }] },
+    markingPopup: { count: 0, items: [] },
+    meetingsPopup: { pr: { count: 2, items: [] }, mcm: { count: 8, items: [] }, catchUps: { count: 3, items: [] },
+      [key]: { count, items } },
+  });
+  render(<MemoryRouter><CoachDashboard /></MemoryRouter>);
+  const opener = await screen.findByRole('button', { name: `Open ${label} details` });
+  await waitFor(() => expect(opener).toHaveTextContent(String(count)));
+  const requests = mocks.load.mock.calls.length;
+  fireEvent.click(opener);
+  const dialog = within(await screen.findByRole('dialog', { name: title }));
+  for (const item of items) expect(dialog.getByText(item.learnerName)).toBeVisible();
+  expect(dialog.queryByText('Nothing scheduled this week')).not.toBeInTheDocument();
+  if (key !== 'catchUps') expect(dialog.getByLabelText(`${key === 'mcm' ? 'Monthly coaching' : 'Progress review'} summary`)).toHaveTextContent(`Scheduled ${count}`);
+  expect(mocks.load).toHaveBeenCalledTimes(requests);
+});
+
+it('uses one canonical unique risk dataset for card, badge and rows despite stale summary and legacy status', async () => {
+  const row = { id: 'a', name: 'Synthetic Risk A', programme: null, group: null,
+    otjh: { completed: 0, target: 100, planned: 100, ragStatus: 'at-risk' } };
+  mocks.load.mockResolvedValue({ owner: {},
+    summary: { totalLearners: 4, otjh: { atRisk: 9, needAttention: 0 }, pendingMarking: 0,
+      meetingsThisWeek: { pr: 0, mcm: 0, catchUps: 0 } },
+    learnerPopup: { all: [row, { ...row }, { ...row, id: 'b', name: 'Synthetic Paused B', programmeStatus: 'On break' },
+      { ...row, id: 'c', name: 'Legacy Misclassified C', status: 'at-risk', otjhRagStatus: 'at-risk',
+        otjh: { ...row.otjh, ragStatus: 'on-track' } }], atRisk: ['c'] },
+    markingPopup: { count: 0, items: [] },
+    meetingsPopup: { pr: { count: 0, items: [] }, mcm: { count: 0, items: [] }, catchUps: { count: 0, items: [] } },
+  });
+  render(<MemoryRouter><CoachDashboard /></MemoryRouter>);
+  const card = await screen.findByRole('button', { name: 'Open OTJH at risk details' });
+  await waitFor(() => expect(card).toHaveTextContent('2'));
+  const requests = mocks.load.mock.calls.length;
+  fireEvent.click(card);
+  const dialog = within(screen.getByRole('dialog', { name: 'Learners at risk' }));
+  expect(dialog.getByRole('list', { name: 'Learners' }).children).toHaveLength(2);
+  expect(dialog.getByRole('button', { name: "Open Synthetic Risk A's profile" })).toBeVisible();
+  expect(dialog.getByRole('button', { name: "Open Synthetic Paused B's profile" })).toBeVisible();
+  expect(dialog.queryByText('Legacy Misclassified C')).not.toBeInTheDocument();
+  expect(dialog.getByLabelText('2 total')).toHaveTextContent('2');
+  expect(mocks.load).toHaveBeenCalledTimes(requests);
+});
+
+it('shows 19 compact marking rows, filters locally, preserves item totals and marking navigation', async () => {
+  const items = Array.from({ length: 19 }, (_, index) => ({
+    id: `submission-${index}`, learnerId: `learner-${index}`, learner: `Marking Learner ${index}`,
+    initials: 'ML', programme: index % 2 ? 'Business Admin' : 'Team Leader', group: `Group ${index}`,
+    submittedAt: '2026-09-01', totalEvidence: 0, isOverdue: index === 0,
+  }));
+  items.push({ ...items[0], id: 'second-submission', submittedAt: '2026-09-02' });
+  mocks.load.mockResolvedValue({ learners: [], marking: { summary: { pendingItems: 20 }, items }, meetings: { events: [] } });
+  render(<MemoryRouter><CoachDashboard /></MemoryRouter>);
+  const opener = await screen.findByRole('button', { name: 'Open Pending marking details' });
+  await waitFor(() => expect(opener).toHaveTextContent('20'));
+  const requests = mocks.load.mock.calls.length;
+  opener.focus();
+  fireEvent.click(opener);
+  const modal = screen.getByRole('dialog', { name: 'Pending marking' });
+  const dialog = within(modal);
+  expect(dialog.getByLabelText('20 total')).toHaveTextContent('20');
+  expect(dialog.getByRole('list', { name: 'Learners awaiting marking' }).children).toHaveLength(19);
+  expect(dialog.getByText('2 Pending')).toBeVisible();
+  expect(dialog.getAllByText('1 Pending')).toHaveLength(18);
+  expect(dialog.getAllByText('Oldest pending')).toHaveLength(19);
+  expect(dialog.getByText('Overdue')).toBeVisible();
+  expect(dialog.queryByText('Pending / Total')).not.toBeInTheDocument();
+  expect(dialog.queryByText('1 / 0')).not.toBeInTheDocument();
+  expect(modal.querySelector('[class*="bg-gradient"]')).toBeNull();
+  const search = dialog.getByRole('searchbox', { name: 'Search learner' });
+  expect(search).toHaveFocus();
+  fireEvent.change(search, { target: { value: 'Marking Learner 18' } });
+  expect(dialog.getByRole('list', { name: 'Learners awaiting marking' }).children).toHaveLength(1);
+  expect(dialog.getByLabelText('20 total')).toHaveTextContent('20');
+  fireEvent.change(search, { target: { value: '' } });
+  fireEvent.change(dialog.getByRole('combobox', { name: 'Filter by programme' }), { target: { value: 'Business Admin' } });
+  expect(dialog.getByRole('list', { name: 'Learners awaiting marking' }).children).toHaveLength(9);
+  fireEvent.change(search, { target: { value: 'no matching learner' } });
+  expect(dialog.getByText('No learners found')).toBeVisible();
+  fireEvent.change(search, { target: { value: '' } });
+  fireEvent.change(dialog.getByRole('combobox'), { target: { value: '' } });
+  const queue = dialog.getByRole('link', { name: 'Open marking queue' });
+  expect(queue).toHaveAttribute('href', '/coach/marking-queue');
+  queue.focus();
+  fireEvent.keyDown(queue, { key: 'Tab' });
+  expect(dialog.getAllByRole('button', { name: 'Close' })[0]).toHaveFocus();
+  expect(mocks.load).toHaveBeenCalledTimes(requests);
+  const row = dialog.getByRole('link', { name: 'Open marking for Marking Learner 0' });
+  expect(row).toHaveAttribute('href', '/coach/marking-queue?learnerId=learner-0');
+  fireEvent.click(row);
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  expect(mocks.load).toHaveBeenCalledTimes(requests);
+});
+
+it('keeps the empty marking state and footer action', async () => {
+  mocks.load.mockResolvedValue({ learners: [], marking: { summary: { pendingItems: 0 }, items: [] }, meetings: { events: [] } });
+  render(<MemoryRouter><CoachDashboard /></MemoryRouter>);
+  fireEvent.click(await screen.findByRole('button', { name: 'Open Pending marking details' }));
+  const dialog = within(screen.getByRole('dialog', { name: 'Pending marking' }));
+  expect(dialog.getByText('No evidence awaiting review')).toBeVisible();
+  expect(dialog.queryByRole('combobox')).not.toBeInTheDocument();
+  expect(dialog.getByRole('link', { name: 'Open marking queue' })).toHaveAttribute('href', '/coach/marking-queue');
+  fireEvent.click(dialog.getByRole('link', { name: 'Open marking queue' }));
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+});
+
+
+it('searches, filters, sorts and clears the cached full learner list with no requests', async () => {
+  vi.useRealTimers();
+  mocks.load.mockResolvedValue({ results: [
+    { id: '1', name: 'Alpha Learner', email: 'alpha@example.invalid', cohortId: 'a', cohortName: 'Cohort A', group: 'Group A', rawProgramStatus: 'active', otjhRagStatus: 'on-track' },
+    { id: '2', name: 'Beta Learner', email: 'beta@example.invalid', cohortId: 'b', cohortName: 'Cohort B', group: 'Group B', rawProgramStatus: 'break', otjhRagStatus: 'at-risk' },
+  ] });
+  render(<MemoryRouter><CoachDashboard /></MemoryRouter>);
+  await screen.findByText('Alpha Learner');
+  const table = () => screen.getByRole('region', { name: 'Coach learner caseload' });
+  const choose = (button: string, option: string) => {
+    fireEvent.click(within(table()).getByRole('button', { name: button }));
+    fireEvent.click(screen.getByRole('option', { name: option }));
+  };
+  const clear = () => fireEvent.click(within(table()).getByRole('button', { name: 'Clear all' }));
+  fireEvent.change(screen.getByRole('searchbox', { name: 'Search learners by name or email' }), { target: { value: 'beta@example.invalid' } });
+  expect(await screen.findByText('Beta Learner')).toBeVisible();
+  expect(within(table()).queryByText('Alpha Learner')).not.toBeInTheDocument();
+  clear();
+  choose('All cohorts / groups', 'Cohort: Cohort A');
+  expect(within(table()).getByText('Alpha Learner')).toBeVisible();
+  expect(within(table()).queryByText('Beta Learner')).not.toBeInTheDocument();
+  clear();
+  choose('All cohorts / groups', 'Group: Group B');
+  expect(within(table()).getByText('Beta Learner')).toBeVisible();
+  expect(within(table()).queryByText('Alpha Learner')).not.toBeInTheDocument();
+  clear();
+  choose('All OTJH statuses', 'On track');
+  expect(within(table()).getByText('Alpha Learner')).toBeVisible();
+  expect(within(table()).queryByText('Beta Learner')).not.toBeInTheDocument();
+  clear();
+  choose('All programme statuses', 'break');
+  expect(within(table()).getByText('Beta Learner')).toBeVisible();
+  expect(within(table()).queryByText('Alpha Learner')).not.toBeInTheDocument();
+  clear();
+  fireEvent.click(within(table()).getByRole('button', { name: 'Sort by Learner' }));
+  const rows = table().querySelectorAll('tbody tr');
+  expect(within(rows[0] as HTMLElement).getByText('Alpha Learner')).toBeVisible();
+  expect(mocks.load.mock.calls.filter(([url]) => url.includes('/learners'))).toHaveLength(1);
+});
+
+it('fetches once per coach and reuses the previous coach cache on return', async () => {
+  vi.useRealTimers();
+  const { rerender } = render(<MemoryRouter><CoachDashboard /></MemoryRouter>);
+  await screen.findByText('Example Learner');
+  Object.assign(mocks.coach, { email: 'other@example.invalid', name: 'Other Coach' });
+  mocks.load.mockResolvedValue({ results: [{ id: 'other', name: 'Other Coach Learner', rawProgramStatus: 'active' }] });
+  rerender(<MemoryRouter><CoachDashboard /></MemoryRouter>);
+  await screen.findByText('Other Coach Learner');
+  Object.assign(mocks.coach, { email: 'coach@example.invalid', name: 'Example Coach' });
+  rerender(<MemoryRouter><CoachDashboard /></MemoryRouter>);
+  await screen.findByText('Example Learner');
+  expect(screen.queryByText('Other Coach Learner')).not.toBeInTheDocument();
+  expect(mocks.load.mock.calls.filter(([url]) => url.includes('/learners'))).toHaveLength(2);
 });

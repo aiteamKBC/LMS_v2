@@ -89,7 +89,13 @@ class CoachDashboardService:
         from coach_api import views as domain
 
         payload = deepcopy(previous_payload)
-        rows = domain.fetch_caseload_dashboard_profiles(self.context.owner_email)
+        from .profile_dates import fetch_dashboard_profile_dates
+
+        if not payload.get("learners"):
+            return payload
+        profile_ids = [domain.to_int(item.get("id")) for item in payload.get("learners") or []]
+        profile_ids = [identity for identity in profile_ids if identity > 0]
+        rows = fetch_dashboard_profile_dates(self.context.owner_email, profile_ids) if profile_ids else []
         rows_by_id = {str(row.id): row for row in rows}
         learners = []
         for learner in payload.get("learners") or []:
@@ -236,10 +242,23 @@ class CoachDashboardService:
             (getattr(row, "coach_name", "") for row in context.rows if getattr(row, "coach_name", "")),
             "Coach",
         )
+        # The caseload loader already attached these full source rows. A live
+        # snapshot build must not fetch the same 84-column source query again
+        # merely to generate its review events.
+        source_schedule_rows = None
+        if all(hasattr(row, "_caseload_source") for row in context.rows):
+            commercial_rows, enrolment_rows = {}, {}
+            for row in context.rows:
+                source = row._caseload_source
+                if source is not None:
+                    target = commercial_rows if domain.clean_text(getattr(source, "learner_type", "")).casefold() == "commercial" else enrolment_rows
+                    target[int(row.id)] = source
+            source_schedule_rows = commercial_rows, enrolment_rows
         resolved = domain.resolve_coach_review_events(
             context.owner_email,
             owner_name,
             context.rows,
+            source_schedule_rows=source_schedule_rows,
         )
         all_review_events = resolved.get("events", [])
         generated_keys = [event.get("eventKey") for event in all_review_events if event.get("eventKey")]
