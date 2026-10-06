@@ -1639,10 +1639,10 @@ export default function CoachDashboard() {
     scrollToAttention();
   };
 
-  // An administrator reaches this page with no caseload of their own. Rather
-  // than a dashboard of zeros, they pick whose workspace to open; the selection
-  // then travels with every coach request (see `@/lib/coachViewAs`), so the
-  // sidebar's caseload, timetable and marking pages follow the same coach.
+  // An administrator reaches this page with no caseload of their own. The
+  // cross-coach dashboard also remains the entry point into an individual
+  // workspace; that selection travels with every coach request (see
+  // `@/lib/coachViewAs`), so the remaining coach pages follow the same coach.
   if (coach.canChooseCoach && !coach.isViewingAsCoach) {
     return (
       <WorkspaceShell
@@ -1657,7 +1657,7 @@ export default function CoachDashboard() {
         // "who opened whose workspace" actually starts. `rbac.ts` still decides
         // who sees it, so a coach lands on an empty rail exactly as before.
         role="coach" roleLabel={coachNav.label} navItems={[coachAuditTrailNavItem]} workspaceLabel={coachNav.workspaceLabel}
-        pageTitle="Coach Workspace" pageSubtitle="Choose a coach to open their workspace"
+        pageTitle="Performance Dashboard" pageSubtitle="Compare coach performance and open any workspace in read-only mode"
         userName={auth.account?.displayName || auth.user?.fullName || 'Administrator'} userRole="Administrator"
       >
         <div className="space-y-6 p-3 md:p-6">

@@ -7,7 +7,7 @@ import json
 import pymupdf as fitz
 from django.test import SimpleTestCase, RequestFactory
 from .training_plan_contract import parse_contract, read_verified_extract, contract_extract_metadata, read_contract, verified_planned_hours
-from .training_plan_dashboard import training_plan_dashboard, number, selected_contract, plan_session, read_dashboard, assigned_group_coach, contract_plan, valid_aptem_id, _canonical_actual_rows
+from .training_plan_dashboard import training_plan_dashboard, number, selected_contract, plan_session, read_dashboard, assigned_group_coach, contract_plan, valid_aptem_id, _canonical_actual_rows, is_educational_live_session_week
 
 
 def contract_pdf(total=30, review_on_same_page=False, joined_provider=False, split_header=False, split_total=False):
@@ -49,6 +49,12 @@ class TrainingPlanDashboardTests(SimpleTestCase):
         self.effective_plan = self.enterContext(
             patch('learner_api.training_plan_dashboard._effective_plan_ids', return_value=['M1']),
         )
+
+    def test_educational_session_count_excludes_onboarding_but_keeps_teaching_introductions(self):
+        self.assertFalse(is_educational_live_session_week('Introduction'))
+        self.assertFalse(is_educational_live_session_week('Welcome, module guide and assessment resources'))
+        self.assertTrue(is_educational_live_session_week('Introduction to AI in Marketing'))
+        self.assertTrue(is_educational_live_session_week('L1: Project controls'))
 
     def test_ssot_contract_uses_monthly_targets_without_legacy_queries(self):
         owner = {'id': 70, 'start_date': date(2026, 9, 1), 'end_date': date(2027, 9, 1)}
@@ -222,12 +228,12 @@ class TrainingPlanDashboardTests(SimpleTestCase):
              patch('learner_api.training_plan_dashboard.LearnerProfile') as profiles, \
              patch('learner_api.training_plan_dashboard._builder_subject_metadata', return_value=({}, {'current:M1': {'id': 'M1'}})), \
              patch('learner_api.training_plan_dashboard.rows', side_effect=[[module], [
-                 {'id': 'W1', 'module_catalogue_id': 'M1', 'week_number': 1, 'title': 'Week 1',
+                 {'id': 'W1', 'module_catalogue_id': 'M1', 'week_number': 1, 'title': 'Welcome, module guide and assessment resources',
                   'learning_outcomes': '["<b>Plan a campaign</b>", ""]',
-                  'holiday_note_enabled': False, 'holiday_note': ''},
+                  'holiday_note_enabled': False, 'holiday_note': '', 'live_session_count': 1},
                  {'id': 'W2', 'module_catalogue_id': 'M1', 'week_number': 2, 'title': 'Week 2',
                   'learning_outcomes': ['Plan a campaign', 'Measure results', None],
-                  'holiday_note_enabled': False, 'holiday_note': ''},
+                  'holiday_note_enabled': False, 'holiday_note': '', 'live_session_count': 2},
              ], []]), \
              patch('learner_api.calendar.coaching_events_for_learner', return_value=[]):
             profiles.objects.filter.return_value.only.return_value.first.return_value = None
@@ -235,12 +241,16 @@ class TrainingPlanDashboardTests(SimpleTestCase):
         detail = result['modules'][0]
         self.assertEqual((detail['title'], detail['description']), ('Marketing', 'Learn & apply'))
         self.assertEqual((detail['total_otjh'], detail['sessions_number'], detail['weeks_number']), (140, 16, 16))
+        self.assertEqual(detail['educational_session_count'], 2)
         self.assertEqual(detail['learning_outcomes'], ['Plan a campaign', 'Measure results'])
         self.assertEqual(detail['session_start_time'], '09:00')
         self.assertEqual(detail['coach_name'], 'Group coach')
         self.assertEqual(detail['end_date'], '2027-02-11')
         self.assertEqual(result['sessions'], [])
         self.assertEqual(result['coach'], {'name': 'Group coach', 'bookingUrl': None})
+        week_sql = next(str(call.args[0]) for call in connection.cursor.return_value.__enter__.return_value.execute.call_args_list
+                        if 'FROM curriculum.weeks w' in str(call.args[0]))
+        self.assertIn("lower(replace(coalesce(c.type, ''), '-', '_'))='live_session'", week_sql)
 
     def test_overview_exposes_review_form_links_from_learner_calendar(self):
         source = SimpleNamespace(pk=125, aptem_id=None, email='learner@example.com',

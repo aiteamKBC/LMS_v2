@@ -18,11 +18,22 @@ from .learning_plan import _aptem_subject_modules, _effective_plan_ids
 from .coach_assignment import current_coach, source_coach
 from .student_activity import _builder_subject_metadata
 from .subject_content import as_list, clean_text, safe_url
+from .subject_dates import is_introduction_section
 from .training_plan_contract import read_contract, contract_extract_metadata, selected_contract
 from .projection_performance import measure_projection
 from . import canonical_learning
 
 log = logging.getLogger(__name__)
+
+NON_TEACHING_LIVE_SESSION_WEEK_TITLES = {
+    'welcome, module guide and assessment resources',
+}
+
+
+def is_educational_live_session_week(title):
+    """Keep teaching weeks while excluding learner onboarding sections."""
+    normalized = clean_text(title).casefold()
+    return not is_introduction_section(title) and normalized not in NON_TEACHING_LIVE_SESSION_WEEK_TITLES
 
 
 # Keep the projection identity reads narrow. ``Created_users`` contains many
@@ -97,6 +108,7 @@ def plan_module(row):
     return {'id': row['id'], **{key: clean_text(row.get(key)) for key in text_fields},
             **{key: row[key].isoformat() if row.get(key) else None for key in ('start_date', 'end_date')},
             **{key: number(row.get(key)) for key in ('total_otjh', 'weeks_number', 'sessions_number')},
+            'educational_session_count': 0,
             'learning_outcomes': []}
 
 
@@ -334,15 +346,24 @@ def read_dashboard(source, section=None):
             by_id = {module['id']: module for module in modules}
             week_counts = defaultdict(int)
             weeks_by_number = {}
-            cur.execute('''SELECT id,module_catalogue_id,week_number,title,learning_outcomes,
-                holiday_note_enabled,holiday_note FROM curriculum.weeks
-                WHERE module_catalogue_id=ANY(%s) AND (deleted_at IS NULL OR COALESCE(deleted_via_parent, '') <> '')
-                ORDER BY display_order,week_number,id''', [ids])
+            cur.execute('''SELECT w.id,w.module_catalogue_id,w.week_number,w.title,w.learning_outcomes,
+                w.holiday_note_enabled,w.holiday_note,
+                (SELECT count(*) FROM curriculum.components c
+                 WHERE c.week_id=w.id AND c.module_catalogue_id=w.module_catalogue_id
+                   AND lower(replace(coalesce(c.type, ''), '-', '_'))='live_session'
+                   AND (c.deleted_at IS NULL OR COALESCE(c.deleted_via_parent, '') <> '')
+                ) AS live_session_count
+                FROM curriculum.weeks w
+                WHERE w.module_catalogue_id=ANY(%s)
+                  AND (w.deleted_at IS NULL OR COALESCE(w.deleted_via_parent, '') <> '')
+                ORDER BY w.display_order,w.week_number,w.id''', [ids])
             for row in rows(cur):
                 week_counts[row['module_catalogue_id']] += 1
                 outcomes = [text for text in (clean_text(o) if isinstance(o, str) else '' for o in as_list(row['learning_outcomes'])) if text]
                 module = by_id.get(row['module_catalogue_id'])
                 if module is not None:
+                    if is_educational_live_session_week(row.get('title')):
+                        module['educational_session_count'] += max(0, int(row.get('live_session_count') or 0))
                     for text in outcomes:
                         if text not in module['learning_outcomes']:
                             module['learning_outcomes'].append(text)
