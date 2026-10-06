@@ -15884,13 +15884,18 @@ LIVE_SESSION_TRACKING_SETTING_KEYS = {
 # are deliberately not persisted on the alias: saving an alias must not create
 # a second owner for the same live_sessions row or leave stale occurrence IDs
 # behind after the source meeting changes.
+#
+# ``liveSessionLinkOverride`` is not one of them. It is the alias's OWN join
+# link, set by Replace Teams links: the alias keeps the source's calendar, but
+# its learners join through the link it was given. Stripping it would undo the
+# replacement on the next save, and copying the source's would hand the alias
+# a link nobody chose for it.
 SHARED_TEAMS_DELIVERY_SETTING_KEYS = {
     'teamsLiveSessionId', 'teamsSessionNumber', 'teamsEventId',
     'teamsOnlineMeetingId', 'teamsCalendarSeries', 'teamsMeetingUrl',
     'liveSessionUrl', 'teamsMeetingOptionsUrl', 'teamsProvider',
     'teamsOccurrenceId', 'teamsWebLink', 'teamsStartDateTimeUtc',
     'teamsDurationMinutes', 'sessionDateTimeUtc', 'sessionRescheduled',
-    'liveSessionLinkOverride',
 }
 
 
@@ -17359,13 +17364,18 @@ def apply_shared_teams_settings_to_weeks(module, weeks):
                 return weeks
             current = component.get('settings') if isinstance(component.get('settings'), dict) else {}
             source = source_settings[index]
-            component['settings'] = {
+            merged = {
                 **current,
                 **{
                     key: value for key, value in source.items()
                     if key in SHARED_TEAMS_DELIVERY_SETTING_KEYS and value not in (None, '')
                 },
             }
+            own_link = clean_str(current.get('liveSessionLinkOverride'))
+            if own_link:
+                merged['liveSessionUrl'] = own_link
+                merged['teamsMeetingUrl'] = own_link
+            component['settings'] = merged
             index += 1
     return weeks
 
@@ -18077,19 +18087,21 @@ def curriculum_module_teams_meeting_restore(request, module_catalogue_id):
     return JsonResponse(body)
 
 
-def replaceable_live_session_link(row):
-    """The join link a bulk replacement may overwrite on this component, or ''.
+def replaceable_live_session(row, *, shared=False):
+    """May a bulk replacement overwrite this component's join link?
 
     The same rule the Module Builder's Replace Teams links dialog counts by: a
-    live session that already carries a link, and is not an additional one-off
-    meeting -- that one is booked separately and keeps its own link.
+    live session that carries a link, and is not an additional one-off meeting
+    -- that one is booked separately and keeps its own link. A module sharing
+    another module's meeting stores no link on its rows (it is read from the
+    source), so for it every such live session carries one.
     """
     if frontend_component_type(row.get('type')) != 'live-session':
-        return ''
+        return False
     settings = component_builder_settings(row)
     if clean_str(settings.get('extraTeamsMeetingUrl')):
-        return ''
-    return clean_str(settings.get('liveSessionUrl') or settings.get('teamsMeetingUrl'))
+        return False
+    return shared or bool(clean_str(settings.get('liveSessionUrl') or settings.get('teamsMeetingUrl')))
 
 
 @csrf_exempt
@@ -18106,6 +18118,10 @@ def curriculum_module_teams_links_replace(request, module_catalogue_id):
     stamped as ``liveSessionLinkOverride`` so a later module save, which
     re-attaches the stored calendar, keeps the new link rather than restoring
     the meeting's own one.
+
+    A module that shares another module's Teams meeting is changed on its own
+    rows only: it keeps the source's calendar, the source and the other modules
+    sharing it keep their link, and its own learners join through the new one.
     """
     if request.method != 'POST':
         return json_error('Method not allowed.', status=405)
@@ -18134,16 +18150,7 @@ def curriculum_module_teams_links_replace(request, module_catalogue_id):
     )
     if archived_error:
         return archived_error
-    shared_source_id = clean_str(module_row.get('teams_shared_source_module_id'))
-    if shared_source_id:
-        # A shared duplicate does not store join links of its own -- the module
-        # save strips them (SHARED_TEAMS_DELIVERY_SETTING_KEYS) -- so a link
-        # written here would vanish on the next save.
-        return json_error(
-            f'This module uses the Teams meeting of module {shared_source_id}. '
-            'Replace the links on that module instead.',
-            status=409,
-        )
+    shared = bool(clean_str(module_row.get('teams_shared_source_module_id')))
 
     expected_revision = clean_str(payload.get('expectedRevision'))
     updated_ids = []
@@ -18165,7 +18172,7 @@ def curriculum_module_teams_links_replace(request, module_catalogue_id):
             ))
             now = datetime.utcnow()
             for row in rows:
-                if not replaceable_live_session_link(row):
+                if not replaceable_live_session(row, shared=shared):
                     continue
                 settings = as_json_value(row.get('settings_json'), {})
                 settings = settings if isinstance(settings, dict) else {}
@@ -21559,7 +21566,13 @@ def save_module_authoring_structure(module_catalogue_id, payload, *, repair_link
                         'coachValidationRequired', 'coach_validation_required', True),
                     'display_order': component_index,
                     'settings_json': json_db_value(component_settings),
-                    'live_sessions_link': clean_str(component_settings.get('liveSessionUrl') or component_settings.get('teamsMeetingUrl')),
+                    # An alias has its meeting keys stripped above, so its own
+                    # replaced link is the only one it can store here.
+                    'live_sessions_link': clean_str(
+                        component_settings.get('liveSessionUrl')
+                        or component_settings.get('teamsMeetingUrl')
+                        or component_settings.get('liveSessionLinkOverride')
+                    ),
                     'copied_from_id': clean_str(component.get('copiedFromId') or component.get('copied_from_id')) or None,
                     # A saved component is attached to this module by definition,
                     # so it is never a library item - and if it was copied out of
