@@ -2177,7 +2177,7 @@ def serialize_case_file_shell(profile, source) -> dict:
     return payload
 
 
-def fetch_attendance_caseload_rows(owner_email: str, *, learner_id: str | None = None) -> list[LearnerProfile]:
+def fetch_attendance_caseload_rows(owner_email: str, *, learner_id: str | None = None, include_plan: bool = True) -> list[LearnerProfile]:
     requested_owner = normalize_email(owner_email)
     queryset = LearnerProfile.objects.annotate(coach_email_key=Lower(Trim("coach_email"))).filter(
         coach_email_key=requested_owner,
@@ -2209,9 +2209,10 @@ def fetch_attendance_caseload_rows(owner_email: str, *, learner_id: str | None =
             "start_date",
             "end_date",
         )
-        .prefetch_related("plan_modules__weeks__components")
         .order_by("full_name", "id")
     )
+    if include_plan:
+        queryset = queryset.prefetch_related("plan_modules__weeks__components")
     rows: list[LearnerProfile] = []
     for row in queryset:
         if not clean_text(row.username):
