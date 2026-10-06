@@ -6,7 +6,8 @@ from .weeks import work_week
 
 # Verified consumers: DashboardMeetingActions, slidesTargetFromEvent,
 # eventPeriodLabel, sortEvents, and buildTimetableFocusState.
-ACTION_FIELDS = ("eventKey", "enrolmentId", "reviewInstanceId", "reviewTemplateId", "sequence")
+ACTION_FIELDS = ("eventKey", "enrolmentId", "reviewInstanceId", "reviewTemplateId", "sequence",
+                 "importedReviewType", "reviewTypeCode", "reviewTypeName")
 DISPLAY_FIELDS = ("startHour", "isTimeEstimated", "timeLabel", "location")
 INPUT_FIELDS = ("id", "source", "type", "date", "scheduledDate", "targetDate", "scheduledTime",
                 "durationMinutes", "learnerId", "learner", "title", "programme", "cohort", "group",

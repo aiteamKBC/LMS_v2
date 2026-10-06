@@ -10,6 +10,16 @@ from coach_api.services.dashboard.upcoming import next_work_week, upcoming_meeti
 
 
 class DashboardUpcomingTests(unittest.TestCase):
+    def test_other_review_keeps_display_type_and_durable_routing(self):
+        start, end = next_work_week(date(2026, 10, 6))
+        event = {"id": "imported-review:synthetic", "eventKey": "imported-review:synthetic",
+                 "source": "progress-review", "importedReviewType": "RPL and Experience",
+                 "date": start.isoformat(), "learnerId": "1", "status": "scheduled"}
+        row = upcoming_meetings({"meetings": {"events": [event]}}, start, end)["meetings"]["events"][0]
+        self.assertEqual(row["importedReviewType"], "RPL and Experience")
+        self.assertEqual(row["eventKey"], event["eventKey"])
+        self.assertEqual(row["type"], "progress-review")
+
     def test_all_review_types_survive_import_metadata_removal_and_live_needs_no_learner_id(self):
         start, end = next_work_week(date(2026, 10, 6))
         events = [{"id": f"{source}-{identity}", "source": source, "reviewSource": "aptem",
