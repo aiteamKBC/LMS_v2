@@ -15,7 +15,7 @@ const learner: Learner = {
   otjhTargetAsOfToday: 80, otjhProgressAsOfToday: 87.5, otjhRagStatus: 'on-track',
   evidenceCount: 2, nextCoaching: '--', nextReview: '--', lastContact: '--', lastAttendanceDate: '--',
   lastActivity: '19 Sep 2026', lastProgressReview: '--', lastReview: '--', lastCoachingSession: '--', lastSubmittedEvidence: '--',
-  recentFlag: null, progressVariance: '--', startDate: '01 Jan 2026', gatewayReviewDate: '01 Jan 2027', plannedEndDate: '01 Feb 2027',
+  recentFlag: null, progressVariance: '--', startDate: '01 Jan 2026', displayStartDate: '01 Jan 2026', displayEndDate: '01 Feb 2027', gatewayReviewDate: '01 Jan 2027', plannedEndDate: '01 Feb 2027',
   rawProgramStatus: 'Delivery', programmeName: 'Project Manager Level 4', liveAttendanceRate: 88,
 };
 

@@ -4,6 +4,8 @@ import { ReviewFormRenderer, computeMissingRequiredFields, computeVisibleRequire
 import { ReviewSignatures } from '@/components/reviews/ReviewSignatures';
 import { ReviewPdfDownload } from '@/components/reviews/ReviewPdfDownload';
 import { ReviewProgressPanel } from '@/components/reviews/ReviewProgressPanel';
+import { renderImportedSection } from '@/pages/learner/reviews/imported/renderImportedSection';
+import { ImportedValue } from '@/pages/learner/reviews/imported/ImportedReviewSection';
 import {
   bookMigratedReview,
   calculateReviewInstanceProgress,
@@ -1120,6 +1122,15 @@ export function ReviewInstanceModal({
               onAnswerChange={handleAnswerChange}
               errors={showErrors ? { missingFieldIds } : undefined}
               readOnly={formReadOnly || checkingSession}
+              renderSectionContent={definition.source === 'aptem'
+                ? (section, renderFields) => renderImportedSection(section, answers, renderFields, (field) => (
+                  // Retain editable inputs, local continuation/preview controls,
+                  // accessible table headers, and the existing summary actions.
+                  field.configuration?.semanticKey === 'meeting_summary'
+                  || (field.fieldType !== 'title_description' && !formReadOnly)
+                  || field.configuration?.imported !== true
+                  || Boolean(field.configuration?.importedTable)
+                )) : undefined}
               openSectionId={openSectionId}
               onOpenSectionChange={setOpenSectionId}
               renderFieldAddon={(field) => field.configuration?.semanticKey === 'meeting_summary' ? (
@@ -1235,7 +1246,9 @@ export function ReviewInstanceModal({
                   onExpand={() => setExpandedSummaryFieldId(field.id)}
                   expandButtonRef={expandSummaryButtonRef}
                 />
-              ) : undefined}
+              ) : definition.source === 'aptem' && field.configuration?.imported === true && context.readOnly
+                ? <ImportedValue value={context.value} label={field.title} fieldType={field.fieldType} />
+                : undefined}
               variant={pageMode ? 'steps' : 'accordion'}
             />
             {advisorSignaturePending && !isViewingAsCoach ? (

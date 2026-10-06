@@ -23,7 +23,8 @@ export function useLearnerProfile(args: Args) {
   const resolvedEnrolmentId = profile.data?.enrolmentId || args.enrolmentId;
   const hasEnrolmentIdentity = args.enabled && Boolean(resolvedKind && resolvedEnrolmentId);
   const hasProfileIdentity = args.enabled && Boolean(profile.data?.learnerId);
-  const plan = useCaseFileDashboardPlan(resolvedKind, resolvedEnrolmentId, hasEnrolmentIdentity, args.activeTab === 'overview' || args.activeTab === 'support');
+  const needsPlan = ['overview', 'weekly-learning', 'monthly-focus', 'progress', 'support'].includes(args.activeTab);
+  const plan = useCaseFileDashboardPlan(resolvedKind, resolvedEnrolmentId, hasEnrolmentIdentity, needsPlan);
   const attendance = useCaseFileAttendance(resolvedKind, resolvedEnrolmentId, hasEnrolmentIdentity);
   const nextSession = useCaseFileNextSession(profile.data?.learnerId, hasProfileIdentity);
   const reviews = useCaseFileReviews(profile.data?.learnerId, hasProfileIdentity);

@@ -261,12 +261,13 @@ class DashboardCompletedReviewHistoryTests(SimpleTestCase):
         self.assertEqual(result[403], {"lastPr": None, "lastMcm": "20 Aug 2026"})
         self.assertEqual(result[404], {"lastPr": "25 Aug 2026", "lastMcm": None})
 
+    @patch("coach_api.review_sources.enrich_imported_events", side_effect=lambda events: events)
     @patch("coach_api.views.resolve_coach_review_events")
-    def test_dashboard_history_reuses_unbounded_shared_resolver(self, resolve_reviews):
+    def test_dashboard_history_reuses_unbounded_shared_resolver(self, resolve_reviews, _enrich):
         row = learner(316, aptem_id=5170, source_aptem_id=5170)
         resolve_reviews.return_value = {
             "events": [{
-                "learnerId": "316", "source": "progress-review", "reviewSource": "aptem",
+                "eventKey": "imported-review:R-316", "learnerId": "316", "source": "progress-review", "reviewSource": "aptem",
                 "status": "completed", "reviewCompletedAt": "2026-07-23",
             }],
         }
@@ -774,6 +775,7 @@ class ImportedReviewWriteTests(SimpleTestCase):
 
 
 class TimetableResolvedReviewStreamTests(SimpleTestCase):
+    @patch("coach_api.review_sources.load_imported_links", return_value=({}, {}))
     @patch("coach_api.views.assign_timetable_slots", side_effect=lambda events: events)
     @patch("coach_api.views.curriculum_review_instances.reconcile_review_event_keys", return_value={})
     @patch("coach_api.views.fetch_calendar_event_records", return_value={})
@@ -785,7 +787,7 @@ class TimetableResolvedReviewStreamTests(SimpleTestCase):
     @patch("coach_api.views.coach_staff_display_name", return_value="Coach")
     def test_calendar_includes_aptem_events_and_drops_coexisting_curriculum_record(
         self, _owner, _active, review_profiles, resolve_reviews, _live,
-        standalone_records, _fetch_records, _reconcile, _slots,
+        standalone_records, _fetch_records, _reconcile, _slots, _imported_links,
     ):
         profile = learner(1, source_aptem_id=101)
         review_profiles.return_value = [profile]
@@ -805,9 +807,11 @@ class TimetableResolvedReviewStreamTests(SimpleTestCase):
             },
         }
         duplicate = MagicMock(
-            event_key="curriculum:duplicate", learner_id=1, event_type="mcr",
+            event_key="curriculum:duplicate", learner_id=1, event_type="mcr", idempotency_key="",
         )
-        standalone_records.return_value = [duplicate]
+        legacy = MagicMock(event_key="old-learner-booking", learner_id=101, event_type="mcr",
+                           idempotency_key="learner-book:mcm:apprenticeship:101:2026-09:401")
+        standalone_records.return_value = [duplicate, legacy]
 
         result = views.collect_generated_timetable(
             "coach@example.invalid", start_date=date(2026, 9, 1), end_date=date(2026, 9, 30),

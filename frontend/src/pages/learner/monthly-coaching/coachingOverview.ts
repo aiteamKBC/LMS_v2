@@ -52,7 +52,7 @@ function daysFromToday(date: string | null, today: string): number | null {
 function signatureState(session: LearnerCalendarEvent, review?: LearnerReviewDefinition | null): CoachingSignature {
   // An archive is read-only. A calendar flag alone does not tell us whether
   // Curriculum requires the participant's signature on this particular form.
-  if (session.importedReview) return 'none';
+  if (session.importedReview && !session.migratedForm) return 'none';
   if (!review) return normalize(session.status) === 'awaiting-signature' ? 'unknown' : 'none';
   const status = normalize(review.instance?.status);
   const submitted = ['awaiting-signature', 'completed'].includes(status);
@@ -169,8 +169,8 @@ export function coachingOverview(
 ): CoachingOverview {
   const all = sessions.map(session => {
     // Join only by durable identity. Two meetings on one day may have the same title.
-    const matched = attendance.find(item => item.id === session.id)
-      || attendance.find(item => Boolean(item.calendarEventKey) && item.calendarEventKey === session.eventKey);
+    const matched = attendance.find(item => item.id === session.id || (session.reviewId && item.id === `imported-review:${session.reviewId}`))
+      || attendance.find(item => Boolean(item.calendarEventKey) && item.calendarEventKey === (session.calendarEventKey || session.eventKey));
     return coachingSessionState(session, matched, today, reviews[session.eventKey] || reviews[session.id]);
   }).sort(chronological);
   const needsAction = all.filter(item => item.needsAction).sort((a, b) =>

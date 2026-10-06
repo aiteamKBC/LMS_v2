@@ -45,6 +45,7 @@ export interface ImportedReview {
   plannedTime: string | null;
   completedDate: string | null;
   status: string;
+  rawStatus?: string;
   extractionStatus: string;
   detailsAvailable: boolean;
   sections: ImportedReviewSection[];

@@ -10,7 +10,6 @@ import { downloadICS, downloadAllICS, createPublicFeedBlob, type ICSEvent } from
 import { useLinkedLearner } from '@/hooks/useMyLearner';
 import { invalidateLearnerReads } from '@/api/learnerRead';
 import { useLiveRefresh } from '@/hooks/useRefreshOnReturn';
-import { fetchReviewHistory } from '@/api/reviewHistory';
 import { buildSourceFilters, countBySource, filterBySource, learnerEventSource, learnerSourceMeta, type LearnerSourceFilter } from './reviewTypeFilters';
 import { moveCalendarDate } from './navigation';
 import { RowsSkeleton } from '@/components/feature/Skeletons';
@@ -39,7 +38,6 @@ import {
 } from '@/pages/coach/timetable/calendarColors';
 import { meetingBookingWarning } from '../reviews/meetingBooking';
 import { useImportedMeetingBooking } from '../reviews/useImportedMeetingBooking';
-import { importedReviewsToEvents, mergeCompletedReviewHistory } from '../reviews/useReviewSessions';
 import { LearnerReviewInstanceForm, useLearnerReviewInstance } from '../reviews/LearnerReviewInstanceForm';
 import { firstAvailableBookingDate, parseBookingDay } from '../reviews/bookingDates';
 import CoachSessionTypePicker, { COACH_APPROVAL_SESSION_TYPES } from './CoachSessionTypePicker';
@@ -209,7 +207,7 @@ function mapCoachEvent(ev: LearnerCalendarEvent): CalendarEvent | null {
       : `${ev.title} session with your coach.`),
     isoDate: iso,
     meetingLink: ev.meetingLink || undefined,
-    eventKey: ev.eventKey || ev.id,
+    eventKey: ev.calendarEventKey || ev.eventKey || ev.id,
     source: ev.source,
     reviewTemplateId: ev.reviewTemplateId,
     reviewTypeId: ev.reviewTypeId,
@@ -884,7 +882,7 @@ function LearnerCalendarBody() {
     let event: CalendarEvent | undefined;
     if (reviewId) {
       if (!importedBooking.target) return;
-      const { review, eventKey, source } = importedBooking.target;
+      const { review, eventKey } = importedBooking.target;
       if (eventKey) {
         event = myEvents.find(item => item.eventKey === eventKey);
         if (!event) {
@@ -895,7 +893,7 @@ function LearnerCalendarBody() {
         setSchedulingError('This review is no longer available for scheduling.');
         return;
       } else {
-        event = mapCoachEvent({ ...importedReviewsToEvents([review], source)[0], status: 'not-scheduled', scheduledDate: null, scheduledTime: null }) || undefined;
+        event = myEvents.find(item => item.bookingReviewId === review.id || item.importedReview?.id === review.id);
       }
       if (event) event = { ...event, title: review.name || event.title, bookingReviewId: review.id, assignmentMonth: review.plannedDate?.slice(0, 7) };
     } else {
@@ -980,26 +978,16 @@ function LearnerCalendarBody() {
     let cancelled = false;
     const writeVersion = calendarWriteVersionRef.current;
     fetchLearnerCalendarEvents(myLearner.kind, myLearner.id, { revalidate: true })
-      .then(async (res) => {
+      .then((res) => {
         if (cancelled || writeVersion !== calendarWriteVersionRef.current) return;
         const mapEvents = (rows: LearnerCalendarEvent[]) => rows.map(mapCoachEvent).filter((event): event is CalendarEvent => event !== null);
         setMyEvents(prev => [...mapEvents(res.events), ...prev.filter(event => event.id.startsWith('custom-'))]);
         setCalendarLoading(false);
-        const histories = await Promise.allSettled([
-          fetchReviewHistory(myLearner.kind, myLearner.id, 'monthly-coaching'),
-          fetchReviewHistory(myLearner.kind, myLearner.id, 'reviews'),
-        ]);
-        if (cancelled || writeVersion !== calendarWriteVersionRef.current) return;
-        const monthly = histories[0].status === 'fulfilled' ? histories[0].value.reviews : [];
-        const progress = histories[1].status === 'fulfilled' ? histories[1].value.reviews : [];
-        const events = mapEvents(mergeCompletedReviewHistory(res.events, [
-          ...importedReviewsToEvents(monthly, 'mcr'),
-          ...importedReviewsToEvents(progress, 'progress-review'),
-        ]));
+        const events = mapEvents(res.events);
         setBookingCalendar(res.bookingCalendar || null);
         // Keep locally-created personal events; replace the DB-backed ones.
         setMyEvents((prev) => [...events, ...prev.filter((ev) => ev.id.startsWith('custom-'))]);
-        setCalendarError(histories.some(result => result.status === 'rejected') ? 'Could not load archived reviews. Please try again.' : null);
+        setCalendarError(null);
       })
       .catch((err: Error) => {
         if (!cancelled && writeVersion === calendarWriteVersionRef.current) setCalendarError(err.message);
@@ -1136,10 +1124,10 @@ function LearnerCalendarBody() {
         bookType === 'other' ? `Requested session type: ${otherSessionType.trim()}` : '',
         bookNotes.trim(),
       ].filter(Boolean).join('\n');
-      const res = rescheduleEvent && !importedReviewBooking
+      const res = rescheduleEvent
         ? await rescheduleLearnerCalendarSession(myLearner.kind, myLearner.id, {
             eventKey: rescheduleEvent.eventKey || rescheduleEvent.id,
-            reviewId: rescheduleEvent.bookingReviewId,
+            reviewId: importedReviewId,
             scheduledDate: bookDate,
             scheduledTime: bookTime,
             durationMinutes: parseInt(bookDuration),
@@ -1162,11 +1150,8 @@ function LearnerCalendarBody() {
       calendarWriteVersionRef.current += 1;
       const mapped = mapCoachEvent(res.event);
       if (mapped) {
-        const updatedImportedReview = importedReview
-          ? { ...importedReview, status: 'scheduled', plannedDate: bookDate, plannedTime: bookTime }
-          : undefined;
-        const updatedEvent = updatedImportedReview
-          ? { ...mapped, id: sourceEvent?.id || mapped.id, importedReview: updatedImportedReview }
+        const updatedEvent = importedReview
+          ? { ...mapped, id: sourceEvent?.id || mapped.id, importedReview, bookingReviewId: importedReview.id }
           : {
               ...mapped,
               bookingReviewId: sourceEvent?.bookingReviewId,

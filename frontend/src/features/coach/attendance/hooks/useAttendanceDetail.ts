@@ -38,6 +38,8 @@ export function useAttendanceDetail(learnerId: string, enabled: boolean) {
           sessions: summary?.total || 0,
           present: summary?.present || 0,
           absent: summary?.absent || 0,
+          learnerStartDate: details.learner.learnerStartDate,
+          learnerEndDate: details.learner.learnerEndDate,
           programmeStartDate: details.learner.programmeStartDate,
           programmeEndDate: details.learner.programmeEndDate,
           coachName: details.learner.coachName,

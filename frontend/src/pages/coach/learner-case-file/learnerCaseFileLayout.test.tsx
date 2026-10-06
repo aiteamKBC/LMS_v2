@@ -44,19 +44,26 @@ vi.mock('./useCaseFileReviews', () => ({ useCaseFileReviews: mocks.useCaseFileRe
 vi.mock('./useCaseFileNextSession', () => ({ useCaseFileNextSession: mocks.useCaseFileNextSession }));
 vi.mock('./useCaseFileMarking', () => ({ useCaseFileMarking: mocks.useCaseFileMarking }));
 vi.mock('@/pages/workspace/learner/DashboardTrainingPlan', () => ({
-  DashboardTrainingPlan: ({ activityOverviewOnly, timelineOnly, showRewards, programmeSnapshot, plan }: { activityOverviewOnly?: boolean; timelineOnly?: boolean; showRewards?: boolean;
+  DashboardTrainingPlan: ({ activityOverviewOnly, timelineOnly, monthlyOnly, overviewOnly, showRewards, showOtjChart, canOpenActivities, programmeSnapshot, plan }: { activityOverviewOnly?: boolean; timelineOnly?: boolean; monthlyOnly?: boolean; overviewOnly?: boolean; showRewards?: boolean; showOtjChart?: boolean; canOpenActivities?: boolean;
     plan?: { error?: string };
     programmeSnapshot?: { overall: number | null; otjhActual: number | null; otjhTarget: number | null; ksb: number | null;
       activitiesCompleted?: number | null; activitiesTotal?: number | null; activitiesPercent?: number | null;
       attendancePresent: number | null; attendanceTotal: number | null } }) => <div aria-label="Coach learner activity overview">
-    <h2>Weekly learning plan</h2><h2>Monthly study plan</h2>
-    <h2>Whole programme progress</h2><h2>Programme progress</h2><h2>Off-The-Job Hours</h2>
+    {monthlyOnly && <h2>Monthly study plan</h2>}
+    {overviewOnly && <><h2>Whole programme progress</h2><h2>Programme progress</h2>{showOtjChart !== false && <h2>Off-The-Job Hours</h2>}</>}
     {timelineOnly && <h2>Module timeline</h2>}
     <span>{programmeSnapshot && `${programmeSnapshot.overall}% Ãƒâ€šÃ‚Â· ${programmeSnapshot.otjhActual}/${programmeSnapshot.otjhTarget} Ãƒâ€šÃ‚Â· ${programmeSnapshot.ksb}% Ãƒâ€šÃ‚Â· ${programmeSnapshot.attendancePresent}/${programmeSnapshot.attendanceTotal}`}</span>
     <span data-testid="activity-snapshot">{programmeSnapshot && `${programmeSnapshot.activitiesCompleted}/${programmeSnapshot.activitiesTotal} Ãƒâ€šÃ‚Â· ${programmeSnapshot.activitiesPercent}%`}</span>
     <span>{activityOverviewOnly ? 'Activity overview only' : 'Full plan'}</span>
     <span>{showRewards === false ? 'Rewards hidden' : 'Rewards visible'}</span>
+    <span data-testid="overview-otjh-chart">{showOtjChart === false ? 'OTJH chart hidden' : 'OTJH chart visible'}</span>
+    <span data-testid="activity-actions">{canOpenActivities === false ? 'Learner actions hidden' : 'Learner actions enabled'}</span>
     {plan?.error && <span>{plan.error}</span>}
+  </div>,
+}));
+vi.mock('@/pages/workspace/learner/tabs/DashboardWeeklyTab', () => ({
+  DashboardWeeklyContent: ({ canOpenActivities }: { canOpenActivities?: boolean }) => <div aria-label="Coach learner weekly learning">
+    <h2>Weekly learning plan</h2><span data-testid="weekly-actions">{canOpenActivities === false ? 'Learner actions hidden' : 'Learner actions enabled'}</span>
   </div>,
 }));
 vi.mock('@/pages/learner/reviews/ImportedReviewHistory', () => ({
@@ -241,25 +248,43 @@ describe('Learner Case File design', () => {
     expect(within(summary).queryByText('Profile Snapshot')).not.toBeInTheDocument();
     expect(within(summary).queryByText('Profile details')).not.toBeInTheDocument();
     expect(summary.querySelector('details')).toBeNull();
-    for (const field of ['Start Date', 'Planned End Date', 'Gateway Due']) {
+    for (const field of ['Start Date', 'Planned End Date']) {
       expect(within(summary).getByText(field)).toBeInTheDocument();
     }
+    expect(within(summary).queryByText('Gateway Due')).not.toBeInTheDocument();
     for (const value of ['Final Test', 'Final Group', 'aya@example.test', '03 Aug 2026', '02 Aug 2027']) {
       expect(within(summary).getByText(value)).toBeInTheDocument();
     }
     for (const removedSection of ['Progress Summary', 'Recent Activity', 'Upcoming Sessions & Reviews']) {
       expect(screen.queryByRole('heading', { name: removedSection })).not.toBeInTheDocument();
     }
-    for (const activitySection of ['Weekly learning plan', 'Monthly study plan', 'Whole programme progress', 'Programme progress', 'Off-The-Job Hours']) {
+    for (const activitySection of ['Whole programme progress', 'Programme progress']) {
       expect(screen.getByRole('heading', { name: activitySection })).toBeInTheDocument();
     }
+    expect(screen.queryByRole('heading', { name: 'Off-The-Job Hours' })).not.toBeInTheDocument();
+    expect(screen.getByLabelText('Coach learner activity overview').closest('.learner-dashboard')).not.toBeNull();
+    const caseFileSections = screen.getByRole('tablist', { name: 'Case file sections' });
+    expect(within(caseFileSections).getByRole('tab', { name: 'Overview' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.queryByRole('heading', { name: 'Weekly learning plan' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Monthly study plan' })).not.toBeInTheDocument();
     expect(screen.getByText('25% Ãƒâ€šÃ‚Â· 10/38.5 Ãƒâ€šÃ‚Â· 20% Ãƒâ€šÃ‚Â· 7/10')).toBeInTheDocument();
     expect(screen.getByText('Activity overview only')).toBeInTheDocument();
     expect(screen.getByText('Rewards hidden')).toBeInTheDocument();
+    expect(screen.getByTestId('overview-otjh-chart')).toHaveTextContent('OTJH chart hidden');
+
+    fireEvent.click(within(caseFileSections).getByRole('tab', { name: 'Weekly Learning' }));
+    expect(screen.getByRole('heading', { name: 'Weekly learning plan' })).toBeVisible();
+    expect(screen.getByTestId('weekly-actions')).toHaveTextContent('Learner actions hidden');
+    expect(within(caseFileSections).getByRole('tab', { name: 'Weekly Learning' })).toHaveAttribute('aria-selected', 'true');
+
+    fireEvent.click(within(caseFileSections).getByRole('tab', { name: 'Monthly Focus' }));
+    expect(screen.getByRole('heading', { name: 'Monthly study plan' })).toBeVisible();
+    expect(screen.getByTestId('activity-actions')).toHaveTextContent('Learner actions hidden');
+    expect(within(caseFileSections).getByRole('tab', { name: 'Monthly Focus' })).toHaveAttribute('aria-selected', 'true');
     expect(mocks.useCaseFileDashboardPlan).toHaveBeenCalledWith('apprenticeship', '125', true, true);
-    // Overview, OTJH & KSB Progress, Attendance, Learning Plan, Reviews, Assignments,
-    // Enrolment Documents.
-    expect(screen.getAllByRole('tab')).toHaveLength(7);
+    // Overview, Weekly Learning, Monthly Focus, OTJH & KSB Progress, Attendance,
+    // Learning Plan, Reviews, Assignments and Enrolment Documents.
+    expect(screen.getAllByRole('tab')).toHaveLength(9);
     expect(screen.getByRole('tab', { name: 'Assignments' })).toBeInTheDocument();
     expect(screen.getByRole('tab', { name: 'Enrolment Documents' })).toBeInTheDocument();
     expect(screen.queryByRole('tab', { name: 'Programme & Employer' })).not.toBeInTheDocument();
@@ -1021,9 +1046,17 @@ describe('Learner Case File design', () => {
     expect(mocks.useCaseFileDashboardPlan).toHaveBeenCalledWith('apprenticeship', '125', true, false);
   });
 
-  it.each(['overview', 'progress', 'attendance', 'support', 'reviews'])('keeps marking idle on the direct %s route', (tab) => {
+  it.each(['overview', 'weekly-learning', 'monthly-focus', 'progress', 'attendance', 'support', 'reviews'])('keeps marking idle on the direct %s route', (tab) => {
     render(<MemoryRouter initialEntries={[`/coach/learner-case-file?id=42&tab=${tab}`]}><LearnerCaseFile /></MemoryRouter>);
     expect(mocks.useCaseFileMarking).toHaveBeenLastCalledWith('125', false);
+  });
+
+  it.each(['weekly-learning', 'monthly-focus', 'progress'])('requests the page-level plan on the direct %s route', (tab) => {
+    render(<MemoryRouter initialEntries={[`/coach/learner-case-file?id=42&tab=${tab}`]}><LearnerCaseFile /></MemoryRouter>);
+
+    expect(mocks.useCaseFileDashboardPlan).toHaveBeenCalledWith('apprenticeship', '125', true, true);
+    const tabName = tab === 'weekly-learning' ? 'Weekly Learning' : tab === 'monthly-focus' ? 'Monthly Focus' : 'OTJH & KSB Progress';
+    expect(screen.getByRole('tab', { name: tabName })).toHaveAttribute('aria-selected', 'true');
   });
 
   it('requests the page-level plan on a direct Learning Plan route', () => {

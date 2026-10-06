@@ -46,6 +46,7 @@ function AssignmentForm({ target, onClose, onAssigned }: {
   const [query, setQuery] = useState('');
   const [programme, setProgramme] = useState('');
   const [company, setCompany] = useState('');
+  const [cohort, setCohort] = useState('');
   const [status, setStatus] = useState('');
   const [toAdd, setToAdd] = useState<Set<string>>(() => new Set());
   const [toRemove, setToRemove] = useState<Set<string>>(() => new Set());
@@ -64,7 +65,7 @@ function AssignmentForm({ target, onClose, onAssigned }: {
   }, [target, retry]);
 
   const canUnassign = target.scope === 'module';
-  const learners = data?.learners || [];
+  const learners = useMemo(() => data?.learners || [], [data]);
   const byId = useMemo(() => new Map(learners.map(learner => [learner.id, learner])), [learners]);
 
   const options = useMemo(() => {
@@ -73,16 +74,21 @@ function AssignmentForm({ target, onClose, onAssigned }: {
     return { programmes: values('programme'), companies: values('company'), statuses: values('programmeStatus') };
   }, [learners]);
 
+  const cohortOptions = useMemo(() => [...new Set(learners
+    .filter(learner => !programme || learner.programme === programme)
+    .map(learner => learner.cohort).filter(Boolean))].sort((a, b) => a.localeCompare(b)), [learners, programme]);
+  const changeProgramme = (value: string) => { setProgramme(value); setCohort(''); };
+
   const matchesFilters = useMemo(() => {
     const terms = query.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean);
     return (learner: AssignmentLearner) => {
       const name = `${learner.name} ${learner.email}`.toLocaleLowerCase();
       return terms.every(term => name.includes(term))
         && (!programme || learner.programme === programme)
-        && (!company || learner.company === company)
+        && (target.scope === 'module' ? (!cohort || learner.cohort === cohort) : (!company || learner.company === company))
         && (!status || learner.programmeStatus === status);
     };
-  }, [query, programme, company, status]);
+  }, [query, programme, company, cohort, status, target.scope]);
 
   const available = useMemo(() => learners.filter(learner => !learner.assigned), [learners]);
   const assigned = useMemo(() => learners.filter(learner => learner.assigned), [learners]);
@@ -119,7 +125,7 @@ function AssignmentForm({ target, onClose, onAssigned }: {
 
   const pending = toAdd.size + toRemove.size;
   const clearSelection = () => { setToAdd(new Set()); setToRemove(new Set()); setReviewOpen(false); };
-  const resetFilters = () => { setQuery(''); setProgramme(''); setCompany(''); setStatus(''); };
+  const resetFilters = () => { setQuery(''); setProgramme(''); setCompany(''); setCohort(''); setStatus(''); };
 
   const submit = async () => {
     if (!data || loading || !pending || savingRef.current) return;
@@ -208,13 +214,15 @@ function AssignmentForm({ target, onClose, onAssigned }: {
         </label>
         <div className="grid gap-3 sm:grid-cols-3">
           {([
-            ['Programme', programme, setProgramme, options.programmes],
-            ['Company', company, setCompany, options.companies],
-            ['Programme status', status, setStatus, options.statuses],
+            ['Programme', programme, changeProgramme, options.programmes],
+            target.scope === 'module'
+              ? ['Cohort', cohort, setCohort, cohortOptions] as const
+              : ['Company', company, setCompany, options.companies] as const,
+            [target.scope === 'module' ? 'Status' : 'Programme status', status, setStatus, options.statuses],
           ] as const).map(([label, value, change, values]) => (
             <label key={label} className="block text-[11px] font-bold text-foreground-600">{label}
               <select value={value} onChange={event => change(event.target.value)} className={`${inputClass} mt-1`}>
-                <option value="">All {label.toLowerCase() === 'company' ? 'companies' : label.toLowerCase() === 'programme' ? 'programmes' : 'statuses'}</option>
+                <option value="">All {label.toLowerCase() === 'company' ? 'companies' : label.toLowerCase() === 'programme' ? 'programmes' : label === 'Cohort' ? 'cohorts' : 'statuses'}</option>
                 {values.map(item => <option key={item} value={item}>{item}</option>)}
               </select>
             </label>

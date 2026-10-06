@@ -28,6 +28,8 @@ export interface CoachAttendanceLearner {
   sessions?: number | null;
   present?: number | null;
   absent?: number | null;
+  learnerStartDate?: string | null;
+  learnerEndDate?: string | null;
   programmeStartDate?: string | null;
   programmeEndDate?: string | null;
   coachName?: string | null;
@@ -85,6 +87,8 @@ export interface CoachAttendanceDetailsPayload {
     programStatus?: string | null;
     learnerType?: string | null;
     enrolmentId?: string | null;
+    learnerStartDate?: string | null;
+    learnerEndDate?: string | null;
     programmeStartDate?: string | null;
     programmeEndDate?: string | null;
     coachName?: string | null;

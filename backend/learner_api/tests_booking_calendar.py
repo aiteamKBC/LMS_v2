@@ -55,7 +55,7 @@ class BookingDateRestrictionTests(SimpleTestCase):
 
 
 class ImportedReviewBookingTests(SimpleTestCase):
-    def test_sync_targets_the_owned_monthly_review_row(self):
+    def test_booking_validates_ownership_without_rewriting_aptem_source_evidence(self):
         from . import calendar as module
 
         cursor = Mock()
@@ -68,13 +68,15 @@ class ImportedReviewBookingTests(SimpleTestCase):
             module._mark_imported_review_scheduled("62", 272, date(2026, 11, 26), time(9, 0))
 
         params = cursor.execute.call_args.args[1]
-        self.assertEqual(params[:4], ["scheduled", datetime(2026, 11, 26, 9, 0), 62, 272])
+        self.assertEqual(params[:2], [62, 272])
+        self.assertTrue(cursor.execute.call_args.args[0].strip().startswith('SELECT'))
 
     def test_sync_fails_when_the_review_is_not_owned_by_the_learner(self):
         from . import calendar as module
 
         cursor = Mock()
         cursor.rowcount = 0
+        cursor.fetchone.return_value = None
         connection = Mock()
         cursor_context = MagicMock()
         cursor_context.__enter__.return_value = cursor

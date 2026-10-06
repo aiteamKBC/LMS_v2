@@ -409,6 +409,7 @@ export function CoachCaseloadContent({ embedded = false, embeddedLearners }: { e
   const handleCloseQuickView = useCallback(() => setQuickView(null), []);
 
   const openProfile = useCallback((learner: Learner, tab?: string) => {
+    const otjhProgress = otjhProgressAsOfToday(learner);
     navigate('/coach/learner-case-file', {
       state: {
         learnerId: learner.id,
@@ -420,6 +421,13 @@ export function CoachCaseloadContent({ embedded = false, embeddedLearners }: { e
           percent: learner.activityProgressAvailable ? learner.activityProgress ?? null
             : learner.componentsPlanned && learner.componentsCompleted != null
               ? Math.round(learner.componentsCompleted / learner.componentsPlanned * 100) : null,
+        },
+        otjhSnapshot: {
+          learnerId: learner.id,
+          completed: otjhProgress.actualHours,
+          target: otjhProgress.targetHours,
+          planned: learner.otjhPlanned ?? null,
+          percent: otjhProgress.percent,
         },
         ...(learner.learnerType ? { kind: learner.learnerType } : {}),
         ...(learner.enrolmentId ? { enrolmentId: learner.enrolmentId } : {}),

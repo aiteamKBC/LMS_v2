@@ -173,8 +173,8 @@ class MigratedLazyPdfTests(TestCase):
 
     def test_real_participant_gate_and_context_allow_only_linked_accounts(self):
         overlay = create_review()
-        profile = SimpleNamespace(enrolment_id=71, full_name="Sample learner", email="learner@example.invalid", programme="Sample programme")
-        learner = SimpleNamespace(pk=71, employer_id=81)
+        profile = SimpleNamespace(id=42, enrolment_id=71, aptem_id=6301, learner_type="commercial", full_name="Sample learner", email="old@example.invalid", programme="Sample programme")
+        learner = SimpleNamespace(pk=71, employer_id=81, aptem_id="6301", email="new@example.invalid")
         with patch.object(endpoints.LearnerProfile.objects, "filter") as profiles, \
              patch.object(endpoints.EnrolmentUser.all_learners, "filter") as learners, \
              patch.object(endpoints.CoachCalendarEvent.objects, "filter") as calendars, \

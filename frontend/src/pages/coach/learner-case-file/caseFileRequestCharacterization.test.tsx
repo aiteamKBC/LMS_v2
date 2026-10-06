@@ -1,5 +1,5 @@
 import { act, render, renderHook, screen, waitFor } from '@testing-library/react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const trace: string[] = [];
 
@@ -44,7 +44,7 @@ vi.mock('@/pages/coach/shared/calendarEvents', () => ({
   statusLabel: () => 'Unknown',
 }));
 
-import { useCoachLearnerCaseFileData } from './data';
+import { selectCaseFileOtjh, useCoachLearnerCaseFileData } from './data';
 import { LearnerCaseFileHeader } from './components/LearnerCaseFileHeader';
 
 const headerProps = {
@@ -100,6 +100,8 @@ function shell(overrides: Record<string, unknown> = {}) {
 
 describe('Learner Case File request characterization', () => {
   beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-07-01T12:00:00Z'));
     trace.length = 0;
     vi.clearAllMocks();
     mocks.fetchLearnerDetail.mockImplementation(async (kind: string, id: string) => {
@@ -128,6 +130,57 @@ describe('Learner Case File request characterization', () => {
       if (url === '/coach_api/coach/learners/316/case-file') return response(shell());
       if (url.startsWith('/coach_api/coach/marking-queue')) return response({ items: [] });
       throw new Error(`Unexpected request: ${url}`);
+    });
+  });
+
+  afterEach(() => vi.useRealTimers());
+
+  it.each(['apprenticeship', 'commercial'] as const)('uses the coach target-to-date for %s while retaining the whole plan', async kind => {
+    mocks.coachFetch.mockResolvedValue(response({ ...shell({ startDate: '2026-06-01', plannedEndDate: '2026-07-31' }),
+      identity: { ...shell().identity, kind },
+    }));
+    mocks.fetchLearnerMetrics.mockResolvedValue({ ...metrics, aptem_planned_total: 100,
+      otjh: { ...metrics.otjh, actual: 12, planned: 80 },
+    });
+    // A conflicting detail date must not override the coach table's window.
+    mocks.fetchLearnerDetail.mockResolvedValue({ ...learnerDetail(false), programmeEndDate: '2027-07-31' });
+    const { result } = renderHook(() => useCoachLearnerCaseFileData({ learnerId: '316' }));
+    await waitFor(() => expect(result.current.data?.reviewsLoading).toBe(false));
+    expect(selectCaseFileOtjh(result.current.data!)).toEqual({
+      logged: 12, target: 50, programmeTotal: 100, remaining: 38, progressPercent: 24,
+    });
+  });
+
+  it.each([
+    ['2026-08-01', '2026-09-01', 0, 0, null],
+    ['2026-05-01', '2026-06-01', 20, 8, 60],
+    [null, null, 20, 8, 60],
+  ])('preserves target boundaries and missing-date fallback (%s / %s)', async (startDate, plannedEndDate, target, remaining, progressPercent) => {
+    mocks.coachFetch.mockResolvedValue(response(shell({ startDate, plannedEndDate })));
+    const { result } = renderHook(() => useCoachLearnerCaseFileData({ learnerId: '316' }));
+    await waitFor(() => expect(result.current.data?.reviewsLoading).toBe(false));
+    expect(selectCaseFileOtjh(result.current.data!)).toMatchObject({ target, remaining, progressPercent, programmeTotal: 20 });
+  });
+
+  it('paces the target by the London business day across midnight', async () => {
+    vi.setSystemTime(new Date('2026-07-01T23:30:00Z'));
+    mocks.coachFetch.mockResolvedValue(response(shell({ startDate: '2026-07-01', plannedEndDate: '2026-07-11' })));
+    const { result } = renderHook(() => useCoachLearnerCaseFileData({ learnerId: '316' }));
+    await waitFor(() => expect(result.current.data?.reviewsLoading).toBe(false));
+    expect(selectCaseFileOtjh(result.current.data!)).toMatchObject({ target: 2, remaining: 0, progressPercent: 100 });
+  });
+
+  it.each(['apprenticeship', 'commercial'] as const)('uses the dashboard contract window for %s when profile dates are missing', async kind => {
+    mocks.coachFetch.mockResolvedValue(response({ ...shell({ startDate: null, plannedEndDate: null,
+      otjhProgrammeStartDate: '2026-06-01', otjhProgrammeEndDate: '2026-07-31',
+    }), identity: { ...shell().identity, kind } }));
+    mocks.fetchLearnerMetrics.mockResolvedValue({ ...metrics, aptem_planned_total: 576,
+      otjh: { ...metrics.otjh, actual: 174.25 },
+    });
+    const { result } = renderHook(() => useCoachLearnerCaseFileData({ learnerId: '316' }));
+    await waitFor(() => expect(result.current.data?.reviewsLoading).toBe(false));
+    expect(selectCaseFileOtjh(result.current.data!)).toEqual({
+      logged: 174.25, target: 288, programmeTotal: 576, remaining: 113.75, progressPercent: 61,
     });
   });
 
@@ -221,7 +274,7 @@ describe('Learner Case File request characterization', () => {
 
     await waitFor(() => expect(result.current.data?.overallProgress).toBe(75));
     expect(result.current.loading).toBe(false);
-    expect(result.current.data?.otjhTarget).toBe(20);
+    expect(result.current.data?.otjhTarget).toBe(1.41);
     expect(result.current.data?.ksbProgress).toBe(50);
     expect(result.current.data?.reviewsLoading).toBe(true);
 
@@ -293,6 +346,29 @@ describe('Learner Case File request characterization', () => {
     expect(result.current.data?.gatewayReviewDate).toBe('04 May 2027');
     render(<LearnerCaseFileHeader {...headerProps} data={result.current.data} />);
     expect(screen.getByText('Start Date').nextElementSibling).toHaveTextContent(/^2026-06-01$/);
+  });
+
+  it('restores the recorded learner end date when the programme and shell end dates are missing', async () => {
+    mocks.fetchLearnerDetail.mockResolvedValue({
+      ...learnerDetail(false),
+      learnerEndDate: '2027-08-02',
+      programmeEndDate: '',
+    });
+    mocks.coachFetch.mockImplementation(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      trace.push(url);
+      if (url === '/coach_api/coach/learners/316/case-file') return response(shell({ plannedEndDate: null }));
+      if (url.startsWith('/coach_api/coach/marking-queue')) return response({ items: [] });
+      throw new Error(`Unexpected request: ${url}`);
+    });
+    const { result } = renderHook(() => useCoachLearnerCaseFileData({
+      learnerId: '316', kind: 'apprenticeship', enrolmentId: '5170',
+    }));
+
+    await waitFor(() => expect(result.current.data?.plannedEndDate).toBe('2027-08-02'));
+    render(<LearnerCaseFileHeader {...headerProps} data={result.current.data} />);
+    expect(screen.getByText('Planned End Date').nextElementSibling).toHaveTextContent(/^2027-08-02$/);
+    expect(screen.queryByText('Gateway Due')).not.toBeInTheDocument();
   });
 
   it('preserves shell profile fields and leaves missing values unavailable', async () => {

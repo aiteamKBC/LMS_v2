@@ -22,11 +22,17 @@ class LocalMcmBookingTests(TestCase):
         self.addCleanup(patcher.stop)
         self.base = {
             "eventKey": self.key, "source": "mcr", "reviewSource": "aptem",
+            "reviewId": "62", "aptemReviewId": "MCM-62", "importedReviewType": "Monthly Coaching Meeting",
+            "enrolmentId": "125", "learnerType": "commercial",
             "learnerId": "211", "learner": "Synthetic learner", "title": "MCM",
             "targetDate": "2026-11-04", "date": "2026-11-04",
             "status": "not-scheduled", "sourceStatus": "Not Scheduled",
             "sequence": 1, "type": "coaching",
         }
+        self.profile = SimpleNamespace(id=211, enrolment_id=125, learner_type="commercial")
+        profile_lookup = patch("learner_api.models.LearnerProfile.objects.filter")
+        profile_lookup.start().return_value.first.return_value = self.profile
+        self.addCleanup(profile_lookup.stop)
 
     def record(self, **changes):
         fields = dict(
@@ -89,7 +95,7 @@ class LocalMcmBookingTests(TestCase):
         self.assertEqual(event["date"], "2026-10-23")
 
     def test_coach_timetable_rejects_a_cross_learner_review_key_collision(self):
-        self.record()
+        self.record(event_key=self.key)
         resolved = {"events": [{**self.base, "learnerId": "999"}], "sourceCounts": {},
                     "reviewGenerationIssues": [], "aptemProfileIds": {211, 999}}
         with patch.object(views, "fetch_owner_active_learner_profiles", return_value=[]), \
@@ -207,7 +213,7 @@ class LocalMcmBookingTests(TestCase):
         from .migrated_completion_views import _mirror_status, _pdf_context
         record = self.record()
         overlay = SimpleNamespace(event_key=self.key, owner_email=self.owner, learner_id=211,
-                                  status="awaiting-signature")
+                                  source_review_id=62, status="awaiting-signature")
         _mirror_status(overlay)
         record.refresh_from_db()
         self.assertEqual(record.status, "awaiting-signature")
@@ -218,7 +224,7 @@ class LocalMcmBookingTests(TestCase):
     def test_meeting_intelligence_uses_the_same_owned_record(self):
         from . import migrated_intelligence_views as intelligence
         record = self.record()
-        overlay = SimpleNamespace(event_key=self.key, owner_email=self.owner, learner_id=211)
+        overlay = SimpleNamespace(event_key=self.key, owner_email=self.owner, learner_id=211, source_review_id=62)
         definition = {"template": {"reviewTypeCode": "aptem_mcm"}}
         with patch.object(intelligence, "_coach_review", return_value=(self.owner, definition)), \
              patch.object(views, "_owned_migrated_overlay", return_value=overlay):
