@@ -801,19 +801,19 @@ export function Sidebar({
         aria-label={`${roleLabel} mobile navigation`}
         aria-hidden={!mobileOpen}
         inert={!mobileOpen}
-        className={`fixed left-0 top-0 z-50 h-screen shadow-xl transition-transform duration-300 ease-out lg:hidden ${role === 'learner' ? 'w-[min(240px,86vw)]' : 'w-[268px]'} ${mobileOpen ? 'translate-x-0' : '-translate-x-full'}`}
+        className={`fixed left-0 top-0 z-50 h-screen shadow-xl transition-transform duration-300 ease-out lg:hidden ${look === 'learner' ? 'w-[min(240px,86vw)]' : 'w-[268px]'} ${mobileOpen ? 'translate-x-0' : '-translate-x-full'}`}
       >
-        {role === 'learner' ? learnerPanel('mobile') : panel('expanded')}
+        {look === 'learner' ? learnerPanel('mobile') : panel('expanded')}
         <button
           type="button"
           onClick={onCloseMobile}
           aria-label="Close navigation"
-          className={`absolute right-2.5 top-3 z-20 flex cursor-pointer items-center justify-center rounded-lg transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#f5c94f] ${role === 'learner' ? 'h-11 w-11 text-white hover:bg-white/15' : 'h-8 w-8 text-foreground-400 hover:bg-primary-50 hover:text-primary-700'}`}
+          className={`absolute right-2.5 top-3 z-20 flex cursor-pointer items-center justify-center rounded-lg transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#f5c94f] ${look === 'learner' ? 'h-11 w-11 text-white hover:bg-white/15' : 'h-8 w-8 text-foreground-400 hover:bg-primary-50 hover:text-primary-700'}`}
         >
           <X size={18} strokeWidth={1.8} aria-hidden="true" />
         </button>
       </div>
-      {role === 'learner' && signOutOpen && createPortal(
+      {look === 'learner' && signOutOpen && createPortal(
         <SignOutConfirmModal
           displayName={userName || auth.user?.fullName || 'User'}
           email={auth.user?.email || 'Signed in'}

@@ -489,6 +489,7 @@ export function WorkspaceShell({
             role={chromeRole}
             workspaceLabel={personal ? 'Learner' : roleLabel}
             personalLearning={Boolean(personal)}
+            sidebarSignOut={appearance === 'learner'}
           />
         )}
 

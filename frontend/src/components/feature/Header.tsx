@@ -28,6 +28,8 @@ interface HeaderProps {
   role?: string;
   workspaceLabel?: string;
   personalLearning?: boolean;
+  /** The sidebar carries its own Sign out (the learner look), so the floating one would duplicate it. */
+  sidebarSignOut?: boolean;
 }
 
 /** "Demo Admin" -> "DA". A single word falls back to its first two letters. */
@@ -170,7 +172,7 @@ export function SignOutConfirmModal({
 }
 
 // Notification sound
-export function Header({ accountButtonRef, pageTitle, pageIcon, pageSubtitle, headerExtras, onOpenSearch, userName = 'Sarah Mitchell', onToggleMobileSidebar, mobileSidebarOpen = false, mobileMenuButtonRef, role, workspaceLabel, personalLearning = false }: HeaderProps) {
+export function Header({ accountButtonRef, pageTitle, pageIcon, pageSubtitle, headerExtras, onOpenSearch, userName = 'Sarah Mitchell', onToggleMobileSidebar, mobileSidebarOpen = false, mobileMenuButtonRef, role, workspaceLabel, personalLearning = false, sidebarSignOut = false }: HeaderProps) {
   const { auth, logout } = useAuth();
   const { theme, toggleTheme } = useTheme();
   // Profile is the only dropdown left in the header, so the state that used to
@@ -507,7 +509,7 @@ export function Header({ accountButtonRef, pageTitle, pageIcon, pageSubtitle, he
       </div>
     </header>
 
-    {role && role !== 'coach' && role !== 'learner' && createPortal(
+    {role && role !== 'coach' && role !== 'learner' && !sidebarSignOut && createPortal(
       <button
         type="button"
         onClick={() => { setProfileOpen(false); setSignOutOpen(true); }}
