@@ -301,7 +301,7 @@ function SubjectCard({ subject, cover, tone = 'purple', onOpen, template, csrfTo
   const tutorName = planModule?.tutor_name?.trim() || 'To be assigned';
   const startDate = planModule?.start_date ? learningDate(planModule.start_date) : 'Not scheduled';
   const endDate = planModule?.end_date ? learningDate(planModule.end_date) : 'Not scheduled';
-  const sessionCount = planModule?.sessions_number;
+  const sessionCount = planModule?.educational_session_count;
   return <article className={`group ${styles.card} ${styles.subjectTheme} ${styles.moduleCard}`} data-tone={tone}>
     <button type="button" onClick={onOpen} className={styles.cardButton}>
       <div className="relative w-full"><Cover title={subject.title} url={cover} fallbackUrl={DEFAULT_MODULE_COVER} /></div>

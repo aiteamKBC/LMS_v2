@@ -107,6 +107,8 @@ import {
   // component, which is what the count in the rail and the Teams series are
   // both built from.
   moduleAuthoredLiveSessions,
+  applyLiveSessionLinkToComponents,
+  replaceModuleTeamsLinks,
   // Which authored weeks a ticked holiday falls on. States the fact only --
   // the plan is unchanged, and what the week becomes is the author's call.
   weeksTouchedByHoliday,
@@ -165,6 +167,8 @@ import { buildKsbMappingPrompt, describeKsbImport, exportModuleKsbWorkbook, impo
 // uses) can reuse them without importing this page.
 import { Checkbox, DurationInput, NumberInput, ReadOnlyInput, SelectInput, TextArea, TextInput } from './formInputs';
 import { TeamsMeetingModal } from './TeamsMeetingModal';
+import { ReplaceTeamsLinksDialog } from './ReplaceTeamsLinksDialog';
+import { RestoreTeamsDataDialog } from './RestoreTeamsDataDialog';
 import { KsbExcelPanel } from './KsbExcelPanel';
 import {
   CONTENT_STATUSES,
@@ -714,6 +718,8 @@ export default function ModuleBuilder() {
   // The Course structure rail's own Teams create dialog. Module-wide, not tied
   // to one live-session component, so it carries no component of its own.
   const [moduleTeamsMeetingOpen, setModuleTeamsMeetingOpen] = useState(false);
+  const [restoreTeamsDataOpen, setRestoreTeamsDataOpen] = useState(false);
+  const [replaceTeamsLinksOpen, setReplaceTeamsLinksOpen] = useState(false);
   const [ksbTarget, setKsbTarget] = useState<KsbTarget | null>(null);
   const [ksbMapModule, setKsbMapModule] = useState<ModuleBuilderListItem | null>(null);
   const [programmeKsbMap, setProgrammeKsbMap] = useState<ProgrammeKsbMapState | null>(null);
@@ -1882,6 +1888,51 @@ export default function ModuleBuilder() {
     setWorkingModule(current => (current ? recalculateModule(updater(current)) : current));
   }, [workingModuleProgrammeArchived]);
 
+  // Saved on its own, straight away, rather than left as an unsaved edit for
+  // the full structure save: on a large module that save sends and rewrites
+  // every component, and it timed out for a change touching a dozen rows. A
+  // rejection propagates to the dialog, which stays open and shows why.
+  const applyTeamsLinkReplacement = useCallback(async (weekIds: string[], link: string) => {
+    const selectedWeekIds = [...new Set(weekIds.map(value => String(value || '').trim()).filter(Boolean))];
+    const replacement = String(link || '').trim();
+    const current = workingModuleRef.current;
+    if (!selectedWeekIds.length || !replacement || !current) return;
+    if (workingModuleProgrammeArchived) throw new Error(ARCHIVED_PROGRAMME_BUILDER_NOTICE);
+    const result = await replaceModuleTeamsLinks(current.catalogueId, {
+      weekIds: selectedWeekIds,
+      link: replacement,
+      expectedRevision: serverRevisionRef.current,
+    });
+    const patch = (module: ModuleCatalogueItem) => recalculateModule(
+      applyLiveSessionLinkToComponents(module, result.updatedComponentIds, result.link),
+    );
+    // The stored copy now holds the new links, so they are part of what
+    // "saved" means: patched into the baseline as well as the workspace, they
+    // read as saved rather than as an edit still waiting, and any other unsaved
+    // work in the tab stays exactly as unsaved as it was.
+    if (savedModuleSnapshotRef.current) {
+      savedModuleSnapshotRef.current = moduleSnapshot(patch(JSON.parse(savedModuleSnapshotRef.current) as ModuleCatalogueItem));
+    }
+    // Only when nothing else had moved the module: then the new revision is
+    // exactly this workspace plus these links. Otherwise the old one stays, and
+    // the next save merges the stored module first, as for any outside write.
+    if (result.revisionWasCurrent && result.structureRevision) serverRevisionRef.current = result.structureRevision;
+    setWorkingModule(latest => (latest && latest.catalogueId === current.catalogueId ? patch(latest) : latest));
+    setReplaceTeamsLinksOpen(false);
+    const weekCount = selectedWeekIds.length;
+    void showCurriculumAlert(result.updated
+      ? {
+        title: `${result.updated} Teams link${result.updated === 1 ? '' : 's'} replaced`,
+        text: `Saved across ${weekCount} week${weekCount === 1 ? '' : 's'}. The live sessions in those weeks now use the new link. The Teams meetings and their invitations were not changed.`,
+        icon: 'success',
+      }
+      : {
+        title: 'No links were replaced',
+        text: 'None of the selected weeks has a saved live session with a link to replace. Save the module first if you have just added one.',
+        icon: 'info',
+      });
+  }, [workingModuleProgrammeArchived]);
+
   // A week can plan as many live sessions as its group has delivery days. Past
   // that there is no date to give one, so the author is asked before it
   // happens instead of discovering a "No date yet" row afterwards. Nothing is
@@ -2130,9 +2181,16 @@ export default function ModuleBuilder() {
     autoSaveAttemptRef.current = sentSnapshot;
     try {
       setWorkingModule(moduleToSave);
+      // The copy the server holds at that revision, so only what the reader
+      // changed since is sent and written. Without one -- a module never saved
+      // -- the whole structure goes, as it always did.
+      const base = savedModuleSnapshotRef.current
+        ? JSON.parse(savedModuleSnapshotRef.current) as ModuleCatalogueItem
+        : null;
       const saved = await saveModuleStructure(moduleToSave.catalogueId, moduleToSave, {
         expectedRevision: serverRevisionRef.current,
         source,
+        base,
       });
       if (saveRequestRef.current !== requestId) return null;
       // The write landed, so this is the version the next save is measured
@@ -3227,6 +3285,8 @@ export default function ModuleBuilder() {
               onAddWeekFromTemplate={() => setWeekTemplateImportOpen(true)}
               onReuseComponents={weekId => setReusePickerWeekId(weekId)}
               onCreateTeamsMeeting={() => setModuleTeamsMeetingOpen(true)}
+              onReplaceTeamsLinks={() => setReplaceTeamsLinksOpen(true)}
+              onRestoreTeamsData={() => setRestoreTeamsDataOpen(true)}
               focusedComponentId={focusedComponentId}
               onAddWeek={() => {
                 const week = createEmptyWeek(workingModule.id, workingModule.weekStructure.length + 1);
@@ -3284,6 +3344,9 @@ export default function ModuleBuilder() {
                         && updatedSettings
                         && Object.prototype.hasOwnProperty.call(updatedSettings, 'liveSessionUrl');
                       const sharedTeamsUrl = sharesTeamsLink ? updatedSettings.liveSessionUrl : undefined;
+                      const selectedUpdates = sharesTeamsLink
+                        ? { ...updates, settings: { ...updatedSettings, liveSessionLinkOverride: '' } }
+                        : updates;
                       let calendarSeries: NonNullable<TeamsMeetingResult['meeting']['calendarSeries']> = [];
                       try { calendarSeries = JSON.parse(String(updatedSettings?.teamsCalendarSeries || '[]')); } catch { /* Legacy manual links have no series manifest. */ }
                       return {
@@ -3291,7 +3354,7 @@ export default function ModuleBuilder() {
                         weekStructure: module.weekStructure.map(week => ({
                           ...week,
                           components: week.components.map(component => {
-                            if (component.id === selectedComponent.id) return { ...component, ...updates };
+                            if (component.id === selectedComponent.id) return { ...component, ...selectedUpdates };
                             if (sharesTeamsLink && component.type === 'live-session') {
                               const date = String(component.settings.sessionDate || week.sessionDate || '');
                               const day = /^\d{4}-\d{2}-\d{2}$/.test(date)
@@ -3301,6 +3364,7 @@ export default function ModuleBuilder() {
                               return {
                                 ...component,
                                 settings: { ...component.settings, liveSessionUrl: daySeries?.joinUrl || sharedTeamsUrl,
+                                  liveSessionLinkOverride: '',
                                   ...(daySeries ? {
                                     teamsMeetingUrl: daySeries.joinUrl, teamsEventId: daySeries.eventId,
                                     teamsOnlineMeetingId: daySeries.onlineMeetingId || '',
@@ -3474,6 +3538,27 @@ export default function ModuleBuilder() {
               setWorkingModule(next);
             }}
             onClose={() => setModuleTeamsMeetingOpen(false)}
+          />
+        )}
+        {restoreTeamsDataOpen && workingModule && (
+          <RestoreTeamsDataDialog
+            module={workingModule}
+            unsavedChanges={hasUnsavedWorkingModuleChanges}
+            onRestored={restored => {
+              if (restored.catalogueId !== workingModule.catalogueId) return;
+              const next = recalculateModule({ ...workingModule, ...restored, sourceModule: workingModule.sourceModule || restored.sourceModule });
+              savedModuleSnapshotRef.current = moduleSnapshot(next);
+              serverRevisionRef.current = restored.structureRevision || '';
+              setWorkingModule(next);
+            }}
+            onClose={() => setRestoreTeamsDataOpen(false)}
+          />
+        )}
+        {replaceTeamsLinksOpen && workingModule && (
+          <ReplaceTeamsLinksDialog
+            weeks={workingModule.weekStructure}
+            onClose={() => setReplaceTeamsLinksOpen(false)}
+            onApply={applyTeamsLinkReplacement}
           />
         )}
         {reusePickerWeekId && (
@@ -4117,7 +4202,7 @@ function WorkspaceActionFooter({ saving, saved, status, autoSave, onToggleAutoSa
 // expanding a week renders its parts timeline (the shared WeekComponentRail,
 // nested variant) indented underneath, so the week list and "the week, in
 // order" view are one nested panel instead of two side-by-side ones.
-function CourseStructure({ module, selection, dragState, onDragState, onSelectWeek, onSelectComponent, onAddWeek, onAddWeekFromTemplate, onDeleteWeek, onDuplicateWeek, onDropReorder, onComponentsChange, onCopyComponentToWeek, onWeekHolidayNoteChange, onReuseComponents, onCreateTeamsMeeting, focusedComponentId = '', pointsByType, plannedSessions, plannedSlots, expandedWeekIds, onExpandedWeekIdsChange, allowMultipleExpanded = false }: {
+function CourseStructure({ module, selection, dragState, onDragState, onSelectWeek, onSelectComponent, onAddWeek, onAddWeekFromTemplate, onDeleteWeek, onDuplicateWeek, onDropReorder, onComponentsChange, onCopyComponentToWeek, onWeekHolidayNoteChange, onReuseComponents, onCreateTeamsMeeting, onReplaceTeamsLinks, onRestoreTeamsData, focusedComponentId = '', pointsByType, plannedSessions, plannedSlots, expandedWeekIds, onExpandedWeekIdsChange, allowMultipleExpanded = false }: {
   module: ModuleCatalogueItem;
   selection: Selection | null;
   dragState: DragState;
@@ -4146,6 +4231,8 @@ function CourseStructure({ module, selection, dragState, onDragState, onSelectWe
    * first create is offered from inside the builder.
    */
   onCreateTeamsMeeting: () => void;
+  onReplaceTeamsLinks: () => void;
+  onRestoreTeamsData: () => void;
   focusedComponentId?: string;
   pointsByType: Partial<Record<ModuleComponentType, number>>;
   /**
@@ -4409,11 +4496,9 @@ function CourseStructure({ module, selection, dragState, onDragState, onSelectWe
             </button>
           </div>
         </div>
-        {/* Creating is done here, over the weeks the dates come from: sending a
-            reader to another page to press one button lost them the rail they
-            were reading. Everything after the create -- the calendar's detail,
-            its updates, its attendance -- still lives on the Teams page, which
-            "Restore saved Teams data" carries them to. */}
+        {/* Teams actions stay over the structure the author is reading. The
+            calendar dialog owns Microsoft updates; restoration is a local,
+            explicit write-back into this module's saved components. */}
         {module.catalogueId && (
           <div className="mt-2 flex flex-wrap items-center gap-1.5">
             <button
@@ -4427,14 +4512,25 @@ function CourseStructure({ module, selection, dragState, onDragState, onSelectWe
               <AppIcon className="ri-calendar-event-line"></AppIcon>
               {moduleHasTeamsCalendar(module) ? 'Update Teams meeting' : 'Create Teams meeting'}
             </button>
-            <Link
-              to={`/curriculum/teams-meetings?module=${encodeURIComponent(module.catalogueId)}`}
-              title="Restore this module's saved Teams data on the Teams Meetings page"
+            <button
+              type="button"
+              onClick={onReplaceTeamsLinks}
+              title="Replace the saved link in live-session components from selected weeks"
               className="inline-flex h-8 items-center justify-center gap-1.5 rounded-lg border border-primary-200 bg-primary-50 px-2.5 text-[11px] font-bold text-primary-700 transition-smooth hover:border-primary-300 hover:bg-primary-100"
             >
-              <AppIcon className="ri-refresh-line"></AppIcon>
-              Restore saved Teams data
-            </Link>
+              <AppIcon className="ri-link-m"></AppIcon>
+              Replace Teams links
+            </button>
+            <button
+              type="button"
+              onClick={onRestoreTeamsData}
+              aria-haspopup="dialog"
+              title="Review and restore this module's saved Teams calendar without leaving the builder"
+              className="inline-flex h-8 items-center justify-center gap-1.5 rounded-lg border border-violet-200 bg-violet-50 px-2.5 text-[11px] font-bold text-violet-700 transition-smooth hover:border-violet-300 hover:bg-violet-100"
+            >
+              <AppIcon className="ri-database-2-line"></AppIcon>
+              Restore Teams data
+            </button>
           </div>
         )}
         {/* What this module actually delivers, stated rather than implied: one

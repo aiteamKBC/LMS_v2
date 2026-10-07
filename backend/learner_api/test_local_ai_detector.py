@@ -4,9 +4,13 @@ from . import local_ai_detector as detector
 
 
 class LocalDetectorTests(unittest.TestCase):
-    def test_short_text_is_not_a_clean_result(self):
-        result = detector.check_text('brief answer', predict=lambda _: self.fail('must not infer'))
-        self.assertEqual(result['status'], 'insufficient_text')
+    def test_short_text_is_assessed_as_one_passage(self):
+        text = 'I learned that ' + 'marketing ' * 17
+        seen = []
+        result = detector.check_text(text, predict=lambda passage: seen.append(passage) or .1)
+        self.assertEqual(result['status'], 'no_signal')
+        self.assertEqual(seen, [text])
+        self.assertEqual(result['segments'], [{'start': 0, 'end': len(text), 'flagged': False}])
 
     def test_mixed_windows_preserve_all_text_and_utf16_offsets(self):
         text = '\U0001f600 ' + 'learning ' * 360

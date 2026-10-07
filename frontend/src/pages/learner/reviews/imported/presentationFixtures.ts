@@ -1,4 +1,11 @@
 /** Synthetic examples for component tests and isolated visual verification. */
+export const metricParityExample = [
+  { progressType: 2, title: 'Learning plan progress', current: 14, max: 87, target: 20, completedCount: 29, totalCount: 87, targetCount: 20 },
+  { progressType: 4, title: 'Example Apprenticeship Standard', current: 79.28442589156874, max: 100, target: 85.71428571428571 },
+  { progressType: 6, title: 'Off-the-job hours progress', completedTime: 4169, plannedHours: 576, minimumRequiredTime: 33420, forecastTime: 35224, target: 7025.5441478439425, max: 34560 },
+  { progressType: 7, title: 'Programme progress', current: 13.75, max: 100, target: 0, startDate: '2025-10-23T00:00:00', currentDate: '2026-01-29T12:03:02', plannedEndDate: '2027-02-22T00:00:00', expectedEndDate: '2027-05-22T00:00:00' },
+];
+
 export const progressExample = [
   { completedCount: 107, current: 99, max: 169, progressType: 2, requiredCount: 0, target: 117, targetCount: 117, totalCount: 169, title: 'Learning plan progress' },
   { current: 86.6357, max: 100, minTarget: 88.6248, progressType: 4, submitted: 86.6357, target: 88.6248, title: 'Example apprenticeship standard' },

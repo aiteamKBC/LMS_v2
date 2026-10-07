@@ -371,6 +371,14 @@ it('honours the MCM navigation restriction without hiding Meetings', () => {
   expect(within(rail).getByRole('button', { name: 'Meetings' })).toBeVisible();
 });
 
+it('opens the separate Review list from the coach Meetings menu', () => {
+  const { rail } = showWorkspace('coach', '/coach/reviews');
+  const review = within(rail).getByRole('link', { name: 'Review' });
+  expect(review).toHaveAttribute('href', '/coach/reviews');
+  expect(review).toHaveAttribute('aria-current', 'page');
+  expect(within(rail).getByRole('link', { name: 'Progress Reviews' })).toBeVisible();
+});
+
 it('shows Quality without an availability tag in either sidebar mode', () => {
   const { sidebar, rail, panel } = showWorkspace('curriculum', '/curriculum/quality');
   const qualityLink = within(rail).getByRole('link', { name: 'Quality' });

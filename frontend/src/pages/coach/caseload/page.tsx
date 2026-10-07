@@ -13,13 +13,14 @@
 // This component owns state and wiring only. Anything that renders lives in
 // ./components, anything that computes lives in ./lib.
 // ============================================================================
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Navigate, useNavigate } from 'react-router-dom';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { useAuth } from '@/hooks/useAuth';
 import { useCoachIdentity } from '@/hooks/useCoachIdentity';
 import { useListQueryState } from '@/hooks/useListQueryState';
 import { loadCoachCaseload } from '@/features/coach/learners/api/caseloadApi';
+import { fetchDashboardLearners, getDashboardLearnerPageCache, invalidateDashboardLearners } from '@/features/coach/dashboard/api/dashboardApi';
 import { applyEngagementStudentStatuses } from '@/features/coach/learners/selectors/caseloadSelectors';
 
 import { CaseloadEmpty, CaseloadError, CaseloadLoading, CaseloadNoMatches } from './components/CaseloadStates';
@@ -38,6 +39,7 @@ import {
   isHiddenCaseloadProgrammeStatus,
   isVisibleCaseloadLearner,
   normalizeLearner,
+  parseDisplayDate,
   otjhProgressAsOfToday,
   startOfToday,
 } from './lib/format';
@@ -84,7 +86,24 @@ function hasAuthoritativePerformanceStatus(value?: string | null): boolean {
   return ['at-risk', 'on-track', 'high', 'new-starter', 'unavailable'].includes(normalizedPerformanceStatus(value));
 }
 
-export function CoachCaseloadContent({ embedded = false, embeddedLearners }: { embedded?: boolean; embeddedLearners?: unknown[] }) {
+function normalizeDashboardRow(source: CaseloadApiLearner): Learner {
+  const reviewDate = (value?: string | null) => {
+    const date = value && /^\d{4}-\d{2}-\d{2}/.test(value) ? parseDisplayDate(value) : null;
+    return date ? new Intl.DateTimeFormat('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }).format(date) : value || undefined;
+  };
+  return normalizeLearner({
+    ...source,
+    programmeName: source.programmeName || (source as CaseloadApiLearner & { programme?: string }).programme,
+    lastProgressReview: reviewDate(hasValue(source.lastProgressReview) ? source.lastProgressReview : source.lastPr),
+    lastReview: reviewDate(hasValue(source.lastReview) ? source.lastReview : source.lastMcm),
+  }, (source.attendanceAvailable ?? source.attendanceRateAvailable) ? {
+    id: source.id, learner: source.name || '', attendance: source.attendanceRate, hasAttendance: true,
+    sessions: source.attendanceSessions, present: source.attendancePresent, absent: source.attendanceAbsent,
+    lastSession: source.attendanceLastSession, lastSessionDate: source.attendanceLastSessionDate,
+  } : null);
+}
+
+export function CoachCaseloadContent({ embedded = false, embeddedLearners, dashboard = false }: { embedded?: boolean; embeddedLearners?: unknown[]; dashboard?: boolean }) {
   const navigate = useNavigate();
   const { auth, isInitialized } = useAuth();
   // Whose caseload this is: the signed-in coach, or the coach an administrator
@@ -92,12 +111,15 @@ export function CoachCaseloadContent({ embedded = false, embeddedLearners }: { e
   const coach = useCoachIdentity();
   const authenticatedCoachEmail = coach.email;
   const authenticatedCoachName = coach.name;
+  const accountEmail = auth.account?.email;
+  const hasAccount = Boolean(auth.account);
 
   const [ownerName, setOwnerName] = useState('Coach');
   const [learners, setLearners] = useState<Learner[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [reloadToken, setReloadToken] = useState(0);
+  const [serverFilterData, setServerFilterData] = useState<Record<string, { urgency?: number }>>({});
   const [serverTotal, setServerTotal] = useState(0);
   const [serverTotalPages, setServerTotalPages] = useState(0);
   const [serverFilterOptions, setServerFilterOptions] = useState<{
@@ -113,7 +135,8 @@ export function CoachCaseloadContent({ embedded = false, embeddedLearners }: { e
   const sortKey = String(query.sort) as SortKey;
   const sortDirection = String(query.direction) as SortDirection;
   const currentPage = Number(query.page);
-  const usesDashboardLearners = embedded && Array.isArray(embeddedLearners);
+  const usesDashboardLearners = dashboard || (embedded && Array.isArray(embeddedLearners));
+  const usesDashboardLayout = dashboard || usesDashboardLearners;
   const otjhStatus = String(query.otjhStatus);
 
   const [quickView, setQuickView] = useState<{ learnerId: string; tab: QuickViewTab } | null>(null);
@@ -122,11 +145,14 @@ export function CoachCaseloadContent({ embedded = false, embeddedLearners }: { e
   const [selectedLearnerIds, setSelectedLearnerIds] = useState<Set<string>>(() => new Set());
   const [isExportingPdf, setIsExportingPdf] = useState(false);
   const [exportError, setExportError] = useState<string | null>(null);
+  const exportController = useRef<AbortController | null>(null);
+  useEffect(() => () => exportController.current?.abort(), [authenticatedCoachEmail]);
 
   // One "today" per mount. Every day-offset on the page is measured from the
   // same instant, so two rows can never disagree about how far away a date is.
   const today = useMemo(() => startOfToday(), []);
   const caseloadUrl = useMemo(() => {
+    if (dashboard) return '';
     const query = new URLSearchParams({ page: String(currentPage), page_size: String(PAGE_SIZE) });
     if (filters.search.trim()) query.set('search', filters.search.trim());
     if (filters.cohort !== 'all') query.set('cohort', filters.cohort);
@@ -141,13 +167,26 @@ export function CoachCaseloadContent({ embedded = false, embeddedLearners }: { e
       query.set('direction', sortDirection);
     }
     return `${CASELOAD_ENDPOINT}?${query}`;
-  }, [currentPage, filters.cohort, filters.group, filters.programStatus, filters.search, sortDirection, sortKey, statusFilter]);
+  }, [currentPage, dashboard, filters.cohort, filters.group, filters.programStatus, filters.search, sortDirection, sortKey, statusFilter]);
+  const pageCacheKey = `${(accountEmail || '').trim().toLowerCase()}::${authenticatedCoachEmail.trim().toLowerCase()}`;
 
   useEffect(() => {
     if (!isInitialized) return;
     const controller = new AbortController();
 
     async function loadCaseload() {
+      const cached = dashboard ? getDashboardLearnerPageCache(pageCacheKey) : undefined;
+      if (cached) {
+        setLearners((cached.results || cached.learners || []).map(normalizeDashboardRow));
+        setOwnerName(cached.owner?.name || authenticatedCoachName);
+        setServerTotal(cached.pagination?.total ?? 0);
+        setServerTotalPages(cached.pagination?.totalPages ?? 0);
+        setServerFilterOptions(cached.filterOptions || null);
+        setServerFilterData(cached.learnerFilterData || {});
+        setLoading(false);
+        setError(null);
+        return;
+      }
       setLoading(true);
       setError(null);
 
@@ -155,7 +194,7 @@ export function CoachCaseloadContent({ embedded = false, embeddedLearners }: { e
         setOwnerName(authenticatedCoachName);
         setLearners([]);
         setError(
-          auth.account
+          hasAccount
             ? 'Coach access is required to load this caseload.'
             : 'Sign in with a coach account to load live learner data. Preview mode does not have a server session.',
         );
@@ -184,11 +223,14 @@ export function CoachCaseloadContent({ embedded = false, embeddedLearners }: { e
       }
 
       try {
-        const { caseload: data, analytics } = await loadCoachCaseload(caseloadUrl, controller.signal);
+        const { caseload: data, analytics } = dashboard
+          ? { caseload: await fetchDashboardLearners(controller.signal, pageCacheKey), analytics: null }
+          : await loadCoachCaseload(caseloadUrl, controller.signal);
         if (controller.signal.aborted) return;
         setOwnerName(data.owner?.name || authenticatedCoachName);
-        const pageResults = applyEngagementStudentStatuses(data.results || data.learners || [], analytics);
-        setLearners(pageResults.map((source) => normalizeLearner({
+        const sourceResults = data.results || data.learners || [];
+        const pageResults = dashboard ? sourceResults : applyEngagementStudentStatuses(sourceResults, analytics);
+        setLearners(pageResults.map((source) => dashboard ? normalizeDashboardRow(source) : normalizeLearner({
           ...source,
           lastProgressReview: source.lastProgressReview || source.lastPr || undefined,
           lastReview: source.lastReview || source.lastMcm || undefined,
@@ -201,6 +243,7 @@ export function CoachCaseloadContent({ embedded = false, embeddedLearners }: { e
         setServerTotal(data.pagination?.total ?? pageResults.length);
         setServerTotalPages(data.pagination?.totalPages ?? (pageResults.length ? 1 : 0));
         setServerFilterOptions(data.filterOptions || null);
+        setServerFilterData(data.learnerFilterData || {});
       } catch (err) {
         if (controller.signal.aborted) return;
         console.error('Unable to load coach caseload', err);
@@ -213,7 +256,7 @@ export function CoachCaseloadContent({ embedded = false, embeddedLearners }: { e
 
     loadCaseload();
     return () => controller.abort();
-  }, [auth.account, authenticatedCoachEmail, authenticatedCoachName, caseloadUrl, embedded, embeddedLearners, isInitialized, reloadToken]);
+  }, [accountEmail, authenticatedCoachEmail, authenticatedCoachName, caseloadUrl, dashboard, embedded, embeddedLearners, hasAccount, isInitialized, pageCacheKey, reloadToken]);
 
   // --- derived data ---------------------------------------------------------
 
@@ -236,13 +279,13 @@ export function CoachCaseloadContent({ embedded = false, embeddedLearners }: { e
     programStatus: filterOptions.programStatus.filter(option => !isHiddenCaseloadProgrammeStatus(option.value)),
   }), [filterOptions]);
 
-  const toolbarOptions = useMemo(() => usesDashboardLearners ? {
+  const toolbarOptions = useMemo(() => usesDashboardLayout ? {
     ...visibleFilterOptions,
     cohort: [
       ...visibleFilterOptions.cohort.map(option => ({ value: `cohort:${option.value}`, label: `Cohort: ${option.label}` })),
       ...visibleFilterOptions.group.map(option => ({ value: `group:${option.value}`, label: `Group: ${option.label}` })),
     ],
-  } : visibleFilterOptions, [visibleFilterOptions, usesDashboardLearners]);
+  } : visibleFilterOptions, [visibleFilterOptions, usesDashboardLayout]);
 
   const matched = useMemo(() => {
     return visibleLearners.filter((learner) => {
@@ -302,13 +345,13 @@ export function CoachCaseloadContent({ embedded = false, embeddedLearners }: { e
     const numeric = (value: number | null | undefined, available = true) => available && Number.isFinite(value) ? Number(value) : null;
     const date = (value: string | null | undefined) => {
       if (!hasValue(value)) return null;
-      const timestamp = Date.parse(value!);
+      const timestamp = parseDisplayDate(value!)?.getTime() ?? NaN;
       return Number.isNaN(timestamp) ? null : timestamp;
     };
     const valueFor = (learner: Learner): number | string | null => {
       switch (sortKey) {
         case 'name': return learner.name;
-        case 'otjh': return numeric(learner.overallProgress, learner.overallProgressAvailable);
+        case 'otjh': return dashboard ? numeric(learner.otjhProgressAsOfToday) : numeric(learner.overallProgress, learner.overallProgressAvailable);
         case 'ksb': return numeric(learner.ksbProgress, learner.ksbProgressAvailable);
         case 'components': return learner.componentsPlanned ? numeric(((learner.componentsCompleted ?? 0) / learner.componentsPlanned) * 100) : null;
         case 'attendance': return numeric(learner.liveAttendanceRate, learner.liveAttendanceRateAvailable);
@@ -316,7 +359,7 @@ export function CoachCaseloadContent({ embedded = false, embeddedLearners }: { e
         case 'activity': return date([learner.lastActivity, learner.attendanceLastSession, learner.lastSubmittedEvidence, learner.lastContact].find(hasValue));
         case 'progress-review': return date(learner.lastProgressReview);
         case 'monthly-coaching': return date(learner.lastReview);
-        default: return insights.get(learner.id)?.urgency ?? 0;
+        default: return dashboard ? (serverFilterData[learner.id]?.urgency ?? insights.get(learner.id)?.urgency ?? 0) : insights.get(learner.id)?.urgency ?? 0;
       }
     };
     const direction = sortDirection === 'asc' ? 1 : -1;
@@ -331,7 +374,7 @@ export function CoachCaseloadContent({ embedded = false, embeddedLearners }: { e
         : leftValue - Number(rightValue);
       return (delta * direction) || left.name.localeCompare(right.name);
     });
-  }, [matched, insights, sortDirection, sortKey]);
+  }, [dashboard, matched, insights, serverFilterData, sortDirection, sortKey]);
 
   const handleSort = useCallback((key: SortKey) => {
     setQueryValues({
@@ -340,7 +383,7 @@ export function CoachCaseloadContent({ embedded = false, embeddedLearners }: { e
     }, { resetPage: true });
   }, [setQueryValues, sortDirection, sortKey]);
 
-  const effectivePageSize = usesDashboardLearners ? EMBEDDED_PAGE_SIZE : PAGE_SIZE;
+  const effectivePageSize = usesDashboardLayout ? EMBEDDED_PAGE_SIZE : PAGE_SIZE;
   const effectiveTotal = usesDashboardLearners ? sorted.length : serverTotal;
   const totalPages = Math.max(1, usesDashboardLearners
     ? Math.ceil(effectiveTotal / effectivePageSize)
@@ -481,12 +524,15 @@ export function CoachCaseloadContent({ embedded = false, embeddedLearners }: { e
     });
   }, [paginated]);
 
-  const handleRetry = useCallback(() => setReloadToken((token) => token + 1), []);
+  const handleRetry = useCallback(() => {
+    if (dashboard) invalidateDashboardLearners(pageCacheKey);
+    setReloadToken((token) => token + 1);
+  }, [dashboard, pageCacheKey]);
 
   // --- render --------------------------------------------------------------
 
-  const hasFiltersApplied = (usesDashboardLearners ? otjhStatus !== 'all' : statusFilter !== 'all')
-    || Object.entries(filters).some(([key, value]) => (!usesDashboardLearners || ['search', 'cohort', 'programStatus'].includes(key)) && value !== INITIAL_FILTERS[key as keyof CaseloadFilterState]);
+  const hasFiltersApplied = (usesDashboardLayout ? otjhStatus !== 'all' : statusFilter !== 'all')
+    || Object.entries(filters).some(([key, value]) => (!usesDashboardLayout || ['search', 'cohort', 'programStatus'].includes(key)) && value !== INITIAL_FILTERS[key as keyof CaseloadFilterState]);
   const allPageSelected = paginated.length > 0 && paginated.every((learner) => selectedLearnerIds.has(learner.id));
 
   // A super-admin cannot read an arbitrary coach caseload until a coach has
@@ -528,7 +574,7 @@ export function CoachCaseloadContent({ embedded = false, embeddedLearners }: { e
         ) : null}
 
         <section className={styles.panel}>
-          {!error && visibleLearners.length > 0 ? (
+          {!error && (visibleLearners.length > 0 || (dashboard && serverFilterOptions)) ? (
             <div className={styles.toolbar}>
               <LearnerToolbar
                 filters={filters}
@@ -537,7 +583,7 @@ export function CoachCaseloadContent({ embedded = false, embeddedLearners }: { e
                 onFilterChange={handleFilterChange}
                 onStatusFilterChange={handleStatusFilterChange}
                 onClearAll={handleClearAll}
-                dashboardFilters={usesDashboardLearners ? {
+                dashboardFilters={usesDashboardLayout ? {
                   otjhStatus,
                   onStatusChange: (value) => setQueryValues({ otjhStatus: value }, { resetPage: true }),
                 } : undefined}
@@ -589,7 +635,7 @@ export function CoachCaseloadContent({ embedded = false, embeddedLearners }: { e
               onRetry={handleRetry}
               action={needsLiveSignIn ? { label: 'Sign in', onClick: () => navigate('/login', { state: { from: '/workspace/coach#learner-caseload' } }) } : undefined}
             />
-          ) : visibleLearners.length === 0 ? (
+          ) : visibleLearners.length === 0 && (!dashboard || !hasFiltersApplied) ? (
             <CaseloadEmpty />
           ) : sorted.length === 0 ? (
             <CaseloadNoMatches onClearFilters={handleClearAll} />

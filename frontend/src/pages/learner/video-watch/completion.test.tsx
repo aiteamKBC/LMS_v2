@@ -41,6 +41,11 @@ vi.mock('@/components/feature/WorkspaceShell', () => ({ WorkspaceShell: ({ child
 vi.mock('./AssignmentSubmissionWizard', () => ({ AssignmentSubmissionWizard: ({ questionFiles }: {
   questionFiles?: { url: string; fileName: string }[];
 }) => <div>{questionFiles?.map(file => <span key={file.url} data-testid="assignment-instruction" data-url={file.url}>{file.fileName}</span>)}</div> }));
+vi.mock('@/components/feature/SessionResults', () => ({
+  SessionResults: ({ onRecordingWatchTimeChange }: { onRecordingWatchTimeChange?: (seconds: number) => void }) => (
+    <button type="button" onClick={() => onRecordingWatchTimeChange?.(37)}>Simulate recording watch</button>
+  ),
+}));
 
 const component = (id: string, weekId: string, date: string) => ({
   componentId: id, component: 'Live Session · Live Teams Session 1', type: 'live_session',
@@ -132,6 +137,42 @@ it('keeps direct audio tied to real playback events', () => {
   fireEvent.ended(audio);
   expect(onPlayingChange).toHaveBeenLastCalledWith(false);
   expect(onEnded).toHaveBeenCalledOnce();
+});
+
+it('waits for Finish before offering reflection after media playback ends', async () => {
+  const audio = {
+    ...first,
+    componentId: 'A1',
+    component: 'Podcast',
+    type: 'audio',
+    audioUrl: 'https://example.test/podcast.mp3',
+    reflectionRequired: true,
+  };
+  vi.mocked(fetchLearnerDetail).mockResolvedValue({ ...detail(), components: [audio] } as unknown as LearnerDetail);
+
+  mount('A1');
+
+  await waitFor(() => expect(document.querySelector('audio')).toBeInTheDocument());
+  fireEvent.ended(document.querySelector('audio')!);
+
+  expect(screen.queryByRole('dialog', { name: 'Do you want to complete a reflection?' })).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: 'Finish' }));
+  expect(await screen.findByRole('dialog', { name: 'Do you want to complete a reflection?' })).toBeVisible();
+});
+
+it('lays out recording watch time, evidence, manual input, and Finish in one live-session panel', async () => {
+  const live = { ...first, teamsLiveSessionId: 'LIVE-1', teamsSessionNumber: 1 };
+  vi.mocked(fetchLearnerDetail).mockResolvedValue({ ...detail(), components: [live] } as unknown as LearnerDetail);
+  mount();
+
+  const input = await screen.findByLabelText('Minutes spent');
+  const timer = screen.getByRole('timer', { name: 'Time on this activity: 00 hours, 00 minutes, 00 seconds' });
+  const actionPanel = timer.parentElement;
+  expect(actionPanel).toContainElement(input);
+  expect(actionPanel).toContainElement(screen.getByText('Upload evidence'));
+  expect(actionPanel).toContainElement(screen.getByRole('button', { name: 'Finish' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Simulate recording watch' }));
+  expect(screen.getByRole('timer')).toHaveAccessibleName('Time on this activity: 00 hours, 00 minutes, 37 seconds');
 });
 
 it('connects the content Upload evidence control to a mounted file input', async () => {

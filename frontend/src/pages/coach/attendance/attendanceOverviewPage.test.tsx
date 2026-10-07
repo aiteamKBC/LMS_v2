@@ -1,14 +1,13 @@
 import { fireEvent, render, screen, within, waitFor } from '@testing-library/react';
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
-import type { ReactNode } from 'react';
+import { StrictMode, type ReactNode } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { coachFetch } from '@/lib/coachFetch';
-import { fetchCurriculumGroups, type CurriculumGroup } from '@/lib/curriculumApi';
 import CoachAttendance from './page';
 import CoachAttendanceProfile from '../attendance-profile/page';
-vi.mock('@/hooks/useCoachIdentity', () => ({ useCoachIdentity: () => ({ isInitialized: true, email: 'coach@example.com', name: 'Coach Sara' }) }));
+const identity = vi.hoisted(() => ({ isInitialized: true, email: 'coach@example.com', name: 'Coach Sara' }));
+vi.mock('@/hooks/useCoachIdentity', () => ({ useCoachIdentity: () => identity }));
 vi.mock('@/lib/coachFetch', () => ({ coachFetch: vi.fn() }));
-vi.mock('@/lib/curriculumApi', () => ({ fetchCurriculumGroups: vi.fn() }));
 vi.mock('@/components/feature/WorkspaceShell', () => ({ WorkspaceShell: ({ children }: { children: ReactNode }) => <>{children}</> }));
 const learners = [
   { id: '42', learner: 'Aya Khater', email: 'same@example.com', group: '--', groupName: 'Cairo A', groupId: 'group-1', programme: 'Data', programmeId: 'programme-1', programStatus: 'Active' },
@@ -23,25 +22,43 @@ const attendanceRecords = [
   { learnerId: '42', sessionId: 'five', sessionDate: '2026-08-19', status: 'absent' },
   { learnerId: '7', sessionId: 'paused', sessionDate: '2026-09-16', status: 'present' },
 ];
+const optionsPayload = { programmes: [
+  { id: 'programme-2', name: 'Cyber', groups: [{ id: 'group-1', name: 'Cairo A', cohort: '--' }] },
+  { id: 'programme-1', name: 'Data', groups: [{ id: 'group-1', name: 'Cairo A', cohort: '--' }, { id: 'group-2', name: 'Cairo B', cohort: '--' }] },
+] };
+const sessions = [{ id: 'occ-1', occurrenceStart: '2026-09-16T09:00:00Z', module: 'Data', sessionTitle: 'Morning session' }, { id: 'occ-2', occurrenceStart: '2026-09-16T14:00:00Z', module: 'Data', sessionTitle: 'Afternoon session' }];
+function groupPayload(url: string, rows = learners, records = attendanceRecords) {
+  const query = new URL(url, 'http://test').searchParams;
+  const programme = optionsPayload.programmes.find(row => row.id === query.get('programmeId'))!;
+  const group = programme.groups.find(row => row.id === query.get('groupId'))!;
+  return { programme, group, sessions,
+    learners: rows.filter(row => row.programmeId === programme.id && row.groupId === group.id).map(row => ({
+      id: row.id, name: row.learner, email: row.email, status: row.programStatus === 'Paused' ? 'on-break' : 'active',
+      attendance: { rate: null, present: 0, absent: 0, sessions: 0 },
+    })), recentAttendance: records };
+}
 function Location() { return <output>{useLocation().pathname}</output>; }
 describe('coach attendance overview', () => {
   beforeEach(() => {
     vi.mocked(coachFetch).mockClear();
-    vi.mocked(coachFetch).mockImplementation(async (url, options) => options?.method === 'POST' ? new Response(JSON.stringify({ results: JSON.parse(String(options.body)).records.map((row: { learnerId: string; status: string }) => ({ ...row, version: 'v-new', sessionOccurrenceId: 'occ-2', attendanceRecord: { ...row, sessionId: 'teams:occ-2', sessionDate: '2026-09-16', counted: true } })) })) : new Response(JSON.stringify(String(url).includes('/bulk?') ? (String(url).includes('sessionOccurrenceId=occ-') ? { learners: [{ learnerId: '42', status: 'present', version: 'v1' }] } : { sessions: [{ id: 'occ-1', occurrenceStart: '2026-09-16T09:00:00Z', module: 'Data', sessionTitle: 'Morning session' }, { id: 'occ-2', occurrenceStart: '2026-09-16T14:00:00Z', module: 'Data', sessionTitle: 'Afternoon session' }] }) : { learners, attendanceRecords })));
-    vi.mocked(fetchCurriculumGroups).mockResolvedValue([]);
+    identity.email = 'coach@example.com';
+    vi.mocked(coachFetch).mockImplementation(async (url, options) => {
+      if (options?.method === 'POST') return new Response(JSON.stringify({ results: JSON.parse(String(options.body)).records.map((row: { learnerId: string; status: string }) => ({ ...row, version: 'v-new', sessionOccurrenceId: 'occ-2', attendanceRecord: { ...row, sessionId: 'teams:occ-2', sessionDate: '2026-09-16', counted: true } })) }));
+      if (String(url).endsWith('/options')) return new Response(JSON.stringify(optionsPayload));
+      if (String(url).includes('/session?')) return new Response(JSON.stringify({ learners: [{ learnerId: '42', status: 'present', version: 'v1' }] }));
+      if (String(url).includes('/group?')) return new Response(JSON.stringify(groupPayload(String(url))));
+      throw new Error(`Unexpected request: ${url}`);
+    });
   });
 
   async function renderSelectionRoster() {
     const original = vi.mocked(coachFetch).getMockImplementation()!;
     vi.mocked(coachFetch).mockImplementation(async (url, options) => {
       if (options?.method === 'POST') return original(url, options);
-      if (String(url).includes('sessionOccurrenceId=occ-1')) return new Response(JSON.stringify({
+      if (String(url).includes('sessionId=occ-1')) return new Response(JSON.stringify({
         learners: [{ learnerId: '42', status: 'unmarked', version: 'v1' }, { learnerId: '9', status: 'absent', version: 'v2' }],
       }));
-      if (url === '/coach_api/coach/attendance') return new Response(JSON.stringify({
-        learners: [learners[0], { ...learners[2], groupId: 'group-1' },
-          { ...learners[0], id: 'unavailable', learner: 'Unavailable learner' }], attendanceRecords,
-      }));
+      if (String(url).includes('/group?')) return new Response(JSON.stringify(groupPayload(String(url), [learners[0], { ...learners[2], groupId: 'group-1' }, { ...learners[0], id: 'unavailable', learner: 'Unavailable learner' }])));
       return original(url, options);
     });
     render(<MemoryRouter><CoachAttendance /></MemoryRouter>);
@@ -143,7 +160,7 @@ describe('coach attendance overview', () => {
   it('loads valid students and shows a compact warning for unavailable enrolments', async () => {
     const original = vi.mocked(coachFetch).getMockImplementation()!;
     vi.mocked(coachFetch).mockImplementation(async (url, options) => {
-      if (String(url).includes('sessionOccurrenceId=occ-1')) return new Response(JSON.stringify({
+      if (String(url).includes('sessionId=occ-1')) return new Response(JSON.stringify({
         learners: [{ learnerId: '42', status: 'present', version: 'v1' }],
         warnings: [{ learnerProfileId: 'broken', code: 'learner_source_unavailable', message: 'Attendance source unavailable for this learner.' }],
       }));
@@ -168,7 +185,7 @@ describe('coach attendance overview', () => {
   it.each(['unmarked', 'upcoming', 'in_progress'])('offers only Present and Absent when the current status is %s', async (currentStatus) => {
     const original = vi.mocked(coachFetch).getMockImplementation()!;
     vi.mocked(coachFetch).mockImplementation(async (url, options) => {
-      if (String(url).includes('sessionOccurrenceId=occ-1')) return new Response(JSON.stringify({
+      if (String(url).includes('sessionId=occ-1')) return new Response(JSON.stringify({
         learners: [{ learnerId: '42', status: currentStatus, version: 'v1' }],
       }));
       return original(url, options);
@@ -194,27 +211,96 @@ describe('coach attendance overview', () => {
     expect(status).toHaveValue('');
     expect(vi.mocked(coachFetch).mock.calls.some(([, options]) => options?.method === 'POST')).toBe(false);
   });
-  it('lists programme groups without caseload learners and keeps other programmes separate', async () => {
-    vi.mocked(fetchCurriculumGroups).mockResolvedValue([
-      { id: 'empty-group', name: 'Empty group', programmeId: 'programme-1', status: 'active' },
-      { id: 'other-group', name: 'Other programme group', programmeId: 'programme-2', status: 'active' },
-      { id: 'archived-group', name: 'Archived group', programmeId: 'programme-1', status: 'archived' },
-    ] as CurriculumGroup[]);
+  it('loads only options initially, then one group and one session request', async () => {
     render(<MemoryRouter><CoachAttendance /></MemoryRouter>);
-    fireEvent.change(await screen.findByRole('combobox', { name: 'Programme' }), { target: { value: 'programme-1' } });
-    const group = screen.getByRole('combobox', { name: 'Group' });
-    expect(await within(group).findByRole('option', { name: 'Empty group' })).toHaveValue('empty-group');
-    expect(within(group).queryByRole('option', { name: 'Other programme group' })).not.toBeInTheDocument();
-    expect(within(group).queryByRole('option', { name: 'Archived group' })).not.toBeInTheDocument();
-    fireEvent.change(group, { target: { value: 'empty-group' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Load students' }));
-    expect(screen.getByText('No learners found for this group.')).toBeInTheDocument();
-    expect(screen.queryByText('Aya Khater')).not.toBeInTheDocument();
+    const programme = await screen.findByRole('combobox', { name: 'Programme' });
+    await waitFor(() => expect(programme).toBeEnabled());
+    expect(vi.mocked(coachFetch).mock.calls.map(([url]) => url)).toEqual(['/coach_api/coach/attendance/options']);
+    fireEvent.change(programme, { target: { value: 'programme-1' } });
+    expect(vi.mocked(coachFetch).mock.calls).toHaveLength(1);
+    expect(within(screen.getByLabelText('Group')).getAllByRole('option').map(row => (row as HTMLOptionElement).value)).toEqual(['', 'group-1', 'group-2']);
+    fireEvent.change(screen.getByLabelText('Group'), { target: { value: 'group-1' } });
+    await screen.findByText('Aya Khater');
+    expect(vi.mocked(coachFetch).mock.calls).toHaveLength(2);
+    fireEvent.change(screen.getByLabelText('Session / occurrence'), { target: { value: 'occ-1' } });
+    await waitFor(() => expect(screen.getByLabelText('Attendance for Aya Khater')).toBeEnabled());
+    expect(vi.mocked(coachFetch).mock.calls).toHaveLength(3);
+    expect(vi.mocked(coachFetch).mock.calls[1][0]).toContain('/group?programmeId=programme-1&groupId=group-1');
+    expect(vi.mocked(coachFetch).mock.calls[2][0]).toContain('/session?programmeId=programme-1&groupId=group-1&sessionId=occ-1');
   });
-  it('reports a programme group request failure', async () => {
-    vi.mocked(fetchCurriculumGroups).mockRejectedValue(new Error('Service unavailable'));
+  it('makes one options request under the application Strict Mode wrapper', async () => {
+    render(<StrictMode><MemoryRouter><CoachAttendance /></MemoryRouter></StrictMode>);
+    await waitFor(() => expect(screen.getByLabelText('Programme')).toBeEnabled());
+    expect(vi.mocked(coachFetch).mock.calls.map(([url]) => url)).toEqual(['/coach_api/coach/attendance/options']);
+  });
+  it('reports an options request failure and allows manual refresh', async () => {
+    vi.mocked(coachFetch).mockResolvedValueOnce(new Response(JSON.stringify({ detail: 'Service unavailable' }), { status: 503 }));
     render(<MemoryRouter><CoachAttendance /></MemoryRouter>);
     expect(await screen.findByRole('alert')).toHaveTextContent('Unable to load programme groups: Service unavailable');
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh options' }));
+    await waitFor(() => expect(screen.getByLabelText('Programme')).toBeEnabled());
+    expect(vi.mocked(coachFetch).mock.calls).toHaveLength(2);
+  });
+  it('does not fetch the previous session when switching groups', async () => {
+    render(<MemoryRouter><CoachAttendance /></MemoryRouter>);
+    await waitFor(() => expect(screen.getByLabelText('Programme')).toBeEnabled());
+    fireEvent.change(screen.getByLabelText('Programme'), { target: { value: 'programme-1' } });
+    fireEvent.change(screen.getByLabelText('Group'), { target: { value: 'group-1' } });
+    await screen.findByRole('option', { name: /Morning session/ });
+    fireEvent.change(screen.getByLabelText('Session / occurrence'), { target: { value: 'occ-1' } });
+    await waitFor(() => expect(screen.getByLabelText('Attendance for Aya Khater')).toBeEnabled());
+    const before = vi.mocked(coachFetch).mock.calls.length;
+    fireEvent.change(screen.getByLabelText('Group'), { target: { value: 'group-2' } });
+    await screen.findByText('Mona Test');
+    expect(screen.getByLabelText('Session / occurrence')).toHaveValue('');
+    expect(vi.mocked(coachFetch).mock.calls.slice(before).map(([url]) => url)).toEqual([
+      '/coach_api/coach/attendance/group?programmeId=programme-1&groupId=group-2',
+    ]);
+  });
+  it('refreshes options without clearing pending attendance or reloading the group', async () => {
+    render(<MemoryRouter><CoachAttendance /></MemoryRouter>);
+    await waitFor(() => expect(screen.getByLabelText('Programme')).toBeEnabled());
+    fireEvent.change(screen.getByLabelText('Programme'), { target: { value: 'programme-1' } });
+    fireEvent.change(screen.getByLabelText('Group'), { target: { value: 'group-1' } });
+    await screen.findByRole('option', { name: /Morning session/ });
+    fireEvent.change(screen.getByLabelText('Session / occurrence'), { target: { value: 'occ-1' } });
+    await waitFor(() => expect(screen.getByLabelText('Attendance for Aya Khater')).toBeEnabled());
+    fireEvent.change(screen.getByLabelText('Attendance for Aya Khater'), { target: { value: 'absent' } });
+    const before = vi.mocked(coachFetch).mock.calls.length;
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh options' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Refresh options' })).toBeEnabled());
+    expect(screen.getByLabelText('Attendance for Aya Khater')).toHaveValue('absent');
+    expect(screen.getByText('Pending changes: 1')).toBeInTheDocument();
+    expect(vi.mocked(coachFetch).mock.calls.slice(before).map(([url]) => url)).toEqual(['/coach_api/coach/attendance/options']);
+  });
+  it('uses current canonical membership and never appends unrelated groups', async () => {
+    vi.mocked(coachFetch).mockResolvedValueOnce(new Response(JSON.stringify({ programmes: [
+      { id: 'programme-2', name: 'Cyber', groups: [{ id: 'group-1', name: 'Current Cyber group', cohort: '--' }] },
+    ] })));
+    render(<MemoryRouter><CoachAttendance /></MemoryRouter>);
+    const programme = await screen.findByRole('combobox', { name: 'Programme' });
+    await waitFor(() => expect(programme).toBeEnabled());
+    expect(within(programme).getAllByRole('option').map(option => (option as HTMLOptionElement).value)).toEqual(['', 'programme-2']);
+    fireEvent.change(programme, { target: { value: 'programme-2' } });
+    expect(within(screen.getByLabelText('Group')).getAllByRole('option').map(option => (option as HTMLOptionElement).value)).toEqual(['', 'group-1']);
+    expect(screen.getByRole('button', { name: 'Load students' })).toBeDisabled();
+  });
+  it('changes the coach cache key, clears the roster, and reuses cached options on remount', async () => {
+    const view = render(<MemoryRouter><CoachAttendance /></MemoryRouter>);
+    await waitFor(() => expect(screen.getByLabelText('Programme')).toBeEnabled());
+    fireEvent.change(screen.getByLabelText('Programme'), { target: { value: 'programme-1' } });
+    fireEvent.change(screen.getByLabelText('Group'), { target: { value: 'group-1' } });
+    await screen.findByText('Aya Khater');
+    identity.email = 'other@example.com';
+    view.rerender(<MemoryRouter><CoachAttendance /></MemoryRouter>);
+    await waitFor(() => expect(screen.getByLabelText('Programme')).toBeEnabled());
+    expect(screen.queryByText('Aya Khater')).not.toBeInTheDocument();
+    expect(screen.getByLabelText('Group')).toHaveValue('');
+    expect(vi.mocked(coachFetch).mock.calls.filter(([url]) => String(url).endsWith('/options'))).toHaveLength(2);
+    view.unmount();
+    render(<MemoryRouter><CoachAttendance /></MemoryRouter>);
+    await waitFor(() => expect(screen.getByLabelText('Programme')).toBeEnabled());
+    expect(vi.mocked(coachFetch).mock.calls.filter(([url]) => String(url).endsWith('/options'))).toHaveLength(2);
   });
   it('filters by stable ids and shows recent status chips', async () => {
     render(<MemoryRouter><CoachAttendance /></MemoryRouter>);
@@ -229,7 +315,7 @@ describe('coach attendance overview', () => {
     expect(within(group).getByRole('option', { name: 'Cairo B' })).toHaveValue('group-2');
     fireEvent.change(group, { target: { value: 'group-1' } });
     fireEvent.click(screen.getByRole('button', { name: 'Load students' }));
-    expect(screen.getByText('Aya Khater')).toBeInTheDocument();
+    expect(await screen.findByText('Aya Khater')).toBeInTheDocument();
     expect(screen.queryByText('Ayman Learner')).not.toBeInTheDocument();
     expect(screen.getByText('P · 16 Sep')).toBeInTheDocument();
     expect(screen.getByText('A · 09 Sep')).toBeInTheDocument();
@@ -243,7 +329,7 @@ describe('coach attendance overview', () => {
     fireEvent.change(await screen.findByRole('combobox', { name: 'Programme' }), { target: { value: 'programme-2' } });
     fireEvent.change(screen.getByRole('combobox', { name: 'Group' }), { target: { value: 'group-1' } });
     fireEvent.click(screen.getByRole('button', { name: 'Load students' }));
-    expect(screen.getByText('Attendance paused')).toBeInTheDocument();
+    expect(await screen.findByText('Attendance paused')).toBeInTheDocument();
     expect(screen.queryByText('P · 16 Sep')).not.toBeInTheDocument();
   });
   it('loads distinct same-day sessions and applies an individual status without canonical refresh', async () => {
@@ -261,7 +347,7 @@ describe('coach attendance overview', () => {
     expect(await screen.findByText('Attendance saved.')).toBeInTheDocument();
     const call = vi.mocked(coachFetch).mock.calls.find(([, options]) => options?.method === 'POST');
     expect(JSON.parse(String(call?.[1]?.body))).toEqual({ programmeId: 'programme-1', groupId: 'group-1', sessionOccurrenceId: 'occ-2', records: [{ learnerId: '42', status: 'absent', version: 'v1' }] });
-    expect(vi.mocked(coachFetch).mock.calls.filter(([url]) => url === '/coach_api/coach/attendance')).toHaveLength(1);
+    expect(vi.mocked(coachFetch).mock.calls.filter(([url]) => url === '/coach_api/coach/attendance')).toHaveLength(0);
   });
   it('saves multiple learners and renders locally updated canonical Last 4 without calculating percentages', async () => {
     const groupLearners = [learners[0], { ...learners[2], groupId: 'group-1', attendance: 87 }];
@@ -269,12 +355,9 @@ describe('coach attendance overview', () => {
     vi.mocked(coachFetch).mockImplementation(async (url, options) => {
       if (String(url).includes('/details?')) return new Response(JSON.stringify({ learner: { id: '42', name: 'Aya Khater' }, summary: { attendanceRate: 0, total: 1, present: 0, absent: 1, unknown: 0 }, sessions: [{ sessionId: 'teams:occ-1', sessionTitle: 'Morning session', sessionDate: '2026-09-16', sessionDateLabel: '16 Sep 2026', status: 'absent', rawStatus: 'pending', effectiveStatus: 'absent', counted: true }] }));
       if (options?.method === 'POST') { saved = true; return new Response(JSON.stringify({ results: JSON.parse(String(options.body)).records.map((row: { learnerId: string; status: string }) => ({ ...row, version: 'v-new', sessionOccurrenceId: 'occ-1', attendanceRecord: { ...row, sessionId: 'teams:occ-1', sessionDate: '2026-09-16', counted: true } })) })); }
-      if (String(url).includes('/bulk?')) return new Response(JSON.stringify(String(url).includes('sessionOccurrenceId=occ-')
-        ? { learners: [{ learnerId: '42', status: saved ? 'absent' : 'present', version: 'v1' }, { learnerId: '9', status: saved ? 'present' : 'unmarked', version: 'v2' }] }
-        : { sessions: [{ id: 'occ-1', occurrenceStart: '2026-09-16T09:00:00Z', module: 'Data', sessionTitle: 'Morning session' }] }));
-      return new Response(JSON.stringify({ learners: groupLearners, attendanceRecords: saved
-        ? [{ learnerId: '42', sessionId: 'teams:occ-1', sessionDate: '2026-09-16', status: 'absent', counted: true }, { learnerId: '9', sessionId: 'teams:occ-1', sessionDate: '2026-09-16', status: 'present', counted: true }]
-        : attendanceRecords }));
+      if (String(url).endsWith('/options')) return new Response(JSON.stringify(optionsPayload));
+      if (String(url).includes('/session?')) return new Response(JSON.stringify({ learners: [{ learnerId: '42', status: saved ? 'absent' : 'present', version: 'v1' }, { learnerId: '9', status: saved ? 'present' : null, version: 'v2' }] }));
+      return new Response(JSON.stringify(groupPayload(String(url), groupLearners)));
     });
     render(<MemoryRouter initialEntries={["/coach/attendance"]}><Routes><Route path="/coach/attendance" element={<CoachAttendance />} /><Route path="/coach/attendance/:learnerId" element={<CoachAttendanceProfile />} /></Routes></MemoryRouter>);
     fireEvent.change(await screen.findByRole('combobox', { name: 'Programme' }), { target: { value: 'programme-1' } });
@@ -322,11 +405,11 @@ describe('coach attendance overview', () => {
     const original = vi.mocked(coachFetch).getMockImplementation()!;
     vi.mocked(coachFetch).mockImplementation(async (url, options) => {
       if (options?.method === 'POST') return new Response(JSON.stringify({ results: [{ learnerId: '42', status: after, version: 'v2', sessionOccurrenceId: 'occ-1', attendanceRecord: { learnerId: '42', sessionId: 'teams:occ-1', sessionDate: '2026-09-16', status: after, effectiveStatus: after, counted: true } }] }));
-      if (String(url).includes('sessionOccurrenceId=occ-1')) return new Response(JSON.stringify({ learners: [{ learnerId: '42', status: before, version: 'v1' }] }));
-      if (url === '/coach_api/coach/attendance') return new Response(JSON.stringify({ learners, attendanceRecords: [
+      if (String(url).includes('sessionId=occ-1')) return new Response(JSON.stringify({ learners: [{ learnerId: '42', status: before, version: 'v1' }] }));
+      if (String(url).includes('/group?')) return new Response(JSON.stringify(groupPayload(String(url), learners, [
         { learnerId: '42', sessionId: 'teams:occ-1', sessionDate: '2026-09-16', status: before },
         { learnerId: '42', sessionId: 'teams:occ-2', sessionDate: '2026-09-16', status: 'present' },
-      ] }));
+      ])));
       return original(url, options);
     });
     render(<MemoryRouter><CoachAttendance /></MemoryRouter>);
@@ -359,7 +442,7 @@ describe('coach attendance overview', () => {
     fireEvent.change(await screen.findByRole('combobox', { name: 'Programme' }), { target: { value: 'programme-1' } });
     fireEvent.change(screen.getByRole('combobox', { name: 'Group' }), { target: { value: 'group-1' } });
     fireEvent.click(screen.getByRole('button', { name: 'Load students' }));
-    fireEvent.click(screen.getByRole('button', { name: 'View' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'View' }));
     expect(screen.getByText('/coach/attendance/42')).toBeInTheDocument();
   });
   it('restores applied group, programme and status from the URL on refresh', async () => {

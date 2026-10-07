@@ -25,11 +25,15 @@ def passages(*flags):
 
 
 class OpenAiDetectorTests(unittest.TestCase):
-    def test_short_text_does_not_call_openai(self):
-        client = FakeClient(passages())
-        result = detector.check_text('brief answer', client=client, model='test-model')
-        self.assertEqual(result['status'], 'insufficient_text')
-        self.assertEqual(client.calls, [])
+    def test_short_text_is_sent_as_one_passage(self):
+        text = 'I learned that ' + 'marketing ' * 17
+        client = FakeClient(passages(True))
+        result = detector.check_text(text, client=client, model='test-model')
+        self.assertEqual(result['status'], 'review_suggested')
+        self.assertEqual(result['segments'], [{'start': 0, 'end': len(text), 'flagged': True}])
+        self.assertEqual(len(client.calls), 1)
+        self.assertIn('<passage number="1">', client.calls[0]['input'][1]['content'])
+        self.assertNotIn('<passage number="2">', client.calls[0]['input'][1]['content'])
 
     def test_mixed_passages_preserve_all_text_and_utf16_offsets(self):
         text = '\U0001f600 ' + 'learning ' * 360

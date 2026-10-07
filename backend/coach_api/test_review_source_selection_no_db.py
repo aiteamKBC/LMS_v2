@@ -70,11 +70,12 @@ class SharedReviewSourceResolverTests(SimpleTestCase):
         )
 
     @patch("coach_api.views.resolve_curriculum_review_occurrences")
+    @patch("coach_api.views.fetch_aptem_mcm_profile_ids", return_value={1})
     @patch("coach_api.views.fetch_source_schedule_rows", return_value=({}, {}))
     @patch("coach_api.views.fetch_aptem_review_events")
     @patch("coach_api.views.resolve_effective_aptem_ids", return_value=({1: 101}, set()))
     def test_aptem_learner_with_aptem_mcm_uses_aptem_only(
-        self, _identities, fetch_aptem, _source_rows, curriculum_occurrences,
+        self, _identities, fetch_aptem, _source_rows, _mcm_profiles, curriculum_occurrences,
     ):
         aptem_events = [
             {"eventKey": "imported-review:A-1", "source": "progress-review", "reviewSource": "aptem", "learnerId": "1"},
@@ -96,11 +97,12 @@ class SharedReviewSourceResolverTests(SimpleTestCase):
     @patch("coach_api.views.resolve_schedule_window", return_value=(date(2026, 1, 1), date(2027, 1, 1)))
     @patch("coach_api.views.resolve_review_anchor_date", return_value=(date(2026, 1, 1), None))
     @patch("coach_api.views.curriculum_review_instances.programme_review_template_identifiers", return_value=[("template-1", "mcm")])
+    @patch("coach_api.views.fetch_aptem_mcm_profile_ids", return_value=set())
     @patch("coach_api.views.fetch_source_schedule_rows", return_value=({}, {}))
     @patch("coach_api.views.fetch_aptem_review_events")
     @patch("coach_api.views.resolve_effective_aptem_ids", return_value=({1: 101}, set()))
-    def test_aptem_learner_without_imported_mcm_does_not_get_curriculum_fallback(
-        self, _identities, fetch_aptem, _source_rows, _templates, _anchor, _window,
+    def test_aptem_learner_without_imported_mcm_gets_curriculum_mcms_only(
+        self, _identities, fetch_aptem, _source_rows, _mcm_profiles, _templates, _anchor, _window,
         _programme, occurrences, build_event,
     ):
         aptem_event = {"eventKey": "imported-review:A-1", "source": "progress-review", "reviewSource": "aptem", "learnerId": "1"}
@@ -115,12 +117,34 @@ class SharedReviewSourceResolverTests(SimpleTestCase):
 
         result = views.resolve_coach_review_events("coach@example.invalid", "Coach", [learner(1)])
 
-        self.assertEqual(result["events"], [aptem_event])
-        occurrences.assert_not_called()
-        build_event.assert_not_called()
+        # Progress Reviews stay Aptem-only; only the Curriculum MCM is added.
+        self.assertEqual(result["events"], [
+            aptem_event,
+            {"eventKey": "review:1:template-1:1", "source": "mcr", "reviewSource": "curriculum"},
+        ])
+        self.assertEqual(build_event.call_count, 1)
         self.assertEqual(result["reviewGenerationIssues"], [])
-        self.assertEqual(result["sourceCounts"]["curriculumMcmFallbackLearners"], 0)
+        self.assertEqual(result["sourceCounts"]["curriculumMcmFallbackLearners"], 1)
+        self.assertEqual(result["sourceCounts"]["curriculumLearners"], 0)
         self.assertEqual(result["aptemProfileIds"], {1})
+
+    @patch("coach_api.views.resolve_curriculum_review_occurrences")
+    @patch("coach_api.views.fetch_aptem_mcm_profile_ids", side_effect=DatabaseError("statement timeout"))
+    @patch("coach_api.views.fetch_source_schedule_rows", return_value=({}, {}))
+    @patch("coach_api.views.fetch_aptem_review_events", return_value=([], set()))
+    @patch("coach_api.views.resolve_effective_aptem_ids", return_value=({1: 101}, set()))
+    def test_unavailable_aptem_mcm_history_never_falls_back_to_curriculum(
+        self, _identities, _fetch_aptem, _source_rows, _mcm_profiles, curriculum_occurrences,
+    ):
+        result = views.resolve_coach_review_events("coach@example.invalid", "Coach", [learner(1)])
+
+        self.assertEqual(result["events"], [])
+        curriculum_occurrences.assert_not_called()
+        self.assertEqual(result["sourceCounts"]["curriculumMcmFallbackLearners"], 0)
+        self.assertIn(
+            {"learnerId": "1", "code": "aptem_reviews_unavailable"},
+            result["reviewGenerationIssues"],
+        )
 
     @patch("coach_api.views.resolve_curriculum_review_occurrences", return_value=[])
     @patch("coach_api.views.fetch_aptem_mcm_profile_ids", return_value={1})
@@ -179,11 +203,12 @@ class SharedReviewSourceResolverTests(SimpleTestCase):
     @patch("coach_api.views.resolve_schedule_window", return_value=(date(2026, 1, 1), date(2027, 1, 1)))
     @patch("coach_api.views.resolve_review_anchor_date", return_value=(date(2026, 1, 1), None))
     @patch("coach_api.views.curriculum_review_instances.programme_review_template_identifiers", return_value=[("template-1", "pr")])
+    @patch("coach_api.views.fetch_aptem_mcm_profile_ids", return_value={1})
     @patch("coach_api.views.fetch_source_schedule_rows", return_value=({}, {}))
     @patch("coach_api.views.fetch_aptem_review_events")
     @patch("coach_api.views.resolve_effective_aptem_ids", return_value=({1: 101}, set()))
     def test_mixed_caseload_uses_each_source_once(
-        self, _identities, fetch_aptem, _source_rows, _templates, _anchor, _window,
+        self, _identities, fetch_aptem, _source_rows, _mcm_profiles, _templates, _anchor, _window,
         _programme, occurrences, build_event,
     ):
         aptem_event = {"eventKey": "imported-review:A-1", "source": "mcr", "reviewSource": "aptem", "learnerId": "1"}

@@ -8,7 +8,7 @@ import CoachTimetablePage from '@/pages/coach/timetable/page';
 import SessionCalendarPage from '@/pages/curriculum/session-calendar/page';
 import { AllCoachesCalendar } from '@/pages/workspace/coach/AllCoachesCalendar';
 import { coachFetch } from '@/lib/coachFetch';
-import { fetchCoachCalendarEventsForCoach } from '@/pages/coach/shared/calendarEvents';
+import { fetchAllCoachesCalendarEvents } from '@/pages/coach/shared/calendarEvents';
 import { updateCurriculumSession } from '@/lib/curriculumApi';
 
 const fixtures = vi.hoisted(() => {
@@ -32,7 +32,10 @@ vi.mock('@/lib/coachFetch', () => ({ coachFetch: vi.fn(async () => new Response(
 vi.mock('@/pages/coach/shared/CoachMeetingArtifactsPanel', () => ({ CoachMeetingArtifactsPanel: () => <p>Meeting recordings</p> }));
 vi.mock('@/pages/coach/shared/calendarEvents', async importOriginal => ({
   ...await importOriginal<typeof import('@/pages/coach/shared/calendarEvents')>(),
-  fetchCoachCalendarEventsForCoach: vi.fn(async () => ({ events: [fixtures.event] })),
+  fetchAllCoachesCalendarEvents: vi.fn(async () => ({
+    calendars: [{ email: fixtures.coach.email, events: [fixtures.event] }],
+    missingCoaches: [],
+  })),
 }));
 vi.mock('@/hooks/useCurriculumSessions', () => ({ useCurriculumSessions: () => ({ sessions: fixtures.sessions, loading: false, error: null, reload: vi.fn() }) }));
 vi.mock('@/lib/curriculumApi', async importOriginal => ({
@@ -89,6 +92,6 @@ describe('staff calendar previews', () => {
     expect(within(dialog).getByText('Assigned coach')).toBeVisible();
     await user.click(within(dialog).getByRole('button', { name: 'Open coach timetable' }));
     expect(openCoach).toHaveBeenCalledWith(fixtures.coach, fixtures.event);
-    expect(fetchCoachCalendarEventsForCoach).toHaveBeenCalled();
+    expect(fetchAllCoachesCalendarEvents).toHaveBeenCalledTimes(1);
   });
 });
