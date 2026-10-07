@@ -37,10 +37,13 @@ export function moduleMeasures(module: TimelineModule, data: TrainingPlanDashboa
   }).map(session => [session.id, session])).values()];
   const attended = ended.filter(session => session.attended === true).length;
   const pendingAttendance = ended.filter(session => typeof session.attended !== 'boolean').length;
+  const ledgerAttendance = module.attendanceProgress;
   const planned = module.detail?.total_otjh;
   const ksb = module.ksbProgress;
   return [
-    { label: 'Attendance', value: ratio(attended, ended.length), detail: ended.length
+    { label: 'Attendance', value: ledgerAttendance ? ratio(ledgerAttendance.attended, ledgerAttendance.total) : ratio(attended, ended.length), detail: ledgerAttendance
+      ? ledgerAttendance.total ? `${ledgerAttendance.attended} / ${ledgerAttendance.total} scheduled sessions attended` : 'No scheduled sessions assigned'
+      : ended.length
       ? `${attended} / ${ended.length} ended sessions attended${pendingAttendance ? ` · ${pendingAttendance} pending` : ''}`
       : 'No ended sessions yet' },
     { label: 'Activities', value: ratio(module.done, module.activityCount), detail: module.activityCount ? `${module.done} / ${module.activityCount} completed` : 'No activities assigned' },

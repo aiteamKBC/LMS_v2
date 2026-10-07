@@ -263,9 +263,9 @@ def contract_plan(source, contract):
             'programmeEndDate': date_only(contract.get('planned_end_date')) if contract else None}
 
 
-def _canonical_actual_rows(owner):
+def _canonical_actual_rows(owner, records=None):
     totals = defaultdict(lambda: {'hours': 0, 'count': 0})
-    for record in canonical_learning.entries_for(owner):
+    for record in records if records is not None else canonical_learning.entries_for(owner):
         if not canonical_learning.counts_as_actual(record):
             continue
         for allocation in canonical_learning.allocations(record):
@@ -284,10 +284,64 @@ def _canonical_actual_rows(owner):
     ]
 
 
+def _canonical_module_progress(records, modules):
+    """Project learner-progress-entry facts onto the assigned module ids."""
+    by_id = {str(module['id']): module for module in modules}
+    ids_by_title = defaultdict(list)
+    for module_id, module in by_id.items():
+        title = clean_text(module.get('title')).casefold()
+        if title:
+            ids_by_title[title].append(module_id)
+
+    def module_id_for(record):
+        direct = str(record.get('module_ref') or '').strip()
+        if direct in by_id:
+            return direct
+        title = clean_text(record.get('module_title')).casefold()
+        matches = ids_by_title.get(title, [])
+        return matches[0] if len(matches) == 1 else None
+
+    result = {
+        module_id: {'hours': {'actual': 0}, 'ksb': {'completed': 0, 'total': 0},
+                    'attendance': {'attended': 0, 'total': 0}}
+        for module_id in by_id
+    }
+    for record in records:
+        module_id = module_id_for(record)
+        if module_id is None:
+            continue
+        metric = result[module_id]
+        if canonical_learning.counts_as_actual(record):
+            metric['hours']['actual'] += sum(
+                canonical_learning.number(allocation.get('actual_seconds')) / 3600
+                for allocation in canonical_learning.allocations(record)
+            )
+        for code in set(record.get('ksbs') or []):
+            if not str(code).strip():
+                continue
+            metric['ksb']['total'] += 1
+            metric['ksb']['completed'] += record.get('accepted') is True
+        if (record.get('kind') == 'activity_event'
+                and record.get('feed_kind') == 'attendance_confirmation'):
+            metric['attendance']['attended'] += 1
+
+    for module_id, metric in result.items():
+        module = by_id[module_id]
+        authored_sessions = number(module.get('educational_session_count'))
+        if not authored_sessions:
+            authored_sessions = number(module.get('sessions_number'))
+        attended = metric['attendance']['attended']
+        metric['hours']['actual'] = round(metric['hours']['actual'], 4)
+        # Confirmations prove attendance; the authored plan remains the session target.
+        metric['attendance']['total'] = max(attended, int(authored_sessions or 0))
+    return result
+
+
 def read_dashboard(source, section=None):
     owner = getattr(source, '_canonical_profile', None)
     email = str(source.email or '').strip().casefold()
     actual, modules, sessions = [], [], []
+    progress_records = []
     historical = None
     targets = canonical_learning.targets_for(owner) if owner is not None else {}
     contract_data = {
@@ -309,7 +363,8 @@ def read_dashboard(source, section=None):
         if section == 'contract':
             return contract_data
         if section != 'learning' and owner is not None:
-            actual = _canonical_actual_rows(owner)
+            progress_records = canonical_learning.entries_for(owner)
+            actual = _canonical_actual_rows(owner, progress_records)
         # Effective current assignments are authoritative for the schedule.
         # Builder metadata enriches those assignments (and supplies legacy
         # links), but a missing builder row must not hide an assigned module.
@@ -425,7 +480,9 @@ def read_dashboard(source, section=None):
     phone = coach_phone(coach_email)
     if phone:
         coach['phone'] = phone
-    return {**contract_data, 'actual': actual, 'actualAvailable': owner is not None, 'modules': modules, 'moduleLinks': links,
+    return {**contract_data, 'actual': actual, 'actualAvailable': owner is not None,
+            'moduleProgress': _canonical_module_progress(progress_records, modules) if owner is not None else {},
+            'modules': modules, 'moduleLinks': links,
             'sessions': sessions, 'reviews': reviews, 'coach': coach,
             'generatedAt': datetime.now(timezone.utc).isoformat()}
 

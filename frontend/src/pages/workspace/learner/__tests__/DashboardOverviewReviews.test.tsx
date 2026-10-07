@@ -27,6 +27,11 @@ const props = {
 afterEach(cleanup);
 
 describe('dashboard programme reviews card', () => {
+  it('does not show programme progress in the learner dashboard summary', () => {
+    render(<MemoryRouter><DashboardOverviewTab {...props} /></MemoryRouter>);
+    expect(screen.queryByRole('link', { name: 'Open Programme Progress' })).not.toBeInTheDocument();
+  });
+
   it('counts only MCM and Progress Reviews due to date and opens the combined calendar', () => {
     render(<MemoryRouter><DashboardOverviewTab {...props} /></MemoryRouter>);
     const card = screen.getByRole('link', { name: 'Open Reviews' });

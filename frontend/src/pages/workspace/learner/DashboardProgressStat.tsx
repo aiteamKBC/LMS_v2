@@ -10,7 +10,8 @@ export function DashboardProgressStat({ href, label, value, summary, valueLabel 
 }) {
   const ringPercent = percent == null ? 0 : Math.min(100, Math.max(0, percent));
   const ringLabel = percent == null ? '—' : `${Number.isInteger(percent) ? percent : Number(percent.toFixed(1))}%`;
-  return <Link to={href} aria-label={`Open ${label}`} data-accent={accent} className={`group ${styles.metric}`}>
+  const progressAccent = percent == null ? accent : percent < 50 ? 'red' : percent < 80 ? 'yellow' : 'green';
+  return <Link to={href} aria-label={`Open ${label}`} data-accent={progressAccent} className={`group ${styles.metric}`}>
     <div className={styles.metricTop}>
       <span className={styles.metricRing} role="img" aria-label={`${label}: ${ringLabel}`} style={{ '--metric-progress': `${ringPercent}%` } as CSSProperties}>
         <span className={styles.metricRingValue}>{ringLabel}</span>
