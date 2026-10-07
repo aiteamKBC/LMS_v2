@@ -1,4 +1,3 @@
-import { ModuleSessions } from '../module-workspace/ModuleSessions';
 import {
   useCallback,
   useEffect,
@@ -27,7 +26,6 @@ import {
   type TeamsMeetingArtifact,
   type TeamsRecordingEventInput,
 } from '../module-builder/moduleAuthoringData';
-import { cleanText } from '../shared/entities/model';
 import {
   TEAMS_LANGUAGE_OPTIONS,
   TEAMS_LOBBY_OPTIONS,
@@ -38,7 +36,6 @@ import {
   TeamsPeopleFields,
 } from './createCalendarForm';
 import {
-  DetailRow,
   EntityDrawer,
   FormField,
   InlineError,
@@ -382,10 +379,10 @@ export function TeamsMeetingDialogs({ workspace, secondTab }: {
     calendarActionTarget, loadTeamsState, notifyChanged, setSelectedId, setCalendarActionTarget, selected,
     requestCloseSelected, notice, openCalendarAction, busy, detailLoading, detail, graphConfigured,
     graphStatus, checkGraphConfiguration,
-    checkCalendarAction, pendingComponents, reattach, selectedForDisplay, createCalendar, createDrawer, createRecovery,
+    checkCalendarAction, selectedForDisplay, createCalendar, createDrawer, createRecovery,
     createDraft, createDraftSaving, saveCreateDraft, leftoverCancelling, cancelLeftover,
     runCalendarSync, calendarSyncing, autoSyncEnabled, setAutoSyncEnabled,
-    openSettings, setResultsModule, resultsModule, detailError, loadDetail, holidayLabelFor,
+    detailError, loadDetail, holidayLabelFor,
     detailOccurrenceFor, now, setPreview, setTranscriptPreview, invitedPrefilling, prefillNotice, prefillInvitees, preview,
     transcriptPreview, settingsDrawer, drawerTarget, saveSettings, blockedReason,
     teamsLoaded, teamsError, createProgress, updateProgress, saveInvitations, addedInvitees, updateDrawer, pushDates, resendSchedule,
@@ -492,22 +489,6 @@ export function TeamsMeetingDialogs({ workspace, secondTab }: {
                       className="inline-flex h-10 items-center gap-1.5 rounded-lg border border-red-200 bg-red-50 px-3 text-[12px] font-bold text-red-700 transition-colors hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-40"><AppIcon className="ri-close-circle-line text-sm"></AppIcon>Cancel series</button>
                     <button type="button" onClick={() => void checkCalendarAction()} disabled={Boolean(busy) || Boolean(updateProgress) || !graphConfigured}
                       className="inline-flex h-10 items-center gap-1.5 rounded-lg border border-primary-200 bg-primary-50 px-3 text-[12px] font-bold text-primary-700 transition-colors hover:bg-primary-100 disabled:cursor-not-allowed disabled:opacity-40"><AppIcon className={busy ? 'ri-loader-4-line animate-spin text-sm' : 'ri-refresh-line text-sm'}></AppIcon>{busy ? 'Checking…' : 'Check action status'}</button>
-                    {/* Both of these are shown only in the state they can act
-                        in. Offered unconditionally they were noise: on a module
-                        whose sessions are all attached and none has run yet,
-                        neither one would have changed anything. */}
-                    {Boolean(pendingComponents) && (
-                      <button
-                        type="button"
-                        onClick={() => void reattach(selected)}
-                        disabled={Boolean(busy) || Boolean(updateProgress) || Boolean(blockedReason)}
-                        title={`${pendingComponents} week${pendingComponents === 1 ? '' : 's'} of this module ${pendingComponents === 1 ? 'has' : 'have'} no live-session component yet. This gives each one its own, on that week's own date.`}
-                        className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-background-200 bg-background-50 px-3 text-[12px] font-bold text-foreground-600 transition-smooth hover:bg-background-100 disabled:cursor-not-allowed disabled:opacity-50"
-                      >
-                        <AppIcon className={busy === `${selected.catalogueId}:reattach` ? 'ri-loader-4-line animate-spin text-sm' : 'ri-history-line text-sm'}></AppIcon>
-                        Add {pendingComponents} missing live session{pendingComponents === 1 ? '' : 's'}
-                      </button>
-                    )}
                     {/* Its own action, deliberately outside the update: it
                         sends nothing to Microsoft and opens no review. It
                         re-sends the joining schedule -- the creation email,
@@ -727,7 +708,7 @@ export function TeamsMeetingDialogs({ workspace, secondTab }: {
                       from here. The durable server worker polls for them every
                       minute and owns the transfer, so the only honest place to
                       ask for them sooner is beside the sessions they belong to,
-                      in the Sessions & Recordings panel below. */}
+                      in the module component's Sessions & Recordings. */}
 
                   {/* This switch is one browser's preference for the in-page
                       cancellation sweep, and nothing more: the server worker
@@ -753,39 +734,11 @@ export function TeamsMeetingDialogs({ workspace, secondTab }: {
                     <AppIcon className={`${graphConfigured && autoSyncEnabled ? 'ri-checkbox-circle-line' : 'ri-close-circle-line'} text-sm`}></AppIcon>
                     {graphConfigured ? `Auto-sync ${autoSyncEnabled ? 'on' : 'off'}` : 'Auto-sync unavailable'}
                   </button>
-                  <button
-                    type="button"
-                    onClick={() => openSettings(selected)}
-                    disabled={Boolean(busy) || Boolean(blockedReason) || detailLoading || !graphConfigured}
-                    title="Change recording, lobby, language, presenters and co-organisers. The join link and session dates stay as they are."
-                    className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-background-200 bg-background-50 px-2.5 text-[11px] font-bold text-foreground-600 transition-smooth hover:bg-background-100 disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    <AppIcon className="ri-settings-3-line text-sm"></AppIcon>
-                    Edit meeting settings
-                  </button>
+                  {/* Meeting settings are edited in the Invitations and meeting
+                      settings section under the dates, and Sessions &
+                      Recordings opens from the module's own component, so
+                      neither is repeated here. */}
                   </span>
-                </div>
-
-                {/* Navigation, not an action on the meeting: this view has its
-                    own home on the module and the button only opens it in
-                    place, so it reads as a link rather than competing with the
-                    buttons that change the meeting. */}
-                <button
-                  type="button"
-                  aria-expanded={resultsModule === selected.summary.moduleCatalogueId}
-                  className="inline-flex items-center gap-1.5 text-sm font-semibold text-primary-700 underline-offset-4 hover:underline"
-                  onClick={() => setResultsModule(current => current === selected.summary!.moduleCatalogueId ? '' : selected.summary!.moduleCatalogueId)}
-                >
-                  <AppIcon className={`${resultsModule === selected.summary.moduleCatalogueId ? 'ri-arrow-down-s-line' : 'ri-arrow-right-s-line'} text-base`}></AppIcon>
-                  Sessions & Recordings
-                </button>
-                {resultsModule === selected.summary.moduleCatalogueId && <ModuleSessions moduleId={resultsModule} />}
-                {/* Presenters, co-organisers and attendees are the editable
-                    fields below now, not a second, read-only copy here. */}
-                <div className="grid gap-x-6 sm:grid-cols-2">
-                  <DetailRow label="Organizer" value={cleanText(selected.summary.organizerEmail, '—')} />
-                  <DetailRow label="Repeats" value={cleanText(selected.summary.repeatPattern, 'none')} />
-                  <DetailRow label="Meetings tracked" value={`${selected.summary.occurrenceCount} (${selected.summary.upcomingCount} upcoming)`} />
                 </div>
 
                 {detailError && <InlineError message={detailError} onRetry={() => void loadDetail(selected.summary!.liveSessionId)} />}
