@@ -1,3 +1,5 @@
+import { fetchModuleProgress, peekModuleProgress } from '@/api/moduleProgress';
+import { useLiveLearnerRead } from '@/hooks/useLiveLearnerRead';
 import type { DashboardTabsProps } from '../DashboardTabs';
 import { DashboardProgressStat } from '../DashboardProgressStat';
 import { DashboardTrainingPlan } from '../DashboardTrainingPlan';
@@ -6,6 +8,11 @@ import { programmeReviewProgress } from '@/pages/learner/training-plan-timeline/
 import styles from '../Overview.module.css';
 
 export default function DashboardOverviewTab({ kind, learnerId, plan, programmeStartDate, programmeEndDate, metrics, real, canSeeNavItem, overviewExtra, pageError, learningSubjects, learningSubjectsLoading, learningSubjectsError, onRetryLearningSubjects }: DashboardTabsProps) {
+  const progress = useLiveLearnerRead(kind, learnerId,
+    !!real && !learningSubjectsLoading && learningSubjects !== undefined,
+    fetchModuleProgress, peekModuleProgress);
+  const awaitingProgress = !!real && learningSubjects !== undefined && !progress.data;
+  const retryModules = () => { onRetryLearningSubjects?.(); progress.refresh(); };
   const reviews = plan.data ? programmeReviewProgress(plan.data.reviews) : null;
   return <div className={styles.dashboardTabContent}>
     <div className={`${styles.metrics} ${styles.metricsInline}`}>
@@ -18,6 +25,6 @@ export default function DashboardOverviewTab({ kind, learnerId, plan, programmeS
     </div>
     {overviewExtra}
     {real && <DashboardActivities kind={kind} programmeStatus={real.programmeStatus} canSeeNavItem={canSeeNavItem} />}
-    <DashboardTrainingPlan kind={kind} learnerId={learnerId} plan={plan} canOpenActivities={false} showRewards={false} activityOverviewOnly overviewOnly programmeStartDate={programmeStartDate} programmeEndDate={programmeEndDate} targetAsOfToday={metrics.otjTargetHours} learningSubjects={learningSubjects} learningSubjectsLoading={learningSubjectsLoading} learningSubjectsError={learningSubjectsError} onRetryLearningSubjects={onRetryLearningSubjects} pageError={pageError} />
+    <DashboardTrainingPlan kind={kind} learnerId={learnerId} plan={plan} canOpenActivities={false} showRewards={false} activityOverviewOnly overviewOnly programmeStartDate={programmeStartDate} programmeEndDate={programmeEndDate} targetAsOfToday={metrics.otjTargetHours} learningSubjects={learningSubjects} programmeProgress={progress.data?.modules} learningSubjectsLoading={learningSubjectsLoading || progress.loading || awaitingProgress} learningSubjectsError={learningSubjectsError || progress.error} onRetryLearningSubjects={retryModules} pageError={pageError} />
   </div>;
 }
