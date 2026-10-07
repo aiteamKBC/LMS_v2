@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useState } from 'react';
-import { coachFetch } from '@/lib/coachFetch';
+import { useCaseFileSession } from '@/features/coach/case-file/hooks/CaseFileSession';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { readCoachJson } from '@/features/coach/case-file/api/caseFileApi';
 import type { CoachMarkingQueueItem } from './types';
 
 type MarkingData = { items: CoachMarkingQueueItem[]; serializedItemCount: number };
@@ -12,27 +13,29 @@ type State = {
 };
 
 export function useCaseFileMarking(learnerId?: string | null, enabled = true) {
+  const session = useCaseFileSession();
+  const completed = useRef<{ learnerId: string; attempt: number } | null>(null);
   const [attempt, setAttempt] = useState(0);
   const [state, setState] = useState<State>({ learnerId: null, attempt: 0, data: null, status: 'idle', error: null });
   const retry = useCallback(() => setAttempt(value => value + 1), []);
 
   useEffect(() => {
     if (!enabled || !learnerId) return;
-    if (state.learnerId === learnerId && state.status === 'success' && state.attempt === attempt) return;
+    if (completed.current?.learnerId === learnerId && completed.current.attempt === attempt) return;
     const controller = new AbortController();
     setState({ learnerId, attempt, data: null, status: 'loading', error: null });
     const query = new URLSearchParams({ page_size: '100', learner: learnerId });
-    coachFetch(`/coach_api/coach/marking-queue?${query}`, { signal: controller.signal })
-      .then(async response => {
-        const payload = await response.json() as { items?: CoachMarkingQueueItem[]; detail?: string; error?: string; message?: string };
-        if (!response.ok) throw new Error(payload.message || payload.detail || payload.error || 'Unable to load learner marking data.');
+    const load = session
+      ? session.read<{ items?: CoachMarkingQueueItem[] }>('assignments', { resource: 'marking' }, { signal: controller.signal, refresh: attempt > 0 })
+      : readCoachJson<{ items?: CoachMarkingQueueItem[] }>(`/coach_api/coach/marking-queue?${query}`, controller.signal);
+    void load.then(payload => {
         const items = Array.isArray(payload.items) ? payload.items : [];
         if (items.some(item => String(item.learnerId || '') !== learnerId)) {
           throw new Error('Marking data did not match the requested learner identity.');
         }
-        if (!controller.signal.aborted) setState({
+        if (!controller.signal.aborted) { completed.current = { learnerId, attempt }; setState({
           learnerId, attempt, data: { items, serializedItemCount: items.length }, status: 'success', error: null,
-        });
+        }); }
       })
       .catch((reason: unknown) => {
         if (!controller.signal.aborted) setState({
@@ -41,7 +44,7 @@ export function useCaseFileMarking(learnerId?: string | null, enabled = true) {
         });
       });
     return () => controller.abort();
-  }, [attempt, enabled, learnerId]); // state is deliberately excluded: successful data is the page-lifetime cache.
+  }, [attempt, enabled, learnerId, session]); // state is deliberately excluded: successful data is the page-lifetime cache.
 
   const current = state.learnerId === learnerId
     ? state

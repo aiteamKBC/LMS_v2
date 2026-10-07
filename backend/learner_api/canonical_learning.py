@@ -131,9 +131,21 @@ def entries(learner_id):
     return entries_for(owner)
 
 
-def entries_for(owner):
-    records = query('''WITH canonical AS (
-        SELECT progress.*
+def entries_for(owner, *, overview_only=False):
+    columns = 'progress.*'
+    if overview_only:
+        # Completion projection needs saved timing/attempt facts, never raw
+        # evidence bodies. Keep lineage required by recorded course allocation.
+        columns = ','.join('progress.' + field for field in (
+            'id', 'learner_id', 'kind', 'module_ref', 'module_title', 'component_ref',
+            'component_title', 'component_type', 'quiz_ref', 'passed', 'reported_time',
+            'submitted_at', 'started_at', 'time_tracking_source', 'claimed_seconds',
+            'verified_seconds', 'expected_otjh', 'source_system', 'component_link_source',
+            'actual_seconds', 'accepted', 'reporting_started_at', 'reporting_ended_at',
+            'reporting_month', 'achieved_score', 'total_score', 'activity_status'))
+        columns += ",jsonb_build_object('original_source_ref',progress.source_payload->>'original_source_ref') AS source_payload"
+    records = query(f'''WITH canonical AS (
+        SELECT {columns}
         FROM "Learner".learner_progress_entries progress
         WHERE progress.learner_id=%s AND progress.deleted_at IS NULL
     ), progress_ksbs AS (
@@ -328,21 +340,22 @@ def targets(learner_id):
     return targets_for(owner)
 
 
-def targets_for(owner):
+def targets_for(owner, *, month=None):
     """Return one exact Training Plan target per month for this enrolment."""
-    return {record['report_month']: float(record['target_hours']) for record in query('''
+    month_filter = ' AND report_month=%s' if month else ''
+    return {record['report_month']: float(record['target_hours']) for record in query(f'''
         SELECT DISTINCT ON (report_month) report_month,target_hours
         FROM "Learner".learner_monthly_targets
         WHERE learner_id=%s
           AND coalesce(programme_profile_id,'')=''
           AND (enrolment_id IS NULL OR enrolment_id IS NOT DISTINCT FROM %s)
-          AND (programme_id IS NULL OR programme_id IS NOT DISTINCT FROM %s)
+          AND (programme_id IS NULL OR programme_id IS NOT DISTINCT FROM %s) {month_filter}
         ORDER BY report_month,
           (enrolment_id IS NOT DISTINCT FROM %s) DESC,
           (programme_id IS NOT DISTINCT FROM %s) DESC,
           updated_at DESC,id DESC''', [
             owner['id'], owner.get('enrolment_id'), owner.get('programme_id'),
-            owner.get('enrolment_id'), owner.get('programme_id'),
+            *([month] if month else []), owner.get('enrolment_id'), owner.get('programme_id'),
         ]) if record['target_hours'] is not None}
 
 
@@ -637,9 +650,9 @@ def content(item, owner=None, record=None):
         'html': f'<p>{escape(note)}</p>' if note else '<p>No material is directly linked to this activity.</p>'}]}
 
 
-def source_subjects(learner_id, summarize):
-    """Recorded learner activities, with full catalogue counts kept separate."""
-    owner = profile(learner_id)
+def source_subjects(learner_id, summarize, *, owner=None, records=None, overview_only=False):
+    """Owned course catalogue with progress, or a compact recorded overview."""
+    owner = owner if owner is not None else profile(learner_id)
     if owner is None:
         raise ServiceError('The consolidated learner identity needs review.', 'identity_review_required', 409)
     courses = query('''SELECT DISTINCT c.id,c.source_course_ref,c.source_course_title,c.curriculum_module_ref
@@ -648,18 +661,25 @@ def source_subjects(learner_id, summarize):
         WHERE m.learner_id=%s AND m.deleted_at IS NULL AND c.source_system='old_lms'
           AND c.source_course_ref ~ '^[0-9]+$'
         ORDER BY c.source_course_title,c.id''', [owner['id']])
-    catalogue = query('''SELECT a.id,a.source_course_id,a.source_activity_id,a.source_activity_kind,
+    catalogue_columns = ("a.source_activity_id,c.source_course_ref" if overview_only else
+        '''a.id,a.source_course_id,a.source_activity_id,a.source_activity_kind,
         a.source_activity_title,a.source_activity_type,a.source_section_title,a.curriculum_component_ref,
-        c.source_course_ref,c.source_course_title,c.curriculum_module_ref,a.source_position AS position
+        c.source_course_ref,c.source_course_title,c.curriculum_module_ref,a.source_position AS position''')
+    catalogue = query(f'''SELECT {catalogue_columns}
         FROM curriculum.source_activities a
         JOIN curriculum.source_courses c ON c.id=a.source_course_id AND c.deleted_at IS NULL
         WHERE a.source_course_id=ANY(%s) AND a.deleted_at IS NULL
           AND a.source_system='old_lms'
         ORDER BY c.id,a.source_position NULLS LAST,a.id''', [[c['id'] for c in courses]]) if courses else []
-    records = entries_for(owner)
-    items, subjects, links = recorded_course_items(courses, catalogue, records)
+    records = entries_for(owner) if records is None else records
+    items, subjects, links = recorded_course_items(courses, catalogue, records,
+        overview_only=overview_only, include_catalogue=not overview_only)
+    if overview_only:
+        return {'progress_basis': 'recorded_activities', 'subjects': subjects,
+                'activities': [{key: item[key] for key in ('activity_id', 'group_id', 'completed')}
+                               for item in items]}
     result = {'source': 'canonical', 'source_status': 'historical',
-        'progress_basis': 'recorded_activities',
+        'progress_basis': 'catalogue_activities',
         'learner_name': owner['name'], 'aptem_id': owner['aptem_id'],
         'subjects': subjects, **summarize(items)}
     total = round(sum(recorded_seconds(r) for r in records if counts_as_actual(r)) / 3600, 4)
@@ -702,21 +722,22 @@ def recorded_activity_schedule(record, course):
         'date_source': 'introduction' if introduction else 'consolidated_record'}
 
 
-def recorded_course_items(courses, catalogue, records):
+def recorded_course_items(courses, catalogue, records, *, overview_only=False, include_catalogue=False):
     """Allocate a final record once per course, using exact catalogue lineage.
 
     Historical/component guesses do not substitute for learner source links.
     A quiz and material sharing a numeric ID remain distinct activities.
     """
-    definitions = {(str(d['source_course_ref']), d['source_activity_id']): d for d in catalogue}
     by_course = {str(c['source_course_ref']): [] for c in courses}
+    definitions = {(str(d['source_course_ref']), d['source_activity_id']): d for d in catalogue
+                   if str(d['source_course_ref']) in by_course}
     links = {}
     for record in records:
         placements = {}
         for source in record.get('sources') or []:
             key = (str(source.get('source_course_ref')), source.get('source_activity_id'))
             if source.get('source_system') == 'old_lms' and key in definitions:
-                placements.setdefault(key[0], definitions[key])
+                placements.setdefault(key if include_catalogue else key[0], definitions[key])
         # Imported journal rows and new attempts retain a typed course/material
         # reference in the consolidated payload. Explicit source links take
         # precedence, even when their course is outside this learner's catalogue.
@@ -749,13 +770,26 @@ def recorded_course_items(courses, catalogue, records):
                 ref = str(source_payload_metadata(record.get('source_payload')).get('original_source_ref') or '')
                 match = re.fullmatch(r'la:(\d+):(\d+)', ref)
                 key = (match[1], 'material:' + match[2]) if match else None
-            if key in definitions:
-                placements.setdefault(key[0], definitions[key])
-        for course, definition in placements.items():
+            keys = routes if (include_catalogue and journals and routes and None not in routes
+                              and len({route[0] for route in routes}) == 1) else {key}
+            for route in sorted(keys, key=lambda route: (route != key, str(route))):
+                if route in definitions:
+                    placements.setdefault(route if include_catalogue else route[0], definitions[route])
+        counted_courses = set()
+        for definition in placements.values():
+            course = str(definition['source_course_ref'])
+            if overview_only:
+                by_course[course].append({'activity_id': f"record:{course}:{record['id']}",
+                    'group_id': int(course),
+                    'completed': counts_as_completed(record, include_source_evidence='completed' in record)})
+                continue
             kind, _, ident = definition['source_activity_id'].partition(':')
             numeric = ident.isdigit()
             accepted = counts_as_actual(record)
-            item = {'activity_id': f"record:{course}:{record['id']}",
+            count_hours = course not in counted_courses
+            counted_courses.add(course)
+            item = {'activity_id': (f"catalogue:{course}:{definition['source_activity_id']}"
+                                    if include_catalogue else f"record:{course}:{record['id']}"),
                 'source_activity_id': int(ident) if numeric else 0, 'group_id': int(course),
                 'group_name': definition['source_course_title'],
                 'activity': record.get('component_title') or definition['source_activity_title'],
@@ -766,13 +800,16 @@ def recorded_course_items(courses, catalogue, records):
                 **recorded_activity_schedule(record, course),
                 'completed': counts_as_completed(record, include_source_evidence='completed' in record),
                 'historical_completed': accepted,
-                'actual': recorded_seconds(record) / 3600 if accepted else 0,
-                'hours_mapped': accepted and any(p.get('actual_seconds') is not None for p in allocations(record)),
-                'planned': record.get('journal_planned_hours', 0),
-                'planned_hours_mapped': 'journal_planned_hours' in record, 'has_result': True,
+                'actual': recorded_seconds(record) / 3600 if accepted and count_hours else 0,
+                'hours_mapped': accepted and count_hours and any(p.get('actual_seconds') is not None for p in allocations(record)),
+                'planned': record.get('journal_planned_hours', 0) if count_hours else 0,
+                'planned_hours_mapped': count_hours and 'journal_planned_hours' in record, 'has_result': True,
                 'status': record.get('activity_status'),
                 'quiz_score': float(record['achieved_score']) if record.get('achieved_score') is not None else None,
                 'quiz_maximum_score': float(record['total_score']) if record.get('total_score') is not None else None}
+            if include_catalogue:
+                # Preserve the existing primary placement for evidence links.
+                item['record_ids'] = [str(record['id'])] if count_hours else []
             by_course[course].append(item)
             component = definition.get('curriculum_component_ref')
             module = definition.get('curriculum_module_ref')
@@ -784,14 +821,62 @@ def recorded_course_items(courses, catalogue, records):
     for course in courses:
         ref = str(course['source_course_ref'])
         activity = by_course[ref]
-        if not activity:
+        course_definitions = [d for (course_ref, _), d in definitions.items() if course_ref == ref]
+        if include_catalogue:
+            activity = catalogue_items_with_progress(course_definitions, activity)
+            for definition in course_definitions:
+                kind, _, ident = definition['source_activity_id'].partition(':')
+                component, module = definition.get('curriculum_component_ref'), definition.get('curriculum_module_ref')
+                if component and module and kind == 'material' and ident.isdigit():
+                    link = {'module_id': module, 'group_id': int(ref), 'activity_id': int(ident)}
+                    if link not in links.setdefault(component, []):
+                        links[component].append(link)
+        if not activity and not include_catalogue:
             continue
         subjects.append({'id': int(ref), 'name': course['source_course_title'],
             'module_id': course.get('curriculum_module_ref'),
-            'catalogue_count': sum(str(d['source_course_ref']) == ref for d in catalogue),
-            'accepted_hours': round(sum(a['actual'] for a in activity), 6)})
+            **({} if overview_only else {
+                'catalogue_count': sum(str(d['source_course_ref']) == ref for d in catalogue),
+                'accepted_hours': round(sum(a['actual'] for a in activity), 6)})})
         items.extend(activity)
     return items, subjects, links
+
+
+def catalogue_items_with_progress(definitions, recorded):
+    """Keep one stable card per catalogue component, including unstarted work."""
+    items = {}
+    for definition in definitions:
+        course = str(definition['source_course_ref'])
+        kind, _, ident = definition['source_activity_id'].partition(':')
+        key = f"catalogue:{course}:{definition['source_activity_id']}"
+        items[key] = {'activity_id': key, 'source_activity_id': int(ident) if ident.isdigit() else 0,
+            'group_id': int(course), 'group_name': definition['source_course_title'],
+            'activity': definition['source_activity_title'],
+            'category': definition.get('source_activity_type') or kind, 'catalogue_kind': kind,
+            'can_open_material': kind == 'material' and ident.isdigit(),
+            'section_title': definition.get('source_section_title'), 'position': definition.get('position') or 0,
+            'date': None, 'month': None, 'week_start': None, 'week_end': None, 'date_source': 'undated',
+            'completed': False, 'historical_completed': False, 'actual': 0, 'planned': 0,
+            'hours_mapped': False, 'planned_hours_mapped': False, 'has_result': False,
+            'status': 'Not started', 'quiz_score': None, 'quiz_maximum_score': None, 'record_ids': []}
+    for record in recorded:
+        item = items[record['activity_id']]
+        if not item['has_result'] or (bool(record['completed']), record.get('date') or '') >= (
+                bool(item['completed']), item.get('date') or ''):
+            for field in ('date', 'month', 'week_start', 'week_end', 'date_source', 'status'):
+                item[field] = record.get(field)
+        for field in ('completed', 'historical_completed', 'hours_mapped', 'planned_hours_mapped', 'has_result'):
+            item[field] |= record[field]
+        for field in ('actual', 'planned'):
+            item[field] += record[field]
+        item['record_ids'].extend(value for value in record['record_ids'] if value not in item['record_ids'])
+        score, maximum = record['quiz_score'], record['quiz_maximum_score']
+        if score is not None and maximum and (not item['quiz_maximum_score']
+                or score / maximum > item['quiz_score'] / item['quiz_maximum_score']):
+            item['quiz_score'], item['quiz_maximum_score'] = score, maximum
+        if item['completed']:
+            item['status'] = 'Completed'
+    return list(items.values())
 
 
 def ksb_point_definition(record, code):

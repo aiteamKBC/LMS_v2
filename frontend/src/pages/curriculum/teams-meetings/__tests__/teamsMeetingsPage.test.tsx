@@ -591,19 +591,21 @@ describe('Teams Meetings page', () => {
       // does not offer a button whose only effect is to queue what is queued
       // already. The sessions themselves are reached through a plain link.
       expect(dialog.queryByRole('button', { name: 'Sync attendance & files' })).not.toBeInTheDocument();
-      expect(dialog.getByRole('button', { name: 'Sessions & Recordings' })).toHaveAttribute('aria-expanded', 'false');
+      // Sessions & Recordings opens from the module's own component, not from here.
+      expect(dialog.queryByRole('button', { name: 'Sessions & Recordings' })).not.toBeInTheDocument();
       expect(dialog.getByRole('switch', { name: 'Auto-sync on' })).toHaveAttribute('aria-checked', 'true');
     });
 
-    it('offers the missing live sessions, counted, when weeks are still without one', async () => {
+    it('does not offer to add missing live sessions from the dialog', async () => {
       probeModuleTeamsAttachment.mockResolvedValue(3);
       await renderPage();
       expect(await screen.findByText('Risk Management')).toBeInTheDocument();
       await userEvent.click(within(rowFor('Risk Management')).getByRole('button', { name: 'Detail' }));
 
       const dialog = within(await screen.findByRole('dialog'));
-      // The count is on the button, so the action says what it will do.
-      expect(await dialog.findByRole('button', { name: 'Add 3 missing live sessions' })).toBeInTheDocument();
+      // Missing live sessions are added from the module itself, not from here.
+      await waitFor(() => expect(probeModuleTeamsAttachment).toHaveBeenCalled());
+      expect(dialog.queryByRole('button', { name: /missing live session/ })).not.toBeInTheDocument();
     });
 
     it('leaves an ended session to the worker instead of offering a sync button', async () => {
@@ -618,7 +620,7 @@ describe('Teams Meetings page', () => {
         // The session having ended is exactly when the old button looked most
         // useful and did least: the worker polls every minute regardless.
         expect(dialog.queryByRole('button', { name: 'Sync attendance & files' })).not.toBeInTheDocument();
-        expect(dialog.getByRole('button', { name: 'Sessions & Recordings' })).toBeInTheDocument();
+        expect(dialog.queryByRole('button', { name: 'Sessions & Recordings' })).not.toBeInTheDocument();
       } finally {
         clock.mockRestore();
       }
@@ -794,9 +796,11 @@ describe('Teams Meetings page', () => {
     await userEvent.click(within(rowFor('Data Foundations')).getByRole('button', { name: 'Detail' }));
 
     const dialog = within(await screen.findByRole('dialog'));
-    expect(dialog.getByText('Organizer')).toBeInTheDocument();
-    expect(dialog.getByText('Repeats')).toBeInTheDocument();
-    expect(dialog.getByText('Meetings tracked')).toBeInTheDocument();
+    // The Organizer, Repeats and Meetings tracked facts are gone; the
+    // organizer is shown in the invitation fields below.
+    expect(dialog.queryByText('Repeats')).not.toBeInTheDocument();
+    expect(dialog.queryByText('Meetings tracked')).not.toBeInTheDocument();
+    expect(dialog.getByRole('textbox', { name: 'Organizer' })).toBeInTheDocument();
     // The old read-only fallback text for an empty role list is gone; the
     // fields below say so in their own way (an empty search box).
     expect(dialog.queryByText(/None — everyone joins as an attendee/)).not.toBeInTheDocument();

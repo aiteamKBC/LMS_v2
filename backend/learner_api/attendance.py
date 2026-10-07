@@ -299,7 +299,7 @@ def fetch_recent_kbc_attendance_rows(learners, *, limit=4):
     return result
 
 
-def _summarize_attendance(rows, *, now=None):
+def _summarize_attendance(rows, *, now=None, overview_only=False):
     """Summarize recorded attendance for sessions that have happened so far."""
     now = now or timezone.now()
 
@@ -322,6 +322,8 @@ def _summarize_attendance(rows, *, now=None):
     sessions = len(counted_rows)
     absent = sum(missed(row) for row in counted_rows)
     present = sessions - absent
+    if overview_only:
+        return {'present': present, 'sessions': sessions}
     late = sum(
         status(row) == 'late' or (row['minutes_late'] or 0) > 0
         for row in counted_rows
@@ -426,7 +428,10 @@ def learner_attendance(request, kind, learner_id):
 
     try:
         # all_learners: the default manager is scoped to apprenticeship rows.
-        source = model.all_learners.only('id', 'username', 'email', 'aptem_id').get(pk=learner_id)
+        from .case_file_sources import source_for_case_file
+        source = source_for_case_file(request, kind, learner_id)
+        if source is None:
+            source = model.all_learners.only('id', 'username', 'email', 'aptem_id').get(pk=learner_id)
     except model.DoesNotExist:
         return _error('Learner not found.', 404)
     except DatabaseError:
@@ -447,4 +452,8 @@ def learner_attendance(request, kind, learner_id):
     except Exception:
         return _error('Unable to load attendance. Please try again.', 502)
 
-    return JsonResponse({'attendance': _summarize_attendance(rows)})
+    # Only the internal Overview projection omits history formatting. The
+    # register and catch-up synchronization above remain the same read path.
+    context = getattr(request, '_case_file_context', None)
+    overview_only = context is not None and context.request.path.rstrip('/').endswith('/overview')
+    return JsonResponse({'attendance': _summarize_attendance(rows, overview_only=overview_only)})

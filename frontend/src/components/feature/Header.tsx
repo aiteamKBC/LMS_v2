@@ -319,10 +319,6 @@ export function Header({ accountButtonRef, pageTitle, pageIcon, pageSubtitle, he
       {headerExtras && <div className="kbc-header-extras min-w-0 shrink-0">{headerExtras}</div>}
       {!personalLearning && <WorkspaceSwitcher />}
 
-      {role === 'coach' && <Link to="/workspace/coach#learner-caseload" className="coach-header-search" aria-label="Search learners">
-        <AppIcon name="ri-search-line" /><span>Search learners...</span>
-      </Link>}
-
       {/* Profile and its existing account actions. */}
       <div className="flex shrink-0 items-center gap-0.5 lg:border-l lg:border-white/15 lg:pl-4">
         <div className="relative" ref={profileRef}>

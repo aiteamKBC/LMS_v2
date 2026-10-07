@@ -14,8 +14,10 @@ function attachmentName(url: string, fileName?: string | null): string {
   }
 }
 
-export function AssignmentAttachment({ url, fileName, title }: { url: string; fileName?: string | null; title: string }) {
-  const [expanded, setExpanded] = useState(false);
+export function AssignmentAttachment({ url, fileName, title, defaultExpanded = false, pdfTools = false }: {
+  url: string; fileName?: string | null; title: string; defaultExpanded?: boolean; pdfTools?: boolean;
+}) {
+  const [expanded, setExpanded] = useState(defaultExpanded);
   const previewId = useId();
   const name = attachmentName(url, fileName);
 
@@ -33,7 +35,7 @@ export function AssignmentAttachment({ url, fileName, title }: { url: string; fi
     </div>
     <div id={previewId} hidden={!expanded} className={styles.attachmentPreview}>
       {expanded && <Suspense fallback={<p role="status">Loading file preview…</p>}>
-        <AttachmentPreview url={url} fileName={name} title={title} />
+        <AttachmentPreview url={url} fileName={name} title={title} pdfTools={pdfTools} />
       </Suspense>}
     </div>
   </section>;

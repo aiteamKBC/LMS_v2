@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ComponentProps } from 'react';
+import { useEffect, useMemo, useRef, useState, type ComponentProps } from 'react';
 import DOMPurify from 'dompurify';
 import { loadAssignmentTopicStates, selectAssignmentTopic, type AssignmentTopicState } from '@/api/assignmentTopics';
 import { MONTHLY_STEPS } from '@/api/monthlyAssignment';
@@ -7,6 +7,7 @@ import { AssignmentSubmissionForm } from './AssignmentSubmissionWizard';
 import { useAssignmentTimer } from './useAssignmentTimer';
 import { ActivityElapsedTimer } from './ActivityElapsedTimer';
 import { AssignmentAttachment } from '../monthly-submission/AssignmentAttachment';
+import { readingFiles } from './readingDownloads';
 
 type FormProps = ComponentProps<typeof AssignmentSubmissionForm>;
 const submitted = (status?: string) => ['submitted_for_tutor_review', 'accepted', 'partial'].includes(status || '');
@@ -26,6 +27,7 @@ export function TopicAssignment({ topics, ...props }: FormProps & { topics: Assi
   const identity = { learnerKind: props.kind, learnerId: props.learnerId, activityId: props.componentId };
   const draft = states.find(state => state.topicId && !submitted(state.status));
   const chosen = topics.find(topic => topic.id === selected);
+  const instructionFiles = useMemo(() => readingFiles(undefined, undefined, chosen?.instructions || chosen?.question || '', chosen?.resources), [chosen]);
   const activeTopic = topics.find(topic => topic.id === opened);
   const readonly = submitted(states.find(state => state.topicId === opened)?.status);
   const complete = states.some(state => submitted(state.status));
@@ -83,7 +85,7 @@ export function TopicAssignment({ topics, ...props }: FormProps & { topics: Assi
           onManualDraftSaved={timer.pause}
           onShowInstructions={() => { setOpened(''); timer.pause(); }}
           questionHtml={activeTopic.question} questionText={activeTopic.question}
-          questionFileUrl={undefined} questionFileName={undefined}
+          questionFileUrl={undefined} questionFileName={undefined} questionFiles={undefined}
           onSubmitProgress={answers => props.onSubmitProgress(answers)}
           onTopicSubmitted={() => {
             timer.pause();
@@ -115,9 +117,9 @@ export function TopicAssignment({ topics, ...props }: FormProps & { topics: Assi
         {chosen && <article className="space-y-4 rounded-xl border p-4">
           <h3 className="font-bold">{topicLabel(chosen)}</h3>
           <div className="rich-text-surface whitespace-pre-wrap" dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(chosen.instructions || chosen.question) }} />
-          {chosen.resources.map(resource => /^(video\/)/.test(resource.contentType) || /\.(mp4|webm|mov|m4v)(?:$|\?)/i.test(resource.fileName)
+          {instructionFiles.map(resource => /^(video\/)/.test(chosen.resources.find(file => file.url === resource.url)?.contentType || '') || /\.(mp4|webm|mov|m4v)(?:$|\?)/i.test(resource.fileName || '')
             ? <div key={resource.url}><p className="mb-2 text-sm font-semibold">{resource.fileName}</p><video controls preload="metadata" src={resource.url} className="max-h-96 w-full rounded-lg bg-black" /></div>
-            : <AssignmentAttachment key={resource.url} url={resource.url} fileName={resource.fileName} title={topicLabel(chosen)} />)}
+            : <AssignmentAttachment key={resource.url} url={resource.url} fileName={resource.fileName} title={resource.label || topicLabel(chosen)} defaultExpanded pdfTools />)}
         </article>}
         {error && <p role="alert" className="text-sm text-red-700">{error}</p>}
         <button type="button" disabled={!chosen || starting || !topicHasContent(chosen)} onClick={() => void begin()} className="rounded-xl bg-primary-600 px-5 py-2.5 font-bold text-white disabled:opacity-40">{starting ? 'Saving topic...' : draft ? 'Resume' : 'Next'}</button>

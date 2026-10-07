@@ -145,9 +145,11 @@ it('opens the Teams Meetings dialog itself, for this module alone', async () => 
   open('MOD-1');
   const dialog = within(await screen.findByRole('dialog'));
   expect(dialog.getAllByText('Data Foundations').length).toBeGreaterThan(0);
-  for (const name of ['Update Teams calendar', 'Edit session dates', 'Cancel series', 'Save without notifying', 'Edit meeting settings', 'Sync calendar status']) {
+  for (const name of ['Update Teams calendar', 'Edit session dates', 'Cancel series', 'Save without notifying', 'Sync calendar status']) {
     expect(dialog.getByRole('button', { name })).toBeInTheDocument();
   }
+  // Meeting settings are edited in the section under the dates, not from a drawer of their own.
+  expect(dialog.queryByRole('button', { name: 'Edit meeting settings' })).not.toBeInTheDocument();
   expect(fetchCurriculumTeamsMeetingSummaries).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ moduleCatalogueIds: ['MOD-1'] }));
   // Only this module's sessions, read fresh -- never a forced rebuild of every module's.
   const { fetchCurriculumSessions } = await import('@/lib/curriculumApi');
@@ -181,7 +183,7 @@ it('refuses every write while the module has unsaved changes, and still lets it 
   open('MOD-1', { unsavedChanges: true });
   const dialog = within(await screen.findByRole('dialog'));
   expect(await dialog.findByText(/This module has unsaved changes/)).toBeVisible();
-  await waitFor(() => expect(dialog.getByRole('button', { name: 'Edit meeting settings' })).toBeDisabled());
+  await waitFor(() => expect(dialog.getByRole('button', { name: 'Cancel series' })).toBeDisabled());
   for (const name of ['Update Teams calendar', 'Edit session dates', 'Cancel series', 'Save without notifying']) {
     expect(dialog.getByRole('button', { name })).toBeDisabled();
   }
@@ -216,30 +218,6 @@ it('closes the builder door when the dialog closes', async () => {
   const dialog = within(await screen.findByRole('dialog'));
   await userEvent.click(dialog.getByRole('button', { name: 'Close' }));
   await waitFor(() => expect(onClose).toHaveBeenCalled());
-});
-
-it('edits meeting settings on the existing meeting without its dates or attendees', async () => {
-  open('MOD-1');
-  const dialog = within(await screen.findByRole('dialog'));
-  const settings = await dialog.findByRole('button', { name: 'Edit meeting settings' });
-  await waitFor(() => expect(settings).toBeEnabled());
-  await userEvent.click(settings);
-  await userEvent.click(await screen.findByRole('button', { name: 'Save meeting settings' }));
-  await waitFor(() => expect(updateTeamsMeetingSchedule).toHaveBeenCalledTimes(1));
-  const [liveId, payload] = updateTeamsMeetingSchedule.mock.calls[0] as [string, Record<string, unknown>];
-  expect(liveId).toBe('LIVE-1');
-  // The saved settings, as Microsoft was last told them, go back as the edit.
-  expect(payload).toMatchObject({
-    peopleOnly: true, settingsOnly: true, recording: 'record', lobbyBypass: 'organization', spokenLanguage: 'ar-EG',
-    presenters: ['tutor@example.invalid'], coOrganizers: ['co@example.invalid'], eventId: 'event-1',
-  });
-  // Invitations are their own action: the attendee list is not part of this save.
-  expect(payload).not.toHaveProperty('attendees');
-  // The held dates go back unchanged.
-  expect((payload.scheduledOccurrences as Array<{ startDateTimeUtc: string }>).map(item => item.startDateTimeUtc))
-    .toEqual(['2026-09-02T08:30:00.000Z', '2026-09-09T08:30:00.000Z']);
-  // Scoped to one module, closing the drawer returns to its dialog.
-  expect(await screen.findByRole('button', { name: 'Edit meeting settings' })).toBeInTheDocument();
 });
 
 it('shows the invitation fields under the dates, every role filled, and saves only what changed', async () => {

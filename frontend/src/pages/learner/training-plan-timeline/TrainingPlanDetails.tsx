@@ -71,11 +71,11 @@ function catchupAction(row: AttendanceLecture): string | null {
 }
 
 /** Weekly learning and monthly coaching share the dashboard above the linked module panels. */
-export function TrainingPlanDetails({ data, subjects, kind, learnerId, onRefresh, refreshing = false,
+export function TrainingPlanDetails({ data: baseData, subjects, kind, learnerId, onRefresh, refreshing = false,
   onRetryContract, initialSubjectId = '', initialMonth = '', canOpenActivities = true, weeklyFocus, programmeStartDate, programmeEndDate,
   activityOverviewOnly = false, timelineOnly = false, monthlyOnly = false, trainingOnly = false, overviewOnly = false,
   showOtjChart = true, programmeSnapshot }: Props) {
-  const modules = useMemo(() => buildPlanModules(subjects, data), [subjects, data]);
+  const baseModules = useMemo(() => buildPlanModules(subjects, baseData), [subjects, baseData]);
   const [now, setNow] = useState(Date.now);
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 30_000);
@@ -83,18 +83,18 @@ export function TrainingPlanDetails({ data, subjects, kind, learnerId, onRefresh
   }, []);
   const today = new Date(now).toLocaleDateString('en-CA', { timeZone: 'Europe/London' });
   const thisMonth = today.slice(0, 7);
-  const programmeStart = dateKey(programmeStartDate) || modules.map(module => dateKey(module.start)).filter(Boolean).sort()[0] || '';
+  const programmeStart = dateKey(programmeStartDate) || baseModules.map(module => dateKey(module.start)).filter(Boolean).sort()[0] || '';
   // The learner-detail bound can lag behind the current contract/activity
   // projection.  Keep it as a lower-priority bound when the payload already
   // contains a later valid month, so an absent URL month defaults to the real
   // current month instead of being clamped into stale history.
   const payloadEndMonths = [
-    ...Object.keys(data.months),
-    ...data.actual.map(row => row.month),
-    ...data.reviews.map(review => reviewDate(review).slice(0, 7)),
+    ...Object.keys(baseData.months),
+    ...baseData.actual.map(row => row.month),
+    ...baseData.reviews.map(review => reviewDate(review).slice(0, 7)),
   ].filter(month => /^\d{4}-(0[1-9]|1[0-2])$/.test(month));
   const payloadEnd = payloadEndMonths.sort().at(-1);
-  const moduleEnd = modules.map(module => dateKey(moduleVisualEnd(module))).filter(Boolean).sort().at(-1);
+  const moduleEnd = baseModules.map(module => dateKey(moduleVisualEnd(module))).filter(Boolean).sort().at(-1);
   const programmeEnd = [dateKey(programmeEndDate), moduleEnd, payloadEnd ? `${payloadEnd}-28` : '']
     .filter(Boolean).sort().at(-1) || '';
   const minMonth = programmeStart.slice(0, 7);
@@ -110,6 +110,8 @@ export function TrainingPlanDetails({ data, subjects, kind, learnerId, onRefresh
   // to a month the user requested directly.
   const initialSelectedMonth = explicitMonth || clampMonth(thisMonth);
   const [selectedMonth, setSelectedMonth] = useState(initialSelectedMonth);
+  const data = baseData;
+  const modules = baseModules;
   const [selectedId, setSelectedId] = useState(initialSubjectId);
   const [bookingReview, setBookingReview] = useState<PlanReview | null>(null);
   const [absenceLecture, setAbsenceLecture] = useState<AttendanceLecture | null>(null);
