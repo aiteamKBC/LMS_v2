@@ -340,21 +340,22 @@ def targets(learner_id):
     return targets_for(owner)
 
 
-def targets_for(owner):
+def targets_for(owner, *, month=None):
     """Return one exact Training Plan target per month for this enrolment."""
-    return {record['report_month']: float(record['target_hours']) for record in query('''
+    month_filter = ' AND report_month=%s' if month else ''
+    return {record['report_month']: float(record['target_hours']) for record in query(f'''
         SELECT DISTINCT ON (report_month) report_month,target_hours
         FROM "Learner".learner_monthly_targets
         WHERE learner_id=%s
           AND coalesce(programme_profile_id,'')=''
           AND (enrolment_id IS NULL OR enrolment_id IS NOT DISTINCT FROM %s)
-          AND (programme_id IS NULL OR programme_id IS NOT DISTINCT FROM %s)
+          AND (programme_id IS NULL OR programme_id IS NOT DISTINCT FROM %s) {month_filter}
         ORDER BY report_month,
           (enrolment_id IS NOT DISTINCT FROM %s) DESC,
           (programme_id IS NOT DISTINCT FROM %s) DESC,
           updated_at DESC,id DESC''', [
             owner['id'], owner.get('enrolment_id'), owner.get('programme_id'),
-            owner.get('enrolment_id'), owner.get('programme_id'),
+            *([month] if month else []), owner.get('enrolment_id'), owner.get('programme_id'),
         ]) if record['target_hours'] is not None}
 
 

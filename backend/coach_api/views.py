@@ -6449,7 +6449,7 @@ def event_note_lines(base_event: dict, record: CoachCalendarEvent | None) -> lis
     return lines
 
 
-def overlay_calendar_record(base_event: dict, record: CoachCalendarEvent | None, imported_overlay=None) -> dict:
+def overlay_calendar_record(base_event: dict, record: CoachCalendarEvent | None, imported_overlay=None, *, compact=False) -> dict:
     event = dict(base_event)
     # Aptem's status remains provenance. A verified LMS meeting controls the
     # calendar display status, while sourceStatus keeps the imported value.
@@ -6524,8 +6524,8 @@ def overlay_calendar_record(base_event: dict, record: CoachCalendarEvent | None,
             "graphWebLink": graph_web_link,
             "platform": meeting_provider or ("Microsoft Teams" if meeting_link else "--"),
             "location": "Online" if meeting_link else "--",
-            "notes": " ".join(event_note_lines(base_event, record)),
-            "reviewResponses": record.review_responses if record and isinstance(record.review_responses, dict) else {},
+            "notes": "" if compact else " ".join(event_note_lines(base_event, record)),
+            "reviewResponses": {} if compact else record.review_responses if record and isinstance(record.review_responses, dict) else {},
             "reviewCompletedAt": (
                 base_event.get("reviewCompletedAt") if aptem_review
                 else record.review_completed_at.isoformat() if record and record.review_completed_at else None
@@ -6546,7 +6546,8 @@ def overlay_calendar_record(base_event: dict, record: CoachCalendarEvent | None,
     )
     if aptem_review:
         from .review_sources import apply_imported_state
-        event = apply_imported_state(event, record, imported_overlay)
+        event = (apply_imported_state(event, record, imported_overlay, compact=True)
+                 if compact else apply_imported_state(event, record, imported_overlay))
         event["priority"] = generated_event_priority(event["status"], target_date, display_date)
         event["platform"] = event.get("meetingProvider") or ("Microsoft Teams" if event.get("meetingLink") else "--")
         event["location"] = "Online" if event.get("meetingLink") else "--"
@@ -9777,6 +9778,9 @@ def fetch_aptem_review_events(
     owner_name: str,
     start_date: date | None = None,
     end_date: date | None = None,
+    projection_month: str | None = None,
+    projection_review_ids: list | None = None,
+    projection_event_keys: list | None = None,
 ) -> tuple[list[dict], set[int]]:
     """Shape verified Aptem rows as the common coach calendar event contract."""
     from .review_sources import imported_identity, imported_learner_identity, number_imported_events
@@ -9849,6 +9853,21 @@ def fetch_aptem_review_events(
           AND NULLIF(BTRIM(lr.review_type), '') IS NOT NULL
         ORDER BY COALESCE(lr.completed_date, lr.planned_scheduled_date), lr.id
     """
+    if projection_month:
+        # Monthly Focus does not render sequence numbers. Keep legacy raw date
+        # formats as candidates for the shared parser; indexed ISO rows and
+        # explicitly moved bookings can be bounded before serialization.
+        query, ordering = query.rsplit('ORDER BY', 1)
+        planned = "coalesce(nullif(lr.planned_scheduled_date::text,''),lr.review_data #>> '{source_metadata,Planned / Scheduled Date}','')"
+        completed = "coalesce(nullif(lr.completed_date::text,''),lr.review_data #>> '{source_metadata,Completed Date}','')"
+        query += f''' AND (
+            left({planned},7)=%s
+            OR left({completed},7)=%s
+            OR ({planned}<>'' AND {planned} !~ '^[0-9]{{4}}-[0-9]{{2}}-')
+            OR ({completed}<>'' AND {completed} !~ '^[0-9]{{4}}-[0-9]{{2}}-')
+            OR lr.id=ANY(%s) OR ('imported-review:' || lr.aptem_review_id)=ANY(%s))'''
+        query_params.extend([projection_month, projection_month, projection_review_ids or [], projection_event_keys or []])
+        query += ' ORDER BY' + ordering
     connection = connections[get_learner_db_alias()]
     with connection.cursor() as cursor:
         cursor.execute(query, query_params)

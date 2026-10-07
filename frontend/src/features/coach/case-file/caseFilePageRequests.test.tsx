@@ -17,7 +17,8 @@ const schedule = { months: {}, contractStatus: 'not-available', actual: [], actu
 const sections: Record<string, unknown> = {
   profile: { learner: { id: '101', enrolmentId: '201', aptemId: null, learnerType: 'apprenticeship', name: 'Synthetic Learner', email: 'learner@example.test', programme: 'Programme', group: 'Synthetic Group', employer: 'Synthetic Employer', status: 'Active', startDate: '2026-01-01', plannedEndDate: '2027-01-01' } },
   overview: { wholeProgrammeProgress: { overall: metrics.programme, ksb: metrics.ksb, attendance: { ...attendance, percent: 50 }, otjh: { actual: 12, planned: 100, targetToDate: 25, percent: 48 } }, programmeProgress: [] },
-  'monthly-focus': { ...schedule, schedule, week: { planSubjects: [] }, hours: { months: [], learner: {} } },
+  'weekly-learning': { weeks: [], selectedWeek: null },
+  'monthly-focus': { month: '2026-09', summary: { requiredHours: 50, achievedHours: 0, differenceHours: -50, ksbCount: null }, reviews: [], assignments: [], lectures: [] },
   'otjh-ksb': { metrics, programmeWindow: { startDate: '2026-01-01', plannedEndDate: '2027-01-01' }, schedule, week: { planSubjects: [], monthlyOtjh: [] }, hours: { months: [], learner: {} }, breakdown: { source: 'progress', rows: [{ code: 'K1', description: 'Synthetic knowledge', category: 'Knowledge', completed: 1, status: 'Achieved', activityNames: ['Synthetic evidence'], components: [] }], achievedKsbs: 1 } },
   'learning-plan': { detail: { modules: ['Synthetic Module'], week: [{ module: 'Synthetic Module', week: 'Week 1', moduleId: 'M1', weekId: 'W1' }], components: [{ componentId: 'C1', moduleId: 'M1', weekId: 'W1', module: 'Synthetic Module', week: 'Week 1', component: 'Synthetic reading', type: 'reading' }], quizAttempts: [], videoProgress: [], componentProgress: [] }, covers: {}, schedule, week: { planSubjects: [], monthlyOtjh: [] }, hours: { months: [], learner: {} } },
   K1: { source: 'progress', rows: [{ code: 'K1', description: 'Synthetic knowledge', category: 'Knowledge', completed: 1, status: 'Achieved', components: [{ name: 'Synthetic evidence', status: 'completed', achieved: true, source: 'Progress' }] }], achievedKsbs: 1 },
@@ -48,7 +49,7 @@ it.each(['apprenticeship', 'commercial'])('real %s tab consumers issue one ownin
   await waitFor(() => expect(screen.getByRole('region', { name: 'Whole programme progress' })).toHaveTextContent('1 / 2 sessions attended'));
   expect(screen.queryByText('KSB progress unavailable')).not.toBeInTheDocument();
   expect(screen.queryByText('Recorded hours unavailable')).not.toBeInTheDocument();
-  const tabs = [['Overview', 'overview'], ['Monthly Focus', 'monthly-focus'], ['OTJH & KSB Progress', 'otjh-ksb'], ['Attendance', 'attendance'], ['Learning Plan', 'learning-plan'], ['Reviews', 'reviews'], ['Assignments', 'assignments'], ['Enrolment Documents', 'enrolment-documents']];
+  const tabs = [['Overview', 'overview'], ['Weekly Learning', 'weekly-learning'], ['Monthly Focus', 'monthly-focus'], ['OTJH & KSB Progress', 'otjh-ksb'], ['Attendance', 'attendance'], ['Learning Plan', 'learning-plan'], ['Reviews', 'reviews'], ['Assignments', 'assignments'], ['Enrolment Documents', 'enrolment-documents']];
   for (const [label, section] of tabs.slice(1)) {
     const before = transport.mock.calls.length;
     fireEvent.click(screen.getByRole('tab', { name: label }));
@@ -59,13 +60,13 @@ it.each(['apprenticeship', 'commercial'])('real %s tab consumers issue one ownin
     if (section === 'learning-plan') await waitFor(() => expect(screen.getByText('Synthetic Module')).toBeInTheDocument());
   }
   for (const [label] of tabs.slice().reverse()) { fireEvent.click(screen.getByRole('tab', { name: label })); await act(async () => {}); }
-  expect(transport).toHaveBeenCalledTimes(9);
+  expect(transport).toHaveBeenCalledTimes(10);
   expect(screen.getByText('Employer: Synthetic Employer')).toBeInTheDocument();
   expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole('tab', { name: 'OTJH & KSB Progress' }));
   await waitFor(() => expect(screen.getByRole('button', { name: 'View' })).toBeInTheDocument());
-  expect(transport).toHaveBeenCalledTimes(9);
+  expect(transport).toHaveBeenCalledTimes(10);
   fireEvent.click(screen.getByRole('button', { name: 'View' }));
-  await waitFor(() => expect(transport).toHaveBeenCalledTimes(10));
+  await waitFor(() => expect(transport).toHaveBeenCalledTimes(11));
   expect(transport.mock.calls.at(-1)?.[0]).toBe('/coach_api/coach/case-file/101/ksbs/K1');
 });

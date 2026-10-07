@@ -41,7 +41,7 @@ def case_file_ksb_detail(request, learner_id, code):
 RESOURCES = {
     'overview': {'detail', 'activity', 'covers', 'week', 'schedule', 'hours'},
     'weekly-learning': {'detail', 'week', 'schedule', 'hours'},
-    'monthly-focus': {'focus', 'week', 'schedule', 'hours'},
+    'monthly-focus': {'focus'},
     'otjh-ksb': {'breakdown', 'metrics', 'week', 'schedule', 'hours'},
     'learning-plan': {'detail', 'activity', 'covers', 'week', 'schedule', 'hours', 'module'},
     'assignments': {'detail', 'covers', 'contract', 'statuses', 'marking', 'submission'},
@@ -95,12 +95,22 @@ class CaseFileContext:
                                       'programme_status', 'cohort', 'group', 'employer', 'coach_name', 'coach_email',
                                       'start_date', 'learner_start_date', 'learner_end_date', 'end_date',
                                       'apprenticeship_end_date', 'practical_period_end_date'}
-                if not self.profile_only and self.request.path.rstrip('/').split('/')[-1] in {'weekly-learning', 'monthly-focus', 'otjh-ksb', 'learning-plan', 'assignments'}:
+                if not self.profile_only and self.request.path.rstrip('/').split('/')[-1] in {'weekly-learning', 'otjh-ksb', 'learning-plan', 'assignments'}:
                     from learner_api.training_plan_dashboard import TRAINING_PLAN_SOURCE_FIELDS
                     fields.update(TRAINING_PLAN_SOURCE_FIELDS)
+                if not self.profile_only and self.request.path.rstrip('/').split('/')[-1] == 'weekly-learning':
+                    fields = {'id', 'aptem_id', 'learner_type', 'username', 'email', 'programme', 'cohort', 'group'}
                 if not self.profile_only and self.request.path.rstrip('/').split('/')[-1] == 'overview':
                     fields = {'id', 'aptem_id', 'learner_type', 'email', 'username', *SOURCE_WINDOW_FIELDS}
-                self._source = EnrolmentUser.all_learners.filter(pk=self.profile.enrolment_id).only(*sorted(fields)).first()
+                query = EnrolmentUser.all_learners.filter(pk=self.profile.enrolment_id).only(*sorted(fields))
+                weekly = not self.profile_only and self.request.path.rstrip('/').split('/')[-1] in {'weekly-learning', 'monthly-focus'}
+                if weekly:
+                    from .weekly_learning import assignment_projection
+                    query = assignment_projection(query)
+                self._source = query.first()
+                if weekly and self._source is not None:
+                    self._source.training_plan = self._source._weekly_training_plan
+                    self._source.learning_plan = self._source._weekly_learning_plan
                 if self._source is not None:
                     self._source._case_file_profile = self.profile
             self._source_loaded = True
@@ -180,6 +190,9 @@ class CaseFileContext:
 
 def build_tab(context, section, month=None):
     """Read each source once and send only projections consumed by this tab."""
+    if section == 'monthly-focus':
+        from .monthly_focus import read_monthly_focus
+        return read_monthly_focus(context, month)
     if section == 'assignments':
         parts = context.parallel({**{resource: lambda resource=resource: context.payload(resource)
                                     for resource in ('covers', 'contract', 'statuses')},
@@ -237,17 +250,6 @@ def build_tab(context, section, month=None):
                               'activityCount': len(row['components']), 'components': []}
                              for row in breakdown['rows']]
         result['breakdown'] = breakdown
-    if section == 'monthly-focus':
-        schedule.update(json.loads(project_month_focus(JsonResponse(schedule), month).content))
-        schedule['sessions'] = [row for row in schedule.get('sessions', [])
-                                if row.get('start', '').startswith(month)]
-        week['monthlyOtjh'] = {month: week['monthlyOtjh'][month]} if month in week.get('monthlyOtjh', {}) else {}
-        week['planSubjects'] = [{**row, 'monthlyActivities': [item for item in row.get('monthlyActivities', [])
-                                                            if item.get('date', '').startswith(month)],
-                                 'ksbCodesByMonth': {month: row.get('ksbCodesByMonth', {}).get(month, [])}}
-                                for row in week.get('planSubjects', [])]
-        hours['months'] = [row for row in hours['months'] if row.get('month') == month]
-        result.update(json.loads(project_month_focus(JsonResponse(schedule), month).content))
     return result
 
 
@@ -560,6 +562,15 @@ def case_file_section(request, learner_id, section='profile'):
                 response = JsonResponse(serialize_case_file_profile(context.profile, context.source))
             elif section == 'overview' and not request.GET.get('resource'):
                 response = JsonResponse(build_overview(context))
+            elif section == 'weekly-learning':
+                from .weekly_learning import read_weekly_learning
+                if request.GET.get('resource'):
+                    response = JsonResponse({'detail': 'Weekly Learning uses a compact week projection.'}, status=400)
+                else:
+                    try:
+                        response = JsonResponse(read_weekly_learning(context, request.GET.get('week')))
+                    except LookupError as error:
+                        response = JsonResponse({'detail': str(error)}, status=404)
             elif section in {'weekly-learning', 'monthly-focus', 'otjh-ksb', 'learning-plan', 'assignments'} and not request.GET.get('resource'):
                 month = request.GET.get('month', '')
                 if section == 'monthly-focus' and not re.fullmatch(r'\d{4}-(0[1-9]|1[0-2])', month):
@@ -619,7 +630,7 @@ def case_file_section(request, learner_id, section='profile'):
                 if not re.fullmatch(r'\d{4}-(0[1-9]|1[0-2])', month):
                     response = JsonResponse({'detail': 'A valid month (YYYY-MM) is required.'}, status=400)
                 else:
-                    response = project_month_focus(context.learner_read('schedule'), month)
+                    response = JsonResponse(build_tab(context, section, month))
             else:
                 defaults = {'overview': 'detail', 'weekly-learning': 'week', 'monthly-focus': 'schedule',
                             'otjh-ksb': 'breakdown', 'learning-plan': 'schedule',

@@ -20,10 +20,35 @@ const resource = createCachedResource<unknown>('coach-case-file-session', fetchS
 export const OVERVIEW_TTL_MS = 60_000;
 const overview = createCachedResource<unknown>('coach-case-file-session', fetchSection, OVERVIEW_TTL_MS, Infinity);
 
+export function peekCaseFileCache<T>(scope: string, learnerId: string, section: string, url: string): T | undefined {
+  const key = JSON.stringify([scope, learnerId, section, url]);
+  const cached = (section === 'overview' || section === 'weekly-learning' || section === 'monthly-focus' ? overview : resource).peek(key);
+  if (cached) return cached as T;
+  if (section === 'weekly-learning') {
+    const requested = new URL(url, window.location.origin);
+    const week = requested.searchParams.get('week');
+    requested.searchParams.delete('week');
+    const initial = overview.peek(JSON.stringify([scope, learnerId, section, requested.pathname + requested.search])) as { selectedWeek?: { id: string } } | undefined;
+    if (week && initial?.selectedWeek?.id === week) return initial as T;
+  }
+}
+
 export function readCaseFileCache<T>(scope: string, learnerId: string, section: string, url: string, options: { signal?: AbortSignal; refresh?: boolean } = {}) {
   if (options.signal?.aborted) return Promise.reject(new DOMException('The operation was aborted.', 'AbortError'));
   const key = JSON.stringify([scope, learnerId, section, url]);
-  return withCallerSignal((section === 'overview' ? overview : resource).read(key, { revalidate: options.refresh }) as Promise<T>, options.signal);
+  if (section === 'weekly-learning') {
+    const requested = new URL(url, window.location.origin);
+    const week = requested.searchParams.get('week');
+    requested.searchParams.delete('week');
+    const defaultUrl = requested.pathname + requested.search;
+    const defaultKey = JSON.stringify([scope, learnerId, section, defaultUrl]);
+    const initial = overview.peek(defaultKey) as { selectedWeek?: { id: string } } | undefined;
+    if (week && initial?.selectedWeek?.id === week) {
+      if (options.refresh) overview.invalidate(defaultKey);
+      else if (!overview.peek(key)) return withCallerSignal(Promise.resolve(initial as T), options.signal);
+    }
+  }
+  return withCallerSignal((section === 'overview' || section === 'weekly-learning' || section === 'monthly-focus' ? overview : resource).read(key, { revalidate: options.refresh }) as Promise<T>, options.signal);
 }
 
 export function clearCaseFileCache() { resource.invalidate(); overview.invalidate(); }

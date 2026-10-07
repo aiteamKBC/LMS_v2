@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { TrainingPlanDashboard } from '@/api/trainingPlanDashboard';
-import type { PlanSubjectSummary } from '@/api/learnerOverview';
-import type { LogSummary } from '@/features/monthly-logs/api';
 import { useCaseFileSession } from './CaseFileSession';
 
-type MonthFocus = Pick<TrainingPlanDashboard, 'months' | 'actual' | 'actualAvailable' | 'reviews'> & {
-  schedule?: TrainingPlanDashboard; week?: { planSubjects: PlanSubjectSummary[] }; hours?: LogSummary;
+export type MonthFocus = {
+  month: string;
+  summary: { requiredHours: number | null; achievedHours: number | null; differenceHours: number | null; ksbCount: number | null };
+  reviews: { id: string; type: string; title: string; date: string; time: string | null; durationMinutes: number | null; status: string }[];
+  assignments: { id: string; title: string; date: string; status: string }[];
+  lectures: { id: string; date: string; time: string; title: string; tutor: string; durationMinutes: number }[];
 };
 
 export function useCaseFileMonthFocus(month: string, enabled: boolean) {

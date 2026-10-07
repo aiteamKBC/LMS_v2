@@ -7,7 +7,7 @@ import { roleNavMap } from '@/mocks/navigation';
 import { EmptyState } from '@/pages/users/components/ui';
 import { useCoachIdentity } from '@/hooks/useCoachIdentity';
 import { DashboardTrainingPlan } from '@/pages/workspace/learner/DashboardTrainingPlan';
-import { DashboardWeeklyContent } from '@/pages/workspace/learner/tabs/DashboardWeeklyTab';
+import { CaseFileWeeklyLearningTab } from './tabs/CaseFileWeeklyLearningTab';
 import OTJHTab from './components/OTJHTab';
 import KSBsTab from './components/KSBsTab';
 import EvidenceTab from './components/EvidenceTab';
@@ -160,8 +160,8 @@ function LearnerCaseFileContent() {
               attendanceTotal: caseFileAttendance.data?.sessions ?? null,
             }} /></div>;
       case 'weekly-learning':
-        return dashboardKind ? <DashboardWeeklyContent kind={dashboardKind}
-          learnerId={data.enrolmentId || data.learnerId} plan={dashboardPlan} canOpenActivities={false} /> : null;
+        return dashboardKind ? <CaseFileWeeklyLearningTab kind={dashboardKind}
+          learnerId={data.enrolmentId || data.learnerId} /> : null;
       case 'monthly-focus':
         return dashboardKind ? <CaseFileMonthlyFocusTab kind={dashboardKind}
           learnerId={data.enrolmentId || data.learnerId} startDate={data.programmeStartDate || data.startDate} endDate={data.programmeEndDate} /> : null;

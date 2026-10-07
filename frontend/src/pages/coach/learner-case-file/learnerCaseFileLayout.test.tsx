@@ -79,9 +79,9 @@ vi.mock('./tabs/CaseFileMonthlyFocusTab', async () => {
   const Plan = DashboardTrainingPlan as unknown as ComponentType<Record<string, unknown>>;
   return { CaseFileMonthlyFocusTab: () => <Plan monthlyOnly showRewards={false} canOpenActivities={false} /> };
 });
-vi.mock('@/pages/workspace/learner/tabs/DashboardWeeklyTab', () => ({
-  DashboardWeeklyContent: ({ canOpenActivities }: { canOpenActivities?: boolean }) => <div aria-label="Coach learner weekly learning">
-    <h2>Weekly learning plan</h2><span data-testid="weekly-actions">{canOpenActivities === false ? 'Learner actions hidden' : 'Learner actions enabled'}</span>
+vi.mock('./tabs/CaseFileWeeklyLearningTab', () => ({
+  CaseFileWeeklyLearningTab: () => <div aria-label="Coach learner weekly learning">
+    <h2>Weekly learning plan</h2><span data-testid="weekly-actions">Learner actions hidden</span>
   </div>,
 }));
 vi.mock('@/pages/learner/reviews/ImportedReviewHistory', () => ({

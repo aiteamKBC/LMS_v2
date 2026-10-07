@@ -1,7 +1,4 @@
 import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from 'react';
-import { useCaseFileMonthFocus } from '@/features/coach/case-file/hooks/useCaseFileMonthFocus';
-import { monthlyLogOtjh } from '@/pages/workspace/learner/useDashboardPlan';
-import { dashboardPlanSubjects } from '@/pages/workspace/learner/dashboardPlan';
 import { Link } from 'react-router-dom';
 import { ArrowRight, CalendarDays, ChevronLeft, ChevronRight, Clock3, Equal, FileText, GraduationCap, RefreshCw, Target, TrendingDown, TrendingUp, Video } from 'lucide-react';
 import type { LearnerKind } from '@/api/learnerDetail';
@@ -113,12 +110,8 @@ export function TrainingPlanDetails({ data: baseData, subjects, kind, learnerId,
   // to a month the user requested directly.
   const initialSelectedMonth = explicitMonth || clampMonth(thisMonth);
   const [selectedMonth, setSelectedMonth] = useState(initialSelectedMonth);
-  const focus = useCaseFileMonthFocus(selectedMonth, monthlyOnly);
-  const data = useMemo(() => focus?.data?.schedule ? { ...focus.data.schedule,
-    monthlyLogOtjh: focus.data.hours ? monthlyLogOtjh(focus.data.hours).months : baseData.monthlyLogOtjh } : baseData, [focus?.data, baseData]);
-  const modules = useMemo(() => focus?.data?.schedule && focus.data.week
-    ? buildPlanModules(dashboardPlanSubjects(focus.data.week.planSubjects, focus.data.schedule), data)
-    : baseModules, [focus?.data, baseModules, data]);
+  const data = baseData;
+  const modules = baseModules;
   const [selectedId, setSelectedId] = useState(initialSubjectId);
   const [bookingReview, setBookingReview] = useState<PlanReview | null>(null);
   const [absenceLecture, setAbsenceLecture] = useState<AttendanceLecture | null>(null);
@@ -165,7 +158,7 @@ export function TrainingPlanDetails({ data: baseData, subjects, kind, learnerId,
     } catch (reason) { setCatchupError(reason instanceof Error ? reason.message : 'Could not link catch-up.'); }
     finally { setCatchupBusy(false); }
   };
-  const monthReviews = (focus?.data?.reviews ?? data.reviews).filter(review => review.source !== 'student-support' && review.status !== 'cancelled' && reviewDate(review).startsWith(selectedMonth))
+  const monthReviews = data.reviews.filter(review => review.source !== 'student-support' && review.status !== 'cancelled' && reviewDate(review).startsWith(selectedMonth))
     .sort((a, b) => reviewDate(a).localeCompare(reviewDate(b)));
   const monthActivities = modules.flatMap(module => (monthData(module).monthlyActivities || []).map(activity => ({ module, activity })))
     .filter(item => item.activity.date.startsWith(selectedMonth))
@@ -325,7 +318,6 @@ export function TrainingPlanDetails({ data: baseData, subjects, kind, learnerId,
   const showMonthly = !trainingOnly && !overviewOnly;
   const showTraining = !monthlyOnly && !overviewOnly;
   return <div className={`${styles.root} ${layout.root}`}>
-    {focus?.error && <div role="alert" className={styles.error}>{focus.error} <button type="button" onClick={focus.refresh}>Retry monthly focus</button></div>}
     {!trainingOnly && <div className={`${layout.topRow} ${weeklyFocus && !monthlyOnly ? layout.withWeeklyFocus : ''} ${activityOverviewOnly ? layout.activityOverviewTopRow : ''} ${activityOverviewOnly && !showMonthly ? layout.overviewSingle : ''}`}
       data-layout="split">
       {activityOverviewOnly

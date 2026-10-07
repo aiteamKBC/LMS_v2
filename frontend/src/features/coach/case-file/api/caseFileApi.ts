@@ -25,6 +25,7 @@ export async function caseFileSectionRead<T>(scope: string, learnerId: string, s
   }
   const { resource, ...selection } = params;
   const query: Record<string, string> = {};
+  if (section === 'weekly-learning' && selection.week) query.week = selection.week;
   if (section === 'monthly-focus') {
     const requested = new URLSearchParams(window.location.search).get('month');
     query.month = selection.month || (requested && /^\d{4}-(0[1-9]|1[0-2])$/.test(requested) ? requested
