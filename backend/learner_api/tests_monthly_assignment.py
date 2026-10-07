@@ -215,18 +215,19 @@ class MonthlyAssignmentTests(SimpleTestCase):
 
     @patch("learner_api.monthly_assignment.resubmission_booking_satisfied", return_value=False)
     @patch("learner_api.calendar._learner_calendar_record")
-    def test_coaching_uses_real_owned_meeting_in_last_ten_days(self, get_record, _resubmission):
+    def test_coaching_uses_real_owned_meeting_on_any_date(self, get_record, _resubmission):
         from datetime import date
         record = SimpleNamespace(event_type="mcr", scheduled_date=date(2026, 9, 21), status="scheduled")
         get_record.return_value = record
         self.assertTrue(booked_coaching(self.payload()))
         get_record.assert_called_with("commercial", 1, "meeting-1")
-        record.scheduled_date = date(2026, 9, 20)
+        # The old monthly windows no longer limit which booked MCM counts.
+        for day in (date(2026, 9, 20), date(2026, 10, 5), date(2026, 10, 6)):
+            record.scheduled_date = day
+            self.assertTrue(booked_coaching(self.payload()))
+        record.scheduled_date = None
         self.assertFalse(booked_coaching(self.payload()))
-        record.scheduled_date = date(2026, 10, 5)
-        self.assertTrue(booked_coaching(self.payload()))
         record.scheduled_date = date(2026, 10, 6)
-        self.assertFalse(booked_coaching(self.payload()))
         self.assertEqual(coaching_booking_bounds("2026-12"), (date(2026, 12, 22), date(2027, 1, 5)))
         record.scheduled_date = date(2026, 9, 30)
         record.status = "cancelled"
