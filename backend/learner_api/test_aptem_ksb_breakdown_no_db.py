@@ -79,6 +79,27 @@ class ProgressKsbBreakdownTests(unittest.TestCase):
             for forbidden in ['aptem_id', 'Aptem_users', 'aptem_component_ksbs', 'curriculum.', 'legacy_aptem_component']:
                 self.assertNotIn(forbidden, call.args[0])
 
+    def test_evidence_reader_matches_only_exact_code_and_returns_point_metadata(self):
+        connection = MagicMock()
+        cursor = connection.cursor.return_value.__enter__.return_value
+        cursor.fetchall.return_value = [
+            (1, 315, 'Unrelated title', 'passed', True, None, 'new_lms', 'B1', 'Behaviour',
+             'reading', 'component', 'Synthetic module', '2026-10-01', None)]
+        result = read_breakdown(connection, 315, code='B1')
+        sql, params = cursor.execute.call_args.args
+        self.assertEqual(params, [315, 'B1'])
+        self.assertIn('AND k.ksb_code=%s', sql)
+        for fuzzy in ('ILIKE', 'LIKE', 'lower(', 'component_title='):
+            self.assertNotIn(fuzzy, sql)
+        row = result['rows'][0]
+        self.assertEqual((row['pointsAchieved'], row['totalPoints'], row['progressPercent']), (1, 1, 100))
+        self.assertEqual(row['components'][0]['type'], 'reading')
+        self.assertEqual(row['components'][0]['module'], 'Synthetic module')
+        self.assertTrue(row['components'][0]['accepted'])
+        pending = build_progress_breakdown(315, [self.entry(2, accepted=False, submitted_at='2026-10-02')])['rows'][0]['components'][0]
+        self.assertEqual(pending['date'], '2026-10-02')
+        self.assertIsNone(pending['completedAt'])
+
     def test_diagnostic_entrypoint_takes_primary_id_without_aptem_lookup(self):
         connection = MagicMock()
         cursor = connection.cursor.return_value.__enter__.return_value

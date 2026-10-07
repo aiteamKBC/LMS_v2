@@ -890,6 +890,33 @@ def ksb_point_definition(record, code):
     return {'ksbDefinitionId': definition_id, 'definitionCode': definition_code}
 
 
+def point_ratio(done, total):
+    """Canonical Student point counts and percentage (also used by Coach)."""
+    from learner_api.ksb_points import point_ratio as shared_ratio
+    return shared_ratio(done, total)
+
+
+def read_ksb_point_counts(learner_id):
+    """Compact activity/code pairs; acceptance owns points, not activity status.
+
+    Student completion enrichment never replaces stored acceptance or adds
+    records (progress_records_with_completion), so no evidence hydration is
+    needed to reproduce its KSB counts here.
+    """
+    return query('''WITH links AS (
+        SELECT DISTINCT ON (k.ksb_code,p.id) k.ksb_code AS code,p.id,
+            k.ksb_description AS description,k.position,p.accepted,
+            (p.activity_status='completed' AND p.accepted IS TRUE) AS achieved
+        FROM "Learner".learner_progress_entries p
+        JOIN "Learner".learner_progress_ksbs k ON k.progress_id=p.id
+        WHERE p.learner_id=%s AND p.deleted_at IS NULL AND k.ksb_code IS NOT NULL
+        ORDER BY k.ksb_code,p.id,k.position
+    ) SELECT code,(array_agg(description ORDER BY id,position))[1] AS description,
+        count(*) AS "evidenceCount",count(*) FILTER (WHERE achieved) AS completed,
+        count(*) FILTER (WHERE accepted IS TRUE) AS "pointsAchieved"
+        FROM links GROUP BY code ORDER BY min(id),code''', [learner_id])
+
+
 def metrics_from_records(records, monthly_targets, *, include_ksb_points=False):
     """Count final activity records once, using accepted evidence only for hours.
 
@@ -900,10 +927,7 @@ def metrics_from_records(records, monthly_targets, *, include_ksb_points=False):
     accepted = [item for item in counted if item.get('accepted') is True]
     completed = [item for item in counted if counts_as_completed(
         item, include_source_evidence='completed' in item)]
-    def ratio(done, total):
-        return {'completed': done, 'total': total,
-                'percent': round(done / total * 100, 2) if total else None,
-                'status': 'ready' if total else 'empty'}
+    ratio = point_ratio
     codes = {}
     for item in counted:
         for code in set(item.get('ksbs') or []):

@@ -20,7 +20,7 @@ export function caseFileRead<T>(scope: string, learnerId: string, section: strin
 
 /** Project consumers from one cached tab response; resources never become HTTP requests. */
 export async function caseFileSectionRead<T>(scope: string, learnerId: string, section: string, params: Record<string, string> = {}, options: CaseFileReadOptions = {}): Promise<T> {
-  if (section === 'ksb-detail' || params.resource === 'submission') {
+  if (section === 'ksb-detail' || section === 'ksb-search' || params.resource === 'submission') {
     return caseFileRead<T>(scope, learnerId, section, params, options);
   }
   const { resource, ...selection } = params;

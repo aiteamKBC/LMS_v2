@@ -22,7 +22,7 @@ const overview = createCachedResource<unknown>('coach-case-file-session', fetchS
 
 export function peekCaseFileCache<T>(scope: string, learnerId: string, section: string, url: string): T | undefined {
   const key = JSON.stringify([scope, learnerId, section, url]);
-  const cached = (section === 'overview' || section === 'weekly-learning' || section === 'monthly-focus' ? overview : resource).peek(key);
+  const cached = (section === 'overview' || section === 'weekly-learning' || section === 'monthly-focus' || section === 'otjh-ksb' || section === 'ksb-detail' || section === 'ksb-search' ? overview : resource).peek(key);
   if (cached) return cached as T;
   if (section === 'weekly-learning') {
     const requested = new URL(url, window.location.origin);
@@ -48,7 +48,7 @@ export function readCaseFileCache<T>(scope: string, learnerId: string, section: 
       else if (!overview.peek(key)) return withCallerSignal(Promise.resolve(initial as T), options.signal);
     }
   }
-  return withCallerSignal((section === 'overview' || section === 'weekly-learning' || section === 'monthly-focus' ? overview : resource).read(key, { revalidate: options.refresh }) as Promise<T>, options.signal);
+  return withCallerSignal((section === 'overview' || section === 'weekly-learning' || section === 'monthly-focus' || section === 'otjh-ksb' || section === 'ksb-detail' || section === 'ksb-search' ? overview : resource).read(key, { revalidate: options.refresh }) as Promise<T>, options.signal);
 }
 
 export function clearCaseFileCache() { resource.invalidate(); overview.invalidate(); }

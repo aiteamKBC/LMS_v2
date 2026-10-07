@@ -25,7 +25,7 @@ export function useLearnerProfile(args: Args) {
   const resolvedEnrolmentId = profile.data?.enrolmentId || args.enrolmentId;
   const hasEnrolmentIdentity = args.enabled && Boolean(resolvedKind && resolvedEnrolmentId);
   const hasProfileIdentity = args.enabled && Boolean(profile.data?.learnerId);
-  const needsPlan = (session ? ['progress', 'support']
+  const needsPlan = (session ? ['support']
     : ['overview', 'weekly-learning', 'monthly-focus', 'progress', 'support']).includes(args.activeTab);
   const planSection = args.activeTab === 'support' ? 'learning-plan' : args.activeTab === 'progress' ? 'otjh-ksb'
     : needsPlan ? args.activeTab : 'overview';

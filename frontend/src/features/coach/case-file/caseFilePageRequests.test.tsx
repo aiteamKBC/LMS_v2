@@ -1,7 +1,8 @@
 import { StrictMode } from 'react';
+import { AppIcon } from '@/components/feature/AppIcon';
 import { fireEvent, render, screen, waitFor, act } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
-import { beforeEach, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { clearAllCachedResources } from '@/api/cachedRequest';
 import LearnerCaseFile from '@/pages/coach/learner-case-file/page';
 
@@ -19,19 +20,28 @@ const sections: Record<string, unknown> = {
   overview: { wholeProgrammeProgress: { overall: metrics.programme, ksb: metrics.ksb, attendance: { ...attendance, percent: 50 }, otjh: { actual: 12, planned: 100, targetToDate: 25, percent: 48 } }, programmeProgress: [] },
   'weekly-learning': { weeks: [], selectedWeek: null },
   'monthly-focus': { month: '2026-09', summary: { requiredHours: 50, achievedHours: 0, differenceHours: -50, ksbCount: null }, reviews: [], assignments: [], lectures: [] },
-  'otjh-ksb': { metrics, programmeWindow: { startDate: '2026-01-01', plannedEndDate: '2027-01-01' }, schedule, week: { planSubjects: [], monthlyOtjh: [] }, hours: { months: [], learner: {} }, breakdown: { source: 'progress', rows: [{ code: 'K1', description: 'Synthetic knowledge', category: 'Knowledge', completed: 1, status: 'Achieved', activityNames: ['Synthetic evidence'], components: [] }], achievedKsbs: 1 } },
+  'otjh-ksb': { otjh: { actualHours: 12, targetToDateHours: 25, plannedHours: 100, remainingHours: 13, progressPercent: 48,
+    months: [{ month: '2026-01', targetHours: 10, submittedHours: 2, completedHours: 12 }] },
+    ksb: { summary: { total: 1, achieved: 1, remaining: 0 }, categories: [
+      { category: 'Knowledge', achieved: 1, total: 1, percent: 100 },
+      { category: 'Skills', achieved: 0, total: 0, percent: 0 }, { category: 'Behaviours', achieved: 0, total: 0, percent: 0 }],
+      rows: [{ code: 'K1', description: 'Synthetic knowledge', category: 'Knowledge', completed: 1, status: 'Achieved', evidenceCount: 87, pointsAchieved: 1, totalPoints: 87, progressPercent: 1.15 }] } },
   'learning-plan': { detail: { modules: ['Synthetic Module'], week: [{ module: 'Synthetic Module', week: 'Week 1', moduleId: 'M1', weekId: 'W1' }], components: [{ componentId: 'C1', moduleId: 'M1', weekId: 'W1', module: 'Synthetic Module', week: 'Week 1', component: 'Synthetic reading', type: 'reading' }], quizAttempts: [], videoProgress: [], componentProgress: [] }, covers: {}, schedule, week: { planSubjects: [], monthlyOtjh: [] }, hours: { months: [], learner: {} } },
   K1: { source: 'progress', rows: [{ code: 'K1', description: 'Synthetic knowledge', category: 'Knowledge', completed: 1, status: 'Achieved', components: [{ name: 'Synthetic evidence', status: 'completed', achieved: true, source: 'Progress' }] }], achievedKsbs: 1 },
-  attendance: { attendance }, reviews: { events: [], reviewGenerationIssues: [] }, assignments: { months: [], errors: [] }, 'enrolment-documents': { documents: [], signature: { saved: false, name: 'Coach' } },
+  attendance: { attendance }, reviews: { events: [], reviewGenerationIssues: [] }, assignments: { months: [], errors: [] }, 'enrolment-documents': { documents: [{ eventKey: 'synthetic-review', label: 'Synthetic enrolment review', completed: true, sectionsDone: 1, sectionsTotal: 1, signatures: { learner: { signed: false }, admin: { signed: false }, employer: { signed: false } } }] },
 };
 beforeEach(() => {
+  // Vite supplies this auto-import; the standalone Vitest config does not.
+  vi.stubGlobal('AppIcon', AppIcon);
   clearAllCachedResources(); transport.mockReset();
-  transport.mockImplementation(async (url: string) => {
+  transport.mockImplementation(async (url: string, init?: RequestInit) => {
+    expect(init?.method ?? 'GET').toBe('GET');
     const section = new URL(url, 'http://example.test').pathname.split('/').at(-1)!;
     if (!(section in sections)) throw new Error(`Unexpected request ${url}`);
     return new Response(JSON.stringify(sections[section]), { status: 200 });
   });
 });
+afterEach(() => vi.unstubAllGlobals());
 it.each(['apprenticeship', 'commercial'])('real %s tab consumers issue one owning request per first open and none on return under StrictMode', async (learnerType) => {
   const profile = sections.profile as { learner: Record<string, unknown> };
   profile.learner.learnerType = learnerType;
@@ -58,6 +68,9 @@ it.each(['apprenticeship', 'commercial'])('real %s tab consumers issue one ownin
     expect(transport.mock.calls.at(-1)?.[0]).toBe(`/coach_api/coach/case-file/101/${section}${section === 'monthly-focus' ? '?month=2026-09' : ''}`);
     expect(transport).toHaveBeenCalledTimes(before + 1);
     if (section === 'learning-plan') await waitFor(() => expect(screen.getByText('Synthetic Module')).toBeInTheDocument());
+    expect(screen.queryByRole('button', { name: /^(edit|save|update|sign|create your signature|submit|delete|report absence|schedule)\b/i })).not.toBeInTheDocument();
+    expect(document.querySelector('form')).toBeNull();
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   }
   for (const [label] of tabs.slice().reverse()) { fireEvent.click(screen.getByRole('tab', { name: label })); await act(async () => {}); }
   expect(transport).toHaveBeenCalledTimes(10);
@@ -69,4 +82,16 @@ it.each(['apprenticeship', 'commercial'])('real %s tab consumers issue one ownin
   fireEvent.click(screen.getByRole('button', { name: 'View' }));
   await waitFor(() => expect(transport).toHaveBeenCalledTimes(11));
   expect(transport.mock.calls.at(-1)?.[0]).toBe('/coach_api/coach/case-file/101/ksbs/K1');
+  for (const [, init] of transport.mock.calls) expect(init?.method ?? 'GET').toBe('GET');
+});
+
+it.each(['otjh', 'ksbs', 'evidence', 'audit', 'activity', 'network', 'documents', 'coach-notes'])('legacy %s Case File route exposes read-only details', async (tab) => {
+  render(<MemoryRouter initialEntries={[`/coach/learner-case-file?id=101&tab=${tab}`]}><LearnerCaseFile /></MemoryRouter>);
+  await screen.findByText('Synthetic Learner');
+  await act(async () => {});
+  expect(screen.queryByRole('button', { name: /^(edit|save|update|sign|create your signature|submit|delete|report absence|schedule)\b/i })).not.toBeInTheDocument();
+  expect(document.querySelector('form, [contenteditable="true"]')).toBeNull();
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  for (const [, init] of transport.mock.calls) expect(init?.method ?? 'GET').toBe('GET');
 });

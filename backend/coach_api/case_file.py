@@ -42,7 +42,7 @@ RESOURCES = {
     'overview': {'detail', 'activity', 'covers', 'week', 'schedule', 'hours'},
     'weekly-learning': {'detail', 'week', 'schedule', 'hours'},
     'monthly-focus': {'focus'},
-    'otjh-ksb': {'breakdown', 'metrics', 'week', 'schedule', 'hours'},
+    'otjh-ksb': set(),
     'learning-plan': {'detail', 'activity', 'covers', 'week', 'schedule', 'hours', 'module'},
     'assignments': {'detail', 'covers', 'contract', 'statuses', 'marking', 'submission'},
     'attendance': {'summary', 'history'},
@@ -95,7 +95,7 @@ class CaseFileContext:
                                       'programme_status', 'cohort', 'group', 'employer', 'coach_name', 'coach_email',
                                       'start_date', 'learner_start_date', 'learner_end_date', 'end_date',
                                       'apprenticeship_end_date', 'practical_period_end_date'}
-                if not self.profile_only and self.request.path.rstrip('/').split('/')[-1] in {'weekly-learning', 'otjh-ksb', 'learning-plan', 'assignments'}:
+                if not self.profile_only and self.request.path.rstrip('/').split('/')[-1] in {'weekly-learning', 'learning-plan', 'assignments'}:
                     from learner_api.training_plan_dashboard import TRAINING_PLAN_SOURCE_FIELDS
                     fields.update(TRAINING_PLAN_SOURCE_FIELDS)
                 if not self.profile_only and self.request.path.rstrip('/').split('/')[-1] == 'weekly-learning':
@@ -190,6 +190,9 @@ class CaseFileContext:
 
 def build_tab(context, section, month=None):
     """Read each source once and send only projections consumed by this tab."""
+    if section == 'otjh-ksb':
+        from .otjh_ksb import read_otjh_ksb
+        return read_otjh_ksb(context)
     if section == 'monthly-focus':
         from .monthly_focus import read_monthly_focus
         return read_monthly_focus(context, month)
@@ -208,16 +211,6 @@ def build_tab(context, section, month=None):
         readers['covers'] = lambda: context.payload('covers')
         if context.profile.aptem_id:
             readers['activity'] = lambda: context.payload('activity')
-    if section == 'otjh-ksb':
-        from learner_api.aptem_ksb_breakdown import read_breakdown
-        readers['breakdown'] = lambda: read_breakdown(connections['enrolment'], context.profile.id)
-        def metrics():
-            try:
-                return canonical_profile_metrics(context), None
-            except Exception:
-                log.exception('case_file_progress_metrics_failed learner_id=%s', context.learner_id)
-                return None, 'Programme totals are unavailable.'
-        readers['metrics'] = metrics
     parts = context.parallel(readers)
     schedule = parts['schedule']
     if section != 'learning-plan':
@@ -238,18 +231,6 @@ def build_tab(context, section, month=None):
         result['covers'] = parts['covers']
         if 'activity' in parts:
             result['activity'] = parts['activity']
-    if section == 'otjh-ksb':
-        # Canonical totals/window belong to this lazy section, never /profile.
-        result['metrics'], metrics_error = parts['metrics']
-        if metrics_error:
-            result['errors'] = {'metrics': metrics_error}
-        result['programmeWindow'] = programme_window(context)
-        breakdown = parts['breakdown']
-        breakdown['rows'] = [{**{key: value for key, value in row.items() if key != 'components'},
-                              'activityNames': [item['name'] for item in row['components']],
-                              'activityCount': len(row['components']), 'components': []}
-                             for row in breakdown['rows']]
-        result['breakdown'] = breakdown
     return result
 
 
@@ -400,7 +381,7 @@ def build_overview(context):
     parts = context.parallel({
         'progress': lambda: canonical_module_progress(context.source, context.profile),
         'learning': lambda: read_overview_learning(context),
-        # Preserve the existing attendance GET, including catch-up sync.
+        # Read the established attendance projection without catch-up writes.
         'attendance': lambda: context.payload('summary').get('attendance') or {},
     })
     metrics, _ = parts['learning']
@@ -531,6 +512,9 @@ def case_file_section(request, learner_id, section='profile'):
                 response = JsonResponse(serialize_case_file_profile(context.profile, context.source))
             elif section == 'overview' and not request.GET.get('resource'):
                 response = JsonResponse(build_overview(context))
+            elif section == 'ksb-search':
+                from .otjh_ksb import search_ksb_activities
+                response = JsonResponse(search_ksb_activities(context.profile.id, request.GET.get('query', '')))
             elif section == 'weekly-learning':
                 from .weekly_learning import read_weekly_learning
                 if request.GET.get('resource'):
@@ -551,16 +535,6 @@ def case_file_section(request, learner_id, section='profile'):
                     response = context.learner_read('history')
             elif section == 'header-summary':
                 response = JsonResponse(build_header_summary(context, learner_id))
-            elif section == 'otjh-ksb' and request.GET.get('resource', 'breakdown') == 'breakdown':
-                from learner_api.aptem_ksb_breakdown import read_learner_breakdown
-                payload = read_learner_breakdown(connections['enrolment'], context.profile.enrolment_id)
-                payload['rows'] = [{
-                    **{key: value for key, value in row.items() if key != 'components'},
-                    'activityNames': [component['name'] for component in row['components']],
-                    'activityCount': len(row['components']),
-                    'components': [],
-                } for row in payload['rows']]
-                response = JsonResponse(payload)
             elif section == 'ksb-detail':
                 from learner_api.aptem_ksb_breakdown import read_learner_breakdown
                 code = request.GET.get('code')

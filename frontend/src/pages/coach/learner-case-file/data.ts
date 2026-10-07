@@ -87,9 +87,6 @@ export function useCoachLearnerCaseFileData(args: {
   const wantsJourney = !session || args.activeTab === 'support';
   const [journeyActivated, setJourneyActivated] = useState(wantsJourney);
   useEffect(() => { if (wantsJourney) setJourneyActivated(true); }, [wantsJourney]);
-  const wantsRichMetrics = Boolean(session && ['progress', 'otjh', 'ksbs', 'evidence'].includes(args.activeTab || ''));
-  const [richMetricsActivated, setRichMetricsActivated] = useState(wantsRichMetrics);
-  useEffect(() => { if (wantsRichMetrics) setRichMetricsActivated(true); }, [wantsRichMetrics]);
   const [data, setData] = useState<CoachLearnerCaseFileData | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -152,14 +149,6 @@ export function useCoachLearnerCaseFileData(args: {
             detailActivated ? session ? session.read<LearnerDetail>('learning-plan', { resource: 'detail' }, { refresh: reloadToken > 0 }).then(detail => ({ detail, kind: resolvedKind })) : fetchAnyLearnerDetail(resolvedEnrolmentId, resolvedKind) : Promise.resolve({ detail: null })
           ).then(result => ({ result, error: null }), error => ({ result: null, error }));
           if (!session) learnerMetrics = await fetchCaseFileMetrics(resolvedKind, resolvedEnrolmentId);
-          else if (richMetricsActivated) {
-            const progress = await session.read<{ metrics: LearnerMetrics | null; errors?: { metrics?: string }; programmeWindow: { startDate: string | null; plannedEndDate: string | null } }>('otjh-ksb', {}, { refresh: reloadToken > 0 });
-            shell.profile.otjhProgrammeStartDate = progress.programmeWindow.startDate;
-            shell.profile.otjhProgrammeEndDate = progress.programmeWindow.plannedEndDate;
-            const metrics = progress.metrics;
-            if (metrics) learnerMetrics = await fetchCaseFileMetrics(resolvedKind, resolvedEnrolmentId, () => Promise.resolve(metrics));
-            else detailError = progress.errors?.metrics || 'Programme totals are unavailable.';
-          }
           const initialData = buildCaseFileData({
             learnerId: shell.identity.learnerId,
             enrolmentId: resolvedEnrolmentId,
@@ -256,7 +245,7 @@ export function useCoachLearnerCaseFileData(args: {
     return () => {
       cancelled = true;
     };
-  }, [args.enabled, args.kind, args.learnerId, args.learnerName, args.enrolmentId, reloadToken, session, detailActivated, richMetricsActivated, journeyActivated]);
+  }, [args.enabled, args.kind, args.learnerId, args.learnerName, args.enrolmentId, reloadToken, session, detailActivated, journeyActivated]);
 
   return { data, loading, error, refresh };
 }
