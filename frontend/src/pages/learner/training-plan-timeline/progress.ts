@@ -1,4 +1,5 @@
 import type { TrainingPlanDashboard } from '@/api/trainingPlanDashboard';
+import { systemDateParts } from '@/lib/format';
 import { percent, type TimelineModule } from './model';
 
 export type ModuleMeasure = { label: string; value: number | null; detail: string };
@@ -6,11 +7,23 @@ const count = (value: number) => new Intl.NumberFormat('en-GB', { maximumFractio
 const ratio = (done: number | null | undefined, total: number | null | undefined) =>
   done != null && total != null && total > 0 ? percent(done, total) : null;
 
-export function programmeReviewProgress(reviews: TrainingPlanDashboard['reviews']) {
+export function programmeReviewProgress(
+  reviews: TrainingPlanDashboard['reviews'],
+  now: string | number | Date = Date.now(),
+) {
+  const today = systemDateParts(now);
+  const todayKey = today
+    ? `${today.year}-${String(today.month).padStart(2, '0')}-${String(today.day).padStart(2, '0')}`
+    : null;
   const unique = [...new Map(reviews.filter(review => review.source !== 'student-support' && review.status !== 'cancelled')
     .map(review => [review.eventKey, review])).values()];
-  const completed = unique.filter(review => review.status === 'completed').length;
-  return { completed, total: unique.length, percent: ratio(completed, unique.length) };
+  const due = todayKey == null ? [] : unique.filter(review => {
+    const targetDate = review.targetDate || review.date;
+    return typeof targetDate === 'string' && /^\d{4}-\d{2}-\d{2}/.test(targetDate)
+      && targetDate.slice(0, 10) <= todayKey;
+  });
+  const completed = due.filter(review => review.status === 'completed').length;
+  return { completed, total: due.length, percent: ratio(completed, due.length) };
 }
 
 export function moduleMeasures(module: TimelineModule, data: TrainingPlanDashboard, now = Date.now()): ModuleMeasure[] {

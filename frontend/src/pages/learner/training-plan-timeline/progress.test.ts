@@ -25,9 +25,11 @@ describe('dashboard module progress', () => {
     expect(result.value).toBe(40);
     expect(result.available).toBe(4);
   });
-  it('counts completed reviews across the programme once per event', () => {
-    expect(programmeReviewProgress([...data.reviews, { ...data.reviews[1] }])).toEqual({ completed: 1, total: 3, percent: 33.33 });
-    expect(programmeReviewProgress([])).toEqual({ completed: 0, total: 0, percent: null });
+  it('counts completed reviews against the unique reviews due by today', () => {
+    const reviews = data.reviews.map(review => ({ ...review, targetDate: review.date }));
+    expect(programmeReviewProgress([...reviews, { ...reviews[1] }], '2026-10-07T23:30:00Z'))
+      .toEqual({ completed: 1, total: 1, percent: 100 });
+    expect(programmeReviewProgress([], '2026-10-07T23:30:00Z')).toEqual({ completed: 0, total: 0, percent: null });
   });
   it('excludes future sessions and counts ended sessions without attendance as pending', () => {
     const sessions = [

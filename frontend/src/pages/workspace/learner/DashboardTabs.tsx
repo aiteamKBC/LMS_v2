@@ -19,7 +19,7 @@ export type DashboardTabsProps = {
   kind: LearnerKind; learnerId: string; plan: DashboardPlanState; programmeStartDate?: string | null; programmeEndDate?: string | null;
   canOpenRewards?: boolean; real?: { programmeStatus?: string }; canSeeNavItem: (id: string) => boolean;
   pageError?: string | null;
-  metrics: { programmeValue: string; programmeSummary: string; programmePercent: number | null; attendanceValue: string; attendanceSummary: string; attendanceTotalValue: string; attendancePercent: number | null; otjActualValue: string; otjSummary: string; otjPlannedValue: string; otjPercent: number | null; ksbValue: string; ksbSummary: string; ksbPercent: number | null };
+  metrics: { programmeValue: string; programmeSummary: string; programmePercent: number | null; attendanceValue: string; attendanceSummary: string; attendanceTotalValue: string; attendancePercent: number | null; otjActualValue: string; otjSummary: string; otjTargetValue: string; otjPercent: number | null; ksbValue: string; ksbSummary: string; ksbPercent: number | null };
   overviewExtra?: ReactNode;
 };
 
