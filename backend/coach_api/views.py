@@ -356,6 +356,12 @@ DEFAULT_MARKING_OWNER_ID = 6452
 ATTENDANCE_INCLUDED_STATUSES = {"active", "break"}
 MARKING_OVERDUE_DAYS = 7
 
+#: A draft is work the learner saved but has not handed in, so it is not the
+#: coach's to mark. Without this the queue's All tab listed drafts (rendered as
+#: "Pending" by the SPA's fallback label) that no status tab would ever show.
+#: ``is distinct from`` keeps any row with a NULL status, as before.
+MARKING_QUEUE_EXCLUDE_DRAFTS_SQL = "status is distinct from 'draft'"
+
 #: Ceiling on coach feedback. Generous rather than tight: the stored column is
 #: unbounded text, and the AI-assisted draft alone runs to 6000-7500 characters
 #: before the coach edits it. Mirrored by the SPA's own counter.
@@ -14045,6 +14051,7 @@ def coach_marking_queue(request, submission_id=None):
                         select {MARKING_QUEUE_COLUMNS}
                           from "Learner".learning_reflection_submissions
                          where id = %s and learner_id = any(%s)
+                           and {MARKING_QUEUE_EXCLUDE_DRAFTS_SQL}
                         """,
                         [str(submission_id), allowed_learner_ids],
                     )
@@ -14106,6 +14113,7 @@ def coach_marking_queue(request, submission_id=None):
                     update "Learner"."learning_reflection_submissions"
                     set status = %s, coach_feedback = %s, reviewed_by = %s, reviewed_at = %s
                     where id = %s and learner_id = any(%s)
+                      and """ + MARKING_QUEUE_EXCLUDE_DRAFTS_SQL + """
                     returning """ + SUBMISSION_AUDIT_SQL + """
                     """,
                     [decision, feedback, reviewed_by, timezone.now(), str(submission_id), allowed_learner_ids],
@@ -14186,7 +14194,7 @@ def coach_marking_queue(request, submission_id=None):
     if not allowed_learner_ids:
         return empty_marking_queue_response(owner_email, page=page, page_size=page_size)
 
-    base_clauses = ["learner_id = any(%s)"]
+    base_clauses = ["learner_id = any(%s)", MARKING_QUEUE_EXCLUDE_DRAFTS_SQL]
     base_params = [allowed_learner_ids]
     if learner_filter:
         base_clauses.append("learner_id = %s")
