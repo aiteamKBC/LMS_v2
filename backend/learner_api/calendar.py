@@ -289,7 +289,22 @@ def _belongs_to_current_cycle(record, mirror):
     return str(record.learner_id or "") in ("", str(mirror.id))
 
 
-def _generated_cycle_events(learner, mirror, stored_by_key):
+def _curriculum_mcm_fallback(learner, mirror):
+    """True for an Aptem-linked learner with no imported Aptem MCM.
+
+    Same rule as coach_api.views.resolve_coach_review_events: such a learner
+    books Curriculum MCMs (never Curriculum Progress Reviews), so the learner
+    and coach calendars name the same occurrence.
+    """
+    from coach_api.views import fetch_aptem_mcm_profile_ids
+
+    review_source = source_for_learner(learner, mirror)
+    if mirror is None or review_source.kind != "aptem":
+        return False
+    return int(mirror.id) not in fetch_aptem_mcm_profile_ids({int(mirror.id): review_source.aptem_id})
+
+
+def _generated_cycle_events(learner, mirror, stored_by_key, *, mcm_only=False):
     """Generate the same Curriculum cycle the coach timetable exposes.
 
     Curriculum review_templates are the only source of truth for MCM/Progress
@@ -297,6 +312,7 @@ def _generated_cycle_events(learner, mirror, stored_by_key):
     mapping, or a programme with no configured template, produces zero
     occurrences here -- never a fixed-interval fallback (see
     coach_api.views.collect_generated_timetable, which this mirrors).
+    ``mcm_only`` is the Aptem-linked MCM fallback (see _curriculum_mcm_fallback).
     """
     from coach_api.models import CoachCalendarEvent
     from coach_api.views import (
@@ -310,7 +326,7 @@ def _generated_cycle_events(learner, mirror, stored_by_key):
     )
     from curriculum_api.review_instances import review_calendar_event_key
 
-    if mirror is None or source_for_learner(learner, mirror).kind != "curriculum":
+    if mirror is None or (source_for_learner(learner, mirror).kind != "curriculum" and not mcm_only):
         return []
 
     programme_id = resolve_curriculum_programme_id(
@@ -350,6 +366,8 @@ def _generated_cycle_events(learner, mirror, stored_by_key):
     ):
         sequence, target_date = occurrence['occurrenceNumber'], occurrence['targetDate']
         event_type = review_event_type_for_type_code(occurrence.get('reviewTypeCode'))
+        if mcm_only and event_type != "mcr":
+            continue
         event_key = review_calendar_event_key(mirror.id, occurrence['reviewTemplateId'], sequence)
         if event_key in stored_by_key:
             continue
@@ -593,15 +611,24 @@ def coaching_events_for_learner(learner, mirror):
         belongs = imported_owned or (email in emails if email else expected_id is not None and str(record.learner_id) == str(expected_id))
         if belongs and _belongs_to_current_cycle(record, mirror):
             records.append(record)
-    from curriculum_api import reviews, review_instances
     if review_source.kind == "aptem":
         from .imported_review_calendar import imported_events_for_learner
         imported = imported_events_for_learner(learner, mirror, review_source.aptem_id, records)
         # Persisted native rows must not become a second occurrence or fallback.
         other = [_serialize_event(record) for record in records
                  if record.event_type not in {"mcr", "progress-review", "review"}]
-        return [*imported, *other]
-    generated = _generated_cycle_events(learner, mirror, set())
+        if not _curriculum_mcm_fallback(learner, mirror):
+            return [*imported, *other]
+        mcm_records = [record for record in records
+                       if record.event_type == "mcr" and not record.event_key.startswith("imported-review:")]
+        return [*imported, *_curriculum_cycle_events(learner, mirror, mcm_records, mcm_only=True), *other]
+    return _curriculum_cycle_events(learner, mirror, records)
+
+
+def _curriculum_cycle_events(learner, mirror, records, *, mcm_only=False):
+    """Generated Curriculum occurrences reconciled with their saved bookings."""
+    from curriculum_api import reviews, review_instances
+    generated = _generated_cycle_events(learner, mirror, set(), mcm_only=mcm_only)
     matched = review_instances.reconcile_review_event_keys(generated, records)
     # Generated occurrences already carry the current template title and Review
     # Type metadata. Reuse it for stored rows from the same templates instead
@@ -918,6 +945,7 @@ def _learner_calendar_record(kind, pk, event_key):
     if learner is None:
         return None
     mirror = _calendar_profile(learner, pk)
+    curriculum_mcm = False
     if source_for_learner(learner, mirror).kind != "curriculum":
         mirror = review_profile_for_source(learner, mirror)
         occurrences = coaching_events_for_learner(learner, mirror)
@@ -929,7 +957,10 @@ def _learner_calendar_record(kind, pk, event_key):
             if record:
                 record._imported_review_event = imported[0]
             return record
-        if event_key.startswith(("imported-review:", "review:", "mcr:", "progress-review:")):
+        # A Curriculum MCM fallback occurrence (see _curriculum_mcm_fallback).
+        curriculum_mcm = any(item.get("reviewSource") != "aptem" and item.get("source") == "mcr"
+                             and item["eventKey"] == event_key for item in occurrences)
+        if not curriculum_mcm and event_key.startswith(("imported-review:", "review:", "mcr:", "progress-review:")):
             return None
     emails = {_s(learner.email).strip().casefold()}
     if mirror:
@@ -937,7 +968,8 @@ def _learner_calendar_record(kind, pk, event_key):
     emails.discard("")
     record = CoachCalendarEvent.objects.filter(event_key=event_key).first()
     if not record or (source_for_learner(learner, mirror).kind == "aptem"
-                      and record.event_type in {"mcr", "progress-review", "review"}):
+                      and record.event_type in {"mcr", "progress-review", "review"}
+                      and not (curriculum_mcm and record.event_type == "mcr")):
         return None
     owner_ids = _record_owner_ids(record, created_user_id=pk, profile_id=mirror.id if mirror else None)
     return record if (str(record.learner_id or "") in owner_ids or _s(record.learner_email).strip().casefold() in emails) else None
@@ -1790,7 +1822,15 @@ def learner_calendar_book(request, kind, pk):
             return _error(message, status_code)
         idempotency_month = review_month or assignment_month
     aptem_target = None
-    if session_type in {"mcr", "progress-review"} and source_for_learner(learner, mirror).kind != "curriculum":
+    aptem_review_booking = session_type in {"mcr", "progress-review"} and source_for_learner(learner, mirror).kind != "curriculum"
+    if aptem_review_booking and session_type == "mcr" and not payload.get("reviewId"):
+        # With no imported Aptem MCM, the learner books a Curriculum MCM
+        # occurrence on the native path below, as the coach timetable shows.
+        try:
+            aptem_review_booking = not _curriculum_mcm_fallback(learner, review_profile_for_source(learner, mirror))
+        except DatabaseError:
+            return _error("The imported Review identity could not be resolved.", 409)
+    if aptem_review_booking:
         try:
             mirror = review_profile_for_source(learner, mirror)
             candidates = [item for item in coaching_events_for_learner(learner, mirror)
@@ -1841,13 +1881,16 @@ def learner_calendar_book(request, kind, pk):
         if not imported_review_id and not assignment_booking:
             return _error("reviewId is required when scheduling an imported monthly coaching review.", 400)
         if session_type == "mcr":
-            from .monthly_assignment import coaching_booking_bounds, coaching_booking_windows
-            windows = (coaching_booking_windows(assignment_month) if assignment_booking
-                       else [coaching_booking_bounds(assignment_month)])
-            if duration_minutes != 60 or not any(start and start <= scheduled_date <= end for start, end in windows):
-                if assignment_booking:
-                    return _error("Book a 60-minute MCM within either monthly assignment booking window.", 400)
-                return _error("Book a 60-minute MCM from the last ten days of the submission month through the 5th of the following month.", 400)
+            from .monthly_assignment import coaching_booking_bounds, month_bounds
+            # Assignment bookings take any bookable day; the shared weekday,
+            # bank-holiday and past-date rules were already applied above.
+            if assignment_booking:
+                if duration_minutes != 60 or not month_bounds(assignment_month)[0]:
+                    return _error("Book a 60-minute MCM for a valid assignment month.", 400)
+            else:
+                start, end = coaching_booking_bounds(assignment_month)
+                if duration_minutes != 60 or not (start and start <= scheduled_date <= end):
+                    return _error("Book a 60-minute MCM from the last ten days of the submission month through the 5th of the following month.", 400)
             # A validated imported Aptem MCM is already the Review's identity
             # (see _assignment_imported_mcm_month) and books on the imported path below.
             if not _s(payload.get("eventKey")) and not (assignment_booking and imported_review_id):

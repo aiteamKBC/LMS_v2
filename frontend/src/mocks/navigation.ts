@@ -91,6 +91,7 @@ export const coachNavItems: SidebarNavItem[] = [
     children: [
       { id: 'coach-monthly-coaching', label: 'Monthly Coaching Meeting', icon: 'ri-calendar-check-line', href: '/coach/monthly-coaching' },
       { id: 'coach-progress-reviews', label: 'Progress Reviews', icon: 'ri-file-chart-line', href: '/coach/progress-reviews' },
+      { id: 'coach-reviews', label: 'Review', icon: 'ri-file-list-3-line', href: '/coach/reviews' },
       { id: 'coach-catchup-queue', label: 'Catch-up Queue', icon: 'ri-refresh-line', href: '/coach/catchup-queue' },
       { id: 'coach-timetable', label: 'Calendar', icon: 'ri-calendar-schedule-line', href: '/coach/timetable' },
     ],
@@ -115,6 +116,7 @@ export const coachNavItems: SidebarNavItem[] = [
     matchPaths: ['/coach/monthly-cycle'],
   },
   { id: 'coach-inclusion', label: 'Inclusion Ticket System', icon: 'ri-heart-pulse-line', href: inclusionLoginHref, external: true },
+  { id: 'coach-support-tickets', label: 'Support Tickets', icon: 'ri-lifebuoy-line', href: '/coach/support-tickets' },
 ];
 
 // ============================================================================

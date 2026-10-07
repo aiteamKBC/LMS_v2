@@ -53,6 +53,7 @@ const ClubEventsPage = lazyRoute(() => import("../pages/learner/clubs/events/pag
 const ClubsPage = lazyRoute(() => import("../pages/learner/clubs/page"));
 const CoachAiMarking = lazyRoute(() => import("../pages/coach/ai-marking/page"));
 const CoachAttendance = lazyRoute(() => import("../pages/coach/attendance/page"));
+const CoachSupportTickets = lazyRoute(() => import("../pages/coach/support-tickets/page"));
 const CoachAttendanceProfile = lazyRoute(() => import("../pages/coach/attendance-profile/page"));
 const CoachCaseFiles = lazyRoute(() => import("../pages/coach/case-files/page"));
 const CoachCaseload = lazyRoute(() => import("../pages/coach/caseload/page"));
@@ -833,6 +834,10 @@ const routes: RouteObject[] = [
     element: <CoachAttendanceProfile />,
   },
   {
+    path: "/coach/support-tickets",
+    element: <CoachSupportTickets />,
+  },
+  {
     path: "/coach/absence-reports",
     element: <Navigate to="/coach/attendance" replace />,
   },
@@ -870,7 +875,11 @@ const routes: RouteObject[] = [
   },
   {
     path: "/coach/progress-reviews",
-    element: <CoachProgressReviews />,
+    element: <CoachProgressReviews key="progress-review" />,
+  },
+  {
+    path: "/coach/reviews",
+    element: <CoachProgressReviews key="review" category="review" />,
   },
   {
     path: "/coach/progress-reviews/:eventKey",

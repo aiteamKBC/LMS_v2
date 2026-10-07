@@ -54,7 +54,9 @@ class CompactLearnerLoadingTests(SimpleTestCase):
                 detail, "_append_week_quizzes", side_effect=lambda w, c, **kw: (w, c),
             ))
             stack.enter_context(patch.object(detail, "_live_otjh_snapshot", return_value={}))
-            result = detail.build_learner_detail(SimpleNamespace(programme=""), 125, compact=compact)
+            result = detail.build_learner_detail(
+                SimpleNamespace(programme="", attendance_type="Recorded"), 125, compact=compact,
+            )
             self.resolved_plan = master.call_args.kwargs["assigned_modules"]
             self.quiz_plan = quizzes.call_args.kwargs["assigned_modules"]
         return result, resolve.call_count
@@ -68,6 +70,7 @@ class CompactLearnerLoadingTests(SimpleTestCase):
         self.assertIs(component["reflectionRequired"], False)
         self.assertEqual(component["ksbMappingCount"], 0)
         self.assertEqual(result["quizAttempts"], [{"grade": 1}])
+        self.assertEqual(result["attendanceType"], "Recorded")
         self.assertEqual(calls, 1)
 
     def test_refresh_still_reloads_a_changed_ksb_assignment(self):

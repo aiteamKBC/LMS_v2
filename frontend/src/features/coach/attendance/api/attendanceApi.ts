@@ -5,7 +5,25 @@ const OVERVIEW_ENDPOINT = '/coach_api/coach/attendance';
 const DETAILS_ENDPOINT = '/coach_api/coach/attendance/details';
 
 export interface BulkSession { id: string; occurrenceStart: string; module: string; sessionTitle: string }
-export interface BulkLearner { learnerId: string; status: 'present' | 'absent' | 'unmarked' | 'upcoming' | 'in_progress'; version: string }
+export interface BulkLearner { learnerId: string; status: 'present' | 'absent' | 'unmarked' | 'upcoming' | 'in_progress' | null; version: string }
+export interface AttendanceGroupOption { id: string; name: string; cohort: string }
+export interface AttendanceOptions { programmes: Array<{ id: string; name: string; groups: AttendanceGroupOption[] }> }
+export interface AttendanceGroupPayload {
+  programme: { id: string; name: string }; group: AttendanceGroupOption;
+  learners: Array<{ id: string; name: string; email: string | null; status: 'active' | 'on-break'; attendance: { rate: number | null; present: number; absent: number; sessions: number } }>;
+  sessions: BulkSession[]; recentAttendance: CoachAttendanceRecord[];
+}
+async function attendanceRead<T>(path: string, signal?: AbortSignal): Promise<T> {
+  const response = await coachFetch(`/coach_api/coach/attendance/${path}`, { signal });
+  const payload = await response.json();
+  if (!response.ok) throw new Error(payload.detail || 'Unable to load attendance.');
+  return payload;
+}
+export const fetchAttendanceOptions = (signal?: AbortSignal) => attendanceRead<AttendanceOptions>('options', signal);
+export const fetchAttendanceGroup = (programmeId: string, groupId: string, signal?: AbortSignal) =>
+  attendanceRead<AttendanceGroupPayload>(`group?${new URLSearchParams({ programmeId, groupId })}`, signal);
+export const fetchAttendanceSession = (programmeId: string, groupId: string, sessionId: string, signal?: AbortSignal) =>
+  attendanceRead<{ learners: BulkLearner[]; warnings?: BulkAttendanceWarning[] }>(`session?${new URLSearchParams({ programmeId, groupId, sessionId })}`, signal);
 export interface BulkAttendanceWarning { learnerProfileId: string; code: 'learner_source_unavailable'; message: string }
 export interface BulkAttendanceResult extends BulkLearner { sessionOccurrenceId: string; attendanceRecord: CoachAttendanceRecord }
 export class BulkAttendanceSaveError extends Error {

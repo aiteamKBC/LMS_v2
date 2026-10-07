@@ -240,6 +240,7 @@ export default function ComponentViewPage() {
   const elapsedRef = useRef(wallElapsed);
   elapsedRef.current = wallElapsed;
   const [manualTimeSeconds, setManualTimeSeconds] = useState<number | null>(null);
+  const [recordingWatchSeconds, setRecordingWatchSeconds] = useState(0);
   const [timeSource, setTimeSource] = useState<TimeSource>('timer');
   // Opened only by a server refusal of the Finish click; null while learning.
   const [correction, setCorrection] = useState<{ reason: WorkingRuleReason | ''; holidayName: string } | null>(null);
@@ -283,6 +284,7 @@ export default function ComponentViewPage() {
     setWallElapsed(readActivityTimer(timerStorageKey)?.elapsedSeconds ?? 0);
     timerRemainder.current.milliseconds = 0;
     setManualTimeSeconds(null);
+    setRecordingWatchSeconds(0);
     setTimeSource('timer');
     setCorrection(null);
     setCorrectionError('');
@@ -780,7 +782,7 @@ export default function ComponentViewPage() {
                   onDuration={(d) => setRealDuration((prev) => prev ?? d)}
                   onProgress={() => undefined}
                   onPlayingChange={setPlayerPlaying}
-                  onEnded={finishConsuming}
+                  onEnded={() => setPlayerPlaying(false)}
                   onUnsupported={() => setUnsupported(true)}
                 />
               )}
@@ -789,6 +791,8 @@ export default function ComponentViewPage() {
                   seriesId={component.teamsLiveSessionId}
                   sessionNumber={component.teamsSessionNumber}
                   learner={{ kind: kind as LearnerKind, id: id || '' }}
+                  attendanceType={detail?.attendanceType}
+                  onRecordingWatchTimeChange={setRecordingWatchSeconds}
                   preview={Boolean(parsePersonalLearning(id))}
                 /> : <p className="mt-4 rounded-xl border bg-amber-50 p-4 text-sm">This live session needs its saved session number before results can be shown. Please contact your tutor.</p>
               )}
@@ -804,10 +808,10 @@ export default function ComponentViewPage() {
                 {!isAssignment && recordingAttempt && <div className={isVideo
                   ? layoutStyles.videoActions
                   : isLiveSession
-                    ? layoutStyles.liveActions
+                    ? `${layoutStyles.liveActions} ${layoutStyles.liveActionsWithTimer}`
                     : 'ml-auto flex min-w-0 max-w-full flex-wrap items-center justify-end gap-3'}>
-                  {!usesManualTimeOnly && (
-                    <ActivityElapsedTimer time={formatClock(elapsedSeconds)} />
+                  {(!usesManualTimeOnly || isLiveSession) && (
+                    <ActivityElapsedTimer time={formatClock(isLiveSession ? recordingWatchSeconds : elapsedSeconds)} />
                   )}
                   <div className={hasActivityPanel ? layoutStyles.videoTools : 'contents'}>
                   <ActivityTimeSpentInput
@@ -818,19 +822,18 @@ export default function ComponentViewPage() {
                     }}
                   />
                   {activityEvidenceContext && canUseComponent && (
-                    <AssignmentEvidence
-                      kind={activityEvidenceContext.kind}
-                      learnerId={activityEvidenceContext.learnerId}
-                      componentId={activityEvidenceContext.componentId}
-                      trainingPlanDetails={activityEvidenceContext.trainingPlanDetails}
-                      onUploaded={activityEvidenceContext.onUploaded}
-                      onFileSelected={setPendingEvidenceFileName}
-                      inputId={evidenceInputId}
-                      showPanel={false}
-                    />
-                  )}
-                  {activityEvidenceContext && canUseComponent && (
-                    evidenceFileLabel ? (
+                    <div className={layoutStyles.evidenceTool}>
+                      <AssignmentEvidence
+                        kind={activityEvidenceContext.kind}
+                        learnerId={activityEvidenceContext.learnerId}
+                        componentId={activityEvidenceContext.componentId}
+                        trainingPlanDetails={activityEvidenceContext.trainingPlanDetails}
+                        onUploaded={activityEvidenceContext.onUploaded}
+                        onFileSelected={setPendingEvidenceFileName}
+                        inputId={evidenceInputId}
+                        showPanel={false}
+                      />
+                      {evidenceFileLabel ? (
                       <span className="inline-flex items-center gap-1.5">
                         <button
                           type="button"
@@ -896,7 +899,8 @@ export default function ComponentViewPage() {
                         <AppIcon className="ri-upload-2-line" />
                         Upload evidence
                       </label>
-                    )
+                      )}
+                    </div>
                   )}
                   </div>
                   <div className={hasActivityPanel ? layoutStyles.videoFooter : 'flex min-w-0 max-w-full items-center gap-3'}>
