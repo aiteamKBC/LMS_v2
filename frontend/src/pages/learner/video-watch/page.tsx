@@ -1004,6 +1004,7 @@ export default function ComponentViewPage() {
                     questionText={component.assignmentBrief}
                     questionFileUrl={component.resourceUrl}
                     questionFileName={component.fileName}
+                    questionFiles={component.files}
                     ksbMappings={component.ksbMappings || []}
                     evidenceFiles={evidenceFiles}
                     evidenceDetails={activityEvidenceContext.trainingPlanDetails}
@@ -1785,13 +1786,15 @@ function AttachedFileCard({ url, fileName, previewed = false }: {
   );
 }
 
-export function InlineAttachmentPreview({ url, title, fileName, readingPreferences, annotationKey, allowAnnotatedDownload = false }: {
+export function InlineAttachmentPreview({ url, title, fileName, readingPreferences, annotationKey, allowAnnotatedDownload = false, pdfTools = false }: {
   url: string;
   title: string;
   fileName?: string | null;
   readingPreferences?: ReadingPreferences;
   annotationKey?: string;
   allowAnnotatedDownload?: boolean;
+  /** Open assignment instructions in the reading viewer with fit-width zoom. */
+  pdfTools?: boolean;
 }) {
   const media = displayableMediaSource(url, fileName);
   const previewUrl = proxiedMaterialUrl(url);
@@ -1868,8 +1871,8 @@ export function InlineAttachmentPreview({ url, title, fileName, readingPreferenc
 
   if (isPdf) {
     const hostedPdfEmbed = resolveDocEmbed(previewUrl);
-    if (hostedPdfEmbed.mode === 'deck') return <DocumentEmbed url={previewUrl} title={title} />;
-    return <PdfCanvasPreview url={previewUrl} title={title} fileName={fileName} readingPreferences={readingPreferences} annotationKey={annotationKey} allowAnnotatedDownload={allowAnnotatedDownload} />;
+    if (hostedPdfEmbed.mode === 'deck' && !pdfTools) return <DocumentEmbed url={previewUrl} title={title} />;
+    return <PdfCanvasPreview url={previewUrl} title={title} fileName={fileName} readingPreferences={readingPreferences} annotationKey={annotationKey} allowAnnotatedDownload={allowAnnotatedDownload} fitWidth={pdfTools} />;
   }
 
   if (preview?.status === 'loading') {
@@ -1923,13 +1926,14 @@ export function InlineAttachmentPreview({ url, title, fileName, readingPreferenc
 
 type PdfHighlight = { x: number; y: number; width: number; height: number };
 
-function PdfCanvasPreview({ url, title, fileName, readingPreferences, annotationKey, allowAnnotatedDownload }: {
+function PdfCanvasPreview({ url, title, fileName, readingPreferences, annotationKey, allowAnnotatedDownload, fitWidth = false }: {
   url: string;
   title: string;
   fileName?: string | null;
   readingPreferences?: ReadingPreferences;
   annotationKey?: string;
   allowAnnotatedDownload: boolean;
+  fitWidth?: boolean;
 }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const dragStartRef = useRef<{ x: number; y: number } | null>(null);
@@ -2008,7 +2012,8 @@ function PdfCanvasPreview({ url, title, fileName, readingPreferences, annotation
       if (!canvas) return;
       const page = await pdf.getPage(pageNumber);
       if (cancelled) return;
-      const viewport = page.getViewport({ scale });
+      // Fit-width pages can be wider than their PDF point size on a desktop.
+      const viewport = page.getViewport({ scale: fitWidth ? scale * 2 : scale });
       const context = canvas.getContext('2d');
       if (!context) return;
 
@@ -2037,7 +2042,7 @@ function PdfCanvasPreview({ url, title, fileName, readingPreferences, annotation
       cancelled = true;
       renderTask?.cancel();
     };
-  }, [pageNumber, pdf, scale]);
+  }, [pageNumber, pdf, scale, fitWidth]);
 
   useEffect(() => () => window.speechSynthesis?.cancel(), []);
 
@@ -2148,7 +2153,7 @@ function PdfCanvasPreview({ url, title, fileName, readingPreferences, annotation
           <p className="truncate text-sm font-bold text-foreground-900">{fileLabelFrom(url, fileName) || title}</p>
           <p className="text-xs text-foreground-500">Page {pageNumber} of {pageCount || 1}</p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className={fitWidth ? 'flex flex-wrap items-center gap-2' : 'flex items-center gap-2'}>
           <button
             type="button"
             onClick={() => setMarkerActive((value) => !value)}
@@ -2168,6 +2173,7 @@ function PdfCanvasPreview({ url, title, fileName, readingPreferences, annotation
             onClick={() => setScale((value) => Math.max(0.75, value - 0.25))}
             className="grid h-9 w-9 place-items-center rounded-lg border border-background-300 bg-white text-foreground-700 hover:bg-background-50"
             aria-label="Zoom out"
+            disabled={fitWidth && scale <= 0.75}
           >
             <AppIcon className="ri-subtract-line" />
           </button>
@@ -2176,9 +2182,14 @@ function PdfCanvasPreview({ url, title, fileName, readingPreferences, annotation
             onClick={() => setScale((value) => Math.min(2.5, value + 0.25))}
             className="grid h-9 w-9 place-items-center rounded-lg border border-background-300 bg-white text-foreground-700 hover:bg-background-50"
             aria-label="Zoom in"
+            disabled={fitWidth && scale >= 2.5}
           >
             <AppIcon className="ri-add-line" />
           </button>
+          {fitWidth && <>
+            <output aria-label="PDF zoom level" className="text-xs font-semibold tabular-nums">{Math.round(scale / 1.25 * 100)}%</output>
+            <button type="button" onClick={() => setScale(1.25)} className="h-9 rounded-lg border border-background-300 bg-white px-3 text-xs font-bold text-foreground-700">Fit width</button>
+          </>}
           <button
             type="button"
             onClick={() => setPageNumber((value) => Math.max(1, value - 1))}
@@ -2214,7 +2225,7 @@ function PdfCanvasPreview({ url, title, fileName, readingPreferences, annotation
         onMouseLeave={() => setRulerY(null)}
       >
         {preferences.ruler && rulerY != null && <span className="pointer-events-none absolute inset-x-0 z-20 h-9 border-y border-blue-400/50 bg-blue-300/20" style={{ top: Math.max(0, rulerY - 18) }} />}
-        <div className="relative mx-auto w-fit max-w-full">
+        <div className={fitWidth ? 'relative mx-auto' : 'relative mx-auto w-fit max-w-full'} style={fitWidth ? { width: `${scale / 1.25 * 100}%` } : undefined}>
           <canvas
             ref={canvasRef}
             className="block max-w-full rounded-lg bg-white shadow-sm"
