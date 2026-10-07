@@ -171,6 +171,7 @@ button.metric:hover { border-color: var(--dashboard-accent); box-shadow: 0 10px 
 .filters :global(.ui-page-tabs) { gap: 2px; }
 .tableScroll { max-width: 100%; margin-top: 16px; overflow: auto; overscroll-behavior-inline: contain; scrollbar-gutter: stable; }
 .tableScroll[data-overflow="true"] { max-height: 410px; }
+.meetingsTableScroll { width: 100%; min-width: 0; overflow-x: auto; -webkit-overflow-scrolling: touch; }
 .table { width: 100%; border-collapse: collapse; text-align: left; font-size: 14px; }
 .dashboard .tableScroll .table thead th { height: 44px; padding: 11px 14px; color: var(--kbc-muted) !important; background: var(--kbc-purple-wash) !important; font-size: 14px; font-weight: 700; letter-spacing: 0; text-align: left; text-transform: none; white-space: nowrap; }
 .dashboard .tableScroll .table tbody td { height: 66px; padding: 11px 14px; border-bottom: 1px solid var(--kbc-border) !important; font-size: 14px; line-height: 1.55; text-align: left; }
@@ -225,7 +226,7 @@ button.metric:hover { border-color: var(--dashboard-accent); box-shadow: 0 10px 
 .meetingType { display: flex; align-items: center; gap: 10px; min-width: 170px; max-width: 260px; color: var(--kbc-muted); font-size: 14px; line-height: 1.5; }
 .meetingTypeIcon { display: grid; place-items: center; flex: 0 0 30px; height: 30px; border-radius: 10px; background: var(--kbc-purple-wash); color: var(--dashboard-accent); }
 .meetingTypeIcon svg { width: 16px; height: 16px; }
-.meetingsTable .identity { gap: 8px; min-width: 0; }
+.meetingsTable .identity { gap: 8px; min-width: 180px; }
 .meetingsTable .identity > :first-child { width: 32px; height: 32px; font-size: 11px; }
 .meetingIdentityText { display: grid; gap: 2px; min-width: 0; max-width: 220px; }
 .meetingsTable .identityName { display: block; max-width: 220px; font-size: 14px; overflow-wrap: anywhere; }
