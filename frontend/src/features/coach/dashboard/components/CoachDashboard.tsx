@@ -290,6 +290,16 @@ function toNumber(value?: number | string | null): number {
   return 0;
 }
 
+const compactDecimalFormat = new Intl.NumberFormat('en-GB', {
+  minimumFractionDigits: 0,
+  maximumFractionDigits: 2,
+  useGrouping: false,
+});
+
+function formatCompactDecimal(value: number): string {
+  return compactDecimalFormat.format(value);
+}
+
 function normalizeMonthlyRisk(points?: MonthlyRiskPoint[] | null): MonthlyRiskPoint[] | null {
   if (!Array.isArray(points)) return null;
   return points.slice(-6).map(point => ({
@@ -1263,7 +1273,7 @@ function RiskInsightsTables({ learners, unavailable }: { learners: CoachLearner[
         <table className={`${styles.table} ${styles.riskInsightTable}`}>
           <thead><tr><th scope="col">Learner</th><th scope="col">Programme</th><th scope="col">Actual</th><th scope="col">Target</th><th scope="col">Behind</th><th scope="col">Status</th></tr></thead>
           <tbody>{otjhRows.length ? otjhRows.map(({ learner, target, gap, tone }) => <tr key={learner.id} data-tone={tone}>
-            <td><RiskLearner learner={learner} /></td><td>{learner.programme}</td><td>{learner.otjhCompleted}h</td><td>{target}h</td><td><strong>{Math.round(gap * 10) / 10}h</strong></td><td><RiskStatus tone={tone} /></td>
+            <td><RiskLearner learner={learner} /></td><td>{learner.programme}</td><td>{formatCompactDecimal(learner.otjhCompleted)}h</td><td>{target}h</td><td><strong>{Math.round(gap * 10) / 10}h</strong></td><td><RiskStatus tone={tone} /></td>
           </tr>) : <EmptyRiskRow columns={6} message={dataUnavailable || 'No OTJH warnings.'} />}</tbody>
         </table>
       </div>

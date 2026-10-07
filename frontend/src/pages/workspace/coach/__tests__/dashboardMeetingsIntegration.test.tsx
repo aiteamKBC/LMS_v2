@@ -1199,7 +1199,7 @@ it('keeps View in caseload list scrolling after local modal filtering', async ()
 it('uses target-to-date for OTJH insights without comparing actuals to the whole plan', async () => {
   useDashboardDate();
   mocks.load.mockResolvedValue({ owner: { name: 'Example Coach' }, learners: [
-    { id: '1', name: 'Warning Learner', rawProgramStatus: 'active', otjhCompleted: 170,
+    { id: '1', name: 'Warning Learner', rawProgramStatus: 'active', otjhCompleted: 169.8766,
       otjhTarget: 576, otjhTargetAsOfToday: 200, otjhRagStatus: 'need-attention' },
     { id: '2', name: 'Critical Learner', rawProgramStatus: 'active', otjhCompleted: 160,
       otjhTarget: 576, otjhTargetAsOfToday: 200, otjhRagStatus: 'at-risk' },
@@ -1214,11 +1214,12 @@ it('uses target-to-date for OTJH insights without comparing actuals to the whole
   fireEvent.click(await screen.findByRole('button', { name: 'Expand OTJH Insights' }));
   const table = within(screen.getByRole('region', { name: 'OTJH risk insights' }));
   const warning = within(table.getByText('Warning Learner').closest('tr')!);
-  expect(warning.getByText('170h')).toBeVisible();
+  expect(warning.getByText('169.88h')).toBeVisible();
   expect(warning.getByText('200h')).toBeVisible();
-  expect(warning.getByText('30h')).toBeVisible();
+  expect(warning.getByText('30.1h')).toBeVisible();
   expect(warning.getByText('Warning')).toBeVisible();
   const critical = within(table.getByText('Critical Learner').closest('tr')!);
+  expect(critical.getByText('160h')).toBeVisible();
   expect(critical.getByText('200h')).toBeVisible();
   expect(critical.getByText('40h')).toBeVisible();
   expect(critical.getByText('Critical')).toBeVisible();
