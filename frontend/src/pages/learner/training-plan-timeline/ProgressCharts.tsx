@@ -14,6 +14,7 @@ type Props = {
   programmeEndMonth?: string;
   programmeSnapshot?: ProgrammeProgressSnapshot;
   showOtjChart?: boolean;
+  targetAsOfToday?: number | null;
   programmeRows?: { id: string; title: string; start?: string; value: number | null; available?: number; measureCount?: number }[];
 };
 export type ProgrammeProgressSnapshot = {
@@ -44,7 +45,7 @@ function measureCount(label: string, detail: string) {
 
 
 export function ProgressCharts({ modules, selected, data, onModuleSelect, programmeStartMonth, programmeEndMonth, programmeSnapshot,
-  showOtjChart = true, programmeRows }: Props) {
+  showOtjChart = true, targetAsOfToday, programmeRows }: Props) {
   const chartId = useId();
   const [programmePage, setProgrammePage] = useState(0);
   const selectedProgress = selected ? moduleProgress(selected, data) : null;
@@ -165,6 +166,6 @@ export function ProgressCharts({ modules, selected, data, onModuleSelect, progra
       </nav>}
       <p className={styles.note}>Module progress is based on activities. Attendance, hours and KSBs are shown independently.</p>
     </section>
-    {showOtjChart && <OtjHoursChart data={data} programmeStartMonth={programmeStartMonth} programmeEndMonth={programmeEndMonth} />}
+    {showOtjChart && <OtjHoursChart data={data} programmeStartMonth={programmeStartMonth} programmeEndMonth={programmeEndMonth} targetAsOfToday={targetAsOfToday} />}
   </div>;
 }

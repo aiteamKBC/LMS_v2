@@ -458,7 +458,7 @@ describe('Dashboard training plan controls', () => {
     expect(scroll).not.toHaveAttribute('data-panning', 'true');
   });
 
-  it('keeps pending hours separate from completed hours and uses target-to-date for overall progress', () => {
+  it('scales completed and submitted hours to the programme plan while keeping the target-to-date marker', () => {
     const data = fixture();
     data.monthlyOtjh = {
       '2026-09': { planned: 18, submitted: 2, actual: 11.5, missingPlannedActivities: 0 },
@@ -473,9 +473,39 @@ describe('Dashboard training plan controls', () => {
     expect(chart.getByRole('tooltip')).toHaveTextContent('Completed:64% (11.5 hours)');
     const bars = september.querySelectorAll('i');
     expect(bars[0].style.bottom).toBe(bars[1].style.height);
-    expect(chart.getByRole('progressbar', { name: 'Overall off-the-job hours progress' })).toHaveAttribute('aria-valuenow', '64');
+    const track = chart.getByRole('progressbar', { name: 'Overall off-the-job hours progress' });
+    const [submitted, completed] = track.querySelectorAll('i');
+    expect(track).toHaveAttribute('aria-valuenow', '29');
+    expect(submitted).toHaveStyle({ left: '29%', width: '5%' });
+    expect(completed).toHaveStyle({ width: '29%' });
+    expect(track.querySelector('b')).toHaveStyle({ left: '45%' });
     expect(chart.getByText('11.5h completed · 2h submitted')).toBeInTheDocument();
     expect(chart.queryByText('N/A')).not.toBeInTheDocument();
+  });
+
+  it('keeps submitted hours after completed hours within the programme plan track', () => {
+    const data = fixture();
+    data.monthlyLogOtjh = {
+      '2026-09': { target: 18, submitted: 3, completed: 24 },
+      '2026-10': { target: 20, submitted: 0, completed: 0 },
+    };
+    data.monthlyOtjh = {};
+    data.actual = [];
+    renderBoard(data, summarySubjects);
+
+    const track = within(screen.getByRole('region', { name: 'Off-the-job hours by month' }))
+      .getByRole('progressbar', { name: 'Overall off-the-job hours progress' });
+    const [submitted] = track.querySelectorAll('i');
+    expect(track).toHaveAttribute('aria-valuenow', '60');
+    expect(submitted).toHaveStyle({ left: '60%', width: '8%' });
+  });
+
+  it('uses the dashboard target-to-date for the overall OTJH variance', () => {
+    render(<MemoryRouter><TrainingPlanDetails data={fixture()} subjects={summarySubjects} kind="commercial" learnerId="125"
+      onRefresh={vi.fn()} onRetryContract={vi.fn()} targetAsOfToday={10} /></MemoryRouter>);
+
+    const chart = within(screen.getByRole('region', { name: 'Off-the-job hours by month' }));
+    expect(chart.getByText('+15% (+1.5h)')).toBeVisible();
   });
 
   it('calculates target-to-date variance when a Monthly Logs target is blank', () => {
@@ -549,7 +579,7 @@ describe('Dashboard training plan controls', () => {
     renderBoard(data, summarySubjects);
 
     expect(within(screen.getByRole('region', { name: 'Off-the-job hours by month' }))
-      .getByRole('progressbar', { name: 'Overall off-the-job hours progress' })).toHaveAttribute('aria-valuenow', '100');
+      .getByRole('progressbar', { name: 'Overall off-the-job hours progress' })).toHaveAttribute('aria-valuenow', '4');
   });
 
   it('uses SSOT monthly logs for every programme month', () => {
