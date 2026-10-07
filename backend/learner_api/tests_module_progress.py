@@ -143,6 +143,28 @@ class SharedModuleProgressTests(SimpleTestCase):
                 module_progress.canonical_module_progress(SimpleNamespace(pk=201), SimpleNamespace(pk=101, enrolment_id=201))
         read.assert_not_called()
 
+    def test_compact_reader_reuses_final_calculation_without_loading_student_content(self):
+        source = SimpleNamespace(pk=201, aptem_id=123)
+        profile = SimpleNamespace(pk=101, enrolment_id=201)
+        inputs = (None, {'components': [
+            {'moduleId': 'M1', 'module': 'Module', 'componentId': 'C1'},
+            {'moduleId': 'M1', 'module': 'Module', 'componentId': 'C2'},
+            {'moduleId': 'M1', 'module': 'Module', 'componentId': 'C3'}], 'quizAttempts': []},
+            [{'id': 'M1', 'title': 'Module'}],
+            [{'kind': 'component', 'component_ref': 'C1', 'passed': None}], {})
+        observed = []
+        def narrow():
+            observed.append(journal_sources.enabled())
+            return inputs
+        with patch.object(canonical_learning, 'require_profile', return_value={'id': 101}), \
+             patch.object(canonical_learning, 'source_subjects', side_effect=AssertionError('Broad historical reader')), \
+             patch.object(module_progress, 'read_native_progress', side_effect=AssertionError('Content reader')):
+            result = module_progress.canonical_module_progress(source, profile, read_projection=narrow)
+        self.assertEqual(result, module_progress.aggregate_module_progress(*inputs))
+        self.assertEqual(result[0]['percent'], 33.33)
+        self.assertEqual(observed, [True])
+        self.assertFalse(journal_sources.enabled())
+
 
 class ModuleProgressEndpointTests(SimpleTestCase):
     def call(self, account, *, error=None, method='get'):

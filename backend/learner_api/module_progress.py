@@ -118,7 +118,7 @@ def aggregate_module_progress(activity, detail, current, progress, titles=None):
             for row in sorted(subjects.values(), key=lambda row: (row['title'].casefold(), row['id']))]
 
 
-def canonical_module_progress(source, profile):
+def canonical_module_progress(source, profile, *, read_projection=None):
     """The single final calculation called by both HTTP consumers."""
     from . import canonical_learning
     from . import journal_sources
@@ -133,11 +133,18 @@ def canonical_module_progress(source, profile):
     # their existing perspective in their independent reader.
     token = journal_sources._current.set(True)
     try:
-        activity = canonical_learning.source_subjects(source.pk, summarize_activities, owner=owner) \
-            if student_activity_available(source.aptem_id) else None
+        if read_projection is not None:
+            # Coach list projections already own narrow catalogue/native facts.
+            # Keep identity, perspective and the final calculation here rather
+            # than hydrating learner content a second time for its percentage.
+            activity, detail, current, progress, titles = read_projection()
+        else:
+            activity = canonical_learning.source_subjects(source.pk, summarize_activities, owner=owner) \
+                if student_activity_available(source.aptem_id) else None
     finally:
         journal_sources._current.reset(token)
-    detail, current, progress, titles = read_native_progress(source, profile)
+    if read_projection is None:
+        detail, current, progress, titles = read_native_progress(source, profile)
     return aggregate_module_progress(activity, detail, current, progress, titles)
 
 

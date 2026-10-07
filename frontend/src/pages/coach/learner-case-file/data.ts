@@ -81,10 +81,10 @@ export function useCoachLearnerCaseFileData(args: {
   activeTab?: string;
 }) {
   const session = useCaseFileSession();
-  const wantsDetail = !session || args.activeTab === 'support';
+  const wantsDetail = !session;
   const [detailActivated, setDetailActivated] = useState(wantsDetail);
   useEffect(() => { if (wantsDetail) setDetailActivated(true); }, [wantsDetail]);
-  const wantsJourney = !session || args.activeTab === 'support';
+  const wantsJourney = !session;
   const [journeyActivated, setJourneyActivated] = useState(wantsJourney);
   useEffect(() => { if (wantsJourney) setJourneyActivated(true); }, [wantsJourney]);
   const [data, setData] = useState<CoachLearnerCaseFileData | null>(null);

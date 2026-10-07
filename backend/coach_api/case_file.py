@@ -37,6 +37,15 @@ def case_file_ksb_detail(request, learner_id, code):
     delegated.GET['code'] = code
     return case_file_section(delegated, learner_id, section='ksb-detail')
 
+
+def case_file_learning_module(request, learner_id, module_id, week_id=None):
+    delegated = copy(request)
+    delegated.GET = request.GET.copy()
+    delegated.GET['moduleId'] = module_id
+    if week_id is not None:
+        delegated.GET['weekId'] = week_id
+    return case_file_section(delegated, learner_id, section='learning-plan-module')
+
 # Resource names are transport projections, never client-selected data sources.
 RESOURCES = {
     'overview': {'detail', 'activity', 'covers', 'week', 'schedule', 'hours'},
@@ -95,7 +104,8 @@ class CaseFileContext:
                                       'programme_status', 'cohort', 'group', 'employer', 'coach_name', 'coach_email',
                                       'start_date', 'learner_start_date', 'learner_end_date', 'end_date',
                                       'apprenticeship_end_date', 'practical_period_end_date'}
-                if not self.profile_only and self.request.path.rstrip('/').split('/')[-1] in {'weekly-learning', 'learning-plan', 'assignments'}:
+                narrow_learning = '/learning-plan' in self.request.path and not self.request.GET.get('resource')
+                if not self.profile_only and not narrow_learning and self.request.path.rstrip('/').split('/')[-1] in {'weekly-learning', 'learning-plan', 'assignments'}:
                     from learner_api.training_plan_dashboard import TRAINING_PLAN_SOURCE_FIELDS
                     fields.update(TRAINING_PLAN_SOURCE_FIELDS)
                 if not self.profile_only and self.request.path.rstrip('/').split('/')[-1] == 'weekly-learning':
@@ -103,7 +113,7 @@ class CaseFileContext:
                 if not self.profile_only and self.request.path.rstrip('/').split('/')[-1] == 'overview':
                     fields = {'id', 'aptem_id', 'learner_type', 'email', 'username', *SOURCE_WINDOW_FIELDS}
                 query = EnrolmentUser.all_learners.filter(pk=self.profile.enrolment_id).only(*sorted(fields))
-                weekly = not self.profile_only and self.request.path.rstrip('/').split('/')[-1] in {'weekly-learning', 'monthly-focus'}
+                weekly = not self.profile_only and (narrow_learning or self.request.path.rstrip('/').split('/')[-1] in {'weekly-learning', 'monthly-focus'})
                 if weekly:
                     from .weekly_learning import assignment_projection
                     query = assignment_projection(query)
@@ -512,6 +522,19 @@ def case_file_section(request, learner_id, section='profile'):
                 response = JsonResponse(serialize_case_file_profile(context.profile, context.source))
             elif section == 'overview' and not request.GET.get('resource'):
                 response = JsonResponse(build_overview(context))
+            elif section in {'learning-plan', 'learning-plan-module'} and not request.GET.get('resource'):
+                from .learning_plan_projection import read_learning_plan, read_journey
+                try:
+                    payload = read_journey(context, request.GET['moduleId'], request.GET.get('weekId')) if section == 'learning-plan-module' else read_learning_plan(context)
+                    response = JsonResponse(payload)
+                except LookupError as error:
+                    response = JsonResponse({'detail': str(error)}, status=404)
+            elif section == 'attendance' and request.GET.get('resource', 'history') == 'history':
+                from .attendance_projection import AttendancePaginationError, read_attendance
+                try:
+                    response = JsonResponse(read_attendance(context, request.GET))
+                except AttendancePaginationError:
+                    response = JsonResponse({'detail': 'Invalid attendance pagination.'}, status=400)
             elif section == 'ksb-search':
                 from .otjh_ksb import search_ksb_activities
                 response = JsonResponse(search_ksb_activities(context.profile.id, request.GET.get('query', '')))

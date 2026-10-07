@@ -28,7 +28,7 @@ from .migrated_intelligence_views import (
 from .migrated_summary_upload import migrated_review_summary_upload
 from .migrated_progress_views import migrated_review_progress
 from .dashboard_view import coach_dashboard, coach_dashboard_section
-from .case_file import case_file_section, case_file_ksb_detail
+from .case_file import case_file_section, case_file_ksb_detail, case_file_learning_module
 from .views import (
     coach_attendance,
     coach_attendance_details,
@@ -74,6 +74,8 @@ from .views import (
 
 urlpatterns = [
     path('coach/case-file/<int:learner_id>/profile', case_file_section, name='case-file-profile'),
+    path('coach/case-file/<int:learner_id>/learning-plan/module/<str:module_id>/week/<str:week_id>', case_file_learning_module, name='case-file-learning-week'),
+    path('coach/case-file/<int:learner_id>/learning-plan/module/<str:module_id>', case_file_learning_module, name='case-file-learning-module'),
     path('coach/case-file/<int:learner_id>/ksbs/<str:code>', case_file_ksb_detail, name='case-file-ksb-detail'),
     path('coach/case-file/<int:learner_id>/<str:section>', case_file_section, name='case-file-section'),
     path('migrated-reviews/<str:review_id>/progress', migrated_review_progress, name='migrated-review-progress'),

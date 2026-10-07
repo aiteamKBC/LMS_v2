@@ -26,9 +26,12 @@ const sections: Record<string, unknown> = {
       { category: 'Knowledge', achieved: 1, total: 1, percent: 100 },
       { category: 'Skills', achieved: 0, total: 0, percent: 0 }, { category: 'Behaviours', achieved: 0, total: 0, percent: 0 }],
       rows: [{ code: 'K1', description: 'Synthetic knowledge', category: 'Knowledge', completed: 1, status: 'Achieved', evidenceCount: 87, pointsAchieved: 1, totalPoints: 87, progressPercent: 1.15 }] } },
-  'learning-plan': { detail: { modules: ['Synthetic Module'], week: [{ module: 'Synthetic Module', week: 'Week 1', moduleId: 'M1', weekId: 'W1' }], components: [{ componentId: 'C1', moduleId: 'M1', weekId: 'W1', module: 'Synthetic Module', week: 'Week 1', component: 'Synthetic reading', type: 'reading' }], quizAttempts: [], videoProgress: [], componentProgress: [] }, covers: {}, schedule, week: { planSubjects: [], monthlyOtjh: [] }, hours: { months: [], learner: {} } },
+  'learning-plan': { timeline: { periodStart: '2026-01', periodEnd: '2027-01', modules: [], reviews: [] },
+    journey: { summary: { modules: 1, weeks: 1, components: 1, completed: 0, inProgress: 0, notStarted: 1, unavailable: 0 },
+      modules: [{ id: 'current:M1', title: 'Synthetic Module', weekCount: 1, componentCount: 1, completedCount: 0,
+        inProgressCount: 0, notStartedCount: 1, unavailableCount: 0, progressPercent: 0, status: 'not-started', otjh: 0 }] } },
   K1: { source: 'progress', rows: [{ code: 'K1', description: 'Synthetic knowledge', category: 'Knowledge', completed: 1, status: 'Achieved', components: [{ name: 'Synthetic evidence', status: 'completed', achieved: true, source: 'Progress' }] }], achievedKsbs: 1 },
-  attendance: { attendance }, reviews: { events: [], reviewGenerationIssues: [] }, assignments: { months: [], errors: [] }, 'enrolment-documents': { documents: [{ eventKey: 'synthetic-review', label: 'Synthetic enrolment review', completed: true, sectionsDone: 1, sectionsTotal: 1, signatures: { learner: { signed: false }, admin: { signed: false }, employer: { signed: false } } }] },
+  attendance: { summary: { ...attendance, outstandingAbsences: 1 }, sessions: [], months: [], pagination: { page: 1, pageSize: 20, total: 0, hasMore: false } }, reviews: { events: [], reviewGenerationIssues: [] }, assignments: { months: [], errors: [] }, 'enrolment-documents': { documents: [{ eventKey: 'synthetic-review', label: 'Synthetic enrolment review', completed: true, sectionsDone: 1, sectionsTotal: 1, signatures: { learner: { signed: false }, admin: { signed: false }, employer: { signed: false } } }] },
 };
 beforeEach(() => {
   // Vite supplies this auto-import; the standalone Vitest config does not.

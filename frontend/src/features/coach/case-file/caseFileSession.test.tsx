@@ -31,7 +31,7 @@ describe('Case File session request lifecycle', () => {
     transport.mockReset();
     transport.mockImplementation(async (url: string) => {
       const body = url.endsWith('/profile') ? shell : url.endsWith('/overview') ? { wholeProgrammeProgress: summary.metrics, programmeProgress: [] }
-        : url.includes('/attendance') ? { attendance: { ...attendance, sessionHistory: [{ id: 'session-1', date: '2026-09-01', title: 'Synthetic session', status: 'absent' }] } }
+        : url.includes('/attendance') ? { summary: { sessions: 2, present: 1, absent: 1, attendanceRate: 50, outstandingAbsences: 1 }, sessions: [{ id: 'session-1', date: '2026-09-01', title: 'Synthetic session', status: 'absent', reason: null }], months: ['2026-09'], pagination: { page: 1, pageSize: 20, total: 1, hasMore: false } }
         : {};
       return new Response(JSON.stringify(body), { status: 200 });
     });
