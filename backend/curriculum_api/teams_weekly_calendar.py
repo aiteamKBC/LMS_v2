@@ -7,6 +7,9 @@ import uuid
 from django.http import JsonResponse
 from .teams_calendar_checks import (CalendarMismatch, calendar_targets, dropped_sessions_sentence, publish_attendees,
                                     sessions_a_rewrite_would_drop, verify_calendar)
+from .teams_schedule_notice import same_schedule, schedule_snapshot
+from .teams_update_guard import (claim_announcement, finish_announcement, graph_failure_outcome, logical_change_id,
+                                 targets_snapshot)
 
 
 class DroppedSessions(RuntimeError):
@@ -89,13 +92,19 @@ def save_weekday_calendar(payload, graph_settings, series=None):
         **payload,
         'hideAttendees': True,
     }
-    # A change to the meeting itself is announced to everyone already invited.
-    # A save that only corrects who is invited, or how the meeting runs, is not:
-    # it goes to Microsoft silently and the people it adds are forwarded the
-    # meeting on their own, so nobody already on the calendar is mailed about a
-    # learner joining it. The LMS schedule email to those added is separate.
+    # A change to the meeting's dates is announced to everyone already invited
+    # when the author asked for it (``notifyAttendees``), exactly as on a shared
+    # series: the per-day date writes are silent, and the announcement is the
+    # attendee write that follows on each day whose dates actually changed. A
+    # save that only corrects who is invited, or how the meeting runs, is never
+    # announced: it goes to Microsoft silently and the people it adds are
+    # forwarded the meeting on their own, so nobody already on the calendar is
+    # mailed about a learner joining it. The LMS schedule email to those added
+    # is separate. A new calendar is always announced: that is its invitation.
+    creating = not v.clean_str(series.get('id'))
     people_only = bool(combined.get('peopleOnly'))
-    notify_attendees = not people_only
+    invitations_only = people_only and bool(combined.get('invitationsOnly'))
+    notify_attendees = True if creating else (False if people_only else bool(combined.get('notifyAttendees')))
     newly_invited = v.teams_newly_invited(
         [
             *v.teams_series_email_list(series.get('attendees')),
@@ -160,6 +169,48 @@ def save_weekday_calendar(payload, graph_settings, series=None):
     leftover_slots = []
     requested_numbers = {item['sessionNumber'] for _, items in groups for item in items}
     stored_rows = v.authoring_fetch_all(v.LIVE_SESSION_OCCURRENCES_TABLE, 'live_session_id = %s', [live_id]) if live_id else []
+    # The logical change, named by its content (see teams_update_guard): the
+    # dates the LMS saved last, the dates asked for, and who is invited.
+    held_before = schedule_snapshot(stored_rows)
+    requested_after = []
+    for _day, items in groups:
+        for item in items:
+            begins = v.parse_graph_datetime(item['startDateTimeUtc'])
+            begins = begins.replace(tzinfo=begins.tzinfo or timezone.utc)
+            requested_after.append({'n': item['sessionNumber'], 'start': begins.isoformat(),
+                                    'end': (begins + timedelta(minutes=item['durationMinutes'])).isoformat()})
+    everyone = [person for entry in prepared for person in entry[3]]
+    change_id = logical_change_id(live_id, held_before, requested_after, everyone,
+                                  v.teams_calendar_subject(combined, series))
+    if people_only:
+        # A people-only save never touches a date, so every day must already be
+        # exactly where the LMS holds it -- checked for all of them before
+        # anything is written. Drift is reported, never repaired here: the
+        # repair moves or re-creates sessions, which is a schedule update.
+        for day, day_payload, *_rest in prepared:
+            previous = next((item for item in manifest if item.get('day') == day), {})
+            event_id = v.clean_str(previous.get('eventId'))
+            try:
+                targets = calendar_targets(day_payload, day_payload['startDateTimeUtc'], day_payload['durationMinutes'],
+                                           day_payload['repeat'], len(day_payload['scheduledOccurrences']),
+                                           v.graph_timezone_iana(graph_settings))
+                if not event_id:
+                    raise CalendarMismatch(f'{day} has no Teams series saved for its sessions.')
+                verify_calendar(microsoft_graph_request, owner, event_id, targets, previous.get('joinUrl') or '',
+                                day_payload['repeat'] != 'none')
+            except CalendarMismatch as mismatch:
+                return v.json_error(
+                    'The Teams calendar dates no longer match the dates saved here, so the invitations were not '
+                    'saved. Nothing was changed in Teams. Update the Teams calendar dates first, then save the '
+                    'invitations again.',
+                    status=409, code='teams_schedule_drift', detail=str(mismatch), liveSessionId=live_id,
+                )
+            except RuntimeError as exc:
+                return v.json_error('Microsoft Teams could not read the calendar, so nothing was changed.',
+                                    status=502, detail=str(exc), liveSessionId=live_id)
+    claims = {}
+    announced_writes = {'count': 0}
+    pending_rows = []
     try:
         for index, (day, day_payload, body, invited_people, stored_attendees, presenters, co_organizers) in enumerate(prepared):
             previous = next((item for item in manifest if item.get('day') == day), {})
@@ -265,14 +316,16 @@ def save_weekday_calendar(payload, graph_settings, series=None):
                 available.remove(match)
                 number = target['session_number']
                 tracked_numbers.add(number)
-                prior = (v.authoring_fetch_all(v.LIVE_SESSION_OCCURRENCES_TABLE, 'live_session_id = %s and session_number = %s', [live_id, number]) or [{}])[0]
-                v.authoring_upsert(v.LIVE_SESSION_OCCURRENCES_TABLE, ['live_session_id', 'session_number'], {
-                    'id': prior.get('id') or f'OCC-{uuid.uuid4().hex.upper()}', 'live_session_id': live_id, 'session_number': number,
+                # Saved only once every day is verified and published (below). Saved
+                # here, a failed attempt left the LMS holding dates nobody had been
+                # told about, and its retry -- reading those as "already saved" --
+                # never announced them.
+                pending_rows.append({
+                    'live_session_id': live_id, 'session_number': number,
                     'graph_event_id': match.get('id') or event_id,
                     'scheduled_start': v.parse_graph_datetime((match.get('start') or {}).get('dateTime')),
                     'scheduled_end': v.parse_graph_datetime((match.get('end') or {}).get('dateTime')),
                     'join_url': join_url, 'online_meeting_id': entry['onlineMeetingId'],
-                    'status': prior.get('status') if prior.get('status') == 'completed' else 'scheduled', 'updated_at': datetime.utcnow(),
                 })
                 if v.teams_calendar_minute_key((match.get('end') or {}).get('dateTime')) != v.teams_calendar_minute_key(target['end']):
                     verified = False
@@ -281,33 +334,87 @@ def save_weekday_calendar(payload, graph_settings, series=None):
             v.update_authoring_rows(v.LIVE_SESSIONS_TABLE, 'id = %s', [live_id], {'calendar_series': v.json_db_value(manifest)})
             checked = verify_calendar(microsoft_graph_request, owner, event_id, targets,
                                       previous.get('joinUrl') or join_url, day_payload['repeat'] != 'none')
-            publish_queue.append((checked, body['attendees'], targets, day_payload['repeat'] != 'none'))
+            # Did this day's sessions really move? Against both what Microsoft
+            # held before this save and what the LMS last saved for this day.
+            own_numbers = {target['session_number'] for target in targets} | set(previous.get('sessionNumbers') or [])
+            day_before = [item for item in held_before if item['n'] in own_numbers]
+            day_changed = not dates_already_verified or not same_schedule(day_before, targets_snapshot(targets))
+            publish_queue.append((checked, body['attendees'], targets, day_payload['repeat'] != 'none', day, day_changed))
 
         if warnings or not settings_applied:
             raise RuntimeError('Microsoft did not accept every reviewed session or meeting option. New invitations remain pending.')
         # Every weekday must pass before any new invitation list is published.
         # The list itself is always published: who is on a meeting is not the
-        # author's email choice to make. Only whether Microsoft announces it is,
-        # and an unchanged list is skipped inside publish_attendees, so a save
-        # that moves nobody sends nothing.
-        for checked, recipients, targets, recurring in publish_queue:
-            written = publish_attendees(
-                microsoft_graph_request, owner, checked, recipients,
-                extra_headers=None if notify_attendees else v.GRAPH_SILENT_INVITE_HEADERS,
-            )
-            if written:
-                verify_calendar(microsoft_graph_request, owner, checked['id'], targets,
-                                (checked.get('onlineMeeting') or {}).get('joinUrl'), recurring)
+        # author's email choice to make. Only whether Microsoft announces it is.
+        #
+        # A day is announced when its dates changed and the author asked for
+        # the notice -- even when its invitation list is unchanged, because the
+        # date write itself is silent and this attendee write is the only thing
+        # that puts the new dates in invitees' calendars. A day whose dates did
+        # not change is written silently (and skipped when nothing differs), so
+        # nobody is told about a date that did not move.
+        def announcing_request(method, path, *, payload=None, extra_headers=None):
+            announced = method == 'PATCH' and not extra_headers
+            try:
+                result = microsoft_graph_request(method, path, payload=payload, extra_headers=extra_headers)
+            except RuntimeError as exc:
+                if announced and graph_failure_outcome(exc) == 'unknown':
+                    announced_writes['count'] += 1
+                raise
+            if announced:
+                announced_writes['count'] += 1
+            return result
 
-        if not notify_attendees and newly_invited:
-            # Every day's series, and only after all of them are verified: the
-            # first thing someone added sees should be the finished calendar.
+        silent_days = []
+        for checked, recipients, targets, recurring, day, day_changed in publish_queue:
+            announce_day = notify_attendees and (creating or day_changed)
+            if announce_day and not creating:
+                # Claimed before Microsoft is asked; an earlier attempt at this
+                # same change that already asked is not repeated.
+                claims[day] = claim_announcement(live_id, change_id, f'day-{day}')
+                if claims[day] == 'attempted':
+                    announce_day = False
+            if not announce_day and claims.get(day) != 'attempted':
+                silent_days.append(v.clean_str(checked.get('id')))
+            announced_writes['count'] = 0
+            try:
+                written = publish_attendees(
+                    announcing_request if announce_day else microsoft_graph_request, owner, checked, recipients,
+                    extra_headers=None if announce_day else v.GRAPH_SILENT_INVITE_HEADERS,
+                    always=announce_day,
+                )
+                if written:
+                    verify_calendar(microsoft_graph_request, owner, checked['id'], targets,
+                                    (checked.get('onlineMeeting') or {}).get('joinUrl'), recurring)
+            except RuntimeError:
+                if claims.get(day) == 'claimed':
+                    finish_announcement(live_id, change_id, f'day-{day}',
+                                        'unknown' if announced_writes['count'] else 'failed')
+                    claims[day] = 'unknown'
+                raise
+            if claims.get(day) == 'claimed':
+                finish_announcement(live_id, change_id, f'day-{day}', 'accepted')
+                claims[day] = 'accepted'
+
+        # "Save without notifying" sends nothing, not even to the people it adds.
+        # Days that were announced already carried the added people on that
+        # write (an earlier attempt's included), so only silent days forward.
+        if not creating and newly_invited and silent_days and not invitations_only:
+            # Every silent day's series, and only after all of them are verified:
+            # the first thing someone added sees should be the finished calendar.
             warnings.extend(v.forward_teams_invitation(
-                microsoft_graph_request, owner,
-                [v.clean_str(checked.get('id')) for checked, _r, _t, _rec in publish_queue],
-                newly_invited,
+                microsoft_graph_request, owner, silent_days, newly_invited,
                 comment=f"You have been added to {v.teams_calendar_subject(combined, series)}.",
             ))
+
+        for values in pending_rows:
+            prior = (v.authoring_fetch_all(v.LIVE_SESSION_OCCURRENCES_TABLE, 'live_session_id = %s and session_number = %s',
+                                           [live_id, values['session_number']]) or [{}])[0]
+            v.authoring_upsert(v.LIVE_SESSION_OCCURRENCES_TABLE, ['live_session_id', 'session_number'], {
+                'id': prior.get('id') or f'OCC-{uuid.uuid4().hex.upper()}', **values,
+                'status': prior.get('status') if prior.get('status') == 'completed' else 'scheduled',
+                'updated_at': datetime.utcnow(),
+            })
 
         days = {day for day, _ in groups}
         for old in list(manifest):
@@ -322,8 +429,10 @@ def save_weekday_calendar(payload, graph_settings, series=None):
                                        'reason': 'weekday_no_longer_planned'})
                 v.update_authoring_rows(v.LIVE_SESSIONS_TABLE, 'id = %s', [live_id], {'calendar_series': v.json_db_value(manifest)})
         for row in v.authoring_fetch_all(v.LIVE_SESSION_OCCURRENCES_TABLE, 'live_session_id = %s', [live_id]):
-            if row['session_number'] not in requested_numbers:
-                v.update_authoring_rows(v.LIVE_SESSION_OCCURRENCES_TABLE, 'id = %s', [row['id']], {'status': 'cancelled'})
+            # Not in the plan any more, but nobody pressed Cancel and its Teams
+            # slot is still there: "not in plan", never 'cancelled'.
+            if row['session_number'] not in requested_numbers and str(row.get('status') or '') not in ('cancelled', 'canceled'):
+                v.update_authoring_rows(v.LIVE_SESSION_OCCURRENCES_TABLE, 'id = %s', [row['id']], {'status': 'superseded'})
         main = next(item for item in manifest if item['day'] == groups[0][0])
         v.update_authoring_rows(v.LIVE_SESSIONS_TABLE, 'id = %s', [live_id], {
             'calendar_series': v.json_db_value(manifest), 'graph_event_id': main['eventId'],
@@ -342,7 +451,7 @@ def save_weekday_calendar(payload, graph_settings, series=None):
         module_id = combined.get('moduleCatalogueId')
         if module_id and v.authoring_module_exists(module_id):
             saved = v.authoring_fetch_all(v.LIVE_SESSIONS_TABLE, 'id = %s', [live_id])[0]
-            occurrences = v.authoring_fetch_all(v.LIVE_SESSION_OCCURRENCES_TABLE, "live_session_id = %s and status <> 'cancelled'", [live_id], 'session_number')
+            occurrences = v.authoring_fetch_all(v.LIVE_SESSION_OCCURRENCES_TABLE, "live_session_id = %s and status not in ('cancelled', 'superseded')", [live_id], 'session_number')
             # Creating or updating a calendar only attaches it to live-session
             # components the author already placed. New components belong to
             # the explicit Restore/Re-attach action, never to Send itself.
@@ -352,6 +461,10 @@ def save_weekday_calendar(payload, graph_settings, series=None):
         return v.json_error(str(exc), status=409, code='teams_update_would_drop_sessions', liveSessionId=live_id,
                             calendarSeries=manifest)
     except RuntimeError as exc:
+        for day, state in claims.items():
+            if state == 'claimed':
+                # Claimed but never reached: a retry may announce that day.
+                finish_announcement(live_id, change_id, f'day-{day}', 'failed')
         if live_id:
             v.update_authoring_rows(v.LIVE_SESSIONS_TABLE, 'id = %s', [live_id], {
                 'warnings': v.json_db_value([*warnings, {'code': 'teams_calendar_unverified', 'message': str(exc)}]),
@@ -370,11 +483,23 @@ def save_weekday_calendar(payload, graph_settings, series=None):
         'settingsApplied': settings_applied, 'trackingReady': all(item.get('onlineMeetingId') for item in manifest),
         'provider': 'Microsoft Teams', 'calendarSeries': manifest,
     }
-    for checked, _recipients, _targets, _recurring in publish_queue:
+    for checked, *_rest in publish_queue:
         leftover_slots.extend(checked.get('unplannedInstances') or [])
     # One entry per Microsoft event, however many checks noticed it.
     leftover_slots = list({slot.get('eventId') or str(index): slot for index, slot in enumerate(leftover_slots)}.values())
     if not series:
         return JsonResponse({'created': True, 'meeting': meeting_result, 'warnings': [item.get('message') or str(item) for item in warnings],
                              'leftoverSlots': leftover_slots}, status=201)
-    return JsonResponse({'updated': True, 'meeting': meeting_result, 'warnings': warnings, 'leftoverSlots': leftover_slots})
+    changed_days = [entry[4] for entry in publish_queue if entry[5]]
+    attempted = [day for day, state in claims.items() if state == 'attempted']
+    return JsonResponse({
+        'updated': True, 'meeting': meeting_result, 'warnings': warnings, 'leftoverSlots': leftover_slots,
+        # The same result fields as a shared series: whether a date change was
+        # announced, and what Microsoft was asked ('sent', 'already_attempted',
+        # 'silent', 'not_needed'). The LMS change email follows `announced`.
+        'announced': notify_attendees and bool(changed_days),
+        'microsoftUpdate': ('not_needed' if not changed_days else 'silent' if not notify_attendees
+                            else 'already_attempted' if len(attempted) == len(changed_days) else 'sent'),
+        'retryGuard': 'unavailable' if 'unguarded' in claims.values() else 'on',
+        'changeId': change_id,
+    })

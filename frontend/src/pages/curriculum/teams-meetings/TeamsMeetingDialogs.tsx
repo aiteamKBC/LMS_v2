@@ -388,8 +388,8 @@ export function TeamsMeetingDialogs({ workspace, secondTab }: {
     openSettings, setResultsModule, resultsModule, detailError, loadDetail, holidayLabelFor,
     detailOccurrenceFor, now, setPreview, setTranscriptPreview, invitedPrefilling, prefillNotice, prefillInvitees, preview,
     transcriptPreview, settingsDrawer, drawerTarget, saveSettings, blockedReason,
-    teamsLoaded, teamsError, createProgress, updateProgress, saveInvitations, updateDrawer, pushDates, resendSchedule,
-    sendUpdateEmails, setSendUpdateEmails, selectedScopeRows, chooseMeetingScope,
+    teamsLoaded, teamsError, createProgress, updateProgress, saveInvitations, addedInvitees, updateDrawer, pushDates, resendSchedule,
+    selectedScopeRows, chooseMeetingScope,
     comparison, comparing, comparisonError, compareAttendees, publishedInvitees,
   } = workspace;
   // Who the author has typed in but not saved. Named under the comparison so a
@@ -406,9 +406,9 @@ export function TeamsMeetingDialogs({ workspace, secondTab }: {
     try {
       const result = await forwardScheduleEmail(selected.summary.liveSessionId, recipients);
       if (result.uncertain || result.failed || result.queued) {
-        setForwardError(`Forwarding is incomplete: ${result.accepted} accepted, ${result.failed} failed, ${result.uncertain + result.queued} pending.`);
+        setForwardError(`The schedule email is incomplete: ${result.accepted} accepted, ${result.failed} failed, ${result.uncertain + result.queued} pending.`);
       } else {
-        setForwardNotice(`Schedule forwarded to ${result.accepted} recipient${result.accepted === 1 ? '' : 's'}.`);
+        setForwardNotice(`Schedule emailed to ${result.accepted} recipient${result.accepted === 1 ? '' : 's'}.`);
         setForwardRecipients('');
       }
     } catch (error) {
@@ -466,6 +466,20 @@ export function TeamsMeetingDialogs({ workspace, secondTab }: {
                   }`}
                   >
                     {notice.text}
+                    {/* Recording a cancellation Microsoft shows is still the
+                        author's own Cancel, through its own review. */}
+                    {notice.recordCancel && (
+                      <span className="mt-2 flex flex-wrap gap-2">
+                        {(notice.recordCancel.series ? [undefined] : notice.recordCancel.sessions).map(sessionNumber => (
+                          <button key={sessionNumber ?? 'series'} type="button"
+                            onClick={() => openCalendarAction('cancel', sessionNumber)}
+                            disabled={Boolean(busy) || detailLoading || !graphConfigured}
+                            className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-amber-300 bg-white px-3 text-[12px] font-bold text-amber-800 hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-50">
+                            {sessionNumber === undefined ? 'Record the series cancellation' : `Record session ${sessionNumber} as cancelled`}
+                          </button>
+                        ))}
+                      </span>
+                    )}
                   </p>
                 )}
             {selected.summary ? (
@@ -502,46 +516,34 @@ export function TeamsMeetingDialogs({ workspace, secondTab }: {
                         first email was missed rather than when a date moved. */}
                     <button type="button" onClick={() => void resendSchedule(selectedForDisplay || selected)}
                       disabled={Boolean(busy) || Boolean(updateProgress) || Boolean(blockedReason) || detailLoading || updateDrawer.saving || !graphConfigured}
-                      title="Send the full schedule email -- the complete timetable and join links, the same message a new calendar sends -- to every invited participant. Every invited participant is emailed, including anyone who already received it. The Teams calendar is not changed."
+                      title="Send the full schedule email -- the complete timetable and join links, the same message a new calendar sends -- to every invited learner, the organiser, the co-organisers and the presenters. They are all emailed, including anyone who already received it. The Teams calendar is not changed."
                       className="inline-flex h-10 items-center gap-1.5 rounded-lg border border-primary-200 bg-primary-50 px-3 text-[12px] font-bold text-primary-700 transition-colors hover:bg-primary-100 disabled:cursor-not-allowed disabled:opacity-40">
                       <AppIcon className={busy === `${selected.catalogueId}:resend` ? 'ri-loader-4-line animate-spin text-sm' : 'ri-mail-send-line text-sm'}></AppIcon>
                       Email the schedule to everyone as the original creation email (not an update)
                     </button>
                     <button type="button" onClick={() => { setForwardOpen(true); setForwardError(''); setForwardNotice(''); }}
                       disabled={Boolean(busy) || Boolean(updateProgress) || Boolean(blockedReason) || detailLoading || updateDrawer.saving || !graphConfigured}
-                      title="Send the current timetable and Teams links to selected email addresses."
+                      title="Email the current timetable and Teams join links to the addresses you choose. This is an LMS email: it does not add the meeting to anyone's Outlook calendar."
                       className="inline-flex h-10 items-center gap-1.5 rounded-lg border border-background-200 bg-background-50 px-3 text-[12px] font-bold text-foreground-700 transition-colors hover:bg-background-100 disabled:cursor-not-allowed disabled:opacity-40">
-                      <AppIcon className="ri-share-forward-line text-sm"></AppIcon>
-                      Forward dates
+                      <AppIcon className="ri-mail-line text-sm"></AppIcon>
+                      Email schedule to…
                     </button>
                     {updateConfirmOpen && (
                       <div className="w-full rounded-lg border border-amber-200 bg-amber-50 p-3 text-[11px] text-amber-900">
                         <p className="font-bold">Before updating the Teams calendar</p>
-                        <p className="mt-1 leading-relaxed">Teams will move the session dates to the planned schedule. If you select the option below, the system will also send one update email to every existing learner invitee with the dates that changed. New people added to the invitation receive their full schedule separately.</p>
-                        <label className="mt-2 inline-flex items-start gap-2 font-semibold">
-                          <input
-                            type="checkbox"
-                            aria-label="Email existing invitees about this update"
-                            checked={sendUpdateEmails}
-                            onChange={event => setSendUpdateEmails(event.target.checked)}
-                            disabled={Boolean(busy) || Boolean(updateProgress) || updateDrawer.saving || Boolean(blockedReason) || detailLoading || !graphConfigured}
-                            className="mt-0.5 h-4 w-4 accent-primary-600"
-                          />
-                          <span>Email existing invitees about this update</span>
-                        </label>
-                        <button type="button" onClick={() => { setUpdateConfirmOpen(false); setSendUpdateEmails(false); }} className="mt-2 font-semibold text-foreground-600 underline">Cancel</button>
+                        <p className="mt-1 leading-relaxed">Teams will move the session dates to the planned schedule. If any date changes, Microsoft sends one update to everyone already invited, and the LMS emails each of them what changed, so Outlook and the email agree. If only the invitations changed, nobody already invited is contacted: the people you add get the Teams invitation and their schedule.</p>
+                        <button type="button" onClick={() => setUpdateConfirmOpen(false)} className="mt-2 font-semibold text-foreground-600 underline">Cancel</button>
                       </div>
                     )}
                     <button
                       type="button"
                       onClick={() => {
                         if (!updateConfirmOpen) { setUpdateConfirmOpen(true); return; }
-                        if (!sendUpdateEmails) return;
                         void pushDates(selectedForDisplay || selected);
                       }}
                       // Waits for the calendar's own read, so the invitation
                       // fields it sends with the dates hold the saved values.
-                      disabled={!(selectedForDisplay || selected).sessions.length || Boolean(busy) || Boolean(updateProgress) || Boolean(blockedReason) || detailLoading || updateDrawer.saving || !graphConfigured || (updateConfirmOpen && !sendUpdateEmails)}
+                      disabled={!(selectedForDisplay || selected).sessions.length || Boolean(busy) || Boolean(updateProgress) || Boolean(blockedReason) || detailLoading || updateDrawer.saving || !graphConfigured}
                       title="Move the Teams calendar onto this module's stored session dates, holiday shifts included, with any changes to the invitations below."
                       className="inline-flex h-10 items-center gap-1.5 rounded-lg bg-primary-600 px-3 text-[12px] font-bold text-white shadow-sm transition-colors hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-50"
                     >
@@ -549,7 +551,7 @@ export function TeamsMeetingDialogs({ workspace, secondTab }: {
                       {/* The calendar already exists by the time this button is
                           rendered, so the action is an update, not a first send
                           -- which is what its own confirmation has always said. */}
-                      {updateConfirmOpen ? 'Confirm update and send emails' : 'Update Teams calendar'}
+                      {updateConfirmOpen ? 'Confirm update' : 'Update Teams calendar'}
                     </button>
                    </div>
                  ) : (
@@ -802,6 +804,11 @@ export function TeamsMeetingDialogs({ workspace, secondTab }: {
                     if (occurrence?.status === 'cancelled') {
                       return <span role="status" className="inline-flex items-center gap-1.5 rounded-full border border-red-200 bg-red-50 px-2.5 py-1 text-[11px] font-bold text-red-700"><AppIcon className="ri-close-circle-line text-sm"></AppIcon>Cancelled</span>;
                     }
+                    // Taken out of the plan, never cancelled: its Teams slot is
+                    // still there until somebody presses Cancel on it.
+                    if (occurrence?.status === 'superseded') {
+                      return <span role="status" title="This session is no longer in the module plan, but nobody cancelled it, so its Teams meeting is still on the calendar. Cancel it from the slots below if it should not run." className="inline-flex items-center gap-1.5 rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-[11px] font-bold text-amber-800"><AppIcon className="ri-calendar-event-line text-sm"></AppIcon>Not in plan – still on Teams</span>;
+                    }
                     // The meeting runs when Teams says it does, so the clock
                     // is read against the calendar entry when there is one
                     // and against the module's own date when there is not.
@@ -924,12 +931,12 @@ export function TeamsMeetingDialogs({ workspace, secondTab }: {
 
                 {/* Under the dates, the same fields the create form asks for,
                     filled with what the calendar holds. Update sends them with
-                    the dates; Save invitations sends them alone. */}
+                    the dates; the two buttons below send them alone. */}
                 <section aria-labelledby="teams-invitations-heading" className="space-y-4 rounded-xl border border-background-200 p-4">
                   <div>
                     <h3 id="teams-invitations-heading" className="text-[11px] font-bold uppercase tracking-wider text-foreground-400">Invitations and meeting settings</h3>
                     <p className="mt-1 text-[11px] text-foreground-500">
-                      Only what you change here is updated, and the join link stays the same. When you add a new email, only that person receives the Teams invitation, and a learner you add also receives the LMS schedule email; people already invited are not emailed again.
+                      Only what you change here is updated, and the join link stays the same, and no session date moves. Save without notifying sends nothing to anybody. Save and invite added people sends the Teams invitation and the schedule email to the people you added, and to nobody else.
                     </p>
                   </div>
                   <div className="grid gap-4 sm:grid-cols-2">
@@ -958,18 +965,35 @@ export function TeamsMeetingDialogs({ workspace, secondTab }: {
                     onCompare={() => void compareAttendees(selected)}
                   />
                   {updateDrawer.error && <InlineError message={updateDrawer.error} />}
+                  {addedInvitees(selected).length > 0 && (
+                    <p role="note" className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-[11px] font-semibold text-amber-900">
+                      With Save without notifying, added people will be saved to the Teams meeting but will not receive an invitation or LMS email. Use Save and invite added people to send them both.
+                    </p>
+                  )}
                   <div className="flex flex-wrap items-center justify-end gap-3">
                     {updateDrawer.dirty && <span className="text-[11px] font-semibold text-amber-700">Changes not sent yet</span>}
                     <button
                       type="button"
                       onClick={() => void saveInvitations(selected)}
                       disabled={!updateDrawer.dirty || updateDrawer.saving || Boolean(busy) || Boolean(blockedReason) || detailLoading || !graphConfigured}
-                      title="Send only these invitation and setting changes. Every session date stays where Teams holds it."
+                      title="Save only these invitation and setting changes. Nobody is emailed, including people you add, and every session date stays where Teams holds it."
                       className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-primary-200 bg-primary-50 px-3 text-[12px] font-bold text-primary-700 transition-smooth hover:bg-primary-100 disabled:cursor-not-allowed disabled:opacity-50"
                     >
-                      <AppIcon className={updateDrawer.saving ? 'ri-loader-4-line animate-spin text-sm' : 'ri-user-add-line text-sm'}></AppIcon>
-                      Save invitations
+                      <AppIcon className={updateDrawer.saving ? 'ri-loader-4-line animate-spin text-sm' : 'ri-save-line text-sm'}></AppIcon>
+                      Save without notifying
                     </button>
+                    {addedInvitees(selected).length > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => void saveInvitations(selected, { invite: true })}
+                        disabled={!updateDrawer.dirty || updateDrawer.saving || Boolean(busy) || Boolean(blockedReason) || detailLoading || !graphConfigured}
+                        title="Save these changes, then send the Teams invitation and the schedule email to the people you added. Nobody already invited is contacted, and no session date moves."
+                        className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-primary-600 px-3 text-[12px] font-bold text-white shadow-sm transition-colors hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        <AppIcon className={updateDrawer.saving ? 'ri-loader-4-line animate-spin text-sm' : 'ri-user-add-line text-sm'}></AppIcon>
+                        Save and invite added people
+                      </button>
+                    )}
                   </div>
                 </section>
 
@@ -1029,7 +1053,7 @@ export function TeamsMeetingDialogs({ workspace, secondTab }: {
 
       {forwardOpen && selected?.summary && (
         <Modal
-          title="Forward module dates"
+          title="Email the schedule"
           size="max-w-xl"
           onClose={() => { if (!forwardSaving) setForwardOpen(false); }}
           footer={(
@@ -1039,13 +1063,13 @@ export function TeamsMeetingDialogs({ workspace, secondTab }: {
               <button type="button" onClick={() => void submitForward()} disabled={forwardSaving || !emailList(forwardRecipients).length}
                 className="inline-flex items-center gap-1.5 rounded-lg bg-primary-600 px-3 py-2 text-[12px] font-bold text-white disabled:cursor-not-allowed disabled:opacity-50">
                 <AppIcon className={forwardSaving ? 'ri-loader-4-line animate-spin text-sm' : 'ri-send-plane-line text-sm'}></AppIcon>
-                {forwardSaving ? 'Forwarding...' : 'Forward dates'}
+                {forwardSaving ? 'Sending...' : 'Send email'}
               </button>
             </div>
           )}
         >
           <div className="space-y-4">
-            <p className="text-sm text-foreground-600">Send the current timetable, session details and Teams join links from the saved calendar.</p>
+            <p className="text-sm text-foreground-600">Email the current timetable, session details and Teams join links from the saved calendar. This is an LMS email: it does not add the meeting to anyone's Outlook calendar or invite them to it in Teams.</p>
             <FormField label="Recipients" hint="Search your Microsoft 365 tenant or type full email addresses. You can add more than one.">
               <EntraPeopleInput label="Forward recipients" value={forwardRecipients} onChange={setForwardRecipients} />
             </FormField>
