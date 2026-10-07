@@ -10,6 +10,7 @@ from .teams_create_drafts import teams_create_draft
 from .teams_schedule_delivery import forward_schedule_email, schedule_email
 from .teams_calendar_state import sync_calendar_state
 from .teams_directory import search_teams_directory
+from .bulk_attendance_learners import bulk_attendance_learners
 from .teams_calendar_actions import calendar_action
 from .teams_week_meeting import (
     curriculum_live_session_meeting_scope,
@@ -20,6 +21,7 @@ from . import session_results, tutor_notifications
 
 
 urlpatterns = [
+    path('curriculum/bulk-attendance/learners/', bulk_attendance_learners, name='curriculum-bulk-attendance-learners'),
     path('curriculum/migrated-review-templates/', migrated_template_views.collection),
     path('curriculum/migrated-review-templates/preview/', migrated_template_views.preview),
     path('curriculum/migrated-review-templates/reset/', migrated_template_views.reset),

@@ -242,6 +242,12 @@ export const curriculumNavItems: SidebarNavItem[] = [
     ],
   },
   {
+    id: 'curriculum-bulk-attendance',
+    label: 'Bulk Attendance',
+    icon: 'ri-calendar-check-line',
+    href: '/curriculum/bulk-attendance',
+  },
+  {
     id: 'curriculum-library',
     label: 'Library',
     icon: 'ri-folder-open-line',
