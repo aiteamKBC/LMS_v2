@@ -273,17 +273,24 @@ class ServiceTests(CalendarFixture):
                   'connection': types.SimpleNamespace(cursor=lambda: nullcontext(cursor))}
         functions(ROOT / 'teams_calendar_state.py', {'state_signature', 'reconcile_calendar'}, self.n)
 
-    def test_persistence_changes_only_exact_series_occurrences_and_identity_snapshot(self):
+    def test_a_cancellation_in_microsoft_is_reported_never_written(self):
+        # Only a person pressing Cancel in the LMS cancels anything. What
+        # Microsoft shows cancelled -- in Outlook, by anybody -- is reported,
+        # and the LMS keeps every session and the calendar exactly as they were.
         self.master['isCancelled'] = True
         self.rows[0].update(status='held', attendance_report_id='report')
         result = self.n['reconcile_calendar']('LIVE-1')
-        self.assertEqual(result['cancelledSessions'], [2])
-        self.assertEqual(len(self.sql), 3)
-        self.assertIn('WHERE id = %s AND live_session_id = %s', self.sql[0][0])
-        self.assertEqual(self.sql[0][1][1:], ['OCC-2', 'LIVE-1'])
-        self.assertEqual(self.sql[1][1][1:], ['LIVE-1'])
-        self.assertEqual(self.sql[2][1][0], 'LIVE-1')
-        self.v.invalidate_curriculum_cache.assert_called_once()
+        self.assertEqual(result['cancelledSessions'], [])
+        self.assertFalse(result['changed'])
+        self.assertEqual(result['seriesStatus'], 'active')
+        self.assertEqual(result['cancelledInMicrosoft'], [2])
+        self.assertTrue(result['seriesCancelledInMicrosoft'])
+        # The identity snapshot is the only write; no status is touched.
+        self.assertEqual(len(self.sql), 1)
+        self.assertIn('teams_calendar_sync_state', self.sql[0][0])
+        self.assertEqual(self.sql[0][1][0], 'LIVE-1')
+        self.assertFalse(any("status = 'cancelled'" in sql for sql, _args in self.sql))
+        self.v.invalidate_curriculum_cache.assert_not_called()
 
     def test_concurrent_local_edit_prevents_any_write(self):
         first = copy.deepcopy((self.series, self.rows, self.saved))

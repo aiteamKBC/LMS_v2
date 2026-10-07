@@ -175,7 +175,7 @@ def cancellation_plan(series, occurrences, previous, read):
                 matches = [item for item in available if event_instant(item, 'start') == utc_datetime(row['scheduled_start'])
                            and event_instant(item, 'end') == utc_datetime(row['scheduled_end'])]
             if len(matches) != 1 or matches[0]['id'] in claimed:
-                if row.get('status') != 'cancelled':
+                if row.get('status') not in ('cancelled', 'superseded'):
                     errors.append(f"Session {row['session_number']} could not be matched to Microsoft; its status was preserved.")
                 if saved:
                     snapshot['occurrences'][row['id']] = saved
@@ -186,7 +186,7 @@ def cancellation_plan(series, occurrences, previous, read):
             if _join(match) and _join(match) != (row.get('join_url') or group['link']):
                 raise CalendarStateError('A session has a different Microsoft join link.')
             claimed.add(match['id'])
-            if row.get('status') != 'cancelled':
+            if row.get('status') not in ('cancelled', 'superseded'):
                 held.add(match['id'])
             snapshot['occurrences'][row['id']] = {'rootId': root_id, 'eventId': match['id'],
                 'occurrenceId': match.get('occurrenceId') or '', 'dates': dates}

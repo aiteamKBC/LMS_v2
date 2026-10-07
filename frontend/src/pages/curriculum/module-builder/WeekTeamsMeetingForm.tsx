@@ -377,11 +377,17 @@ function SavedWeekMeeting({
  * assumed: mail that did not go out is the kind of failure nobody notices until
  * somebody misses a session.
  */
-function ScheduleEmailNote({ email }: { email: NonNullable<WeekTeamsMeetingResult['scheduleEmail']> }) {
+function ScheduleEmailNote({ email, kind = 'created' }: {
+  email: NonNullable<WeekTeamsMeetingResult['scheduleEmail']>;
+  /** Which email: the new meeting's schedule, the schedule to people an edit added, or the moved-time notice. */
+  kind?: 'created' | 'added' | 'moved';
+}) {
+  const name = kind === 'moved' ? 'change email' : 'schedule email';
+  const who = kind === 'added' ? ' the people this save added' : kind === 'moved' ? ' everyone already invited' : '';
   if (email.error) {
     return (
       <p role="alert" className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-[12px] font-semibold text-amber-800">
-        Microsoft sent its calendar invitation, but our own schedule email did not go out: {email.error}
+        {kind === 'created' ? 'Microsoft sent its calendar invitation, but our' : 'The meeting is saved, but our'} own {name} to{who || ' its guests'} did not go out: {email.error}
       </p>
     );
   }
@@ -394,8 +400,10 @@ function ScheduleEmailNote({ email }: { email: NonNullable<WeekTeamsMeetingResul
       pending ? 'border-amber-200 bg-amber-50 text-amber-800' : 'border-emerald-200 bg-emerald-50 text-emerald-800'
     }`}>
       {pending
-        ? `Our schedule email reached ${accepted} of ${total}; ${pending} still pending or failed. Microsoft’s calendar invitation was sent separately.`
-        : `Our schedule email was sent to all ${total}, alongside Microsoft’s calendar invitation — two emails each.`}
+        ? `Our ${name} reached ${accepted} of ${total}; ${pending} still pending or failed.${kind === 'created' ? ' Microsoft’s calendar invitation was sent separately.' : ''}`
+        : kind === 'created'
+          ? `Our schedule email was sent to all ${total}, alongside Microsoft’s calendar invitation — two emails each.`
+          : `Our ${name} was sent to${who} — ${total} ${total === 1 ? 'person' : 'people'}.`}
     </p>
   );
 }
@@ -432,11 +440,17 @@ export function WeekTeamsMeetingPanel({
   });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
-  const [created, setCreated] = useState<{ joinUrl: string; invited: string[]; warnings: string[]; edited?: boolean; email?: WeekTeamsMeetingResult['scheduleEmail'] } | null>(null);
+  const [created, setCreated] = useState<{
+    joinUrl: string; invited: string[]; warnings: string[]; edited?: boolean;
+    email?: WeekTeamsMeetingResult['scheduleEmail']; added?: WeekTeamsMeetingResult['scheduleEmail']; moved?: WeekTeamsMeetingResult['scheduleEmail'];
+  } | null>(null);
   // Editing the meeting a week already has, rather than booking a new one. The
   // form is the same one: an author changes a meeting where they created it.
   const [editing, setEditing] = useState('');
   const [notifyExisting, setNotifyExisting] = useState(false);
+  // The time and length the meeting had when editing began: a change to either
+  // is always announced (see `timeChanged`).
+  const [editingOriginal, setEditingOriginal] = useState<{ start: string; duration: number } | null>(null);
   const [confirmCancel, setConfirmCancel] = useState(false);
   const patch = (value: Partial<WeekTeamsMeetingForm>) => {
     setForm(current => ({ ...current, ...value }));
@@ -484,6 +498,25 @@ export function WeekTeamsMeetingPanel({
     }
   };
 
+  /**
+   * Whether this edit moves the meeting. A moved meeting is always announced:
+   * Microsoft sends its one update to everyone invited and the LMS "was / now"
+   * follows, so nobody's Outlook keeps the old time while the email gives the
+   * new one. The server refuses a silent time change for the same reason.
+   */
+  const timeChanged = (() => {
+    if (!editing || !editingOriginal || !form.date || !form.startTime) return false;
+    const minute = (value: string) => Math.floor(new Date(value).getTime() / 60000);
+    try {
+      const edited = zonedNaiveToUtcIso(`${form.date}T${form.startTime}`, form.scheduleTimeZone);
+      return minute(edited) !== minute(editingOriginal.start)
+        || (Math.max(15, Number(form.durationMinutes) || 60)) !== editingOriginal.duration;
+    } catch {
+      return false;
+    }
+  })();
+  const announceEdit = timeChanged || notifyExisting;
+
   const week = weeks.find(item => item.id === form.weekId);
   const booked = existingWeekMeeting(week);
   const block = weekMeetingBlock(week);
@@ -512,6 +545,7 @@ export function WeekTeamsMeetingPanel({
       attendees: peopleList(settings.extraTeamsAttendees).join(', '),
     }));
     setEditing(cleanText(settings.extraTeamsLiveSessionId));
+    setEditingOriginal({ start, duration: Number(settings.extraTeamsDurationMinutes) || 60 });
     setNotifyExisting(false);
     setError('');
   };
@@ -521,9 +555,13 @@ export function WeekTeamsMeetingPanel({
     setSaving(true);
     setError('');
     try {
-      await cancelWeekTeamsMeeting(module.catalogueId, liveSessionId);
+      const result = await cancelWeekTeamsMeeting(module.catalogueId, liveSessionId);
       setEditing('');
       setConfirmCancel(false);
+      // Microsoft's cancellation went out; ours is reported only when it did not.
+      if (result.scheduleEmail?.error) {
+        setError(`The meeting is cancelled, but our own cancellation email did not go out: ${result.scheduleEmail.error}`);
+      }
       onCreated?.('');
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : 'The meeting could not be cancelled.');
@@ -553,16 +591,18 @@ export function WeekTeamsMeetingPanel({
         requestResponses: true,
         allowNewTimeProposals: true,
         scheduleTimeZone: form.scheduleTimeZone,
-        notifyAttendees: notifyExisting,
+        notifyAttendees: announceEdit,
       });
       setCreated({
         joinUrl: result.meeting.joinUrl,
-        // Who this save actually reached on its own: the people it ADDED, each
-        // forwarded the meeting individually. Everyone already invited was
-        // emailed only if the author ticked the box.
+        // Who this save reached on their own: the people it ADDED, each
+        // forwarded the meeting individually when nothing was announced. An
+        // announced edit invites them on the same write as everyone else.
         invited: result.forwardedTo || [],
         warnings: result.warnings || [],
         edited: true,
+        added: result.addedEmail ?? undefined,
+        moved: result.scheduleEmail ?? undefined,
       });
       setEditing('');
       onCreated?.(result.meeting.joinUrl);
@@ -657,6 +697,8 @@ export function WeekTeamsMeetingPanel({
           </div>
         </div>
         {created.email && <ScheduleEmailNote email={created.email} />}
+        {created.added && <ScheduleEmailNote email={created.added} kind="added" />}
+        {created.moved && <ScheduleEmailNote email={created.moved} kind="moved" />}
         {created.warnings.map(warning => (
           <p key={warning} role="status" className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-[12px] font-semibold text-amber-800">{warning}</p>
         ))}
@@ -802,22 +844,26 @@ export function WeekTeamsMeetingPanel({
 
       <div className="flex flex-wrap items-center justify-end gap-2">
         {editing && (
-          /* Exactly the module calendar's rule, in its own words: this decides
-             only whether people ALREADY invited hear about the change. Anyone
-             this save adds is sent the meeting either way, because Microsoft
-             puts it on their calendar only when something is sent to them. */
+          /* Whether Microsoft sends its own update to people ALREADY invited.
+             A new date, time or length always is -- with the LMS "was / now"
+             after it -- so the box is ticked and locked then. Anyone this save
+             adds is sent the meeting and the schedule either way, once. */
           <label className="mr-auto inline-flex min-h-10 items-center gap-2 rounded-lg border border-background-200 bg-background-50 px-3 text-[11px] font-semibold text-foreground-700">
             <input
               type="checkbox"
-              aria-label="Email existing invitees about this change"
-              checked={notifyExisting}
+              aria-label="Also send Microsoft’s update to existing invitees"
+              checked={announceEdit}
               onChange={event => setNotifyExisting(event.target.checked)}
-              disabled={saving}
+              disabled={saving || timeChanged}
               className="h-4 w-4 accent-primary-600"
             />
             <span>
-              Email existing invitees
-              <span className="ml-1 font-normal text-foreground-500">(people added now are always sent it)</span>
+              Also send Microsoft’s update to existing invitees
+              <span className="ml-1 font-normal text-foreground-500">
+                {timeChanged
+                  ? '(always sent when the time changes, with the LMS change email, so Outlook and the email agree)'
+                  : '(people added now are sent the meeting and their schedule either way)'}
+              </span>
             </span>
           </label>
         )}
