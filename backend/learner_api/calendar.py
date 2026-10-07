@@ -1910,13 +1910,16 @@ def learner_calendar_book(request, kind, pk):
         if not imported_review_id and not assignment_booking:
             return _error("reviewId is required when scheduling an imported monthly coaching review.", 400)
         if session_type == "mcr":
-            from .monthly_assignment import coaching_booking_bounds, coaching_booking_windows
-            windows = (coaching_booking_windows(assignment_month) if assignment_booking
-                       else [coaching_booking_bounds(assignment_month)])
-            if duration_minutes != 60 or not any(start and start <= scheduled_date <= end for start, end in windows):
-                if assignment_booking:
-                    return _error("Book a 60-minute MCM within either monthly assignment booking window.", 400)
-                return _error("Book a 60-minute MCM from the last ten days of the submission month through the 5th of the following month.", 400)
+            from .monthly_assignment import coaching_booking_bounds, month_bounds
+            # Assignment bookings take any bookable day; the shared weekday,
+            # bank-holiday and past-date rules were already applied above.
+            if assignment_booking:
+                if duration_minutes != 60 or not month_bounds(assignment_month)[0]:
+                    return _error("Book a 60-minute MCM for a valid assignment month.", 400)
+            else:
+                start, end = coaching_booking_bounds(assignment_month)
+                if duration_minutes != 60 or not (start and start <= scheduled_date <= end):
+                    return _error("Book a 60-minute MCM from the last ten days of the submission month through the 5th of the following month.", 400)
             # A validated imported Aptem MCM is already the Review's identity
             # (see _assignment_imported_mcm_month) and books on the imported path below.
             if not _s(payload.get("eventKey")) and not (assignment_booking and imported_review_id):

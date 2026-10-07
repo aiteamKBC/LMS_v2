@@ -164,12 +164,11 @@ def booked_coaching(payload):
         return True
     from .calendar import _learner_calendar_record
     monthly = mapping(payload.get("monthlyAssignment"))
-    windows = coaching_booking_windows(monthly.get("month"))
-    if not windows or not text(monthly.get("meetingKey")):
+    # Any booked MCM counts, whatever its date; the month only has to be valid.
+    if not month_bounds(monthly.get("month"))[0] or not text(monthly.get("meetingKey")):
         return False
     record = _learner_calendar_record(payload.get("learnerKind"), int(payload.get("learnerId")), monthly["meetingKey"])
     return bool(record and record.event_type == "mcr" and record.scheduled_date
-                and any(start <= record.scheduled_date <= end for start, end in windows)
                 and record.status in ("scheduled", "in-progress", "completed", "awaiting-signature"))
 
 

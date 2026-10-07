@@ -144,6 +144,7 @@ it('does not offer an optional email choice for a reschedule', async () => {
   vi.mocked(calendarAction).mockResolvedValueOnce({ ...review, action: 'reschedule', notificationRequired: false })
     .mockResolvedValueOnce({ status: 'done', message: 'Moved', completed: 1, total: 1 });
   render(<CalendarActionDialog target={{ ...target, action: 'reschedule' }} onClose={vi.fn()} onChanged={vi.fn(async () => undefined)} />);
+  fireEvent.change(screen.getByLabelText('Session 2 date and time'), { target: { value: '2099-11-06T12:00' } });
   await user.click(screen.getByRole('button', { name: 'Review changes' }));
   expect(screen.queryByText(/Email attendees and organisers/)).toBeNull();
   await user.click(await screen.findByRole('checkbox', { name: /I checked/ }));
@@ -151,4 +152,39 @@ it('does not offer an optional email choice for a reschedule', async () => {
   expect(vi.mocked(calendarAction).mock.calls[1]).toEqual(['LIVE-1', {
     stage: 'confirm', reviewToken: 'signed-review', acknowledgeNotifications: true,
   }]);
+});
+
+const schedule: CalendarActionTarget = { ...target, action: 'reschedule', scope: 'series', occurrences: [
+  { session_number: 1, scheduled_start: '2020-11-02T12:00:00Z', scheduled_end: '2020-11-02T14:00:00Z', status: 'scheduled' },
+  { session_number: 2, scheduled_start: '2099-11-05T12:00:00Z', scheduled_end: '2099-11-05T14:00:00Z', status: 'scheduled' },
+  { session_number: 3, scheduled_start: '2099-11-12T12:00:00Z', scheduled_end: '2099-11-12T14:00:00Z', status: 'scheduled' },
+] };
+
+it('lists every session with its time, and a session that has run as fixed', () => {
+  render(<CalendarActionDialog target={schedule} onClose={vi.fn()} onChanged={vi.fn()} />);
+  expect(screen.getByText('Session 1')).toBeInTheDocument();
+  expect(screen.getByText(/Already run, can.t be moved/)).toBeInTheDocument();
+  expect(screen.queryByLabelText('Session 1 date and time')).toBeNull();
+  expect(screen.getByLabelText('Session 2 date and time')).toBeInTheDocument();
+  expect(screen.getByLabelText('Session 3 date and time')).toBeInTheDocument();
+});
+
+it('sends nothing when no session time changed', () => {
+  render(<CalendarActionDialog target={schedule} onClose={vi.fn()} onChanged={vi.fn()} />);
+  expect(screen.getByRole('button', { name: 'Review changes' })).toBeDisabled();
+  expect(screen.getByText(/nothing will be sent to Teams or emailed/)).toBeInTheDocument();
+  // Typing a time back to what it was is still no change.
+  fireEvent.change(screen.getByLabelText('Session 3 date and time'), { target: { value: '2099-11-19T12:00' } });
+  fireEvent.change(screen.getByLabelText('Session 3 date and time'), { target: { value: '2099-11-12T12:00' } });
+  expect(screen.getByRole('button', { name: 'Review changes' })).toBeDisabled();
+  expect(calendarAction).not.toHaveBeenCalled();
+});
+
+it('reviews only the sessions that were changed', async () => {
+  vi.mocked(calendarAction).mockResolvedValue(review);
+  render(<CalendarActionDialog target={schedule} onClose={vi.fn()} onChanged={vi.fn()} />);
+  fireEvent.change(screen.getByLabelText('Session 3 date and time'), { target: { value: '2099-11-19T12:00' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Review changes' }));
+  await screen.findByRole('checkbox', { name: /I checked/ });
+  expect(vi.mocked(calendarAction).mock.calls[0][1].changes).toEqual([{ sessionNumber: 3, startDateTimeUtc: '2099-11-19T12:00:00.000Z', durationMinutes: 120 }]);
 });

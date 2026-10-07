@@ -3386,6 +3386,7 @@ export default function ModuleBuilder() {
                     weekSessionDate={liveSessionDateByWeekId.get(selectedWeek.id) || selectedWeek.sessionDate}
                     weekSessionTime={selectedWeek.sessionStartTime}
                     uploadResource={uploadComponentForModule}
+                    moduleId={workingModule.catalogueId || workingModule.id}
                   />
                 </ModuleBuilderScrollArea>
               ) : selectedWeek ? (

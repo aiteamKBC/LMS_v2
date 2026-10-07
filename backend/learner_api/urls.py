@@ -19,7 +19,7 @@ from .profile_photo import learner_profile_photo
 from .attendance_lectures import attendance_lectures
 from .attendance_confirmation import confirm_attendance
 from .meeting_attendance import meeting_attendance, confirm_meeting_attendance
-from .attendance_mode import attendance_mode, review_attendance_mode
+from .attendance_mode import attendance_mode, attendance_modes, review_attendance_mode
 from .first_session_bookings import first_session_bookings
 from .first_login_details import first_login_details
 
@@ -63,6 +63,7 @@ urlpatterns = [
     path('meeting-attendance/<str:kind>/<int:learner_id>/attend/', confirm_meeting_attendance, name='confirm-meeting-attendance'),
     path('attendance/<str:kind>/<int:learner_id>/mode/', attendance_mode, name='attendance-mode'),
     path('attendance-mode/review/', review_attendance_mode, name='attendance-mode-review'),
+    path('attendance-mode/', attendance_modes, name='attendance-modes'),
     path('profile-photo/<str:kind>/<int:pk>/', learner_profile_photo, name='learner-profile-photo'),
     path("tutor-learners/", views.tutor_learners, name="tutor-learners"),
     # Enrolment workspace: every learner's first-session booking, read only.

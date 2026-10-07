@@ -329,20 +329,23 @@ describe('Teams Meetings page', () => {
     } finally { clock.mockRestore(); }
   });
 
-  it('honours auto-sync off and lets a manual check close a cancelled series', async () => {
+  it('honours auto-sync off, and a manual check never cancels a series Microsoft shows cancelled', async () => {
     window.localStorage.setItem('curriculumTeamsAutoSync', 'off');
     await renderPage();
     await screen.findByText('Data Foundations');
     await userEvent.click(within(rowFor('Data Foundations')).getByRole('button', { name: 'Detail' }));
     const dialog = within(await screen.findByRole('dialog'));
     expect(syncTeamsCalendarState).not.toHaveBeenCalled();
-    vi.mocked(syncTeamsCalendarState).mockResolvedValueOnce({ changed: true, seriesStatus: 'cancelled', cancelledSessions: [1, 2], errors: [] });
-    fetchCurriculumTeamsMeetingSummaries.mockResolvedValue(summaries.filter(item => item.liveSessionId !== 'LIVE-1'));
+    // Cancelled in Microsoft (in Outlook, say), never in the LMS: the check
+    // reports it and changes nothing. Only the author's own Cancel records it.
+    vi.mocked(syncTeamsCalendarState).mockResolvedValueOnce({ changed: false, seriesStatus: 'active', cancelledSessions: [], errors: [],
+      cancelledInMicrosoft: [1, 2], seriesCancelledInMicrosoft: true });
     await userEvent.click(dialog.getByRole('button', { name: 'Sync calendar status' }));
-    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
     // Named: the check reads Microsoft for one calendar, and its verdict has to
     // say which module it is about.
-    expect(await screen.findByText('Data Foundations — This calendar was cancelled in Microsoft and is now cancelled in the LMS.')).toBeInTheDocument();
+    expect(await screen.findByText(/^Data Foundations — Microsoft shows this whole calendar as cancelled, but nobody cancelled it in the LMS/)).toBeInTheDocument();
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Record the series cancellation' })).toBeInTheDocument();
     expect(syncTeamsMeetingArtifacts).not.toHaveBeenCalled();
     expect(createTeamsMeeting).not.toHaveBeenCalled();
   });
@@ -588,19 +591,21 @@ describe('Teams Meetings page', () => {
       // does not offer a button whose only effect is to queue what is queued
       // already. The sessions themselves are reached through a plain link.
       expect(dialog.queryByRole('button', { name: 'Sync attendance & files' })).not.toBeInTheDocument();
-      expect(dialog.getByRole('button', { name: 'Sessions & Recordings' })).toHaveAttribute('aria-expanded', 'false');
+      // Sessions & Recordings opens from the module's own component, not from here.
+      expect(dialog.queryByRole('button', { name: 'Sessions & Recordings' })).not.toBeInTheDocument();
       expect(dialog.getByRole('switch', { name: 'Auto-sync on' })).toHaveAttribute('aria-checked', 'true');
     });
 
-    it('offers the missing live sessions, counted, when weeks are still without one', async () => {
+    it('does not offer to add missing live sessions from the dialog', async () => {
       probeModuleTeamsAttachment.mockResolvedValue(3);
       await renderPage();
       expect(await screen.findByText('Risk Management')).toBeInTheDocument();
       await userEvent.click(within(rowFor('Risk Management')).getByRole('button', { name: 'Detail' }));
 
       const dialog = within(await screen.findByRole('dialog'));
-      // The count is on the button, so the action says what it will do.
-      expect(await dialog.findByRole('button', { name: 'Add 3 missing live sessions' })).toBeInTheDocument();
+      // Missing live sessions are added from the module itself, not from here.
+      await waitFor(() => expect(probeModuleTeamsAttachment).toHaveBeenCalled());
+      expect(dialog.queryByRole('button', { name: /missing live session/ })).not.toBeInTheDocument();
     });
 
     it('leaves an ended session to the worker instead of offering a sync button', async () => {
@@ -615,7 +620,7 @@ describe('Teams Meetings page', () => {
         // The session having ended is exactly when the old button looked most
         // useful and did least: the worker polls every minute regardless.
         expect(dialog.queryByRole('button', { name: 'Sync attendance & files' })).not.toBeInTheDocument();
-        expect(dialog.getByRole('button', { name: 'Sessions & Recordings' })).toBeInTheDocument();
+        expect(dialog.queryByRole('button', { name: 'Sessions & Recordings' })).not.toBeInTheDocument();
       } finally {
         clock.mockRestore();
       }
@@ -683,14 +688,17 @@ describe('Teams Meetings page', () => {
     const send = within(dialog).getByRole('button', { name: 'Update Teams calendar' });
     await waitFor(() => expect(send).not.toBeDisabled());
     await userEvent.click(send);
-    await userEvent.click(within(dialog).getByRole('checkbox', { name: 'Email existing invitees about this update' }));
-    await userEvent.click(within(dialog).getByRole('button', { name: 'Confirm update and send emails' }));
+    // A date change is always announced, by Microsoft and the LMS together:
+    // there is no opt-out box to tick, and nothing to forget to tick.
+    expect(within(dialog).queryByRole('checkbox', { name: 'Email existing invitees about this update' })).toBeNull();
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Confirm update' }));
 
     await waitFor(() => expect(updateTeamsMeetingSchedule).toHaveBeenCalledTimes(1));
     const [liveSessionId, input] = updateTeamsMeetingSchedule.mock.calls[0] as unknown as [
       string,
-      { scheduledOccurrences: Array<{ sessionNumber: number; startDateTimeUtc: string; durationMinutes: number }>; repeatOccurrences: number; startDateTimeUtc: string; localStartDateTime: string },
+      { scheduledOccurrences: Array<{ sessionNumber: number; startDateTimeUtc: string; durationMinutes: number }>; repeatOccurrences: number; startDateTimeUtc: string; localStartDateTime: string; notifyAttendees?: boolean },
     ];
+    expect(input.notifyAttendees).toBe(true);
     // Nothing was edited, so no list or option is sent to overwrite the saved ones.
     for (const key of ['attendees', 'presenters', 'coOrganizers', 'recording', 'lobbyBypass', 'spokenLanguage']) {
       expect(input).not.toHaveProperty(key);
@@ -725,8 +733,7 @@ describe('Teams Meetings page', () => {
     await userEvent.click(dialog.getByRole('combobox', { name: 'Recording' }));
     await userEvent.click(await screen.findByRole('option', { name: 'Record automatically' }));
     await userEvent.click(send);
-    await userEvent.click(dialog.getByRole('checkbox', { name: 'Email existing invitees about this update' }));
-    await userEvent.click(dialog.getByRole('button', { name: 'Confirm update and send emails' }));
+    await userEvent.click(dialog.getByRole('button', { name: 'Confirm update' }));
 
     await waitFor(() => expect(updateTeamsMeetingSchedule).toHaveBeenCalledTimes(1));
     const [, input] = updateTeamsMeetingSchedule.mock.calls[0] as unknown as [string, Record<string, unknown>];
@@ -751,8 +758,7 @@ describe('Teams Meetings page', () => {
     fireEvent.change(attendees, { target: { value: 'new.learner@example.com' } });
     fireEvent.keyDown(attendees, { key: 'Enter' });
     await userEvent.click(send);
-    await userEvent.click(dialog.getByRole('checkbox', { name: 'Email existing invitees about this update' }));
-    await userEvent.click(dialog.getByRole('button', { name: 'Confirm update and send emails' }));
+    await userEvent.click(dialog.getByRole('button', { name: 'Confirm update' }));
 
     await waitFor(() => expect(updateTeamsMeetingSchedule).toHaveBeenCalledTimes(1));
     const [, input] = updateTeamsMeetingSchedule.mock.calls[0] as unknown as [string, Record<string, unknown>];
@@ -790,9 +796,11 @@ describe('Teams Meetings page', () => {
     await userEvent.click(within(rowFor('Data Foundations')).getByRole('button', { name: 'Detail' }));
 
     const dialog = within(await screen.findByRole('dialog'));
-    expect(dialog.getByText('Organizer')).toBeInTheDocument();
-    expect(dialog.getByText('Repeats')).toBeInTheDocument();
-    expect(dialog.getByText('Meetings tracked')).toBeInTheDocument();
+    // The Organizer, Repeats and Meetings tracked facts are gone; the
+    // organizer is shown in the invitation fields below.
+    expect(dialog.queryByText('Repeats')).not.toBeInTheDocument();
+    expect(dialog.queryByText('Meetings tracked')).not.toBeInTheDocument();
+    expect(dialog.getByRole('textbox', { name: 'Organizer' })).toBeInTheDocument();
     // The old read-only fallback text for an empty role list is gone; the
     // fields below say so in their own way (an empty search box).
     expect(dialog.queryByText(/None — everyone joins as an attendee/)).not.toBeInTheDocument();
@@ -1266,7 +1274,7 @@ describe('Comparing the invitation list with Teams', () => {
   it('offers the comparison on an untouched form, where Save itself is refused', async () => {
     const dialog = await openInvitations();
     // Nothing has been edited, so the save path is closed...
-    expect(dialog.getByRole('button', { name: /Save invitations/ })).toBeDisabled();
+    expect(dialog.getByRole('button', { name: /Save without notifying/ })).toBeDisabled();
     // ...and this is exactly when an externally added attendee is invisible.
     const compare = dialog.getByRole('button', { name: /Compare with Teams/ });
     expect(compare).toBeEnabled();
@@ -1347,6 +1355,6 @@ describe('Comparing the invitation list with Teams', () => {
 
     // The edit itself survived the round trip, and is still savable.
     expect(dialog.getByRole('button', { name: 'Remove mohamed@example.com' })).toBeInTheDocument();
-    expect(dialog.getByRole('button', { name: /Save invitations/ })).toBeEnabled();
+    expect(dialog.getByRole('button', { name: /Save without notifying/ })).toBeEnabled();
   });
 });

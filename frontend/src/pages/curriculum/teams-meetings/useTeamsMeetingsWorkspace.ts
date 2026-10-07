@@ -433,7 +433,11 @@ export function useTeamsMeetingsWorkspace(options: TeamsMeetingsWorkspaceOptions
   // particular. Background checks run across every calendar on the page, so a
   // message with no owner cannot be told apart from one about the module the
   // reader has open.
-  const [notice, setNotice] = useState<{ tone: 'info' | 'warning' | 'error'; text: string; moduleId?: string } | null>(null);
+  const [notice, setNotice] = useState<{
+    tone: 'info' | 'warning' | 'error'; text: string; moduleId?: string;
+    /** Cancelled in Microsoft but not here: the sessions (or whole series) the author may record a cancellation for. */
+    recordCancel?: { series: boolean; sessions: number[] };
+  } | null>(null);
   const [detail, setDetail] = useState<TeamsMeetingArtifactsResult | null>(null);
   const [plannedSessions, setPlannedSessions] = useState<Record<string, CurriculumSession[]>>({});
   // The selected module's live-session components, so each date can be shown
@@ -529,10 +533,6 @@ export function useTeamsMeetingsWorkspace(options: TeamsMeetingsWorkspaceOptions
   // An existing-calendar update has no polling endpoint, so this follows the
   // confirmed request and its notification phase locally.
   const [updateProgress, setUpdateProgress] = useState<UpdateProgress | null>(null);
-  // Date changes can be announced to existing invitees only when the author
-  // explicitly opts in. New people added to the roster keep their separate
-  // invitation/schedule path and are not affected by this switch.
-  const [sendUpdateEmails, setSendUpdateEmails] = useState(false);
 
   // ------------------------------------------------------------------ loads
 
@@ -798,8 +798,9 @@ export function useTeamsMeetingsWorkspace(options: TeamsMeetingsWorkspaceOptions
       return Number.isFinite(instant) ? Math.floor(instant / 60000) : NaN;
     };
     const at = (value: string) => occurrences.filter(item => minute(item.scheduled_start) === minute(value));
-    if (teamsUtc) return at(teamsUtc).find(item => item.status !== 'cancelled') || at(teamsUtc)[0];
-    return plannedUtc ? at(plannedUtc).find(item => item.status === 'cancelled') : undefined;
+    const off = (item: { status?: string }) => item.status === 'cancelled' || item.status === 'superseded';
+    if (teamsUtc) return at(teamsUtc).find(item => !off(item)) || at(teamsUtc)[0];
+    return plannedUtc ? at(plannedUtc).find(off) : undefined;
   }, [detail]);
 
   const loadDetail = useCallback(async (liveSessionId: string) => {
@@ -984,17 +985,24 @@ export function useTeamsMeetingsWorkspace(options: TeamsMeetingsWorkspaceOptions
         setDetail(current => (current && current.series.id === liveSessionId
           ? { ...current, leftoverSlots: result.leftovers } : current));
       }
-      if (source === 'manual' || result.changed || result.errors.length) {
+      // Cancelled in Microsoft but not here. The check never cancels anything:
+      // only a person pressing Cancel does, so it is said, with the way to do it.
+      const outsideSessions = result.cancelledInMicrosoft || [];
+      const outsideSeries = Boolean(result.seriesCancelledInMicrosoft);
+      if (source === 'manual' || result.changed || result.errors.length || outsideSeries || outsideSessions.length) {
         const owner = moduleByLiveSession.get(liveSessionId);
         const body = result.errors.length ? result.errors.join(' ')
-          : result.seriesStatus === 'cancelled' ? 'This calendar was cancelled in Microsoft and is now cancelled in the LMS.'
-            : result.cancelledSessions.length ? `Cancelled sessions updated: ${result.cancelledSessions.join(', ')}.`
+          : outsideSeries ? 'Microsoft shows this whole calendar as cancelled, but nobody cancelled it in the LMS, so nothing was changed here. If the cancellation should stand, record it with the button below.'
+            : outsideSessions.length ? `Microsoft shows session${outsideSessions.length === 1 ? '' : 's'} ${outsideSessions.join(', ')} as cancelled, but nobody cancelled ${outsideSessions.length === 1 ? 'it' : 'them'} in the LMS, so nothing was changed here. If the cancellation should stand, record it with the button below.`
+              : result.seriesStatus === 'cancelled' ? 'This calendar is cancelled.'
               : result.leftovers?.length
                 ? `Calendar status is up to date. Teams also shows ${result.leftovers.length === 1 ? 'a slot' : `${result.leftovers.length} slots`} that ${result.leftovers.length === 1 ? 'is' : 'are'} not part of this module; nothing was cancelled. Review them in the calendar.`
                 : 'Calendar status is up to date.';
         setNotice({
-          tone: result.errors.length ? 'warning' : 'info',
+          tone: result.errors.length || outsideSeries || outsideSessions.length ? 'warning' : 'info',
           moduleId: owner?.catalogueId,
+          ...(!result.errors.length && (outsideSeries || outsideSessions.length)
+            ? { recordCancel: { series: outsideSeries, sessions: outsideSessions } } : {}),
           // Named, because this check reads Microsoft for one calendar and the
           // automatic sweep can land its verdict while a different module is
           // open. "Session 11 could not be matched" says nothing about whose
@@ -1083,7 +1091,6 @@ export function useTeamsMeetingsWorkspace(options: TeamsMeetingsWorkspaceOptions
   /** Fill the dialog's invitation fields from the calendar, as their untouched starting point. */
   const seedInvitations = (row: MeetingRow) => {
     if (!row.summary) return;
-    setSendUpdateEmails(false);
     const form = invitationForm(row);
     updateBaseline.current = form;
     invitationsFor.current = row.summary.liveSessionId;
@@ -1101,21 +1108,35 @@ export function useTeamsMeetingsWorkspace(options: TeamsMeetingsWorkspaceOptions
     ? { form: updateDrawer.form, baseline: updateBaseline.current || updateDrawer.form }
     : undefined);
 
+  /** Who the open invitation fields add to this calendar, compared with what it holds. */
+  const addedInvitees = (row: MeetingRow) => {
+    const update = invitationEdits(row);
+    return update ? teamsUpdateChanges(update.form, update.baseline).addedPeople : [];
+  };
+
   /** After a save, what was sent is the new starting point: nothing is left "unsaved". */
   const settleInvitations = (form: TeamsCalendarForm) => {
     updateBaseline.current = form;
     updateDrawer.openWith(form);
   };
 
-  /** "Save invitations": the people and settings alone, every date left where Teams holds it. */
-  const saveInvitations = async (row: MeetingRow) => {
+  /**
+   * The people and settings alone, every date left where Teams holds it.
+   *
+   * "Save without notifying" (the default) sends nothing to anybody, not even
+   * the people it adds. "Save and invite added people" (`invite`) is the same
+   * save, after which the people it added -- and only they -- are sent the
+   * Teams invitation and their LMS schedule. Neither tells anyone already
+   * invited, and neither ever moves a date.
+   */
+  const saveInvitations = async (row: MeetingRow, { invite = false }: { invite?: boolean } = {}) => {
     const update = invitationEdits(row);
     if (!update) return;
     if (blockedReason) { updateDrawer.setError(blockedReason); return; }
     updateDrawer.setSaving(true);
     updateDrawer.setError(null);
     try {
-      await savePeople(row, update);
+      await savePeople(row, update, { invite });
     } finally {
       updateDrawer.setSaving(false);
       setUpdateProgress(null);
@@ -1166,8 +1187,8 @@ export function useTeamsMeetingsWorkspace(options: TeamsMeetingsWorkspaceOptions
 
   /**
    * Send the schedule email again, as a creation email, to every learner the
-   * saved calendar invites -- not the "was ... now ..." update notice. The
-   * organiser, co-organisers and presenters are not emailed by the LMS.
+   * saved calendar invites, the organiser, every co-organiser and every
+   * presenter -- not the "was ... now ..." update notice.
    *
    * Its own action, before any review: it never touches the Teams calendar and
    * never asks Microsoft to announce anything. It re-reads the calendar the
@@ -1180,14 +1201,16 @@ export function useTeamsMeetingsWorkspace(options: TeamsMeetingsWorkspaceOptions
     const summary = row.summary;
     if (blockedReason || !summary?.liveSessionId) return;
     const address = (value: unknown) => String(value || '').trim().toLowerCase();
-    // The server emails attendees who do not also run the meeting; count the same people.
-    const running = new Set([...(summary.presenters || []), ...(summary.coOrganizers || []), summary.organizerEmail || ''].map(address));
-    const learners = new Set((summary.attendees || []).map(address).filter(value => value && !running.has(value)));
+    // The server emails attendees who do not also run the meeting, plus the
+    // organiser, co-organisers and presenters. Count the same people.
+    const organisers = new Set([summary.organizerEmail || '', ...(summary.coOrganizers || []), ...(summary.presenters || [])].map(address).filter(Boolean));
+    const learners = new Set((summary.attendees || []).map(address).filter(value => value && !organisers.has(value)));
     const count = learners.size;
+    const organiserCount = organisers.size;
     setNotice(null);
     await showCurriculumConfirm({
-      title: 'Email the full schedule to every learner?',
-      text: `${count || 'Every'} invited ${count === 1 ? 'learner' : 'learners'} on ${row.name} will be sent the complete timetable and join links again, as a new schedule email rather than a change notice. Anyone who already received it will receive it a second time. The Teams calendar itself is not changed.`,
+      title: 'Email the full schedule to everyone?',
+      text: `${count || 'Every'} invited ${count === 1 ? 'learner' : 'learners'}${organiserCount ? ` and ${organiserCount} ${organiserCount === 1 ? 'organiser or presenter' : 'organisers and presenters'}` : ''} on ${row.name} will be sent the complete timetable and join links again, as a new schedule email rather than a change notice. Anyone who already received it will receive it a second time. The Teams calendar itself is not changed.`,
       icon: 'warning',
       confirmButtonText: 'Send schedule emails',
       onConfirm: async () => {
@@ -1200,8 +1223,8 @@ export function useTeamsMeetingsWorkspace(options: TeamsMeetingsWorkspaceOptions
             text: unfinished
               ? `${row.name}: Microsoft accepted ${email.accepted} of ${email.total} schedule emails. ${unfinished} could not be confirmed — press the button again to send a fresh round.`
               : email.total
-                ? `${row.name}: the full schedule was submitted to all ${email.accepted} learner${email.accepted === 1 ? '' : 's'}.`
-                : `${row.name}: no learners are invited, so no schedule email was sent.`,
+                ? `${row.name}: the full schedule was submitted to all ${email.accepted} recipient${email.accepted === 1 ? '' : 's'}.`
+                : `${row.name}: nobody is invited, so no schedule email was sent.`,
           });
         } finally {
           setBusy('');
@@ -1218,7 +1241,7 @@ export function useTeamsMeetingsWorkspace(options: TeamsMeetingsWorkspaceOptions
     setBusy(`${row.catalogueId}:dates`);
     setNotice({
       tone: 'warning',
-      text: 'Heads up: updating the schedule sends an update email to the invited people because the session dates changed.',
+      text: 'Heads up: if the session dates changed, Microsoft sends one update to everyone invited and the LMS emails them what changed.',
     });
     // Only what the author changed in the invitation fields is sent: an
     // untouched field keeps what the calendar has saved.
@@ -1285,7 +1308,11 @@ export function useTeamsMeetingsWorkspace(options: TeamsMeetingsWorkspaceOptions
         scheduledOccurrences: occurrences,
         ...changes.fields,
         ...(peopleOnly ? { peopleOnly: true } : {}),
-        ...(!peopleOnly ? { notifyAttendees: sendUpdateEmails } : {}),
+        // A date change is always announced, by Microsoft and by the LMS
+        // together, so nobody's Outlook keeps dates the LMS email has replaced.
+        // The server announces only what really moved: a retry of an update
+        // that already landed is told to nobody twice.
+        ...(!peopleOnly ? { notifyAttendees: true } : {}),
       }, { onSubmitted: () => setUpdateProgress({ stage: 'calendar' }) });
       setUpdateProgress(previous => previous ? { ...previous, stage: 'emails' } : previous);
       if (update) settleInvitations(update.form);
@@ -1315,8 +1342,13 @@ export function useTeamsMeetingsWorkspace(options: TeamsMeetingsWorkspaceOptions
           tone: 'warning',
           text: `${row.name}: the session dates are saved here, but Microsoft Teams did not accept every shifted meeting. ${warning}`,
         });
+      } else if (result.microsoftUpdate === 'already_attempted') {
+        setNotice({
+          tone: 'warning',
+          text: `${row.name}: an earlier attempt at this same update had already asked Microsoft to tell everyone invited, so it was not sent again. If someone still sees the old dates in Outlook, check the calendar before updating again.`,
+        });
       }
-      if (result.notifyAttendees || changes.addedPeople.length) {
+      if (result.notifyAttendees || changes.addedPeople.length || result.addedPeople?.length) {
         // There is email to send -- the change email the author ticked, or the
         // schedule for people just added -- so the result stays open to send it
         // and say how it went, instead of timing out.
@@ -1326,7 +1358,9 @@ export function useTeamsMeetingsWorkspace(options: TeamsMeetingsWorkspaceOptions
       }
       await showCurriculumAlert({
         title: warning ? 'Sent with warnings' : 'Teams calendar updated',
-        text: `${occurrences.length} session date${occurrences.length === 1 ? '' : 's'} sent to the Teams calendar for ${row.name}.`,
+        text: !peopleOnly && result.microsoftUpdate === 'not_needed'
+          ? `The Teams calendar for ${row.name} already had these dates. Nobody was emailed.`
+          : `${occurrences.length} session date${occurrences.length === 1 ? '' : 's'} sent to the Teams calendar for ${row.name}.`,
         timer: warning ? undefined : 2000,
       });
     } catch (err) {
@@ -1536,10 +1570,17 @@ export function useTeamsMeetingsWorkspace(options: TeamsMeetingsWorkspaceOptions
   /**
    * Save the invitations form: who is invited in every role, and how the
    * meeting runs. The dates sent back are the ones Teams already holds, so no
-   * session moves; only the fields the author changed are sent, and everyone
-   * newly invited is sent the schedule.
+   * session moves; only the fields the author changed are sent.
+   *
+   * Without `invite` it only saves. Nobody is emailed -- not by Microsoft, not
+   * by the LMS, not even the people it adds -- so it skips the send review and
+   * never opens the email result. With `invite` the people it adds, and only
+   * they, are forwarded the Teams invitation and sent their LMS schedule.
+   *
+   * Either way the server refuses, before writing anything, when Teams no
+   * longer holds the dates saved here: a people save never repairs dates.
    */
-  const savePeople = async (row: MeetingRow, update: { form: TeamsCalendarForm; baseline: TeamsCalendarForm }) => {
+  const savePeople = async (row: MeetingRow, update: { form: TeamsCalendarForm; baseline: TeamsCalendarForm }, { invite = false }: { invite?: boolean } = {}) => {
     const summary = row.summary;
     if (!summary) return;
     const changes = teamsUpdateChanges(update.form, update.baseline);
@@ -1557,24 +1598,31 @@ export function useTeamsMeetingsWorkspace(options: TeamsMeetingsWorkspaceOptions
       return;
     }
     try {
-      const result = await updateTeamsMeetingSchedule(summary.liveSessionId, { ...held, ...changes.fields }, {
+      const inviting = invite && changes.addedPeople.length > 0;
+      const result = await updateTeamsMeetingSchedule(summary.liveSessionId, { ...held, ...changes.fields, ...(inviting ? {} : { invitationsOnly: true }) }, {
         onSubmitted: () => setUpdateProgress({ stage: 'calendar' }),
       });
-      setUpdateProgress(previous => previous ? { ...previous, stage: 'emails' } : previous);
       settleInvitations(update.form);
       await loadTeamsState();
       if (summary.liveSessionId) await loadDetail(summary.liveSessionId);
       notifyChanged(row.catalogueId);
-      if (result.notifyAttendees || changes.addedPeople.length) {
-        await finishTeamsUpdate(result, { title: row.name, scheduledOccurrences: held.scheduledOccurrences, scheduleTimeZone: summary.timeZone,
-          liveSessionId: summary.liveSessionId, addedPeople: changes.addedPeople });
+      if (inviting) {
+        // The people added, and only they, are sent the invitation and their
+        // schedule; the result stays open to say how that went.
+        await finishTeamsUpdate(result, { title: row.name, scheduledOccurrences: held.scheduledOccurrences,
+          scheduleTimeZone: summary.timeZone, liveSessionId: summary.liveSessionId, addedPeople: changes.addedPeople });
         return;
       }
       const warning = (result.warnings || [])[0];
+      const added = changes.addedPeople.length;
       await showCurriculumAlert({
-        title: warning ? 'Saved with a warning' : 'Invitations updated',
-        text: warning ? warning.message : `Invitations and meeting settings are saved for ${row.name}. The join link and session dates are unchanged.`,
-        timer: warning ? undefined : 2200,
+        title: warning ? 'Saved with a warning' : 'Saved without notifying',
+        text: warning
+          ? warning.message
+          : `Invitations and meeting settings are saved for ${row.name}. Nobody was emailed${added
+            ? `, including the ${added} ${added === 1 ? 'person' : 'people'} you added`
+            : ''}. The join link and session dates are unchanged.`,
+        timer: warning ? undefined : 3200,
       });
     } catch (err) {
       if (isTeamsReviewCancelled(err)) return;
@@ -1980,9 +2028,9 @@ export function useTeamsMeetingsWorkspace(options: TeamsMeetingsWorkspaceOptions
     settingsDrawer, createDrawer, createDraft, createDraftSaving, saveCreateDraft, leftoverCancelling, cancelLeftover, updateDrawer, drawerTarget, invitedPrefilling, prefillNotice,
     loadTeamsState, holidayLabelFor, rows, selected, selectedForDisplay, stats,
     openCalendarAction, checkCalendarAction, runArtifactSync, runCalendarSync,
-    pushDates, resendSchedule, saveInvitations, reattach, prefillInvitees, openSettings, saveSettings,
+    pushDates, resendSchedule, saveInvitations, addedInvitees, reattach, prefillInvitees, openSettings, saveSettings,
     comparison, comparing, comparisonError, compareAttendees, publishedInvitees,
-    sendUpdateEmails, setSendUpdateEmails, selectedScopeRows, chooseMeetingScope, refreshMeetingScopes,
+    selectedScopeRows, chooseMeetingScope, refreshMeetingScopes,
     createCalendar, createRecovery, createProgress, updateProgress, requestCloseSelected, notifyChanged, blockedReason, drawerOpen,
   };
 }

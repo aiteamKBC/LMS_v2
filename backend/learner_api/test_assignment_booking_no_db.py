@@ -156,11 +156,10 @@ class AssignmentBookingTests(unittest.TestCase):
                 self.assertEqual(response.status_code, 201, response)
                 self.assertEqual(self.conflicts.call_args.args[-1], offset)
 
-    def test_gap_and_dates_outside_both_windows_are_rejected(self):
+    def test_dates_outside_the_old_monthly_windows_are_accepted(self):
         for day in ('2026-09-18', '2026-10-06', '2026-10-21', '2026-11-06'):
             with self.subTest(day=day):
-                self.assertEqual(self.book(scheduledDate=day).status_code, 400)
-        self.assert_no_booking()
+                self.assertEqual(self.book(scheduledDate=day).status_code, 201)
 
     def test_assignment_requires_a_valid_month_and_sixty_minutes(self):
         for changes in ({'assignmentMonth': ''}, {'assignmentMonth': 'invalid'}, {'durationMinutes': 45}):
@@ -218,12 +217,11 @@ class AssignmentBookingTests(unittest.TestCase):
         self.coach.reserve_coach_calendar_booking.assert_not_called()
         self.mark_imported.assert_not_called()
 
-    def test_imported_aptem_mcm_still_respects_both_assignment_windows(self):
+    def test_imported_aptem_mcm_books_outside_the_old_monthly_windows(self):
         self.use_imported_path()
         for day in ('2026-10-06', '2026-11-06'):
             with self.subTest(day=day):
-                self.assertEqual(self.book(eventKey=None, reviewId='9840', scheduledDate=day).status_code, 400)
-        self.coach.reserve_coach_calendar_booking.assert_not_called()
+                self.assertEqual(self.book(eventKey=None, reviewId='9840', scheduledDate=day).status_code, 201)
 
     def test_no_explicit_slot_resolves_to_an_official_occurrence(self):
         response = self.book(eventKey=None)

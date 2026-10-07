@@ -177,6 +177,65 @@ describe('component editor saved session results', () => {
     expect(coachFetch).not.toHaveBeenCalled();
   });
 
+  it('keeps the section visible and says why when no Teams session is linked', () => {
+    const component: ComponentProps<typeof ComponentEditor>['component'] = {
+      id: 'CL', weekId: 'W1', type: 'live-session', title: 'Hand-linked session', description: '',
+      expectedOtjh: 2, points: 30, reflectionRequired: false, reflectionQuestion: '',
+      workplaceEvidenceRequired: false, tutorValidationRequired: false, coachValidationRequired: true,
+      ksbMappings: [], settings: { liveSessionUrl: 'https://teams.example.invalid/manual' },
+    };
+    render(<ComponentEditor component={component} onChange={vi.fn()} onBack={vi.fn()} groupOptions={[]}
+      weekScope={{} as ComponentProps<typeof ComponentEditor>['weekScope']} weekSessionDate={session.date} />);
+    expect(screen.getByText('Recording & attendance')).toBeInTheDocument();
+    expect(screen.getByText(/isn’t connected to a Teams calendar session/)).toBeInTheDocument();
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(fetchArtifacts).not.toHaveBeenCalled();
+  });
+
+  it('plays the module’s saved session on this date when the component holds no series of its own', async () => {
+    const moduleUrl = '/curriculum_api/curriculum/modules/M1/session-results/';
+    const day = { ...saved, id: 'O1', sessionNumber: 1, startsAt: '2026-10-06T08:30:00Z' };
+    const firstUrl = '/curriculum_api/curriculum/session-results/S1/sessions/1/';
+    fetchMock.mockImplementation((url: string) => {
+      if (url === moduleUrl) return ok({ series: [{ id: 'S1', title: 'Module', sessions: [day,
+        { ...day, id: 'O2', sessionNumber: 2, startsAt: '2026-10-13T08:30:00Z' }] }], jobs: [] });
+      if (url === firstUrl) return ok({ sessions: [day] });
+      throw new Error(`Unexpected network request: ${url}`);
+    });
+    const component: ComponentProps<typeof ComponentEditor>['component'] = {
+      id: 'CL', weekId: 'W1', type: 'live-session', title: 'Hand-linked session', description: '',
+      expectedOtjh: 2, points: 30, reflectionRequired: false, reflectionQuestion: '',
+      workplaceEvidenceRequired: false, tutorValidationRequired: false, coachValidationRequired: true,
+      ksbMappings: [], settings: { liveSessionUrl: 'https://teams.example.invalid/manual' },
+    };
+    render(<ComponentEditor component={component} onChange={vi.fn()} onBack={vi.fn()} groupOptions={[]} moduleId="M1"
+      weekScope={{} as ComponentProps<typeof ComponentEditor>['weekScope']} weekSessionDate="2026-10-06" />);
+    expect(await screen.findByLabelText('Session recording 1')).toHaveAttribute('src', '/curriculum_api/curriculum/session-results/S1/artifacts/R6/');
+    expect(fetchMock).toHaveBeenCalledWith(firstUrl, expect.anything());
+    expect(fetchArtifacts).not.toHaveBeenCalled();
+    expect(coachFetch).not.toHaveBeenCalled();
+  });
+
+  it('does not guess between two module sessions held on the same date', async () => {
+    fetchMock.mockImplementation((url: string) => {
+      if (url === '/curriculum_api/curriculum/modules/M1/session-results/') return ok({ series: [
+        { id: 'S1', title: 'A', sessions: [{ ...saved, startsAt: '2026-10-06T08:30:00Z' }] },
+        { id: 'S2', title: 'B', sessions: [{ ...saved, seriesId: 'S2', startsAt: '2026-10-06T13:00:00Z' }] }], jobs: [] });
+      throw new Error(`Unexpected network request: ${url}`);
+    });
+    const component: ComponentProps<typeof ComponentEditor>['component'] = {
+      id: 'CL', weekId: 'W1', type: 'live-session', title: 'Hand-linked session', description: '',
+      expectedOtjh: 2, points: 30, reflectionRequired: false, reflectionQuestion: '',
+      workplaceEvidenceRequired: false, tutorValidationRequired: false, coachValidationRequired: true,
+      ksbMappings: [], settings: { liveSessionUrl: 'https://teams.example.invalid/manual' },
+    };
+    render(<ComponentEditor component={component} onChange={vi.fn()} onBack={vi.fn()} groupOptions={[]} moduleId="M1"
+      weekScope={{} as ComponentProps<typeof ComponentEditor>['weekScope']} weekSessionDate="2026-10-06" />);
+    expect(await screen.findByText(/2 saved Teams sessions are held on this date/)).toBeInTheDocument();
+    expect(screen.queryByLabelText('Session recording 1')).not.toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
   it('opens an additional meeting’s own saved results, not the module calendar’s', async () => {
     const extraUrl = '/curriculum_api/curriculum/session-results/EXTRA/sessions/1/';
     fetchMock.mockImplementation((url: string) => {

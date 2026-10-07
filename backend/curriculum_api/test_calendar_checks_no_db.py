@@ -32,6 +32,31 @@ class Response(dict):
         self.status_code = status
 
 
+class AnnouncementLedger:
+    """The delivery ledger's claim contract, in memory, for the announcement guard."""
+
+    def __init__(self):
+        self.rows = {}
+
+    def check(self):
+        pass
+
+    def enqueue(self, key, recipients):
+        for recipient in recipients:
+            self.rows.setdefault((key, recipient), 'queued')
+
+    def claim(self, key, recipient, retry_failed):
+        allowed = ('queued', 'failed') if retry_failed else ('queued',)
+        if self.rows.get((key, recipient)) not in allowed:
+            return False
+        self.rows[key, recipient] = 'sending'
+        return True
+
+    def finish(self, key, recipient, status, code):
+        if self.rows.get((key, recipient)) == 'sending':
+            self.rows[key, recipient] = status
+
+
 class CalendarChecksTests(unittest.TestCase):
     def setUp(self):
         # Also blocks an accidental network dependency added in a future refactor.
@@ -60,6 +85,7 @@ class CalendarChecksTests(unittest.TestCase):
                               CalendarMismatch=checks.CalendarMismatch, safe_teams_join_url=checks.safe_teams_join_url,
                               utc_datetime=checks.utc_datetime, graph_calendar_time=checks.graph_calendar_time,
                               verify_calendar=checks.verify_calendar, publish_attendees=checks.publish_attendees,
+                              remove_attendees_silently=checks.remove_attendees_silently,
                               attendee_differences=checks.attendee_differences,
                               attendees_already_match=checks.attendees_already_match,
                               event_organizer_address=checks.event_organizer_address,
@@ -78,7 +104,7 @@ class CalendarChecksTests(unittest.TestCase):
                               graph_event_utc=self.utc_event, persist_live_session_series=self.persist_series,
                               replace_live_session_occurrences=self.persist_occurrences,
                               held_schedule_snapshot=lambda _live_session_id: [],
-                              with_schedule_change_notice=lambda response, _live_session_id, _before: response,
+                              with_schedule_change_notice=lambda response, _live_session_id, _before, **_emails: response,
                               update_authoring_rows=self.update_series, json_db_value=lambda value: value,
                               apply_teams_meeting_options=lambda *args, **kwargs: (self.options_ok, {'id': 'online-1'}, []),
                               teams_series_email_list=lambda value: value or [],
@@ -98,7 +124,8 @@ class CalendarChecksTests(unittest.TestCase):
                  'verify_teams_calendar_with_standalones', 'publish_teams_calendar_attendees',
                  'teams_newly_invited', 'forward_teams_invitation',
                  'reschedule_single_live_session_occurrence', 'saved_live_session_occurrences',
-                 'teams_schedule_settings'}
+                 'teams_schedule_settings', 'refresh_standalone_occurrence_options',
+                 'curriculum_teams_meeting_occurrence_schedule'}
         tree = ast.parse((ROOT / 'views.py').read_text(encoding='utf-8-sig'))
         for node in tree.body:
             if isinstance(node, ast.Assign) and any(isinstance(target, ast.Name) and target.id == 'GRAPH_SILENT_INVITE_HEADERS' for target in node.targets):
@@ -110,9 +137,22 @@ class CalendarChecksTests(unittest.TestCase):
         transport.microsoft_graph_request = self.graph
         transport.has_graph_credentials = lambda: True
         transport.get_graph_settings = lambda: {'timezone': 'GMT Standard Time'}
-        self.modules = patch.dict(sys.modules, {'coach_api': types.ModuleType('coach_api'), 'coach_api.views': transport})
+        package = types.ModuleType('curriculum_api')
+        package.__path__ = [str(ROOT)]
+        package.views = self.v
+        self.modules = patch.dict(sys.modules, {'coach_api': types.ModuleType('coach_api'), 'coach_api.views': transport,
+                                                'curriculum_api': package, 'curriculum_api.views': self.v})
         self.modules.start()
         self.addCleanup(self.modules.stop)
+        # The retry guard's ledger: in memory, so its claims can be read back.
+        # A test that wants the guard switched off replaces it with one whose
+        # check() raises, as an unprovisioned database does.
+        from curriculum_api import teams_update_guard
+        self.guard = teams_update_guard
+        self.announcements = AnnouncementLedger()
+        self.guard_ledger = patch.object(teams_update_guard, '_ledger', lambda ledger: ledger or self.announcements)
+        self.guard_ledger.start()
+        self.addCleanup(self.guard_ledger.stop)
 
     def make_payload(self, hour=0):
         dates = ['2026-09-17', '2026-09-24', '2026-10-08', '2026-10-15', '2026-10-22', '2026-10-29',
@@ -532,15 +572,19 @@ class CalendarChecksTests(unittest.TestCase):
             self.assertFalse(checks.safe_teams_join_url(url))
 
     def prepare_weekday_path(self):
-        package = types.ModuleType('curriculum_api')
-        package.views = self.v
-        self.modules2 = patch.dict(sys.modules, {'curriculum_api': package, 'curriculum_api.views': self.v})
-        self.modules2.start()
-        self.addCleanup(self.modules2.stop)
+        from curriculum_api import teams_schedule_notice, teams_update_guard
         namespace = {'__package__': 'curriculum_api', 'datetime': datetime, 'timedelta': timedelta, 'timezone': timezone,
+                     'same_schedule': teams_schedule_notice.same_schedule,
+                     'schedule_snapshot': teams_schedule_notice.schedule_snapshot,
+                     'claim_announcement': teams_update_guard.claim_announcement,
+                     'finish_announcement': teams_update_guard.finish_announcement,
+                     'graph_failure_outcome': teams_update_guard.graph_failure_outcome,
+                     'logical_change_id': teams_update_guard.logical_change_id,
+                     'targets_snapshot': teams_update_guard.targets_snapshot,
                      'quote': urllib_parse.quote, 'urlencode': urllib_parse.urlencode, 'ZoneInfo': ZoneInfo, 'uuid': uuid,
                      'JsonResponse': Response, 'calendar_targets': checks.calendar_targets,
                      'verify_calendar': checks.verify_calendar, 'publish_attendees': checks.publish_attendees,
+                     'remove_attendees_silently': checks.remove_attendees_silently,
                      'CalendarMismatch': checks.CalendarMismatch,
                      'sessions_a_rewrite_would_drop': checks.sessions_a_rewrite_would_drop,
                      'dropped_sessions_sentence': checks.dropped_sessions_sentence}
@@ -617,6 +661,41 @@ class CalendarChecksTests(unittest.TestCase):
         self.assertEqual(announced, [SILENT_INVITE, SILENT_INVITE])
         self.assertEqual(sorted(self.forwards), sorted([('event-1', ['joined@example.invalid']),
                                                         ('event-2', ['joined@example.invalid'])]))
+
+    def test_save_invitations_sends_nothing_even_to_the_person_it_added(self):
+        """"Save invitations" only saves who is invited.
+
+        The roster is still written, under the silent preference, but nobody is
+        forwarded the meeting -- not even the person just added.
+        """
+        self.assertEqual(self.create().status_code, 201)
+        self.payload.update(peopleOnly=True, invitationsOnly=True, attendees=['replacement@example.invalid'])
+        self.v.apply_teams_meeting_options = Mock(return_value=(True, {'id': 'online-1'}, []))
+        self.calls.clear()
+        self.headers.clear()
+        self.forwards.clear()
+        result = self.v.curriculum_teams_meeting_schedule(types.SimpleNamespace(method='PATCH'), 'LIVE-SYNTHETIC')
+        self.assertEqual(result.status_code, 200, result)
+        patches = [call[2] for call in self.calls if call[0] == 'PATCH']
+        self.assertEqual([item['emailAddress']['address'] for item in patches[0]['attendees']], ['replacement@example.invalid'])
+        announced = [item[2] for item in self.headers if item[0] == 'PATCH' and 'attendees' in (item[3] or {})]
+        self.assertEqual(announced, [SILENT_INVITE])
+        self.assertFalse(self.forwards)
+
+    def test_weekday_save_invitations_sends_nothing_even_to_the_person_it_added(self):
+        self.prepare_weekday_path()
+        self.assertEqual(self.create().status_code, 201)
+        self.payload.update(peopleOnly=True, invitationsOnly=True,
+                            attendees=['learner@example.invalid', 'joined@example.invalid'])
+        self.v.stored_calendar_series = lambda series: series.get('calendar_series') or []
+        self.calls.clear()
+        self.headers.clear()
+        self.forwards.clear()
+        result = self.v.curriculum_teams_meeting_schedule(types.SimpleNamespace(method='PATCH'), 'LIVE-SYNTHETIC')
+        self.assertEqual(result.status_code, 200, result)
+        announced = [item[2] for item in self.headers if item[0] == 'PATCH' and 'attendees' in (item[3] or {})]
+        self.assertEqual(announced, [SILENT_INVITE, SILENT_INVITE])
+        self.assertFalse(self.forwards)
 
     def test_pending_invites_are_repaired_silently_without_recreating_or_rewriting_dates(self):
         """A create that failed before inviting anyone is repaired by the update.

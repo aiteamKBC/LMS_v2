@@ -1595,6 +1595,9 @@ export interface LiveSessionArtifactsResponse {
  */
 const OFF_CALENDAR_OCCURRENCE_STATUSES = new Set([
   'cancelled', 'canceled', 'declined', 'deleted', 'removed',
+  // "Not in plan": a session a new plan left on Teams. Not cancelled -- its
+  // Teams slot stands until somebody cancels it -- but not a planned session.
+  'superseded',
 ]);
 
 /** The tracked occurrences that still stand for a meeting on the calendar. */

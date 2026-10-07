@@ -304,7 +304,7 @@ class AttachmentTests(unittest.TestCase):
 class OccurrenceReplacementTests(unittest.TestCase):
     """A repaired date must not move attendance identity to another session."""
 
-    def test_inserting_25_september_keeps_9_october_identity_and_cancels_the_extra(self):
+    def test_inserting_25_september_keeps_9_october_identity_and_leaves_the_extra_not_in_plan(self):
         rows = [
             {'id': 'OCC-SEP18', 'session_number': 1, 'scheduled_start': '2026-09-18T08:00:00Z',
              'scheduled_end': '2026-09-18T10:00:00Z', 'status': 'completed', 'created_at': 'old'},
@@ -355,7 +355,8 @@ class OccurrenceReplacementTests(unittest.TestCase):
         self.assertEqual((by_id['OCC-SEP18']['session_number'], by_id['OCC-SEP18']['status']), (1, 'completed'))
         self.assertEqual((by_id['OCC-OCT09']['session_number'], by_id['OCC-OCT09']['scheduled_start']),
                          (3, '2026-10-09T08:00:00Z'))
-        self.assertEqual(by_id['OCC-DEC18']['status'], 'cancelled')
+        # Left out of the plan, never cancelled: nobody pressed Cancel on it.
+        self.assertEqual(by_id['OCC-DEC18']['status'], 'superseded')
         added = next(row for row in rows if row['scheduled_start'] == '2026-09-25T08:00:00Z')
         self.assertEqual((added['session_number'], added['status']), (2, 'scheduled'))
 

@@ -1,5 +1,6 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { finishTeamsUpdate } from '../../teams-meetings/creationResult';
+import { showCurriculumAlert } from '@/components/feature/CurriculumSweetAlert';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, expect, it, vi } from 'vitest';
@@ -144,9 +145,11 @@ it('opens the Teams Meetings dialog itself, for this module alone', async () => 
   open('MOD-1');
   const dialog = within(await screen.findByRole('dialog'));
   expect(dialog.getAllByText('Data Foundations').length).toBeGreaterThan(0);
-  for (const name of ['Update Teams calendar', 'Edit session dates', 'Cancel series', 'Save invitations', 'Edit meeting settings', 'Sync calendar status']) {
+  for (const name of ['Update Teams calendar', 'Edit session dates', 'Cancel series', 'Save without notifying', 'Sync calendar status']) {
     expect(dialog.getByRole('button', { name })).toBeInTheDocument();
   }
+  // Meeting settings are edited in the section under the dates, not from a drawer of their own.
+  expect(dialog.queryByRole('button', { name: 'Edit meeting settings' })).not.toBeInTheDocument();
   expect(fetchCurriculumTeamsMeetingSummaries).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ moduleCatalogueIds: ['MOD-1'] }));
   // Only this module's sessions, read fresh -- never a forced rebuild of every module's.
   const { fetchCurriculumSessions } = await import('@/lib/curriculumApi');
@@ -180,8 +183,8 @@ it('refuses every write while the module has unsaved changes, and still lets it 
   open('MOD-1', { unsavedChanges: true });
   const dialog = within(await screen.findByRole('dialog'));
   expect(await dialog.findByText(/This module has unsaved changes/)).toBeVisible();
-  await waitFor(() => expect(dialog.getByRole('button', { name: 'Edit meeting settings' })).toBeDisabled());
-  for (const name of ['Update Teams calendar', 'Edit session dates', 'Cancel series', 'Save invitations']) {
+  await waitFor(() => expect(dialog.getByRole('button', { name: 'Cancel series' })).toBeDisabled());
+  for (const name of ['Update Teams calendar', 'Edit session dates', 'Cancel series', 'Save without notifying']) {
     expect(dialog.getByRole('button', { name })).toBeDisabled();
   }
   expect(dialog.getByRole('button', { name: 'Sync calendar status' })).toBeEnabled();
@@ -217,30 +220,6 @@ it('closes the builder door when the dialog closes', async () => {
   await waitFor(() => expect(onClose).toHaveBeenCalled());
 });
 
-it('edits meeting settings on the existing meeting without its dates or attendees', async () => {
-  open('MOD-1');
-  const dialog = within(await screen.findByRole('dialog'));
-  const settings = await dialog.findByRole('button', { name: 'Edit meeting settings' });
-  await waitFor(() => expect(settings).toBeEnabled());
-  await userEvent.click(settings);
-  await userEvent.click(await screen.findByRole('button', { name: 'Save meeting settings' }));
-  await waitFor(() => expect(updateTeamsMeetingSchedule).toHaveBeenCalledTimes(1));
-  const [liveId, payload] = updateTeamsMeetingSchedule.mock.calls[0] as [string, Record<string, unknown>];
-  expect(liveId).toBe('LIVE-1');
-  // The saved settings, as Microsoft was last told them, go back as the edit.
-  expect(payload).toMatchObject({
-    peopleOnly: true, settingsOnly: true, recording: 'record', lobbyBypass: 'organization', spokenLanguage: 'ar-EG',
-    presenters: ['tutor@example.invalid'], coOrganizers: ['co@example.invalid'], eventId: 'event-1',
-  });
-  // Invitations are their own action: the attendee list is not part of this save.
-  expect(payload).not.toHaveProperty('attendees');
-  // The held dates go back unchanged.
-  expect((payload.scheduledOccurrences as Array<{ startDateTimeUtc: string }>).map(item => item.startDateTimeUtc))
-    .toEqual(['2026-09-02T08:30:00.000Z', '2026-09-09T08:30:00.000Z']);
-  // Scoped to one module, closing the drawer returns to its dialog.
-  expect(await screen.findByRole('button', { name: 'Edit meeting settings' })).toBeInTheDocument();
-});
-
 it('shows the invitation fields under the dates, every role filled, and saves only what changed', async () => {
   open('MOD-1');
   const dialog = within(await screen.findByRole('dialog'));
@@ -251,24 +230,55 @@ it('shows the invitation fields under the dates, every role filled, and saves on
   expect(dialog.getByRole('button', { name: 'Remove co@example.invalid' })).toBeInTheDocument();
   expect(dialog.getByRole('button', { name: 'Remove learner@example.invalid' })).toBeInTheDocument();
   for (const name of ['Presenters', 'Co-organizers', 'Attendees']) expect(dialog.getByRole('combobox', { name })).toBeInTheDocument();
-  const save = dialog.getByRole('button', { name: 'Save invitations' });
+  const save = dialog.getByRole('button', { name: 'Save without notifying' });
   // Nothing to save until something changes.
   expect(save).toBeDisabled();
   const attendees = dialog.getByRole('combobox', { name: 'Attendees' });
   fireEvent.change(attendees, { target: { value: 'new@example.invalid' } });
   fireEvent.keyDown(attendees, { key: 'Enter' });
   await waitFor(() => expect(save).toBeEnabled());
+  // Adding someone says, before saving, that this button tells them nothing.
+  expect(dialog.getByText(/added people will be saved to the Teams meeting but will not receive an invitation or LMS email/))
+    .toBeInTheDocument();
   await act(async () => { await userEvent.click(save); });
   await waitFor(() => expect(updateTeamsMeetingSchedule).toHaveBeenCalledTimes(1));
   const [, payload] = updateTeamsMeetingSchedule.mock.calls[0] as [string, Record<string, unknown>];
-  expect(payload).toMatchObject({ peopleOnly: true, attendees: ['learner@example.invalid', 'new@example.invalid'] });
+  // Save without notifying only saves: it asks the server to send nothing to anybody.
+  expect(payload).toMatchObject({ peopleOnly: true, invitationsOnly: true, attendees: ['learner@example.invalid', 'new@example.invalid'] });
   // Untouched roles and options keep what Teams has saved.
   expect(payload).not.toHaveProperty('presenters');
   expect(payload).not.toHaveProperty('coOrganizers');
   expect(payload).not.toHaveProperty('recording');
-  // The held dates go back unchanged, and the one new person is sent the schedule.
+  // The held dates go back unchanged, and nobody is emailed -- not even the one new person.
+  expect((payload.scheduledOccurrences as Array<{ startDateTimeUtc: string }>).map(item => item.startDateTimeUtc))
+    .toEqual(['2026-09-02T08:30:00.000Z', '2026-09-09T08:30:00.000Z']);
+  await waitFor(() => expect(showCurriculumAlert).toHaveBeenCalledWith(expect.objectContaining({
+    title: 'Saved without notifying', text: expect.stringContaining('Nobody was emailed, including the 1 person you added'),
+  })));
+  expect(finishTeamsUpdate).not.toHaveBeenCalled();
+});
+
+it('invites only the people added when asked to, without moving a date', async () => {
+  open('MOD-1');
+  const dialog = within(await screen.findByRole('dialog'));
+  await waitFor(() => expect(dialog.getByRole('button', { name: 'Remove learner@example.invalid' })).toBeInTheDocument());
+  // Offered only once somebody is added: with nobody new there is nobody to invite.
+  expect(dialog.queryByRole('button', { name: 'Save and invite added people' })).toBeNull();
+  const attendees = dialog.getByRole('combobox', { name: 'Attendees' });
+  fireEvent.change(attendees, { target: { value: 'new@example.invalid' } });
+  fireEvent.keyDown(attendees, { key: 'Enter' });
+  const invite = await dialog.findByRole('button', { name: 'Save and invite added people' });
+  await waitFor(() => expect(invite).toBeEnabled());
+  await act(async () => { await userEvent.click(invite); });
+  await waitFor(() => expect(updateTeamsMeetingSchedule).toHaveBeenCalledTimes(1));
+  const [, payload] = updateTeamsMeetingSchedule.mock.calls[0] as [string, Record<string, unknown>];
+  // The people-only path that forwards the meeting to the added and emails
+  // them their schedule: never "send nothing", never a date change.
+  expect(payload).toMatchObject({ peopleOnly: true, attendees: ['learner@example.invalid', 'new@example.invalid'] });
+  expect(payload).not.toHaveProperty('invitationsOnly');
+  expect(payload).not.toHaveProperty('notifyAttendees');
   expect((payload.scheduledOccurrences as Array<{ startDateTimeUtc: string }>).map(item => item.startDateTimeUtc))
     .toEqual(['2026-09-02T08:30:00.000Z', '2026-09-09T08:30:00.000Z']);
   await waitFor(() => expect(finishTeamsUpdate).toHaveBeenCalledTimes(1));
-  expect(vi.mocked(finishTeamsUpdate).mock.calls[0][1]).toMatchObject({ liveSessionId: 'LIVE-1', addedPeople: ['new@example.invalid'] });
+  expect(vi.mocked(finishTeamsUpdate).mock.calls[0][1]).toMatchObject({ addedPeople: ['new@example.invalid'] });
 });
