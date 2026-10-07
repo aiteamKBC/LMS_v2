@@ -608,7 +608,7 @@ class OneEmailPerPersonTests(unittest.TestCase):
         self.modules.start()
         self.addCleanup(self.modules.stop)
         message = (['one@example.invalid', 'back@example.invalid'], ['organizer@example.invalid'], 'learner', 'organiser')
-        verified = patch.dict(self.service, {'verified_message': lambda _live: copy.deepcopy(message)})
+        verified = patch.dict(self.service, {'verified_message': lambda _live, _added=None: copy.deepcopy(message)})
         verified.start()
         self.addCleanup(verified.stop)
 
