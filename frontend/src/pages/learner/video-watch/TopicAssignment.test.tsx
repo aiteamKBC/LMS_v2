@@ -11,7 +11,9 @@ vi.mock('./AssignmentSubmissionWizard', () => ({ AssignmentSubmissionForm: (prop
 }) => <div><h3>{props.title}</h3><p>{props.questionText}</p><span>Form topic {props.assignmentTopicId}</span>
   <button onClick={props.onManualDraftSaved}>Save draft</button>
   <button onClick={async () => { await props.onSubmitProgress({ assignmentTopicId: props.assignmentTopicId }); props.onTopicSubmitted?.(); }}>Submit topic</button></div> }));
-vi.mock('../monthly-submission/AssignmentAttachment', () => ({ AssignmentAttachment: ({ fileName }: { fileName: string }) => <span>{fileName}</span> }));
+vi.mock('../monthly-submission/AssignmentAttachment', () => ({ AssignmentAttachment: ({ fileName, url, defaultExpanded, pdfTools }: {
+  fileName: string; url: string; defaultExpanded: boolean; pdfTools: boolean;
+}) => <span data-testid="instruction-file" data-url={url} data-open={defaultExpanded} data-pdf-tools={pdfTools}>{fileName}</span> }));
 const topics = assignmentTopics([1, 2, 3].map(id => ({ id: String(id), name: `Choice ${id}`, question: `Question ${id}`, instructions: `Read topic ${id}`, resources: id === 2 ? [{ fileName: 'guide.mp4', url: '/curriculum_api/curriculum/uploads/guide.mp4', contentType: 'video/mp4', size: 3 }] : [] })));
 const props = { topics, kind: 'commercial' as const, learnerId: 'synthetic-1', learnerName: 'Test learner', programmeName: 'Test programme',
   componentId: 'A1', title: 'Monthly assignment', moduleTitle: 'Module', weekTitle: 'Week', initialMonth: '2026-10',
@@ -19,6 +21,26 @@ const props = { topics, kind: 'commercial' as const, learnerId: 'synthetic-1', l
   submittingProgress: false, onEvidenceChanged: vi.fn(), onRestoreTime: vi.fn(), onSubmitProgress: vi.fn().mockResolvedValue(undefined) };
 beforeEach(() => { localStorage.clear(); vi.mocked(loadAssignmentTopicStates).mockResolvedValue([]); vi.mocked(selectAssignmentTopic).mockResolvedValue(undefined); vi.clearAllMocks(); });
 afterEach(cleanup);
+
+it('opens both instruction PDFs with reading tools and keeps files scoped to the selected topic', async () => {
+  const files = ['brief', 'guidance'].map(name => ({ url: `/curriculum_api/curriculum/uploads/${name}.pdf`, fileName: `${name}.pdf`, contentType: 'application/pdf', size: 10 }));
+  const choices = assignmentTopics([
+    { ...topics[0], resources: files, instructions: `<p>Read both PDFs</p><a href="${files[1].url}">Guidance PDF</a>` },
+    topics[1],
+  ]);
+  render(<TopicAssignment {...props} topics={choices} />);
+  fireEvent.click(await screen.findByRole('button', { name: /Topic 1.*Choice 1/ }));
+  const previews = screen.getAllByTestId('instruction-file');
+  expect(previews.map(preview => preview.getAttribute('data-url'))).toEqual(files.map(file => file.url));
+  for (const preview of previews) {
+    expect(preview).toHaveAttribute('data-open', 'true');
+    expect(preview).toHaveAttribute('data-pdf-tools', 'true');
+  }
+  fireEvent.click(screen.getByRole('button', { name: /Topic 2.*Choice 2/ }));
+  expect(screen.queryByTestId('instruction-file')).toBeNull();
+  expect(document.querySelector('video')).toHaveAttribute('src', '/curriculum_api/curriculum/uploads/guide.mp4');
+  expect(selectAssignmentTopic).not.toHaveBeenCalled();
+});
 
 it('records the chosen topic before opening its question and unlocks remaining topics after submit', async () => {
   render(<TopicAssignment {...props} />);
