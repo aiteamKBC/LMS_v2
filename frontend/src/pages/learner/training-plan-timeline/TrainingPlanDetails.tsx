@@ -1,4 +1,7 @@
 import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from 'react';
+import { useCaseFileMonthFocus } from '@/features/coach/case-file/hooks/useCaseFileMonthFocus';
+import { monthlyLogOtjh } from '@/pages/workspace/learner/useDashboardPlan';
+import { dashboardPlanSubjects } from '@/pages/workspace/learner/dashboardPlan';
 import { Link } from 'react-router-dom';
 import { ArrowRight, CalendarDays, ChevronLeft, ChevronRight, Clock3, Equal, FileText, GraduationCap, RefreshCw, Target, TrendingDown, TrendingUp, Video } from 'lucide-react';
 import type { LearnerKind } from '@/api/learnerDetail';
@@ -71,11 +74,11 @@ function catchupAction(row: AttendanceLecture): string | null {
 }
 
 /** Weekly learning and monthly coaching share the dashboard above the linked module panels. */
-export function TrainingPlanDetails({ data, subjects, kind, learnerId, onRefresh, refreshing = false,
+export function TrainingPlanDetails({ data: baseData, subjects, kind, learnerId, onRefresh, refreshing = false,
   onRetryContract, initialSubjectId = '', initialMonth = '', canOpenActivities = true, weeklyFocus, programmeStartDate, programmeEndDate,
   activityOverviewOnly = false, timelineOnly = false, monthlyOnly = false, trainingOnly = false, overviewOnly = false,
   showOtjChart = true, programmeSnapshot }: Props) {
-  const modules = useMemo(() => buildPlanModules(subjects, data), [subjects, data]);
+  const baseModules = useMemo(() => buildPlanModules(subjects, baseData), [subjects, baseData]);
   const [now, setNow] = useState(Date.now);
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 30_000);
@@ -83,18 +86,18 @@ export function TrainingPlanDetails({ data, subjects, kind, learnerId, onRefresh
   }, []);
   const today = new Date(now).toLocaleDateString('en-CA', { timeZone: 'Europe/London' });
   const thisMonth = today.slice(0, 7);
-  const programmeStart = dateKey(programmeStartDate) || modules.map(module => dateKey(module.start)).filter(Boolean).sort()[0] || '';
+  const programmeStart = dateKey(programmeStartDate) || baseModules.map(module => dateKey(module.start)).filter(Boolean).sort()[0] || '';
   // The learner-detail bound can lag behind the current contract/activity
   // projection.  Keep it as a lower-priority bound when the payload already
   // contains a later valid month, so an absent URL month defaults to the real
   // current month instead of being clamped into stale history.
   const payloadEndMonths = [
-    ...Object.keys(data.months),
-    ...data.actual.map(row => row.month),
-    ...data.reviews.map(review => reviewDate(review).slice(0, 7)),
+    ...Object.keys(baseData.months),
+    ...baseData.actual.map(row => row.month),
+    ...baseData.reviews.map(review => reviewDate(review).slice(0, 7)),
   ].filter(month => /^\d{4}-(0[1-9]|1[0-2])$/.test(month));
   const payloadEnd = payloadEndMonths.sort().at(-1);
-  const moduleEnd = modules.map(module => dateKey(moduleVisualEnd(module))).filter(Boolean).sort().at(-1);
+  const moduleEnd = baseModules.map(module => dateKey(moduleVisualEnd(module))).filter(Boolean).sort().at(-1);
   const programmeEnd = [dateKey(programmeEndDate), moduleEnd, payloadEnd ? `${payloadEnd}-28` : '']
     .filter(Boolean).sort().at(-1) || '';
   const minMonth = programmeStart.slice(0, 7);
@@ -110,6 +113,12 @@ export function TrainingPlanDetails({ data, subjects, kind, learnerId, onRefresh
   // to a month the user requested directly.
   const initialSelectedMonth = explicitMonth || clampMonth(thisMonth);
   const [selectedMonth, setSelectedMonth] = useState(initialSelectedMonth);
+  const focus = useCaseFileMonthFocus(selectedMonth, monthlyOnly);
+  const data = useMemo(() => focus?.data?.schedule ? { ...focus.data.schedule,
+    monthlyLogOtjh: focus.data.hours ? monthlyLogOtjh(focus.data.hours).months : baseData.monthlyLogOtjh } : baseData, [focus?.data, baseData]);
+  const modules = useMemo(() => focus?.data?.schedule && focus.data.week
+    ? buildPlanModules(dashboardPlanSubjects(focus.data.week.planSubjects, focus.data.schedule), data)
+    : baseModules, [focus?.data, baseModules, data]);
   const [selectedId, setSelectedId] = useState(initialSubjectId);
   const [bookingReview, setBookingReview] = useState<PlanReview | null>(null);
   const [absenceLecture, setAbsenceLecture] = useState<AttendanceLecture | null>(null);
@@ -156,7 +165,7 @@ export function TrainingPlanDetails({ data, subjects, kind, learnerId, onRefresh
     } catch (reason) { setCatchupError(reason instanceof Error ? reason.message : 'Could not link catch-up.'); }
     finally { setCatchupBusy(false); }
   };
-  const monthReviews = data.reviews.filter(review => review.source !== 'student-support' && review.status !== 'cancelled' && reviewDate(review).startsWith(selectedMonth))
+  const monthReviews = (focus?.data?.reviews ?? data.reviews).filter(review => review.source !== 'student-support' && review.status !== 'cancelled' && reviewDate(review).startsWith(selectedMonth))
     .sort((a, b) => reviewDate(a).localeCompare(reviewDate(b)));
   const monthActivities = modules.flatMap(module => (monthData(module).monthlyActivities || []).map(activity => ({ module, activity })))
     .filter(item => item.activity.date.startsWith(selectedMonth))
@@ -316,6 +325,7 @@ export function TrainingPlanDetails({ data, subjects, kind, learnerId, onRefresh
   const showMonthly = !trainingOnly && !overviewOnly;
   const showTraining = !monthlyOnly && !overviewOnly;
   return <div className={`${styles.root} ${layout.root}`}>
+    {focus?.error && <div role="alert" className={styles.error}>{focus.error} <button type="button" onClick={focus.refresh}>Retry monthly focus</button></div>}
     {!trainingOnly && <div className={`${layout.topRow} ${weeklyFocus && !monthlyOnly ? layout.withWeeklyFocus : ''} ${activityOverviewOnly ? layout.activityOverviewTopRow : ''} ${activityOverviewOnly && !showMonthly ? layout.overviewSingle : ''}`}
       data-layout="split">
       {activityOverviewOnly

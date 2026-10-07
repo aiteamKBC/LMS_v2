@@ -3,6 +3,8 @@ export interface AptemKsbRow {
   description: string;
   category: string;
   components: Array<{ name: string; status: string; achieved: boolean; source?: string }>;
+  activityNames?: string[];
+  activityCount?: number;
   completed: number;
   status: 'Achieved' | 'Not Achieved';
 }
@@ -17,7 +19,7 @@ export function selectAptemKsbGroups(rows: AptemKsbRow[], source: AptemKsbBreakd
   return rows.map((row) => ({
     ...row,
     id: row.code,
-    activities: row.components.map((component) => ({
+    activities: row.activityNames ? row.activityNames.map(name => ({ activityTitle: name, evidenceActivities: [] as Array<{ title: string; type: string; source: string; status: string; achievesKsb: boolean }> })) : row.components.map((component) => ({
       activityTitle: component.name,
       evidenceActivities: [{ title: component.name, type: 'Component', source: component.source || (source === 'progress' ? 'Progress' : source === 'new_lms' ? 'LMS' : 'Aptem'), status: component.status, achievesKsb: component.achieved }],
     })),

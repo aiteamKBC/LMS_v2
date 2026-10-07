@@ -131,9 +131,21 @@ def entries(learner_id):
     return entries_for(owner)
 
 
-def entries_for(owner):
-    records = query('''WITH canonical AS (
-        SELECT progress.*
+def entries_for(owner, *, overview_only=False):
+    columns = 'progress.*'
+    if overview_only:
+        # Completion projection needs saved timing/attempt facts, never raw
+        # evidence bodies. Keep lineage required by recorded course allocation.
+        columns = ','.join('progress.' + field for field in (
+            'id', 'learner_id', 'kind', 'module_ref', 'module_title', 'component_ref',
+            'component_title', 'component_type', 'quiz_ref', 'passed', 'reported_time',
+            'submitted_at', 'started_at', 'time_tracking_source', 'claimed_seconds',
+            'verified_seconds', 'expected_otjh', 'source_system', 'component_link_source',
+            'actual_seconds', 'accepted', 'reporting_started_at', 'reporting_ended_at',
+            'reporting_month', 'achieved_score', 'total_score', 'activity_status'))
+        columns += ",jsonb_build_object('original_source_ref',progress.source_payload->>'original_source_ref') AS source_payload"
+    records = query(f'''WITH canonical AS (
+        SELECT {columns}
         FROM "Learner".learner_progress_entries progress
         WHERE progress.learner_id=%s AND progress.deleted_at IS NULL
     ), progress_ksbs AS (
@@ -637,9 +649,9 @@ def content(item, owner=None, record=None):
         'html': f'<p>{escape(note)}</p>' if note else '<p>No material is directly linked to this activity.</p>'}]}
 
 
-def source_subjects(learner_id, summarize):
+def source_subjects(learner_id, summarize, *, owner=None, records=None, overview_only=False):
     """Recorded learner activities, with full catalogue counts kept separate."""
-    owner = profile(learner_id)
+    owner = owner if owner is not None else profile(learner_id)
     if owner is None:
         raise ServiceError('The consolidated learner identity needs review.', 'identity_review_required', 409)
     courses = query('''SELECT DISTINCT c.id,c.source_course_ref,c.source_course_title,c.curriculum_module_ref
@@ -648,16 +660,22 @@ def source_subjects(learner_id, summarize):
         WHERE m.learner_id=%s AND m.deleted_at IS NULL AND c.source_system='old_lms'
           AND c.source_course_ref ~ '^[0-9]+$'
         ORDER BY c.source_course_title,c.id''', [owner['id']])
-    catalogue = query('''SELECT a.id,a.source_course_id,a.source_activity_id,a.source_activity_kind,
+    catalogue_columns = ("a.source_activity_id,c.source_course_ref" if overview_only else
+        '''a.id,a.source_course_id,a.source_activity_id,a.source_activity_kind,
         a.source_activity_title,a.source_activity_type,a.source_section_title,a.curriculum_component_ref,
-        c.source_course_ref,c.source_course_title,c.curriculum_module_ref,a.source_position AS position
+        c.source_course_ref,c.source_course_title,c.curriculum_module_ref,a.source_position AS position''')
+    catalogue = query(f'''SELECT {catalogue_columns}
         FROM curriculum.source_activities a
         JOIN curriculum.source_courses c ON c.id=a.source_course_id AND c.deleted_at IS NULL
         WHERE a.source_course_id=ANY(%s) AND a.deleted_at IS NULL
           AND a.source_system='old_lms'
         ORDER BY c.id,a.source_position NULLS LAST,a.id''', [[c['id'] for c in courses]]) if courses else []
-    records = entries_for(owner)
-    items, subjects, links = recorded_course_items(courses, catalogue, records)
+    records = entries_for(owner) if records is None else records
+    items, subjects, links = recorded_course_items(courses, catalogue, records, overview_only=overview_only)
+    if overview_only:
+        return {'progress_basis': 'recorded_activities', 'subjects': subjects,
+                'activities': [{key: item[key] for key in ('activity_id', 'group_id', 'completed')}
+                               for item in items]}
     result = {'source': 'canonical', 'source_status': 'historical',
         'progress_basis': 'recorded_activities',
         'learner_name': owner['name'], 'aptem_id': owner['aptem_id'],
@@ -702,7 +720,7 @@ def recorded_activity_schedule(record, course):
         'date_source': 'introduction' if introduction else 'consolidated_record'}
 
 
-def recorded_course_items(courses, catalogue, records):
+def recorded_course_items(courses, catalogue, records, *, overview_only=False):
     """Allocate a final record once per course, using exact catalogue lineage.
 
     Historical/component guesses do not substitute for learner source links.
@@ -752,6 +770,11 @@ def recorded_course_items(courses, catalogue, records):
             if key in definitions:
                 placements.setdefault(key[0], definitions[key])
         for course, definition in placements.items():
+            if overview_only:
+                by_course[course].append({'activity_id': f"record:{course}:{record['id']}",
+                    'group_id': int(course),
+                    'completed': counts_as_completed(record, include_source_evidence='completed' in record)})
+                continue
             kind, _, ident = definition['source_activity_id'].partition(':')
             numeric = ident.isdigit()
             accepted = counts_as_actual(record)
@@ -788,8 +811,9 @@ def recorded_course_items(courses, catalogue, records):
             continue
         subjects.append({'id': int(ref), 'name': course['source_course_title'],
             'module_id': course.get('curriculum_module_ref'),
-            'catalogue_count': sum(str(d['source_course_ref']) == ref for d in catalogue),
-            'accepted_hours': round(sum(a['actual'] for a in activity), 6)})
+            **({} if overview_only else {
+                'catalogue_count': sum(str(d['source_course_ref']) == ref for d in catalogue),
+                'accepted_hours': round(sum(a['actual'] for a in activity), 6)})})
         items.extend(activity)
     return items, subjects, links
 

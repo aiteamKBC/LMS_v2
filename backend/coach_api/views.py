@@ -12952,7 +12952,7 @@ def coach_directory(request):
 def coach_learner_case_file(request, learner_id):
     owner_email = authenticated_coach_email(request)
     try:
-        profile, source = fetch_case_file_shell(owner_email, learner_id)
+        profile, source = _case_file_shell_for_request(request, owner_email, learner_id)
     except DatabaseError:
         logger.exception("coach_case_file_shell_failed learner_id=%s", learner_id)
         return coach_error(
@@ -12969,6 +12969,13 @@ def coach_learner_case_file(request, learner_id):
 def _case_file_learner_not_found():
     # Keep ownership failures indistinguishable from an unknown id.
     return JsonResponse({"detail": "Learner not found."}, status=404)
+
+
+def _case_file_shell_for_request(request, owner_email, learner_id):
+    context = getattr(request, '_case_file_context', None)
+    if context is not None and context.coach == owner_email and context.learner_id == learner_id:
+        return context.profile, context.source
+    return fetch_case_file_shell(owner_email, learner_id)
 
 
 def _case_file_owner_name(owner_email, profile):
@@ -13045,7 +13052,7 @@ def _case_file_next_session(owner_email, profile):
 def coach_learner_case_file_next_session(request, learner_id):
     owner_email = authenticated_coach_email(request)
     try:
-        profile, _source = fetch_case_file_shell(owner_email, learner_id)
+        profile, _source = _case_file_shell_for_request(request, owner_email, learner_id)
         if profile is None:
             return _case_file_learner_not_found()
         event = _case_file_next_session(owner_email, profile)
@@ -13060,7 +13067,7 @@ def coach_learner_case_file_next_session(request, learner_id):
 def coach_learner_case_file_reviews(request, learner_id):
     owner_email = authenticated_coach_email(request)
     try:
-        profile, _source = fetch_case_file_shell(owner_email, learner_id)
+        profile, _source = _case_file_shell_for_request(request, owner_email, learner_id)
         if profile is None:
             return _case_file_learner_not_found()
         events, issues = _case_file_review_events(owner_email, profile)

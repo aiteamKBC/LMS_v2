@@ -27,15 +27,16 @@ export function LearnerCaseFileHeader({ data, pageTitle, pageSubtitle }: Props) 
           <div className={styles.nameRow}>
             <h1>{pageTitle}</h1>
             <StatusBadge tone={statusTone(data?.programStatus)} label={data ? data.programStatus || '--' : 'Loading'} size="sm" />
-            {data?.coachRag && <StatusBadge status={data.coachRag} label={`RAG: ${data.coachRag}`} size="sm" />}
           </div>
           <div className={styles.programmeLine}>
             <span><AppIcon className="ri-graduation-cap-line" />{data?.programme || pageSubtitle}</span>
             {data?.group && <span><AppIcon className="ri-group-line" />{data.group}</span>}
           </div>
+          {data?.employer && <div className={styles.contactLine}>
+            <span><AppIcon className="ri-building-line" />Employer: {data.employer}</span>
+          </div>}
           <div className={styles.contactLine}>
             {data?.email && <span><AppIcon className="ri-mail-line" />{data.email}</span>}
-            {data?.detail?.phone && <span><AppIcon className="ri-phone-line" />{data.detail.phone}</span>}
           </div>
         </div>
       </div>

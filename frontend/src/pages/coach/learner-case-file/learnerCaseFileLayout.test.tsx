@@ -1,8 +1,16 @@
+import type { ComponentType } from 'react';
 import { fireEvent, render, screen, within, waitFor } from '@testing-library/react';
 import { MemoryRouter, useLocation } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { CaseFileReviewMeeting, CoachLearnerCaseFileData } from './types';
 import LearnerCaseFile from './page';
+
+// This suite isolates presentation with mocked profile/tab hooks. The real
+// session transport is exercised by caseFileSession.test.tsx.
+vi.mock('@/features/coach/case-file/hooks/CaseFileSession', () => ({
+  CaseFileSessionProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+  useCaseFileSession: () => null,
+}));
 
 function activityPoint(code = 'K1', activityId = 'point-1', completed = false, title = 'Learning activity', type = 'Assignment') {
   return { code, activityId, completed, title, type, module: null, status: null, source: null, completedAt: null, componentId: null };
@@ -61,6 +69,16 @@ vi.mock('@/pages/workspace/learner/DashboardTrainingPlan', () => ({
     {plan?.error && <span>{plan.error}</span>}
   </div>,
 }));
+vi.mock('./tabs/CaseFileOverviewTab', async () => {
+  const { DashboardTrainingPlan } = await import('@/pages/workspace/learner/DashboardTrainingPlan');
+  const Plan = DashboardTrainingPlan as unknown as ComponentType<Record<string, unknown>>;
+  return { CaseFileOverviewTab: ({ snapshot }: { snapshot: never }) => <Plan overviewOnly activityOverviewOnly showOtjChart={false} showRewards={false} canOpenActivities={false} programmeSnapshot={snapshot} /> };
+});
+vi.mock('./tabs/CaseFileMonthlyFocusTab', async () => {
+  const { DashboardTrainingPlan } = await import('@/pages/workspace/learner/DashboardTrainingPlan');
+  const Plan = DashboardTrainingPlan as unknown as ComponentType<Record<string, unknown>>;
+  return { CaseFileMonthlyFocusTab: () => <Plan monthlyOnly showRewards={false} canOpenActivities={false} /> };
+});
 vi.mock('@/pages/workspace/learner/tabs/DashboardWeeklyTab', () => ({
   DashboardWeeklyContent: ({ canOpenActivities }: { canOpenActivities?: boolean }) => <div aria-label="Coach learner weekly learning">
     <h2>Weekly learning plan</h2><span data-testid="weekly-actions">{canOpenActivities === false ? 'Learner actions hidden' : 'Learner actions enabled'}</span>
@@ -243,7 +261,7 @@ describe('Learner Case File design', () => {
     }
     expect(within(summary).queryByLabelText('Next Progress Review')).not.toBeInTheDocument();
     expect(within(summary).queryByLabelText('Next Monthly Coaching Meeting')).not.toBeInTheDocument();
-    expect(mocks.useCaseFileReviews).toHaveBeenCalledWith('42', true);
+    expect(mocks.useCaseFileReviews).toHaveBeenCalledWith('42', true, false);
     expect(within(summary).queryByText('Absences')).not.toBeInTheDocument();
     expect(within(summary).queryByText('Profile Snapshot')).not.toBeInTheDocument();
     expect(within(summary).queryByText('Profile details')).not.toBeInTheDocument();
@@ -281,7 +299,7 @@ describe('Learner Case File design', () => {
     expect(screen.getByRole('heading', { name: 'Monthly study plan' })).toBeVisible();
     expect(screen.getByTestId('activity-actions')).toHaveTextContent('Learner actions hidden');
     expect(within(caseFileSections).getByRole('tab', { name: 'Monthly Focus' })).toHaveAttribute('aria-selected', 'true');
-    expect(mocks.useCaseFileDashboardPlan).toHaveBeenCalledWith('apprenticeship', '125', true, true);
+    expect(mocks.useCaseFileDashboardPlan).toHaveBeenCalledWith('apprenticeship', '125', true, true, 'overview');
     // Overview, Weekly Learning, Monthly Focus, OTJH & KSB Progress, Attendance,
     // Learning Plan, Reviews, Assignments and Enrolment Documents.
     expect(screen.getAllByRole('tab')).toHaveLength(9);
@@ -1043,7 +1061,7 @@ describe('Learner Case File design', () => {
   it.each(['attendance', 'reviews', 'assignments'])('does not request the page-level plan on a direct %s route', (tab) => {
     render(<MemoryRouter initialEntries={[`/coach/learner-case-file?id=42&tab=${tab}`]}><LearnerCaseFile /></MemoryRouter>);
 
-    expect(mocks.useCaseFileDashboardPlan).toHaveBeenCalledWith('apprenticeship', '125', true, false);
+    expect(mocks.useCaseFileDashboardPlan).toHaveBeenCalledWith('apprenticeship', '125', true, false, 'overview');
   });
 
   it.each(['overview', 'weekly-learning', 'monthly-focus', 'progress', 'attendance', 'support', 'reviews'])('keeps marking idle on the direct %s route', (tab) => {
@@ -1054,7 +1072,7 @@ describe('Learner Case File design', () => {
   it.each(['weekly-learning', 'monthly-focus', 'progress'])('requests the page-level plan on the direct %s route', (tab) => {
     render(<MemoryRouter initialEntries={[`/coach/learner-case-file?id=42&tab=${tab}`]}><LearnerCaseFile /></MemoryRouter>);
 
-    expect(mocks.useCaseFileDashboardPlan).toHaveBeenCalledWith('apprenticeship', '125', true, true);
+    expect(mocks.useCaseFileDashboardPlan).toHaveBeenCalledWith('apprenticeship', '125', true, true, tab === 'progress' ? 'otjh-ksb' : tab);
     const tabName = tab === 'weekly-learning' ? 'Weekly Learning' : tab === 'monthly-focus' ? 'Monthly Focus' : 'OTJH & KSB Progress';
     expect(screen.getByRole('tab', { name: tabName })).toHaveAttribute('aria-selected', 'true');
   });
@@ -1062,7 +1080,7 @@ describe('Learner Case File design', () => {
   it('requests the page-level plan on a direct Learning Plan route', () => {
     render(<MemoryRouter initialEntries={['/coach/learner-case-file?id=42&tab=learning-plan']}><LearnerCaseFile /></MemoryRouter>);
 
-    expect(mocks.useCaseFileDashboardPlan).toHaveBeenCalledWith('apprenticeship', '125', true, true);
+    expect(mocks.useCaseFileDashboardPlan).toHaveBeenCalledWith('apprenticeship', '125', true, true, 'learning-plan');
     expect(screen.getByRole('tab', { name: 'Learning Plan' })).toHaveAttribute('aria-selected', 'true');
   });
 
@@ -1106,7 +1124,8 @@ describe('Learner Case File design', () => {
     fireEvent.click(screen.getByRole('tab', { name: 'Reviews' }));
     fireEvent.click(screen.getByRole('tab', { name: 'Attendance' }));
     expect(mocks.coachFetch).not.toHaveBeenCalled();
-    expect(mocks.useCaseFileAttendance).toHaveBeenCalledWith('apprenticeship', '125', true);
+    expect(mocks.useCaseFileAttendance).toHaveBeenCalledWith('apprenticeship', '125', true, false);
+    expect(mocks.useCaseFileAttendance).toHaveBeenLastCalledWith('apprenticeship', '125', true, true);
   });
 
   it('keeps the learner shell visible when the Attendance tab request fails', async () => {
