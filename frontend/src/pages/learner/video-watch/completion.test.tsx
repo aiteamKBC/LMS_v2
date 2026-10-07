@@ -38,7 +38,9 @@ vi.mock('@/hooks/useMyLearner', () => ({ rememberLearner: vi.fn() }));
 vi.mock('@/hooks/useAuth', () => ({ useAuth: () => ({ auth: { account: session.account }, isInitialized: session.isInitialized }) }));
 vi.mock('@/hooks/useComponentAccessWindow', () => ({ useComponentAccessWindow: () => ({ open: true, outsideWorkingHours: session.outsideWorkingHours, holidays: session.holidays, holidayCalendarReady: session.holidayCalendarReady, currentTimeLabel: 'Sunday, 14:02 BST' }) }));
 vi.mock('@/components/feature/WorkspaceShell', () => ({ WorkspaceShell: ({ children, pageSubtitle }: { children: ReactNode; pageSubtitle: string }) => <main><p>{pageSubtitle}</p>{children}</main> }));
-vi.mock('./AssignmentSubmissionWizard', () => ({ AssignmentSubmissionWizard: () => null }));
+vi.mock('./AssignmentSubmissionWizard', () => ({ AssignmentSubmissionWizard: ({ questionFiles }: {
+  questionFiles?: { url: string; fileName: string }[];
+}) => <div>{questionFiles?.map(file => <span key={file.url} data-testid="assignment-instruction" data-url={file.url}>{file.fileName}</span>)}</div> }));
 
 const component = (id: string, weekId: string, date: string) => ({
   componentId: id, component: 'Live Session · Live Teams Session 1', type: 'live_session',
@@ -57,8 +59,8 @@ const detail = (done = false) => ({
 }) as unknown as LearnerDetail;
 
 function Location() { return <span data-testid="location">{useLocation().pathname}</span>; }
-function mount(id = 'C1') {
-  return render(<MemoryRouter initialEntries={[`/learner/component/apprenticeship/1/${id}`]}>
+function mount(id = 'C1', kind = 'apprenticeship') {
+  return render(<MemoryRouter initialEntries={[`/learner/component/${kind}/1/${id}`]}>
     <Location /><Routes><Route path="/learner/component/:kind/:id/:componentId" element={<ComponentViewPage />} /></Routes>
   </MemoryRouter>);
 }
@@ -86,6 +88,18 @@ beforeEach(() => {
   vi.mocked(loadLearningReflectionSubmission).mockResolvedValue(null);
 });
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
+
+it.each(['commercial', 'apprenticeship'])('passes every instruction file to the %s assignment without including another activity', async kind => {
+  const files = ['brief', 'guidance'].map(name => ({ url: `/curriculum_api/curriculum/uploads/${name}.pdf`, fileName: `${name}.pdf`, contentType: 'application/pdf', size: 10 }));
+  vi.mocked(fetchLearnerDetail).mockResolvedValue({ ...detail(), components: [
+    { ...first, type: 'assignment', component: 'Assignment instructions', assignmentBrief: 'Read both PDFs.', resourceUrl: files[0].url, fileName: files[0].fileName, files },
+    { ...second, type: 'assignment', resourceUrl: '/unrelated.pdf', files: [{ ...files[0], url: '/unrelated.pdf', fileName: 'unrelated.pdf' }] },
+  ] } as LearnerDetail);
+  mount('C1', kind);
+  const instructions = await screen.findAllByTestId('assignment-instruction');
+  expect(instructions.map(file => file.getAttribute('data-url'))).toEqual(files.map(file => file.url));
+  expect(screen.queryByText('unrelated.pdf')).toBeNull();
+});
 
 it('keeps direct audio tied to real playback events', () => {
   const onPlayingChange = vi.fn();

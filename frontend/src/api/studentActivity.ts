@@ -6,6 +6,8 @@ export interface StudentActivityItem {
   source_activity_id: number;
   catalogue_kind?: string;
   can_open_material?: boolean;
+  /** Canonical evidence links retained when several results share a component. */
+  record_ids?: string[];
   group_id: number;
   group_name: string | null;
   date: string | null;
@@ -70,7 +72,7 @@ export interface CanonicalOtjhActivity {
 }
 
 export interface StudentActivityResponse {
-  progress_basis?: 'recorded_activities';
+  progress_basis?: 'recorded_activities' | 'catalogue_activities';
   learner_name: string;
   count: number;
   unique_activity_count: number;

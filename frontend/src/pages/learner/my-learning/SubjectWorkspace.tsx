@@ -323,6 +323,7 @@ function SubjectCard({ subject, cover, tone = 'purple', onOpen, template, csrfTo
         <p className={styles.cardDescription}>Explore your learning materials and activities.</p>
         <div className={styles.cardProgress}><Progress done={completed} total={total} compact label={`${subject.title} progress`} />
           {subject.recordedHistory && <p className="mt-2 text-xs text-foreground-500">Recorded activities only · Full catalogue: {subject.catalogueCount ?? 0}<br />Accepted time: {formatRecordedHours(subject.acceptedHours ?? 0)}</p>}
+          {subject.catalogueProgress && <p className="mt-2 text-xs text-foreground-500">Accepted time: {formatRecordedHours(subject.acceptedHours ?? 0)}</p>}
         </div>
         <span className={styles.nextActivity}>{isComplete ? <CheckCircle2 size={20} /> : <BookOpen size={20} />}<span><small>{isComplete ? 'Well done' : 'Next up'}</small><strong>{isComplete ? subject.recordedHistory ? 'All recorded activities complete' : 'All activities complete' : next?.title || 'Explore this subject'}</strong></span><ChevronRight size={16} /></span>
         <span className={styles.cardAction}>Open subject<ArrowRight size={16} aria-hidden="true" /></span>
@@ -454,7 +455,8 @@ export function StudentActivityPanel({ data: incomingData, loading, error, onRet
   // Refuse ambiguous matches rather than opening a different course's material.
   const activityMatches = requestedActivity ? subjects.flatMap(subject => subject.activities
     .filter(entry => requestedActivity.startsWith('record:')
-      ? /^record:[^:]+:[^:]+$/.test(entry.id) && entry.id.slice(entry.id.lastIndexOf(':') + 1) === requestedActivity.slice(7)
+      ? entry.legacy?.record_ids?.includes(requestedActivity.slice(7))
+        || /^record:[^:]+:[^:]+$/.test(entry.id) && entry.id.slice(entry.id.lastIndexOf(':') + 1) === requestedActivity.slice(7)
       : entry.id === requestedActivity || String(entry.legacy?.source_activity_id) === requestedActivity)
     .map(entry => ({ subject, entry }))) : [];
   const activityTarget = activityMatches.length === 1 ? activityMatches[0] : undefined;
