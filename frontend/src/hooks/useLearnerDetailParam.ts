@@ -1,3 +1,4 @@
+import { useCaseFileSession } from '@/features/coach/case-file/hooks/CaseFileSession';
 import { useCallback, useEffect, useState } from 'react';
 import { fetchLearnerDetail, peekLearnerDetail, type LearnerDetail, type LearnerKind } from '@/api/learnerDetail';
 
@@ -7,6 +8,7 @@ import { fetchLearnerDetail, peekLearnerDetail, type LearnerDetail, type Learner
  * so ordinary sidebar navigation can reuse the short-lived cached payload.
  */
 export function useLearnerDetailParam(kind: string | undefined, id: string | undefined, refreshOnFocus = false) {
+  const session = useCaseFileSession();
   const isRealMode = kind === 'commercial' || kind === 'apprenticeship';
   const identity = isRealMode && id ? `${kind}:${id}` : null;
   const [state, setState] = useState<{
@@ -21,7 +23,7 @@ export function useLearnerDetailParam(kind: string | undefined, id: string | und
   }, []);
 
   useEffect(() => {
-    if (!refreshOnFocus || !identity) return;
+    if (session || !refreshOnFocus || !identity) return;
     // Returning from Module Builder must pick up assignments and newly added
     // content. Browsers can emit both visibilitychange and focus together.
     let lastRefresh = 0;
@@ -38,27 +40,27 @@ export function useLearnerDetailParam(kind: string | undefined, id: string | und
       window.removeEventListener('online', onReturn);
       document.removeEventListener('visibilitychange', onReturn);
     };
-  }, [refreshOnFocus, identity, refresh]);
+  }, [refreshOnFocus, identity, refresh, session]);
 
   useEffect(() => {
     if (!isRealMode || !id || !identity) return;
     let cancelled = false;
-    const cached = peekLearnerDetail(kind as LearnerKind, id, true);
+    const cached = session ? undefined : peekLearnerDetail(kind as LearnerKind, id, true);
     setState((previous) => {
       const real = previous?.identity === identity ? previous.real : cached ?? null;
       return { identity, real, loading: !real, loadError: null };
     });
-    fetchLearnerDetail(kind as LearnerKind, id, { revalidate: refreshTick > 0 })
+    (session ? session.detail(refreshTick > 0) : fetchLearnerDetail(kind as LearnerKind, id, { revalidate: refreshTick > 0 }))
       .then((data) => { if (!cancelled) setState({ identity, real: data, loading: false, loadError: null }); })
       .catch((error) => {
         if (!cancelled) setState((previous) => ({ identity, real: previous?.identity === identity ? previous.real : null, loading: false, loadError: error instanceof Error ? error.message : 'Could not load learner' }));
       });
     return () => { cancelled = true; };
-  }, [isRealMode, kind, id, identity, refreshTick]);
+  }, [isRealMode, kind, id, identity, refreshTick, session]);
 
   // Staff can move directly between View pages. Hide the previous learner in
   // the first render of the new URL, before the next request effect runs.
   const current = identity && state?.identity === identity ? state : null;
-  const cached = !current && identity && id ? peekLearnerDetail(kind as LearnerKind, id, true) : undefined;
+  const cached = !session && !current && identity && id ? peekLearnerDetail(kind as LearnerKind, id, true) : undefined;
   return { isRealMode, real: current?.real ?? cached ?? null, loading: current?.loading ?? (isRealMode && !!id && !cached), loadError: current?.loadError ?? null, refresh };
 }

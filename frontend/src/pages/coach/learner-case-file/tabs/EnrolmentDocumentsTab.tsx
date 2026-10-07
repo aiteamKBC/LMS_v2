@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCaseFileSession } from '@/features/coach/case-file/hooks/CaseFileSession';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { RowsSkeleton } from '@/components/feature/Skeletons';
 import { useAuth } from '@/hooks/useAuth';
@@ -22,6 +23,9 @@ import { ReferencePanel } from '../components/CaseFilePrimitives';
  * here — there is no withdraw — so it asks for confirmation first.
  */
 export function EnrolmentDocumentsTab({ learnerId }: { learnerId: string }) {
+  const session = useCaseFileSession();
+  const currentRead = useRef<AbortController | null>(null);
+  const mounted = useRef(false);
   const { auth } = useAuth();
   const account = auth.account;
   const accountKey = account ? `${account.subjectType}:${account.subjectId}` : '';
@@ -31,23 +35,31 @@ export function EnrolmentDocumentsTab({ learnerId }: { learnerId: string }) {
   const [creatingSignature, setCreatingSignature] = useState(false);
   const [signatureError, setSignatureError] = useState<string | null>(null);
 
-  const load = useCallback(() => {
+  const load = useCallback((refresh = false) => {
+    if (!mounted.current) return;
+    currentRead.current?.abort();
+    const controller = new AbortController();
+    currentRead.current = controller;
     setLoading(true);
     setError(null);
-    fetchCoachEnrolmentDocuments(learnerId)
-      .then(setData)
-      .catch((e: Error) => setError(e.message))
-      .finally(() => setLoading(false));
-  }, [learnerId]);
+    (session ? session.read<CoachEnrolmentDocumentsResponse>('enrolment-documents', {}, { refresh, signal: controller.signal }) : fetchCoachEnrolmentDocuments(learnerId))
+      .then(value => { if (!controller.signal.aborted) setData(value); })
+      .catch((e: Error) => { if (!controller.signal.aborted) setError(e.message); })
+      .finally(() => { if (!controller.signal.aborted) setLoading(false); });
+  }, [learnerId, session]);
 
-  useEffect(load, [load]);
+  useEffect(() => {
+    mounted.current = true;
+    load();
+    return () => { mounted.current = false; currentRead.current?.abort(); };
+  }, [load]);
 
   const saveNewSignature = async (dataUrl: string) => {
     setSignatureError(null);
     try {
       await saveSignature(accountKey, dataUrl);
       setCreatingSignature(false);
-      load();
+      load(true);
     } catch (e) {
       setSignatureError(e instanceof Error ? e.message : 'Could not save your signature.');
     }
@@ -97,7 +109,7 @@ export function EnrolmentDocumentsTab({ learnerId }: { learnerId: string }) {
             )}
             <ul className="divide-y divide-foreground-100 rounded-xl border border-foreground-100">
               {data.documents.map((doc) => (
-                <DocumentRow key={doc.eventKey} learnerId={learnerId} doc={doc} canSign={hasSignature} signerName={data.signature.name} onSigned={load} />
+                <DocumentRow key={doc.eventKey} learnerId={learnerId} doc={doc} canSign={hasSignature} signerName={data.signature.name} onSigned={() => load(true)} />
               ))}
             </ul>
           </>

@@ -26,7 +26,7 @@ import planLayout from '@/pages/learner/training-plan-timeline/TrainingPlanDetai
 
 type SessionRow = Extract<CurriculumRow, { kind: 'session' }>;
 type ReadingWeekRow = Extract<CurriculumRow, { kind: 'reading-week' }>;
-type SessionState = 'attended' | 'missed' | 'upcoming' | 'live' | 'unscheduled';
+type SessionState = 'attended' | 'missed' | 'upcoming' | 'live' | 'unscheduled' | 'unmarked' | 'cancelled';
 
 function sessionState(week: SessionRow, now: number): SessionState {
   if (week.attended === true) return 'attended';
@@ -236,7 +236,7 @@ export function WeeklyLearningPlan({ kind, learnerId, schedule, scheduleLoading,
 }
 
 /** One of the week summary cards: activities, KSBs and expected OTJ hours. */
-function WeekStatCard({ label, value, percent, tone, caption, title }: {
+export function WeekStatCard({ label, value, percent, tone, caption, title }: {
   label: string; value: string; percent: number | null; tone: string; caption: string; title?: string;
 }) {
   return <div className="min-w-0 rounded-xl border border-foreground-100 bg-background-50 p-3.5 shadow-sm" title={title}>
@@ -278,14 +278,14 @@ function PaginationControls({ page, pageCount, onPageChange, label, className }:
   </nav>;
 }
 
-function LiveSessionSummary({ week, now, headingId, canJoinSession }: {
-  week: SessionRow; now: number; headingId: string; canJoinSession: boolean;
+export function LiveSessionSummary({ week, now, headingId, canJoinSession, derivedState }: {
+  week: SessionRow; now: number; headingId: string; canJoinSession: boolean; derivedState?: SessionState;
 }) {
   const start = week.start as string;
   const startMs = Date.parse(start);
   const end = week.minutes ? new Date(startMs + week.minutes * 60_000) : null;
   const hasJoinUrl = !!week.joinUrl;
-  const state = sessionState(week, now);
+  const state = derivedState ?? sessionState(week, now);
   const canJoin = state === 'live' || (state === 'upcoming' && now >= startMs - 60 * 60_000);
   return <div className={cn('flex min-h-[136px] flex-col gap-4 rounded-xl border p-5 md:flex-row md:items-center md:justify-between', planLayout.secondaryLiveCard)}>
     <div className="flex min-w-0 gap-4">
@@ -337,7 +337,7 @@ function durationLabel(minutes: number): string {
   return `${minutes} min`;
 }
 
-function ReadingWeekPanel({ week }: { week: ReadingWeekRow }) {
+export function ReadingWeekPanel({ week }: { week: ReadingWeekRow }) {
   return <div className="rounded-xl border border-foreground-100 bg-background-50 p-4 shadow-sm">
     <div className="flex items-center gap-3"><span className="flex h-10 w-10 items-center justify-center rounded-xl bg-background-100 text-foreground-500"><CalendarOff size={18} aria-hidden="true" /></span><p className="text-sm font-semibold text-foreground-900">No session this week</p></div>
     {week.holidays.length ? <ul className="mt-2 space-y-1 text-xs text-foreground-500">
@@ -400,9 +400,10 @@ function ActivitiesHeading({ count, controls }: { count: number; controls?: Reac
   </div>;
 }
 
-function ActivitiesTableModern({ components, completedIds, kind, learnerId, week, canOpenActivities }: {
+export function ActivitiesTableModern({ components, completedIds, kind, learnerId, week, canOpenActivities, summaries }: {
   components: JourneyComponent[]; completedIds: Set<string>; kind: LearnerKind; learnerId: string; week?: string;
   canOpenActivities: boolean;
+  summaries?: Record<string, { status: ActivityStatus; expectedTimeLabel: string; ksbCodes: string[] }>;
 }) {
   const [query, setQuery] = useState('');
   const [typeFilter, setTypeFilter] = useState('all');
@@ -411,12 +412,12 @@ function ActivitiesTableModern({ components, completedIds, kind, learnerId, week
   const filteredComponents = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase();
     return components.filter(component => {
-      const status = activityStatus(component, completedIds);
+      const status = summaries?.[component.componentId || '']?.status ?? activityStatus(component, completedIds);
       const type = activityTypeLabel(component);
       const matchesQuery = !normalizedQuery || `${type} ${component.title}`.toLowerCase().includes(normalizedQuery);
       return matchesQuery && (typeFilter === 'all' || type === typeFilter) && (statusFilter === 'all' || status === statusFilter);
     });
-  }, [components, completedIds, query, statusFilter, typeFilter]);
+  }, [components, completedIds, query, statusFilter, typeFilter, summaries]);
   const componentPageKey = components.map(component => component.componentId || component.title).join('|');
   const [page, setPage] = useState(0);
   const pageCount = Math.max(1, Math.ceil(filteredComponents.length / ACTIVITY_PAGE_SIZE));
@@ -470,7 +471,7 @@ function ActivitiesTableModern({ components, completedIds, kind, learnerId, week
         </thead>
         <tbody>
           {visibleComponents.map((component, index) => {
-            const status = activityStatus(component, completedIds);
+            const status = summaries?.[component.componentId || '']?.status ?? activityStatus(component, completedIds);
             const href = canOpenActivities ? activityHref(component, week, kind, learnerId, status === 'completed') : null;
             const typeLabel = activityTypeLabel(component);
             const meta = resourceTypeMeta(component.type || typeLabel);
@@ -488,9 +489,9 @@ function ActivitiesTableModern({ components, completedIds, kind, learnerId, week
                 <p className="line-clamp-2 text-[11px] font-semibold leading-4 text-foreground-900" title={component.title}>{component.title}</p>
               </td>
               <td className="px-2 py-2 text-center align-middle text-[10px] font-semibold tabular-nums text-foreground-700">
-                <span className="inline-flex items-center justify-center gap-1 whitespace-nowrap"><Clock3 size={12} className="text-foreground-400" aria-hidden="true" />{activityExpectedTimeLabel(component)}</span>
+                <span className="inline-flex items-center justify-center gap-1 whitespace-nowrap"><Clock3 size={12} className="text-foreground-400" aria-hidden="true" />{summaries?.[component.componentId || '']?.expectedTimeLabel ?? activityExpectedTimeLabel(component)}</span>
               </td>
-              <td className="px-2 py-2 text-center align-middle"><div className="flex justify-center"><KsbChips codes={activityKsbCodes(component)} /></div></td>
+              <td className="px-2 py-2 text-center align-middle"><div className="flex justify-center"><KsbChips codes={summaries?.[component.componentId || '']?.ksbCodes ?? activityKsbCodes(component)} /></div></td>
               <td className="px-2 py-2 text-center align-middle"><StatusBadge tone={STATUS_TONE[status]} label={STATUS_LABEL[status]} size="sm" showIcon={status === 'completed'} className="whitespace-nowrap text-[10px]" /></td>
               {canOpenActivities && <td className="px-2 py-2 text-center align-middle">
                 {href ? <Link to={href} className={cn(
@@ -517,7 +518,7 @@ function activityTypeLabel(component: JourneyComponent): string {
   return (component.type || 'activity').replace(/[_-]/g, ' ').replace(/\b\w/g, letter => letter.toUpperCase());
 }
 
-function WeeklyLearningPlanSkeleton() {
+export function WeeklyLearningPlanSkeleton() {
   return <section aria-busy="true" aria-label="Loading your weekly learning plan" className="col-span-full grid w-full min-w-0 grid-cols-1 gap-3 lg:grid-cols-[240px_minmax(0,1fr)]">
     <Panel>
       <div className="mb-3 flex items-center gap-2 text-sm font-bold text-foreground-400"><BookOpen size={16} aria-hidden="true" />Weeks</div>

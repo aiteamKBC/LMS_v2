@@ -52,14 +52,14 @@ CURRENT_SUBJECTS_SQL = '''
     WHERE (cm.deleted_at IS NULL OR COALESCE(cm.deleted_via_parent, '') <> '')
 '''
 
-def _direct_progress_records(enrolment_id):
+def _direct_progress_records(enrolment_id, *, profile=None):
     """Progress recorded after the historical audit snapshot was imported.
 
     The Last_audit total already covers every legacy subject displayed by this
     endpoint.  Only direct/current-platform rows are added here; including the
     imported normalized rows as well would count the historical time twice.
     """
-    profile = (
+    profile = profile or (
         LearnerProfile.objects.using('enrolment')
         .filter(enrolment_id=enrolment_id)
         .only('id')
@@ -232,7 +232,10 @@ def student_activity(request, kind, pk):
         return _error("Learner not found.", 404)
 
     try:
-        source = model.all_learners.only("id", "aptem_id", "email").get(pk=pk)
+        from .case_file_sources import source_for_case_file
+        source = source_for_case_file(request, kind, pk)
+        if source is None:
+            source = model.all_learners.only("id", "aptem_id", "email").get(pk=pk)
     except model.DoesNotExist:
         return _error("Learner not found.", 404)
     except DatabaseError:

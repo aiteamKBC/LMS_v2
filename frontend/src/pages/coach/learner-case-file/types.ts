@@ -245,6 +245,8 @@ export interface CoachLearnerCaseFileData {
   startDate: string;
   gatewayReviewDate: string;
   plannedEndDate: string;
+  programmeStartDate?: string | null;
+  programmeEndDate?: string | null;
   totalExpectedOtjh: number;
   touchedKsbCodes: string[];
   activityItems: CaseFileActivityItem[];

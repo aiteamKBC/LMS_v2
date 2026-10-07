@@ -1,4 +1,5 @@
-import { useMemo, useState } from 'react';
+import { useCaseFileSession } from '@/features/coach/case-file/hooks/CaseFileSession';
+import { useEffect, useMemo, useState } from 'react';
 import { ChevronDown, ChevronUp, FileText } from 'lucide-react';
 import type { LearnerKind } from '@/api/learnerDetail';
 import { RowsSkeleton } from '@/components/feature/Skeletons';
@@ -14,15 +15,13 @@ import type { useCaseFileMarking } from '../useCaseFileMarking';
  * same submission history and PDF report the learner sees on Monthly
  * submission. Read only: marking stays in the Marking queue.
  */
-export default function AssignmentsTab({ kind, learnerId, markingState }: {
+function LegacyAssignmentsTab({ kind, learnerId, markingState }: {
   kind: LearnerKind;
   learnerId: string;
   markingState?: ReturnType<typeof useCaseFileMarking>;
 }) {
   const { real, loading, loadError, refresh } = useLearnerDetailParam(kind, learnerId);
   const plan = useMonthlyAssignmentPlan(kind, learnerId);
-  const [open, setOpen] = useState<string | null>(null);
-
   const months = useMemo(() => (real
     ? groupMonthlyAssignments(real, plan.metadata, plan.contract, plan.statuses, plan.submissionCounts)
       .map(group => ({ ...group, assignments: group.assignments.filter(hasSubmission) }))
@@ -30,8 +29,6 @@ export default function AssignmentsTab({ kind, learnerId, markingState }: {
       // Latest month first; unscheduled work last.
       .sort((a, b) => a.month && b.month ? b.month.localeCompare(a.month) : a.month ? -1 : b.month ? 1 : 0)
     : []), [real, plan.metadata, plan.contract, plan.statuses, plan.submissionCounts]);
-  const total = months.reduce((sum, group) => sum + group.assignments.length, 0);
-
   if (loading || plan.loading || markingState?.loading) {
     return <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-5" role="status" aria-label="Loading assignments"><RowsSkeleton rows={4} /></div>;
   }
@@ -48,6 +45,39 @@ export default function AssignmentsTab({ kind, learnerId, markingState }: {
     </div>;
   }
 
+  return <AssignmentList months={months} errors={plan.errors} retry={plan.retry} kind={kind} learnerId={learnerId} />;
+}
+
+type Months = ReturnType<typeof groupMonthlyAssignments>;
+export default function AssignmentsTab(props: { kind: LearnerKind; learnerId: string; markingState?: ReturnType<typeof useCaseFileMarking> }) {
+  const session = useCaseFileSession();
+  return session ? <SectionAssignments {...props} /> : <LegacyAssignmentsTab {...props} />;
+}
+
+function SectionAssignments({ kind, learnerId }: { kind: LearnerKind; learnerId: string }) {
+  const session = useCaseFileSession();
+  const [attempt, setAttempt] = useState(0);
+  const [state, setState] = useState<{ months?: Months; errors?: string[]; error?: string }>({});
+  useEffect(() => {
+    if (!session) return;
+    const controller = new AbortController();
+    setState({});
+    void session.read<{ months: Months; errors: string[] }>('assignments', {}, { signal: controller.signal, refresh: attempt > 0 }).then(payload => {
+      if (!controller.signal.aborted) setState(payload);
+    }).catch((error: unknown) => {
+      if (!controller.signal.aborted) setState({ error: error instanceof Error ? error.message : 'Unable to load assignments.' });
+    });
+    return () => controller.abort();
+  }, [session, attempt]);
+  const retry = () => setAttempt(value => value + 1);
+  if (state.error) return <div role="alert">{state.error}<button type="button" onClick={retry}>Retry assignments</button></div>;
+  if (!state.months) return <div role="status" aria-label="Loading assignments"><RowsSkeleton rows={4} /></div>;
+  return <AssignmentList months={state.months} errors={state.errors || []} retry={retry} kind={kind} learnerId={learnerId} />;
+}
+
+function AssignmentList({ months, errors, retry, kind, learnerId }: { months: Months; errors: string[]; retry: () => void; kind: LearnerKind; learnerId: string }) {
+  const [open, setOpen] = useState<string | null>(null);
+  const total = months.reduce((sum, group) => sum + group.assignments.length, 0);
   return <section className="space-y-4" aria-label="Submitted assignments">
     <div className="flex flex-wrap items-center justify-between gap-2">
       <div>
@@ -59,10 +89,10 @@ export default function AssignmentsTab({ kind, learnerId, markingState }: {
       </span>
     </div>
 
-    {plan.errors.length > 0 && <div role="alert" className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
-      {plan.errors.map(message => <p key={message}>{message}</p>)}
+    {errors.length > 0 && <div role="alert" className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+      {errors.map(message => <p key={message}>{message}</p>)}
       <p>Some submitted assignments may be missing from this list until the details load.</p>
-      <button type="button" onClick={plan.retry} className="mt-2 rounded-lg border border-amber-300 px-3 py-1.5 font-semibold hover:bg-amber-100">Retry details</button>
+      <button type="button" onClick={retry} className="mt-2 rounded-lg border border-amber-300 px-3 py-1.5 font-semibold hover:bg-amber-100">Retry details</button>
     </div>}
 
     {months.length === 0 ? (
@@ -74,7 +104,7 @@ export default function AssignmentsTab({ kind, learnerId, markingState }: {
       className="rounded-xl border border-foreground-200/60 bg-background-50">
       <header className="flex flex-wrap items-baseline justify-between gap-2 border-b border-foreground-200/60 px-4 py-3">
         <h3 className="text-sm font-semibold text-foreground-900">
-          {monthName(group.month)}{group.label !== monthName(group.month) ? ` — ${group.label}` : ''}
+          {monthName(group.month)}{group.label && group.label !== monthName(group.month) ? ` — ${group.label}` : ''}
         </h3>
         <span className="text-xs text-foreground-500">{group.assignments.length} assignment{group.assignments.length === 1 ? '' : 's'}</span>
       </header>

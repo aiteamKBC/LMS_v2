@@ -1,3 +1,4 @@
+import { useCaseFileSession } from '@/features/coach/case-file/hooks/CaseFileSession';
 import { useEffect, useRef, useState } from 'react';
 import { ArrowDown, ArrowUp, ArrowUpDown, CalendarDays, Clock, GraduationCap, PieChart, Target } from 'lucide-react';
 import { AppIcon } from '@/components/feature/AppIcon';
@@ -75,6 +76,15 @@ export function ProgressTab({ data, onViewEvidence, plan, otjhSnapshot }: {
   plan?: DashboardPlanState;
   otjhSnapshot?: OtjhSnapshot | null;
 }) {
+  const session = useCaseFileSession();
+  const detailController = useRef<AbortController | null>(null);
+  useEffect(() => {
+    const controller = new AbortController();
+    detailController.current = controller;
+    return () => controller.abort();
+  }, [session]);
+  const [detailError, setDetailError] = useState<string>();
+  const [loadingCode, setLoadingCode] = useState<string>();
   const [activeKsbCategory, setActiveKsbCategory] = useState('All');
   const [activeKsbStatus, setActiveKsbStatus] = useState('All Status');
   const [ksbSearch, setKsbSearch] = useState('');
@@ -91,7 +101,7 @@ export function ProgressTab({ data, onViewEvidence, plan, otjhSnapshot }: {
       setBreakdownState({ key: breakdownKey, error: 'Learner identity is unavailable.' });
       return;
     }
-    readLearnerJson<AptemKsbBreakdown>(`/learner_api/metrics/${data.kind}/${data.enrolmentId}/?view=coach-ksb-breakdown`, { signal: controller.signal })
+    (session ? session.read<AptemKsbBreakdown>('otjh-ksb', { resource: 'breakdown' }, { signal: controller.signal }) : readLearnerJson<AptemKsbBreakdown>(`/learner_api/metrics/${data.kind}/${data.enrolmentId}/?view=coach-ksb-breakdown`, { signal: controller.signal }))
       .then((value) => {
         if (!value || !Array.isArray(value.rows)) throw new Error('The server returned invalid KSB components. Please reload to try again.');
         if (!controller.signal.aborted) setBreakdownState({ key: breakdownKey, value });
@@ -100,7 +110,7 @@ export function ProgressTab({ data, onViewEvidence, plan, otjhSnapshot }: {
         if (!controller.signal.aborted) setBreakdownState({ key: breakdownKey, error: error instanceof Error ? error.message : 'Could not load KSB components.' });
       });
     return () => controller.abort();
-  }, [breakdownKey, data.kind, data.enrolmentId]);
+  }, [breakdownKey, data.kind, data.enrolmentId, session]);
   const breakdown = breakdownState?.key === breakdownKey ? breakdownState.value : undefined;
   const breakdownError = breakdownState?.key === breakdownKey ? breakdownState.error : undefined;
   const otjh = selectProgressOtjh(data, plan, otjhSnapshot);
@@ -162,6 +172,7 @@ export function ProgressTab({ data, onViewEvidence, plan, otjhSnapshot }: {
   };
   return (
     <div className={cn(styles.stack, styles.progressTab)}>
+      {detailError && <div role="alert" className="text-red-700">{detailError}</div>}
       <ReferencePanel title="Off-the-Job Hours (OTJH)" subtitle="Track off-the-job learning hours against your programme requirements." icon="ri-time-line" tone="primary" className={styles.otjhPanel}>
         <GraduationCap className={styles.otjhDecoration} aria-hidden="true" />
         <div className={styles.metricGrid}>
@@ -246,14 +257,22 @@ export function ProgressTab({ data, onViewEvidence, plan, otjhSnapshot }: {
                     <td><StatusBadge tone={item.status === 'Achieved' ? 'positive' : 'neutral'} label={item.status} className={styles.browserBadge} /></td>
                     <td>{item.activities.length} {item.activities.length === 1 ? 'Activity' : 'Activities'}</td>
                     <td className={styles.ksbGroupProgress}>{item.completed} completed components</td>
-                    <td><button type="button" className={styles.tableButton} onClick={() => onViewEvidence({
-                      code: item.code,
-                      title: item.description,
-                      category: item.category,
-                      linked: item.status === 'Achieved',
-                      mappedComponents: true,
-                      activities: item.activities.flatMap((activity) => activity.evidenceActivities),
-                    })}>View</button></td>
+                    <td><button type="button" className={styles.tableButton} disabled={loadingCode === item.code} onClick={async () => {
+                      setDetailError(undefined);
+                      setLoadingCode(item.code);
+                      const controller = detailController.current;
+                      try {
+                        const detail = session ? await session.read<AptemKsbBreakdown>('ksb-detail', { code: item.code }, { signal: controller?.signal }) : null;
+                        if (controller?.signal.aborted) return;
+                        const row = detail ? selectAptemKsbGroups(detail.rows, detail.source)[0] : item;
+                        if (!row) throw new Error('KSB detail is unavailable.');
+                        onViewEvidence({ code: item.code, title: item.description, category: item.category,
+                          linked: item.status === 'Achieved', mappedComponents: true,
+                          activities: row.activities.flatMap(activity => activity.evidenceActivities) });
+                      } catch (reason) {
+                        if (!controller?.signal.aborted) setDetailError(reason instanceof Error ? reason.message : 'Could not load KSB detail.');
+                      } finally { if (!controller?.signal.aborted) setLoadingCode(undefined); }
+                    }}>{loadingCode === item.code ? 'Loading...' : 'View'}</button></td>
                   </tr>
                 ))}
               </tbody>

@@ -299,7 +299,7 @@ def read_dashboard(source, section=None):
         'programmeStartDate': date_only(owner.get('start_date')) if owner else None,
         'programmeEndDate': date_only(owner.get('end_date')) if owner else None,
     }
-    profile = (
+    profile = getattr(source, '_case_file_profile', None) or (
         LearnerProfile.objects.filter(enrolment_id=source.pk)
         .only(*TRAINING_PLAN_PROFILE_FIELDS)
         .first()
@@ -441,7 +441,10 @@ def training_plan_dashboard(request, kind, pk):
     measurement = None
     try:
         with measure_projection('training-plan-dashboard', kind=kind, learner_id=pk, section=section) as measurement:
-            source = model.all_learners.only(*TRAINING_PLAN_SOURCE_FIELDS).get(pk=pk)
+            from .case_file_sources import source_for_case_file
+            source = source_for_case_file(request, kind, pk)
+            if source is None:
+                source = model.all_learners.only(*TRAINING_PLAN_SOURCE_FIELDS).get(pk=pk)
             source._canonical_profile = canonical_learning.require_profile(pk)
         # ``learning`` is the detailed weekly dashboard projection.  Keep it
         # on the same read path as overview so clients can request the weekly
