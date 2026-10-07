@@ -24,7 +24,12 @@ def imported_events_for_learner(source, profile, aptem_id, records):
     with connection.cursor() as cursor:
         rows = _review_rows(cursor, profile.id, types)
         sections = _sections_by_review(cursor, [row["id"] for row in rows])
-    history = {str(row["id"]): _serialize_review(row, sections) for row in rows}
+    # Match the Coach/history presentation. The shared helper enriches only
+    # source-completed reviews; local overlay completion does not opt them in.
+    history = {
+        str(row["id"]): _serialize_review(row, sections, historical_presentation=True)
+        for row in rows
+    }
     bookings, overlays = load_imported_links(events, records=records)
     result = []
     for event in events:

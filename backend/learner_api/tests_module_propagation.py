@@ -1,12 +1,17 @@
 """Module assignments and live authored content, without a database or writes."""
 import json
+from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import MagicMock, Mock, patch
 
 from django.test import RequestFactory, SimpleTestCase
 
 from .learning_plan import _effective_plan_ids, learning_plan, module_learners
-from .learner_detail import _append_week_quizzes, _resolve_from_master
+from .learner_detail import (
+    _append_week_quizzes,
+    _live_session_occurrence_fallbacks,
+    _resolve_from_master,
+)
 from .mappers import get_training_plan, stored_training_plan, training_plan_field
 
 
@@ -148,6 +153,52 @@ class LiveAssignedModuleTests(SimpleTestCase):
         self.assertEqual(result[2][0]['componentId'], 'C-VID')
         self.assertIsNone(result[2][0]['videoUrl'])
         self.assertEqual(result[2][0]['contentHtml'], '<p>Notes</p>')
+
+    def test_missing_live_session_link_uses_the_unique_module_occurrence_on_its_local_date(self):
+        result, cursor = self.resolve([
+            [('MOD-NEW', 'New module')],
+            [('W-NEW', 'MOD-NEW', 'Week 1', 1, 0)],
+            [('C-LIVE', 'W-NEW', 'MOD-NEW', 'live_session', 'Live lesson', '',
+              {'sessionDate': '2026-10-06'}, '', 0,
+              [{'code': 'K1', 'weight': 1}], False, None, False)],
+            [],
+            [('MOD-NEW', 'LIVE-1', 'GMT Standard Time', 'OCC-1', 1,
+              datetime(2026, 10, 6, 8, 30))],
+        ], assigned=[MODULE])
+
+        live = result[2][0]
+        self.assertEqual(live['teamsLiveSessionId'], 'LIVE-1')
+        self.assertEqual(live['teamsSessionNumber'], 1)
+        self.assertIn('curriculum.live_session_occurrences', cursor.execute.call_args_list[-1].args[0])
+
+    def test_existing_live_session_link_is_not_replaced_or_queried_again(self):
+        result, cursor = self.resolve([
+            [('MOD-NEW', 'New module')],
+            [('W-NEW', 'MOD-NEW', 'Week 1', 1, 0)],
+            [('C-LIVE', 'W-NEW', 'MOD-NEW', 'live_session', 'Live lesson', '',
+              {'sessionDate': '2026-10-06', 'teamsLiveSessionId': 'LIVE-SAVED', 'teamsSessionNumber': 7}, '', 0,
+              [{'code': 'K1', 'weight': 1}], False, None, False)],
+            [],
+        ], assigned=[MODULE])
+
+        live = result[2][0]
+        self.assertEqual((live['teamsLiveSessionId'], live['teamsSessionNumber']), ('LIVE-SAVED', 7))
+        self.assertFalse(any('curriculum.live_session_occurrences' in call.args[0] for call in cursor.execute.call_args_list))
+
+    def test_ambiguous_live_session_date_is_not_attached_to_either_occurrence(self):
+        rows = [
+            ('MOD-NEW', 'LIVE-1', 'GMT Standard Time', 'OCC-1', 1, datetime(2026, 10, 6, 8, 30)),
+            ('MOD-NEW', 'LIVE-2', 'GMT Standard Time', 'OCC-2', 1, datetime(2026, 10, 6, 14, 30)),
+        ]
+        self.assertNotIn(('MOD-NEW', '2026-10-06'), _live_session_occurrence_fallbacks(rows))
+
+    def test_live_session_fallback_matches_the_series_local_date(self):
+        rows = [
+            ('MOD-NEW', 'LIVE-1', 'Egypt Standard Time', 'OCC-1', 1,
+             datetime(2026, 10, 5, 22, 30, tzinfo=timezone.utc)),
+        ]
+        fallback = _live_session_occurrence_fallbacks(rows)
+        self.assertEqual(fallback[('MOD-NEW', '2026-10-06')]['teamsSessionNumber'], 1)
 
     def test_removing_a_video_does_not_touch_other_components_in_the_week(self):
         result, _ = self.resolve([

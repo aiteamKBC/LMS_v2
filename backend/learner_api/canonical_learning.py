@@ -870,6 +870,71 @@ def metrics(learner_id):
     return result
 
 
+def otjh_summary_bulk(learner_ids):
+    """Profile OTJH facts in three bounded reads, without content/KSB hydration.
+
+    Accepted seconds belong to progress rows, not their source snapshots,
+    segments or unpersisted submissions. The plan uses the same scoped monthly
+    targets as Monthly Logs and the Coach Profile (not Created_users.Planned_hours).
+    Invalid or ambiguous identities remain unavailable, just as in metrics().
+    """
+    enrolment_ids = list(dict.fromkeys(int(value) for value in learner_ids if value is not None))
+    if not enrolment_ids:
+        return {}
+    candidates = {}
+    for owner in query('''SELECT l.id,l.enrolment_id,l.aptem_id,l.programme_id,
+        l.email,l.start_date,l.end_date,
+        u.id AS account_record_id,u."Email" AS account_email,u.aptem_id AS account_aptem_id
+        FROM "Learner".learners l
+        LEFT JOIN enrolment."Created_users" u ON u.id=l.enrolment_id
+        WHERE l.enrolment_id=ANY(%s)''', [enrolment_ids]):
+        candidates.setdefault(int(owner['enrolment_id']), []).append(owner)
+    result = {enrolment_id: None for enrolment_id in enrolment_ids}
+    owners = {}
+    for enrolment_id, matches in candidates.items():
+        if len(matches) != 1:
+            continue
+        try:
+            owners[enrolment_id] = _validated_profile(matches[0])
+        except ServiceError:
+            continue
+    if not owners:
+        return result
+    profile_ids = [int(owner['id']) for owner in owners.values()]
+    records = {profile_id: [] for profile_id in profile_ids}
+    # Aggregate before transfer: full caseloads can contain many historical rows.
+    # Mirror number(): ignore non-finite values and clamp negative seconds to 0.
+    for item in query('''SELECT learner_id,
+        SUM(CASE WHEN actual_seconds::text IN ('NaN','Infinity','-Infinity')
+                 THEN 0 ELSE GREATEST(COALESCE(actual_seconds,0),0) END) AS actual_seconds
+        FROM "Learner".learner_progress_entries
+        WHERE learner_id=ANY(%s) AND deleted_at IS NULL AND accepted IS TRUE
+        GROUP BY learner_id''', [profile_ids]):
+        records[int(item['learner_id'])].append({**item, 'accepted': True})
+    targets = {profile_id: {} for profile_id in profile_ids}
+    for item in query('''SELECT DISTINCT ON (t.learner_id,t.report_month)
+        t.learner_id,t.report_month,t.target_hours
+        FROM "Learner".learner_monthly_targets t
+        JOIN "Learner".learners l ON l.id=t.learner_id
+        WHERE t.learner_id=ANY(%s) AND coalesce(t.programme_profile_id,'')=''
+          AND (t.enrolment_id IS NULL OR t.enrolment_id IS NOT DISTINCT FROM l.enrolment_id)
+          AND (t.programme_id IS NULL OR t.programme_id IS NOT DISTINCT FROM l.programme_id)
+        ORDER BY t.learner_id,t.report_month,
+          (t.enrolment_id IS NOT DISTINCT FROM l.enrolment_id) DESC,
+          (t.programme_id IS NOT DISTINCT FROM l.programme_id) DESC,
+          t.updated_at DESC,t.id DESC''', [profile_ids]):
+        if item['target_hours'] is not None:
+            targets[int(item['learner_id'])][item['report_month']] = float(item['target_hours'])
+    for enrolment_id, owner in owners.items():
+        profile_id = int(owner['id'])
+        result[enrolment_id] = {
+            'profile_id': profile_id,
+            'start_date': owner.get('start_date'), 'end_date': owner.get('end_date'),
+            **metrics_from_records(records[profile_id], targets[profile_id])['otjh'],
+        }
+    return result
+
+
 def metrics_bulk(learner_ids, *, learner_workspace=False, include_ksb_points=False):
     """Return canonical metrics for a caseload without per-learner queries.
 

@@ -28,7 +28,8 @@ describe('recording watch tracking', () => {
 
   it('reports only seconds actually played, not a jump ahead, when the learner pauses', async () => {
     vi.mocked(recordRecordingWatch).mockResolvedValue({ watchedSeconds: 4, durationSeconds: 0 });
-    render(<SessionRecordingPlayer seriesId="S" file={recording} transcripts={[transcript]} learner={learner} label="Recording" trackWatch />);
+    const onWatchTimeChange = vi.fn();
+    render(<SessionRecordingPlayer seriesId="S" file={recording} transcripts={[transcript]} learner={learner} label="Recording" trackWatch onWatchTimeChange={onWatchTimeChange} />);
     await waitFor(() => expect(loadRecordingWatch).toHaveBeenCalled());
     await act(async () => undefined);
     const video = screen.getByLabelText('Recording') as HTMLVideoElement;
@@ -38,7 +39,15 @@ describe('recording watch tracking', () => {
     expect(recordRecordingWatch).toHaveBeenCalledTimes(1);
     expect(recordRecordingWatch).toHaveBeenCalledWith('S', recording, learner,
       { watchedSeconds: 4, position: 101, duration: 0 }, 'token-1', false);
+    await waitFor(() => expect(onWatchTimeChange).toHaveBeenLastCalledWith(4));
     expect(await screen.findByText('Viewing time saved: under 1 min')).toBeInTheDocument();
+  });
+
+  it('reports zero viewing time before the learner starts the recording', async () => {
+    const onWatchTimeChange = vi.fn();
+    render(<SessionRecordingPlayer seriesId="S" file={recording} transcripts={[transcript]} learner={learner} label="Recording" trackWatch onWatchTimeChange={onWatchTimeChange} />);
+    await waitFor(() => expect(onWatchTimeChange).toHaveBeenCalledWith(0));
+    expect(screen.queryByRole('timer')).not.toBeInTheDocument();
   });
 
   it('shows the saved total and says when viewing time could not be saved', async () => {
@@ -57,8 +66,10 @@ describe('recording watch tracking', () => {
 
   it('shows viewing saved earlier as soon as the recording opens', async () => {
     vi.mocked(loadRecordingWatch).mockResolvedValue({ watchedSeconds: 600, durationSeconds: 7200, csrfToken: 'token-1' });
-    render(<SessionRecordingPlayer seriesId="S" file={recording} transcripts={[transcript]} learner={learner} label="Recording" trackWatch />);
+    const onWatchTimeChange = vi.fn();
+    render(<SessionRecordingPlayer seriesId="S" file={recording} transcripts={[transcript]} learner={learner} label="Recording" trackWatch onWatchTimeChange={onWatchTimeChange} />);
     expect(await screen.findByText('Watched 10 of 120 min')).toBeInTheDocument();
+    await waitFor(() => expect(onWatchTimeChange).toHaveBeenLastCalledWith(600));
   });
 
   it('does not report viewing for staff previews', () => {

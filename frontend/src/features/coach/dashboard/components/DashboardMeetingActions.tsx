@@ -7,6 +7,7 @@ import { useCoachIdentity } from '@/hooks/useCoachIdentity';
 import { ModernDatePicker, ModernDurationPicker, ScheduleFieldLabel, ScheduleTimeInput } from '@/pages/coach/shared/ScheduleControls';
 import { reviewInstancePath, reviewInstanceRouteState } from '@/pages/coach/shared/reviewInstanceNavigation';
 import ProgressReviewPptxModal from '@/pages/coach/progress-reviews/components/ProgressReviewPptxModal';
+import { reviewCategory } from '@/lib/reviewCategory';
 import { slidesTargetFromEvent } from '@/pages/coach/progress-reviews/components/slidesTarget';
 import { eventIdentity, scheduleCoachCalendarEvent, scheduleDefaults, type CoachCalendarEvent } from '@/pages/coach/shared/calendarEvents';
 import styles from '@/pages/workspace/coach/dashboard.module.css';
@@ -24,8 +25,9 @@ export function DashboardMeetingActions({ event, onUpdated, onScheduleNotice }: 
   const [notice, setNotice] = useState('');
   const [error, setError] = useState('');
   const dialogRef = useRef<HTMLDialogElement>(null);
-  const isReview = event.source === 'progress-review';
-  const hasForm = Boolean(event.reviewInstanceId || event.reviewTemplateId || event.source === 'mcr' || isReview);
+  const category = reviewCategory(event);
+  const isReview = category === 'progress-review';
+  const hasForm = Boolean(event.reviewInstanceId || event.reviewTemplateId || event.source === 'mcr' || isReview || event.importedReviewType);
   const canWrite = !coach.isViewingAsCoach;
   const canRemind = ['scheduled', 'confirmed'].includes(event.status) && ['mcr', 'progress-review', 'catch-up', 'student-support'].includes(event.source || '');
   const identity = eventIdentity(event);
@@ -79,7 +81,7 @@ export function DashboardMeetingActions({ event, onUpdated, onScheduleNotice }: 
           });
           return;
         }
-        navigate(`/coach/${isReview ? 'progress-reviews' : 'meetings'}/${encodeURIComponent(identity)}`);
+        navigate(`/coach/${category === 'review' ? 'reviews' : isReview ? 'progress-reviews' : 'meetings'}/${encodeURIComponent(identity)}`);
       })}><AppIcon name="ri-file-text-line" />View Form</button> : <span className={styles.subtle}>No review form</span>}
       <dialog ref={dialogRef} className={styles.scheduleDialog} onCancel={cancel => { if (busyRef.current) cancel.preventDefault(); else setScheduleOpen(false); }}>
         <form onSubmit={submit => { submit.preventDefault(); void perform('schedule', async () => {

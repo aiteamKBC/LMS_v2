@@ -104,7 +104,7 @@ it('says so when nobody added is a learner to send the schedule to', async () =>
   const pending = finishTeamsUpdate({ updated: true, meeting: { liveSessionId: 'LIVE-ONE' } },
     { ...calendar, addedPeople: ['back.again@example.invalid'] });
   await resultOpen();
-  expect(screen.getByText('None to send — no learners were added')).toBeVisible();
+  expect(screen.getByText('None to send — no people were added')).toBeVisible();
   await userEvent.click(screen.getByRole('button', { name: 'Done' }));
   await pending;
 });

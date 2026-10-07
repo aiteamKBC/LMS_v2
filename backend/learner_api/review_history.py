@@ -162,7 +162,8 @@ def _review_data_sections(data):
     available to the learner page when the normalised rows are absent.
     """
     result = []
-    for index, section in enumerate(data.get("sections", [])):
+    captured_sections = data.get("sections")
+    for index, section in enumerate(captured_sections if isinstance(captured_sections, list) else []):
         if not isinstance(section, dict):
             continue
         fields = section.get("fields")
@@ -189,7 +190,7 @@ def _field_value(sections, label):
     return ""
 
 
-def _serialize_review(row, sections):
+def _serialize_review(row, sections, *, historical_presentation=False):
     data = _json_value(row.get("review_data"), dict, {})
     metadata = _json_value(data.get("source_metadata"), dict, {})
     planned_raw = row.get("planned_scheduled_date") or metadata.get("Planned / Scheduled Date")
@@ -200,7 +201,7 @@ def _serialize_review(row, sections):
     manager_name = _field_value(review_sections, "Manager")
     if not manager_name:
         manager_name = _field_value(_review_data_sections(data), "Manager")
-    return {
+    review = {
         "id": str(row["id"]),
         "aptemReviewId": _s(row.get("aptem_review_id")),
         "aptemLearnerId": _s(data.get("aptem_learner_id")),
@@ -218,6 +219,10 @@ def _serialize_review(row, sections):
         "detailsAvailable": bool(review_sections),
         "sections": review_sections,
     }
+    if historical_presentation:
+        from .historical_review_presentation import enrich_historical_review
+        return enrich_historical_review(review, data)
+    return review
 
 
 @require_GET
@@ -251,7 +256,7 @@ def learner_review_history(request, kind, pk):
             sections = _sections_by_review(cursor, [row["id"] for row in rows])
     except DatabaseError:
         return _error("Could not load review history.", 503)
-    serialized = [_serialize_review(row, sections) for row in rows]
+    serialized = [_serialize_review(row, sections, historical_presentation=True) for row in rows]
     serialized = [review for review in serialized if not review.get("aptemLearnerId")
                   or review["aptemLearnerId"] == str(review_source.aptem_id)]
     serialized.sort(

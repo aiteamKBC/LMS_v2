@@ -170,7 +170,8 @@ class AuthoringIdentityTests(unittest.TestCase):
             'teamsOnlineMeetingId': 'MEETING-1', 'teamsMeetingUrl': 'https://teams.microsoft.com/meet/example',
             'teamsWebLink': 'https://outlook.office.com/calendar/item/example',
             'teamsStartDateTimeUtc': '2026-10-29T09:00:00Z', 'teamsDurationMinutes': 90,
-            'sessionDay': 'Thursday', 'sessionRescheduled': True}
+            'sessionDay': 'Thursday', 'sessionRescheduled': True,
+            'liveSessionLinkOverride': 'https://teams.microsoft.com/meet/replacement'}
 
     def test_save_retains_exact_occurrence_and_shifted_calendar_fields(self):
         for kind in ('live-session', 'live_session'):
