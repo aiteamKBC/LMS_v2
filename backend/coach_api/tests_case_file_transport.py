@@ -158,15 +158,15 @@ class CaseFileAggregationTests(SimpleTestCase):
         context.parallel.return_value = {
             'learning': ({'programme': {'completed': 1, 'total': 2, 'percent': 50}, 'otjh': {'actual': 12, 'planned': 100}, 'ksb': {'completed': 1, 'total': 4, 'percent': 25, 'points': ['private']}}, None),
             'attendance': {'present': 1, 'sessions': 2, 'sessionHistory': ['private']},
-            'week': {'planSubjects': [
-                {'id': 'legacy:1', 'source': 'legacy', 'title': 'Old', 'total': 2, 'completed': 1, 'dates': [], 'directHours': None},
-                {'id': 'current:M1', 'source': 'current', 'title': 'New', 'total': 2, 'completed': 2, 'dates': [], 'directHours': 3},
-            ]},
+            'progress': [
+                {'id': 'legacy:1', 'source': 'legacy', 'title': 'Old', 'total': 2, 'completed': 1, 'percent': 50, 'dates': [], 'directHours': None},
+                {'id': 'current:M1', 'source': 'current', 'title': 'New', 'total': 2, 'completed': 2, 'percent': 100, 'dates': [], 'directHours': 3},
+            ],
             'schedule': {'moduleLinks': {'legacy:1': {'id': 'M1', 'title': 'Verified title'}}, 'modules': [], 'sessions': [], 'actual': [], 'reviews': ['private']},
         }
         result = build_overview(context)
         self.assertEqual(set(result), {'wholeProgrammeProgress', 'programmeProgress'})
-        self.assertEqual(result['programmeProgress'], [{'id': 'current:M1', 'title': 'New', 'percent': 100}, {'id': 'legacy:1', 'title': 'Old', 'percent': 50}])
+        self.assertEqual(result['programmeProgress'], [{'id': 'legacy:1', 'title': 'Old', 'percent': 50}, {'id': 'current:M1', 'title': 'New', 'percent': 100}])
         self.assertNotIn('points', result['wholeProgrammeProgress']['ksb'])
         self.assertEqual(result['wholeProgrammeProgress']['attendance'], {'present': 1, 'sessions': 2, 'percent': 50})
         whole = result['wholeProgrammeProgress']

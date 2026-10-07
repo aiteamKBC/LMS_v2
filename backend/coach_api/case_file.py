@@ -391,52 +391,21 @@ def read_overview_learning(context):
     metrics = canonical_learning.metrics_from_records(workspace, {}, include_ksb_points=False)
     metrics['otjh']['planned'] = canonical_learning.programme_planned_hours(
         context.profile.enrolment_id, owner=owner)
-    activity = canonical_learning.source_subjects(context.profile.enrolment_id, None,
-        owner=owner, records=records, overview_only=True) if context.profile.aptem_id else None
-    return metrics, activity
+    return metrics, None
 
 
 def build_overview(context):
     """Final Overview numbers; no content, schedules or evidence hydration."""
-    from learner_api.overview_week import read_overview_subjects
+    from learner_api.module_progress import canonical_module_progress, compact_module_progress
     parts = context.parallel({
-        'week': lambda: {'planSubjects': read_overview_subjects(context.source, context.profile)},
+        'progress': lambda: canonical_module_progress(context.source, context.profile),
         'learning': lambda: read_overview_learning(context),
         # Preserve the existing attendance GET, including catch-up sync.
         'attendance': lambda: context.payload('summary').get('attendance') or {},
     })
-    week = parts['week']
-    metrics, activity = parts['learning']
+    metrics, _ = parts['learning']
     attendance = parts['attendance']
-    # Native week subjects have no historical aliases. Retain verified merging
-    # for any future mixed projection without loading an entire schedule.
-    schedule = {'moduleLinks': {}}
-    parts['activity'] = activity
-    subjects = week.get('planSubjects', [])
-    if context.profile.aptem_id:
-        activity = parts['activity']
-        if activity.get('progress_basis') == 'recorded_activities':
-            historical = {f"legacy:{row['id']}": row for row in activity.get('subjects', [])}
-            historical_modules = {row.get('module_id') for row in historical.values() if row.get('module_id')}
-            by_subject = {}
-            for row in activity.get('activities', []):
-                key = f"legacy:{row['group_id']}"
-                by_subject.setdefault(key, {})[str(row['activity_id'])] = row
-            summaries = {row['id']: row for row in subjects}
-            subjects = []
-            for key, row in historical.items():
-                items = list(by_subject.get(key, {}).values())
-                subjects.append({
-                    'id': key, 'title': row['name'], 'total': len(items),
-                    'completed': sum(bool(item.get('completed')) for item in items),
-                })
-            subjects.extend(row for row in summaries.values()
-                            if row['id'].startswith('current:') and row['id'][8:] not in historical_modules)
-    else:
-        subjects = merge_overview_subjects(subjects, schedule)
-    rows = [{'id': subject['id'], 'title': subject['title'],
-             'percent': overview_percent(subject.get('completed', 0), subject['total'])
-                        if subject.get('total') else None} for subject in subjects]
+    rows = compact_module_progress(parts['progress'])
     # Reuse the established source/profile precedence and business-date pacing.
     from .selectors.otjh import learner_programme_window
     from .views import apply_otjh_to_date_metrics

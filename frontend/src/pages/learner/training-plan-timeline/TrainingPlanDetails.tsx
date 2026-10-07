@@ -1,3 +1,5 @@
+import type { CanonicalModuleProgress } from '@/api/moduleProgress';
+import { moduleMeasures } from './progress';
 import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { ArrowRight, CalendarDays, ChevronLeft, ChevronRight, Clock3, Equal, FileText, GraduationCap, RefreshCw, Target, TrendingDown, TrendingUp, Video } from 'lucide-react';
@@ -37,6 +39,7 @@ type Props = {
   trainingOnly?: boolean;
   overviewOnly?: boolean;
   showOtjChart?: boolean;
+  programmeProgress?: CanonicalModuleProgress[];
   programmeSnapshot?: ProgrammeProgressSnapshot;
   targetAsOfToday?: number | null;
 };
@@ -75,7 +78,7 @@ function catchupAction(row: AttendanceLecture): string | null {
 export function TrainingPlanDetails({ data: baseData, subjects, kind, learnerId, onRefresh, refreshing = false,
   onRetryContract, initialSubjectId = '', initialMonth = '', canOpenActivities = true, weeklyFocus, programmeStartDate, programmeEndDate,
   activityOverviewOnly = false, timelineOnly = false, monthlyOnly = false, trainingOnly = false, overviewOnly = false,
-  showOtjChart = true, programmeSnapshot, targetAsOfToday }: Props) {
+  showOtjChart = true, programmeSnapshot, programmeProgress, targetAsOfToday }: Props) {
   const baseModules = useMemo(() => buildPlanModules(subjects, baseData), [subjects, baseData]);
   const [now, setNow] = useState(Date.now);
   useEffect(() => {
@@ -293,8 +296,14 @@ export function TrainingPlanDetails({ data: baseData, subjects, kind, learnerId,
       </table></div> : <p className={board.empty}>No lectures scheduled for this month.</p>}
     </section>
   </section>;
+  const programmeRows = programmeProgress?.map(row => {
+    const module = modules.find(item => item.id === row.id);
+    const measures = module ? moduleMeasures(module, data) : [];
+    return { id: row.id, title: row.title, value: row.percent, start: module?.start,
+      available: measures.filter(measure => measure.value != null).length, measureCount: measures.length };
+  });
   const progressCharts = <ProgressCharts modules={modules} selected={selected} data={data} onModuleSelect={module => setSelectedId(module.id)}
-    programmeStartMonth={minMonth} programmeEndMonth={maxMonth} programmeSnapshot={programmeSnapshot} showOtjChart={showOtjChart} targetAsOfToday={targetAsOfToday} />;
+    programmeRows={programmeRows} programmeStartMonth={minMonth} programmeEndMonth={maxMonth} programmeSnapshot={programmeSnapshot} showOtjChart={showOtjChart} targetAsOfToday={targetAsOfToday} />;
   // Off-the-job hours summary for the sidebar beside Monthly focus. Values come
   // from the same month-by-month source the OTJH chart below uses, so the card
   // agrees with it. Minimum required and Forecast are not carried by the learner
