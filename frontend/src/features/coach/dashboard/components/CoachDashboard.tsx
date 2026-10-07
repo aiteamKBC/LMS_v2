@@ -1744,7 +1744,7 @@ export default function CoachDashboard() {
               {scheduleNotice && <p className={styles.notice} role="status">{scheduleNotice}</p>}
               {schedulePanelLoading && <ScheduleSkeleton />}
               {!schedulePanelLoading && upcomingScheduleGroups.length > 0 && (
-                <div className={styles.tableScroll} tabIndex={0} role="region" aria-label="Upcoming meetings and live sessions">
+                <div className={`${styles.tableScroll} ${styles.meetingsTableScroll}`} tabIndex={0} role="region" aria-label="Upcoming meetings and live sessions">
                   <table className={`${styles.table} ${styles.meetingsTable}`}>
                     <caption className="sr-only">Meetings and live sessions in the next work week</caption>
                     <thead className="sr-only"><tr><th scope="col">Date</th><th scope="col">Time</th><th scope="col">Learner / session</th><th scope="col">Meeting type</th><th scope="col">Status</th><th scope="col">Reschedule</th><th scope="col">Send Reminder</th><th scope="col">Generate Presentation</th><th scope="col">View Form</th></tr></thead>
