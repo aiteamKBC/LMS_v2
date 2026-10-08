@@ -1,3 +1,4 @@
+import type { CanonicalModuleProgress } from '@/api/moduleProgress';
 import { useEffect, useMemo, useRef } from 'react';
 import { useLocation, useSearchParams } from 'react-router-dom';
 import type { LearnerKind } from '@/api/learnerDetail';
@@ -15,12 +16,13 @@ import styles from '@/pages/learner/training-plan-timeline/TrainingPlanDetails.m
 /** Independent loading keeps the existing dashboard visible while plan sources resolve. */
 export function DashboardTrainingPlan({ kind, learnerId, plan, canOpenActivities = true, programmeStartDate, programmeEndDate,
   canOpenRewards = true, showRewards = true, activityOverviewOnly = false, timelineOnly = false,
-  monthlyOnly = false, trainingOnly = false, overviewOnly = false, showOtjChart = true, programmeSnapshot,
+  monthlyOnly = false, trainingOnly = false, overviewOnly = false, showOtjChart = true, programmeSnapshot, programmeProgress,
   targetAsOfToday, pageError, learningActivity, learnerDetail, learningSubjects, learningSubjectsLoading, learningSubjectsError, onRetryLearningSubjects }: {
   kind: LearnerKind; learnerId: string; plan: DashboardPlanState; canOpenActivities?: boolean;
   programmeStartDate?: string | null; programmeEndDate?: string | null; canOpenRewards?: boolean;
   showRewards?: boolean; activityOverviewOnly?: boolean; timelineOnly?: boolean;
   monthlyOnly?: boolean; trainingOnly?: boolean; overviewOnly?: boolean; showOtjChart?: boolean;
+  programmeProgress?: CanonicalModuleProgress[];
   programmeSnapshot?: ProgrammeProgressSnapshot; targetAsOfToday?: number | null; pageError?: string | null;
   learningActivity?: StudentActivityResponse | null; learnerDetail?: LearnerDetail | null;
   learningSubjects?: Subject[]; learningSubjectsLoading?: boolean; learningSubjectsError?: string | null;
@@ -65,7 +67,7 @@ export function DashboardTrainingPlan({ kind, learnerId, plan, canOpenActivities
     {error && <div role="alert" className={styles.error}><span>Your monthly learning could not refresh. {error}</span><button onClick={refresh}>Retry monthly learning</button></div>}
     {!error && learningSubjectsError && <div role="alert" className={styles.error}><span>Your learning modules could not refresh. {learningSubjectsError}</span>{onRetryLearningSubjects && <button onClick={onRetryLearningSubjects}>Retry learning modules</button>}</div>}
     {hasSnapshot && data ? <TrainingPlanDetails key={destination} data={data} subjects={subjects} kind={kind} learnerId={learnerId}
-      weeklyFocus={weeklyFocus} programmeStartDate={programmeStartDate} programmeEndDate={programmeEndDate} canOpenActivities={canOpenActivities} onRefresh={refresh} refreshing={loading} onRetryContract={retryContract} initialSubjectId={initialSubjectId} initialMonth={initialMonth} activityOverviewOnly={activityOverviewOnly} timelineOnly={timelineOnly} monthlyOnly={monthlyOnly} trainingOnly={trainingOnly} overviewOnly={overviewOnly} showOtjChart={showOtjChart} programmeSnapshot={programmeSnapshot} targetAsOfToday={targetAsOfToday} />
+      weeklyFocus={weeklyFocus} programmeStartDate={programmeStartDate} programmeEndDate={programmeEndDate} canOpenActivities={canOpenActivities} onRefresh={refresh} refreshing={loading} onRetryContract={retryContract} initialSubjectId={initialSubjectId} initialMonth={initialMonth} activityOverviewOnly={activityOverviewOnly} timelineOnly={timelineOnly} monthlyOnly={monthlyOnly} trainingOnly={trainingOnly} overviewOnly={overviewOnly} showOtjChart={showOtjChart} programmeSnapshot={programmeSnapshot} programmeProgress={programmeProgress} targetAsOfToday={targetAsOfToday} />
       : <>
         <div className={`${styles.topRow} ${weeklyFocus && !timelineOnly ? styles.withWeeklyFocus : ''}`}>
           {!timelineOnly && weeklyFocus}

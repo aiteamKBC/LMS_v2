@@ -1,4 +1,5 @@
 """Read-only KSB coverage from a learner's non-deleted progress rows."""
+from .ksb_points import point_ratio
 
 
 def build_progress_breakdown(learner_id, entries):
@@ -19,10 +20,18 @@ def build_progress_breakdown(learner_id, entries):
         group['components'][identity] = dict(
             name=entry.get('component_title') or f'Learning activity {identity}',
             status=entry.get('activity_status') or 'Unknown', achieved=achieved,
-            source=entry.get('source_system') or 'Progress')
+            source=entry.get('source_system') or 'Progress',
+            accepted=entry.get('accepted') is True,
+            type=entry.get('component_type') or entry.get('kind') or 'Component',
+            module=entry.get('module_title'),
+            date=entry.get('submitted_at') or entry.get('reporting_ended_at'),
+            completedAt=(entry.get('submitted_at') or entry.get('reporting_ended_at'))
+                if entry.get('accepted') is True else None)
     rows = []
     for group in groups.values():
         group['components'] = list(group['components'].values())
+        points = point_ratio(sum(item['accepted'] for item in group['components']), len(group['components']))
+        group.update(pointsAchieved=points['completed'], totalPoints=points['total'], progressPercent=points['percent'])
         group['completed'] = sum(item['achieved'] for item in group['components'])
         group['status'] = 'Achieved' if group['completed'] else 'Not Achieved'
         rows.append(group)
@@ -36,13 +45,15 @@ def read_breakdown(connection, learner_id, *, code=None):
     with connection.cursor() as cursor:
         code_filter = ' AND k.ksb_code=%s' if code is not None else ''
         cursor.execute('''SELECT p.id,p.learner_id,p.component_title,p.activity_status,
-                p.accepted,p.deleted_at,p.source_system,k.ksb_code,k.ksb_description
+                p.accepted,p.deleted_at,p.source_system,k.ksb_code,k.ksb_description,
+                p.component_type,p.kind,p.module_title,p.submitted_at,p.reporting_ended_at
             FROM "Learner".learner_progress_entries p
             JOIN "Learner".learner_progress_ksbs k ON k.progress_id=p.id
             WHERE p.learner_id=%s AND p.deleted_at IS NULL
             ''' + code_filter + ' ORDER BY p.id,k.position', [learner_id, code] if code is not None else [learner_id])
         fields = ('id', 'learner_id', 'component_title', 'activity_status', 'accepted',
-                  'deleted_at', 'source_system', 'ksb_code', 'ksb_description')
+                  'deleted_at', 'source_system', 'ksb_code', 'ksb_description',
+                  'component_type', 'kind', 'module_title', 'submitted_at', 'reporting_ended_at')
         entries = [dict(zip(fields, row)) for row in cursor.fetchall()]
     return build_progress_breakdown(learner_id, entries)
 

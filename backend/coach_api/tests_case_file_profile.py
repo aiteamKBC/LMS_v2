@@ -156,36 +156,15 @@ class CaseFileProfileTests(SimpleTestCase):
         self.assertIn(response.status_code, (401, 403))
         context.assert_not_called()
 
-    def test_canonical_metrics_and_window_load_only_in_owning_progress_section(self):
-        from .case_file import build_tab
-        context = MagicMock(profile=self.profile(), source=self.source(start_date='2020-01-01',
-                                                                     end_date='2030-01-01'))
-        context.parallel.side_effect = lambda readers: {name: read() for name, read in readers.items()}
-        context.payload.side_effect = lambda resource: {
-            'schedule': {'modules': []}, 'week': {}, 'hours': {'months': []},
-        }[resource]
-        metrics = {'programme': {'percent': 50}, 'otjh': {'actual': 12, 'planned': 100},
-                   'ksb': {'percent': 25, 'points': ['deferred'], 'codes': ['deferred']}}
-        with patch('coach_api.case_file.canonical_learning.metrics_bulk', return_value={201: metrics}) as read, \
-             patch('learner_api.aptem_ksb_breakdown.read_breakdown', return_value={'rows': []}), \
-             patch('coach_api.case_file.build_header_summary', side_effect=AssertionError('Unrelated header reads')) as header:
-            result = build_tab(context, 'otjh-ksb')
-        read.assert_called_once_with([201], learner_workspace=True, include_ksb_points=False)
-        header.assert_not_called()
-        self.assertEqual(result['metrics']['otjh'], metrics['otjh'])
-        self.assertEqual(result['metrics']['ksb'], {'percent': 25})
-        self.assertEqual(result['programmeWindow'], {'startDate': '01 Jan 2020', 'plannedEndDate': '01 Jan 2030'})
-
-    def test_progress_metrics_failure_preserves_available_breakdown_and_visible_error(self):
+    def test_canonical_projection_loads_only_in_owning_progress_section(self):
         from .case_file import build_tab
         context = MagicMock(profile=self.profile(), source=self.source())
-        context.parallel.side_effect = lambda readers: {name: read() for name, read in readers.items()}
-        context.payload.side_effect = lambda resource: {'schedule': {'modules': []}, 'week': {},
-                                                       'hours': {'months': []}}[resource]
-        with patch('coach_api.case_file.canonical_learning.metrics_bulk', side_effect=ValueError('Synthetic failure')), \
-             patch('learner_api.aptem_ksb_breakdown.read_breakdown', return_value={'rows': [], 'achievedKsbs': 1}), \
-             patch('coach_api.case_file.log.exception'):
+        compact = {'otjh': {'actualHours': 12}, 'ksb': {'rows': []}}
+        with patch('coach_api.otjh_ksb.read_otjh_ksb', return_value=compact) as read, \
+             patch('coach_api.case_file.build_header_summary', side_effect=AssertionError('Unrelated header reads')) as header:
             result = build_tab(context, 'otjh-ksb')
-        self.assertIsNone(result['metrics'])
-        self.assertEqual(result['errors'], {'metrics': 'Programme totals are unavailable.'})
-        self.assertEqual(result['breakdown']['achievedKsbs'], 1)
+        self.assertEqual(result, compact)
+        read.assert_called_once_with(context)
+        header.assert_not_called()
+        context.payload.assert_not_called()
+        context.parallel.assert_not_called()

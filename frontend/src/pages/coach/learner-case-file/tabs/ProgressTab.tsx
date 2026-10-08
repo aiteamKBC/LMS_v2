@@ -1,4 +1,5 @@
 import { useCaseFileSession } from '@/features/coach/case-file/hooks/CaseFileSession';
+import type { CaseFileOtjhKsb } from '@/features/coach/case-file/api/contracts';
 import { useEffect, useRef, useState } from 'react';
 import { ArrowDown, ArrowUp, ArrowUpDown, CalendarDays, Clock, GraduationCap, PieChart, Target } from 'lucide-react';
 import { AppIcon } from '@/components/feature/AppIcon';
@@ -8,7 +9,6 @@ import { readLearnerJson } from '@/api/learnerRead';
 import { selectAptemKsbGroups, summarizeAptemKsbGroups, type AptemKsbBreakdown } from '../domain/aptemKsbBreakdown';
 import { cn } from '@/lib/cn';
 import { Pagination } from '@/components/ui/Pagination';
-import { StatusBadge } from '@/components/ui/StatusBadge';
 import { formatHours, selectCaseFileOtjh } from '../data';
 import type { CaseFileOtjhMetrics, CoachLearnerCaseFileData } from '../types';
 import {
@@ -21,7 +21,7 @@ import { monthFromDate, monthlyHours } from '@/pages/learner/training-plan-timel
 import { OtjHoursChart } from '@/pages/learner/training-plan-timeline/OtjHoursChart';
 import { targetHoursAsOfToday } from '@/lib/format';
 
-type KsbSortKey = 'code' | 'category' | 'status' | 'activity';
+type KsbSortKey = 'code' | 'pointsAchieved' | 'totalPoints' | 'progressPercent';
 type SortDirection = 'asc' | 'desc';
 
 function validHours(value: number | null | undefined) {
@@ -92,7 +92,7 @@ export function ProgressTab({ data, onViewEvidence, plan, otjhSnapshot }: {
   const [ksbPageSize, setKsbPageSize] = useState(10);
   const [ksbSortKey, setKsbSortKey] = useState<KsbSortKey>('code');
   const [ksbSortDirection, setKsbSortDirection] = useState<SortDirection>('asc');
-  const [breakdownState, setBreakdownState] = useState<{ key: string; value?: AptemKsbBreakdown; error?: string }>();
+  const [breakdownState, setBreakdownState] = useState<{ key: string; value?: AptemKsbBreakdown; compact?: CaseFileOtjhKsb; error?: string }>();
   const breakdownKey = `${data.kind}/${data.enrolmentId || ''}`;
   useEffect(() => {
     const controller = new AbortController();
@@ -101,7 +101,17 @@ export function ProgressTab({ data, onViewEvidence, plan, otjhSnapshot }: {
       setBreakdownState({ key: breakdownKey, error: 'Learner identity is unavailable.' });
       return;
     }
-    (session ? session.read<AptemKsbBreakdown>('otjh-ksb', { resource: 'breakdown' }, { signal: controller.signal }) : readLearnerJson<AptemKsbBreakdown>(`/learner_api/metrics/${data.kind}/${data.enrolmentId}/?view=coach-ksb-breakdown`, { signal: controller.signal }))
+    if (session) {
+      void session.read<CaseFileOtjhKsb>('otjh-ksb', {}, { signal: controller.signal })
+        .then(compact => {
+          if (!compact?.otjh || !Array.isArray(compact.ksb?.rows) || !Array.isArray(compact.otjh.months)) throw new Error('The server returned invalid OTJH/KSB progress. Please reload to try again.');
+          if (!controller.signal.aborted) setBreakdownState({ key: breakdownKey, compact });
+        }).catch((error: unknown) => {
+          if (!controller.signal.aborted) setBreakdownState({ key: breakdownKey, error: error instanceof Error ? error.message : 'Could not load OTJH/KSB progress.' });
+        });
+      return () => controller.abort();
+    }
+    readLearnerJson<AptemKsbBreakdown>(`/learner_api/metrics/${data.kind}/${data.enrolmentId}/?view=coach-ksb-breakdown`, { signal: controller.signal })
       .then((value) => {
         if (!value || !Array.isArray(value.rows)) throw new Error('The server returned invalid KSB components. Please reload to try again.');
         if (!controller.signal.aborted) setBreakdownState({ key: breakdownKey, value });
@@ -112,10 +122,21 @@ export function ProgressTab({ data, onViewEvidence, plan, otjhSnapshot }: {
     return () => controller.abort();
   }, [breakdownKey, data.kind, data.enrolmentId, session]);
   const breakdown = breakdownState?.key === breakdownKey ? breakdownState.value : undefined;
+  const compact = breakdownState?.key === breakdownKey ? breakdownState.compact : undefined;
   const breakdownError = breakdownState?.key === breakdownKey ? breakdownState.error : undefined;
-  const otjh = selectProgressOtjh(data, plan, otjhSnapshot);
-  const ksbs = selectAptemKsbGroups(breakdown?.rows || [], breakdown?.source);
-  const ksbSummary = summarizeAptemKsbGroups(ksbs, Boolean(breakdown));
+  const otjh = session ? {
+    logged: compact?.otjh.actualHours ?? null, target: compact?.otjh.targetToDateHours ?? null,
+    programmeTotal: compact?.otjh.plannedHours ?? null, remaining: compact?.otjh.remainingHours ?? null,
+    progressPercent: compact?.otjh.progressPercent ?? null,
+  } : selectProgressOtjh(data, plan, otjhSnapshot);
+  const ksbs = compact ? compact.ksb.rows.map(row => ({ ...row, id: row.code,
+    activities: [] as ReturnType<typeof selectAptemKsbGroups>[number]['activities'] }))
+    : selectAptemKsbGroups(breakdown?.rows || [], breakdown?.source);
+  const ksbSummary = session ? {
+    total: compact?.ksb.summary.total ?? null, achieved: compact?.ksb.summary.achieved ?? null,
+    remaining: compact?.ksb.summary.remaining ?? null,
+    categories: new Map((compact?.ksb.categories ?? []).map(row => [row.category, row])),
+  } : summarizeAptemKsbGroups(selectAptemKsbGroups(breakdown?.rows || [], breakdown?.source), Boolean(breakdown));
   const categoryOrder = ['Knowledge', 'Skills', 'Behaviours', 'Other'];
   const categoryOptions = Array.from(new Set(['Knowledge', 'Skills', 'Behaviours', ...ksbs.map((item) => item.category)])).sort((left, right) => {
     const leftIndex = categoryOrder.indexOf(left);
@@ -125,8 +146,8 @@ export function ProgressTab({ data, onViewEvidence, plan, otjhSnapshot }: {
     return normalizedLeft - normalizedRight || left.localeCompare(right);
   });
   const categorySummary = categoryOptions.map((category) => {
-    const summary = ksbSummary.categories.get(category)!;
-    return { category, total: summary.total, linked: summary.achieved, percent: summary.percent, available: summary.total !== null && summary.achieved !== null };
+    const summary = ksbSummary.categories.get(category);
+    return { category, total: summary?.total ?? null, linked: summary?.achieved ?? null, percent: summary?.percent ?? null, available: summary?.total != null && summary?.achieved != null };
   });
   const normalizedSearch = ksbSearch.trim().toLowerCase();
   const filteredKsbs = ksbs.filter((item) => {
@@ -135,15 +156,14 @@ export function ProgressTab({ data, onViewEvidence, plan, otjhSnapshot }: {
     const matchesSearch = !normalizedSearch
       || item.code.toLowerCase().includes(normalizedSearch)
       || item.description.toLowerCase().includes(normalizedSearch)
-      || item.activities.some((activity) => activity.activityTitle.toLowerCase().includes(normalizedSearch))
-      || item.category.toLowerCase().includes(normalizedSearch);
+;
     return matchesCategory && matchesStatus && matchesSearch;
   }).sort((left, right) => {
     const value = (item: typeof left): string | number => {
       switch (ksbSortKey) {
-        case 'category': return item.category;
-        case 'status': return item.status === 'Achieved' ? 1 : 0;
-        case 'activity': return item.activities.length;
+        case 'pointsAchieved': return 'pointsAchieved' in item ? item.pointsAchieved ?? -1 : -1;
+        case 'totalPoints': return 'totalPoints' in item ? item.totalPoints ?? -1 : -1;
+        case 'progressPercent': return 'progressPercent' in item ? item.progressPercent ?? -1 : -1;
         default: return item.code;
       }
     };
@@ -173,6 +193,7 @@ export function ProgressTab({ data, onViewEvidence, plan, otjhSnapshot }: {
   return (
     <div className={cn(styles.stack, styles.progressTab)}>
       {detailError && <div role="alert" className="text-red-700">{detailError}</div>}
+      {compact?.errors?.otjh && <div role="alert" className="text-red-700">{compact.errors.otjh}</div>}
       <ReferencePanel title="Off-the-Job Hours (OTJH)" subtitle="Track off-the-job learning hours against your programme requirements." icon="ri-time-line" tone="primary" className={styles.otjhPanel}>
         <GraduationCap className={styles.otjhDecoration} aria-hidden="true" />
         <div className={styles.metricGrid}>
@@ -183,7 +204,11 @@ export function ProgressTab({ data, onViewEvidence, plan, otjhSnapshot }: {
         </div>
         <ProfileProgress label="OTJH Progress" value={otjh.progressPercent} color="bg-primary-600" />
       </ReferencePanel>
-      {plan?.data && <OtjHoursChart data={plan.data}
+      {compact && <OtjHoursChart points={compact.otjh.months.map(row => ({ key: row.month,
+        label: new Date(`${row.month}-01T12:00:00Z`).toLocaleDateString('en-GB', { month: 'long', year: 'numeric', timeZone: 'UTC' }),
+        target: row.targetHours, submitted: row.submittedHours, completed: row.completedHours }))}
+        plannedHours={compact.otjh.plannedHours} targetAsOfToday={compact.otjh.targetToDateHours} />}
+      {!session && plan?.data && <OtjHoursChart data={plan.data}
         programmeStartMonth={monthFromDate(data.detail?.programmeStartDate)}
         programmeEndMonth={monthFromDate(data.detail?.programmeEndDate)}
         targetAsOfToday={otjh.target} />}
@@ -218,7 +243,7 @@ export function ProgressTab({ data, onViewEvidence, plan, otjhSnapshot }: {
           <label className={styles.search}>
             <span className="sr-only">Search KSBs</span>
             <AppIcon className="ri-search-line" />
-            <input value={ksbSearch} onChange={(event) => { setKsbSearch(event.target.value); setKsbPage(1); }} placeholder="Search KSBs by code, title or activity..." />
+            <input value={ksbSearch} onChange={(event) => { setKsbSearch(event.target.value); setKsbPage(1); }} placeholder="Search KSBs by code or description..." />
           </label>
           <div className={styles.filterPills}>
             {['All', ...categoryOptions].map((category) => (
@@ -239,24 +264,22 @@ export function ProgressTab({ data, onViewEvidence, plan, otjhSnapshot }: {
             />
           </div>
         </div>}>
-        {!breakdown && !breakdownError ? <RowsSkeleton rows={4} /> : breakdownError ? <ProfileEmpty text={breakdownError} /> : filteredKsbs.length === 0 ? <ProfileEmpty text={'No KSB components matched the current filter.'} /> : (
+        {!compact && !breakdown && !breakdownError ? <RowsSkeleton rows={4} /> : breakdownError ? <ProfileEmpty text={breakdownError} /> : filteredKsbs.length === 0 ? <ProfileEmpty text={'No KSB components matched the current filter.'} /> : (
           <div className={styles.tableScroll}>
             <table className={styles.ksbTable}>
               <thead><tr>
                 <th aria-sort={ksbSortKey === 'code' ? (ksbSortDirection === 'asc' ? 'ascending' : 'descending') : 'none'}>{ksbSortHeader('KSB Code', 'code')}</th>
-                <th aria-sort={ksbSortKey === 'category' ? (ksbSortDirection === 'asc' ? 'ascending' : 'descending') : 'none'}>{ksbSortHeader('Category', 'category')}</th>
-                <th aria-sort={ksbSortKey === 'status' ? (ksbSortDirection === 'asc' ? 'ascending' : 'descending') : 'none'}>{ksbSortHeader('Status', 'status')}</th>
-                <th aria-sort={ksbSortKey === 'activity' ? (ksbSortDirection === 'asc' ? 'ascending' : 'descending') : 'none'}>{ksbSortHeader('Activities', 'activity')}</th>
-                <th>Progress</th><th>View</th>
+                <th aria-sort={ksbSortKey === 'pointsAchieved' ? (ksbSortDirection === 'asc' ? 'ascending' : 'descending') : 'none'}>{ksbSortHeader('Points Achieved', 'pointsAchieved')}</th>
+                <th aria-sort={ksbSortKey === 'totalPoints' ? (ksbSortDirection === 'asc' ? 'ascending' : 'descending') : 'none'}>{ksbSortHeader('Total Points', 'totalPoints')}</th>
+                <th>{ksbSortHeader('Progress', 'progressPercent')}</th><th>View</th>
               </tr></thead>
               <tbody>
                 {paginatedKsbs.map((item) => (
                   <tr key={item.id} className={styles.ksbParentRow}>
                     <td><span className={styles.ksbDetailedCode}>{item.code}</span></td>
-                    <td><span className={cn(styles.ksbCategoryBadge, styles.browserBadge, styles.ksbCategory)} data-category={item.category}><span aria-hidden="true" />{item.category}</span></td>
-                    <td><StatusBadge tone={item.status === 'Achieved' ? 'positive' : 'neutral'} label={item.status} className={styles.browserBadge} /></td>
-                    <td>{item.activities.length} {item.activities.length === 1 ? 'Activity' : 'Activities'}</td>
-                    <td className={styles.ksbGroupProgress}>{item.completed} completed components</td>
+                    <td>{'pointsAchieved' in item ? item.pointsAchieved : '--'}</td>
+                    <td>{'totalPoints' in item ? item.totalPoints : '--'}</td>
+                    <td className={styles.ksbGroupProgress}>{'progressPercent' in item && item.progressPercent != null ? `${item.progressPercent}%` : '--'}</td>
                     <td><button type="button" className={styles.tableButton} disabled={loadingCode === item.code} onClick={async () => {
                       setDetailError(undefined);
                       setLoadingCode(item.code);
@@ -268,6 +291,7 @@ export function ProgressTab({ data, onViewEvidence, plan, otjhSnapshot }: {
                         if (!row) throw new Error('KSB detail is unavailable.');
                         onViewEvidence({ code: item.code, title: item.description, category: item.category,
                           linked: item.status === 'Achieved', mappedComponents: true,
+                          ...('pointsAchieved' in item ? { pointsAchieved: item.pointsAchieved, totalPoints: item.totalPoints, progressPercent: item.progressPercent } : {}),
                           activities: row.activities.flatMap(activity => activity.evidenceActivities) });
                       } catch (reason) {
                         if (!controller?.signal.aborted) setDetailError(reason instanceof Error ? reason.message : 'Could not load KSB detail.');
@@ -329,7 +353,7 @@ export function EvidencePreviewModal({ evidence, onClose, onOpenAssignment }: { 
 
   return (
     <div
-      className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-4"
+      className="fixed inset-0 z-[100] flex items-stretch justify-end bg-black/50"
       role="presentation"
       onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}
     >
@@ -339,7 +363,7 @@ export function EvidencePreviewModal({ evidence, onClose, onOpenAssignment }: { 
         role="dialog"
         aria-modal="true"
         aria-labelledby="evidence-preview-title"
-        className="max-h-[84vh] w-full max-w-4xl overflow-hidden rounded-2xl border border-foreground-200/60 bg-white shadow-2xl"
+        className="h-full w-full max-w-xl overflow-hidden rounded-l-2xl border border-foreground-200/60 bg-white shadow-2xl"
       >
         <div className="border-b border-primary-100 bg-primary-50/40 px-6 py-5">
           <div className="flex items-start justify-between gap-4">
@@ -357,10 +381,13 @@ export function EvidencePreviewModal({ evidence, onClose, onOpenAssignment }: { 
             {evidence.category && <span className={cn('rounded-md border px-2.5 py-1', styles.ksbCategory)} data-category={evidence.category}>{evidence.category}</span>}
             <span className={`rounded-md px-2.5 py-1 font-semibold ${evidence.linked ? 'bg-emerald-100 text-emerald-700' : 'bg-background-100 text-foreground-600'}`}>{evidence.mappedComponents ? (evidence.linked ? 'Achieved' : 'Not Achieved') : (evidence.linked ? 'Completed' : 'Not completed')}</span>
             <span className="text-foreground-500">{evidence.activities.length} {evidence.mappedComponents ? 'components' : evidence.activities.length === 1 ? 'activity' : 'activities'}</span>
+            {evidence.pointsAchieved != null && <span>{evidence.pointsAchieved} / {evidence.totalPoints} points</span>}
+            {evidence.progressPercent != null && <span>{evidence.progressPercent}%</span>}
           </div>
         </div>
-        <div className="max-h-[calc(84vh-190px)] overflow-y-auto p-6">
-          {evidence.activities.length ? <div className="grid gap-3 md:grid-cols-2">{evidence.activities.map((activity, index) => (
+        <div className="max-h-[calc(100vh-240px)] overflow-y-auto p-6">
+          <h3 className="mb-3 text-sm font-semibold">Mapped evidence</h3>
+          {evidence.activities.length ? <div className="grid gap-3">{evidence.activities.map((activity, index) => (
             <div
               key={`${activity.title}-${activity.type}-${index}`}
               className={cn('rounded-xl border p-4', evidence.mappedComponents && activity.achievesKsb ? 'border-emerald-300 bg-emerald-50' : 'border-background-200 bg-background-50')}
@@ -369,8 +396,10 @@ export function EvidencePreviewModal({ evidence, onClose, onOpenAssignment }: { 
               <p className="mt-3 text-xs text-foreground-500">{activity.type === 'Historical Activity' ? 'Historical Activity' : `Source: ${activity.source || activity.type}`}</p>
               {activity.source && <p className="mt-1 text-[11px] text-foreground-500">Source: {activity.source}</p>}
               {activity.completedAt && <p className="mt-1 text-[11px] text-foreground-500">Completed: {activity.completedAt}</p>}
+              {!activity.completedAt && activity.date && <p className="mt-1 text-[11px] text-foreground-500">Date: {activity.date}</p>}
               {activity.activityId && <p className="mt-1 text-[11px] text-foreground-500">Activity ID: {activity.activityId}</p>}
               {evidence.mappedComponents && activity.achievesKsb && <p className="mt-2 text-xs font-semibold text-emerald-700">Achieved this KSB</p>}
+              {activity.accepted != null && <p className="mt-1 text-[11px] text-foreground-500">{activity.accepted ? 'Accepted / Completed' : 'Not accepted'}</p>}
               {activity.status && <p className="mt-1 text-[11px] text-foreground-500">Status: {activity.status}</p>}
               {activity.module && <p className="mt-1 text-[11px] text-foreground-500">Module: {activity.module}</p>}
             </div>

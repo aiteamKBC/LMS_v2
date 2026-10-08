@@ -108,6 +108,19 @@ afterEach(() => {
 });
 
 describe('Dashboard training plan controls', () => {
+  it('renders server module percentages without recalculating from local cards or changing measure captions', () => {
+    render(<MemoryRouter><TrainingPlanDetails data={fixture()} subjects={summarySubjects} kind="commercial" learnerId="125"
+      onRefresh={vi.fn()} onRetryContract={vi.fn()} activityOverviewOnly overviewOnly programmeProgress={[
+        { id: 'legacy:10', title: 'Marketing', completed: 1, total: 29, percent: 3.45 },
+        { id: 'current:NEW', title: 'New module', completed: 0, total: 2, percent: 0 },
+      ]} /></MemoryRouter>);
+    const chart = within(screen.getByRole('region', { name: 'Programme module progress' }));
+    expect(chart.getByText('3.45%')).toBeVisible();
+    expect(chart.getByText('0%')).toBeVisible();
+    expect(chart.queryByText('42.86%')).not.toBeInTheDocument();
+    expect(chart.getAllByText(/of 4 measures available/)).toHaveLength(2);
+  });
+
   it('shows the monthly activity and three progress charts without the timeline in activity overview mode', () => {
     renderBoard(fixture(), summarySubjects, vi.fn(), undefined, undefined, true);
 

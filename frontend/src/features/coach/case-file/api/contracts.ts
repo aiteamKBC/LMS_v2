@@ -27,3 +27,20 @@ export type CaseFileHeaderSummary = {
   reviews: CoachCalendarEvent[] | null;
   errors: Partial<Record<'metrics' | 'attendance' | 'nextSession' | 'reviews', string>>;
 };
+
+export type CaseFileOtjhKsb = {
+  errors?: { otjh?: string };
+  otjh: {
+    actualHours: number | null;
+    targetToDateHours: number | null;
+    plannedHours: number | null;
+    remainingHours: number | null;
+    progressPercent: number | null;
+    months: Array<{ month: string; targetHours: number | null; submittedHours: number | null; completedHours: number | null }>;
+  };
+  ksb: {
+    summary: { total: number; achieved: number; remaining: number };
+    categories: Array<{ category: string; achieved: number; total: number; percent: number }>;
+    rows: Array<{ code: string; description: string; category: string; status: 'Achieved' | 'Not Achieved'; evidenceCount: number; completed: number; pointsAchieved: number; totalPoints: number; progressPercent: number | null }>;
+  };
+};

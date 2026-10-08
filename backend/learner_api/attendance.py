@@ -443,8 +443,9 @@ def learner_attendance(request, kind, learner_id):
         # the KBC database table and Aptem ID, never an email or Teams merge.
         rows = kbc_attendance_rows(source) if request.GET.get('source') == 'kbc' else None
         if rows is None:
-            if getattr(source, 'email', ''):
-                # Catch-ups only: settle this learner's elapsed catch-ups first.
+            if getattr(source, 'email', '') and getattr(request, '_case_file_context', None) is None:
+                # Case File projects stored attendance without settling outcomes.
+                # Student reads retain the existing catch-up settlement path.
                 from .catchup_outcomes import sync_catchup_outcomes
                 sync_catchup_outcomes(learner_email=getattr(source, 'email', ''))
             from .attendance_lectures import lecture_register
@@ -453,7 +454,7 @@ def learner_attendance(request, kind, learner_id):
         return _error('Unable to load attendance. Please try again.', 502)
 
     # Only the internal Overview projection omits history formatting. The
-    # register and catch-up synchronization above remain the same read path.
+    # register projection above remains the same read path.
     context = getattr(request, '_case_file_context', None)
     overview_only = context is not None and context.request.path.rstrip('/').endswith('/overview')
     return JsonResponse({'attendance': _summarize_attendance(rows, overview_only=overview_only)})

@@ -252,7 +252,7 @@ function CoachWeekCard({
   );
 }
 
-function CoachComponentRow({ component, state }: { component: JourneyComponent; state: { status: ActivityStatus; completedAt: string | null; unavailableReason?: string } }) {
+export function CoachComponentRow({ component, state }: { component: JourneyComponent; state: { status: ActivityStatus; completedAt: string | null; unavailableReason?: string } }) {
   const display = componentDisplay(component);
   const attempts = component.quizAttempts || [];
   const latestAttempt = attempts.length > 0 ? attempts[attempts.length - 1] : null;
