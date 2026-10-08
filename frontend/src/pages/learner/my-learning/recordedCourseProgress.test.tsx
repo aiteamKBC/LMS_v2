@@ -2,7 +2,7 @@ import { fireEvent, render, screen, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import * as api from '@/api/studentActivity';
-import { subjectWeeks } from './subjectLearning';
+import { currentLearningWeek, subjectWeeks } from './subjectLearning';
 import { groupSubjectActivities } from './SubjectWorkspace';
 import type { LearnerDetail } from '@/api/learnerDetail';
 import type { StudentActivityItem, StudentActivityResponse } from '@/api/studentActivity';
@@ -47,6 +47,36 @@ const catalogueData: StudentActivityResponse = {
 
 describe('full historical course catalogue', () => {
   afterEach(() => vi.restoreAllMocks());
+
+  it('keeps month-only source placements distinct and chronological on the learning map', () => {
+    const recovered = { ...catalogueData, activities: [
+      { ...pending(1, 10), month: '2026-09', date_source: 'section_month' },
+      { ...pending(1, 20), month: '2026-04', date_source: 'section_month' },
+      { ...pending(1, 30), month: '2026-03', date_source: 'section_month' },
+      { ...pending(1, 40), month: 'undated', date_needs_review: true },
+    ] };
+    const subject = subjectsFrom(recovered, null)[0];
+    const weeks = subjectWeeks(subject);
+    expect(weeks.map(week => week.activities.map(item => item.legacy?.source_activity_id))).toEqual([[30], [20], [10], [40]]);
+    expect(weeks.slice(0, 3).map(week => week.label)).toEqual(['March 2026', 'April 2026', 'September 2026']);
+    expect(weeks.every(week => week.start === null && week.end === null)).toBe(true);
+    expect(currentLearningWeek(subject, '2026-04-15')).toBeUndefined();
+    expect(groupSubjectActivities(subject.activities).map(group => group.month)).toEqual(['2026-03', '2026-04', '2026-09', 'undated']);
+  });
+
+  it.each(['commercial', 'apprenticeship'])('shows a sourced month without describing its activities as awaiting a date (%s)', async kind => {
+    vi.spyOn(api, 'subjectRequest').mockResolvedValue({ covers: {} });
+    const recovered = { ...catalogueData, activities: [
+      { ...pending(1, 10), month: '2026-03', date_source: 'section_month' },
+    ] };
+    render(<MemoryRouter initialEntries={['/?subject=legacy%3A1']}><StudentActivityPanel data={recovered}
+      kind={kind} learnerId="77" loading={false} error={null} onRetry={vi.fn()} /></MemoryRouter>);
+    fireEvent.click(await screen.findByRole('button', { name: 'Expand March 2026' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Expand March 2026, Activities in this month' }));
+    expect(screen.getByRole('group', { name: 'Pending lesson 1-10 activity' })).toBeVisible();
+    expect(screen.queryByText('Activities awaiting a date')).not.toBeInTheDocument();
+    expect(screen.queryByText('Undated activities')).not.toBeInTheDocument();
+  });
 
   it('uses recovered source months and introduction consistently in the catalogue and map', () => {
     const recovered = { ...catalogueData, activities: [

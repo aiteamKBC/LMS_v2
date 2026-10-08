@@ -664,7 +664,7 @@ def source_subjects(learner_id, summarize, *, owner=None, records=None, overview
         ORDER BY c.source_course_title,c.id''', [owner['id']])
     catalogue_columns = ("a.source_activity_id,c.source_course_ref" if overview_only else
         '''a.id,a.source_course_id,a.source_activity_id,a.source_activity_kind,
-        a.source_activity_title,a.source_activity_type,a.source_section_title,a.curriculum_component_ref,
+        a.source_activity_title,a.source_activity_type,a.source_section_ref,a.source_section_title,a.curriculum_component_ref,
         c.source_course_ref,c.source_course_title,c.curriculum_module_ref,a.source_position AS position,
         jsonb_build_object('quiz_id',a.source_payload->'quiz_id',
             'activity_id',a.source_payload->'activity_id','parent_activity_id',a.source_payload->'parent_activity_id',
