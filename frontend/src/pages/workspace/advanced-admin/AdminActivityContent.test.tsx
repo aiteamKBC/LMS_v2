@@ -1,4 +1,4 @@
-import { render, screen, within } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import {
   advancedAdminComponentQuizReview, advancedAdminLegacyQuizReview, advancedAdminMaterial,
@@ -199,6 +199,10 @@ it('plays a scoped audio source in a native audio element', async () => {
   const audio = await screen.findByLabelText('Recorded audio');
   expect(audio.tagName).toBe('AUDIO');
   expect(audio).toHaveAttribute('src', `${window.location.origin}${stream}`);
+  expect(screen.getByRole('status', { name: 'Loading audio' })).toHaveAttribute('aria-busy', 'true');
+  fireEvent.loadedMetadata(audio);
+  expect(screen.queryByRole('status', { name: 'Loading audio' })).not.toBeInTheDocument();
+  expect(audio).toHaveClass('w-full');
   expect(screen.queryByTestId('saved-media')).not.toBeInTheDocument();
 });
 
