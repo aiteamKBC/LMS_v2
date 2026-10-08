@@ -11,6 +11,7 @@ import { useLearnerProfile } from '@/features/coach/learner-profile/hooks/useLea
 import type { CaseFileTabId } from '@/pages/coach/learner-case-file/components/caseFileTabs.config';
 
 const transport = vi.hoisted(() => vi.fn());
+vi.mock('@/hooks/useCoachIdentity', () => ({ useCoachIdentity: () => ({ email: 'coach@example.test' }) }));
 vi.mock('@/lib/coachFetch', () => ({ coachFetch: transport }));
 
 const shell = {
@@ -37,14 +38,14 @@ describe('Case File session request lifecycle', () => {
     });
   });
 
-  it('deduplicates concurrent reads and keeps settled data beyond the old TTL', async () => {
+  it('deduplicates concurrent review reads and expires them after 60 seconds', async () => {
     const before = Date.now();
     const reads = await Promise.all([caseFileRead('coach-a', '101', 'reviews'), caseFileRead('coach-a', '101', 'reviews')]);
     expect(reads[0]).toBe(reads[1]);
     vi.spyOn(Date, 'now').mockReturnValue(before + 90_000);
     try { await caseFileRead('coach-a', '101', 'reviews'); }
     finally { vi.restoreAllMocks(); }
-    expect(transport).toHaveBeenCalledTimes(1);
+    expect(transport).toHaveBeenCalledTimes(2);
   });
 
   it('separates coach, learner and selected-month cache keys', async () => {

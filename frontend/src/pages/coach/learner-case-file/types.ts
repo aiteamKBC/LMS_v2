@@ -166,7 +166,6 @@ export interface CaseFileUpcomingSession {
 export interface CaseFileReviewMeeting {
   id: string;
   eventKey: string;
-  reviewInstanceId?: string | null;
   source: string;
   reviewTypeCode?: string | null;
   occurrenceNumber?: number | null;
@@ -184,7 +183,6 @@ export interface CaseFileReviewMeeting {
   isNext: boolean;
   notes?: string;
   reviewer: string;
-  hasForm: boolean;
   hasTranscript: boolean;
   hasAttendance: boolean;
 }

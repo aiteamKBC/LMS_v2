@@ -19,7 +19,7 @@ const fetchSection = async (key: string) => {
 const resource = createCachedResource<unknown>('coach-case-file-session', fetchSection, Infinity, Infinity);
 export const OVERVIEW_TTL_MS = 60_000;
 const overview = createCachedResource<unknown>('coach-case-file-session', fetchSection, OVERVIEW_TTL_MS, Infinity);
-const dynamicSections = new Set(['overview', 'weekly-learning', 'monthly-focus', 'otjh-ksb', 'ksb-detail', 'ksb-search', 'attendance', 'learning-plan', 'learning-plan-module', 'learning-plan-week']);
+const dynamicSections = new Set(['reviews', 'overview', 'weekly-learning', 'monthly-focus', 'otjh-ksb', 'ksb-detail', 'ksb-search', 'attendance', 'learning-plan', 'learning-plan-module', 'learning-plan-week']);
 
 export function peekCaseFileCache<T>(scope: string, learnerId: string, section: string, url: string): T | undefined {
   const key = JSON.stringify([scope, learnerId, section, url]);

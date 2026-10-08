@@ -536,7 +536,6 @@ export function buildReviewMeetingItems(
     return {
       id: event.eventKey || event.id,
       eventKey: event.eventKey || event.id,
-      reviewInstanceId: event.reviewInstanceId,
       source,
       reviewTypeCode: String(event.reviewTypeCode || '').trim() || null,
       occurrenceNumber: event.occurrenceNumber ?? event.sequence ?? null,
@@ -562,7 +561,6 @@ export function buildReviewMeetingItems(
       isNext,
       notes: String(event.notes || '').trim() || undefined,
       reviewer: String(event.reviewerName || event.ownerName || '').trim() || '--',
-      hasForm: Boolean(event.hasReviewForm ?? event.reviewInstanceId),
       hasTranscript: Boolean(event.hasTranscript),
       hasAttendance: Boolean(event.hasAttendance),
     };

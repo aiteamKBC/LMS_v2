@@ -8,10 +8,16 @@ export interface BulkSession { id: string; occurrenceStart: string; module: stri
 export interface BulkLearner { learnerId: string; status: 'present' | 'absent' | 'unmarked' | 'upcoming' | 'in_progress' | null; version: string }
 export interface AttendanceGroupOption { id: string; name: string; cohort: string }
 export interface AttendanceOptions { programmes: Array<{ id: string; name: string; groups: AttendanceGroupOption[] }> }
+export interface AttendanceSessionOption { id: string; date: string; title: string; time: string; status: 'scheduled' | 'completed' }
+export interface AttendanceRecent { date: string; status: 'present' | 'absent' }
 export interface AttendanceGroupPayload {
   programme: { id: string; name: string }; group: AttendanceGroupOption;
-  learners: Array<{ id: string; name: string; email: string | null; status: 'active' | 'on-break'; attendance: { rate: number | null; present: number; absent: number; sessions: number } }>;
-  sessions: BulkSession[]; recentAttendance: CoachAttendanceRecord[];
+  learners: Array<{ id: string; name: string; email: string | null; status: 'active' | 'on-break'; attendance: { rate: number | null; present: number; absent: number; sessions: number }; recent: AttendanceRecent[] }>;
+}
+export interface AttendanceContextPayload {
+  programme: { id: string; name: string }; group: AttendanceGroupOption;
+  learners: Array<{ id: string; name: string; email: string | null; status: 'active' | 'on-break'; recent: AttendanceRecent[] }>;
+  sessions: Array<Omit<AttendanceSessionOption, 'status'>>;
 }
 async function attendanceRead<T>(path: string, signal?: AbortSignal): Promise<T> {
   const response = await coachFetch(`/coach_api/coach/attendance/${path}`, { signal });
@@ -20,12 +26,16 @@ async function attendanceRead<T>(path: string, signal?: AbortSignal): Promise<T>
   return payload;
 }
 export const fetchAttendanceOptions = (signal?: AbortSignal) => attendanceRead<AttendanceOptions>('options', signal);
+export const fetchAttendanceContext = (programmeId: string, groupId: string, signal?: AbortSignal) =>
+  attendanceRead<AttendanceContextPayload>(`context?${new URLSearchParams({ programmeId, groupId })}`, signal);
 export const fetchAttendanceGroup = (programmeId: string, groupId: string, signal?: AbortSignal) =>
   attendanceRead<AttendanceGroupPayload>(`group?${new URLSearchParams({ programmeId, groupId })}`, signal);
+export const fetchAttendanceSessions = (programmeId: string, groupId: string, signal?: AbortSignal) =>
+  attendanceRead<{ sessions: AttendanceSessionOption[] }>(`sessions?${new URLSearchParams({ programmeId, groupId })}`, signal);
 export const fetchAttendanceSession = (programmeId: string, groupId: string, sessionId: string, signal?: AbortSignal) =>
   attendanceRead<{ learners: BulkLearner[]; warnings?: BulkAttendanceWarning[] }>(`session?${new URLSearchParams({ programmeId, groupId, sessionId })}`, signal);
 export interface BulkAttendanceWarning { learnerProfileId: string; code: 'learner_source_unavailable'; message: string }
-export interface BulkAttendanceResult extends BulkLearner { sessionOccurrenceId: string; attendanceRecord: CoachAttendanceRecord }
+export interface BulkAttendanceResult extends BulkLearner { sessionOccurrenceId: string; attendanceRecord: CoachAttendanceRecord; recent: AttendanceRecent[] }
 export class BulkAttendanceSaveError extends Error {
   readonly status: number;
   constructor(status: number, message: string) {
@@ -89,8 +99,8 @@ export async function deleteSourceAttendance(input: Pick<SourceAttendanceInput, 
   if (!response.ok) throw new Error('Unable to delete the attendance record.');
 }
 
-export async function fetchCoachAttendanceDetails(learnerId: string, signal?: AbortSignal): Promise<CoachAttendanceDetailsPayload> {
-  const query = new URLSearchParams({ learner_id: learnerId });
+export async function fetchCoachAttendanceDetails(learnerId: string, signal?: AbortSignal, page = 1, pageSize = 20): Promise<CoachAttendanceDetailsPayload> {
+  const query = new URLSearchParams({ learner_id: learnerId, page: String(page), pageSize: String(pageSize) });
   const response = await coachFetch(`${DETAILS_ENDPOINT}?${query}`, signal ? { signal } : undefined);
   if (!response.ok) throw new Error('Unable to load attendance sessions.');
   return response.json() as Promise<CoachAttendanceDetailsPayload>;

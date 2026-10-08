@@ -60,8 +60,8 @@ vi.mock('@/pages/workspace/learner/DashboardTrainingPlan', () => ({
     {monthlyOnly && <h2>Monthly study plan</h2>}
     {overviewOnly && <><h2>Whole programme progress</h2><h2>Programme progress</h2>{showOtjChart !== false && <h2>Off-The-Job Hours</h2>}</>}
     {timelineOnly && <h2>Module timeline</h2>}
-    <span>{programmeSnapshot && `${programmeSnapshot.overall}% Ãƒâ€šÃ‚Â· ${programmeSnapshot.otjhActual}/${programmeSnapshot.otjhTarget} Ãƒâ€šÃ‚Â· ${programmeSnapshot.ksb}% Ãƒâ€šÃ‚Â· ${programmeSnapshot.attendancePresent}/${programmeSnapshot.attendanceTotal}`}</span>
-    <span data-testid="activity-snapshot">{programmeSnapshot && `${programmeSnapshot.activitiesCompleted}/${programmeSnapshot.activitiesTotal} Ãƒâ€šÃ‚Â· ${programmeSnapshot.activitiesPercent}%`}</span>
+    <span>{programmeSnapshot && `${programmeSnapshot.overall}% Â· ${programmeSnapshot.otjhActual}/${programmeSnapshot.otjhTarget} Â· ${programmeSnapshot.ksb}% Â· ${programmeSnapshot.attendancePresent}/${programmeSnapshot.attendanceTotal}`}</span>
+    <span data-testid="activity-snapshot">{programmeSnapshot && `${programmeSnapshot.activitiesCompleted}/${programmeSnapshot.activitiesTotal} Â· ${programmeSnapshot.activitiesPercent}%`}</span>
     <span>{activityOverviewOnly ? 'Activity overview only' : 'Full plan'}</span>
     <span>{showRewards === false ? 'Rewards hidden' : 'Rewards visible'}</span>
     <span data-testid="overview-otjh-chart">{showOtjChart === false ? 'OTJH chart hidden' : 'OTJH chart visible'}</span>
@@ -83,11 +83,6 @@ vi.mock('./tabs/CaseFileWeeklyLearningTab', () => ({
   CaseFileWeeklyLearningTab: () => <div aria-label="Coach learner weekly learning">
     <h2>Weekly learning plan</h2><span data-testid="weekly-actions">Learner actions hidden</span>
   </div>,
-}));
-vi.mock('@/pages/learner/reviews/ImportedReviewHistory', () => ({
-  ImportedReviewHistory: ({ kind, learnerId, category, reviewId }: { kind: string; learnerId: string; category: string; reviewId?: string }) => (
-    <div data-testid="imported-review-form">{`${kind}:${learnerId}:${category}:${reviewId}`}</div>
-  ),
 }));
 vi.mock('./components/AssignmentsTab', () => ({
   default: ({ kind, learnerId }: { kind: string; learnerId: string }) => <div data-testid="assignments-tab">{`${kind}:${learnerId}`}</div>,
@@ -215,11 +210,24 @@ beforeEach(() => {
     loading: false, error: null, retry: mocks.attendanceRetry, invalidate: mocks.attendanceRetry,
   });
   mocks.reviewsRetry.mockReset();
-  mocks.useCaseFileReviews.mockReset().mockImplementation(() => ({
-    data: { groups: mocks.data?.reviewGroups || [], issues: mocks.data?.reviewGenerationIssues || [] },
-    nextMeetings: { pr: '10 Oct 2026 Ãƒâ€šÃ‚Â· 10:00', mcm: '12 Oct 2026 Ãƒâ€šÃ‚Â· 09:30' },
-    loading: Boolean(mocks.data?.reviewsLoading), error: null, retry: mocks.reviewsRetry, invalidate: mocks.reviewsRetry,
-  }));
+  mocks.useCaseFileReviews.mockReset().mockImplementation(() => {
+    // Model the new backend contract; legacy case-file fixtures stay reusable
+    // for the unrelated profile/layout assertions in this suite.
+    const date = (value: string) => !value || value === '--' ? null : /^\d{4}-/.test(value) ? value : new Date(`${value} 00:00:00 UTC`).toISOString().slice(0, 10);
+    const reviews = (mocks.data?.reviewGroups || []).flatMap(group => group.items).map(item => ({
+      id: item.id, type: item.reviewTypeName === 'Progress Review' ? 'progress-review' : item.reviewTypeName === 'Monthly Coaching Meeting' ? 'mcr' : item.source,
+      title: item.reviewTypeName, plannedDate: date(item.plannedDate), scheduledDate: date(item.scheduledDate),
+      scheduledTime: item.scheduledTime, completedDate: date(item.completedDate), status: item.status,
+      reviewer: item.reviewer,
+    }));
+    return {
+      data: { reviews, summary: { total: reviews.length, progressReviews: reviews.filter(row => row.type === 'progress-review').length,
+        monthlyCoachingMeetings: reviews.filter(row => row.type === 'mcr').length, completed: reviews.filter(row => row.status === 'completed').length,
+        upcoming: reviews.filter(row => !['completed', 'cancelled'].includes(row.status)).length }, reviewGenerationIssues: mocks.data?.reviewGenerationIssues || [] },
+      nextMeetings: { pr: '10 Oct 2026 ? 10:00', mcm: '12 Oct 2026 ? 09:30' },
+      loading: Boolean(mocks.data?.reviewsLoading), error: null, retry: mocks.reviewsRetry, invalidate: mocks.reviewsRetry,
+    };
+  });
   mocks.useCaseFileNextSession.mockReset().mockReturnValue({ data: null, loading: false, error: null, retry: vi.fn(), invalidate: vi.fn() });
   mocks.markingRetry.mockReset();
   mocks.useCaseFileMarking.mockReset().mockReturnValue({ data: { items: [], serializedItemCount: 0 }, loading: false, error: null, retry: mocks.markingRetry, invalidate: mocks.markingRetry });
@@ -231,7 +239,7 @@ describe('Learner Case File design', () => {
     render(<MemoryRouter initialEntries={[{ pathname: '/coach/learner-case-file', state: {
       learnerId: '42', activitySnapshot: { learnerId: '42', completed: 137, total: 157, percent: 87.26 },
     } }]}><LearnerCaseFile /></MemoryRouter>);
-    expect(screen.getByTestId('activity-snapshot')).toHaveTextContent('137/157 Ãƒâ€šÃ‚Â· 87.26%');
+    expect(screen.getByTestId('activity-snapshot')).toHaveTextContent('137/157 Â· 87.26%');
   });
 
   it('does not reuse another learner table snapshot when a query selects this learner', () => {
@@ -239,7 +247,7 @@ describe('Learner Case File design', () => {
     render(<MemoryRouter initialEntries={[{ pathname: '/coach/learner-case-file', search: '?id=42', state: {
       learnerId: '99', activitySnapshot: { learnerId: '99', completed: 137, total: 157, percent: 87.26 },
     } }]}><LearnerCaseFile /></MemoryRouter>);
-    expect(screen.getByTestId('activity-snapshot')).toHaveTextContent('3/4 Ãƒâ€šÃ‚Â· 75%');
+    expect(screen.getByTestId('activity-snapshot')).toHaveTextContent('3/4 Â· 75%');
   });
 
   it('preserves unavailable table activity counts rather than substituting a different read', () => {
@@ -247,7 +255,7 @@ describe('Learner Case File design', () => {
     render(<MemoryRouter initialEntries={[{ pathname: '/coach/learner-case-file', state: {
       learnerId: '42', activitySnapshot: { learnerId: '42', completed: null, total: null, percent: null },
     } }]}><LearnerCaseFile /></MemoryRouter>);
-    expect(screen.getByTestId('activity-snapshot')).toHaveTextContent('null/null Ãƒâ€šÃ‚Â· null%');
+    expect(screen.getByTestId('activity-snapshot')).toHaveTextContent('null/null Â· null%');
   });
 
   it('preserves learner identity and dates without the five summary cards', () => {
@@ -288,7 +296,7 @@ describe('Learner Case File design', () => {
     expect(within(caseFileSections).getByRole('tab', { name: 'Overview' })).toHaveAttribute('aria-selected', 'true');
     expect(screen.queryByRole('heading', { name: 'Weekly learning plan' })).not.toBeInTheDocument();
     expect(screen.queryByRole('heading', { name: 'Monthly study plan' })).not.toBeInTheDocument();
-    expect(screen.getByText('25% Ãƒâ€šÃ‚Â· 10/38.5 Ãƒâ€šÃ‚Â· 20% Ãƒâ€šÃ‚Â· 7/10')).toBeInTheDocument();
+    expect(screen.getByText('25% Â· 10/38.5 Â· 20% Â· 7/10')).toBeInTheDocument();
     expect(screen.getByText('Activity overview only')).toBeInTheDocument();
     expect(screen.getByText('Rewards hidden')).toBeInTheDocument();
     expect(screen.getByTestId('overview-otjh-chart')).toHaveTextContent('OTJH chart hidden');
@@ -314,11 +322,11 @@ describe('Learner Case File design', () => {
 
   it('shows learner review summaries, classification, filters, canonical dates and only available actions', () => {
     const completedReview = {
-      id: 'review-1', eventKey: 'review-1', reviewInstanceId: 'instance-1', source: 'mcr',
+      id: 'review-1', eventKey: 'review-1', source: 'mcr',
       reviewTypeCode: 'mcm', reviewTypeName: 'Progress Review', title: 'Progress Review', date: '10 Sep 2026', plannedDate: '08 Sep 2026',
       scheduledDate: '10 Sep 2026', scheduledTime: '10:00', completedDate: '10 Sep 2026',
       time: '10:00', detail: '', status: 'completed', statusLabel: 'Completed',
-      isNext: false, reviewer: 'Test Coach', hasForm: true, hasTranscript: false, hasAttendance: true,
+      isNext: false, reviewer: 'Test Coach', hasTranscript: false, hasAttendance: true,
     } satisfies CaseFileReviewMeeting;
     const upcomingMeeting = {
       id: 'meeting-1', eventKey: 'meeting-1', source: 'mcr', reviewTypeName: 'Monthly Coaching Meeting',
@@ -326,14 +334,14 @@ describe('Learner Case File design', () => {
       title: 'Monthly Coaching Meeting', date: '02 Oct 2026', plannedDate: '28 Sep 2026',
       scheduledDate: '02 Oct 2026', scheduledTime: '09:00', completedDate: '--',
       time: '09:00', detail: '', status: 'confirmed', statusLabel: 'Confirmed', isNext: true,
-      reviewer: 'Test Coach', hasForm: false, hasTranscript: false, hasAttendance: false,
+      reviewer: 'Test Coach', hasTranscript: false, hasAttendance: false,
     } satisfies CaseFileReviewMeeting;
     const customReview = {
       id: 'career-1', eventKey: 'career-1', source: 'review', reviewTypeCode: 'career_review',
       reviewTypeName: 'Career Review', title: 'Career Review', date: '30 Sep 2026', plannedDate: '30 Sep 2026',
       scheduledDate: '30 Sep 2026', scheduledTime: '11:00', completedDate: '--',
       time: '11:00', detail: '', status: 'scheduled', statusLabel: 'Scheduled', isNext: false,
-      reviewer: 'Test Coach', hasForm: false, hasTranscript: false, hasAttendance: false,
+      reviewer: 'Test Coach', hasTranscript: false, hasAttendance: false,
     } satisfies CaseFileReviewMeeting;
     mocks.data = {
       ...caseFileData,
@@ -350,12 +358,13 @@ describe('Learner Case File design', () => {
     expect(screen.getByLabelText('Review summary')).toHaveTextContent('3Total Reviews');
     expect(screen.getByLabelText('Review summary')).toHaveTextContent('1Progress Reviews');
     expect(screen.getByLabelText('Review summary')).toHaveTextContent('1Monthly Coaching Meetings');
-    expect(screen.getByRole('cell', { name: '08 Sep 2026' })).toBeInTheDocument();
-    expect(screen.getByRole('cell', { name: '10 Sep 2026' })).toBeInTheDocument();
+    expect(screen.getByRole('cell', { name: '08 Sept 2026' })).toBeInTheDocument();
+    expect(screen.getByRole('cell', { name: '10 Sept 2026' })).toBeInTheDocument();
     expect(screen.getByRole('columnheader', { name: 'Scheduled Date & Time' })).toBeInTheDocument();
     expect(screen.getByRole('cell', { name: '02 Oct 2026 at 09:00' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'View Form' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'View Attendance' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'View Form' })).not.toBeInTheDocument();
+    expect(screen.getAllByRole('button', { name: 'View' })).toHaveLength(3);
+    expect(screen.queryByRole('button', { name: 'View Attendance' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'View Transcript' })).not.toBeInTheDocument();
 
     const typeFilters = within(screen.getByLabelText('Review type filters'));
@@ -389,12 +398,15 @@ describe('Learner Case File design', () => {
     expect(screen.queryByText('Progress Review', { selector: 'td' })).not.toBeInTheDocument();
   });
 
-  it('opens the requested imported review form instead of the general review history', () => {
+  it('keeps incoming review links in the table without opening a panel', async () => {
+    mocks.useCaseFileReviews.mockReturnValue({ data: { reviews: [{ id: 'imported-review:A72', type: 'progress-review', title: 'Progress Review',
+      plannedDate: null, scheduledDate: null, scheduledTime: null, completedDate: null, status: 'completed', reviewer: 'Coach' }],
+      summary: { total: 1, progressReviews: 1, monthlyCoachingMeetings: 0, completed: 1, upcoming: 0 } },
+      loading: false, error: null });
     render(<MemoryRouter initialEntries={['/coach/learner-case-file?id=42&kind=apprenticeship&enrolmentId=125&tab=reviews&reviewId=A72']}><LearnerCaseFile /></MemoryRouter>);
-
-    expect(screen.getByTestId('imported-review-form')).toHaveTextContent('apprenticeship:125:reviews:A72');
-    expect(screen.queryByRole('heading', { name: 'Review History' })).not.toBeInTheDocument();
-    expect(screen.queryByLabelText('Review summary')).not.toBeInTheDocument();
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'View' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Review History' })).toBeInTheDocument();
   });
 
   it('does not leak a mixed Progress Review row from an MCM group', () => {
@@ -403,7 +415,7 @@ describe('Learner Case File design', () => {
       reviewTypeName: 'Monthly Coaching Meeting', title: 'Monthly Coaching Meeting',
       date: '02 Oct 2026', plannedDate: '28 Sep 2026', scheduledDate: '02 Oct 2026', scheduledTime: '09:00',
       completedDate: '--', time: '09:00', detail: '', status: 'scheduled', statusLabel: 'Scheduled',
-      isNext: false, reviewer: 'Test Coach', hasForm: false, hasTranscript: false, hasAttendance: false,
+      isNext: false, reviewer: 'Test Coach', hasTranscript: false, hasAttendance: false,
     } satisfies CaseFileReviewMeeting;
     const leakedProgress = { ...mcm, id: 'pr-leaked', eventKey: 'pr-leaked', reviewTypeCode: 'progress_review', reviewTypeName: 'Progress Review', title: 'Progress Review', source: 'progress-review' } satisfies CaseFileReviewMeeting;
     mocks.data = { ...caseFileData, reviewGroups: [{ key: 'monthly coaching meeting', title: 'Monthly Coaching Meeting', items: [mcm, leakedProgress] }] };
@@ -425,66 +437,20 @@ describe('Learner Case File design', () => {
     expect(screen.getByText('No reviews found for this learner.')).toBeInTheDocument();
   });
 
-  it('paginates filtered review history in ten-row pages and resets filters to page one', () => {
-    const reviews = Array.from({ length: 36 }, (_, index): CaseFileReviewMeeting => ({
-      id: `review-${index + 1}`,
-      eventKey: `review-${index + 1}`,
-      source: index < 8 ? 'progress-review' : 'mcr',
-      reviewTypeName: index < 8 ? 'Progress Review' : 'Monthly Coaching Meeting',
-      title: `Review ${index + 1}`,
-      date: `${String(index + 1).padStart(2, '0')} Sep 2026`,
-      plannedDate: `${String(index + 1).padStart(2, '0')} Sep 2026`,
-      scheduledDate: `${String(index + 1).padStart(2, '0')} Sep 2026`,
-      scheduledTime: '09:00',
-      completedDate: '--',
-      time: '09:00',
-      detail: '',
-      status: 'scheduled',
-      statusLabel: 'Scheduled',
-      isNext: false,
-      reviewer: `Reviewer ${index + 1}`,
-      hasForm: false,
-      hasTranscript: false,
-      hasAttendance: false,
+  it('shows all compact history rows and filters locally without pagination', () => {
+    const reviews = Array.from({ length: 19 }, (_, index): CaseFileReviewMeeting => ({
+      id: `review-${index}`, eventKey: `review-${index}`, source: index < 7 ? 'progress-review' : 'mcr',
+      reviewTypeName: index < 7 ? 'Progress Review' : 'Monthly Coaching Meeting', title: 'Review',
+      date: '01 Sep 2026', plannedDate: '01 Sep 2026', scheduledDate: '--', scheduledTime: '--', completedDate: '--',
+      time: '--', detail: '', status: 'not-scheduled', statusLabel: 'Not Scheduled', isNext: false,
+      reviewer: `Reviewer ${index}`, hasTranscript: false, hasAttendance: false,
     }));
-    mocks.data = {
-      ...caseFileData,
-      reviewGroups: [
-        { key: 'all reviews', title: 'Reviews', items: reviews },
-      ],
-    };
-
-    const { rerender } = render(<MemoryRouter initialEntries={['/coach/learner-case-file?id=42&tab=reviews']}><LearnerCaseFile /></MemoryRouter>);
-
-    const table = screen.getByRole('table');
-    const pagination = screen.getByRole('navigation', { name: 'Review pagination' });
-    expect(within(table).getAllByRole('row')).toHaveLength(11);
-    expect(pagination).toHaveTextContent('Showing 1-10 of 36 reviews');
-    expect(within(pagination).getByRole('button', { name: 'Previous' })).toBeDisabled();
-    expect(within(pagination).getByRole('button', { name: 'Next' })).toBeEnabled();
-    for (const pageNumber of [1, 2, 3, 4]) {
-      expect(within(pagination).getByRole('button', { name: `Go to page ${pageNumber}` })).toBeVisible();
-    }
-
-    fireEvent.click(within(pagination).getByRole('button', { name: 'Go to page 4' }));
-    expect(within(table).getAllByRole('row')).toHaveLength(7);
-    expect(pagination).toHaveTextContent('Showing 31-36 of 36 reviews');
-    expect(within(pagination).getByRole('button', { name: 'Previous' })).toBeEnabled();
-    expect(within(pagination).getByRole('button', { name: 'Next' })).toBeDisabled();
-
-    mocks.data = {
-      ...caseFileData,
-      reviewGroups: [{ key: 'all reviews', title: 'Reviews', items: reviews.slice(0, 12) }],
-    };
-    rerender(<MemoryRouter initialEntries={['/coach/learner-case-file?id=42&tab=reviews']}><LearnerCaseFile /></MemoryRouter>);
-    expect(within(table).getAllByRole('row')).toHaveLength(3);
-    expect(pagination).toHaveTextContent('Showing 11-12 of 12 reviews');
-    expect(within(pagination).getByRole('button', { name: 'Next' })).toBeDisabled();
-
-    fireEvent.click(screen.getByRole('button', { name: 'Progress Review' }));
-    expect(within(table).getAllByRole('row')).toHaveLength(9);
+    mocks.data = { ...caseFileData, reviewGroups: [{ key: 'reviews', title: 'Reviews', items: reviews }] };
+    render(<MemoryRouter initialEntries={['/coach/learner-case-file?id=42&tab=reviews']}><LearnerCaseFile /></MemoryRouter>);
+    expect(within(screen.getByRole('table')).getAllByRole('row')).toHaveLength(20);
     expect(screen.queryByRole('navigation', { name: 'Review pagination' })).not.toBeInTheDocument();
-    expect(screen.getByText('Reviewer 1')).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: 'Progress Review' }));
+    expect(within(screen.getByRole('table')).getAllByRole('row')).toHaveLength(8);
   });
 
   it('keeps the KSB card absent and preserves unavailable canonical status', async () => {
@@ -892,7 +858,7 @@ describe('Learner Case File design', () => {
         title: 'Quarterly Progress Review',
         date: '21 Sep 2026',
         time: '10:00',
-        summary: 'Mon 21 Sep Ãƒâ€šÃ‚Â· 10:00',
+        summary: 'Mon 21 Sep Â· 10:00',
         detail: 'Progress Review',
       }],
     };

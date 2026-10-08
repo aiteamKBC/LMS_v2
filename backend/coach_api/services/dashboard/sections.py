@@ -8,7 +8,6 @@ from __future__ import annotations
 
 from functools import cmp_to_key
 from math import ceil, floor
-from datetime import timedelta
 import re
 
 from django.db import connections
@@ -339,7 +338,7 @@ def dashboard_popup_contract(payload, weekly_rows):
     return {
         "owner": _pick(payload.get("owner") or {}, ("name",)),
         "summary": _pick(payload, ("totalLearners", "otjh", "pendingMarking", "meetingsThisWeek")),
-        "learnerPopup": {"all": rows, "atRisk": [row["id"] for row in at_risk_rows]},
+        "learnerPopup": {"all": rows},
         "markingPopup": {"count": payload["pendingMarking"], "items": marking_items},
         "meetingsPopup": meetings_popup,
     }

@@ -307,7 +307,7 @@ it.each([{ includeStatus: false, expected: 1 }, { includeStatus: true, expected:
       owner: { name: 'Synthetic Coach' },
       summary: { totalLearners: 2, otjh: { atRisk: 0, needAttention: 0 }, pendingMarking: 0,
         meetingsThisWeek: { pr: 0, mcm: 0, catchUps: 0 } },
-      learnerPopup: { all: learners, atRisk: [] }, markingPopup: { count: 0, items: [] },
+      learnerPopup: { all: learners }, markingPopup: { count: 0, items: [] },
       meetingsPopup: { pr: { count: 0, items: [] }, mcm: { count: 0, items: [] }, catchUps: { count: 0, items: [] } },
     } : url.includes('/meetings?') ? {
       meetings: { range: { from: '2026-09-21', to: '2026-09-25' }, events: [...events, live] }, errors: {},
@@ -1035,7 +1035,7 @@ function setCleanPopupFixture() {
     owner: { name: 'Example Coach' },
     summary: { totalLearners: 12, otjh: { atRisk: 9, needAttention: 1 }, pendingMarking: 0,
       meetingsThisWeek: { pr: 0, mcm: 0, catchUps: 0 } },
-    learnerPopup: { all: [...atRisk, ...other], atRisk: [] },
+    learnerPopup: { all: [...atRisk, ...other] },
     markingPopup: { count: 0, items: [] },
     meetingsPopup: { pr: { count: 0, items: [] }, mcm: { count: 0, items: [] }, catchUps: { count: 0, items: [] } },
   });
@@ -1267,7 +1267,7 @@ it('uses one canonical unique risk dataset for card, badge and rows despite stal
       meetingsThisWeek: { pr: 0, mcm: 0, catchUps: 0 } },
     learnerPopup: { all: [row, { ...row }, { ...row, id: 'b', name: 'Synthetic Paused B', programmeStatus: 'On break' },
       { ...row, id: 'c', name: 'Legacy Misclassified C', status: 'at-risk', otjhRagStatus: 'at-risk',
-        otjh: { ...row.otjh, ragStatus: 'on-track' } }], atRisk: ['c'] },
+        otjh: { ...row.otjh, ragStatus: 'on-track' } }] },
     markingPopup: { count: 0, items: [] },
     meetingsPopup: { pr: { count: 0, items: [] }, mcm: { count: 0, items: [] }, catchUps: { count: 0, items: [] } },
   });
@@ -1409,7 +1409,7 @@ it('preserves weighted learner aggregates and counts pending items without new r
     owner: {},
     summary: { totalLearners: 2, otjh: { atRisk: 0, needAttention: 0 }, pendingMarking: 7,
       meetingsThisWeek: { pr: 0, mcm: 0, catchUps: 0 } },
-    learnerPopup: { all: [], atRisk: [] },
+    learnerPopup: { all: [] },
     markingPopup: { count: 7, items: [
       { learnerId: 'synthetic-a', learnerName: 'Same Name', programme: 'Programme', group: 'A', pendingCount: 5, oldestPendingDate: '2026-09-01' },
       { learnerId: 'synthetic-b', learnerName: 'Same Name', programme: 'Programme', group: 'B', pendingCount: 2, oldestPendingDate: '2026-09-02' },
@@ -1427,4 +1427,22 @@ it('preserves weighted learner aggregates and counts pending items without new r
   expect(dialog.getByText('5 Pending')).toBeVisible();
   expect(dialog.getByText('2 Pending')).toBeVisible();
   expect(mocks.load).toHaveBeenCalledTimes(requests);
+});
+
+it('keeps exactly the six current workload cards without legacy dashboard panels or extra requests', async () => {
+  useDashboardDate();
+  render(<MemoryRouter><CoachDashboard /></MemoryRouter>);
+  const metrics = await screen.findByRole('region', { name: 'Coach dashboard metrics' });
+  expect(within(metrics).getAllByRole('button')).toHaveLength(6);
+  for (const label of ['Total learners', 'OTJH at risk', 'Pending marking', 'PR this week', 'MCM this week', 'Catch-ups this week']) {
+    expect(within(metrics).getByRole('button', { name: new RegExp(label) })).toBeVisible();
+  }
+  for (const label of ['Coach RAG', 'Today / Needs Action', 'Active learners', 'Paused learners', 'Completed learners', 'EPA learners']) {
+    expect(screen.queryByText(label)).not.toBeInTheDocument();
+  }
+  await screen.findByText('Example Learner');
+  expect(mocks.load).toHaveBeenCalledTimes(2);
+  expect(mocks.load.mock.calls.map(([url]) => url).sort()).toEqual([
+    '/coach_api/coach/dashboard/learners', '/coach_api/coach/dashboard/summary',
+  ]);
 });
