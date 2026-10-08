@@ -681,6 +681,63 @@ class EndpointTests(unittest.TestCase):
         self.assertEqual(rows[0]['attendance'][0]['name'], 'Module Learner')
         self.assertNotIn('tutor@example.invalid', json.dumps(rows, default=str))
 
+    def account_check_rows(self, identity):
+        from curriculum_api.attendance_identity import identity_check, staff_roles
+        self.ns.update(identity_check=identity_check, staff_roles=staff_roles,
+                       module_tutor_emails=Mock(return_value=['tutor@example.invalid']),
+                       college_tenant_id=Mock(return_value='HOME'))
+        self.ns['apply_recovery'] = lambda rows: None
+        self.ns['read'].side_effect = [[{
+            'id': 'O', 'session_number': 1, 'status': 'completed', 'attendance_report_id': 'R',
+            'actual_end': '2026-09-16T10:00Z', 'scheduled_start': '2026-09-16T09:00Z',
+            'scheduled_end': '2026-09-16T10:00Z',
+        }], [{
+            'id': 'LEARNER', 'occurrence_id': 'O', 'email': 'learner@example.invalid', 'role': 'Attendee',
+            'total_attendance_seconds': 240,
+            'raw_data': {'identity': {'id': 'OID-L', 'displayName': 'Learner', 'tenantId': 'HOME'}},
+        }, {
+            'id': 'TUTOR', 'occurrence_id': 'O', 'email': 'tutor@example.invalid', 'role': 'Presenter',
+            'total_attendance_seconds': 3600,
+            'raw_data': {'identity': {'id': 'OID-T', 'displayName': 'Tutor', 'tenantId': 'HOME'}},
+        }, {
+            'id': 'ANON', 'occurrence_id': 'O', 'email': '', 'role': 'Attendee', 'display_name': 'Module Learner',
+            'total_attendance_seconds': 60,
+            'raw_data': {'identity': {'id': 'ANON-1', 'displayName': 'Module Learner', 'tenantId': None}},
+        }], [{
+            'occurrence_id': 'O', 'learner_profile_id': 7,
+            'learner_email': 'learner@example.invalid', 'learner_name': 'Module Learner',
+            'attendance_status': 'present', 'attended_seconds': 240,
+        }], [], []]
+        return self.ns['result_rows']({'id': 'S', 'module_catalogue_id': 'M'}, session_number=1, identity=identity)
+
+    def test_staff_account_check_is_added_without_changing_the_register(self):
+        plain = self.account_check_rows(False)
+        checked = self.account_check_rows(True)
+        self.assertNotIn('identityCheck', plain[0])
+        self.assertEqual({k: v for k, v in checked[0].items() if k != 'identityCheck'}, plain[0])
+        people = {person['name']: person for person in checked[0]['identityCheck']['participants']}
+        self.assertEqual(people['Tutor']['roles'], ['Tutor'])
+        self.assertEqual(people['Tutor']['status'], 'matched')
+        # The register's saved exact-name rule counts the anonymous row for the
+        # learner, so the check flags them: a name is not proof of identity.
+        learner = people['Module Learner']
+        self.assertEqual(learner['expectedEmail'], 'learner@example.invalid')
+        self.assertEqual(learner['linkedBy'], ['email', 'name'])
+        self.assertEqual(learner['status'], 'unverified-guest')
+        self.assertEqual([account['status'] for account in learner['accounts']], ['unverified-guest', 'matched'])
+        self.assertIn('not proof of identity', learner['reason'])
+        self.assertNotIn('raw_data', json.dumps(checked, default=str))
+
+    def test_learner_results_never_carry_the_account_check(self):
+        rows = self.account_check_rows(True)
+        self.ns['read'].side_effect = None
+        self.assertIn('identityCheck', rows[0])
+        self.ns['read'].side_effect = [[{'id': 'O', 'session_number': 1, 'status': 'completed', 'attendance_report_id': 'R',
+            'actual_end': '2026-09-16T10:00Z', 'scheduled_start': '2026-09-16T09:00Z', 'scheduled_end': '2026-09-16T10:00Z'}],
+            [], [], []]
+        own = self.ns['result_rows']({'id': 'S'}, session_number=1, email='learner@example.invalid', identity=True)
+        self.assertNotIn('identityCheck', own[0])
+
     def test_staff_sees_unknown_attendee_separately_from_module_roster(self):
         self.ns['apply_recovery'] = lambda rows: None
         self.ns['read'].side_effect = [[{
@@ -744,7 +801,8 @@ class EndpointTests(unittest.TestCase):
         response = self.ns['admin_session'](self.req(), series_id='S', session_number=12)
         self.assertEqual(response['job'], job)
         self.assertEqual(self.ns['read'].call_args.args[1], ['S'])
-        self.ns['result_rows'].assert_called_once_with({'id': 'S'}, session_number=12)
+        # identity=True adds the read-only account check; it starts no work either.
+        self.ns['result_rows'].assert_called_once_with({'id': 'S'}, session_number=12, identity=True)
         self.ns['start_requested_sync'].assert_not_called()
 
     def test_missing_job_table_does_not_hide_saved_session(self):

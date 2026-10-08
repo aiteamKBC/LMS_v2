@@ -95,7 +95,7 @@ it.each(['evidence', 'monthly'])('redirects the removed %s learner page to Learn
   expect(screen.queryByTestId('records')).not.toBeInTheDocument();
 });
 
-it('shows ready module metrics and current course content while verified courses are pending', async () => {
+it('keeps the course catalogue skeleton visible until verified courses are ready', async () => {
   vi.mocked(advancedAdminModuleProgress).mockResolvedValueOnce({ progress: {
     modules: [{ id: 'module-1', title: 'Planning', total_otjh: 20 }], moduleLinks: {},
     moduleProgress: { 'module-1': { hours: { actual: 4 }, ksb: { completed: 2, total: 3 } } },
@@ -114,14 +114,16 @@ it('shows ready module metrics and current course content while verified courses
   expect(screen.getByText('KSBs: 2 / 3')).toBeVisible();
   expect(screen.queryByTestId('module-progress')).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole('tab', { name: 'Courses & Activities' }));
-  expect(await screen.findByTestId('learning')).toBeVisible();
-  expect(screen.getByTestId('verified-courses')).toHaveTextContent('0');
+  expect(await screen.findByRole('status', { name: 'Loading courses and activities' })).toHaveAttribute('aria-busy', 'true');
+  expect(screen.queryByTestId('learning')).not.toBeInTheDocument();
+  expect(screen.queryByTestId('verified-courses')).not.toBeInTheDocument();
 
   resolveCourses({ source: 'wordpress-live', courses: [{ id: 8, title: 'Verified course',
     completedActivities: 6, startedActivities: 6,
     activities: Array.from({ length: 6 }, (_, index) => ({ id: index + 1, title: `Activity ${index + 1}`,
       type: 'reading', completed: true, started: true })) }] });
   await waitFor(() => expect(screen.getByTestId('verified-courses')).toHaveTextContent('1'));
+  expect(screen.queryByRole('status', { name: 'Loading courses and activities' })).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole('tab', { name: 'Module Progress' }));
   expect(await screen.findByTestId('module-progress')).toBeVisible();
   expect(screen.queryByRole('region', { name: 'Available module metrics' })).not.toBeInTheDocument();

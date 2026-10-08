@@ -21,6 +21,29 @@ export interface SessionPerson {
   sourceRecordIds?: string[];
   suggestedLearnerProfileId?: number | null;
 }
+export type AccountCheckStatus = 'matched' | 'different-account' | 'unverified-guest' | 'unknown' | 'unmatched';
+/** One Microsoft account seen in the Teams report. Emails are only those Microsoft vouches for. */
+export interface AccountCheckAccount {
+  sourceRecordIds: string[]; displayName: string; teamsRole: string;
+  verification: 'verified' | 'unverified' | 'unknown';
+  tenant: '' | 'home' | 'external'; accountType: string;
+  email: string; emailSource: '' | 'teams' | 'directory'; otherEmails: string[];
+  /** Typed by an anonymous joiner: never verified, never used to match. */
+  enteredEmail: string;
+  lookup: '' | 'resolved' | 'not-found' | 'failed' | 'denied';
+  linkedBy: string; status: AccountCheckStatus; reason: string; joins: number; seconds: number;
+}
+export interface AccountCheckParticipant {
+  kind: 'learner' | 'staff' | 'unlinked'; name: string; roles: string[]; learnerProfileId: number | null;
+  expectedEmail: string; linkedBy: string[]; teamsRoles: string[];
+  status: AccountCheckStatus; reason: string; accounts: AccountCheckAccount[];
+}
+/** Staff only. Read-only comparison; never changes attendance. */
+export interface SessionAccountCheck {
+  participants: AccountCheckParticipant[];
+  counts: Record<AccountCheckStatus, number>;
+  lookupPending: number;
+}
 export interface AttendanceCandidate {
   learnerProfileId: number; email: string; name: string;
 }
@@ -40,6 +63,7 @@ export interface SessionResult {
   state: string; reportReady: boolean; syncedAt?: string; fileCount?: number; archiveReady?: boolean;
   attendance?: SessionPerson[]; unmatchedAttendance?: SessionPerson[];
   attendanceCandidates?: AttendanceCandidate[]; artifacts?: SessionFile[];
+  identityCheck?: SessionAccountCheck;
 }
 export interface ModuleSessionResults {
   syncAvailable?: boolean;
