@@ -76,13 +76,25 @@ async function intercept(route) {
     if (url.pathname === '/login_api/me/') json = { user: { id: 99, email: owner.email,
       displayName: owner.name, role: 'staff', access: 'coach', accesses: ['coach'],
       subjectType: 'staff', subjectId: 99, hasPassword: true, permissions: [] } };
+    if (url.pathname === '/coach_api/coach/attendance/options') json = {
+      programmes: [{ id: 'programme-example', name: 'Example programme',
+        groups: [{ id: 'group-example', name: 'Example group', cohort: 'Example cohort' }] }],
+    };
+    if (url.pathname === '/coach_api/coach/attendance/context') json = {
+      programme: { id: 'programme-example', name: 'Example programme' },
+      group: { id: 'group-example', name: 'Example group', cohort: 'Example cohort' },
+      learners: [{ id: '42', name: 'Example learner with a long name', email: 'learner@example.test',
+        status: 'active', recent: [{ date: '2026-10-01', status: 'present' }] }],
+      sessions: [{ id: 'occ-1', date: '2026-10-01', time: '09:00', title: 'Example teaching session' }],
+    };
     if (url.pathname === '/coach_api/coach/attendance/details') json = {
       learner: { id: '42', name: 'Example learner with a long name', email: 'learner@example.test',
-        programme: 'Example programme', cohort: 'Example cohort', group: 'Example group', coachName: owner.name },
-      summary: { total: 1, present: 1, absent: 0, unknown: 0 },
-      sessions: [{ sessionId: 'session-1', source: 'microsoft-teams', sourceId: 'occ-1',
-        sessionTitle: 'Example teaching session', sessionType: 'Live lecture', sessionDate: '2026-10-01',
-        sessionDateLabel: '01 Oct 2026', status: 'present' }],
+        programme: 'Example programme', cohort: 'Example cohort', group: 'Example group' },
+      coach: owner, tutor: null,
+      summary: { sessions: 1, present: 1, absent: 0, attendanceRate: 100 },
+      records: [{ id: 'microsoft-teams:occ-1', title: 'Example teaching session',
+        module: 'Example module', date: '2026-10-01', status: 'present', absenceReport: null }],
+      pagination: { page: 1, pageSize: 20, total: 1, hasMore: false },
     };
     if (url.pathname === '/coach_api/coach/reviews/example') json = {
       instance: { id: 'example', reviewTemplateId: 'template-example', learnerId: 42,

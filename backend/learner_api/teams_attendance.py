@@ -153,6 +153,8 @@ def fetch_verified_teams_attendance_rows(
     start_date=None,
     end_date=None,
     include_reported_participants: bool = False,
+    occurrence_ids: list[str] | None = None,
+    independent_learner_scope: bool = False,
 ) -> list[dict]:
     """Build real attendance from completed Microsoft Teams reports.
 
@@ -197,6 +199,11 @@ def fetch_verified_teams_attendance_rows(
             return []
 
     session_queryset = LiveSession.objects.using(database)
+    if occurrence_ids is not None:
+        if not occurrence_ids:
+            return []
+        session_queryset = session_queryset.filter(id__in=LiveSessionOccurrence.objects.using(database)
+            .filter(id__in=occurrence_ids).values('live_session_id'))
     if modules:
         session_queryset = session_queryset.filter(module_catalogue_id__in=modules)
     sessions = list(
@@ -241,7 +248,8 @@ def fetch_verified_teams_attendance_rows(
         }
         if identity_learners_by_email is not None else None
     )
-    approved_guests = approved_alternative_guests(database, scoped_enrolment_emails)
+    approved_guests = approved_alternative_guests(database, scoped_enrolment_emails,
+        **({'occurrence_ids': occurrence_ids} if occurrence_ids is not None else {}))
     if approved_guests:
         occurrence_series = dict(
             LiveSessionOccurrence.objects.using(database)
@@ -296,6 +304,8 @@ def fetch_verified_teams_attendance_rows(
         .filter(live_session_id__in=list(sessions_by_id), actual_end__isnull=False)
         .exclude(Q(attendance_report_id__isnull=True) | Q(attendance_report_id__exact=""))
     )
+    if occurrence_ids is not None:
+        occurrence_queryset = occurrence_queryset.filter(id__in=occurrence_ids)
     # Monthly/reporting callers only need a bounded slice. Applying the range
     # before loading reports prevents one request from materialising every
     # historical occurrence and attendance record for the whole caseload.
@@ -373,32 +383,39 @@ def fetch_verified_teams_attendance_rows(
                 expected_emails_by_occurrence.get(record.occurrence_id, set()),
                 learners_by_email,
             )
-        if not email_key:
-            continue
-        if email_key not in expected_emails_by_occurrence.get(record.occurrence_id, set()):
-            continue
-        first_join, last_leave = _attendance_interval_bounds(record.intervals)
-        existing = attendance_by_occurrence[record.occurrence_id].get(email_key)
-        if existing is None:
-            attendance_by_occurrence[record.occurrence_id][email_key] = {
-                "total_attendance_seconds": max(record.total_attendance_seconds or 0, 0),
-                "records": [{"intervals": record.intervals, "total_attendance_seconds": record.total_attendance_seconds}],
-                "source_record_id": str(record.graph_record_id or record.id or "").strip(),
-                "first_join_at": first_join,
-                "last_leave_at": last_leave,
-            }
-        else:
-            existing["records"].append({"intervals": record.intervals, "total_attendance_seconds": record.total_attendance_seconds})
-            if not existing["source_record_id"] and record.graph_record_id:
-                existing["source_record_id"] = str(record.graph_record_id).strip()
-            if first_join is not None and (
-                existing["first_join_at"] is None or first_join < existing["first_join_at"]
-            ):
-                existing["first_join_at"] = first_join
-            if last_leave is not None and (
-                existing["last_leave_at"] is None or last_leave > existing["last_leave_at"]
-            ):
-                existing["last_leave_at"] = last_leave
+        email_keys = {email_key} if email_key else set()
+        if (independent_learner_scope and not raw_email
+                and not reviewed_identity_links.get((str(record.occurrence_id), source_row_id))
+                and str(record.role or '').strip().casefold() in {'', 'attendee'}):
+            # The coach detail formerly invoked this reader for one email at a
+            # time. Preserve that exact name-matching scope during bulk reads;
+            # other callers retain the existing whole-roster ambiguity rule.
+            name = attendance_display_name({'display_name': record.display_name, 'raw_data': record.raw_data})
+            email_keys = {email for email in expected_emails_by_occurrence.get(record.occurrence_id, set())
+                          if _unique_exact_name_email(name, {email}, learners_by_email)}
+        for email_key in email_keys & expected_emails_by_occurrence.get(record.occurrence_id, set()):
+            first_join, last_leave = _attendance_interval_bounds(record.intervals)
+            existing = attendance_by_occurrence[record.occurrence_id].get(email_key)
+            if existing is None:
+                attendance_by_occurrence[record.occurrence_id][email_key] = {
+                    "total_attendance_seconds": max(record.total_attendance_seconds or 0, 0),
+                    "records": [{"intervals": record.intervals, "total_attendance_seconds": record.total_attendance_seconds}],
+                    "source_record_id": str(record.graph_record_id or record.id or "").strip(),
+                    "first_join_at": first_join,
+                    "last_leave_at": last_leave,
+                }
+            else:
+                existing["records"].append({"intervals": record.intervals, "total_attendance_seconds": record.total_attendance_seconds})
+                if not existing["source_record_id"] and record.graph_record_id:
+                    existing["source_record_id"] = str(record.graph_record_id).strip()
+                if first_join is not None and (
+                    existing["first_join_at"] is None or first_join < existing["first_join_at"]
+                ):
+                    existing["first_join_at"] = first_join
+                if last_leave is not None and (
+                    existing["last_leave_at"] is None or last_leave > existing["last_leave_at"]
+                ):
+                    existing["last_leave_at"] = last_leave
 
     for people in attendance_by_occurrence.values():
         for evidence in people.values():

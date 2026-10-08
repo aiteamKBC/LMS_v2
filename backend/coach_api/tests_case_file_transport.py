@@ -155,10 +155,10 @@ class CaseFileTransportTests(SimpleTestCase):
                  'targetDate': '2026-09-12', 'scheduledDate': '2026-10-12',
                  'reviewCompletedAt': None, 'rawStatus': 'source-only', 'reviewResponses': {'unused': 'unused'}}
         context.read.return_value = JsonResponse({'events': [event], 'reviewGenerationIssues': []})
-        with patch('coach_api.case_file.CaseFileContext', return_value=context), patch('coach_api.views._case_file_review_events', return_value=([event], [])):
+        with patch('coach_api.case_file.CaseFileContext', return_value=context), patch('coach_api.case_file_reviews.review_events', return_value=([event], [])):
             response = unwrap(case_file_section)(self.request('/?resource=rows'), 101, section='reviews')
-        row = json.loads(response.content)['events'][0]
-        self.assertEqual(row['targetDate'], '2026-09-12')
+        row = json.loads(response.content)['reviews'][0]
+        self.assertEqual(row['plannedDate'], '2026-09-12')
         self.assertEqual(row['scheduledDate'], '2026-10-12')
         self.assertNotIn('rawStatus', row)
         self.assertNotIn('reviewResponses', row)
