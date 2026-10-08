@@ -62,6 +62,25 @@ class CalendarRescheduleSyncTests(SimpleTestCase):
         self.assertEqual(record.graph_event_id, "original-event")
         self.assertEqual(record.meeting_link, "https://teams.microsoft.com/meet/original")
 
+    def test_reschedule_of_the_same_meeting_sends_no_meeting_options(self):
+        record = self.record()
+        with self.patches(record), patch.object(views, "microsoft_graph_request", return_value=self.graph_response(record)):
+            options = views.apply_teams_meeting_options
+            self.assertEqual(views.sync_calendar_event_to_graph(record, {"source": "mcr"}), "")
+        options.assert_not_called()
+
+    def test_new_or_replaced_online_meeting_still_gets_its_options(self):
+        for existing, join_url in ((False, "https://teams.microsoft.com/meet/new"),
+                                   (True, "https://teams.microsoft.com/meet/replaced")):
+            with self.subTest(existing=existing):
+                record = self.record(existing=existing)
+                response = {"id": record.graph_event_id or "new-event", "onlineMeeting": {"joinUrl": join_url}}
+                with self.patches(record), patch.object(views, "microsoft_graph_request", return_value=response):
+                    options = views.apply_teams_meeting_options
+                    self.assertEqual(views.sync_calendar_event_to_graph(record, {"source": "mcr"}), "")
+                options.assert_called_once()
+                self.assertEqual(options.call_args.args[1], join_url)
+
     def test_first_booking_still_creates_online_meeting_with_stable_transaction_id(self):
         record = self.record(existing=False)
         response = {"id": "new-event", "onlineMeeting": {"joinUrl": "https://teams.microsoft.com/meet/new"}}

@@ -767,15 +767,42 @@ def curriculum_week_teams_meeting_detail(request, module_catalogue_id, live_sess
         lobby = 'invited'
     recording = v.clean_str(single.get('recording')).lower() or v.clean_str(series.get('recording')) or 'none'
     language = v.clean_str(single.get('spokenLanguage')) or v.clean_str(series.get('spoken_language')) or 'en-GB'
-    settings_applied, graph_meeting, option_warnings = v.apply_teams_meeting_options(
-        organizer, join_url, recording=recording, lobby_bypass=lobby, spoken_language=language,
-        attendees=invited_people, presenters=presenters, co_organizers=co_organizers,
-        online_meeting_id=v.clean_str(series.get('online_meeting_id')),
+    # Only the option groups this save changed (see teams_meeting_options_policy).
+    # A save that only adds or removes people sends no onlineMeeting PATCH; a
+    # time change or a settings change also retries options left unapplied.
+    from .teams_meeting_options_policy import (json_list, option_groups_to_apply, pending_warning, remaining_pending,
+                                              stored_options as saved_meeting_options)
+    stored_options = saved_meeting_options(series)
+    saved_warnings = json_list(series.get('warnings'))
+    # This meeting saves its warnings as sentences; an unapplied-options one is
+    # recognised by its own wording, written below or by apply_teams_meeting_options.
+    pending_options = {'settings', 'roles'} if any(
+        marker in str((item if isinstance(item, str) else (item or {}).get('message')) or '')
+        for item in saved_warnings
+        for marker in ('did not apply its lobby', 'has not applied this meeting')
+    ) else set()
+    option_groups = option_groups_to_apply(
+        stored_options,
+        {'recording': recording, 'lobby_bypass': lobby, 'spoken_language': language,
+         'presenters': presenters, 'co_organizers': co_organizers},
+        pending_options, retry_pending=time_changed,
     )
+    settings_applied, graph_meeting, option_warnings = True, {}, []
+    if option_groups:
+        settings_applied, graph_meeting, option_warnings = v.apply_teams_meeting_options(
+            organizer, join_url, recording=recording, lobby_bypass=lobby, spoken_language=language,
+            attendees=invited_people, presenters=presenters, co_organizers=co_organizers,
+            online_meeting_id=v.clean_str(series.get('online_meeting_id')), groups=option_groups,
+            live_session_id=live_id,
+        )
     for option_warning in option_warnings:
         message = v.clean_str(option_warning.get('message'))
         detail = v.clean_str(option_warning.get('detail'))
         warnings.append(f'{message} ({detail})' if detail else message)
+    options_pending = remaining_pending(pending_options, option_groups, set() if settings_applied else option_groups)
+    if options_pending and settings_applied:
+        # Not retried by this save (people only): keep saying so.
+        warnings.append(pending_warning(options_pending)['message'])
 
     # Everyone this save added, reached on their own so the rest stay quiet --
     # only when nothing was announced. An announced write (this one, or the
@@ -795,9 +822,11 @@ def curriculum_week_teams_meeting_detail(request, module_catalogue_id, live_sess
         'co_organizers': v.json_db_value(co_organizers),
         'start_datetime': utc_start,
         'duration_minutes': duration,
-        'lobby_bypass': lobby,
-        'recording': recording,
-        'spoken_language': language,
+        # A refused settings change is not saved as if Microsoft had taken it.
+        **({'lobby_bypass': stored_options['lobby_bypass'], 'recording': stored_options['recording'],
+            'spoken_language': stored_options['spoken_language']}
+           if not settings_applied and 'settings' in option_groups else
+           {'lobby_bypass': lobby, 'recording': recording, 'spoken_language': language}),
         'warnings': v.json_db_value(warnings),
         'updated_at': now,
     })

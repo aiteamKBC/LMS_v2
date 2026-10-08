@@ -125,6 +125,12 @@ def reconcile_calendar(live_id):
                               ON CONFLICT (live_session_id) DO UPDATE
                               SET snapshot = EXCLUDED.snapshot, checked_at = EXCLUDED.checked_at""",
                            [live_id, json.dumps(plan['snapshot']), datetime.now(timezone.utc)])
+    # Read-only on Microsoft; this only notes that a check ran and what it found.
+    from .teams_calendar_integrity import EVENT_VERIFIED, record_event
+    record_event(live_id, EVENT_VERIFIED, module_catalogue_id=str(series.get('module_catalogue_id') or ''),
+                 trigger='Calendar status check', outcome='attention' if plan['errors'] else 'success',
+                 detail={'errors': plan['errors'][:20], 'unmatched': len(plan.get('unmatched') or []),
+                         'leftovers': len(plan.get('leftovers') or [])})
     return {'changed': False, 'seriesStatus': 'active', 'cancelledSessions': [],
             # Cancelled in Microsoft, still scheduled here, and left that way.
             'cancelledInMicrosoft': [row['session_number'] for row in rows if row['id'] in plan['cancelledIds']],
@@ -144,6 +150,15 @@ def sync_calendar_state(request, live_session_id):
     except LookupError:
         return JsonResponse({'error': 'Calendar not found.'}, status=404)
     except CalendarStateError as exc:
+        _note_failed_check(live_session_id, str(exc))
         return JsonResponse({'error': str(exc)}, status=409)
     except (httpx.HTTPError, ValueError, RuntimeError):
+        _note_failed_check(live_session_id, 'Microsoft calendar status could not be verified.')
         return JsonResponse({'error': 'Microsoft calendar status could not be verified. No cancellation was inferred.'}, status=502)
+
+
+def _note_failed_check(live_session_id, message):
+    """Calendar health shows "verification failed" rather than an older success as current."""
+    from .teams_calendar_integrity import EVENT_VERIFY_FAILED, record_event
+    record_event(live_session_id, EVENT_VERIFY_FAILED, trigger='Calendar status check', outcome='failed',
+                 detail={'message': message[:300]})
