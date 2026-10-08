@@ -39,6 +39,74 @@ class CourseDisplayTests(unittest.TestCase):
         self.assertIsNone(item['date'])
         self.assertIsNone(item['week_start'])
 
+    def test_section_reference_places_components_missing_from_the_export_material_list(self):
+        self.definitions[1]['source_section_ref'] = '2'
+        item = self.project([self.placement(None, 'April 2026', 2)])[1]
+        self.assertEqual(item['month'], '2026-04')
+        self.assertIsNone(item['date'])
+        self.assertEqual(item['section_title'], 'April 2026')
+        self.assertFalse(item['completed'])
+
+    def test_section_reference_is_scoped_to_the_owned_course(self):
+        self.definitions[1]['source_section_ref'] = '2'
+        item = self.project([self.placement(None, 'April 2026', 2, course=99)])[1]
+        self.assertEqual(item['month'], 'undated')
+        self.assertTrue(item['date_needs_review'])
+
+    def test_conflicting_component_and_section_references_need_review(self):
+        self.definitions[0]['source_section_ref'] = '2'
+        item = self.project([self.placement(10, 'March 2026', 1),
+                             self.placement(None, 'April 2026', 2)])[0]
+        self.assertEqual(item['month'], 'undated')
+        self.assertTrue(item['date_needs_review'])
+
+    def test_verified_quiz_parent_supplies_placement_even_before_the_parent_in_source_order(self):
+        parent, quiz = self.definitions[:2]
+        parent.update(source_payload={'quiz_id': 10}, material_available=False)
+        quiz['source_payload'] = {'activity_id': 10}
+        self.definitions[:2] = [quiz, parent]
+        before = copy.deepcopy(self.definitions)
+        item = self.project([self.placement(10, 'Lecture 17/4/26')])[0]
+        self.assertEqual((item['month'], item['date']), ('2026-04', '2026-04-17'))
+        self.assertEqual(item['section_title'], 'Lecture 17/4/26')
+        self.assertNotIn('source_material_activity_id', item)  # Placement does not invent content.
+        self.assertEqual(self.definitions, before)
+
+    def test_parent_does_not_overwrite_a_quizs_own_date_or_conflicting_sections(self):
+        self.definitions[0]['source_payload'] = {'quiz_id': 10}
+        self.definitions[1]['source_payload'] = {'activity_id': 10}
+        exports = [self.placement(10, 'March 2026'), self.placement(10, 'April 2026', 2, kind='quiz')]
+        self.assertEqual(self.project(exports)[1]['month'], '2026-04')
+        exports.append(self.placement(10, 'May 2026', 3, kind='quiz'))
+        item = self.project(exports)[1]
+        self.assertEqual(item['month'], 'undated')
+        self.assertTrue(item['date_needs_review'])
+
+    def test_ambiguous_parent_date_and_unconfirmed_parent_links_remain_for_review(self):
+        self.definitions[0]['source_payload'] = {'quiz_id': 10}
+        self.definitions[1]['source_payload'] = {'activity_id': 10}
+        item = self.project([self.placement(10, 'March 2026'), self.placement(10, 'April 2026', 2)])[1]
+        self.assertEqual(item['month'], 'undated')
+        self.assertTrue(item['date_needs_review'])
+        self.definitions[0]['source_payload'] = {'quiz_id': 99}
+        self.assertEqual(self.project([self.placement(10, 'March 2026')])[1]['month'], 'undated')
+
+    def test_pre_month_section_and_its_confirmed_quiz_are_introduction(self):
+        self.definitions[0].update(source_section_ref='1', source_payload={'quiz_id': 10})
+        self.definitions[1]['source_payload'] = {'activity_id': 10}
+        items = self.project([self.placement(None, 'Welcome resources', 1),
+                              self.placement(20, 'March 2026', 2)])
+        self.assertEqual([item['date_source'] for item in items[:2]], ['introduction', 'introduction'])
+
+    def test_explicit_source_introduction_and_month_headings_work_without_export_members(self):
+        for title, month, source in [('Introduction', 'undated', 'introduction'),
+                                     ('March - 2026', '2026-03', 'section_month')]:
+            with self.subTest(title=title):
+                self.definitions[0]['source_section_title'] = title
+                item = self.project([])[0]
+                self.assertEqual((item['month'], item['date_source']), (month, source))
+                self.assertIsNone(item['date'])
+
     def test_only_sections_before_first_dated_section_become_introduction(self):
         exports = [self.placement(10, 'Welcome resources', 1),
                    self.placement(20, 'March 2026', 2),

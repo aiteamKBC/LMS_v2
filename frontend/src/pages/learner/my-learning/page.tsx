@@ -94,7 +94,7 @@ export default function MyLearningPage({ view = 'catalogue' }: { view?: 'catalog
   const canTake = !!(kind && id) && canProgress;
 
   const subtitle = real
-    ? [real.programme, real.employer, real.cohort ? `Cohort ${real.cohort}` : ''].filter(Boolean).join(' · ')
+    ? [real.programme, real.name, real.cohort ? `Cohort ${real.cohort}` : ''].filter(Boolean).join(' · ')
     : '';
 
   const tabs: PageTabItem[] = [
