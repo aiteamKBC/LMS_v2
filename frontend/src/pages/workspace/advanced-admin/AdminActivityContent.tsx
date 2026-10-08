@@ -6,7 +6,27 @@ import {
   type AdvancedAdminQuizReview,
 } from '@/api/advancedAdmin';
 import { normalizeReadingHtml } from '@/lib/readingHtml';
+import { SkeletonBlock } from '@/components/feature/Skeletons';
 import { Media } from '@/pages/learner/my-learning/StudentMaterial';
+
+function ActivityContentSkeleton() {
+  return <section role="status" aria-busy="true" aria-label="Loading activity content"
+    className="space-y-4 rounded-xl border border-foreground-200 bg-background-50 p-4">
+    <span className="sr-only">Preparing activity content...</span>
+    <div className="flex items-center justify-between gap-4">
+      <div className="w-full max-w-md space-y-2">
+        <SkeletonBlock className="h-4 w-2/5 min-w-32" />
+        <SkeletonBlock className="h-3 w-3/5 min-w-48" />
+      </div>
+      <SkeletonBlock className="h-9 w-24 shrink-0 rounded-xl" />
+    </div>
+    <SkeletonBlock className="h-[65vh] min-h-[320px] w-full rounded-xl" />
+    <div className="space-y-2">
+      <SkeletonBlock className="h-3 w-1/3" />
+      <SkeletonBlock className="h-3 w-2/3" />
+    </div>
+  </section>;
+}
 
 function AdminPdfPreview({ url, title }: { url: string; title: string }) {
   const [preview, setPreview] = useState<{ src?: string; error?: string }>({});
@@ -224,7 +244,7 @@ export function AdminLegacyActivityContent({ learnerId, groupId, activityId, kin
   return <div className="space-y-5 rounded-2xl border border-foreground-200 bg-white p-5">
     <div className="rounded-xl border border-primary-100 bg-primary-50 p-4"><h4 className="font-semibold">Activity progress</h4>
       <p className={`mt-1 text-sm font-semibold ${completed ? 'text-emerald-700' : 'text-foreground-600'}`}>{completed ? 'Complete' : 'Not complete'}</p></div>
-    {(materialLoading || quizLoading) && <p role="status" className="text-sm">Preparing activity content...</p>}
+    {(materialLoading || quizLoading) && <ActivityContentSkeleton />}
     {materialError && <p role="alert" className="text-sm text-amber-800">{materialError}</p>}
     {quizError && <p role="alert" className="text-sm text-amber-800">{quizError}</p>}
     {material?.media.map((item, index) => <AdminMedia key={`${index}:${item.url}`} item={item} />)}

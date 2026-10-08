@@ -22,6 +22,14 @@ beforeEach(() => {
 });
 afterEach(() => vi.unstubAllGlobals());
 
+it('shows a structured skeleton while the activity content is loading', () => {
+  vi.mocked(advancedAdminMaterial).mockReturnValue(new Promise(() => {}));
+  render(<AdminLegacyActivityContent learnerId={42} groupId={8} activityId={12} kind="material" completed />);
+  const skeleton = screen.getByRole('status', { name: 'Loading activity content' });
+  expect(skeleton).toHaveAttribute('aria-busy', 'true');
+  expect(skeleton.querySelectorAll('.kbc-skeleton')).toHaveLength(6);
+});
+
 it('opens saved media and formatted text while displaying the quiz key and recorded selection read only', async () => {
   vi.mocked(advancedAdminMaterial).mockResolvedValue({
     media: [
