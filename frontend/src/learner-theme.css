@@ -532,6 +532,31 @@ body:has(.dashboard-theme[data-workspace-role="learner"]) .dashboard-theme[data-
   opacity: 0.1;
 }
 
+/* Advanced Admin uses the same full-height navigation pattern with its own
+   compact purple selection. Learner navigation and permissions stay separate. */
+body .dashboard-theme[data-workspace-role="advanced-admin"] .kbc-learner-sidebar-panel {
+  background: #21164b !important;
+}
+
+body .dashboard-theme[data-workspace-role="advanced-admin"] .kbc-learner-sidebar-panel nav[aria-label="Advanced Admin primary navigation"] :is(a, button) {
+  border-radius: 8px;
+  color: #fff;
+}
+
+body .dashboard-theme[data-workspace-role="advanced-admin"] .kbc-learner-sidebar-panel nav[aria-label="Advanced Admin primary navigation"] :is(a, button):not([aria-current="page"]) {
+  background: transparent;
+}
+
+body .dashboard-theme[data-workspace-role="advanced-admin"] .kbc-learner-sidebar-panel nav[aria-label="Advanced Admin primary navigation"] :is(a, button):not([aria-current="page"]):hover {
+  background: rgb(255 255 255 / 0.11);
+}
+
+body .dashboard-theme[data-workspace-role="advanced-admin"] .kbc-learner-sidebar-panel nav[aria-label="Advanced Admin primary navigation"] a[aria-current="page"] {
+  background: #5b34a5 !important;
+  color: #fff !important;
+  font-weight: 700;
+}
+
 body .dashboard-theme[data-workspace-role="learner"] .kbc-learner-sidebar-panel :is(a, button) {
   color: #ffffff;
 }

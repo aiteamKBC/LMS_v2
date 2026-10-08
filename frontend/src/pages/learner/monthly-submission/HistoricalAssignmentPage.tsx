@@ -107,6 +107,11 @@ export default function HistoricalAssignmentPage() {
           <h2 className="font-semibold">Original tutor feedback{feedback.author ? ` — ${feedback.author}` : ''}</h2>
           <div className="mt-3 text-sm leading-6" dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(feedback.message || '') }} />
         </section>)}
+        {(submission.legacyAssignment?.lmsReviews || []).map((review, index) => <section key={index} className="rounded-xl border border-emerald-200 bg-emerald-50 p-5">
+          <h2 className="font-semibold text-emerald-900">LMS review · {review.decision}</h2>
+          <p className="mt-1 text-xs">{review.reviewedBy} · {review.reviewedAt.slice(0, 10)}</p>
+          <p className="mt-3 whitespace-pre-wrap text-sm leading-6">{review.feedback}</p>
+        </section>)}
       </>}
     </main>
   </WorkspaceShell>;

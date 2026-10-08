@@ -86,6 +86,11 @@ def classified_submission(row, kind, learner_id):
 def classified_response(kind, learner_id, activity_id=''):
     rows = classified_rows(kind, learner_id, activity_id)
     submissions = [classified_submission(row, kind, learner_id) for row in rows]
+    if submissions:
+        from .legacy_marking import reviews_for_evidence
+        marks = reviews_for_evidence(rows[0]['aptem_id'], [row['evidence_id'] for row in rows])
+        for row, submission in zip(rows, submissions):
+            submission['legacyAssignment']['lmsReviews'] = marks.get(int(row['evidence_id']), [])
     if activity_id:
         if submissions:
             from .assignment_content import load_assignment_content

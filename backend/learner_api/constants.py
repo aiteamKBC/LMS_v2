@@ -80,6 +80,7 @@ ACCESS_CURRICULUM = "curriculum"
 ACCESS_COACH = "coach"
 ACCESS_TUTOR = "tutor"
 ACCESS_SUPER_ADMIN = "super-admin"
+ACCESS_ADVANCED_ADMIN = "advanced-admin"
 ACCESS_RECORD_MONITOR = "record-monitor"
 
 #: Canonical order — also the order the console offers them in.
@@ -89,6 +90,7 @@ ACCESS_CHOICES = [
     ACCESS_COACH,
     ACCESS_TUTOR,
     ACCESS_RECORD_MONITOR,
+    ACCESS_ADVANCED_ADMIN,
     ACCESS_SUPER_ADMIN,
 ]
 
@@ -99,6 +101,7 @@ ACCESS_LABELS = {
     ACCESS_COACH: "Coach access",
     ACCESS_TUTOR: "Tutor access",
     ACCESS_RECORD_MONITOR: "Learning record monitoring",
+    ACCESS_ADVANCED_ADMIN: "Advanced Admin access",
     ACCESS_SUPER_ADMIN: "Super Admin access",
 }
 
@@ -112,6 +115,7 @@ ACCESS_DESCRIPTIONS = {
     ACCESS_COACH: "The coach workspace — their caseload, reviews and evidence validation.",
     ACCESS_TUTOR: "The tutor workspace — their teaching groups and session delivery.",
     ACCESS_RECORD_MONITOR: "Read-only monitoring of active enrolled learners, previous records and signatures.",
+    ACCESS_ADVANCED_ADMIN: "The assigned PCP and ME learner review workspace and assessment marking.",
     ACCESS_SUPER_ADMIN: "Everything, including this console. Can edit any data on the platform.",
 }
 
@@ -132,6 +136,7 @@ ACCESS_HOME_ROUTES = {
     ACCESS_COACH: "/workspace/coach",
     ACCESS_TUTOR: "/workspace/tutor",
     ACCESS_RECORD_MONITOR: "/old-otjh/monitor",
+    ACCESS_ADVANCED_ADMIN: "/workspace/advanced-admin",
     ACCESS_SUPER_ADMIN: "/workspace/admin",
 }
 
@@ -144,6 +149,7 @@ ACCESS_NAV_ROLES = {
     ACCESS_COACH: "coach",
     ACCESS_TUTOR: "tutor",
     ACCESS_RECORD_MONITOR: "record-monitor",
+    ACCESS_ADVANCED_ADMIN: "advanced-admin",
     ACCESS_SUPER_ADMIN: "admin",
 }
 

@@ -1,0 +1,15 @@
+.hoursChart {
+  container: trainingDetails / inline-size;
+  min-width: 0;
+  --learner-success: #167853;
+  --learner-warning: #9a5d0d;
+}
+
+.hoursChart [role='tooltip'] {
+  max-width: calc(100cqw - 2rem);
+}
+
+.hoursChart [role='tooltip'] dd {
+  white-space: normal;
+  text-align: right;
+}

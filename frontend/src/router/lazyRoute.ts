@@ -11,13 +11,13 @@ import { lazy, type ComponentType } from 'react';
 //
 // The page the reader wants does exist; only the name they were given is out of
 // date, and the current name is in the index.html a reload would fetch. So a
-// stale chunk reloads once, silently, and lands on the page that was asked for.
+// stale chunk reloads once by default and lands on the page that was asked for.
 //
 // Once, deliberately: if the chunk is missing for any other reason — a broken
 // deploy, a purged CDN path, a network that fails on that one file — reloading
-// forever would trap the reader in a flicker with nothing to read. The second
-// failure is left to RouteErrorBoundary, which explains it and offers the
-// reload as a choice.
+// forever would trap the reader in a flicker with nothing to read. A failure
+// after the route's reload limit is left to RouteErrorBoundary, which explains
+// it and offers the reload as a choice.
 // ============================================================================
 
 const STALE_CHUNK = /Failed to fetch dynamically imported module|Importing a module script failed|error loading dynamically imported module|ChunkLoadError|Unable to preload CSS/i;
@@ -69,17 +69,22 @@ function marker(): { read: () => string | null; write: (value: string) => void; 
 }
 
 /**
- * Reload once for a stale chunk. Returns true when a reload was started, so
+ * Reload up to the route's limit for a stale chunk. Returns true when a reload was started, so
  * the caller can stop rather than surfacing an error the reader will never see.
  */
-export function recoverFromStaleChunk(path = window.location.pathname): boolean {
+export function recoverFromStaleChunk(path = window.location.pathname, maxReloads = 1): boolean {
   const store = marker();
   // Scoped to the path, not the whole URL: ?tab=x and ?tab=y are the same page
-  // and the same chunk, so they must share one reload budget or a page with
+  // and the same chunk, so they must share a reload budget or a page with
   // query state could reload repeatedly. A genuinely different page whose chunk
   // is also stale still gets its own.
-  if (store.read() === path) return false;
-  store.write(path);
+  const saved = store.read();
+  const [savedPath, savedCount] = saved?.split('\n') ?? [];
+  const previousCount = Number(savedCount ?? 1);
+  const count = savedPath === path && Number.isSafeInteger(previousCount) && previousCount > 0
+    ? previousCount : 0;
+  if (count >= maxReloads) return false;
+  store.write(count === 0 ? path : `${path}\n${count + 1}`);
   window.location.reload();
   return true;
 }
@@ -111,7 +116,10 @@ type Loader<T> = () => Promise<{ default: T }>;
  * A load that succeeds clears the marker — that, and not a route rendering, is
  * the moment a chunk is known to have arrived.
  */
-export function lazyRoute<T extends ComponentType<never>>(loader: Loader<T>) {
+export function lazyRoute<T extends ComponentType<never>>(
+  loader: Loader<T>,
+  options: { maxChunkReloads?: number } = {},
+) {
   let pending: Promise<{ default: T }> | undefined;
   const preload = () => {
     if (!pending) pending = loader().catch(error => { pending = undefined; throw error; });
@@ -127,7 +135,7 @@ export function lazyRoute<T extends ComponentType<never>>(loader: Loader<T>) {
       return loaded;
     })
     .catch((error: unknown) => {
-      if (isStaleChunkError(error) && recoverFromStaleChunk()) {
+      if (isStaleChunkError(error) && recoverFromStaleChunk(window.location.pathname, options.maxChunkReloads)) {
         return new Promise<{ default: T }>((_resolve, reject) => {
           window.setTimeout(() => reject(error), RELOAD_GRACE_MS);
         });

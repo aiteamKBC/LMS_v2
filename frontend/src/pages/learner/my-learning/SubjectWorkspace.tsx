@@ -280,7 +280,7 @@ function SubjectCertificateAction({
   </div>;
 }
 
-function SubjectCard({ subject, cover, tone = 'purple', onOpen, template, csrfToken, kind, learnerId, planModule }: {
+export function SubjectCard({ subject, cover, tone = 'purple', onOpen, template, csrfToken, kind, learnerId, planModule }: {
   subject: Subject;
   cover?: string;
   tone?: SubjectCardTone;
