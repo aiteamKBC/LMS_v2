@@ -14,7 +14,7 @@ function attachmentName(url: string, fileName?: string | null): string {
   }
 }
 
-export function AssignmentAttachment({ url, fileName, title, defaultExpanded = false, pdfTools = false }: {
+export function AssignmentAttachment({ url, fileName, title, defaultExpanded = false, pdfTools = true }: {
   url: string; fileName?: string | null; title: string; defaultExpanded?: boolean; pdfTools?: boolean;
 }) {
   const [expanded, setExpanded] = useState(defaultExpanded);
@@ -35,7 +35,7 @@ export function AssignmentAttachment({ url, fileName, title, defaultExpanded = f
     </div>
     <div id={previewId} hidden={!expanded} className={styles.attachmentPreview}>
       {expanded && <Suspense fallback={<p role="status">Loading file preview…</p>}>
-        <AttachmentPreview url={url} fileName={name} title={title} pdfTools={pdfTools} />
+        <AttachmentPreview url={url} fileName={name} title={title} pdfTools={pdfTools} allowAnnotatedDownload />
       </Suspense>}
     </div>
   </section>;

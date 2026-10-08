@@ -10,6 +10,11 @@ import { fetchEvidence } from '@/api/evidence';
 import { loadLearningReflectionSubmission } from '@/api/reflectionSubmission';
 import ComponentViewPage, { ComponentBody } from './page';
 import { downloadReadingPdf } from './readingDownloads';
+const readingPdf = vi.hoisted(() => ({ getPage: vi.fn(), cleanup: vi.fn() }));
+vi.mock('pdfjs-dist', () => ({
+  GlobalWorkerOptions: {},
+  getDocument: () => ({ promise: Promise.resolve({ numPages: 1, ...readingPdf }) }),
+}));
 
 (globalThis as Record<string, unknown>).AppIcon = ({ className }: { className?: string }) => <i className={className} />;
 
@@ -93,6 +98,50 @@ beforeEach(() => {
   vi.mocked(loadLearningReflectionSubmission).mockResolvedValue(null);
 });
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
+
+it.each(['commercial', 'apprenticeship'])('counts reading time only after the PDF page renders for %s learners', async kind => {
+  vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible');
+  let now = 0;
+  vi.spyOn(performance, 'now').mockImplementation(() => now);
+  let resolveFile!: (response: Response) => void;
+  const pendingFile = new Promise<Response>(resolve => { resolveFile = resolve; });
+  const request = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => (await pendingFile).clone());
+  let finishRender!: () => void;
+  const rendered = new Promise<void>(resolve => { finishRender = resolve; });
+  const renderPage = vi.fn(() => ({ promise: rendered, cancel: vi.fn() }));
+  readingPdf.getPage.mockResolvedValue({ getViewport: () => ({ width: 800, height: 1000 }), render: renderPage });
+  vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({ clearRect: vi.fn() } as unknown as CanvasRenderingContext2D);
+  const reading = { ...first, type: 'reading', component: 'Reading', resourceUrl: '/curriculum_api/curriculum/uploads/sample.pdf', fileName: 'sample.pdf' };
+  vi.mocked(fetchLearnerDetail).mockResolvedValue({ ...detail(), components: [reading] } as unknown as LearnerDetail);
+  mount('C1', kind);
+  await screen.findByRole('timer');
+  await waitFor(() => expect(request).toHaveBeenCalled());
+  now = 30000;
+  await act(async () => resolveFile(new Response(new Uint8Array([1]), { status: 200 })));
+  await waitFor(() => expect(renderPage).toHaveBeenCalled());
+  now = 60000;
+  expect(screen.getByRole('timer')).toHaveAccessibleName('Time on this activity: 00 hours, 00 minutes, 00 seconds');
+  await act(async () => finishRender());
+  now = 62000;
+  fireEvent.click(screen.getByRole('button', { name: 'Finish' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'Confirm' }));
+  await waitFor(() => expect(submitComponentProgress).toHaveBeenCalledWith('C1', kind, '1', expect.objectContaining({ timeTakenSeconds: 2 })));
+});
+
+it('does not count a failed reading preview as reading time', async () => {
+  vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible');
+  let now = 0;
+  vi.spyOn(performance, 'now').mockImplementation(() => now);
+  vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('', { status: 404 }));
+  const reading = { ...first, type: 'reading', component: 'Reading', resourceUrl: '/curriculum_api/curriculum/uploads/sample.pdf' };
+  vi.mocked(fetchLearnerDetail).mockResolvedValue({ ...detail(), components: [reading] } as unknown as LearnerDetail);
+  const { unmount } = mount();
+  await screen.findByText('File request failed (404)');
+  now = 60000;
+  unmount();
+  const saved = JSON.parse(localStorage.getItem('learner_activity_timer:v1:apprenticeship:1:C1')!);
+  expect(saved.elapsedSeconds).toBe(0);
+});
 
 it.each(['commercial', 'apprenticeship'])('passes every instruction file to the %s assignment without including another activity', async kind => {
   const files = ['brief', 'guidance'].map(name => ({ url: `/curriculum_api/curriculum/uploads/${name}.pdf`, fileName: `${name}.pdf`, contentType: 'application/pdf', size: 10 }));

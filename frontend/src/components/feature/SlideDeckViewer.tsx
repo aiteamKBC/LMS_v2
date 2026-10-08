@@ -23,6 +23,8 @@ import {
 const INDENT_PX = 24;
 
 interface SlideDeckViewerProps {
+  /** Called after the displayed document's first page and images are ready. */
+  onReady?: () => void;
   /** The deck's authored resource URL (a site-relative upload path). */
   src: string;
   title: string;
@@ -30,7 +32,7 @@ interface SlideDeckViewerProps {
   fallback: (reason: string) => React.ReactNode;
 }
 
-export function SlideDeckViewer({ src, title, fallback }: SlideDeckViewerProps) {
+export function SlideDeckViewer({ src, title, fallback, onReady }: SlideDeckViewerProps) {
   const [deck, setDeck] = useState<SlideDeck | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [index, setIndex] = useState(0);
@@ -85,7 +87,7 @@ export function SlideDeckViewer({ src, title, fallback }: SlideDeckViewerProps) 
         }}
         className="rounded-xl outline-none focus-visible:ring-2 focus-visible:ring-orange-500"
       >
-        <SlideStage slide={slide} widthPx={deck.slideWidthPx} heightPx={deck.slideHeightPx} />
+        <SlideStage slide={slide} widthPx={deck.slideWidthPx} heightPx={deck.slideHeightPx} onReady={onReady} />
       </div>
 
       {deck.truncated && deck.totalPages && (
@@ -158,9 +160,26 @@ export function SlideDeckViewer({ src, title, fallback }: SlideDeckViewerProps) 
  * reader would land in the middle of a page whose top they cannot see. Because
  * the cap can make the frame shorter than the ratio asks for, the scale fits
  * BOTH dimensions and the stage is centred in whatever room is left. */
-function SlideStage({ slide, widthPx, heightPx }: { slide: Slide; widthPx: number; heightPx: number }) {
+function SlideStage({ slide, widthPx, heightPx, onReady }: { slide: Slide; widthPx: number; heightPx: number; onReady?: () => void }) {
   const frameRef = useRef<HTMLDivElement | null>(null);
   const [scale, setScale] = useState(0);
+
+  useEffect(() => {
+    if (!onReady || !scale) return;
+    const images = Array.from(frameRef.current?.querySelectorAll('img') ?? []);
+    // PDF pages may also be supplied as a CSS background image.
+    if (slide.background?.image) {
+      const background = new Image();
+      background.src = slide.background.image;
+      images.push(background);
+    }
+    const loaded = new Set(images.filter(image => image.complete && image.naturalWidth > 0));
+    const check = () => { if (loaded.size === images.length) onReady(); };
+    const onLoad = (event: Event) => { loaded.add(event.target as HTMLImageElement); check(); };
+    images.forEach(image => image.addEventListener('load', onLoad));
+    check();
+    return () => images.forEach(image => image.removeEventListener('load', onLoad));
+  }, [slide, onReady, scale]);
 
   useLayoutEffect(() => {
     const frame = frameRef.current;
