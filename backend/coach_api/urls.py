@@ -5,6 +5,7 @@ from .csrf import coach_csrf_token
 from .bulk_attendance import coach_bulk_attendance
 from .attendance_loading import coach_attendance_options, coach_attendance_group, coach_attendance_session, coach_attendance_sessions, coach_attendance_context
 from . import personal_learning
+from . import monthly_logs
 from .monthly_reports import coach_monthly_report_detail, coach_monthly_reports
 from .support_tickets import (
     coach_support_ticket_notes,
@@ -73,6 +74,9 @@ from .views import (
 
 
 urlpatterns = [
+    path('coach/monthly-logs/learners', monthly_logs.learners, name='coach-monthly-log-learners'),
+    path('coach/monthly-logs/<int:learner_id>', monthly_logs.learner_year, name='coach-monthly-log-year'),
+    path('coach/monthly-logs/<int:learner_id>/<str:month>', monthly_logs.learner_month, name='coach-monthly-log-month'),
     path('coach/case-file/<int:learner_id>/profile', case_file_section, name='case-file-profile'),
     path('coach/case-file/<int:learner_id>/learning-plan/module/<str:module_id>/week/<str:week_id>', case_file_learning_module, name='case-file-learning-week'),
     path('coach/case-file/<int:learner_id>/learning-plan/module/<str:module_id>', case_file_learning_module, name='case-file-learning-module'),
