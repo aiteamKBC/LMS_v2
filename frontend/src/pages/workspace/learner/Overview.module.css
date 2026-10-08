@@ -228,6 +228,10 @@
   --metric-fill: var(--learner-success);
 }
 
+.metric[data-accent='red'] {
+  --metric-fill: var(--learner-danger);
+}
+
 .dashboardCardsRow {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
@@ -321,7 +325,7 @@
   flex: 0 0 6.25rem;
   border-radius: 50%;
   place-items: center;
-  background: conic-gradient(from -90deg, var(--metric-fill) var(--kbc-ring-progress), var(--metric-track) 0);
+  background: conic-gradient(from -90deg, var(--metric-fill) var(--metric-progress), var(--metric-track) 0);
 }
 
 .metricRing::after {
@@ -627,6 +631,6 @@
 
 @container learnerOverview (min-width: 66rem) {
   .dashboardTabContent > .metricsInline {
-    grid-template-columns: repeat(5, minmax(0, 1fr));
+    grid-template-columns: repeat(4, minmax(0, 1fr));
   }
 }

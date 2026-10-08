@@ -208,6 +208,38 @@ class CoachMarkingQueueRuntimeTests(TestCase):
         self.assertEqual(response.json()["item"]["id"], str(submission_id))
 
     @patch("coach_api.views.LearnerProfile.objects.annotate")
+    def test_learner_drafts_are_not_in_the_marking_queue(self, annotate):
+        now = timezone.now()
+        pending_id = self._insert_submission("101", submitted_at=now - timedelta(days=1))
+        draft_id = self._insert_submission("101", status="draft", submitted_at=now - timedelta(days=10))
+        annotate.return_value.filter.return_value.values_list.return_value = [101]
+
+        listed = self.client.get("/coach_api/coach/marking-queue", {"status": "all"})
+        loaded = self.client.get(f"/coach_api/coach/marking-queue/{draft_id}")
+        decided = self.client.patch(
+            f"/coach_api/coach/marking-queue/{draft_id}",
+            data=json.dumps({"decision": "accepted"}),
+            content_type="application/json",
+        )
+
+        self.assertEqual(listed.status_code, 200)
+        body = listed.json()
+        self.assertEqual([item["id"] for item in body["items"]], [str(pending_id)])
+        self.assertEqual(body["pagination"]["totalItems"], 1)
+        self.assertEqual(body["summary"]["totalItems"], 1)
+        self.assertEqual(body["summary"]["pendingItems"], 1)
+        self.assertEqual(body["summary"]["overdueItems"], 0)
+        self.assertEqual(body["summary"]["reflectionItems"], 1)
+        self.assertEqual(loaded.status_code, 404)
+        self.assertEqual(decided.status_code, 404)
+        with connections["enrolment"].cursor() as cursor:
+            cursor.execute(
+                'select status from "Learner".learning_reflection_submissions where id = %s',
+                [draft_id],
+            )
+            self.assertEqual(cursor.fetchone()[0], "draft")
+
+    @patch("coach_api.views.LearnerProfile.objects.annotate")
     def test_missing_schema_fails_safely_without_repair(self, annotate):
         annotate.return_value.filter.return_value.values_list.return_value = [101]
         cursor = MagicMock()

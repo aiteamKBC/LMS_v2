@@ -1,4 +1,4 @@
-"""Reconcile cancellations from Microsoft; no Microsoft mutation or email path."""
+"""Read cancellations from Microsoft and report them; never cancels anything, never mails."""
 import json
 import time
 from contextlib import contextmanager
@@ -104,8 +104,6 @@ def state_signature(series, rows):
 
 
 def reconcile_calendar(live_id):
-    from . import views as v
-
     series, rows, snapshot = load_calendar_state(live_id)
     if series.get('status') != 'active':
         return {'changed': False, 'seriesStatus': series.get('status'), 'cancelledSessions': [], 'errors': []}
@@ -114,29 +112,23 @@ def reconcile_calendar(live_id):
     signature = state_signature(series, rows)
     with calendar_reader() as read:
         plan = cancellation_plan(series, rows, snapshot, read)
-    now = datetime.now(timezone.utc).replace(tzinfo=None)
     with transaction.atomic():
         current, current_rows, current_snapshot = load_calendar_state(live_id, lock=True)
         if state_signature(current, current_rows) != signature or current_snapshot != snapshot:
             raise CalendarStateError('This calendar changed during verification. Retry the status check.')
         with connection.cursor() as cursor:
-            for occurrence_id in plan['cancelledIds']:
-                cursor.execute("""UPDATE curriculum.live_session_occurrences
-                                  SET status = 'cancelled', updated_at = %s
-                                  WHERE id = %s AND live_session_id = %s AND status = 'scheduled'""",
-                               [now, occurrence_id, live_id])
-            if plan['seriesCancelled']:
-                cursor.execute("UPDATE curriculum.live_sessions SET status = 'cancelled', updated_at = %s WHERE id = %s AND status = 'active'", [now, live_id])
+            # Never a cancellation. Only a person pressing Cancel in the LMS
+            # cancels a session or a calendar; what Microsoft shows cancelled --
+            # in Outlook, by anybody -- is reported for that person to record.
             cursor.execute("""INSERT INTO curriculum.teams_calendar_sync_state (live_session_id, snapshot, checked_at)
                               VALUES (%s, %s::jsonb, %s)
                               ON CONFLICT (live_session_id) DO UPDATE
                               SET snapshot = EXCLUDED.snapshot, checked_at = EXCLUDED.checked_at""",
                            [live_id, json.dumps(plan['snapshot']), datetime.now(timezone.utc)])
-    changed = bool(plan['cancelledIds'] or plan['seriesCancelled'])
-    if changed:
-        v.invalidate_curriculum_cache()
-    return {'changed': changed, 'seriesStatus': 'cancelled' if plan['seriesCancelled'] else 'active',
-            'cancelledSessions': [row['session_number'] for row in rows if row['id'] in plan['cancelledIds']],
+    return {'changed': False, 'seriesStatus': 'active', 'cancelledSessions': [],
+            # Cancelled in Microsoft, still scheduled here, and left that way.
+            'cancelledInMicrosoft': [row['session_number'] for row in rows if row['id'] in plan['cancelledIds']],
+            'seriesCancelledInMicrosoft': bool(plan['seriesCancelled']),
             'errors': plan['errors'],
             # Reported for a person to decide on; nothing here cancels them.
             'leftovers': plan.get('leftovers') or []}

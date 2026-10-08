@@ -63,7 +63,7 @@ import { GroupPlacementPanel, type PlacementResult } from './PlaceComponentDrawe
 import { moduleCountForGroup } from '../shared/entities/groupModuleMatch';
 import { loadModuleStructure, saveModuleStructure, type LiveSessionDateDrift } from '@/pages/curriculum/module-builder/moduleAuthoringData';
 import { LiveSessionScheduleEditor } from '@/pages/curriculum/module-builder/LiveSessionScheduleEditor';
-import { LiveSessionArtifactsPanel } from '@/pages/curriculum/shared/entities/liveSessionArtifacts';
+import { LiveSessionArtifactsPanel, ModuleLiveSessionResults } from '@/pages/curriculum/shared/entities/liveSessionArtifacts';
 import { RichTextDraft } from '@/pages/curriculum/module-builder/RichTextEditor';
 import { formatDateLabel } from '@/pages/curriculum/shared/entities/model';
 import { showFullTextWhenTruncated } from '@/pages/curriculum/shared/entities/truncationTitle';
@@ -1773,9 +1773,13 @@ export interface ComponentBodyProps {
   // Injected file uploader so the same bodies work in both the week builder
   // (posts to week-components/) and the module builder (module-scoped upload).
   uploadResource?: WeekComponentUploader;
+  // The module this component is authored in (module builder only). A live
+  // session saved without its own Teams series reads its recording from the
+  // module's saved sessions, the same list Sessions & Recordings shows.
+  moduleId?: string;
 }
 
-export function ComponentEditor({ component, onChange, onBack, groupOptions, rulePoints, weekScope, weekSessionDate, weekSessionTime, uploadResource }: { component: ModuleComponent; onChange: (patch: Partial<ModuleComponent>) => void; onBack: () => void; groupOptions: GroupOption[]; rulePoints?: number; weekScope: WeekScope; weekSessionDate?: string; weekSessionTime?: string; uploadResource?: WeekComponentUploader }) {
+export function ComponentEditor({ component, onChange, onBack, groupOptions, rulePoints, weekScope, weekSessionDate, weekSessionTime, uploadResource, moduleId }: { component: ModuleComponent; onChange: (patch: Partial<ModuleComponent>) => void; onBack: () => void; groupOptions: GroupOption[]; rulePoints?: number; weekScope: WeekScope; weekSessionDate?: string; weekSessionTime?: string; uploadResource?: WeekComponentUploader; moduleId?: string }) {
   const editorRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const editor = editorRef.current;
@@ -1787,7 +1791,7 @@ export function ComponentEditor({ component, onChange, onBack, groupOptions, rul
   const tone = toneFor(component.type);
   const issues = validateWeekComponent(component);
   const setSetting = (key: string, value: ComponentSettingValue) => onChange({ settings: { ...component.settings, [key]: value } });
-  const bodyProps: ComponentBodyProps = { component, onChange, setSetting, groupOptions, rulePoints, weekScope, weekSessionDate, weekSessionTime, uploadResource };
+  const bodyProps: ComponentBodyProps = { component, onChange, setSetting, groupOptions, rulePoints, weekScope, weekSessionDate, weekSessionTime, uploadResource, moduleId };
 
   return (
     <div ref={editorRef} tabIndex={-1} role="region" aria-label="Component editor" className="scroll-mt-6 rounded-2xl border border-background-200 bg-background-50 overflow-hidden">
@@ -1868,7 +1872,7 @@ function GenericComponentBody({ component, onChange, setSetting, rulePoints }: C
 
 // Bespoke Live Teams Session editor. (Group assignment is rendered once for
 // every component type by ComponentEditor, so it isn't repeated here.)
-function LiveSessionBody({ component, onChange, setSetting, rulePoints, weekSessionDate, weekSessionTime }: ComponentBodyProps) {
+function LiveSessionBody({ component, onChange, setSetting, rulePoints, weekSessionDate, weekSessionTime, moduleId }: ComponentBodyProps) {
   const s = (key: string) => String(component.settings[key] ?? '');
   // An explicit edit always wins; otherwise default to the date/time the week is
   // actually scheduled on (the group-creation clock), so the fields read
@@ -1904,9 +1908,10 @@ function LiveSessionBody({ component, onChange, setSetting, rulePoints, weekSess
       </Section>
 
       {/* Read this component's saved results through the same archive-backed
-          panel used by the module workspace and learner preview. */}
-      {teamsLiveSessionId && (
-        <Section title="Recording & attendance">
+          panel used by the module workspace and learner preview. The section
+          always shows, so a missing link reads as a reason, not an absence. */}
+      <Section title="Recording & attendance">
+        {teamsLiveSessionId ? (
           <LiveSessionArtifactsPanel
             session={{
               liveSessionId: teamsLiveSessionId,
@@ -1919,8 +1924,22 @@ function LiveSessionBody({ component, onChange, setSetting, rulePoints, weekSess
             sessionNumber={additionalLiveSessionId ? 1 : Number(s('teamsSessionNumber')) || undefined}
             occurrenceId={additionalLiveSessionId ? undefined : s('teamsOccurrenceId') || undefined}
           />
-        </Section>
-      )}
+        ) : moduleId && hasMeeting ? (
+          <ModuleLiveSessionResults
+            moduleId={moduleId}
+            date={sessionDate}
+            unmatched={sessionDate
+              ? 'No saved Teams session for this module is held on this session’s date yet. Its recording and attendance will appear here once Teams has them.'
+              : 'This session has no date, so its saved Teams session can’t be found. Set a session date to see its recording and attendance.'}
+          />
+        ) : (
+          <p className="rounded-xl border border-background-200 bg-background-50/60 p-4 text-[12px] text-foreground-500">
+            {hasMeeting
+              ? 'This session’s Teams link was entered by hand, so it isn’t connected to a Teams calendar session. Its recording and attendance will appear here once the session is linked to its module’s Teams meeting.'
+              : 'No Teams meeting is linked to this session yet. Its recording and attendance will appear here once one is.'}
+          </p>
+        )}
+      </Section>
 
       <Section title="Effort & reward">
         <div className="grid gap-4 sm:grid-cols-2 max-w-md">

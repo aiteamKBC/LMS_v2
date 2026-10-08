@@ -1,4 +1,8 @@
+import type { CaseFileProfile } from '@/features/coach/case-file/api/contracts';
+import { subjectRefs } from '@/pages/learner/my-learning/learningSummary';
 import { useCallback, useEffect, useState } from 'react';
+import { useCaseFileSession } from '@/features/coach/case-file/hooks/CaseFileSession';
+import type { LearnerMetrics } from '@/api/learnerMetrics';
 import type { KsbActivityPoint } from '@/api/learnerMetrics';
 import { formatHoursMinutes, systemDateParts } from '@/lib/format';
 import { otjhProgressAsOfToday } from '@/pages/coach/caseload/lib/format';
@@ -59,6 +63,11 @@ export function selectCaseFileOtjh(data: Pick<CoachLearnerCaseFileData, 'otjhCom
   return { logged, target, programmeTotal, remaining, progressPercent };
 }
 
+type CaseFilePresentationShell = {
+  identity: Pick<CaseFileShell['identity'], 'learnerId' | 'enrolmentId' | 'aptemId' | 'kind'>;
+  profile: CaseFileShell['profile'];
+};
+
 export function useCoachLearnerCaseFileData(args: {
   learnerId?: string | null;
   learnerName?: string | null;
@@ -69,7 +78,15 @@ export function useCoachLearnerCaseFileData(args: {
    *  disjoint pk space that always 404s against that endpoint. */
   enrolmentId?: string | null;
   enabled?: boolean;
+  activeTab?: string;
 }) {
+  const session = useCaseFileSession();
+  const wantsDetail = !session;
+  const [detailActivated, setDetailActivated] = useState(wantsDetail);
+  useEffect(() => { if (wantsDetail) setDetailActivated(true); }, [wantsDetail]);
+  const wantsJourney = !session;
+  const [journeyActivated, setJourneyActivated] = useState(wantsJourney);
+  useEffect(() => { if (wantsJourney) setJourneyActivated(true); }, [wantsJourney]);
   const [data, setData] = useState<CoachLearnerCaseFileData | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -105,9 +122,9 @@ export function useCoachLearnerCaseFileData(args: {
         setLoading(false);
         return;
       }
-      let shell: CaseFileShell;
+      let shell: CaseFilePresentationShell;
       try {
-        shell = await fetchCaseFileShell(directId);
+        shell = session ? profileShell(await session.read<CaseFileProfile>('profile', {}, { refresh: reloadToken > 0 })) : await fetchCaseFileShell(directId);
       } catch (loadErr) {
         if (!cancelled) {
           setData(null);
@@ -128,12 +145,10 @@ export function useCoachLearnerCaseFileData(args: {
           // Detail and canonical metrics are independent reads. Loading them
           // together prevents a slow historical-activity request from holding
           // the profile's Overall/OTJH/KSB figures behind unrelated work.
-          const [detailResult, metricsResult] = await Promise.all([
-            fetchAnyLearnerDetail(resolvedEnrolmentId, resolvedKind),
-            fetchCaseFileMetrics(resolvedKind, resolvedEnrolmentId),
-          ]);
-          detail = detailResult.detail;
-          learnerMetrics = metricsResult;
+          const detailPending = (
+            detailActivated ? session ? session.read<LearnerDetail>('learning-plan', { resource: 'detail' }, { refresh: reloadToken > 0 }).then(detail => ({ detail, kind: resolvedKind })) : fetchAnyLearnerDetail(resolvedEnrolmentId, resolvedKind) : Promise.resolve({ detail: null })
+          ).then(result => ({ result, error: null }), error => ({ result: null, error }));
+          if (!session) learnerMetrics = await fetchCaseFileMetrics(resolvedKind, resolvedEnrolmentId);
           const initialData = buildCaseFileData({
             learnerId: shell.identity.learnerId,
             enrolmentId: resolvedEnrolmentId,
@@ -153,10 +168,13 @@ export function useCoachLearnerCaseFileData(args: {
             setData(initialData);
             setLoading(false);
           }
-          if (shell.identity.aptemId || detail.studentActivityAvailable) {
+          const detailOutcome = await detailPending;
+          if (detailOutcome.error) throw detailOutcome.error;
+          detail = detailOutcome.result?.detail ?? null;
+          if (journeyActivated && detail && (shell.identity.aptemId || detail.studentActivityAvailable)) {
             try {
-              aptemActivity = await fetchCaseFileStudentActivity(resolvedKind, resolvedEnrolmentId);
-              subjectMetadata = await fetchCaseFileSubjectMetadata(resolvedEnrolmentId, aptemActivity, detail);
+              aptemActivity = session ? await session.read<StudentActivityResponse>('learning-plan', { resource: 'activity' }) : await fetchCaseFileStudentActivity(resolvedKind, resolvedEnrolmentId);
+              subjectMetadata = session ? await session.read<CoverMetadata>('learning-plan', { resource: 'covers', refs: subjectRefs(aptemActivity, detail) }) : await fetchCaseFileSubjectMetadata(resolvedEnrolmentId, aptemActivity, detail);
             } catch {
               detailError = 'Could not load the canonical Programme Journey. Please retry.';
             }
@@ -202,6 +220,15 @@ export function useCoachLearnerCaseFileData(args: {
         return;
       }
 
+      // Tab detail must never replace the persistent profile's header values.
+      if (session) Object.assign(finalData, {
+        displayName: shell.profile.name || '', initials: getInitials(shell.profile.name || ''),
+        programme: shell.profile.programme || '', group: shell.profile.group || '',
+        email: shell.profile.email || '', employer: shell.profile.employer || '',
+        programStatus: shell.profile.status || '', startDate: shell.profile.startDate || '--',
+        plannedEndDate: shell.profile.learnerEndDate || '--',
+      });
+
       setData(finalData);
 
       const missingDetailOnly = Boolean(detailError && /learner not found|\b404\b/i.test(detailError));
@@ -218,9 +245,22 @@ export function useCoachLearnerCaseFileData(args: {
     return () => {
       cancelled = true;
     };
-  }, [args.enabled, args.kind, args.learnerId, args.learnerName, args.enrolmentId, reloadToken]);
+  }, [args.enabled, args.kind, args.learnerId, args.learnerName, args.enrolmentId, reloadToken, session, detailActivated, journeyActivated]);
 
   return { data, loading, error, refresh };
+}
+
+/** Adapt only the compact transport to the existing presentation builder.
+ * The legacy shell endpoint and its other consumers keep their own contract. */
+function profileShell({ learner }: CaseFileProfile): CaseFilePresentationShell {
+  return {
+    identity: { learnerId: learner.id, enrolmentId: learner.enrolmentId, aptemId: learner.aptemId,
+      kind: learner.learnerType },
+    profile: { name: learner.name, email: learner.email, programme: learner.programme,
+      group: learner.group, employer: learner.employer, status: learner.status,
+      startDate: learner.startDate, plannedEndDate: learner.plannedEndDate, learnerEndDate: learner.plannedEndDate,
+      cohort: null, coachName: null, coachEmail: null, coachRag: null, gatewayReviewDate: null },
+  };
 }
 
 export function flattenJourney(data: CoachLearnerCaseFileData) {
@@ -337,10 +377,10 @@ type CaseFileLearnerMetrics = {
 
 /** Canonical totals used by the learner dashboard. Programme, OTJH and KSB
  * figures must describe the same learner facts on both workspaces. */
-async function fetchCaseFileMetrics(kind: LearnerKind | null, enrolmentId: string | null): Promise<CaseFileLearnerMetrics | null> {
+async function fetchCaseFileMetrics(kind: LearnerKind | null, enrolmentId: string | null, read?: () => Promise<LearnerMetrics>): Promise<CaseFileLearnerMetrics | null> {
   if (!kind || !enrolmentId) return null;
   try {
-    const metrics = await fetchCaseFileLearnerMetrics(kind, enrolmentId);
+    const metrics = read ? await read() : await fetchCaseFileLearnerMetrics(kind, enrolmentId);
     return {
       programmeCompleted: metrics.programme.completed,
       programmeTotal: metrics.programme.total,
@@ -648,7 +688,7 @@ function buildCaseFileData(args: {
   learnerId: string;
   enrolmentId: string | null;
   kind: LearnerKind | null;
-  shell: CaseFileShell;
+  shell: CaseFilePresentationShell;
   snapshot: CoachCaseloadLearner | null;
   attendance: CoachAttendanceLearner | null;
   evidence: CoachMarkingQueueItem | null;
@@ -780,6 +820,8 @@ function buildCaseFileData(args: {
     startDate: args.shell.profile.startDate || '--',
     gatewayReviewDate: args.shell.profile.gatewayReviewDate || '--',
     plannedEndDate: (args.detail ? args.detail.learnerEndDate : args.shell.profile.learnerEndDate) || '--',
+    programmeStartDate: args.detail?.programmeStartDate || args.shell.profile.otjhProgrammeStartDate || args.shell.profile.startDate,
+    programmeEndDate: args.detail?.programmeEndDate || args.shell.profile.otjhProgrammeEndDate || args.shell.profile.plannedEndDate,
     totalExpectedOtjh: metricsAvailable ? canonicalPlanned ?? 0 : 0,
     touchedKsbCodes,
     activityItems: buildActivityItems(args.snapshot, args.detail, args.evidence),

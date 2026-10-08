@@ -1,5 +1,5 @@
 vi.mock('@/api/extraActivities', () => ({ useExtraActivities: () => ({ activities: [], loading: false, error: '', refresh: vi.fn() }) }));
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AssignmentSubmissionWizard } from './AssignmentSubmissionWizard';
@@ -309,12 +309,32 @@ describe('monthly assignment drafts', () => {
 });
 
 
-it('previews a question attachment inside the answer step without downloading it', async () => {
+it('opens the question attachment automatically inside the answer step without downloading it', async () => {
   render(<AssignmentSubmissionWizard {...props} questionText="" questionFileUrl="/curriculum_api/curriculum/uploads/brief.pdf" questionFileName="brief.pdf" />);
   expect(await screen.findByText('Preview the attached file for your assignment question.')).toBeVisible();
-  fireEvent.click(screen.getByRole('button', { name: 'View file' }));
   expect(await screen.findByTestId('question-preview')).toHaveAttribute('data-url', '/curriculum_api/curriculum/uploads/brief.pdf');
   expect(screen.getByRole('button', { name: 'Hide preview' })).toHaveAttribute('aria-expanded', 'true');
+});
+
+it.each(['commercial', 'apprenticeship'] as const)('previews both %s instruction PDFs once and keeps the answer when one is hidden', async kind => {
+  const files = ['brief', 'guidance'].map(name => ({ url: `/curriculum_api/curriculum/uploads/${name}.pdf`, fileName: `${name}.pdf` }));
+  render(<AssignmentSubmissionWizard {...props} kind={kind} questionFileUrl={files[0].url} questionFileName={files[0].fileName}
+    questionFiles={files} questionHtml={`<p>Read both documents.</p><a href="${files[1].url}">Guidance PDF</a>`} />);
+  const previews = await screen.findAllByTestId('question-preview');
+  expect(previews.map(preview => preview.getAttribute('data-url'))).toEqual(files.map(file => file.url));
+  const answer = screen.getByRole('textbox', { name: /Your answer/ });
+  fireEvent.change(answer, { target: { value: 'My draft answer stays here.' } });
+  const attachments = screen.getAllByRole('region', { name: 'Assignment attachment' });
+  fireEvent.click(within(attachments[0]).getByRole('button', { name: 'Hide preview' }));
+  expect(within(attachments[0]).queryByTestId('question-preview')).toBeNull();
+  expect(within(attachments[1]).getByTestId('question-preview')).toBeVisible();
+  expect(answer).toHaveValue('My draft answer stays here.');
+  expect(screen.getAllByRole('link', { name: 'Download file' }).map(link => link.getAttribute('href'))).toEqual(files.map(file => file.url));
+});
+
+it('previews instruction links even when there is no primary attachment', async () => {
+  render(<AssignmentSubmissionWizard {...props} questionHtml={'<a href="/instructions.pdf">Instructions PDF</a><a href="/worksheet.pdf">Worksheet PDF</a>'} />);
+  expect((await screen.findAllByTestId('question-preview')).map(preview => preview.getAttribute('data-url'))).toEqual(['/instructions.pdf', '/worksheet.pdf']);
 });
 
 it.each(['commercial', 'apprenticeship'] as const)('requires every learning declaration for %s submission even when server checks pass', async kind => {

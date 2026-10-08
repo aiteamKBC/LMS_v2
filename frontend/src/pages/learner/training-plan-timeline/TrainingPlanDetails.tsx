@@ -1,3 +1,5 @@
+import type { CanonicalModuleProgress } from '@/api/moduleProgress';
+import { moduleMeasures } from './progress';
 import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { ArrowRight, CalendarDays, ChevronLeft, ChevronRight, Clock3, Equal, FileText, GraduationCap, RefreshCw, Target, TrendingDown, TrendingUp, Video } from 'lucide-react';
@@ -37,7 +39,9 @@ type Props = {
   trainingOnly?: boolean;
   overviewOnly?: boolean;
   showOtjChart?: boolean;
+  programmeProgress?: CanonicalModuleProgress[];
   programmeSnapshot?: ProgrammeProgressSnapshot;
+  targetAsOfToday?: number | null;
 };
 
 type TimelineModule = ReturnType<typeof buildPlanModules>[number];
@@ -71,11 +75,11 @@ function catchupAction(row: AttendanceLecture): string | null {
 }
 
 /** Weekly learning and monthly coaching share the dashboard above the linked module panels. */
-export function TrainingPlanDetails({ data, subjects, kind, learnerId, onRefresh, refreshing = false,
+export function TrainingPlanDetails({ data: baseData, subjects, kind, learnerId, onRefresh, refreshing = false,
   onRetryContract, initialSubjectId = '', initialMonth = '', canOpenActivities = true, weeklyFocus, programmeStartDate, programmeEndDate,
   activityOverviewOnly = false, timelineOnly = false, monthlyOnly = false, trainingOnly = false, overviewOnly = false,
-  showOtjChart = true, programmeSnapshot }: Props) {
-  const modules = useMemo(() => buildPlanModules(subjects, data), [subjects, data]);
+  showOtjChart = true, programmeSnapshot, programmeProgress, targetAsOfToday }: Props) {
+  const baseModules = useMemo(() => buildPlanModules(subjects, baseData), [subjects, baseData]);
   const [now, setNow] = useState(Date.now);
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 30_000);
@@ -83,18 +87,18 @@ export function TrainingPlanDetails({ data, subjects, kind, learnerId, onRefresh
   }, []);
   const today = new Date(now).toLocaleDateString('en-CA', { timeZone: 'Europe/London' });
   const thisMonth = today.slice(0, 7);
-  const programmeStart = dateKey(programmeStartDate) || modules.map(module => dateKey(module.start)).filter(Boolean).sort()[0] || '';
+  const programmeStart = dateKey(programmeStartDate) || baseModules.map(module => dateKey(module.start)).filter(Boolean).sort()[0] || '';
   // The learner-detail bound can lag behind the current contract/activity
   // projection.  Keep it as a lower-priority bound when the payload already
   // contains a later valid month, so an absent URL month defaults to the real
   // current month instead of being clamped into stale history.
   const payloadEndMonths = [
-    ...Object.keys(data.months),
-    ...data.actual.map(row => row.month),
-    ...data.reviews.map(review => reviewDate(review).slice(0, 7)),
+    ...Object.keys(baseData.months),
+    ...baseData.actual.map(row => row.month),
+    ...baseData.reviews.map(review => reviewDate(review).slice(0, 7)),
   ].filter(month => /^\d{4}-(0[1-9]|1[0-2])$/.test(month));
   const payloadEnd = payloadEndMonths.sort().at(-1);
-  const moduleEnd = modules.map(module => dateKey(moduleVisualEnd(module))).filter(Boolean).sort().at(-1);
+  const moduleEnd = baseModules.map(module => dateKey(moduleVisualEnd(module))).filter(Boolean).sort().at(-1);
   const programmeEnd = [dateKey(programmeEndDate), moduleEnd, payloadEnd ? `${payloadEnd}-28` : '']
     .filter(Boolean).sort().at(-1) || '';
   const minMonth = programmeStart.slice(0, 7);
@@ -110,6 +114,8 @@ export function TrainingPlanDetails({ data, subjects, kind, learnerId, onRefresh
   // to a month the user requested directly.
   const initialSelectedMonth = explicitMonth || clampMonth(thisMonth);
   const [selectedMonth, setSelectedMonth] = useState(initialSelectedMonth);
+  const data = baseData;
+  const modules = baseModules;
   const [selectedId, setSelectedId] = useState(initialSubjectId);
   const [bookingReview, setBookingReview] = useState<PlanReview | null>(null);
   const [absenceLecture, setAbsenceLecture] = useState<AttendanceLecture | null>(null);
@@ -290,8 +296,14 @@ export function TrainingPlanDetails({ data, subjects, kind, learnerId, onRefresh
       </table></div> : <p className={board.empty}>No lectures scheduled for this month.</p>}
     </section>
   </section>;
+  const programmeRows = programmeProgress?.map(row => {
+    const module = modules.find(item => item.id === row.id);
+    const measures = module ? moduleMeasures(module, data) : [];
+    return { id: row.id, title: row.title, value: row.percent, start: module?.start,
+      available: measures.filter(measure => measure.value != null).length, measureCount: measures.length };
+  });
   const progressCharts = <ProgressCharts modules={modules} selected={selected} data={data} onModuleSelect={module => setSelectedId(module.id)}
-    programmeStartMonth={minMonth} programmeEndMonth={maxMonth} programmeSnapshot={programmeSnapshot} showOtjChart={showOtjChart} />;
+    programmeRows={programmeRows} programmeStartMonth={minMonth} programmeEndMonth={maxMonth} programmeSnapshot={programmeSnapshot} showOtjChart={showOtjChart} targetAsOfToday={targetAsOfToday} />;
   // Off-the-job hours summary for the sidebar beside Monthly focus. Values come
   // from the same month-by-month source the OTJH chart below uses, so the card
   // agrees with it. Minimum required and Forecast are not carried by the learner

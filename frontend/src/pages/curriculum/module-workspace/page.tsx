@@ -1350,8 +1350,10 @@ function TeamsFact({ label, value, tone }: { label: string; value: string; tone?
 // What the calendar has to say about one session, in one chip: its status, and
 // the turnout when there was any. A meeting nobody has attended yet says
 // nothing about attendance rather than "0 attended" on every future date.
-function MeetingChip({ status, attended }: { status: string; attended: number }) {
-  const key = normaliseKey(status);
+function MeetingChip({ status: raw, attended }: { status: string; attended: number }) {
+  // A session a new plan left on Teams was never cancelled; say what it is.
+  const status = normaliseKey(raw) === 'superseded' ? 'Not in plan – still on Teams' : raw;
+  const key = normaliseKey(raw);
   const tone = key === 'completed'
     ? 'bg-emerald-50 text-emerald-700'
     : key === 'cancelled'

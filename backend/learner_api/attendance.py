@@ -299,7 +299,7 @@ def fetch_recent_kbc_attendance_rows(learners, *, limit=4):
     return result
 
 
-def _summarize_attendance(rows, *, now=None):
+def _summarize_attendance(rows, *, now=None, overview_only=False):
     """Summarize recorded attendance for sessions that have happened so far."""
     now = now or timezone.now()
 
@@ -322,6 +322,8 @@ def _summarize_attendance(rows, *, now=None):
     sessions = len(counted_rows)
     absent = sum(missed(row) for row in counted_rows)
     present = sessions - absent
+    if overview_only:
+        return {'present': present, 'sessions': sessions}
     late = sum(
         status(row) == 'late' or (row['minutes_late'] or 0) > 0
         for row in counted_rows
@@ -426,7 +428,10 @@ def learner_attendance(request, kind, learner_id):
 
     try:
         # all_learners: the default manager is scoped to apprenticeship rows.
-        source = model.all_learners.only('id', 'username', 'email', 'aptem_id').get(pk=learner_id)
+        from .case_file_sources import source_for_case_file
+        source = source_for_case_file(request, kind, learner_id)
+        if source is None:
+            source = model.all_learners.only('id', 'username', 'email', 'aptem_id').get(pk=learner_id)
     except model.DoesNotExist:
         return _error('Learner not found.', 404)
     except DatabaseError:
@@ -438,8 +443,9 @@ def learner_attendance(request, kind, learner_id):
         # the KBC database table and Aptem ID, never an email or Teams merge.
         rows = kbc_attendance_rows(source) if request.GET.get('source') == 'kbc' else None
         if rows is None:
-            if getattr(source, 'email', ''):
-                # Catch-ups only: settle this learner's elapsed catch-ups first.
+            if getattr(source, 'email', '') and getattr(request, '_case_file_context', None) is None:
+                # Case File projects stored attendance without settling outcomes.
+                # Student reads retain the existing catch-up settlement path.
                 from .catchup_outcomes import sync_catchup_outcomes
                 sync_catchup_outcomes(learner_email=getattr(source, 'email', ''))
             from .attendance_lectures import lecture_register
@@ -447,4 +453,8 @@ def learner_attendance(request, kind, learner_id):
     except Exception:
         return _error('Unable to load attendance. Please try again.', 502)
 
-    return JsonResponse({'attendance': _summarize_attendance(rows)})
+    # Only the internal Overview projection omits history formatting. The
+    # register projection above remains the same read path.
+    context = getattr(request, '_case_file_context', None)
+    overview_only = context is not None and context.request.path.rstrip('/').endswith('/overview')
+    return JsonResponse({'attendance': _summarize_attendance(rows, overview_only=overview_only)})

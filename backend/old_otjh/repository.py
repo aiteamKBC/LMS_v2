@@ -6,6 +6,8 @@ import re
 from datetime import date
 from contextlib import contextmanager
 from contextvars import ContextVar
+from copy import deepcopy
+from threading import RLock
 
 from django.db import DatabaseError, connections, transaction
 
@@ -24,12 +26,48 @@ DOCS = 'structured_manual_activities.manual_activity_documents'
 PROVISIONAL_ROWS = 'structured_manual_activities.monthly_log_provisional_rows'
 
 _query_alias = ContextVar('old_otjh_query_alias', default=None)
+_read_scope = ContextVar('case_file_read_scope', default=None)
+
+
+@contextmanager
+def request_read_scope():
+    """Opt-in reuse of identical repository SELECTs for one aggregate request.
+
+    Results are copied because canonical projections enrich their input rows.
+    Aliases and the effective journal SQL form part of the key. Never retain
+    results between requests or cache a statement containing a write/lock.
+    """
+    token = _read_scope.set(({}, RLock()))
+    try:
+        yield
+    finally:
+        _read_scope.reset(token)
 
 
 def query(sql, params=()):
     from learner_api.journal_sources import retained_journal_sql
-    with connections[_query_alias.get() or DB].cursor() as cursor:
-        cursor.execute(retained_journal_sql(sql), params)
+    effective_sql = retained_journal_sql(sql)
+    alias = _query_alias.get() or DB
+    scope = _read_scope.get()
+    read_only = bool(re.match(r'\s*(SELECT|WITH)\b', effective_sql, re.I)) and not re.search(
+        r'\b(INSERT|UPDATE|DELETE|MERGE|FOR\s+SHARE|FOR\s+UPDATE|nextval|setval)\b', effective_sql, re.I)
+    if scope is not None and read_only:
+        cache, lock = scope
+        key = (alias, effective_sql, json.dumps(params, default=str, sort_keys=True))
+        with lock:
+            if key not in cache:
+                cache[key] = _query_rows(alias, effective_sql, params)
+            return deepcopy(cache[key])
+    if scope is not None:
+        with scope[1]:
+            scope[0].clear()
+            return _query_rows(alias, effective_sql, params)
+    return _query_rows(alias, effective_sql, params)
+
+
+def _query_rows(alias, sql, params):
+    with connections[alias].cursor() as cursor:
+        cursor.execute(sql, params)
         if cursor.description is None:
             return []
         columns = [col[0] for col in cursor.description]

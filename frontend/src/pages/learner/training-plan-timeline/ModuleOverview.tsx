@@ -1,4 +1,5 @@
 import { Link } from 'react-router-dom';
+import { useCaseFileModuleDetail } from '@/features/coach/case-file/hooks/useCaseFileModuleDetail';
 import type { ReactNode } from 'react';
 import { ArrowRight, CalendarDays, Clock3, GraduationCap, Layers3, Target, Users, type LucideIcon } from 'lucide-react';
 import { percent, type TimelineModule } from './model';
@@ -15,7 +16,8 @@ const activityLabels: Record<string, string> = {
 };
 
 export function ModuleOverview({ module, hasModules, coachName, href, canOpenActivities, showSchedule = true }: Props) {
-  const detail = module?.detail;
+  const focused = useCaseFileModuleDetail(module?.detail?.id);
+  const detail = focused?.module ?? module?.detail;
   const timetable = [detail?.session_week_day, detail?.session_start_time
     ? `${detail.session_start_time}${detail.session_end_time ? `–${detail.session_end_time}` : ''}` : ''].filter(Boolean).join(' · ');
   const outcomes = detail?.learning_outcomes || [];
@@ -24,6 +26,7 @@ export function ModuleOverview({ module, hasModules, coachName, href, canOpenAct
   const studyHoursProgress = detail?.total_otjh != null && module?.actual != null
     ? percent(module.actual, detail.total_otjh) : null;
   return <section className={`${styles.panel} ${layout.overview}`} aria-label="Module overview">
+    {focused?.error && <p role="alert">{focused.error} <button type="button" onClick={focused.refresh}>Retry module details</button></p>}
     <div className={styles.panelHeading}>
       <div><p className={styles.eyebrow}>In focus</p><h2>Module overview</h2></div>
       {canOpenActivities && module && <Link className={styles.primary} to={href}>Go to module<ArrowRight size={15} /></Link>}

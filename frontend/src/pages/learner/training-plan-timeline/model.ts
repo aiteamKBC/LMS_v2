@@ -70,16 +70,18 @@ export function buildPlanModules(subjects: (Subject | PlanSubjectSummary)[], dat
     // Activity-to-KSB mappings are occurrence counts, not canonical learner KSB
     // evidence/profile progress.  No safe per-module canonical KSB source is
     // present in this payload, so the module indicator remains unavailable.
-    const ksbProgress = summary?.ksbProgress ?? null;
+    const entryProgress = moduleId ? data.moduleProgress?.[moduleId] : undefined;
+    const ksbProgress = entryProgress?.ksb ?? summary?.ksbProgress ?? null;
     const historicalHours = actual.length ? actual.reduce((sum, row) => sum + row.hours, 0) : null;
-    const recordedHours = summary?.directHours != null
+    const summaryHours = summary?.directHours != null
       ? groupId ? data.actualAvailable ? (historicalHours || 0) + summary.directHours : null : summary.directHours
       : historicalHours;
+    const recordedHours = entryProgress?.hours.actual ?? summaryHours;
     return { ...subject, activities, activityCount, activityCounts, ksbCodes,
       ksbMappingMissing: summary ? summary.ksbMappingMissing : activities.some(activity => !activity.native?.ksbMappings),
       moduleId, detail, sessions, dates, start, end,
       weeks: new Set(dates.map(weekKey)).size, done, progress: percent(done, activityCount), ksbProgress,
-      actual: recordedHours };
+      attendanceProgress: entryProgress?.attendance, actual: recordedHours };
   });
 }
 export type TimelineModule = ReturnType<typeof buildPlanModules>[number];
