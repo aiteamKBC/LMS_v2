@@ -125,6 +125,22 @@ class LocalSubjectContentTests(unittest.TestCase):
         self.assertEqual(row['video_iframe_url'], 'https://video.example/player')
         self.assertNotIn('iframe_url', row['_material_schema'])
 
+    def test_incomplete_snapshot_preserves_exact_stored_material_content(self):
+        row = hydrate_material({'material_payload': {}, 'material_content_type': 'reading',
+            'video_iframe_url': 'https://example.org/recording',
+            'reading_iframe_url': 'https://example.org/reading.pdf',
+            'audio_url': 'https://example.org/audio.mp3', 'reading_text_body': '<p>Original text</p>'})
+        self.assertEqual(row['video_iframe_url'], 'https://example.org/recording')
+        self.assertEqual(row['reading_iframe_url'], 'https://example.org/reading.pdf')
+        self.assertEqual(row['audio_url'], 'https://example.org/audio.mp3')
+        self.assertEqual(row['reading_text_body'], '<p>Original text</p>')
+
+    def test_recovered_fallback_does_not_override_current_snapshot_link(self):
+        row = hydrate_material({'material_content_type': 'video',
+            'video_iframe_url': 'https://example.org/old',
+            'material_payload': {'iframe_url': 'https://example.org/current'}})
+        self.assertEqual(row['video_iframe_url'], 'https://example.org/current')
+
     def test_pending_blob_is_not_presented_as_available(self):
         row = hydrate_material({'material_blob_container': 'materials', 'material_blob_name': 'lesson.pdf',
                                 'material_backup_status': 'pending'})

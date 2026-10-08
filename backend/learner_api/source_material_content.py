@@ -9,13 +9,14 @@ def object_value(value):
 
 
 def hydrate_material(row):
+    saved_media = {key: row.get(key) or '' for key in ('video_iframe_url', 'reading_iframe_url', 'audio_url')}
     payload = object_value(row.get('material_payload'))
     schema = dict(payload)
     kind = str(row.get('material_content_type') or payload.get('content_type') or '').lower()
     row['title'] = row.get('material_title') or payload.get('material_title') or row.get('title')
     row['activity_type'] = row.get('material_content_type') or row.get('activity_type')
     row['reading_text_body'] = next((payload[key] for key in
-        ('reading_text_body', 'text_body', 'html_body') if isinstance(payload.get(key), str) and payload[key]), '')
+        ('reading_text_body', 'text_body', 'html_body') if isinstance(payload.get(key), str) and payload[key]), row.get('reading_text_body') or '')
     row['video_iframe_url'] = row.get('material_video_url') or payload.get('video_iframe_url') or ''
     row['reading_iframe_url'] = row.get('material_reading_url') or payload.get('reading_iframe_url') or ''
     row['audio_url'] = row.get('material_audio_url') or payload.get('audio_iframe_url') or ''
@@ -23,6 +24,8 @@ def hydrate_material(row):
     if generic:
         field = 'video_iframe_url' if kind in {'video', 'recording', 'live'} else 'audio_url' if kind in {'audio', 'podcast'} else 'reading_iframe_url'
         row[field] = row[field] or generic
+    for field, saved in saved_media.items():
+        row[field] = row[field] or saved
     quiz = object_value(payload.get('quiz'))
     for target, key in (('quiz_id', 'quiz_id'), ('quiz_body', 'quiz_body'),
                         ('quiz_questions', 'questions'), ('quiz_passing_score', 'passing_score'),

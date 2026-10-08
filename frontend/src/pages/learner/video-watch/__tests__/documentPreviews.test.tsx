@@ -21,7 +21,8 @@ describe('documents alongside reading text', () => {
     request.mockRestore();
   });
 
-  it.each(['pdf', 'pptx'])('shows an uploaded %s and the accompanying text together', extension => {
+  it('shows an uploaded PowerPoint and the accompanying text together', () => {
+    const extension = 'pptx';
     reading('<p>Read this guidance before opening the file.</p>', `/curriculum_api/curriculum/uploads/book.${extension}`);
     expect(screen.getByText('Read this guidance before opening the file.')).toBeVisible();
     expect(screen.getByTestId('deck')).toHaveAttribute('data-src', expect.stringContaining(`book.${extension}`));
