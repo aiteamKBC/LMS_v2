@@ -11,7 +11,14 @@ function hours(value: number | string | null | undefined) {
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : 0;
 }
 
-export function monthlyLogOtjh(summary: LogSummary) {
+type HoursSummary = {
+  learner?: { planned_end_date?: string | null } | null;
+  training_plan_totals?: { accepted_hours?: number | null; planned_hours?: number | null };
+  months: Array<{ month: string; training_plan_target?: number | string | null;
+    not_accepted_hours: number | string; actual_hours: number | string }>;
+};
+
+export function monthlyLogOtjh(summary: HoursSummary) {
   return {
     plannedEndDate: summary.learner?.planned_end_date ?? null,
     acceptedTotal: summary.training_plan_totals?.accepted_hours ?? null,

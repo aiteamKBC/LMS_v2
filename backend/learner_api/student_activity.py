@@ -350,7 +350,7 @@ def _cover_url(path):
     return UPLOAD_URL_PREFIX + blob_name_for(path)
 
 
-def _definition_for(stored, group_id=None):
+def _definition_for(stored, group_id=None, *, attachment_resolver=None):
     row = stored['_source']
     quiz_id = row.get('quiz_id')
     # Never fetch definitions from the old LMS during learner requests.
@@ -360,7 +360,7 @@ def _definition_for(stored, group_id=None):
 
         path = _legacy_attachment_upload_path(reference)
         return '/curriculum_api/curriculum/uploads/' + path if path else ''
-    definition = build_material(stored, schema, attachment_resolver=archive_url)
+    definition = build_material(stored, schema, attachment_resolver=archive_url if attachment_resolver is None else attachment_resolver)
     if group_id is not None and quiz_id and definition.get('quiz') and not definition['quiz']['ready']:
         from .subject_quiz import imported_quiz
         try:
@@ -399,9 +399,10 @@ def _local_pdf_urls(definition, kind, pk, group_id, activity_id):
     ]}
 
 
-def _material_response(request, pk, aptem_id, stored, *, kind=None, group_id=None):
+def _material_response(request, pk, aptem_id, stored, *, kind=None, group_id=None, attachment_resolver=None):
     row = stored['_source']
-    definition = _local_pdf_urls(_definition_for(stored, group_id), kind, pk, group_id, row['activity_id'])
+    definition = _local_pdf_urls(_definition_for(stored, group_id, attachment_resolver=attachment_resolver),
+                                 kind, pk, group_id, row['activity_id'])
     try:
         saved = subject_store.state(pk, aptem_id, row['activity_id'], group_id=group_id)
     except DatabaseError:

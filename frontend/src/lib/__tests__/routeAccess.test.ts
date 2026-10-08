@@ -19,6 +19,21 @@ const as = (role: Role) => ({ role });
  * would be reported ("a learner pasted a curriculum URL").
  */
 describe('mayAccessRoute', () => {
+  it('keeps Advanced Admin inside its scoped workspace', () => {
+    const account = { role: 'staff' as const, access: 'advanced-admin' };
+    for (const path of ['/workspace/advanced-admin', '/workspace/advanced-admin/learners/12',
+      '/workspace/advanced-admin/learners/12/reviews',
+      '/workspace/advanced-admin/learners/12/preview',
+      '/workspace/advanced-admin/learners/12/preview/messages', '/profile']) {
+      expect(mayAccessRoute(path, account), path).toBe(true);
+    }
+    for (const path of ['/workspace/admin', '/coach/caseload', '/learner/home',
+      '/curriculum/teams-meetings', '/workspace/coach']) {
+      expect(mayAccessRoute(path, account), path).toBe(false);
+    }
+    expect(homeRouteFor({ ...account, accessHome: '/workspace/admin', subjectId: 12 }))
+      .toBe('/workspace/advanced-admin');
+  });
   it('keeps learners and employers out of the staff console', () => {
     const staffOnly = [
       '/curriculum/teams-meetings',
