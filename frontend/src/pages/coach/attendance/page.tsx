@@ -6,14 +6,14 @@ import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { useCoachIdentity } from '@/hooks/useCoachIdentity';
 import { useListQueryState } from '@/hooks/useListQueryState';
-import { formatSystemTimestamp } from '@/lib/format';
 import { roleNavMap } from '@/mocks/navigation';
 import styles from './attendanceOverview.module.css';
 import lastFourStyles from './attendanceLastFour.module.css';
 import { useAttendanceOptions } from '@/features/coach/attendance/hooks/useAttendanceOptions';
-import type { CoachAttendanceLearner, CoachAttendanceRecord } from '@/features/coach/attendance/types/attendance.types';
-import { selectRecentAttendance } from '@/features/coach/attendance/selectors/attendanceSelectors';
-import { fetchAttendanceGroup, fetchAttendanceSession, saveBulkAttendance, type BulkSession, type BulkLearner, type BulkAttendanceWarning } from '@/features/coach/attendance/api/attendanceApi';
+import type { CoachAttendanceLearner } from '@/features/coach/attendance/types/attendance.types';
+import { fetchAttendanceSession, saveBulkAttendance, type AttendanceRecent, type AttendanceSessionOption, type BulkLearner, type BulkAttendanceWarning } from '@/features/coach/attendance/api/attendanceApi';
+import { acquireAttendanceContext, attendanceContextKey, invalidateAttendanceContext } from '@/features/coach/attendance/api/attendanceContextCache';
+import { coachViewAs } from '@/lib/coachViewAs';
 
 const coachNav = roleNavMap.coach;
 const PAGE_SIZE = 10;
@@ -33,8 +33,7 @@ export default function CoachAttendance() {
   const navigate = useNavigate();
   const { state: query, setValues: setQueryValues } = useListQueryState(QUERY_DEFAULTS);
   const options = useAttendanceOptions(coach.email, coach.isInitialized && Boolean(coach.email));
-  const [learners, setLearners] = useState<CoachAttendanceLearner[]>([]);
-  const [records, setRecords] = useState<CoachAttendanceRecord[]>([]);
+  const [learners, setLearners] = useState<Array<CoachAttendanceLearner & { recent: AttendanceRecent[] }>>([]);
   const [groupLoading, setGroupLoading] = useState(false);
   const loading = !coach.isInitialized || (Boolean(coach.email) && (options.loading || groupLoading));
   const error = coach.isInitialized && !coach.email ? 'Coach access is required to load attendance data.' : options.error;
@@ -44,7 +43,10 @@ export default function CoachAttendance() {
   const programStatus = String(query.status);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [sessionId, setSessionId] = useState('');
-  const [sessions, setSessions] = useState<BulkSession[]>([]);
+  const [sessions, setSessions] = useState<Array<Omit<AttendanceSessionOption, 'status'>>>([]);
+  const [sessionsLoading, setSessionsLoading] = useState(false);
+  const [sessionsError, setSessionsError] = useState<string | null>(null);
+  const [sessionsRetry, setSessionsRetry] = useState(0);
   const [sessionLearners, setSessionLearners] = useState<BulkLearner[]>([]);
   const [bulkWarnings, setBulkWarnings] = useState<BulkAttendanceWarning[]>([]);
   const [pending, setPending] = useState<Record<string, 'present' | 'absent'>>({});
@@ -58,11 +60,15 @@ export default function CoachAttendance() {
   currentCoach.current = coach.email;
   const sessionContext = useRef('');
   const selectedGroupAllowed = options.programmes.some(row => row.id === programmeId && row.groups.some(group => group.id === groupId));
+  const attendanceScope = JSON.stringify([coach.email.trim().toLowerCase(),
+    coach.isViewingAsCoach ? coachViewAs()?.adminEmail.trim().toLowerCase() || '' : '',
+    coach.isViewingAsCoach ? 'view-as' : 'coach']);
+  const contextKey = attendanceContextKey(attendanceScope, programmeId, groupId);
   useEffect(() => {
     if (previousCoach.current === coach.email) return;
     previousCoach.current = coach.email;
     setGroupId(''); setProgrammeId(''); setQueryValues({ group: '', programme: '', page: 1 });
-    setLearners([]); setRecords([]);
+    setLearners([]);
   }, [coach.email, setQueryValues]);
 
   useEffect(() => {
@@ -71,26 +77,28 @@ export default function CoachAttendance() {
   }, [query.group, query.programme]);
 
   useEffect(() => {
-    const controller = new AbortController();
-    setLearners([]); setRecords([]); setGroupLoading(false);
+    let cancelled = false;
+    setLearners([]); setGroupLoading(false);
     sessionContext.current = '';
-    setSessionId(''); setSessions([]); setSessionLearners([]); setBulkWarnings([]); setPending({}); setSelected(new Set());
-    setBulkError(null);
+    setSessionId(''); setSessions([]); setSessionsLoading(false); setSessionLearners([]); setBulkWarnings([]); setPending({}); setSelected(new Set());
+    setBulkError(null); setSessionsError(null);
     if (!programmeId || !groupId || !selectedGroupAllowed) { setSessionLoading(false); return; }
-    setGroupLoading(true);
-    fetchAttendanceGroup(programmeId, groupId, controller.signal).then(payload => {
-      if (!controller.signal.aborted) {
-        setSessions(payload.sessions || []); setRecords(payload.recentAttendance || []);
+    setGroupLoading(true); setSessionsLoading(true);
+    const request = acquireAttendanceContext(contextKey);
+    request.promise.then(payload => {
+      if (!cancelled) {
         setLearners(payload.learners.map(row => ({ id: row.id, learner: row.name, email: row.email,
           programme: payload.programme.name, programmeId: payload.programme.id, group: payload.group.name, groupId: payload.group.id,
-          programStatus: row.status === 'on-break' ? 'Paused' : 'Active', attendance: row.attendance.rate,
-          present: row.attendance.present, absent: row.attendance.absent, sessions: row.attendance.sessions })));
+          programStatus: row.status === 'on-break' ? 'Paused' : 'Active', recent: row.recent })));
+        setSessions(payload.sessions);
       }
     }).catch(reason => {
-      if (!controller.signal.aborted) setBulkError(reason instanceof Error ? reason.message : 'Unable to load sessions.');
-    }).finally(() => { if (!controller.signal.aborted) setGroupLoading(false); });
-    return () => controller.abort();
-  }, [programmeId, groupId, coach.email, selectedGroupAllowed]);
+      if (!cancelled && !(reason instanceof Error && reason.name === 'AbortError')) {
+        setSessionsError(reason instanceof Error ? reason.message : 'Unable to load group attendance context.');
+      }
+    }).finally(() => { if (!cancelled) { setGroupLoading(false); setSessionsLoading(false); } });
+    return () => { cancelled = true; request.release(); };
+  }, [programmeId, groupId, contextKey, selectedGroupAllowed, sessionsRetry]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -105,7 +113,11 @@ export default function CoachAttendance() {
     return () => controller.abort();
   }, [programmeId, groupId, sessionId, coach.email]);
 
+  const hasValidSession = sessions.some(session => session.id === sessionId);
+  const selectionEnabled = hasValidSession && !saving;
+
   const apply = async () => {
+    if (!hasValidSession || !selected.size || !Object.keys(pending).length || sessionLoading || saving) return;
     const owner = coach.email;
     setSaving(true); setBulkError(null); setNotice(null);
     try {
@@ -113,12 +125,11 @@ export default function CoachAttendance() {
         learnerId, status, version: sessionLearners.find(row => row.learnerId === learnerId)!.version,
       })));
       if (currentCoach.current !== owner) return;
-      setRecords(current => {
-        const updates = payload.results.map(row => row.attendanceRecord);
-        const next = [...updates, ...current.filter(row => !updates.some(update => update.learnerId === row.learnerId && update.sessionId === row.sessionId))];
-        const instant = (row: CoachAttendanceRecord) => Date.parse(row.occurrenceStart || `${row.sessionDate}T00:00:00Z`) || 0;
-        return next.sort((a, b) => instant(b) - instant(a) || b.sessionId.localeCompare(a.sessionId));
-      });
+      invalidateAttendanceContext(contextKey);
+      setLearners(current => current.map(learner => {
+        const result = payload.results.find(row => row.learnerId === learner.id);
+        return result ? { ...learner, recent: result.recent } : learner;
+      }));
       setSessionLearners(current => current.map(row => payload.results.find(result => result.learnerId === row.learnerId) || row));
       setPending(current => {
         const next = { ...current };
@@ -130,18 +141,15 @@ export default function CoachAttendance() {
       if (currentCoach.current === owner) setBulkError(reason instanceof Error ? reason.message : 'Unable to save attendance.');
     } finally { setSaving(false); }
   };
-  const sessionLabel = (session: BulkSession) => `${formatSystemTimestamp(session.occurrenceStart, {
-    dateStyle: 'medium', timeStyle: 'short',
-  })} · ${session.module} · ${session.sessionTitle}`;
+  const sessionLabel = (session: Omit<AttendanceSessionOption, 'status'>) => `${shortDate(session.date)} ? ${session.time} ? ${session.title}`;
 
   const programmes = options.programmes.map(row => [row.id, row.name]);
   const groups = options.programmes.find(row => row.id === programmeId)?.groups.map(row => [row.id, `${row.name}${row.cohort && row.cohort !== '--' ? ` (${row.cohort})` : ''}`]) || [];
   const statuses = useMemo(() => [...new Set(learners.map(row => display(row.programStatus)).filter(value => value !== '--'))].sort(), [learners]);
-  const loadedLearners = useMemo(() => loaded ? learners.filter(row => String(row.groupId) === loaded.groupId && (!loaded.programmeId || String(row.programmeId) === loaded.programmeId) && (!sessionId || sessionLearners.some(item => item.learnerId === row.id))) : [], [learners, loaded, sessionId, sessionLearners]);
+  const loadedLearners = useMemo(() => loaded ? learners.filter(row => String(row.groupId) === loaded.groupId && (!loaded.programmeId || String(row.programmeId) === loaded.programmeId) && (!sessionId || sessionLoading || sessionLearners.some(item => item.learnerId === row.id))) : [], [learners, loaded, sessionId, sessionLoading, sessionLearners]);
   const visible = useMemo(() => loadedLearners.filter(row => programStatus === 'all' || (programStatus === 'active' ? display(row.programStatus).toLowerCase() === 'active' : display(row.programStatus) === programStatus)), [loadedLearners, programStatus]);
   const pageCount = Math.max(1, Math.ceil(visible.length / PAGE_SIZE));
   const pageRows = visible.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
-  const recent = (id: string) => selectRecentAttendance(records, id);
   const stageStatus = (ids: Iterable<string>, status: 'present' | 'absent') => {
     setPending(current => {
       const next = { ...current };
@@ -165,17 +173,20 @@ export default function CoachAttendance() {
       <div className={styles.formRow}><Field label="Programme"><select aria-label="Programme" value={programmeId} onChange={event => { setProgrammeId(event.target.value); setGroupId(''); setQueryValues({ programme: event.target.value, group: '', page: 1 }); }} disabled={loading || saving}><option value="">Select programme</option>{programmes.map(([id, name]) => <option key={id} value={id}>{name}</option>)}</select></Field><Field label="Group"><select aria-label="Group" value={groupId} onChange={event => { setGroupId(event.target.value); setQueryValues({ programme: programmeId, group: event.target.value, page: 1 }); }} disabled={!programmeId || saving}><option value="">Select group</option>{groups.map(([id, name]) => <option key={id} value={id}>{name}</option>)}</select></Field><button className={styles.primary} type="button" onClick={loadStudents} disabled={!programmeId || !groupId || saving}><AppIcon name="ri-group-line" />Load students</button></div>
     </section>
     <section className={`${styles.card} ${styles.editCard}`} aria-labelledby="edit-title"><CardHeading id="edit-title" icon="ri-calendar-edit-line" title="Attendance edit" copy="Choose a session and update selected learners." />
-      <div className={`${styles.formRow} ${styles.sessionRow}`}><Field label="Session / occurrence"><select aria-label="Session / occurrence" value={sessionId} disabled={!programmeId || !groupId || groupLoading || sessionLoading || saving} onChange={event => { sessionContext.current = JSON.stringify([coach.email, programmeId, groupId]); setSessionId(event.target.value); setQueryValues({ programme: programmeId, group: groupId, page: 1 }); }}><option value="">Select session</option>{sessions.map(session => <option key={session.id} value={session.id}>{sessionLabel(session)}</option>)}</select></Field></div>
+      <div className={`${styles.formRow} ${styles.sessionRow}`}><Field label="Session / occurrence"><select aria-label="Session / occurrence" value={sessionId} disabled={!programmeId || !groupId || groupLoading || sessionsLoading || sessionLoading || saving || !sessions.length} onChange={event => { sessionContext.current = JSON.stringify([coach.email, programmeId, groupId]); setSelected(new Set()); setPending({}); setSessionLearners([]); setBulkWarnings([]); setNotice(null); setSessionLoading(Boolean(event.target.value)); setSessionId(event.target.value); setQueryValues({ programme: programmeId, group: groupId, page: 1 }); }}><option value="" disabled={!sessions.length}>{sessionsLoading ? 'Loading sessions...' : sessionsError ? 'Unable to load sessions' : programmeId && groupId && !sessions.length ? 'No sessions available for this group' : 'Select session'}</option>{sessions.map(session => <option key={session.id} value={session.id}>{sessionLabel(session)}</option>)}</select></Field></div>
+      {sessionsError && <p role="alert">{sessionsError} <button type="button" onClick={() => setSessionsRetry(current => current + 1)}>Retry sessions</button></p>}
+      {sessionsLoading && <p role="status">Loading sessions...</p>}
       {sessionLoading && <p role="status">Loading session attendance...</p>}
-      <div className={styles.editActions}><div className={styles.selectActions}><button className={styles.presentAction} type="button" disabled={!sessionId || !selected.size || sessionLoading || saving} onClick={() => stageStatus(selected, 'present')}><AppIcon name="ri-checkbox-circle-line" />Mark selected Present</button><button className={styles.absentAction} type="button" disabled={!sessionId || !selected.size || sessionLoading || saving} onClick={() => stageStatus(selected, 'absent')}><AppIcon name="ri-close-circle-line" />Mark selected Absent</button></div>
-      <div><button className={styles.primary} type="button" disabled={!sessionId || !Object.keys(pending).length || saving || sessionLoading} onClick={() => void apply()}><AppIcon name="ri-check-line" />{saving ? 'Saving...' : 'Apply bulk update'}</button><button className={styles.secondary} type="button" disabled={saving || !Object.keys(pending).length} onClick={() => setPending({})}><AppIcon name="ri-delete-bin-line" />Discard</button></div></div>
+      <p>{hasValidSession ? 'Select learners to mark attendance.' : 'Select a session to begin marking attendance.'}</p>
+      <div className={styles.editActions}><div className={styles.selectActions}><button className={styles.presentAction} type="button" disabled={!selectionEnabled || !selected.size || sessionLoading} onClick={() => stageStatus(selected, 'present')}><AppIcon name="ri-checkbox-circle-line" />Mark selected Present</button><button className={styles.absentAction} type="button" disabled={!selectionEnabled || !selected.size || sessionLoading} onClick={() => stageStatus(selected, 'absent')}><AppIcon name="ri-close-circle-line" />Mark selected Absent</button></div>
+      <div><button className={styles.primary} type="button" disabled={!selectionEnabled || !selected.size || !Object.keys(pending).length || sessionLoading} onClick={() => void apply()}><AppIcon name="ri-check-line" />{saving ? 'Saving...' : 'Apply bulk update'}</button><button className={styles.secondary} type="button" disabled={!selectionEnabled || !Object.keys(pending).length} onClick={() => setPending({})}><AppIcon name="ri-delete-bin-line" />Discard</button></div></div>
       <div className={styles.editFooter}><div aria-live="polite" aria-atomic="true"><strong>Selected: {selected.size}</strong><strong>Pending changes: {Object.keys(pending).length}</strong></div></div>
       {bulkError && <p role="alert">{bulkError}</p>}{notice && <p className={styles.notice} role="status">{notice}</p>}
     </section>
     <section className={styles.card} aria-labelledby="students-title"><header className={styles.studentsHeader}><div className={styles.studentsSummary}><CardHeading id="students-title" icon="ri-user-3-line" title={`Students (${visible.length})`} copy="Learners loaded from the selected programme and group." />{bulkWarnings.length > 0 && <p className={styles.inlineWarning} role="status" title="Enrolment record unavailable.">{bulkWarnings.length} {bulkWarnings.length === 1 ? 'learner' : 'learners'} unavailable</p>}</div><Field label="Programme status"><select aria-label="Programme status" value={programStatus} onChange={event => setQueryValues({ status: event.target.value, page: 1 })}><option value="all">All statuses</option><option value="active">Active</option>{statuses.filter(value => value.toLowerCase() !== 'active').map(value => <option key={value} value={value}>{value}</option>)}</select></Field></header>
-      <div className={`${styles.selectActions} ${styles.studentsSelection}`}><button type="button" disabled={!visible.length} onClick={() => setSelected(new Set(visible.map(row => row.id)))}><AppIcon name="ri-checkbox-blank-line" />Select all</button><button type="button" disabled={!selected.size} onClick={() => setSelected(new Set())}><AppIcon name="ri-delete-bin-line" />Clear</button></div>
+      <div className={`${styles.selectActions} ${styles.studentsSelection}`}><button type="button" disabled={!selectionEnabled || !visible.length} onClick={() => setSelected(new Set(visible.map(row => row.id)))}><AppIcon name="ri-checkbox-blank-line" />Select all</button><button type="button" disabled={!selectionEnabled || !selected.size} onClick={() => setSelected(new Set())}><AppIcon name="ri-delete-bin-line" />Clear</button></div>
       <div className={styles.tableScroll}><table><colgroup><col className={styles.checkboxColumn} /><col className={styles.learnerColumn} /><col className={styles.emailColumn} /><col className={styles.programmeColumn} /><col className={styles.attendanceColumn} /><col /><col className={styles.detailsColumn} /></colgroup><thead><tr><th aria-label="Selection" /><th>Learner</th><th>Email</th><th>Programme</th><th>Attendance</th><th>Recent</th><th>Actions</th></tr></thead><tbody>
-        {loading ? Array.from({ length: 5 }, (_, row) => <tr key={row} aria-hidden="true">{Array.from({ length: 7 }, (_, column) => <td key={column}><SkeletonBlock className={styles.studentSkeleton} /></td>)}</tr>) : error ? <tr><td colSpan={7}><EmptyState variant="error" size="sm" title="Unable to load attendance" description={error} /></td></tr> : !loaded ? <tr><td colSpan={7}><EmptyState size="sm" title="Choose a group" description="Select a group, then load its learners." /></td></tr> : !pageRows.length ? <tr><td colSpan={7}><EmptyState size="sm" title="No learners found for this group." /></td></tr> : pageRows.map(learner => <tr key={learner.id} data-selected={selected.has(learner.id)}><td><input aria-label={`Select ${learner.learner}`} type="checkbox" checked={selected.has(learner.id)} onChange={() => setSelected(current => { const next = new Set(current); next.has(learner.id) ? next.delete(learner.id) : next.add(learner.id); return next; })} /></td><td><div className={styles.learnerIdentity}><strong>{learner.learner}</strong></div></td><td><span className={styles.emailText} title={display(learner.email)}>{display(learner.email)}</span></td><td><span className={styles.programStatus} data-programme-status={display(learner.programStatus).toLowerCase()}>{display(learner.programStatus)}</span></td><td><select aria-label={`Attendance for ${learner.learner}`} disabled={!sessionId || sessionLoading || saving || !sessionLearners.some(row => row.learnerId === learner.id)} value={pending[learner.id] || (['present', 'absent'].includes(sessionLearners.find(row => row.learnerId === learner.id)?.status || '') ? sessionLearners.find(row => row.learnerId === learner.id)?.status : '')} onChange={event => stageStatus([learner.id], event.target.value as 'present' | 'absent')}><option value="" disabled hidden>Not marked</option><option value="present">Present</option><option value="absent">Absent</option></select></td><td>{display(learner.programStatus).toLowerCase() === 'paused' ? <span className={lastFourStyles.paused}>Attendance paused</span> : <div className={`${styles.chips} ${lastFourStyles.chips}`}>{recent(learner.id).map(row => <span key={`${row.sessionId}-${row.sessionDate}`} data-status={row.status} title={`${row.status === 'present' ? 'Present' : 'Absent'} \u00b7 ${shortDate(row.sessionDate)}`}>{row.status === 'present' ? 'P' : 'A'} · {shortDate(row.sessionDate, true)}</span>)}{!recent(learner.id).length && '\u2014'}</div>}</td><td><button className={styles.linkButton} type="button" onClick={() => navigate(`/coach/attendance/${learner.id}`, { state: { groupId: loaded.groupId, programmeId: loaded.programmeId, programStatus } })}><AppIcon name="ri-eye-line" />View</button></td></tr>)}
+        {loading ? Array.from({ length: 5 }, (_, row) => <tr key={row} aria-hidden="true">{Array.from({ length: 7 }, (_, column) => <td key={column}><SkeletonBlock className={styles.studentSkeleton} /></td>)}</tr>) : error ? <tr><td colSpan={7}><EmptyState variant="error" size="sm" title="Unable to load attendance" description={error} /></td></tr> : !loaded ? <tr><td colSpan={7}><EmptyState size="sm" title="Choose a group" description="Select a group, then load its learners." /></td></tr> : !pageRows.length ? <tr><td colSpan={7}><EmptyState size="sm" title="No learners found for this group." /></td></tr> : pageRows.map(learner => <tr key={learner.id} data-selected={selected.has(learner.id)}><td><input aria-label={`Select ${learner.learner}`} type="checkbox" disabled={!selectionEnabled} checked={selected.has(learner.id)} onChange={() => setSelected(current => { const next = new Set(current); next.has(learner.id) ? next.delete(learner.id) : next.add(learner.id); return next; })} /></td><td><div className={styles.learnerIdentity}><strong>{learner.learner}</strong></div></td><td><span className={styles.emailText} title={display(learner.email)}>{display(learner.email)}</span></td><td><span className={styles.programStatus} data-programme-status={display(learner.programStatus).toLowerCase()}>{display(learner.programStatus)}</span></td><td><select aria-label={`Attendance for ${learner.learner}`} disabled={!selectionEnabled || sessionLoading || !sessionLearners.some(row => row.learnerId === learner.id)} value={pending[learner.id] || (['present', 'absent'].includes(sessionLearners.find(row => row.learnerId === learner.id)?.status || '') ? sessionLearners.find(row => row.learnerId === learner.id)?.status : '')} onChange={event => { setSelected(current => new Set(current).add(learner.id)); stageStatus([learner.id], event.target.value as 'present' | 'absent'); }}><option value="" disabled hidden>Not marked</option><option value="present">Present</option><option value="absent">Absent</option></select></td><td>{display(learner.programStatus).toLowerCase() === 'paused' ? <span className={lastFourStyles.paused}>Attendance paused</span> : <div className={`${styles.chips} ${lastFourStyles.chips}`}>{learner.recent.map((row, index) => <span key={`${row.date}-${index}`} data-status={row.status} title={`${row.status === 'present' ? 'Present' : 'Absent'} \u00b7 ${shortDate(row.date)}`}>{row.status === 'present' ? 'P' : 'A'} · {shortDate(row.date, true)}</span>)}{!learner.recent.length && '\u2014'}</div>}</td><td><button className={styles.linkButton} type="button" onClick={() => navigate(`/coach/attendance/${learner.id}`, { state: { groupId: loaded.groupId, programmeId: loaded.programmeId, programStatus } })}><AppIcon name="ri-eye-line" />View</button></td></tr>)}
       </tbody></table></div>{pageCount > 1 && <nav className={styles.pagination} aria-label="Students pagination"><button disabled={page === 1} onClick={() => setQueryValues({ page: page - 1 }, { replace: false })}>Previous</button><span>Page {page} of {pageCount}</span><button disabled={page === pageCount} onClick={() => setQueryValues({ page: page + 1 }, { replace: false })}>Next</button></nav>}
     </section>
   </main></WorkspaceShell>;

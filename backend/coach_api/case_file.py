@@ -59,18 +59,6 @@ RESOURCES = {
     'enrolment-documents': {'rows'},
 }
 
-# These dates have distinct presentation roles (planned, booked, completed).
-# Raw source status/answers, meeting artifacts and tenant identity are unused.
-REVIEW_ROW_FIELDS = {
-    'id', 'eventKey', 'learnerId', 'enrolmentId', 'type', 'source', 'sequence',
-    'reviewTemplateId', 'reviewInstanceId', 'reviewTypeName', 'reviewTypeCode',
-    'occurrenceNumber', 'title', 'date', 'targetDate', 'scheduledDate', 'scheduledTime',
-    'year', 'month', 'dayOfMonth', 'startHour', 'endHour', 'timeLabel', 'isTimeEstimated',
-    'durationMinutes', 'status', 'reviewCompletedAt', 'meetingProvider', 'notes',
-    'reviewerName', 'ownerName', 'hasReviewForm', 'hasTranscript', 'hasAttendance',
-}
-
-
 PROFILE_FIELDS = ('id', 'enrolment_id', 'learner_type', 'full_name', 'email', 'aptem_id',
                   'programme', 'programme_status', 'group_name')
 PROFILE_SOURCE_FIELDS = ('id', 'aptem_id', 'learner_type', 'username', 'email', 'programme',
@@ -569,18 +557,9 @@ def case_file_section(request, learner_id, section='profile'):
             elif section == 'next-session':
                 response = context.read(f'/coach_api/coach/learners/{learner_id}/next-session')
             elif section == 'reviews':
-                from .views import _case_file_review_events
+                from .case_file_reviews import read_reviews
                 with measurement.stage('reviews'):
-                    events, issues = _case_file_review_events(context.coach, context.profile)
-                response = JsonResponse({'events': events, 'reviewGenerationIssues': issues})
-                if response.status_code == 200:
-                    payload = json.loads(response.content)
-                    fields = ({'learnerId', 'enrolmentId', 'status', 'scheduledDate', 'scheduledTime', 'source', 'reviewTypeName', 'reviewTypeCode'}
-                              if request.GET.get('resource') == 'summary' else REVIEW_ROW_FIELDS)
-                    response = JsonResponse({'events': [
-                        {key: value for key, value in event.items() if key in fields}
-                        for event in payload.get('events', [])
-                    ], 'reviewGenerationIssues': payload.get('reviewGenerationIssues', [])})
+                    response = JsonResponse(read_reviews(context))
             elif section == 'enrolment-documents':
                 with measurement.stage('documents'):
                     response = context.read(f'/coach_api/coach/learners/{learner_id}/enrolment-documents')

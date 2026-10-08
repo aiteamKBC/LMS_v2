@@ -3,7 +3,8 @@
 import re
 import urllib.error
 import urllib.request
-from urllib.parse import parse_qs, unquote, urlsplit
+from html.parser import HTMLParser
+from urllib.parse import parse_qs, unquote, urljoin, urlsplit
 
 from django.conf import settings
 from django.core.handlers.asgi import ASGIRequest
@@ -102,12 +103,64 @@ def saved_kbc_material_id(url):
     return int(match.group(1)) if match else None
 
 
+def saved_kbc_embed_material_id(url):
+    """Accept only the configured KBC material embed route."""
+    parsed = urlsplit(safe_url(url))
+    origin = urlsplit(getattr(settings, 'KBC_LMS_SCHEMA_URL', ''))
+    if (parsed.scheme != 'https' or parsed.username
+            or (parsed.scheme, parsed.netloc) != (origin.scheme, origin.netloc)):
+        return None
+    match = re.fullmatch(r'/wp-json/kbc-lms/v1/material/(\d+)/embed/?', parsed.path)
+    return int(match.group(1)) if match else None
+
+
 def saved_kbc_source_url(url):
     """Identify a stored page or media URL on the configured KBC source only."""
     parsed = urlsplit(safe_url(url))
     origin = urlsplit(getattr(settings, 'KBC_LMS_SCHEMA_URL', ''))
     return bool(parsed.scheme == 'https' and not parsed.username
                 and (parsed.scheme, parsed.netloc) == (origin.scheme, origin.netloc))
+
+
+class _AudioSourceParser(HTMLParser):
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.sources = []
+
+    def handle_starttag(self, tag, attrs):
+        if tag.lower() not in {'audio', 'source'}:
+            return
+        source = next((value for name, value in attrs if name.lower() == 'src'), '')
+        if source:
+            self.sources.append(source)
+
+
+def _kbc_audio_source(opener, embed_url, activity_id, attachment_id):
+    """Resolve the stable KBC audio player to its short-lived MP3 source."""
+    try:
+        with opener.open(urllib.request.Request(embed_url, headers={
+                'Accept': 'text/html', 'User-Agent': 'KBC-LearningOS/1.0',
+        }), timeout=30) as upstream:
+            content_type = upstream.headers.get_content_type().lower()
+            raw = upstream.read(128 * 1024 + 1)
+            if upstream.status != 200 or content_type != 'text/html' or len(raw) > 128 * 1024:
+                return ''
+            charset = upstream.headers.get_content_charset() or 'utf-8'
+    except (urllib.error.URLError, TimeoutError, OSError, ValueError):
+        return ''
+    parser = _AudioSourceParser()
+    try:
+        parser.feed(raw.decode(charset, errors='replace'))
+    except (LookupError, UnicodeError):
+        return ''
+    sources = list(dict.fromkeys(safe_url(urljoin(embed_url, value)) for value in parser.sources))
+    sources = [value for value in sources if value]
+    if len(sources) != 1 or saved_kbc_material_id(sources[0]) != int(activity_id):
+        return ''
+    reference = _attachment_id(sources[0])
+    if attachment_id and reference != attachment_id:
+        return ''
+    return sources[0]
 
 
 def live_kbc_media_response(request, activity_id, expected_kind):
@@ -122,6 +175,9 @@ def live_kbc_media_response(request, activity_id, expected_kind):
     if metadata['kind'] != expected_kind:
         return HttpResponse('The saved media type could not be verified.', status=502)
     url = safe_url(schema.get(f'{expected_kind}_iframe_url') or schema.get('iframe_url'))
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), _SameHostRedirect())
+    if expected_kind == 'audio' and saved_kbc_embed_material_id(url) == int(activity_id):
+        url = _kbc_audio_source(opener, url, activity_id, metadata['attachment_id'])
     if saved_kbc_material_id(url) != int(activity_id):
         return HttpResponse('The saved media source could not be verified.', status=502)
     reference = _attachment_id(url)
@@ -136,7 +192,6 @@ def live_kbc_media_response(request, activity_id, expected_kind):
     if re.fullmatch(r'bytes=\d+-\d*', byte_range):
         headers['Range'] = byte_range
     try:
-        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), _SameHostRedirect())
         upstream = opener.open(urllib.request.Request(url, headers=headers), timeout=30)
     except (urllib.error.URLError, TimeoutError, OSError, ValueError):
         return HttpResponse('The saved media is temporarily unavailable.', status=502)

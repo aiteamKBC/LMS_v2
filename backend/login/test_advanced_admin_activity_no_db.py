@@ -187,6 +187,48 @@ class AdvancedAdminSavedFileTests(SimpleTestCase):
         self.assertEqual(sent.get_header('Range'), 'bytes=0-15')
 
     @override_settings(KBC_LMS_SCHEMA_URL='https://source.example/wp-json/kbc-lms/v1/schema')
+    def test_kbc_audio_proxy_resolves_the_embed_player_to_its_verified_source(self):
+        request = RequestFactory().get(
+            '/login_api/advanced-admin/learners/42/learning/material/8/12/media/0/',
+            HTTP_RANGE='bytes=0-15',
+        )
+        schema = {
+            'material_id': 12, 'content_type': 'podcast',
+            'iframe_url': ('https://source.example/wp-json/kbc-lms/v1/material/12/embed'
+                           '?attachment_id=34&token=stable'),
+            'source': {'attachments': [{
+                'attachment_id': 34, 'filename': 'lesson.mp3', 'mime_type': 'audio/mpeg',
+            }]},
+        }
+        embed_headers = Message()
+        embed_headers['Content-Type'] = 'text/html; charset=UTF-8'
+        embed = BytesIO(
+            b'<audio><source src="https://source.example/wp-json/kbc-lms/v1/material/12/view'
+            b'?attachment_id=34&amp;token=fresh"></audio>')
+        embed.status = 200
+        embed.headers = embed_headers
+        media_headers = Message()
+        media_headers['Content-Type'] = 'audio/mpeg'
+        media_headers['Content-Length'] = '16'
+        media_headers['Accept-Ranges'] = 'bytes'
+        media = BytesIO(b'ID3-audio-content')
+        media.status = 200
+        media.headers = media_headers
+        with patch('login.advanced_admin_activity.material_schema', return_value=schema), \
+             patch('login.advanced_admin_activity.urllib.request.build_opener') as opener:
+            opener.return_value.open.side_effect = [embed, media]
+            response = live_kbc_media_response(request, 12, 'audio')
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response['Content-Type'], 'audio/mpeg')
+        self.assertEqual(response['Accept-Ranges'], 'bytes')
+        self.assertEqual(b''.join(response.streaming_content), b'ID3-audio-content')
+        response.close()
+        self.assertEqual(opener.return_value.open.call_count, 2)
+        media_request = opener.return_value.open.call_args_list[1].args[0]
+        self.assertEqual(media_request.get_header('Range'), 'bytes=0-15')
+        self.assertIn('/material/12/view?', media_request.full_url)
+
+    @override_settings(KBC_LMS_SCHEMA_URL='https://source.example/wp-json/kbc-lms/v1/schema')
     def test_kbc_media_proxy_rejects_login_html_instead_of_framing_it(self):
         request = RequestFactory().get(
             '/login_api/advanced-admin/learners/42/learning/material/8/12/media/0/')

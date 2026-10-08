@@ -95,7 +95,7 @@ class CourseCatalogueTests(unittest.TestCase):
         self.scope['entries_for'] = Mock(return_value=[])
         self.scope['targets_for'] = Mock(return_value={})
         self.scope['query'].side_effect = [
-            [{**course, 'id': index + 1} for index, course in enumerate(self.courses)], self.catalogue]
+            [{**course, 'id': index + 1} for index, course in enumerate(self.courses)], self.catalogue, []]
         result = self.scope['source_subjects'](17, lambda items: {'activities': items})
         self.assertEqual(result['progress_basis'], 'catalogue_activities')
         self.assertEqual(len(result['activities']), 4)

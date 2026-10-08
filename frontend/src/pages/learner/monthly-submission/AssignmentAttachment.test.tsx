@@ -1,10 +1,16 @@
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { AssignmentAttachment } from './AssignmentAttachment';
 // Preload the lazy viewer so module transformation is outside the UI timeout.
-import '../video-watch/page';
+import { ComponentBody, InlineAttachmentPreview } from '../video-watch/page';
 
 const pdf = vi.hoisted(() => ({ getPage: vi.fn(), cleanup: vi.fn() }));
+const exportedPdf = vi.hoisted(() => ({ addPage: vi.fn(), addImage: vi.fn(), save: vi.fn() }));
+vi.mock('jspdf', () => ({ jsPDF: class {
+  addPage = exportedPdf.addPage;
+  addImage = exportedPdf.addImage;
+  save = exportedPdf.save;
+} }));
 vi.mock('pdfjs-dist', () => ({
   GlobalWorkerOptions: {},
   getDocument: () => ({ promise: Promise.resolve({ numPages: 3, ...pdf }) }),
@@ -70,4 +76,95 @@ it('keeps existing callers collapsed until they request a preview', () => {
   render(<AssignmentAttachment url="/brief.pdf" title="Brief" />);
   expect(screen.getByRole('button', { name: 'View file' })).toHaveAttribute('aria-expanded', 'false');
   expect(fetch).not.toHaveBeenCalled();
+});
+
+it('signals reading readiness only after the PDF canvas finishes rendering', async () => {
+  let finishRender!: () => void;
+  const rendering = new Promise<void>(resolve => { finishRender = resolve; });
+  const renderPage = vi.fn(() => ({ cancel: vi.fn(), promise: rendering }));
+  pdf.getPage.mockResolvedValue({
+    getViewport: () => ({ width: 600, height: 800 }), render: renderPage,
+  });
+  const onReady = vi.fn();
+  render(<InlineAttachmentPreview url="/reading.pdf" title="Reading" onReady={onReady} />);
+  await waitFor(() => expect(renderPage).toHaveBeenCalled());
+  expect(onReady).not.toHaveBeenCalled();
+  await act(async () => finishRender());
+  expect(onReady).toHaveBeenCalledOnce();
+});
+
+it.each(['reading', 'assignment', 'linked file'])('provides PDF reading tools by default for %s', async context => {
+  const url = '/curriculum_api/curriculum/uploads/reading.pdf';
+  if (context === 'assignment') {
+    render(<AssignmentAttachment url={url} title="Reading" />);
+    fireEvent.click(screen.getByRole('button', { name: 'View file' }));
+  } else {
+    render(<ComponentBody component={{ componentId: 'READ', type: 'reading',
+      contentHtml: context === 'linked file' ? `<p>Reading guidance</p><a href="${url}">Reference PDF</a>` : '<p>Reading guidance</p>',
+      resourceUrl: context === 'reading' ? url : undefined,
+    } as never} contentKind="reading" parsed={null} title="Reading" onDuration={vi.fn()} onProgress={vi.fn()}
+      onPlayingChange={vi.fn()} onEnded={vi.fn()} onUnsupported={vi.fn()} />);
+    expect(screen.getByText('Reading guidance')).toBeVisible();
+    if (context === 'linked file') fireEvent.click(screen.getByRole('button', { name: 'Preview file: Reference PDF' }));
+  }
+  fireEvent.click(await screen.findByRole('button', { name: 'Zoom in' }));
+  expect(screen.getByRole('button', { name: 'Download highlighted PDF' })).toBeEnabled();
+  expect(screen.getByLabelText('PDF zoom level')).toHaveTextContent('120%');
+  fireEvent.click(screen.getByRole('button', { name: 'Zoom out' }));
+  expect(screen.getByLabelText('PDF zoom level')).toHaveTextContent('100%');
+  expect(screen.getByRole('button', { name: 'Read page aloud' })).toBeEnabled();
+  fireEvent.click(screen.getByRole('button', { name: 'Marker' }));
+  expect(screen.getByRole('button', { name: 'Marker' })).toHaveAttribute('aria-pressed', 'true');
+  const layer = screen.getByLabelText('PDF highlight layer');
+  vi.spyOn(layer, 'getBoundingClientRect').mockReturnValue({ left: 0, top: 0, width: 1000, height: 1000 } as DOMRect);
+  Object.defineProperty(layer, 'setPointerCapture', { configurable: true, value: vi.fn() });
+  vi.stubGlobal('PointerEvent', MouseEvent);
+  fireEvent.pointerDown(layer, { clientX: 100, clientY: 100 });
+  fireEvent.pointerUp(layer, { clientX: 300, clientY: 200 });
+  expect(layer.querySelectorAll('rect')).toHaveLength(1);
+  fireEvent.click(screen.getByRole('button', { name: 'Save marks' }));
+  const storageKey = `kbc-reading:${context === 'reading' ? 'READ' : url}:pdf-highlights`;
+  expect(JSON.parse(localStorage.getItem(storageKey)!)['1']).toHaveLength(1);
+  fireEvent.click(screen.getByRole('button', { name: 'Next page' }));
+  expect(layer.querySelectorAll('rect')).toHaveLength(0);
+  fireEvent.click(screen.getByRole('button', { name: 'Previous page' }));
+  expect(layer.querySelectorAll('rect')).toHaveLength(1);
+  fireEvent.click(screen.getByRole('button', { name: 'Clear marks on this page' }));
+  expect(layer.querySelectorAll('rect')).toHaveLength(0);
+});
+
+it('downloads every PDF page with its own highlights', async () => {
+  localStorage.setItem('kbc-reading:/marked.pdf:pdf-highlights', JSON.stringify({
+    1: [{ x: 0.1, y: 0.2, width: 0.3, height: 0.1 }],
+    3: [{ x: 0.2, y: 0.3, width: 0.4, height: 0.2 }],
+  }));
+  const fillRect = vi.fn();
+  vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({ clearRect: vi.fn(), save: vi.fn(), restore: vi.fn(), fillRect } as unknown as CanvasRenderingContext2D);
+  vi.spyOn(HTMLCanvasElement.prototype, 'toDataURL').mockReturnValue('data:image/jpeg;base64,synthetic');
+  render(<AssignmentAttachment url="/marked.pdf" title="Reading" defaultExpanded />);
+  fireEvent.click(await screen.findByRole('button', { name: 'Download highlighted PDF' }));
+  await waitFor(() => expect(exportedPdf.save).toHaveBeenCalledWith('marked-highlighted.pdf'));
+  expect(exportedPdf.addPage).toHaveBeenCalledTimes(2);
+  expect(exportedPdf.addImage).toHaveBeenCalledTimes(3);
+  expect(fillRect.mock.calls).toEqual([[96, 256, 288, 128], [192, 384, 384, 256]]);
+});
+
+it('shows an export failure and allows retry without downloading a partial PDF', async () => {
+  render(<AssignmentAttachment url="/marked.pdf" title="Reading" defaultExpanded />);
+  const download = await screen.findByRole('button', { name: 'Download highlighted PDF' });
+  await waitFor(() => expect(pdf.getPage).toHaveBeenCalled());
+  pdf.getPage.mockRejectedValueOnce(new Error('Could not render export page'));
+  fireEvent.click(download);
+  expect(await screen.findByRole('alert')).toHaveTextContent('Could not render export page');
+  expect(exportedPdf.save).not.toHaveBeenCalled();
+  expect(download).toBeEnabled();
+});
+
+it('keeps highlighted downloads unavailable for a slide deck with downloads disabled', async () => {
+  render(<ComponentBody component={{ componentId: 'SLIDES', type: 'slides', resourceUrl: '/slides.pdf', downloadAllowed: false } as never}
+    contentKind="slides" parsed={null} title="Slides" onDuration={vi.fn()} onProgress={vi.fn()}
+    onPlayingChange={vi.fn()} onEnded={vi.fn()} onUnsupported={vi.fn()} />);
+  await screen.findByRole('button', { name: 'Zoom in' });
+  expect(screen.queryByRole('button', { name: 'Download highlighted PDF' })).not.toBeInTheDocument();
+  expect(screen.queryByRole('link', { name: 'Download deck' })).not.toBeInTheDocument();
 });

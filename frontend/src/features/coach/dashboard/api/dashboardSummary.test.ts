@@ -28,7 +28,7 @@ describe('summary contract compatibility', () => {
     const wire = {
       owner: { name: 'Synthetic Coach' }, summary,
       learnerPopup: { all: [{ id: '42', name: 'Synthetic Learner', programme: 'Programme A', group: 'Group A',
-        otjh: { completed: 7, target: 13, planned: 400, ragStatus: 'at-risk' as const } }], atRisk: ['42'] },
+        otjh: { completed: 7, target: 13, planned: 400, ragStatus: 'at-risk' as const } }] },
       markingPopup: { count: 0, items: [] },
       meetingsPopup: { pr: { count: 2, items: [{ learnerId: "42", learnerName: "Synthetic Learner", programme: "Programme A", group: "Group A", date: "2026-09-21", time: "09:30", durationMinutes: 45, status: "scheduled" as const }] }, mcm: { count: 8, items: [] }, catchUps: { count: 0, items: [] } },
     };
@@ -49,7 +49,7 @@ describe('summary contract compatibility', () => {
       learnerPopup: { all: [{ id: '42', name: 'Synthetic Learner', initials: 'SL',
         learnerType: 'apprenticeship' as const, enrolmentId: '101', programmeStatus: 'active',
         programme: 'Programme A', group: 'Group A',
-        otjh: { completed: 7, target: 13, planned: 400, ragStatus: 'at-risk' as const } }], atRisk: ['42'] },
+        otjh: { completed: 7, target: 13, planned: 400, ragStatus: 'at-risk' as const } }] },
       markingPopup: { count: 0, items: [] },
       meetingsPopup: { pr: { count: 0, items: [] }, mcm: { count: 0, items: [] }, catchUps: { count: 0, items: [] } },
     };
@@ -72,7 +72,7 @@ it('derives the risk count from unique nested popup statuses, ignoring legacy fi
   const learners = [row, { ...row }, { ...row, id: 'b', programmeStatus: 'On break' },
     { ...row, id: 'c', status: 'at-risk', otjhRagStatus: 'at-risk', otjh: { ...row.otjh, ragStatus: 'on-track' as const } }];
   const result = adaptDashboardPopupContract({ owner: {}, summary,
-    learnerPopup: { all: learners, atRisk: ['c'] }, markingPopup: { count: 0, items: [] },
+    learnerPopup: { all: learners }, markingPopup: { count: 0, items: [] },
     meetingsPopup: { pr: { count: 0, items: [] }, mcm: { count: 0, items: [] }, catchUps: { count: 0, items: [] } } });
   expect(result.totals.otjhAtRisk).toBe(2);
   expect(result.popupLearners.map(row => row.id)).toEqual(['a', 'b', 'c']);

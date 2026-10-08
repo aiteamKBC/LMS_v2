@@ -308,6 +308,7 @@ def alternative_target_details(
 
 def approved_alternative_guests(
     database: str = "enrolment", current_emails_by_enrolment: dict[int, str] | None = None,
+    *, occurrence_ids=None,
 ) -> dict[str, set[str]]:
     """Current learner emails expected only for their approved target occurrence."""
     reports_query = CoachAbsenceReport.objects.filter(
@@ -315,6 +316,8 @@ def approved_alternative_guests(
         recovery_method=ALTERNATIVE_METHOD,
         catchup_event_key__startswith=ALTERNATIVE_KEY_PREFIX,
     )
+    if occurrence_ids is not None:
+        reports_query = reports_query.filter(catchup_event_key__in=[alternative_event_key(value) for value in occurrence_ids])
     if current_emails_by_enrolment is not None:
         if not current_emails_by_enrolment:
             return defaultdict(set)

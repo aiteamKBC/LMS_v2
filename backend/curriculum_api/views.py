@@ -25704,6 +25704,9 @@ def curriculum_uploaded_file(request, path):
         or mimetypes.guess_type(relative_path)[0]
         or 'application/octet-stream'
     )
+    if response['Content-Type'].lower().startswith('video/'):
+        from config.video_streaming import video_chunks
+        response.streaming_content = video_chunks(request, stream)
     if requested:
         response['Content-Range'] = f'bytes {offset}-{offset + length - 1}/{total_size}'
     return response

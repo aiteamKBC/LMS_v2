@@ -73,6 +73,24 @@ function inferredMediaKind(item: SubjectMaterial['media'][number], url: URL): st
   return item.kind;
 }
 
+function AdminAudioPlayer({ url, title }: { url: string; title: string }) {
+  const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading');
+  return <section className="space-y-2">
+    {status === 'loading' && <div role="status" aria-label="Loading audio" aria-busy="true"
+      className="rounded-xl border border-foreground-200 bg-background-50 p-3">
+      <span className="sr-only">Loading audio...</span>
+      <SkeletonBlock className="h-12 w-full rounded-xl" />
+    </div>}
+    {status === 'error' && <p role="alert" className="rounded-xl border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
+      This audio could not be loaded. Open it in a new tab or try again.
+    </p>}
+    <audio src={url} controls preload="metadata" aria-label={title}
+      className={status === 'ready' ? 'w-full' : 'hidden'}
+      onLoadedMetadata={() => setStatus('ready')} onError={() => setStatus('error')} />
+    <a href={url} target="_blank" rel="noopener noreferrer" className="text-sm font-semibold text-primary-700 underline">Open material in a new tab</a>
+  </section>;
+}
+
 function AdminMedia({ item }: { item: SubjectMaterial['media'][number] }) {
   let url: URL;
   try { url = new URL(item.url, window.location.origin); } catch {
@@ -95,10 +113,7 @@ function AdminMedia({ item }: { item: SubjectMaterial['media'][number] }) {
     </section>;
   }
   if (kind === 'audio' && item.can_embed !== false && scopedMedia) {
-    return <section className="space-y-2">
-      <audio src={url.href} controls preload="metadata" className="w-full" aria-label={item.title} />
-      <a href={url.href} target="_blank" rel="noopener noreferrer" className="text-sm font-semibold text-primary-700 underline">Open material in a new tab</a>
-    </section>;
+    return <AdminAudioPlayer url={url.href} title={item.title} />;
   }
   if (kind === 'audio' && item.can_embed !== false && url.protocol === 'https:'
       && (url.hostname === 'kentbusinesscollege.org' || url.hostname.endsWith('.kentbusinesscollege.org'))

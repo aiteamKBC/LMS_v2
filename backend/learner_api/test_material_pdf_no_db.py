@@ -16,6 +16,39 @@ from learner_api import material_storage
 
 
 class MaterialPdfTests(unittest.TestCase):
+    def test_legacy_archive_uses_only_the_configured_account_and_safe_path(self):
+        config = SimpleNamespace(AZURE_STORAGE_ACCOUNT='curriculumfiles', AZURE_CURRICULUM_CONTAINER='private')
+        row = {'material_blob_account': 'curriculumfiles', 'material_blob_container': 'private',
+               'material_blob_name': '_legacy_files/9/lesson one.mp4'}
+        self.assertEqual(material_storage.curriculum_archive_url(row, config),
+                         '/curriculum_api/curriculum/uploads/_legacy_files/9/lesson%20one.mp4')
+        for changes in ({'material_blob_account': 'different'}, {'material_blob_container': 'different'},
+                        {'material_blob_name': '_legacy_files/9/../other.mp4'},
+                        {'material_blob_name': '_legacy_files/9/..'},
+                        {'material_blob_name': '_legacy_files/9/dir\\file.mp4'},
+                        {'material_blob_name': 'source-materials/9/hash'}):
+            with self.subTest(changes=changes):
+                self.assertEqual(material_storage.curriculum_archive_url({**row, **changes}, config), '')
+
+    def test_archive_delivery_keeps_ownership_and_preview_route(self):
+        tree = ast.parse(Path(__file__).with_name('student_activity.py').read_text(encoding='utf-8'))
+        node = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == 'source_material_file')
+        node.decorator_list = []
+        owned = Mock(return_value=(8, {'_source': {'_material_blob_ready': True}}))
+        scope = {'__package__': 'learner_api', '_owned_material': owned,
+                 '_error': lambda message, status: status, 'DatabaseError': RuntimeError,
+                 'HttpResponseRedirect': lambda url: {'Location': url}}
+        exec(compile(ast.Module(body=[node], type_ignores=[]), 'source-file', 'exec'), scope)
+        with patch.object(material_storage, 'curriculum_archive_url', return_value='/curriculum_api/curriculum/uploads/_legacy_files/9/lesson.pptx'), \
+                patch.object(material_storage, 'read_url') as signed:
+            response = scope['source_material_file'](SimpleNamespace(GET={'preview': '1'}), 'commercial', 3, 5, 1)
+            owned.assert_called_once_with('commercial', 3, 5, 1)
+            self.assertTrue(response['Location'].endswith('lesson.pptx?preview=1'))
+            self.assertEqual(response['Cache-Control'], 'private, no-store')
+            signed.assert_not_called()
+            owned.side_effect = LookupError('Not owned')
+            self.assertEqual(scope['source_material_file'](SimpleNamespace(GET={}), 'commercial', 3, 5, 1), 404)
+
     def upstream(self, data=b'%PDF-example', status=200, mime='application/pdf'):
         response = io.BytesIO(data)
         response.status = status
