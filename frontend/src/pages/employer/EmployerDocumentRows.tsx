@@ -77,7 +77,7 @@ export function SignModal({
           {reviewDefinition?.template ? <LearnerReviewInstanceForm definition={reviewDefinition} viewerRole="employer" onSaveAnswers={onSaveReviewAnswers} /> : null}
           <SignaturePad
             signatoryName={employerName}
-            onCommit={(url) => { void submit(url); }}
+            onCommit={submit}
             onCancel={onClose}
           />
 

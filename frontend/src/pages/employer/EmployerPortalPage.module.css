@@ -139,8 +139,7 @@
 .viewButton:hover { border-color: #8e65df; background: #f7f2ff; color: #4212a5; }
 .viewButton:focus-visible, .backButton:focus-visible { outline: 2px solid #7c3aed; outline-offset: 2px; }
 
-.loadingState, .errorState, .emptyState { display: flex; min-height: 190px; align-items: center; justify-content: center; gap: 10px; border: 1px dashed #d8cff0; border-radius: 15px; background: rgb(255 255 255 / 72%); color: #756ba6; font-size: 13px; }
-.loadingState i { color: #6d28d9; font-size: 20px; }
+.errorState, .emptyState { display: flex; min-height: 190px; align-items: center; justify-content: center; gap: 10px; border: 1px dashed #d8cff0; border-radius: 15px; background: rgb(255 255 255 / 72%); color: #756ba6; font-size: 13px; }
 .errorState { flex-direction: column; color: #b42318; }
 .errorState p { margin: 0; }
 .errorState button, .emptyState button { border: 0; background: transparent; color: #6424c8; font-size: 12px; font-weight: 700; cursor: pointer; }
@@ -178,7 +177,6 @@
 :global([data-theme='dark']) .hero,
 :global([data-theme='dark']) .searchBox,
 :global([data-theme='dark']) .learnerCard,
-:global([data-theme='dark']) .loadingState,
 :global([data-theme='dark']) .errorState,
 :global([data-theme='dark']) .emptyState { border-color: #3a4d6b; background: #182d48; }
 :global([data-theme='dark']) .statCard { border-color: #3a4d6b; background: #182d48; }

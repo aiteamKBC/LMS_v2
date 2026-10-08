@@ -51,6 +51,8 @@ export interface LearnerCalendarEvent {
   reviewCompletedAt?: string | null;
   learnerSigned?: boolean;
   learnerSignedAt?: string | null;
+  employerSigned?: boolean;
+  employerSignatureRequired?: boolean;
   /** False when the Microsoft Graph sync failed: saved locally, but no invite sent. */
   invited?: boolean;
   syncError?: string;

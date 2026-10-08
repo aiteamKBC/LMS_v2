@@ -108,7 +108,7 @@ function ImportedFunctionalSkills({ section }: { section: NonNullable<LearnerCal
   </div>;
 }
 
-function ImportedReviewSections({ review }: { review: NonNullable<LearnerCalendarEvent['importedReview']> }) {
+export function ImportedReviewSections({ review }: { review: NonNullable<LearnerCalendarEvent['importedReview']> }) {
   if (!review.sections.length) return <Empty>No section details were imported for this review.</Empty>;
   return <div className="space-y-3">
     {review.sections.map((section) => <div key={section.id}>

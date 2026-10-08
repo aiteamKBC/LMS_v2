@@ -1,11 +1,14 @@
 import type { ReactNode } from 'react';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { SidebarNavItem } from '@/components/feature/Sidebar';
 import { AppIcon } from '@/components/feature/AppIcon';
+import { fetchEmployerLearnerPlan, fetchEmployerLearnerWeek, fetchEmployerLearnerSchedule, fetchEmployerLearnerHours } from '@/api/employerPortal';
+import type { LearnerDetail } from '@/api/learnerDetail';
 
 const mocks = vi.hoisted(() => ({
   useAuth: vi.fn(),
@@ -35,6 +38,8 @@ vi.mock('@/api/employerPortal', async (importOriginal) => ({
   fetchEmployerLearnerPhoto: vi.fn(() => new Promise(() => undefined)),
   fetchEmployerLearner: mocks.fetchEmployerLearner,
   fetchEmployerLearnerPlan: vi.fn(),
+  fetchEmployerMonthlyLogSummary: vi.fn(() => Promise.resolve({ months: [], total_months: 0, completed_months: 0, read_only: true, csrf_token: '' })),
+  fetchEmployerProgressReviews: vi.fn(() => Promise.resolve({ events: [], definitions: {} })),
   fetchEmployerReviewInstance: mocks.fetchEmployerReviewInstance,
   signDocumentAsEmployer: vi.fn(),
   signAgreementAsEmployer: vi.fn(),
@@ -91,12 +96,15 @@ vi.mock('@/components/feature/WorkspaceShell', () => ({
 import EmployerLearnerPage from './EmployerLearnerPage';
 
 function renderPage() {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
+    <QueryClientProvider client={client}>
     <MemoryRouter initialEntries={['/employers/7/learner/commercial/499']}>
       <Routes>
         <Route path="/employers/:employerId/learner/:kind/:learnerId" element={<EmployerLearnerPage />} />
       </Routes>
-    </MemoryRouter>,
+    </MemoryRouter>
+    </QueryClientProvider>,
   );
   return screen.getByTestId('workspace-shell');
 }
@@ -117,6 +125,8 @@ describe('EmployerLearnerPage workspace identity', () => {
     expect(shell).toHaveAttribute('data-role-label', 'Employer');
     expect(shell).toHaveAttribute('data-user-name', 'Test Employer');
     expect(shell).toHaveAttribute('data-learners-href', '/employers/7');
+    expect(screen.getByRole('status', { name: 'Loading learner' })).toBeVisible();
+    expect(screen.getByTestId('learner-loading-spinner')).toHaveClass('animate-spin');
   });
 
   it('gives staff the same employer menu under their own name', () => {
@@ -133,7 +143,7 @@ describe('EmployerLearnerPage workspace identity', () => {
   });
 });
 
-describe('EmployerLearnerPage review signing', () => {
+describe('EmployerLearnerPage content and review signing', () => {
   const review = {
     kind: 'review',
     eventKey: 'enrol-eligibility-1',
@@ -156,7 +166,7 @@ describe('EmployerLearnerPage review signing', () => {
       employer: { id: '7', name: 'Test Employer' },
       learner: {
         id: '499', kind: 'commercial', name: 'Lee Learner', email: '', phone: '', programme: '',
-        cohort: '', programmeStatus: 'Onboarding', onboardingStatus: '', startDate: '', endDate: '', isActive: false,
+        cohort: '', employer: 'Test Employer', organization: 'Test Organization', programmeStatus: 'Onboarding', onboardingStatus: '', startDate: '', endDate: '', isActive: false,
       },
       performance: {
         quizzesTaken: 0, quizzesPassed: 0, averageScore: null, componentsCompleted: 0,
@@ -191,6 +201,124 @@ describe('EmployerLearnerPage review signing', () => {
     await userEvent.click(await screen.findByRole('button', { name: /^Sign$/ }));
     await userEvent.click(screen.getByRole('button', { name: 'Pad sign' }));
   }
+
+  it('places Progress reviews after Documents and opens the employer review workspace', async () => {
+    mocks.fetchEmployerLearner.mockResolvedValue(detail([]));
+    renderPage();
+    const tab = await screen.findByRole('button', { name: 'Progress reviews' });
+    const documents = screen.getByRole('button', { name: /Documents/ });
+    expect(documents.compareDocumentPosition(tab) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    await userEvent.click(tab);
+    expect(await screen.findByRole('region', { name: 'Reviews sessions' })).toBeVisible();
+    expect(tab).toHaveAttribute('aria-current', 'page');
+    expect(screen.queryByRole('link', { name: 'Open calendar' })).not.toBeInTheDocument();
+  });
+
+  it('adds the timeline above the existing learning plan while keeping progress in Overview', async () => {
+    mocks.fetchEmployerLearner.mockResolvedValue(detail([]));
+    vi.mocked(fetchEmployerLearnerWeek).mockResolvedValueOnce({
+      weekStart: '2026-10-05', weekEnd: '2026-10-11', timezone: 'Europe/London', modules: [], deadlines: [],
+      undatedActivities: 0, expectedHours: 0, missingExpectedHours: 0,
+      otjh: { actual: 0, historical: 0, new: 0, undatedHistoricalRows: 0 },
+      planSubjects: [],
+      metrics: {
+        migrated: false,
+        programme: { completed: 4, total: 8, percent: 50, status: 'ready' },
+        ksb: { completed: 2, total: 4, percent: 50, status: 'ready' },
+        otjh: { historical: 0, new: 11, actual: 11, completed_actual: 11, planned: 74 },
+      },
+    });
+    vi.mocked(fetchEmployerLearnerSchedule).mockResolvedValueOnce({
+      months: {}, actual: [], actualAvailable: true, modules: [], moduleLinks: {}, sessions: [], reviews: [],
+      coach: { name: 'Coach', bookingUrl: null }, contractStatus: 'ready', generatedAt: '',
+    });
+    vi.mocked(fetchEmployerLearnerHours).mockResolvedValueOnce({ months: [] } as Awaited<ReturnType<typeof fetchEmployerLearnerHours>>);
+    vi.mocked(fetchEmployerLearnerPlan).mockResolvedValueOnce({
+      name: 'Lee Learner', modules: ['Existing module'], ksbs: [],
+      week: [{ module: 'Existing module', week: 'Existing week' }],
+      components: [{ module: 'Existing module', week: 'Existing week', component: 'Existing reading',
+        componentId: 'reading-1', type: 'reading', expectedOtjh: 2, contentHtml: '<p>Saved lesson</p>' }],
+    } as unknown as LearnerDetail);
+
+    renderPage();
+    const learnerBanner = within(await screen.findByRole('banner', { name: 'Learner programme' }));
+    expect(learnerBanner.getByRole('heading', { level: 1, name: 'Lee Learner' })).toBeVisible();
+    expect(learnerBanner.getByRole('button', { name: 'All learners' })).toBeVisible();
+    const employment = learnerBanner.getByRole('region', { name: 'Employer and Organization' });
+    expect(employment).toHaveTextContent('Test Employer');
+    expect(employment).toHaveTextContent('Test Organization');
+    expect(learnerBanner.queryByRole('button', { name: 'Continue learning' })).not.toBeInTheDocument();
+    expect(learnerBanner.queryByRole('button', { name: "Learner's Map" })).not.toBeInTheDocument();
+    const programmeProgress = await screen.findByRole('region', { name: 'Programme module progress' });
+    expect(programmeProgress).toBeVisible();
+    expect(programmeProgress.closest('.learner-dashboard')).not.toBeNull();
+    expect(programmeProgress.closest('.employer-learner-dashboard')).not.toBeNull();
+    const wholeProgramme = screen.getByRole('region', { name: 'Whole programme progress' });
+    expect(wholeProgramme).toBeVisible();
+    expect(within(wholeProgramme).getAllByRole('img')).toHaveLength(4);
+    expect(within(wholeProgramme).getByRole('img', { name: /^Attendance:/ })).toBeVisible();
+    expect(within(wholeProgramme).getByRole('img', { name: 'Activities: 50%' })).toBeVisible();
+    expect(within(wholeProgramme).getByRole('img', { name: /^Hours:/ })).toBeVisible();
+    expect(within(wholeProgramme).getByRole('img', { name: 'KSBs: 50%' })).toBeVisible();
+    expect(within(wholeProgramme).getByText('4 / 8')).toBeVisible();
+    expect(wholeProgramme.parentElement).toBe(programmeProgress.parentElement);
+    expect(wholeProgramme.compareDocumentPosition(programmeProgress) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    const otjChart = screen.getByRole('region', { name: 'Off-the-job hours by month' });
+    expect(otjChart).toBeVisible();
+    expect(otjChart.parentElement).toBe(programmeProgress.parentElement);
+    expect(programmeProgress.compareDocumentPosition(otjChart) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(screen.queryByRole('region', { name: 'Module timeline' })).not.toBeInTheDocument();
+    expect(fetchEmployerLearnerPlan).not.toHaveBeenCalled();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Learning plan' }));
+    expect(screen.getByRole('banner', { name: 'Learner programme' })).toBeVisible();
+    const timeline = await screen.findByRole('region', { name: 'Module timeline' });
+    const overview = screen.getByRole('region', { name: 'Module overview' });
+    expect(overview).toBeVisible();
+    expect(timeline.parentElement?.parentElement).toHaveClass(/trainingCards/);
+    expect(timeline.compareDocumentPosition(overview) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    const module = await screen.findByRole('button', { name: /Existing module/ });
+    expect(module).toBeVisible();
+    expect(timeline.compareDocumentPosition(module) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    await userEvent.click(screen.getByRole('button', { name: /Existing week/ }));
+    expect(screen.getByText('Existing reading', { selector: 'p' })).toBeVisible();
+    expect(fetchEmployerLearnerPlan).toHaveBeenCalledWith('7', 'commercial', '499');
+    expect(screen.queryByRole('region', { name: 'Programme module progress' })).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Overview' }));
+    expect(await screen.findByRole('region', { name: 'Programme module progress' })).toBeVisible();
+    expect(screen.getByRole('region', { name: 'Off-the-job hours by month' })).toBeVisible();
+    expect(screen.queryByText('Existing reading')).not.toBeInTheDocument();
+    expect(screen.queryByRole('region', { name: 'Module timeline' })).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Monthly logs' }));
+    expect(await screen.findByText('No monthly logs yet')).toBeVisible();
+    expect(screen.queryByRole('region', { name: 'Off-the-job hours by month' })).not.toBeInTheDocument();
+  });
+
+  it('shows the All documents columns and filters for the current learner', async () => {
+    mocks.fetchEmployerLearner.mockResolvedValue(detail([
+      review,
+      { ...review, eventKey: 'waiting-review', label: 'Waiting review', signable: false },
+      { ...review, eventKey: 'signed-review', label: 'Signed review', signed: true },
+    ]));
+    await openDocuments();
+    const documents = screen.getByRole('region', { name: 'Documents' });
+    for (const column of ['Document', 'Date', 'Status', 'Parties', 'Action']) {
+      expect(within(documents).getByText(column)).toBeVisible();
+    }
+    expect(within(documents).getByText('Awaiting your signature')).toBeVisible();
+    expect(within(documents).getByText('Waiting on learner')).toBeVisible();
+    const filters = within(documents).getByRole('navigation', { name: 'Filter documents' });
+    await userEvent.click(within(filters).getByRole('button', { name: /To sign/ }));
+    expect(within(documents).getByText(review.label)).toBeVisible();
+    expect(within(documents).queryByText('Waiting review')).not.toBeInTheDocument();
+    expect(within(documents).queryByText('Signed review')).not.toBeInTheDocument();
+    await userEvent.click(within(filters).getByRole('button', { name: /Signed/ }));
+    expect(within(documents).getByText('Signed review')).toBeVisible();
+    expect(within(documents).getByRole('button', { name: 'Show document' })).toBeVisible();
+    expect(within(documents).queryByText(review.label)).not.toBeInTheDocument();
+  });
 
   it('signs a legacy enrolment review through the enrolment-review endpoint', async () => {
     mocks.fetchEmployerLearner.mockResolvedValue(detail([review]));

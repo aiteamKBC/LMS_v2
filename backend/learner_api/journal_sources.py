@@ -1,5 +1,6 @@
 """Request-scoped journal reads; coach callers retain their existing sources."""
 from contextvars import ContextVar
+from contextlib import contextmanager
 from functools import wraps
 import re
 
@@ -23,6 +24,16 @@ TABLES = {
 
 def enabled():
     return _current.get()
+
+
+@contextmanager
+def learner_journal_reads():
+    """Use learner journal sources in an already-authorized shared reader."""
+    token = _current.set(True)
+    try:
+        yield
+    finally:
+        _current.reset(token)
 
 
 def table(name):

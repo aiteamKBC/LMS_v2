@@ -20,6 +20,7 @@ enrolment_api/documents.py.
 CSRF is exempted for the same reason as the rest of learner_api: an internal
 same-origin dev API behind the Vite proxy.
 """
+import json
 import logging
 
 from django.db import DatabaseError
@@ -590,6 +591,7 @@ def employer_portal_learner(request, employer_id, kind, learner_id):
             # The learner record's employer display name, as the learner's own
             # dashboard header shows it.
             "employer": _s(learner.employer),
+            "organization": _s(learner.organization),
             "programmeStatus": status,
             "onboardingStatus": _s(learner.onboarding_status),
             "startDate": _s(learner.start_date),
@@ -623,12 +625,17 @@ def employer_review_instance(request, employer_id, kind, learner_id, event_key):
         return _error("Learner not found.", 404)
     if learner.employer_id != employer.pk:
         return _error("That learner does not belong to this employer.", 403)
+    from .calendar import _calendar_profile
+    profile = _calendar_profile(learner, learner.pk)
+    owner_id = profile.pk if profile is not None else learner.pk
     record = CoachCalendarEvent.objects.filter(event_key=event_key).first()
-    if record and str(record.learner_id or '') != str(learner_id) and _s(record.learner_email).casefold() != _s(learner.email).casefold():
+    if record and str(record.learner_id or '') not in {str(learner_id), str(owner_id)} and _s(record.learner_email).casefold() != _s(learner.email).casefold():
         record = None
     instance = review_instances.get_review_instance(getattr(record, 'review_instance_id', '')) if record else review_instances.get_review_instance(event_key)
     if not instance:
         return _error("Review instance not found.", 404)
+    if str(instance.get('learner_id')) != str(owner_id):
+        return _error("Review instance not found for this learner.", 404)
     definition = review_instances.review_instance_form_definition(instance)
     if not definition['template']['visibleTo'].get('employer', False):
         return _error("This review is not visible to the employer.", 403)
@@ -769,11 +776,13 @@ def _without_meeting_links(payload):
     }
 
 
-def _overview_part(part, learner):
+def _overview_part(part, learner, kind=None):
     if part == "week":
         from .overview_week import read_week
 
-        return read_week(learner)
+        # Match the coach overview's canonical whole-programme metrics while
+        # retaining the employer ownership gate around this endpoint.
+        return read_week(learner, dashboard_kind=kind)
     if part in ("schedule", "contract"):
         from .training_plan_dashboard import read_dashboard
 
@@ -848,7 +857,7 @@ def employer_portal_learner_overview(request, employer_id, kind, learner_id, par
     from old_otjh.service import ServiceError
 
     try:
-        payload = _overview_part(part, learner)
+        payload = _overview_part(part, learner, kind)
     except ServiceError as exc:
         return _error(str(exc), exc.status)
     except LookupError as exc:
@@ -879,6 +888,178 @@ def _owned_learner(employer_id, kind, learner_id):
     if learner.employer_id != employer.pk:
         return None, _error("That learner does not belong to this employer.", 403)
     return learner, None
+
+
+def _employer_progress_definition(event, learner, profile, template_cache):
+    """Read an owned occurrence or its template preview without creating it."""
+    from curriculum_api import reviews
+
+    instance_id = _s(event.get("reviewInstanceId"))
+    template_id = _s(event.get("reviewTemplateId"))
+    instance = review_instances.get_review_instance(instance_id) if instance_id else None
+    if instance is None and template_id and profile is not None:
+        occurrence = event.get("occurrenceNumber") or event.get("sequence")
+        instance = review_instances.find_review_instance(template_id, str(profile.pk), occurrence)
+    if instance is not None:
+        owner_id = profile.pk if profile is not None else learner.pk
+        if str(instance.get("learner_id")) != str(owner_id):
+            return None
+        definition = review_instances.review_instance_form_definition(instance)
+    elif template_id:
+        if template_id not in template_cache:
+            template = reviews.get_review_template_row(template_id, include_deleted=True)
+            template_cache[template_id] = review_instances.build_definition_snapshot(template) if template else None
+        snapshot = template_cache[template_id]
+        if snapshot is None:
+            return None
+        definition = {
+            "instance": None, "occurrenceNumber": event.get("occurrenceNumber") or event.get("sequence"),
+            "template": snapshot, "sections": snapshot["sections"],
+            "signatures": {role: {"required": bool(snapshot["signatures"].get(role)), "signed": False}
+                           for role in review_instances.SIGNATURE_ROLES},
+        }
+    else:
+        return None
+    return definition if definition["template"]["visibleTo"].get("employer", False) else None
+
+
+@csrf_exempt
+@employer_or_staff()
+def employer_portal_progress_reviews(request, employer_id, kind, learner_id, event_key=None, as_pdf=False):
+    """Same programme review source as the learner, with employer visibility."""
+    if request.method != "GET":
+        return _error("Method not allowed.", 405)
+    learner, err = _owned_learner(employer_id, kind, learner_id)
+    if err is not None:
+        return err
+    from .calendar import _calendar_profile, coaching_events_for_learner
+
+    try:
+        profile = _calendar_profile(learner, learner.pk)
+        events = coaching_events_for_learner(learner, profile)
+        rows, definitions, template_cache = [], {}, {}
+        for source in events:
+            code = source.get("reviewTypeCode")
+            is_progress = code == "progress_review" if code else not source.get("reviewTemplateId") and source.get("source") == "progress-review"
+            if not is_progress or (event_key is not None and event_key not in {source.get("id"), source.get("eventKey")}):
+                continue
+            event = dict(source)
+            definition = None
+            if event.get("reviewTemplateId") or event.get("reviewInstanceId"):
+                definition = _employer_progress_definition(event, learner, profile, template_cache)
+                if definition is None:
+                    continue
+                state = definition["signatures"].get("employer", {})
+                instance = definition.get("instance") or {}
+                event.update({"employerSigned": bool(state.get("signed")),
+                              "employerSignatureRequired": bool(state.get("required"))})
+                if instance:
+                    event["reviewInstanceId"] = instance["id"]
+                    event["status"] = instance["status"]
+                definitions[event["eventKey"]] = definition
+            elif event.get("migratedForm"):
+                overlay = ImportedReviewInstance.objects.filter(
+                    event_key=event["eventKey"], learner_id=getattr(profile, "pk", learner.pk),
+                ).first()
+                if overlay is None:
+                    continue
+                state = signature_states(overlay)["employer"]
+                event.update({"employerSigned": bool(state["signed"]), "employerSignatureRequired": bool(state["required"])})
+            # Meeting access stays with the existing learner/coach calendar.
+            event["meetingLink"] = ""
+            rows.append(event)
+        rows.sort(key=lambda event: (event.get("date") or event.get("targetDate") or "", event.get("sequence") or 0, event["eventKey"]))
+    except DatabaseError:
+        logger.exception("employer_portal_progress_reviews: review read unavailable for %s", learner.pk)
+        return _error("Could not load progress reviews. Please try again.", 503)
+    if event_key is not None:
+        if not rows:
+            return _error("Progress review not found for this learner.", 404)
+        definition = definitions.get(rows[0]["eventKey"])
+        if as_pdf:
+            from curriculum_api.review_pdf import learner_information, mcm_pdf_response, historical_pdf_response
+            information = learner_information(learner)
+            if definition is not None:
+                response = mcm_pdf_response(definition, information)
+            elif rows[0].get("importedReview") and not rows[0].get("migratedForm"):
+                from .aptem_review_pdf import original_review_pdf
+                review = rows[0]["importedReview"]
+                response = historical_pdf_response(review, information, identifier=review["id"],
+                                                   original_content=original_review_pdf(review))
+            else:
+                return _error("A review document is not available yet.", 409)
+        else:
+            response = JsonResponse({"event": rows[0], "definition": definition})
+    else:
+        response = JsonResponse({"events": rows, "definitions": definitions})
+    response["Cache-Control"] = "private, no-store"
+    return response
+
+
+def _monthly_log_urls(payload, employer_id, kind, learner_id):
+    """Keep report materials and evidence behind the portal ownership check."""
+    import re
+
+    prefix = f"/learner_api/employer-portal/{employer_id}/learner/{kind}/{learner_id}/monthly-logs/"
+    source = f"/learner_api/monthly-logs/{learner_id}/"
+    if isinstance(payload, dict):
+        return {key: _monthly_log_urls(value, employer_id, kind, learner_id) for key, value in payload.items()}
+    if isinstance(payload, list):
+        return [_monthly_log_urls(value, employer_id, kind, learner_id) for value in payload]
+    if isinstance(payload, str) and payload.startswith(source):
+        suffix = payload[len(source):]
+        if re.fullmatch(r"(?:documents/[\w-]+|canonical-documents/\d+|\d{4}-\d{2}/activities/\d+/materials/\d+)/", suffix):
+            return prefix + suffix
+    return payload
+
+
+@csrf_exempt
+@employer_or_staff()
+def employer_portal_monthly_logs(request, employer_id, kind, learner_id, month=None,
+                                 row_id=None, material_id=None, file_id=None, document_source=None):
+    """The learner Monthly Logs reader, scoped to this employer and GET only."""
+    if request.method != "GET":
+        return _error("Method not allowed.", 405)
+    learner, err = _owned_learner(employer_id, kind, learner_id)
+    if err is not None:
+        return err
+
+    from old_otjh.service import ServiceError
+    from . import canonical_learning, monthly_logs
+    from .journal_sources import learner_journal_reads
+    from .subject_content import ContentUnavailable
+
+    def read_report(request):
+        profile = canonical_learning.require_profile(learner.pk)
+        record = {**profile, "id": learner.pk, "_profile": profile,
+                  "_canonical_profile": profile, "_view_as": True}
+        if file_id is not None:
+            reader = monthly_logs.canonical_document_response if document_source == "canonical" else monthly_logs.document_response
+            return reader(learner.pk, file_id)
+        if material_id is not None:
+            return monthly_logs.material_response(record, month, row_id, material_id)
+        if row_id is not None:
+            response = monthly_logs.content_response(record, month, row_id)
+            payload = json.loads(response.content)
+        elif month is not None:
+            payload = monthly_logs.detail_data(record, month, include_open=True)
+        else:
+            payload = {**monthly_logs.summary_data(record, include_open=True), "read_only": True, "csrf_token": ""}
+        return JsonResponse(_monthly_log_urls(payload, employer_id, kind, learner_id))
+
+    try:
+        with learner_journal_reads():
+            response = read_report(request)
+    except ServiceError as exc:
+        return _error(str(exc), exc.status)
+    except ContentUnavailable as exc:
+        return _error(str(exc), 503)
+    except DatabaseError:
+        logger.exception("employer_portal_monthly_logs: logs unavailable for %s", learner.pk)
+        return _error("Could not load this learner's monthly logs. Please try again.", 503)
+    response["Cache-Control"] = "private, no-store"
+    response["Vary"] = "Cookie"
+    return response
 
 
 #: A learner's handed-in assignments: every status except an unsent draft.

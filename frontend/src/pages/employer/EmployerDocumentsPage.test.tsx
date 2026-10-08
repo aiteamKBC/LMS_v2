@@ -23,6 +23,8 @@ const documents: EmployerDocuments = {
   ],
 };
 
+const documentsApi = vi.hoisted(() => ({ fetchDocuments: vi.fn() }));
+
 vi.mock('@/hooks/useAuth', () => ({ useAuth: () => ({ auth: { account: { role: 'employer', subjectId: 9, displayName: 'Test Employer' } } }) }));
 vi.mock('@/hooks/useToast', () => ({ useToast: () => ({ success: vi.fn(), error: vi.fn() }) }));
 vi.mock('@/pages/users/wizard/steps/SignaturePad', () => ({ SignaturePad: () => <div>Signature pad</div> }));
@@ -37,7 +39,7 @@ vi.mock('@/components/feature/WorkspaceShell', () => ({
 }));
 vi.mock('@/api/employerPortal', async importOriginal => ({
   ...(await importOriginal<typeof import('@/api/employerPortal')>()),
-  fetchEmployerDocuments: vi.fn(() => Promise.resolve(documents)),
+  fetchEmployerDocuments: (...args: unknown[]) => documentsApi.fetchDocuments(...args),
 }));
 
 import EmployerDocumentsPage from './EmployerDocumentsPage';
@@ -49,10 +51,22 @@ function renderPage() {
 }
 
 // ui.tsx relies on the build's auto-imported AppIcon global.
-beforeEach(() => { vi.stubGlobal('AppIcon', ({ className }: { className?: string }) => <i className={className} />); });
+beforeEach(() => {
+  documentsApi.fetchDocuments.mockReset();
+  documentsApi.fetchDocuments.mockResolvedValue(documents);
+  vi.stubGlobal('AppIcon', ({ className }: { className?: string }) => <i className={className} />);
+});
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
 describe('All documents', () => {
+  it('shows the animated loading state while documents are being prepared', () => {
+    documentsApi.fetchDocuments.mockReturnValueOnce(new Promise(() => undefined));
+    renderPage();
+
+    expect(screen.getByRole('status', { name: 'Loading documents' })).toBeVisible();
+    expect(screen.getByTestId('documents-loading-spinner')).toHaveClass('animate-spin');
+  });
+
   it('uses the employer workspace menu and the learner look', async () => {
     renderPage();
     const sidebar = screen.getByRole('navigation', { name: 'Sidebar' });

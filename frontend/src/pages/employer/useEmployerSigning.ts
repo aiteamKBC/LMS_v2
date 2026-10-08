@@ -22,6 +22,12 @@ import { REVIEW_QUESTION_LABELS } from '@/pages/learner/onboarding/reviews/quest
 /** One signable item and the learner it belongs to. */
 export type SigningTarget = { item: SignableItem; kind: LearnerKind; learnerId: string };
 
+/** The same document counts and filters in All documents and a learner's tab. */
+export function documentState(item: SignableItem): 'signed' | 'to-sign' | 'waiting' {
+  if (item.signed) return 'signed';
+  return item.signable ? 'to-sign' : 'waiting';
+}
+
 /** Reviews are keyed by event key and documents by id; the learner keeps keys unique across learners. */
 export function targetKey({ item, kind, learnerId }: SigningTarget) {
   return `${kind}:${learnerId}:${item.kind === 'review' ? `r-${item.eventKey}` : `d-${item.id}`}`;

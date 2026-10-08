@@ -187,14 +187,14 @@ class CanonicalLearningTests(unittest.TestCase):
     def test_monthly_material_redirect_checks_owner_month_row_and_material(self):
         row = {'id': 9, 'progress_id': 20}
         parts = [{'id': 100, 'url': 'https://materials.example/private?sig=test'}]
-        scope = {'scope': Mock(return_value=({'_profile': self.owner}, 'learner')),
+        scope = {'scope': Mock(return_value=({'id': 271, '_profile': self.owner}, 'learner')),
             'valid_month': lambda month: None,
             'canonical': SimpleNamespace(enabled=lambda _: True, content_row=Mock(return_value=(row, {'id': 20})), material_parts=Mock(return_value=parts),
                 content=Mock(return_value={'id': 9, 'parts': [dict(parts[0])]})),
             'detail_data': Mock(return_value={'source': 'lms', 'rows': [row]}),
             'old': SimpleNamespace(ServiceError=ServiceError),
             'HttpResponseRedirect': lambda url: {'Location': url}, 'JsonResponse': lambda value: value}
-        functions('monthly_logs.py', scope, {'canonical_material', 'content'})
+        functions('monthly_logs.py', scope, {'canonical_material', 'material_response', 'content', 'content_response'})
         response = scope['canonical_material'](None, 271, '2026-08', 9, 100)
         self.assertEqual(response['Location'], parts[0]['url'])
         self.assertEqual(response['Cache-Control'], 'private, no-store')
@@ -761,7 +761,7 @@ class CanonicalLearningTests(unittest.TestCase):
         query = Mock(return_value=[])
         scope = dict(scope=Mock(), canonical=SimpleNamespace(profile=lambda _: self.owner),
                      old_repo=SimpleNamespace(query=query), old=SimpleNamespace(ServiceError=ServiceError))
-        functions('monthly_logs.py', scope, {'canonical_document'})
+        functions('monthly_logs.py', scope, {'canonical_document', 'canonical_document_response'})
         with self.assertRaises(ServiceError):
             scope['canonical_document'](object(), 271, 999)
         sql, params = query.call_args.args

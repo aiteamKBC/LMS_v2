@@ -21,7 +21,7 @@ export interface ReviewPresentation {
 }
 
 /** Display state only. Keep the original event for all existing action handlers. */
-export function presentReview(session: LearnerCalendarEvent, attendance: MeetingAttendance | undefined, today: string, definition?: LearnerReviewDefinition | null): ReviewPresentation {
+export function presentReview(session: LearnerCalendarEvent, attendance: MeetingAttendance | undefined, today: string, definition?: LearnerReviewDefinition | null, viewerRole: 'participant' | 'employer' = 'participant'): ReviewPresentation {
   const storedStatus = meetingStatus(session);
   const bookingStatus = (attendance?.status || session.bookingStatus || storedStatus).trim().toLowerCase().replace(/[ _]+/g, '-');
   const submittedStatus = definition?.instance?.status;
@@ -40,6 +40,19 @@ export function presentReview(session: LearnerCalendarEvent, attendance: Meeting
     ({ ...base, label, description, action, past, needsAttention });
 
   if (cancelled) return result('Cancelled', 'This review was cancelled. Its record is still available.', 'view', true);
+  if (viewerRole === 'employer') {
+    const signature = definition?.signatures.employer;
+    const required = signature?.required ?? session.employerSignatureRequired;
+    const signed = signature?.signed ?? session.employerSigned;
+    if (['awaiting-signature', 'completed'].includes(status) && required && !signed) {
+      return result('Your signature is needed', 'Read the review and agreed next steps, then sign as employer.', 'sign', true, true);
+    }
+    if (signed) return result('Your signature is saved', 'Your employer signature is saved. You can read the review and check the other signatures.', 'view', true);
+    if (session.importedReview && !session.migratedForm) return result(status === 'completed' ? 'Completed' : 'Archived review', 'Read this saved review and its attachments.', 'view', true);
+    if (['awaiting-signature', 'completed'].includes(status)) return result(status === 'completed' ? 'Completed' : 'Waiting for signatures', 'Read the review and check its signature status.', 'view', true);
+    if (booked) return result(isToday ? 'Today' : status === 'in-progress' ? 'In progress' : 'Scheduled', 'Review the learner’s progress and agreed next steps.', isToday && joinUrl ? 'join' : 'view', Boolean(date && date < today));
+    return result(['not-scheduled', 'planned'].includes(status) ? 'Not scheduled' : 'In preparation', 'The coach is preparing this review. You can read the available details and answer any employer questions.', 'view');
+  }
   if (session.importedReview) return result(status === 'completed' ? 'Completed' : 'Archived review', 'You can read this saved review and its attachments.', 'view', true);
   if (['awaiting-signature', 'completed'].includes(status)) {
     // Match the existing detail form's signature eligibility. A calendar status
@@ -67,17 +80,18 @@ export function presentReview(session: LearnerCalendarEvent, attendance: Meeting
   return result('Check review details', 'Open the review to check its current details.', 'view', Boolean(date && date < today));
 }
 
-export function reviewOverview(sessions: readonly LearnerCalendarEvent[], attendance: readonly MeetingAttendance[], today: string, definitions: ReviewDefinitions = {}) {
+export function reviewOverview(sessions: readonly LearnerCalendarEvent[], attendance: readonly MeetingAttendance[], today: string, definitions: ReviewDefinitions = {}, viewerRole: 'participant' | 'employer' = 'participant') {
   const all = sessions.map(session => presentReview(session,
     attendance.find(item => item.id === session.id) || attendance.find(item => Boolean(item.calendarEventKey) && item.calendarEventKey === session.eventKey),
-    today, definitions[session.eventKey] || definitions[session.id]));
+    today, definitions[session.eventKey] || definitions[session.id], viewerRole));
   // Reuse the existing featured-meeting ordering; never alter the programme
   // dates, persisted statuses, booking rules or the input event objects.
   const featured = featuredSession(all.filter(item => !item.past)
     .map(item => ({ ...item.session, status: item.status, scheduledDate: item.booked ? item.date : null,
       scheduledTime: item.attendance?.startTime ?? item.session.scheduledTime })), today);
   const attention = all.filter(item => item.needsAttention);
-  const current = all.find(item => item.session.id === featured?.id) || attention[0] || null;
+  const current = all.find(item => item.session.id === featured?.id) || attention[0]
+    || (viewerRole === 'employer' ? all.filter(item => item.status !== 'cancelled').at(-1) : null) || null;
   return { all, attention, current, upcoming: all.filter(item => !item.past), past: all.filter(item => item.past).reverse() };
 }
 

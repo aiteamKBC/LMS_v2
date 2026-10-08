@@ -1263,7 +1263,7 @@ export function ReviewInstanceModal({
                         signatureSaveInFlightRef.current = true;
                         setSaving(true);
                         setError(null);
-                        void (definition.migratedForm
+                        return (definition.migratedForm
                           ? signMigratedReviewAsCoach(definition.instance.id, signature)
                           : signReviewInstance(definition.instance.id, 'advisor', auth.user?.fullName || 'Coach', signature))
                           .then((updated) => {

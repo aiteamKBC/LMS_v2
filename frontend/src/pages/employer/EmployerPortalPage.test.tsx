@@ -45,6 +45,14 @@ describe('employer portal design', () => {
     });
   });
 
+  it('shows the animated loading state while learners are being prepared', () => {
+    fetchEmployerPortal.mockReturnValueOnce(new Promise(() => undefined));
+    showPage();
+
+    expect(screen.getByRole('status', { name: 'Loading learners' })).toBeVisible();
+    expect(screen.getByTestId('learners-loading-spinner')).toHaveClass('animate-spin');
+  });
+
   it('renders the supplied banner artwork and filters learner cards', async () => {
     const { container } = showPage();
 

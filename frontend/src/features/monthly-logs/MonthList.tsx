@@ -7,13 +7,13 @@ import { duration, hours, monthLabel, monthStatus } from '@/features/old-otjh/re
 import type { LogMonth, LogPerspective, LogSummary } from './api';
 import styles from './monthlyLogs.module.css';
 
-export function MonthList({ summary, base, perspective }: { summary: LogSummary; base: string; perspective: LogPerspective }) {
+export function MonthList({ summary, base, perspective, onMonthSelect }: { summary: LogSummary; base: string; perspective: LogPerspective; onMonthSelect?: (month: string) => void }) {
   return perspective === 'coach'
     ? <CoachMonthList summary={summary} base={base} />
-    : <LearnerMonthList summary={summary} base={base} perspective={perspective} />;
+    : <LearnerMonthList summary={summary} base={base} perspective={perspective} onMonthSelect={onMonthSelect} />;
 }
 
-function LearnerMonthList({ summary, base, perspective }: { summary: LogSummary; base: string; perspective: LogPerspective }) {
+function LearnerMonthList({ summary, base, perspective, onMonthSelect }: { summary: LogSummary; base: string; perspective: LogPerspective; onMonthSelect?: (month: string) => void }) {
   const [year, setYear] = useState('all');
   const [pendingOnly, setPendingOnly] = useState(false);
   const signature = perspective === 'learner' ? 'student_signature' : 'coach_signature';
@@ -78,7 +78,9 @@ function LearnerMonthList({ summary, base, perspective }: { summary: LogSummary;
             {Number(item.estimated_hours || 0) > 0 && <p className="mt-2 text-xs font-medium text-amber-700">Estimated — approval required: {duration(item.estimated_hours)}</p>}
             <div className={styles.signatures}>{item.is_open ? <span className={styles.unsigned}><AppIcon className="ri-time-line" />Month in progress</span> : <><SignatureState role="Learner" signed={!!item.student_signature} /><SignatureState role="Coach" signed={!!item.coach_signature} /></>}</div>
             <span className={`${styles.status} ${item.status === 'complete' ? styles.complete : ''}`}><AppIcon className={item.status === 'complete' ? 'ri-check-line' : 'ri-time-line'} />{item.is_open ? 'In progress' : monthStatus(item)}</span>
-            <Link className={styles.openMonth} to={`${base}/${item.month}`} aria-label={`Review month: ${monthLabel(item.month)}`}><span>{item.is_open ? 'View current log' : 'View report'}</span><AppIcon className="ri-arrow-right-line" /></Link>
+            {onMonthSelect
+              ? <button type="button" className={styles.openMonth} onClick={() => onMonthSelect(item.month)} aria-label={`Review month: ${monthLabel(item.month)}`}><span>{item.is_open ? 'View current log' : 'View report'}</span><AppIcon className="ri-arrow-right-line" /></button>
+              : <Link className={styles.openMonth} to={`${base}/${item.month}`} aria-label={`Review month: ${monthLabel(item.month)}`}><span>{item.is_open ? 'View current log' : 'View report'}</span><AppIcon className="ri-arrow-right-line" /></Link>}
           </article>)}</div>
         </section>)}</div>}
     </>}

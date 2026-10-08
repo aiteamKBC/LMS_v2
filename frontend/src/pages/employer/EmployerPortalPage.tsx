@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
+import { LoaderCircle } from 'lucide-react';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { PageContainer } from '@/components/ui/PageContainer';
 import { fetchEmployerPortal, type EmployerLearnerCard, type EmployerPortal } from '@/api/employerPortal';
@@ -159,7 +160,24 @@ export default function EmployerPortalPage() {
           {query && <button type="button" onClick={() => setQuery('')} aria-label="Clear learner search"><i className="ri-close-line" aria-hidden="true" /></button>}
         </label>
 
-        {loading && <div className={styles.loadingState} role="status"><i className="ri-loader-4-line animate-spin" aria-hidden="true" />Loading learners…</div>}
+        {loading && (
+          <div
+            role="status"
+            aria-label="Loading learners"
+            aria-live="polite"
+            className="flex min-h-[18rem] items-center justify-center py-16"
+          >
+            <div className="flex flex-col items-center gap-3 text-center">
+              <span className="grid h-12 w-12 place-items-center rounded-full bg-primary-50 text-primary-700 shadow-sm">
+                <LoaderCircle data-testid="learners-loading-spinner" aria-hidden="true" className="h-7 w-7 animate-spin" />
+              </span>
+              <div>
+                <p className="text-[13px] font-semibold text-foreground-700">Loading learners...</p>
+                <p className="mt-1 text-[11px] text-foreground-400">Preparing your learner list</p>
+              </div>
+            </div>
+          </div>
+        )}
 
         {!loading && error && (
           <div className={styles.errorState} role="alert">

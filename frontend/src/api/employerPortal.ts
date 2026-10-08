@@ -14,10 +14,52 @@
 import type { LearnerDetail, LearnerKind } from '@/api/learnerDetail';
 import type { OverviewWeek } from '@/api/learnerOverview';
 import type { TrainingPlanContract, TrainingPlanDashboard } from '@/api/trainingPlanDashboard';
-import type { MonthlyLogHours } from '@/features/monthly-logs/api';
+import type { MonthlyLogHours, LogSummary, LogDetail } from '@/features/monthly-logs/api';
+import type { ActivityContent } from '@/features/old-otjh/api';
 import type { ReviewFormResponse } from '@/api/reviewForm';
+import type { LearnerCalendarEvent, LearnerReviewDefinition } from '@/api/learnerCalendar';
 
 const BASE = '/learner_api/employer-portal';
+
+export type EmployerProgressReviews = {
+  events: LearnerCalendarEvent[];
+  definitions: Record<string, LearnerReviewDefinition | null>;
+};
+
+export function fetchEmployerProgressReviews(employerId: string, kind: LearnerKind, learnerId: string, signal?: AbortSignal) {
+  return request<EmployerProgressReviews>(`${BASE}/${employerId}/learner/${kind}/${learnerId}/progress-reviews/`, { signal });
+}
+
+export function fetchEmployerProgressReview(employerId: string, kind: LearnerKind, learnerId: string, eventKey: string, signal?: AbortSignal) {
+  return request<{ event: LearnerCalendarEvent; definition: LearnerReviewDefinition | null }>(
+    `${BASE}/${employerId}/learner/${kind}/${learnerId}/progress-reviews/${encodeURIComponent(eventKey)}/`, { signal });
+}
+
+export async function downloadEmployerProgressReview(employerId: string, kind: LearnerKind, learnerId: string, eventKey: string) {
+  const { saveReviewPdfResponse } = await import('./reviewPdf');
+  await saveReviewPdfResponse(await fetch(
+    `${BASE}/${employerId}/learner/${kind}/${learnerId}/progress-reviews/${encodeURIComponent(eventKey)}/pdf/`,
+    { credentials: 'include' }));
+}
+
+function monthlyLogPath(employerId: string, kind: LearnerKind, learnerId: string) {
+  return `${BASE}/${employerId}/learner/${kind}/${learnerId}/monthly-logs/`;
+}
+
+export function fetchEmployerMonthlyLogSummary(employerId: string, kind: LearnerKind, learnerId: string, signal?: AbortSignal) {
+  return request<LogSummary>(monthlyLogPath(employerId, kind, learnerId), { signal });
+}
+
+export function fetchEmployerMonthlyLog(employerId: string, kind: LearnerKind, learnerId: string, month: string, signal?: AbortSignal) {
+  return request<LogDetail>(`${monthlyLogPath(employerId, kind, learnerId)}${month}/`, { signal });
+}
+
+export async function fetchEmployerMonthlyLogContent(employerId: string, kind: LearnerKind, learnerId: string, month: string, rowId: number) {
+  const content = await request<ActivityContent>(`${monthlyLogPath(employerId, kind, learnerId)}${month}/activities/${rowId}/`);
+  return { ...content, parts: content.parts.map(part => ({ ...part,
+    url: part.url?.startsWith('/') && !part.url.startsWith('//') ? new URL(part.url, window.location.origin).href : part.url,
+  })) };
+}
 
 export interface EmployerLearnerCard {
   id: string;
@@ -119,6 +161,8 @@ export interface EmployerLearnerDetail {
     cohort: string;
     /** The learner record's employer display name. */
     employer?: string;
+    /** The learner record's organisation display name. */
+    organization?: string;
     programmeStatus: string;
     onboardingStatus: string;
     startDate: string;

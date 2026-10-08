@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { LoaderCircle } from 'lucide-react';
 import {
   fetchEmployerAssignmentFileUrl,
   fetchEmployerLearnerAssignments,
@@ -81,9 +82,22 @@ export function EmployerAssignmentsTab({ employerId, kind, learnerId, learnerNam
 
   if (!assignments) {
     return (
-      <p className="py-16 text-center text-[13px] text-foreground-400">
-        <i className="ri-loader-4-line animate-spin mr-2" />Loading assignments…
-      </p>
+      <div
+        role="status"
+        aria-label="Loading assignments"
+        aria-live="polite"
+        className="flex min-h-[18rem] items-center justify-center py-16"
+      >
+        <div className="flex flex-col items-center gap-3 text-center">
+          <span className="grid h-12 w-12 place-items-center rounded-full bg-primary-50 text-primary-700 shadow-sm">
+            <LoaderCircle data-testid="assignments-loading-spinner" aria-hidden="true" className="h-7 w-7 animate-spin" />
+          </span>
+          <div>
+            <p className="text-[13px] font-semibold text-foreground-700">Loading assignments...</p>
+            <p className="mt-1 text-[11px] text-foreground-400">Preparing submitted work</p>
+          </div>
+        </div>
+      </div>
     );
   }
 
@@ -135,7 +149,9 @@ export function EmployerAssignmentsTab({ employerId, kind, learnerId, learnerNam
                         title={file.name}
                         className="inline-flex max-w-[16rem] items-center gap-1.5 rounded-lg border border-foreground-200 px-2.5 py-1 text-[12px] font-medium text-foreground-600 transition-smooth hover:border-primary-300 hover:bg-primary-50/60 hover:text-primary-700 cursor-pointer disabled:opacity-60"
                       >
-                        <i className={opening === key ? 'ri-loader-4-line animate-spin' : 'ri-external-link-line'} aria-hidden="true" />
+                        {opening === key
+                          ? <LoaderCircle aria-hidden="true" className="h-4 w-4 shrink-0 animate-spin" />
+                          : <i className="ri-external-link-line" aria-hidden="true" />}
                         <span className="truncate">{file.name}</span>
                       </button>
                     );

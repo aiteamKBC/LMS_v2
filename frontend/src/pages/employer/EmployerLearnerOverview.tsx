@@ -1,17 +1,16 @@
 import { useEffect, useState } from 'react';
 import type { LearnerKind } from '@/api/learnerDetail';
 import { fetchEmployerLearnerPhoto, type EmployerLearnerDetail } from '@/api/employerPortal';
-import { AppIcon } from '@/components/feature/AppIcon';
 import { displayValue, EMPTY_VALUE, initialsFor } from '@/lib/format';
 import type { DashboardPlanState } from '@/pages/workspace/learner/useDashboardPlan';
 import { formatProgrammeStartDate, learnerHeaderPlan } from '@/pages/workspace/learner/learnerHeaderPlan';
-import { ProfileFact } from '@/pages/workspace/learner/ProfileFact';
+import { LearnerDashboardHero } from '@/pages/workspace/learner/LearnerDashboardHero';
 import overviewStyles from '@/pages/workspace/learner/Overview.module.css';
 import photoStyles from '@/components/feature/LearnerProfilePhoto.module.css';
 
 // ============================================================================
-// The employer's Overview tab: the learner's own dashboard header and module
-// timeline, read through the employer portal.
+// The employer's Overview tab: the learner's own dashboard header, read through
+// the employer portal. The module timeline lives in Learning plan.
 //
 // The learner's dashboard endpoints admit only the learner and staff, so the
 // same payloads are fetched from the portal's /overview/<part>/ routes (see
@@ -72,33 +71,30 @@ export function EmployerLearnerHeader({ employerId, kind, learner, plan, onBack 
 
   return (
     <div className={overviewStyles.overview}>
-      <header className={`learner-super-admin-hero ${overviewStyles.hero}`} aria-label="Learner programme">
-        <div aria-hidden="true" className={overviewStyles.heroArtwork} />
-        <div className={overviewStyles.heroTop}>
-          <div className={overviewStyles.identity}>
-            <LearnerAvatar employerId={employerId} kind={kind} learnerId={learner.id} name={learner.name} />
-            <div className="min-w-0">
-              <p className={overviewStyles.eyebrow}>Learner</p>
-              <h1 className={`${overviewStyles.name} font-heading`}>{learner.name || 'Learner'}</h1>
-              {description ? <p className={overviewStyles.description}>{description}</p> : null}
-            </div>
-          </div>
-          <div className={overviewStyles.heroActions}>
-            <button type="button" onClick={onBack} className={overviewStyles.heroAction}>
-              <AppIcon className="ri-arrow-left-line" />
-              All learners
-            </button>
-          </div>
-        </div>
-        <dl className={overviewStyles.facts}>
-          <ProfileFact icon="ri-group-line" label="Cohort" value={learner.cohort || EMPTY_VALUE} />
-          <ProfileFact icon="ri-book-2-line" label={current.label} value={modulesLabel} />
-          <ProfileFact icon="ri-user-line" label="Coach" value={coachName} />
-          <ProfileFact icon="ri-calendar-event-line" label="Start date" value={startDate} />
-          <ProfileFact label="Status" value={displayValue(learner.programmeStatus)} status />
-          <ProfileFact icon="ri-calendar-event-line" label="Planned end" value={plannedEnd} />
-        </dl>
-      </header>
+      <LearnerDashboardHero
+        avatar={<LearnerAvatar employerId={employerId} kind={kind} learnerId={learner.id} name={learner.name} />}
+        name={learner.name || 'Learner'}
+        description={description}
+        cohort={learner.cohort || EMPTY_VALUE}
+        moduleLabel={current.label}
+        modules={current.modules.map(module => ({ id: module.id, title: module.title, href: '#' }))}
+        modulePlaceholder={modulesLabel}
+        allModulesHref="#"
+        employer={learner.employer || EMPTY_VALUE}
+        organization={learner.organization || EMPTY_VALUE}
+        coach={coachName}
+        coachEmail={schedule.data?.coach.email}
+        coachPhone={schedule.data?.coach.phone}
+        status={displayValue(learner.programmeStatus)}
+        startDate={startDate}
+        plannedEnd={plannedEnd}
+        loading={schedule.loading}
+        onContinue={onBack}
+        onOpenMap={onBack}
+        observerAction={{ label: 'All learners', onClick: onBack }}
+        readOnlyModules
+        handwritingText={{ firstLine: 'Supporting', secondLine: 'progress' }}
+      />
     </div>
   );
 }

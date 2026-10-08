@@ -53,10 +53,12 @@
 .learnerField { display: flex; align-items: center; gap: 9px; }
 .learnerField > :first-child { flex-shrink: 0; color: var(--record-muted); }
 .learnerField > span { overflow-wrap: anywhere; }
-.monthControl { display: flex; align-items: stretch; gap: 6px; min-width: 0; }
-.monthSelect { width: 100%; flex: 1; }
+.monthControl { display: grid; grid-template-columns: minmax(0, 1fr) auto auto auto; align-items: stretch; gap: 6px; min-width: 0; }
+.monthSelect { width: 100%; }
 :global(.dashboard-theme .workspace-main) .page .monthSelect { min-width: 0; width: 100%; min-height: 34px; height: 34px; padding: 6px 28px 6px 10px; border: 1px solid var(--record-border); border-radius: 5px; color: var(--record-ink); background-color: #fff; font-size: 12px; }
 .page .monthControl button { width: 34px; flex-shrink: 0; padding: 5px; }
+.page .monthControl button:not([aria-label]) { width: auto; padding-inline: 12px; }
+.monthControl > :is(a, button) { white-space: nowrap; }
 .header { padding: 22px; border-top: 3px solid var(--record-deep); }
 .headerTop { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 16px; margin-bottom: 30px; }
 .title { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
@@ -119,8 +121,9 @@
   .headerActions > :is(a, button) { flex: 1; }
   .downloadActions { width: 100%; }
   .downloadButtons > button { flex: 1; }
-  .monthControl { flex-wrap: wrap; }
-  .monthControl .monthSelect { flex-basis: calc(100% - 96px); }
+  .monthControl { grid-template-columns: 40px 40px minmax(0, 1fr); }
+  .monthControl .monthSelect { grid-column: 1 / -1; }
+  .monthControl > :last-child { justify-self: end; }
   .signoff .sectionHeading { flex-wrap: wrap; }
   .profileGrid { grid-template-columns: minmax(0, 1fr); }
   .profileGroup { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; padding: 14px; }

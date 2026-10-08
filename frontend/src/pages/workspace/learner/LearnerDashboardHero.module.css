@@ -24,7 +24,8 @@
 .identity { display: flex; align-items: flex-start; gap: 1rem; min-width: 0; position: relative; z-index: 1; }
 .identityText { min-width: 0; }
 .avatar { position: relative; flex-shrink: 0; padding-top: 0.2rem; }
-.avatar > div > button {
+.avatar > div > button,
+.avatar > span:not(.statusBadge) {
   width: 4.5rem;
   height: 4.5rem;
   /* The shared workspace button rule otherwise replaces the avatar's circle. */
@@ -90,7 +91,8 @@
 .moduleContent { display: grid; grid-template-columns: 3rem minmax(0, 1fr); align-items: center; gap: 0.4rem; flex: 1; margin: 0.2rem 0 0; min-width: 0; }
 .moduleList { list-style: none; padding: 0; margin: 0; max-height: 3.2rem; overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--scrollbar-thumb) transparent; }
 .moduleList li + li { margin-top: 0.2rem; }
-.hero .moduleList li a { display: flex; width: 100%; align-items: center; justify-content: flex-start; gap: 0.55rem; min-height: 1.3rem; padding: 0.15rem 0.4rem; border-radius: 0.6rem; border: 1px solid rgb(213 188 255 / 0.14); background: rgb(29 16 64 / 0.24); color: #fff; font-size: 0.7rem; line-height: 1.25; transition: background 160ms ease; }
+.hero .moduleList li a,
+.hero .moduleList li .moduleItem { display: flex; width: 100%; align-items: center; justify-content: flex-start; gap: 0.55rem; min-height: 1.3rem; padding: 0.15rem 0.4rem; border-radius: 0.6rem; border: 1px solid rgb(213 188 255 / 0.14); background: rgb(29 16 64 / 0.24); color: #fff; font-size: 0.7rem; line-height: 1.25; transition: background 160ms ease; }
 .moduleList a:hover { background: rgb(128 74 212 / 0.4); }
 .moduleTitle { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; flex: 1; }
 .moduleList a > svg { flex-shrink: 0; width: 1rem; height: 1rem; color: #b196d7; }
@@ -136,6 +138,9 @@
 @container learnerOverview (max-width: 65rem) {
   .top { grid-template-columns: 1fr; gap: 0.875rem; }
   .actionArea { justify-self: start; width: auto; }
+  .observerHero .top { grid-template-columns: minmax(0, 1fr) auto; align-items: start; }
+  .observerHero .identity { grid-column: 1; grid-row: 1; }
+  .observerHero .actionArea { grid-column: 2; grid-row: 1; align-self: start; justify-self: end; width: max-content; }
   .cards { grid-template-columns: repeat(2, minmax(0, 1fr)) minmax(0, 1.35fr); }
   .cardsWithActions { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .cardsWithActions .modulesCard { grid-column: span 2; width: 70%; justify-self: start; }
@@ -144,6 +149,8 @@
 }
 @container learnerOverview (max-width: 38rem) {
   .hero { padding: 1rem; border-radius: 1rem; }
+  .observerHero .top { grid-template-columns: 1fr; }
+  .observerHero .actionArea { grid-column: 1; grid-row: 2; justify-self: stretch; width: 100%; }
   .cards { grid-template-columns: 1fr; gap: 0.625rem; margin-top: 0.875rem; }
   .cardsWithActions .modulesCard { grid-column: auto; width: 100%; }
   .actionCards { grid-column: auto; }
@@ -157,7 +164,7 @@
   .headerFact > span { display: block; }
   .headerFactLabel, .headerFact strong { display: block; }
   .hero h1.name { font-size: clamp(1.35rem, 6cqi, 1.65rem) !important; }
-  .avatar > div > button { width: 3.5rem; height: 3.5rem; font-size: 1.5rem; }
+  .avatar > div > button, .avatar > span:not(.statusBadge) { width: 3.5rem; height: 3.5rem; font-size: 1.5rem; }
   .moduleContent { grid-template-columns: 3.5rem minmax(0, 1fr); }
   .learningArtwork { transform: scale(0.45); }
   .datesCard { display: flex; }
@@ -185,7 +192,8 @@
     gap: .7rem;
   }
 
-  .avatar > div > button {
+  .avatar > div > button,
+  .avatar > span:not(.statusBadge) {
     width: 3.75rem;
     height: 3.75rem;
     font-size: 1.45rem;
@@ -284,7 +292,8 @@
     transform: scale(.32);
   }
 
-  .hero .moduleList li a {
+  .hero .moduleList li a,
+  .hero .moduleList li .moduleItem {
     min-height: 1.15rem;
     padding: .1rem .3rem;
     font-size: .62rem;

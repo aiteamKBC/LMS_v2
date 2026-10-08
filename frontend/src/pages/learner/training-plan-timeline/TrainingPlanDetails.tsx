@@ -33,7 +33,8 @@ type Props = {
   programmeStartDate?: string | null; programmeEndDate?: string | null;
   activityOverviewOnly?: boolean;
   timelineOnly?: boolean;
-  /** Only the module timeline, module overview and progress panels, without the monthly plan above them. */
+  /** Module timeline, module overview and progress panels, without the monthly plan.
+   * overviewOnly keeps progress; trainingOnly keeps the timeline and module overview. */
   cardsOnly?: boolean;
   simpleModuleOverview?: boolean;
   canOpenCalendar?: boolean;
@@ -41,6 +42,7 @@ type Props = {
   trainingOnly?: boolean;
   overviewOnly?: boolean;
   showOtjChart?: boolean;
+  wholeProgrammeRings?: boolean;
   programmeSnapshot?: ProgrammeProgressSnapshot;
 };
 
@@ -79,7 +81,7 @@ export function TrainingPlanDetails({ data, subjects, kind, learnerId, onRefresh
   onRetryContract, initialSubjectId = '', initialMonth = '', canOpenActivities = true, weeklyFocus, programmeStartDate, programmeEndDate,
   activityOverviewOnly = false, timelineOnly = false, cardsOnly = false, canOpenCalendar = true, simpleModuleOverview = false,
   monthlyOnly = false, trainingOnly = false, overviewOnly = false,
-  showOtjChart = true, programmeSnapshot }: Props) {
+  showOtjChart = true, wholeProgrammeRings = false, programmeSnapshot }: Props) {
   const modules = useMemo(() => buildPlanModules(subjects, data), [subjects, data]);
   const [now, setNow] = useState(Date.now);
   useEffect(() => {
@@ -296,7 +298,7 @@ export function TrainingPlanDetails({ data, subjects, kind, learnerId, onRefresh
     </section>
   </section>;
   const progressCharts = <ProgressCharts modules={modules} selected={selected} data={data} onModuleSelect={module => setSelectedId(module.id)}
-    programmeStartMonth={minMonth} programmeEndMonth={maxMonth} programmeSnapshot={programmeSnapshot} showOtjChart={showOtjChart} />;
+    programmeStartMonth={minMonth} programmeEndMonth={maxMonth} programmeSnapshot={programmeSnapshot} showOtjChart={showOtjChart} wholeProgrammeRings={wholeProgrammeRings} />;
   // Off-the-job hours summary for the sidebar beside Monthly focus. Values come
   // from the same month-by-month source the OTJH chart below uses, so the card
   // agrees with it. Minimum required and Forecast are not carried by the learner
@@ -321,13 +323,13 @@ export function TrainingPlanDetails({ data, subjects, kind, learnerId, onRefresh
   }
   if (cardsOnly) {
     return <div className={`${styles.root} ${layout.root}`}>
-      {/* The timeline and the module it focuses on share a row; the progress
-          cards take the full width beneath, so neither column trails empty. */}
-      <div className={layout.cards}>
+      {/* Training uses the learner dashboard's stacked layout: the timeline
+          takes the full row and the focused module follows beneath it. */}
+      {!overviewOnly && <div className={`${layout.cards} ${trainingOnly ? layout.trainingCards : ''}`}>
         <div className={layout.learningVisuals}>{moduleTimeline}</div>
         {moduleOverview}
-      </div>
-      <div className={layout.cardsBelow}>{progressCharts}</div>
+      </div>}
+      {!trainingOnly && <div className={layout.cardsBelow}>{progressCharts}</div>}
     </div>;
   }
   const showMonthly = !trainingOnly && !overviewOnly;

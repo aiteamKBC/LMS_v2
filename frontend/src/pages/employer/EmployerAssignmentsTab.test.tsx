@@ -1,5 +1,5 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { EmployerAssignment } from '@/api/employerPortal';
 
 const assignments: EmployerAssignment[] = [
@@ -14,17 +14,31 @@ const assignments: EmployerAssignment[] = [
 ];
 
 const fileUrl = vi.fn((..._args: unknown[]) => Promise.resolve('https://sas.example/file'));
+const assignmentApi = vi.hoisted(() => ({ fetchAssignments: vi.fn() }));
 vi.mock('@/hooks/useToast', () => ({ useToast: () => ({ success: vi.fn(), error: vi.fn() }) }));
 vi.mock('@/api/employerPortal', () => ({
-  fetchEmployerLearnerAssignments: vi.fn(() => Promise.resolve({ assignments })),
+  fetchEmployerLearnerAssignments: (...args: unknown[]) => assignmentApi.fetchAssignments(...args),
   fetchEmployerAssignmentFileUrl: (...args: unknown[]) => fileUrl(...args),
 }));
 
 import { EmployerAssignmentsTab } from './EmployerAssignmentsTab';
 
+beforeEach(() => {
+  assignmentApi.fetchAssignments.mockReset();
+  assignmentApi.fetchAssignments.mockResolvedValue({ assignments });
+});
+
 afterEach(() => { cleanup(); fileUrl.mockClear(); });
 
 describe('Employer assignments tab', () => {
+  it('shows the animated loading state while assignments are being prepared', () => {
+    assignmentApi.fetchAssignments.mockReturnValueOnce(new Promise(() => undefined));
+    render(<EmployerAssignmentsTab employerId="9" kind="commercial" learnerId="101" learnerName="Aya" />);
+
+    expect(screen.getByRole('status', { name: 'Loading assignments' })).toBeVisible();
+    expect(screen.getByTestId('assignments-loading-spinner')).toHaveClass('animate-spin');
+  });
+
   it('lists every handed-in assignment with its status and files', async () => {
     render(<EmployerAssignmentsTab employerId="9" kind="commercial" learnerId="101" learnerName="Aya" />);
     const list = await screen.findByRole('region', { name: 'Assignments' });

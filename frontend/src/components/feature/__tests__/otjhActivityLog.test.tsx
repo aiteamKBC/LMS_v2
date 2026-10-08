@@ -1,10 +1,11 @@
 import { render, screen, within } from '@testing-library/react';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { OtjhBody } from '../RealOtjhView';
 import type { LearnerDetail } from '@/api/learnerDetail';
 import type { StudentActivityResponse } from '@/api/studentActivity';
 import type { LearnerMetrics } from '@/api/learnerMetrics';
+import type { TrainingPlanDashboard } from '@/api/trainingPlanDashboard';
 import { KsbProgressBody } from '../RealKsbView';
 
 // ---------------------------------------------------------------------------
@@ -72,6 +73,8 @@ function renderBody(overrides: Partial<LearnerDetail>) {
   return render(<OtjhBody real={detail(overrides)} loading={false} showHero={false} />);
 }
 
+afterEach(() => vi.useRealTimers());
+
 describe('OTJ hours activity log', () => {
   const metrics: LearnerMetrics = { migrated: true,
     programme: { completed: 2, total: 3, percent: 66.67, status: 'ready' },
@@ -79,6 +82,74 @@ describe('OTJ hours activity log', () => {
     ksb: { completed: 2, total: 3, percent: 66.67, status: 'ready',
       codes: [{ code: 'K1', completed: 2, total: 3, percent: 66.67 }] },
   };
+  it('places the monthly OTJH chart directly below the summary cards', () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-09-15T12:00:00Z'));
+    const monthlyPlan = {
+      months: {
+        '2026-08': { label: '', topics: [], planned: 30, source: 'contract' },
+        '2026-09': { label: '', topics: [], planned: 10, source: 'contract' },
+      },
+      monthlyOtjh: {
+        '2026-08': { planned: 30, submitted: 0, actual: 0, missingPlannedActivities: 0 },
+        '2026-09': { planned: 10, submitted: 2, actual: 0.7, missingPlannedActivities: 0 },
+      },
+      actual: [], actualAvailable: true, modules: [], moduleLinks: {}, sessions: [], reviews: [],
+      coach: { name: 'Coach', bookingUrl: null }, contractStatus: 'ready', generatedAt: '',
+      programmeStartDate: '2026-09-01', programmeEndDate: '2026-10-01',
+    } as TrainingPlanDashboard;
+    render(<OtjhBody real={detail({ learnerStartDate: '2026-09-01' })} loading={false} showHero={false} monthlyPlan={monthlyPlan}
+      hideProgressAgainstTarget
+      dashboardHours={{ actual: 0.7, planned: 120 }} />);
+
+    const summary = screen.getByLabelText('Off-the-job hours summary');
+    const chart = screen.getByRole('region', { name: 'Off-the-job hours by month' });
+    expect(summary.compareDocumentPosition(chart) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(screen.queryByRole('heading', { name: 'Progress against current target' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /August 2026/ })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /September 2026: target 10 hours, submitted 2 hours, completed 0.7 hours/ })).toBeVisible();
+    expect(within(summary).getByText('42m')).toBeVisible();
+    expect(within(summary).queryByText('11h')).not.toBeInTheDocument();
+    expect(within(summary).getByText('Target to date')).toBeVisible();
+    expect(within(summary).getByText('56h')).toBeVisible();
+    expect(within(chart).getByText('0.7h completed · 2h submitted')).toBeVisible();
+    expect(chart.closest('.learner-dashboard')).not.toBeNull();
+    // Match the coach dashboard: 14 of the 30 programme days have elapsed, so
+    // target-to-date is 120 * 14 / 30 = 56 hours.
+    expect(within(chart).getByRole('progressbar', { name: 'Overall off-the-job hours progress' }))
+      .toHaveAttribute('aria-valuenow', '1');
+    expect(within(chart).getByText('-99% (-55.3h)')).toBeVisible();
+  });
+
+  it('keeps progress against current target on the learner view by default', () => {
+    renderBody({});
+    expect(screen.getByRole('heading', { name: 'Progress against current target' })).toBeVisible();
+  });
+
+  it('uses the chart monthly target-to-date when the programme total is zero', () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-09-15T12:00:00Z'));
+    const monthlyPlan = {
+      months: { '2026-09': { label: '', topics: [], planned: 10, source: 'contract' } },
+      monthlyOtjh: { '2026-09': { planned: 10, submitted: 2, actual: 0.7, missingPlannedActivities: 0 } },
+      actual: [], actualAvailable: true, modules: [], moduleLinks: {}, sessions: [], reviews: [],
+      coach: { name: 'Coach', bookingUrl: null }, contractStatus: 'ready', generatedAt: '',
+      programmeStartDate: '2026-09-01', programmeEndDate: '2026-10-01',
+    } as TrainingPlanDashboard;
+    render(<OtjhBody real={detail({ learnerStartDate: '2026-09-01', targetHours: '18' })}
+      loading={false} showHero={false} monthlyPlan={monthlyPlan}
+      dashboardHours={{ actual: 0.7, planned: 0 }} />);
+
+    const summary = screen.getByLabelText('Off-the-job hours summary');
+    const chart = within(screen.getByRole('region', { name: 'Off-the-job hours by month' }));
+    expect(within(summary).getByText('Target to date')).toBeVisible();
+    expect(within(summary).getByText('10h')).toBeVisible();
+    expect(within(summary).queryByText('18h')).not.toBeInTheDocument();
+    expect(chart.getByRole('progressbar', { name: 'Overall off-the-job hours progress' }))
+      .toHaveAttribute('aria-valuenow', '7');
+    expect(chart.getByText('-93% (-9.3h)')).toBeVisible();
+  });
+
   it('shows the combined actual and contract plan even when the old activity response differs', () => {
     render(<OtjhBody real={detail()} loading={false} showHero={false} metrics={metrics}
       activityData={{ activities: [], audit_lms_actual: 1171.34, audit_tp_planned: 100 } as unknown as StudentActivityResponse} />);

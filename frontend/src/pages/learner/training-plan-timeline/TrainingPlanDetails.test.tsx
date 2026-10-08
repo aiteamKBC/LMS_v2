@@ -108,6 +108,40 @@ afterEach(() => {
 });
 
 describe('Dashboard training plan controls', () => {
+  it('keeps progress in employer Overview and only the timeline and module details in Learning plan', () => {
+    const data = fixture();
+    const panel = (overview: boolean) => <MemoryRouter><TrainingPlanDetails
+      data={data} subjects={summarySubjects} kind="commercial" learnerId="125"
+      onRefresh={vi.fn()} onRetryContract={vi.fn()} canOpenActivities={false} canOpenCalendar={false}
+      cardsOnly overviewOnly={overview} trainingOnly={!overview} simpleModuleOverview={overview}
+    /></MemoryRouter>;
+    const view = render(panel(true));
+
+    expect(screen.getByRole('region', { name: 'Module progress' })).toBeVisible();
+    expect(screen.getByRole('region', { name: 'Programme module progress' })).toBeVisible();
+    expect(screen.queryByRole('region', { name: 'Module timeline' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('region', { name: 'Module overview' })).not.toBeInTheDocument();
+
+    view.rerender(panel(false));
+
+    const timeline = screen.getByRole('region', { name: 'Module timeline' });
+    const overview = screen.getByRole('region', { name: 'Module overview' });
+    expect(timeline).toBeVisible();
+    expect(overview).toBeVisible();
+    expect(timeline.parentElement?.parentElement).toHaveClass(/trainingCards/);
+    expect(timeline.compareDocumentPosition(overview) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(within(overview).getByText('Builder description')).toBeVisible();
+    expect(within(overview).getByRole('heading', { name: /Learning activities/ })).toBeVisible();
+    expect(screen.queryByRole('region', { name: 'Module progress' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('region', { name: 'Programme module progress' })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Show Marketing overview' }));
+    expect(within(screen.getByRole('region', { name: 'Module overview' })).getByRole('heading', { name: 'Marketing' })).toBeVisible();
+
+    view.rerender(panel(true));
+    expect(screen.getByRole('region', { name: 'Programme module progress' })).toBeVisible();
+    expect(screen.queryByRole('region', { name: 'Module timeline' })).not.toBeInTheDocument();
+  });
+
   it('shows the monthly activity and three progress charts without the timeline in activity overview mode', () => {
     renderBoard(fixture(), summarySubjects, vi.fn(), undefined, undefined, true);
 

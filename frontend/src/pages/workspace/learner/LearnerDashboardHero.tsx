@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 import { Link } from 'react-router-dom';
-import { ArrowRight, BookOpen, BriefcaseBusiness, Building2, CalendarDays, ChevronRight, Clock, GraduationCap, Mail, Map, Phone, Play, UserRound, UsersRound } from 'lucide-react';
+import { ArrowLeft, ArrowRight, BookOpen, BriefcaseBusiness, Building2, CalendarDays, ChevronRight, Clock, GraduationCap, Mail, Map, Phone, Play, UserRound, UsersRound } from 'lucide-react';
 import { statusTone, toneStyle } from '@/lib/statusTone';
 import { SeasonalHoverCards, type SeasonCardProps } from '@/components/lightswind/seasonal-hover-cards';
 import styles from './LearnerDashboardHero.module.css';
@@ -26,15 +26,20 @@ interface LearnerDashboardHeroProps {
   loading: boolean;
   onContinue: () => void;
   onOpenMap: () => void;
+  observerAction?: { label: string; onClick: () => void };
+  readOnlyModules?: boolean;
+  handwritingText?: { firstLine: string; secondLine: string };
 }
 
 /** Presentation only: placement, dates, status and navigation come from the dashboard. */
 export function LearnerDashboardHero(props: LearnerDashboardHeroProps) {
   const { avatar, name, description, cohort, moduleLabel, modules, modulePlaceholder,
-    allModulesHref, actionCards = [], employer, organization, coach, coachEmail, coachPhone, status, startDate, plannedEnd, loading, onContinue, onOpenMap } = props;
+    allModulesHref, actionCards = [], employer, organization, coach, coachEmail, coachPhone, status, startDate, plannedEnd, loading,
+    onContinue, onOpenMap, observerAction, readOnlyModules = false,
+    handwritingText = { firstLine: 'Keep', secondLine: 'learning' } } = props;
   const tone = statusTone(status);
   return (
-    <header className={styles.hero} aria-label="Learner programme">
+    <header className={`${styles.hero} ${observerAction ? styles.observerHero : ''}`} aria-label="Learner programme">
       <div className={styles.artwork} aria-hidden="true" />
       <div className={styles.top}>
         <div className={styles.identity}>
@@ -65,18 +70,24 @@ export function LearnerDashboardHero(props: LearnerDashboardHeroProps) {
             <p className={styles.quote}>“Progress turns goals into reality.”</p>
           </div>
         </div>
-        <div className={styles.handwriting} aria-hidden="true">Keep<br /><span>learning</span></div>
+        <div className={styles.handwriting} aria-hidden="true">
+          {handwritingText.firstLine}<br /><span>{handwritingText.secondLine}</span>
+        </div>
         <div className={styles.actionArea}>
           <div className={styles.actions}>
-            <button type="button" onClick={onContinue} disabled={loading} aria-busy={loading}
-              className={`${styles.action} ${styles.primaryAction}`}>
-              <Play aria-hidden="true" />Continue learning<ArrowRight aria-hidden="true" className={styles.actionArrow} />
-            </button>
-            <button type="button" onClick={onOpenMap} className={styles.action}>
-              <Map aria-hidden="true" />Learner&apos;s Map
-            </button>
+            {observerAction ? <button type="button" onClick={observerAction.onClick} className={styles.action}>
+              <ArrowLeft aria-hidden="true" />{observerAction.label}
+            </button> : <>
+              <button type="button" onClick={onContinue} disabled={loading} aria-busy={loading}
+                className={`${styles.action} ${styles.primaryAction}`}>
+                <Play aria-hidden="true" />Continue learning<ArrowRight aria-hidden="true" className={styles.actionArrow} />
+              </button>
+              <button type="button" onClick={onOpenMap} className={styles.action}>
+                <Map aria-hidden="true" />Learner&apos;s Map
+              </button>
+            </>}
           </div>
-          <p className={styles.actionCaption}>Your learning journey. Further possibilities.</p>
+          {!observerAction && <p className={styles.actionCaption}>Your learning journey. Further possibilities.</p>}
         </div>
       </div>
 
@@ -106,7 +117,7 @@ export function LearnerDashboardHero(props: LearnerDashboardHeroProps) {
           <div className={styles.moduleHeading}>
             <span className={styles.icon}><BookOpen aria-hidden="true" /></span>
             <h2>{moduleLabel}</h2>
-            <Link to={allModulesHref} className={styles.viewAll}>View all<ArrowRight aria-hidden="true" /></Link>
+            {!readOnlyModules && <Link to={allModulesHref} className={styles.viewAll}>View all<ArrowRight aria-hidden="true" /></Link>}
           </div>
           <div className={styles.moduleContent}>
             <div className={styles.learningArtwork} aria-hidden="true">
@@ -114,11 +125,14 @@ export function LearnerDashboardHero(props: LearnerDashboardHeroProps) {
             </div>
             {modules.length ? <ul className={styles.moduleList} aria-label={moduleLabel} tabIndex={0}>
               {modules.map(module => <li key={module.id}>
-                <Link to={module.href} title={module.title}>
+                {readOnlyModules ? <span className={styles.moduleItem} title={module.title}>
+                  <span className={styles.moduleDot} aria-hidden="true" />
+                  <span className={styles.moduleTitle}>{module.title}</span>
+                </span> : <Link to={module.href} title={module.title}>
                   <span className={styles.moduleDot} aria-hidden="true" />
                   <span className={styles.moduleTitle}>{module.title}</span>
                   <ChevronRight aria-hidden="true" />
-                </Link>
+                </Link>}
               </li>)}
             </ul> : <p className={styles.modulePlaceholder} role="status">{modulePlaceholder}</p>}
           </div>
