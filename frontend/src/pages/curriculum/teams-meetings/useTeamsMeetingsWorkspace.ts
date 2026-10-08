@@ -1340,7 +1340,10 @@ export function useTeamsMeetingsWorkspace(options: TeamsMeetingsWorkspaceOptions
       if (warning) {
         setNotice({
           tone: 'warning',
-          text: `${row.name}: the session dates are saved here, but Microsoft Teams did not accept every shifted meeting. ${warning}`,
+          text: result.warnings?.[0]?.code === 'teams_meeting_options_not_applied'
+            // Dates and invitations went ahead; only the meeting settings were refused.
+            ? `${row.name}: ${warning}`
+            : `${row.name}: the session dates are saved here, but Microsoft Teams did not accept every shifted meeting. ${warning}`,
         });
       } else if (result.microsoftUpdate === 'already_attempted') {
         setNotice({

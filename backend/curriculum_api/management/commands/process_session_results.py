@@ -61,6 +61,9 @@ class Command(BaseCommand):
                 request = RequestFactory().post('/internal/session-result-worker/')
                 request.session_result_worker = True
                 request.session_result_force = row[1]
+                # The lease names this run in the Teams integrity log, so a status
+                # this job changes is traceable to the job that changed it.
+                request.session_result_job_id = f'session-results:{lease}'
                 response = curriculum_teams_meeting_artifacts(request, series_id)
                 result = json.loads(response.content)
                 errors = ['Teams returned incomplete results. Check worker logs.'] if result.get('errors') else []

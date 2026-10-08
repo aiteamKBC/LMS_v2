@@ -1494,6 +1494,8 @@ export interface CurriculumTeamsMeetingSummary {
    */
   syncState?: 'in-sync' | 'out-of-sync' | 'no-sessions' | 'unverified';
   syncReasons?: string[];
+  /** Saved / pending / failed for the meeting options; read with readMicrosoftUpdate. */
+  microsoftUpdate?: unknown;
   expectedOccurrenceCount?: number;
   differingOccurrenceCount?: number;
   missingFromTeams?: string[];
