@@ -18,8 +18,10 @@ from login.advanced_admin import (
 )
 from login.advanced_admin_activity import (
     _review, _saved_pdf_source, legacy_quiz_review, native_quiz_review,
+    live_kbc_media_response,
     saved_extra_pdf_response, saved_extra_pdf_source,
-    saved_google_drive_file_id, saved_google_drive_response, saved_office_embed, saved_pdf_response,
+    saved_google_drive_file_id, saved_google_drive_response, saved_kbc_material_id,
+    saved_media_metadata, saved_office_embed, saved_pdf_response,
 )
 
 
@@ -120,6 +122,90 @@ class AdvancedAdminActivityReviewTests(SimpleTestCase):
 
 
 class AdvancedAdminSavedFileTests(SimpleTestCase):
+    @override_settings(KBC_LMS_SCHEMA_URL='https://source.example/wp-json/kbc-lms/v1/schema')
+    def test_saved_media_type_uses_mime_then_attachment_extension(self):
+        self.assertEqual(saved_media_metadata({
+            'content_type': 'document', 'source': {'attachments': [{
+                'attachment_id': 34, 'filename': 'lesson.MP4',
+                'mime_type': 'application/octet-stream',
+            }]},
+        }), {
+            'kind': 'video', 'file_name': 'lesson.MP4',
+            'mime_type': 'application/octet-stream', 'attachment_id': '34',
+        })
+        self.assertEqual(saved_media_metadata({
+            'content_type': 'document', 'source': {'attachments': [{
+                'attachment_id': 35, 'filename': 'recording.bin', 'mime_type': 'audio/mpeg',
+            }]},
+        })['kind'], 'audio')
+
+    @override_settings(KBC_LMS_SCHEMA_URL='https://source.example/wp-json/kbc-lms/v1/schema')
+    def test_only_exact_kbc_material_urls_are_stream_candidates(self):
+        self.assertEqual(saved_kbc_material_id(
+            'https://source.example/wp-json/kbc-lms/v1/material/12/view?attachment_id=34'), 12)
+        self.assertIsNone(saved_kbc_material_id(
+            'https://source.example.evil.test/wp-json/kbc-lms/v1/material/12/view?attachment_id=34'))
+        self.assertIsNone(saved_kbc_material_id(
+            'https://source.example/wp-json/kbc-lms/v1/material/12/schema'))
+
+    @override_settings(KBC_LMS_SCHEMA_URL='https://source.example/wp-json/kbc-lms/v1/schema')
+    def test_kbc_media_proxy_refreshes_and_streams_verified_video_ranges(self):
+        request = RequestFactory().get(
+            '/login_api/advanced-admin/learners/42/learning/material/8/12/media/0/',
+            HTTP_RANGE='bytes=0-15',
+        )
+        schema = {
+            'material_id': 12, 'content_type': 'video',
+            'iframe_url': ('https://source.example/wp-json/kbc-lms/v1/material/12/view'
+                           '?attachment_id=34&token=synthetic'),
+            'source': {'attachments': [{
+                'attachment_id': 34, 'filename': 'lesson.mp4', 'mime_type': 'video/mp4',
+            }]},
+        }
+        headers = Message()
+        headers['Content-Type'] = 'video/mp4'
+        headers['Content-Length'] = '16'
+        headers['Content-Range'] = 'bytes 0-15/100'
+        upstream = BytesIO(b'0123456789abcdef')
+        upstream.status = 206
+        upstream.headers = headers
+        with patch('login.advanced_admin_activity.material_schema', return_value=schema), \
+             patch('login.advanced_admin_activity.urllib.request.build_opener') as opener:
+            opener.return_value.open.return_value = upstream
+            response = live_kbc_media_response(request, 12, 'video')
+        self.assertEqual(response.status_code, 206)
+        self.assertEqual(response['Content-Type'], 'video/mp4')
+        self.assertEqual(response['Content-Range'], 'bytes 0-15/100')
+        self.assertEqual(response['Cache-Control'], 'private, no-store')
+        self.assertEqual(b''.join(response.streaming_content), b'0123456789abcdef')
+        response.close()
+        sent = opener.return_value.open.call_args.args[0]
+        self.assertEqual(sent.get_header('Range'), 'bytes=0-15')
+
+    @override_settings(KBC_LMS_SCHEMA_URL='https://source.example/wp-json/kbc-lms/v1/schema')
+    def test_kbc_media_proxy_rejects_login_html_instead_of_framing_it(self):
+        request = RequestFactory().get(
+            '/login_api/advanced-admin/learners/42/learning/material/8/12/media/0/')
+        schema = {
+            'material_id': 12, 'content_type': 'video',
+            'iframe_url': ('https://source.example/wp-json/kbc-lms/v1/material/12/view'
+                           '?attachment_id=34&token=synthetic'),
+            'source': {'attachments': [{
+                'attachment_id': 34, 'filename': 'lesson.mp4', 'mime_type': 'video/mp4',
+            }]},
+        }
+        headers = Message()
+        headers['Content-Type'] = 'text/html'
+        upstream = BytesIO(b'<p>Login</p>')
+        upstream.status = 200
+        upstream.headers = headers
+        with patch('login.advanced_admin_activity.material_schema', return_value=schema), \
+             patch('login.advanced_admin_activity.urllib.request.build_opener') as opener:
+            opener.return_value.open.return_value = upstream
+            response = live_kbc_media_response(request, 12, 'video')
+        self.assertEqual(response.status_code, 502)
+        self.assertTrue(upstream.closed)
+
     @override_settings(KBC_LMS_SCHEMA_URL='https://source.example/wp-json/kbc-lms/v1/schema')
     def test_extra_pdf_source_requires_the_saved_stable_file_and_matching_attachment(self):
         stored = self._stored()
@@ -296,21 +382,68 @@ class AdvancedAdminSavedFileTests(SimpleTestCase):
         self.assertEqual(saved_google_drive_file_id(
             f'https://drive.google.com/file/d/{file_id}/edit'), '')
 
+    @override_settings(KBC_LMS_SCHEMA_URL='https://source.example/wp-json/kbc-lms/v1/schema')
     def test_admin_video_uses_a_scoped_media_url(self):
         request = RequestFactory().get('/login_api/advanced-admin/learners/42/learning/material/8/12/')
         drive = 'https://drive.google.com/file/d/synthetic-file-id-12345/preview'
+        kbc = ('https://source.example/wp-json/kbc-lms/v1/material/12/view'
+               '?attachment_id=34&token=synthetic')
         youtube = 'https://www.youtube.com/embed/example-video'
         with patch('login.advanced_admin._profile_in_scope',
                    return_value=SimpleNamespace(enrolment_id=7)), \
              patch('login.advanced_admin._legacy_material_response',
                    return_value=JsonResponse({'media': [
-                       {'kind': 'video', 'url': drive}, {'kind': 'video', 'url': youtube},
+                       {'kind': 'video', 'url': drive}, {'kind': 'video', 'url': kbc},
+                       {'kind': 'video', 'url': youtube},
                    ]})):
             response = learner_material.__wrapped__.__wrapped__(request, 42, 8, 12)
         media = json.loads(response.content)['media']
         self.assertEqual(media[0]['url'],
                          '/login_api/advanced-admin/learners/42/learning/material/8/12/media/0/')
-        self.assertEqual(media[1]['url'], youtube)
+        self.assertEqual(media[1]['url'],
+                         '/login_api/advanced-admin/learners/42/learning/material/8/12/media/1/')
+        self.assertEqual(media[2]['url'], youtube)
+
+    @override_settings(KBC_LMS_SCHEMA_URL='https://source.example/wp-json/kbc-lms/v1/schema')
+    def test_extensionless_kbc_video_is_typed_from_saved_attachment_metadata(self):
+        request = RequestFactory().get('/login_api/advanced-admin/learners/42/learning/material/8/12/')
+        stored = self._stored()
+        stored['_source'] = {'_material_schema': {
+            'content_type': 'video', 'source': {'attachments': [{
+                'attachment_id': 34, 'filename': 'lesson.mp4', 'mime_type': 'video/mp4',
+            }]},
+        }}
+        source = ('https://source.example/wp-json/kbc-lms/v1/material/12/view'
+                  '?attachment_id=34&token=synthetic')
+        with patch('learner_api.student_activity._owned_material', return_value=(123, stored)), \
+             patch('learner_api.student_activity._material_response', return_value=JsonResponse({
+                 'media': [{'kind': 'document', 'url': source}],
+             })):
+            response = _legacy_material_response(
+                request, SimpleNamespace(id=42, enrolment_id=7), 8, 12)
+        item = json.loads(response.content)['media'][0]
+        self.assertEqual(item['kind'], 'video')
+        self.assertEqual(item['file_name'], 'lesson.mp4')
+        self.assertEqual(item['content_type'], 'video/mp4')
+
+    @override_settings(KBC_LMS_SCHEMA_URL='https://source.example/wp-json/kbc-lms/v1/schema')
+    def test_scoped_kbc_stream_checks_activity_before_proxying(self):
+        request = RequestFactory().get(
+            '/login_api/advanced-admin/learners/42/learning/material/8/12/media/0/',
+            HTTP_RANGE='bytes=0-1023',
+        )
+        source = ('https://source.example/wp-json/kbc-lms/v1/material/12/view'
+                  '?attachment_id=34&token=synthetic')
+        with patch('login.advanced_admin._profile_in_scope',
+                   return_value=SimpleNamespace(enrolment_id=7)), \
+             patch('login.advanced_admin._legacy_material_response', return_value=JsonResponse({
+                 'media': [{'kind': 'video', 'url': source}],
+             })), \
+             patch('login.advanced_admin_activity.live_kbc_media_response',
+                   return_value=HttpResponse(b'video', content_type='video/mp4')) as proxy:
+            response = learner_material_media.__wrapped__.__wrapped__(request, 42, 8, 12, 0)
+        self.assertEqual(response.status_code, 200)
+        proxy.assert_called_once_with(request, 12, 'video')
 
     def test_scoped_video_stream_checks_activity_and_media_before_proxying(self):
         request = RequestFactory().get('/login_api/advanced-admin/learners/42/learning/material/8/12/media/0/',
