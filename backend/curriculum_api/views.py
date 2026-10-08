@@ -38,6 +38,7 @@ from login.permissions import require_role
 from .weekly_schedule import module_weekly_schedule, merged_weekly_schedule
 from .teams_weekly_calendar import calendar_groups, save_weekday_calendar, stored_calendar_series, graph_event_utc
 from .session_overrides import apply_session_overrides, override_clock, session_overrides
+from .attendance_identity import keep_directory_lookup, resolve_directory_accounts
 from .teams_calendar_checks import (CalendarMismatch, attendee_differences, attendees_already_match, calendar_targets, event_organizer_address,
                                     graph_calendar_time, local_calendar_recurrence, publish_attendees, remove_attendees_silently,
                                     safe_teams_join_url,
@@ -4709,6 +4710,8 @@ def curriculum_teams_meeting_artifacts(request, live_session_id):
                             'attendanceReportEnd': clean_str(detail.get('meetingEndDateTime') or report.get('meetingEndDateTime')),
                         }
                         merged_raw = graph_item_with_occurrence_link(merged_raw, occurrence, launch)
+                        # Keep an earlier directory lookup of the same account (read-only identity check).
+                        merged_raw = keep_directory_lookup(existing_raw, merged_raw)
                         authoring_upsert(LIVE_SESSION_ATTENDANCE_TABLE, ['id'], {
                             'id': attendance_id,
                             'occurrence_id': occurrence['id'],
@@ -4780,6 +4783,24 @@ def curriculum_teams_meeting_artifacts(request, live_session_id):
                         )
             except RuntimeError as exc:
                 errors.append(f'{artifact_type.title()}: {exc}')
+
+    # Identity check only: look up the email behind signed-in college accounts
+    # so staff can compare it with the LMS email. Reads the directory, writes
+    # nothing to Microsoft and leaves attendance seconds and status untouched.
+    try:
+        lookup = resolve_directory_accounts(
+            [row for occurrence in occurrences
+             for row in authoring_fetch_all(LIVE_SESSION_ATTENDANCE_TABLE, 'occurrence_id = %s', [occurrence['id']])],
+            graph_request=microsoft_graph_request,
+            save_raw=lambda row, raw: update_authoring_rows(
+                LIVE_SESSION_ATTENDANCE_TABLE, 'id = %s', [row['id']], {'raw_data': json_db_value(raw)}),
+            home_tenant=get_graph_settings().get('tenant_id') or '',
+        )
+        synced['accountsLookedUp'] = lookup['resolved'] + lookup['notFound']
+        if lookup['denied']:
+            logger.warning('Teams account check: Microsoft refused the directory lookup (User.Read.All).')
+    except Exception:
+        logger.exception('Teams account check: directory lookup failed; attendance is unaffected.')
 
     try:
         from learner_api.teams_attendance import sync_verified_teams_attendance_reporting
