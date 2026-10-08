@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { AppIcon } from './AppIcon';
+import { SessionAccountCheck } from './SessionAccountCheck';
 import { SessionRecordingPlayer } from './SessionRecordingPlayer';
 import { SessionSyncStatus } from './SessionSyncStatus';
 import { formatSystemTimestamp } from '@/lib/format';
@@ -173,6 +174,7 @@ export function SessionResults({ seriesId, sessionNumber, learner, attendanceTyp
               </div>})}
             </div>}
           </div>}
+          {session.identityCheck && <SessionAccountCheck check={session.identityCheck} />}
           <div className="overflow-x-auto"><table className="w-full text-left text-sm"><thead><tr className="border-b text-foreground-500"><th className="p-3">Learner</th><th>Duration</th><th>Attendance</th><th>Recovery</th></tr></thead><tbody>
             {people.slice(page * 25, page * 25 + 25).map((person, index) => <tr key={person.email || index} className="border-b"><td className="p-3"><p className="font-semibold">{person.name}</p><p className="text-xs text-foreground-500">{person.email || 'Unmatched identity'}</p></td><td>{Math.floor(person.seconds / 60)}m {person.seconds % 60}s</td><td>{rawLabels[rawStatusOf(person)]}</td><td>{recoveryLabel(person)}</td></tr>)}
           </tbody></table></div>

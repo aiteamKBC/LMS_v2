@@ -10,6 +10,7 @@ from django.views.decorators.csrf import csrf_protect
 from django.views.decorators.http import require_GET, require_POST
 from login.permissions import require_role, learner_self_or_staff
 
+from .attendance_identity import identity_check, staff_roles
 from .session_results_policy import attendance_display_name, attendance_name_key, session_roster, attendance_csv, instant, session_runs
 from .session_media_policy import hidden_artifact_ids, recording_transcript_links, transcript_timing_ready, artifact_metadata
 from .session_sync_runtime import start_requested_sync
@@ -88,7 +89,33 @@ def launch_expectations(series_ids, emails=None):
     return by_series, by_occurrence
 
 
-def result_rows(series, *, session_number=None, email=None):
+def module_tutor_emails(module_catalogue_id):
+    """Tutor emails assigned to the module; absent column or table reads as none."""
+
+    try:
+        rows = read('''SELECT DISTINCT lower(btrim(tutor_email)) AS email FROM curriculum.modules
+            WHERE module_catalogue_id=%s AND deleted_at IS NULL AND coalesce(tutor_email,'')<>'' ''',
+            [module_catalogue_id or ''])
+    except DatabaseError as error:
+        cause = error.__cause__ or error
+        if getattr(cause, 'sqlstate', None) not in {'42P01', '42703'}:
+            raise
+        return []
+    return [row['email'] for row in rows if row.get('email')]
+
+
+def college_tenant_id():
+    """The college's Entra tenant, read from configuration (no Graph call)."""
+
+    try:
+        from coach_api.views import get_graph_settings
+        return get_graph_settings().get('tenant_id') or ''
+    except Exception:
+        log.warning('Could not read the Microsoft tenant setting for the account check.')
+        return ''
+
+
+def result_rows(series, *, session_number=None, email=None, identity=False):
     params = [series['id']]
     where = ''
     if session_number is not None:
@@ -164,6 +191,13 @@ def result_rows(series, *, session_number=None, email=None):
         )
         if str(value or '').strip()
     }
+    if identity and email is None:
+        staff = staff_roles(series, module_tutor_emails(series.get('module_catalogue_id')))
+        alias_targets = {
+            str(row.get('alias_email') or '').strip().casefold(): str(row.get('canonical_email') or '').strip().casefold()
+            for row in aliases if str(row.get('alias_email') or '').strip()
+        }
+        home_tenant = college_tenant_id()
     for item in occurrences:
         complete = bool(item.get('attendance_report_id') and item.get('actual_end'))
         saved_register = register_by_id[item['id']]
@@ -238,6 +272,25 @@ def result_rows(series, *, session_number=None, email=None):
             }
             for row in saved_register
         ] if email is None else []
+        session_identity = None
+        if identity and email is None:
+            # Staff only: which Microsoft account each row came from, beside the
+            # LMS email it counts for. Read-only; the register above is unchanged.
+            session_identity = identity_check(
+                attendance_by_id[item['id']],
+                learners={key: {'name': row.get('learner_name') or key, 'learnerProfileId': row.get('learner_profile_id')}
+                          for key, row in learner_by_email.items()},
+                aliases=alias_targets,
+                reviewed_links={
+                    str(row.get('attendance_row_id') or ''): str(row.get('canonical_email') or '').strip().casefold()
+                    for row in identity_links if str(row.get('occurrence_id') or '') == str(item['id'])
+                },
+                name_match=lambda row: unique_email_by_name.get(attendance_name_key(row.get('display_name')))
+                if saved_exact_name_match(row) else None,
+                staff=staff,
+                organizer_email=str(series.get('organizer_email') or '').strip().casefold(),
+                home_tenant=home_tenant,
+            )
         results.append({'id': item['id'], 'seriesId': series['id'], 'sessionNumber': item['session_number'],
                         'title': series.get('module_title') or '',
                         'startsAt': instant(item['scheduled_start']), 'endsAt': instant(item['scheduled_end']),
@@ -248,7 +301,8 @@ def result_rows(series, *, session_number=None, email=None):
                         'syncedAt': instant(item.get('artifacts_synced_at')),
                         'attendance': roster, 'unmatchedAttendance': unmatched,
                         'attendanceCandidates': candidates,
-                        'artifacts': artifacts_by_id[item['id']]})
+                        'artifacts': artifacts_by_id[item['id']],
+                        **({'identityCheck': session_identity} if session_identity is not None else {})})
     apply_recovery(results)
     if email is not None:
         for item in results:
@@ -510,7 +564,7 @@ def admin_session(request, series_id, session_number):
         if series:
             from .teams_week_meeting import ensure_week_meeting_occurrence
             ensure_week_meeting_occurrence(series[0])
-        sessions = result_rows(series[0], session_number=session_number) if series else []
+        sessions = result_rows(series[0], session_number=session_number, identity=True) if series else []
         if not sessions:
             return JsonResponse({'error': 'Session not found.'}, status=404)
         job = None
