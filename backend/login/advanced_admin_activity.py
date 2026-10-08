@@ -13,7 +13,10 @@ from audit_api.last_audit_ledger_views import _connection
 from learner_api.models import EnrolmentUser, LearnerProgressEntry, LearnerQuizAnswer
 from learner_api.source_material_content import object_value
 from learner_api.student_activity_data import read_student_material
-from learner_api.subject_content import _SameHostRedirect, _attachment_id, as_list, quiz_definition, safe_url
+from learner_api.subject_content import (
+    ContentUnavailable, _SameHostRedirect, _attachment_id, as_list,
+    material_schema, quiz_definition, safe_url,
+)
 from learner_api.subject_quiz import imported_quiz
 from quiz_api.models import QuizPackage, QuizQuestion
 
@@ -40,6 +43,109 @@ def saved_google_drive_file_id(url):
         return ''
     match = re.fullmatch(r'/file/d/([A-Za-z0-9_-]{10,})/(?:preview|view)?/?', parsed.path)
     return match.group(1) if match else ''
+
+
+_MEDIA_EXTENSIONS = {
+    'video': {'.mp4', '.webm', '.mov', '.m4v', '.ogv'},
+    'audio': {'.mp3', '.wav', '.m4a', '.aac', '.ogg', '.oga', '.flac'},
+    'pdf': {'.pdf'},
+    'document': {'.doc', '.docx', '.ppt', '.pptx', '.xls', '.xlsx', '.odt', '.ods'},
+}
+
+
+def saved_media_metadata(schema):
+    """Classify an extensionless material URL from its saved attachment metadata."""
+    schema = schema if isinstance(schema, dict) else {}
+    source = schema.get('source') if isinstance(schema.get('source'), dict) else {}
+    attachments = as_list(source.get('attachments'))
+    attachment = attachments[0] if attachments and isinstance(attachments[0], dict) else {}
+    filename = str(attachment.get('filename') or attachment.get('file_title') or '').strip()
+    mime_type = str(attachment.get('mime_type') or attachment.get('content_type') or '').split(';', 1)[0].strip().lower()
+    extension = ''
+    candidate = urlsplit(filename).path.rsplit('/', 1)[-1]
+    if '.' in candidate:
+        extension = '.' + candidate.rsplit('.', 1)[-1].lower()
+
+    kind = ''
+    if mime_type.startswith('video/'):
+        kind = 'video'
+    elif mime_type.startswith('audio/'):
+        kind = 'audio'
+    elif mime_type == 'application/pdf':
+        kind = 'pdf'
+    else:
+        kind = next((name for name, extensions in _MEDIA_EXTENSIONS.items()
+                     if extension in extensions), '')
+    if not kind:
+        declared = str(schema.get('content_type') or '').strip().lower()
+        kind = ('video' if declared in {'video', 'recording', 'live'}
+                else 'audio' if declared in {'audio', 'podcast'}
+                else 'pdf' if declared == 'pdf'
+                else 'document' if declared in {'document', 'reading', 'file', 'ppt', 'powerpoint'}
+                else '')
+    return {
+        'kind': kind,
+        'file_name': filename,
+        'mime_type': mime_type,
+        'attachment_id': str(attachment.get('attachment_id') or ''),
+    }
+
+
+def saved_kbc_material_id(url):
+    """Accept only the configured KBC material-view route, never an arbitrary host."""
+    parsed = urlsplit(safe_url(url))
+    origin = urlsplit(getattr(settings, 'KBC_LMS_SCHEMA_URL', ''))
+    if (parsed.scheme != 'https' or parsed.username
+            or (parsed.scheme, parsed.netloc) != (origin.scheme, origin.netloc)):
+        return None
+    match = re.fullmatch(r'/wp-json/kbc-lms/v1/material/(\d+)/view/?', parsed.path)
+    return int(match.group(1)) if match else None
+
+
+def live_kbc_media_response(request, activity_id, expected_kind):
+    """Stream the fresh typed source; saved signed URLs can expire into login HTML."""
+    if expected_kind not in {'video', 'audio'}:
+        return HttpResponse('The saved media type is unavailable.', status=404)
+    try:
+        schema = material_schema(activity_id)
+    except ContentUnavailable:
+        return HttpResponse('The saved media is temporarily unavailable.', status=502)
+    metadata = saved_media_metadata(schema)
+    if metadata['kind'] != expected_kind:
+        return HttpResponse('The saved media type could not be verified.', status=502)
+    url = safe_url(schema.get(f'{expected_kind}_iframe_url') or schema.get('iframe_url'))
+    if saved_kbc_material_id(url) != int(activity_id):
+        return HttpResponse('The saved media source could not be verified.', status=502)
+    reference = _attachment_id(url)
+    if metadata['attachment_id'] and reference != metadata['attachment_id']:
+        return HttpResponse('The saved media attachment could not be verified.', status=502)
+
+    headers = {
+        'Accept': f'{expected_kind}/*,application/octet-stream',
+        'User-Agent': 'KBC-LearningOS/1.0',
+    }
+    byte_range = request.headers.get('Range', '').strip()
+    if re.fullmatch(r'bytes=\d+-\d*', byte_range):
+        headers['Range'] = byte_range
+    try:
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), _SameHostRedirect())
+        upstream = opener.open(urllib.request.Request(url, headers=headers), timeout=30)
+    except (urllib.error.URLError, TimeoutError, OSError, ValueError):
+        return HttpResponse('The saved media is temporarily unavailable.', status=502)
+    content_type = upstream.headers.get_content_type().lower()
+    if upstream.status not in (200, 206) or not content_type.startswith(expected_kind + '/'):
+        upstream.close()
+        return HttpResponse('The saved source did not return playable media.', status=502)
+    response = FileResponse(upstream, status=upstream.status, content_type=content_type,
+                            as_attachment=False, filename=metadata['file_name'] or '')
+    for header in ('Content-Length', 'Content-Range', 'Accept-Ranges'):
+        if upstream.headers.get(header):
+            response[header] = upstream.headers[header]
+    response['Accept-Ranges'] = 'bytes'
+    response['Cache-Control'] = 'private, no-store'
+    response['Referrer-Policy'] = 'no-referrer'
+    response['X-Content-Type-Options'] = 'nosniff'
+    return response
 
 
 def saved_google_drive_response(request, file_id):

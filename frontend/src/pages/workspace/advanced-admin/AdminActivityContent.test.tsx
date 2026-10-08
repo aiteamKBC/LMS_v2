@@ -164,6 +164,36 @@ it('plays a scoped Drive video directly in Advanced Admin', async () => {
   expect(screen.queryByTestId('saved-media')).not.toBeInTheDocument();
 });
 
+it('infers returned media types from the URL or attachment filename extension', async () => {
+  vi.mocked(advancedAdminMaterial).mockResolvedValue({
+    media: [
+      { kind: 'document', url: 'https://files.example.test/lesson.MP4?token=synthetic', title: 'Video file' },
+      { kind: 'embed', url: 'https://files.example.test/media', file_name: 'podcast.MP3', title: 'Audio file' },
+      { kind: 'document', url: 'https://files.example.test/download', file_name: 'handout.PDF', title: 'PDF file' },
+    ],
+    reading_html: '', unavailable_attachments: [], quiz: null, has_quiz_review: false,
+    historical: { answers: [] }, history: [],
+  } as never);
+  render(<AdminLegacyActivityContent learnerId={42} groupId={8} activityId={12} kind="material" completed />);
+  const media = await screen.findAllByTestId('saved-media');
+  expect(media.map(item => item.getAttribute('data-kind'))).toEqual(['video', 'audio', 'pdf']);
+  expect(advancedAdminLegacyQuizReview).not.toHaveBeenCalled();
+});
+
+it('plays a scoped audio source in a native audio element', async () => {
+  const stream = '/login_api/advanced-admin/learners/42/learning/material/8/12/media/0/';
+  vi.mocked(advancedAdminMaterial).mockResolvedValue({
+    media: [{ kind: 'document', url: stream, file_name: 'recording.mp3', title: 'Recorded audio' }],
+    reading_html: '', unavailable_attachments: [], quiz: null, has_quiz_review: false,
+    historical: { answers: [] }, history: [],
+  } as never);
+  render(<AdminLegacyActivityContent learnerId={42} groupId={8} activityId={12} kind="material" completed />);
+  const audio = await screen.findByLabelText('Recorded audio');
+  expect(audio.tagName).toBe('AUDIO');
+  expect(audio).toHaveAttribute('src', `${window.location.origin}${stream}`);
+  expect(screen.queryByTestId('saved-media')).not.toBeInTheDocument();
+});
+
 it('shows the saved quiz body without inventing a missing answer key', async () => {
   vi.mocked(advancedAdminLegacyQuizReview).mockResolvedValue({ quiz: {
     body: '<p>Quiz introduction</p>', questions: [{

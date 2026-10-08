@@ -45,26 +45,42 @@ function AdminPdfPreview({ url, title }: { url: string; title: string }) {
   return <iframe title={title} src={preview.src} className="h-[65vh] min-h-[320px] w-full rounded-xl border bg-white" />;
 }
 
+function inferredMediaKind(item: SubjectMaterial['media'][number], url: URL): string {
+  const path = `${url.pathname} ${item.file_name || ''}`.toLowerCase();
+  if (/\.(mp4|webm|mov|m4v|ogv)(?:\s|$)/.test(path)) return 'video';
+  if (/\.(mp3|wav|m4a|aac|ogg|oga|flac)(?:\s|$)/.test(path)) return 'audio';
+  if (/\.pdf(?:\s|$)/.test(path)) return 'pdf';
+  return item.kind;
+}
+
 function AdminMedia({ item }: { item: SubjectMaterial['media'][number] }) {
   let url: URL;
   try { url = new URL(item.url, window.location.origin); } catch {
     return <Media value={item.url} kind={item.kind} title={item.title} fileName={item.file_name} canEmbed={item.can_embed} />;
   }
-  if (item.kind === 'pdf' && item.can_embed !== false && url.origin === window.location.origin
+  const kind = inferredMediaKind(item, url);
+  if (kind === 'pdf' && item.can_embed !== false && url.origin === window.location.origin
       && /^\/login_api\/advanced-admin\/learners\/\d+\/learning\/material\/\d+\/\d+\/(?:files\/\d+|source-file|media\/\d+)\/$/.test(url.pathname)) {
     return <section className="space-y-2">
       <AdminPdfPreview url={url.href} title={item.title} />
       <a href={url.href} target="_blank" rel="noopener noreferrer" className="text-sm font-semibold text-primary-700 underline">Open material in a new tab</a>
     </section>;
   }
-  if (item.kind === 'video' && item.can_embed !== false && url.origin === window.location.origin
-      && /^\/login_api\/advanced-admin\/learners\/\d+\/learning\/material\/\d+\/\d+\/media\/\d+\/$/.test(url.pathname)) {
+  const scopedMedia = url.origin === window.location.origin
+    && /^\/login_api\/advanced-admin\/learners\/\d+\/learning\/material\/\d+\/\d+\/media\/\d+\/$/.test(url.pathname);
+  if (kind === 'video' && item.can_embed !== false && scopedMedia) {
     return <section className="space-y-2">
       <video src={url.href} controls preload="metadata" className="aspect-video w-full rounded-xl bg-black" aria-label={item.title} />
       <a href={url.href} target="_blank" rel="noopener noreferrer" className="text-sm font-semibold text-primary-700 underline">Open material in a new tab</a>
     </section>;
   }
-  if (item.kind === 'audio' && item.can_embed !== false && url.protocol === 'https:'
+  if (kind === 'audio' && item.can_embed !== false && scopedMedia) {
+    return <section className="space-y-2">
+      <audio src={url.href} controls preload="metadata" className="w-full" aria-label={item.title} />
+      <a href={url.href} target="_blank" rel="noopener noreferrer" className="text-sm font-semibold text-primary-700 underline">Open material in a new tab</a>
+    </section>;
+  }
+  if (kind === 'audio' && item.can_embed !== false && url.protocol === 'https:'
       && (url.hostname === 'kentbusinesscollege.org' || url.hostname.endsWith('.kentbusinesscollege.org'))
       && /^\/wp-json\/kbc-lms\/v1\/material\/\d+\/view\/?$/.test(url.pathname)) {
     return <section className="space-y-2">
@@ -73,7 +89,7 @@ function AdminMedia({ item }: { item: SubjectMaterial['media'][number] }) {
       <a href={url.href} target="_blank" rel="noopener noreferrer" className="text-sm font-semibold text-primary-700 underline">Open material in a new tab</a>
     </section>;
   }
-  if (item.can_embed !== false && (item.kind === 'video' || item.kind === 'embed')
+  if (item.can_embed !== false && (kind === 'video' || kind === 'embed')
       && (url.origin === 'https://www.youtube.com' || url.origin === 'https://youtube.com')
       && url.pathname === '/playlist') {
     const playlistId = url.searchParams.get('list') || '';
@@ -89,7 +105,7 @@ function AdminMedia({ item }: { item: SubjectMaterial['media'][number] }) {
       </section>;
     }
   }
-  if (item.can_embed !== false && item.kind === 'document' && url.protocol === 'https:'
+  if (item.can_embed !== false && kind === 'document' && url.protocol === 'https:'
       && url.hostname === 'view.officeapps.live.com' && url.pathname === '/op/embed.aspx'
       && url.searchParams.has('src')) {
     return <section className="space-y-2">
@@ -99,7 +115,7 @@ function AdminMedia({ item }: { item: SubjectMaterial['media'][number] }) {
       <a href={url.href} target="_blank" rel="noopener noreferrer" className="text-sm font-semibold text-primary-700 underline">Open material in a new tab</a>
     </section>;
   }
-  return <Media value={item.url} kind={item.kind} title={item.title} fileName={item.file_name} canEmbed={item.can_embed} />;
+  return <Media value={item.url} kind={kind} title={item.title} fileName={item.file_name} canEmbed={item.can_embed} />;
 }
 
 export function RichContent({ value }: { value: string }) {
