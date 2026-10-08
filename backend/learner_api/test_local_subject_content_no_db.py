@@ -230,6 +230,34 @@ class LocalSubjectContentTests(unittest.TestCase):
         scope['_dict_rows'] = lambda _: [{}, {}]
         self.assertIsNone(scope['read_student_material'](self.cursor, 8, 5, 1))
 
+    def test_migrated_companion_uses_its_verified_path_without_wordpress_lookup(self):
+        local = '/curriculum_api/curriculum/uploads/_legacy_files/11/companion.pdf'
+        schema = {'source': {'attachments': [{'attachment_id': 11, 'content_type': 'pdf',
+                    'filename': 'companion.pdf', 'lms_url': local}]}}
+        resolver = Mock(side_effect=AssertionError('Unnecessary legacy lookup'))
+        result = build_material(self.stored, schema, attachment_resolver=resolver)
+        self.assertEqual(result['media'][0]['url'], local)
+        self.assertEqual(result['unavailable_attachments'], [])
+        resolver.assert_not_called()
+
+    def test_inline_migration_does_not_restore_the_old_wordpress_navigation(self):
+        row = hydrate_material({'material_content_type': 'video',
+            'video_iframe_url': 'https://source.example/stm-lessons/reading/',
+            'material_payload': {'reading_text_body': '<p>Stored lesson</p>',
+                'video_iframe_url': '', 'lms_cleared_media_fields': ['video_iframe_url']}})
+        self.assertEqual(row['video_iframe_url'], '')
+        self.assertEqual(row['reading_text_body'], '<p>Stored lesson</p>')
+
+    def test_migrated_companion_rejects_foreign_and_mismatched_attachment_paths(self):
+        for url in ('https://outside.example/file.pdf',
+                    '/curriculum_api/curriculum/uploads/_legacy_files/12/file.pdf',
+                    '/curriculum_api/curriculum/uploads/_legacy_files/11/..%2Fother.pdf'):
+            schema = {'source': {'attachments': [{'attachment_id': 11, 'lms_url': url}]}}
+            resolver = Mock(return_value='')
+            result = build_material(self.stored, schema, attachment_resolver=resolver)
+            self.assertFalse(result['media'])
+            resolver.assert_called_once_with('11')
+
 
 if __name__ == '__main__':
     unittest.main()
