@@ -543,6 +543,10 @@ class LearnerProfile(models.Model):
     )
     full_name = models.TextField()
     email = models.EmailField(max_length=320, unique=True)
+    # An optional contact address.  Authentication and account ownership stay
+    # bound to ``email`` (and the linked Created_users row); this field must
+    # never be treated as a login identifier.
+    secondary_email = models.EmailField(max_length=320, null=True, blank=True)
     # GENERATED ALWAYS in Postgres — the database derives it from `email`, and an
     # INSERT/UPDATE that names the column is rejected outright. `editable=False`
     # only hides a field from forms; it stays in the write. GeneratedField with

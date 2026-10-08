@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCaseFileSession } from '@/features/coach/case-file/hooks/CaseFileSession';
 import type { LearnerKind } from '@/api/learnerDetail';
 import { overviewSchedule, overviewWeek } from '@/api/learnerOverview';
 import type { TrainingPlanContract } from '@/api/trainingPlanDashboard';
@@ -10,7 +11,14 @@ function hours(value: number | string | null | undefined) {
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : 0;
 }
 
-export function monthlyLogOtjh(summary: LogSummary) {
+type HoursSummary = {
+  learner?: { planned_end_date?: string | null } | null;
+  training_plan_totals?: { accepted_hours?: number | null; planned_hours?: number | null };
+  months: Array<{ month: string; training_plan_target?: number | string | null;
+    not_accepted_hours: number | string; actual_hours: number | string }>;
+};
+
+export function monthlyLogOtjh(summary: HoursSummary) {
   return {
     plannedEndDate: summary.learner?.planned_end_date ?? null,
     acceptedTotal: summary.training_plan_totals?.accepted_hours ?? null,
@@ -39,10 +47,15 @@ export function contractPlannedOtjh(contract: TrainingPlanContract | undefined) 
   if (!months.length || months.some(month => month.planned == null || !Number.isFinite(month.planned) || month.planned < 0)) return null;
   return Math.round(months.reduce((total, month) => total + month.planned!, 0) * 10_000) / 10_000;
 }
-export function useDashboardPlan(kind?: LearnerKind | null, id?: string | null, enabled = true) {
+export function useDashboardPlan(kind?: LearnerKind | null, id?: string | null, enabled = true, caseFileSection = 'overview') {
+  const session = useCaseFileSession();
+  const readers = useMemo(() => session ? {
+    week: { read: (_kind: LearnerKind, _id: string, signal?: AbortSignal, fresh = false) => session.read<Awaited<ReturnType<typeof overviewWeek.read>>>(caseFileSection, { resource: 'week' }, { signal, refresh: fresh }), peek: () => undefined },
+    schedule: { read: (_kind: LearnerKind, _id: string, signal?: AbortSignal, fresh = false) => session.read<Awaited<ReturnType<typeof overviewSchedule.read>>>(caseFileSection, { resource: 'schedule' }, { signal, refresh: fresh }), peek: () => undefined },
+  } : { week: overviewWeek, schedule: overviewSchedule }, [session, caseFileSection]);
   const active = enabled && !!kind && !!id;
-  const week = useLiveLearnerRead(kind, id, active, overviewWeek.read, overviewWeek.peek);
-  const schedule = useLiveLearnerRead(kind, id, active, overviewSchedule.read, overviewSchedule.peek);
+  const week = useLiveLearnerRead(kind, id, active, readers.week.read, readers.week.peek);
+  const schedule = useLiveLearnerRead(kind, id, active, readers.schedule.read, readers.schedule.peek);
   const identity = `${kind}:${id}`;
   const [attempt, setAttempt] = useState(0);
   const [ssot, setSsot] = useState<{ identity: string; data: ReturnType<typeof monthlyLogOtjh>; error: string } | null>(null);
@@ -62,7 +75,7 @@ export function useDashboardPlan(kind?: LearnerKind | null, id?: string | null, 
     // The shared reader owns the request deadline and retry. A shorter
     // dashboard timer would discard a successful response after a cold connection.
     const controller = new AbortController();
-    void getLogSummary(id, controller.signal, 'learner').then(summary => {
+    void (session ? session.read<LogSummary>(caseFileSection, { resource: 'hours' }, { signal: controller.signal, refresh: attempt > 0 }) : getLogSummary(id, controller.signal, 'learner')).then(summary => {
       if (!controller.signal.aborted) setSsot({ identity, data: monthlyLogOtjh(summary), error: '' });
     }).catch((error: unknown) => {
       if (!controller.signal.aborted) setSsot({ identity, data: { months: {}, plannedEndDate: null,
@@ -70,7 +83,7 @@ export function useDashboardPlan(kind?: LearnerKind | null, id?: string | null, 
         error: error instanceof Error ? error.message : 'SSOT learning hours could not be loaded.' });
     });
     return () => { controller.abort(); };
-  }, [active, id, identity, attempt]);
+  }, [active, id, identity, attempt, session, caseFileSection]);
   const refresh = () => { week.refresh(); schedule.refresh(); retryContract(); };
   const ssotData = ssot?.identity === identity ? ssot.data : { months: {}, plannedEndDate: null,
     acceptedTotal: null, plannedTotal: null };

@@ -7,7 +7,7 @@ import json
 import pymupdf as fitz
 from django.test import SimpleTestCase, RequestFactory
 from .training_plan_contract import parse_contract, read_verified_extract, contract_extract_metadata, read_contract, verified_planned_hours
-from .training_plan_dashboard import training_plan_dashboard, number, selected_contract, plan_session, read_dashboard, assigned_group_coach, contract_plan, valid_aptem_id, _canonical_actual_rows, is_educational_live_session_week
+from .training_plan_dashboard import training_plan_dashboard, number, selected_contract, plan_session, read_dashboard, assigned_group_coach, contract_plan, valid_aptem_id, _canonical_actual_rows, _canonical_module_progress, is_educational_live_session_week
 
 
 def contract_pdf(total=30, review_on_same_page=False, joined_provider=False, split_header=False, split_total=False):
@@ -84,6 +84,27 @@ class TrainingPlanDashboardTests(SimpleTestCase):
             {'month': '2026-09', 'groupId': None, 'hours': 1.0, 'count': 1},
             {'month': '2026-09', 'groupId': 'module-1', 'hours': 2.0, 'count': 1},
         ])
+
+    def test_module_progress_uses_learner_progress_entries_and_authored_session_target(self):
+        records = [
+            {'module_ref': 'M1', 'module_title': 'Marketing', 'accepted': True,
+             'actual_seconds': 5400, 'ksbs': ['K1', 'S1']},
+            {'module_ref': '', 'module_title': 'Marketing', 'accepted': False,
+             'actual_seconds': 3600, 'ksbs': ['K1'], 'kind': 'activity_event',
+             'feed_kind': 'attendance_confirmation', 'time_tracking_session_ref': 'session-1'},
+            # A duplicate confirmation cannot normally be saved, but must not
+            # make the presented attendance exceed the authored target.
+            {'module_ref': '', 'module_title': 'Marketing', 'accepted': False,
+             'ksbs': [], 'kind': 'activity_event', 'feed_kind': 'attendance_confirmation',
+             'time_tracking_session_ref': 'session-2'},
+        ]
+        modules = [{'id': 'M1', 'title': 'Marketing', 'educational_session_count': 1, 'sessions_number': 4}]
+        result = _canonical_module_progress(records, modules)
+
+        self.assertEqual(result, {'M1': {
+            'hours': {'actual': 1.5}, 'ksb': {'completed': 2, 'total': 3},
+            'attendance': {'attended': 2, 'total': 2},
+        }})
 
     def test_learning_section_returns_only_module_selection_data(self):
         source = SimpleNamespace(pk=125, aptem_id=987, email='learner@example.com')

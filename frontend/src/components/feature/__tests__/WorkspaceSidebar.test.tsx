@@ -5,6 +5,7 @@ import { WorkspaceShell } from '../WorkspaceShell';
 import { roleNavMap } from '@/mocks/navigation';
 import type { SidebarNavItem } from '../Sidebar';
 import { AuditWorkspaceShell } from '@/features/audit/AuditWorkspaceShell';
+import { learnerNavigation } from '@/pages/workspace/advanced-admin/learnerNavigation';
 
 const { denied, viewer } = vi.hoisted(() => ({ denied: new Set<string>(), viewer: { isAdmin: false } }));
 vi.mock('@/hooks/useAuth', () => ({
@@ -53,6 +54,25 @@ beforeEach(() => {
   viewer.isAdmin = false;
   localStorage.clear();
   sessionStorage.clear();
+});
+
+it('uses a separate purple main menu for the selected Advanced Admin learner', () => {
+  render(<MemoryRouter initialEntries={['/workspace/advanced-admin/learners/42/reviews']}>
+    <WorkspaceShell role="advanced-admin" roleLabel="Advanced Admin" navItems={learnerNavigation(42)} pageTitle="PR & MCM">
+      <CurrentRoute />
+    </WorkspaceShell>
+  </MemoryRouter>);
+  const sidebar = screen.getByRole('complementary', { name: 'Advanced Admin sidebar' });
+  expect(sidebar).toHaveClass('kbc-learner-sidebar');
+  const menu = within(sidebar).getByRole('navigation', { name: 'Advanced Admin primary navigation' });
+  expect(within(menu).getAllByRole('link')).toHaveLength(6);
+  expect(within(menu).queryByRole('link', { name: 'Evidence & files' })).toBeNull();
+  expect(within(menu).queryByRole('link', { name: 'Monthly reports' })).toBeNull();
+  expect(within(menu).getByRole('link', { name: 'PR & MCM' })).toHaveAttribute('aria-current', 'page');
+  expect(within(menu).getByRole('link', { name: 'Learning & progress' }))
+    .toHaveAttribute('href', '/workspace/advanced-admin/learners/42/learning');
+  fireEvent.click(within(sidebar).getByRole('button', { name: 'Collapse Advanced Admin navigation' }));
+  expect(within(sidebar).getByRole('button', { name: 'Expand Advanced Admin navigation' })).toBeVisible();
 });
 
 it.each(['coach', 'learner', 'curriculum'])(
@@ -243,7 +263,7 @@ describe.each(Object.keys(roleNavMap))('%s shared workspace sidebar', role => {
       expect(shell.style.getPropertyValue('--kbc-sidebar-width')).toBe('240px');
       return;
     }
-    if (role === 'learner') {
+    if (role === 'learner' || role === 'advanced-admin') {
       expect(sidebar.style.width).toBe('240px');
       expect(shell.style.getPropertyValue('--kbc-sidebar-width')).toBe('240px');
       expect(panel).toBeNull();
@@ -278,13 +298,13 @@ describe.each(Object.keys(roleNavMap))('%s shared workspace sidebar', role => {
       expect(screen.getByTestId('route')).toHaveTextContent(destination.href!);
       return;
     }
-    if (role !== 'learner') fireEvent.click(within(sidebar).getByRole('button', { name: 'Expand navigation' }));
+    if (role !== 'learner' && role !== 'advanced-admin') fireEvent.click(within(sidebar).getByRole('button', { name: 'Expand navigation' }));
     if (role === 'learner' && item.children?.length) {
       await act(async () => { fireEvent.click(within(rail).getByRole('button', { name: item.label })); });
     }
-    const link = within(role === 'learner' ? rail : panel).getAllByRole('link').find(link => link.getAttribute('href') === destination.href)!;
+    const link = within(role === 'learner' || role === 'advanced-admin' ? rail : panel).getAllByRole('link').find(link => link.getAttribute('href') === destination.href)!;
     expect(link).toHaveAttribute('aria-current', 'page');
-    expect(within(rail).getAllByRole(role !== 'learner' && item.children?.length ? 'button' : 'link')
+    expect(within(rail).getAllByRole(role !== 'learner' && role !== 'advanced-admin' && item.children?.length ? 'button' : 'link')
       .some(item => item.hasAttribute('aria-current'))).toBe(true);
     fireEvent.click(link);
     expect(screen.getByTestId('route')).toHaveTextContent(destination.href!);
@@ -298,7 +318,9 @@ describe.each(Object.keys(roleNavMap))('%s shared workspace sidebar', role => {
     expect(drawer).not.toHaveAttribute('inert');
     fireEvent.click(within(drawer).getAllByRole('link')[0]);
     expect(drawer).toHaveAttribute('inert');
-  expect(shell.style.getPropertyValue('--kbc-sidebar-width')).toBe(role === 'coach' ? '240px' : role === 'learner' ? '240px' : '112px');
+    expect(shell.style.getPropertyValue('--kbc-sidebar-width')).toBe(
+      role === 'coach' || role === 'learner' || role === 'advanced-admin' ? '240px' : '112px',
+    );
   });
 });
 
