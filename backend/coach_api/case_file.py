@@ -37,12 +37,21 @@ def case_file_ksb_detail(request, learner_id, code):
     delegated.GET['code'] = code
     return case_file_section(delegated, learner_id, section='ksb-detail')
 
+
+def case_file_learning_module(request, learner_id, module_id, week_id=None):
+    delegated = copy(request)
+    delegated.GET = request.GET.copy()
+    delegated.GET['moduleId'] = module_id
+    if week_id is not None:
+        delegated.GET['weekId'] = week_id
+    return case_file_section(delegated, learner_id, section='learning-plan-module')
+
 # Resource names are transport projections, never client-selected data sources.
 RESOURCES = {
     'overview': {'detail', 'activity', 'covers', 'week', 'schedule', 'hours'},
     'weekly-learning': {'detail', 'week', 'schedule', 'hours'},
     'monthly-focus': {'focus'},
-    'otjh-ksb': {'breakdown', 'metrics', 'week', 'schedule', 'hours'},
+    'otjh-ksb': set(),
     'learning-plan': {'detail', 'activity', 'covers', 'week', 'schedule', 'hours', 'module'},
     'assignments': {'detail', 'covers', 'contract', 'statuses', 'marking', 'submission', 'historical'},
     'attendance': {'summary', 'history'},
@@ -95,7 +104,8 @@ class CaseFileContext:
                                       'programme_status', 'cohort', 'group', 'employer', 'coach_name', 'coach_email',
                                       'start_date', 'learner_start_date', 'learner_end_date', 'end_date',
                                       'apprenticeship_end_date', 'practical_period_end_date'}
-                if not self.profile_only and self.request.path.rstrip('/').split('/')[-1] in {'weekly-learning', 'otjh-ksb', 'learning-plan', 'assignments'}:
+                narrow_learning = '/learning-plan' in self.request.path and not self.request.GET.get('resource')
+                if not self.profile_only and not narrow_learning and self.request.path.rstrip('/').split('/')[-1] in {'weekly-learning', 'learning-plan', 'assignments'}:
                     from learner_api.training_plan_dashboard import TRAINING_PLAN_SOURCE_FIELDS
                     fields.update(TRAINING_PLAN_SOURCE_FIELDS)
                 if not self.profile_only and self.request.path.rstrip('/').split('/')[-1] == 'weekly-learning':
@@ -103,7 +113,7 @@ class CaseFileContext:
                 if not self.profile_only and self.request.path.rstrip('/').split('/')[-1] == 'overview':
                     fields = {'id', 'aptem_id', 'learner_type', 'email', 'username', *SOURCE_WINDOW_FIELDS}
                 query = EnrolmentUser.all_learners.filter(pk=self.profile.enrolment_id).only(*sorted(fields))
-                weekly = not self.profile_only and self.request.path.rstrip('/').split('/')[-1] in {'weekly-learning', 'monthly-focus'}
+                weekly = not self.profile_only and (narrow_learning or self.request.path.rstrip('/').split('/')[-1] in {'weekly-learning', 'monthly-focus'})
                 if weekly:
                     from .weekly_learning import assignment_projection
                     query = assignment_projection(query)
@@ -190,6 +200,9 @@ class CaseFileContext:
 
 def build_tab(context, section, month=None):
     """Read each source once and send only projections consumed by this tab."""
+    if section == 'otjh-ksb':
+        from .otjh_ksb import read_otjh_ksb
+        return read_otjh_ksb(context)
     if section == 'monthly-focus':
         from .monthly_focus import read_monthly_focus
         return read_monthly_focus(context, month)
@@ -208,16 +221,6 @@ def build_tab(context, section, month=None):
         readers['covers'] = lambda: context.payload('covers')
         if context.profile.aptem_id:
             readers['activity'] = lambda: context.payload('activity')
-    if section == 'otjh-ksb':
-        from learner_api.aptem_ksb_breakdown import read_breakdown
-        readers['breakdown'] = lambda: read_breakdown(connections['enrolment'], context.profile.id)
-        def metrics():
-            try:
-                return canonical_profile_metrics(context), None
-            except Exception:
-                log.exception('case_file_progress_metrics_failed learner_id=%s', context.learner_id)
-                return None, 'Programme totals are unavailable.'
-        readers['metrics'] = metrics
     parts = context.parallel(readers)
     schedule = parts['schedule']
     if section != 'learning-plan':
@@ -238,18 +241,6 @@ def build_tab(context, section, month=None):
         result['covers'] = parts['covers']
         if 'activity' in parts:
             result['activity'] = parts['activity']
-    if section == 'otjh-ksb':
-        # Canonical totals/window belong to this lazy section, never /profile.
-        result['metrics'], metrics_error = parts['metrics']
-        if metrics_error:
-            result['errors'] = {'metrics': metrics_error}
-        result['programmeWindow'] = programme_window(context)
-        breakdown = parts['breakdown']
-        breakdown['rows'] = [{**{key: value for key, value in row.items() if key != 'components'},
-                              'activityNames': [item['name'] for item in row['components']],
-                              'activityCount': len(row['components']), 'components': []}
-                             for row in breakdown['rows']]
-        result['breakdown'] = breakdown
     return result
 
 
@@ -391,52 +382,21 @@ def read_overview_learning(context):
     metrics = canonical_learning.metrics_from_records(workspace, {}, include_ksb_points=False)
     metrics['otjh']['planned'] = canonical_learning.programme_planned_hours(
         context.profile.enrolment_id, owner=owner)
-    activity = canonical_learning.source_subjects(context.profile.enrolment_id, None,
-        owner=owner, records=records, overview_only=True) if context.profile.aptem_id else None
-    return metrics, activity
+    return metrics, None
 
 
 def build_overview(context):
     """Final Overview numbers; no content, schedules or evidence hydration."""
-    from learner_api.overview_week import read_overview_subjects
+    from learner_api.module_progress import canonical_module_progress, compact_module_progress
     parts = context.parallel({
-        'week': lambda: {'planSubjects': read_overview_subjects(context.source, context.profile)},
+        'progress': lambda: canonical_module_progress(context.source, context.profile),
         'learning': lambda: read_overview_learning(context),
-        # Preserve the existing attendance GET, including catch-up sync.
+        # Read the established attendance projection without catch-up writes.
         'attendance': lambda: context.payload('summary').get('attendance') or {},
     })
-    week = parts['week']
-    metrics, activity = parts['learning']
+    metrics, _ = parts['learning']
     attendance = parts['attendance']
-    # Native week subjects have no historical aliases. Retain verified merging
-    # for any future mixed projection without loading an entire schedule.
-    schedule = {'moduleLinks': {}}
-    parts['activity'] = activity
-    subjects = week.get('planSubjects', [])
-    if context.profile.aptem_id:
-        activity = parts['activity']
-        if activity.get('progress_basis') == 'recorded_activities':
-            historical = {f"legacy:{row['id']}": row for row in activity.get('subjects', [])}
-            historical_modules = {row.get('module_id') for row in historical.values() if row.get('module_id')}
-            by_subject = {}
-            for row in activity.get('activities', []):
-                key = f"legacy:{row['group_id']}"
-                by_subject.setdefault(key, {})[str(row['activity_id'])] = row
-            summaries = {row['id']: row for row in subjects}
-            subjects = []
-            for key, row in historical.items():
-                items = list(by_subject.get(key, {}).values())
-                subjects.append({
-                    'id': key, 'title': row['name'], 'total': len(items),
-                    'completed': sum(bool(item.get('completed')) for item in items),
-                })
-            subjects.extend(row for row in summaries.values()
-                            if row['id'].startswith('current:') and row['id'][8:] not in historical_modules)
-    else:
-        subjects = merge_overview_subjects(subjects, schedule)
-    rows = [{'id': subject['id'], 'title': subject['title'],
-             'percent': overview_percent(subject.get('completed', 0), subject['total'])
-                        if subject.get('total') else None} for subject in subjects]
+    rows = compact_module_progress(parts['progress'])
     # Reuse the established source/profile precedence and business-date pacing.
     from .selectors.otjh import learner_programme_window
     from .views import apply_otjh_to_date_metrics
@@ -562,6 +522,22 @@ def case_file_section(request, learner_id, section='profile'):
                 response = JsonResponse(serialize_case_file_profile(context.profile, context.source))
             elif section == 'overview' and not request.GET.get('resource'):
                 response = JsonResponse(build_overview(context))
+            elif section in {'learning-plan', 'learning-plan-module'} and not request.GET.get('resource'):
+                from .learning_plan_projection import read_learning_plan, read_journey
+                try:
+                    payload = read_journey(context, request.GET['moduleId'], request.GET.get('weekId')) if section == 'learning-plan-module' else read_learning_plan(context)
+                    response = JsonResponse(payload)
+                except LookupError as error:
+                    response = JsonResponse({'detail': str(error)}, status=404)
+            elif section == 'attendance' and request.GET.get('resource', 'history') == 'history':
+                from .attendance_projection import AttendancePaginationError, read_attendance
+                try:
+                    response = JsonResponse(read_attendance(context, request.GET))
+                except AttendancePaginationError:
+                    response = JsonResponse({'detail': 'Invalid attendance pagination.'}, status=400)
+            elif section == 'ksb-search':
+                from .otjh_ksb import search_ksb_activities
+                response = JsonResponse(search_ksb_activities(context.profile.id, request.GET.get('query', '')))
             elif section == 'weekly-learning':
                 from .weekly_learning import read_weekly_learning
                 if request.GET.get('resource'):
@@ -582,16 +558,6 @@ def case_file_section(request, learner_id, section='profile'):
                     response = context.learner_read('history')
             elif section == 'header-summary':
                 response = JsonResponse(build_header_summary(context, learner_id))
-            elif section == 'otjh-ksb' and request.GET.get('resource', 'breakdown') == 'breakdown':
-                from learner_api.aptem_ksb_breakdown import read_learner_breakdown
-                payload = read_learner_breakdown(connections['enrolment'], context.profile.enrolment_id)
-                payload['rows'] = [{
-                    **{key: value for key, value in row.items() if key != 'components'},
-                    'activityNames': [component['name'] for component in row['components']],
-                    'activityCount': len(row['components']),
-                    'components': [],
-                } for row in payload['rows']]
-                response = JsonResponse(payload)
             elif section == 'ksb-detail':
                 from learner_api.aptem_ksb_breakdown import read_learner_breakdown
                 code = request.GET.get('code')

@@ -6,6 +6,9 @@ export type EvidencePreviewTarget = {
   category?: string;
   linked?: boolean;
   mappedComponents?: boolean;
+  pointsAchieved?: number;
+  totalPoints?: number;
+  progressPercent?: number | null;
   activities: Array<{
     title: string;
     type: string;
@@ -19,8 +22,10 @@ export type EvidencePreviewTarget = {
     source?: string;
     activityId?: string;
     completedAt?: string;
+    date?: string;
     status?: string;
     achievesKsb?: boolean;
+    accepted?: boolean;
     module?: string;
   }>;
 };

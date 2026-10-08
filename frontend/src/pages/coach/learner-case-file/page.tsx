@@ -1,5 +1,5 @@
 ﻿import { useState } from 'react';
-import { CaseFileSessionProvider } from '@/features/coach/case-file/hooks/CaseFileSession';
+import { CaseFileSessionProvider, useCaseFileSession } from '@/features/coach/case-file/hooks/CaseFileSession';
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { AppIcon } from '@/components/feature/AppIcon';
@@ -15,6 +15,7 @@ import AuditTab from '@/features/audit/AuditTab';
 import ActivityTab from './components/ActivityTab';
 import DocumentsTab from './components/DocumentsTab';
 import NetworkTab from './components/NetworkTab';
+import { CaseFileLearningPlanTab } from './tabs/CaseFileLearningPlanTab';
 import LearningPlanTab from './components/OverviewTab';
 import AssignmentsTab from './components/AssignmentsTab';
 import { RowsSkeleton } from '@/components/feature/Skeletons';
@@ -76,6 +77,7 @@ export default function LearnerCaseFile() {
 }
 
 function LearnerCaseFileContent() {
+  const session = useCaseFileSession();
   const coach = useCoachIdentity();
   const navigate = useNavigate();
   const location = useLocation();
@@ -185,19 +187,10 @@ function LearnerCaseFileContent() {
       case 'coach-notes':
         return <DocumentsTab data={data} />;
       case 'support':
-        return <div className="space-y-5">
-          {dashboardKind ? <DashboardTrainingPlan
-            kind={dashboardKind}
-            learnerId={data.enrolmentId || data.learnerId}
-            plan={dashboardPlan}
-            programmeStartDate={data.programmeStartDate}
-            programmeEndDate={data.programmeEndDate}
-            learningActivity={data.learningActivity}
-            learnerDetail={data.detail}
-            canOpenActivities
-            showRewards={false}
-            timelineOnly
-          /> : null}
+        return session ? <CaseFileLearningPlanTab /> : <div className="space-y-5">
+          {dashboardKind ? <DashboardTrainingPlan kind={dashboardKind} learnerId={data.enrolmentId || data.learnerId}
+            plan={dashboardPlan} programmeStartDate={data.programmeStartDate} programmeEndDate={data.programmeEndDate}
+            learningActivity={data.learningActivity} learnerDetail={data.detail} canOpenActivities={false} showRewards={false} timelineOnly /> : null}
           <LearningPlanTab data={data} ksbSummary={headerKsb || undefined} onOpenNotes={() => setActiveTab('coach-notes')} />
         </div>;
       case 'otjh':

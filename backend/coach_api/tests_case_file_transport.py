@@ -28,9 +28,14 @@ class CaseFileTransportTests(SimpleTestCase):
 
     def test_unknown_or_other_coach_learner_never_calls_underlying_reader(self):
         context = MagicMock(profile=None)
-        with patch('coach_api.case_file.CaseFileContext', return_value=context):
-            response = unwrap(case_file_section)(self.request('/'), 101, section='attendance')
-        self.assertEqual(response.status_code, 404)
+        for section in ('attendance', 'otjh-ksb', 'ksb-search', 'ksb-detail'):
+            with self.subTest(section=section), patch('coach_api.case_file.CaseFileContext', return_value=context), \
+                 patch('coach_api.otjh_ksb.read_otjh_ksb') as projection, \
+                 patch('coach_api.otjh_ksb.search_ksb_activities') as search:
+                response = unwrap(case_file_section)(self.request('/'), 101, section=section)
+            self.assertEqual(response.status_code, 404)
+            projection.assert_not_called()
+            search.assert_not_called()
         context.learner_read.assert_not_called()
 
     def test_historical_assessments_keep_coach_and_pilot_scope(self):
@@ -123,17 +128,13 @@ class CaseFileTransportTests(SimpleTestCase):
         self.assertEqual(module['effectiveEndDate'], '2026-10-12')
         self.assertEqual(module['curriculumSlots'], [{'date': '2026-10-12'}])
 
-    def test_ksb_summary_keeps_authoritative_status_and_names_without_evidence(self):
+    def test_otjh_section_rejects_legacy_overfetch_resources(self):
         context = MagicMock(profile=SimpleNamespace(id=101, enrolment_id=201))
-        payload = {'source': 'progress', 'achievedKsbs': 1, 'rows': [{'code': 'K1', 'description': 'Knowledge', 'category': 'Knowledge', 'completed': 1, 'status': 'Achieved', 'components': [{'name': 'Synthetic component', 'status': 'completed', 'achieved': True, 'source': 'Progress'}]}]}
-        with patch('coach_api.case_file.CaseFileContext', return_value=context), patch('learner_api.aptem_ksb_breakdown.read_learner_breakdown', return_value=payload):
-            response = unwrap(case_file_section)(self.request('/?resource=breakdown'), 101, section='otjh-ksb')
-        result = json.loads(response.content)
-        self.assertEqual(result['achievedKsbs'], 1)
-        self.assertEqual(result['rows'][0]['completed'], 1)
-        self.assertEqual(result['rows'][0]['status'], 'Achieved')
-        self.assertEqual(result['rows'][0]['activityNames'], ['Synthetic component'])
-        self.assertEqual(result['rows'][0]['components'], [])
+        for resource in ('breakdown', 'schedule', 'week', 'hours', 'metrics'):
+            with self.subTest(resource=resource), patch('coach_api.case_file.CaseFileContext', return_value=context):
+                response = unwrap(case_file_section)(self.request('/?resource=' + resource), 101, section='otjh-ksb')
+            self.assertEqual(response.status_code, 400)
+        context.learner_read.assert_not_called()
 
     def test_header_preserves_learner_metrics_perspective_without_evidence_points(self):
         context = MagicMock(profile=SimpleNamespace(id=101, enrolment_id=201, learner_type='apprenticeship'))
@@ -178,7 +179,7 @@ class CaseFileTransportTests(SimpleTestCase):
         read.assert_not_called()
 
     def test_unauthenticated_semantic_endpoints_are_rejected(self):
-        for section in ('profile', 'header-summary', 'attendance', 'reviews', 'ksbs/K1'):
+        for section in ('profile', 'header-summary', 'attendance', 'reviews', 'otjh-ksb', 'ksb-search', 'ksbs/K1'):
             with self.subTest(section=section):
                 response = self.client.get(f'/coach_api/coach/case-file/101/{section}')
                 self.assertIn(response.status_code, (401, 403))
@@ -192,15 +193,15 @@ class CaseFileAggregationTests(SimpleTestCase):
         context.parallel.return_value = {
             'learning': ({'programme': {'completed': 1, 'total': 2, 'percent': 50}, 'otjh': {'actual': 12, 'planned': 100}, 'ksb': {'completed': 1, 'total': 4, 'percent': 25, 'points': ['private']}}, None),
             'attendance': {'present': 1, 'sessions': 2, 'sessionHistory': ['private']},
-            'week': {'planSubjects': [
-                {'id': 'legacy:1', 'source': 'legacy', 'title': 'Old', 'total': 2, 'completed': 1, 'dates': [], 'directHours': None},
-                {'id': 'current:M1', 'source': 'current', 'title': 'New', 'total': 2, 'completed': 2, 'dates': [], 'directHours': 3},
-            ]},
+            'progress': [
+                {'id': 'legacy:1', 'source': 'legacy', 'title': 'Old', 'total': 2, 'completed': 1, 'percent': 50, 'dates': [], 'directHours': None},
+                {'id': 'current:M1', 'source': 'current', 'title': 'New', 'total': 2, 'completed': 2, 'percent': 100, 'dates': [], 'directHours': 3},
+            ],
             'schedule': {'moduleLinks': {'legacy:1': {'id': 'M1', 'title': 'Verified title'}}, 'modules': [], 'sessions': [], 'actual': [], 'reviews': ['private']},
         }
         result = build_overview(context)
         self.assertEqual(set(result), {'wholeProgrammeProgress', 'programmeProgress'})
-        self.assertEqual(result['programmeProgress'], [{'id': 'current:M1', 'title': 'New', 'percent': 100}, {'id': 'legacy:1', 'title': 'Old', 'percent': 50}])
+        self.assertEqual(result['programmeProgress'], [{'id': 'legacy:1', 'title': 'Old', 'percent': 50}, {'id': 'current:M1', 'title': 'New', 'percent': 100}])
         self.assertNotIn('points', result['wholeProgrammeProgress']['ksb'])
         self.assertEqual(result['wholeProgrammeProgress']['attendance'], {'present': 1, 'sessions': 2, 'percent': 50})
         whole = result['wholeProgrammeProgress']

@@ -44,8 +44,10 @@ function MonthTooltip({ row, id }: { row: MonthlyHours; id: string }) {
   </div>;
 }
 
-export function OtjHoursChart({ data, programmeStartMonth, programmeEndMonth, targetAsOfToday }: {
-  data: MonthlyHoursSource;
+export function OtjHoursChart({ data, points, plannedHours, programmeStartMonth, programmeEndMonth, targetAsOfToday }: {
+  data?: MonthlyHoursSource;
+  points?: MonthlyHours[];
+  plannedHours?: number | null;
   programmeStartMonth?: string;
   programmeEndMonth?: string;
   targetAsOfToday?: number | null;
@@ -55,7 +57,7 @@ export function OtjHoursChart({ data, programmeStartMonth, programmeEndMonth, ta
   const [activeMonth, setActiveMonth] = useState('');
   const monthlyScrollRef = useRef<HTMLDivElement>(null);
   const monthlyPan = useRef<{ pointerId: number; x: number; left: number } | null>(null);
-  const months = monthlyHours(data, programmeStartMonth, programmeEndMonth);
+  const months = points ?? (data ? monthlyHours(data, programmeStartMonth, programmeEndMonth) : []);
   const active = months.find(row => row.key === activeMonth);
   const activeIndex = Math.max(0, months.findIndex(row => row.key === activeMonth));
   const scale = scaleFor(months);
@@ -68,8 +70,9 @@ export function OtjHoursChart({ data, programmeStartMonth, programmeEndMonth, ta
   const progressTarget = targetAsOfToday != null && Number.isFinite(targetAsOfToday) && targetAsOfToday > 0
     ? targetAsOfToday : expectedTarget;
   const monthlyPlanned = months.length ? months.reduce((sum, row) => sum + (row.target ?? 0), 0) : null;
-  const plannedTarget = data.requiredOtjh != null && Number.isFinite(data.requiredOtjh) && data.requiredOtjh > 0
-    ? data.requiredOtjh : monthlyPlanned && monthlyPlanned > 0 ? monthlyPlanned : progressTarget;
+  const requiredOtjh = plannedHours ?? data?.requiredOtjh;
+  const plannedTarget = requiredOtjh != null && Number.isFinite(requiredOtjh) && requiredOtjh > 0
+    ? requiredOtjh : monthlyPlanned && monthlyPlanned > 0 ? monthlyPlanned : progressTarget;
   const overallPercent = ratio(totalCompleted, plannedTarget);
   const targetPosition = ratio(progressTarget, plannedTarget);
   const overallVariance = progressTarget == null || totalCompleted == null ? null : totalCompleted - progressTarget;

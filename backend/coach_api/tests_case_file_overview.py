@@ -24,11 +24,31 @@ class CaseFileOverviewTests(SimpleTestCase):
                    'otjh': {'actual': actual, 'planned': planned, 'new': 0, 'historical': actual, 'completed_actual': actual},
                    'ksb': {'completed': 1, 'total': 4, 'percent': 25, 'historicalCompleted': 1}}
         with patch('coach_api.case_file.read_overview_learning', return_value=(metrics, activity)), \
-             patch('learner_api.overview_week.read_overview_subjects', return_value=subjects or []), \
+             patch('learner_api.module_progress.canonical_module_progress', return_value=self.shared_rows(subjects or [], activity)), \
              patch('coach_api.views.timezone.localdate', return_value=today):
             result = build_overview(context)
         context.payload.assert_called_once_with('summary')
         return result
+
+    @staticmethod
+    def shared_rows(subjects, activity):
+        from learner_api.module_progress import aggregate_module_progress
+        detail = {'components': [], 'quizAttempts': []}
+        progress = []
+        historical = {'subjects': [], 'activities': []}
+        for row in (activity or {}).get('subjects', []):
+            historical['subjects'].append(row)
+            historical['activities'].extend({'group_id': row['id'], 'activity_id': f"A{i}",
+                'completed': i < row['completed']} for i in range(row['total']))
+        for row in subjects:
+            module_id = row['id'][8:]
+            for i in range(row['total']):
+                component_id = f"{module_id}:{i}"
+                detail['components'].append({'moduleId': module_id, 'module': row['title'], 'componentId': component_id})
+                if i < row['completed']:
+                    progress.append({'kind': 'component', 'passed': None, 'component_ref': component_id})
+        return aggregate_module_progress(historical, detail,
+            [{'id': row['id'][8:], 'title': row['title']} for row in subjects], progress)
 
     def test_mid_programme_uses_paced_target_not_full_planned_hours(self):
         whole = self.render()['wholeProgrammeProgress']
@@ -54,16 +74,79 @@ class CaseFileOverviewTests(SimpleTestCase):
                 self.assertEqual(hours['planned'], planned)
 
     def test_historical_records_deduplicate_and_suppress_only_mapped_native_module(self):
-        activity = {'progress_basis': 'recorded_activities',
-                    'subjects': [{'id': 1, 'name': 'Recorded', 'module_id': 'M1'}],
-                    'activities': [{'activity_id': 'r1', 'group_id': 1, 'completed': False},
-                                   {'activity_id': 'r1', 'group_id': 1, 'completed': True},
-                                   {'activity_id': 'r2', 'group_id': 1, 'completed': False}]}
+        activity = {'progress_basis': 'catalogue_activities',
+                    'subjects': [{'id': 1, 'name': 'Recorded', 'module_id': 'M1', 'total': 4, 'completed': 1},
+                                 {'id': 2, 'name': 'Unstarted', 'module_id': 'M3', 'total': 3, 'completed': 0}]}
         subjects = [{'id': 'current:M1', 'title': 'Mapped', 'total': 3, 'completed': 3},
                     {'id': 'current:M2', 'title': 'Native', 'total': 3, 'completed': 1}]
         rows = self.render(subjects=subjects, activity=activity)['programmeProgress']
-        self.assertEqual(rows, [{'id': 'legacy:1', 'title': 'Recorded', 'percent': 50},
-                                {'id': 'current:M2', 'title': 'Native', 'percent': 33.33}])
+        self.assertEqual(rows, [{'id': 'current:M2', 'title': 'Native', 'percent': 33.33},
+                                {'id': 'legacy:1', 'title': 'Recorded', 'percent': 25},
+                                {'id': 'legacy:2', 'title': 'Unstarted', 'percent': 0}])
+        self.assertTrue(all(set(row) == {'id', 'title', 'percent'} for row in rows))
+        self.assertEqual(self.render(subjects=subjects, activity=activity)['wholeProgrammeProgress'],
+                         self.render(subjects=subjects)['wholeProgrammeProgress'])
+
+    def test_same_title_is_not_a_module_link(self):
+        activity = {'progress_basis': 'catalogue_activities', 'subjects': [
+            {'id': 1, 'name': 'Same title', 'module_id': 'M1', 'total': 4, 'completed': 1}]}
+        subjects = [{'id': 'current:M2', 'title': 'Same title', 'total': 2, 'completed': 0}]
+        self.assertEqual(self.render(subjects=subjects, activity=activity)['programmeProgress'], [
+            {'id': 'current:M2', 'title': 'Same title', 'percent': 0},
+            {'id': 'legacy:1', 'title': 'Same title', 'percent': 25}])
+
+    def test_native_dashboard_cards_include_retained_quizzes_and_require_a_pass(self):
+        from learner_api.module_progress import aggregate_module_progress
+        components = [
+            {'moduleId': 'M1', 'module': 'Same', 'componentId': 'C1'},
+            {'moduleId': 'M1', 'module': 'Same', 'componentId': 'C2'},
+            {'moduleId': 'M1', 'module': 'Same', 'componentId': 'Q1', 'isQuiz': True,
+             'quizMeta': {'quizId': 11}},
+            {'moduleId': 'M2', 'module': 'Same', 'componentId': 'C3'},
+        ]
+        detail = {'components': components + [components[0]],
+                  'retiredQuizComponents': [{'moduleId': 'M1', 'module': 'Same', 'componentId': 'old',
+                                            'isQuiz': True, 'quizMeta': {'quizId': 10}}],
+                  'quizAttempts': [{'quizId': 11, 'passed': False},
+                                   {'quizId': 10, 'passed': True}, {'quizId': 10, 'passed': False}]}
+        progress = [{'kind': 'component', 'component_ref': 'C1', 'passed': None},
+                    {'kind': 'component', 'component_ref': 'C2', 'passed': False}]
+        subjects = aggregate_module_progress(None, detail, [{'id': 'M1', 'title': 'Same'},
+                                                  {'id': 'M2', 'title': 'Same'}], progress)
+        self.assertEqual(subjects, [{'id': 'current:M1', 'title': 'Same', 'total': 4, 'completed': 2, 'percent': 50},
+                                    {'id': 'current:M2', 'title': 'Same', 'total': 1, 'completed': 0, 'percent': 0}])
+        self.assertEqual([row['percent'] for row in self.render(subjects=subjects)['programmeProgress']], [50, 0])
+
+    def test_native_module_identity_cannot_fall_back_to_title(self):
+        from learner_api.module_progress import aggregate_module_progress
+        from old_otjh.service import ServiceError
+        with self.assertRaises(ServiceError):
+            aggregate_module_progress(None, {'components': [{'module': 'Same', 'componentId': 'C1'}],
+                                   'quizAttempts': []}, [{'id': 'M1', 'title': 'Same'}], [])
+
+    def test_native_reader_reuses_student_plan_and_retained_quiz_helpers(self):
+        from learner_api.module_progress import read_native_progress
+        profile = MagicMock()
+        profile.progress_entries.using.return_value.exclude.return_value.values.return_value = []
+        source = SimpleNamespace(pk=201, programme='Synthetic')
+        components = [{'moduleId': 'M1', 'module': 'Module', 'componentId': 'C1'}]
+        connection = MagicMock()
+        with patch('learner_api.learning_plan.effective_training_plan', return_value=[{'moduleId': 'M1'}]), \
+             patch('learner_api.mappers.get_training_plan', return_value=[]), \
+             patch('learner_api.mappers.flatten_training_plan', return_value=([], [], [])), \
+             patch('learner_api.learner_detail._resolve_from_master', return_value=(['Module'], [], components)) as resolve, \
+             patch('learner_api.learner_detail._apply_programme_assignment_template', return_value=components), \
+             patch('learner_api.learner_detail._append_week_quizzes', return_value=([], components)) as quizzes, \
+             patch('learner_api.retained_quiz_progress.retain_quiz_progress') as retain, \
+             patch('learner_api.student_activity._builder_subject_metadata', return_value=({}, {})), \
+             patch('learner_api.student_activity._effective_current_subjects', return_value=[{'id': 'M1', 'title': 'Module'}]), \
+             patch('django.db.connections', {'enrolment': connection}), \
+             patch('learner_api.learner_detail.build_learner_detail', side_effect=AssertionError('must not invoke repair writes')):
+            result = read_native_progress(source, profile)
+        resolve.assert_called_once_with([], [], [], assigned_modules=[{'moduleId': 'M1'}], compact=True)
+        quizzes.assert_called_once()
+        retain.assert_called_once()
+        self.assertEqual(result[:3], ({'components': components, 'quizAttempts': []}, [{'id': 'M1', 'title': 'Module'}], []))
 
     def test_verified_subject_merge_rule_is_unchanged(self):
         subjects = [{'id': 'legacy:1', 'source': 'legacy', 'title': 'Old', 'total': 2, 'completed': 1},
@@ -82,7 +165,7 @@ class CaseFileOverviewTests(SimpleTestCase):
              patch.object(canonical_learning, 'source_subjects', return_value={}) as subjects:
             metrics, _activity = read_overview_learning(context)
         load.assert_called_once_with(owner, overview_only=True)
-        subjects.assert_called_once_with(201, None, owner=owner, records=records, overview_only=True)
+        subjects.assert_not_called()
         self.assertEqual(metrics['programme']['completed'], 2)
         self.assertEqual(metrics['programme']['total'], 2)
         self.assertEqual(metrics['otjh']['actual'], 1)

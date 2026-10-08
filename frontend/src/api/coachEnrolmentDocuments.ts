@@ -1,7 +1,7 @@
 // ============================================================================
 // Coach case file — Enrolment Documents
 // The learner's enrolment review documents, which the coach views, downloads
-// and signs (college sign-off) with their saved signature. The server only
+// as a read-only viewer. The server only
 // answers for a learner on the signed-in coach's caseload
 // (backend/coach_api/enrolment_documents.py).
 // ============================================================================
@@ -10,14 +10,12 @@ import type { ReviewDocument, ReviewFormResponse } from '@/api/reviewForm';
 
 export interface CoachEnrolmentDocumentsResponse {
   documents: ReviewDocument[];
-  /** Whether the coach has a saved signature to sign with. */
-  signature: { saved: boolean; name: string };
 }
 
-async function send<T>(url: string, init?: globalThis.RequestInit): Promise<T> {
+async function send<T>(url: string): Promise<T> {
   let res: Response;
   try {
-    res = await coachFetch(url, { ...init, headers: { 'Content-Type': 'application/json', ...(init?.headers || {}) } });
+    res = await coachFetch(url, { method: 'GET' });
   } catch {
     throw new Error('Could not reach the server.');
   }
@@ -43,9 +41,4 @@ export function fetchCoachEnrolmentDocuments(learnerId: string): Promise<CoachEn
 
 export function fetchCoachEnrolmentDocument(learnerId: string, eventKey: string): Promise<ReviewFormResponse> {
   return send(`${base(learnerId)}/${encodeURIComponent(eventKey)}`);
-}
-
-/** Sign the college sign-off with the coach's saved signature. */
-export function signCoachEnrolmentDocument(learnerId: string, eventKey: string): Promise<ReviewFormResponse> {
-  return send(`${base(learnerId)}/${encodeURIComponent(eventKey)}/sign`, { method: 'POST', body: '{}' });
 }
