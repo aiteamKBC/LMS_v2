@@ -559,6 +559,26 @@ class WeekMeetingEditTests(unittest.TestCase):
         self.delivery.send_week_meeting_change_emails.assert_not_called()
         self.assertEqual(self.delivery.send_week_meeting_emails.call_args.kwargs['added'], ['new@example.invalid'])
 
+    def test_a_people_only_edit_sends_no_meeting_options(self):
+        options = Mock(return_value=(True, {}, []))
+        sys.modules['curriculum_api.views'].apply_teams_meeting_options = options
+        result = self.edit(attendees=['one@example.invalid', 'gone@example.invalid', 'new@example.invalid'])
+        self.assertEqual(result.status_code, 200, getattr(result, 'message', result))
+        options.assert_not_called()
+        self.assertEqual(self.forwards, [['new@example.invalid']])
+
+    def test_a_refused_options_write_does_not_stop_the_additional_meeting_edit(self):
+        options = Mock(return_value=(False, {}, [{'code': 'teams_meeting_options_not_applied', 'groups': ['settings'],
+                                                  'message': 'The Teams meeting exists, but Microsoft Graph did not apply its lobby options.',
+                                                  'detail': 'HTTP 403'}]))
+        sys.modules['curriculum_api.views'].apply_teams_meeting_options = options
+        result = self.edit(lobbyBypass='everyone', attendees=['one@example.invalid', 'gone@example.invalid', 'new@example.invalid'])
+        self.assertEqual(result.status_code, 200, getattr(result, 'message', result))
+        self.assertEqual(options.call_args.kwargs['groups'], {'settings'})
+        # The person added is still reached, and only through the additional event.
+        self.assertEqual(self.forwards, [['new@example.invalid']])
+        self.assertFalse([call for call in self.calls if call[0] == 'DELETE' or call[1].endswith('/cancel')])
+
     def test_a_removed_guest_is_taken_off_silently_before_the_announcement(self):
         result = self.edit(startDateTimeUtc=(self.START + timedelta(days=1)).isoformat(), notifyAttendees=True,
                            attendees=['one@example.invalid'])

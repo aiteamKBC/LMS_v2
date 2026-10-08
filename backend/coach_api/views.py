@@ -6723,6 +6723,10 @@ def sync_calendar_event_to_graph(record: CoachCalendarEvent, base_event: dict) -
     payload = build_graph_event_payload(record, base_event)
     organizer_mailbox = graph_organizer_mailbox(record, base_event)
     owner_key = urllib_parse.quote(organizer_mailbox, safe="")
+    # The meeting this booking already had, if any. A reschedule PATCHes only
+    # subject/start/end, and Microsoft keeps the same onlineMeeting for it.
+    previous_event_id = clean_text(record.graph_event_id)
+    previous_join_url = clean_text(record.meeting_link)
     try:
         if clean_text(record.graph_event_id):
             # Preserve the existing Teams body and attendee list on reschedule.
@@ -6778,11 +6782,16 @@ def sync_calendar_event_to_graph(record: CoachCalendarEvent, base_event: dict) -
 
     # The booking is already saved and invited by this point. These options are
     # the difference between a session that records and transcribes itself and one
-    # that opens with nothing running, so they are applied on every sync -- Graph
-    # hands out a new online meeting whenever the event gets one, at the tenant
-    # defaults. A deployment without OnlineMeetings.ReadWrite.All and an
-    # application access policy is logged, not surfaced: the meeting itself works.
-    if response_join_url:
+    # that opens with nothing running. Graph hands out a new online meeting, at the
+    # tenant defaults, whenever an event gets one -- so they are applied to a new
+    # meeting, or when Microsoft returns a different join link. A reschedule of the
+    # same meeting sends no options PATCH: it changed none of them, and re-sending
+    # them only turned an intermittent organiser 403 into a warning on a booking
+    # that had worked (reapply_coach_teams_lobby repairs older meetings on demand).
+    # A deployment without OnlineMeetings.ReadWrite.All and an application access
+    # policy is logged, not surfaced: the meeting itself works.
+    new_online_meeting = not previous_event_id or response_join_url != previous_join_url
+    if response_join_url and new_online_meeting:
         applied, _meeting, option_warnings = apply_teams_meeting_options(
             organizer_mailbox,
             response_join_url,

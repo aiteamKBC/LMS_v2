@@ -163,6 +163,17 @@ def save_weekday_calendar(payload, graph_settings, series=None):
     live_id = v.clean_str(series.get('id'))
     manifest = list(existing)
     warnings, settings_applied = [], True
+    # The onlineMeeting options are their own operation (see
+    # teams_meeting_options_policy): sent per day only for the groups that
+    # changed, were left unapplied, or for a day Microsoft just created; a
+    # refusal is reported and never blocks the invitations or the dates.
+    from .teams_meeting_options_policy import (NOT_APPLIED, json_list, option_groups_to_apply, pending_option_groups,
+                                              pending_warning, remaining_pending, reported_failure,
+                                              stored_options as saved_meeting_options)
+    stored_options = saved_meeting_options(series, 'invited')
+    saved_warnings = json_list(series.get('warnings'))
+    pending_options = pending_option_groups(saved_warnings)
+    option_failures, attempted_groups = [], set()
     first_event = None
     tracked_numbers = set()
     publish_queue = []
@@ -275,16 +286,40 @@ def save_weekday_calendar(payload, graph_settings, series=None):
             v.update_authoring_rows(v.LIVE_SESSIONS_TABLE, 'id = %s', [live_id], {'calendar_series': v.json_db_value(manifest)})
             if first_event is None:
                 first_event = event
-            applied, meeting, option_warnings = v.apply_teams_meeting_options(
-                organizer, join_url, recording=combined.get('recording') or 'none',
-                lobby_bypass=combined.get('lobbyBypass') or v.DEFAULT_TEAMS_LOBBY_BYPASS, spoken_language=combined.get('spokenLanguage') or 'en-GB',
-                attendees=invited_people, presenters=presenters, co_organizers=co_organizers,
-                online_meeting_id=previous.get('onlineMeetingId'),
+            fresh_meeting = (not previous.get('onlineMeetingId') or not previous.get('joinUrl')
+                             or str(previous.get('joinUrl') or '').strip() != join_url)
+            day_groups = option_groups_to_apply(
+                stored_options,
+                {'recording': combined.get('recording') or 'none',
+                 'lobby_bypass': combined.get('lobbyBypass') or v.DEFAULT_TEAMS_LOBBY_BYPASS,
+                 'spoken_language': combined.get('spokenLanguage') or 'en-GB',
+                 'presenters': presenters, 'co_organizers': co_organizers},
+                pending_options,
+                new_meeting=fresh_meeting and not people_only,
+                retry_pending=not people_only,
             )
+            attempted_groups |= day_groups
+            applied, meeting, option_warnings = True, {}, []
+            if day_groups:
+                applied, meeting, option_warnings = v.apply_teams_meeting_options(
+                    organizer, join_url, recording=combined.get('recording') or 'none',
+                    lobby_bypass=combined.get('lobbyBypass') or v.DEFAULT_TEAMS_LOBBY_BYPASS, spoken_language=combined.get('spokenLanguage') or 'en-GB',
+                    attendees=invited_people, presenters=presenters, co_organizers=co_organizers,
+                    online_meeting_id=previous.get('onlineMeetingId'), groups=day_groups, live_session_id=live_id,
+                )
+                if not applied and not option_warnings:
+                    option_warnings = [{'code': NOT_APPLIED, 'groups': sorted(day_groups),
+                                        'message': 'Microsoft did not apply this meeting\u2019s options.', 'detail': ''}]
             settings_applied = settings_applied and applied
             entry['onlineMeetingId'] = v.clean_str(meeting.get('id')) or v.clean_str(previous.get('onlineMeetingId'))
-            entry['meetingOptionsUrl'] = v.clean_str(meeting.get('meetingOptionsWebUrl'))
-            warnings.extend(option_warnings)
+            entry['meetingOptionsUrl'] = (v.clean_str(meeting.get('meetingOptionsWebUrl'))
+                                          or v.clean_str(previous.get('meetingOptionsUrl')))
+            if fresh_meeting and option_warnings:
+                # A meeting this save just created: nobody is invited to it
+                # while its lobby and roles are still the tenant defaults.
+                warnings.extend(option_warnings)
+            else:
+                option_failures.extend(option_warnings)
             if day_payload['repeat'] != 'none':
                 if not combined.get('peopleOnly') and not dates_already_verified:
                     # The third value is the occurrences the shift PROVED removable:
@@ -341,8 +376,8 @@ def save_weekday_calendar(payload, graph_settings, series=None):
             day_changed = not dates_already_verified or not same_schedule(day_before, targets_snapshot(targets))
             publish_queue.append((checked, body['attendees'], targets, day_payload['repeat'] != 'none', day, day_changed))
 
-        if warnings or not settings_applied:
-            raise RuntimeError('Microsoft did not accept every reviewed session or meeting option. New invitations remain pending.')
+        if warnings:
+            raise RuntimeError('Microsoft did not accept every reviewed session. New invitations remain pending.')
         # Every weekday must pass before any new invitation list is published.
         # The list itself is always published: who is on a meeting is not the
         # author's email choice to make. Only whether Microsoft announces it is.
@@ -416,6 +451,17 @@ def save_weekday_calendar(payload, graph_settings, series=None):
                 'updated_at': datetime.utcnow(),
             })
 
+        failed_groups = {group for item in option_failures for group in (item.get('groups') or attempted_groups)}
+        still_pending = remaining_pending(pending_options, attempted_groups, failed_groups)
+        previous_pending = next((item for item in saved_warnings
+                                 if isinstance(item, dict) and item.get('code') == NOT_APPLIED), None)
+        requested_settings = ({'recording': combined.get('recording') or 'none',
+                               'lobby_bypass': combined.get('lobbyBypass') or v.DEFAULT_TEAMS_LOBBY_BYPASS,
+                               'spoken_language': combined.get('spokenLanguage') or 'en-GB'}
+                              if 'settings' in failed_groups else (previous_pending or {}).get('requested'))
+        stored_option_warnings = ([pending_warning(still_pending, (option_failures or [previous_pending])[0],
+                                                   requested_settings)]
+                                  if still_pending else [])
         days = {day for day, _ in groups}
         for old in list(manifest):
             if old['day'] not in days:
@@ -442,10 +488,13 @@ def save_weekday_calendar(payload, graph_settings, series=None):
             'duration_minutes': combined.get('durationMinutes') or 60, 'repeat_pattern': 'weekly',
             'repeat_occurrences': len(requested_numbers), 'module_title': v.teams_calendar_subject(combined, series),
             'attendees': v.json_db_value(stored_attendees), 'presenters': v.json_db_value(presenters), 'co_organizers': v.json_db_value(co_organizers),
-            'recording': combined.get('recording') or 'none',
-            'lobby_bypass': combined.get('lobbyBypass') or v.DEFAULT_TEAMS_LOBBY_BYPASS,
-            'spoken_language': combined.get('spokenLanguage') or 'en-GB',
-            'warnings': v.json_db_value(warnings), 'updated_at': datetime.utcnow(),
+            # A refused settings change is not saved as if Microsoft had taken it.
+            **({'recording': stored_options['recording'], 'lobby_bypass': stored_options['lobby_bypass'],
+                'spoken_language': stored_options['spoken_language']} if 'settings' in failed_groups and series else {
+                'recording': combined.get('recording') or 'none',
+                'lobby_bypass': combined.get('lobbyBypass') or v.DEFAULT_TEAMS_LOBBY_BYPASS,
+                'spoken_language': combined.get('spokenLanguage') or 'en-GB'}),
+            'warnings': v.json_db_value([*warnings, *stored_option_warnings]), 'updated_at': datetime.utcnow(),
             'hide_attendees': True,
         })
         module_id = combined.get('moduleCatalogueId')
@@ -466,8 +515,12 @@ def save_weekday_calendar(payload, graph_settings, series=None):
                 # Claimed but never reached: a retry may announce that day.
                 finish_announcement(live_id, change_id, f'day-{day}', 'failed')
         if live_id:
+            # This failed save wrote no options: keep the unapplied-options marker.
+            unapplied = set(pending_options) | {group for item in option_failures
+                                                for group in (item.get('groups') or attempted_groups)}
             v.update_authoring_rows(v.LIVE_SESSIONS_TABLE, 'id = %s', [live_id], {
-                'warnings': v.json_db_value([*warnings, {'code': 'teams_calendar_unverified', 'message': str(exc)}]),
+                'warnings': v.json_db_value([*warnings, {'code': 'teams_calendar_unverified', 'message': str(exc)},
+                                             *([pending_warning(unapplied, (option_failures or [{}])[0])] if unapplied else [])]),
                 'updated_at': datetime.utcnow(),
             })
         return v.json_error('Teams could not finish every weekday series. Update this calendar to retry the remaining work.',
@@ -487,13 +540,19 @@ def save_weekday_calendar(payload, graph_settings, series=None):
         leftover_slots.extend(checked.get('unplannedInstances') or [])
     # One entry per Microsoft event, however many checks noticed it.
     leftover_slots = list({slot.get('eventId') or str(index): slot for index, slot in enumerate(leftover_slots)}.values())
+    # The onlineMeeting options, reported apart from the invitations and dates.
+    option_result = {'optionGroupsSent': sorted(attempted_groups), 'optionsApplied': not option_failures,
+                     'optionsPending': sorted(still_pending), 'partial': bool(option_failures)}
     if not series:
-        return JsonResponse({'created': True, 'meeting': meeting_result, 'warnings': [item.get('message') or str(item) for item in warnings],
+        return JsonResponse({'created': True, 'meeting': meeting_result, **option_result,
+                             'warnings': [item.get('message') or str(item) for item in [*warnings, *option_failures]],
                              'leftoverSlots': leftover_slots}, status=201)
     changed_days = [entry[4] for entry in publish_queue if entry[5]]
     attempted = [day for day, state in claims.items() if state == 'attempted']
     return JsonResponse({
-        'updated': True, 'meeting': meeting_result, 'warnings': warnings, 'leftoverSlots': leftover_slots,
+        'updated': True, 'meeting': meeting_result, 'warnings': [*warnings, *[reported_failure(item) for item in option_failures]],
+        **option_result,
+        'leftoverSlots': leftover_slots,
         # The same result fields as a shared series: whether a date change was
         # announced, and what Microsoft was asked ('sent', 'already_attempted',
         # 'silent', 'not_needed'). The LMS change email follows `announced`.
