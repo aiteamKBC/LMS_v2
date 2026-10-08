@@ -639,6 +639,7 @@ def content(item, owner=None, record=None):
 
 def source_subjects(learner_id, summarize):
     """Every component of an owned course, overlaid with the learner's progress."""
+    from learner_api.course_catalogue_display import read_export_placements, catalogue_display_context
     owner = profile(learner_id)
     if owner is None:
         raise ServiceError('The consolidated learner identity needs review.', 'identity_review_required', 409)
@@ -650,12 +651,19 @@ def source_subjects(learner_id, summarize):
         ORDER BY c.source_course_title,c.id''', [owner['id']])
     catalogue = query('''SELECT a.id,a.source_course_id,a.source_activity_id,a.source_activity_kind,
         a.source_activity_title,a.source_activity_type,a.source_section_title,a.curriculum_component_ref,
-        c.source_course_ref,c.source_course_title,c.curriculum_module_ref,a.source_position AS position
+        c.source_course_ref,c.source_course_title,c.curriculum_module_ref,a.source_position AS position,
+        jsonb_build_object('quiz_id',a.source_payload->'quiz_id',
+            'activity_id',a.source_payload->'activity_id','parent_activity_id',a.source_payload->'parent_activity_id',
+            'section_title',a.source_payload->'section_title') AS source_payload,
+        EXISTS (SELECT 1 FROM curriculum.source_materials m
+            WHERE m.material_id=a.source_material_id AND m.source_system=a.source_system
+              AND m.deleted_at IS NULL) AS material_available
         FROM curriculum.source_activities a
         JOIN curriculum.source_courses c ON c.id=a.source_course_id AND c.deleted_at IS NULL
         WHERE a.source_course_id=ANY(%s) AND a.deleted_at IS NULL
           AND a.source_system='old_lms'
         ORDER BY c.id,a.source_position NULLS LAST,a.id''', [[c['id'] for c in courses]]) if courses else []
+    catalogue = catalogue_display_context(catalogue, read_export_placements(query, courses))
     records = entries_for(owner)
     items, subjects, links = recorded_course_items(courses, catalogue, records, include_catalogue=True)
     result = {'source': 'canonical', 'source_status': 'historical',
@@ -818,6 +826,7 @@ def recorded_course_items(courses, catalogue, records, *, include_catalogue=Fals
 
 def catalogue_items_with_progress(definitions, recorded):
     """Keep one stable card per catalogue component, including unstarted work."""
+    from learner_api.course_catalogue_display import apply_catalogue_display
     items = {}
     for definition in definitions:
         course = str(definition['source_course_ref'])
@@ -850,7 +859,7 @@ def catalogue_items_with_progress(definitions, recorded):
             item['quiz_score'], item['quiz_maximum_score'] = score, maximum
         if item['completed']:
             item['status'] = 'Completed'
-    return list(items.values())
+    return apply_catalogue_display(list(items.values()), definitions)
 
 
 def ksb_point_definition(record, code):

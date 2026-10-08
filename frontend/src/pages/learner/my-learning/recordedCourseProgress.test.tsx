@@ -1,9 +1,17 @@
 import { fireEvent, render, screen, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import * as api from '@/api/studentActivity';
+import { subjectWeeks } from './subjectLearning';
+import { groupSubjectActivities } from './SubjectWorkspace';
 import type { LearnerDetail } from '@/api/learnerDetail';
 import type { StudentActivityItem, StudentActivityResponse } from '@/api/studentActivity';
 import { buildUnifiedLearningSummary, StudentActivityPanel, subjectsFrom } from './SubjectWorkspace';
+
+vi.mock('./DeferredStudentMaterial', () => ({
+  DeferredStudentMaterial: ({ groupId, activityId }: { groupId: number; activityId: number }) =>
+    <div>Source material {groupId}/{activityId}</div>,
+}));
 
 const activity = (course: number, kind: string, id: number): StudentActivityItem => ({
   activity_id: `record:${course}:${id}`, source_activity_id: 10, group_id: course,
@@ -38,6 +46,38 @@ const catalogueData: StudentActivityResponse = {
 };
 
 describe('full historical course catalogue', () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it('uses recovered source months and introduction consistently in the catalogue and map', () => {
+    const recovered = { ...catalogueData, activities: [
+      { ...pending(1, 10), month: 'undated', date_source: 'introduction' },
+      { ...pending(1, 20), month: '2026-03', date: '2026-03-06', date_source: 'section_title', week_start: '2026-03-02', week_end: '2026-03-08' },
+      { ...pending(1, 30), month: 'undated', date_needs_review: true },
+    ] };
+    const subject = subjectsFrom(recovered, null)[0];
+    expect(groupSubjectActivities(subject.activities).map(group => group.month)).toEqual(['introduction', '2026-03', 'undated']);
+    expect(subjectWeeks(subject).map(week => week.id)).toEqual(['introduction', '2026-03-02', 'undated']);
+    expect(subject.activities.every(item => !item.completed)).toBe(true);
+  });
+
+  it.each(['commercial', 'apprenticeship'])('links a recovered quiz source to the exact parent in its course (%s)', async kind => {
+    vi.spyOn(api, 'subjectRequest').mockResolvedValue({ covers: {} });
+    const recovered = { ...catalogueData, activities: catalogueData.activities.map(item => item.catalogue_kind === 'quiz' && item.group_id === 1
+      ? { ...item, completed: false, source_material_activity_id: 'catalogue:1:material:20' } : item) };
+    render(<MemoryRouter initialEntries={['/?activity=catalogue:1:quiz:10']}><StudentActivityPanel data={recovered}
+      kind={kind} learnerId="77" loading={false} error={null} onRetry={vi.fn()} /></MemoryRouter>);
+    const row = within(await screen.findByRole('group', { name: 'quiz 1 activity' }));
+    expect(row.getByRole('link', { name: 'View source material' })).toHaveAttribute('href',
+      `/learner/my-learning/${kind}/77?subject=legacy%3A1&activity=catalogue%3A1%3Amaterial%3A20`);
+    expect(row.queryByText('Content not available yet')).not.toBeInTheDocument();
+    expect(row.getByText('Not complete')).toBeVisible();
+    expect(row.queryByRole('button', { name: 'Open activity' })).not.toBeInTheDocument();
+    fireEvent.click(row.getByRole('link', { name: 'View source material' }));
+    expect(await screen.findByText('Source material 1/20')).toBeVisible();
+    expect(screen.queryByText('Source material 1/10')).not.toBeInTheDocument();
+    expect(screen.queryByText('Source material 2/20')).not.toBeInTheDocument();
+  });
+
   it('counts every component, preserving distinct quiz/material and course identities', () => {
     const result = buildUnifiedLearningSummary(catalogueData, null);
     expect(result.subjects.map(subject => subject.activities.length)).toEqual([3, 2, 1]);
