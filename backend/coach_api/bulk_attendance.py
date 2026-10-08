@@ -4,6 +4,7 @@ import json
 import logging
 
 from django.db import DatabaseError, transaction
+from django.db.models import Q
 from django.http import JsonResponse
 from django.views.decorators.http import require_http_methods
 
@@ -11,6 +12,8 @@ from curriculum_api.models import LiveSession, LiveSessionOccurrence, ModuleAuth
 from learner_api.attendance_lectures import attendance_read_contract, lecture_register
 from learner_api.attendance_rules import canonical_status
 from .auth import coach_access_required
+from .attendance_group import compact_recent
+from .attendance_sessions import assigned_module_ids
 from .validation import ValidationError
 from .models import CoachAttendanceSourceAdjustment
 
@@ -35,12 +38,16 @@ def context_profiles(owner, programme, group):
     return {str(row.id): row for row in profiles if str(row.id) in allowed}
 
 
-def delivery_occurrences(programme, group, occurrence_id=None, lock=False):
+def delivery_occurrences(programme, group, occurrence_id=None, lock=False, *, profiles=None, assigned_modules=None):
     # Use the same physical source as the canonical schedule, never default's
     # possibly separate database. Holding its locks until correction commit
     # serializes bulk writers and prevents cancellation during validation.
+    scope = {'group_id': group} if profiles is None else {}
     modules = ModuleAuthoringModule.objects.using('enrolment').filter(
-        programme_id=programme, group_id=group, deleted_at__isnull=True, is_programme_deleted=False)
+        programme_id=programme, deleted_at__isnull=True, is_programme_deleted=False, **scope)
+    if profiles is not None:
+        modules = modules.filter(Q(group_id=group) | Q(module_catalogue_id__in=(
+            assigned_module_ids(profiles) if assigned_modules is None else assigned_modules)))
     sessions = LiveSession.objects.using('enrolment').filter(module_catalogue_id__in=modules.values('module_catalogue_id'))
     occurrences = LiveSessionOccurrence.objects.using('enrolment').filter(live_session_id__in=sessions.values('id'))
     if occurrence_id:
@@ -73,6 +80,11 @@ def current_row(profile, occurrence_id, lock=False):
     query = CoachAttendanceSourceAdjustment.objects.filter(
         learner_id=profile.id, source='microsoft-teams', source_id=occurrence_id)
     adjustment = (query.select_for_update() if lock else query).first()
+    return row, adjustment, attendance_version(profile.id, occurrence_id, row, adjustment)
+
+
+def attendance_version(profile_id, occurrence_id, row, adjustment):
+    """Shared read/write token; the inputs and digest format remain unchanged."""
     # The register includes read-time calculated_at and display metadata. Neither
     # is an attendance revision. Hash only this learner/occurrence's state, after
     # canonical deduplication, plus its persisted correction state. Correction
@@ -83,7 +95,7 @@ def current_row(profile, occurrence_id, lock=False):
 
     raw_status = row.get('raw_attendance_status') or row.get('attendance_status')
     version_state = {
-        'learner_profile_id': str(profile.id), 'session_occurrence_id': str(occurrence_id),
+        'learner_profile_id': str(profile_id), 'session_occurrence_id': str(occurrence_id),
         'raw_status': state(raw_status),
         'effective_status': state(row.get('effective_attendance_status') or raw_status),
         'effective_attendance': row.get('effective_attendance'),
@@ -92,7 +104,7 @@ def current_row(profile, occurrence_id, lock=False):
         } if adjustment else None,
     }
     token = hashlib.sha256(json.dumps(version_state, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
-    return row, adjustment, token
+    return token
 
 
 def write_records(profiles, occurrence_id, records, owner):
@@ -146,7 +158,7 @@ def coach_bulk_attendance(request):
                 if occurrence_id:
                     raise BulkError('Learner context is outside your caseload or selected programme/group.', 403)
                 return JsonResponse({'sessions': [], 'learners': []})
-            occurrences = delivery_occurrences(programme, group, occurrence_id or None)
+            occurrences = delivery_occurrences(programme, group, occurrence_id or None, profiles=list(profiles.values()))
             if occurrence_id and not occurrences:
                 raise BulkError('Occurrence is invalid, cancelled or outside the selected group.', 409)
             if not occurrence_id:
@@ -179,9 +191,9 @@ def coach_bulk_attendance(request):
         if not occurrence_id or not isinstance(records, list) or not records or len(records) > 1000:
             raise BulkError('Select a session and supply between 1 and 1000 attendance records.')
         with transaction.atomic(using='enrolment'):
-            if not delivery_occurrences(programme, group, occurrence_id, lock=True):
-                raise BulkError('Occurrence is invalid, cancelled or outside the selected group.', 409)
             profiles = context_profiles(owner, programme, group)
+            if not delivery_occurrences(programme, group, occurrence_id, lock=True, profiles=list(profiles.values())):
+                raise BulkError('Occurrence is invalid, cancelled or outside the selected group.', 409)
             with transaction.atomic():
                 results = write_records(profiles, occurrence_id, records, owner)
                 for result in results:
@@ -191,7 +203,10 @@ def coach_bulk_attendance(request):
                                    if row['source'] == 'microsoft-teams' and row['sourceId'] == occurrence_id)
                     _, _, version = current_row(profile, occurrence_id)
                     result.update(status=session['status'], version=version,
-                                  sessionOccurrenceId=occurrence_id, attendanceRecord=session)
+                                  sessionOccurrenceId=occurrence_id, attendanceRecord=session,
+                                  recent=compact_recent(contract))
+        from .attendance_context import clear_context_cache
+        clear_context_cache()
         return JsonResponse({'ok': True, 'results': results})
     except BulkError as exc:
         return JsonResponse({'detail': exc.detail}, status=exc.status)

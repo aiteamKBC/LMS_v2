@@ -15,10 +15,10 @@ describe('Coach Attendance API ownership', () => {
   });
 
   it('loads cancellable detail by stable learner id without name or email parameters', async () => {
-    coachFetch.mockResolvedValue(new Response(JSON.stringify({ sessions: [] }), { status: 200 }));
+    coachFetch.mockResolvedValue(new Response(JSON.stringify({ records: [] }), { status: 200 }));
     const controller = new AbortController();
     await fetchCoachAttendanceDetails('42', controller.signal);
-    expect(coachFetch).toHaveBeenCalledExactlyOnceWith('/coach_api/coach/attendance/details?learner_id=42', { signal: controller.signal });
+    expect(coachFetch).toHaveBeenCalledExactlyOnceWith('/coach_api/coach/attendance/details?learner_id=42&page=1&pageSize=20', { signal: controller.signal });
   });
 
   it('creates, updates and deletes only the manual attendance resource', async () => {

@@ -1175,7 +1175,7 @@ def normalize_program_status(raw_status: str | None) -> str:
     return "unknown"
 
 
-def apply_curriculum_attendance_placements(learners: list[dict], rows) -> None:
+def apply_curriculum_attendance_placements(learners: list[dict], rows, *, groups=None) -> None:
     """Resolve non-Aptem caseload placements without changing learner ownership.
 
     Curriculum and attendance share LearnerProfile identities. Legacy placements
@@ -1191,7 +1191,7 @@ def apply_curriculum_attendance_placements(learners: list[dict], rows) -> None:
                 and int(learner['id']) not in conflicts]
     if not eligible:
         return
-    groups = authoring_fetch_all(GROUPS_TABLE, ensure_tables=False)
+    groups = authoring_fetch_all(GROUPS_TABLE, ensure_tables=False) if groups is None else groups
     for learner in eligible:
         row = rows_by_id.get(str(learner['id']))
         if row is None:
@@ -2201,6 +2201,7 @@ def fetch_attendance_caseload_rows(owner_email: str, *, learner_id: str | None =
             "programme_id",
             "programme_status",
             "cohort",
+            "cohort_id",
             "group_name",
             "group_id",
             "completed_hours",
@@ -2264,6 +2265,7 @@ def fetch_owner_active_learner_profiles(owner_email: str) -> list[LearnerProfile
 
 def fetch_source_schedule_rows(
     learners: list[LearnerProfile | SimpleNamespace],
+    *, fields: tuple[str, ...] | None = None,
 ) -> tuple[dict[int, CommercialUser], dict[int, EnrolmentUser]]:
     """Map profile ids to Created_users rows using stable enrolment ids."""
     if not learners:
@@ -2283,7 +2285,10 @@ def fetch_source_schedule_rows(
     # Evaluate inside the measured boundary. QuerySet construction does not
     # touch Postgres and cannot detect a broken SSL connection.
     with dashboard_stage("source_schedule_query") as stats:
-        source_rows = list(EnrolmentUser.all_learners.filter(pk__in=profile_ids_by_enrolment))
+        source_query = EnrolmentUser.all_learners.filter(pk__in=profile_ids_by_enrolment)
+        if fields is not None:
+            source_query = source_query.only(*fields)
+        source_rows = list(source_query)
         stats["row_count"] = len(source_rows)
 
     commercial_rows = {}
@@ -12450,70 +12455,49 @@ def coach_source_attendance(request):
 @coach_access_required
 @require_GET
 def coach_attendance_details(request):
+    from .attendance_detail import detail_records
+    from .attendance_projection import AttendancePaginationError, pagination_params
+
     owner_email = authenticated_coach_email(request)
     learner_id = clean_text(request.GET.get("learner_id"))
     learner_email = normalize_email(request.GET.get("learner_email"))
+    try:
+        pagination_params(request.GET)
+    except AttendancePaginationError as error:
+        return JsonResponse({"detail": str(error)}, status=400)
 
     try:
-        # The detail route needs one authorised learner, not the coach's whole
-        # caseload. Filtering before the schedule prefetch avoids repeating the
-        # expensive attendance overview work for every profile.
-        caseload_rows = fetch_attendance_caseload_rows(
-            owner_email, learner_id=learner_id or None,
-        )
-        attach_caseload_source_rows(caseload_rows)
-        learners = [serialize_attendance_source_learner(row) for row in caseload_rows]
-        learner = next(
-            (
-                item for item in learners
-                if (learner_id and str(item["id"]) == learner_id)
-                or (learner_email and normalize_email(item.get("email")) == learner_email)
-            ),
-            None,
-        )
-        if not learner:
+        rows = fetch_attendance_caseload_rows(owner_email, learner_id=learner_id or None, include_plan=False)
+        profile = next((row for row in rows if
+            (learner_id and str(row.id) == learner_id) or
+            (learner_email and normalize_email(row.email) == learner_email)), None)
+        if profile is None:
             return JsonResponse({"detail": "Learner not found in this coach caseload."}, status=404)
-
-        profile_row = next(row for row in caseload_rows if str(row.id) == str(learner["id"]))
-        source = getattr(profile_row, "_caseload_source", None)
+        commercial, enrolment = fetch_source_schedule_rows([profile], fields=(
+            'id', 'username', 'email', 'aptem_id', 'employer_id', 'learner_type',
+            'learner_start_date', 'learner_end_date'))
+        source = resolve_caseload_source_row(profile, commercial_rows=commercial, enrolment_rows=enrolment)
         if source is None:
             return JsonResponse({"detail": "Learner attendance source is unavailable."}, status=404)
-        summary, sessions = canonical_attendance_detail_rows(source, learner_profile_id=profile_row.id)
+        detail = detail_records(source, profile.id, request.GET)
+        learner = {
+            "id": str(profile.id), "name": clean_text(profile.username) or "Unknown learner",
+            "email": clean_text(profile.email) or None,
+            "programme": clean_text(profile.programme) or "--",
+            "cohort": clean_text(profile.cohort) or "--",
+            "group": clean_text(profile.group_name) or "--",
+        }
+        # Verified PDF-report fields; omit absent dates instead of extra nulls.
+        for field, key in (("learner_start_date", "learnerStartDate"), ("learner_end_date", "learnerEndDate")):
+            if value := clean_text(getattr(source, field, None)):
+                learner[key] = value
+        return JsonResponse({"learner": learner,
+            "coach": {"name": clean_text(profile.coach_name) or "Coach", "email": owner_email},
+            "tutor": None, **detail})
     except Exception:
         logger.exception("coach_attendance_details_failed coach_account_id=%s learner_id=%s", owner_email, learner_id)
-        return coach_error(
-            request,
-            code="database_unavailable",
-            message="Unable to load learner attendance details.",
-            status=503,
-        )
-
-    return JsonResponse(
-        {
-            "learner": {
-                "id": learner["id"],
-                "name": learner["name"],
-                "email": learner.get("email"),
-                "programme": learner.get("programmeName"),
-                "programmeId": learner.get("programmeId"),
-                "cohort": learner.get("cohortName"),
-                "group": learner.get("group"),
-                "groupId": learner.get("groupId"),
-                "programStatus": learner.get("rawProgramStatus"),
-                "learnerType": learner.get("learnerType"),
-                "enrolmentId": learner.get("enrolmentId"),
-                "learnerStartDate": clean_text(getattr(getattr(profile_row, "_caseload_source", None), "learner_start_date", None)) or None,
-                "learnerEndDate": clean_text(getattr(getattr(profile_row, "_caseload_source", None), "learner_end_date", None)) or None,
-                "programmeStartDate": format_date(getattr(profile_row, "start_date", None)),
-                "programmeEndDate": format_date(getattr(profile_row, "end_date", None)),
-                "coachName": learner.get("coachName"),
-            },
-            "summary": summary,
-            "history": sessions,
-            "recentAttendance": [row for row in sessions if row['counted']][:4],
-            "sessions": sessions,
-        }
-    )
+        return coach_error(request, code="database_unavailable",
+            message="Unable to load learner attendance details.", status=503)
 
 
 @coach_access_required

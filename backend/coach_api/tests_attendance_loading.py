@@ -24,15 +24,20 @@ class AttendanceLoadingTests(SimpleTestCase):
         self.placement_patcher = patch.object(loading, 'attendance_placements', side_effect=lambda owner: (self.profiles, self.placements))
         self.context = self.placement_patcher.start()
         patch('coach_api.views.authenticated_coach_email', return_value='selected@example.test').start()
-        self.evidence = patch.object(loading, 'attendance_read_contract', return_value={
+        self.evidence = patch('learner_api.attendance_lectures.attendance_read_contract', return_value={
             'summary': {'attendanceRate': 95, 'present': 41, 'absent': 2, 'sessions': 43},
-            'recentAttendance': [{'learnerId': '42', 'sessionId': str(i), 'sessionDate': '2026-09-01',
+            'recentAttendance': [{'learnerId': '42', 'sessionId': str(i), 'sessionDate': f'2026-09-{8-i:02d}',
                                   'status': 'present', 'counted': True, 'employer': 'Must not leak'} for i in range(8)],
             'history': [{'source': 'microsoft-teams', 'sourceId': 'occ', 'status': 'absent',
                          'absenceReport': {'id': 'report', 'status': 'approved'}, 'privateMetric': 99}],
         }).start()
+        self.contracts = patch.object(loading, 'group_contracts', side_effect=lambda profiles: {
+            str(profile.id): self.evidence.return_value for profile in profiles
+            if getattr(profile, '_caseload_source', None) is not None}).start()
+        self.selected = patch.object(loading, 'selected_rows', return_value={}).start()
         self.occurrences = patch.object(loading, 'delivery_occurrences', return_value=[
-            (SimpleNamespace(id='occ', scheduled_start=datetime(2026, 9, 1, 9, tzinfo=timezone.utc), session_number=1),
+            (SimpleNamespace(id='occ', scheduled_start=datetime(2026, 9, 1, 9, tzinfo=timezone.utc),
+                             scheduled_end=datetime(2026, 9, 1, 10, tzinfo=timezone.utc), session_number=1),
              SimpleNamespace(title='Module'))]).start()
         self.addCleanup(patch.stopall)
 
@@ -48,6 +53,41 @@ class AttendanceLoadingTests(SimpleTestCase):
             {'id': 'g', 'name': 'Shared name', 'cohort': 'Cohort A'}]}]})
         self.evidence.assert_not_called()
         self.occurrences.assert_not_called()
+
+    def test_dedicated_sessions_are_compact_and_use_business_timezone(self):
+        from django.utils import timezone as django_timezone
+        from django.urls import resolve
+        self.assertEqual(resolve('/coach_api/coach/attendance/sessions').func, loading.coach_attendance_sessions)
+        with django_timezone.override('Europe/London'), patch.object(
+                django_timezone, 'now', return_value=datetime(2026, 9, 1, 9, 30, tzinfo=timezone.utc)):
+            response, payload = self.call(loading.coach_attendance_sessions, programmeId='p', groupId='g')
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(payload, {'sessions': [{'id': 'occ', 'date': '2026-09-01',
+            'title': 'Module — Session 1', 'time': '10:00', 'status': 'scheduled'}]})
+        self.occurrences.assert_called_once_with('p', 'g', profiles=[self.profiles['42']])
+        self.evidence.assert_not_called()
+        self.contracts.assert_not_called()
+
+    def test_dedicated_sessions_genuinely_empty(self):
+        self.occurrences.return_value = []
+        response, payload = self.call(loading.coach_attendance_sessions, programmeId='p', groupId='g')
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(payload, {'sessions': []})
+
+    def test_native_timestamp_without_timezone_is_utc_in_sessions_and_detail(self):
+        from django.utils import timezone as django_timezone
+        occurrence = self.occurrences.return_value[0][0]
+        occurrence.scheduled_start = datetime(2026, 9, 1, 9)
+        occurrence.scheduled_end = datetime(2026, 9, 1, 10)
+        with django_timezone.override('Europe/London'):
+            response, payload = self.call(loading.coach_attendance_sessions, programmeId='p', groupId='g')
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(payload['sessions'][0]['time'], '10:00')
+            with patch.object(loading, 'selected_rows', return_value={}):
+                response, payload = self.call(loading.coach_attendance_session,
+                    programmeId='p', groupId='g', sessionId='occ')
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(payload['session']['startTime'], '10:00')
 
     def test_options_collapse_canonical_ids_but_keep_same_names_in_other_cohorts(self):
         self.placements += [placement('43'), placement('44', group='g2', cohort='Cohort B')]
@@ -85,12 +125,25 @@ class AttendanceLoadingTests(SimpleTestCase):
         _, payload = self.call(loading.coach_attendance_group, programmeId='p', groupId='g')
         self.assertEqual(payload['learners'], [{'id': '42', 'name': 'Synthetic learner',
             'email': 'learner@example.test', 'status': 'active',
-            'attendance': {'rate': 95, 'present': 41, 'absent': 2, 'sessions': 43}}])
-        self.assertEqual(len(payload['recentAttendance']), 4)
-        self.assertEqual(set(payload), {'programme', 'group', 'learners', 'recentAttendance', 'sessions'})
-        self.assertNotIn('employer', payload['recentAttendance'][0])
-        self.evidence.assert_called_once_with(self.profiles['42']._caseload_source, learner_profile_id=42)
-        self.occurrences.assert_called_once_with('p', 'g')
+            'attendance': {'rate': 95, 'present': 41, 'absent': 2, 'sessions': 43},
+            'recent': [{'date': f'2026-09-{8-i:02d}', 'status': 'present'} for i in range(4)]}])
+        self.assertEqual(set(payload), {'programme', 'group', 'learners'})
+        self.assertTrue(all(set(row) == {'date', 'status'} for row in payload['learners'][0]['recent']))
+        self.contracts.assert_called_once_with([self.profiles['42']])
+        self.evidence.assert_not_called()
+        self.occurrences.assert_not_called()
+
+    def test_recent_is_bounded_for_each_learner_without_cross_learner_history(self):
+        self.placements.append(placement('43'))
+        self.profiles['43'] = SimpleNamespace(id=43, _caseload_source=SimpleNamespace(id=943))
+        self.contracts.side_effect = None
+        self.contracts.return_value = {'42': self.evidence.return_value, '43': {
+            'summary': {'attendanceRate': 0, 'present': 0, 'absent': 1, 'sessions': 1},
+            'recentAttendance': [{'sessionDate': '2026-09-09', 'status': 'absent'}]}}
+        _, payload = self.call(loading.coach_attendance_group, programmeId='p', groupId='g')
+        self.assertEqual([len(row['recent']) for row in payload['learners']], [4, 1])
+        self.assertEqual(payload['learners'][1]['recent'], [{'date': '2026-09-09', 'status': 'absent'}])
+        self.assertEqual(payload['learners'][1]['attendance'], {'rate': 0, 'present': 0, 'absent': 1, 'sessions': 1})
 
     def test_break_status_and_unavailable_evidence_do_not_fabricate_rate(self):
         self.placements[0]['enrollmentStatus'] = 'break'
@@ -101,7 +154,7 @@ class AttendanceLoadingTests(SimpleTestCase):
 
     def test_unowned_group_or_wrong_programme_is_forbidden_before_evidence(self):
         for programme, group in [('p', 'other'), ('other', 'g')]:
-            for view in [loading.coach_attendance_group, loading.coach_attendance_session]:
+            for view in [loading.coach_attendance_group, loading.coach_attendance_session, loading.coach_attendance_sessions]:
                 response, _ = self.call(view, programmeId=programme, groupId=group, sessionId='occ')
                 self.assertEqual(response.status_code, 403)
         self.evidence.assert_not_called()
@@ -119,19 +172,18 @@ class AttendanceLoadingTests(SimpleTestCase):
         self.assertEqual(response.status_code, 409)
         self.evidence.assert_not_called()
 
-    @patch.object(loading, 'lecture_register', return_value=[{'source': 'microsoft-teams', 'session_id': 'occ'}])
-    @patch.object(loading, 'current_row', return_value=({}, None, 'version-token'))
-    def test_session_returns_only_selected_occurrence_with_save_version_and_report(self, revision, register):
+    def test_session_returns_only_selected_occurrence_with_save_version_and_report(self):
+        self.selected.return_value = {'42': {'learnerId': '42', 'status': 'absent',
+            'absenceReport': {'id': 'report', 'status': 'approved'}, 'version': 'version-token'}}
         _, payload = self.call(loading.coach_attendance_session, programmeId='p', groupId='g', sessionId='occ')
         self.assertEqual(set(payload), {'session', 'learners', 'warnings'})
         self.assertEqual(payload['session']['id'], 'occ')
         self.assertEqual(payload['learners'], [{'learnerId': '42', 'name': 'Synthetic learner',
             'status': 'absent', 'absenceReport': {'id': 'report', 'status': 'approved'}, 'version': 'version-token'}])
-        self.occurrences.assert_called_once_with('p', 'g', 'occ')
-        revision.assert_called_once_with(self.profiles['42'], 'occ')
+        self.occurrences.assert_called_once_with('p', 'g', 'occ', profiles=[self.profiles['42']])
+        self.assertEqual(self.selected.call_args.args[:2], ([self.profiles['42']], 'occ'))
 
-    @patch.object(loading, 'lecture_register', return_value=[])
-    def test_unassigned_session_learner_is_excluded(self, register):
+    def test_unassigned_session_learner_is_excluded(self):
         _, payload = self.call(loading.coach_attendance_session, programmeId='p', groupId='g', sessionId='occ')
         self.assertEqual(payload['learners'], [])
         self.evidence.assert_not_called()
@@ -161,6 +213,7 @@ class CanonicalPlacementTests(SimpleTestCase):
         fetch_attendance_caseload_rows(' Coach@Example.Test ', include_plan=False)
         profiles.annotate.return_value.filter.assert_called_once_with(coach_email_key='coach@example.test')
         ordered.prefetch_related.assert_not_called()
+        self.assertIn('cohort_id', query.only.call_args.args)
         fetch_attendance_caseload_rows('coach@example.test')
         ordered.prefetch_related.assert_called_once_with('plan_modules__weeks__components')
 
@@ -186,7 +239,7 @@ class CanonicalPlacementTests(SimpleTestCase):
 
 
 class AttendanceAccessTests(SimpleTestCase):
-    views = (loading.coach_attendance_options, loading.coach_attendance_group, loading.coach_attendance_session)
+    views = (loading.coach_attendance_options, loading.coach_attendance_group, loading.coach_attendance_session, loading.coach_attendance_sessions)
 
     @patch('login.permissions.authenticate_request', return_value=None)
     @patch.object(loading, 'attendance_placements')
