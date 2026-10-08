@@ -31,7 +31,7 @@ const sections: Record<string, unknown> = {
       modules: [{ id: 'current:M1', title: 'Synthetic Module', weekCount: 1, componentCount: 1, completedCount: 0,
         inProgressCount: 0, notStartedCount: 1, unavailableCount: 0, progressPercent: 0, status: 'not-started', otjh: 0 }] } },
   K1: { source: 'progress', rows: [{ code: 'K1', description: 'Synthetic knowledge', category: 'Knowledge', completed: 1, status: 'Achieved', components: [{ name: 'Synthetic evidence', status: 'completed', achieved: true, source: 'Progress' }] }], achievedKsbs: 1 },
-  attendance: { summary: { ...attendance, outstandingAbsences: 1 }, sessions: [], months: [], pagination: { page: 1, pageSize: 20, total: 0, hasMore: false } }, reviews: { events: [], reviewGenerationIssues: [] }, assignments: { months: [], errors: [] }, 'enrolment-documents': { documents: [{ eventKey: 'synthetic-review', label: 'Synthetic enrolment review', completed: true, sectionsDone: 1, sectionsTotal: 1, signatures: { learner: { signed: false }, admin: { signed: false }, employer: { signed: false } } }] },
+  attendance: { summary: { ...attendance, outstandingAbsences: 1 }, sessions: [], months: [], pagination: { page: 1, pageSize: 20, total: 0, hasMore: false } }, reviews: { summary: { total: 0, progressReviews: 0, monthlyCoachingMeetings: 0, completed: 0, upcoming: 0 }, reviews: [] }, assignments: { months: [], errors: [] }, 'enrolment-documents': { documents: [{ eventKey: 'synthetic-review', label: 'Synthetic enrolment review', completed: true, sectionsDone: 1, sectionsTotal: 1, signatures: { learner: { signed: false }, admin: { signed: false }, employer: { signed: false } } }] },
 };
 beforeEach(() => {
   // Vite supplies this auto-import; the standalone Vitest config does not.

@@ -14874,7 +14874,7 @@ def _imported_review_progress_snapshot(learner, review: dict, *, calculated_by: 
     return _imported_progress_snapshot_from_review(review)
 
 
-def _imported_review_definition(owner_email: str, event_key: str, *, preview_only=False, pdf_only=False) -> dict | None:
+def _imported_review_definition(owner_email: str, event_key: str, *, preview_only=False, pdf_only=False, learners=None) -> dict | None:
     """Adapt one owned Aptem review to the native form-definition contract.
 
     Summary-only imports remain read-only. An admin view-as may preview an
@@ -14889,7 +14889,7 @@ def _imported_review_definition(owner_email: str, event_key: str, *, preview_onl
     if not aptem_review_id:
         return None
 
-    learners = fetch_caseload_dashboard_profiles(owner_email)
+    learners = fetch_caseload_dashboard_profiles(owner_email) if learners is None else learners
     aptem_by_profile, conflicts = resolve_effective_aptem_ids(learners)
     eligible_ids = sorted(
         profile_id for profile_id in aptem_by_profile
