@@ -1,8 +1,16 @@
+import type { ComponentType } from 'react';
 import { fireEvent, render, screen, within, waitFor } from '@testing-library/react';
 import { MemoryRouter, useLocation } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { CaseFileReviewMeeting, CoachLearnerCaseFileData } from './types';
 import LearnerCaseFile from './page';
+
+// This suite isolates presentation with mocked profile/tab hooks. The real
+// session transport is exercised by caseFileSession.test.tsx.
+vi.mock('@/features/coach/case-file/hooks/CaseFileSession', () => ({
+  CaseFileSessionProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+  useCaseFileSession: () => null,
+}));
 
 function activityPoint(code = 'K1', activityId = 'point-1', completed = false, title = 'Learning activity', type = 'Assignment') {
   return { code, activityId, completed, title, type, module: null, status: null, source: null, completedAt: null, componentId: null };
@@ -61,9 +69,19 @@ vi.mock('@/pages/workspace/learner/DashboardTrainingPlan', () => ({
     {plan?.error && <span>{plan.error}</span>}
   </div>,
 }));
-vi.mock('@/pages/workspace/learner/tabs/DashboardWeeklyTab', () => ({
-  DashboardWeeklyContent: ({ canOpenActivities }: { canOpenActivities?: boolean }) => <div aria-label="Coach learner weekly learning">
-    <h2>Weekly learning plan</h2><span data-testid="weekly-actions">{canOpenActivities === false ? 'Learner actions hidden' : 'Learner actions enabled'}</span>
+vi.mock('./tabs/CaseFileOverviewTab', async () => {
+  const { DashboardTrainingPlan } = await import('@/pages/workspace/learner/DashboardTrainingPlan');
+  const Plan = DashboardTrainingPlan as unknown as ComponentType<Record<string, unknown>>;
+  return { CaseFileOverviewTab: ({ snapshot }: { snapshot: never }) => <Plan overviewOnly activityOverviewOnly showOtjChart={false} showRewards={false} canOpenActivities={false} programmeSnapshot={snapshot} /> };
+});
+vi.mock('./tabs/CaseFileMonthlyFocusTab', async () => {
+  const { DashboardTrainingPlan } = await import('@/pages/workspace/learner/DashboardTrainingPlan');
+  const Plan = DashboardTrainingPlan as unknown as ComponentType<Record<string, unknown>>;
+  return { CaseFileMonthlyFocusTab: () => <Plan monthlyOnly showRewards={false} canOpenActivities={false} /> };
+});
+vi.mock('./tabs/CaseFileWeeklyLearningTab', () => ({
+  CaseFileWeeklyLearningTab: () => <div aria-label="Coach learner weekly learning">
+    <h2>Weekly learning plan</h2><span data-testid="weekly-actions">Learner actions hidden</span>
   </div>,
 }));
 vi.mock('@/pages/learner/reviews/ImportedReviewHistory', () => ({
@@ -165,18 +183,21 @@ beforeEach(() => {
   // must use this response, never canonical activity-point completion.
   mocks.readLearnerJson.mockReset().mockImplementation(async () => {
     if (mocks.data?.ksbStatus === 'unavailable') throw new Error('KSB components are unavailable. Please reload to try again.');
-    const rows = new Map<string, { code: string; description: string; category: string; components: Array<{ name: string; status: string; achieved: boolean }>; completed: number; status: string }>();
+    const rows = new Map<string, { code: string; description: string; category: string; components: Array<{ name: string; status: string; achieved: boolean }>; completed: number; status: string; pointsAchieved: number; totalPoints: number; progressPercent: number }>();
     for (const point of mocks.data?.ksbActivityPoints || []) {
       const code = point.definitionCode || point.code;
       let row = rows.get(code);
       if (!row) {
         row = { code, description: mocks.data?.detail?.ksbs?.find(item => item.code === point.code)?.description || code,
-          category: code[0] === 'K' ? 'Knowledge' : code[0] === 'S' ? 'Skills' : 'Behaviours', components: [], completed: 0, status: 'Not Achieved' };
+          category: code[0] === 'K' ? 'Knowledge' : code[0] === 'S' ? 'Skills' : 'Behaviours', components: [], completed: 0, status: 'Not Achieved', pointsAchieved: 0, totalPoints: 0, progressPercent: 0 };
         rows.set(code, row);
       }
       row.components.push({ name: point.title || point.activityId, status: point.completed ? 'Completed' : 'NotStarted', achieved: point.completed });
       row.completed += Number(point.completed);
       row.status = row.completed ? 'Achieved' : 'Not Achieved';
+      row.pointsAchieved = row.completed;
+      row.totalPoints = row.components.length;
+      row.progressPercent = Math.round(row.pointsAchieved / row.totalPoints * 10000) / 100;
     }
     return { rows: [...rows.values()] };
   });
@@ -243,7 +264,7 @@ describe('Learner Case File design', () => {
     }
     expect(within(summary).queryByLabelText('Next Progress Review')).not.toBeInTheDocument();
     expect(within(summary).queryByLabelText('Next Monthly Coaching Meeting')).not.toBeInTheDocument();
-    expect(mocks.useCaseFileReviews).toHaveBeenCalledWith('42', true);
+    expect(mocks.useCaseFileReviews).toHaveBeenCalledWith('42', true, false);
     expect(within(summary).queryByText('Absences')).not.toBeInTheDocument();
     expect(within(summary).queryByText('Profile Snapshot')).not.toBeInTheDocument();
     expect(within(summary).queryByText('Profile details')).not.toBeInTheDocument();
@@ -281,7 +302,7 @@ describe('Learner Case File design', () => {
     expect(screen.getByRole('heading', { name: 'Monthly study plan' })).toBeVisible();
     expect(screen.getByTestId('activity-actions')).toHaveTextContent('Learner actions hidden');
     expect(within(caseFileSections).getByRole('tab', { name: 'Monthly Focus' })).toHaveAttribute('aria-selected', 'true');
-    expect(mocks.useCaseFileDashboardPlan).toHaveBeenCalledWith('apprenticeship', '125', true, true);
+    expect(mocks.useCaseFileDashboardPlan).toHaveBeenCalledWith('apprenticeship', '125', true, true, 'overview');
     // Overview, Weekly Learning, Monthly Focus, OTJH & KSB Progress, Attendance,
     // Learning Plan, Reviews, Assignments and Enrolment Documents.
     expect(screen.getAllByRole('tab')).toHaveLength(9);
@@ -487,7 +508,7 @@ describe('Learner Case File design', () => {
     expect(screen.getByText('Total KSBs').parentElement).toHaveTextContent('1');
     expect(screen.getByText('Achieved KSBs').parentElement).toHaveTextContent('0');
     expect(screen.getByText('Remaining KSBs').parentElement).toHaveTextContent('1');
-    for (const label of ['KSB Code', 'Category', 'Status', 'Activities']) {
+    for (const label of ['KSB Code', 'Points Achieved', 'Total Points', 'Progress']) {
       expect(screen.getByRole('button', { name: `Sort by ${label}` }).querySelector('svg')).toBeInTheDocument();
     }
     expect(screen.getByRole('table').querySelector('.lucide-circle')).not.toBeInTheDocument();
@@ -677,8 +698,9 @@ describe('Learner Case File design', () => {
     await waitFor(() => expect(screen.getByText('Total KSBs').parentElement).toHaveTextContent(mocks.data?.ksbStatus === 'unavailable' ? '--' : /\d/));
     const first = screen.getByText('B1', { selector: 'span' }).closest('tr')!;
     const second = screen.getByText('B1.1', { selector: 'span' }).closest('tr')!;
-    expect(within(first).getByText('Achieved')).toBeInTheDocument();
-    expect(within(second).getByText('Not Achieved')).toBeInTheDocument();
+    expect(within(first).getAllByRole('cell')).toHaveLength(5);
+    expect(within(second).getAllByRole('cell')).toHaveLength(5);
+    expect(screen.queryByRole('columnheader', { name: 'Status' })).not.toBeInTheDocument();
     fireEvent.click(within(first).getByRole('button', { name: 'View' }));
     const dialog = screen.getByRole('dialog');
     expect(within(dialog).getByText('Accepted journal')).toBeInTheDocument();
@@ -690,7 +712,8 @@ describe('Learner Case File design', () => {
     render(<MemoryRouter initialEntries={['/coach/learner-case-file?id=42']}><LearnerCaseFile /></MemoryRouter>);
     fireEvent.click(screen.getByRole('tab', { name: 'OTJH & KSB Progress' }));
     await waitFor(() => expect(screen.getByText('Total KSBs').parentElement).toHaveTextContent(mocks.data?.ksbStatus === 'unavailable' ? '--' : /\d/));
-    expect(within(screen.getByRole('table')).getByText('Not Achieved')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'View' }));
+    expect(within(screen.getByRole('dialog')).getByText('Not Achieved')).toBeInTheDocument();
   });
 
   it('shows completed components out of the weekly total and omits recent assessments', () => {
@@ -762,12 +785,13 @@ describe('Learner Case File design', () => {
     await waitFor(() => expect(screen.getByText('Total KSBs').parentElement).toHaveTextContent(mocks.data?.ksbStatus === 'unavailable' ? '--' : /\d/));
     const table = screen.getByRole('table');
     expect(within(table).getAllByRole('row')).toHaveLength(2);
-    expect(within(table).getAllByRole('columnheader').map(header => header.textContent)).toEqual(['KSB Code', 'Category', 'Status', 'Activities', 'Progress', 'View']);
+    expect(within(table).getAllByRole('columnheader').map(header => header.textContent)).toEqual(['KSB Code', 'Points Achieved', 'Total Points', 'Progress', 'View']);
     expect(within(table).queryByRole('button', { name: 'Sort by Title' })).not.toBeInTheDocument();
-    expect(within(table).getAllByRole('cell')).toHaveLength(6);
+    expect(within(table).getAllByRole('cell')).toHaveLength(5);
     expect(within(table).queryByText('Understand the organisation')).not.toBeInTheDocument();
-    expect(within(table).getByText('1 completed components')).toBeInTheDocument();
-    expect(within(table).getByText('Achieved')).toBeInTheDocument();
+    expect(within(table).getAllByRole('cell')[1]).toHaveTextContent('1');
+    expect(within(table).getAllByRole('cell')[2]).toHaveTextContent('2');
+    expect(within(table).getAllByRole('cell')[3]).toHaveTextContent('50%');
     expect(screen.queryByRole('button', { name: /Expand|Collapse/ })).not.toBeInTheDocument();
     fireEvent.change(screen.getByLabelText('Search KSBs'), { target: { value: 'Understand the organisation' } });
     expect(within(table).getAllByRole('row')).toHaveLength(2);
@@ -847,7 +871,7 @@ describe('Learner Case File design', () => {
     await waitFor(() => expect(screen.getByText('Total KSBs').parentElement).toHaveTextContent(mocks.data?.ksbStatus === 'unavailable' ? '--' : /\d/));
     const ksbRow = screen.getByText('K1', { selector: 'span' }).closest('tr');
     expect(ksbRow).not.toBeNull();
-    expect(within(ksbRow!).getByText('Achieved')).toBeInTheDocument();
+    expect(within(ksbRow!).getAllByRole('cell')[1]).toHaveTextContent('1');
 
     fireEvent.click(within(ksbRow!).getByRole('button', { name: 'View' }));
     const dialog = screen.getByRole('dialog');
@@ -941,7 +965,7 @@ describe('Learner Case File design', () => {
     expect(screen.getByRole('button', { name: 'Previous page' })).toBeDisabled();
     fireEvent.click(screen.getByRole('button', { name: 'Next page' }));
     expect(screen.getByRole('button', { name: '2' })).toHaveAttribute('aria-current', 'page');
-    fireEvent.click(screen.getByRole('button', { name: 'Sort by Activities' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Sort by Total Points' }));
     expect(screen.getByRole('button', { name: '1' })).toHaveAttribute('aria-current', 'page');
     expect(within(table).getByText('K1')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Next page' }));
@@ -1043,7 +1067,7 @@ describe('Learner Case File design', () => {
   it.each(['attendance', 'reviews', 'assignments'])('does not request the page-level plan on a direct %s route', (tab) => {
     render(<MemoryRouter initialEntries={[`/coach/learner-case-file?id=42&tab=${tab}`]}><LearnerCaseFile /></MemoryRouter>);
 
-    expect(mocks.useCaseFileDashboardPlan).toHaveBeenCalledWith('apprenticeship', '125', true, false);
+    expect(mocks.useCaseFileDashboardPlan).toHaveBeenCalledWith('apprenticeship', '125', true, false, 'overview');
   });
 
   it.each(['overview', 'weekly-learning', 'monthly-focus', 'progress', 'attendance', 'support', 'reviews'])('keeps marking idle on the direct %s route', (tab) => {
@@ -1054,7 +1078,7 @@ describe('Learner Case File design', () => {
   it.each(['weekly-learning', 'monthly-focus', 'progress'])('requests the page-level plan on the direct %s route', (tab) => {
     render(<MemoryRouter initialEntries={[`/coach/learner-case-file?id=42&tab=${tab}`]}><LearnerCaseFile /></MemoryRouter>);
 
-    expect(mocks.useCaseFileDashboardPlan).toHaveBeenCalledWith('apprenticeship', '125', true, true);
+    expect(mocks.useCaseFileDashboardPlan).toHaveBeenCalledWith('apprenticeship', '125', true, true, tab === 'progress' ? 'otjh-ksb' : tab);
     const tabName = tab === 'weekly-learning' ? 'Weekly Learning' : tab === 'monthly-focus' ? 'Monthly Focus' : 'OTJH & KSB Progress';
     expect(screen.getByRole('tab', { name: tabName })).toHaveAttribute('aria-selected', 'true');
   });
@@ -1062,7 +1086,7 @@ describe('Learner Case File design', () => {
   it('requests the page-level plan on a direct Learning Plan route', () => {
     render(<MemoryRouter initialEntries={['/coach/learner-case-file?id=42&tab=learning-plan']}><LearnerCaseFile /></MemoryRouter>);
 
-    expect(mocks.useCaseFileDashboardPlan).toHaveBeenCalledWith('apprenticeship', '125', true, true);
+    expect(mocks.useCaseFileDashboardPlan).toHaveBeenCalledWith('apprenticeship', '125', true, true, 'learning-plan');
     expect(screen.getByRole('tab', { name: 'Learning Plan' })).toHaveAttribute('aria-selected', 'true');
   });
 
@@ -1106,7 +1130,8 @@ describe('Learner Case File design', () => {
     fireEvent.click(screen.getByRole('tab', { name: 'Reviews' }));
     fireEvent.click(screen.getByRole('tab', { name: 'Attendance' }));
     expect(mocks.coachFetch).not.toHaveBeenCalled();
-    expect(mocks.useCaseFileAttendance).toHaveBeenCalledWith('apprenticeship', '125', true);
+    expect(mocks.useCaseFileAttendance).toHaveBeenCalledWith('apprenticeship', '125', true, false);
+    expect(mocks.useCaseFileAttendance).toHaveBeenLastCalledWith('apprenticeship', '125', true, true);
   });
 
   it('keeps the learner shell visible when the Attendance tab request fails', async () => {

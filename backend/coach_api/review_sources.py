@@ -143,7 +143,7 @@ def linked_booking(event, records, overlay=None):
     return matches[0] if matches else None
 
 
-def load_imported_links(events, *, records=None):
+def load_imported_links(events, *, records=None, compact=False):
     from .models import CoachCalendarEvent, ImportedReviewInstance
 
     if not events:
@@ -151,8 +151,11 @@ def load_imported_links(events, *, records=None):
     profile_ids = {int(event["learnerId"]) for event in events}
     review_ids = {int(event["reviewId"]) for event in events if event.get("reviewId")}
     keys = {event["eventKey"] for event in events}
-    overlays = list(ImportedReviewInstance.objects.filter(learner_id__in=profile_ids).filter(
-        Q(source_review_id__in=review_ids) | Q(event_key__in=keys)))
+    overlay_query = ImportedReviewInstance.objects.filter(learner_id__in=profile_ids).filter(
+        Q(source_review_id__in=review_ids) | Q(event_key__in=keys))
+    if compact:
+        overlay_query = overlay_query.only('id', 'learner_id', 'source_review_id', 'event_key', 'owner_email', 'status', 'completed_at')
+    overlays = list(overlay_query)
     if records is None:
         enrolment_ids = {int(event["enrolmentId"]) for event in events if str(event.get("enrolmentId", "")).isdigit()}
         records = list(CoachCalendarEvent.objects.filter(
@@ -252,7 +255,7 @@ def standalone_review_records(records, profiles, aptem_profile_ids, *, linked_ke
     return result
 
 
-def apply_imported_state(event, record=None, overlay=None):
+def apply_imported_state(event, record=None, overlay=None, *, compact=False):
     """Pure read adapter. Never changes source evidence or a meeting identity."""
     event = dict(event)
     from learner_api.review_history import _normalise_status
@@ -260,7 +263,7 @@ def apply_imported_state(event, record=None, overlay=None):
     source_status = _normalise_status(event.get("sourceStatus") or event.get("status"))
     historical = source_status == "completed" or bool(event.get("sourceCompletedDate"))
     effective = "completed" if historical else source_status
-    migrated = bool(not historical and overlay and overlay.source_review_id
+    migrated = bool(not compact and not historical and overlay and overlay.source_review_id
                     and isinstance(overlay.template_snapshot, dict) and overlay.template_snapshot.get("sections"))
     if record:
         # Pending/failed sync must not claim a successful external booking.
@@ -277,7 +280,7 @@ def apply_imported_state(event, record=None, overlay=None):
             "meetingLink": (record.meeting_link or record.graph_web_link or "") if verified else "",
             "graphWebLink": (record.graph_web_link or "") if verified else "", "meetingProvider": record.meeting_provider or "",
             "coachName": record.owner_name or "", "coachEmail": record.owner_email or "",
-            "invited": verified, "reviewResponses": record.review_responses or {},
+            "invited": verified, "reviewResponses": {} if compact else record.review_responses or {},
         })
         if record.scheduled_date:
             event["date"] = record.scheduled_date.isoformat()

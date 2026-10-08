@@ -36,40 +36,33 @@ export function AssignmentCoachingBooking({ kind, learnerId, month, title, meeti
   const latest = useRef({ kind, learnerId, month, assignmentId, topicId, onSelect });
   latest.current = { kind, learnerId, month, assignmentId, topicId, onSelect };
   const [reload, setReload] = useState(0);
-  const windows = [0, 1].map(offset => {
-    const end = new Date(Number(month.slice(0, 4)), Number(month.slice(5)) + offset, 0);
-    const key = `${end.getFullYear()}-${String(end.getMonth() + 1).padStart(2, '0')}`;
-    const next = new Date(end.getFullYear(), end.getMonth() + 1, 5);
-    return { month: key, start: `${key}-${String(end.getDate() - 9).padStart(2, '0')}`,
-      end: `${next.getFullYear()}-${String(next.getMonth() + 1).padStart(2, '0')}-05` };
-  });
-  const inBookingWindow = (value: string) => windows.some(window => value >= window.start && value <= window.end);
-  const windowLabel = windows.map(window => `${window.start} to ${window.end}`).join(' or ');
-  const selectableDates = windows.flatMap(window => {
-    const dates: string[] = [];
-    const today = calendar?.bookingCalendar?.today || new Date().toLocaleDateString('sv-SE', { timeZone: 'Europe/London' });
-    for (const day = new Date(`${window.start}T12:00:00Z`); day.toISOString().slice(0, 10) <= window.end; day.setUTCDate(day.getUTCDate() + 1)) {
-      const value = day.toISOString().slice(0, 10);
-      if (value < today || [0, 6].includes(day.getUTCDay())) continue;
-      if (calendar?.bookingCalendar?.bankHolidays.some(holiday => holiday.date === value)) continue;
-      if (calendar?.bookingCalendar && !calendar.bookingCalendar.coveredYears.includes(day.getUTCFullYear())) continue;
-      dates.push(value);
-    }
-    return dates;
-  });
+  // Any upcoming weekday can be booked; weekends, UK bank holidays and past
+  // dates stay closed, as the server's shared booking rules require.
+  const today = calendar?.bookingCalendar?.today || new Date().toLocaleDateString('sv-SE', { timeZone: 'Europe/London' });
+  const lastYear = Math.max(Number(today.slice(0, 4)), ...(calendar?.bookingCalendar?.coveredYears || []));
+  const selectableDates: string[] = [];
+  for (const day = new Date(`${today}T12:00:00Z`); day.getUTCFullYear() <= lastYear; day.setUTCDate(day.getUTCDate() + 1)) {
+    const value = day.toISOString().slice(0, 10);
+    if ([0, 6].includes(day.getUTCDay())) continue;
+    if (calendar?.bookingCalendar?.bankHolidays.some(holiday => holiday.date === value)) continue;
+    if (calendar?.bookingCalendar && !calendar.bookingCalendar.coveredYears.includes(day.getUTCFullYear())) continue;
+    selectableDates.push(value);
+  }
   const events = calendar?.events || [];
-  const booked = events.filter(e => e.source === 'mcr' && ['scheduled', 'in-progress', 'completed', 'awaiting-signature'].includes(e.status) && inBookingWindow(e.scheduledDate || ''));
+  const booked = events.filter(e => e.source === 'mcr' && ['scheduled', 'in-progress', 'completed', 'awaiting-signature'].includes(e.status) && e.scheduledDate);
   // Learners with imported Aptem MCMs get no Curriculum MCMs on their coach's
   // timetable, so only their Aptem MCMs can be booked here.
   const aptemSourced = importedMcms.some(review => review.aptemReviewId);
   const slots: { key: string; label: string; eventKey?: string; reviewId?: string }[] = aptemSourced
     ? importedMcms.filter(review => review.aptemReviewId && !review.completedDate && !CLOSED_REVIEW_STATUSES.includes(review.status)
-        && windows.some(window => window.month === (review.plannedDate || '').slice(0, 7))
-        && !events.some(e => e.reviewId === review.id && e.status !== 'cancelled'))
+        // Every imported MCM is also a calendar event; only a linked booking takes it.
+        && !events.some(e => e.reviewId === review.id && e.calendarEventKey && e.status !== 'cancelled'))
+      .sort((a, b) => (a.plannedDate || '').localeCompare(b.plannedDate || ''))
       .map(review => ({ key: `imported-review:${review.id}`, reviewId: review.id,
-        label: `MCM ${(review.plannedDate || '').slice(0, 7)} | Booking windows: ${windowLabel} | Aptem plan ${review.plannedDate}` }))
-    : events.filter(e => e.source === 'mcr' && e.status === 'not-scheduled' && windows.some(window => window.month === (e.targetDate || e.date || '').slice(0, 7)))
-      .map(e => ({ key: e.eventKey, eventKey: e.eventKey, label: `MCM ${(e.targetDate || e.date || '').slice(0, 7)} | Booking windows: ${windowLabel} | ${e.coachName}` }));
+        label: `MCM ${(review.plannedDate || '').slice(0, 7)} | Aptem plan ${review.plannedDate}` }))
+    : events.filter(e => e.source === 'mcr' && e.status === 'not-scheduled')
+      .sort((a, b) => (a.targetDate || a.date || '').localeCompare(b.targetDate || b.date || ''))
+      .map(e => ({ key: e.eventKey, eventKey: e.eventKey, label: `MCM ${(e.targetDate || e.date || '').slice(0, 7)} | ${e.coachName}` }));
   const slot = slots.find(e => e.key === slotKey);
   const needsSlot = slots.length > 0 || aptemSourced;
   const shared = topicId && !disabled ? topicStates
@@ -99,8 +92,6 @@ export function AssignmentCoachingBooking({ kind, learnerId, month, title, meeti
     if (!date) return '';
     const parsed = new Date(`${date}T12:00:00`);
     if (!Number.isFinite(parsed.getTime())) return 'Choose a valid date.';
-    if (!inBookingWindow(date)) return `Choose a date within ${windowLabel}.`;
-    const today = calendar?.bookingCalendar?.today || new Date().toLocaleDateString('sv-SE');
     if (date < today) return 'Sessions cannot be booked on a date that has already passed.';
     if ([0, 6].includes(parsed.getDay())) return 'Sessions cannot be booked on Saturdays or Sundays.';
     const holiday = calendar?.bookingCalendar?.bankHolidays.find(h => h.date === date);
@@ -151,7 +142,7 @@ export function AssignmentCoachingBooking({ kind, learnerId, month, title, meeti
     {loading && <p role="status" className="flex items-center gap-2 text-sm"><Loader2 aria-hidden="true" className="h-4 w-4 animate-spin" />Loading coaching meetings...</p>}
     {!loading && <>
       {!topicBooked && <label className="block">Use an existing coaching booking<select className={input} value={meetingKey} disabled={disabled || busy} onChange={e => { setBookedHere(e.target.value); onSelect(e.target.value); }}><option value="">Select a booked meeting</option>{booked.map(e => <option key={e.eventKey} value={e.eventKey}>{e.scheduledDate} {e.scheduledTime} ? {e.coachName}</option>)}</select></label>}
-      {!booked.length && <p className="text-sm text-slate-500">No booked MCM falls within {windowLabel}.</p>}
+      {!booked.length && <p className="text-sm text-slate-500">You have no booked MCM yet.</p>}
       {selected && <div className="rounded-xl bg-blue-50 p-4 text-sm"><p>{topicBooked ? "MCM already booked" : "Linked meeting"}: {selected.scheduledDate} at {selected.scheduledTime} with {selected.coachName}.</p>{topicBooked && <p className="mt-2">This meeting is shared across all three topics. You only need to book once.</p>}{selected.invited === false && <p className="mt-2 text-amber-800">The meeting is saved, but the calendar invitation has not been sent. Contact your coach.</p>}</div>}
       {selected && <div className="space-y-3">
         <p className="text-sm leading-6 text-slate-600">Recording and transcription are enabled automatically using the live-session settings. The recording, transcript and attendance appear here once Teams has processed them after the meeting.</p>
@@ -161,8 +152,8 @@ export function AssignmentCoachingBooking({ kind, learnerId, month, title, meeti
         <legend className="px-2 text-sm font-semibold">Schedule an official MCM</legend>
         <>
           {slots.length > 0 && <label className="block">Monthly Coaching Meeting slot<select className={input} value={slotKey} onChange={e => setSlotKey(e.target.value)}><option value="">Select your programme MCM</option>{slots.map(e => <option key={e.key} value={e.key}>{e.label}</option>)}</select></label>}
-          {aptemSourced && !slots.length && <p role="status" className="text-sm text-slate-600">No open Monthly Coaching Meeting from your programme plan falls within {windowLabel}. Contact your coach to arrange it.</p>}
-          <p className="text-sm leading-6 text-slate-600">Choose a weekday within {windowLabel}. Available times come from your coach's calendar and working hours, shown in UK time (Europe/London). Availability is checked again when you book.</p>
+          {aptemSourced && !slots.length && <p role="status" className="text-sm text-slate-600">No open Monthly Coaching Meeting is left in your programme plan. Contact your coach to arrange it.</p>}
+          <p className="text-sm leading-6 text-slate-600">Choose an upcoming weekday. Available times come from your coach's calendar and working hours, shown in UK time (Europe/London). Availability is checked again when you book.</p>
           <div className="grid gap-4 sm:grid-cols-2"><BookingDatePicker value={date} onChange={setDate} dates={selectableDates} /><label>Time<select className={input} value={time} disabled={availabilityLoading || !availableTimes.length} onChange={e => setTime(e.target.value)}><option value="">{availabilityLoading ? 'Loading available times...' : 'Select an available time'}</option>{availableTimes.map(value => <option key={value} value={value}>{value}</option>)}</select></label></div>
           {availabilityError && <p role="alert" className="text-sm text-red-700">{availabilityError}</p>}
           {date && !dateError && !availabilityLoading && !availabilityError && !availableTimes.length && <p className="text-sm text-slate-600">Your coach has no available 60-minute appointments on this date. Choose another date.</p>}

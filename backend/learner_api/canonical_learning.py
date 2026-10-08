@@ -131,9 +131,21 @@ def entries(learner_id):
     return entries_for(owner)
 
 
-def entries_for(owner):
-    records = query('''WITH canonical AS (
-        SELECT progress.*
+def entries_for(owner, *, overview_only=False):
+    columns = 'progress.*'
+    if overview_only:
+        # Completion projection needs saved timing/attempt facts, never raw
+        # evidence bodies. Keep lineage required by recorded course allocation.
+        columns = ','.join('progress.' + field for field in (
+            'id', 'learner_id', 'kind', 'module_ref', 'module_title', 'component_ref',
+            'component_title', 'component_type', 'quiz_ref', 'passed', 'reported_time',
+            'submitted_at', 'started_at', 'time_tracking_source', 'claimed_seconds',
+            'verified_seconds', 'expected_otjh', 'source_system', 'component_link_source',
+            'actual_seconds', 'accepted', 'reporting_started_at', 'reporting_ended_at',
+            'reporting_month', 'achieved_score', 'total_score', 'activity_status'))
+        columns += ",jsonb_build_object('original_source_ref',progress.source_payload->>'original_source_ref') AS source_payload"
+    records = query(f'''WITH canonical AS (
+        SELECT {columns}
         FROM "Learner".learner_progress_entries progress
         WHERE progress.learner_id=%s AND progress.deleted_at IS NULL
     ), progress_ksbs AS (
@@ -328,21 +340,22 @@ def targets(learner_id):
     return targets_for(owner)
 
 
-def targets_for(owner):
+def targets_for(owner, *, month=None):
     """Return one exact Training Plan target per month for this enrolment."""
-    return {record['report_month']: float(record['target_hours']) for record in query('''
+    month_filter = ' AND report_month=%s' if month else ''
+    return {record['report_month']: float(record['target_hours']) for record in query(f'''
         SELECT DISTINCT ON (report_month) report_month,target_hours
         FROM "Learner".learner_monthly_targets
         WHERE learner_id=%s
           AND coalesce(programme_profile_id,'')=''
           AND (enrolment_id IS NULL OR enrolment_id IS NOT DISTINCT FROM %s)
-          AND (programme_id IS NULL OR programme_id IS NOT DISTINCT FROM %s)
+          AND (programme_id IS NULL OR programme_id IS NOT DISTINCT FROM %s) {month_filter}
         ORDER BY report_month,
           (enrolment_id IS NOT DISTINCT FROM %s) DESC,
           (programme_id IS NOT DISTINCT FROM %s) DESC,
           updated_at DESC,id DESC''', [
             owner['id'], owner.get('enrolment_id'), owner.get('programme_id'),
-            owner.get('enrolment_id'), owner.get('programme_id'),
+            *([month] if month else []), owner.get('enrolment_id'), owner.get('programme_id'),
         ]) if record['target_hours'] is not None}
 
 
@@ -637,10 +650,10 @@ def content(item, owner=None, record=None):
         'html': f'<p>{escape(note)}</p>' if note else '<p>No material is directly linked to this activity.</p>'}]}
 
 
-def source_subjects(learner_id, summarize):
-    """Every component of an owned course, overlaid with the learner's progress."""
+def source_subjects(learner_id, summarize, *, owner=None, records=None, overview_only=False):
+    """Owned course catalogue with progress, or a compact recorded overview."""
     from learner_api.course_catalogue_display import read_export_placements, catalogue_display_context
-    owner = profile(learner_id)
+    owner = owner if owner is not None else profile(learner_id)
     if owner is None:
         raise ServiceError('The consolidated learner identity needs review.', 'identity_review_required', 409)
     courses = query('''SELECT DISTINCT c.id,c.source_course_ref,c.source_course_title,c.curriculum_module_ref
@@ -649,7 +662,8 @@ def source_subjects(learner_id, summarize):
         WHERE m.learner_id=%s AND m.deleted_at IS NULL AND c.source_system='old_lms'
           AND c.source_course_ref ~ '^[0-9]+$'
         ORDER BY c.source_course_title,c.id''', [owner['id']])
-    catalogue = query('''SELECT a.id,a.source_course_id,a.source_activity_id,a.source_activity_kind,
+    catalogue_columns = ("a.source_activity_id,c.source_course_ref" if overview_only else
+        '''a.id,a.source_course_id,a.source_activity_id,a.source_activity_kind,
         a.source_activity_title,a.source_activity_type,a.source_section_title,a.curriculum_component_ref,
         c.source_course_ref,c.source_course_title,c.curriculum_module_ref,a.source_position AS position,
         jsonb_build_object('quiz_id',a.source_payload->'quiz_id',
@@ -657,15 +671,22 @@ def source_subjects(learner_id, summarize):
             'section_title',a.source_payload->'section_title') AS source_payload,
         EXISTS (SELECT 1 FROM curriculum.source_materials m
             WHERE m.material_id=a.source_material_id AND m.source_system=a.source_system
-              AND m.deleted_at IS NULL) AS material_available
+              AND m.deleted_at IS NULL) AS material_available''')
+    catalogue = query(f'''SELECT {catalogue_columns}
         FROM curriculum.source_activities a
         JOIN curriculum.source_courses c ON c.id=a.source_course_id AND c.deleted_at IS NULL
         WHERE a.source_course_id=ANY(%s) AND a.deleted_at IS NULL
           AND a.source_system='old_lms'
         ORDER BY c.id,a.source_position NULLS LAST,a.id''', [[c['id'] for c in courses]]) if courses else []
-    catalogue = catalogue_display_context(catalogue, read_export_placements(query, courses))
-    records = entries_for(owner)
-    items, subjects, links = recorded_course_items(courses, catalogue, records, include_catalogue=True)
+    if not overview_only:
+        catalogue = catalogue_display_context(catalogue, read_export_placements(query, courses))
+    records = entries_for(owner) if records is None else records
+    items, subjects, links = recorded_course_items(courses, catalogue, records,
+        overview_only=overview_only, include_catalogue=not overview_only)
+    if overview_only:
+        return {'progress_basis': 'recorded_activities', 'subjects': subjects,
+                'activities': [{key: item[key] for key in ('activity_id', 'group_id', 'completed')}
+                               for item in items]}
     result = {'source': 'canonical', 'source_status': 'historical',
         'progress_basis': 'catalogue_activities',
         'learner_name': owner['name'], 'aptem_id': owner['aptem_id'],
@@ -710,7 +731,7 @@ def recorded_activity_schedule(record, course):
         'date_source': 'introduction' if introduction else 'consolidated_record'}
 
 
-def recorded_course_items(courses, catalogue, records, *, include_catalogue=False):
+def recorded_course_items(courses, catalogue, records, *, overview_only=False, include_catalogue=False):
     """Allocate a final record once per course, using exact catalogue lineage.
 
     Historical/component guesses do not substitute for learner source links.
@@ -766,6 +787,11 @@ def recorded_course_items(courses, catalogue, records, *, include_catalogue=Fals
         counted_courses = set()
         for definition in placements.values():
             course = str(definition['source_course_ref'])
+            if overview_only:
+                by_course[course].append({'activity_id': f"record:{course}:{record['id']}",
+                    'group_id': int(course),
+                    'completed': counts_as_completed(record, include_source_evidence='completed' in record)})
+                continue
             kind, _, ident = definition['source_activity_id'].partition(':')
             numeric = ident.isdigit()
             accepted = counts_as_actual(record)
@@ -818,8 +844,9 @@ def recorded_course_items(courses, catalogue, records, *, include_catalogue=Fals
             continue
         subjects.append({'id': int(ref), 'name': course['source_course_title'],
             'module_id': course.get('curriculum_module_ref'),
-            'catalogue_count': len(course_definitions),
-            'accepted_hours': round(sum(a['actual'] for a in activity), 6)})
+            **({} if overview_only else {
+                'catalogue_count': sum(str(d['source_course_ref']) == ref for d in catalogue),
+                'accepted_hours': round(sum(a['actual'] for a in activity), 6)})})
         items.extend(activity)
     return items, subjects, links
 
@@ -873,6 +900,33 @@ def ksb_point_definition(record, code):
     return {'ksbDefinitionId': definition_id, 'definitionCode': definition_code}
 
 
+def point_ratio(done, total):
+    """Canonical Student point counts and percentage (also used by Coach)."""
+    from learner_api.ksb_points import point_ratio as shared_ratio
+    return shared_ratio(done, total)
+
+
+def read_ksb_point_counts(learner_id):
+    """Compact activity/code pairs; acceptance owns points, not activity status.
+
+    Student completion enrichment never replaces stored acceptance or adds
+    records (progress_records_with_completion), so no evidence hydration is
+    needed to reproduce its KSB counts here.
+    """
+    return query('''WITH links AS (
+        SELECT DISTINCT ON (k.ksb_code,p.id) k.ksb_code AS code,p.id,
+            k.ksb_description AS description,k.position,p.accepted,
+            (p.activity_status='completed' AND p.accepted IS TRUE) AS achieved
+        FROM "Learner".learner_progress_entries p
+        JOIN "Learner".learner_progress_ksbs k ON k.progress_id=p.id
+        WHERE p.learner_id=%s AND p.deleted_at IS NULL AND k.ksb_code IS NOT NULL
+        ORDER BY k.ksb_code,p.id,k.position
+    ) SELECT code,(array_agg(description ORDER BY id,position))[1] AS description,
+        count(*) AS "evidenceCount",count(*) FILTER (WHERE achieved) AS completed,
+        count(*) FILTER (WHERE accepted IS TRUE) AS "pointsAchieved"
+        FROM links GROUP BY code ORDER BY min(id),code''', [learner_id])
+
+
 def metrics_from_records(records, monthly_targets, *, include_ksb_points=False):
     """Count final activity records once, using accepted evidence only for hours.
 
@@ -883,10 +937,7 @@ def metrics_from_records(records, monthly_targets, *, include_ksb_points=False):
     accepted = [item for item in counted if item.get('accepted') is True]
     completed = [item for item in counted if counts_as_completed(
         item, include_source_evidence='completed' in item)]
-    def ratio(done, total):
-        return {'completed': done, 'total': total,
-                'percent': round(done / total * 100, 2) if total else None,
-                'status': 'ready' if total else 'empty'}
+    ratio = point_ratio
     codes = {}
     for item in counted:
         for code in set(item.get('ksbs') or []):

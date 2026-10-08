@@ -32,14 +32,14 @@ export interface LearnerMetrics {
   aptem_planned_total?: number | null;
   programme: ProgressMetric;
   ksb: ProgressMetric;
-  otjh: { historical: number | null; new: number; actual: number | null; planned: number | null; completed_actual?: number | null };
+  otjh: { historical: number | null; new: number; actual: number | null; planned: number | null; targetToDate?: number | null; completed_actual?: number | null };
 }
 const url = (kind: LearnerKind, id: string) => `/learner_api/metrics/${kind}/${id}/`;
 function valid(data: LearnerMetrics | undefined): data is LearnerMetrics {
   return !!(data?.programme?.status && data?.ksb?.status && data?.otjh);
 }
-export const peekLearnerMetrics = (kind: LearnerKind, id: string) => {
-  const data = peekLearnerJson<LearnerMetrics>(url(kind, id));
+export const peekLearnerMetrics = (kind: LearnerKind, id: string, perspective?: 'learner-overview') => {
+  const data = peekLearnerJson<LearnerMetrics>(url(kind, id) + (perspective ? `?view=${perspective}` : ''));
   return valid(data) ? data : undefined;
 };
 export async function fetchLearnerMetrics(kind: LearnerKind, id: string, signal?: AbortSignal, force = false, perspective?: 'learner-overview') {

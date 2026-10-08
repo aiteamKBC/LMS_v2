@@ -84,12 +84,9 @@ def prepare_topic_save(cur, payload):
 def inherit_coaching_booking(payload, rows):
     """Reuse this component's owned MCM without modifying submitted topics."""
     from .calendar import _learner_calendar_record
-    from .monthly_assignment import coaching_booking_windows
+    from .monthly_assignment import month_bounds
     monthly = payload.get('monthlyAssignment')
-    if not isinstance(monthly, dict):
-        return
-    windows = coaching_booking_windows(monthly.get('month'))
-    if not windows:
+    if not isinstance(monthly, dict) or not month_bounds(monthly.get('month'))[0]:
         return
     for identity, _status, content in rows:
         if not identity or identity == payload.get('assignmentTopicId'):
@@ -101,8 +98,7 @@ def inherit_coaching_booking(payload, rows):
             continue
         record = _learner_calendar_record(payload['learnerKind'], int(payload['learnerId']), key)
         if (record and record.event_type == 'mcr' and record.scheduled_date
-                and record.status in ('scheduled', 'in-progress', 'completed', 'awaiting-signature')
-                and any(start <= record.scheduled_date <= end for start, end in windows)):
+                and record.status in ('scheduled', 'in-progress', 'completed', 'awaiting-signature')):
             payload['monthlyAssignment'] = {**monthly, 'meetingKey': key}
             return
 

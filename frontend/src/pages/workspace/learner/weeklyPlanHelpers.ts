@@ -85,7 +85,9 @@ function formatActivityMinutes(durationMinutes: number): string {
   return seconds ? `${minutes ? `${minutes}m ` : ''}${seconds}s` : `${minutes} mins`;
 }
 
-export function activityExpectedTimeLabel(component: JourneyComponent): string {
+export function activityExpectedTimeLabel(component: Pick<JourneyComponent, 'isQuiz' | 'durationMinutes' | 'expectedOtjh'> & {
+  quizMeta?: Pick<NonNullable<JourneyComponent['quizMeta']>, 'duration' | 'timeUnit'>;
+}): string {
   if (component.isQuiz && component.quizMeta?.duration) {
     const { duration, timeUnit } = component.quizMeta;
     if (duration >= 60 && /^(min|mins|minute|minutes)$/i.test(timeUnit || 'mins')) return formatActivityMinutes(duration);

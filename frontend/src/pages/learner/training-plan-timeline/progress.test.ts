@@ -25,9 +25,11 @@ describe('dashboard module progress', () => {
     expect(result.value).toBe(40);
     expect(result.available).toBe(4);
   });
-  it('counts completed reviews across the programme once per event', () => {
-    expect(programmeReviewProgress([...data.reviews, { ...data.reviews[1] }])).toEqual({ completed: 1, total: 3, percent: 33.33 });
-    expect(programmeReviewProgress([])).toEqual({ completed: 0, total: 0, percent: null });
+  it('counts completed reviews against the unique reviews due by today', () => {
+    const reviews = data.reviews.map(review => ({ ...review, targetDate: review.date }));
+    expect(programmeReviewProgress([...reviews, { ...reviews[1] }], '2026-10-07T23:30:00Z'))
+      .toEqual({ completed: 1, total: 1, percent: 100 });
+    expect(programmeReviewProgress([], '2026-10-07T23:30:00Z')).toEqual({ completed: 0, total: 0, percent: null });
   });
   it('excludes future sessions and counts ended sessions without attendance as pending', () => {
     const sessions = [
@@ -49,6 +51,18 @@ describe('dashboard module progress', () => {
     expect(result.available).toBe(2);
     expect(result.measures[2].detail).toBe('20 / 10 hours');
     expect(moduleProgress({ ...module, done: 0, activityCount: 0, actual: null }, { ...data, reviews: [] }).value).toBeNull();
+  });
+  it('uses learner-progress-entry metrics when the dashboard supplies them', () => {
+    const current = { ...data, moduleProgress: {
+      M1: { attendance: { attended: 2, total: 4 }, hours: { actual: 3.5 }, ksb: { completed: 3, total: 5 } },
+    } };
+    const result = moduleProgress(buildPlanModules([subject], current)[0], current, Date.parse('2026-09-20T12:00:00Z'));
+    expect(result.measures).toEqual([
+      { label: 'Attendance', value: 50, detail: '2 / 4 scheduled sessions attended' },
+      { label: 'Activities', value: 40, detail: '4 / 10 completed' },
+      { label: 'Hours', value: 35, detail: '3.5 / 10 hours' },
+      { label: 'KSBs', value: 60, detail: '3 / 5 activity KSB points achieved' },
+    ]);
   });
   it('combines verified old and new summaries without losing KSB points or recorded hours', () => {
     const combined = { ...data, actualAvailable: true, actual: [{ month: '2026-09', groupId: '10', hours: 5, count: 1 }], moduleLinks: { 'legacy:10': { id: 'M1', title: 'Marketing' } } };
