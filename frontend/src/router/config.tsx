@@ -18,7 +18,9 @@ const SystemAuditTrailPage = lazyRoute(() => import("../pages/admin/audit-trail/
 const SystemAuditTrailPersonPage = lazyRoute(() => import("../pages/admin/audit-trail/person/page"));
 const AdminDashboard = lazyRoute(() => import("../pages/workspace/admin/page"));
 const AdvancedAdminWorkspace = lazyRoute(() => import("../pages/workspace/advanced-admin/page"));
-const AdvancedAdminLearner = lazyRoute(() => import("../pages/workspace/advanced-admin/learner"));
+// Give this route one extra bounded reload if a Vite update is still in flight
+// when the first reload reaches it.
+const AdvancedAdminLearner = lazyRoute(() => import("../pages/workspace/advanced-admin/learner"), { maxChunkReloads: 2 });
 const AdvancedAdminLearnerPreview = lazyRoute(() => import("../pages/workspace/advanced-admin/preview"));
 const EmployerWorkspacePage = lazyRoute(() => import("../pages/workspace/admin/employers/page"));
 const AdminCertificatesPage = lazyRoute(() => import("../pages/admin/certificates/page"));
