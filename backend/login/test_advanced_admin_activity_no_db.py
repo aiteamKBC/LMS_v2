@@ -21,7 +21,7 @@ from login.advanced_admin_activity import (
     live_kbc_media_response,
     saved_extra_pdf_response, saved_extra_pdf_source,
     saved_google_drive_file_id, saved_google_drive_response, saved_kbc_material_id,
-    saved_media_metadata, saved_office_embed, saved_pdf_response,
+    saved_kbc_source_url, saved_media_metadata, saved_office_embed, saved_pdf_response,
 )
 
 
@@ -147,6 +147,10 @@ class AdvancedAdminSavedFileTests(SimpleTestCase):
             'https://source.example.evil.test/wp-json/kbc-lms/v1/material/12/view?attachment_id=34'))
         self.assertIsNone(saved_kbc_material_id(
             'https://source.example/wp-json/kbc-lms/v1/material/12/schema'))
+        self.assertTrue(saved_kbc_source_url(
+            'https://source.example/stm-lessons/the-social-media-party-part-1/'))
+        self.assertFalse(saved_kbc_source_url(
+            'https://source.example.evil.test/stm-lessons/the-social-media-party-part-1/'))
 
     @override_settings(KBC_LMS_SCHEMA_URL='https://source.example/wp-json/kbc-lms/v1/schema')
     def test_kbc_media_proxy_refreshes_and_streams_verified_video_ranges(self):
@@ -386,8 +390,7 @@ class AdvancedAdminSavedFileTests(SimpleTestCase):
     def test_admin_video_uses_a_scoped_media_url(self):
         request = RequestFactory().get('/login_api/advanced-admin/learners/42/learning/material/8/12/')
         drive = 'https://drive.google.com/file/d/synthetic-file-id-12345/preview'
-        kbc = ('https://source.example/wp-json/kbc-lms/v1/material/12/view'
-               '?attachment_id=34&token=synthetic')
+        kbc = 'https://source.example/stm-lessons/the-social-media-party-part-1/'
         youtube = 'https://www.youtube.com/embed/example-video'
         with patch('login.advanced_admin._profile_in_scope',
                    return_value=SimpleNamespace(enrolment_id=7)), \
@@ -413,8 +416,7 @@ class AdvancedAdminSavedFileTests(SimpleTestCase):
                 'attachment_id': 34, 'filename': 'lesson.mp4', 'mime_type': 'video/mp4',
             }]},
         }}
-        source = ('https://source.example/wp-json/kbc-lms/v1/material/12/view'
-                  '?attachment_id=34&token=synthetic')
+        source = 'https://source.example/stm-lessons/the-social-media-party-part-1/'
         with patch('learner_api.student_activity._owned_material', return_value=(123, stored)), \
              patch('learner_api.student_activity._material_response', return_value=JsonResponse({
                  'media': [{'kind': 'document', 'url': source}],
@@ -432,8 +434,7 @@ class AdvancedAdminSavedFileTests(SimpleTestCase):
             '/login_api/advanced-admin/learners/42/learning/material/8/12/media/0/',
             HTTP_RANGE='bytes=0-1023',
         )
-        source = ('https://source.example/wp-json/kbc-lms/v1/material/12/view'
-                  '?attachment_id=34&token=synthetic')
+        source = 'https://source.example/stm-lessons/the-social-media-party-part-1/'
         with patch('login.advanced_admin._profile_in_scope',
                    return_value=SimpleNamespace(enrolment_id=7)), \
              patch('login.advanced_admin._legacy_material_response', return_value=JsonResponse({

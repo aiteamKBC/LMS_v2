@@ -271,7 +271,7 @@ def learner_module_progress(request, profile_id):
 def _legacy_material_response(request, profile, group_id, activity_id):
     from learner_api.student_activity import _material_response, _owned_material
     from login.advanced_admin_activity import (
-        _saved_pdf_source, saved_extra_pdf_source, saved_kbc_material_id,
+        _saved_pdf_source, saved_extra_pdf_source, saved_kbc_source_url,
         saved_media_metadata, saved_office_embed,
     )
 
@@ -317,7 +317,7 @@ def _legacy_material_response(request, profile, group_id, activity_id):
         metadata = saved_media_metadata(schema)
         if metadata['kind'] in {'video', 'audio'}:
             for item in payload.get('media') or []:
-                if saved_kbc_material_id(item.get('url')) == int(activity_id):
+                if saved_kbc_source_url(item.get('url')):
                     item['kind'] = metadata['kind']
                     if metadata['file_name']:
                         item['file_name'] = metadata['file_name']
@@ -405,8 +405,8 @@ def learner_material(request, profile_id, group_id, activity_id):
         elif url.startswith('/curriculum_api/curriculum/uploads/'):
             item['url'] = f'{scoped}media/{index}/'
         elif item.get('kind') in ('video', 'audio'):
-            from login.advanced_admin_activity import saved_google_drive_file_id, saved_kbc_material_id
-            if saved_google_drive_file_id(url) or saved_kbc_material_id(url) == int(activity_id):
+            from login.advanced_admin_activity import saved_google_drive_file_id, saved_kbc_source_url
+            if saved_google_drive_file_id(url) or saved_kbc_source_url(url):
                 item['url'] = f'{scoped}media/{index}/'
     # The imported manifest may list the same PDF as both the playable reading
     # and a later attachment. Do not label that playable file unavailable.
@@ -497,15 +497,14 @@ def learner_material_media(request, profile_id, group_id, activity_id, media_ind
     url = media[media_index].get('url') or '' if media_index < len(media) else ''
     if media_index < len(media) and media[media_index].get('kind') in ('video', 'audio'):
         from login.advanced_admin_activity import (
-            live_kbc_media_response, saved_google_drive_file_id, saved_kbc_material_id,
+            live_kbc_media_response, saved_google_drive_file_id, saved_kbc_source_url,
         )
         file_id = saved_google_drive_file_id(url)
         if file_id:
             from login.advanced_admin_activity import saved_google_drive_response
             return saved_google_drive_response(request, file_id)
-        material_id = saved_kbc_material_id(url)
-        if material_id == int(activity_id):
-            return live_kbc_media_response(request, material_id, media[media_index]['kind'])
+        if saved_kbc_source_url(url):
+            return live_kbc_media_response(request, activity_id, media[media_index]['kind'])
     marker = '/curriculum_api/curriculum/uploads/'
     if not url.startswith(marker):
         return JsonResponse({'error': 'Activity file not found.'}, status=404)

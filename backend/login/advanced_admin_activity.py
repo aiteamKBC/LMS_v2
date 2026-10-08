@@ -102,6 +102,14 @@ def saved_kbc_material_id(url):
     return int(match.group(1)) if match else None
 
 
+def saved_kbc_source_url(url):
+    """Identify a stored page or media URL on the configured KBC source only."""
+    parsed = urlsplit(safe_url(url))
+    origin = urlsplit(getattr(settings, 'KBC_LMS_SCHEMA_URL', ''))
+    return bool(parsed.scheme == 'https' and not parsed.username
+                and (parsed.scheme, parsed.netloc) == (origin.scheme, origin.netloc))
+
+
 def live_kbc_media_response(request, activity_id, expected_kind):
     """Stream the fresh typed source; saved signed URLs can expire into login HTML."""
     if expected_kind not in {'video', 'audio'}:
