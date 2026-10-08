@@ -797,6 +797,7 @@ function stripChatNavItems(items: SidebarNavItem[]): SidebarNavItem[] {
 }
 
 const baseRoleNavMap: Record<string, { items: SidebarNavItem[]; label: string; workspaceLabel: string }> = {
+  'advanced-admin': { items: [{ id: 'advanced-admin-learners', label: 'Learners', href: '/workspace/advanced-admin', icon: 'ri-team-line' }], label: 'Advanced Admin', workspaceLabel: 'Learner Review' },
   'record-monitor': { items: [{ id: 'record-monitor', label: 'Record monitoring', href: '/old-otjh/monitor', icon: 'ri-dashboard-line' }], label: 'Record monitor', workspaceLabel: 'Learning record monitoring' },
   learner: { items: learnerNavItems, label: 'Learner', workspaceLabel: 'Learner Workspace' },
   coach: { items: coachNavItems, label: 'Coach', workspaceLabel: 'Coach Workspace' },

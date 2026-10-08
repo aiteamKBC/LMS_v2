@@ -17,6 +17,9 @@ const AdminAccessLogsPage = lazyRoute(() => import("../pages/admin/access-logs/p
 const SystemAuditTrailPage = lazyRoute(() => import("../pages/admin/audit-trail/page"));
 const SystemAuditTrailPersonPage = lazyRoute(() => import("../pages/admin/audit-trail/person/page"));
 const AdminDashboard = lazyRoute(() => import("../pages/workspace/admin/page"));
+const AdvancedAdminWorkspace = lazyRoute(() => import("../pages/workspace/advanced-admin/page"));
+const AdvancedAdminLearner = lazyRoute(() => import("../pages/workspace/advanced-admin/learner"));
+const AdvancedAdminLearnerPreview = lazyRoute(() => import("../pages/workspace/advanced-admin/preview"));
 const EmployerWorkspacePage = lazyRoute(() => import("../pages/workspace/admin/employers/page"));
 const AdminCertificatesPage = lazyRoute(() => import("../pages/admin/certificates/page"));
 const AdminDocumentsPage = lazyRoute(() => import("../pages/admin/documents/page"));
@@ -405,6 +408,26 @@ const routes: RouteObject[] = [
   {
     path: "/workspace/admin",
     element: <AdminDashboard />,
+  },
+  {
+    path: "/workspace/advanced-admin",
+    element: <AdvancedAdminWorkspace />,
+  },
+  {
+    path: "/workspace/advanced-admin/learners/:learnerId",
+    element: <AdvancedAdminLearner />,
+  },
+  {
+    path: "/workspace/advanced-admin/learners/:learnerId/preview",
+    element: <AdvancedAdminLearnerPreview />,
+  },
+  {
+    path: "/workspace/advanced-admin/learners/:learnerId/preview/:section",
+    element: <AdvancedAdminLearnerPreview />,
+  },
+  {
+    path: "/workspace/advanced-admin/learners/:learnerId/:section",
+    element: <AdvancedAdminLearner />,
   },
   {
     // Every employer as a card; each opens /employers/:employerId.

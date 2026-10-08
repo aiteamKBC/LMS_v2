@@ -49,6 +49,50 @@ function LegacyAssignmentsTab({ kind, learnerId, markingState }: {
 }
 
 type Months = ReturnType<typeof groupMonthlyAssignments>;
+
+interface HistoricalAssessment {
+  id: string;
+  title: string;
+  date: string | null;
+  sourceStatus: string;
+  originalFeedback: Array<{ author?: string; message?: string }>;
+  lmsReviews: Array<{ decision: string; feedback: string; reviewedBy: string; reviewedAt: string }>;
+}
+
+function HistoricalCoachAssessments() {
+  const session = useCaseFileSession();
+  const [items, setItems] = useState<HistoricalAssessment[]>([]);
+  const [error, setError] = useState('');
+  const [loading, setLoading] = useState(Boolean(session));
+  const [attempt, setAttempt] = useState(0);
+  useEffect(() => {
+    if (!session) return;
+    const controller = new AbortController();
+    setLoading(true); setError('');
+    void session.read<{ items: HistoricalAssessment[] }>('assignments', { resource: 'historical' },
+      { signal: controller.signal, refresh: attempt > 0 }).then(payload => {
+      if (!controller.signal.aborted) setItems(payload.items);
+    }).catch((failure: unknown) => {
+      if (!controller.signal.aborted) setError(failure instanceof Error ? failure.message : 'Historical assessments are unavailable.');
+    }).finally(() => { if (!controller.signal.aborted) setLoading(false); });
+    return () => controller.abort();
+  }, [session, attempt]);
+  if (!session) return null;
+  if (loading) return <p role="status">Loading historical assessments…</p>;
+  if (error) return <div role="alert">{error}<button type="button" className="ml-2 underline" onClick={() => setAttempt(value => value + 1)}>Retry</button></div>;
+  if (!items.length) return null;
+  return <section className="rounded-xl border border-foreground-200 bg-white p-4" aria-label="Historical assessments and LMS reviews">
+    <h3 className="font-semibold">Historical Aptem assessments</h3>
+    <div className="mt-3 space-y-2">{items.map(item => <details key={item.id} className="rounded-lg border p-3 text-sm">
+      <summary className="cursor-pointer font-medium">{item.title} · {item.sourceStatus} · {item.date || 'Date not recorded'}</summary>
+      <div className="mt-3 space-y-2">
+        {item.originalFeedback.map((feedback, index) => <p key={index} className="whitespace-pre-wrap"><strong>Original coach feedback{feedback.author ? ` · ${feedback.author}` : ''}:</strong> {feedback.message || 'No text recorded'}</p>)}
+        {item.lmsReviews.map((review, index) => <p key={index} className="whitespace-pre-wrap rounded-lg bg-emerald-50 p-3"><strong>LMS review · {review.decision} · {review.reviewedBy} · {review.reviewedAt.slice(0, 10)}:</strong> {review.feedback}</p>)}
+      </div>
+    </details>)}</div>
+  </section>;
+}
+
 export default function AssignmentsTab(props: { kind: LearnerKind; learnerId: string; markingState?: ReturnType<typeof useCaseFileMarking> }) {
   const session = useCaseFileSession();
   return session ? <SectionAssignments {...props} /> : <LegacyAssignmentsTab {...props} />;
@@ -137,5 +181,6 @@ function AssignmentList({ months, errors, retry, kind, learnerId }: { months: Mo
         })}
       </ul>
     </section>)}
+    <HistoricalCoachAssessments />
   </section>;
 }

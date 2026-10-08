@@ -58,12 +58,12 @@ export function LearningHero({ map = false }: { map?: boolean }) {
   </header>;
 }
 
-export function LearningCatalogue({ summary, search, onSearch, current, renderCard, onContinue, moduleStartDate, kind, learnerId, total, done, percent, deadlines = [], covers = {}, upcomingSessions = [] }: {
+export function LearningCatalogue({ summary, search, onSearch, current, renderCard, onContinue, moduleStartDate, kind, learnerId, total, done, percent, deadlines = [], covers = {}, upcomingSessions = [], reviewMode = false }: {
   summary: UnifiedLearningSummary; search: string; onSearch: (value: string) => void; current?: Subject;
   renderCard: (subject: Subject) => ReactNode; onContinue: (subject: Subject) => void;
   moduleStartDate: (subject: Subject) => string | null | undefined; kind?: string; learnerId?: string;
   total: number | string; done: number | string; percent: number | null;
-  deadlines?: OverviewWeek['deadlines']; covers?: Record<string, string>; upcomingSessions?: PlanSession[];
+  deadlines?: OverviewWeek['deadlines']; covers?: Record<string, string>; upcomingSessions?: PlanSession[]; reviewMode?: boolean;
 }) {
   const [filter, setFilter] = useState('all');
   const [sourceFilter, setSourceFilter] = useState<'all' | Subject['source']>('all');
@@ -133,9 +133,9 @@ export function LearningCatalogue({ summary, search, onSearch, current, renderCa
       <section className={styles.asidePanel}><div className={styles.asideHeading}><h2><CalendarDays size={19} />Upcoming</h2>{upcoming.length > 3 && <button type="button" className={styles.asideTextButton} aria-expanded={showAllUpcoming} onClick={() => setShowAllUpcoming(value => !value)}>{showAllUpcoming ? 'Show less' : 'View all'}<ArrowRight size={14} /></button>}</div>
         {upcoming.length ? (showAllUpcoming ? upcoming : upcoming.slice(0, 3)).map(item => <Link className={styles.deadline} key={item.id} to={item.href}><span className={styles.deadlineIcon} data-kind={item.type}>{item.type === 'session' ? <CalendarDays size={18} /> : <ClipboardList size={18} />}</span><div><strong>{item.title}</strong><small>{item.detail} · {item.type === 'session' ? formatSystemTimestamp(item.date, { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : learningDate(item.date)}</small></div>{item.online && <span className={styles.onlineBadge}>Online</span>}</Link>) : <p className={styles.asideEmpty}>No upcoming sessions or deadlines.</p>}
       </section>
-      <Link className={styles.mapShortcut} to={learningHref('map', kind, learnerId)}><Map size={25} /><div><strong>Learner’s Map</strong><span>See your learning week by week</span></div><ArrowRight size={18} /></Link>
-      <section className={styles.asidePanel}><h2><Headphones size={19} />Need help?</h2><nav className={styles.helpLinks} aria-label="Learning help"><Link to="/learner/calendar?book=student-support"><CalendarDays size={16} />Book a tutor meeting<ArrowRight size={15} /></Link><Link to="/learner/knowledge-base"><Clock3 size={16} />Visit the help centre<ArrowRight size={15} /></Link><Link to="/learner/support?action=new-ticket&category=learning"><Headphones size={16} />Contact student support<ArrowRight size={15} /></Link></nav></section>
-      <div className={styles.encouragement}><Trophy size={30} strokeWidth={1.8} /><div><strong>Consistency leads to progress.</strong><p>Keep going!</p></div></div>
+      {!reviewMode && <><Link className={styles.mapShortcut} to={learningHref('map', kind, learnerId)}><Map size={25} /><div><strong>Learner’s Map</strong><span>See your learning week by week</span></div><ArrowRight size={18} /></Link>
+        <section className={styles.asidePanel}><h2><Headphones size={19} />Need help?</h2><nav className={styles.helpLinks} aria-label="Learning help"><Link to="/learner/calendar?book=student-support"><CalendarDays size={16} />Book a tutor meeting<ArrowRight size={15} /></Link><Link to="/learner/knowledge-base"><Clock3 size={16} />Visit the help centre<ArrowRight size={15} /></Link><Link to="/learner/support?action=new-ticket&category=learning"><Headphones size={16} />Contact student support<ArrowRight size={15} /></Link></nav></section>
+        <div className={styles.encouragement}><Trophy size={30} strokeWidth={1.8} /><div><strong>Consistency leads to progress.</strong><p>Keep going!</p></div></div></>}
     </aside>
   </div>;
 }

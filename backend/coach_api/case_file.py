@@ -44,7 +44,7 @@ RESOURCES = {
     'monthly-focus': {'focus'},
     'otjh-ksb': {'breakdown', 'metrics', 'week', 'schedule', 'hours'},
     'learning-plan': {'detail', 'activity', 'covers', 'week', 'schedule', 'hours', 'module'},
-    'assignments': {'detail', 'covers', 'contract', 'statuses', 'marking', 'submission'},
+    'assignments': {'detail', 'covers', 'contract', 'statuses', 'marking', 'submission', 'historical'},
     'attendance': {'summary', 'history'},
     'reviews': {'rows'},
     'enrolment-documents': {'rows'},
@@ -618,6 +618,29 @@ def case_file_section(request, learner_id, section='profile'):
             elif section == 'enrolment-documents':
                 with measurement.stage('documents'):
                     response = context.read(f'/coach_api/coach/learners/{learner_id}/enrolment-documents')
+            elif section == 'assignments' and request.GET.get('resource') == 'historical':
+                # CaseFileContext has already verified this coach owns this learner.
+                # Restrict this added projection to the approved Advanced Admin pilot.
+                from login.models import AdvancedAdminLearnerScope
+                from learner_api.legacy_assignments import classified_rows, classified_submission
+                from learner_api.legacy_marking import reviews_for_evidence
+
+                profile = context.profile
+                if (context.kind != 'commercial' or not profile.enrolment_id
+                        or not profile.aptem_id or not AdvancedAdminLearnerScope.objects.filter(
+                            aptem_id=str(profile.aptem_id)).exists()):
+                    response = JsonResponse({'items': []})
+                else:
+                    rows = classified_rows('commercial', profile.enrolment_id)
+                    marks = reviews_for_evidence(profile.aptem_id, [row['evidence_id'] for row in rows])
+                    response = JsonResponse({'items': [{
+                        'id': f"aptem:{profile.aptem_id}:evidence:{row['evidence_id']}",
+                        'title': row['evidence_name'],
+                        'date': row['activity_date'].isoformat() if row['activity_date'] else None,
+                        'sourceStatus': row['evidence_status'],
+                        'originalFeedback': classified_submission(row, 'commercial', profile.enrolment_id)['legacyAssignment']['feedbacks'],
+                        'lmsReviews': marks.get(int(row['evidence_id']), []),
+                    } for row in rows]})
             elif section == 'learning-plan' and request.GET.get('resource') == 'module':
                 response = context.learner_read('schedule')
                 if response.status_code == 200:
