@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
-import { AuthError, PasswordSetupRequired, apiAuthHealth, apiMicrosoftStart } from '@/api/auth';
+import { AuthError, PasswordSetupRequired, apiMicrosoftStart } from '@/api/auth';
 import { AppIcon } from '@/components/feature/AppIcon';
 // Shared with RequireAuth, so the page you are sent to after signing in and
 // the page you are sent back to when refused are decided by one definition.
@@ -20,9 +20,6 @@ export default function LoginPage() {
   const [rememberMe, setRememberMe] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [ssoLoading, setSsoLoading] = useState(false);
-  // Undefined until the health check answers, so the button is not flashed in
-  // and then taken away on a deployment that has no provider configured.
-  const [ssoAvailable, setSsoAvailable] = useState<boolean | undefined>(undefined);
 
   // A refused Microsoft sign-in comes back with ?sso_error=... . Lift it into
   // the form's error box, then strip it so a refresh cannot resurrect it.
@@ -35,15 +32,6 @@ export default function LoginPage() {
     const rest = params.toString();
     navigate({ pathname: location.pathname, search: rest ? `?${rest}` : '' }, { replace: true });
   }, [location.search, location.pathname, navigate]);
-
-  // Only show Microsoft sign-in when the backend confirms it is configured.
-  useEffect(() => {
-    let cancelled = false;
-    apiAuthHealth()
-      .then((health) => { if (!cancelled) setSsoAvailable(!!health.microsoftSso?.configured); })
-      .catch(() => { if (!cancelled) setSsoAvailable(false); });
-    return () => { cancelled = true; };
-  }, []);
 
   // Bounce an already-signed-in visitor to their console after the server
   // session has been resolved.
@@ -240,7 +228,9 @@ export default function LoginPage() {
               </button>
             </form>
 
-              {ssoAvailable && (
+              {/* Always offered. On a deployment without a Microsoft app
+                  registration, the click reports "not configured" in the
+                  error box above rather than the button silently vanishing. */}
                 <div className={styles.ssoBlock}>
                 <div className={styles.divider} aria-hidden="true">
                   <span />
@@ -276,7 +266,6 @@ export default function LoginPage() {
                   Use your work account. You must already have access to this platform.
                 </p>
                 </div>
-              )}
 
             <footer className={styles.secureFooter}>
               <span>

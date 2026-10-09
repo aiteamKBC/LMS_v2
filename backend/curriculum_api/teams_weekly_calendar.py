@@ -497,6 +497,12 @@ def save_weekday_calendar(payload, graph_settings, series=None):
             'warnings': v.json_db_value([*warnings, *stored_option_warnings]), 'updated_at': datetime.utcnow(),
             'hide_attendees': True,
         })
+        # The meeting ID and passcode under the main join link; a read, skipped
+        # once captured for this link.
+        from .teams_dial_in import remember_teams_dial_in
+        remember_teams_dial_in({'id': live_id, 'join_url': main['joinUrl'], 'online_meeting_id': main.get('onlineMeetingId'),
+                                'organizer_email': organizer, 'dial_in_join_url': series.get('dial_in_join_url'),
+                                'join_meeting_code': series.get('join_meeting_code')})
         module_id = combined.get('moduleCatalogueId')
         if module_id and v.authoring_module_exists(module_id):
             saved = v.authoring_fetch_all(v.LIVE_SESSIONS_TABLE, 'id = %s', [live_id])[0]

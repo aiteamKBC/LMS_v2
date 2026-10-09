@@ -1,7 +1,10 @@
 """Saved session results. GET never calls Graph, provisions tables or starts jobs."""
 import json
 import logging
+import re
 from collections import defaultdict
+from pathlib import PurePosixPath
+from zoneinfo import ZoneInfo
 
 from django.db import connections, DatabaseError, transaction
 from django.http import HttpResponse, HttpResponseRedirect, JsonResponse
@@ -667,6 +670,20 @@ def queue_sync(request, series_id):
         return unavailable()
 
 
+def recording_download_name(row):
+    """A saved recording's file name: module, session number and date, nothing a header could break on."""
+    found = read('''SELECT s.module_title,o.session_number,o.scheduled_start FROM curriculum.live_session_occurrences o
+        JOIN curriculum.live_sessions s ON s.id=o.live_session_id WHERE o.id=%s''', [row.get('occurrence_id')])
+    session = found[0] if found else {}
+    start = instant(session.get('scheduled_start'))
+    parts = [session.get('module_title') or 'Live session',
+             f"session {session['session_number']}" if session.get('session_number') else '',
+             start.astimezone(ZoneInfo('Europe/London')).date().isoformat() if start else '']
+    stem = re.sub(r'[^A-Za-z0-9]+', '-', ' '.join(part for part in parts if part)).strip('-')[:120] or 'session-recording'
+    suffix = re.sub(r'[^A-Za-z0-9.]', '', PurePosixPath(row.get('blob_name') or '').suffix)[:8] or '.mp4'
+    return stem + suffix
+
+
 def stored_content(request, series_id, artifact_id, *, learner_view=False):
     if learner_view:
         siblings = read('''SELECT a.* FROM curriculum.live_session_artifacts a
@@ -695,6 +712,9 @@ def stored_content(request, series_id, artifact_id, *, learner_view=False):
             # A two-hour lesson must remain seekable beyond the default 15-minute
             # document URL lifetime. This URL still grants read access to one blob.
             options = {'ttl_minutes': 240} if row['artifact_type'] == 'recording' else {}
+            # Staff asking to keep a copy get the file saved, not played.
+            if row['artifact_type'] == 'recording' and not learner_view and request.GET.get('download') == '1':
+                options['content_disposition'] = f'attachment; filename="{recording_download_name(row)}"'
             response = HttpResponseRedirect(get_read_sas(row['container'], row['blob_name'], **options))
         except Exception as error:
             log.warning('Session file signing failed: %s', type(error).__name__)

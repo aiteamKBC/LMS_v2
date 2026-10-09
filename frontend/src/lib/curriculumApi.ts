@@ -3717,6 +3717,22 @@ export function fetchLiveSessionArtifacts(
   );
 }
 
+/** The meeting ID and passcode Teams prints under `link`, one of the series'
+ *  own join links. Read from Microsoft on first ask, then stored; blanks when
+ *  Microsoft cannot say. Staff only. */
+export type TeamsMeetingDialIn = { joinUrl: string; meetingId: string; passcode: string };
+
+export function fetchTeamsMeetingDialIn(
+  liveSessionId: string,
+  link: string,
+  options: { signal?: AbortSignal } = {},
+): Promise<TeamsMeetingDialIn> {
+  return fetchJson<TeamsMeetingDialIn>(
+    `/curriculum/teams-meetings/${encodeURIComponent(liveSessionId)}/dial-in/?link=${encodeURIComponent(link)}`,
+    { signal: options.signal, skipCache: true },
+  );
+}
+
 /** Absolute URL that streams a transcript/recording artifact's content (proxied
  *  from Graph server-side). Same-origin + cookie auth, so it can be used directly
  *  as an `href` / `download` / media `src`. */
