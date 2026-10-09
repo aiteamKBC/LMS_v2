@@ -237,6 +237,7 @@ export const curriculumNavItems: SidebarNavItem[] = [
       '/curriculum/groups',
       '/curriculum/modules',
       '/curriculum/teams-meetings',
+      '/curriculum/recordings',
       '/curriculum/session-calendar',
       '/curriculum/england-holidays',
     ],

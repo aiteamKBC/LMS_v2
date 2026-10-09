@@ -1381,6 +1381,12 @@ def provision_live_session_tracking_tables():
             cursor.execute(f"alter table {live_sessions} add column presenters {json_type} not null default '[]'")
         if connection.vendor != 'postgresql' and 'co_organizers' not in column_names(LIVE_SESSIONS_TABLE):
             cursor.execute(f"alter table {live_sessions} add column co_organizers {json_type} not null default '[]'")
+        # The meeting ID and passcode under the join link (teams_dial_in.py).
+        for column in ('join_meeting_code', 'join_passcode', 'dial_in_join_url'):
+            if connection.vendor == 'postgresql':
+                cursor.execute(f"alter table {live_sessions} add column if not exists {column} text not null default ''")
+            elif column not in column_names(LIVE_SESSIONS_TABLE):
+                cursor.execute(f"alter table {live_sessions} add column {column} text not null default ''")
         cursor.execute(f'''
             create table if not exists {occurrences} (
                 id varchar(128) primary key, live_session_id varchar(128) not null,
@@ -3488,6 +3494,9 @@ def curriculum_teams_meeting(request):
             'warnings': json_db_value([]), 'online_meeting_id': meeting_id,
             'meeting_options_url': meeting_options_url, 'join_url': join_url, 'updated_at': datetime.utcnow(),
         })
+        from .teams_dial_in import remember_teams_dial_in
+        remember_teams_dial_in({'id': live_session_id, 'join_url': join_url, 'online_meeting_id': meeting_id,
+                                'organizer_email': organizer}, graph_meeting)
         # Persist component links before returning, even if the browser has
         # stopped waiting. Only verified occurrences may be attached.
         if resolved_catalogue_id:
@@ -4693,6 +4702,9 @@ def curriculum_teams_meeting_artifacts(request, live_session_id):
     # the loaded row in step with it, or the grouping below reads the blank value
     # the row was loaded with and asks Graph for nothing at all.
     series['online_meeting_id'] = meeting_id
+    # The meeting ID and passcode shown under the join link, once per link.
+    from .teams_dial_in import remember_teams_dial_in
+    remember_teams_dial_in(series)
     errors = []
     if any(clean_str(row.get('join_url')) not in ('', join_url) and not clean_str(row.get('online_meeting_id')) for row in occurrences):
         errors.append('A weekday series has no online meeting ID yet. Update the calendar to retry its Teams configuration.')

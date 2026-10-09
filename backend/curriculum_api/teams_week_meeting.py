@@ -419,6 +419,9 @@ def curriculum_week_teams_meeting(request, module_catalogue_id):
             'Cancel it in the organiser’s calendar before trying again.',
             status=500, meetingCreated=True, eventId=event_id, joinUrl=join_url,
         )
+    from .teams_dial_in import remember_teams_dial_in
+    remember_teams_dial_in({'id': live_session_id, 'join_url': join_url, 'online_meeting_id': online_meeting_id,
+                            'organizer_email': organizer}, graph_meeting)
 
     # Invite the people named on the form -- the actual send. `always=True`
     # because the event was created empty on purpose: the patch is what makes
