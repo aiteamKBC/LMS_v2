@@ -19,9 +19,10 @@ import type { SignatureCaptureMethod } from '@/features/old-otjh/api';
 import design from '@/features/old-otjh/design.module.css';
 import journal from '@/features/old-otjh/journal.module.css';
 import reportStyles from '@/features/old-otjh/report.module.css';
-import { completeLogMonth, getLogContent, getLogMonth, getLogSummary, signLogMonth, unlockLogMonth, type LogSummary, type LogPerspective } from './api';
+import { completeLogMonth, getLogContent, getLogMonth, getLogSummary, signLogMonth, unlockLogMonth, type LogSummary, type LogPerspective, type LogDetail } from './api';
 import styles from './monthlyLogs.module.css';
 import { MonthList, MonthIndexSkeleton } from './MonthList';
+import { CoachLearnerLogs } from '@/features/coach/monthly-logs/components/CoachLearnerLogs';
 import { CoachMonthlyLogLearners } from '@/features/coach/monthly-logs/components/CoachMonthlyLogLearners';
 
 export default function MonthlyLogsPage() {
@@ -42,8 +43,8 @@ export default function MonthlyLogsPage() {
     <PageContainer className={`${design.scope} ${design.page} ${styles.theme} ${month ? journal.canvas : ''} ${coachOverview ? styles.coachCanvas : ''}`}>
       {coachOverview ? <CoachMonthlyLogLearners selectedLearnerId={id} renderSelected={learner => {
         const learnerId = String(learner.id);
-        return <LearnerLogs key={`coach-${learnerId}`} id={learnerId} base={`/coach/monthly-logs/${learnerId}`} perspective="coach" />;
-      }} /> : id ? <LearnerLogs key={`${perspective}-${id}`} id={id} month={month} base={base} perspective={perspective} /> : perspective === 'learner'
+        return <CoachLearnerLogs key={`coach-${learnerId}`} id={learnerId} />;
+      }} /> : id && perspective === 'coach' && month ? <CoachLearnerLogs key={`coach-${id}-${month}`} id={id} month={month} /> : id ? <LearnerLogs key={`${perspective}-${id}`} id={id} month={month} base={base} perspective={perspective} /> : perspective === 'learner'
         ? <EmptyState title="Your learner account is unavailable" /> : <EmptyState title="Choose a learner to view monthly logs" />}
     </PageContainer>
   </WorkspaceShell>;
@@ -92,8 +93,8 @@ export function LearnerLogs({ id, month, base, perspective, workflow, embedded =
   </>;
 }
 
-export function MonthlyLog({ id, month, summary, base, perspective, workflow, embedded = false }: {
-  id: string; month: string; summary: LogSummary; base: string; perspective: LogPerspective;
+export function MonthlyLog({ id, month, summary, base, perspective, workflow, embedded = false, loadedDetail }: {
+  id: string; month: string; summary: LogSummary; loadedDetail?: LogDetail; base: string; perspective: LogPerspective;
   workflow?: string; embedded?: boolean;
 }) {
   const { auth } = useAuth();
@@ -108,7 +109,7 @@ export function MonthlyLog({ id, month, summary, base, perspective, workflow, em
   const canActAsStudent = student || (perspective === 'learner' && auth.account?.role === 'admin');
   const futureMonth = month > currentMonthKey() && !mcmWorkflow;
   const key = ['monthly-logs', auth.account?.id, perspective, perspective === 'coach' ? coachViewAs()?.email : null, id, month];
-  const query = useQuery({ queryKey: [...key, workflowKey], queryFn: ({ signal }) => mcmWorkflow ? getLogMonth(id, month, signal, perspective, false, workflowKey) : getLogMonth(id, month, signal, perspective), refetchInterval: 7000, enabled: !futureMonth });
+  const query = useQuery({ queryKey: [...key, workflowKey], queryFn: ({ signal }) => mcmWorkflow ? getLogMonth(id, month, signal, perspective, false, workflowKey) : getLogMonth(id, month, signal, perspective), refetchInterval: loadedDetail ? false : 7000, enabled: !futureMonth && !loadedDetail, initialData: loadedDetail });
   const draftDigest = useRef<string | null>(null);
   const [captureVersion, setCaptureVersion] = useState(0);
   const [message, setMessage] = useState('');
@@ -129,10 +130,10 @@ export function MonthlyLog({ id, month, summary, base, perspective, workflow, em
     void client.invalidateQueries({ queryKey: ['monthly-logs'] });
   } });
   if (futureMonth) return <FutureMonthState month={month} base={base} />;
-  if (query.isPending) return <MonthReportSkeleton />;
-  if (query.error && !query.data) return <ErrorState error={query.error} retry={() => void query.refetch()} />;
-  if (!query.data) return null;
-  const data = query.data;
+  if (query.isPending && !loadedDetail) return <MonthReportSkeleton />;
+  if (query.error && !query.data && !loadedDetail) return <ErrorState error={query.error} retry={() => void query.refetch()} />;
+  if (!query.data && !loadedDetail) return null;
+  const data = loadedDetail ?? query.data!;
   // Training-plan values come only from the canonical monthly-log response;
   // this view must not overwrite them from a second frontend contract.
   // Sort a presentation copy so the saved report and signing digest stay intact.

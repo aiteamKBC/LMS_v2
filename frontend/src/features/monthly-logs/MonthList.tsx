@@ -6,6 +6,7 @@ import { SkeletonBlock } from '@/components/feature/Skeletons';
 import { duration, hours, monthLabel, monthStatus } from '@/features/old-otjh/report';
 import type { LogMonth, LogPerspective, LogSummary } from './api';
 import styles from './monthlyLogs.module.css';
+import type { CoachLogYear } from '@/features/coach/monthly-logs/api/monthlyLogsApi';
 
 export function MonthList({ summary, base, perspective }: { summary: LogSummary; base: string; perspective: LogPerspective }) {
   return perspective === 'coach'
@@ -90,28 +91,33 @@ function learnerInitials(name?: string) {
   return String(name || '').split(/\s+/).filter(Boolean).slice(0, 2).map(part => part[0]).join('').toUpperCase() || 'L';
 }
 
-function CoachMonthList({ summary, base }: { summary: LogSummary; base: string }) {
+export function CoachMonthList({ summary, projection, base, year: controlledYear, onYearChange, pendingOnly: controlledPending, onPendingChange }: { summary?: LogSummary; projection?: CoachLogYear; base: string; year?: string; onYearChange?: (year: string) => void; pendingOnly?: boolean; onPendingChange?: (pending: boolean) => void }) {
   const [year, setYear] = useState('');
-  const [pendingOnly, setPendingOnly] = useState(false);
-  const years = [...new Set(summary.months.map(item => item.month.slice(0, 4)))];
-  const selectedYear = years.includes(year) ? year : years.at(-1) || '';
-  const yearMonths = summary.months.filter(item => !selectedYear || item.month.startsWith(selectedYear));
+  const months = projection ? projection.months.map(item => ({ month: item.month, row_count: item.activities,
+    actual_hours: item.acceptedOtjhHours, training_plan_target: item.targetHours, is_open: item.isOpen,
+    student_signature: item.learnerSigned, coach_signature: item.coachSigned, target_warning: null })) : summary!.months;
+  const [localPending, setLocalPending] = useState(false);
+  const pendingOnly = controlledPending ?? localPending;
+  const setPendingOnly = onPendingChange ?? setLocalPending;
+  const years = projection ? projection.years.map(String) : [...new Set(months.map(item => item.month.slice(0, 4)))];
+  const selectedYear = controlledYear ?? (years.includes(year) ? year : years.at(-1) || '');
+  const yearMonths = months.filter(item => !selectedYear || item.month.startsWith(selectedYear));
   const pending = yearMonths.filter(item => !item.is_open && !item.coach_signature);
   const visible = pendingOnly ? pending : yearMonths;
-  const closed = summary.months.filter(item => !item.is_open);
-  const signed = closed.filter(item => item.coach_signature).length;
-  const total = closed.length;
+  const closed = months.filter(item => !item.is_open);
+  const signed = projection?.summary.coachSignatures.completed ?? closed.filter(item => item.coach_signature).length;
+  const total = projection?.summary.coachSignatures.total ?? closed.length;
   const percent = total ? Math.round(signed / total * 100) : 0;
-  const plan = summary.training_plan_totals;
+  const plan = projection ? { accepted_hours: projection.summary.acceptedOtjhHours, planned_hours: projection.summary.trainingPlanHours } : summary?.training_plan_totals;
   const acceptedHours = plan ? `${hours(plan.accepted_hours)} h` : 'Unavailable';
   const plannedHours = plan?.planned_hours == null ? 'Unavailable' : `${hours(plan.planned_hours)} h`;
-  const warnings = [...new Set(summary.months.map(item => item.target_warning).filter(Boolean))];
+  const warnings = [...new Set(months.map(item => item.target_warning).filter(Boolean))];
 
   return <div className={styles.coachLogOverview}>
     <section className={styles.coachProfileCard} aria-label="Selected learner summary">
       <div className={styles.coachProfileIdentity}>
-        <span className={styles.coachProfileAvatar}>{learnerInitials(summary.learner?.name)}</span>
-        <div><h2>{summary.learner?.name}</h2><p>{summary.learner?.programme}</p></div>
+        <span className={styles.coachProfileAvatar}>{learnerInitials((projection?.learner ?? summary?.learner)?.name)}</span>
+        <div><h2>{(projection?.learner ?? summary?.learner)?.name}</h2><p>{(projection?.learner ?? summary?.learner)?.programme}</p></div>
       </div>
       <div className={styles.coachProfileFact}>
         <span>Coach signatures</span><strong>{signed} <small>/ {total}</small></strong>
@@ -137,12 +143,12 @@ function CoachMonthList({ summary, base }: { summary: LogSummary; base: string }
           <button type="button" aria-pressed={!pendingOnly} onClick={() => setPendingOnly(false)}>All months <span>{yearMonths.length}</span></button>
           <button type="button" aria-pressed={pendingOnly} onClick={() => setPendingOnly(true)}>Awaiting signature <span>{pending.length}</span></button>
         </div>
-        {years.length > 0 && <label className={styles.coachYearFilter}><span>Year</span><select aria-label="Filter by year" value={selectedYear} onChange={event => setYear(event.target.value)}>
+        {years.length > 0 && <label className={styles.coachYearFilter}><span>Year</span><select aria-label="Filter by year" value={selectedYear} onChange={event => (onYearChange ?? setYear)(event.target.value)}>
           {years.map(value => <option key={value} value={value}>{value}</option>)}
         </select></label>}
       </div>
 
-      {!summary.months.length ? <EmptyState title="No monthly logs yet" description="Recorded learner activities will appear here as they are completed." />
+      {!months.length ? <EmptyState title="No monthly logs yet" description="Recorded learner activities will appear here as they are completed." />
         : !visible.length ? <div className={styles.coachNoMonths}><AppIcon className="ri-checkbox-circle-line" /><h3>All signatures saved for {selectedYear}</h3><p>There are no months awaiting a coach signature in this view.</p><button type="button" onClick={() => setPendingOnly(false)}>View all months</button></div>
           : <div className={styles.coachTableScroll}><table className={styles.coachMonthTable}>
             <thead><tr><th scope="col">Month</th><th scope="col">Activities</th><th scope="col">Accepted OTJ hours</th><th scope="col">Target hours</th><th scope="col">Learner signature</th><th scope="col">Coach signature</th><th scope="col">Report</th></tr></thead>
