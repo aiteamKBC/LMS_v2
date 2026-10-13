@@ -1,4 +1,4 @@
-import { assignmentTopics } from '@/lib/assignmentTopics';
+import { configuredAssignmentTopics } from '@/lib/assignmentTopics';
 import { componentFileList, legacyComponentFile } from '@/lib/componentFiles';
 import type { JourneyComponent } from '@/utils/learnerJourney';
 import { embeddedSrc } from '@/components/feature/VideoPlayer';
@@ -19,7 +19,9 @@ export function previewComponent(component: ModuleComponent): JourneyComponent {
   const assignmentContent = setting('assignmentContent');
   const assignmentHtml = /<[a-z][^>]*>/i.test(assignmentContent) ? assignmentContent : '';
   const audio = setting('podcastUrl') || setting('audioUrl') || ((component.type === 'podcast' || /\.(mp3|wav|m4a|ogg|aac|flac)(?:[?#]|$)/i.test(uploaded)) ? uploaded : '');
-  return { title: component.title, componentId: component.id, type: component.type.replace(/-/g, '_'),
+  return { title: (component.type === 'assignment' && setting('learnerTitle').trim()) || component.title,
+    componentId: component.id, type: component.type.replace(/-/g, '_'),
+    monthlyAssignment: component.settings.isMonthlyAssignment === true,
     expectedOtjh: component.expectedOtjh, description: component.description,
     videoUrl: setting('videoUrl') || uploaded || embed, audioUrl: audio,
     contentHtml: setting('readingContent'), hasReadingContent: Boolean(setting('readingContent')),
@@ -33,7 +35,8 @@ export function previewComponent(component: ModuleComponent): JourneyComponent {
       legacyComponentFile(resource, setting('fileName') || setting('uploadedFileName') || setting('assignmentFileName'),
         component.settings.uploadedFileSize, setting('uploadedFileContentType')),
     ),
-    assignmentTopics: assignmentTopics(component.settings.assignmentTopics),
+    // Learners are offered only the topics an author filled in.
+    assignmentTopics: configuredAssignmentTopics(component.settings.assignmentTopics),
     assignmentBrief: setting('assignmentBrief') || (!assignmentHtml ? assignmentContent : ''), assignmentBriefHtml: assignmentHtml,
     downloadAllowed: Boolean(component.settings.downloadAllowed),
     reflectionPrompt: setting('reflectionPrompt') || setting('podcastReflectionQuestion') || setting('readingReflectionPrompts') || component.description,

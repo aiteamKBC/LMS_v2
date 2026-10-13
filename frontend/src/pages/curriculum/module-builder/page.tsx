@@ -5855,6 +5855,8 @@ function TypeSpecificFields({
   if (component.type === 'assignment') {
     return (
       <EditorBlock title="Assignment">
+        <TextInput label="Title shown to learners" value={getString('learnerTitle')} onChange={value => onSettingChange('learnerTitle', value)} />
+        <Checkbox label="Monthly assignment (8-step submission)" checked={getBool('isMonthlyAssignment')} onChange={value => onSettingChange('isMonthlyAssignment', value)} />
         <AssignmentTopicsEditor value={component.settings.assignmentTopics}
           legacyQuestion={getString('assignmentBrief') || getString('assignmentContent')}
           legacyInstructions={getString('submissionInstructions')}

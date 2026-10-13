@@ -56,6 +56,8 @@ export interface LearnerComponentEntry {
   type?: string | null;                 // master component type, e.g. 'video', 'live_session'
   description?: string | null;
   assignmentTopics?: import('@/lib/assignmentTopics').AssignmentTopic[];
+  /** Author flag: the monthly (eight-step) assignment. See isMonthlyAssignment. */
+  monthlyAssignment?: boolean;
   assignmentBrief?: string | null;      // assignment brief authored as plain text (Module Builder)
   assignmentBriefHtml?: string | null;  // assignment brief authored as rich text (Week Builder)
   videoUrl?: string | null;             // present on video components authored with a URL

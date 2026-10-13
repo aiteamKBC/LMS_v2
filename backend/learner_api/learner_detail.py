@@ -1748,12 +1748,19 @@ def _resolve_from_master(modules, weeks, components, assigned_modules=None, *, c
         ):
             continue
         from .assignment_topics import topics_from_settings
+        from .assignment_settings import flagged_monthly, learner_title
+        # The programme team's name for an assignment replaces the (often
+        # imported) curriculum title wherever the learner sees it.
+        display_title = (normalised_type == "assignment" and learner_title(settings)) or ctitle
         comps_by_week.setdefault(week_id, []).append({
             "componentId": comp_id,
-            "display": _display_quiz_title(linked_quiz["title"]) if linked_quiz else _display_component_title(ctype, ctitle),
+            "display": _display_quiz_title(linked_quiz["title"]) if linked_quiz else _display_component_title(ctype, display_title),
             "type": ctype,
             "description": _s(cdesc) or None,
             "assignmentTopics": topics_from_settings(settings) if normalised_type == "assignment" else [],
+            # The author's flag only; which assignments are monthly for this
+            # learner is decided across their whole plan (assignment_settings).
+            "monthlyAssignment": normalised_type == "assignment" and flagged_monthly(settings),
             "assignmentBrief": assignment_brief,
             "assignmentBriefHtml": assignment_brief_html,
             "videoUrl": video_url,
@@ -1828,6 +1835,7 @@ def _resolve_from_master(modules, weeks, components, assigned_modules=None, *, c
                     "type": comp["type"],
                     "description": comp["description"],
                     "assignmentTopics": comp["assignmentTopics"],
+                    "monthlyAssignment": comp["monthlyAssignment"],
                     "assignmentBrief": comp["assignmentBrief"],
                     "assignmentBriefHtml": comp["assignmentBriefHtml"],
                     "videoUrl": comp["videoUrl"],

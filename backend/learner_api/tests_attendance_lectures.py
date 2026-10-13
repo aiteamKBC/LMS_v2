@@ -13,12 +13,19 @@ from django.utils import timezone
 
 from .attendance_lectures import (
     _component_for, build_lectures, lecture_register, lecture_totals,
-    read_legacy_metadata, report_id, session_key,
+    read_legacy_metadata, read_workspace, report_id, session_key,
     read_native_occurrences, read_native_components, ATTENDANCE_SOURCE_FIELDS,
 )
 from .attendance import _summarize_attendance
 from .attendance_mode import _payload, _manager, MAX_AGE, SALT, review_attendance_mode
-from .absence_reports import _fetch_missed_sessions, _resolve_absent_attendance, learner_absence_reports
+from .absence_reports import (
+    _can_report_absence, _fetch_missed_sessions, _resolve_absent_attendance, learner_absence_reports,
+)
+
+
+def run_now(task, *args, **kwargs):
+    """Stand-in for the after-commit email thread, so a test sees the email synchronously."""
+    return task(*args, **kwargs)
 from .management.commands.send_attendance_reminders import reminder_candidates
 
 
@@ -75,14 +82,17 @@ class AttendanceLectureTests(SimpleTestCase):
     def test_schedule_uses_current_module_assignment_without_stale_invitation_gate(self):
         conn = MagicMock()
         cur = conn.cursor.return_value.__enter__.return_value
-        cur.fetchall.return_value = [('assigned-module', 'Current module title')]
+        cur.fetchall.side_effect = [[('assigned-module', 'Current module title')], []]
         with patch('learner_api.attendance_lectures.connections', {'enrolment': conn}), \
              patch('learner_api.attendance_lectures.dict_rows', return_value=[]):
             read_native_occurrences(SimpleNamespace(id=12, email=' LEARNER@example.test '))
         assignment_sql, assignment_params = cur.execute.call_args_list[0].args
         self.assertIn('enrolment."Created_users" WHERE id=%s', assignment_sql)
         self.assertEqual(assignment_params, [12])
-        schedule_sql, schedule_params = cur.execute.call_args_list[1].args
+        shared_sql, shared_params = cur.execute.call_args_list[1].args
+        self.assertIn('teams_shared_source_module_id', shared_sql)
+        self.assertEqual(shared_params, [['assigned-module']])
+        schedule_sql, schedule_params = cur.execute.call_args_list[2].args
         self.assertEqual(schedule_params, ['learner@example.test', ['assigned-module']])
         self.assertIn('s.module_catalogue_id=ANY(%s)', schedule_sql)
         self.assertIn('curriculum.live_session_attendance', schedule_sql)
@@ -94,6 +104,7 @@ class AttendanceLectureTests(SimpleTestCase):
     def test_schedule_reuses_already_loaded_home_assignment(self):
         conn = MagicMock()
         cur = conn.cursor.return_value.__enter__.return_value
+        cur.fetchall.return_value = []
         with patch('learner_api.attendance_lectures.connections', {'enrolment': conn}), \
              patch('learner_api.attendance_lectures.dict_rows', return_value=[]):
             read_native_occurrences(
@@ -101,10 +112,24 @@ class AttendanceLectureTests(SimpleTestCase):
                 module_ids=['assigned-module', 'assigned-module', ''],
             )
 
-        cur.execute.assert_called_once()
+        statements = [call.args[0] for call in cur.execute.call_args_list]
+        self.assertFalse(any('Created_users' in sql for sql in statements))
+        self.assertEqual(len(statements), 2)
         schedule_sql, schedule_params = cur.execute.call_args.args
         self.assertIn('s.module_catalogue_id=ANY(%s)', schedule_sql)
         self.assertEqual(schedule_params, ['learner@example.test', ['assigned-module']])
+
+    def test_shared_teams_duplicate_reads_its_source_modules_meeting(self):
+        # A duplicate sharing another module's meeting has no series of its own.
+        conn = MagicMock()
+        cur = conn.cursor.return_value.__enter__.return_value
+        cur.fetchall.side_effect = [[('alias-module', 'Alias')], [('alias-module', 'source-module')]]
+        with patch('learner_api.attendance_lectures.connections', {'enrolment': conn}), \
+             patch('learner_api.attendance_lectures.dict_rows', return_value=[]):
+            read_native_occurrences(SimpleNamespace(id=12, email='learner@example.test'))
+        schedule_sql, schedule_params = cur.execute.call_args.args
+        self.assertIn('s.module_catalogue_id=ANY(%s)', schedule_sql)
+        self.assertEqual(schedule_params, ['learner@example.test', ['alias-module', 'source-module']])
 
     def test_empty_json_plan_still_uses_normalized_module_assignments(self):
         conn = MagicMock()
@@ -299,6 +324,39 @@ class AttendanceLectureTests(SimpleTestCase):
         combined.return_value = [ended, active, attended]
         result = {row['session_id']: row['attendance_status'] for row in lecture_register(SimpleNamespace(id=12))}
         self.assertEqual(result, {'ended': 'unmarked', 'active': 'in_progress', 'attended': 'present'})
+
+    @patch('learner_api.attendance_lectures.read_native_occurrences')
+    @patch('learner_api.attendance_lectures.combined_attendance_rows')
+    def test_ended_teams_lecture_without_an_attendance_report_can_be_reported(self, combined, scheduled):
+        # Regression: before its Teams report syncs an ended lecture is 'unmarked',
+        # and it vanished from the absence form and could not be submitted.
+        now = timezone.now()
+        ended = register_row(source='microsoft-teams', session_id='occ-1', occurrence_id='occ-1',
+                             module_catalogue_id='mod-1', live_session_id='live-1', session_number=1,
+                             attendance_status='pending', attendance_report_id=None,
+                             session_date=timezone.localdate() - timedelta(days=2),
+                             scheduled_start=now-timedelta(days=2, hours=2), scheduled_end=now-timedelta(days=2))
+        scheduled.return_value = [ended]
+        combined.return_value = []
+        register = lecture_register(SimpleNamespace(id=12))
+        self.assertEqual(register[0]['attendance_status'], 'unmarked')
+        self.assertTrue(_can_report_absence(register[0]))
+        with patch('learner_api.absence_reports.lecture_register', return_value=register), \
+             patch('learner_api.absence_reports.eligible_alternatives_by_occurrence', return_value={}):
+            form = _fetch_missed_sessions(SimpleNamespace(id=12), 12)
+        self.assertEqual([(item['sessionId'], item['status']) for item in form], [('teams:occ-1', 'unmarked')])
+
+        conn = MagicMock()
+        with patch('learner_api.attendance_lectures.lecture_register', return_value=register), \
+             patch('learner_api.attendance_lectures.read_legacy_metadata', return_value=({}, [])), \
+             patch('learner_api.attendance_lectures.read_native_components', return_value=([], [])), \
+             patch('learner_api.attendance_lectures.read_assigned_modules', return_value=[]), \
+             patch('learner_api.attendance_mode.read_mode', return_value={'mode': 'live', 'requestedMode': None, 'updatedAt': None}), \
+             patch('learner_api.attendance_lectures.connections', {'enrolment': conn}), \
+             patch('learner_api.attendance_lectures.dict_rows', return_value=[]):
+            lecture = read_workspace(SimpleNamespace(id=12, email='learner@example.test'), 'apprenticeship')['lectures'][0]
+        self.assertEqual(lecture['status'], 'unmarked')
+        self.assertTrue(lecture['canReportAbsence'])
 
     @patch('learner_api.attendance_lectures.read_native_occurrences')
     @patch('learner_api.attendance_lectures.combined_attendance_rows')
@@ -558,6 +616,7 @@ class AttendanceAbsenceTests(SimpleTestCase):
              patch('learner_api.absence_reports.transaction.atomic', return_value=nullcontext()), \
              patch('learner_api.absence_reports._recording_recovery_event') as calendar_event, \
              patch('learner_api.absence_reports.email_azure.send_mail', return_value=(True, 'sent')) as send_mail, \
+             patch('learner_api.absence_reports._send_after_commit', side_effect=run_now), \
              patch('learner_api.absence_reports.resolve_read_url', return_value=''):
             manager.filter.return_value.exists.return_value = False
             manager.filter.return_value.count.return_value = 0
@@ -598,6 +657,7 @@ class AttendanceAbsenceTests(SimpleTestCase):
              patch('learner_api.absence_reports.transaction.atomic', return_value=nullcontext()), \
              patch('learner_api.absence_reports._catchup_booking') as booking, \
              patch('learner_api.absence_reports.email_azure.send_mail', return_value=(True, 'sent')), \
+             patch('learner_api.absence_reports._send_after_commit', side_effect=run_now), \
              patch('learner_api.absence_reports._serialize', return_value={'id': 1}):
             manager.filter.return_value.exists.return_value = False
             manager.filter.return_value.count.return_value = 0
@@ -613,7 +673,7 @@ class AttendanceAbsenceTests(SimpleTestCase):
         # The ledger gets the catch-up from the booking that links to this report.
         self.assertEqual(record_absence.call_args.kwargs['recovery_method'], '')
 
-    def test_duplicate_report_is_rejected_before_writing(self):
+    def submit_duplicate(self, saved):
         request = RequestFactory().post('/', {'sessionId': 'same', 'sessionTitle': 'Lecture',
                                              'sessionDate': '2026-09-01', 'reasonCategory': 'illness',
                                              'recoveryMethod': 'recorded', 'recordingDate': '2026-10-02',
@@ -621,11 +681,85 @@ class AttendanceAbsenceTests(SimpleTestCase):
         source = SimpleNamespace(id=12, username='Learner', email='learner@example.test')
         with patch('learner_api.absence_reports._source_learner', return_value=source), \
              patch('learner_api.absence_reports._resolve_absent_attendance', return_value=123), \
-             patch('learner_api.absence_reports.CoachAbsenceReport.objects') as manager:
+             patch('learner_api.absence_reports.CoachAbsenceReport.objects') as manager, \
+             patch('learner_api.absence_reports._serialize', side_effect=lambda report: {'id': report.id}), \
+             patch('learner_api.absence_reports._send_after_commit') as notify:
             manager.filter.return_value.exists.return_value = True
+            manager.filter.return_value.first.return_value = saved
             response = inspect.unwrap(learner_absence_reports)(request, 'apprenticeship', 12)
-        self.assertEqual(response.status_code, 409)
         manager.create.assert_not_called()
+        notify.assert_not_called()
+        return response
+
+    def test_duplicate_report_for_another_learner_is_rejected_before_writing(self):
+        response = self.submit_duplicate(SimpleNamespace(id=7, learner_id=99))
+        self.assertEqual(response.status_code, 409)
+
+    def test_retried_report_returns_the_learners_saved_report(self):
+        # The first attempt was saved after the proxy had timed out the request.
+        response = self.submit_duplicate(SimpleNamespace(id=7, learner_id=12))
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(json.loads(response.content), {'id': 7})
+
+    def save(self, *, profiles, create=None):
+        request = RequestFactory().post('/', {'sessionId': 'teams:occ-1', 'sessionTitle': 'Lecture',
+                                             'sessionDate': '2026-10-01', 'reasonCategory': 'illness',
+                                             'recoveryMethod': 'recorded', 'recordingDate': '2026-10-02',
+                                             'recordingTime': '18:00'})
+        source = SimpleNamespace(id=12, username='Learner', email='learner@example.test')
+        with patch('learner_api.absence_reports._source_learner', return_value=source), \
+             patch('learner_api.absence_reports._resolve_absent_attendance', return_value=8000000000000000001), \
+             patch('learner_api.absence_reports.CoachAbsenceReport.objects') as manager, \
+             patch('learner_api.absence_reports.learner_profile_for_source', side_effect=profiles) as lookup, \
+             patch('learner_api.absence_reports.record_reported_absence') as record_absence, \
+             patch('learner_api.absence_reports.transaction.atomic', return_value=nullcontext()), \
+             patch('learner_api.absence_reports._recording_recovery_event'), \
+             patch('learner_api.absence_reports._send_after_commit'), \
+             patch('learner_api.absence_reports._serialize', return_value={'id': 1}):
+            manager.filter.return_value.exists.return_value = False
+            manager.filter.return_value.count.return_value = 0
+            manager.create.side_effect = create
+            response = inspect.unwrap(learner_absence_reports)(request, 'apprenticeship', 12)
+        return response, lookup, record_absence
+
+    def test_lecture_absence_links_a_profile_that_is_not_marked_active(self):
+        paused = SimpleNamespace(id=99, coach_name='Coach', coach_email='coach@example.test')
+        response, lookup, record_absence = self.save(profiles=[None, paused])
+        self.assertEqual(response.status_code, 201)
+        self.assertTrue(lookup.call_args_list[0].kwargs['active_only'])
+        self.assertNotIn('active_only', lookup.call_args_list[1].kwargs)
+        self.assertEqual(record_absence.call_args.kwargs['learner_profile_id'], 99)
+
+    def test_failed_save_without_evidence_does_not_mention_an_upload(self):
+        profile = SimpleNamespace(id=99, coach_name='Coach', coach_email='coach@example.test')
+        with self.assertLogs('learner_api.absence_reports', 'ERROR'):
+            response, _, record_absence = self.save(profiles=[profile], create=RuntimeError('database unavailable'))
+        self.assertEqual(response.status_code, 502)
+        self.assertEqual(json.loads(response.content)['error'], 'The absence report could not be saved. Please retry.')
+        record_absence.assert_not_called()
+
+    def test_profile_lookup_failure_is_a_json_error(self):
+        with self.assertLogs('learner_api.absence_reports', 'ERROR'):
+            response, _, _ = self.save(profiles=RuntimeError('database unavailable'))
+        self.assertEqual(response.status_code, 502)
+        self.assertIn('learner profile', json.loads(response.content)['error'])
+
+    def test_notification_email_runs_after_commit_off_the_request_and_never_raises(self):
+        from . import absence_reports as absence
+        task = MagicMock(side_effect=RuntimeError('Graph timed out'), __name__='_email_coach_recovery')
+        with patch.object(absence.transaction, 'on_commit') as on_commit, \
+             patch.object(absence.threading, 'Thread') as thread, \
+             patch.object(absence.connections, 'close_all') as close_all:
+            absence._send_after_commit(task, 'report', recovery_details='Monday')
+            task.assert_not_called()
+            on_commit.call_args.args[0]()
+            self.assertTrue(thread.call_args.kwargs['daemon'])
+            thread.return_value.start.assert_called_once()
+            task.assert_not_called()
+            with self.assertLogs('learner_api.absence_reports', 'ERROR'):
+                thread.call_args.kwargs['target']()
+        task.assert_called_once_with('report', recovery_details='Monday')
+        close_all.assert_called_once()
 
     @patch('learner_api.absence_reports.lecture_register')
     def test_new_and_old_reportable_sessions_use_source_ids(self, read):

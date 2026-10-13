@@ -34,3 +34,20 @@ it('keeps names, separate questions and multiple resources across topic switches
   expect(restored[1].resources.map(file => file.fileName)).toEqual(['intro.mp4', 'brief.pdf']);
   expect(restored[2].question).toBe('');
 });
+
+it('seeds an imported link list as Topic 1 resources instead of its instructions', () => {
+  let saved = '';
+  const imported = '<p><strong>Additional materials</strong></p><ul>'
+    + '<li><a href="/curriculum_api/curriculum/uploads/brief.pdf" target="_blank" rel="noreferrer">brief.pdf</a></li>'
+    + '<li><a href="https://old.example.test/guide.docx" target="_blank" rel="noreferrer">Guide &amp; template</a></li></ul>';
+  const brief = { fileName: 'brief.pdf', url: '/curriculum_api/curriculum/uploads/brief.pdf', size: 9, contentType: 'application/pdf' };
+  render(<AssignmentTopicsEditor value="" legacyQuestion="Original question" legacyInstructions={`Submit one report.${imported}`}
+    legacyResources={[brief]} onChange={next => { saved = next; }} onUpload={vi.fn()} />);
+  expect(screen.getByLabelText('Instructions')).toHaveValue('Submit one report.');
+  expect(screen.getByRole('link', { name: 'Guide & template' })).toHaveAttribute('href', 'https://old.example.test/guide.docx');
+  expect(screen.getAllByRole('link', { name: 'brief.pdf' })).toHaveLength(1);
+  fireEvent.change(screen.getByLabelText('Topic name (optional)'), { target: { value: 'Report' } });
+  const [topic] = assignmentTopics(saved);
+  expect(topic.instructions).toBe('Submit one report.');
+  expect(topic.resources).toEqual([brief, { fileName: 'Guide & template', url: 'https://old.example.test/guide.docx', size: 0, contentType: '', link: true }]);
+});

@@ -233,6 +233,11 @@ urlpatterns = [
     path('student-activity/<str:kind>/<int:pk>/<int:group_id>/<int:activity_id>/files/<int:attachment_id>/', student_activity.subject_file, name='subject-file'),
     path('student-activity/<str:kind>/<int:pk>/<int:group_id>/<int:activity_id>/source-file/', student_activity.source_material_file, name='source-material-file'),
     path("media/google-drive/<str:file_id>/", media_proxy.google_drive_media, name="google-drive-media"),
+    # Imported LMS files: component settings, the slide renderer and the
+    # zero-byte placeholder fallback in curriculum uploads all link here.
+    path("media/legacy-attachment/<str:attachment_id>/", media_proxy.legacy_attachment_media, name="legacy-attachment-media"),
+    path("media/legacy-attachment/<str:attachment_id>/pdf-info/", media_proxy.legacy_attachment_pdf_info, name="legacy-attachment-pdf-info"),
+    path("media/legacy-attachment/<str:attachment_id>/pdf-page/<int:page_number>/", media_proxy.legacy_attachment_pdf_page, name="legacy-attachment-pdf-page"),
     path("attendance/<str:kind>/<int:learner_id>/", attendance.learner_attendance, name="learner-attendance"),
     path("learners/<int:pk>/coach/", views.learner_coach, name="learner-coach"),
     # curriculum lookups for the training-plan builder

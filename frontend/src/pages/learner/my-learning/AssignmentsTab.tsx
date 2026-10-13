@@ -8,7 +8,7 @@ import { RowsSkeleton } from '@/components/feature/Skeletons';
 import { PageTabs } from '@/components/ui/PageTabs';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import type { LearnerDetail } from '@/api/learnerDetail';
-import { completedComponentIds, componentRequiresEvidence, hasComponentContent } from '@/utils/learnerJourney';
+import { completedComponentIds, hasComponentContent, isMonthlyAssignment } from '@/utils/learnerJourney';
 import { useSubjectMetadata } from './SubjectWorkspace';
 
 type Assignment = {
@@ -63,7 +63,8 @@ function AssignedList({ real, kind, id, canTake }: {
     const completed = completedComponentIds(real);
     const seen = new Set<string>();
     return real.components.filter(component => {
-      if (!component.componentId || !componentRequiresEvidence(component.type) || seen.has(component.componentId)) return false;
+      // Rows open the monthly submission, so only monthly assignments belong here.
+      if (!component.componentId || !isMonthlyAssignment(component, real.components) || seen.has(component.componentId)) return false;
       seen.add(component.componentId);
       return true;
     }).map(component => {
@@ -122,7 +123,7 @@ export function AssignmentsTab({ kind, id, real = null, loading: planLoading = f
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [retry, setRetry] = useState(0);
-  const hasAssigned = !!real?.components?.some(component => component.componentId && componentRequiresEvidence(component.type));
+  const hasAssigned = !!real?.components?.some(component => component.componentId && isMonthlyAssignment(component, real.components));
   useEffect(() => {
     if (!kind || !id) { setRows([]); setLoading(false); return; }
     const controller = new AbortController();

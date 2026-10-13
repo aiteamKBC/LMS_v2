@@ -130,6 +130,12 @@ class PrefixMatchingTests(SimpleTestCase):
         self.assertFalse(is_gated("/api/calendar/microsoft/callback"))
         # The learner's actual calendar data is elsewhere, and is gated.
         self.assertTrue(is_gated("/learner_api/learners/learner/1/calendar/"))
+        # Office Online fetches a preview file with no session; the view checks
+        # a signed, expiring token naming one upload.
+        self.assertFalse(is_gated("/curriculum_api/office-preview/token/handout.doc"))
+        # The upload itself, and the rest of the console, stay gated.
+        self.assertTrue(is_gated("/curriculum_api/curriculum/uploads/_legacy_files/42/handout.doc"))
+        self.assertTrue(is_gated("/curriculum_api/office-previewer/"))
 
     def test_the_previously_open_apis_are_gated(self):
         """The five apps that had no authentication of any kind."""

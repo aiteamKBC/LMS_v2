@@ -156,23 +156,30 @@ class LocalSubjectContentTests(unittest.TestCase):
         self.assertEqual(public['media'][0]['file_name'], 'lesson.pdf')
         self.assertNotIn('source_material_file', public['media'][0])
 
-    def test_blob_redirect_requires_ownership_and_available_backup(self):
+    def test_blob_stream_requires_ownership_and_available_backup(self):
+        # Streamed on the LMS origin rather than redirected to Azure, whose
+        # responses carry no CORS headers for the inline preview's fetch.
         storage = ModuleType('learner_api.material_storage')
         storage.curriculum_archive_url = Mock(return_value='')
-        storage.read_url = Mock(return_value='https://storage.example/short-lived')
+        storage.file_response = Mock(side_effect=lambda row, config, request: {})
+        storage.office_preview_response = Mock()
+        storage.OFFICE_PREVIEW_SUFFIXES = ('.doc',)
         owned = Mock(return_value=(8, {'_source': {'_material_blob_ready': True,
-            'material_blob_container': 'materials', 'material_blob_name': 'lesson.pdf'}}))
+            'material_blob_container': 'materials', 'material_blob_name': 'lesson.docx'}}))
         self.scope.update(_owned_material=owned, _error=lambda message, status: status,
                           HttpResponseRedirect=lambda url: {'Location': url})
         view = function('source_material_file', self.scope)
+        request = SimpleNamespace(GET={})
         with patch.dict(sys.modules, {'learner_api.material_storage': storage}):
-            response = view(None, 'commercial', 3, 5, 1)
+            response = view(request, 'commercial', 3, 5, 1)
             self.assertEqual(response['Cache-Control'], 'private, no-store')
-            storage.read_url.assert_called_once_with(owned.return_value[1]['_source'], settings)
-            storage.read_url.reset_mock()
+            self.assertNotIn('Location', response)
+            storage.file_response.assert_called_once_with(owned.return_value[1]['_source'], settings, request)
+            storage.office_preview_response.assert_not_called()
+            storage.file_response.reset_mock()
             owned.side_effect = LookupError('Not owned')
-            self.assertEqual(view(None, 'commercial', 3, 5, 1), 404)
-            storage.read_url.assert_not_called()
+            self.assertEqual(view(request, 'commercial', 3, 5, 1), 404)
+            storage.file_response.assert_not_called()
 
     def test_extensionless_blob_keeps_the_pdf_preview_type(self):
         row = hydrate_material({'activity_id': 1, 'material_title': 'Reading',
