@@ -9,9 +9,17 @@ export interface CalendarSyncResult {
   errors: string[];
   /** On Teams but not in the module plan. Reported only; never cancelled by the check. */
   leftovers?: TeamsLeftoverSlot[];
+  /**
+   * Sessions Microsoft shows cancelled (in Outlook, by anybody) that the LMS
+   * still holds. Reported only: the check never cancels anything, and the
+   * author records the cancellation with Cancel if it should stand.
+   */
+  cancelledInMicrosoft?: number[];
+  /** The whole calendar shows cancelled in Microsoft; still active in the LMS. */
+  seriesCancelledInMicrosoft?: boolean;
 }
 
-/** Reads Microsoft status and reconciles the LMS; sends no calendar invitations. */
+/** Reads Microsoft status and reports it; never cancels anything and sends no email. */
 export async function syncTeamsCalendarState(liveSessionId: string): Promise<CalendarSyncResult> {
   const controller = new AbortController();
   const timeout = window.setTimeout(() => controller.abort(), 60000);

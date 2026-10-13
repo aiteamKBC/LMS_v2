@@ -21,6 +21,39 @@ beforeEach(() => { vi.clearAllMocks(); vi.stubGlobal('fetch', fetchMock); fetchM
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
 describe('Saved session results', () => {
+  it('shows the read-only account check beside the register without changing attendance', async () => {
+    const account = (overrides: Record<string, unknown>) => ({ sourceRecordIds: ['R1'], displayName: '', teamsRole: 'Attendee',
+      verification: 'verified', tenant: 'home', accountType: 'Microsoft work or school account', email: '', emailSource: 'teams',
+      otherEmails: [], enteredEmail: '', lookup: '', linkedBy: 'email', status: 'matched', reason: '', joins: 1, seconds: 240, ...overrides });
+    const identityCheck = {
+      counts: { matched: 1, 'different-account': 1, 'unverified-guest': 1, unknown: 0, unmatched: 0 }, lookupPending: 1,
+      participants: [
+        { kind: 'learner', name: 'Learner One', roles: ['Learner'], learnerProfileId: 1, expectedEmail: 'learner@example.invalid',
+          linkedBy: ['email'], teamsRoles: ['Attendee'], status: 'matched', reason: 'Signed in to Microsoft with the LMS email.',
+          accounts: [account({ email: 'learner@example.invalid' })] },
+        { kind: 'learner', name: 'Learner Two', roles: ['Learner'], learnerProfileId: 2, expectedEmail: 'two@example.invalid',
+          linkedBy: ['alias'], teamsRoles: ['Attendee'], status: 'different-account', reason: 'Signed in to Microsoft as home@other.invalid, not the LMS email.',
+          accounts: [account({ sourceRecordIds: ['R2'], email: 'home@other.invalid', tenant: 'external', status: 'different-account' })] },
+        { kind: 'learner', name: 'Learner Three', roles: ['Learner'], learnerProfileId: 3, expectedEmail: 'three@example.invalid',
+          linkedBy: ['name'], teamsRoles: ['Attendee'], status: 'unverified-guest', reason: 'Joined without signing in to Microsoft, so Microsoft cannot confirm who this was.',
+          accounts: [account({ sourceRecordIds: ['R3'], verification: 'unverified', accountType: 'anonymous guest', enteredEmail: 'three@example.invalid', status: 'unverified-guest' })] },
+      ],
+    };
+    fetchMock.mockImplementation(() => ok({ sessions: [{ ...session, identityCheck }] }));
+    render(<SessionResults seriesId="S1" sessionNumber={1} />);
+    fireEvent.click(await screen.findByRole('tab', { name: 'attendance' }));
+    fireEvent.click(screen.getByRole('button', { name: /Account check/ }));
+    expect(screen.getByText('home@other.invalid')).toBeInTheDocument();
+    expect(screen.getByText('Typed three@example.invalid (not verified)')).toBeInTheDocument();
+    expect(screen.getByText(/1 signed-in account has no email yet/)).toBeInTheDocument();
+    // Matched learners are hidden until "Everyone" is chosen; the register still lists them.
+    expect(screen.queryByText('Signed in to Microsoft with the LMS email.')).not.toBeInTheDocument();
+    fireEvent.change(screen.getByRole('combobox', { name: /Show/ }), { target: { value: 'all' } });
+    expect(screen.getByText('Signed in to Microsoft with the LMS email.')).toBeInTheDocument();
+    expect(screen.getAllByText('Present').length).toBeGreaterThan(0);
+    expect(coachFetch).not.toHaveBeenCalled();
+  });
+
   it('shows refresh feedback while keeping the saved video mounted', async () => {
     render(<SessionResults seriesId="S1" sessionNumber={1} />);
     const video = await screen.findByLabelText('Session recording 1');
@@ -95,6 +128,20 @@ describe('Saved session results', () => {
     expect(screen.queryByText('Export attendance CSV')).not.toBeInTheDocument();
     expect(screen.queryByText('Export attendance PDF')).not.toBeInTheDocument();
     expect(screen.getByLabelText('Session recording 1')).toHaveAttribute('src', '/learner_api/session-results/commercial/7/S1/artifacts/recording-1/');
+  });
+
+  it('hides the Teams attendance card for a Recorded learner', async () => {
+    render(<MemoryRouter><SessionResults seriesId="S1" sessionNumber={1}
+      learner={{ kind: 'commercial', id: '7' }} attendanceType="Recorded" /></MemoryRouter>);
+    await screen.findByLabelText('Session recording 1');
+    expect(screen.queryByText(/Your original attendance:/)).not.toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: 'recordings' })).toBeInTheDocument();
+  });
+
+  it('keeps the Teams attendance card for a Not recorded learner', async () => {
+    render(<MemoryRouter><SessionResults seriesId="S1" sessionNumber={1}
+      learner={{ kind: 'commercial', id: '7' }} attendanceType="Not recorded" /></MemoryRouter>);
+    expect(await screen.findByText('Your original attendance: Present')).toBeInTheDocument();
   });
 
   it('keeps a reported recovery separate from the original absence', async () => {

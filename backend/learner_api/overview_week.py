@@ -309,13 +309,51 @@ def summarise_week(historical, native, progress, attempts, links, start, end):
             'missingExpectedHours': sum(value is None for value in expected.values())}
 
 
+def read_overview_subjects(source, profile):
+    """Overview only needs native activity counts, not dates, hours or KSBs."""
+    progress = [{'kind': row['kind'], 'passed': row['passed'],
+                 'componentId': row['component_ref'], 'quizId': row['quiz_ref']}
+                for row in profile.progress_entries.using('enrolment')
+                .filter(component_link_source__in=('direct', 'quiz_ref'))
+                .exclude(kind='activity_event')
+                .values('kind', 'passed', 'component_ref', 'quiz_ref')]
+    with connections['enrolment'].cursor() as cur:
+        cur.execute(CURRENT_SUBJECTS_SQL, [source.pk])
+        assigned = cur.fetchall()
+        cur.execute('''SELECT c.id,c.module_catalogue_id AS module_id,m.title AS module_title,
+            coalesce((SELECT q.quiz_id::text FROM curriculum.quiz_component_links q
+                      WHERE q.component_id=c.id ORDER BY q.id LIMIT 1),
+                     c.settings_json->>'linkedQuizId') AS quiz_id
+            FROM curriculum.components c
+            JOIN curriculum.modules m ON m.module_catalogue_id=c.module_catalogue_id
+            LEFT JOIN curriculum.weeks w ON w.id=c.week_id AND w.module_catalogue_id=c.module_catalogue_id
+            WHERE c.module_catalogue_id=ANY(%s)
+              AND (c.deleted_at IS NULL OR COALESCE(c.deleted_via_parent, '') <> '')
+              AND (w.id IS NULL OR w.deleted_at IS NULL OR COALESCE(w.deleted_via_parent, '') <> '')''',
+                    [[module_id for module_id, _title in assigned]])
+        native = rows(cur)
+    subjects = {}
+    for row in merged_activities([], native, progress, set(), {}):
+        subject = subjects.setdefault(row['subject'], {'id': row['subject'],
+            'title': clean_text(row.get('module_title')) or 'Learning activities',
+            'total': 0, 'completed': 0})
+        subject['total'] += 1
+        subject['completed'] += bool(row['completed'])
+    for module_id, title in assigned:
+        subjects.setdefault(f'current:{module_id}', {'id': f'current:{module_id}',
+            'title': clean_text(title), 'total': 0, 'completed': 0})
+    return sorted(subjects.values(), key=lambda row: (row['title'].casefold(), row['id']))
+
+
 def read_week(source, now=None, *, home_kind=None, dashboard_kind=None):
     start, end = week_bounds(now)
     # Every active learner route is SSOT-only. Missing SSOT identity fails when
     # the canonical metrics/home projection is read below.
     historical, attempts, links = [], set(), {}
     old_hours, undated_hours = 0, 0
-    progress = _direct_progress_records(source.pk)
+    owned_profile = getattr(source, '_case_file_profile', None)
+    progress = (_direct_progress_records(source.pk, profile=owned_profile) if owned_profile is not None
+                else _direct_progress_records(source.pk))
     attendance_module_ids = None
     with connections['enrolment'].cursor() as cur:
         cur.execute(HOME_SUBJECTS_SQL if home_kind else CURRENT_SUBJECTS_SQL, [source.pk])
@@ -402,7 +440,10 @@ def overview_week(request, kind, pk):
                         enqueue_learner_home_refresh(kind, pk, reason='stale-read')
             if shared is None:
                 fields = HOME_SOURCE_FIELDS if home else ('id', 'aptem_id', 'email')
-                source = model.all_learners.only(*fields).get(pk=pk)
+                from .case_file_sources import source_for_case_file
+                source = source_for_case_file(request, kind, pk)
+                if source is None:
+                    source = model.all_learners.only(*fields).get(pk=pk)
                 with measurement.stage(section or 'overview'):
                     payload = read_week(source, home_kind=kind) if home else read_week(
                         source, dashboard_kind=kind if section == 'dashboard' else None)

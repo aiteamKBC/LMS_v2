@@ -107,8 +107,8 @@ export function ActivitySidebar({
 
   return (
     <aside aria-label="Module activities" className="min-w-0 space-y-4 lg:sticky lg:top-4">
-      <div className="rounded-xl border border-primary-100 bg-white overflow-hidden">
-        <div className="px-4 py-3 border-b border-primary-100">
+      <div className="overflow-hidden rounded-xl border border-emerald-200 bg-emerald-50/70 shadow-sm">
+        <div className="border-b border-emerald-100 px-4 py-3">
           <p className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-primary-600">Current week</p>
           <h2 className="text-sm font-heading font-bold text-primary-900">{currentWeekLabel || 'This week'}</h2>
           <p className="text-[11px] text-foreground-400 mt-0.5">
@@ -118,7 +118,7 @@ export function ActivitySidebar({
           {hasUnavailableContent && <p className="mt-2 text-[11px] leading-4 text-foreground-500">Locked activities have no learning content available yet.</p>}
           <HolidayNoteHint note={currentWeekNote} className="mt-2" />
         </div>
-        <ul className="divide-y divide-primary-100">
+        <ul className="divide-y divide-emerald-100">
           {weekComponents.map((c) => {
             const cm = componentTypeMeta(c.title);
             const isCurrent = isCurrentRow(c);
@@ -139,12 +139,12 @@ export function ActivitySidebar({
                   onClick={() => accessBlocked ? onAccessBlocked?.() : clickable && navigate(routeFor(c, weekTitle))}
                   className={`w-full flex items-center gap-2.5 px-4 py-2.5 text-left transition-colors ${
                     !contentAvailable || accessBlocked
-                      ? 'cursor-not-allowed bg-primary-50/70 opacity-55'
+                      ? 'cursor-not-allowed bg-emerald-100/60 opacity-55'
                       : isCurrent
-                        ? 'bg-primary-50'
+                        ? 'bg-emerald-100/80'
                         : completed
-                          ? `bg-emerald-50/70 ${clickable ? 'hover:bg-emerald-50 cursor-pointer' : 'cursor-default'}`
-                          : clickable ? 'hover:bg-primary-50/70 cursor-pointer' : 'cursor-default'
+                          ? `bg-emerald-100/70 ${clickable ? 'hover:bg-emerald-100 cursor-pointer' : 'cursor-default'}`
+                          : clickable ? 'bg-emerald-50/30 hover:bg-emerald-100/60 cursor-pointer' : 'bg-emerald-50/30 cursor-default'
                   }`}
                 >
                   <span className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 ${completed ? 'bg-emerald-100' : 'bg-primary-100'}`}>

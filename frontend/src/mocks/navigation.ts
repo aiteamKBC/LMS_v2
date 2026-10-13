@@ -91,6 +91,7 @@ export const coachNavItems: SidebarNavItem[] = [
     children: [
       { id: 'coach-monthly-coaching', label: 'Monthly Coaching Meeting', icon: 'ri-calendar-check-line', href: '/coach/monthly-coaching' },
       { id: 'coach-progress-reviews', label: 'Progress Reviews', icon: 'ri-file-chart-line', href: '/coach/progress-reviews' },
+      { id: 'coach-reviews', label: 'Review', icon: 'ri-file-list-3-line', href: '/coach/reviews' },
       { id: 'coach-catchup-queue', label: 'Catch-up Queue', icon: 'ri-refresh-line', href: '/coach/catchup-queue' },
       { id: 'coach-timetable', label: 'Calendar', icon: 'ri-calendar-schedule-line', href: '/coach/timetable' },
     ],
@@ -236,6 +237,7 @@ export const curriculumNavItems: SidebarNavItem[] = [
       '/curriculum/groups',
       '/curriculum/modules',
       '/curriculum/teams-meetings',
+      '/curriculum/recordings',
       '/curriculum/session-calendar',
       '/curriculum/england-holidays',
     ],
@@ -796,6 +798,7 @@ function stripChatNavItems(items: SidebarNavItem[]): SidebarNavItem[] {
 }
 
 const baseRoleNavMap: Record<string, { items: SidebarNavItem[]; label: string; workspaceLabel: string }> = {
+  'advanced-admin': { items: [{ id: 'advanced-admin-learners', label: 'Learners', href: '/workspace/advanced-admin', icon: 'ri-team-line' }], label: 'Advanced Admin', workspaceLabel: 'Learner Review' },
   'record-monitor': { items: [{ id: 'record-monitor', label: 'Record monitoring', href: '/old-otjh/monitor', icon: 'ri-dashboard-line' }], label: 'Record monitor', workspaceLabel: 'Learning record monitoring' },
   learner: { items: learnerNavItems, label: 'Learner', workspaceLabel: 'Learner Workspace' },
   coach: { items: coachNavItems, label: 'Coach', workspaceLabel: 'Coach Workspace' },

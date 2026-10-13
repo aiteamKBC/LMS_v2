@@ -170,7 +170,8 @@ class AuthoringIdentityTests(unittest.TestCase):
             'teamsOnlineMeetingId': 'MEETING-1', 'teamsMeetingUrl': 'https://teams.microsoft.com/meet/example',
             'teamsWebLink': 'https://outlook.office.com/calendar/item/example',
             'teamsStartDateTimeUtc': '2026-10-29T09:00:00Z', 'teamsDurationMinutes': 90,
-            'sessionDay': 'Thursday', 'sessionRescheduled': True}
+            'sessionDay': 'Thursday', 'sessionRescheduled': True,
+            'liveSessionLinkOverride': 'https://teams.microsoft.com/meet/replacement'}
 
     def test_save_retains_exact_occurrence_and_shifted_calendar_fields(self):
         for kind in ('live-session', 'live_session'):
@@ -680,6 +681,63 @@ class EndpointTests(unittest.TestCase):
         self.assertEqual(rows[0]['attendance'][0]['name'], 'Module Learner')
         self.assertNotIn('tutor@example.invalid', json.dumps(rows, default=str))
 
+    def account_check_rows(self, identity):
+        from curriculum_api.attendance_identity import identity_check, staff_roles
+        self.ns.update(identity_check=identity_check, staff_roles=staff_roles,
+                       module_tutor_emails=Mock(return_value=['tutor@example.invalid']),
+                       college_tenant_id=Mock(return_value='HOME'))
+        self.ns['apply_recovery'] = lambda rows: None
+        self.ns['read'].side_effect = [[{
+            'id': 'O', 'session_number': 1, 'status': 'completed', 'attendance_report_id': 'R',
+            'actual_end': '2026-09-16T10:00Z', 'scheduled_start': '2026-09-16T09:00Z',
+            'scheduled_end': '2026-09-16T10:00Z',
+        }], [{
+            'id': 'LEARNER', 'occurrence_id': 'O', 'email': 'learner@example.invalid', 'role': 'Attendee',
+            'total_attendance_seconds': 240,
+            'raw_data': {'identity': {'id': 'OID-L', 'displayName': 'Learner', 'tenantId': 'HOME'}},
+        }, {
+            'id': 'TUTOR', 'occurrence_id': 'O', 'email': 'tutor@example.invalid', 'role': 'Presenter',
+            'total_attendance_seconds': 3600,
+            'raw_data': {'identity': {'id': 'OID-T', 'displayName': 'Tutor', 'tenantId': 'HOME'}},
+        }, {
+            'id': 'ANON', 'occurrence_id': 'O', 'email': '', 'role': 'Attendee', 'display_name': 'Module Learner',
+            'total_attendance_seconds': 60,
+            'raw_data': {'identity': {'id': 'ANON-1', 'displayName': 'Module Learner', 'tenantId': None}},
+        }], [{
+            'occurrence_id': 'O', 'learner_profile_id': 7,
+            'learner_email': 'learner@example.invalid', 'learner_name': 'Module Learner',
+            'attendance_status': 'present', 'attended_seconds': 240,
+        }], [], []]
+        return self.ns['result_rows']({'id': 'S', 'module_catalogue_id': 'M'}, session_number=1, identity=identity)
+
+    def test_staff_account_check_is_added_without_changing_the_register(self):
+        plain = self.account_check_rows(False)
+        checked = self.account_check_rows(True)
+        self.assertNotIn('identityCheck', plain[0])
+        self.assertEqual({k: v for k, v in checked[0].items() if k != 'identityCheck'}, plain[0])
+        people = {person['name']: person for person in checked[0]['identityCheck']['participants']}
+        self.assertEqual(people['Tutor']['roles'], ['Tutor'])
+        self.assertEqual(people['Tutor']['status'], 'matched')
+        # The register's saved exact-name rule counts the anonymous row for the
+        # learner, so the check flags them: a name is not proof of identity.
+        learner = people['Module Learner']
+        self.assertEqual(learner['expectedEmail'], 'learner@example.invalid')
+        self.assertEqual(learner['linkedBy'], ['email', 'name'])
+        self.assertEqual(learner['status'], 'unverified-guest')
+        self.assertEqual([account['status'] for account in learner['accounts']], ['unverified-guest', 'matched'])
+        self.assertIn('not proof of identity', learner['reason'])
+        self.assertNotIn('raw_data', json.dumps(checked, default=str))
+
+    def test_learner_results_never_carry_the_account_check(self):
+        rows = self.account_check_rows(True)
+        self.ns['read'].side_effect = None
+        self.assertIn('identityCheck', rows[0])
+        self.ns['read'].side_effect = [[{'id': 'O', 'session_number': 1, 'status': 'completed', 'attendance_report_id': 'R',
+            'actual_end': '2026-09-16T10:00Z', 'scheduled_start': '2026-09-16T09:00Z', 'scheduled_end': '2026-09-16T10:00Z'}],
+            [], [], []]
+        own = self.ns['result_rows']({'id': 'S'}, session_number=1, email='learner@example.invalid', identity=True)
+        self.assertNotIn('identityCheck', own[0])
+
     def test_staff_sees_unknown_attendee_separately_from_module_roster(self):
         self.ns['apply_recovery'] = lambda rows: None
         self.ns['read'].side_effect = [[{
@@ -743,7 +801,8 @@ class EndpointTests(unittest.TestCase):
         response = self.ns['admin_session'](self.req(), series_id='S', session_number=12)
         self.assertEqual(response['job'], job)
         self.assertEqual(self.ns['read'].call_args.args[1], ['S'])
-        self.ns['result_rows'].assert_called_once_with({'id': 'S'}, session_number=12)
+        # identity=True adds the read-only account check; it starts no work either.
+        self.ns['result_rows'].assert_called_once_with({'id': 'S'}, session_number=12, identity=True)
         self.ns['start_requested_sync'].assert_not_called()
 
     def test_missing_job_table_does_not_hide_saved_session(self):
@@ -822,6 +881,18 @@ class EndpointTests(unittest.TestCase):
         self.assertEqual(response['Cache-Control'], 'private, no-store')
         self.assertEqual(self.ns['read'].call_args.args[1], ['A', 'S'])
         storage.get_read_sas.assert_called_once_with('session-recordings', 'M/G/S/file.mp4', ttl_minutes=240)
+
+    def test_staff_download_signs_an_attachment_name_into_the_private_url(self):
+        storage = types.ModuleType('learner_api.evidence_storage')
+        storage.get_read_sas = Mock(return_value='https://storage.invalid/private/read')
+        self.ns['recording_download_name'] = Mock(return_value='Module-session-1-2026-09-07.mp4')
+        req = self.req(); req.GET = {'download': '1'}
+        with patch.dict(sys.modules, {'learner_api.evidence_storage': storage}):
+            self.ns['read'].return_value = [{'status': 'ready', 'artifact_type': 'recording', 'container': 'session-recordings', 'blob_name': 'M/G/S/file.mp4'}]
+            response = self.ns['stored_content'](req, 'S', 'A')
+        self.assertEqual(response.status_code, 302)
+        storage.get_read_sas.assert_called_once_with('session-recordings', 'M/G/S/file.mp4', ttl_minutes=240,
+            content_disposition='attachment; filename="Module-session-1-2026-09-07.mp4"')
 
     def test_timed_cues_are_read_from_database_without_signing_or_fetching_storage(self):
         cues = [{'start': 1, 'end': 3, 'speaker': 'Speaker', 'text': 'Saved words'}]

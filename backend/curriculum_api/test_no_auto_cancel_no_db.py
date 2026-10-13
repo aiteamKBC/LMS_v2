@@ -176,7 +176,9 @@ class AdditionalUpdateLeavesMainTests(unittest.TestCase):
         start = datetime(2026, 9, 21, 10, 0, tzinfo=timezone.utc)
         extra_row = {'id': 'LIVE-EXTRA', 'organizer_email': 'guest-host@example.invalid',
                      'graph_event_id': 'additional-event', 'join_url': 'https://teams.microsoft.com/meet/extra',
-                     'attendees': [], 'presenters': [], 'co_organizers': [], 'status': 'week-meeting'}
+                     'attendees': [], 'presenters': [], 'co_organizers': [], 'status': 'week-meeting',
+                     # What a booked meeting always has saved: its own time.
+                     'start_datetime': start, 'duration_minutes': 60}
         component = {'id': 'COMP-2', 'settings': {'extraTeamsLiveSessionId': 'LIVE-EXTRA',
                                                   'extraTeamsMeetingUrl': 'https://teams.microsoft.com/meet/extra'}}
 
@@ -210,6 +212,13 @@ class AdditionalUpdateLeavesMainTests(unittest.TestCase):
             update_authoring_rows=lambda table, where, params, values: week.writes.append((table, params)),
             json_db_value=lambda value: value, authoring_upsert=lambda table, keys, values: week.writes.append((table, values.get('live_session_id'))),
             parse_graph_datetime=lambda value: value, invalidate_curriculum_cache=lambda: None,
+            parse_int=lambda value, default=0: int(value) if value not in (None, '') else default,
+            utc_datetime=checks.utc_datetime,
+            teams_calendar_minute_key=lambda value: (checks.utc_datetime(value).replace(second=0, microsecond=0, tzinfo=None)
+                                                     .isoformat(timespec='minutes') if value else ''),
+            remove_attendees_silently=checks.remove_attendees_silently, graph_event_utc=lambda event: event,
+            attendee_differences=checks.attendee_differences, event_organizer_address=checks.event_organizer_address,
+            unconfirmed_attendee_detail=checks.unconfirmed_attendee_detail,
         )
         pkg = types.ModuleType('curriculum_api')
         pkg.__path__ = [str(ROOT)]
@@ -349,7 +358,7 @@ class ExtraOccurrenceTests(unittest.TestCase):
 
 
 class RewriteDropTests(unittest.TestCase):
-    """A recurrence rewrite that would silently drop a future session is refused."""
+    """A recurrence rewrite that would silently drop any tracked session, past or future, is refused."""
 
     def rows(self, *starts):
         return [{'session_number': index + 1, 'scheduled_start': start, 'status': 'scheduled'}
@@ -369,11 +378,68 @@ class RewriteDropTests(unittest.TestCase):
         middle = datetime(2026, 10, 12, 10, tzinfo=timezone.utc)
         self.assertEqual(checks.sessions_a_rewrite_would_drop(targets, True, self.rows(middle), 'Europe/London', now), [])
 
-    def test_a_session_that_already_ran_is_left_alone(self):
+    def test_a_session_whose_date_has_gone_is_never_dropped_either(self):
+        # A past date is not a session anybody cancelled: a rewrite that would
+        # take it off Teams is refused and named, exactly like a future one --
+        # whether it was still scheduled, ran, or was left out of the plan.
         now = datetime(2026, 11, 1, tzinfo=timezone.utc)
         targets = [aware_target(1, at((10, 12), 10))]
         ran = datetime(2026, 10, 5, 10, tzinfo=timezone.utc)
-        self.assertEqual(checks.sessions_a_rewrite_would_drop(targets, True, self.rows(ran), 'Europe/London', now), [])
+        for status in ('scheduled', 'completed', 'superseded'):
+            rows = [{**row, 'status': status} for row in self.rows(ran)]
+            dropped = checks.sessions_a_rewrite_would_drop(targets, True, rows, 'Europe/London', now)
+            self.assertEqual([row['session_number'] for row in dropped], [1], status)
+
+    def test_a_cancelled_session_is_not_counted_again(self):
+        now = datetime(2026, 11, 1, tzinfo=timezone.utc)
+        targets = [aware_target(1, at((10, 12), 10))]
+        rows = [{**row, 'status': 'cancelled'} for row in self.rows(datetime(2026, 10, 5, 10, tzinfo=timezone.utc))]
+        self.assertEqual(checks.sessions_a_rewrite_would_drop(targets, True, rows, 'Europe/London', now), [])
+
+
+class SilentRemovalTests(unittest.TestCase):
+    """Somebody taken off a meeting is never sent a cancellation by an announced update."""
+
+    def setUp(self):
+        self.writes = []
+        self.event = {'id': 'event-1', 'organizer': {'emailAddress': {'address': 'organizer@example.invalid'}},
+                      'attendees': [{'emailAddress': {'address': 'stay@example.invalid', 'name': 'Stay'}, 'type': 'required'},
+                                    {'emailAddress': {'address': 'gone@example.invalid'}, 'type': 'required'}]}
+
+    def request(self, method, path, payload=None, extra_headers=None):
+        if method == 'PATCH':
+            self.writes.append((payload, extra_headers))
+            self.event = {**self.event, 'attendees': payload['attendees']}
+            return {}
+        return self.event
+
+    def people(self, *addresses):
+        return [{'emailAddress': {'address': address}, 'type': 'required'} for address in addresses]
+
+    def test_an_announced_update_removes_the_dropped_person_silently_first(self):
+        checks.publish_attendees(self.request, 'owner', self.event, self.people('stay@example.invalid', 'new@example.invalid'))
+        silent, announced = self.writes
+        # First the person dropped goes, under the silent preference...
+        self.assertEqual(silent[1], checks.SILENT_INVITE_HEADERS)
+        self.assertEqual([item['emailAddress']['address'] for item in silent[0]['attendees']], ['stay@example.invalid'])
+        # ...then the announced write reaches only the people who stay or join.
+        self.assertIsNone(announced[1])
+        self.assertEqual([item['emailAddress']['address'] for item in announced[0]['attendees']],
+                         ['stay@example.invalid', 'new@example.invalid'])
+
+    def test_a_removal_alone_is_still_announced_to_the_people_who_stay(self):
+        checks.publish_attendees(self.request, 'owner', self.event, self.people('stay@example.invalid'))
+        self.assertEqual([headers for _payload, headers in self.writes], [checks.SILENT_INVITE_HEADERS, None])
+
+    def test_nobody_removed_means_no_silent_write(self):
+        checks.publish_attendees(self.request, 'owner', self.event,
+                                 self.people('stay@example.invalid', 'gone@example.invalid', 'new@example.invalid'))
+        self.assertEqual([headers for _payload, headers in self.writes], [None])
+
+    def test_a_silent_save_is_unchanged(self):
+        checks.publish_attendees(self.request, 'owner', self.event, self.people('stay@example.invalid'),
+                                 extra_headers=checks.SILENT_INVITE_HEADERS)
+        self.assertEqual([headers for _payload, headers in self.writes], [checks.SILENT_INVITE_HEADERS])
 
 
 # --------------------------------------------------------------------------- 6

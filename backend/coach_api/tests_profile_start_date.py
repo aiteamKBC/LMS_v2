@@ -53,9 +53,9 @@ class ProfileStartDateTests(SimpleTestCase):
             {"id": "2", "startDate": "01 Oct 2025", "status": "active", "plannedEndDate": "01 May 2027"},
         ], "meetings": {"events": [{"id": "preserved"}]}}
         before = deepcopy(original)
-        with patch("coach_api.views.fetch_caseload_dashboard_profiles", return_value=rows) as fetch:
+        with patch("coach_api.services.dashboard.profile_dates.fetch_dashboard_profile_dates", return_value=rows) as fetch:
             corrected = CoachDashboardService("coach@example.com").normalize_start_dates(original)
-        fetch.assert_called_once_with("coach@example.com")
+        fetch.assert_called_once_with("coach@example.com", [1, 2])
         self.assertEqual(original, before)
         self.assertEqual([r["startDate"] for r in corrected["learners"]], ["2025-05-01", "2026-05-28"])
         for old, new in zip(original["learners"], corrected["learners"]):
@@ -81,7 +81,8 @@ class ProfileStartDateTests(SimpleTestCase):
         cached = {"learners": [{"id": "1", "startDate": "--", "otjhTarget": 42}]}
         with patch("coach_api.dashboard_view.dashboard_cache.get_cached_coach_dashboard", return_value=cached), \
                 patch("coach_api.dashboard_view.snapshot_needs_refresh", return_value=False), \
-                patch("coach_api.views.fetch_caseload_dashboard_profiles", return_value=[row]):
+                patch("coach_api.services.dashboard.otjh.refresh_otjh_rows"), \
+                patch("coach_api.services.dashboard.profile_dates.fetch_dashboard_profile_dates", return_value=[row]):
             response = call_coach_view(coach_dashboard, RequestFactory().get("/coach_api/coach/dashboard"))
         self.assertEqual(response.status_code, 200)
         learner = json.loads(response.content)["learners"][0]
@@ -114,9 +115,9 @@ class ProfileStartDateTests(SimpleTestCase):
                      "otjhProgrammeStartDate": "01 Oct 2025", "lastActivity": "preserved"}
                     for i in range(1, 5)
                 ]}
-                with patch("coach_api.views.fetch_caseload_dashboard_profiles", return_value=rows) as fetch:
+                with patch("coach_api.services.dashboard.profile_dates.fetch_dashboard_profile_dates", return_value=rows) as fetch:
                     payload = CoachDashboardService(coach).normalize_start_dates(original)
-                fetch.assert_called_once_with(coach)
+                fetch.assert_called_once_with(coach, [1, 2, 3, 4])
                 self.assertEqual([r["startDate"] for r in payload["learners"]],
                                  ["2026-05-28", None, None, None])
                 for learner in payload["learners"]:

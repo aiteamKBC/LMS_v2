@@ -5,6 +5,7 @@ import { ReviewSignatures } from '@/components/reviews/ReviewSignatures';
 import { ReviewPdfDownload } from '@/components/reviews/ReviewPdfDownload';
 import { ReviewProgressPanel } from '@/components/reviews/ReviewProgressPanel';
 import { renderImportedSection } from '@/pages/learner/reviews/imported/renderImportedSection';
+import { hasImportedProgress } from '@/pages/learner/reviews/imported/presentation';
 import { ImportedValue } from '@/pages/learner/reviews/imported/ImportedReviewSection';
 import {
   bookMigratedReview,
@@ -1100,7 +1101,10 @@ export function ReviewInstanceModal({
                 code, never by the template's name. Calculating is locked once
                 the review reaches the signature step, so the figures a party
                 signs cannot move afterwards. */}
-            {['progress_review', 'aptem_progress_review'].includes(definition.template.reviewTypeCode || '') ? (
+            {['progress_review', 'aptem_progress_review'].includes(definition.template.reviewTypeCode || '')
+              && !(definition.source === 'aptem' && definition.readOnly && !definition.migratedForm
+                && (definition.instance.status === 'completed' || definition.sections.some(section => section.historicalPresentation))
+                && !definition.progressSnapshot && hasImportedProgress(definition.sections)) ? (
               <ReviewProgressPanel
                 snapshot={definition.progressSnapshot}
                 ragHistory={definition.ragHistory}

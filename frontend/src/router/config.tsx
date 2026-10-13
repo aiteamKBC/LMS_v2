@@ -17,6 +17,11 @@ const AdminAccessLogsPage = lazyRoute(() => import("../pages/admin/access-logs/p
 const SystemAuditTrailPage = lazyRoute(() => import("../pages/admin/audit-trail/page"));
 const SystemAuditTrailPersonPage = lazyRoute(() => import("../pages/admin/audit-trail/person/page"));
 const AdminDashboard = lazyRoute(() => import("../pages/workspace/admin/page"));
+const AdvancedAdminWorkspace = lazyRoute(() => import("../pages/workspace/advanced-admin/page"));
+// Give this route one extra bounded reload if a Vite update is still in flight
+// when the first reload reaches it.
+const AdvancedAdminLearner = lazyRoute(() => import("../pages/workspace/advanced-admin/learner"), { maxChunkReloads: 2 });
+const AdvancedAdminLearnerPreview = lazyRoute(() => import("../pages/workspace/advanced-admin/preview"));
 const EmployerWorkspacePage = lazyRoute(() => import("../pages/workspace/admin/employers/page"));
 const AdminCertificatesPage = lazyRoute(() => import("../pages/admin/certificates/page"));
 const AdminDocumentsPage = lazyRoute(() => import("../pages/admin/documents/page"));
@@ -93,6 +98,7 @@ const CurriculumGroupWorkspace = lazyRoute(() => import("../pages/curriculum/gro
 const CurriculumEnglandHolidays = lazyRoute(() => import("../pages/curriculum/england-holidays/page"));
 const CurriculumModuleWorkspace = lazyRoute(() => import("../pages/curriculum/module-workspace/page"));
 const CurriculumTeamsMeetings = lazyRoute(() => import("../pages/curriculum/teams-meetings/page"));
+const CurriculumRecordings = lazyRoute(() => import("../pages/curriculum/recordings/page"));
 const CurriculumProgrammes = lazyRoute(() => import("../pages/curriculum/programmes/page"));
 const CurriculumPublishedPage = lazyRoute(() => import("../pages/curriculum/published/page"));
 const CurriculumQAPage = lazyRoute(() => import("../pages/curriculum/curriculum-qa/page"));
@@ -406,6 +412,26 @@ const routes: RouteObject[] = [
   {
     path: "/workspace/admin",
     element: <AdminDashboard />,
+  },
+  {
+    path: "/workspace/advanced-admin",
+    element: <AdvancedAdminWorkspace />,
+  },
+  {
+    path: "/workspace/advanced-admin/learners/:learnerId",
+    element: <AdvancedAdminLearner />,
+  },
+  {
+    path: "/workspace/advanced-admin/learners/:learnerId/preview",
+    element: <AdvancedAdminLearnerPreview />,
+  },
+  {
+    path: "/workspace/advanced-admin/learners/:learnerId/preview/:section",
+    element: <AdvancedAdminLearnerPreview />,
+  },
+  {
+    path: "/workspace/advanced-admin/learners/:learnerId/:section",
+    element: <AdvancedAdminLearner />,
   },
   {
     // Every employer as a card; each opens /employers/:employerId.
@@ -881,7 +907,11 @@ const routes: RouteObject[] = [
   },
   {
     path: "/coach/progress-reviews",
-    element: <CoachProgressReviews />,
+    element: <CoachProgressReviews key="progress-review" />,
+  },
+  {
+    path: "/coach/reviews",
+    element: <CoachProgressReviews key="review" category="review" />,
   },
   {
     path: "/coach/progress-reviews/:eventKey",
@@ -1121,6 +1151,11 @@ const routes: RouteObject[] = [
     // per-module view of the same meeting is the module workspace's Teams tab.
     path: "/curriculum/teams-meetings",
     element: <CurriculumTeamsMeetings />,
+  },
+  {
+    // Every saved live-session recording, by module, group and week. Read only.
+    path: "/curriculum/recordings",
+    element: <CurriculumRecordings />,
   },
   {
     // The bank holiday calendar: GOV.UK holidays stay synced here, and extra

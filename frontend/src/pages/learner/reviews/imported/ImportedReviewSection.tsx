@@ -1,7 +1,7 @@
 import DOMPurify from 'dompurify';
 import type { ImportedReviewSection as HistorySection } from '@/api/reviewHistory';
 import { ImportedProgressCards } from './ImportedProgressCards';
-import { adaptHistorySection, calendarLabel, decodeStructured, displayLabel, isEmpty, isTechnical, keyOf, normalizeImportedProgress, record, type PresentationField, type PresentationSection } from './presentation';
+import { adaptHistorySection, calendarLabel, decodeStructured, displayLabel, isEmpty, isTechnical, keyOf, normalizeImportedProgressData, record, type PresentationField, type PresentationSection } from './presentation';
 import styles from './importedReview.module.css';
 
 const htmlPattern = /<\/?[a-z][^>]*>/i;
@@ -66,7 +66,7 @@ function safeHref(value: unknown): string | undefined {
 function Field({ field }: { field: PresentationField }) {
   return <div className={styles.question}>
     {field.label && <dt>{displayLabel(field.label)}</dt>}
-    <dd><ImportedValue value={field.value} label={field.label} fieldType={field.fieldType} />
+    <dd>{!(field.fieldType === 'title_description' && isEmpty(field.value)) && <ImportedValue value={field.value} label={field.label} fieldType={field.fieldType} />}
       {field.description && <div className={styles.note}><ImportedValue value={field.description} /></div>}
       {field.links?.map((link, index) => { const href = safeHref(link.azure_url || link.url || link.href); return href ? <a className={styles.link} key={index} href={href} target="_blank" rel="noopener noreferrer">{link.text || link.title || `Attachment ${index + 1}`}</a> : null; })}
     </dd>
@@ -74,7 +74,7 @@ function Field({ field }: { field: PresentationField }) {
 }
 
 function visibleFields(fields: PresentationField[]) {
-  return fields.filter(field => !isTechnical(field.label || '') && (!isEmpty(field.value) || field.required || field.links?.length || field.description));
+  return fields.filter(field => !isTechnical(field.label || '') && (!isEmpty(field.value) || field.required || field.preserveEmpty || field.links?.length || field.description));
 }
 
 export function ImportedSectionContent({ section }: { section: PresentationSection }) {
@@ -87,13 +87,13 @@ export function ImportedSectionContent({ section }: { section: PresentationSecti
       {identity && <div className={styles.identity}><span className={styles.avatar} aria-hidden="true">{name.split(/\s+/).filter(Boolean).slice(0, 2).map(part => part[0]).join('').toUpperCase()}</span><h3>{name}</h3><p>Learner information</p></div>}
       <dl className={info ? styles.infoGrid : styles.questions}>
         {fields.filter(field => field !== identity).map((field, index) => keyOf(field.label || '') === 'progress' && /learning\s*progress/i.test(section.name)
-          ? <div key={index} className={styles.progressField}><dt className={styles.srOnly}>Learning progress</dt><dd><ImportedProgressCards cards={normalizeImportedProgress(field.value)} renderUnknown={value => <ImportedValue value={value} />} /></dd></div>
+          ? <div key={index} className={styles.progressField}><dt className={styles.srOnly}>Learning progress</dt><dd><ImportedProgressCards historical={section.historicalPresentation} data={normalizeImportedProgressData(field.value)} renderUnknown={value => <ImportedValue value={value} />} /></dd></div>
           : <Field key={index} field={field} />)}
       </dl>
     </div>
     {section.tables.map((rows, i) => rows.length > 0 && <div key={i} className={styles.tableWrap}><table aria-label={section.name}><tbody>{rows.map((row, r) => <tr key={r}>{(Array.isArray(row) ? row : [row]).map((cell, c) => <td key={c}><ImportedValue value={cell} /></td>)}</tr>)}</tbody></table></div>)}
     {/* rawText is the export's duplicate of fields/tables. Use it only for text-only exports. */}
-    {!section.fields.length && !section.tables.length && !isEmpty(section.rawText) && <ImportedValue value={section.rawText} />}
+    {(section.preserveRawText || (!section.fields.length && !section.tables.length)) && !isEmpty(section.rawText) && <ImportedValue value={section.rawText} />}
     {!fields.length && !section.tables.some(table => table.length) && (section.fields.length > 0 || isEmpty(section.rawText)) && <p className={styles.note}>No response was recorded for this section.</p>}
   </div>;
 }

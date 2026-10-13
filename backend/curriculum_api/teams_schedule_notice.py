@@ -24,7 +24,7 @@ def schedule_snapshot(rows):
     """The live sessions of a calendar as ``[{n, start, end}]``, in session order."""
     held = []
     for row in rows or []:
-        if str(row.get('status') or '') == 'cancelled':
+        if str(row.get('status') or '') in ('cancelled', 'superseded'):
             continue
         start, end = row.get('scheduled_start'), row.get('scheduled_end')
         if not start or not end:

@@ -25,6 +25,7 @@ import { CreateOrganisationModal } from './components/CreateOrganisationModal';
 import { EditStaffModal } from './components/EditStaffModal';
 import { LearningPlanModal } from './components/LearningPlanModal';
 import { ShiftModuleModal } from './components/ShiftModuleModal';
+import { BulkAttendanceModeModal } from './components/BulkAttendanceModeModal';
 import { TableBodySkeleton } from '@/components/feature/Skeletons';
 
 const enrolmentNav = roleNavMap.apprentice;
@@ -356,6 +357,7 @@ export default function UsersListPage() {
   const [createOpen, setCreateOpen] = useState(false);
   const [createModalOpen, setCreateModalOpen] = useState(false);
   const [importModalOpen, setImportModalOpen] = useState(false);
+  const [bulkOpen, setBulkOpen] = useState(false);
   const [createAdminOpen, setCreateAdminOpen] = useState(false);
   const [createTutorOpen, setCreateTutorOpen] = useState(false);
   const [createEmployerOpen, setCreateEmployerOpen] = useState(false);
@@ -399,8 +401,10 @@ export default function UsersListPage() {
   // Only the learner call is allowed to fail the page: it's the bulk of the
   // directory. The other two are swallowed so a missing table or a 502 on either
   // one leaves the learners listed instead of blanking the whole screen.
-  const load = () => {
-    setLoading(true);
+  // Without the skeleton the rows stay mounted, so a row's open panel (a
+  // just-issued set-password link) survives the reload.
+  const fetchRows = (showSkeleton: boolean) => {
+    if (showSkeleton) setLoading(true);
     setError(null);
     Promise.all([
       fetchEnrolmentUsers(),
@@ -420,6 +424,8 @@ export default function UsersListPage() {
       .catch((e: Error) => setError(e.message))
       .finally(() => setLoading(false));
   };
+  const load = () => fetchRows(true);
+  const refreshInPlace = () => fetchRows(false);
 
   useEffect(load, []);
 
@@ -651,6 +657,12 @@ export default function UsersListPage() {
               <button type="button" className={btnSecondary} onClick={() => setImportModalOpen(true)}>
                 <AppIcon className="ri-upload-2-line" />Upload learners
               </button>
+              {/* Admin-only: the attendance mode endpoint rejects writes from any other role. */}
+              {isAdmin && (
+                <button type="button" className={btnSecondary} onClick={() => setBulkOpen(true)} disabled={loading}>
+                  <AppIcon className="ri-checkbox-multiple-line" />Bulk actions
+                </button>
+              )}
             <div ref={createRef} className="relative">
               <button
                 type="button"
@@ -909,7 +921,7 @@ export default function UsersListPage() {
                         {/* For learners whose employer blocks our email: staff
                             send the same single-use link another way. */}
                         {!row.hasSignedIn && isLearner && (
-                          <CopyInvitationLinkButton subjectId={Number(row.id)} name={row.name} onIssued={load} />
+                          <CopyInvitationLinkButton subjectId={Number(row.id)} name={row.name} onIssued={refreshInPlace} />
                         )}
                       </span>
                     </td>
@@ -985,6 +997,7 @@ export default function UsersListPage() {
 
       {createModalOpen && <CreateUserModal onClose={() => setCreateModalOpen(false)} onCreated={load} />}
       {importModalOpen && <ImportLearnersModal onClose={() => setImportModalOpen(false)} onImported={applyLearnerImport} />}
+      {bulkOpen && <BulkAttendanceModeModal rows={rows} onClose={() => setBulkOpen(false)} />}
       {createAdminOpen && <CreateStaffModal variant="admin" onClose={() => setCreateAdminOpen(false)} onCreated={load} />}
       {createTutorOpen && <CreateStaffModal variant="tutor" onClose={() => setCreateTutorOpen(false)} onCreated={load} />}
       {editStaff && <EditStaffModal row={editStaff} onClose={() => setEditStaff(null)} onSaved={applyStaffUpdate} />}

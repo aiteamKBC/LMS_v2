@@ -449,6 +449,10 @@ const LIVE_SESSION_TRACKING_SETTING_KEYS = [
   'teamsMeetingUrl', 'teamsWebLink', 'teamsStartDateTimeUtc',
   'teamsDurationMinutes', 'sessionDay', 'sessionRescheduled',
   'teamsMeetingScope',
+  // Explicit bulk link replacements are authoring overrides. They preserve
+  // the Teams identity and occurrence metadata while keeping the chosen link
+  // through the next module-structure save.
+  'liveSessionLinkOverride',
 ] as const;
 
 /**

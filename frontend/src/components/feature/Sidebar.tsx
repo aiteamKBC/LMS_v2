@@ -352,6 +352,7 @@ export function Sidebar({
   const [activeDropdown, setActiveDropdown] = useState<string | null>(null);
   const [previewId, setPreviewId] = useState<string | null>(null);
   const [isHovering, setIsHovering] = useState(false);
+  const fullHeightNavigation = look === 'learner' || role === 'advanced-admin';
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(() => {
     try {
       const stored = localStorage.getItem('kbc_sidebar_expanded');
@@ -609,7 +610,9 @@ export function Sidebar({
           <button
             type="button"
             onClick={() => onLearnerCollapsedChange(!collapsed)}
-            aria-label={collapsed ? 'Expand learner navigation' : 'Collapse learner navigation'}
+            aria-label={collapsed
+              ? role === 'learner' ? 'Expand learner navigation' : `Expand ${roleLabel} navigation`
+              : role === 'learner' ? 'Collapse learner navigation' : `Collapse ${roleLabel} navigation`}
             aria-expanded={!collapsed}
             title={collapsed ? 'Expand navigation' : 'Collapse navigation'}
             className="flex h-9 w-9 shrink-0 items-center justify-center text-white/90 transition-colors hover:bg-white/10 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#f5c94f]"
@@ -624,7 +627,7 @@ export function Sidebar({
         <>
           <nav
             id={`${role}-${instance}-primary-navigation`}
-            aria-label="Learner primary navigation"
+            aria-label={`${roleLabel} primary navigation`}
             className="relative z-10 min-h-0 flex-1 space-y-3 overflow-y-auto px-2 py-5 [scrollbar-width:thin] [scrollbar-color:rgb(255_255_255/0.32)_transparent]"
           >
             {filteredNavItems.map(item => hasChildren(item) ? (
@@ -656,7 +659,7 @@ export function Sidebar({
       ) : <>
         <nav
           id={`${role}-${instance}-primary-navigation`}
-          aria-label="Learner primary navigation"
+          aria-label={`${roleLabel} primary navigation`}
           className="relative z-10 min-h-0 flex-1 space-y-2 overflow-y-auto px-5 py-7 [scrollbar-width:thin] [scrollbar-color:rgb(255_255_255/0.32)_transparent]"
         >
           {filteredNavItems.map(item => hasChildren(item) ? (
@@ -689,7 +692,7 @@ export function Sidebar({
 
   return (
     <>
-      {look === 'learner' ? (
+      {fullHeightNavigation ? (
         <aside
           aria-label={`${roleLabel} sidebar`}
           data-workspace-role={look}
@@ -801,19 +804,19 @@ export function Sidebar({
         aria-label={`${roleLabel} mobile navigation`}
         aria-hidden={!mobileOpen}
         inert={!mobileOpen}
-        className={`fixed left-0 top-0 z-50 h-screen shadow-xl transition-transform duration-300 ease-out lg:hidden ${look === 'learner' ? 'w-[min(240px,86vw)]' : 'w-[268px]'} ${mobileOpen ? 'translate-x-0' : '-translate-x-full'}`}
+        className={`fixed left-0 top-0 z-50 h-screen shadow-xl transition-transform duration-300 ease-out lg:hidden ${fullHeightNavigation ? 'w-[min(240px,86vw)]' : 'w-[268px]'} ${mobileOpen ? 'translate-x-0' : '-translate-x-full'}`}
       >
-        {look === 'learner' ? learnerPanel('mobile') : panel('expanded')}
+        {fullHeightNavigation ? learnerPanel('mobile') : panel('expanded')}
         <button
           type="button"
           onClick={onCloseMobile}
           aria-label="Close navigation"
-          className={`absolute right-2.5 top-3 z-20 flex cursor-pointer items-center justify-center rounded-lg transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#f5c94f] ${look === 'learner' ? 'h-11 w-11 text-white hover:bg-white/15' : 'h-8 w-8 text-foreground-400 hover:bg-primary-50 hover:text-primary-700'}`}
+          className={`absolute right-2.5 top-3 z-20 flex cursor-pointer items-center justify-center rounded-lg transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#f5c94f] ${fullHeightNavigation ? 'h-11 w-11 text-white hover:bg-white/15' : 'h-8 w-8 text-foreground-400 hover:bg-primary-50 hover:text-primary-700'}`}
         >
           <X size={18} strokeWidth={1.8} aria-hidden="true" />
         </button>
       </div>
-      {look === 'learner' && signOutOpen && createPortal(
+      {fullHeightNavigation && signOutOpen && createPortal(
         <SignOutConfirmModal
           displayName={userName || auth.user?.fullName || 'User'}
           email={auth.user?.email || 'Signed in'}

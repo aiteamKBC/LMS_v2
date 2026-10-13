@@ -132,6 +132,11 @@ export function rolesForRoute(path: string): readonly Role[] {
 
 /** Whether `account` is admitted to `path`. */
 export function mayAccessRoute(path: string, account: Pick<AuthUser, 'role' | 'access' | 'accessWorkspaces'>): boolean {
+  if (account.access === 'advanced-admin') {
+    return path === '/workspace/advanced-admin'
+      || path.startsWith('/workspace/advanced-admin/')
+      || path === '/profile';
+  }
   if (account.access === 'record-monitor') return path === '/old-otjh' || path.startsWith('/old-otjh/');
   if (['/admin/coach_directory', '/users/coach-directory', '/curriculum/coach-directory'].includes(path)) {
     const grants = [account.access, ...(account.accessWorkspaces ?? []).map(workspace => workspace.access)];
@@ -159,6 +164,7 @@ export function homeRouteFor(
   account: Pick<AuthUser, 'role' | 'access' | 'accessHome' | 'subjectId' | 'hasLegacyRecord'>,
 ): string {
   if (account.access === 'record-monitor') return '/old-otjh/monitor';
+  if (account.access === 'advanced-admin') return '/workspace/advanced-admin';
   if (account.role === 'learner') return HOME_BY_ROLE.learner;
   if (account.role === 'employer' && account.subjectId) {
     return `/employers/${account.subjectId}`;

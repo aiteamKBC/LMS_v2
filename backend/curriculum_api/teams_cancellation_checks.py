@@ -59,6 +59,9 @@ def cancellation_plan(series, occurrences, previous, read):
         raise CalendarStateError('The saved calendar identity is incomplete.')
     prefix = f'users/{owner}'
     cache, snapshot, cancelled, errors = {}, {'roots': {}, 'occurrences': {}}, set(), []
+    # Planned sessions Microsoft could not be matched to this run. Reported to
+    # Calendar health as "verification failed"; never read as a cancellation.
+    unmatched = []
     previous = previous or {}
     if previous.get('management'):
         snapshot['management'] = previous['management']
@@ -175,8 +178,9 @@ def cancellation_plan(series, occurrences, previous, read):
                 matches = [item for item in available if event_instant(item, 'start') == utc_datetime(row['scheduled_start'])
                            and event_instant(item, 'end') == utc_datetime(row['scheduled_end'])]
             if len(matches) != 1 or matches[0]['id'] in claimed:
-                if row.get('status') != 'cancelled':
+                if row.get('status') not in ('cancelled', 'superseded'):
                     errors.append(f"Session {row['session_number']} could not be matched to Microsoft; its status was preserved.")
+                    unmatched.append(row['id'])
                 if saved:
                     snapshot['occurrences'][row['id']] = saved
                 continue
@@ -186,7 +190,7 @@ def cancellation_plan(series, occurrences, previous, read):
             if _join(match) and _join(match) != (row.get('join_url') or group['link']):
                 raise CalendarStateError('A session has a different Microsoft join link.')
             claimed.add(match['id'])
-            if row.get('status') != 'cancelled':
+            if row.get('status') not in ('cancelled', 'superseded'):
                 held.add(match['id'])
             snapshot['occurrences'][row['id']] = {'rootId': root_id, 'eventId': match['id'],
                 'occurrenceId': match.get('occurrenceId') or '', 'dates': dates}
@@ -212,6 +216,7 @@ def cancellation_plan(series, occurrences, previous, read):
             leftovers.append({'kind': 'series', 'rootId': event_id, 'eventId': event_id, 'occurrenceId': '',
                               'day': entry.get('day') or '', 'startDateTimeUtc': '', 'endDateTimeUtc': ''})
     snapshot['leftovers'] = leftovers
+    snapshot['integrity'] = {'unmatched': unmatched}
     # Preserve completed attendance and all historical evidence. This operation
     # updates calendar availability, never recategorizes a session that ran.
     eligible = {row['id'] for row in occurrences if row.get('status') == 'scheduled'
@@ -219,4 +224,4 @@ def cancellation_plan(series, occurrences, previous, read):
                 and not row.get('participant_count')}
     return {'cancelledIds': sorted(cancelled & eligible), 'seriesCancelled': bool(groups) and len(cancelled_roots) == len(groups),
             'snapshot': snapshot, 'errors': errors, 'cancelledRootIds': sorted(cancelled_roots),
-            'leftovers': leftovers}
+            'leftovers': leftovers, 'unmatched': unmatched}

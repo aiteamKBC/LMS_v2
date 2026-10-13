@@ -377,47 +377,35 @@ class AttendanceDetailRowsTests(SimpleTestCase):
         self.assertIs(actual_summary, summary)
         self.assertIs(sessions, history)
 
-    @patch("coach_api.views.canonical_attendance_detail_rows")
-    @patch("coach_api.views.CoachManualAttendance.objects")
-    @patch("coach_api.views.serialize_attendance_source_learner")
-    @patch("coach_api.views.attach_caseload_source_rows")
+    @patch("coach_api.attendance_detail.detail_records")
+    @patch("coach_api.views.resolve_caseload_source_row")
+    @patch("coach_api.views.fetch_source_schedule_rows", return_value=({}, {}))
     @patch("coach_api.views.fetch_attendance_caseload_rows")
     def test_detail_view_fetches_only_the_requested_authorised_learner(
-        self, fetch_rows, attach_sources, serialize, manual_objects, detail_rows,
+        self, fetch_rows, fetch_source, resolve_source, detail_rows,
     ):
         source = SimpleNamespace(id=901)
-        row = SimpleNamespace(id=315, _caseload_source=source)
+        row = SimpleNamespace(id=315, username="A Learner", email="learner@example.test",
+            programme="Data", cohort="September", group_name="Group A", coach_name="Coach")
         fetch_rows.return_value = [row]
-        serialize.return_value = {
-            "id": "315", "name": "A Learner", "email": "learner@example.com",
-            "programmeName": "Data", "programmeId": "programme-1",
-            "cohortName": "September", "group": "Cairo A", "groupId": "group-1",
-            "rawProgramStatus": "Active", "learnerType": "apprenticeship",
-            "enrolmentId": "901",
-        }
-        detail_rows.return_value = (
-            {"total": 3, "present": 2, "absent": 1, "unknown": 0},
-            [
-                {"sessionId": "session-1", "status": "present", "counted": True},
-                {"sessionId": "session-2", "status": "present", "counted": True},
-                {"sessionId": "session-3", "status": "absent", "counted": True},
-            ],
-        )
-        manual_objects.filter.return_value = []
-
-        response = call_coach_view(
-            coach_attendance_details,
-            RequestFactory().get("/coach_api/coach/attendance/details", {"learner_id": "315"}),
-        )
+        resolve_source.return_value = source
+        detail_rows.return_value = {"summary": {"sessions": 3, "present": 2, "absent": 1, "attendanceRate": 67},
+            "records": [], "pagination": {"page": 1, "pageSize": 20, "total": 3, "hasMore": False}}
+        request = RequestFactory().get("/coach_api/coach/attendance/details", {"learner_id": "315"})
+        response = call_coach_view(coach_attendance_details, request)
         payload = json.loads(response.content)
-
         self.assertEqual(response.status_code, 200)
-        fetch_rows.assert_called_once_with("coach@example.com", learner_id="315")
-        attach_sources.assert_called_once_with([row])
-        detail_rows.assert_called_once_with(source, learner_profile_id=315)
-        self.assertEqual(payload["learner"]["programme"], "Data")
-        self.assertEqual(payload["learner"]["enrolmentId"], "901")
-        self.assertEqual(payload["summary"], {"total": 3, "present": 2, "absent": 1, "unknown": 0})
+        fetch_rows.assert_called_once_with("coach@example.com", learner_id="315", include_plan=False)
+        fetch_source.assert_called_once_with([row], fields=(
+            'id', 'username', 'email', 'aptem_id', 'employer_id', 'learner_type',
+            'learner_start_date', 'learner_end_date'))
+        detail_rows.assert_called_once_with(source, 315, request.GET)
+        self.assertEqual(payload["learner"], {"id": "315", "name": "A Learner", "email": "learner@example.test",
+            "programme": "Data", "cohort": "September", "group": "Group A"})
+        self.assertEqual(payload["coach"], {"name": "Coach", "email": "coach@example.com"})
+        self.assertIsNone(payload["tutor"])
+        self.assertEqual(payload["summary"], detail_rows.return_value["summary"])
+        self.assertEqual(set(payload), {"learner", "coach", "tutor", "summary", "records", "pagination"})
 
 
 class ManualAttendanceMutationTests(SimpleTestCase):
@@ -786,7 +774,7 @@ class OtjhToDateContractTests(SimpleTestCase):
         self.assertEqual(result["otjhRagStatus"], "on-track")
         self.assertEqual(result["otjhRagSource"], "ssot:programme-plan-window")
 
-    def test_missing_window_uses_explicit_api_target_fallback(self):
+    def test_missing_window_does_not_use_legacy_target_fallback(self):
         result = apply_otjh_to_date_metrics({
             "otjhCompleted": 9,
             "otjhPlanned": 0,
@@ -795,9 +783,10 @@ class OtjhToDateContractTests(SimpleTestCase):
             "plannedEndDate": "--",
         }, today=date(2026, 6, 15))
 
-        self.assertEqual(result["otjhTargetAsOfToday"], 50.0)
-        self.assertEqual(result["otjhRagStatus"], "at-risk")
-        self.assertEqual(result["otjhRagSource"], "ssot:api-target-fallback")
+        self.assertIsNone(result["otjhTargetAsOfToday"])
+        self.assertIsNone(result["otjhProgressAsOfToday"])
+        self.assertEqual(result["otjhRagStatus"], "unavailable")
+        self.assertEqual(result["otjhRagSource"], "unavailable")
 
 
 class CanonicalCoachMetricsTests(SimpleTestCase):
@@ -1789,7 +1778,7 @@ class ApplyAttendanceSummaryTests(SimpleTestCase):
 class CoachDashboardViewTests(SimpleTestCase):
     def setUp(self):
         # Cached DTOs are normalized through the same bulk source read as snapshots.
-        source_reads = patch("coach_api.views.fetch_caseload_dashboard_profiles", return_value=[])
+        source_reads = patch("coach_api.services.dashboard.profile_dates.fetch_dashboard_profile_dates", return_value=[])
         source_reads.start()
         self.addCleanup(source_reads.stop)
 
@@ -1919,7 +1908,7 @@ class CoachDashboardViewTests(SimpleTestCase):
     def test_first_request_misses_and_second_request_hits_final_response_cache(self, build):
         cache.clear()
         build.return_value = {"owner": {"email": "coach@example.com"}, "learners": [
-            {"id": "1", "startDate": None, "displayStartDate": None, "otjhProgrammeStartDate": "--"},
+            {"id": "1", "startDate": None, "displayStartDate": None, "displayEndDate": "--", "otjhProgrammeStartDate": "--"},
         ]}
         request = RequestFactory().get("/coach_api/coach/dashboard")
         request.coach_email = "coach@example.com"
@@ -2110,7 +2099,7 @@ class CoachDashboardBackgroundRefreshTests(SimpleTestCase):
 class CoachDashboardReadModelTests(SimpleTestCase):
     def setUp(self):
         # Snapshot date normalization performs separate read-only source reads.
-        source_reads = patch("coach_api.views.fetch_caseload_dashboard_profiles", return_value=[])
+        source_reads = patch("coach_api.services.dashboard.profile_dates.fetch_dashboard_profile_dates", return_value=[])
         source_reads.start()
         self.addCleanup(source_reads.stop)
 

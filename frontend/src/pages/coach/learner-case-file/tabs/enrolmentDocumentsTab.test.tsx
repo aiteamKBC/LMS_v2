@@ -1,6 +1,5 @@
 /**
- * Enrolment Documents: the coach views, downloads and signs their learner's
- * enrolment review documents, signing with a signature they create once.
+ * Case File only views and downloads enrolment review documents.
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
@@ -25,13 +24,6 @@ vi.mock('@/pages/learner/onboarding/reviews/reviewDocument', () => ({
   buildReviewPdf: () => ({ output: () => 'blob:review' }),
   downloadReviewPdf: (...a: unknown[]) => api.downloadReviewPdf(...a),
 }));
-// The real pad needs a canvas; a button standing in for "draw and sign" is enough here.
-vi.mock('@/pages/users/wizard/steps/SignaturePad', () => ({
-  SignaturePad: ({ onCommit }: { onCommit: (url: string) => void }) => (
-    <button onClick={() => onCommit('data:image/png;base64,NEW')}>Use this signature</button>
-  ),
-}));
-
 import { EnrolmentDocumentsTab } from './EnrolmentDocumentsTab';
 
 const unsigned = { signature: '', name: '', signedAt: null, signed: false };
@@ -70,43 +62,35 @@ describe('Enrolment Documents tab', () => {
     expect(screen.getByText('Employer not signed')).toBeInTheDocument();
   });
 
-  it('adds the coach signature only after the coach confirms', async () => {
+  it.each([true, false])('has no mutation controls with saved signature=%s', async (saved) => {
+    api.list.mockResolvedValue({ documents: [doc(), doc({ eventKey: 'other', label: 'Incomplete review', completed: false })], signature: { saved, name: 'Casey Coach' } });
     render(<EnrolmentDocumentsTab learnerId="31" />);
-    await userEvent.click(await screen.findByRole('button', { name: /^Sign Eligibility/ }));
-
+    await screen.findByText('Eligibility Review & FS Discussion');
+    expect(screen.queryByRole('button', { name: /sign|save|edit|update/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(screen.queryByRole('textbox')).not.toBeInTheDocument();
+    expect(screen.getAllByRole('button')).toHaveLength(4);
     expect(api.sign).not.toHaveBeenCalled();
-    expect(screen.getByRole('dialog')).toHaveTextContent('as Casey Coach');
-    await userEvent.click(screen.getByRole('button', { name: /Sign document/ }));
-
-    await waitFor(() => expect(api.sign).toHaveBeenCalledWith('31', 'eligibility-review:31:1:2026-08-03'));
-    expect(api.list).toHaveBeenCalledTimes(2); // refreshed to show the new signature
+    expect(api.saveSignature).not.toHaveBeenCalled();
   });
 
-  it('offers no Sign button once the review has its staff signature, and none before the review is complete', async () => {
-    api.list.mockResolvedValue({
-      documents: [
-        doc({ signatures: { ...doc().signatures, admin: signed('Enrolment Officer') } }),
-        doc({ eventKey: 'workspace:31:1', label: 'RPL And Experience', completed: false, sectionsDone: 2 }),
-      ],
-      signature: { saved: true, name: 'Casey Coach' },
-    });
+  it('preserves historical staff signatures without editing actions', async () => {
+    api.list.mockResolvedValue({ documents: [doc({ signatures: { ...doc().signatures, admin: signed('Enrolment Officer') } })] });
     render(<EnrolmentDocumentsTab learnerId="31" />);
-
-    expect(await screen.findByText(/Coach signed — Enrolment Officer/)).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /^Sign / })).not.toBeInTheDocument();
-    expect(screen.getByText('It can be signed once the review is complete.')).toBeInTheDocument();
+    expect(await screen.findByText(/Coach signed.*Enrolment Officer/)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /sign/i })).not.toBeInTheDocument();
   });
 
-  it('asks the coach to create a signature first, then saves it to their account', async () => {
-    api.list.mockResolvedValueOnce({ documents: [doc()], signature: { saved: false, name: 'Casey Coach' } });
+  it('opens the full document without saving or signing', async () => {
+    const tab = { location: { href: '' }, close: vi.fn() };
+    const open = vi.spyOn(window, 'open').mockReturnValue(tab as unknown as Window);
     render(<EnrolmentDocumentsTab learnerId="31" />);
-
-    expect(await screen.findByRole('button', { name: /^Sign Eligibility/ })).toBeDisabled();
-    await userEvent.click(screen.getByRole('button', { name: /Create your signature/ }));
-    await userEvent.click(screen.getByRole('button', { name: 'Use this signature' }));
-
-    await waitFor(() => expect(api.saveSignature).toHaveBeenCalledWith('staff:7', 'data:image/png;base64,NEW'));
-    await waitFor(() => expect(screen.getByRole('button', { name: /^Sign Eligibility/ })).toBeEnabled());
+    await userEvent.click(await screen.findByRole('button', { name: /^View/ }));
+    await waitFor(() => expect(tab.location.href).toBe('blob:review'));
+    expect(api.one).toHaveBeenCalledWith('31', doc().eventKey);
+    expect(api.sign).not.toHaveBeenCalled();
+    expect(api.saveSignature).not.toHaveBeenCalled();
+    open.mockRestore();
   });
 
   it('downloads the full document', async () => {

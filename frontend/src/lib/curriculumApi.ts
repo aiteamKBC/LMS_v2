@@ -1494,6 +1494,8 @@ export interface CurriculumTeamsMeetingSummary {
    */
   syncState?: 'in-sync' | 'out-of-sync' | 'no-sessions' | 'unverified';
   syncReasons?: string[];
+  /** Saved / pending / failed for the meeting options; read with readMicrosoftUpdate. */
+  microsoftUpdate?: unknown;
   expectedOccurrenceCount?: number;
   differingOccurrenceCount?: number;
   missingFromTeams?: string[];
@@ -1595,6 +1597,9 @@ export interface LiveSessionArtifactsResponse {
  */
 const OFF_CALENDAR_OCCURRENCE_STATUSES = new Set([
   'cancelled', 'canceled', 'declined', 'deleted', 'removed',
+  // "Not in plan": a session a new plan left on Teams. Not cancelled -- its
+  // Teams slot stands until somebody cancels it -- but not a planned session.
+  'superseded',
 ]);
 
 /** The tracked occurrences that still stand for a meeting on the calendar. */
@@ -3709,6 +3714,22 @@ export function fetchLiveSessionArtifacts(
   return fetchJson<LiveSessionArtifactsResponse>(
     `/curriculum/teams-meetings/${encodeURIComponent(liveSessionId)}/artifacts/`,
     { signal: options.signal, skipCache: options.skipCache },
+  );
+}
+
+/** The meeting ID and passcode Teams prints under `link`, one of the series'
+ *  own join links. Read from Microsoft on first ask, then stored; blanks when
+ *  Microsoft cannot say. Staff only. */
+export type TeamsMeetingDialIn = { joinUrl: string; meetingId: string; passcode: string };
+
+export function fetchTeamsMeetingDialIn(
+  liveSessionId: string,
+  link: string,
+  options: { signal?: AbortSignal } = {},
+): Promise<TeamsMeetingDialIn> {
+  return fetchJson<TeamsMeetingDialIn>(
+    `/curriculum/teams-meetings/${encodeURIComponent(liveSessionId)}/dial-in/?link=${encodeURIComponent(link)}`,
+    { signal: options.signal, skipCache: true },
   );
 }
 

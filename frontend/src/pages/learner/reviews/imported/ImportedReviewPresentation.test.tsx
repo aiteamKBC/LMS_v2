@@ -3,9 +3,10 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ImportedReviewSection as Section } from '@/api/reviewHistory';
 import type { LearnerReviewDefinition } from '@/api/learnerCalendar';
 import { LearnerReviewInstanceForm } from '../LearnerReviewInstanceForm';
-import { ImportedReviewSection, ImportedValue } from './ImportedReviewSection';
+import { ImportedReviewSection, ImportedSectionContent, ImportedValue } from './ImportedReviewSection';
 import { adaptDefinitionSection, calendarLabel, normalizeImportedProgress } from './presentation';
 import { progressExample, skillsExample } from './presentationFixtures';
+import { renderImportedSection } from './renderImportedSection';
 
 vi.mock('@/features/monthly-logs/page', () => ({ LearnerLogs: () => null }));
 vi.mock('@/pages/users/wizard/steps/SignaturePad', () => ({ SignaturePad: () => null }));
@@ -36,10 +37,11 @@ describe('imported learner presentation', () => {
 
   it.each([progressExample, JSON.stringify(progressExample), { progress: progressExample }])('renders semantic progress for arrays, JSON and wrapped objects', value => {
     const { container } = render(<ImportedReviewSection section={section('Learning progress', [{ label: 'hasPrevProgress', value: 'Yes' }, { label: 'progress', value }])} />);
-    expect(screen.getByRole('img', { name: '107 completed of 169 activities' })).toBeVisible();
+    expect(screen.getByRole('img', { name: 'Learning Plan Progress: 59%; target 69%' })).toBeVisible();
+    expect(screen.getByText('107 of 169 completed')).toBeVisible();
     expect(screen.getByText('62')).toBeVisible();
     expect(screen.getByText('117')).toBeVisible();
-    expect(screen.getByText('Behind')).toBeVisible();
+    expect(screen.getByText('2% Below')).toBeVisible();
     expect(screen.getByText('110%')).toBeVisible();
     ['837h', '867h', '957h', '1,302h', '18/10/2024', '17/04/2028'].forEach(v => expect(screen.getByText(v)).toBeVisible());
     expect(container.textContent).not.toMatch(/completedCount|progressType|hasPrevProgress|T00:00/);
@@ -49,7 +51,7 @@ describe('imported learner presentation', () => {
     const cards = normalizeImportedProgress(progressExample);
     expect(cards[0]).toMatchObject({ submitted: null, completed: 107, total: 169 });
     expect(normalizeImportedProgress({ progressType: 4, current: 0 })[0]).toMatchObject({ current: 0, target: null, status: null });
-    expect(normalizeImportedProgress({ progressType: 7 })[0]).toMatchObject({ dates: [] });
+    expect(normalizeImportedProgress({ progressType: 7 }).find(card => card.kind === 'timeline')).toMatchObject({ dates: [] });
     expect(normalizeImportedProgress({ progressType: 2, completedCount: 4, totalCount: 10, submittedCount: 2 })[0]).toMatchObject({ submitted: 2, remaining: 4 });
   });
 
@@ -134,5 +136,54 @@ describe('imported learner presentation', () => {
     expect(within(form).queryByText('18/10/2024')).not.toBeInTheDocument();
     expect(within(form).getByDisplayValue('2024-10-18T00:00:00')).toBeDisabled();
     expect(within(form).getByDisplayValue('Alex Example')).toBeDisabled();
+  });
+
+  it('renders restored instructions, empty questions and historical answers without edit controls', () => {
+    const data = definition();
+    const source = { ...data.sections[0], title: 'Historical questions', historicalPresentation: true, fields: [
+      { ...data.sections[0].fields[0], id: 'instruction', title: 'Learner:', fieldType: 'title_description' as const,
+        answer: null, configuration: { imported: true, preserveEmpty: true, description: 'On a scale of 1 and 10, rate progress.' } },
+      { ...data.sections[0].fields[0], id: 'answer', title: 'Required action', answer: 'First review' },
+      { ...data.sections[0].fields[0], id: 'empty', title: 'Theme comments', answer: null,
+        configuration: { imported: true, preserveEmpty: true } },
+      { ...data.sections[0].fields[0], id: 'rag', title: 'RAG Level', answer: 'Green' },
+    ] };
+    const before = JSON.stringify(source);
+    render(<ImportedSectionContent section={adaptDefinitionSection(source, { instruction: null, empty: null })} />);
+    expect(screen.getAllByText('On a scale of 1 and 10, rate progress.')).toHaveLength(1);
+    expect(screen.getByText('First review')).toBeVisible();
+    expect(screen.getByText('Theme comments')).toBeVisible();
+    expect(screen.getAllByText('Not provided')).toHaveLength(1);
+    expect(screen.getByText('Green')).toBeVisible();
+    expect(screen.queryByRole('textbox')).not.toBeInTheDocument();
+    expect(JSON.stringify(source)).toBe(before);
+  });
+
+  it('uses the same restored content and historical RAG label in learner history', () => {
+    const data = section('Learner Reflections & Ratings', [
+      { label: 'Learner:', value: null, fieldType: 'title_description', description: 'Rate from 1 to 10.', preserveEmpty: true },
+      { label: 'RAG Level', value: 3, displayValue: 'Green' },
+      { label: 'Theme comments', value: null, preserveEmpty: true },
+    ]);
+    data.historicalPresentation = true;
+    render(<ImportedReviewSection section={data} />);
+    expect(screen.getByText('Rate from 1 to 10.')).toBeVisible();
+    expect(screen.getByText('Green')).toBeVisible();
+    expect(screen.queryByText('3')).not.toBeInTheDocument();
+    expect(screen.getByText('Theme comments')).toBeVisible();
+    expect(screen.getAllByText('Not provided')).toHaveLength(1);
+    expect(data.fields[1].value).toBe(3);
+  });
+
+  it('retains a primary text-only export alongside newly recovered questions', () => {
+    const data = definition();
+    const source = { ...data.sections[0], historicalPresentation: true, preserveRawText: true, fields: [
+      { ...data.sections[0].fields[0], id: 'recovered', title: 'Question', answer: 'Captured answer' },
+      { ...data.sections[0].fields[0], id: 'aptem-text:original', title: 'Original content', fieldType: 'title_description' as const,
+        answer: null, configuration: { description: 'Original historical narrative' } },
+    ] };
+    render(<>{renderImportedSection(source, {}, () => null)}</>);
+    expect(screen.getByText('Captured answer')).toBeVisible();
+    expect(screen.getByText('Original historical narrative')).toBeVisible();
   });
 });

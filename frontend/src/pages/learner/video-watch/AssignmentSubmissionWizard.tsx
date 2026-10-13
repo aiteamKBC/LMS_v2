@@ -24,6 +24,7 @@ import { AssignmentAiCheckContext } from './AssignmentAiCheckContext';
 import { useAssignmentStepCheck } from './useAssignmentStepCheck';
 import { MonthlyAnswerField, MonthlyAssignmentSteps } from './MonthlyAssignmentSteps';
 import { AssignmentAttachment } from '../monthly-submission/AssignmentAttachment';
+import { readingFiles } from './readingDownloads';
 import { assignmentTimeHours } from './AssignmentTimeEntries';
 import { HistoricalAssignmentCards } from './HistoricalAssignmentCards';
 import { useLearningStatements } from '@/hooks/useLearningStatements';
@@ -69,6 +70,7 @@ export function AssignmentSubmissionForm({
   questionText,
   questionFileUrl,
   questionFileName,
+  questionFiles,
   ksbMappings,
   evidenceFiles,
   evidenceDetails,
@@ -99,6 +101,7 @@ export function AssignmentSubmissionForm({
   questionText?: string | null;
   questionFileUrl?: string | null;
   questionFileName?: string | null;
+  questionFiles?: readonly { url: string; fileName?: string | null }[];
   ksbMappings: ComponentKsbMapping[];
   evidenceFiles: EvidenceRecord[];
   evidenceDetails: EvidenceTrainingPlanDetails;
@@ -120,6 +123,8 @@ export function AssignmentSubmissionForm({
   onShowInstructions?: () => void;
   onTopicSubmitted?: () => void;
 }) {
+  const questionAttachments = useMemo(() => readingFiles(questionFileUrl, questionFileName, questionHtml || '', questionFiles),
+    [questionFileUrl, questionFileName, questionHtml, questionFiles]);
   const personalStudy = parsePersonalLearning(learnerId)?.mode === 'study';
   const steps = MONTHLY_STEPS.map((label, index) => personalStudy && index === 7 ? 'Presentation' : label);
   // Imported cards retain their original storage order; display them in wizard order.
@@ -574,11 +579,11 @@ export function AssignmentSubmissionForm({
                   {cleanQuestionHtml ? (
                     <div className="max-w-none [&_p]:mb-3 [&_ul]:list-disc [&_ul]:pl-5" dangerouslySetInnerHTML={questionInnerHtml} />
                   ) : (
-                    <p className="whitespace-pre-line">{questionText || (questionFileUrl ? 'Preview the attached file for your assignment question.' : 'Your tutor has not added the assignment question yet.')}</p>
+                    <p className="whitespace-pre-line">{questionText || (questionAttachments.length ? 'Preview the attached file for your assignment question.' : 'Your tutor has not added the assignment question yet.')}</p>
                   )}
                 </div>
               </div>}
-              {questionFileUrl && <AssignmentAttachment key={questionFileUrl} url={questionFileUrl} fileName={questionFileName} title={title} />}
+              {questionAttachments.map(file => <AssignmentAttachment key={file.url} url={file.url} fileName={file.fileName} title={file.label || title} defaultExpanded pdfTools />)}
               <MonthlyAnswerField qualityTarget="answer" title={title} label="Your answer (at least 120 words; one point per line)" value={answers.assignmentAnswer} onChange={value => setAnswer('assignmentAnswer', value)} disabled={readOnly || submittingRef.current} rows={10} minimumWords={120} onePointPerLine generation={{ enabled: learningGeneration.canGenerate, busy: learningGeneration.generating, onGenerate: () => { if (!(answers.whatYouLearned || monthly.understood || monthly.gainedSkills) || window.confirm('Replace the three learning statements with new drafts from your answer?')) void learningGeneration.generate(); } }} />
               <p className="rounded-xl border border-blue-100 bg-blue-50 px-4 py-3 text-sm leading-6 text-blue-900">Write at least 120 words, then click Generate learning statements to draft the three fields below. Review and edit the generated text before submitting.</p>
               {learningGeneration.status && <div

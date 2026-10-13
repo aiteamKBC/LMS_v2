@@ -761,6 +761,70 @@ class AttendanceModeTests(SimpleTestCase):
             self.assertEqual(response.status_code, 400)
             state.assert_not_called()
 
+    def _post_mode(self, body, role, before):
+        """Drive the mode view past its auth gate with the enrolment DB mocked."""
+        from .attendance_mode import attendance_mode
+        view = inspect.unwrap(attendance_mode)
+        source = SimpleNamespace(id=12, username='Learner', email='learner@example.test')
+        model = MagicMock()
+        model.all_learners.filter.return_value.first.return_value = source
+        conn = MagicMock()
+        cur = conn.cursor.return_value.__enter__.return_value
+        request = RequestFactory().post('/', json.dumps(body), content_type='application/json',
+                                        HTTP_X_REQUESTED_WITH='XMLHttpRequest')
+        request.login_account = SimpleNamespace(role=role)
+        with patch('learner_api.attendance_mode.SOURCE_MODELS', {'apprenticeship': model}),              patch('learner_api.attendance_mode.connections', {'enrolment': conn}),              patch('learner_api.attendance_mode.transaction.atomic', return_value=nullcontext()),              patch('learner_api.attendance_mode._ready', return_value=True),              patch('learner_api.attendance_mode._state', side_effect=[before, {**before, 'mode': body['mode'],
+                   'requested_mode': None, 'status': 'active'}]),              patch('learner_api.attendance_mode._manager', return_value='manager@example.test') as manager,              patch('learner_api.attendance_mode.is_configured', return_value=True),              patch('learner_api.attendance_mode._send_request', return_value=True) as send:
+            response = view(request, kind='apprenticeship', learner_id=12)
+        return response, cur, manager, send
+
+    def test_admin_direct_recorded_mode_applies_without_manager_approval_or_email(self):
+        before = {'mode': 'live', 'requested_mode': 'lazy', 'status': 'pending', 'email_sent': True,
+                  'request_id': 'old', 'updated_at': timezone.now()}
+        response, cur, manager, send = self._post_mode({'mode': 'lazy', 'direct': True}, 'admin', before)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(json.loads(response.content)['mode'], 'lazy')
+        update = cur.execute.call_args_list[-1]
+        self.assertIn("status='active'", update.args[0])
+        self.assertIn('request_id=NULL', update.args[0])
+        self.assertEqual(update.args[1], ['lazy', 12])
+        manager.assert_not_called()
+        send.assert_not_called()
+
+    def test_learner_cannot_skip_manager_approval(self):
+        before = {'mode': 'live', 'status': 'active', 'email_sent': False}
+        response, cur, manager, send = self._post_mode({'mode': 'lazy', 'direct': True}, 'learner', before)
+        self.assertEqual(response.status_code, 403)
+        cur.execute.assert_not_called()
+        send.assert_not_called()
+
+    def test_learner_recorded_request_still_asks_the_manager(self):
+        before = {'mode': 'live', 'status': 'active', 'email_sent': False, 'request_id': None}
+        response, cur, manager, send = self._post_mode({'mode': 'lazy'}, 'learner', before)
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("status='pending'", cur.execute.call_args_list[-1].args[0])
+        manager.assert_called_once()
+        send.assert_called_once()
+
+    def test_bulk_mode_read_is_admin_only_and_returns_saved_modes(self):
+        from .attendance_mode import attendance_modes
+        conn = MagicMock()
+        saved = [{'learner_id': 12, 'mode': 'lazy', 'requested_mode': None, 'status': 'active'},
+                 {'learner_id': 13, 'mode': 'live', 'requested_mode': 'lazy', 'status': 'pending',
+                  'updated_at': timezone.now()}]
+        with patch('learner_api.attendance_mode.connections', {'enrolment': conn}),              patch('learner_api.attendance_mode._ready', return_value=True),              patch('learner_api.attendance_mode.rows', return_value=saved):
+            with patch('login.permissions.authenticate_request', return_value=SimpleNamespace(role='learner')):
+                self.assertEqual(attendance_modes(RequestFactory().get('/')).status_code, 403)
+            conn.cursor.assert_not_called()
+            with patch('login.permissions.authenticate_request', return_value=SimpleNamespace(role='admin')):
+                response = attendance_modes(RequestFactory().get('/'))
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(json.loads(response.content), {'available': True, 'modes': {
+            '12': {'mode': 'lazy', 'requestedMode': None},
+            '13': {'mode': 'live', 'requestedMode': 'lazy'},
+        }})
+        self.assertEqual(resolve('/learner_api/attendance-mode/').func.__name__, 'attendance_modes')
+
     def test_pending_pauses_reminders_but_keeps_live_allocation_until_approval(self):
         payload = _payload({'mode': 'live', 'requested_mode': 'lazy', 'status': 'pending', 'updated_at': timezone.now()})
         self.assertFalse(payload['remindersEnabled'])

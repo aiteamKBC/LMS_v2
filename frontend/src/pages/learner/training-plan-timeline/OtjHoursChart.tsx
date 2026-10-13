@@ -1,6 +1,5 @@
 import { useId, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react';
-import type { TrainingPlanDashboard } from '@/api/trainingPlanDashboard';
-import { monthlyHours, type MonthlyHours } from './monthlyHours';
+import { monthlyHours, type MonthlyHours, type MonthlyHoursSource } from './monthlyHours';
 import styles from './ProgressCharts.module.css';
 
 const hourNumber = new Intl.NumberFormat('en-GB', { maximumFractionDigits: 1 });
@@ -45,8 +44,10 @@ function MonthTooltip({ row, id }: { row: MonthlyHours; id: string }) {
   </div>;
 }
 
-export function OtjHoursChart({ data, programmeStartMonth, programmeEndMonth, targetAsOfToday }: {
-  data: TrainingPlanDashboard;
+export function OtjHoursChart({ data, points, plannedHours, programmeStartMonth, programmeEndMonth, targetAsOfToday }: {
+  data?: MonthlyHoursSource;
+  points?: MonthlyHours[];
+  plannedHours?: number | null;
   programmeStartMonth?: string;
   programmeEndMonth?: string;
   targetAsOfToday?: number | null;
@@ -56,7 +57,7 @@ export function OtjHoursChart({ data, programmeStartMonth, programmeEndMonth, ta
   const [activeMonth, setActiveMonth] = useState('');
   const monthlyScrollRef = useRef<HTMLDivElement>(null);
   const monthlyPan = useRef<{ pointerId: number; x: number; left: number } | null>(null);
-  const months = monthlyHours(data, programmeStartMonth, programmeEndMonth);
+  const months = points ?? (data ? monthlyHours(data, programmeStartMonth, programmeEndMonth) : []);
   const active = months.find(row => row.key === activeMonth);
   const activeIndex = Math.max(0, months.findIndex(row => row.key === activeMonth));
   const scale = scaleFor(months);
@@ -68,10 +69,16 @@ export function OtjHoursChart({ data, programmeStartMonth, programmeEndMonth, ta
   const totalCompleted = months.every(row => row.completed != null) ? months.reduce((sum, row) => sum + row.completed!, 0) : null;
   const progressTarget = targetAsOfToday != null && Number.isFinite(targetAsOfToday) && targetAsOfToday > 0
     ? targetAsOfToday : expectedTarget;
-  const overallPercent = ratio(totalCompleted, progressTarget);
-  const expectedPercent = progressTarget == null ? null : 100;
+  const monthlyPlanned = months.length ? months.reduce((sum, row) => sum + (row.target ?? 0), 0) : null;
+  const requiredOtjh = plannedHours ?? data?.requiredOtjh;
+  const plannedTarget = requiredOtjh != null && Number.isFinite(requiredOtjh) && requiredOtjh > 0
+    ? requiredOtjh : monthlyPlanned && monthlyPlanned > 0 ? monthlyPlanned : progressTarget;
+  const overallPercent = ratio(totalCompleted, plannedTarget);
+  const targetPosition = ratio(progressTarget, plannedTarget);
   const overallVariance = progressTarget == null || totalCompleted == null ? null : totalCompleted - progressTarget;
   const variancePercent = ratio(overallVariance, progressTarget);
+  const completedWidth = Math.min(100, overallPercent || 0);
+  const submittedWidth = Math.min(Math.max(0, 100 - completedWidth), ratio(totalSubmitted, plannedTarget) || 0);
   const beginMonthlyPan = (event: ReactPointerEvent<HTMLDivElement>) => {
     if (event.pointerType !== 'mouse' || event.button !== 0) return;
     const scroll = monthlyScrollRef.current;
@@ -133,10 +140,10 @@ export function OtjHoursChart({ data, programmeStartMonth, programmeEndMonth, ta
     </div> : <p className={styles.empty}>Monthly hour targets will appear here once the training plan is available.</p>}
     {months.length > 0 && <div className={styles.overall}>
       <div><strong>Overall progress</strong><span>{totalCompleted == null ? 'Recorded hours unavailable' : `${hourNumber.format(totalCompleted)}h completed${totalSubmitted != null && totalSubmitted > 0 ? ` · ${hourNumber.format(totalSubmitted)}h submitted` : ''}`}</span></div>
-      <div className={styles.overallTrack} role="progressbar" aria-label="Overall off-the-job hours progress" aria-valuemin={0} aria-valuemax={100} aria-valuenow={overallPercent == null ? undefined : Math.min(100, overallPercent)}>
-        {totalSubmitted != null && progressTarget != null && <i className={styles.submittedOverall} style={{ left: `${Math.min(100, overallPercent || 0)}%`, width: `${Math.min(100, ratio(totalSubmitted, progressTarget) || 0)}%` }} />}
-        <i className={styles.completedOverall} style={{ width: `${Math.min(100, overallPercent || 0)}%` }} />
-        {expectedPercent != null && <b style={{ left: `${Math.min(100, expectedPercent)}%` }} />}
+      <div className={styles.overallTrack} role="progressbar" aria-label="Overall off-the-job hours progress" aria-valuemin={0} aria-valuemax={100} aria-valuenow={overallPercent == null ? undefined : completedWidth}>
+        {totalSubmitted != null && progressTarget != null && <i className={styles.submittedOverall} style={{ left: `${completedWidth}%`, width: `${submittedWidth}%` }} />}
+        <i className={styles.completedOverall} style={{ width: `${completedWidth}%` }} />
+        {targetPosition != null && <b style={{ left: `${Math.min(100, targetPosition)}%` }} />}
       </div>
       <strong className={overallVariance != null && overallVariance < 0 ? styles.behind : styles.ahead}>
         {variancePercent == null || overallVariance == null ? 'N/A' : `${variancePercent > 0 ? '+' : ''}${variancePercent}% (${signed(overallVariance)}h)`}

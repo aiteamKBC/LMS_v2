@@ -7,6 +7,7 @@ import type { OverviewWeek } from '@/api/learnerOverview';
 import type { TrainingPlanDashboard } from '@/api/trainingPlanDashboard';
 import type { LearnerDetail } from '@/api/learnerDetail';
 import type { StudentActivityResponse } from '@/api/studentActivity';
+import type { Subject } from '@/pages/learner/my-learning/SubjectWorkspace';
 import { DashboardTrainingPlan } from '../DashboardTrainingPlan';
 import { useDashboardPlan } from '../useDashboardPlan';
 
@@ -27,7 +28,7 @@ const schedule = (): TrainingPlanDashboard => ({
     targetDate: '2026-09-25', scheduledDate: null, scheduledTime: null, durationMinutes: 60, status: 'not-scheduled', coachName: 'Assigned Coach', invited: false }],
   coach: { name: 'Assigned Coach', bookingUrl: null }, contractStatus: 'ready', generatedAt: '',
 });
-function setup(calendar = schedule(), failed = '', overview = week(), recorded?: StudentActivityResponse) {
+function setup(calendar = schedule(), failed = '', overview = week(), recorded?: StudentActivityResponse, learningSubjects?: Subject[]) {
   const fetch = vi.fn(async (input: Parameters<typeof globalThis.fetch>[0]) => {
     const url = String(input);
     if (failed && url.includes(failed)) return new Response(JSON.stringify({ error: 'Offline' }), { status: 503 });
@@ -42,7 +43,7 @@ function setup(calendar = schedule(), failed = '', overview = week(), recorded?:
   function Subject() {
     const plan = useDashboardPlan('commercial', '125');
     return <DashboardTrainingPlan kind="commercial" learnerId="125" plan={plan}
-      learningActivity={recorded} learnerDetail={{ studentActivityAvailable: true } as LearnerDetail} />;
+      learningActivity={recorded} learnerDetail={{ studentActivityAvailable: true } as LearnerDetail} learningSubjects={learningSubjects} />;
   }
   render(<MemoryRouter><Subject /></MemoryRouter>);
   return fetch;
@@ -60,6 +61,34 @@ describe('dashboard learning layout', () => {
     } as unknown as StudentActivityResponse);
 
     expect(await screen.findByRole('button', { name: 'Marketing: 100% overall progress' })).toBeVisible();
+  });
+
+  it('shows every module from the learner My Learning source in programme progress', async () => {
+    setup(schedule(), '', week(), undefined, [
+      { id: 'current:M1', title: 'Marketing', source: 'current', activities: [] },
+      { id: 'current:M2', title: 'Marketing Executive L4', source: 'current', activities: [] },
+    ]);
+
+    expect(await screen.findByRole('button', { name: 'Marketing: N/A overall progress' })).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Marketing Executive L4: N/A overall progress' })).toBeVisible();
+  });
+
+  it('keeps the learning skeleton visible instead of rendering overview fallback subjects', async () => {
+    function Subject() {
+      const plan = useDashboardPlan('commercial', '125');
+      return <DashboardTrainingPlan kind="commercial" learnerId="125" plan={plan} learningSubjectsLoading />;
+    }
+    const fetch = vi.fn(async (input: Parameters<typeof globalThis.fetch>[0]) => {
+      const url = String(input);
+      if (url.includes('rewards-summary')) return new Response(JSON.stringify({ points: { learnerId: '125', earned: 0, committed: 0, balance: 0 }, rewards: [] }));
+      if (url.includes('/monthly-logs/125/')) return new Response(JSON.stringify({ learner: { id: 125 }, months: [] }));
+      return new Response(JSON.stringify(url.includes('overview-week') ? week() : schedule()));
+    });
+    vi.stubGlobal('fetch', fetch);
+    render(<MemoryRouter><Subject /></MemoryRouter>);
+
+    expect(await screen.findByRole('status', { name: 'Loading monthly learning and coaching' })).toBeVisible();
+    expect(screen.queryByRole('region', { name: 'Programme module progress' })).not.toBeInTheDocument();
   });
 
   it('fills the monthly summary from authored hours and current learner progress without Aptem history', async () => {

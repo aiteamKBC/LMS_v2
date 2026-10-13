@@ -82,6 +82,15 @@ describe('review before sending', () => {
     expect(calendarReviewHtml(values, 'Europe/London')).toContain('12:00 AM');
   });
 
+  it('says on create that organisers and presenters get the roster copy, apart from the tutor assignment email', () => {
+    const html = calendarReviewHtml({ ...input(), summaryEmail: true }, 'Europe/London');
+    expect(html).toContain('the organiser, co-organisers and presenters each receive a copy that also lists the meeting settings and the invited learners');
+    expect(html).toContain('Presenters get the schedule too.');
+    expect(html).toContain('separate from the module drawer’s “assigned to this module” tutor email');
+    // An update sends no creation schedule, so it carries no creation note.
+    expect(calendarReviewHtml(input(), 'Europe/London')).not.toContain('Presenters get the schedule too.');
+  });
+
   it('reviews current organizer, link and saved recipients before a dates-only save', async () => {
     const values = input();
     const { attendees: _attendees, presenters: _presenters, coOrganizers: _coOrganizers, ...dates } = values;

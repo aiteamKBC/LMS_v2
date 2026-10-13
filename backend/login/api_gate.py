@@ -284,6 +284,19 @@ def refusal_for(path, account, *, django_user_is_authenticated=False, method='GE
     """
     if account is not None and getattr(account, '_staff_access_unavailable', False):
         return _unavailable()
+    if account is not None and getattr(account, '_staff_access', None) == 'advanced-admin':
+        # This grant has a learner allowlist of its own. The coarse ``staff``
+        # role would otherwise admit it to older staff prefixes whose views
+        # predate access grants. Keep the exception independent of the regular
+        # role gate so batch requests and ungated prefixes cannot bypass it.
+        account_paths = {
+            '/login_api/me/', '/login_api/logout/', '/login_api/change-password/',
+            '/login_api/forgot-password/', '/login_api/reset/',
+            '/login_api/reset-password/', '/login_api/login/',
+            '/login_api/health/',
+        }
+        if not path.startswith('/login_api/advanced-admin/') and path not in account_paths:
+            return _forbidden(['advanced-admin'])
     if account is not None and getattr(account, '_staff_access', None) == 'record-monitor':
         from old_otjh.gate import is_transition_path
         # Applies to batch children too. Record endpoints enforce read-only

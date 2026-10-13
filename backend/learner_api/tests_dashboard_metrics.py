@@ -2,7 +2,7 @@
 import json
 from datetime import date
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import ANY, MagicMock, patch
 
 from django.db import DatabaseError
 from django.test import SimpleTestCase, RequestFactory
@@ -300,32 +300,37 @@ class LearnerOverviewMetricsEndpointTests(SimpleTestCase):
         model.all_learners.only.return_value.get.return_value = source
         with patch.dict('learner_api.dashboard_metrics.SOURCE_MODELS', {'commercial': model}), \
              patch('learner_api.dashboard_metrics.read_metrics', return_value=payload) as ordinary, \
-             patch('learner_api.dashboard_metrics.canonical_learning.metrics_bulk', return_value={125: payload}) as overview:
+             patch('learner_api.dashboard_metrics.canonical_learning.metrics_bulk', return_value={125: payload}) as overview, \
+             patch('learner_api.dashboard_metrics.coach_otjh_target_to_date', return_value=123.87) as target_to_date:
             response = learner_metrics.__wrapped__.__wrapped__(RequestFactory().get('/', query), 'commercial', 125)
         model.all_learners.only.return_value.get.assert_called_once_with(pk=125)
-        return response, ordinary, overview
+        return response, ordinary, overview, target_to_date
 
     def test_explicit_overview_uses_same_metrics_as_coach_caseload(self):
         payload = {'ksb': {'completed': 498, 'total': 584, 'percent': 85.3},
                    'otjh': {'actual': 164.87, 'planned': 576}, '_ksb_evidence_sources': []}
-        response, ordinary, overview = self.call({'view': 'learner-overview'}, payload)
+        response, ordinary, overview, target_to_date = self.call({'view': 'learner-overview'}, payload)
         self.assertEqual(response.status_code, 200)
         ordinary.assert_not_called()
         overview.assert_called_once_with([125], learner_workspace=True, include_ksb_points=True)
         self.assertEqual(json.loads(response.content)['ksb']['total'], 584)
+        self.assertEqual(json.loads(response.content)['otjh']['targetToDate'], 123.87)
+        target_to_date.assert_called_once_with(ANY, payload['otjh'])
         self.assertNotIn('_ksb_evidence_sources', json.loads(response.content))
         self.assertEqual(response['Cache-Control'], 'private, no-store')
 
     def test_existing_metrics_call_retains_its_source(self):
-        response, ordinary, overview = self.call({}, {'ksb': {'status': 'empty'}})
+        response, ordinary, overview, target_to_date = self.call({}, {'ksb': {'status': 'empty'}})
         self.assertEqual(response.status_code, 200)
         ordinary.assert_called_once()
         overview.assert_not_called()
+        target_to_date.assert_not_called()
 
     def test_missing_overview_identity_does_not_fallback_to_other_totals(self):
-        response, ordinary, overview = self.call({'view': 'learner-overview'}, None)
+        response, ordinary, overview, target_to_date = self.call({'view': 'learner-overview'}, None)
         self.assertEqual(response.status_code, 409)
         ordinary.assert_not_called()
+        target_to_date.assert_not_called()
 
 
 class CombinedAttendanceTests(SimpleTestCase):

@@ -14,6 +14,10 @@ request_id_context = contextvars.ContextVar("request_id", default="")
 logger = logging.getLogger("observability")
 
 SAFE_LOG_FIELDS = (
+    "stage",
+    "duration_ms",
+    "query_count",
+    "query_duration_ms",
     "event",
     "method",
     "path",

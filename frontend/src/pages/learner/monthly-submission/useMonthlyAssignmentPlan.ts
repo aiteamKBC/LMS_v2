@@ -1,3 +1,4 @@
+import { useCaseFileSession } from '@/features/coach/case-file/hooks/CaseFileSession';
 import { useEffect, useState } from 'react';
 import type { LearnerKind } from '@/api/learnerDetail';
 import { readLearnerJson } from '@/api/learnerRead';
@@ -12,6 +13,7 @@ type PlanState = {
 };
 
 export function useMonthlyAssignmentPlan(kind?: LearnerKind, id?: string) {
+  const session = useCaseFileSession();
   const identity = `${kind}:${id}`;
   const [attempt, setAttempt] = useState(0);
   const [state, setState] = useState<PlanState | null>(null);
@@ -23,9 +25,9 @@ export function useMonthlyAssignmentPlan(kind?: LearnerKind, id?: string) {
     setState({ identity, metadata: null, contract: null, statuses: null, submissionCounts: {}, loading: true, errors: [] });
     const query = new URLSearchParams({ learnerKind: kind, learnerId: id });
     void Promise.allSettled([
-      subjectRequest<CoverMetadata>(`/learner_api/subject-covers/${encodeURIComponent(id)}/?refs=`, { signal: controller.signal, revalidate: attempt > 0 }),
-      fetchTrainingPlanContract(kind, id, controller.signal),
-      readLearnerJson<{ statuses: { activityType: string; activityId: string; status: string; submissionCount?: number }[] }>(
+      session ? session.read<CoverMetadata>('assignments', { resource: 'covers' }, { signal: controller.signal, refresh: attempt > 0 }) : subjectRequest<CoverMetadata>(`/learner_api/subject-covers/${encodeURIComponent(id)}/?refs=`, { signal: controller.signal, revalidate: attempt > 0 }),
+      session ? session.read<TrainingPlanContract>('assignments', { resource: 'contract' }, { signal: controller.signal, refresh: attempt > 0 }) : fetchTrainingPlanContract(kind, id, controller.signal),
+      session ? session.read<{ statuses: { activityType: string; activityId: string; status: string; submissionCount?: number }[] }>('assignments', { resource: 'statuses' }, { signal: controller.signal, refresh: attempt > 0 }) : readLearnerJson<{ statuses: { activityType: string; activityId: string; status: string; submissionCount?: number }[] }>(
         `/learner_api/reflection/submissions/?${query}`, { signal: controller.signal, revalidate: true }),
     ]).then(([dates, contract, submissions]) => {
       if (!active) return;
@@ -47,7 +49,7 @@ export function useMonthlyAssignmentPlan(kind?: LearnerKind, id?: string) {
       });
     }).finally(() => window.clearTimeout(timer));
     return () => { active = false; controller.abort(); window.clearTimeout(timer); };
-  }, [kind, id, identity, attempt]);
+  }, [kind, id, identity, attempt, session]);
   const current = state?.identity === identity ? state : null;
   return { metadata: current?.metadata || null, contract: current?.contract || null,
     statuses: current?.statuses || null, loading: current?.loading ?? Boolean(kind && id),

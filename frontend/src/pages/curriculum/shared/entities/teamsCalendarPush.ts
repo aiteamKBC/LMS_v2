@@ -92,8 +92,19 @@ export async function pushModulePlanToTeams({
     15,
     minutesBetween(time, String(endTime || '')) || summary.durationMinutes || FALLBACK_DURATION_MINUTES,
   );
+  // Keep the planner's occurrence identity when it is unambiguous. In
+  // particular, if week 2 is delivered by an additional event, week 3 must
+  // stay session 3 on the module series; renumbering it to 2 makes the
+  // occurrence writer move the later main session onto the removed week's
+  // identity. Older planners sometimes repeat numbers, so those payloads use
+  // the compact sequence the Teams API expects.
+  const plannedNumbers = planned.map(session => session.sessionNumber).filter(
+    (value): value is number => Number.isInteger(value) && value > 0,
+  );
+  const plannerNumbersAreUnique = plannedNumbers.length === planned.length
+    && new Set(plannedNumbers).size === plannedNumbers.length;
   const occurrences = planned.map((session, index) => ({
-    sessionNumber: index + 1,
+    sessionNumber: plannerNumbersAreUnique ? session.sessionNumber : index + 1,
     startDateTimeUtc: zonedNaiveToUtcIso(`${session.date}T${normalizedClock(session.startTime || time)}`, summary.timeZone),
     durationMinutes: session.durationMinutes || minutesBetween(session.startTime || time, session.endTime || '') || duration,
   }));

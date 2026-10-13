@@ -3,7 +3,8 @@ import type { StudentActivityResponse } from '@/api/studentActivity';
 import type { JourneyComponent, JourneyModule } from '@/utils/learnerJourney';
 import { progressCountsAsAchieved } from '@/utils/learnerJourney';
 import { buildUnifiedLearningSummary, type CoverMetadata } from '@/pages/learner/my-learning/learningSummary';
-import { subjectMapWeeks, subjectLearningStatus } from '@/pages/learner/my-learning/subjectLearning';
+import { subjectMapWeeks } from '@/pages/learner/my-learning/subjectLearning';
+import { historicalJourneyStarted, journeyStatus } from './journeyRules';
 
 export type ActivityStatus = 'completed' | 'in-progress' | 'not-started' | 'unavailable';
 export type ActivityUnavailableReason = 'missing_source_component_id' | 'missing_group_id_activity_id'
@@ -51,7 +52,7 @@ export function buildFullCaseFileJourney(
           { ...detail, studentActivityAvailable: false }, null,
         )[native.componentId] : null;
         const status = entry.completed ? 'completed'
-          : nativeState?.status === 'in-progress' || subjectLearningStatus({ ...subject, activities: [entry] }) === 'In progress' ? 'in-progress' : 'not-started';
+          : nativeState?.status === 'in-progress' || historicalJourneyStarted(legacy) || (native?.quizAttempts?.length || 0) > 0 ? 'in-progress' : 'not-started';
         return {
           ...(native || { expectedOtjh: legacy?.planned ?? null }),
           // Historical records need a subject-scoped key; keep native IDs intact.
@@ -144,7 +145,7 @@ export function buildCaseFileActivityStates(
       .filter(() => !component.tutorValidationRequired || marking?.status === 'accepted');
     const feedStarted = (detail?.activityFeed || []).some(entry => String(entry.componentId || '') === id);
     states[id] = {
-      status: completed.length ? 'completed' : records.length || feedStarted ? 'in-progress' : 'not-started',
+      status: journeyStatus('native', { completed: completed.length > 0, started: records.length > 0 || feedStarted }),
       completedAt: completed.length
         ? latestIso([marking?.reviewedAt, ...completed.map(record => record.submittedAt)])
         : null,
@@ -167,9 +168,7 @@ export function moduleActivitySummary(module: JourneyModule, states: CaseFileAct
     ...counts,
     total,
     percent: total ? Math.round((counts.completed / total) * 100) : 0,
-    status: (total > 0 && counts.completed === total ? 'completed'
-      : counts.completed > 0 || counts['in-progress'] > 0 ? 'in-progress'
-        : counts.unavailable > 0 ? 'unavailable'
-        : 'not-started') as ActivityStatus,
+    status: journeyStatus('module', { allCompleted: total > 0 && counts.completed === total,
+      started: counts.completed > 0 || counts['in-progress'] > 0, unavailable: counts.unavailable > 0 }),
   };
 }
