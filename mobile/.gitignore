@@ -13,3 +13,5 @@ android/local.properties
 *.keystore
 *.jks
 .env*
+android/.kotlin/
+
