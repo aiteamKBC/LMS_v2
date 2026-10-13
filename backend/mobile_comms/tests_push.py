@@ -2,6 +2,7 @@ from types import SimpleNamespace
 from unittest import TestCase
 from unittest.mock import Mock
 import requests
+import threading
 from .push import FcmSender
 
 class PushTransportTests(TestCase):
@@ -10,6 +11,7 @@ class PushTransportTests(TestCase):
         self.sender.project_id = 'synthetic-project'
         self.sender.credentials = SimpleNamespace(valid=True, token='synthetic')
         self.sender.http = Mock()
+        self.sender.auth_lock = threading.Lock()
         self.notice = SimpleNamespace(pk=123, account_id=41, body='You have a new KBC message.', category='private_messages')
 
     def result(self, status, body, headers=None):

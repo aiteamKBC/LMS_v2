@@ -1,5 +1,6 @@
 """FCM HTTP v1 transport. Contains no credentials and performs no work on import."""
 import json
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 import requests
@@ -23,8 +24,10 @@ class FcmSender:
             raise ValueError('Unexpected notification credential configuration.')
         self.project_id = project_id
         self.credentials = service_account.Credentials.from_service_account_info(info, scopes=SCOPES)
-        self.http = http or requests.Session()
-        self.auth_request = Request(session=self.http)
+        self.http = http
+        self.local = threading.local()
+        self.auth_lock = threading.Lock()
+        self.auth_request = Request(session=http or requests.Session())
 
     def send(self, token, notification, *, validate_only=False):
         # Only opaque IDs and generic wording leave the LMS. Message bodies and
@@ -33,14 +36,20 @@ class FcmSender:
                 'screen': 'notifications'}
         message = {'token': token, 'notification': {'title': 'KBC Learn', 'body': notification.body},
                    'data': data, 'android': {'priority': 'high', 'ttl': '600s',
-                       'restricted_package_name': 'com.kentbusinesscollege.learn',
+                       'restricted_package_name': 'com.kentbusinesscollege.learn.lmscandidate',
                        'notification': {'channel_id': 'kbc-' + notification.category + '-v1',
                                         'tag': 'kbc-' + str(notification.pk), 'visibility': 'PRIVATE'}}}
         try:
-            if not self.credentials.valid:
-                self.credentials.refresh(self.auth_request)
-            result = self.http.post('https://fcm.googleapis.com/v1/projects/' + self.project_id + '/messages:send',
-                headers={'Authorization': 'Bearer ' + self.credentials.token},
+            with self.auth_lock:
+                if not self.credentials.valid:
+                    self.credentials.refresh(self.auth_request)
+                bearer = self.credentials.token
+            if self.http is None:
+                if not hasattr(self.local, 'http'):self.local.http = requests.Session()
+                http = self.local.http
+            else:http = self.http
+            result = http.post('https://fcm.googleapis.com/v1/projects/' + self.project_id + '/messages:send',
+                headers={'Authorization': 'Bearer ' + bearer},
                 json={'message': message, 'validate_only': validate_only}, timeout=(5, 20), allow_redirects=False)
             payload = result.json()
         except GoogleAuthError:
@@ -51,7 +60,9 @@ class FcmSender:
             return SendResult('retry')
         if result.status_code == 200 and isinstance(payload.get('name'), str):
             return SendResult('sent', payload['name'][:200])
-        codes = {detail.get('errorCode') for detail in payload.get('error', {}).get('details', [])
+        error = payload.get('error') if isinstance(payload.get('error'), dict) else {}
+        details = error.get('details') if isinstance(error.get('details'), list) else []
+        codes = {detail.get('errorCode') for detail in details
                  if isinstance(detail, dict)}
         if 'UNREGISTERED' in codes:
             return SendResult('invalid-device')

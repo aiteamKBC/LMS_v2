@@ -1,0 +1,13 @@
+import React from 'react';
+import {Pressable,Text,View,TextInput,ActivityIndicator} from 'react-native';
+import {Ionicons} from '@expo/vector-icons';
+import {base,s} from './styles';
+export const Btn=({title,onPress,secondary=false,disabled=false,icon}:any)=><Pressable accessibilityRole="button" accessibilityLabel={title} accessibilityState={{disabled}} disabled={disabled} onPress={onPress} style={[s.button,secondary?s.secondary:s.primary,{opacity:disabled?.5:1}]}>{icon&&<Ionicons name={icon} size={21} color={secondary?base.green:'#fff'}/>}<Text style={[s.buttonText,{color:secondary?base.green:'#fff'}]}>{title}</Text></Pressable>;
+export const Card=({children}:any)=><View style={s.card}>{children}</View>;
+export const H=({children}:any)=><Text accessibilityRole="header" style={s.heading}>{children}</Text>;
+export const Txt=({children,small=false}:any)=><Text style={small?s.small:s.body}>{children}</Text>;
+export const Notice=({children}:any)=><View accessibilityLiveRegion="polite" style={s.notice}><Text style={s.noticeText}>{children}</Text></View>;
+export const Busy=({label='Loading your learning…'}:any)=><View style={{gap:15,padding:25,alignItems:'center'}}><ActivityIndicator color={base.green}/><Txt>{label}</Txt></View>;
+export const Field=({label,value,onChangeText,multiline=false,...rest}:any)=><View style={{gap:8}}><Text style={s.rowTitle}>{label}</Text><TextInput accessibilityLabel={label} value={value} onChangeText={onChangeText} multiline={multiline} style={[s.input,multiline&&s.largeInput]} {...rest}/></View>;
+export const Row=({title,subtitle,onPress,done=false}:any)=><Pressable accessibilityRole="button" accessibilityLabel={title} accessibilityHint={subtitle} onPress={onPress} style={s.rowLink}><View style={s.iconTile}><Ionicons name={done?'checkmark':'chevron-forward'} size={22} color={base.green}/></View><View style={{flex:1,gap:3}}><Text style={s.rowTitle}>{title}</Text>{subtitle&&<Text style={s.small}>{subtitle}</Text>}</View></Pressable>;
+export const Back=({onPress,title='Back'}:any)=><Pressable accessibilityRole="button" accessibilityLabel={title} onPress={onPress} style={s.back}><Ionicons name="chevron-back" size={20} color={base.green}/><Text style={s.backText}>{title}</Text></Pressable>;

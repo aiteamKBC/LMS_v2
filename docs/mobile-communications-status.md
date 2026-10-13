@@ -1,28 +1,36 @@
-# Mobile communications implementation status
+# Android chat and reminder release
 
-Work in progress; not a release. The new application is not yet in INSTALLED_APPS or the production URL configuration. Do not enable or deploy this feature from this draft.
+This change adds native Android cohort group chat, private same-cohort messages, and assigned learner–coach conversations. The coach account has its own mobile inbox. Existing LMS course selection, learning and legacy chat are preserved.
 
-## Implemented foundation
+## Notification behaviour
 
-- Additive tables for cohort and private conversations, retry-safe text messages, read cursors, notification preferences, devices, notifications and delivery records. Existing legacy chat tables are untouched.
-- API handlers derive identity from the LMS session and verify current cohort membership or coach assignment for every conversation access. No demo bootstrap or client-selected sender.
-- Independent in-app and push preferences for cohort messages, private messages, meetings, attendance, assignments and tasks. Push defaults off.
-- Pure reminder policy: previous UK calendar day, 15 minutes before, 15 minutes after when attendance is unconfirmed; assignment/task two-day and one-day reminders. Cancellation, authorised absence, attendance and submission suppress the applicable reminders when supplied by a current server-side source.
-- FCM HTTP v1 transport with generic lock-screen wording, opaque IDs, Android channels, bounded TTL and classified delivery failures. Credentials are external runtime files, never repository content.
+Six categories have independent in-app and phone choices: cohort messages, private messages, meetings, attendance, assignments and tasks. Phone delivery is opt-in and also needs Android permission. Preferences apply across the account's registered phones. Current login sessions, cohort membership and coach assignment are rechecked for reads, sends and delivery.
 
-## Validation
+The scheduler reads current LMS records. Meeting/session reminders run the previous UK calendar day, 15 minutes before, and 15 minutes after when attendance is not confirmed. Approved absence, cancellation and confirmed attendance suppress applicable reminders. Assignment/task alerts run two and one days before the due date. Assignments use the saved end-of-week deadline where configured, otherwise the 21st of the scheduled month; ambiguous/undated assignments are skipped. Submitted assignments and completed tasks are suppressed. Task reminders cover dated learner-owned actions in saved coaching summaries.
 
-`python -m django test mobile_comms --settings=mobile_comms.test_settings --noinput`: 34 tests passed on 13 October 2026. The dedicated settings use an in-memory SQLite database and bypass application startup hooks. Tests use synthetic identities and mocked external transport; they do not prove production database behavior or real phone delivery.
+Push payloads contain generic wording and opaque routing/account IDs, never message text or learner names. Delivery checks expire after ten minutes. Transient provider failures retry within that eligibility window; uncertain sends after process interruption are retained for review rather than blindly resent. Provider/network delivery is not an exactly-once guarantee. Conversation reads poll every 12 seconds while the app is active.
 
-Teams baseline and expanded Teams tests: not required for this draft; no Teams files changed. Live Teams testing: not run.
+## Validation on 13 October 2026
 
-## Required before release
+- Native tests: 201 passed, including chat navigation, retry identity, coach routes and independent preferences.
+- TypeScript: passed.
+- Communications policy/API/worker/provider tests: 51 passed using synthetic identities and mocked transport.
+- Fresh loopback PostgreSQL: initial migration, actual enrolment/profile bridge, apprenticeship/commercial access, forbidden cohort/withdrawn learner/former coach, concurrent idempotency, rate limit and dispatch claim passed.
+- Existing LMS facade/rewards/install regression suites: 99 + 27 + 5 passed on isolated databases after incorporating PR 368.
+- Live read-only source checks passed for existing learner records. No synthetic messages, invitations or pushes were sent to learners.
+- Chat and notification choices visually inspected at 390 px phone width using isolated synthetic preview data.
+- Teams baseline: not required; no Teams-list file changed. Live Microsoft invitations/attendance were not exercised.
 
-1. Complete canonical identity tests, concurrent-send limiting and delivery worker authorization, including expired/revoked sessions and preference changes. Validate the migration on isolated PostgreSQL.
-2. Connect reminder generation and last-moment eligibility checks to actual LMS calendar, attendance, assignment submission and task sources. The current pure policy is not a running scheduler.
-3. Add the Android Messages inbox, learner/cohort/private routes, coach sign-in/inbox, notification preferences and notification inbox. Register native FCM tokens, unregister on sign-out, handle token refresh, account switching and notification taps. Replace overlapping local reminders to avoid duplicate alerts.
-4. Add app/routes/configuration and a reviewed scheduler with delivery retries and monitoring. No live sender or scheduler has been enabled.
-5. Test the complete final change, review the PR, merge current main, verify backup/restore and migration targets, and deploy through the agreed main pull, frontend build and service restart flow. Preserve any team modifications.
-6. Build a new Android APK and verify foreground/background/closed-app notifications and chat on physical phones. The previously installed APK cannot gain these features from a backend change alone.
+## Deployment and rollback
 
-The Firebase account and private credential provisioning are tracked outside this public repository. Their validation-only check sent no messages. No learner accounts have been reactivated and no test chats have been sent to real learners.
+Apply through GitHub branch review, merge main, then the verified server checkout. Deploy only the reviewed merged revision. Preserve existing team source hashes and the previous frontend/APK. Build the frontend successfully before restarting LMS services.
+
+The migration adds only mobile_comms tables; it does not alter existing learner or legacy chat tables. Run the reviewed initial migration on the verified default LMS database. Keep a fresh production restore point and the deployment receipt outside this public repository.
+
+Enable KBC_MOBILE_COMMS_ENABLED and KBC_MOBILE_PUSH_ENABLED through protected runtime configuration. Keep the Firebase sender credential outside GitHub and the APK. Install the supplied systemd service/timer and check its first execution. The timer runs one reconciliation/dispatch cycle, then waits one minute after it finishes; the command also holds a non-overlapping lock.
+
+Rollback first stops/disables the new timer and turns off communications/push flags, restores the previous frontend and APK, and deploys a reviewed revert through GitHub. Preserve chat data and tables; do not drop them or restore the entire database over subsequent legitimate LMS work as a routine rollback.
+
+## Physical Android acceptance still required
+
+Install/update the internal candidate, sign in as two current cohort learners and their assigned coach, enable selected phone alerts, and check foreground/background/closed-app delivery and taps. Verify disabling a category, logout/account switching, rescheduling, submission and attendance suppression using an agreed pilot record. Automated tests and Firebase validation-only requests do not prove delivery on a physical phone. This is an internally signed candidate, not a Google Play release.

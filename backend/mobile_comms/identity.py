@@ -98,7 +98,7 @@ def peer_directory(viewer):
     else:
         profiles = profiles.filter(coach_email__iexact=viewer.email)
     entries = []
-    for profile in profiles.order_by("full_name", "id")[:500]:
+    for profile in profiles.order_by("full_name", "id").iterator(chunk_size=200):
         try:
             person = active_learner(profile.enrolment_id)
         except AccessError:

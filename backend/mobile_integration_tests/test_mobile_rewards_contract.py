@@ -67,6 +67,33 @@ class RewardsFacadeTests(unittest.TestCase):
         self.assertEqual(response.status_code,200)
         self.assertEqual(service.record_observations.call_args.kwargs["tracking"]["activityId"],"77")
 
+    def test_other_assigned_course_study_does_not_expand_pmp_rewards(self):
+        self.scoped()
+        self.plan.append({"moduleId":"RISK-M01","moduleTitle":"Risk"})
+        self.detail["components"].append({**self.audio,"moduleId":"RISK-M01","componentId":"RISK-AUDIO"})
+        response=views.observations(self.request("POST",self.observation(componentId="RISK-AUDIO")))
+        self.assertEqual(response.status_code,404)
+        self.assertEqual(json.loads(response.content)["code"],"module_not_assigned")
+        service.record_observations.assert_not_called()
+        base.timer.verify_tracking_session.assert_not_called()
+
+    def test_standalone_quiz_never_persists_a_synthetic_reward_component(self):
+        self.scoped();self.mode="active_quiz"
+        self.quiz_component["componentId"]=None
+        catalogue=json.loads(base.mobile.catalogue(self.request()).content)
+        quiz=next(item for item in catalogue["components"] if item["mobileMode"]=="quiz")
+        audio=next(item for item in catalogue["components"] if item["mobileMode"]=="audio")
+        self.assertFalse(quiz["rewardObservationsSupported"])
+        self.assertTrue(audio["rewardObservationsSupported"])
+        response=views.observations(self.request("POST",self.observation(componentId=quiz["componentId"],mode="quiz")))
+        self.assertEqual(response.status_code,404)
+        service.record_observations.assert_not_called()
+        base.timer.verify_tracking_session.assert_not_called()
+        response=base.mobile.submit_quiz(self.request("POST",{
+            "trackingToken":"server-token","timeTakenSeconds":0,"answers":{"10":[12]}}),quiz["componentId"])
+        self.assertEqual(response.status_code,200)
+        self.assertEqual(base.quizzes.submit_quiz_attempt.call_args.kwargs,{"quiz_id":77})
+
     def test_entitlement_and_learning_gate_cover_all_reward_views(self):
         self.scoped()
         self.detail["learningAccess"]={"blocked":True}

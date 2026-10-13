@@ -68,6 +68,7 @@ def preference(account_id):
 @endpoint({"GET"})
 def session(request):
     p = request.comms_user
+    Preference.objects.get_or_create(account_id=p.account_id)
     return JsonResponse({"accountId":str(p.account_id), "role":p.kind, "name":p.name,
                          "cohortId":p.cohort_id, "preferences":preference(p.account_id),
                          "pushConfigured":bool(getattr(settings,"KBC_MOBILE_PUSH_ENABLED",False))})
@@ -157,12 +158,13 @@ def messages(request, thread_id):
         if not isinstance(text,str) or not text.strip() or len(text)>4000:
             raise ValueError()
         nonce=uuid.UUID(str(data["clientId"]))
-        # Persisted limit shared by all API workers; retries reuse their nonce.
-        if (not Message.objects.filter(account_id=p.account_id,client_id=nonce).exists()
-                and Message.objects.filter(account_id=p.account_id,
-                    created_at__gt=timezone.now()-timedelta(minutes=1)).count()>=30):
-            return error("Please wait a minute before sending another message.",429)
         with transaction.atomic():
+            Preference.objects.get_or_create(account_id=p.account_id)
+            Preference.objects.select_for_update().get(account_id=p.account_id)
+            if (not Message.objects.filter(account_id=p.account_id,client_id=nonce).exists()
+                    and Message.objects.filter(account_id=p.account_id,
+                        created_at__gt=timezone.now()-timedelta(minutes=1)).count()>=30):
+                return error("Please wait a minute before sending another message.",429)
             # Serialise sends for a conversation and recheck rights inside the transaction.
             thread=Thread.objects.select_for_update().get(pk=thread.pk)
             identity.participants(thread,p)
@@ -211,6 +213,9 @@ def read_thread(request, thread_id):
 @endpoint({"GET"})
 def inbox(request):
     p=request.comms_user; prefs=preference(p.account_id)
+    from .worker import current_notification
+    from .sources import events_for
+    events = None
     enabled=[key for key,channels in prefs.items() if channels["inApp"]]
     rows=Notification.objects.filter(account_id=p.account_id,category__in=enabled,
                                      cancelled_at=None,due_at__lte=timezone.now()).order_by("-due_at")[:100]
@@ -219,6 +224,9 @@ def inbox(request):
         if row.source.get("kind")=="message":
             try:thread_for(request,row.source["threadId"])
             except identity.AccessError:continue
+        else:
+            if events is None:events=events_for(p)
+            if not current_notification(row,p,timezone.now(),events=events):continue
         result.append({"id":row.pk,"category":row.category,"body":row.body,"target":row.target,
                        "read":row.read_at is not None,"createdAt":row.due_at.isoformat()})
     return JsonResponse({"notifications":result})
