@@ -544,6 +544,41 @@ class MobileFacadeTests(unittest.TestCase):
             ("PMP-AUDIO-1", "PMP-W01", 1, None, None, None, None, False, "{bad", None, {}, mobile.PILOT_MODULE_ID, 1, 1)]
         self.assertNotIn("learningRoute", self.body(mobile.catalogue(self.request()))["components"][0])
 
+    def test_direct_route_metadata_accepts_raw_json_text_and_preserves_typed_values(self):
+        legacy = {"required": True, "optional": False, "required_route_minutes": 20,
+                  "required_weekly_minutes": 45, "source_content_type": "reading"}
+        direct = {"required": False, "optional": True, "countsTowardsRequiredCompletion": False,
+                  "required_route_minutes": 12.5, "required_weekly_minutes": None,
+                  "full_content_planned_minutes": 0, "plannedLearningMinutes": 30,
+                  "source_content_type": "audio", "parent_activity_id": "LESSON-1",
+                  "answerKey": "never expose"}
+        expected_route = {"source": "canonical_settings", "required": False, "optional": True,
+                          "countsTowardsRequiredCompletion": False, "requiredRouteMinutes": 12.5,
+                          "requiredWeeklyMinutes": 45, "fullContentPlannedMinutes": 0,
+                          "plannedLearningMinutes": 30, "requirement": "Optional"}
+        for raw_direct in (direct, json.dumps(direct)):
+            with self.subTest(raw_json=isinstance(raw_direct, str)):
+                self.cursor.fetchall.return_value = [
+                    ("PMP-AUDIO-1", "PMP-W01", 1, None, None, None, None, False,
+                     json.dumps(legacy), "Optional", raw_direct, mobile.PILOT_MODULE_ID, 1, 1)]
+                response = mobile.catalogue(self.request())
+                self.assertEqual(response.status_code, 200)
+                item = self.body(response)["components"][0]
+                self.assertEqual(item["learningRoute"], expected_route)
+                self.assertEqual(item["sourceContentType"], "audio")
+                self.assertEqual(item["sourceParentActivityId"], "LESSON-1")
+                self.assertNotIn("answerKey", json.dumps(item))
+
+    def test_malformed_or_non_object_direct_metadata_is_ignored(self):
+        for direct in ("{bad", "null", "[]", '"text"', "true", "3", [], True, 3):
+            with self.subTest(direct=direct):
+                self.cursor.fetchall.return_value = [
+                    ("PMP-AUDIO-1", "PMP-W01", 1, None, None, None, None, False,
+                     {}, None, direct, mobile.PILOT_MODULE_ID, 1, 1)]
+                response = mobile.catalogue(self.request())
+                self.assertEqual(response.status_code, 200)
+                self.assertNotIn("learningRoute", self.body(response)["components"][0])
+
     def test_programme_otjh_never_becomes_weekly_measured_seconds(self):
         overview = sys.modules["learner_api.overview_week"].overview_week
         overview.reset_mock()

@@ -11,9 +11,9 @@ $env:KBC_MOBILE_ISOLATED_DB_CONFIG = 'C:\private\quiz-metadata.json'
 python backend/mobile_integration_tests/run_tests.py --postgres-config C:\private\rewards.json --install-config C:\private\install.json --report-path C:\private\mobile-test-results.json
 ```
 
-The complete suite contains **129 checks**: 97 facade/security/download/canonical round-trip checks, including the real PostgreSQL quiz metadata query; 27 PostgreSQL reward checks; and five migration/installation checks. The runner executes the three groups in separate processes. The metadata fixture creates its minimal schema inside a transaction that is rolled back. The rewards and installation fixtures populate their dedicated databases, so create fresh databases for subsequent full runs.
+The complete suite contains **131 checks**: 99 facade/security/download/canonical round-trip checks, including the real PostgreSQL quiz metadata query; 27 PostgreSQL reward checks; and five migration/installation checks. The runner executes the three groups in separate processes. The metadata fixture creates its minimal schema inside a transaction that is rolled back. The rewards and installation fixtures populate their dedicated databases, so create fresh databases for subsequent full runs.
 
-Without `KBC_MOBILE_ISOLATED_DB_CONFIG`, one quiz metadata test is explicitly skipped; that run does not establish all 129 checks. Without both database command arguments, the runner runs only the facade group and reports an incomplete result. For the isolated facade group alone:
+Without `KBC_MOBILE_ISOLATED_DB_CONFIG`, one quiz metadata test is explicitly skipped; that run does not establish all 131 checks. Without both database command arguments, the runner runs only the facade group and reports an incomplete result. For the isolated facade group alone:
 
 ```text
 python -m unittest discover -s backend/mobile_integration_tests -p "test_mobile*contract.py" -q
