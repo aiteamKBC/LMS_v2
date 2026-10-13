@@ -49,6 +49,10 @@ def learner(source_id,profile_id,cohort,kind='apprenticeship'):
         learner_type=kind,coach_email='coach@example.test')
     return LoginAccount.objects.create(subject_type='learner',subject_id=source_id,role='learner',email=f'synthetic{source_id}@example.test')
 a=learner(101,5001,'c1');b=learner(102,5002,'c1','commercial');other=learner(103,101,'c2')
+# Production uses transaction pooling; a named cursor cannot survive across
+# requests. Fail this integration check if any communications path opens one.
+cursor_guard=patch.object(connection,'chunked_cursor',side_effect=AssertionError('Named server cursors are incompatible with transaction pooling'))
+cursor_guard.start()
 pa=identity.principal_for_account(a);pb=identity.principal_for_account(b)
 assert pa.subject_id==101 and pa.cohort_id=='c1' and pb.kind=='learner'
 assert {x['id'] for x in identity.peer_directory(pa)}=={'102'}
@@ -110,4 +114,5 @@ with patch('mobile_comms.sources.events_for',return_value={}):
     result=worker.tick(sender)
 assert result['sourceErrors']==0 and result['accounts']==2
 assert sender.send.call_count==2,'Only the remaining unread message is dispatched'
+cursor_guard.stop()
 print(json.dumps({'status':'PASS','checks':['fresh PostgreSQL migration','real enrolment/profile identity bridge','apprenticeship and commercial access','cohort outsider denied','withdrawn learner denied','coach permission revoked','concurrent duplicate send','concurrent rate limit','concurrent delivery claim','bounded parallel scheduler cycle'],'externalCalls':0}))

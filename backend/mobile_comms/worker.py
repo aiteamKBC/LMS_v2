@@ -97,7 +97,7 @@ def tick(sender=None, *, now=None):
             if result:counts[result]+=1
     if sender is None:return counts
     for notification in Notification.objects.filter(cancelled_at=None,read_at=None,
-            due_at__range=(now-timedelta(minutes=10),now)).iterator():
+            due_at__range=(now-timedelta(minutes=10),now)):
         for device in Device.objects.filter(account_id=notification.account_id,active=True):
             Delivery.objects.get_or_create(notification=notification,device=device,defaults={"next_attempt_at":now})
     ids=list(Delivery.objects.filter(state__in=["pending","retry"],next_attempt_at__lte=now).order_by("next_attempt_at").values_list("pk",flat=True)[:500])
