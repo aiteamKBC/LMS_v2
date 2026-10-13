@@ -10,7 +10,7 @@ Before editing, give the teammate a short scope note containing:
 
 - **Scope:** affected screen, user role, likely files, and downstream features.
 
-- **Restrictions:** no agent commits, pushes, pulls, or PRs; database/schema/data changes are allowed when required by the task; preserve unrelated work; Teams checks only if a Teams file (section 5) is edited.
+- **Restrictions:** develop changes on a GitHub feature branch, test and review through a pull request, merge into main, then deploy the merged main revision; no direct production source edits; preserve unrelated work; database/schema/data changes are allowed when required by the task; Teams checks only if a Teams file (section 5) is edited.
 
 - **Validation:** tests for the changed feature and shared dependencies, plus the Teams baseline only when a Teams file is edited.
 
@@ -92,13 +92,19 @@ While required answers are pending, continue independent read-only investigation
 
 ## 2. Git and concurrent work
 
-- Do not create commits.
+- From 13 October 2026, the owner authorizes scoped commits, feature-branch pushes, pull requests and merges into main for requested work in https://github.com/aiteamKBC/LMS_v2. This replaces the earlier blanket prohibition. Respect repository permissions, required reviews and checks; never bypass protections or force-push main.
 
-- Do not push or pull from remotes.
+- Work in an isolated local checkout and branch based on current main. Keep the change focused; report its scope, test evidence and affected areas in a pull request so the team can review and coordinate.
 
-- Do not create, update, or merge pull requests.
+- Do not edit production application source directly. Deploy only the reviewed change after it is merged into main. Before merging, recheck the latest main and rerun affected checks after resolving conflicts.
 
-- The project owner manually handles commits, pushes, pulls, and pull requests.
+- Deploy one release at a time. On the verified server checkout /var/www/LMS_v2 (case-sensitive), check the remote, current branch, deployed commit and working tree first. Stop if there are unexplained local modifications or untracked application files; preserve and reconcile them through a branch instead of resetting, cleaning or stashing teammates' work.
+
+- Once the checkout is safe and the intended main revision is confirmed, run git pull --ff-only origin main. From /var/www/LMS_v2/frontend run npm run build. Only after a successful build and any reviewed required migration steps, restart the backend services with systemctl restart 'lms-*.service'. The quoted wildcard contains no backslash.
+
+- Before a schema-changing release, verify the database target, backup/restore point and migration plan. Keep the previous commit/build and rollback procedure. After deployment verify service health and affected learner workflows; record the PR, merge commit, deployed commit, build and check results.
+
+- This workflow is ongoing authorization for the requested scope, not permission to include unrelated changes, expose credentials or learner data, or bypass required checks. Do not push secrets, private runtime files, learner data or the entire local work/memory folder into this public repository.
 
 - Read-only Git commands such as status, diffs, and history are allowed.
 

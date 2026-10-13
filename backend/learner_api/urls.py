@@ -6,7 +6,7 @@ from . import learner_import
 from . import monthly_reflection_ai
 from .assignment_ai_check import assignment_ai_check
 from . import ksb_generation
-from django.urls import path
+from django.urls import include, path
 from coach_api.migrated_completion_views import (
     migrated_review_party_csrf, migrated_review_party_detail, migrated_review_party_pdf, migrated_review_party_sign,
 )
@@ -31,6 +31,7 @@ from curriculum_api import session_results
 from .session_recovery import link_catchup
 
 urlpatterns = [
+    path("mobile/", include("learner_api.mobile_urls")),
     path('migrated-reviews/csrf', migrated_review_party_csrf, name='migrated-review-party-csrf'),
     path('migrated-reviews/<str:review_id>/party', migrated_review_party_detail, name='migrated-review-party-detail'),
     path('migrated-reviews/<str:review_id>/party-pdf', migrated_review_party_pdf, name='migrated-review-party-pdf'),
