@@ -120,6 +120,6 @@ it('restores unsaved answers and the active section after reopening', async () =
   first.unmount();
   view();
   await waitFor(() => expect(screen.getByLabelText('Actual time spent (hours)')).toBeEnabled());
-  fireEvent.click(screen.getByRole('button', { name: 'Learning', exact: true }));
+  fireEvent.click(screen.getByRole('button', { name: /^Learning$/ }));
   expect(screen.getByPlaceholderText('Type or use the microphone...')).toHaveValue('Keep this answer');
 });
