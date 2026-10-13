@@ -834,6 +834,8 @@ class LearnerProfile(models.Model):
                 record["questions"] = [
                     {
                         "questionId": answer.question_ref,
+                        **(answer.result_snapshot or {}),
+                        **({"imageUrl": answer.question_image_url} if answer.question_image_url is not None else {}),
                         # Built from the prefetched rows rather than .exists(),
                         # which would issue its own query per answer and undo
                         # the prefetch above.
@@ -1132,6 +1134,10 @@ class LearnerQuizAnswer(models.Model):
     progress = models.ForeignKey(LearnerProgressEntry, on_delete=models.CASCADE, related_name="quiz_answers")
     position = models.PositiveIntegerField()
     question_ref = models.BigIntegerField()
+    # NULL means a legacy attempt without a snapshot; '' means no image was shown.
+    question_image_url = models.TextField(null=True, blank=True)
+    # New attempts retain the reviewed text/key even if the quiz changes later.
+    result_snapshot = models.JSONField(null=True, blank=True)
     chosen_answer_ref = models.BigIntegerField(null=True, blank=True)
     is_correct = models.BooleanField(null=True, blank=True)
     earned = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)

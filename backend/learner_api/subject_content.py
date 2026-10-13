@@ -11,7 +11,7 @@ import math
 import re
 from threading import Lock
 from time import monotonic
-from urllib.parse import urlsplit, parse_qs
+from urllib.parse import urlsplit, parse_qs, unquote
 import urllib.error
 import urllib.request
 
@@ -264,11 +264,30 @@ def build_material(stored, schema=None, attachment_resolver=None, pdf_checker=No
                 reading = schema[field]
                 break
     missing_attachments = []
-    if attachment_resolver:
+    attachment_source = (schema or {}).get('source')
+    attachments = as_list(attachment_source.get('attachments')) if isinstance(attachment_source, dict) else []
+    if (schema or {}).get('lms_media_attachments') is not None:
+        attachments = as_list(schema['lms_media_attachments'])
+    local_attachments = {}
+    for attachment in attachments:
+        if not isinstance(attachment, dict):
+            continue
+        reference = str(attachment.get('attachment_id') or '')
+        local = safe_url(attachment.get('lms_url'))
+        # A migrated companion belongs to this exact attachment, on our origin.
+        # Never accept an arbitrary origin or a different attachment's path.
+        path = unquote(urlsplit(local).path)
+        prefix = f'/curriculum_api/curriculum/uploads/_legacy_files/{reference}/'
+        filename = path[len(prefix):] if path.startswith(prefix) else ''
+        if (reference.isdigit() and local.startswith(prefix) and filename not in {'', '.', '..'}
+                and not re.search(r'[/\\\x00-\x1f]', filename)):
+            local_attachments[reference] = local
+    if attachment_resolver or local_attachments:
         resolved = {}
         def archived(reference):
             if reference not in resolved:
-                resolved[reference] = safe_url(attachment_resolver(reference)) if reference else ''
+                resolved[reference] = local_attachments.get(reference) or (
+                    safe_url(attachment_resolver(reference)) if reference and attachment_resolver else '')
             return resolved[reference]
         # Prefer already transferred files; the existing attachment player can
         # recover empty legacy blobs through the original WordPress source.
@@ -277,8 +296,6 @@ def build_material(stored, schema=None, attachment_resolver=None, pdf_checker=No
             recovered = archived(reference)
             if recovered:
                 item.update(url=recovered, can_embed=True)
-        attachment_source = (schema or {}).get('source')
-        attachments = as_list(attachment_source.get('attachments')) if isinstance(attachment_source, dict) else []
         for index, attachment in enumerate(attachments):
             if not isinstance(attachment, dict):
                 continue
@@ -296,8 +313,6 @@ def build_material(stored, schema=None, attachment_resolver=None, pdf_checker=No
                 missing_attachments.append(title)
     # Keep a lesson's reading companion alongside its quiz, even when WP's
     # navigation target points to the standalone quiz page.
-    attachment_source = (schema or {}).get('source')
-    attachments = as_list(attachment_source.get('attachments')) if isinstance(attachment_source, dict) else []
     by_id = {str(a.get('attachment_id')): a for a in attachments if isinstance(a, dict)}
     source_origin = urlsplit(getattr(settings, 'KBC_LMS_SCHEMA_URL', ''))
     for item in media:
