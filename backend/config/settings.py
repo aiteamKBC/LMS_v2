@@ -55,6 +55,12 @@ def load_env_file(path):
 
 load_env_file(BASE_DIR / '.env')
 
+# New LMS mobile pilot: explicit default-off release gates.
+KBC_MOBILE_API_ENABLED = os.environ.get("KBC_MOBILE_API_ENABLED", "0").strip().lower() in {"1", "true", "yes", "on"}
+KBC_MOBILE_CALENDAR_WRITES_ENABLED = os.environ.get("KBC_MOBILE_CALENDAR_WRITES_ENABLED", "0").strip().lower() in {"1", "true", "yes", "on"}
+KBC_SHARED_REWARDS_READY = os.environ.get("KBC_SHARED_REWARDS_READY", "0").strip().lower() in {"1", "true", "yes", "on"}
+
+
 SAFEGUARDING_SSO_SECRET = os.environ.get("SAFEGUARDING_SSO_SECRET", "").strip()
 INCLUSION_SSO_SECRET = os.environ.get("INCLUSION_SSO_SECRET", "").strip()
 INCLUSION_SSO_CALLBACK_URL = os.environ.get(

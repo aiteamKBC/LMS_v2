@@ -1,8 +1,9 @@
 from django.urls import path
 
-from . import views
+from . import views, shared_reward_views
 
 urlpatterns = [
+    path('shared-rewards/bonus-verifications/', shared_reward_views.verify_bonus),
     path('rewards/', views.rewards_collection, name='rewards-collection'),
     path('rewards/<int:pk>/', views.reward_detail, name='reward-detail'),
     path('voucher-claims/', views.voucher_claims_collection, name='voucher-claims-collection'),
