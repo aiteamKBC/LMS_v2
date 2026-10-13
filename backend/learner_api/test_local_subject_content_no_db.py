@@ -240,6 +240,16 @@ class LocalSubjectContentTests(unittest.TestCase):
         self.assertEqual(result['unavailable_attachments'], [])
         resolver.assert_not_called()
 
+    def test_migrated_companion_keeps_string_provenance_and_uses_local_manifest(self):
+        local = '/curriculum_api/curriculum/uploads/_legacy_files/11/companion.pdf'
+        schema = {'source': 'legacy_import', 'lms_media_attachments': [
+            {'attachment_id': 11, 'content_type': 'pdf', 'filename': 'companion.pdf', 'lms_url': local}]}
+        resolver = Mock(side_effect=AssertionError('Unnecessary legacy lookup'))
+        result = build_material(self.stored, schema, attachment_resolver=resolver)
+        self.assertEqual(result['media'][0]['url'], local)
+        self.assertEqual(schema['source'], 'legacy_import')
+        resolver.assert_not_called()
+
     def test_inline_migration_does_not_restore_the_old_wordpress_navigation(self):
         row = hydrate_material({'material_content_type': 'video',
             'video_iframe_url': 'https://source.example/stm-lessons/reading/',

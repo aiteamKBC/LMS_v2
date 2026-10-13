@@ -25,11 +25,13 @@ from urllib.parse import parse_qs, quote, unquote, urljoin, urlsplit
 
 PREFIX = '/curriculum_api/curriculum/uploads/'
 FIELDS = ('source_url', 'video_iframe_url', 'audio_iframe_url', 'reading_iframe_url')
-PAYLOAD_FIELDS = (*FIELDS, 'iframe_url', 'reading_text_body', 'text_body', 'html_body', 'lms_cleared_media_fields')
+PAYLOAD_FIELDS = (*FIELDS, 'iframe_url', 'reading_text_body', 'text_body', 'html_body',
+                  'lms_cleared_media_fields', 'lms_media_attachments')
 NATIVE_FIELDS = ('videoUrl', 'audioUrl', 'resourceUrl', 'podcastUrl', 'presentationUrl',
                  'uploadedFileUrl', 'assignmentFileUrl', 'readingContent', 'embedCode',
                  'lessonContent', 'transcript', 'attachments',
-                 'lessonMaterialLinks', 'speakerNotes', 'assignmentBrief')
+                 'lessonMaterialLinks', 'speakerNotes', 'assignmentBrief',
+                 'componentFiles', 'readingUrl', 'handbookUrl')
 URL_PATTERN = re.compile(r'https?://[^\s"\'<>\\]+')
 
 
@@ -48,7 +50,7 @@ def source_key(value, host):
     if parsed.scheme not in {'http', 'https'} or parsed.hostname != host or parsed.username or parsed.password:
         return ''
     reference = (parse_qs(parsed.query).get('attachment_id') or [''])[0]
-    if re.fullmatch(r'/wp-json/kbc-lms/v1/material/[0-9]+/view', parsed.path) and reference.isdigit():
+    if re.fullmatch(r'/wp-json/kbc-lms/v1/material/[0-9]+/(?:view|embed)', parsed.path) and reference.isdigit():
         return 'attachment:' + reference
     if parsed.path.startswith('/wp-content/uploads/'):
         return 'file:' + hashlib.sha256(unquote(parsed.path).encode()).hexdigest()
@@ -120,7 +122,8 @@ def download_parts(session, url, output, max_bytes, expected_mime='', progress=N
                         current_mime = expected_mime
                     if (expected_mime and current_mime != expected_mime) or (mime and mime != current_mime):
                         raise ValueError('source_mime_mismatch')
-                    current_validator = response.headers.get('ETag') or response.headers.get('Last-Modified') or ''
+                    etag = response.headers.get('ETag') or ''
+                    current_validator = (etag if not etag.startswith('W/') else '') or response.headers.get('Last-Modified') or ''
                     if validator and current_validator != validator:
                         raise ValueError('source_changed_during_download')
                     if response.status_code == 206:
@@ -134,6 +137,8 @@ def download_parts(session, url, output, max_bytes, expected_mime='', progress=N
                             raise ValueError('source_changed_during_download')
                         if length > max_bytes:
                             raise ValueError('file_too_large')
+                        if end + 1 < length and not current_validator:
+                            raise ValueError('source_version_unverifiable')
                         data = bytearray()
                         for chunk in response.iter_content(65536):
                             data.extend(chunk)
@@ -183,6 +188,35 @@ def download_parts(session, url, output, max_bytes, expected_mime='', progress=N
     return mime, offset, digest.hexdigest()
 
 
+def source_file_header(session, url, max_bytes, expected_mime=''):
+    """Read a bounded signature and a strong version for conditional Azure copy."""
+    with session.get(url, headers={'Accept-Encoding': 'identity', 'Range': 'bytes=0-65535'},
+                     stream=True, allow_redirects=False, timeout=(10, 20)) as response:
+        response.raise_for_status()
+        etag = response.headers.get('ETag') or ''
+        if response.status_code != 206 or not etag or etag.startswith('W/'):
+            return None
+        match = re.fullmatch(r'bytes 0-([0-9]+)/([0-9]+)', response.headers.get('Content-Range', ''))
+        if not match:
+            raise ValueError('invalid_content_range')
+        end, size = map(int, match.groups())
+        if end >= size or end >= 65536 or size > max_bytes:
+            raise ValueError('invalid_source_size')
+        mime = response.headers.get('Content-Type', '').split(';')[0].strip().lower()
+        if mime == 'application/octet-stream' and expected_mime:
+            mime = expected_mime
+        if expected_mime and mime != expected_mime:
+            raise ValueError('source_mime_mismatch')
+        data = bytearray()
+        for chunk in response.iter_content(65536):
+            data.extend(chunk)
+            if len(data) > end + 1:
+                raise ValueError('invalid_content_range')
+        if len(data) != end + 1 or not valid_signature(mime, data):
+            raise ValueError('invalid_file_content')
+        return {'etag': etag, 'size': size, 'mime': mime, 'head': bytes(data)}
+
+
 class ReadingHTML(HTMLParser):
     """Keep reading content, never publish executable WordPress markup."""
     tags = set('p div span h1 h2 h3 h4 h5 h6 br hr ul ol li table thead tbody tfoot tr th td strong b em i u s blockquote pre code a img sub sup'.split())
@@ -227,6 +261,94 @@ def clean_reading(value):
     return ''.join(parser.parts)
 
 
+def read_source_json(session, url, headers):
+    """Retry interrupted metadata reads without retrying access/not-found errors."""
+    import requests
+    for attempt in range(3):
+        try:
+            with session.get(url, headers=headers, allow_redirects=False, stream=True, timeout=(10, 30)) as response:
+                response.raise_for_status()
+                if response.status_code != 200:
+                    raise ValueError('source_redirect')
+                chunks, size = [], 0
+                for chunk in response.iter_content(65536):
+                    size += len(chunk)
+                    if size > 8*1024*1024:
+                        raise ValueError('oversized_schema')
+                    chunks.append(chunk)
+                return json.loads(b''.join(chunks))
+        except requests.HTTPError as error:
+            if error.response.status_code not in {429, 502, 503, 504} or attempt == 2:
+                raise
+        except (requests.ConnectionError, requests.Timeout, requests.exceptions.ChunkedEncodingError):
+            if attempt == 2:
+                raise
+        time.sleep(attempt + 1)
+
+
+def recovered_files(records, blobs):
+    """Recover committed aliases after an interrupted run, never guess conflicts."""
+    candidates = defaultdict(set)
+    for record in records:
+        for key, name in (record.get('verified_files') or {}).items():
+            if re.fullmatch(r'(attachment:[0-9]+|(?:file|page):[0-9a-f]{64})', key):
+                candidates[key].add(name)
+    result, conflicts = {}, 0
+    for key, names in candidates.items():
+        if len(names) != 1:
+            conflicts += 1
+            continue
+        name = next(iter(names))
+        actual = blobs.get(name)
+        if not actual or not actual.get('size') or not actual.get('mime'):
+            continue
+        result[key] = {'blob': name, **actual, 'url': PREFIX + quote(name, safe='/')}
+        if name.startswith('_wordpress_text/'):
+            result[key]['inline'] = True
+    return result, conflicts
+
+
+def attachment_file_aliases(attachments, mapping, host):
+    """An imported attachment's exact file URL identifies its verified blob."""
+    matches = defaultdict(dict)
+    for item in attachments:
+        if not isinstance(item, dict):
+            continue
+        known = mapping.get('attachment:' + str(item.get('attachment_id')))
+        if not known or (item.get('mime_type') and item['mime_type'] != known['mime']):
+            continue
+        for field in ('file_url', 'open_url'):
+            key = source_key(item.get(field), host)
+            if key.startswith('file:'):
+                matches[key][known['blob']] = known
+    return {key: next(iter(choices.values())) for key, choices in matches.items() if len(choices) == 1}
+
+
+def sharepoint_identity(value):
+    """Stable file identity from the source lesson, without any sharing token."""
+    parsed = urlsplit(value or '')
+    if parsed.scheme != 'https' or parsed.hostname != 'kentbusinesscollege.sharepoint.com':
+        return None
+    marker = parsed.path.lower().find('/_layouts/')
+    identity = next((values[0] for key, values in parse_qs(parsed.query).items()
+                     if key.lower() in {'uniqueid', 'sourcedoc'} and values), '').strip('{}').lower()
+    if marker < 0 or not re.fullmatch(r'[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}', identity):
+        return None
+    return {'host': parsed.hostname, 'site_path': parsed.path[:marker].lower(), 'unique_id': identity}
+
+
+def provider_reference(provider, value):
+    """Approved direct players retain their original provider and activity type."""
+    parsed = urlsplit(value or '')
+    if parsed.scheme != 'https' or parsed.username or parsed.password:
+        return None
+    spotify = (provider == 'spotify' and parsed.netloc == 'open.spotify.com'
+               and re.fullmatch(r'/embed/(?:show|episode|track|album|playlist)/[A-Za-z0-9]+', parsed.path))
+    youtube = (provider == 'youtube' and parsed.netloc in {'www.youtube.com', 'www.youtube-nocookie.com'}
+               and re.fullmatch(r'/embed/[A-Za-z0-9_-]{6,}', parsed.path))
+    return {'provider': provider, 'url': value} if spotify or youtube else None
+
+
 def material_patch(row, mapping, host, attachments, reading=''):
     """Only active media fields change; quiz/history and unknown keys survive."""
     payload = deepcopy(row.get('payload') or {})
@@ -235,9 +357,14 @@ def material_patch(row, mapping, host, attachments, reading=''):
         if field in payload:
             payload[field] = replace_urls(payload[field], mapping, host)
     if attachments:
-        source = deepcopy(payload.get('source') or {})
-        source['attachments'] = attachments
-        payload['source'] = source
+        if payload.get('source') is not None and not isinstance(payload['source'], dict):
+            # Some snapshots use source as a provenance string. Keep its type
+            # and value, and store the verified attachment manifest separately.
+            payload['lms_media_attachments'] = attachments
+        else:
+            source = deepcopy(payload.get('source') or {})
+            source['attachments'] = attachments
+            payload['source'] = source
     if reading:
         # A navigation page with inline reading is not a playable media file.
         payload['reading_text_body'] = reading
@@ -288,6 +415,7 @@ class Migrator:
         if self.state.get('target', self.target) != self.target:
             raise ValueError('state_target_mismatch')
         self.state['target'] = self.target
+        self.state.setdefault('providers', {})
         self.service = BlobServiceClient(account_url=f'https://{self.account}.blob.core.windows.net',
             credential=settings.AZURE_STORAGE_KEY, retry_total=2,
             max_single_put_size=256*1024, max_block_size=256*1024,
@@ -332,6 +460,16 @@ class Migrator:
             temp.write_text(json.dumps(self.state), encoding='utf-8')
             temp.replace(self.state_path)
 
+    def save_provider(self, key, result):
+        if not key.startswith('page:') or not provider_reference(result.get('provider'), result.get('url')):
+            raise ValueError('invalid_provider_reference')
+        with self.guard:
+            self.state['providers'][key] = result
+            self.state_path.parent.mkdir(parents=True, exist_ok=True)
+            temp = self.state_path.with_suffix('.tmp')
+            temp.write_text(json.dumps(self.state), encoding='utf-8')
+            temp.replace(self.state_path)
+
     def get_json(self, path, *, authenticated=False):
         url = path if path.startswith('https://') else self.origin + path
         if urlsplit(url).hostname != self.host:
@@ -341,49 +479,117 @@ class Migrator:
             headers['X-KBC-API-Key'] = self.settings.KBC_LMS_API_KEY
         with self.requests.Session() as session:
             session.trust_env = False
-            with session.get(url, headers=headers, allow_redirects=False, stream=True, timeout=(10, 30)) as response:
-                response.raise_for_status()
-                if response.status_code != 200:
-                    raise ValueError('source_redirect')
-                chunks, size = [], 0
-                for chunk in response.iter_content(65536):
-                    size += len(chunk)
-                    if size > 8*1024*1024:
-                        raise ValueError('oversized_schema')
-                    chunks.append(chunk)
-                return json.loads(b''.join(chunks))
+            return read_source_json(session, url, headers)
 
     def inventory(self):
-        for blob in self.store.list_blobs(include=['metadata']):
-            self.blobs[blob.name] = {'size': blob.size, 'mime': blob.content_settings.content_type or '',
-                                    'sha256': (blob.metadata or {}).get('sha256')}
-            match = re.fullmatch(r'_legacy_files/([0-9]+)/[^/]+', blob.name)
-            if match and blob.size:
-                self.by_attachment[match[1]].append(blob.name)
+        # Render caches and unrelated authored uploads can dwarf the source
+        # archive. Small pages also avoid long, fragile listing responses.
+        for prefix in ('_legacy_files/', '_wordpress_files/', '_wordpress_text/'):
+            for blob in self.store.list_blobs(name_starts_with=prefix, include=['metadata'], results_per_page=250):
+                self.blobs[blob.name] = {'size': blob.size, 'mime': blob.content_settings.content_type or '',
+                                        'sha256': (blob.metadata or {}).get('sha256'),
+                                        'source_version': (blob.metadata or {}).get('source_version')}
+                match = re.fullmatch(r'_legacy_files/([0-9]+)/[^/]+', blob.name)
+                if match and blob.size:
+                    self.by_attachment[match[1]].append(blob.name)
+            self.emit(stage='storage_inventory', prefix=prefix, files=len(self.blobs))
+
+    def recover_committed_files(self):
+        with self.connect() as conn, conn.cursor() as cur:
+            cur.execute("""SELECT source_metadata->'wordpress_azure_migration' AS migration
+                FROM curriculum.source_materials WHERE deleted_at IS NULL AND source_system='old_lms'
+                AND source_metadata ? 'wordpress_azure_migration'""")
+            records = [row['migration'] for row in cur.fetchall()]
+            mappings, conflicts = recovered_files(records, self.blobs)
+        recovered = 0
+        for key, result in mappings.items():
+            if key not in self.state['files']:
+                self.save_file(key, result)
+                recovered += 1
+        providers = defaultdict(dict)
+        for record in records:
+            for key, result in (record.get('resolved_provider_urls') or {}).items():
+                verified = provider_reference(result.get('provider'), result.get('url'))
+                if verified and key.startswith('page:'):
+                    providers[key][verified['url']] = verified
+        for key, choices in providers.items():
+            if len(choices) == 1 and key not in self.state['providers']:
+                self.save_provider(key, next(iter(choices.values())))
+            elif len(choices) > 1:
+                conflicts += 1
+        self.emit(stage='recovered_committed_files', aliases=recovered, conflicts=conflicts)
 
     def known(self, key):
         saved = self.state['files'].get(key)
         if saved:
             actual = self.blobs.get(saved['blob'])
-            if actual and actual['size'] == saved['size'] and actual['mime'] == saved['mime']:
+            if (actual and actual['size'] == saved['size'] and actual['mime'] == saved['mime']
+                    and (not saved.get('sha256') or actual.get('sha256') == saved['sha256'])
+                    and (not saved.get('source_version') or actual.get('source_version') == saved['source_version'])):
                 return saved
+            return None
         if key.startswith('attachment:'):
             names = self.by_attachment.get(key.split(':')[1], [])
             if len(names) == 1:
                 name = names[0]
                 return {'blob': name, **self.blobs[name], 'url': PREFIX + quote(name, safe='/')}
+        provider = self.state.get('providers', {}).get(key)
+        if provider:
+            return provider_reference(provider.get('provider'), provider.get('url'))
         return None
 
-    def upload(self, data, name, mime, size, sha):
-        from azure.core.exceptions import ResourceExistsError
+    def upload(self, data, name, mime, size, sha, source_url=''):
+        from azure.core.exceptions import AzureError, ResourceExistsError, ResourceNotFoundError
         blob = self.store.get_blob_client(name)
         try:
-            blob.upload_blob(data, overwrite=False, metadata={'sha256': sha},
-                content_settings=self.ContentSettings(content_type=mime, content_disposition='inline'),
-                max_concurrency=2)
-        except ResourceExistsError:
-            pass
-        props = blob.get_blob_properties()
+            props = blob.get_blob_properties()
+        except ResourceNotFoundError:
+            props = None
+        if props is None:
+            copied = False
+            if source_url:
+                parsed = urlsplit(source_url)
+                if (parsed.scheme != 'https' or parsed.netloc != self.host
+                        or not parsed.path.startswith('/wp-content/uploads/')):
+                    raise ValueError('unapproved_copy_source')
+                # Azure can read public source files directly. Its MD5 check
+                # binds that transfer to the exact bytes already downloaded and
+                # SHA-256 verified here, even if the remote file changes later.
+                md5 = hashlib.md5()
+                if isinstance(data, bytes):
+                    md5.update(data)
+                else:
+                    data.seek(0)
+                    for chunk in iter(lambda: data.read(1024*1024), b''):
+                        md5.update(chunk)
+                    data.seek(0)
+                try:
+                    blob.upload_blob_from_url(source_url, overwrite=False,
+                        source_content_md5=md5.digest(), metadata={'sha256': sha},
+                        include_source_blob_properties=False,
+                        content_settings=self.ContentSettings(content_type=mime, content_disposition='inline',
+                                                              content_md5=md5.digest()))
+                    copied = True
+                    self.emit(stage='server_copy', bytes=size)
+                except ResourceExistsError:
+                    copied = True
+                except AzureError as error:
+                    self.emit(stage='server_copy_fallback', error=type(error).__name__,
+                              status=getattr(error, 'status_code', None))
+                    # A response timeout can occur after a successful commit.
+                    try:
+                        props = blob.get_blob_properties()
+                        copied = True
+                    except ResourceNotFoundError:
+                        pass
+            if not copied:
+                try:
+                    blob.upload_blob(data, overwrite=False, metadata={'sha256': sha},
+                        content_settings=self.ContentSettings(content_type=mime, content_disposition='inline'),
+                        max_concurrency=2)
+                except ResourceExistsError:
+                    pass
+            props = props or blob.get_blob_properties()
         if props.size != size or props.metadata.get('sha256') != sha:
             raise ValueError('upload_verification_failed')
         result = {'blob': name, 'mime': mime, 'size': size, 'sha256': sha,
@@ -393,6 +599,54 @@ class Migrator:
             self.counts['uploaded_files'] += 1
             self.counts['uploaded_bytes'] += size
         return result
+
+    def copy_public_file(self, key, url, filename, expected_mime):
+        """Azure copies the exact source version; no full local relay is needed."""
+        from azure.core import MatchConditions
+        from azure.core.exceptions import AzureError, ResourceExistsError, ResourceNotFoundError
+        parsed = urlsplit(url)
+        if parsed.scheme != 'https' or parsed.netloc != self.host or not parsed.path.startswith('/wp-content/uploads/'):
+            raise ValueError('unapproved_copy_source')
+        try:
+            with self.requests.Session() as session:
+                session.trust_env = False
+                source = source_file_header(session, url, self.args.max_mb*1024*1024, expected_mime)
+            if source is None:
+                return None
+            version = hashlib.sha256(json.dumps({'key': source_key(url, self.host),
+                **{field: source[field] for field in ('etag', 'size', 'mime')}}, sort_keys=True).encode()).hexdigest()
+            folder = '_legacy_files/' + key.split(':')[1] if key.startswith('attachment:') else '_wordpress_files/' + version
+            name = folder + '/' + version[:12] + '-' + safe_filename(filename or parsed.path)
+            blob = self.store.get_blob_client(name)
+            try:
+                props = blob.get_blob_properties()
+            except ResourceNotFoundError:
+                try:
+                    blob.upload_blob_from_url(url, overwrite=False, source_etag=source['etag'],
+                        source_match_condition=MatchConditions.IfNotModified, include_source_blob_properties=False,
+                        metadata={'source_version': version},
+                        content_settings=self.ContentSettings(content_type=source['mime'], content_disposition='inline'))
+                except ResourceExistsError:
+                    pass
+                props = blob.get_blob_properties()
+            if (props.size != source['size'] or props.metadata.get('source_version') != version
+                    or props.content_settings.content_type != source['mime']):
+                raise ValueError('copy_verification_failed')
+            if blob.download_blob(offset=0, length=len(source['head'])).readall() != source['head']:
+                raise ValueError('copied_signature_mismatch')
+            # This is a version identity, not a SHA-256 of the file body.
+            # Azure enforces the strong source ETag during the copy operation.
+            result = {'blob': name, 'mime': source['mime'], 'size': source['size'], 'sha256': None,
+                      'source_version': version, 'url': PREFIX + quote(name, safe='/')}
+            with self.guard:
+                self.blobs[name] = result
+                self.counts['uploaded_files'] += 1
+                self.counts['uploaded_bytes'] += source['size']
+            self.emit(stage='conditional_server_copy', source_key=key, bytes=source['size'])
+            return result
+        except (AzureError, self.requests.RequestException) as error:
+            self.emit(stage='conditional_copy_fallback', source_key=key, error=type(error).__name__)
+            return None
 
     def copy_file(self, key, url='', filename='', expected_mime=''):
         with self.guard:
@@ -412,6 +666,13 @@ class Migrator:
             if parsed.hostname != self.host or not parsed.path.startswith('/wp-content/uploads/'):
                 raise ValueError('not_a_source_file')
             url = self.origin + quote(parsed.path, safe='/%') + ('?' + parsed.query if parsed.query else '')
+            result = self.copy_public_file(key, url, filename, expected_mime)
+            if result:
+                self.save_file(key, result)
+                direct_key = source_key(url, self.host)
+                if direct_key.startswith('file:') and direct_key != key:
+                    self.save_file(direct_key, result)
+                return result
             with TemporaryFile() as output, self.requests.Session() as session:
                 session.trust_env = False
                 self.emit(stage='source_download', source_key=key)
@@ -423,9 +684,54 @@ class Migrator:
                 folder = '_legacy_files/' + key.split(':')[1] if key.startswith('attachment:') else '_wordpress_files/' + sha
                 name = folder + '/' + sha[:12] + '-' + filename
                 output.seek(0)
-                result = self.upload(output, name, mime, size, sha)
+                result = self.upload(output, name, mime, size, sha, source_url=url)
             self.save_file(key, result)
+            # Public attachment metadata binds the current exact upload URL to
+            # this identity; other consumers may store that URL instead of ID.
+            direct_key = source_key(url, self.host)
+            if direct_key.startswith('file:') and direct_key != key:
+                self.save_file(direct_key, result)
             return result
+
+    def staged_sharepoint_file(self, source):
+        """Consume only exact files fetched separately with delegated access.
+
+        The migration never requests Microsoft tokens or changes permissions.
+        A staged file must carry its original site/GUID and verified SHA-256.
+        """
+        identity = sharepoint_identity(source)
+        if not identity:
+            return None
+        key = 'sharepoint:' + hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()
+        existing = self.known(key)
+        if existing:
+            return existing
+        folder = self.state_path.parent / 'sharepoint-staging'
+        manifest = folder / (identity['unique_id'] + '.json')
+        if not manifest.exists():
+            return None
+        record = json.loads(manifest.read_text(encoding='utf-8'))
+        if any(record.get(field) != value for field, value in identity.items()):
+            raise ValueError('staged_source_identity_mismatch')
+        path = folder / (identity['unique_id'] + '.mp4')
+        if record.get('mime') != 'video/mp4' or path.stat().st_size != record.get('size'):
+            raise ValueError('staged_source_size_or_type_mismatch')
+        digest = hashlib.sha256()
+        with path.open('rb') as handle:
+            first = handle.read(65536)
+            if not valid_signature(record['mime'], first):
+                raise ValueError('invalid_staged_video')
+            digest.update(first)
+            for chunk in iter(lambda: handle.read(1024*1024), b''):
+                digest.update(chunk)
+            sha = digest.hexdigest()
+            if sha != record.get('sha256'):
+                raise ValueError('staged_source_digest_mismatch')
+            handle.seek(0)
+            name = '_wordpress_files/' + sha + '/' + identity['unique_id'] + '.mp4'
+            result = self.upload(handle, name, record['mime'], record['size'], sha)
+        self.save_file(key, result)
+        return result
 
     def read_materials(self):
         rows, after = [], 0
@@ -455,7 +761,12 @@ class Migrator:
     def process_material(self, row):
         mapping, failures = {}, []
         payload = row.get('payload') or {}
-        attachments = deepcopy((payload.get('source') or {}).get('attachments') or [])
+        source = payload.get('source') if isinstance(payload.get('source'), dict) else {}
+        attachments = deepcopy(payload.get('lms_media_attachments', source.get('attachments')) or [])
+        if isinstance(attachments, str):
+            attachments = json.loads(attachments)
+        if not isinstance(attachments, list):
+            raise ValueError('invalid_attachment_manifest')
         values = {**{k: row.get(k) for k in FIELDS}, 'payload': {k: payload.get(k) for k in PAYLOAD_FIELDS}}
         needed = {source_key(u, self.host): unwrap(u) for u in urls(values) if source_key(u, self.host)}
         schema = None
@@ -486,32 +797,49 @@ class Migrator:
             if key.startswith(('attachment:', 'file:')):
                 needed[key] = unwrap(source)
         for item in attachments:
+            if not isinstance(item, dict):
+                continue
             reference = str(item.get('attachment_id') or '')
             if reference.isdigit():
                 needed.setdefault('attachment:' + reference, '')
-        for key, value in needed.items():
+                known = self.known('attachment:' + reference)
+                if known and (not item.get('mime_type') or known['mime'] == item['mime_type']):
+                    mapping['attachment:' + reference] = known
+        mapping.update(attachment_file_aliases(attachments, mapping, self.host))
+        # Resolve identities before their direct URL aliases to avoid copying
+        # large files that already have a verified Azure attachment.
+        for key, value in sorted(needed.items(), key=lambda pair: not pair[0].startswith('attachment:')):
             if not key.startswith(('attachment:', 'file:')):
+                continue
+            if key in mapping:
                 continue
             try:
                 if key in self.unavailable:
                     failures.append(self.unavailable[key])
                     continue
                 expected = next((item.get('mime_type') or '' for item in attachments
-                    if key == 'attachment:' + str(item.get('attachment_id'))), '')
+                    if isinstance(item, dict) and key == 'attachment:' + str(item.get('attachment_id'))), '')
                 mapping[key] = self.copy_file(key, value, expected_mime=expected)
+                if key.startswith('attachment:'):
+                    mapping.update(attachment_file_aliases(attachments, mapping, self.host))
             except Exception as error:
                 problem = {'key': key, 'error': type(error).__name__, 'status': getattr(getattr(error, 'response', None), 'status_code', None)}
                 failures.append(problem)
                 with self.guard:
                     self.unavailable[key] = problem
         for item in attachments:
+            if not isinstance(item, dict):
+                continue
             found = mapping.get('attachment:' + str(item.get('attachment_id')))
             if found:
                 item['lms_url'] = found['url']
+        attachments = replace_urls(attachments, mapping, self.host)
         reading = ''
         if schema:
             schema_key = source_key(schema.get('iframe_url'), self.host)
-            selected = mapping.get(schema_key)
+            selected = mapping.get(schema_key) or self.staged_sharepoint_file(schema.get('iframe_url'))
+            if not selected and not schema.get('text_body'):
+                selected = provider_reference((schema.get('source') or {}).get('provider'), schema.get('iframe_url'))
             if selected:
                 mapping.update({key: selected for key in page_keys})
             elif schema.get('text_body'):
@@ -555,6 +883,8 @@ class Migrator:
             prior = row.get('migration_state') or {}
             metadata = {'wordpress_azure_migration': {**prior,
                 'verified_files': {**prior.get('verified_files', {}), **{key: item['blob'] for key, item in mapping.items() if 'blob' in item}},
+                'resolved_provider_urls': {**prior.get('resolved_provider_urls', {}),
+                    **{key: item for key, item in mapping.items() if item.get('provider') in {'spotify', 'youtube'}}},
                                                      'inline_reading': bool(reading or row.get('inline_migrated'))}}
             if primary_file and row['backup_status'] != 'available':
                 metadata['azure_storage_account'] = self.account
@@ -577,8 +907,10 @@ class Migrator:
             self.counts['changed_materials'] += bool(fields or patch)
             self.counts['material_failures'] += bool(failures)
         for key, result in mapping.items():
-            if key.startswith('page:') and 'blob' in result:
+            if 'blob' in result and self.state['files'].get(key) != result:
                 self.save_file(key, result)
+            elif result.get('provider') and self.state['providers'].get(key) != result:
+                self.save_provider(key, result)
         return {'material_id': row['material_id'], 'changed': bool(fields or patch), 'unresolved': failures}
 
     def native_rows(self):
@@ -701,6 +1033,8 @@ def main():
     args = parser.parse_args()
     if not 1 <= args.workers <= 4:
         parser.error('Use one to four transfer workers.')
+    if args.max_mb < 1 or (args.limit is not None and args.limit < 1):
+        parser.error('Size and selection limits must be positive.')
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
     from config import settings
     worker = Migrator(settings, args)
@@ -718,6 +1052,7 @@ def main():
         return
     worker.store.get_container_properties()  # Existing destination only; no ACL changes.
     worker.inventory()
+    worker.recover_committed_files()
     with ThreadPoolExecutor(max_workers=args.workers) as pool:
         jobs = {pool.submit(worker.process_material, row): row['material_id'] for row in rows}
         for index, job in enumerate(as_completed(jobs), 1):

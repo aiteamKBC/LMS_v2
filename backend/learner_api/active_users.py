@@ -1158,6 +1158,10 @@ def save_progress_record(learner, record, activity=None):
                 progress=progress,
                 position=position,
                 question_ref=int(answer.get("questionId")),
+                question_image_url=answer.get("imageUrl"),
+                result_snapshot={key: answer[key] for key in (
+                    "questionText", "type", "possible", "chosenText", "correctText",
+                ) if key in answer} or None,
                 chosen_answer_ref=chosen if not isinstance(chosen, list) else None,
                 is_correct=answer.get("correct") if isinstance(answer.get("correct"), bool) else None,
                 earned=_number(answer.get("earned")),

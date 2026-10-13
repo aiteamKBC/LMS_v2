@@ -266,6 +266,8 @@ def build_material(stored, schema=None, attachment_resolver=None, pdf_checker=No
     missing_attachments = []
     attachment_source = (schema or {}).get('source')
     attachments = as_list(attachment_source.get('attachments')) if isinstance(attachment_source, dict) else []
+    if (schema or {}).get('lms_media_attachments') is not None:
+        attachments = as_list(schema['lms_media_attachments'])
     local_attachments = {}
     for attachment in attachments:
         if not isinstance(attachment, dict):
@@ -311,8 +313,6 @@ def build_material(stored, schema=None, attachment_resolver=None, pdf_checker=No
                 missing_attachments.append(title)
     # Keep a lesson's reading companion alongside its quiz, even when WP's
     # navigation target points to the standalone quiz page.
-    attachment_source = (schema or {}).get('source')
-    attachments = as_list(attachment_source.get('attachments')) if isinstance(attachment_source, dict) else []
     by_id = {str(a.get('attachment_id')): a for a in attachments if isinstance(a, dict)}
     source_origin = urlsplit(getattr(settings, 'KBC_LMS_SCHEMA_URL', ''))
     for item in media:
