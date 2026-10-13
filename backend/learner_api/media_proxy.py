@@ -9,6 +9,7 @@ import asyncio
 import html
 import http.cookiejar
 import json
+import mimetypes
 import re
 import urllib.parse
 import urllib.error
@@ -19,6 +20,7 @@ from django.http import HttpResponse, JsonResponse, StreamingHttpResponse
 from django.views.decorators.http import require_GET
 
 from curriculum_api import upload_storage
+from config.video_streaming import video_chunks
 
 
 GOOGLE_DRIVE_ID_RE = re.compile(r"^[A-Za-z0-9_-]{10,}$")
@@ -57,11 +59,14 @@ def _programme_audit_database_aliases():
 
 
 def _stream_response(upstream):
-    while True:
-        chunk = upstream.read(CHUNK_SIZE)
-        if not chunk:
-            break
-        yield chunk
+    try:
+        while True:
+            chunk = upstream.read(CHUNK_SIZE)
+            if not chunk:
+                break
+            yield chunk
+    finally:
+        upstream.close()
 
 
 async def _async_stream_response(upstream):
@@ -351,10 +356,12 @@ def google_drive_media(request, file_id):
     except urllib.error.URLError:
         return HttpResponse("Could not load media.", status=502)
 
+    content_type = upstream.headers.get("Content-Type") or "application/octet-stream"
     response = StreamingHttpResponse(
-        _async_stream_response(upstream),
+        video_chunks(request, _stream_response(upstream)) if content_type.lower().startswith('video/')
+        else _async_stream_response(upstream),
         status=getattr(upstream, "status", 200),
-        content_type=upstream.headers.get("Content-Type") or "application/octet-stream",
+        content_type=content_type,
     )
     for header in ("Content-Length", "Content-Range", "Accept-Ranges"):
         value = upstream.headers.get(header)
@@ -391,10 +398,13 @@ def legacy_attachment_media(request, attachment_id):
             opened = upload_storage.open_stream(upload_path, offset=start, length=length)
             if opened is not None:
                 stream, _total, opened_type = opened
+                file_type = mimetypes.guess_type(upload_path)[0] or ''
+                served_type = opened_type or content_type or (
+                    file_type if file_type.startswith('video/') else 'application/octet-stream')
                 response = StreamingHttpResponse(
-                    stream,
+                    video_chunks(request, stream) if served_type.lower().startswith('video/') else stream,
                     status=206 if match else 200,
-                    content_type=opened_type or content_type or 'application/octet-stream',
+                    content_type=served_type,
                 )
                 response['Accept-Ranges'] = 'bytes'
                 response['Content-Length'] = str(length)
@@ -419,7 +429,8 @@ def legacy_attachment_media(request, attachment_id):
         return HttpResponse("Legacy attachment returned an HTML page, not a file.", status=502)
 
     response = StreamingHttpResponse(
-        _async_stream_response(upstream),
+        video_chunks(request, _stream_response(upstream)) if content_type.lower().startswith('video/')
+        else _async_stream_response(upstream),
         status=getattr(upstream, "status", 200),
         content_type=content_type,
     )

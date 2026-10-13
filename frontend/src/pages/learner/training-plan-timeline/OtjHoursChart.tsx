@@ -1,6 +1,5 @@
 import { useId, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react';
-import type { TrainingPlanDashboard } from '@/api/trainingPlanDashboard';
-import { monthlyHours, type MonthlyHours } from './monthlyHours';
+import { monthlyHours, type MonthlyHours, type MonthlyHoursSource } from './monthlyHours';
 import styles from './ProgressCharts.module.css';
 
 const hourNumber = new Intl.NumberFormat('en-GB', { maximumFractionDigits: 1 });
@@ -46,7 +45,7 @@ function MonthTooltip({ row, id }: { row: MonthlyHours; id: string }) {
 }
 
 export function OtjHoursChart({ data, points, plannedHours, programmeStartMonth, programmeEndMonth, targetAsOfToday }: {
-  data?: TrainingPlanDashboard;
+  data?: MonthlyHoursSource;
   points?: MonthlyHours[];
   plannedHours?: number | null;
   programmeStartMonth?: string;

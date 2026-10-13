@@ -5,19 +5,38 @@ from django.http import JsonResponse
 from django.views.decorators.http import require_GET
 
 from .auth import coach_access_required
-from .bulk_attendance import BulkError, current_row, delivery_occurrences
-from learner_api.attendance_lectures import attendance_read_contract, lecture_register
+from .attendance_selected import selected_rows
+from .attendance_timing import AttendanceTiming
+from .attendance_group import group_contracts, compact_recent
+from .bulk_attendance import BulkError, delivery_occurrences
+from learner_api.attendance_lectures import _aware
 
 log = logging.getLogger(__name__)
+
+
+@coach_access_required
+@require_GET
+def coach_attendance_context(request):
+    from .attendance_context import load_context
+    try:
+        return JsonResponse(load_context(request))
+    except BulkError as exc:
+        return JsonResponse({'detail': exc.detail}, status=exc.status)
+    except Exception:
+        log.exception('coach_attendance_context_failed')
+        return JsonResponse({'detail': 'Unable to load group attendance context.'}, status=503)
 
 
 def attendance_placements(owner):
     from .views import (fetch_attendance_caseload_rows, fetch_source_schedule_rows, resolve_caseload_source_row,
                         apply_curriculum_attendance_placements, clean_text,
                         get_lms_row_program_status, normalize_program_status,
-                        should_include_in_attendance_page)
+                        should_include_in_attendance_page, authoring_fetch_all, GROUPS_TABLE)
     profiles = fetch_attendance_caseload_rows(owner, include_plan=False)
-    commercial, enrolment = fetch_source_schedule_rows(profiles)
+    # Do not hydrate saved plans and unrelated profile JSON for the whole
+    # caseload. Canonical assignments are resolved separately in one SQL read.
+    commercial, enrolment = fetch_source_schedule_rows(profiles, fields=(
+        'id', 'username', 'email', 'aptem_id', 'learner_type', 'employer_id'))
     for profile in profiles:
         profile._caseload_source = resolve_caseload_source_row(
             profile, commercial_rows=commercial, enrolment_rows=enrolment)
@@ -33,16 +52,17 @@ def attendance_placements(owner):
         }
         if should_include_in_attendance_page(learner):
             learners.append(learner)
-    apply_curriculum_attendance_placements(learners, profiles)
-    return {str(row.id): row for row in profiles}, current_placements(learners)
+    groups = authoring_fetch_all(GROUPS_TABLE, ensure_tables=False)
+    apply_curriculum_attendance_placements(learners, profiles, groups=groups)
+    return {str(row.id): row for row in profiles}, current_placements(learners, groups=groups)
 
 
-def current_placements(learners):
+def current_placements(learners, *, groups=None):
     from .views import clean_text, authoring_fetch_all, GROUPS_TABLE
     # Current curriculum membership wins over stale profile placements. Only
     # existing coach learners are enriched; global groups are never appended.
     groups = {clean_text(row.get('group_id')): row
-              for row in authoring_fetch_all(GROUPS_TABLE, ensure_tables=False)}
+              for row in (authoring_fetch_all(GROUPS_TABLE, ensure_tables=False) if groups is None else groups)}
     current = []
     for learner in learners:
         group = groups.get(learner.get('groupId'))
@@ -113,24 +133,19 @@ def coach_attendance_options(request):
 def coach_attendance_group(request):
     try:
         profiles, placements, programme, group = selected_context(request)
-        learners, recent = [], []
+        learners = []
+        contracts = group_contracts([profiles[row['id']] for row in placements])
         for placement in placements:
             profile = profiles[placement['id']]
-            source = getattr(profile, '_caseload_source', None)
-            contract = attendance_read_contract(source, learner_profile_id=profile.id) if source else None
+            contract = contracts.get(str(profile.id))
             summary = contract['summary'] if contract else {}
             learners.append({
                 'id': placement['id'], 'name': placement['name'], 'email': placement['email'],
                 'status': 'on-break' if placement['enrollmentStatus'] == 'break' else 'active',
                 'attendance': {'rate': summary.get('attendanceRate'), 'present': summary.get('present', 0),
-                               'absent': summary.get('absent', 0), 'sessions': summary.get('sessions', 0)}})
-            for row in (contract['recentAttendance'][:4] if contract else []):
-                recent.append({key: row.get(key) for key in
-                               ('learnerId', 'sessionId', 'sessionDate', 'status', 'counted', 'occurrenceStart')})
-        return JsonResponse({'programme': programme, 'group': group, 'learners': learners,
-                             'recentAttendance': recent,
-                             'sessions': [session_option(row, module) for row, module in
-                                          delivery_occurrences(programme['id'], group['id'])]})
+                               'absent': summary.get('absent', 0), 'sessions': summary.get('sessions', 0)},
+                'recent': compact_recent(contract) if contract else []})
+        return JsonResponse({'programme': programme, 'group': group, 'learners': learners})
     except BulkError as exc:
         return JsonResponse({'detail': exc.detail}, status=exc.status)
     except Exception:
@@ -140,37 +155,59 @@ def coach_attendance_group(request):
 
 @coach_access_required
 @require_GET
-def coach_attendance_session(request):
+def coach_attendance_sessions(request):
+    from django.utils import timezone
     try:
         profiles, placements, programme, group = selected_context(request)
+        occurrences = delivery_occurrences(programme['id'], group['id'],
+            profiles=[profiles[row['id']] for row in placements])
+        now = timezone.now()
+        sessions = []
+        for occurrence, module in occurrences:
+            start = timezone.localtime(_aware(occurrence.scheduled_start))
+            sessions.append({'id': str(occurrence.id), 'date': start.date().isoformat(),
+                'title': f'{module.title} — Session {occurrence.session_number}',
+                'time': start.strftime('%H:%M'),
+                'status': 'completed' if _aware(occurrence.scheduled_end) <= now else 'scheduled'})
+        return JsonResponse({'sessions': sessions})
+    except BulkError as exc:
+        return JsonResponse({'detail': exc.detail}, status=exc.status)
+    except Exception:
+        log.exception('coach_attendance_sessions_failed')
+        return JsonResponse({'detail': 'Unable to load attendance sessions.'}, status=503)
+
+
+@coach_access_required
+@require_GET
+def coach_attendance_session(request):
+    with AttendanceTiming().request() as timing:
+        return _selected_session_response(request, timing)
+
+
+def _selected_session_response(request, timing):
+    try:
+        with timing.stage('learner_identity'):
+            profiles, placements, programme, group = selected_context(request)
         session_id = request.GET.get('sessionId', '')
         if not session_id:
             raise BulkError('Select a session.')
-        occurrences = delivery_occurrences(programme['id'], group['id'], session_id)
+        with timing.stage('occurrence_session'):
+            occurrences = delivery_occurrences(programme['id'], group['id'], session_id,
+                profiles=[profiles[row['id']] for row in placements])
         if not occurrences:
             raise BulkError('Occurrence is invalid, cancelled or outside the selected group.', 409)
         occurrence, module = occurrences[0]
+        rows = selected_rows([profiles[row['id']] for row in placements], session_id, timing)
         learners, warnings = [], []
         for placement in placements:
             profile = profiles[placement['id']]
-            source = getattr(profile, '_caseload_source', None)
-            if source is None:
+            if getattr(profile, '_caseload_source', None) is None:
                 warnings.append({'learnerProfileId': placement['id'], 'code': 'learner_source_unavailable',
                                  'message': 'Attendance source unavailable for this learner.'})
-                continue
-            raw = lecture_register(source, learner_profile_id=profile.id, apply_adjustments=False)
-            if not any(row.get('source') == 'microsoft-teams' and str(row['session_id']) == session_id for row in raw):
-                continue
-            _, _, version = current_row(profile, session_id)
-            contract = attendance_read_contract(source, learner_profile_id=profile.id)
-            session = next((row for row in contract['history'] if row['source'] == 'microsoft-teams'
-                            and row['sourceId'] == session_id), None)
-            status = session['status'] if session else None
-            learners.append({'learnerId': placement['id'], 'name': placement['name'],
-                             'status': status if status in {'present', 'absent'} else None,
-                             'absenceReport': session.get('absenceReport') if session else None, 'version': version})
+            elif placement['id'] in rows:
+                learners.append({**rows[placement['id']], 'name': placement['name']})
         from django.utils import timezone
-        start = timezone.localtime(occurrence.scheduled_start)
+        start = timezone.localtime(_aware(occurrence.scheduled_start))
         return JsonResponse({'session': {'id': session_id, 'title': session_option(occurrence, module)['sessionTitle'],
                                          'date': start.date().isoformat(), 'startTime': start.strftime('%H:%M')},
                              'learners': learners, 'warnings': warnings})

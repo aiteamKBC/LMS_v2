@@ -71,6 +71,7 @@ export interface StoredLearningReflectionSubmission extends LearningReflectionSu
     sourceStatus: string;
     documents: Array<{ evidenceId: number; part: 'file' | 'report'; name: string }>;
     feedbacks?: Array<{ author?: string; date?: string; message?: string }>;
+    lmsReviews?: Array<{ decision: string; feedback: string; reviewedBy: string; reviewedAt: string }>;
   };
   id: string;
   status: string;

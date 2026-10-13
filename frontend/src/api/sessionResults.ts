@@ -21,6 +21,29 @@ export interface SessionPerson {
   sourceRecordIds?: string[];
   suggestedLearnerProfileId?: number | null;
 }
+export type AccountCheckStatus = 'matched' | 'different-account' | 'unverified-guest' | 'unknown' | 'unmatched';
+/** One Microsoft account seen in the Teams report. Emails are only those Microsoft vouches for. */
+export interface AccountCheckAccount {
+  sourceRecordIds: string[]; displayName: string; teamsRole: string;
+  verification: 'verified' | 'unverified' | 'unknown';
+  tenant: '' | 'home' | 'external'; accountType: string;
+  email: string; emailSource: '' | 'teams' | 'directory'; otherEmails: string[];
+  /** Typed by an anonymous joiner: never verified, never used to match. */
+  enteredEmail: string;
+  lookup: '' | 'resolved' | 'not-found' | 'failed' | 'denied';
+  linkedBy: string; status: AccountCheckStatus; reason: string; joins: number; seconds: number;
+}
+export interface AccountCheckParticipant {
+  kind: 'learner' | 'staff' | 'unlinked'; name: string; roles: string[]; learnerProfileId: number | null;
+  expectedEmail: string; linkedBy: string[]; teamsRoles: string[];
+  status: AccountCheckStatus; reason: string; accounts: AccountCheckAccount[];
+}
+/** Staff only. Read-only comparison; never changes attendance. */
+export interface SessionAccountCheck {
+  participants: AccountCheckParticipant[];
+  counts: Record<AccountCheckStatus, number>;
+  lookupPending: number;
+}
 export interface AttendanceCandidate {
   learnerProfileId: number; email: string; name: string;
 }
@@ -40,6 +63,7 @@ export interface SessionResult {
   state: string; reportReady: boolean; syncedAt?: string; fileCount?: number; archiveReady?: boolean;
   attendance?: SessionPerson[]; unmatchedAttendance?: SessionPerson[];
   attendanceCandidates?: AttendanceCandidate[]; artifacts?: SessionFile[];
+  identityCheck?: SessionAccountCheck;
 }
 export interface ModuleSessionResults {
   syncAvailable?: boolean;
@@ -124,3 +148,37 @@ export async function setRecordingVisibility(seriesId: string, artifactId: strin
   const result = await response.json();
   if (!response.ok) throw new Error(result.error || 'Could not update recording visibility.');
 }
+
+/** Where a recording's saved copy stands, from the archive row a sync persisted. */
+export type LibraryRecordingStatus = 'available' | 'missingAzureFile' | 'verificationRequired';
+/** One saved recording on the Recordings page. `state` is the saved playback copy, not Teams. */
+export interface LibraryRecording {
+  id: string; seriesId: string; sessionNumber: number | null;
+  startsAt: string | null; recordedAt: string | null; endsAt: string | null;
+  state: 'pending' | 'ready' | 'failed'; status: LibraryRecordingStatus;
+  /** More stored copies of this same Teams recording (Graph listed it under another id). */
+  duplicateCount: number; hiddenFromLearners: boolean;
+}
+/** A past session with no recording, judged only from persisted sync results. */
+export interface RecordingsAttention {
+  occurrenceId: string; weekId: string | null; weekNumber: number | null; weekTitle: string;
+  sessionNumber: number | null; startsAt: string | null;
+  status: 'missingSync' | 'notRecorded' | 'verificationRequired'; reason: string;
+}
+/** `weekId` null: no live-session component in the course structure owns this recording's session. */
+export interface RecordingsWeek { weekId: string | null; weekNumber: number | null; title: string; recordings: LibraryRecording[] }
+/**
+ * One module delivery: a module record is one group's delivery, so it carries its own programme, cohort and group.
+ * `archived`: the module was deleted; its recordings are kept, read only.
+ */
+export interface RecordingsDelivery {
+  moduleId: string; title: string; programme: string; programmeActive: boolean; archived: boolean;
+  cohort: string; group: string; weeks: RecordingsWeek[]; recordingCount: number; attention: RecordingsAttention[];
+}
+/** `attentionChecked` false: the session checks could not be read; the recordings are still complete. */
+export interface RecordingsLibrary { deliveries: RecordingsDelivery[]; recordingCount: number; attentionChecked: boolean }
+export const loadRecordingsLibrary = (signal?: AbortSignal) =>
+  read<RecordingsLibrary>('/curriculum_api/curriculum/session-recordings/', signal);
+/** Staff only: the saved copy, signed to save as a file rather than play. */
+export const recordingDownloadUrl = (seriesId: string, artifactId: string) =>
+  `${adminBase}/${encodeURIComponent(seriesId)}/artifacts/${encodeURIComponent(artifactId)}/?download=1`;

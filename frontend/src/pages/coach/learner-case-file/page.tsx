@@ -1,4 +1,4 @@
-﻿import { useState } from 'react';
+import { useState } from 'react';
 import { CaseFileSessionProvider, useCaseFileSession } from '@/features/coach/case-file/hooks/CaseFileSession';
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
@@ -24,7 +24,6 @@ import {
   formatPercent,
   selectCaseFileOtjh,
 } from './data';
-import type { CaseFileReviewMeeting } from './types';
 import styles from './learnerCaseFile.module.css';
 import weeklyActivitiesStyles from './coachWeeklyActivities.module.css';
 import { CaseFileTabs } from './components/CaseFileTabs';
@@ -87,7 +86,6 @@ function LearnerCaseFileContent() {
   const requestedTab = searchParams.get('tab') || state.tab;
   const { activeTab, setActiveTab } = useLearnerProfileTabs(requestedTab);
   const [evidencePreview, setEvidencePreview] = useState<EvidencePreviewTarget | null>(null);
-  const requestedReviewId = searchParams.get('reviewId') || undefined;
   const learnerId = searchParams.get('id') || state.learnerId;
   const learnerName = state.learnerName;
   const explicitKind = parseLearnerKind(searchParams.get('kind') || state.kind);
@@ -120,22 +118,6 @@ function LearnerCaseFileContent() {
     && state.activitySnapshot.learnerId === learnerId ? state.activitySnapshot : null;
   const tableOtjh = data && state.otjhSnapshot?.learnerId === data.learnerId
     && state.otjhSnapshot.learnerId === learnerId ? state.otjhSnapshot : null;
-  const handleOpenReviewMeeting = (item: CaseFileReviewMeeting) => {
-    const returnParams = new URLSearchParams(location.search);
-    returnParams.set('id', data?.learnerId || learnerId || '');
-    returnParams.set('tab', 'reviews');
-    if (data?.kind) returnParams.set('kind', data.kind);
-    const returnTo = `${location.pathname}?${returnParams.toString()}`;
-    const detailBase = item.source === 'mcr'
-      ? '/coach/meetings'
-      : '/coach/reviews';
-    const detailKey = item.eventKey;
-
-    navigate(`${detailBase}/${encodeURIComponent(detailKey)}`, {
-      state: { returnTo },
-    });
-  };
-
   const renderTab = () => {
     if (!data) {
       return (
@@ -172,12 +154,7 @@ function LearnerCaseFileContent() {
       case 'attendance':
         return <AttendanceTab attendanceState={caseFileAttendance} />;
       case 'reviews':
-        return <ReviewsTab
-          data={data}
-          reviewsState={caseFileReviews}
-          onOpen={handleOpenReviewMeeting}
-          requestedReviewId={requestedReviewId}
-        />;
+        return <ReviewsTab reviewsState={caseFileReviews} />;
       case 'assignments':
         return dashboardKind && (data.enrolmentId || data.learnerId)
           ? <AssignmentsTab kind={dashboardKind} learnerId={data.enrolmentId || data.learnerId} markingState={caseFileMarking} />

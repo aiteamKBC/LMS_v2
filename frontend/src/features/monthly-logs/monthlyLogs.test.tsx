@@ -4,6 +4,11 @@ import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ReactNode } from 'react';
 import MonthlyLogsPage from './page';
+import { getCoachMonthlyLogLearners, getCoachLogYear, getCoachLogDetail } from '@/features/coach/monthly-logs/api/monthlyLogsApi';
+vi.mock('@/features/coach/monthly-logs/api/monthlyLogsApi', async importOriginal => ({
+  ...await importOriginal<typeof import('@/features/coach/monthly-logs/api/monthlyLogsApi')>(),
+  getCoachMonthlyLogLearners: vi.fn(), getCoachLogYear: vi.fn(), getCoachLogDetail: vi.fn(),
+}));
 import { completeLogMonth, getLogContent, getLogLearners, getLogMonth, getLogSummary, signLogMonth, type LogDetail, type LogSummary } from './api';
 import { learnerNavItems, coachNavItems } from '@/mocks/navigation';
 import { rememberLearner } from '@/hooks/useMyLearner';
@@ -49,6 +54,19 @@ beforeEach(() => {
   localStorage.clear();
   Object.assign(account, { role: 'learner', subjectId: 7, access: 'learner' });
   vi.mocked(getLogSummary).mockResolvedValue(summary);
+  vi.mocked(getCoachMonthlyLogLearners).mockImplementation(() => getLogLearners());
+  vi.mocked(getCoachLogYear).mockImplementation(async (id, year) => {
+    const data = await getLogSummary(id, new AbortController().signal, 'coach');
+    return { learner: { id: Number(id), name: data.learner!.name, programme: data.learner!.programme, initials: 'EL' },
+      year, years: [year], summary: { coachSignatures: { completed: data.months.filter(item => !item.is_open && item.coach_signature).length, total: data.months.filter(item => !item.is_open).length },
+        acceptedOtjhHours: data.training_plan_totals!.accepted_hours, trainingPlanHours: data.training_plan_totals!.planned_hours },
+      months: data.months.map(item => ({ month: item.month, activities: item.row_count, acceptedOtjhHours: Number(item.actual_hours),
+        targetHours: item.training_plan_target == null ? null : Number(item.training_plan_target), isOpen: !!item.is_open, learnerSigned: !!item.student_signature, coachSigned: !!item.coach_signature })) };
+  });
+  vi.mocked(getCoachLogDetail).mockImplementation(async (id, month) => ({
+    summary: await getLogSummary(id, new AbortController().signal, 'coach'),
+    detail: await getLogMonth(id, month, new AbortController().signal, 'coach'),
+  }));
   vi.mocked(getLogMonth).mockImplementation(async (_id, month) => month === '2026-08' ? retained : current);
   vi.mocked(getLogLearners).mockResolvedValue({ learners: [
     { id: 7, name: 'Example learner', programme: 'Programme' },
@@ -369,9 +387,10 @@ describe('monthly logs', () => {
     vi.mocked(getLogLearners).mockResolvedValue({ learners: [{ id: 7, name: 'Example learner', programme: 'Programme' }] });
     page('/coach/monthly-logs');
     expect(await screen.findByRole('link', { name: /Example learner/ })).toHaveAttribute('href', '/coach/monthly-logs/7');
-    expect(screen.getByRole('link', { name: /Example learner/ })).toHaveAttribute('aria-current', 'page');
-    expect(await screen.findByRole('region', { name: 'Example learner monthly logs' })).toBeVisible();
-    expect(getLogSummary).toHaveBeenCalledWith('7', expect.any(AbortSignal), 'coach');
+    expect(screen.getByRole('link', { name: /Example learner/ })).not.toHaveAttribute('aria-current');
+    expect(getCoachMonthlyLogLearners).toHaveBeenCalledTimes(1);
+    expect(getCoachLogYear).not.toHaveBeenCalled();
+    expect(getLogSummary).not.toHaveBeenCalled();
   });
 
   it('uses a coach loading layout without the decorative background image', () => {

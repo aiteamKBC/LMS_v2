@@ -8,6 +8,9 @@ export type MonthlyHours = {
   completed: number | null;
 };
 
+export type MonthlyHoursSource = Pick<TrainingPlanDashboard, 'months' | 'actual' | 'actualAvailable'> &
+  Partial<Pick<TrainingPlanDashboard, 'monthlyOtjh' | 'monthlyLogOtjh' | 'requiredOtjh'>>;
+
 export function monthlyTargetHours(logTarget: number | string | null | undefined, planTarget: number | null | undefined): number | null {
   const stored = typeof logTarget === 'string' ? (logTarget.trim() ? Number(logTarget) : null) : logTarget;
   return stored != null && Number.isFinite(stored) ? stored : planTarget ?? null;
@@ -36,7 +39,7 @@ export function monthRange(keys: string[], programmeStartMonth = '', programmeEn
   return result;
 }
 
-export function monthlyHours(data: TrainingPlanDashboard, programmeStartMonth = '', programmeEndMonth = ''): MonthlyHours[] {
+export function monthlyHours(data: MonthlyHoursSource, programmeStartMonth = '', programmeEndMonth = ''): MonthlyHours[] {
   const keys = monthRange([
     ...Object.keys(data.months),
     ...Object.keys(data.monthlyOtjh || {}),
@@ -74,14 +77,14 @@ export function monthlyHours(data: TrainingPlanDashboard, programmeStartMonth = 
   });
 }
 
-export function totalCompletedHours(data: TrainingPlanDashboard, programmeStartMonth = '', programmeEndMonth = '') {
+export function totalCompletedHours(data: MonthlyHoursSource, programmeStartMonth = '', programmeEndMonth = '') {
   const rows = monthlyHours(data, programmeStartMonth, programmeEndMonth);
   return rows.length && rows.every(row => row.completed != null)
     ? rows.reduce((sum, row) => sum + row.completed!, 0)
     : null;
 }
 
-export function hasMonthlyHourData(data: TrainingPlanDashboard) {
+export function hasMonthlyHourData(data: MonthlyHoursSource) {
   return Object.keys(data.months).length > 0
     || Object.keys(data.monthlyOtjh || {}).length > 0
     || Object.keys(data.monthlyLogOtjh || {}).length > 0

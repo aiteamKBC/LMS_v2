@@ -32,7 +32,7 @@ def azure_configured() -> bool:
     return bool(settings.AZURE_STORAGE_ACCOUNT and settings.AZURE_STORAGE_KEY)
 
 
-def _service_client(upload_block_bytes=None, retry_total=None) -> BlobServiceClient:
+def _service_client(upload_block_bytes=None, retry_total=None, download_chunk_bytes=None) -> BlobServiceClient:
     options = {}
     if upload_block_bytes:
         options.update({
@@ -45,6 +45,11 @@ def _service_client(upload_block_bytes=None, retry_total=None) -> BlobServiceCli
             'retry_connect': retry_total,
             'retry_read': retry_total,
             'retry_status': retry_total,
+        })
+    if download_chunk_bytes is not None:
+        options.update({
+            'max_single_get_size': download_chunk_bytes,
+            'max_chunk_get_size': download_chunk_bytes,
         })
     return BlobServiceClient(
         account_url=f"https://{settings.AZURE_STORAGE_ACCOUNT}.blob.core.windows.net",

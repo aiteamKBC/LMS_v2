@@ -6,6 +6,8 @@ export interface StudentActivityItem {
   source_activity_id: number;
   catalogue_kind?: string;
   can_open_material?: boolean;
+  /** Exact owned parent material for an imported companion quiz. */
+  source_material_activity_id?: string;
   /** Canonical evidence links retained when several results share a component. */
   record_ids?: string[];
   group_id: number;

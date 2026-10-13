@@ -503,7 +503,7 @@ class CanonicalLearningTests(unittest.TestCase):
             [{'id': 5, 'source_course_ref': '50', 'source_course_id': 3, 'source_activity_id': 'material:10',
               'source_activity_kind': 'material', 'source_activity_title': 'Reading', 'source_activity_type': 'reading',
               'source_course_title': 'Synthetic course', 'curriculum_component_ref': 'COMP-1',
-              'curriculum_module_ref': 'MOD-1'}]]
+              'curriculum_module_ref': 'MOD-1'}], []]
         result = self.scope['source_subjects'](271, lambda items: {'activities': items})
         self.assertEqual(result['module_count'], 1)
         self.assertEqual(result['audit_tp_planned'], 10)

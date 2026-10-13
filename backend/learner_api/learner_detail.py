@@ -1895,7 +1895,7 @@ def _annotate_otjh(components):
     return components, round(total, 2)
 
 
-def build_learner_detail(source, pk, *, compact=False):
+def build_learner_detail(source, pk, *, compact=False, read_only=False):
     """The learner's full workspace payload for one already-loaded source row.
 
     Split out of the view so other callers can serve the same shape behind their
@@ -1905,15 +1905,17 @@ def build_learner_detail(source, pk, *, compact=False):
     """
     # Date-based activation has no user action of its own. Re-checking here
     # keeps the learner workspace correct between scheduled daily sweeps.
-    advance_learner(source)
+    if not read_only:
+        advance_learner(source)
     # Plans selected during enrolment used to contain only module ids. Fill
     # in the authored weeks/components before serialising the learner page,
     # which also repairs learners activated before this behaviour existed.
-    hydrate_source_training_plan(source)
+    if not read_only:
+        hydrate_source_training_plan(source)
     assigned_modules = effective_training_plan(source)
     learner_profile = _active_profile_for_source(source, pk)
 
-    if learner_profile and not learner_profile.ksbs:
+    if learner_profile and not learner_profile.ksbs and not read_only:
         try:
             from .active_users import refresh_learner_ksb_snapshot
 
@@ -1948,7 +1950,7 @@ def build_learner_detail(source, pk, *, compact=False):
     )
     snapshot = _live_otjh_snapshot(detail, learner_profile)
     _apply_live_otjh_snapshot(detail, snapshot)
-    if learner_profile is not None:
+    if learner_profile is not None and not read_only:
         try:
             persist_live_otjh_snapshot(learner_profile, snapshot)
         except DatabaseError as exc:

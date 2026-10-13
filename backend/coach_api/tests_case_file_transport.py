@@ -38,6 +38,40 @@ class CaseFileTransportTests(SimpleTestCase):
             search.assert_not_called()
         context.learner_read.assert_not_called()
 
+    def test_historical_assessments_keep_coach_and_pilot_scope(self):
+        request = self.request('/coach_api/coach/case-file/101/assignments?resource=historical')
+        request.GET = request.GET.copy()
+        context = MagicMock(profile=SimpleNamespace(id=101, enrolment_id=201, aptem_id=301))
+        context.kind = 'commercial'
+        with patch('coach_api.case_file.CaseFileContext', return_value=context), \
+             patch('login.models.AdvancedAdminLearnerScope.objects') as scope, \
+             patch('learner_api.legacy_assignments.classified_rows') as source:
+            scope.filter.return_value.exists.return_value = False
+            response = unwrap(case_file_section)(request, 101, section='assignments')
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(json.loads(response.content), {'items': []})
+        source.assert_not_called()
+
+    def test_historical_assessments_show_lms_reviews_with_original_feedback(self):
+        request = self.request('/coach_api/coach/case-file/101/assignments?resource=historical')
+        context = MagicMock(profile=SimpleNamespace(id=101, enrolment_id=201, aptem_id=301))
+        context.kind = 'commercial'
+        row = {'evidence_id': 7, 'evidence_name': 'Assessment', 'activity_date': None,
+               'evidence_status': 'Accepted'}
+        review = {'decision': 'referred', 'feedback': 'Add detail.', 'reviewedBy': 'Assessor',
+                  'reviewedAt': '2026-10-08T10:00:00+00:00'}
+        with patch('coach_api.case_file.CaseFileContext', return_value=context), \
+             patch('login.models.AdvancedAdminLearnerScope.objects') as scope, \
+             patch('learner_api.legacy_assignments.classified_rows', return_value=[row]), \
+             patch('learner_api.legacy_assignments.classified_submission',
+                   return_value={'legacyAssignment': {'feedbacks': [{'message': 'Original'}]}}), \
+             patch('learner_api.legacy_marking.reviews_for_evidence', return_value={7: [review]}):
+            scope.filter.return_value.exists.return_value = True
+            response = unwrap(case_file_section)(request, 101, section='assignments')
+        item = json.loads(response.content)['items'][0]
+        self.assertEqual(item['originalFeedback'][0]['message'], 'Original')
+        self.assertEqual(item['lmsReviews'], [review])
+
     def test_section_does_not_accept_arbitrary_resource_or_upstream_url(self):
         context = MagicMock(profile=SimpleNamespace(id=101, enrolment_id=201))
         with patch('coach_api.case_file.CaseFileContext', return_value=context):
@@ -121,10 +155,10 @@ class CaseFileTransportTests(SimpleTestCase):
                  'targetDate': '2026-09-12', 'scheduledDate': '2026-10-12',
                  'reviewCompletedAt': None, 'rawStatus': 'source-only', 'reviewResponses': {'unused': 'unused'}}
         context.read.return_value = JsonResponse({'events': [event], 'reviewGenerationIssues': []})
-        with patch('coach_api.case_file.CaseFileContext', return_value=context), patch('coach_api.views._case_file_review_events', return_value=([event], [])):
+        with patch('coach_api.case_file.CaseFileContext', return_value=context), patch('coach_api.case_file_reviews.review_events', return_value=([event], [])):
             response = unwrap(case_file_section)(self.request('/?resource=rows'), 101, section='reviews')
-        row = json.loads(response.content)['events'][0]
-        self.assertEqual(row['targetDate'], '2026-09-12')
+        row = json.loads(response.content)['reviews'][0]
+        self.assertEqual(row['plannedDate'], '2026-09-12')
         self.assertEqual(row['scheduledDate'], '2026-10-12')
         self.assertNotIn('rawStatus', row)
         self.assertNotIn('reviewResponses', row)

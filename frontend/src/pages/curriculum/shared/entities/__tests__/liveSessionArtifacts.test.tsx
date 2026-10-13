@@ -177,6 +177,39 @@ describe('component editor saved session results', () => {
     expect(coachFetch).not.toHaveBeenCalled();
   });
 
+  it('shows the staff account check in the live session component’s Recording & attendance section', async () => {
+    const identityCheck = {
+      counts: { matched: 0, 'different-account': 1, 'unverified-guest': 0, unknown: 0, unmatched: 0 }, lookupPending: 0,
+      participants: [{ kind: 'learner', name: 'Learner One', roles: ['Learner'], learnerProfileId: 1,
+        expectedEmail: 'learner@example.invalid', linkedBy: ['alias'], teamsRoles: ['Attendee'], status: 'different-account',
+        reason: 'Signed in to Microsoft as home@other.invalid, not the LMS email.',
+        accounts: [{ sourceRecordIds: ['A1'], displayName: 'Learner One', teamsRole: 'Attendee', verification: 'verified',
+          tenant: 'external', accountType: 'external organisation', email: 'home@other.invalid', emailSource: 'teams',
+          otherEmails: [], enteredEmail: '', lookup: '', linkedBy: 'alias', status: 'different-account',
+          reason: 'Signed in to Microsoft as home@other.invalid, not the LMS email.', joins: 1, seconds: 240 }] }],
+    };
+    fetchMock.mockImplementation((url: string) => {
+      if (url === resultUrl) return ok({ sessions: [{ ...saved, identityCheck }] });
+      throw new Error(`Unexpected network request: ${url}`);
+    });
+    const component: ComponentProps<typeof ComponentEditor>['component'] = {
+      id: 'C6', weekId: 'W6', type: 'live-session', title: 'Live session six', description: '',
+      expectedOtjh: 2, points: 30, reflectionRequired: false, reflectionQuestion: '',
+      workplaceEvidenceRequired: false, tutorValidationRequired: false, coachValidationRequired: true,
+      ksbMappings: [], settings: { teamsLiveSessionId: 'S1', teamsOccurrenceId: 'O6' },
+    };
+    const onChange = vi.fn();
+    render(<ComponentEditor component={component} onChange={onChange} onBack={vi.fn()} groupOptions={[]}
+      weekScope={{} as ComponentProps<typeof ComponentEditor>['weekScope']} weekSessionDate={session.date} />);
+    await screen.findByLabelText('Session recording 1');
+    fireEvent.click(screen.getByRole('tab', { name: 'attendance' }));
+    fireEvent.click(screen.getByRole('button', { name: /Account check/ }));
+    expect(screen.getByText('home@other.invalid')).toBeInTheDocument();
+    expect(screen.getAllByText('Different account').length).toBeGreaterThan(0);
+    expect(onChange).not.toHaveBeenCalled();
+    expect(coachFetch).not.toHaveBeenCalled();
+  });
+
   it('keeps the section visible and says why when no Teams session is linked', () => {
     const component: ComponentProps<typeof ComponentEditor>['component'] = {
       id: 'CL', weekId: 'W1', type: 'live-session', title: 'Hand-linked session', description: '',
