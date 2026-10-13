@@ -197,8 +197,21 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
   return data as T;
 }
 
+// The landing page is the heaviest employer read. A second caller while it is
+// still loading (StrictMode's double effect, the progress-reviews page) shares
+// the request on its way rather than asking the server to build it again.
+const portalRequests = new Map<string, Promise<EmployerPortal>>();
+
 export function fetchEmployerPortal(employerId: string): Promise<EmployerPortal> {
-  return request<EmployerPortal>(`${BASE}/${employerId}/`);
+  const existing = portalRequests.get(employerId);
+  if (existing) return existing;
+  const pending = request<EmployerPortal>(`${BASE}/${employerId}/`);
+  const clear = () => {
+    if (portalRequests.get(employerId) === pending) portalRequests.delete(employerId);
+  };
+  pending.then(clear, clear);
+  portalRequests.set(employerId, pending);
+  return pending;
 }
 
 /** Whose document a row is, on the all-documents list. */
@@ -290,6 +303,19 @@ function overviewPart<T>(employerId: string, kind: string, learnerId: string, pa
 
 export function fetchEmployerLearnerWeek(employerId: string, kind: LearnerKind, learnerId: string, signal?: AbortSignal) {
   return overviewPart<OverviewWeek>(employerId, kind, learnerId, 'week', signal);
+}
+
+/** Attendance-register totals: the figure the learner's dashboard and the coach case file show. */
+export interface EmployerLearnerAttendance {
+  sessions: number;
+  present: number;
+  absent: number;
+  late: number;
+  attendanceRate: number;
+}
+
+export function fetchEmployerLearnerAttendance(employerId: string, kind: LearnerKind, learnerId: string, signal?: AbortSignal) {
+  return overviewPart<{ attendance: EmployerLearnerAttendance | null }>(employerId, kind, learnerId, 'attendance', signal);
 }
 
 export function fetchEmployerLearnerSchedule(employerId: string, kind: LearnerKind, learnerId: string, signal?: AbortSignal) {

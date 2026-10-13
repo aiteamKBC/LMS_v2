@@ -5,7 +5,9 @@ import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { PageContainer } from '@/components/ui/PageContainer';
 import {
   fetchEmployerLearner,
+  fetchEmployerLearnerAttendance,
   fetchEmployerLearnerPlan,
+  type EmployerLearnerAttendance,
   type EmployerLearnerDetail,
   type EmployerOwnedItem,
 } from '@/api/employerPortal';
@@ -66,8 +68,13 @@ const progressPercent = (completed: number, total: number) => total > 0
   ? Math.min(100, Math.round(completed / total * 10_000) / 100)
   : null;
 
-/** Build the same whole-programme series the coach overview charts. */
-function employerProgrammeSnapshot(plan: DashboardPlanState): ProgrammeProgressSnapshot {
+/**
+ * Build the same whole-programme series the coach overview charts. Attendance
+ * is the learner's attendance register, as on their dashboard and the coach
+ * case file — not the timetable: a class with no register entry is neither
+ * attended nor missed.
+ */
+function employerProgrammeSnapshot(plan: DashboardPlanState, attendance: EmployerLearnerAttendance | null): ProgrammeProgressSnapshot {
   const metrics = plan.week.data?.metrics;
   const subjects = plan.subjects || plan.data?.planSubjects || [];
   const activitiesCompleted = metrics?.programme.status === 'ready'
@@ -87,17 +94,6 @@ function employerProgrammeSnapshot(plan: DashboardPlanState): ProgrammeProgressS
   const ksbAvailable = metrics ? metrics.ksb.status === 'ready' : ksbRows.length > 0;
   const ksb = metrics?.ksb.status === 'ready' ? metrics.ksb.percent
     : ksbAvailable ? progressPercent(ksbCompleted, ksbTotal) : null;
-  const now = Date.now();
-  const endedSessions = [...new Map((plan.data?.sessions || []).filter(session => {
-    if (['cancelled', 'deleted'].includes(session.status)) return false;
-    const start = Date.parse(session.start);
-    const explicitEnd = Date.parse(session.end || '');
-    const end = Number.isFinite(explicitEnd) ? explicitEnd
-      : Number.isFinite(start) ? start + Math.max(0, session.minutes || 0) * 60_000 : Number.NaN;
-    return Number.isFinite(end) && end <= now;
-  }).map(session => [session.id, session])).values()];
-  const attendanceTotal = endedSessions.length || null;
-  const attendancePresent = attendanceTotal === null ? null : endedSessions.filter(session => session.attended === true).length;
   return {
     overall: metrics?.programme.status === 'ready' ? metrics.programme.percent : activitiesPercent,
     activitiesCompleted,
@@ -107,8 +103,8 @@ function employerProgrammeSnapshot(plan: DashboardPlanState): ProgrammeProgressS
     otjhTarget: metrics?.otjh.planned ?? plan.otjh.planned,
     ksb,
     ksbAvailable,
-    attendancePresent,
-    attendanceTotal,
+    attendancePresent: attendance?.present ?? null,
+    attendanceTotal: attendance?.sessions ?? null,
   };
 }
 
@@ -130,7 +126,21 @@ export default function EmployerLearnerPage() {
   // The learner dashboard's Overview header and Learning plan timeline. Waits
   // for the learner record, whose ownership check it shares.
   const dashboardPlan = useEmployerDashboardPlan(employerId, kind, learnerId, !!data);
-  const progressSnapshot = employerProgrammeSnapshot(dashboardPlan);
+  const [attendance, setAttendance] = useState<EmployerLearnerAttendance | null>(null);
+  const learnerLoaded = !!data;
+  const progressSnapshot = employerProgrammeSnapshot(dashboardPlan, attendance);
+
+  // Like the plan, waits for the learner record whose ownership check it shares.
+  useEffect(() => {
+    setAttendance(null);
+    if (!learnerLoaded) return undefined;
+    const controller = new AbortController();
+    fetchEmployerLearnerAttendance(employerId, kind, learnerId, controller.signal)
+      .then(result => setAttendance(result.attendance))
+      // The ring reads "Attendance unavailable" rather than a wrong 0.
+      .catch(() => undefined);
+    return () => controller.abort();
+  }, [employerId, kind, learnerId, learnerLoaded]);
 
   const load = () => {
     setLoading(true);
@@ -176,6 +186,9 @@ export default function EmployerLearnerPage() {
   // or the panels flash "nothing here" before the request has even started.
   const planPending = !plan && !planError;
   const outstanding = data?.outstandingCount ?? 0;
+  const unsigned = items.filter(item => !item.signed).length;
+  const unsignedNote = outstanding > 0 ? `${outstanding} awaiting your signature`
+    : unsigned > 0 ? `${unsigned} not signed yet` : null;
 
   const { shell } = useEmployerPortalChrome(employerId, data?.employer.name);
   const backToLearners = () => navigate(`/employers/${employerId}`);
@@ -232,15 +245,16 @@ export default function EmployerLearnerPage() {
                   }`}
                 >
                   <i className={`${t.icon} text-[14px]`} />{t.label}
-                  {/* Paperwork waiting on this employer stays visible from
-                      every tab, now that it has a tab of its own. */}
-                  {t.key === 'documents' && outstanding > 0 && (
+                  {/* Paperwork not yet signed by this employer stays visible
+                      from every tab, now that it has a tab of its own —
+                      including items not ready to sign yet. */}
+                  {t.key === 'documents' && unsignedNote && (
                     <span
-                      className="ml-0.5 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-red-500 text-[10px] font-bold leading-none text-white ring-2 ring-white/70"
-                      aria-label={`${outstanding} to sign`}
-                      title="Awaiting your signature"
+                      data-testid="documents-unsigned-dot"
+                      className="ml-0.5 h-2 w-2 shrink-0 rounded-full bg-red-500 ring-2 ring-white/70"
+                      title={unsignedNote}
                     >
-                      {outstanding}
+                      <span className="sr-only">{unsignedNote}</span>
                     </span>
                   )}
                 </button>

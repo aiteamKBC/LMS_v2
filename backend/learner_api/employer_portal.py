@@ -24,6 +24,7 @@ import json
 import logging
 
 from django.db import DatabaseError
+from django.db.models import JSONField
 from django.core.exceptions import ValidationError
 from django.http import JsonResponse
 from django.utils import timezone
@@ -34,7 +35,7 @@ from login.permissions import employer_or_staff
 from .learner_detail import SOURCE_MODELS
 from .identity import learner_profile_for_source
 from .mappers import _s, to_employer_row
-from .models import Employer, EnrolmentReview
+from .models import Employer, EnrolmentReview, LearnerProfile
 from .review_form import (
     MAX_SIGNATURE_CHARS,
     _lookup as _lookup_enrolment_review,
@@ -64,30 +65,89 @@ def _learner_kind(learner):
     return "commercial" if _s(getattr(learner, "learner_type", "")) == "commercial" else "apprenticeship"
 
 
-def _review_signing_rows(kind, learner_id, *, employer_only=True):
-    """This learner's reviews as the employer sees them.
+def _review_signing_rows(kind, learner_id, *, employer_only=True, learner=None):
+    """One learner's reviews as the employer sees them.
+
+    `learner` is their Created_users row when the caller already holds it, so
+    it is not read a second time. See _review_signing_rows_for.
+    """
+    if learner is None:
+        source_model = SOURCE_MODELS.get(kind)
+        if source_model is not None:
+            try:
+                learner = source_model.all_learners.get(pk=learner_id)
+            except (source_model.DoesNotExist, DatabaseError):
+                learner = None
+    rows = _review_signing_rows_for([(kind, learner_id, learner)], employer_only=employer_only)
+    return rows[(kind, learner_id)]
+
+
+def _active_profile_ids(learners):
+    """{learner_id: active LearnerProfile pk}, read in one query.
+
+    learner_profile_for_source resolves one learner at a time; this does the
+    enrolment_id match -- the real link -- for all of them at once, and falls
+    back to it (email matching, self-healing) only for the ones it missed.
+    """
+    sources = {learner_id: source for _kind, learner_id, source in learners if source is not None}
+    if not sources:
+        return {}
+    found = {}
+    try:
+        # Lowest pk first: the same profile .first() picks for one learner.
+        for profile in LearnerProfile.objects.filter(
+            enrolment_id__in=list(sources), lifecycle_status="active",
+        ).order_by("pk"):
+            found.setdefault(profile.enrolment_id, profile.pk)
+        for learner_id, source in sources.items():
+            if learner_id in found:
+                continue
+            profile = learner_profile_for_source(source, learner_id, active_only=True)
+            if profile is not None:
+                found[learner_id] = profile.pk
+    except DatabaseError:
+        logger.exception("_active_profile_ids: lookup failed for %s", list(sources))
+    return found
+
+
+def _review_signing_rows_for(learners, *, employer_only=True):
+    """{(kind, learner_id): reviews} for many learners in a fixed number of queries.
+
+    `learners` is (kind, learner_id, Created_users row or None) per learner.
+    Asking per learner cost ~30 round trips each, which made an employer's
+    landing page take minutes; every lookup here covers all of them at once.
 
     `employer_only` keeps the list to reviews that actually want an employer
     signature — the employer has no business being shown the RPL review.
     """
+    keys = [(kind, learner_id) for kind, learner_id, _source in learners]
+    rows_by_learner = {key: [] for key in keys}
+    if not keys:
+        return rows_by_learner
+    learner_ids = list(dict.fromkeys(learner_id for _kind, learner_id in keys))
+
     try:
         # A cancelled booking's review belongs to a meeting that is not
         # happening -- the learner re-books, and that new review is the one to
         # sign. Same rule as the board's and the coach's review documents.
-        reviews = EnrolmentReview.objects.filter(
-            learner_kind=kind, learner_id=learner_id
-        ).exclude(status=EnrolmentReview.STATUS_CANCELLED).order_by("scheduled_date", "id")
+        reviews = list(
+            EnrolmentReview.objects.filter(learner_id__in=learner_ids)
+            .exclude(status=EnrolmentReview.STATUS_CANCELLED)
+            .order_by("scheduled_date", "id")
+        )
     except DatabaseError:
-        logger.exception("_review_signing_rows: lookup failed for %s/%s", kind, learner_id)
-        return []
+        logger.exception("_review_signing_rows_for: lookup failed for %s", keys)
+        return rows_by_learner
 
-    rows = []
     for review in reviews:
+        key = (review.learner_kind, review.learner_id)
+        if key not in rows_by_learner:
+            continue
         required = employer_signature_required(review)
         if employer_only and not required:
             continue
         signed = bool(_s(review.employer_signature))
-        rows.append({
+        rows_by_learner[key].append({
             "kind": "review",
             "eventKey": review.event_key,
             "reviewType": _s(review.review_type),
@@ -106,47 +166,64 @@ def _review_signing_rows(kind, learner_id, *, employer_only=True):
             "learnerSigned": bool(_s(review.learner_signature)),
             "adminSigned": bool(_s(review.admin_signature)),
         })
+
     # Curriculum instances are the canonical review records. Keep them in the
     # existing employer queue shape while the old EnrolmentReview records drain.
     # Instances are normally keyed by the internal LearnerProfile id, while
     # this portal is addressed by the source enrolment id. Read both identities
     # so a valid review cannot disappear from the employer queue.
-    instance_learner_ids = [str(learner_id)]
-    source_model = SOURCE_MODELS.get(kind)
-    if source_model is not None:
-        try:
-            source_learner = source_model.all_learners.get(pk=learner_id)
-            profile = learner_profile_for_source(source_learner, learner_id, active_only=True)
-            if profile is not None and str(profile.pk) not in instance_learner_ids:
-                instance_learner_ids.append(str(profile.pk))
-        except (source_model.DoesNotExist, DatabaseError):
-            pass
-    instance_rows = []
-    seen_instance_ids = set()
-    for instance_learner_id in instance_learner_ids:
-        try:
-            candidates = review_instances.list_review_instances_for_learner(instance_learner_id)
-        except DatabaseError:
-            candidates = []
-        for instance in candidates:
-            instance_id = _s(instance.get('id'))
-            if instance_id and instance_id in seen_instance_ids:
+    profile_ids = _active_profile_ids(learners)
+    identity_ids = {}
+    for kind, learner_id in keys:
+        ids = [str(learner_id)]
+        profile_id = profile_ids.get(learner_id)
+        if profile_id is not None and str(profile_id) not in ids:
+            ids.append(str(profile_id))
+        identity_ids[(kind, learner_id)] = ids
+    all_identity_ids = list(dict.fromkeys(i for ids in identity_ids.values() for i in ids))
+
+    try:
+        instances_by_identity = review_instances.list_review_instances_for_learners(all_identity_ids)
+    except DatabaseError:
+        instances_by_identity = {}
+    instances_by_learner = {}
+    unique_instances = {}
+    for key, ids in identity_ids.items():
+        instance_rows = []
+        seen_instance_ids = set()
+        for instance_learner_id in ids:
+            for instance in instances_by_identity.get(instance_learner_id, []):
+                instance_id = _s(instance.get('id'))
+                if instance_id and instance_id in seen_instance_ids:
+                    continue
+                if instance_id:
+                    seen_instance_ids.add(instance_id)
+                instance_rows.append(instance)
+                unique_instances.setdefault(instance.get('id'), instance)
+        instances_by_learner[key] = instance_rows
+    definitions = review_instances.review_instance_signing_definitions(list(unique_instances.values()))
+
+    wanted = []
+    for key, instance_rows in instances_by_learner.items():
+        for instance in instance_rows:
+            definition = definitions.get(instance.get('id'))
+            if definition is None:
                 continue
-            if instance_id:
-                seen_instance_ids.add(instance_id)
-            instance_rows.append(instance)
-    for instance in instance_rows:
-        definition = review_instances.review_instance_form_definition(instance)
-        if employer_only and not definition['template']['visibleTo'].get('employer', False):
-            continue
-        employer_state = definition['signatures'].get('employer', {})
-        if not employer_state.get('required'):
-            continue
+            if employer_only and not definition['template']['visibleTo'].get('employer', False):
+                continue
+            if not definition['signatures'].get('employer', {}).get('required'):
+                continue
+            wanted.append((key, instance, definition))
+    calendar_ids = {instance.get('calendar_event_id') for _key, instance, _d in wanted if instance.get('calendar_event_id')}
+    event_keys = dict(
+        CoachCalendarEvent.objects.filter(pk__in=calendar_ids).values_list("pk", "event_key")
+    ) if calendar_ids else {}
+    for key, instance, definition in wanted:
         signatures = definition['signatures']
-        calendar_record = CoachCalendarEvent.objects.filter(pk=instance.get('calendar_event_id')).first() if instance.get('calendar_event_id') else None
-        rows.append({
+        employer_state = signatures.get('employer', {})
+        rows_by_learner[key].append({
             "kind": "review",
-            "eventKey": _s(getattr(calendar_record, 'event_key', '')) or _s(instance.get('id')),
+            "eventKey": _s(event_keys.get(instance.get('calendar_event_id'), '')) or _s(instance.get('id')),
             "reviewInstanceId": _s(instance.get('id')),
             "reviewType": _s(definition['template'].get('reviewTypeCode')) or 'review',
             "label": _s(definition['template'].get('name')) or 'Review',
@@ -161,58 +238,54 @@ def _review_signing_rows(kind, learner_id, *, employer_only=True):
             "learnerSigned": bool(signatures.get('participant', {}).get('signed')),
             "adminSigned": bool(signatures.get('advisor', {}).get('signed')),
         })
+
     # Imported Aptem continuations have their own overlay and signature store.
-    # Only this learner's profile ids are queried; native review rows above
+    # Only these learners' profile ids are queried; native review rows above
     # keep their existing behavior and document identity.
-    for overlay in ImportedReviewInstance.objects.select_related("migrated_template").filter(
-        learner_id__in=[int(value) for value in instance_learner_ids],
-        source_review_id__isnull=False,
-        status__in=[ImportedReviewInstance.STATUS_AWAITING_SIGNATURE, ImportedReviewInstance.STATUS_COMPLETED],
-    ):
-        if not overlay.migrated_template_id or overlay.migrated_template.review_family != "PR":
-            continue
-        signatures = signature_states(overlay)
-        employer_state = signatures["employer"]
-        rows.append({
-            "kind": "review", "eventKey": overlay.event_key,
-            "reviewInstanceId": overlay.event_key, "migratedForm": True,
-            "reviewType": "aptem_progress_review",
-            "label": overlay.template_snapshot.get("name") or "Migrated Progress Review",
-            "scheduledDate": "", "signable": overlay.status == ImportedReviewInstance.STATUS_AWAITING_SIGNATURE,
-            "completed": overlay.status == ImportedReviewInstance.STATUS_COMPLETED,
-            "sectionsTotal": len(overlay.template_snapshot.get("sections") or []),
-            "employerSignatureRequired": True,
-            "signed": employer_state["signed"],
-            "signedName": employer_state["signedName"] or "",
-            "signedAt": employer_state["signedAt"],
-            "learnerSigned": signatures["participant"]["signed"],
-            "adminSigned": signatures["advisor"]["signed"],
-        })
-    return rows
+    overlays = [
+        overlay
+        for overlay in ImportedReviewInstance.objects.select_related("migrated_template")
+        .prefetch_related("migrated_signatures")
+        .filter(
+            learner_id__in=[int(value) for value in all_identity_ids],
+            source_review_id__isnull=False,
+            status__in=[ImportedReviewInstance.STATUS_AWAITING_SIGNATURE, ImportedReviewInstance.STATUS_COMPLETED],
+        )
+        if overlay.migrated_template_id and overlay.migrated_template.review_family == "PR"
+    ]
+    for key, ids in identity_ids.items():
+        ids = {int(value) for value in ids}
+        for overlay in overlays:
+            if overlay.learner_id not in ids:
+                continue
+            signatures = signature_states(overlay)
+            employer_state = signatures["employer"]
+            rows_by_learner[key].append({
+                "kind": "review", "eventKey": overlay.event_key,
+                "reviewInstanceId": overlay.event_key, "migratedForm": True,
+                "reviewType": "aptem_progress_review",
+                "label": overlay.template_snapshot.get("name") or "Migrated Progress Review",
+                "scheduledDate": "", "signable": overlay.status == ImportedReviewInstance.STATUS_AWAITING_SIGNATURE,
+                "completed": overlay.status == ImportedReviewInstance.STATUS_COMPLETED,
+                "sectionsTotal": len(overlay.template_snapshot.get("sections") or []),
+                "employerSignatureRequired": True,
+                "signed": employer_state["signed"],
+                "signedName": employer_state["signedName"] or "",
+                "signedAt": employer_state["signedAt"],
+                "learnerSigned": signatures["participant"]["signed"],
+                "adminSigned": signatures["advisor"]["signed"],
+            })
+    return rows_by_learner
 
 
-def _agreement_signing_rows(kind, learner_id):
+def _agreement_signing_row(agreement):
     """The learner's active Apprenticeship Agreement, as a signable row.
 
     The agreement lives in its own table rather than Enrolment_Documents, but the
     employer sees it in the same list as everything else they must sign — so it
     is projected onto the same row shape here.
     """
-    from .models import ApprenticeshipAgreement
-
-    try:
-        agreement = ApprenticeshipAgreement.objects.filter(
-            learner_kind=kind,
-            learner_id=learner_id,
-            status=ApprenticeshipAgreement.STATUS_ACTIVE,
-        ).first()
-    except DatabaseError:
-        logger.exception("_agreement_signing_rows: lookup failed for %s/%s", kind, learner_id)
-        return []
-    if agreement is None:
-        return []
-
-    return [{
+    return {
         "kind": "agreement",
         "id": str(agreement.id),
         "docType": "apprenticeship-agreement",
@@ -227,30 +300,16 @@ def _agreement_signing_rows(kind, learner_id):
         "learnerSigned": agreement.apprentice_signed,
         "learnerSignedName": _s(agreement.apprentice_signed_name),
         "learnerSignedAt": _iso(agreement.apprentice_signed_at),
-    }]
+    }
 
 
-def _training_plan_signing_rows(kind, learner_id):
+def _training_plan_signing_row(plan):
     """The learner's active Training Plan, as a signable row.
 
     Signed by all three parties; the employer is one of them, so it appears in
     their queue alongside the reviews and the apprenticeship agreement.
     """
-    from .models import TrainingPlanDocument
-
-    try:
-        plan = TrainingPlanDocument.objects.filter(
-            learner_kind=kind,
-            learner_id=learner_id,
-            status=TrainingPlanDocument.STATUS_ACTIVE,
-        ).first()
-    except DatabaseError:
-        logger.exception("_training_plan_signing_rows: lookup failed for %s/%s", kind, learner_id)
-        return []
-    if plan is None:
-        return []
-
-    return [{
+    return {
         "kind": "training-plan",
         "id": str(plan.id),
         "docType": "training-plan",
@@ -268,30 +327,16 @@ def _training_plan_signing_rows(kind, learner_id):
         "providerSigned": plan.provider_signed,
         "providerSignedName": _s(plan.provider_signed_name),
         "providerSignedAt": _iso(plan.provider_signed_at),
-    }]
+    }
 
 
-def _written_agreement_signing_rows(kind, learner_id):
+def _written_agreement_signing_row(doc):
     """The learner's active Written Agreement, as a signable row.
 
     Signed by the learner, the employer and the provider — the employer is one
     of the three, so it appears in their queue.
     """
-    from .models import WrittenAgreement
-
-    try:
-        doc = WrittenAgreement.objects.filter(
-            learner_kind=kind,
-            learner_id=learner_id,
-            status=WrittenAgreement.STATUS_ACTIVE,
-        ).first()
-    except DatabaseError:
-        logger.exception("_written_agreement_signing_rows: lookup failed for %s/%s", kind, learner_id)
-        return []
-    if doc is None:
-        return []
-
-    return [{
+    return {
         "kind": "written-agreement",
         "id": str(doc.id),
         "docType": "written-agreement",
@@ -308,14 +353,43 @@ def _written_agreement_signing_rows(kind, learner_id):
         "providerSigned": doc.provider_signed,
         "providerSignedName": _s(doc.provider_signed_name),
         "providerSignedAt": _iso(doc.provider_signed_at),
-    }]
+    }
+
+
+def _active_documents(model, keys):
+    """{(kind, learner_id): the active row of `model`}, in one query.
+
+    The models order newest first, so the first row seen per learner is the
+    one .first() returned when this was asked one learner at a time. The
+    frozen document content (JSON columns) is never shown here, so it is not
+    fetched.
+    """
+    frozen_content = [field.name for field in model._meta.concrete_fields if isinstance(field, JSONField)]
+    try:
+        found = {}
+        for doc in model.objects.filter(
+            learner_id__in=list(dict.fromkeys(learner_id for _kind, learner_id in keys)),
+            status=model.STATUS_ACTIVE,
+        ).defer(*frozen_content):
+            found.setdefault((doc.learner_kind, doc.learner_id), doc)
+        return found
+    except DatabaseError:
+        logger.exception("_active_documents: %s lookup failed for %s", model.__name__, keys)
+        return {}
 
 
 def _document_signing_rows(kind, learner_id):
-    """The learner's generated compliance PDFs, with employer sign-off state.
+    """One learner's signable documents. See _document_signing_rows_for."""
+    return _document_signing_rows_for([(kind, learner_id)])[(kind, learner_id)]
 
-    Read with raw SQL rather than a model: enrolment."Enrolment_Documents" is
-    owned by enrolment_api and has no Django model — see its document_tables.py.
+
+def _document_signing_rows_for(keys):
+    """{(kind, learner_id): signable documents} for many learners at once.
+
+    The Apprenticeship Agreement, Training Plan and Written Agreement come
+    first, then the generated compliance PDFs. Those are read with raw SQL
+    rather than a model: enrolment."Enrolment_Documents" is owned by
+    enrolment_api and has no Django model — see its document_tables.py.
     """
     from django.db import connections
 
@@ -323,43 +397,57 @@ def _document_signing_rows(kind, learner_id):
 
     from enrolment_api.documents import SIGNING_PARTIES
 
-    rows_out = (
-        _agreement_signing_rows(kind, learner_id)
-        + _training_plan_signing_rows(kind, learner_id)
-        + _written_agreement_signing_rows(kind, learner_id)
-    )
+    from .models import ApprenticeshipAgreement, TrainingPlanDocument, WrittenAgreement
 
+    out = {key: [] for key in keys}
+    if not keys:
+        return out
+    for model, to_row in (
+        (ApprenticeshipAgreement, _agreement_signing_row),
+        (TrainingPlanDocument, _training_plan_signing_row),
+        (WrittenAgreement, _written_agreement_signing_row),
+    ):
+        for key, doc in _active_documents(model, keys).items():
+            if key in out:
+                out[key].append(to_row(doc))
+
+    learner_ids = list(dict.fromkeys(learner_id for _kind, learner_id in keys))
+    placeholders = ", ".join(["%s"] * len(learner_ids))
     try:
         ensure_enrolment_documents_table()
         with connections["enrolment"].cursor() as cur:
             cur.execute(
-                '''
-                select id, "Doc_type", "Doc_name", "Generated_at",
+                f'''
+                select "Learner_kind", "Learner_id",
+                       id, "Doc_type", "Doc_name", "Generated_at",
                        "Employer_signature", "Employer_signed_name", "Employer_signed_at",
                        "Learner_signature", "Learner_signed_name", "Learner_signed_at"
                 from enrolment."Enrolment_Documents"
-                where "Learner_kind" = %s and "Learner_id" = %s
+                where "Learner_id" in ({placeholders})
                 order by "Generated_at" desc
                 ''',
-                [kind, learner_id],
+                learner_ids,
             )
             rows = cur.fetchall()
     except DatabaseError:
-        logger.exception("_document_signing_rows: lookup failed for %s/%s", kind, learner_id)
-        return rows_out
+        logger.exception("_document_signing_rows_for: lookup failed for %s", keys)
+        return out
 
-    out = list(rows_out)
     for row in rows:
         (
+            learner_kind, row_learner_id,
             doc_id, doc_type, doc_name, generated_at,
             sig, sig_name, sig_at,
             learner_sig, learner_sig_name, learner_sig_at,
         ) = row
+        key = (learner_kind, row_learner_id)
+        if key not in out:
+            continue
         doc_type = _s(doc_type)
         # Only offer documents this type actually asks the employer to sign —
         # a learner-only document has no business appearing in their queue.
         parties = SIGNING_PARTIES.get(doc_type, ("employer",))
-        out.append({
+        out[key].append({
             "kind": "document",
             "id": str(doc_id),
             "docType": doc_type,
@@ -398,17 +486,20 @@ def _learner_cards(employer_id):
     """
     model = SOURCE_MODELS["apprenticeship"]
     try:
-        learners = model.all_learners.filter(employer_id=employer_id).order_by("username", "id")
+        learners = list(model.all_learners.filter(employer_id=employer_id).order_by("username", "id"))
     except DatabaseError:
         logger.exception("_learner_cards: lookup failed for employer %s", employer_id)
         return []
 
+    entries = [(_learner_kind(learner), learner.pk, learner) for learner in learners]
+    reviews_by_learner = _review_signing_rows_for(entries)
+    documents_by_learner = _document_signing_rows_for([(kind, pk) for kind, pk, _learner in entries])
+
     cards = []
-    for learner in learners:
-        kind = _learner_kind(learner)
+    for kind, _pk, learner in entries:
         status = _s(learner.programme_status)
-        reviews = _review_signing_rows(kind, learner.pk)
-        documents = _document_signing_rows(kind, learner.pk)
+        reviews = reviews_by_learner[(kind, learner.pk)]
+        documents = documents_by_learner[(kind, learner.pk)]
         # Only counts what the employer can actually act on now: an unfinished
         # review is not yet signable, so counting it would show a task they
         # cannot complete.
@@ -520,16 +611,20 @@ def employer_portal_documents(request, employer_id):
         logger.exception("employer_portal_documents: lookup failed for employer %s", employer.pk)
         return _error("Could not load documents. Please try again.", 503)
 
+    entries = [(_learner_kind(learner), learner.pk, learner) for learner in learners]
+    reviews_by_learner = _review_signing_rows_for(entries)
+    documents_by_learner = _document_signing_rows_for([(kind, pk) for kind, pk, _learner in entries])
+
     items = []
-    for learner in learners:
-        kind = _learner_kind(learner)
+    for kind, _pk, learner in entries:
         owner = {
             "id": str(learner.pk),
             "kind": kind,
             "name": _s(learner.username),
             "programme": _s(learner.programme),
         }
-        for item in (*_review_signing_rows(kind, learner.pk), *_document_signing_rows(kind, learner.pk)):
+        key = (kind, learner.pk)
+        for item in (*reviews_by_learner[key], *documents_by_learner[key]):
             items.append({**item, "learner": owner})
 
     return JsonResponse({
@@ -572,7 +667,7 @@ def employer_portal_learner(request, employer_id, kind, learner_id):
         return _error("That learner does not belong to this employer.", 403)
 
     status = _s(learner.programme_status)
-    reviews = _review_signing_rows(kind, learner.pk)
+    reviews = _review_signing_rows(kind, learner.pk, learner=learner)
     documents = _document_signing_rows(kind, learner.pk)
 
     return JsonResponse({
@@ -755,7 +850,11 @@ def employer_portal_learner_plan(request, employer_id, kind, learner_id):
 #: served by the same reader as the learner's own endpoint (overview-week,
 #: training-plan-dashboard, monthly-logs, profile-photo), so the employer sees
 #: the learner's timeline and progress rather than a second calculation of them.
-OVERVIEW_PARTS = frozenset({"week", "schedule", "contract", "hours", "photo"})
+OVERVIEW_PARTS = frozenset({"week", "schedule", "contract", "hours", "photo", "attendance"})
+
+#: Attendance-register totals the dashboard's Attendance figure needs. The
+#: employer gets the counts only, never the per-session register behind them.
+_ATTENDANCE_FIELDS = ("sessions", "present", "absent", "late", "attendanceRate")
 
 #: Monthly-log fields the dashboard's hours figures need. The employer gets the
 #: per-month totals only, never the activity rows or signatures behind them.
@@ -789,6 +888,17 @@ def _overview_part(part, learner, kind=None):
         if part == "contract":
             return read_dashboard(learner, section="contract")
         return _without_meeting_links(read_dashboard(learner, section="overview"))
+    if part == "attendance":
+        from .attendance import _summarize_attendance
+        from .attendance_lectures import lecture_register
+
+        # The same register the learner's dashboard and the coach case file
+        # count, so all three show one figure. Timetabled sessions are not
+        # attendance: a class with no register entry is neither attended nor
+        # missed. Read-only: catch-up outcomes are settled by the learner's
+        # own reads, not by their employer viewing the page.
+        summary = _summarize_attendance(lecture_register(learner))
+        return {"attendance": {key: summary[key] for key in _ATTENDANCE_FIELDS} if summary else None}
 
     from old_otjh import service as old_service
     from . import monthly_log_sources, monthly_logs

@@ -44,12 +44,37 @@ describe('Employer assignments tab', () => {
     const list = await screen.findByRole('region', { name: 'Assignments' });
     expect(within(list).getByText('3 assignments handed in by Aya · 2 with uploaded files')).toBeInTheDocument();
     expect(within(list).getByText('Marketing plan')).toBeInTheDocument();
-    expect(within(list).getByText('Aya Modual · Week 3')).toBeInTheDocument();
+    expect(within(list).getByText('Week 3')).toBeInTheDocument();
     expect(within(list).getByText('Awaiting marking')).toBeInTheDocument();
     expect(within(list).getByText('Referred')).toBeInTheDocument();
     expect(within(list).getByText('Accepted')).toBeInTheDocument();
     expect(within(list).getByText('No file uploaded')).toBeInTheDocument();
     expect(within(list).queryByText(/score|feedback/i)).not.toBeInTheDocument();
+  });
+
+  it('groups assignments by module, then by the month they were handed in', async () => {
+    assignmentApi.fetchAssignments.mockResolvedValueOnce({ assignments: [
+      ...assignments,
+      { id: 'lms:c3', source: 'lms', title: 'Campaign brief', moduleTitle: 'Aya Modual', weekTitle: 'Week 6',
+        status: 'accepted', submittedAt: '2026-10-02T09:00:00Z', files: [] },
+      { id: 'lms:c4', source: 'lms', title: 'Persona', moduleTitle: 'Aya Modual', weekTitle: 'Week 2',
+        status: 'accepted', submittedAt: '2026-09-20T09:00:00Z', files: [] },
+    ] });
+    render(<EmployerAssignmentsTab employerId="9" kind="commercial" learnerId="101" learnerName="Aya" />);
+    await screen.findByRole('region', { name: 'Assignments' });
+
+    // Most recently worked-on module first; undated work after dated; no module last.
+    const modules = screen.getAllByRole('heading', { level: 3 }).map(heading => heading.textContent);
+    expect(modules).toEqual(['Aya Modual3 assignments', 'Legacy module1 assignment', 'Other assignments1 assignment']);
+
+    const aya = screen.getByRole('region', { name: 'Aya Modual' });
+    expect(within(aya).getAllByRole('heading', { level: 4 }).map(h => h.textContent)).toEqual(['October 2026', 'September 2026']);
+    const september = within(aya).getByRole('region', { name: 'Aya Modual, September 2026' });
+    // Newest first within the month.
+    expect(within(september).getAllByRole('listitem').map(item => item.querySelector('[title]')?.textContent))
+      .toEqual(['Persona', 'Marketing plan']);
+    expect(within(screen.getByRole('region', { name: 'Legacy module' })).getByRole('heading', { level: 4 }))
+      .toHaveTextContent('Date not recorded');
   });
 
   it('opens an uploaded file in a new tab', async () => {

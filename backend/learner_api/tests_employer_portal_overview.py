@@ -349,8 +349,11 @@ class EmployerPortalDocumentsTests(SimpleTestCase):
             mock.patch.object(employer_portal, "_employer_or_404",
                               return_value=(SimpleNamespace(pk=9, full_name="Test Employer"), None)),
             mock.patch.object(employer_portal, "SOURCE_MODELS", {"apprenticeship": model}),
-            mock.patch.object(employer_portal, "_review_signing_rows", side_effect=lambda kind, pk: reviews.get(pk, [])),
-            mock.patch.object(employer_portal, "_document_signing_rows", side_effect=lambda kind, pk: documents.get(pk, [])),
+            # Every learner's rows are read in one batched call, not one per learner.
+            mock.patch.object(employer_portal, "_review_signing_rows_for", side_effect=lambda entries: {
+                (kind, pk): reviews.get(pk, []) for kind, pk, _learner in entries}),
+            mock.patch.object(employer_portal, "_document_signing_rows_for", side_effect=lambda keys: {
+                (kind, pk): documents.get(pk, []) for kind, pk in keys}),
             mock.patch.dict("os.environ", {"LEARNER_API_REQUIRE_AUTH": "1"}),
         ]
         for patch in patches:

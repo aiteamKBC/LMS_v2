@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { SidebarNavItem } from '@/components/feature/Sidebar';
 import { AppIcon } from '@/components/feature/AppIcon';
-import { fetchEmployerLearnerPlan, fetchEmployerLearnerWeek, fetchEmployerLearnerSchedule, fetchEmployerLearnerHours } from '@/api/employerPortal';
+import { fetchEmployerLearnerPlan, fetchEmployerLearnerWeek, fetchEmployerLearnerSchedule, fetchEmployerLearnerHours, fetchEmployerLearnerAttendance } from '@/api/employerPortal';
 import type { LearnerDetail } from '@/api/learnerDetail';
 
 const mocks = vi.hoisted(() => ({
@@ -35,6 +35,7 @@ vi.mock('@/api/employerPortal', async (importOriginal) => ({
   fetchEmployerLearnerWeek: vi.fn(() => new Promise(() => undefined)),
   fetchEmployerLearnerSchedule: vi.fn(() => new Promise(() => undefined)),
   fetchEmployerLearnerHours: vi.fn(() => new Promise(() => undefined)),
+  fetchEmployerLearnerAttendance: vi.fn(() => new Promise(() => undefined)),
   fetchEmployerLearnerPhoto: vi.fn(() => new Promise(() => undefined)),
   fetchEmployerLearner: mocks.fetchEmployerLearner,
   fetchEmployerLearnerPlan: vi.fn(),
@@ -233,6 +234,10 @@ describe('EmployerLearnerPage content and review signing', () => {
       coach: { name: 'Coach', bookingUrl: null }, contractStatus: 'ready', generatedAt: '',
     });
     vi.mocked(fetchEmployerLearnerHours).mockResolvedValueOnce({ months: [] } as Awaited<ReturnType<typeof fetchEmployerLearnerHours>>);
+    // The attendance register, not the timetable: no timetabled session is marked attended here.
+    vi.mocked(fetchEmployerLearnerAttendance).mockResolvedValueOnce({
+      attendance: { sessions: 6, present: 1, absent: 5, late: 0, attendanceRate: 17 },
+    });
     vi.mocked(fetchEmployerLearnerPlan).mockResolvedValueOnce({
       name: 'Lee Learner', modules: ['Existing module'], ksbs: [],
       week: [{ module: 'Existing module', week: 'Existing week' }],
@@ -261,6 +266,8 @@ describe('EmployerLearnerPage content and review signing', () => {
     expect(within(wholeProgramme).getByRole('img', { name: /^Hours:/ })).toBeVisible();
     expect(within(wholeProgramme).getByRole('img', { name: 'KSBs: 50%' })).toBeVisible();
     expect(within(wholeProgramme).getByText('4 / 8')).toBeVisible();
+    expect(await within(wholeProgramme).findByText('1 / 6')).toBeVisible();
+    expect(fetchEmployerLearnerAttendance).toHaveBeenCalledWith('7', 'commercial', '499', expect.any(AbortSignal));
     expect(wholeProgramme.parentElement).toBe(programmeProgress.parentElement);
     expect(wholeProgramme.compareDocumentPosition(programmeProgress) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     const otjChart = screen.getByRole('region', { name: 'Off-the-job hours by month' });
@@ -294,6 +301,27 @@ describe('EmployerLearnerPage content and review signing', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Monthly logs' }));
     expect(await screen.findByText('No monthly logs yet')).toBeVisible();
     expect(screen.queryByRole('region', { name: 'Off-the-job hours by month' })).not.toBeInTheDocument();
+  });
+
+  it('marks the Documents tab with a red dot while anything is unsigned', async () => {
+    // Not signable yet (the review form is unfinished) still counts as unsigned.
+    mocks.fetchEmployerLearner.mockResolvedValue({
+      ...detail([{ ...review, signable: false }, { ...review, eventKey: 'signed-review', signed: true }]),
+      outstandingCount: 0,
+    });
+    renderPage();
+    const documentsTab = await screen.findByRole('button', { name: /Documents/ });
+    const dot = within(documentsTab).getByTestId('documents-unsigned-dot');
+    expect(dot).toHaveClass('bg-red-500');
+    expect(dot).toHaveAttribute('title', '1 not signed yet');
+    expect(documentsTab).toHaveAccessibleName(/1 not signed yet/);
+  });
+
+  it('shows no dot once everything is signed', async () => {
+    mocks.fetchEmployerLearner.mockResolvedValue({ ...detail([{ ...review, signed: true }]), outstandingCount: 0 });
+    renderPage();
+    const documentsTab = await screen.findByRole('button', { name: /Documents/ });
+    expect(within(documentsTab).queryByTestId('documents-unsigned-dot')).not.toBeInTheDocument();
   });
 
   it('shows the All documents columns and filters for the current learner', async () => {
