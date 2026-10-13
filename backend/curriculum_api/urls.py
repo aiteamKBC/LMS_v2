@@ -17,9 +17,11 @@ from .teams_week_meeting import (
     curriculum_week_teams_meeting_detail,
 )
 from . import session_results, tutor_notifications
+from .learner_activity_status import activity_status
 
 
 urlpatterns = [
+    path('curriculum/modules/<str:module_id>/learners/<int:learner_id>/activities/<str:component_id>/status/', activity_status),
     path('curriculum/migrated-review-templates/', migrated_template_views.collection),
     path('curriculum/migrated-review-templates/preview/', migrated_template_views.preview),
     path('curriculum/migrated-review-templates/reset/', migrated_template_views.reset),

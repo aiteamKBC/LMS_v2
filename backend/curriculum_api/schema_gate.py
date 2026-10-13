@@ -50,6 +50,8 @@ CURRICULUM_SCHEMA = 'curriculum'
 # the migration that established the CURRENT name rather than claiming a single
 # authoritative CREATE. Tables absent from the map fall back to a generic hint.
 TABLE_OWNER_MIGRATION = {
+    'learner_activity_display_overrides': 'curriculum_api.0070_learner_activity_display_overrides',
+    'learner_activity_display_audit': 'curriculum_api.0070_learner_activity_display_overrides',
     'programmes': 'curriculum_api.0003_rename_clear_curriculum_tables',
     'cohorts': 'curriculum_api.0004_rename_selected_curriculum_tables',
     'weeks': 'curriculum_api.0004_rename_selected_curriculum_tables',
