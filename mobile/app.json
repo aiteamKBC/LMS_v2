@@ -2,7 +2,7 @@
   "expo": {
     "name": "KBC Learn LMS Candidate",
     "slug": "kbc-learn-lmscandidate",
-    "version": "0.2.0",
+    "version": "0.3.0",
     "orientation": "default",
     "scheme": "kbclearn-lmscandidate",
     "userInterfaceStyle": "light",
@@ -21,7 +21,7 @@
     "android": {
       "package": "com.kentbusinesscollege.learn.lmscandidate",
       "predictiveBackGestureEnabled": true,
-      "versionCode": 5
+      "versionCode": 6
     },
     "web": {
       "bundler": "metro",

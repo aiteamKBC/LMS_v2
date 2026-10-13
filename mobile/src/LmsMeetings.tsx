@@ -6,12 +6,12 @@ import {s} from './styles';
 import {useMeetingNotifications} from './meeting-notifications';
 import {LMS_MEETING_LINKS,normalizeLmsMeetings} from './lms-meetings-model.mjs';
 
-type Options={client:any;session:any;refreshVersion?:number;moduleId?:string;onOpenMeetings?:(eventId?:string)=>void};
+type Options={client:any;session:any;refreshVersion?:number;moduleId?:string;serverReminders?:boolean;onOpenMeetings?:(eventId?:string)=>void};
 const accountKey=(session:any)=>session?.authenticated&&session.user?.accountId&&session.user?.id ? 'lms:'+session.user.accountId+':'+session.user.learnerKind+':'+session.user.id : null;
 const preferenceKey=(owner:string)=>'kbc:lms:meeting-reminders:v1:'+owner;
 
 /** Keep this hook mounted in the authenticated shell, so tab changes retain phone reminders. */
-export function useLmsMeetings({client,session,refreshVersion=0,moduleId,onOpenMeetings}:Options){
+export function useLmsMeetings({client,session,refreshVersion=0,moduleId,onOpenMeetings,serverReminders=false}:Options){
  const owner=accountKey(session),current=useRef({owner,client,session,moduleId,onOpenMeetings});current.current={owner,client,session,moduleId,onOpenMeetings};
  const [snapshot,setSnapshot]=useState<{owner:string;data:any}|null>(null),[fault,setFault]=useState<{owner:string;message:string}|null>(null),[pending,setPending]=useState<string|null>(null);
  const [preference,setPreference]=useState<{owner:string;enabled:boolean}|null>(null),[selected,setSelected]=useState<string|null>(null);
@@ -29,7 +29,7 @@ export function useLmsMeetings({client,session,refreshVersion=0,moduleId,onOpenM
  },[]);
  const data=snapshot?.owner===owner?snapshot.data:null;
  const enabled=preference?.owner===owner&&preference.enabled;
- const notifications=useMeetingNotifications({userId:owner,enabled,reminders:data?.reminders||[],onRefresh:refresh,onOpenMeetings:eventId=>{setSelected(eventId||null);current.current.onOpenMeetings?.(eventId);}});
+ const notifications=useMeetingNotifications({userId:serverReminders?null:owner,enabled:!serverReminders&&enabled,reminders:data?.reminders||[],onRefresh:refresh,onOpenMeetings:eventId=>{setSelected(eventId||null);current.current.onOpenMeetings?.(eventId);}});
  useEffect(()=>{
   let cancelled=false;setSelected(null);setPreference(null);setFault(null);setSnapshot(null);generation.current++;
   if(owner)void AsyncStorage.getItem(preferenceKey(owner)).then(value=>{if(!cancelled&&current.current.owner===owner)setPreference({owner,enabled:value==='enabled'});}).catch(()=>{if(!cancelled&&current.current.owner===owner)setFault({owner,message:'This phone could not read your reminder preference. You can enable reminders again.'});});
@@ -51,7 +51,7 @@ export function useLmsMeetings({client,session,refreshVersion=0,moduleId,onOpenM
   catch{if(current.current.owner===active)setFault({owner:active,message:'The phone could not save this change. You can turn off KBC Learn notifications in phone settings.'});}
   finally{busy.current=false;}
  };
- return {data,error:fault?.owner===owner?fault.message:'',loading:pending===owner,refresh,selected,setSelected,notifications,enabled,enableReminders,disableReminders};
+ return {serverReminders,data,error:fault?.owner===owner?fault.message:'',loading:pending===owner,refresh,selected,setSelected,notifications,enabled,enableReminders,disableReminders};
 }
 
 export type LmsMeetingsController=ReturnType<typeof useLmsMeetings>;
@@ -91,7 +91,7 @@ export function LmsMeetings({controller:c,onOpenLms}:Props){
    {c.data.attention.length>0&&<><Text style={s.sectionTitle}>Follow up</Text>{eventRows(c.data.attention)}</>}
    {actions}
    {c.data.past.length>0&&<><Btn title={showPast?'Hide previous meetings':'Previous meetings'} secondary onPress={()=>setShowPast(!showPast)}/>{showPast&&eventRows(c.data.past)}</>}
-   <Card><Text style={s.sectionTitle}>Gentle reminders</Text><Txt small>{c.notifications.message||'Choose a reminder on this phone, 15 minutes before a scheduled meeting.'}</Txt>{Platform.OS!=='web'&&<Btn title={c.enabled?'Turn off phone reminders':'Enable phone reminders'} secondary disabled={c.notifications.status==='pending'} onPress={c.enabled?c.disableReminders:c.enableReminders}/>}<Txt small>Changes refresh when the app connects. Your college controls coaching and review dates.</Txt></Card>
+   <Card><Text style={s.sectionTitle}>Gentle reminders</Text><Txt small>{c.serverReminders?'Manage phone and in-app alerts in Chat > Notification choices.':c.notifications.message||'Choose a reminder on this phone, 15 minutes before a scheduled meeting.'}</Txt>{!c.serverReminders&&Platform.OS!=='web'&&<Btn title={c.enabled?'Turn off phone reminders':'Enable phone reminders'} secondary disabled={c.notifications.status==='pending'} onPress={c.enabled?c.disableReminders:c.enableReminders}/>}<Txt small>Changes refresh when the app connects. Your college controls coaching and review dates.</Txt></Card>
   </>}
   <Btn title={c.loading?'Refreshing…':'Refresh my calendar'} secondary disabled={c.loading} onPress={c.refresh}/>
  </>;

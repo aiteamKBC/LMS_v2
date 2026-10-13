@@ -94,8 +94,23 @@ android {
         applicationId 'com.kentbusinesscollege.learn.lmscandidate'
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 5
-        versionName "0.2.0"
+        versionCode 6
+        versionName "0.3.0"
+
+        // Client Firebase configuration is supplied by the release operator.
+        // The server notification-sender credential must NEVER be used here.
+        def firebasePath = System.getenv('KBC_ANDROID_FIREBASE_CONFIG')
+        if (firebasePath) {
+            def firebase = new groovy.json.JsonSlurper().parse(file(firebasePath))
+            def client = firebase.client.find { it.client_info.android_client_info.package_name == applicationId }
+            if (!client) throw new GradleException('Firebase configuration does not match the Android package.')
+            resValue "string", "google_app_id", client.client_info.mobilesdk_app_id
+            resValue "string", "gcm_defaultSenderId", firebase.project_info.project_number
+            resValue "string", "project_id", firebase.project_info.project_id
+            resValue "string", "google_api_key", client.api_key[0].current_key
+        } else if (gradle.startParameter.taskNames.any { it.toLowerCase().contains('release') }) {
+            throw new GradleException('Set KBC_ANDROID_FIREBASE_CONFIG before building the notification-enabled release.')
+        }
 
         buildConfigField "String", "REACT_NATIVE_RELEASE_LEVEL", "\"${findProperty('reactNativeReleaseLevel') ?: 'stable'}\""
     }

@@ -25,13 +25,13 @@ function ownPayload(value = {}) {
   if (identityFields.some(key => Object.hasOwn(value, key))) throw new LmsServiceError('The LMS must determine identity, marks and accepted hours.', 400, 'SERVER_OWNED_FIELD');
   return value;
 }
-export function createLmsClient({fetchImpl = globalThis.fetch, timeoutMs = 30000, onSessionExpired = () => {}} = {}) {
+export function createLmsClient({fetchImpl = globalThis.fetch, timeoutMs = 30000, onSessionExpired = () => {}, communications = false} = {}) {
   if (typeof fetchImpl !== 'function') throw new TypeError('A native HTTPS fetch implementation is required.');
   let generation = 0;
   async function request(path, method = 'GET', body, {mobile = true, sessionSensitive = true} = {}) {
-    if (typeof path !== 'string' || !/^\/[A-Za-z0-9_\-/%.:]+(?:\?moduleId=[A-Za-z0-9_%.:-]+)?$/.test(path) || path.includes('..') || path.includes('//')) throw new LmsServiceError('The LMS request address is not valid.', 400);
+    if (typeof path !== 'string' || !/^\/[A-Za-z0-9_\-/%.:]+(?:\?(?:moduleId=[A-Za-z0-9_%.:-]+|before=[0-9]+))?$/.test(path) || path.includes('..') || path.includes('//')) throw new LmsServiceError('The LMS request address is not valid.', 400);
     const url = new URL(path, LMS_ORIGIN);
-    if (url.origin !== LMS_ORIGIN || (!url.pathname.startsWith(LMS_MOBILE_BASE) && !['/login_api/login/','/login_api/logout/','/login_api/me/'].includes(url.pathname))) throw new LmsServiceError('This destination is not an LMS service.', 400);
+    if (url.origin !== LMS_ORIGIN || (!url.pathname.startsWith(LMS_MOBILE_BASE) && !url.pathname.startsWith('/learner_api/communications/') && !['/login_api/login/','/login_api/logout/','/login_api/me/'].includes(url.pathname))) throw new LmsServiceError('This destination is not an LMS service.', 400);
     const requestGeneration = generation, controller = new AbortController(), timeout = setTimeout(() => controller.abort(), timeoutMs);
     try {
       const response = await fetchImpl(url.toString(), {method, credentials:'include', redirect:'error', cache:'no-store', signal:controller.signal, headers:{Accept:'application/json','X-Requested-With':'XMLHttpRequest',...(body === undefined ? {} : {'Content-Type':'application/json'})}, ...(body === undefined ? {} : {body:JSON.stringify(body)})});
@@ -54,8 +54,20 @@ export function createLmsClient({fetchImpl = globalThis.fetch, timeoutMs = 30000
     } finally { clearTimeout(timeout); }
   }
   const mobile = (path, method, body) => request(LMS_MOBILE_BASE + path, method, body);
+  const comms = (path, method, body) => request('/learner_api/communications/' + path, method, body, {mobile:false});
+  async function session(expectedAccountId) {
+    if (!communications) return checkedMobileSession(await mobile('session/'), expectedAccountId);
+    const profile = await comms('session/');
+    if (!validIdentity(profile.accountId) || !['coach','learner'].includes(profile.role)
+        || (expectedAccountId!==undefined && String(expectedAccountId)!==String(profile.accountId))) {
+      throw new LmsServiceError('The account changed. Please sign in again.',409,'SESSION_CHANGED');
+    }
+    if (profile.role==='coach') return {authenticated:true,user:{id:profile.accountId,accountId:profile.accountId,learnerKind:'coach'},communications:profile};
+    return {...checkedMobileSession(await mobile('session/'),profile.accountId),communications:profile};
+  }
   return {
     origin:LMS_ORIGIN,
+    comms,
     async signIn(email,password) {
       if (typeof email !== 'string' || typeof password !== 'string' || !email.trim() || !password) throw new LmsServiceError('Enter your LMS email address and password.',400);
       generation++;
@@ -68,9 +80,9 @@ export function createLmsClient({fetchImpl = globalThis.fetch, timeoutMs = 30000
       }
       // Login alone does not prove installation, learner authorisation or that
       // the native cookie jar still contains this same account's session.
-      return checkedMobileSession(await mobile('session/'), login.user.id);
+      return session(login.user.id);
     },
-    session:async() => checkedMobileSession(await mobile('session/')),
+    session:() => session(),
     async signOut() { generation++; return request('/login_api/logout/','POST',{}, {mobile:false,sessionSensitive:false}); },
     catalogue:() => mobile('catalogue/'),
     progress:moduleId => mobile('progress/'+(moduleId===undefined?'':'?moduleId='+componentId(moduleId))),
