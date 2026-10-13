@@ -364,7 +364,14 @@ def _presentation_metadata(components):
             except (ValueError, TypeError):
                 legacy = {}
         legacy = legacy if isinstance(legacy, dict) else {}
-        authored = {**legacy, **{key: value for key, value in (direct or {}).items() if value is not None}}
+        # Raw PostgreSQL JSONB expressions can use the driver's text loader.
+        if isinstance(direct, str):
+            try:
+                direct = json.loads(direct)
+            except (ValueError, TypeError):
+                direct = {}
+        direct = direct if isinstance(direct, dict) else {}
+        authored = {**legacy, **{key: value for key, value in direct.items() if value is not None}}
         route = {}
         for key in ("required", "optional", "countsTowardsRequiredCompletion"):
             if type(authored.get(key)) is bool:
