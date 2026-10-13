@@ -242,4 +242,3 @@ def device(request):
         Device.objects.update_or_create(token=token,defaults={"account_id":request.comms_user.account_id,
             "session_id":str(request.login_session.pk),"platform":data["platform"],"active":True,"updated_at":timezone.now()})
     return JsonResponse({"ok":True})
-

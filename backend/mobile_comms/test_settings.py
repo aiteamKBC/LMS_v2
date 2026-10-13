@@ -19,4 +19,3 @@ KBC_MOBILE_COMMS_ENABLED=True
 ALLOWED_HOSTS=["testserver"]
 MIGRATION_MODULES={"learner_api":None,"login":None}
 PASSWORD_HASHERS=["django.contrib.auth.hashers.MD5PasswordHasher"]
-

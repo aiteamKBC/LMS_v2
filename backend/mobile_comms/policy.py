@@ -68,4 +68,3 @@ def eligible_now(item, event, now):
     fresh = {row["key"]: row for row in reminder_plan(event)}
     current = fresh.get(item["key"])
     return bool(current and current["dueAt"] <= now < current["dueAt"] + timedelta(minutes=10))
-

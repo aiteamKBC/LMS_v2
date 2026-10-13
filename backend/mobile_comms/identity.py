@@ -105,4 +105,3 @@ def peer_directory(viewer):
             continue
         entries.append({"id": str(person.subject_id), "name": person.name})
     return entries
-

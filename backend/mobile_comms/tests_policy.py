@@ -49,4 +49,3 @@ class ReminderPolicyTests(unittest.TestCase):
         with self.assertRaises(ValueError):validate_preferences(prefs)
     def test_rejects_unzoned_time(self):
         with self.assertRaises(ValueError):reminder_plan(self.event(startsAt="2026-10-25T10:00:00"))
-

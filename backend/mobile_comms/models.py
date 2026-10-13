@@ -67,4 +67,3 @@ class Delivery(models.Model):
     next_attempt_at = models.DateTimeField(default=timezone.now)
     class Meta:
         constraints = [models.UniqueConstraint(fields=["notification", "device"], name="mobile_comms_delivery_once")]
-

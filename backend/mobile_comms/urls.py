@@ -9,4 +9,3 @@ urlpatterns = [
     path("notifications/<int:notification_id>/read/",views.read_notification),
     path("device/",views.device),
 ]
-

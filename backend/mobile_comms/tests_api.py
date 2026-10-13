@@ -89,4 +89,3 @@ class MessagingTests(TestCase):
     def test_preferences_do_not_change_other_accounts(self):
         self.call(views.preferences,data={"categories":__import__("mobile_comms.policy",fromlist=["default_preferences"]).default_preferences()})
         self.assertFalse(Preference.objects.filter(account_id=12).exists())
-
