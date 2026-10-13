@@ -11,10 +11,55 @@
 //  - PDFs     -> /enrolment_api/documents/<kind>/<id>/<docId>/sign/
 // ============================================================================
 
-import type { LearnerDetail } from '@/api/learnerDetail';
+import type { LearnerDetail, LearnerKind } from '@/api/learnerDetail';
+import type { OverviewWeek } from '@/api/learnerOverview';
+import type { TrainingPlanContract, TrainingPlanDashboard } from '@/api/trainingPlanDashboard';
+import type { MonthlyLogHours, LogSummary, LogDetail } from '@/features/monthly-logs/api';
+import type { ActivityContent } from '@/features/old-otjh/api';
 import type { ReviewFormResponse } from '@/api/reviewForm';
+import type { LearnerCalendarEvent, LearnerReviewDefinition } from '@/api/learnerCalendar';
 
 const BASE = '/learner_api/employer-portal';
+
+export type EmployerProgressReviews = {
+  events: LearnerCalendarEvent[];
+  definitions: Record<string, LearnerReviewDefinition | null>;
+};
+
+export function fetchEmployerProgressReviews(employerId: string, kind: LearnerKind, learnerId: string, signal?: AbortSignal) {
+  return request<EmployerProgressReviews>(`${BASE}/${employerId}/learner/${kind}/${learnerId}/progress-reviews/`, { signal });
+}
+
+export function fetchEmployerProgressReview(employerId: string, kind: LearnerKind, learnerId: string, eventKey: string, signal?: AbortSignal) {
+  return request<{ event: LearnerCalendarEvent; definition: LearnerReviewDefinition | null }>(
+    `${BASE}/${employerId}/learner/${kind}/${learnerId}/progress-reviews/${encodeURIComponent(eventKey)}/`, { signal });
+}
+
+export async function downloadEmployerProgressReview(employerId: string, kind: LearnerKind, learnerId: string, eventKey: string) {
+  const { saveReviewPdfResponse } = await import('./reviewPdf');
+  await saveReviewPdfResponse(await fetch(
+    `${BASE}/${employerId}/learner/${kind}/${learnerId}/progress-reviews/${encodeURIComponent(eventKey)}/pdf/`,
+    { credentials: 'include' }));
+}
+
+function monthlyLogPath(employerId: string, kind: LearnerKind, learnerId: string) {
+  return `${BASE}/${employerId}/learner/${kind}/${learnerId}/monthly-logs/`;
+}
+
+export function fetchEmployerMonthlyLogSummary(employerId: string, kind: LearnerKind, learnerId: string, signal?: AbortSignal) {
+  return request<LogSummary>(monthlyLogPath(employerId, kind, learnerId), { signal });
+}
+
+export function fetchEmployerMonthlyLog(employerId: string, kind: LearnerKind, learnerId: string, month: string, signal?: AbortSignal) {
+  return request<LogDetail>(`${monthlyLogPath(employerId, kind, learnerId)}${month}/`, { signal });
+}
+
+export async function fetchEmployerMonthlyLogContent(employerId: string, kind: LearnerKind, learnerId: string, month: string, rowId: number) {
+  const content = await request<ActivityContent>(`${monthlyLogPath(employerId, kind, learnerId)}${month}/activities/${rowId}/`);
+  return { ...content, parts: content.parts.map(part => ({ ...part,
+    url: part.url?.startsWith('/') && !part.url.startsWith('//') ? new URL(part.url, window.location.origin).href : part.url,
+  })) };
+}
 
 export interface EmployerLearnerCard {
   id: string;
@@ -114,6 +159,10 @@ export interface EmployerLearnerDetail {
     phone: string;
     programme: string;
     cohort: string;
+    /** The learner record's employer display name. */
+    employer?: string;
+    /** The learner record's organisation display name. */
+    organization?: string;
     programmeStatus: string;
     onboardingStatus: string;
     startDate: string;
@@ -148,8 +197,73 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
   return data as T;
 }
 
+// The landing page is the heaviest employer read. A second caller while it is
+// still loading (StrictMode's double effect, the progress-reviews page) shares
+// the request on its way rather than asking the server to build it again.
+const portalRequests = new Map<string, Promise<EmployerPortal>>();
+
 export function fetchEmployerPortal(employerId: string): Promise<EmployerPortal> {
-  return request<EmployerPortal>(`${BASE}/${employerId}/`);
+  const existing = portalRequests.get(employerId);
+  if (existing) return existing;
+  const pending = request<EmployerPortal>(`${BASE}/${employerId}/`);
+  const clear = () => {
+    if (portalRequests.get(employerId) === pending) portalRequests.delete(employerId);
+  };
+  pending.then(clear, clear);
+  portalRequests.set(employerId, pending);
+  return pending;
+}
+
+/** Whose document a row is, on the all-documents list. */
+export interface EmployerDocumentOwner {
+  id: string;
+  kind: 'apprenticeship' | 'commercial';
+  name: string;
+  programme: string;
+}
+
+export type EmployerOwnedItem = SignableItem & { learner: EmployerDocumentOwner };
+
+export interface EmployerDocuments {
+  employer: { id: string; name: string };
+  items: EmployerOwnedItem[];
+  outstandingTotal: number;
+}
+
+/** One file the learner uploaded to an assignment. */
+export type EmployerAssignmentFile =
+  | { source: 'lms'; id: string; name: string }
+  | { source: 'aptem'; id: string; activityId: string; name: string };
+
+/** A handed-in assignment, as the employer sees it: no marks or tutor feedback. */
+export interface EmployerAssignment {
+  id: string;
+  source: 'lms' | 'aptem';
+  title: string;
+  moduleTitle: string;
+  weekTitle: string;
+  status: string;
+  submittedAt: string | null;
+  files: EmployerAssignmentFile[];
+}
+
+/** Every assignment this learner has handed in, current and legacy. */
+export function fetchEmployerLearnerAssignments(employerId: string, kind: string, learnerId: string) {
+  return request<{ assignments: EmployerAssignment[] }>(`${BASE}/${employerId}/learner/${kind}/${learnerId}/assignments/`);
+}
+
+/** A short-lived link to one uploaded assignment file. */
+export async function fetchEmployerAssignmentFileUrl(employerId: string, kind: string, learnerId: string, file: EmployerAssignmentFile) {
+  const base = `${BASE}/${employerId}/learner/${kind}/${learnerId}/assignments`;
+  const url = file.source === 'lms'
+    ? `${base}/files/${encodeURIComponent(file.id)}/`
+    : `${base}/legacy/${encodeURIComponent(file.id)}/?activityId=${encodeURIComponent(file.activityId)}`;
+  return (await request<{ url: string }>(url)).url;
+}
+
+/** Every signable item across this employer's learners. */
+export function fetchEmployerDocuments(employerId: string): Promise<EmployerDocuments> {
+  return request<EmployerDocuments>(`${BASE}/${employerId}/documents/`);
 }
 
 export function fetchEmployerLearner(
@@ -173,6 +287,56 @@ export function fetchEmployerLearnerPlan(
   learnerId: string,
 ): Promise<LearnerDetail> {
   return request<LearnerDetail>(`${BASE}/${employerId}/learner/${kind}/${learnerId}/plan/`);
+}
+
+/**
+ * The learner-dashboard reads behind the Overview tab, served through the portal.
+ *
+ * The learner's own dashboard endpoints admit only the learner and staff, so an
+ * employer signed in to the portal gets these same payloads from here instead,
+ * behind the portal's employer-owns-this-learner check. Meeting and booking
+ * links come back empty: the employer's view is read-only.
+ */
+function overviewPart<T>(employerId: string, kind: string, learnerId: string, part: string, signal?: AbortSignal) {
+  return request<T>(`${BASE}/${employerId}/learner/${kind}/${learnerId}/overview/${part}/`, { signal });
+}
+
+export function fetchEmployerLearnerWeek(employerId: string, kind: LearnerKind, learnerId: string, signal?: AbortSignal) {
+  return overviewPart<OverviewWeek>(employerId, kind, learnerId, 'week', signal);
+}
+
+/** Attendance-register totals: the figure the learner's dashboard and the coach case file show. */
+export interface EmployerLearnerAttendance {
+  sessions: number;
+  present: number;
+  absent: number;
+  late: number;
+  attendanceRate: number;
+}
+
+export function fetchEmployerLearnerAttendance(employerId: string, kind: LearnerKind, learnerId: string, signal?: AbortSignal) {
+  return overviewPart<{ attendance: EmployerLearnerAttendance | null }>(employerId, kind, learnerId, 'attendance', signal);
+}
+
+export function fetchEmployerLearnerSchedule(employerId: string, kind: LearnerKind, learnerId: string, signal?: AbortSignal) {
+  return overviewPart<TrainingPlanDashboard>(employerId, kind, learnerId, 'schedule', signal);
+}
+
+export function fetchEmployerLearnerContract(employerId: string, kind: LearnerKind, learnerId: string, signal?: AbortSignal) {
+  return overviewPart<TrainingPlanContract>(employerId, kind, learnerId, 'contract', signal);
+}
+
+/** Per-month hour totals only — no activity rows or signatures. */
+export function fetchEmployerLearnerHours(employerId: string, kind: LearnerKind, learnerId: string, signal?: AbortSignal) {
+  return overviewPart<MonthlyLogHours>(employerId, kind, learnerId, 'hours', signal);
+}
+
+/** The learner's profile photo, or null when they have not added one. */
+export async function fetchEmployerLearnerPhoto(employerId: string, kind: LearnerKind, learnerId: string, signal?: AbortSignal) {
+  const res = await fetch(`${BASE}/${employerId}/learner/${kind}/${learnerId}/overview/photo/`, { credentials: 'include', signal });
+  if (res.status === 204) return null;
+  if (!res.ok || !res.headers.get('Content-Type')?.startsWith('image/jpeg')) throw new Error('The photo could not be loaded.');
+  return res.blob();
 }
 
 

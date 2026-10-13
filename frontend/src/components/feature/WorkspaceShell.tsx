@@ -41,6 +41,11 @@ interface WorkspaceShellProps {
   hideBreadcrumbs?: boolean;
   /** The transition portal has its own menu before programme delivery starts. */
   filterLearnerNavigation?: boolean;
+  /**
+   * Borrow another workspace's colours and sidebar (e.g. 'learner') while
+   * keeping this workspace's own navigation and behaviour. Defaults to `role`.
+   */
+  appearance?: string;
 }
 
 interface BreadcrumbItem {
@@ -205,6 +210,7 @@ export function WorkspaceShell({
   hidePageChrome = false,
   hideBreadcrumbs = false,
   filterLearnerNavigation = true,
+  appearance,
 }: WorkspaceShellProps) {
   // A learner who is still onboarding, or who has finished enrolment but is not
   // yet being taught, gets a reduced sidebar — most of the workspace needs a
@@ -212,7 +218,11 @@ export function WorkspaceShell({
   // every page, while learner-type and navigation permissions still apply.
   const { auth, isAdmin } = useAuth();
   const location = useLocation();
-  const fullHeightNavigation = role === 'learner' || role === 'advanced-admin';
+  // `appearance="learner"` is a complete shell mode, not just a colour skin.
+  // Employer portal pages borrow that chrome, so their reserved content width
+  // must follow the same 240px/64px sidebar state as a learner workspace.
+  const usesLearnerSidebar = role !== 'coach' && (appearance ?? role) === 'learner';
+  const fullHeightNavigation = usesLearnerSidebar || role === 'advanced-admin';
   const personalContext = activePersonalLearning(location.pathname);
   const personal = auth.account?.role === 'admin' && personalContext?.accountId === auth.account.id ? personalContext : null;
   // Keep the approved admin page styling in the shared directory, but let the
@@ -451,7 +461,7 @@ export function WorkspaceShell({
   return (
     <div
       className={`dashboard-theme workspace-shell flex h-screen overflow-hidden ${design.shell}`}
-      data-workspace-role={chromeRole}
+      data-workspace-role={appearance ?? chromeRole}
       // The offset itself is applied under a `lg` media query in index.css —
       // below that breakpoint the sidebar is an off-canvas drawer and must
       // reserve nothing.
@@ -466,6 +476,7 @@ export function WorkspaceShell({
         collapsed={coachSidebarCollapsed} onCollapsedChange={handleCoachSidebarCollapsedChange}
         onOpenAccount={() => { accountButtonRef.current?.focus(); accountButtonRef.current?.click(); }} /> : <Sidebar
         role={role}
+        appearance={appearance}
         roleLabel={roleLabel}
         navItems={workspaceNavItems}
         userName={displayName}
@@ -498,8 +509,10 @@ export function WorkspaceShell({
             mobileSidebarOpen={mobileSidebarOpen}
             mobileMenuButtonRef={mobileMenuButtonRef}
             role={chromeRole}
+            appearance={appearance}
             workspaceLabel={personal ? 'Learner' : roleLabel}
             personalLearning={Boolean(personal)}
+            sidebarSignOut={appearance === 'learner'}
           />
         )}
 
@@ -511,7 +524,7 @@ export function WorkspaceShell({
               title={!canGoBack ? 'You are on the first page' : previousRoute ? 'Back to the previous page' : 'Back'}>
               <ArrowLeft size={16} aria-hidden="true" /><span>Back</span>
             </button>}
-            {!hideBreadcrumbs && <nav className={`flex min-w-0 items-center gap-1.5 overflow-x-auto text-xs [scrollbar-width:none] [&::-webkit-scrollbar]:hidden ${role === 'learner' || role === 'coach' ? 'learner-step-breadcrumb' : ''}`} aria-label="Breadcrumb">
+            {!hideBreadcrumbs && <nav className={`flex min-w-0 items-center gap-1.5 overflow-x-auto text-xs [scrollbar-width:none] [&::-webkit-scrollbar]:hidden ${usesLearnerSidebar || role === 'coach' ? 'learner-step-breadcrumb' : ''}`} aria-label="Breadcrumb">
               {roleLabel !== 'Super Admin' && (
                 <>
                   <Link to="/" className="workspace-breadcrumb-home text-foreground-300 hover:text-foreground-500 transition-smooth">

@@ -64,4 +64,17 @@ describe('learner account menu', () => {
     await userEvent.click(button);
     expect(within(screen.getByRole('menu')).queryByRole('menuitem', { name: 'My Profile' })).not.toBeInTheDocument();
   });
+
+  it('uses learner header styling without changing employer account behaviour', async () => {
+    render(<MemoryRouter>
+      <Header role="employer" appearance="learner" workspaceLabel="Employer" pageTitle="My learners" onOpenSearch={() => {}} />
+    </MemoryRouter>);
+
+    expect(document.querySelector('.kbc-workspace-topbar')).toHaveClass('kbc-learner-header');
+    expect(document.querySelector('.kbc-learner-header-pattern')).toBeInTheDocument();
+    const button = screen.getByRole('button', { name: 'Account menu' });
+    expect(button.querySelector('.kbc-topbar-user-name')).toHaveTextContent('Employer');
+    await userEvent.click(button);
+    expect(within(screen.getByRole('menu')).queryByRole('menuitem', { name: 'My Profile' })).not.toBeInTheDocument();
+  });
 });

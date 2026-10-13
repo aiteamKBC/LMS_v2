@@ -17,6 +17,8 @@ describe('Learner dashboard hero', () => {
   it('keeps all assigned module links, actual placement facts, and existing actions accessible', () => {
     render(<MemoryRouter><LearnerDashboardHero {...props} /></MemoryRouter>);
     const hero = within(screen.getByRole('banner', { name: 'Learner programme' }));
+    expect(hero.getByText('Keep')).toBeInTheDocument();
+    expect(hero.getByText('learning')).toBeInTheDocument();
     expect(hero.getByRole('heading', { level: 1, name: props.name })).toBeVisible();
     expect(hero.getByText(props.cohort)).toBeVisible();
     expect(hero.getByText(props.employer)).toBeVisible();
@@ -67,5 +69,35 @@ describe('Learner dashboard hero', () => {
     expect(screen.getByLabelText('Status: On break')).toBeVisible();
     expect(screen.queryByRole('list')).not.toBeInTheDocument();
     expect(screen.queryByLabelText('Status: Active')).not.toBeInTheDocument();
+  });
+
+  it('supports the employer read-only view without changing the learner actions', () => {
+    const onBack = vi.fn();
+    render(
+      <MemoryRouter>
+        <LearnerDashboardHero
+          {...props}
+          observerAction={{ label: 'All learners', onClick: onBack }}
+          readOnlyModules
+          handwritingText={{ firstLine: 'Supporting', secondLine: 'progress' }}
+        />
+      </MemoryRouter>,
+    );
+
+    const hero = within(screen.getByRole('banner', { name: 'Learner programme' }));
+    expect(hero.getByText('Supporting')).toBeInTheDocument();
+    expect(hero.getByText('progress')).toBeInTheDocument();
+    expect(hero.queryByText('Keep')).not.toBeInTheDocument();
+    fireEvent.click(hero.getByRole('button', { name: 'All learners' }));
+    expect(onBack).toHaveBeenCalledOnce();
+    expect(hero.queryByRole('button', { name: 'Continue learning' })).not.toBeInTheDocument();
+    expect(hero.queryByRole('button', { name: "Learner's Map" })).not.toBeInTheDocument();
+    expect(hero.queryByRole('link', { name: 'View all' })).not.toBeInTheDocument();
+
+    const modules = within(hero.getByRole('list', { name: props.moduleLabel }));
+    expect(modules.queryAllByRole('link')).toHaveLength(0);
+    for (const module of props.modules) {
+      expect(modules.getByText(module.title)).toBeVisible();
+    }
   });
 });

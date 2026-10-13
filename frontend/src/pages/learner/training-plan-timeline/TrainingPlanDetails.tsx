@@ -35,10 +35,16 @@ type Props = {
   programmeStartDate?: string | null; programmeEndDate?: string | null;
   activityOverviewOnly?: boolean;
   timelineOnly?: boolean;
+  /** Module timeline, module overview and progress panels, without the monthly plan.
+   * overviewOnly keeps progress; trainingOnly keeps the timeline and module overview. */
+  cardsOnly?: boolean;
+  simpleModuleOverview?: boolean;
+  canOpenCalendar?: boolean;
   monthlyOnly?: boolean;
   trainingOnly?: boolean;
   overviewOnly?: boolean;
   showOtjChart?: boolean;
+  wholeProgrammeRings?: boolean;
   programmeProgress?: CanonicalModuleProgress[];
   programmeSnapshot?: ProgrammeProgressSnapshot;
   targetAsOfToday?: number | null;
@@ -77,8 +83,9 @@ function catchupAction(row: AttendanceLecture): string | null {
 /** Weekly learning and monthly coaching share the dashboard above the linked module panels. */
 export function TrainingPlanDetails({ data: baseData, subjects, kind, learnerId, onRefresh, refreshing = false,
   onRetryContract, initialSubjectId = '', initialMonth = '', canOpenActivities = true, weeklyFocus, programmeStartDate, programmeEndDate,
-  activityOverviewOnly = false, timelineOnly = false, monthlyOnly = false, trainingOnly = false, overviewOnly = false,
-  showOtjChart = true, programmeSnapshot, programmeProgress, targetAsOfToday }: Props) {
+  activityOverviewOnly = false, timelineOnly = false, cardsOnly = false, canOpenCalendar = true, simpleModuleOverview = false,
+  monthlyOnly = false, trainingOnly = false, overviewOnly = false,
+  showOtjChart = true, wholeProgrammeRings = false, programmeSnapshot, programmeProgress, targetAsOfToday }: Props) {
   const baseModules = useMemo(() => buildPlanModules(subjects, baseData), [subjects, baseData]);
   const [now, setNow] = useState(Date.now);
   useEffect(() => {
@@ -303,7 +310,8 @@ export function TrainingPlanDetails({ data: baseData, subjects, kind, learnerId,
       available: measures.filter(measure => measure.value != null).length, measureCount: measures.length };
   });
   const progressCharts = <ProgressCharts modules={modules} selected={selected} data={data} onModuleSelect={module => setSelectedId(module.id)}
-    programmeRows={programmeRows} programmeStartMonth={minMonth} programmeEndMonth={maxMonth} programmeSnapshot={programmeSnapshot} showOtjChart={showOtjChart} targetAsOfToday={targetAsOfToday} />;
+    programmeRows={programmeRows} programmeStartMonth={minMonth} programmeEndMonth={maxMonth} programmeSnapshot={programmeSnapshot} showOtjChart={showOtjChart}
+    wholeProgrammeRings={wholeProgrammeRings} targetAsOfToday={targetAsOfToday} />;
   // Off-the-job hours summary for the sidebar beside Monthly focus. Values come
   // from the same month-by-month source the OTJH chart below uses, so the card
   // agrees with it. Minimum required and Forecast are not carried by the learner
@@ -318,11 +326,23 @@ export function TrainingPlanDetails({ data: baseData, subjects, kind, learnerId,
   const otjSummaryCard = showOtjSummary
     ? <OtjHoursSummary plannedIlr={otjPlanned} submitted={otjSubmitted} completed={otjCompleted} minimumRequired={null} forecast={null} />
     : null;
+  const moduleTimeline = <ModuleTimeline canOpenActivities={canOpenActivities} canOpenCalendar={canOpenCalendar} data={data} modules={modules} kind={kind} learnerId={learnerId} today={today}
+    programmeStartDate={programmeStartDate} detailsMode="overview" selectedMonth={selectedMonth} selectedId={selected?.id}
+    onMonthChange={selectMonth} onModuleSelect={module => setSelectedId(module.id)} />;
+  const moduleOverview = <ModuleOverview module={selected} hasModules={modules.length > 0} coachName={data.coach.name}
+    href={selected ? subjectHref(selected.id) : ""} canOpenActivities={canOpenActivities} showSchedule={!trainingOnly} simple={simpleModuleOverview} />;
   if (timelineOnly) {
+    return <div className={`${styles.root} ${layout.root}`}>{moduleTimeline}</div>;
+  }
+  if (cardsOnly) {
     return <div className={`${styles.root} ${layout.root}`}>
-      <ModuleTimeline canOpenActivities={canOpenActivities} data={data} modules={modules} kind={kind} learnerId={learnerId} today={today}
-        programmeStartDate={programmeStartDate} detailsMode="overview" selectedMonth={selectedMonth} selectedId={selected?.id}
-        onMonthChange={selectMonth} onModuleSelect={module => setSelectedId(module.id)} />
+      {/* Training uses the learner dashboard's stacked layout: the timeline
+          takes the full row and the focused module follows beneath it. */}
+      {!overviewOnly && <div className={`${layout.cards} ${trainingOnly ? layout.trainingCards : ''}`}>
+        <div className={layout.learningVisuals}>{moduleTimeline}</div>
+        {moduleOverview}
+      </div>}
+      {!trainingOnly && <div className={layout.cardsBelow}>{progressCharts}</div>}
     </div>;
   }
   const showMonthly = !trainingOnly && !overviewOnly;
@@ -419,12 +439,10 @@ export function TrainingPlanDetails({ data: baseData, subjects, kind, learnerId,
     </>}
     <div className={`${layout.cards} ${activityOverviewOnly ? layout.activityOverviewCards : ''} ${trainingOnly ? layout.trainingCards : ''}`}>
       <div className={layout.learningVisuals}>
-      {!activityOverviewOnly && <ModuleTimeline canOpenActivities={canOpenActivities} data={data} modules={modules} kind={kind} learnerId={learnerId} today={today}
-        programmeStartDate={programmeStartDate} detailsMode="overview" selectedMonth={selectedMonth} selectedId={selected?.id} onMonthChange={selectMonth} onModuleSelect={module => setSelectedId(module.id)} />}
+      {!activityOverviewOnly && moduleTimeline}
       {!trainingOnly && progressCharts}
       </div>
-      {!activityOverviewOnly && <ModuleOverview module={selected} hasModules={modules.length > 0} coachName={data.coach.name}
-        href={selected ? subjectHref(selected.id) : ""} canOpenActivities={canOpenActivities} showSchedule={!trainingOnly} />}
+      {!activityOverviewOnly && moduleOverview}
     </div>
     </section>}
     {canOpenActivities && bookingReview && <MeetingBookingDialog
