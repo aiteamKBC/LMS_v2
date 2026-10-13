@@ -35,4 +35,3 @@ def operator_reference(value):
         return identifier(value)
     except RewardError:
         raise CommandError("A valid operator reference is required.") from None
-

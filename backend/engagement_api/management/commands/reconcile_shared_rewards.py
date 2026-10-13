@@ -19,4 +19,3 @@ class Command(BaseCommand):
         results = reconcile_pending(options["limit"]) + reconcile_pending_saved(options["limit"])
         counts = Counter(row["status"] for row in results)
         self.stdout.write("Processed " + str(len(results)) + " durable jobs. " + ", ".join(key+"="+str(value) for key,value in sorted(counts.items())))
-

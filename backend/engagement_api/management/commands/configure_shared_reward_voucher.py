@@ -38,4 +38,3 @@ class Command(BaseCommand):
             cursor.execute('INSERT INTO "Engagement".shared_reward_voucher_options(reward_id,amount_gbp,enabled) VALUES(%s,%s,%s) ON CONFLICT(reward_id) DO UPDATE SET enabled=EXCLUDED.enabled',
                            [reward_id, amount, bool(options["enable"])])
         self.stdout.write("Existing voucher option " + ("enabled." if options["enable"] else "saved disabled.") + " No claim was created or fulfilled.")
-

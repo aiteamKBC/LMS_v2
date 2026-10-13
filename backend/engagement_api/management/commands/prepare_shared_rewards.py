@@ -79,4 +79,3 @@ class Command(BaseCommand):
             cursor.execute('UPDATE "Engagement".shared_reward_config SET enabled=%s,starts_at=%s,programme_start=%s,module_end=%s,semester_end=%s,masterclass_event_id=%s,updated_by=%s,updated_at=now() WHERE module_id=%s',
                            [enabled, starts_at, began, end, semester, event, operator, PILOT_MODULE])
         self.stdout.write("Shared rewards policy " + ("enabled; original cutover preserved." if enabled else "prepared disabled."))
-

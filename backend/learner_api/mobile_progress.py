@@ -168,4 +168,3 @@ def measured_time(rows, module_id, now=None):
         "excludedOverlappingSessions": len(overlaps), "unallocatedMeasuredSessions": unallocated_count,
         "note": "Saved signed study is separate from accepted OTJ hours. Overlapping session envelopes are excluded; cross-week or invalid bounds remain unallocated. Planned/manual hours never enter these totals.",
     }
-

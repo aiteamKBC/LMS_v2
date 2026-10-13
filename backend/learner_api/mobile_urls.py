@@ -23,4 +23,3 @@ urlpatterns = [
     path("quizzes/<str:component_id>/submit/", mobile.submit_quiz),
     path("meetings/<str:action>/", mobile.meeting_action),
 ]
-

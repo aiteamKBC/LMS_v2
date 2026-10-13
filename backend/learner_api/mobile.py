@@ -642,4 +642,3 @@ def meeting_action(request, action):
     _, source, kind, _ = request.mobile_context
     return _delegate(request, f"/learner_api/calendar/{kind}/{source.pk}/{action}/",
                      handlers[action], payload=payload, kind=kind, pk=source.pk)
-
