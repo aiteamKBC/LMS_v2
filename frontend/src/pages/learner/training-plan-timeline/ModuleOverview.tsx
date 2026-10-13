@@ -8,14 +8,16 @@ import { dateLabel, hours, Meter, moduleStatus, State } from './presentation';
 import styles from './trainingPlan.module.css';
 import layout from './TrainingPlanDetails.module.css';
 
-type Props = { module?: TimelineModule; hasModules: boolean; coachName: string; href: string; canOpenActivities: boolean; showSchedule?: boolean };
+type Props = { module?: TimelineModule; hasModules: boolean; coachName: string; href: string; canOpenActivities: boolean; showSchedule?: boolean;
+  /** Dates, staff, hours and progress only: for viewers outside the learner's own workspace. */
+  simple?: boolean };
 const activityLabels: Record<string, string> = {
   reading: 'Readings', video: 'Videos', podcast: 'Podcasts', audio: 'Audio activities', powerpoint: 'Presentations',
   quiz: 'Quizzes', reading_quiz: 'Readings & quizzes', assignment: 'Assignments', checkpoint: 'Checkpoints',
   reflection: 'Reflections', live_session: 'Live sessions', activity: 'Other activities',
 };
 
-export function ModuleOverview({ module, hasModules, coachName, href, canOpenActivities, showSchedule = true }: Props) {
+export function ModuleOverview({ module, hasModules, coachName, href, canOpenActivities, showSchedule = true, simple = false }: Props) {
   const focused = useCaseFileModuleDetail(module?.detail?.id);
   const detail = focused?.module ?? module?.detail;
   const timetable = [detail?.session_week_day, detail?.session_start_time
@@ -25,7 +27,7 @@ export function ModuleOverview({ module, hasModules, coachName, href, canOpenAct
   const deliveryEnd = (detail?.effectiveEndDate || '').slice(0, 10);
   const studyHoursProgress = detail?.total_otjh != null && module?.actual != null
     ? percent(module.actual, detail.total_otjh) : null;
-  return <section className={`${styles.panel} ${layout.overview}`} aria-label="Module overview">
+  return <section className={`${styles.panel} ${layout.overview} ${simple ? layout.simpleOverview : ''}`} aria-label="Module overview">
     {focused?.error && <p role="alert">{focused.error} <button type="button" onClick={focused.refresh}>Retry module details</button></p>}
     <div className={styles.panelHeading}>
       <div><p className={styles.eyebrow}>In focus</p><h2>Module overview</h2></div>
@@ -33,11 +35,11 @@ export function ModuleOverview({ module, hasModules, coachName, href, canOpenAct
     </div>
     {module ? <>
       <div className={layout.moduleIdentity}><h3 className={styles.overviewTitle}>{module.title}</h3><State value={moduleStatus(module)} /></div>
-      {(detail?.programme_name || detail?.cohort_name || detail?.group_name) && <div className={layout.moduleContext}>
+      {!simple && (detail?.programme_name || detail?.cohort_name || detail?.group_name) && <div className={layout.moduleContext}>
         {detail.programme_name && <p>{detail.programme_name}</p>}
         <div>{detail.cohort_name && <span>Cohort: {detail.cohort_name}</span>}{detail.group_name && <span>Group: {detail.group_name}</span>}</div>
       </div>}
-      {detail?.description && <p className={layout.moduleDescription}>{detail.description}</p>}
+      {!simple && detail?.description && <p className={layout.moduleDescription}>{detail.description}</p>}
       <div className={layout.overviewGroups}>
         <div className={`${layout.overviewGroup} ${layout.scheduleGroup}`}><h3>Schedule</h3><dl className={`${layout.factGrid} ${layout.scheduleFacts}`}>
           <OverviewFact icon={CalendarDays} label="Start date">{module.start ? dateLabel(module.start) : 'To be confirmed'}</OverviewFact>
@@ -48,12 +50,14 @@ export function ModuleOverview({ module, hasModules, coachName, href, canOpenAct
               rather than a stored date that stopped describing the run when
               the closure was ticked. Hidden when the two agree: repeating the
               same date under two labels reads as two different facts. */}
-          {deliveryEnd && deliveryEnd !== module.end && (
+          {!simple && deliveryEnd && deliveryEnd !== module.end && (
             <OverviewFact icon={CalendarDays} label="Delivery ends">{dateLabel(deliveryEnd)}
               <small>Moved by a holiday closure</small></OverviewFact>
           )}
-          <OverviewFact icon={Layers3} label="Teaching weeks">{detail?.weeks_number ?? (module.weeks || 'To be confirmed')}</OverviewFact>
-          <OverviewFact icon={Clock3} label="Weekly timetable">{timetable || 'To be confirmed'}{detail?.session_start_time && <small>UK time</small>}</OverviewFact>
+          {!simple && <>
+            <OverviewFact icon={Layers3} label="Teaching weeks">{detail?.weeks_number ?? (module.weeks || 'To be confirmed')}</OverviewFact>
+            <OverviewFact icon={Clock3} label="Weekly timetable">{timetable || 'To be confirmed'}{detail?.session_start_time && <small>UK time</small>}</OverviewFact>
+          </>}
         </dl></div>
         <div className={layout.overviewGroup}><h3>Staff</h3><dl className={layout.factGrid}>
           <OverviewFact icon={Users} label="Coach">{detail?.coach_name || coachName || 'To be assigned'}</OverviewFact>
@@ -68,6 +72,7 @@ export function ModuleOverview({ module, hasModules, coachName, href, canOpenAct
           dates they are delivered, and the delivery days a cohort holiday
           closed still present as Reading Weeks. Without these the learner sees
           an unexplained gap where a bank holiday was. */}
+      {!simple && <>
       {showSchedule && <CurriculumTimeline slots={detail?.curriculumSlots} sessions={module.sessions} />}
       {Object.keys(module.activityCounts).length > 0 && <div className={layout.moduleSection}>
         <h3>Learning activities <span>{module.activityCount}</span></h3>
@@ -86,6 +91,7 @@ export function ModuleOverview({ module, hasModules, coachName, href, canOpenAct
         <summary>Learning outcomes ({outcomes.length})</summary>
         <ul>{outcomes.map(outcome => <li key={outcome}>{outcome}</li>)}</ul>
       </details>}
+      </>}
       <div className={`${styles.overviewProgress} ${layout.moduleProgress}`}>
         <div><span>Activity progress</span><strong>{module.progress}%</strong></div>
         <Meter value={module.progress} label="Selected module progress" />

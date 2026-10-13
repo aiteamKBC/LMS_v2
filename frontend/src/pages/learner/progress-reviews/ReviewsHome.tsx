@@ -1,4 +1,4 @@
-import { useEffect, useId, useMemo, useRef, useState } from 'react';
+import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { ArrowLeft, ArrowRight, CalendarDays, ChevronDown, FileText, List, Video } from 'lucide-react';
 import type { LearnerCalendarEvent } from '@/api/learnerCalendar';
@@ -27,6 +27,8 @@ export interface ReviewsHomeProps {
   onAttend: (id: string) => void;
   onReport: (session: MeetingAttendance) => void;
   basePath?: string;
+  viewerRole?: 'participant' | 'employer';
+  onOpenReview?: (session: LearnerCalendarEvent) => void;
 }
 
 const filters: { id: ReviewFilter; label: string }[] = [{ id: 'all', label: 'All' }, { id: 'upcoming', label: 'Upcoming' }, { id: 'past', label: 'Past' }];
@@ -44,9 +46,13 @@ const progressTimelineStatus = (state: ReviewPresentation, definitions?: ReviewD
 
 export default function ReviewsHome(props: ReviewsHomeProps) {
   const { sessions, attendance, definitions, learner, today, titleOf } = props;
-  const overview = useMemo(() => reviewOverview(sessions, attendance, today, definitions), [sessions, attendance, today, definitions]);
+  const employer = props.viewerRole === 'employer';
+  const overview = useMemo(() => reviewOverview(sessions, attendance, today, definitions, props.viewerRole), [sessions, attendance, today, definitions, props.viewerRole]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [params, setParams] = useSearchParams();
+  const [routeParams, setRouteParams] = useSearchParams();
+  const [localParams, setLocalParams] = useState(() => new URLSearchParams());
+  const params = props.onOpenReview ? localParams : routeParams;
+  const setParams = (next: URLSearchParams) => props.onOpenReview ? setLocalParams(next) : setRouteParams(next);
   const allView = params.get('view') === 'all';
   const filter = filters.find(item => item.id === params.get('filter'))?.id || 'all';
   const rows = overview[filter];
@@ -80,6 +86,17 @@ export default function ReviewsHome(props: ReviewsHomeProps) {
   const reminders = overview.attention.filter(item => item.session.id !== overview.current?.session.id);
   const attentionId = useId();
 
+  function listLink(all: boolean, children: ReactNode, className: string) {
+    return props.onOpenReview
+      ? <button type="button" className={className} onClick={() => { setSelectedId(null); setParams(new URLSearchParams(all ? 'view=all' : '')); }}>{children}</button>
+      : <Link className={className} to={viewHref(all)} onClick={() => { if (!all) setSelectedId(null); }}>{children}</Link>;
+  }
+  function reviewLink(state: ReviewPresentation, children: ReactNode, className?: string) {
+    return props.onOpenReview
+      ? <button type="button" className={className} onClick={() => props.onOpenReview?.(state.session)}>{children}</button>
+      : <Link className={className} to={detailHref(state)}>{children}</Link>;
+  }
+
   function status(state: ReviewPresentation) {
     return <span className={styles.badge} data-tone={state.needsAttention ? 'attention' : state.status === 'completed' ? 'success' : 'neutral'}>{state.label}</span>;
   }
@@ -87,12 +104,13 @@ export default function ReviewsHome(props: ReviewsHomeProps) {
     const className = secondary ? styles.secondaryButton : styles.primaryButton;
     if (state.action === 'schedule') return <button type="button" className={className} disabled={!props.canAct || props.busy} onClick={() => props.onSchedule(state.session)}><CalendarDays size={19} aria-hidden="true"/>Book a time</button>;
     if (state.action === 'join' && state.joinUrl) return <a className={className} href={state.joinUrl} target="_blank" rel="noopener noreferrer"><Video size={19} aria-hidden="true"/>Join meeting</a>;
-    return <Link className={className} to={detailHref(state)}><FileText size={19} aria-hidden="true"/>{state.action === 'sign' && props.canAct ? 'Read & sign' : 'View review'}</Link>;
+    return reviewLink(state, <><FileText size={19} aria-hidden="true"/>{state.action === 'sign' && props.canAct ? 'Read & sign' : 'View review'}</>, className);
   }
   function canUseAttendanceActions(state: ReviewPresentation) {
     return !state.session.importedReview && !['completed', 'cancelled', 'awaiting-signature'].includes(state.status);
   }
   function options(state: ReviewPresentation) {
+    if (employer) return null;
     if (state.session.importedReview && !state.attendance?.calendarEventKey) return null;
     const showAttendanceOptions = canUseAttendanceActions(state) && state.attendance && !state.attendance.canAttend && !state.attendance.absenceReported
       && !state.attendance.attendanceConfirmed && (state.attendance.canReportAbsence || state.attendance.missed);
@@ -106,6 +124,7 @@ export default function ReviewsHome(props: ReviewsHomeProps) {
     </div></details>;
   }
   function attendanceActions(state: ReviewPresentation) {
+    if (employer) return null;
     if (!canUseAttendanceActions(state)) return null;
     if (!state.attendance?.canAttend && !state.attendance?.attendanceConfirmed && !state.attendance?.absenceReported) return null;
     return <div className={styles.attendance}>
@@ -120,8 +139,8 @@ export default function ReviewsHome(props: ReviewsHomeProps) {
   }
 
   return <section className={styles.home} aria-label="Reviews sessions">
-    <header className={styles.header}><div><h1 ref={heading} tabIndex={-1}>{allView ? 'All reviews' : 'My reviews'}</h1><p className={styles.intro}>{allView ? 'Find a review, check its status or read a previous record.' : 'Your next review and anything that needs your attention.'}</p></div>
-      <div className={styles.headerLinks}>{allView ? <Link className={styles.secondaryButton} to={viewHref(false)} onClick={() => setSelectedId(null)}><ArrowLeft size={19} aria-hidden="true"/>Back to current review</Link> : <Link className={styles.secondaryButton} to={viewHref(true)}><List size={19} aria-hidden="true"/>View all reviews ({sessions.length})</Link>}</div>
+    <header className={styles.header}><div><h1 ref={heading} tabIndex={-1}>{allView ? 'All reviews' : employer ? 'Progress reviews' : 'My reviews'}</h1><p className={styles.intro}>{allView ? 'Find a review, check its status or read a previous record.' : employer ? 'This learner’s reviews and anything that needs your employer signature.' : 'Your next review and anything that needs your attention.'}</p></div>
+      <div className={styles.headerLinks}>{allView ? listLink(false, <><ArrowLeft size={19} aria-hidden="true"/>Back to current review</>, styles.secondaryButton) : listLink(true, <><List size={19} aria-hidden="true"/>View all reviews ({sessions.length})</>, styles.secondaryButton)}</div>
     </header>
     {sessions.length > 0 && <ProgrammeReviewTimeline label="Progress review" activeId={current?.session.id || null} onSelect={selectTimelineItem} items={overview.all.map(state => ({
       id: state.session.id, title: titleOf(state.session), date: state.date,
@@ -135,7 +154,7 @@ export default function ReviewsHome(props: ReviewsHomeProps) {
           <div className={styles.filters} role="group" aria-label="Filter reviews">{filters.map(item => <button type="button" key={item.id} aria-pressed={filter === item.id} onClick={() => updateView(item.id)}>{item.label} ({overview[item.id].length})</button>)}</div>
           {!rows.length ? <div className={styles.empty}><h2>{filter === 'past' ? 'No past reviews yet' : filter === 'upcoming' ? 'No upcoming reviews' : 'No reviews yet'}</h2><p>Your reviews will appear here when they are available.</p></div> : <ul className={styles.reviewList}>
             {rows.slice((page - 1) * 8, page * 8).map(state => <li key={state.session.id} className={styles.reviewRow}>
-              <div className={styles.rowIdentity}><h2><Link to={detailHref(state)}>{titleOf(state.session)}</Link></h2><p>{state.session.coachName || 'Reviewer to be confirmed'}</p><p>{state.description}</p></div>
+              <div className={styles.rowIdentity}><h2>{reviewLink(state, titleOf(state.session), props.onOpenReview ? styles.textLink : undefined)}</h2><p>{state.session.coachName || 'Reviewer to be confirmed'}</p><p>{state.description}</p></div>
               <div className={styles.rowDate}>{status(state)}<p>{state.action === 'schedule' ? 'Target date' : state.booked ? 'Meeting date' : 'Review date'}</p><strong>{dateLabel(state.date)}</strong>{state.booked && <p>{state.attendance?.startTime || state.session.scheduledTime || 'Time to be confirmed'}{props.timeZone ? ` · ${props.timeZone}` : ''}</p>}</div>
               <div className={styles.rowActions}>{action(state, true)}{options(state)}{attendanceActions(state)}</div>{warning(state)}
             </li>)}
@@ -151,10 +170,10 @@ export default function ReviewsHome(props: ReviewsHomeProps) {
             <p className={styles.help}>{current.description}</p>{warning(current)}
             <div className={styles.actions}>{action(current)}{current.action === 'schedule' && <Link className={styles.textLink} to={detailHref(current)}>View review details<ArrowRight size={17} aria-hidden="true"/></Link>}{options(current)}</div>
             {attendanceActions(current)}
-          </article> : <article className={styles.empty} aria-label="Current review"><h2>No current review</h2><p>Your next review will appear here when it is planned. You can still open your previous records.</p><Link className={styles.secondaryButton} to={viewHref(true)}>View all reviews<ArrowRight size={18} aria-hidden="true"/></Link></article>}
+          </article> : <article className={styles.empty} aria-label="Current review"><h2>No current review</h2><p>Your next review will appear here when it is planned. You can still open your previous records.</p>{listLink(true, <>View all reviews<ArrowRight size={18} aria-hidden="true"/></>, styles.secondaryButton)}</article>}
           {reminders.length > 0 && <section id={attentionId} className={styles.attention} aria-label="Reviews needing attention"><h2 className={styles.attentionHeading}>Also needs your attention ({reminders.length})</h2>{reminders.map(state => <article key={state.session.id} className={styles.attentionItem}><div><h3>{titleOf(state.session)}</h3><p>{state.label} · {dateLabel(state.date)}</p><p>{state.description}</p></div>{action(state, true)}</article>)}</section>}
         </>}
-        <footer className={styles.footer}><Link className={styles.textLink} to={`/learner/calendar?${new URLSearchParams({ kind: learner.kind, learner: learner.id })}`}><CalendarDays size={18} aria-hidden="true"/>Open calendar</Link></footer>
+        {!employer && <footer className={styles.footer}><Link className={styles.textLink} to={`/learner/calendar?${new URLSearchParams({ kind: learner.kind, learner: learner.id })}`}><CalendarDays size={18} aria-hidden="true"/>Open calendar</Link></footer>}
       </>}
   </section>;
 }
