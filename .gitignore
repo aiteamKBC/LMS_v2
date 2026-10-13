@@ -269,7 +269,7 @@ $RECYCLE.BIN/
 /frontend/*.mp4
 /screenshots/
 /frontend/screenshots/
-
+.baseline-head-tmp
 # One-off backfill / migration completion markers
 /backend/*_DONE.txt
 

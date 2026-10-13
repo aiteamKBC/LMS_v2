@@ -313,6 +313,11 @@ const definitions: ComponentAuthoringDefinition[] = [
       // strips it on save/reload, resetting the editor to the written-brief tab
       // and hiding an uploaded file that is actually still stored.
       assignmentSource: 'Text',
+      // The title learners see in place of `title` (blank keeps `title`), and
+      // whether this is the eight-step monthly assignment. Read by
+      // learner_api.assignment_settings; declared in the backend schema too.
+      learnerTitle: '',
+      isMonthlyAssignment: false,
     },
   },
   {

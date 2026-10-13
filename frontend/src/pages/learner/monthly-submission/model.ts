@@ -1,8 +1,21 @@
 import type { LearnerDetail } from '@/api/learnerDetail';
-import type { TrainingPlanContract } from '@/api/trainingPlanDashboard';
+import type { PlanMonth, TrainingPlanContract } from '@/api/trainingPlanDashboard';
 import type { CoverMetadata } from '../my-learning/SubjectWorkspace';
-import { completedComponentIds, componentRequiresEvidence, hasComponentContent } from '@/utils/learnerJourney';
+import { completedComponentIds, componentTypeMeta, hasComponentContent, isMonthlyAssignment } from '@/utils/learnerJourney';
 import { dateKey } from '../training-plan-timeline/model';
+
+const PLAN_ASSIGNMENT_SUFFIX = /\s*[-(–—]?\s*(?:Coach[ -]Led Assignment|Assignment)\s*\)?$/i;
+const PLAN_ROW_NOT_A_TOPIC = /^(?:LMS[- ]?Activity|Additional job activities|(?:January|February|March|April|May|June|July|August|September|October|November|December)[ -]*)$/i;
+
+/** The assignments the learner's Training Plan names for a month (its
+ * "… Coach Led Assignment" rows), as the plan words them. Shown beside the
+ * portal assignment so learners can match the two; never matched automatically. */
+export function trainingPlanAssignments(month: PlanMonth | undefined): string[] {
+  const names = (month?.activities || []).filter(row => /assignment/i.test(row.method || ''))
+    .map(row => (row.title || '').replace(PLAN_ASSIGNMENT_SUFFIX, '').replace(/^[\s\-–—]+|[\s\-–—]+$/g, ''))
+    .filter(name => name && !PLAN_ROW_NOT_A_TOPIC.test(name));
+  return [...new Set(names)];
+}
 
 export const statusLabels: Record<string, string> = {
   todo: 'To do', draft: 'Draft saved', submitted_for_tutor_review: 'Submitted for review',
@@ -21,7 +34,7 @@ export function groupMonthlyAssignments(real: LearnerDetail, metadata: CoverMeta
   const completed = completedComponentIds(real);
   const seen = new Set<string>();
   const assignments = real.components.filter(component => {
-    if (!component.componentId || !componentRequiresEvidence(component.type) || seen.has(component.componentId)) return false;
+    if (!component.componentId || !isMonthlyAssignment(component, real.components) || seen.has(component.componentId)) return false;
     seen.add(component.componentId);
     return true;
   }).map(component => {
@@ -39,7 +52,9 @@ export function groupMonthlyAssignments(real: LearnerDetail, metadata: CoverMeta
     const revise = ['referred', 'returned', 'rejected', 'partial'].includes(status);
     const hasContent = hasComponentContent({ ...component, title: component.component });
     const awaitingBrief = !hasContent && status === 'todo';
-    return { ...component, id, date, dueDate, month, status, submitted, awaitingBrief,
+    // "Assignment · Title" -> the title alone; the page already says it is an assignment.
+    const title = componentTypeMeta(component.component).detail || component.component;
+    return { ...component, id, title, date, dueDate, month, status, submitted, awaitingBrief,
       submissionCount: submissionCounts[id],
       marking: real.componentMarkingStatus?.[id],
       action: awaitingBrief ? 'Awaiting assignment brief' : status === 'draft' ? 'Continue assignment'
@@ -54,6 +69,7 @@ export function groupMonthlyAssignments(real: LearnerDetail, metadata: CoverMeta
   return [...groups].sort(([a], [b]) => a && b ? a.localeCompare(b) : a ? -1 : b ? 1 : 0).map(([month, rows]) => ({
     month, label: contract?.months[month]?.label?.trim() || monthName(month),
     topics: contract?.months[month]?.topics || [],
+    planAssignments: trainingPlanAssignments(contract?.months[month]),
     assignments: rows.sort((a, b) => a.date.localeCompare(b.date)),
     submitted: rows.filter(row => row.submitted).length,
   }));

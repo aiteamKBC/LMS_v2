@@ -52,11 +52,21 @@ def actual_time_seconds(value):
         return None
 
 
+def is_unsynchronised_direct_save(record):
+    """A current LMS save that no sync or reconciliation has given seconds yet.
+
+    Imported/normalised seconds (including zero) and reporting segments remain
+    authoritative, so those rows are never unsynchronised.
+    """
+    return (record.get('component_link_source') in {'direct', 'quiz_ref'}
+            and not record.get('source_system') and record.get('actual_seconds') is None
+            and not record.get('segments'))
+
+
 def project_current(records, markings):
     """Project unsynchronised direct saves using the existing time/pass rules.
 
-    Imported/normalised seconds (including zero) and reporting segments remain
-    authoritative. Planned duration is never substituted for recorded time.
+    Planned duration is never substituted for recorded time.
     """
     result, native = [], {}
     retained = {source_reference(p) for p in records if p.get('source_system')}
@@ -68,9 +78,7 @@ def project_current(records, markings):
                    and p.get('actual_seconds') is not None and p.get('component_ref')}
     for original in records:
         p = dict(original)
-        if (p.get('component_link_source') not in {'direct', 'quiz_ref'}
-                or p.get('source_system') or p.get('actual_seconds') is not None
-                or p.get('segments')):
+        if not is_unsynchronised_direct_save(p):
             result.append(p)
             continue
         if p.get('kind') == 'activity_event' or not p.get('submitted_at'):

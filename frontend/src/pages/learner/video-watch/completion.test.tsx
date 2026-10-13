@@ -136,7 +136,7 @@ it('does not count a failed reading preview as reading time', async () => {
   const reading = { ...first, type: 'reading', component: 'Reading', resourceUrl: '/curriculum_api/curriculum/uploads/sample.pdf' };
   vi.mocked(fetchLearnerDetail).mockResolvedValue({ ...detail(), components: [reading] } as unknown as LearnerDetail);
   const { unmount } = mount();
-  await screen.findByText('File request failed (404)');
+  await screen.findByText('This file could not be found on the server. Please let your coach or the curriculum team know.');
   now = 60000;
   unmount();
   const saved = JSON.parse(localStorage.getItem('learner_activity_timer:v1:apprenticeship:1:C1')!);

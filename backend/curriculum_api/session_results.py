@@ -585,8 +585,14 @@ def admin_session(request, series_id, session_number):
 
 
 def learner_series(kind, learner_id, series_id):
+    """The learner and a series from one of their assigned modules, else (None, None).
+
+    A module duplicated to share another module's Teams meeting has no series
+    of its own, so its learners are matched through the source module. The
+    duplicates that led here are kept on the row as ``learner_shared_module_ids``.
+    """
     from learner_api.learner_detail import SOURCE_MODELS
-    from learner_api.attendance_lectures import read_assigned_modules
+    from learner_api.attendance_lectures import read_assigned_modules, shared_teams_sources
     model = SOURCE_MODELS.get(kind)
     learner = model.all_learners.filter(pk=learner_id).first() if model else None
     if not learner:
@@ -595,10 +601,17 @@ def learner_series(kind, learner_id, series_id):
     rows = read('''SELECT s.* FROM curriculum.live_sessions s JOIN curriculum.modules m
         ON m.module_catalogue_id=s.module_catalogue_id
         WHERE s.id=%s AND m.deleted_at IS NULL AND NOT coalesce(m.is_programme_deleted,false)
-        AND s.status NOT IN ('deleted','superseded','failed')''', [series_id])
-    if not rows or str(rows[0]['module_catalogue_id']) not in modules:
+        AND lower(btrim(s.status)) NOT IN ('deleted','superseded','failed')''', [series_id])
+    if not rows:
         return None, None
-    return learner, rows[0]
+    series = rows[0]
+    owner = str(series['module_catalogue_id'])
+    if owner in modules:
+        return learner, series
+    shared = sorted(alias for alias, sources in shared_teams_sources(modules).items() if owner in sources)
+    if not shared:
+        return None, None
+    return learner, {**series, 'learner_shared_module_ids': shared}
 
 
 @require_GET
@@ -608,39 +621,114 @@ def learner_results(request, kind, learner_id, series_id, session_number):
         learner, series = learner_series(kind, learner_id, series_id)
         if not series:
             return JsonResponse({'error': 'Session not found.'}, status=404)
-        sessions = result_rows(series, session_number=session_number, email=learner.email.strip().casefold())
+        sessions = result_rows(series, session_number=session_number, email=str(learner.email or '').strip().casefold())
         return JsonResponse({'sessions': sessions})
     except DatabaseError:
         return unavailable()
 
 
+def join_url_for(series, occurrence):
+    """Where Join sends this learner for one occurrence, or '' when no link is usable.
+
+    Replace Teams links stores the new link only on the module's live-session
+    components (``liveSessionLinkOverride``); the meeting rows keep Microsoft's
+    original, so an override wins. A shared duplicate keeps its own replaced
+    link on its own components, which carry no meeting ids: they line up with
+    the source's live sessions by authored position, as in
+    views.apply_shared_teams_settings_to_weeks. Otherwise the occurrence, then
+    the series, link applies; a component's ordinary link can be stale after a
+    reschedule, so it is only the last resort.
+    """
+    from .teams_calendar_checks import safe_teams_join_url
+    owner = str(series.get('module_catalogue_id') or '')
+    shared = list(series.get('learner_shared_module_ids') or [])
+    try:
+        # Live-session components in authored order, reading only the keys a
+        # join needs: settings_json also carries the whole calendar payload.
+        rows = read('''SELECT c.module_catalogue_id,
+                c.settings_json->>'teamsOccurrenceId' AS occurrence_id,
+                c.settings_json->>'teamsLiveSessionId' AS series_id,
+                c.settings_json->>'teamsSessionNumber' AS session_number,
+                c.settings_json->>'liveSessionLinkOverride' AS link_override,
+                c.settings_json->>'teamsMeetingUrl' AS teams_meeting_url,
+                c.settings_json->>'liveSessionUrl' AS live_session_url
+            FROM curriculum.components c
+            LEFT JOIN curriculum.weeks w ON w.id=c.week_id AND w.module_catalogue_id=c.module_catalogue_id
+            WHERE c.module_catalogue_id=ANY(%s) AND c.deleted_at IS NULL AND NOT coalesce(c.is_programme_deleted,false)
+              AND (w.id IS NULL OR (w.deleted_at IS NULL AND NOT coalesce(w.is_programme_deleted,false)))
+              AND lower(replace(coalesce(c.type,''),'-','_'))='live_session'
+            ORDER BY w.display_order,w.week_number,w.id,c.display_order,c.id''', [[owner, *shared]])
+    except DatabaseError:
+        # The meeting's own link still works without the authored overrides.
+        log.warning('Could not read replaced Teams links for series %s.', series.get('id'), exc_info=True)
+        rows = []
+    occurrence_id, number = str(occurrence.get('id') or ''), str(occurrence.get('session_number') or '')
+    source = [row for row in rows if row['module_catalogue_id'] == owner]
+    exact = [index for index, row in enumerate(source)
+             if (row.get('occurrence_id') and row['occurrence_id'] == occurrence_id)
+             or (row.get('series_id') == str(series['id']) and str(row.get('session_number') or '') == number)]
+    # A component booked against the whole series rather than one session.
+    whole_series = [row for row in source if row.get('series_id') == str(series['id'])
+                    and not row.get('occurrence_id') and not row.get('session_number')]
+    candidates = []
+    for module_id in shared:
+        own = [row for row in rows if row['module_catalogue_id'] == module_id]
+        candidates += [own[index].get('link_override') for index in exact[:1] if index < len(own)]
+    candidates += [source[index].get('link_override') for index in exact]
+    candidates += [row.get('link_override') for row in whole_series]
+    candidates += [occurrence.get('join_url'), series.get('join_url')]
+    candidates += [source[index].get(key) for index in exact for key in ('teams_meeting_url', 'live_session_url')]
+    return next((str(url).strip() for url in candidates if safe_teams_join_url(str(url or '').strip())), '')
+
+
+def learner_join_failure(kind, learner_id, reason):
+    """Back to the learner's Attendance page with a readable message.
+
+    Join opens in a new tab, so a JSON error would be all the learner sees.
+    """
+    response = HttpResponseRedirect(f'/learner/attendance/{kind}/{learner_id}?joinError={reason}')
+    response['Cache-Control'] = 'private, no-store'
+    return response
+
+
 @require_GET
 @learner_self_or_staff(kwarg='learner_id')
 def learner_join(request, kind, learner_id, series_id, session_number):
-    from .teams_calendar_checks import safe_teams_join_url
     import uuid
     try:
         learner, series = learner_series(kind, learner_id, series_id)
         rows = read('SELECT * FROM curriculum.live_session_occurrences WHERE live_session_id=%s AND session_number=%s', [series_id, session_number]) if series else []
         if len(rows) != 1:
-            return JsonResponse({'error': 'Session not found.'}, status=404)
+            return learner_join_failure(kind, learner_id, 'not-found')
         occurrence = rows[0]
         end = instant(occurrence.get('scheduled_end'))
-        if not end or end <= timezone.now() or series['status'] == 'cancelled' or occurrence['status'] in {'cancelled', 'deleted', 'superseded'}:
-            return JsonResponse({'error': 'This session has ended or is unavailable.'}, status=410)
-        url = occurrence.get('join_url') or series.get('join_url')
-        if not safe_teams_join_url(url):
-            return JsonResponse({'error': 'The Teams link is unavailable.'}, status=409)
-        # A launch is context for matching a meeting run, not proof of attendance.
-        with connections['default'].cursor() as cursor:
-            cursor.execute('''INSERT INTO curriculum.live_session_join_launches
-                (id,live_session_id,occurrence_id,viewer_email,launched_at) VALUES (%s,%s,%s,%s,now() AT TIME ZONE 'UTC')''',
-                ['JOIN-' + uuid.uuid4().hex.upper(), series_id, occurrence['id'], learner.email.strip().casefold()])
-        response = HttpResponseRedirect(url)
-        response['Cache-Control'] = 'private, no-store'
-        return response
+        # Joining early is fine: Teams holds the learner in the lobby until it starts.
+        if not end or end <= timezone.now():
+            return learner_join_failure(kind, learner_id, 'ended')
+        if (str(series.get('status') or '').strip().lower() in {'cancelled', 'canceled'}
+                or str(occurrence.get('status') or '').strip().lower() in {'cancelled', 'canceled', 'deleted', 'superseded', 'failed'}):
+            return learner_join_failure(kind, learner_id, 'unavailable')
+        url = join_url_for(series, occurrence)
     except DatabaseError:
-        return unavailable()
+        log.exception('Could not open the Teams join for series %s session %s', series_id, session_number)
+        return learner_join_failure(kind, learner_id, 'unavailable')
+    if not url:
+        return learner_join_failure(kind, learner_id, 'unavailable')
+    email = str(getattr(learner, 'email', '') or '').strip().casefold()
+    if email:
+        # A launch is context for matching a meeting run, not proof of attendance.
+        # It never stands between the learner and the meeting; its own
+        # transaction keeps a failed write from affecting anything else.
+        try:
+            with transaction.atomic(), connections['default'].cursor() as cursor:
+                cursor.execute('''INSERT INTO curriculum.live_session_join_launches
+                    (id,live_session_id,occurrence_id,viewer_email,launched_at) VALUES (%s,%s,%s,%s,now() AT TIME ZONE 'UTC')''',
+                    ['JOIN-' + uuid.uuid4().hex.upper(), series_id, occurrence['id'], email])
+        except DatabaseError:
+            log.warning('Could not record the Teams join launch for occurrence %s.', occurrence['id'], exc_info=True)
+    response = HttpResponseRedirect(url)
+    response['Cache-Control'] = 'private, no-store'
+    return response
 
 
 @require_POST

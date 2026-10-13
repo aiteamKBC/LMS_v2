@@ -42,7 +42,7 @@ def adapter(query):
                      owner['enrolment_id']: records.get(owner['id'], []) for owner in owners
                  })
     functions('monthly_log_sources.py', scope, {'decoded', 'number', 'stable_id', 'row'})
-    functions('current_learning.py', scope, {'source_payload_metadata'})
+    functions('current_learning.py', scope, {'source_payload_metadata', 'is_unsynchronised_direct_save'})
     functions('canonical_learning.py', scope)
     return scope
 
@@ -359,6 +359,30 @@ class CanonicalLearningTests(unittest.TestCase):
         self.assertEqual(result[0]['achieved_score'], 80)
         self.assertNotIn('completed', stored[0])
         self.assertEqual(self.scope['metrics_from_records'](result, {})['otjh']['actual'], .8333)
+
+    def test_unsynchronised_direct_save_uses_projected_time_and_decision(self):
+        stored = [
+            {'id': 1, 'component_link_source': 'direct', 'source_system': '', 'accepted': True,
+             'actual_seconds': None, 'reporting_month': '', 'segments': [], 'ksbs': []},
+            {'id': 2, 'component_link_source': 'direct', 'source_system': '', 'accepted': True,
+             'actual_seconds': None, 'reporting_month': '', 'segments': [], 'ksbs': [],
+             'component_type': 'assignment'},
+            {'id': 3, 'component_link_source': 'direct', 'source_system': '', 'accepted': True,
+             'actual_seconds': 600, 'reporting_month': '2026-09', 'segments': [], 'ksbs': []},
+        ]
+        current = [
+            {**stored[0], 'accepted': True, 'actual_seconds': 1800, 'reporting_month': '2026-10',
+             'activity_status': 'Completed'},
+            # An assignment awaiting tutor review is submitted, not accepted.
+            {**stored[1], 'accepted': False, 'actual_seconds': 3600, 'reporting_month': '2026-10',
+             'activity_status': 'Submitted'},
+            {**stored[2], 'actual_seconds': 9900, 'reporting_month': '2026-10'},
+        ]
+        result = self.scope['progress_records_with_completion'](stored, current)
+        self.assertEqual([r['actual_seconds'] for r in result], [1800, 3600, 600])
+        self.assertEqual([r['accepted'] for r in result], [True, False, True])
+        self.assertEqual([r['reporting_month'] for r in result], ['2026-10', '2026-10', '2026-09'])
+        self.assertEqual(self.scope['metrics_from_records'](result, {})['otjh']['actual'], .6667)
 
     def test_single_reader_retains_distinct_accepted_rows_sharing_a_source_key(self):
         first = {'id': 1, 'canonical_activity_key': 'shared', 'accepted': True,
