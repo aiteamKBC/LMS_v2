@@ -292,6 +292,7 @@ def module_assignment_roster(module_id, placement_learners, lifecycle_status='')
             continue
         result[key] = {
             'id': profile.pk, 'sourceId': profile.pk, 'sourceKind': 'learner',
+            'enrolmentId': profile.enrolment_id,
             'assignmentBasis': 'module',
             'name': profile.full_name or '', 'email': profile.email or '',
             'programme': profile.programme or '', 'programmeStatus': profile.programme_status or '',

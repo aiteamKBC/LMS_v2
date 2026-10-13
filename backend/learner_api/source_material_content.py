@@ -12,6 +12,7 @@ def hydrate_material(row):
     saved_media = {key: row.get(key) or '' for key in ('video_iframe_url', 'reading_iframe_url', 'audio_url')}
     payload = object_value(row.get('material_payload'))
     schema = dict(payload)
+    cleared = set(payload.get('lms_cleared_media_fields') or [])
     kind = str(row.get('material_content_type') or payload.get('content_type') or '').lower()
     row['title'] = row.get('material_title') or payload.get('material_title') or row.get('title')
     row['activity_type'] = row.get('material_content_type') or row.get('activity_type')
@@ -23,9 +24,13 @@ def hydrate_material(row):
     generic = payload.get('iframe_url') or row.get('material_source_url') or ''
     if generic:
         field = 'video_iframe_url' if kind in {'video', 'recording', 'live'} else 'audio_url' if kind in {'audio', 'podcast'} else 'reading_iframe_url'
-        row[field] = row[field] or generic
+        source_field = 'audio_iframe_url' if field == 'audio_url' else field
+        if source_field not in cleared:
+            row[field] = row[field] or generic
     for field, saved in saved_media.items():
-        row[field] = row[field] or saved
+        source_field = 'audio_iframe_url' if field == 'audio_url' else field
+        if source_field not in cleared:
+            row[field] = row[field] or saved
     quiz = object_value(payload.get('quiz'))
     for target, key in (('quiz_id', 'quiz_id'), ('quiz_body', 'quiz_body'),
                         ('quiz_questions', 'questions'), ('quiz_passing_score', 'passing_score'),

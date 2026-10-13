@@ -41,6 +41,7 @@ from .working_rules import (
     validation_response_payload,
 )
 from login.permissions import learner_self_or_admin
+from quiz_api.answer_keys import choice_label, quiz_submission_error
 
 logger = logging.getLogger(__name__)
 
@@ -128,7 +129,7 @@ def _fetch_quiz(quiz_id):
         }
 
         cur.execute(
-            "SELECT id, question_text, question_type, points, sort_order, explanation "
+            "SELECT id, question_text, question_type, points, sort_order, explanation, image_url "
             "FROM curriculum.quiz_questions WHERE quiz_id = %s AND is_archived = false "
             "ORDER BY sort_order",
             [quiz_id],
@@ -137,8 +138,9 @@ def _fetch_quiz(quiz_id):
             {
                 "id": qid, "text": text, "type": qtype, "points": points,
                 "sortOrder": sort_order, "explanation": explanation,
+                "imageUrl": image_url or "",
             }
-            for qid, text, qtype, points, sort_order, explanation in cur.fetchall()
+            for qid, text, qtype, points, sort_order, explanation, image_url in cur.fetchall()
         ]
         if not questions:
             quiz["questions"] = []
@@ -175,7 +177,9 @@ def _scrub_answer_key(quiz):
         safe_q = {k: v for k, v in q.items() if k != "answers"}
 
         if qtype in ("single_choice", "multiple_choice", "true_false"):
-            shuffled = list(answers)
+            # Legacy imports can contain indistinguishable options. Show one
+            # per label; the grader accepts any ID belonging to that label.
+            shuffled = list({choice_label(a["text"]): a for a in reversed(answers)}.values())
             random.shuffle(shuffled)
             safe_q["answers"] = [{"id": a["id"], "text": a["text"]} for a in shuffled]
 
@@ -226,7 +230,11 @@ def _scrub_answer_key(quiz):
 
         safe_questions.append(safe_q)
 
-    return {**{k: v for k, v in quiz.items() if k != "questions"}, "questions": safe_questions}
+    return {
+        **{k: v for k, v in quiz.items() if k != "questions"},
+        "questions": safe_questions,
+        "unavailableReason": quiz_submission_error(quiz, {}),
+    }
 
 
 @csrf_exempt
@@ -315,11 +323,12 @@ def _grade_question(question, submitted):
     if qtype in ("single_choice", "true_false"):
         correct_ids = {a["id"] for a in answers if a["isCorrect"]}
         chosen_id = _coerce_id(submitted) if isinstance(submitted, (int, str)) else None
-        ok = chosen_id in correct_ids
+        correct_labels = {choice_label(by_id[i]) for i in correct_ids}
+        ok = chosen_id in by_id and choice_label(by_id[chosen_id]) in correct_labels
         return {
             "earned": points if ok else 0, "possible": points, "correct": ok,
             "chosenAnswer": by_id.get(chosen_id) if chosen_id is not None else None,
-            "correctAnswer": ", ".join(by_id[i] for i in correct_ids),
+            "correctAnswer": ", ".join(dict.fromkeys(by_id[i] for i in sorted(correct_ids))),
             # ID form (for the slim stored record); resolved back to text on display.
             "chosenAnswerId": chosen_id,
             "correctAnswerId": sorted(correct_ids),
@@ -328,11 +337,13 @@ def _grade_question(question, submitted):
     if qtype == "multiple_choice":
         correct_ids = {a["id"] for a in answers if a["isCorrect"]}
         submitted_ids = {_coerce_id(v) for v in submitted} if isinstance(submitted, list) else set()
-        ok = submitted_ids == correct_ids and len(correct_ids) > 0
+        chosen_labels = {choice_label(by_id[i]) for i in submitted_ids if i in by_id}
+        correct_labels = {choice_label(by_id[i]) for i in correct_ids}
+        ok = submitted_ids.issubset(by_id) and chosen_labels == correct_labels and bool(correct_labels)
         return {
             "earned": points if ok else 0, "possible": points, "correct": ok,
-            "chosenAnswer": ", ".join(by_id[i] for i in submitted_ids if i in by_id) or None,
-            "correctAnswer": ", ".join(by_id[i] for i in correct_ids),
+            "chosenAnswer": ", ".join(dict.fromkeys(by_id[i] for i in by_id if i in submitted_ids)) or None,
+            "correctAnswer": ", ".join(dict.fromkeys(by_id[i] for i in by_id if i in correct_ids)),
             "chosenAnswerId": sorted(submitted_ids),
             "correctAnswerId": sorted(correct_ids),
         }
@@ -386,7 +397,12 @@ def _grade_question(question, submitted):
     if qtype == "ordering":
         correct_order = [a["id"] for a in sorted(answers, key=lambda a: a["sortOrder"])]
         submitted_order = [_coerce_id(v) for v in submitted] if isinstance(submitted, list) else []
-        ok = submitted_order == correct_order
+        ok = (
+            len(submitted_order) == len(correct_order)
+            and len(set(submitted_order)) == len(correct_order)
+            and all(i in by_id for i in submitted_order)
+            and [choice_label(by_id[i]) for i in submitted_order] == [choice_label(by_id[i]) for i in correct_order]
+        )
         return {
             "earned": points if ok else 0, "possible": points, "correct": ok,
             "chosenAnswer": " -> ".join(by_id[i] for i in submitted_order if i in by_id) or None,
@@ -470,6 +486,10 @@ def submit_quiz_attempt(request, quiz_id):
     if quiz is None:
         return _error("Quiz not found.", 404)
 
+    grading_error = quiz_submission_error(quiz, submitted_answers)
+    if grading_error:
+        return _error(grading_error, 409)
+
     earned = 0.0
     possible = 0.0
     correct_count = 0
@@ -486,6 +506,7 @@ def submit_quiz_attempt(request, quiz_id):
         breakdown.append({
             "questionId": q["id"],
             "questionText": q["text"],
+            "imageUrl": q.get("imageUrl", ""),
             "type": q["type"],
             "points": q["points"],
             "earned": result["earned"],
@@ -498,6 +519,13 @@ def submit_quiz_attempt(request, quiz_id):
         # so keep their (short) submitted/accepted text as a fallback.
         slim = {
             "questionId": q["id"],
+            "questionText": q["text"],
+            "type": q["type"],
+            "possible": result["possible"],
+            "chosenText": result["chosenAnswer"],
+            "correctText": result["correctAnswer"],
+            # Keep the diagram seen during this attempt, including no diagram.
+            "imageUrl": q.get("imageUrl", ""),
             "earned": result["earned"],
             "correct": result["correct"],
         }
