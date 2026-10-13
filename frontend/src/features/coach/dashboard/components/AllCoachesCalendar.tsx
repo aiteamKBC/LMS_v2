@@ -6,7 +6,7 @@ import type { DirectoryCoach } from '@/api/coachDirectory';
 import {
   type CoachCalendarEvent,
   eventDisplayDate,
-  fetchCoachCalendarEventsForCoach,
+  fetchAllCoachesCalendarEvents,
   formatTimeLabel,
   needsScheduling,
   parseLocalDate,
@@ -83,23 +83,30 @@ export function AllCoachesCalendar({
     setLoading(true);
     setFailedCoaches([]);
 
-    Promise.allSettled(coaches.map(async coach => {
-      const response = await fetchCoachCalendarEventsForCoach(coach.email, controller.signal, {
+    fetchAllCoachesCalendarEvents(controller.signal, {
         start: isoDate(weekStart),
         end: isoDate(weekEnd),
-        includeSchedulerQueues: false,
-      });
-      return (response.events || []).map(event => ({ coach, event }));
-    })).then(results => {
+      }).then(response => {
       if (controller.signal.aborted) return;
+      const coachByEmail = new Map(coaches.map(coach => [coach.email.trim().toLowerCase(), coach]));
       const nextEvents: AggregatedEvent[] = [];
-      const failures: string[] = [];
-      results.forEach((result, index) => {
-        if (result.status === 'fulfilled') nextEvents.push(...result.value);
-        else failures.push(coachLabel(coaches[index]));
+      (response.calendars || []).forEach(calendar => {
+        const coach = coachByEmail.get(calendar.email.trim().toLowerCase());
+        if (!coach) return;
+        nextEvents.push(...(calendar.events || []).map(event => ({ coach, event })));
       });
       setEvents(nextEvents);
-      setFailedCoaches(failures);
+      setFailedCoaches((response.missingCoaches || []).map(email => (
+        coachByEmail.has(email.trim().toLowerCase())
+          ? coachLabel(coachByEmail.get(email.trim().toLowerCase())!)
+          : email
+      )));
+    }).catch(() => {
+      if (controller.signal.aborted) return;
+      setEvents([]);
+      setFailedCoaches(coaches.map(coachLabel));
+    }).finally(() => {
+      if (controller.signal.aborted) return;
       setLoading(false);
     });
 

@@ -32,9 +32,10 @@ class CoachDashboardService:
     # v17 carries the Case File start date separately for table display.
     # v18 makes startDate itself use the Profile resolver.
     # v19 keeps imported Review continuations on their source occurrence.
+    # v20 separates other imported reviews from PR dates and dashboard counts.
     # Older snapshots may legitimately contain ``--`` dates, so they must not
     # be served as if they were current after the serializer is corrected.
-    SCHEMA_VERSION = 19
+    SCHEMA_VERSION = 20
 
     def build(self) -> dict:
         """Read the persistent projection; build once only if it is absent."""
@@ -55,7 +56,7 @@ class CoachDashboardService:
                     "version": shared.schema_version,
                     "refreshedAt": shared.refreshed_at.isoformat(),
                 }
-                return self.normalize_start_dates(payload)
+                return self.normalize_start_dates(payload, refresh_otjh=True)
 
         # Resolve through the compatibility module so existing patch points and
         # operational tooling remain valid during the module relocation.
@@ -65,7 +66,7 @@ class CoachDashboardService:
             schema_version=self.SCHEMA_VERSION,
         ).only("payload", "refreshed_at").first()
         if snapshot is not None:
-            return self.normalize_start_dates(self._snapshot_payload(snapshot, version=self.SCHEMA_VERSION))
+            return self.normalize_start_dates(self._snapshot_payload(snapshot, version=self.SCHEMA_VERSION), refresh_otjh=True)
         previous = compatibility.CoachDashboardSnapshot.objects.filter(
             owner_email=self.context.owner_email,
         ).order_by("-refreshed_at").only(
@@ -75,13 +76,13 @@ class CoachDashboardService:
             # A schema mismatch should not make the first page load wait for a
             # full caseload rebuild.  Serve the newest durable projection and
             # let dashboard_view enqueue the schema refresh after responding.
-            return self.normalize_start_dates(self._snapshot_payload(previous, version=previous.schema_version))
+            return self.normalize_start_dates(self._snapshot_payload(previous, version=previous.schema_version), refresh_otjh=True)
         return self.refresh()
 
-    def normalize_start_dates(self, previous_payload: dict) -> dict:
+    def normalize_start_dates(self, previous_payload: dict, *, refresh_otjh=False) -> dict:
         """Correct persisted/cached dates with read-only, coach-scoped source reads.
 
-        Preserve every metric and the existing contractual OTJH window. Older
+        The optional OTJH overlay reads current Profile facts and window. Older
         snapshots must not expose their outdated startDate while refresh queues.
         Learners who have since been withdrawn, completed or entered EPA are
         dropped the same way, so an hourly snapshot never shows them.
@@ -89,8 +90,23 @@ class CoachDashboardService:
         from coach_api import views as domain
 
         payload = deepcopy(previous_payload)
-        rows = domain.fetch_caseload_dashboard_profiles(self.context.owner_email)
+        from .profile_dates import fetch_dashboard_profile_dates
+
+        if not payload.get("learners"):
+            return payload
+        profile_ids = [domain.to_int(item.get("id")) for item in payload.get("learners") or []]
+        profile_ids = [identity for identity in profile_ids if identity > 0]
+        rows = fetch_dashboard_profile_dates(self.context.owner_email, profile_ids) if profile_ids else []
         rows_by_id = {str(row.id): row for row in rows}
+        snapshot_version = (payload.get("readModel") or {}).get("version")
+        review_dates = {}
+        if rows and snapshot_version is not None and snapshot_version < 20:
+            # Old projections can contain a completed onboarding review as
+            # Last PR. Read the owned history while the normal refresh queues.
+            review_dates = domain.dashboard_imported_completed_review_dates(
+                [row.id for row in rows], owner_email=self.context.owner_email,
+                owner_name=(payload.get("owner") or {}).get("name") or "Coach",
+            )
         learners = []
         for learner in payload.get("learners") or []:
             row = rows_by_id.get(str(learner.get("id")))
@@ -102,9 +118,16 @@ class CoachDashboardService:
             learner["startDate"] = domain.caseload_profile_start_date(row)
             learner["displayStartDate"] = learner["startDate"]
             learner["displayEndDate"] = domain.format_date(getattr(getattr(row, "_caseload_source", None), "learner_end_date", None))
+            dates = review_dates.get(domain.to_int(learner.get("id")))
+            if dates is not None:
+                learner["lastPr"] = dates.get("lastPr")
+                learner["lastProgressReview"] = dates.get("lastPr") or "--"
             learners.append(learner)
         if "learners" in payload:
             payload["learners"] = learners
+        if refresh_otjh:
+            from .otjh import refresh_otjh_rows
+            refresh_otjh_rows(payload, rows, today=self.context.today)
         return payload
 
     @staticmethod
@@ -154,6 +177,8 @@ class CoachDashboardService:
             domain.apply_attendance_summary(learner, attendance_by_id.get(profile_id))
             domain.apply_otjh_to_date_metrics(learner, today=self.context.today)
             learner["attendanceAvailable"] = bool(learner.get("attendanceRateAvailable"))
+        from .otjh import refresh_otjh_rows
+        refresh_otjh_rows(payload, rows, today=self.context.today)
         compatibility.CoachDashboardSnapshot.objects.update_or_create(
             owner_email=self.context.owner_email,
             defaults={"payload": payload, "schema_version": self.SCHEMA_VERSION},
@@ -236,10 +261,23 @@ class CoachDashboardService:
             (getattr(row, "coach_name", "") for row in context.rows if getattr(row, "coach_name", "")),
             "Coach",
         )
+        # The caseload loader already attached these full source rows. A live
+        # snapshot build must not fetch the same 84-column source query again
+        # merely to generate its review events.
+        source_schedule_rows = None
+        if all(hasattr(row, "_caseload_source") for row in context.rows):
+            commercial_rows, enrolment_rows = {}, {}
+            for row in context.rows:
+                source = row._caseload_source
+                if source is not None:
+                    target = commercial_rows if domain.clean_text(getattr(source, "learner_type", "")).casefold() == "commercial" else enrolment_rows
+                    target[int(row.id)] = source
+            source_schedule_rows = commercial_rows, enrolment_rows
         resolved = domain.resolve_coach_review_events(
             context.owner_email,
             owner_name,
             context.rows,
+            source_schedule_rows=source_schedule_rows,
         )
         all_review_events = resolved.get("events", [])
         generated_keys = [event.get("eventKey") for event in all_review_events if event.get("eventKey")]
@@ -297,7 +335,8 @@ class CoachDashboardService:
             completed = event.get("date") or event.get("scheduledDate")
             if learner_id is None or not completed:
                 continue
-            key = "lastMcm" if event.get("source") == "mcr" else "lastPr" if event.get("source") == "progress-review" else None
+            category = domain.review_event_category(event)
+            key = "lastMcm" if category == "mcr" else "lastPr" if category == "progress-review" else None
             if key and (last_dates[learner_id][key] is None or completed > last_dates[learner_id][key]):
                 last_dates[learner_id][key] = completed
 
@@ -311,6 +350,7 @@ class CoachDashboardService:
         for row, learner in zip(context.rows, context.learners):
             learner.update(last_dates.get(int(row.id), {"lastPr": None, "lastMcm": None}))
             learner.update(progress_projections.get(int(row.id), {}))
+            learner["lastProgressReview"] = learner["lastPr"] or "--"
             domain.apply_audit_hour_totals(learner, audit_totals.get(int(row.id)))
             domain.apply_evidenced_ksb_count(learner, ksb_counts.get(int(row.id)))
             domain.apply_canonical_learner_metrics(learner, canonical_metrics.get(int(row.id)), learner_workspace=True)
@@ -320,6 +360,8 @@ class CoachDashboardService:
             learner["attendanceAvailable"] = bool(learner.get("attendanceRateAvailable"))
 
         marking = dashboard_marking_projection(context)
+        from .otjh import refresh_otjh_rows
+        refresh_otjh_rows({"learners": context.learners}, context.rows, today=context.today)
         return {
             "owner": {"name": owner_name, "email": context.owner_email},
             "learners": context.learners,

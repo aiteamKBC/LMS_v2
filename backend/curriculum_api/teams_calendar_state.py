@@ -1,4 +1,4 @@
-"""Reconcile cancellations from Microsoft; no Microsoft mutation or email path."""
+"""Read cancellations from Microsoft and report them; never cancels anything, never mails."""
 import json
 import time
 from contextlib import contextmanager
@@ -104,8 +104,6 @@ def state_signature(series, rows):
 
 
 def reconcile_calendar(live_id):
-    from . import views as v
-
     series, rows, snapshot = load_calendar_state(live_id)
     if series.get('status') != 'active':
         return {'changed': False, 'seriesStatus': series.get('status'), 'cancelledSessions': [], 'errors': []}
@@ -114,29 +112,29 @@ def reconcile_calendar(live_id):
     signature = state_signature(series, rows)
     with calendar_reader() as read:
         plan = cancellation_plan(series, rows, snapshot, read)
-    now = datetime.now(timezone.utc).replace(tzinfo=None)
     with transaction.atomic():
         current, current_rows, current_snapshot = load_calendar_state(live_id, lock=True)
         if state_signature(current, current_rows) != signature or current_snapshot != snapshot:
             raise CalendarStateError('This calendar changed during verification. Retry the status check.')
         with connection.cursor() as cursor:
-            for occurrence_id in plan['cancelledIds']:
-                cursor.execute("""UPDATE curriculum.live_session_occurrences
-                                  SET status = 'cancelled', updated_at = %s
-                                  WHERE id = %s AND live_session_id = %s AND status = 'scheduled'""",
-                               [now, occurrence_id, live_id])
-            if plan['seriesCancelled']:
-                cursor.execute("UPDATE curriculum.live_sessions SET status = 'cancelled', updated_at = %s WHERE id = %s AND status = 'active'", [now, live_id])
+            # Never a cancellation. Only a person pressing Cancel in the LMS
+            # cancels a session or a calendar; what Microsoft shows cancelled --
+            # in Outlook, by anybody -- is reported for that person to record.
             cursor.execute("""INSERT INTO curriculum.teams_calendar_sync_state (live_session_id, snapshot, checked_at)
                               VALUES (%s, %s::jsonb, %s)
                               ON CONFLICT (live_session_id) DO UPDATE
                               SET snapshot = EXCLUDED.snapshot, checked_at = EXCLUDED.checked_at""",
                            [live_id, json.dumps(plan['snapshot']), datetime.now(timezone.utc)])
-    changed = bool(plan['cancelledIds'] or plan['seriesCancelled'])
-    if changed:
-        v.invalidate_curriculum_cache()
-    return {'changed': changed, 'seriesStatus': 'cancelled' if plan['seriesCancelled'] else 'active',
-            'cancelledSessions': [row['session_number'] for row in rows if row['id'] in plan['cancelledIds']],
+    # Read-only on Microsoft; this only notes that a check ran and what it found.
+    from .teams_calendar_integrity import EVENT_VERIFIED, record_event
+    record_event(live_id, EVENT_VERIFIED, module_catalogue_id=str(series.get('module_catalogue_id') or ''),
+                 trigger='Calendar status check', outcome='attention' if plan['errors'] else 'success',
+                 detail={'errors': plan['errors'][:20], 'unmatched': len(plan.get('unmatched') or []),
+                         'leftovers': len(plan.get('leftovers') or [])})
+    return {'changed': False, 'seriesStatus': 'active', 'cancelledSessions': [],
+            # Cancelled in Microsoft, still scheduled here, and left that way.
+            'cancelledInMicrosoft': [row['session_number'] for row in rows if row['id'] in plan['cancelledIds']],
+            'seriesCancelledInMicrosoft': bool(plan['seriesCancelled']),
             'errors': plan['errors'],
             # Reported for a person to decide on; nothing here cancels them.
             'leftovers': plan.get('leftovers') or []}
@@ -152,6 +150,15 @@ def sync_calendar_state(request, live_session_id):
     except LookupError:
         return JsonResponse({'error': 'Calendar not found.'}, status=404)
     except CalendarStateError as exc:
+        _note_failed_check(live_session_id, str(exc))
         return JsonResponse({'error': str(exc)}, status=409)
     except (httpx.HTTPError, ValueError, RuntimeError):
+        _note_failed_check(live_session_id, 'Microsoft calendar status could not be verified.')
         return JsonResponse({'error': 'Microsoft calendar status could not be verified. No cancellation was inferred.'}, status=502)
+
+
+def _note_failed_check(live_session_id, message):
+    """Calendar health shows "verification failed" rather than an older success as current."""
+    from .teams_calendar_integrity import EVENT_VERIFY_FAILED, record_event
+    record_event(live_session_id, EVENT_VERIFY_FAILED, trigger='Calendar status check', outcome='failed',
+                 detail={'message': message[:300]})

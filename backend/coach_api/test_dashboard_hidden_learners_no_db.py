@@ -35,7 +35,7 @@ class SnapshotReadDropsHiddenLearnersTests(SimpleTestCase):
         ], "meetings": {"events": [{"id": "preserved"}]}}
         before = deepcopy(snapshot)
         rows = [profile(1, "Withdrawn"), profile(2, "Delivery"), profile(3, "Completed")]
-        with patch("coach_api.views.fetch_caseload_dashboard_profiles", return_value=rows):
+        with patch("coach_api.services.dashboard.profile_dates.fetch_dashboard_profile_dates", return_value=rows):
             payload = CoachDashboardService("coach@example.invalid").normalize_start_dates(snapshot)
 
         # 1 and 3 changed status since the build; 4 has no current row, so it is left as built.
@@ -46,6 +46,6 @@ class SnapshotReadDropsHiddenLearnersTests(SimpleTestCase):
         self.assertEqual(snapshot, before)
 
     def test_payload_without_learners_keeps_its_shape(self):
-        with patch("coach_api.views.fetch_caseload_dashboard_profiles", return_value=[]):
+        with patch("coach_api.services.dashboard.profile_dates.fetch_dashboard_profile_dates", return_value=[]):
             payload = CoachDashboardService("coach@example.invalid").normalize_start_dates({"meetings": {}})
         self.assertEqual(payload, {"meetings": {}})

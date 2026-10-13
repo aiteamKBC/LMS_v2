@@ -921,8 +921,8 @@ export interface LiveSessionDateDrift {
  * One date is not the planner's to move -- an occurrence Microsoft has
  * confirmed (`teamsLiveSessionId` with a `teamsSessionNumber`). That date is
  * where a meeting real people were invited to actually sits, and it changes
- * through `rescheduleTeamsOccurrence`, which asks Microsoft, or through a push
- * from the Teams Meetings page. So when such a session's week moves, the two
+ * through the Teams calendar's Edit session action, which asks Microsoft and
+ * tells the people invited, or through a push from the Teams Meetings page. So when such a session's week moves, the two
  * genuinely disagree -- and the screens say so rather than quietly re-dating a
  * booking the calendar would then contradict.
  *
@@ -1043,7 +1043,7 @@ export function applyModuleWeekSessionPlan(
         // The single exception is an occurrence Microsoft has confirmed: that
         // date is not a copy of anything, it is where a meeting real people
         // have been invited to actually sits, and it moves through
-        // `rescheduleTeamsOccurrence` rather than behind the author's back.
+        // the calendar's Edit session action rather than behind the author's back.
         // `sessionDateTimeUtc` deliberately does NOT count -- the planner writes
         // it on every stamp, so treating it as a Teams booking froze every date
         // the planner had ever set.
@@ -3431,6 +3431,10 @@ export interface WeekTeamsMeetingUpdateResult {
   meeting: WeekTeamsMeetingResult['meeting'];
   componentSettings: ComponentSettings;
   warnings: string[];
+  /** The LMS change email to everyone already invited, sent by the server when the time moved. */
+  scheduleEmail?: WeekTeamsMeetingResult['scheduleEmail'] | null;
+  /** The LMS schedule email to the people this save added, sent by the server. */
+  addedEmail?: WeekTeamsMeetingResult['scheduleEmail'] | null;
 }
 
 export async function updateWeekTeamsMeeting(
@@ -3448,7 +3452,7 @@ export async function updateWeekTeamsMeeting(
 }
 
 export async function cancelWeekTeamsMeeting(moduleCatalogueId: string, liveSessionId: string) {
-  return apiJson<{ cancelled: boolean; componentId: string; warnings: string[] }>(
+  return apiJson<{ cancelled: boolean; componentId: string; warnings: string[]; scheduleEmail?: WeekTeamsMeetingResult['scheduleEmail'] | null }>(
     `/curriculum/modules/${encodeURIComponent(moduleCatalogueId)}/week-teams-meetings/${encodeURIComponent(liveSessionId)}/`,
     { method: 'DELETE', timeoutMs: 45000 },
   ).then(result => {
@@ -3524,7 +3528,7 @@ function peopleAddedBySave(
  * `coOrganizers` are optional: omit them to move dates only, pass them to correct
  * who is invited, who presents and who co-runs it without recreating the meeting.
  */
-export async function updateTeamsMeetingSchedule(liveSessionId: string, input: Pick<TeamsMeetingInput, 'title' | 'organizerEmail' | 'localStartDateTime' | 'startDateTimeUtc' | 'durationMinutes' | 'repeat' | 'repeatOccurrences' | 'scheduledOccurrences'> & Partial<Pick<TeamsMeetingInput, 'lobbyBypass' | 'recording' | 'spokenLanguage' | 'seriesMode'>> & { eventId?: string; attendees?: string[]; presenters?: string[]; coOrganizers?: string[]; peopleOnly?: boolean; settingsOnly?: boolean; notifyAttendees?: boolean }, options: { onSubmitted?: () => void } = {}) {
+export async function updateTeamsMeetingSchedule(liveSessionId: string, input: Pick<TeamsMeetingInput, 'title' | 'organizerEmail' | 'localStartDateTime' | 'startDateTimeUtc' | 'durationMinutes' | 'repeat' | 'repeatOccurrences' | 'scheduledOccurrences'> & Partial<Pick<TeamsMeetingInput, 'lobbyBypass' | 'recording' | 'spokenLanguage' | 'seriesMode'>> & { eventId?: string; attendees?: string[]; presenters?: string[]; coOrganizers?: string[]; peopleOnly?: boolean; settingsOnly?: boolean; notifyAttendees?: boolean; invitationsOnly?: boolean }, options: { onSubmitted?: () => void } = {}) {
   // `settingsOnly` only labels the review ("meeting settings" rather than
   // "invitations"); the transport is the same people-only update either way.
   const { settingsOnly, ...sent } = input;
@@ -3532,7 +3536,7 @@ export async function updateTeamsMeetingSchedule(liveSessionId: string, input: P
   const { series: rawSeries, occurrences } = await loadTeamsMeetingArtifacts(liveSessionId);
   const series = calendarSeriesForReview(rawSeries);
   if (reviewed.peopleOnly) {
-    const held = occurrences.filter(item => item.status !== 'cancelled')
+    const held = occurrences.filter(item => item.status !== 'cancelled' && item.status !== 'superseded')
       .sort((a, b) => parseUtcInstant(a.scheduled_start).getTime() - parseUtcInstant(b.scheduled_start).getTime());
     if (!held.length) throw new Error('The saved session dates could not be loaded. Review the calendar dates before changing invitations.');
     reviewed.scheduledOccurrences = held.map(item => ({ sessionNumber: item.session_number,
@@ -3565,7 +3569,8 @@ export async function updateTeamsMeetingSchedule(liveSessionId: string, input: P
   // recording or the lobby -- sends no mail at all, to anybody, so a full
   // session-by-session review and a "Save and send" button confirm an act with
   // no outward effect. That save applies on the press instead.
-  if (!reviewed.peopleOnly || peopleAddedBySave(invitations, series).length) {
+  // "Save invitations" sends nothing to anybody, so there is nothing to review.
+  if (!reviewed.invitationsOnly && (!reviewed.peopleOnly || peopleAddedBySave(invitations, series).length)) {
     await reviewCalendar({ ...reviewed, settingsOnly, organizerEmail: series.organizer_email, joinUrl: series.join_url,
       notifyOnUpdate: notifyAttendees, ...invitations,
       recording: reviewed.recording ?? series.recording, lobbyBypass: reviewed.lobbyBypass ?? series.lobby_bypass, spokenLanguage: reviewed.spokenLanguage ?? series.spoken_language,
@@ -3576,7 +3581,7 @@ export async function updateTeamsMeetingSchedule(liveSessionId: string, input: P
   // The review is complete. The caller can now replace its form with a
   // progress panel without showing it behind the confirmation dialog.
   options.onSubmitted?.();
-  return apiJson<{ updated: boolean; meeting: TeamsMeetingResult['meeting']; warnings?: Array<{ code?: string; message: string; detail?: string }>; changeNotice?: string; leftoverSlots?: TeamsLeftoverSlot[] }>(`/curriculum/teams-meetings/${encodeURIComponent(liveSessionId)}/schedule/`, {
+  return apiJson<{ updated: boolean; meeting: TeamsMeetingResult['meeting']; warnings?: Array<{ code?: string; message: string; detail?: string }>; changeNotice?: string; leftoverSlots?: TeamsLeftoverSlot[]; scheduleEmail?: TeamsMeetingResult['scheduleEmail']; addedPeople?: string[]; addedEmail?: TeamsMeetingResult['scheduleEmail']; addedEmailKey?: string; announced?: boolean; microsoftUpdate?: TeamsMicrosoftUpdate }>(`/curriculum/teams-meetings/${encodeURIComponent(liveSessionId)}/schedule/`, {
     method: 'PATCH',
     body: JSON.stringify({ ...reviewed, notifyAttendees }),
     // One update is around ten SERIAL Microsoft Graph round trips -- read the
@@ -3590,56 +3595,25 @@ export async function updateTeamsMeetingSchedule(liveSessionId: string, input: P
     timeoutMs: 240000,
   }).then(result => {
     clearCurriculumGetCache();
-    return { ...result, notifyAttendees };
+    // The server has the last word on whether there was a date change to tell
+    // anyone about. A retry of an update that had already landed, or a save
+    // whose dates did not really move, comes back `announced: false`: nobody
+    // is sent a change email for it, from the server or from here.
+    return { ...result, notifyAttendees: result.announced === false ? false : notifyAttendees };
   });
-}
-
-export interface TeamsOccurrenceRescheduleResult {
-  updated: boolean;
-  occurrence: {
-    liveSessionId: string;
-    sessionNumber: number;
-    startDateTimeUtc: string;
-    durationMinutes: number;
-    joinUrl: string;
-    eventId: string;
-  };
-  warnings?: Array<{ code?: string; message: string; detail?: string }>;
 }
 
 /**
- * Move one session of a live-session series to a date/time of its own, leaving
- * every other session — and the module's default time — untouched. The tracked
- * occurrence keeps its own duration unless `durationMinutes` is passed.
+ * What Microsoft was asked to announce for one update. A request, never proof
+ * of delivery: Graph cannot say whether an invitee's mailbox received it.
+ *
+ * - `sent`: the date change was announced to everyone invited.
+ * - `already_attempted`: an earlier attempt at this same change (one whose
+ *   answer was lost to a timeout) already asked; it was not asked again.
+ * - `silent`: the dates changed without a notice, by the caller's choice.
+ * - `not_needed`: no date changed, so there was nothing to announce.
  */
-export async function rescheduleTeamsOccurrence(
-  liveSessionId: string,
-  sessionNumber: number,
-  input: { startDateTimeUtc: string; durationMinutes?: number },
-) {
-  const reviewed = { ...input };
-  const detail = await loadTeamsMeetingArtifacts(liveSessionId);
-  const series = calendarSeriesForReview(detail.series);
-  const occurrence = detail.occurrences.find(item => item.session_number === sessionNumber);
-  if (!occurrence) throw new Error('Load this session before reviewing a time change.');
-  const duration = reviewed.durationMinutes ?? (parseUtcInstant(occurrence.scheduled_end).getTime() - parseUtcInstant(occurrence.scheduled_start).getTime()) / 60000;
-  await reviewCalendar({ title: series.module_title, organizerEmail: series.organizer_email,
-    joinUrl: occurrence.join_url || series.join_url, attendees: series.attendees,
-    presenters: series.presenters, coOrganizers: series.co_organizers, previousOccurrences: [occurrence], seriesMode: 'shared',
-    scheduledOccurrences: [{ sessionNumber, startDateTimeUtc: reviewed.startDateTimeUtc, durationMinutes: duration }],
-  }, getCalendarTimeZone());
-  return apiJson<TeamsOccurrenceRescheduleResult>(
-    `/curriculum/teams-meetings/${encodeURIComponent(liveSessionId)}/occurrences/${sessionNumber}/schedule/`,
-    {
-      method: 'PATCH',
-      body: JSON.stringify(reviewed),
-      timeoutMs: 45000,
-    },
-  ).then(result => {
-    clearCurriculumGetCache();
-    return result;
-  });
-}
+export type TeamsMicrosoftUpdate = 'sent' | 'already_attempted' | 'silent' | 'not_needed';
 
 export interface TeamsArtifactSyncResult {
   synced: {

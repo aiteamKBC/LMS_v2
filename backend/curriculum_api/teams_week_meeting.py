@@ -419,6 +419,9 @@ def curriculum_week_teams_meeting(request, module_catalogue_id):
             'Cancel it in the organiser’s calendar before trying again.',
             status=500, meetingCreated=True, eventId=event_id, joinUrl=join_url,
         )
+    from .teams_dial_in import remember_teams_dial_in
+    remember_teams_dial_in({'id': live_session_id, 'join_url': join_url, 'online_meeting_id': online_meeting_id,
+                            'organizer_email': organizer}, graph_meeting)
 
     # Invite the people named on the form -- the actual send. `always=True`
     # because the event was created empty on purpose: the patch is what makes
@@ -592,11 +595,23 @@ def curriculum_week_teams_meeting_detail(request, module_catalogue_id, live_sess
     re-attaching its series across every live-session component of the module,
     which would put this meeting's link on all of them.
 
-    Emailing follows the module calendar's rule exactly. People already invited
-    stay unbothered unless the author asks for them to be told; anybody this
-    save ADDS is always reached, because Microsoft puts a meeting on someone's
-    calendar only when something is sent to them -- so a silent write would
-    leave a new guest on the attendee list and off their own calendar.
+    Emailing keeps Outlook and the LMS email in step:
+
+    * A new date, time or length is always announced. Microsoft sends ONE
+      update -- a single write carrying the new time and the full invitation
+      list -- to everyone invited, and the LMS "was / now" follows once
+      Microsoft confirms the new time. A silent time change would leave
+      invitees' Outlook on the old time while the LMS emailed the new one, so
+      the request is refused unless ``notifyAttendees`` is set.
+    * Otherwise people already invited stay unbothered unless the author asks
+      for them to be told. Anybody this save ADDS is reached either way: on the
+      announced write when there is one, or by a forward of their own when the
+      save is silent -- never both, because Microsoft puts a meeting on
+      someone's calendar only when something is sent.
+    * Somebody removed is taken off silently first, so no write here ever sends
+      a cancellation. Only Cancel cancels.
+    * A retry of the same edit after a timeout is never announced twice (see
+      teams_update_guard), and its change email reuses one ledger key.
     """
     from . import views as v
     from coach_api.views import get_graph_settings, has_graph_credentials, microsoft_graph_request
@@ -627,6 +642,7 @@ def curriculum_week_teams_meeting_detail(request, module_catalogue_id, live_sess
     if request.method == 'DELETE':
         return cancel_week_meeting(
             v, microsoft_graph_request, component_row, settings, owner_key, event_key, live_id, now,
+            series=series if may_send_schedule_email(request) else None,
         )
 
     payload = v.json_body(request)
@@ -665,14 +681,48 @@ def curriculum_week_teams_meeting_detail(request, module_catalogue_id, live_sess
               | lower(v.as_json_value(series.get('co_organizers'), [])))
     added = [email for email in invited_people if v.clean_str(email).lower() not in before]
 
+    # Did the time really move, against what the LMS saved (and told people)?
+    stored_start = v.parse_graph_datetime(series.get('start_datetime'))
+    stored_duration = v.parse_int(series.get('duration_minutes'), 60)
+    time_changed = (v.teams_calendar_minute_key(stored_start) != v.teams_calendar_minute_key(utc_start)
+                    or stored_duration != duration)
+    if time_changed and not notify_existing:
+        return v.json_error(
+            'A new date, time or length is always sent to the people invited, so their Outlook calendar and the '
+            'LMS email show the same time. Choose to notify them, or keep the time unchanged.',
+            status=400, code='time_change_needs_notice',
+        )
+
+    from .teams_update_guard import (claim_announcement, finish_announcement, graph_failure_outcome,
+                                     logical_change_id)
+
+    def one_session(start, minutes):
+        start = v.utc_datetime(start)
+        return [{'n': 1, 'start': start.isoformat(), 'end': (start + timedelta(minutes=minutes)).isoformat()}] if start else []
+
+    change_id = logical_change_id(live_id, one_session(stored_start, stored_duration), one_session(utc_start, duration),
+                                  invited_people, event_payload.get('subject'), extra='week-meeting')
+    claim = claim_announcement(live_id, change_id) if notify_existing else ''
+    # An earlier attempt at this very edit already asked Microsoft to announce
+    # it; that is reported, never repeated. The write below is then silent.
+    announce = notify_existing and claim != 'attempted'
+
     warnings = []
-    # Silent unless the author asked for existing invitees to be told. The
-    # preference is per WRITE in Graph, never per person, which is why the
-    # people this save added are reached separately below.
-    headers = None if notify_existing else v.GRAPH_SILENT_INVITE_HEADERS
+    path = f'users/{owner_key}/events/{event_key}'
+    announced_writes = 0
     try:
+        event = microsoft_graph_request('GET', path)
+        if announce:
+            # Whoever this announced write drops goes first, silently, so
+            # Exchange sends them no cancellation.
+            event, _removed = v.remove_attendees_silently(microsoft_graph_request, owner_key, {**event, 'id': event_id},
+                                                          event_payload['attendees'])
+        # ONE write: the time, the text and the invitation list together. Two
+        # writes -- the event, then the attendees -- was two announcements to
+        # everyone invited when the author asked for one.
+        announced_writes = 1 if announce else 0
         microsoft_graph_request(
-            'PATCH', f'users/{owner_key}/events/{event_key}',
+            'PATCH', path,
             payload={
                 'subject': event_payload['subject'],
                 'body': event_payload['body'],
@@ -681,22 +731,38 @@ def curriculum_week_teams_meeting_detail(request, module_catalogue_id, live_sess
                 'responseRequested': event_payload['responseRequested'],
                 'allowNewTimeProposals': event_payload['allowNewTimeProposals'],
                 'hideAttendees': True,
+                'attendees': event_payload['attendees'],
             },
-            extra_headers=headers,
+            extra_headers=None if announce else v.GRAPH_SILENT_INVITE_HEADERS,
         )
     except RuntimeError as exc:
-        return v.json_error('Microsoft Teams could not update the meeting. Nothing was changed.',
-                            status=502, detail=str(exc))
+        if claim == 'claimed':
+            finish_announcement(live_id, change_id, outcome=(
+                graph_failure_outcome(exc) if announced_writes else 'failed'))
+        return v.json_error('Microsoft Teams could not update the meeting. Nothing was saved here.',
+                            status=502, detail=str(exc),
+                            verificationRequired=bool(announced_writes and graph_failure_outcome(exc) == 'unknown'))
+    if claim == 'claimed':
+        finish_announcement(live_id, change_id, outcome='accepted')
 
-    # The invitation list, with Microsoft's own read-back confirming it.
+    # Microsoft's own read-back: the time it holds and who it invited.
+    time_confirmed = False
     try:
-        event = microsoft_graph_request('GET', f'users/{owner_key}/events/{event_key}')
-        v.publish_attendees(
-            microsoft_graph_request, owner_key, event, event_payload['attendees'],
-            extra_headers=headers, always=notify_existing,
+        confirmed = v.graph_event_utc(microsoft_graph_request('GET', path))
+        time_confirmed = (
+            v.teams_calendar_minute_key((confirmed.get('start') or {}).get('dateTime')) == v.teams_calendar_minute_key(utc_start)
+            and v.teams_calendar_minute_key((confirmed.get('end') or {}).get('dateTime'))
+            == v.teams_calendar_minute_key(v.utc_datetime(utc_start) + timedelta(minutes=duration))
         )
+        if not time_confirmed:
+            warnings.append('Microsoft did not confirm the new time, so the LMS change email was not sent.')
+        missing, extra = v.attendee_differences(event_payload['attendees'], confirmed.get('attendees'),
+                                                v.event_organizer_address(confirmed))
+        if missing or extra:
+            warnings.append('Microsoft did not confirm the invitation list '
+                            f'({v.unconfirmed_attendee_detail(missing, extra)}).')
     except RuntimeError as exc:
-        warnings.append(f'Microsoft did not confirm the invitation list: {exc}')
+        warnings.append(f'Microsoft did not confirm the updated meeting: {exc}')
 
     join_url = v.clean_str(series.get('join_url'))
     lobby = v.clean_str(single.get('lobbyBypass')).lower() or v.clean_str(series.get('lobby_bypass')) or 'invited'
@@ -704,19 +770,49 @@ def curriculum_week_teams_meeting_detail(request, module_catalogue_id, live_sess
         lobby = 'invited'
     recording = v.clean_str(single.get('recording')).lower() or v.clean_str(series.get('recording')) or 'none'
     language = v.clean_str(single.get('spokenLanguage')) or v.clean_str(series.get('spoken_language')) or 'en-GB'
-    settings_applied, graph_meeting, option_warnings = v.apply_teams_meeting_options(
-        organizer, join_url, recording=recording, lobby_bypass=lobby, spoken_language=language,
-        attendees=invited_people, presenters=presenters, co_organizers=co_organizers,
-        online_meeting_id=v.clean_str(series.get('online_meeting_id')),
+    # Only the option groups this save changed (see teams_meeting_options_policy).
+    # A save that only adds or removes people sends no onlineMeeting PATCH; a
+    # time change or a settings change also retries options left unapplied.
+    from .teams_meeting_options_policy import (json_list, option_groups_to_apply, pending_warning, remaining_pending,
+                                              stored_options as saved_meeting_options)
+    stored_options = saved_meeting_options(series)
+    saved_warnings = json_list(series.get('warnings'))
+    # This meeting saves its warnings as sentences; an unapplied-options one is
+    # recognised by its own wording, written below or by apply_teams_meeting_options.
+    pending_options = {'settings', 'roles'} if any(
+        marker in str((item if isinstance(item, str) else (item or {}).get('message')) or '')
+        for item in saved_warnings
+        for marker in ('did not apply its lobby', 'has not applied this meeting')
+    ) else set()
+    option_groups = option_groups_to_apply(
+        stored_options,
+        {'recording': recording, 'lobby_bypass': lobby, 'spoken_language': language,
+         'presenters': presenters, 'co_organizers': co_organizers},
+        pending_options, retry_pending=time_changed,
     )
+    settings_applied, graph_meeting, option_warnings = True, {}, []
+    if option_groups:
+        settings_applied, graph_meeting, option_warnings = v.apply_teams_meeting_options(
+            organizer, join_url, recording=recording, lobby_bypass=lobby, spoken_language=language,
+            attendees=invited_people, presenters=presenters, co_organizers=co_organizers,
+            online_meeting_id=v.clean_str(series.get('online_meeting_id')), groups=option_groups,
+            live_session_id=live_id,
+        )
     for option_warning in option_warnings:
         message = v.clean_str(option_warning.get('message'))
         detail = v.clean_str(option_warning.get('detail'))
         warnings.append(f'{message} ({detail})' if detail else message)
+    options_pending = remaining_pending(pending_options, option_groups, set() if settings_applied else option_groups)
+    if options_pending and settings_applied:
+        # Not retried by this save (people only): keep saying so.
+        warnings.append(pending_warning(options_pending)['message'])
 
-    # Everyone this save added, reached on their own so the rest stay quiet.
+    # Everyone this save added, reached on their own so the rest stay quiet --
+    # only when nothing was announced. An announced write (this one, or the
+    # earlier attempt's, which carried the same list) already invited them.
+    forwarded_to = added if not notify_existing else []
     for forwarded in v.forward_teams_invitation(
-        microsoft_graph_request, owner_key, [event_id], added,
+        microsoft_graph_request, owner_key, [event_id], forwarded_to,
         comment='You have been added to this Teams meeting.',
     ):
         warnings.append(v.clean_str(forwarded.get('message')))
@@ -729,9 +825,11 @@ def curriculum_week_teams_meeting_detail(request, module_catalogue_id, live_sess
         'co_organizers': v.json_db_value(co_organizers),
         'start_datetime': utc_start,
         'duration_minutes': duration,
-        'lobby_bypass': lobby,
-        'recording': recording,
-        'spoken_language': language,
+        # A refused settings change is not saved as if Microsoft had taken it.
+        **({'lobby_bypass': stored_options['lobby_bypass'], 'recording': stored_options['recording'],
+            'spoken_language': stored_options['spoken_language']}
+           if not settings_applied and 'settings' in option_groups else
+           {'lobby_bypass': lobby, 'recording': recording, 'spoken_language': language}),
         'warnings': v.json_db_value(warnings),
         'updated_at': now,
     })
@@ -756,10 +854,33 @@ def curriculum_week_teams_meeting_detail(request, module_catalogue_id, live_sess
         })
     v.invalidate_curriculum_cache()
 
+    # Our own emails, from the server, the same rule as the module calendar: the
+    # people this save added get the full schedule -- under this save's own key,
+    # so a guest removed and later added back is sent it again -- and nobody
+    # already invited is sent it again. A time that moved is told to everyone
+    # else as a "was / now" change, once Microsoft confirmed that same time and
+    # announced it; the change is keyed by the logical edit, so a retry of it
+    # never emails anyone twice.
+    schedule_email = added_email = None
+    if may_send_schedule_email(request):
+        from .teams_schedule_delivery import send_week_meeting_change_emails, send_week_meeting_emails
+        saved = week_meeting_row(v, resolved_id, live_id)
+        if added:
+            added_email = send_week_meeting_emails(live_id, added=added, key=f'{live_id}+{uuid.uuid4().hex}')
+        if saved and time_changed and time_confirmed:
+            schedule_email = send_week_meeting_change_emails(series, saved, exclude=added,
+                                                             key=f'{live_id}#{change_id}')
+
     return JsonResponse({
         'updated': True,
+        'scheduleEmail': schedule_email,
+        'addedEmail': added_email,
         'notifiedExisting': notify_existing,
-        'forwardedTo': added,
+        # 'sent', 'already_attempted' (an earlier attempt at this same edit
+        # asked; not repeated) or 'silent'. A request, never proof of delivery.
+        'microsoftUpdate': 'silent' if not notify_existing else 'already_attempted' if claim == 'attempted' else 'sent',
+        'timeChanged': time_changed,
+        'forwardedTo': forwarded_to,
         'meeting': {
             'liveSessionId': live_id,
             'componentId': v.clean_str((component_row or {}).get('id')),
@@ -780,11 +901,14 @@ def curriculum_week_teams_meeting_detail(request, module_catalogue_id, live_sess
     })
 
 
-def cancel_week_meeting(v, graph_request, component_row, settings, owner_key, event_key, live_id, now):
+def cancel_week_meeting(v, graph_request, component_row, settings, owner_key, event_key, live_id, now, series=None):
     """Cancel one additional meeting and leave its week for the author to assign again.
 
     Microsoft cancels the event and tells the people invited -- that is what a
-    cancellation IS, so it is never sent silently. Afterwards the component's
+    cancellation IS, so it is never sent silently. The LMS cancellation email
+    follows to everyone the meeting invited, as the module calendar's does;
+    ``series`` is the row as it stood, passed only for a caller who may send
+    mail. Afterwards the component's
     ``extraTeams*`` keys and its main/additional choice are cleared. On a module
     whose calendar exists that makes the live session 'pending' (see
     ``live_session_meeting_scope``): it is not handed back to the module series
@@ -827,10 +951,15 @@ def cancel_week_meeting(v, graph_request, component_row, settings, owner_key, ev
             'updated_at': now,
         })
     v.invalidate_curriculum_cache()
+    schedule_email = None
+    if series is not None:
+        from .teams_schedule_delivery import send_week_meeting_change_emails
+        schedule_email = send_week_meeting_change_emails(series)
     return JsonResponse({
         'cancelled': True,
         'liveSessionId': live_id,
         'componentId': v.clean_str((component_row or {}).get('id')),
+        'scheduleEmail': schedule_email,
         'warnings': warnings,
     })
 

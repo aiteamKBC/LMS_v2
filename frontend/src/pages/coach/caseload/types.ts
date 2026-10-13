@@ -13,6 +13,7 @@
 // values for them.
 // ============================================================================
 
+/** Overall learner performance/engagement label; never the OTJH RAG verdict. */
 export type PerformanceStatus = 'at-risk' | 'on-track' | 'high' | 'new-starter' | 'unavailable';
 export type EnrollmentStatus = 'all' | 'active' | 'break' | 'withdrawn' | 'ready-to-enrol' | 'unknown';
 export type AttendanceRisk = 'green' | 'amber' | 'red';
@@ -64,6 +65,8 @@ export interface Learner {
   /** Programme label. Present on the attendance payload; falls back to cohort. */
   programmeName?: string;
   group: string;
+  /** Legacy composite performance on Dashboard responses; engagement overallStatus
+   * after the standalone caseload join. OTJH consumers use otjhRagStatus only. */
   status: PerformanceStatus;
   enrollmentStatus: EnrollmentStatus;
   riskFlags: string[];
@@ -177,6 +180,9 @@ export interface CaseloadApiLearner extends Omit<Learner, 'enrollmentStatus' | '
 export type EmbeddedCaseloadLearner = Partial<CaseloadApiLearner>;
 
 export interface CaseloadApiResponse {
+  /** Filtering/sorting metadata kept separate from the public dashboard row DTO. */
+  learnerFilterData?: Record<string, { email?: string | null; cohortId?: string; cohortName?: string; group?: string; urgency?: number }>;
+
   owner?: {
     name?: string;
     email?: string;

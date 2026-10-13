@@ -91,10 +91,20 @@ export async function confirmAttendance(kind: LearnerKind, id: string, lectureId
   invalidateLearnerReads();
   return result;
 }
-export async function updateAttendanceMode(kind: LearnerKind, id: string, mode: 'live' | 'lazy'): Promise<AttendanceMode> {
+export type SavedAttendanceMode = Pick<AttendanceMode, 'mode' | 'requestedMode'>;
+/** Administrators only: every saved mode keyed by learner id. A learner with no entry is on Live Sessions. */
+export async function fetchAttendanceModes(signal?: AbortSignal): Promise<{ available: boolean; modes: Record<string, SavedAttendanceMode> }> {
+  const response = await fetch('/learner_api/attendance-mode/', { credentials: 'include', signal });
+  const result = await response.json().catch(() => null);
+  if (!response.ok || !result) throw new Error(result?.error || 'Could not load attendance modes.');
+  return result;
+}
+/** `direct` (administrators only) applies the mode at once, without manager approval or email. */
+export async function updateAttendanceMode(kind: LearnerKind, id: string, mode: 'live' | 'lazy', options: { direct?: boolean } = {}): Promise<AttendanceMode> {
   const response = await fetch(`/learner_api/attendance/${kind}/${id}/mode/`, {
     method: 'POST', credentials: 'include',
-    headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' }, body: JSON.stringify({ mode }),
+    headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+    body: JSON.stringify(options.direct ? { mode, direct: true } : { mode }),
   });
   const result = await response.json();
   if (!response.ok) throw new Error(result.error || 'Could not update attendance mode.');

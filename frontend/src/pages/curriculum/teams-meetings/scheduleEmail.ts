@@ -15,7 +15,7 @@ export interface ScheduleEmailStatus {
  * "was ... now ..." change email instead of the full creation schedule. The
  * token is the server's own; nothing else about recipients or dates is sent.
  */
-export async function sendScheduleEmailBatch(liveSessionId: string, retryFailed = false, changeNotice = '', addedPeople?: string[], resendKey = ''): Promise<ScheduleEmailStatus> {
+export async function sendScheduleEmailBatch(liveSessionId: string, retryFailed = false, changeNotice = '', addedPeople?: string[], resendKey = '', addedKey = ''): Promise<ScheduleEmailStatus> {
   const controller = new AbortController();
   const timeout = window.setTimeout(() => controller.abort(), 120000);
   try {
@@ -24,7 +24,7 @@ export async function sendScheduleEmailBatch(liveSessionId: string, retryFailed 
     const response = await coachFetch(`${base}/curriculum/teams-meetings/${encodeURIComponent(liveSessionId)}/schedule-email/`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(changeNotice ? { retryFailed, changeNotice }
-        : addedPeople ? { retryFailed, addedPeople }
+        : addedPeople ? { retryFailed, addedPeople, ...(addedKey ? { addedKey } : {}) }
         : resendKey ? { retryFailed, resendKey }
         : { retryFailed }), signal: controller.signal,
     });
@@ -52,13 +52,13 @@ export async function sendScheduleEmailBatch(liveSessionId: string, retryFailed 
 export async function submitChangeEmails(
   liveSessionId: string,
   changeNotice: string,
-  { retryFailed = false, onProgress, addedPeople, resendKey }: { retryFailed?: boolean; onProgress?: (status: ScheduleEmailStatus) => void; addedPeople?: string[]; resendKey?: string } = {},
+  { retryFailed = false, onProgress, addedPeople, resendKey, addedKey }: { retryFailed?: boolean; onProgress?: (status: ScheduleEmailStatus) => void; addedPeople?: string[]; resendKey?: string; addedKey?: string } = {},
 ): Promise<ScheduleEmailStatus> {
   let previousQueued: number | undefined;
   let retry = retryFailed;
   let email: ScheduleEmailStatus;
   do {
-    email = await sendScheduleEmailBatch(liveSessionId, retry, changeNotice, addedPeople, resendKey);
+    email = await sendScheduleEmailBatch(liveSessionId, retry, changeNotice, addedPeople, resendKey, addedKey);
     retry = false;
     onProgress?.(email);
     if (email.queued > 0 && previousQueued !== undefined && email.queued >= previousQueued) {
@@ -71,13 +71,15 @@ export async function submitChangeEmails(
 
 /**
  * The full schedule email, for the people an update just added and nobody else.
- * The server keeps only addresses the saved calendar invites, and its ledger
- * skips anyone this calendar's schedule has already reached.
+ * The server keeps only addresses the saved calendar invites. `addedKey` is the
+ * key the update sent them under, so this continues that batch: a person added
+ * back after a removal is not skipped as already sent, and nobody in the batch
+ * is emailed twice.
  */
 export function submitAddedPeopleEmails(
   liveSessionId: string,
   addedPeople: string[],
-  options: { retryFailed?: boolean; onProgress?: (status: ScheduleEmailStatus) => void } = {},
+  options: { retryFailed?: boolean; onProgress?: (status: ScheduleEmailStatus) => void; addedKey?: string } = {},
 ): Promise<ScheduleEmailStatus> {
   return submitChangeEmails(liveSessionId, '', { ...options, addedPeople });
 }

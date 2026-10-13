@@ -167,6 +167,8 @@ export interface LearnerDetail {
   /** A Delivery apprentice who has signed all four compliance documents may book their first session. */
   firstSessionUnlocked?: boolean;
   learnerType?: LearnerKind;
+  /** Staff-owned Created_users.Attendance_type delivery classification. */
+  attendanceType?: string | null;
   programmeStartDate?: string;
   /** The learner's own recorded start, from Created_users.Learner_start_date.
    *  programmeStartDate falls back to the cohort when this is unset, so it can

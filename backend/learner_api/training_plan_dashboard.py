@@ -18,11 +18,22 @@ from .learning_plan import _aptem_subject_modules, _effective_plan_ids
 from .coach_assignment import current_coach, source_coach
 from .student_activity import _builder_subject_metadata
 from .subject_content import as_list, clean_text, safe_url
+from .subject_dates import is_introduction_section
 from .training_plan_contract import read_contract, contract_extract_metadata, selected_contract
 from .projection_performance import measure_projection
 from . import canonical_learning
 
 log = logging.getLogger(__name__)
+
+NON_TEACHING_LIVE_SESSION_WEEK_TITLES = {
+    'welcome, module guide and assessment resources',
+}
+
+
+def is_educational_live_session_week(title):
+    """Keep teaching weeks while excluding learner onboarding sections."""
+    normalized = clean_text(title).casefold()
+    return not is_introduction_section(title) and normalized not in NON_TEACHING_LIVE_SESSION_WEEK_TITLES
 
 
 # Keep the projection identity reads narrow. ``Created_users`` contains many
@@ -97,6 +108,7 @@ def plan_module(row):
     return {'id': row['id'], **{key: clean_text(row.get(key)) for key in text_fields},
             **{key: row[key].isoformat() if row.get(key) else None for key in ('start_date', 'end_date')},
             **{key: number(row.get(key)) for key in ('total_otjh', 'weeks_number', 'sessions_number')},
+            'educational_session_count': 0,
             'learning_outcomes': []}
 
 
@@ -251,9 +263,9 @@ def contract_plan(source, contract):
             'programmeEndDate': date_only(contract.get('planned_end_date')) if contract else None}
 
 
-def _canonical_actual_rows(owner):
+def _canonical_actual_rows(owner, records=None):
     totals = defaultdict(lambda: {'hours': 0, 'count': 0})
-    for record in canonical_learning.entries_for(owner):
+    for record in records if records is not None else canonical_learning.entries_for(owner):
         if not canonical_learning.counts_as_actual(record):
             continue
         for allocation in canonical_learning.allocations(record):
@@ -272,10 +284,64 @@ def _canonical_actual_rows(owner):
     ]
 
 
+def _canonical_module_progress(records, modules):
+    """Project learner-progress-entry facts onto the assigned module ids."""
+    by_id = {str(module['id']): module for module in modules}
+    ids_by_title = defaultdict(list)
+    for module_id, module in by_id.items():
+        title = clean_text(module.get('title')).casefold()
+        if title:
+            ids_by_title[title].append(module_id)
+
+    def module_id_for(record):
+        direct = str(record.get('module_ref') or '').strip()
+        if direct in by_id:
+            return direct
+        title = clean_text(record.get('module_title')).casefold()
+        matches = ids_by_title.get(title, [])
+        return matches[0] if len(matches) == 1 else None
+
+    result = {
+        module_id: {'hours': {'actual': 0}, 'ksb': {'completed': 0, 'total': 0},
+                    'attendance': {'attended': 0, 'total': 0}}
+        for module_id in by_id
+    }
+    for record in records:
+        module_id = module_id_for(record)
+        if module_id is None:
+            continue
+        metric = result[module_id]
+        if canonical_learning.counts_as_actual(record):
+            metric['hours']['actual'] += sum(
+                canonical_learning.number(allocation.get('actual_seconds')) / 3600
+                for allocation in canonical_learning.allocations(record)
+            )
+        for code in set(record.get('ksbs') or []):
+            if not str(code).strip():
+                continue
+            metric['ksb']['total'] += 1
+            metric['ksb']['completed'] += record.get('accepted') is True
+        if (record.get('kind') == 'activity_event'
+                and record.get('feed_kind') == 'attendance_confirmation'):
+            metric['attendance']['attended'] += 1
+
+    for module_id, metric in result.items():
+        module = by_id[module_id]
+        authored_sessions = number(module.get('educational_session_count'))
+        if not authored_sessions:
+            authored_sessions = number(module.get('sessions_number'))
+        attended = metric['attendance']['attended']
+        metric['hours']['actual'] = round(metric['hours']['actual'], 4)
+        # Confirmations prove attendance; the authored plan remains the session target.
+        metric['attendance']['total'] = max(attended, int(authored_sessions or 0))
+    return result
+
+
 def read_dashboard(source, section=None):
     owner = getattr(source, '_canonical_profile', None)
     email = str(source.email or '').strip().casefold()
     actual, modules, sessions = [], [], []
+    progress_records = []
     historical = None
     targets = canonical_learning.targets_for(owner) if owner is not None else {}
     contract_data = {
@@ -287,7 +353,7 @@ def read_dashboard(source, section=None):
         'programmeStartDate': date_only(owner.get('start_date')) if owner else None,
         'programmeEndDate': date_only(owner.get('end_date')) if owner else None,
     }
-    profile = (
+    profile = getattr(source, '_case_file_profile', None) or (
         LearnerProfile.objects.filter(enrolment_id=source.pk)
         .only(*TRAINING_PLAN_PROFILE_FIELDS)
         .first()
@@ -297,7 +363,8 @@ def read_dashboard(source, section=None):
         if section == 'contract':
             return contract_data
         if section != 'learning' and owner is not None:
-            actual = _canonical_actual_rows(owner)
+            progress_records = canonical_learning.entries_for(owner)
+            actual = _canonical_actual_rows(owner, progress_records)
         # Effective current assignments are authoritative for the schedule.
         # Builder metadata enriches those assignments (and supplies legacy
         # links), but a missing builder row must not hide an assigned module.
@@ -334,15 +401,24 @@ def read_dashboard(source, section=None):
             by_id = {module['id']: module for module in modules}
             week_counts = defaultdict(int)
             weeks_by_number = {}
-            cur.execute('''SELECT id,module_catalogue_id,week_number,title,learning_outcomes,
-                holiday_note_enabled,holiday_note FROM curriculum.weeks
-                WHERE module_catalogue_id=ANY(%s) AND (deleted_at IS NULL OR COALESCE(deleted_via_parent, '') <> '')
-                ORDER BY display_order,week_number,id''', [ids])
+            cur.execute('''SELECT w.id,w.module_catalogue_id,w.week_number,w.title,w.learning_outcomes,
+                w.holiday_note_enabled,w.holiday_note,
+                (SELECT count(*) FROM curriculum.components c
+                 WHERE c.week_id=w.id AND c.module_catalogue_id=w.module_catalogue_id
+                   AND lower(replace(coalesce(c.type, ''), '-', '_'))='live_session'
+                   AND (c.deleted_at IS NULL OR COALESCE(c.deleted_via_parent, '') <> '')
+                ) AS live_session_count
+                FROM curriculum.weeks w
+                WHERE w.module_catalogue_id=ANY(%s)
+                  AND (w.deleted_at IS NULL OR COALESCE(w.deleted_via_parent, '') <> '')
+                ORDER BY w.display_order,w.week_number,w.id''', [ids])
             for row in rows(cur):
                 week_counts[row['module_catalogue_id']] += 1
                 outcomes = [text for text in (clean_text(o) if isinstance(o, str) else '' for o in as_list(row['learning_outcomes'])) if text]
                 module = by_id.get(row['module_catalogue_id'])
                 if module is not None:
+                    if is_educational_live_session_week(row.get('title')):
+                        module['educational_session_count'] += max(0, int(row.get('live_session_count') or 0))
                     for text in outcomes:
                         if text not in module['learning_outcomes']:
                             module['learning_outcomes'].append(text)
@@ -404,7 +480,9 @@ def read_dashboard(source, section=None):
     phone = coach_phone(coach_email)
     if phone:
         coach['phone'] = phone
-    return {**contract_data, 'actual': actual, 'actualAvailable': owner is not None, 'modules': modules, 'moduleLinks': links,
+    return {**contract_data, 'actual': actual, 'actualAvailable': owner is not None,
+            'moduleProgress': _canonical_module_progress(progress_records, modules) if owner is not None else {},
+            'modules': modules, 'moduleLinks': links,
             'sessions': sessions, 'reviews': reviews, 'coach': coach,
             'generatedAt': datetime.now(timezone.utc).isoformat()}
 
@@ -420,7 +498,10 @@ def training_plan_dashboard(request, kind, pk):
     measurement = None
     try:
         with measure_projection('training-plan-dashboard', kind=kind, learner_id=pk, section=section) as measurement:
-            source = model.all_learners.only(*TRAINING_PLAN_SOURCE_FIELDS).get(pk=pk)
+            from .case_file_sources import source_for_case_file
+            source = source_for_case_file(request, kind, pk)
+            if source is None:
+                source = model.all_learners.only(*TRAINING_PLAN_SOURCE_FIELDS).get(pk=pk)
             source._canonical_profile = canonical_learning.require_profile(pk)
         # ``learning`` is the detailed weekly dashboard projection.  Keep it
         # on the same read path as overview so clients can request the weekly

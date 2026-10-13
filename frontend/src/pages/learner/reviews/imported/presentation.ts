@@ -59,19 +59,42 @@ const numeric = (item: Record<string, unknown>, ...keys: string[]) => {
 };
 export const percentage = (current: number | null, total: number | null) => current !== null && total !== null && total > 0 ? current / total * 100 : null;
 
+export interface ImportedProgressMetric {
+  percentage: number | null;
+  targetPercentage: number | null;
+  variancePercentage: number | null;
+}
+
+// Keep full precision in the presentation model; round only visible labels.
+const progressMetric = (value: number | null, target: number | null): ImportedProgressMetric => ({
+  percentage: value, targetPercentage: target,
+  variancePercentage: value !== null && target !== null ? value - target : null,
+});
+const sourceMetric = (item: Record<string, unknown>) => progressMetric(
+  percentage(numeric(item, 'current'), numeric(item, 'max')),
+  percentage(numeric(item, 'target', 'minTarget'), numeric(item, 'max')),
+);
+
 export type ProgressCard =
-  | { kind: 'activities'; completed: number | null; submitted: number | null; remaining: number | null; total: number | null; target: number | null }
-  | { kind: 'standard'; title: string; current: number | null; target: number | null; max: number | null; status: 'Behind' | 'On track' | 'Ahead' | null }
-  | { kind: 'hours'; minimum: number | null; planned: number | null; completed: number | null; forecast: number | null; percentage: number | null }
+  | ({ kind: 'activities'; completed: number | null; submitted: number | null; remaining: number | null; total: number | null; target: number | null } & ImportedProgressMetric)
+  | ({ kind: 'standard'; title: string; current: number | null; target: number | null; max: number | null; status: 'Behind' | 'On track' | 'Ahead' | null } & ImportedProgressMetric)
+  | ({ kind: 'hours'; minimum: number | null; planned: number | null; completed: number | null; forecast: number | null } & ImportedProgressMetric)
+  | ({ kind: 'programme' } & ImportedProgressMetric)
   | { kind: 'timeline'; dates: { label: string; value: string }[] }
   | { kind: 'other'; value: unknown };
 
-export function normalizeImportedProgress(raw: unknown): ProgressCard[] {
+export interface ImportedProgressNormalizedData {
+  /** Complete decoded capture, including metrics not selected for display. Never mutated. */
+  readonly source: unknown;
+  readonly cards: ProgressCard[];
+}
+
+export function normalizeImportedProgressData(raw: unknown): ImportedProgressNormalizedData {
   const decoded = decodeStructured(raw);
-  if (decoded.malformed || isEmpty(decoded.value)) return [];
+  if (decoded.malformed || isEmpty(decoded.value)) return { source: raw, cards: [] };
   const object = record(decoded.value);
   const items = Array.isArray(decoded.value) ? decoded.value : object?.progress && Array.isArray(object.progress) ? object.progress : object ? [object] : [];
-  return items.flatMap((value): ProgressCard[] => {
+  const cards = items.flatMap((value): ProgressCard[] => {
     const item = record(value);
     if (!item) return [{ kind: 'other', value }];
     const type = numberValue(item.progressType);
@@ -80,35 +103,68 @@ export function normalizeImportedProgress(raw: unknown): ProgressCard[] {
       const submitted = numeric(item, 'submittedCount', 'submitted');
       const total = numeric(item, 'totalCount', 'max');
       // An absent submitted count is unknown, not zero. The source's remaining
-      // activities include everything not completed, matching its completed/total ring.
+      // activities include everything not completed. Counts support, but never
+      // replace, the source current/max progress metric.
       const remaining = numeric(item, 'remainingCount') ?? (total !== null && completed !== null ? Math.max(0, total - completed - (submitted ?? 0)) : null);
-      return [{ kind: 'activities', completed, submitted, total, remaining, target: numeric(item, 'targetCount', 'target') }];
+      return [{ kind: 'activities', ...sourceMetric(item), completed, submitted, total, remaining, target: numeric(item, 'targetCount', 'target') }];
     }
     if (type === 4) {
       const current = numeric(item, 'current'), target = numeric(item, 'target', 'minTarget');
-      return [{ kind: 'standard', title: typeof item.title === 'string' ? item.title : 'Programme progress', current, target, max: numeric(item, 'max'),
+      return [{ kind: 'standard', ...sourceMetric(item), title: typeof item.title === 'string' ? item.title : 'Standard progress', current, target, max: numeric(item, 'max'),
         status: current === null || target === null ? null : current < target ? 'Behind' : current > target ? 'Ahead' : 'On track' }];
     }
     if (type === 6 || 'completedTime' in item) {
       // Aptem *Time metrics are minutes (57394 / 60 = 956.57h); plannedHours is hours.
       const hours = (key: string) => { const n = numeric(item, key); return n === null ? null : n / 60; };
       const completed = hours('completedTime') ?? hours('current'), planned = numeric(item, 'plannedHours');
-      return [{ kind: 'hours', completed, planned, minimum: hours('minimumRequiredTime'), forecast: hours('forecastTime'), percentage: percentage(completed, planned) }];
+      return [{ kind: 'hours', completed, planned, minimum: hours('minimumRequiredTime'), forecast: hours('forecastTime'),
+        ...progressMetric(percentage(completed, planned), percentage(numeric(item, 'target'), numeric(item, 'max'))) }];
     }
     if (type === 7 || 'startDate' in item) {
       const dates = [['Programme start', 'startDate'], ['Review snapshot', 'currentDate'], ['Gateway / planned end', 'plannedEndDate'], ['Apprenticeship end', 'expectedEndDate']]
         .flatMap(([label, key]) => typeof item[key] === 'string' && calendarLabel(item[key] as string) ? [{ label, value: item[key] as string }] : []);
-      return [{ kind: 'timeline', dates }];
+      return [{ kind: 'programme', ...sourceMetric(item) }, { kind: 'timeline', dates }];
     }
     return [{ kind: 'other', value: item }];
   });
+  return { source: decoded.value, cards };
 }
 
-export interface PresentationField extends ImportedReviewField { required?: boolean; fieldType?: string }
-export interface PresentationSection { name: string; fields: PresentationField[]; tables: unknown[][][]; rawText: string }
+/** Compatibility for consumers of the complete metric list, independent of UI selection. */
+export function normalizeImportedProgress(raw: unknown): ProgressCard[] {
+  return normalizeImportedProgressData(raw).cards;
+}
+
+export type AptemHistoricalProgressPresentation = Exclude<ProgressCard, { kind: 'programme' }>[];
+
+/** The historical web Review selects Activities, Standard, Timeline and OTJ.
+ * Type-7 numeric progress remains in the normalized model for other consumers.
+ * The same source shapes use this presentation across PR, Skills Radar and MCM.
+ */
+export function aptemHistoricalProgressPresentation(data: ImportedProgressNormalizedData): AptemHistoricalProgressPresentation {
+  const order = { activities: 0, standard: 1, timeline: 2, hours: 3, other: 4 };
+  return data.cards.filter((card): card is AptemHistoricalProgressPresentation[number] => card.kind !== 'programme')
+    .sort((a, b) => order[a.kind] - order[b.kind]);
+}
+
+export interface PresentationField extends ImportedReviewField { required?: boolean; fieldType?: string; preserveEmpty?: boolean }
+export interface PresentationSection { name: string; fields: PresentationField[]; tables: unknown[][][]; rawText: string; historicalPresentation?: boolean; preserveRawText?: boolean }
+
+export function hasImportedProgress(sections: ReviewSectionDefinition[]): boolean {
+  return sections.some(section => section.enabled && /learning\s*progress/i.test(section.title) && section.fields.some(field =>
+    keyOf(field.title) === 'progress' && normalizeImportedProgress(field.answer).some(card =>
+      card.kind === 'activities' ? card.percentage !== null || (card.completed !== null && card.total !== null)
+        : card.kind === 'standard' || card.kind === 'programme' ? card.percentage !== null
+          : card.kind === 'hours' ? card.completed !== null
+            : card.kind === 'timeline' && card.dates.length > 0,
+    ),
+  ));
+}
 
 export function adaptHistorySection(section: ImportedReviewSection): PresentationSection {
-  return { name: section.name, fields: section.fields, tables: section.tables.map(table => table.rows || []), rawText: section.rawText };
+  return { name: section.name, fields: section.fields.map(field => ({ ...field,
+    ...(Object.prototype.hasOwnProperty.call(field, 'displayValue') ? { value: field.displayValue } : {}),
+  })), tables: section.tables.map(table => table.rows || []), rawText: section.rawText, historicalPresentation: section.historicalPresentation, preserveRawText: section.preserveRawText };
 }
 
 export function adaptDefinitionSection(section: ReviewSectionDefinition, answers: Record<string, unknown>): PresentationSection {
@@ -122,10 +178,11 @@ export function adaptDefinitionSection(section: ReviewSectionDefinition, answers
     } else if (field.id.startsWith('aptem-text:')) {
       rawText = typeof config.description === 'string' ? config.description : '';
     } else {
-      fields.push({ label: field.title, value: Object.prototype.hasOwnProperty.call(answers, field.id) ? answers[field.id] : field.answer ?? (field.fieldType === 'title_description' ? config.description : undefined),
-        description: field.fieldType === 'title_description' ? undefined : typeof config.description === 'string' ? config.description : undefined,
-        required: field.required, fieldType: field.fieldType });
+      const historicalInstruction = section.historicalPresentation && field.fieldType === 'title_description';
+      fields.push({ label: field.title, value: Object.prototype.hasOwnProperty.call(answers, field.id) ? answers[field.id] : field.answer ?? (field.fieldType === 'title_description' && !historicalInstruction ? config.description : undefined),
+        description: field.fieldType === 'title_description' && !historicalInstruction ? undefined : typeof config.description === 'string' ? config.description : undefined,
+        required: field.required, fieldType: field.fieldType, preserveEmpty: config.preserveEmpty === true });
     }
   });
-  return { name: section.title, fields, tables, rawText };
+  return { name: section.title, fields, tables, rawText, historicalPresentation: section.historicalPresentation, preserveRawText: section.preserveRawText };
 }

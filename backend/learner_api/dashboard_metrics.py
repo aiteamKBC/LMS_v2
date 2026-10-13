@@ -2,6 +2,7 @@
 import json
 import logging
 from collections import defaultdict
+from types import SimpleNamespace
 
 import psycopg
 from . import journal_sources
@@ -26,6 +27,16 @@ from . import canonical_learning
 
 log = logging.getLogger(__name__)
 _MISSING = object()
+
+
+def coach_otjh_target_to_date(source, otjh):
+    from coach_api.selectors.otjh import learner_programme_window
+    from coach_api.views import apply_otjh_to_date_metrics
+    profile = canonical_learning.require_profile(source.pk)
+    start, end = learner_programme_window(SimpleNamespace(**profile), source)
+    data = {'otjhCompleted': otjh.get('actual'), 'otjhPlanned': otjh.get('planned')}
+    data.update(otjhProgrammeStartDate=start, plannedEndDate=end)
+    return apply_otjh_to_date_metrics(data)['otjhTargetAsOfToday']
 
 
 def as_json(value, default):
@@ -496,6 +507,7 @@ def learner_metrics(request, kind, pk):
                     ).get(source.pk)
                     if payload is None:
                         raise ValueError('Learner identity is unavailable.')
+                    payload['otjh']['targetToDate'] = coach_otjh_target_to_date(source, payload['otjh'])
                 else:
                     payload = read_metrics(source, kind)
     except model.DoesNotExist:

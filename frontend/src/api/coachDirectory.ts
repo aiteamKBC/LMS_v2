@@ -13,6 +13,28 @@ export interface DirectoryCoach {
   email: string;
   caseloadCount: number;
   activeLearnerCount: number;
+  performance?: CoachPerformanceMetrics | null;
+}
+
+export interface ReviewPerformanceMetrics {
+  required: number;
+  completed: number;
+  overdue: number;
+}
+
+export interface CoachPerformanceMetrics {
+  available: boolean;
+  attendanceRate: number | null;
+  progressReviewRate: number | null;
+  pendingMarking: number;
+  completedReviews: number;
+  otjh: {
+    onTrack: number;
+    needAttention: number;
+    atRisk: number;
+  };
+  progressReviews: ReviewPerformanceMetrics;
+  monthlyCoaching: ReviewPerformanceMetrics;
 }
 
 export interface CoachDirectory {
@@ -36,6 +58,43 @@ function toCount(value: unknown): number {
   return Number.isFinite(parsed) && parsed > 0 ? Math.round(parsed) : 0;
 }
 
+function toRate(value: unknown): number | null {
+  if (value === null || value === undefined || value === '') return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? Math.max(0, Math.min(100, Math.round(parsed))) : null;
+}
+
+function reviewMetrics(value: unknown): ReviewPerformanceMetrics {
+  const source = value && typeof value === 'object' ? value as Record<string, unknown> : {};
+  return {
+    required: toCount(source.required),
+    completed: toCount(source.completed),
+    overdue: toCount(source.overdue),
+  };
+}
+
+function performanceMetrics(value: unknown): CoachPerformanceMetrics | null {
+  if (!value || typeof value !== 'object') return null;
+  const source = value as Record<string, unknown>;
+  const otjh = source.otjh && typeof source.otjh === 'object'
+    ? source.otjh as Record<string, unknown>
+    : {};
+  return {
+    available: source.available !== false,
+    attendanceRate: toRate(source.attendanceRate),
+    progressReviewRate: toRate(source.progressReviewRate),
+    pendingMarking: toCount(source.pendingMarking),
+    completedReviews: toCount(source.completedReviews),
+    otjh: {
+      onTrack: toCount(otjh.onTrack),
+      needAttention: toCount(otjh.needAttention),
+      atRisk: toCount(otjh.atRisk),
+    },
+    progressReviews: reviewMetrics(source.progressReviews),
+    monthlyCoaching: reviewMetrics(source.monthlyCoaching),
+  };
+}
+
 export async function fetchCoachDirectory(signal?: AbortSignal): Promise<CoachDirectory> {
   const response = await coachFetch('/coach_api/coaches', { signal });
   const payload = await response.json().catch(() => ({})) as CoachDirectoryPayload;
@@ -52,6 +111,7 @@ export async function fetchCoachDirectory(signal?: AbortSignal): Promise<CoachDi
         email: String(coach.email || '').trim().toLowerCase(),
         caseloadCount: toCount(coach.caseloadCount),
         activeLearnerCount: toCount(coach.activeLearnerCount),
+        performance: performanceMetrics(coach.performance),
       }))
       .filter(coach => Boolean(coach.email)),
     caseloadCountsAvailable: payload.caseloadCountsAvailable !== false,

@@ -47,10 +47,12 @@ function LocationOutput() {
   return <output data-testid="route">{location.pathname}{location.search}</output>;
 }
 
-function mount() {
-  return render(<MemoryRouter initialEntries={['/coach/progress-reviews']}>
+function mount(initialPath = '/coach/progress-reviews') {
+  return render(<MemoryRouter initialEntries={[initialPath]}>
     <Routes>
-      <Route path="/coach/progress-reviews" element={<CoachProgressReviews />} />
+      <Route path="/coach/progress-reviews" element={<CoachProgressReviews key="pr" />} />
+      <Route path="/coach/reviews" element={<CoachProgressReviews key="other" category="review" />} />
+      <Route path="/coach/reviews/:eventKey" element={<div>Other review details page</div>} />
       <Route path="/coach/progress-reviews/:eventKey" element={<div>Review details page</div>} />
     </Routes>
     <LocationOutput />
@@ -68,6 +70,60 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.useRealTimers(); });
 
 describe('progress review list navigation and filters', () => {
+  const mixedReviews = () => [
+    review(60, { learner: 'PR Learner', importedReviewType: 'Progress Review', reviewSource: 'aptem' }),
+    review(61, { learner: 'Radar Learner', importedReviewType: 'Progress Review (+ Skills Radar)', reviewSource: 'aptem' }),
+    review(62, { id: 'imported-review:62', eventKey: 'imported-review:62', learner: 'Other Learner',
+      importedReviewType: 'RPL and Experience', reviewSource: 'aptem', aptemReviewId: '62',
+      reviewTemplateId: undefined, hasReviewForm: true, status: 'completed', reviewCompletedAt: '2026-09-10' }),
+    review(63, { learner: 'MCM Learner', source: 'mcr', importedReviewType: 'Monthly Coaching Meeting', reviewSource: 'aptem' }),
+    review(64, { learner: 'Native Other', source: 'review', title: 'Progress Review', reviewTypeCode: 'career_review',
+      reviewTypeName: 'Career Review', reviewTemplateId: 'REV-CAREER' }),
+  ];
+
+  it('keeps only genuine PR and skills-radar reviews in the PR list and counters', async () => {
+    fetchEvents.mockResolvedValue({ events: mixedReviews() });
+    mount();
+    expect(await screen.findByText('PR Learner')).toBeVisible();
+    expect(screen.getByText('Radar Learner')).toBeVisible();
+    expect(screen.queryByText('Other Learner')).toBeNull();
+    expect(screen.queryByText('MCM Learner')).toBeNull();
+    expect(screen.queryByText('Native Other')).toBeNull();
+    expect(screen.getByRole('button', { name: 'All2' })).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Completed0' })).toBeVisible();
+  });
+
+  it('lists other imported and Curriculum reviews with original types and intact form links', async () => {
+    fetchEvents.mockResolvedValue({ events: mixedReviews() });
+    mount('/coach/reviews?month=2026-09&q=Other');
+    expect(await screen.findByText('Other Learner')).toBeVisible();
+    expect(screen.getByText('Native Other')).toBeVisible();
+    expect(screen.getByText('RPL and Experience')).toBeVisible();
+    expect(screen.getByText('Career Review')).toBeVisible();
+    expect(screen.getByRole('columnheader', { name: 'Review type' })).toBeVisible();
+    expect(screen.queryByRole('columnheader', { name: 'Last PR' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Bulk generate slides' })).toBeNull();
+    expect(screen.queryByText('PR Learner')).toBeNull();
+    expect(screen.queryByText('MCM Learner')).toBeNull();
+    expect(screen.getByRole('button', { name: 'All2' })).toBeVisible();
+    fireEvent.click(within(screen.getByText('Other Learner').closest('tr')!).getByRole('button', { name: 'View form' }));
+    expect(screen.getByTestId('route')).toHaveTextContent('/coach/review-instances/imported-review%3A62');
+    expect(openReview).not.toHaveBeenCalled();
+  });
+
+  it('keeps PR and Review caches separate and opens other-review details on their own route', async () => {
+    fetchEvents.mockResolvedValue({ events: mixedReviews() });
+    const first = mount();
+    await screen.findByText('PR Learner');
+    first.unmount();
+    mount('/coach/reviews');
+    expect(await screen.findByText('Other Learner')).toBeVisible();
+    expect(screen.queryByText('PR Learner')).toBeNull();
+    fireEvent.click(screen.getByText('Other Learner'));
+    expect(await screen.findByText('Other review details page')).toBeVisible();
+    expect(screen.getByTestId('route')).toHaveTextContent('/coach/reviews/imported-review%3A62');
+  });
+
   it('uses the MCM month-scoped filters', async () => {
     mount();
     await screen.findByText('Scheduled Review');

@@ -44,6 +44,9 @@ describe('module activity sidebar', () => {
       expect(within(sidebar).getByRole('button', { name: new RegExp(`^Week ${number}\\b`) })).toBeVisible();
     }
     expect(within(sidebar).getByText('Current week')).toBeVisible();
+    expect(within(sidebar).getByRole('button', { name: /Lesson 6/ })).toHaveClass('bg-emerald-100/80');
+    expect(within(sidebar).getByText('Current week').parentElement?.parentElement)
+      .toHaveClass('border-emerald-200', 'bg-emerald-50/70');
   });
 
   it('expands another week in place and opens its chosen activity within the same learner', () => {

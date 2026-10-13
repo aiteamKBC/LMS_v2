@@ -7,7 +7,7 @@ import { AppIcon } from '@/components/feature/AppIcon';
 import { SkeletonBlock } from '@/components/feature/Skeletons';
 import { EmptyState } from '@/components/ui/EmptyState';
 import styles from '@/features/monthly-logs/monthlyLogs.module.css';
-import { getCoachMonthlyLogLearners } from '../api/monthlyLogsApi';
+import { getCoachMonthlyLogLearners, coachLogQueryOptions } from '../api/monthlyLogsApi';
 import { filterCoachMonthlyLogLearners } from '../selectors/monthlyLogsSelectors';
 import type { CoachMonthlyLogLearner } from '../types/monthlyLogs.types';
 
@@ -55,6 +55,7 @@ export function CoachMonthlyLogLearners({ selectedLearnerId, renderSelected }: {
   const query = useQuery({
     queryKey: ['monthly-logs', auth.account?.id, coachViewAs()?.email, 'learners'],
     queryFn: getCoachMonthlyLogLearners,
+    ...coachLogQueryOptions,
     // A coach returning to this route should keep the successful list visible;
     // React Query can still refresh it without reverting to the first-load UI.
     gcTime: Infinity,
@@ -64,8 +65,7 @@ export function CoachMonthlyLogLearners({ selectedLearnerId, renderSelected }: {
     action={<button className={styles.coachRetryButton} onClick={() => void query.refetch()}>Try again</button>} />;
 
   const learners = filterCoachMonthlyLogLearners(query.data.learners, search);
-  const selected = query.data.learners.find(learner => String(learner.id) === selectedLearnerId)
-    || (!selectedLearnerId ? query.data.learners[0] : undefined);
+  const selected = query.data.learners.find(learner => String(learner.id) === selectedLearnerId);
 
   return <div className={styles.coachWorkspace}>
     <header className={styles.coachHero}>
@@ -102,7 +102,7 @@ export function CoachMonthlyLogLearners({ selectedLearnerId, renderSelected }: {
       </aside>
 
       <section className={styles.coachSelectedLearner} aria-label={selected ? `${selected.name} monthly logs` : 'Selected learner monthly logs'}>
-        {selected ? renderSelected(selected) : <EmptyState title="Learner not found" description="Choose a learner from your assigned caseload." />}
+        {selected ? renderSelected(selected) : <EmptyState title={selectedLearnerId ? 'Learner not found' : 'Choose a learner to view monthly logs'} description="Choose a learner from your assigned caseload." />}
       </section>
     </div>
   </div>;

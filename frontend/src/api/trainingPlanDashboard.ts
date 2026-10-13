@@ -36,7 +36,7 @@ export type PlanCurriculumSlot = { slotNumber: number; date: string; day: string
   holidayNote?: string };
 export type PlanModule = { id: string; title: string; description: string; start_date: string | null; end_date: string | null; tutor_name: string; coach_name: string;
   programme_name?: string; cohort_name?: string; group_name?: string; total_otjh?: number | null;
-  weeks_number?: number | null; sessions_number?: number | null;
+  weeks_number?: number | null; sessions_number?: number | null; educational_session_count?: number;
   session_week_day?: string; session_start_time?: string; session_end_time?: string; learning_outcomes?: string[];
   /** The curriculum spine for this module. Empty when the module has no plannable schedule. */
   curriculumSlots?: PlanCurriculumSlot[];
@@ -64,6 +64,11 @@ export type PlanModuleSummary = {
   ksbCodes?: string[];
   ksbMappingMissing?: boolean;
 };
+export type PlanModuleProgress = {
+  attendance: { attended: number; total: number };
+  hours: { actual: number };
+  ksb: { completed: number; total: number };
+};
 export type TrainingPlanDashboard = {
   /** Per-module activity/hour/KSB summaries already loaded by the overview read. */
   planSubjects?: PlanModuleSummary[];
@@ -79,6 +84,8 @@ export type TrainingPlanDashboard = {
   requiredOtjh?: number | null;
   actual: { month: string; groupId: string | null; hours: number; count: number }[];
   actualAvailable: boolean;
+  /** Learner-progress-entry metrics keyed by the assigned curriculum module id. */
+  moduleProgress?: Record<string, PlanModuleProgress>;
   modules: PlanModule[];
   moduleLinks: Record<string, { id: string; title: string }>;
   sessions: PlanSession[];

@@ -32,6 +32,8 @@ import { useLearnerDetailParam } from '@/hooks/useLearnerDetailParam';
 import { learnerLiveSessionHref } from './liveSessionRoute';
 import type { LearnerCalendarEvent } from '@/api/learnerCalendar';
 import MeetingBookingDialog from '@/pages/learner/reviews/MeetingBookingDialog';
+import { dashboardOtjhProgress } from './dashboardOtjhProgress';
+import { useUnifiedLearningSummary } from '@/pages/learner/my-learning/SubjectWorkspace';
 
 function formatProgrammeStartDate(value?: string | null): string {
   if (!value) return '';
@@ -84,10 +86,13 @@ export default function LearnerOverview() {
   const skipPreStartData = isRealMode && (!real || isCommercialPreStart);
   const learnerKind: LearnerKind | null = kind === 'commercial' || kind === 'apprenticeship' ? kind : null;
   const dashboardPlan = useDashboardPlan(learnerKind, id, isRealMode && !skipPreStartData);
+  const learnerDetailRead = useLearnerDetailParam(kind, id);
   // Programme and KSB cards share the canonical metrics with My Learning.
   // Actual combines retained Audit hours and measured LMS completions once.
   // Migrated Planned hours use the retained Aptem total.
-  const metrics = useLearnerMetrics(learnerKind, id, isRealMode && !skipPreStartData);
+  const metrics = useLearnerMetrics(learnerKind, id, isRealMode && !skipPreStartData, 'learner-overview');
+  const unifiedLearning = useUnifiedLearningSummary(learnerDetailRead.real, learnerKind, id,
+    isRealMode && !skipPreStartData && !!learnerDetailRead.real);
   const scheduleRead = dashboardPlan.schedule;
   const [now, setNow] = useState(Date.now);
   useEffect(() => {
@@ -168,7 +173,6 @@ export default function LearnerOverview() {
   const nextReviewOrMcm = useMemo(() => upcomingReviewOrMcm(scheduleRead.data, new Date(now)),
     [scheduleRead.data, now]);
   const [bookingSession, setBookingSession] = useState<LearnerCalendarEvent | null>(null);
-  const learnerDetailRead = useLearnerDetailParam(kind, id);
   const nextLectureActivityHref = learnerLiveSessionHref(learnerDetailRead.real, nextLecture, kind, id)
     || (nextLecture.moduleId
       ? learnerModuleHref(kind, id, nextLecture.moduleId, scheduleRead.data?.moduleLinks)
@@ -264,18 +268,18 @@ export default function LearnerOverview() {
   const attendanceSummary = attendancePresent == null || attendanceSessions == null
     ? EMPTY_VALUE : `${attendanceValue} / ${attendanceTotalValue}`;
 
-  const otjPlannedHours = !metrics.data ? null : metrics.data.migrated
-    ? metrics.data.aptem_planned_total ?? metrics.data.otjh.planned ?? null : dashboardPlan.otjh.planned;
-  const otjPlannedLoading = metrics.loading || (!metrics.data?.migrated && dashboardPlan.otjh.plannedLoading);
   // Use the same canonical Actual total as the OTJ Hours page. Monthly Logs is
   // still the per-month view, but it can omit the open month and must not leave
   // this programme-wide headline showing an older partial total.
   const otjActualHours = metrics.data?.otjh.actual ?? null;
-  const otjPercent = otjActualHours != null && otjPlannedHours != null && otjPlannedHours > 0
-    ? Math.round((otjActualHours / otjPlannedHours) * 100)
-    : null;
-  const otjPlannedValue = otjPlannedHours != null ? `${otjPlannedHours.toFixed(2)} h`
-    : otjPlannedLoading ? 'Loading…' : 'Unavailable';
+  // The metrics endpoint carries the exact target-to-date used by the Coach.
+  // Do not use the legacy learner-detail snapshot or whole-programme total.
+  const { target: otjTargetHours, percent: otjPercent } = dashboardOtjhProgress(
+    otjActualHours,
+    metrics.data?.otjh.targetToDate,
+  );
+  const otjTargetValue = otjTargetHours != null ? `${otjTargetHours.toFixed(2)} h`
+    : metrics.loading ? 'Loading…' : 'Unavailable';
   const otjActualValue = otjActualHours != null ? `${otjActualHours.toFixed(2)} h`
     : metrics.loading ? 'Loading...' : 'Unavailable';
   const ksb = metrics.data?.ksb;
@@ -472,9 +476,13 @@ export default function LearnerOverview() {
         </div>}
         <DashboardTabs kind={learnerKind} learnerId={id} plan={dashboardPlan} programmeStartDate={programmeStartDate} programmeEndDate={programmeEndDate}
           canOpenRewards={!reviewingLearner} real={real || undefined} canSeeNavItem={canSeeNavItem} pageError={loadError}
+          learningSubjects={unifiedLearning.summary?.subjects}
+          learningSubjectsLoading={isRealMode && !skipPreStartData && (!learnerDetailRead.real || unifiedLearning.loading)}
+          learningSubjectsError={unifiedLearning.error}
+          onRetryLearningSubjects={unifiedLearning.retry}
           metrics={{ programmeValue: programmeProgressValue, programmeSummary: programmeProgressSummary, programmePercent: programmeProgressPercent,
-            attendanceValue, attendanceSummary, attendanceTotalValue, attendancePercent, otjActualValue, otjSummary: `${otjActualHours?.toFixed(2) ?? EMPTY_VALUE} / ${otjPlannedHours?.toFixed(2) ?? EMPTY_VALUE} h`,
-            otjPlannedValue, otjPercent, ksbValue, ksbSummary, ksbPercent }} />
+            attendanceValue, attendanceSummary, attendanceTotalValue, attendancePercent, otjActualValue, otjSummary: `${otjActualHours?.toFixed(2) ?? EMPTY_VALUE} / ${otjTargetHours?.toFixed(2) ?? EMPTY_VALUE} h`,
+            otjTargetValue, otjTargetHours, otjPercent, ksbValue, ksbSummary, ksbPercent }} />
       </PageContainer>
     </WorkspaceShell>
   );

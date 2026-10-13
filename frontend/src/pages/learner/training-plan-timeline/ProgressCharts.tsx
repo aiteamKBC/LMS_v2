@@ -1,7 +1,7 @@
 import { useEffect, useId, useState, type CSSProperties } from 'react';
 import type { TrainingPlanDashboard } from '@/api/trainingPlanDashboard';
 import { percent, type TimelineModule } from './model';
-import { moduleMeasures, moduleProgress } from './progress';
+import { moduleMeasures, moduleProgress, type ModuleMeasure } from './progress';
 import { OtjHoursChart } from './OtjHoursChart';
 import styles from './ProgressCharts.module.css';
 
@@ -14,12 +14,17 @@ type Props = {
   programmeEndMonth?: string;
   programmeSnapshot?: ProgrammeProgressSnapshot;
   showOtjChart?: boolean;
+  wholeProgrammeRings?: boolean;
+  targetAsOfToday?: number | null;
+  programmeRows?: { id: string; title: string; start?: string; value: number | null; available?: number; measureCount?: number }[];
 };
 export type ProgrammeProgressSnapshot = {
   overall: number | null;
   activitiesCompleted?: number | null;
   activitiesTotal?: number | null;
   activitiesPercent?: number | null;
+  otjhPercent?: number | null;
+  attendancePercent?: number | null;
   otjhActual: number | null;
   otjhTarget: number | null;
   ksb: number | null;
@@ -39,14 +44,34 @@ function measureCount(label: string, detail: string) {
   return match ? { count: match[1], unit: measureUnits[label] || '' } : { count: detail, unit: '' };
 }
 
+function ProgressMeasureRings({ measures, label }: { measures: ModuleMeasure[]; label: string }) {
+  return <div className={styles.measureRings} aria-label={label}>
+    {measures.map((measure, index) => {
+      const value = measure.value == null ? 0 : Math.min(100, Math.max(0, measure.value));
+      const { count, unit } = measureCount(measure.label, measure.detail);
+      return <div className={styles.measureRingItem} key={measure.label} title={measure.detail}>
+        <span className={styles.measureRing} style={{ '--measure-progress': `${value}%`, '--measure-color': ringColors[index] } as CSSProperties} role="img" aria-label={`${measure.label}: ${percentage(measure.value)}`}>
+          <span>{percentage(measure.value)}</span>
+        </span>
+        <strong>{measure.label}</strong>
+        <small>{measure.detail}</small>
+        <span className={styles.measureCount}><b>{count}</b>{unit ? <em>{unit}</em> : null}</span>
+      </div>;
+    })}
+  </div>;
+}
+
 
 export function ProgressCharts({ modules, selected, data, onModuleSelect, programmeStartMonth, programmeEndMonth, programmeSnapshot,
-  showOtjChart = true }: Props) {
+  showOtjChart = true, wholeProgrammeRings = false, targetAsOfToday, programmeRows }: Props) {
   const chartId = useId();
   const [programmePage, setProgrammePage] = useState(0);
   const selectedProgress = selected ? moduleProgress(selected, data) : null;
   const selectedMeasures = selected ? moduleMeasures(selected, data) : [];
-  const rows = [...modules].sort((a, b) => (a.start || '9999').localeCompare(b.start || '9999') || a.title.localeCompare(b.title));
+  const rows = (programmeRows || modules.map(module => {
+    const progress = moduleProgress(module, data);
+    return { ...module, value: progress.value, available: progress.available, measureCount: progress.measures.length };
+  })).sort((a, b) => (a.start || '9999').localeCompare(b.start || '9999') || a.title.localeCompare(b.title));
   const pageSize = 5;
   const pageCount = Math.max(1, Math.ceil(rows.length / pageSize));
   const visibleRows = rows.slice(programmePage * pageSize, (programmePage + 1) * pageSize);
@@ -64,7 +89,7 @@ export function ProgressCharts({ modules, selected, data, onModuleSelect, progra
     available: 5,
     measures: [
       { label: 'Overall', value: programmeSnapshot.overall, detail: percentage(programmeSnapshot.overall) },
-      { label: 'Attendance', value: programmeSnapshot.attendancePresent == null || programmeSnapshot.attendanceTotal == null
+      { label: 'Attendance', value: programmeSnapshot.attendancePercent !== undefined ? programmeSnapshot.attendancePercent : programmeSnapshot.attendancePresent == null || programmeSnapshot.attendanceTotal == null
         ? null : percent(programmeSnapshot.attendancePresent, programmeSnapshot.attendanceTotal),
         detail: programmeSnapshot.attendancePresent == null || programmeSnapshot.attendanceTotal == null
           ? 'Attendance unavailable' : `${programmeSnapshot.attendancePresent} / ${programmeSnapshot.attendanceTotal} sessions attended` },
@@ -72,7 +97,7 @@ export function ProgressCharts({ modules, selected, data, onModuleSelect, progra
         : activityTotal && activityDone != null ? percent(activityDone, activityTotal) : null,
         detail: activityTotal == null || activityDone == null ? 'Activity progress unavailable'
           : activityTotal ? `${activityDone} / ${activityTotal} completed across all modules` : 'No activities assigned' },
-      { label: 'Hours', value: programmeSnapshot.otjhActual == null || programmeSnapshot.otjhTarget == null
+      { label: 'Hours', value: programmeSnapshot.otjhPercent !== undefined ? programmeSnapshot.otjhPercent : programmeSnapshot.otjhActual == null || programmeSnapshot.otjhTarget == null
         ? null : percent(programmeSnapshot.otjhActual, programmeSnapshot.otjhTarget),
         detail: programmeSnapshot.otjhActual == null || programmeSnapshot.otjhTarget == null
           ? 'Recorded hours unavailable' : `${hourNumber.format(programmeSnapshot.otjhActual)} / ${hourNumber.format(programmeSnapshot.otjhTarget)} hours` },
@@ -87,6 +112,7 @@ export function ProgressCharts({ modules, selected, data, onModuleSelect, progra
         {chartProgress && <strong className={styles.total}>{percentage(chartProgress.value)}<small>Overall</small></strong>}
       </header>
       {chartProgress ? <>
+        {wholeProgrammeRings ? <ProgressMeasureRings measures={chartProgress.measures.slice(1)} label="Whole programme progress measures" /> : <>
         <svg className={styles.chart} viewBox={`0 0 ${chartWidth} 235`} role="img" aria-labelledby={`${chartId}-title ${chartId}-description`}>
           <title id={`${chartId}-title`}>Whole programme progress by measure</title>
           <desc id={`${chartId}-description`}>{chartProgress.measures.map(measure => `${measure.label}: ${percentage(measure.value)}, ${measure.detail}`).join('. ')}</desc>
@@ -104,47 +130,36 @@ export function ProgressCharts({ modules, selected, data, onModuleSelect, progra
         <dl className={styles.measures}>{chartProgress.measures.map((measure, index) => <div key={measure.label}>
           <dt><i style={{ background: colors[index] }} />{measure.label}</dt><dd>{measure.detail}</dd>
         </div>)}</dl>
-        <p className={styles.note}>{hasActivitySnapshot
-          ? 'Activities use the same programme totals as the coach learner table. Overall, OTJH, KSB and attendance match the case-file cards.'
-          : 'Overall, OTJH, KSB and attendance match the case-file cards. Activities are aggregated across all learner modules.'}</p>
+        </>}
+        {!wholeProgrammeRings && <p className={styles.note}>{hasActivitySnapshot
+          ? programmeSnapshot?.attendancePercent !== undefined
+            ? 'Activities use the supplied programme totals. Overall, OTJH, KSB and attendance match the case-file cards.'
+            : 'Activities use the same programme totals as the coach learner table. Overall, OTJH, KSB and attendance match the case-file cards.'
+          : 'Overall, OTJH, KSB and attendance match the case-file cards. Activities are aggregated across all learner modules.'}</p>}
       </> : <p className={styles.empty}>Select a module to see attendance, activities, hours and KSBs.</p>}
     </section> : <section className={`${styles.card} ${styles.moduleProgressCard}`} aria-label="Module progress">
       <header><div><p className={styles.eyebrow}>Selected module</p><h2>Module progress</h2></div>
         <label className={styles.modulePicker}><span className={styles.srOnly}>Select module</span><select value={selected?.id || ''} onChange={event => {
-          const next = rows.find(module => module.id === event.target.value);
+          const next = modules.find(module => module.id === event.target.value);
           if (next) onModuleSelect(next);
         }} disabled={!rows.length}>
           {!rows.length && <option value="">No modules</option>}
           {rows.map(module => <option key={module.id} value={module.id}>{module.title}</option>)}
         </select></label>
       </header>
-      {selected ? <div className={styles.measureRings} aria-label={`${selected.title} progress measures`}>
-        {selectedMeasures.map((measure, index) => {
-          const value = measure.value == null ? 0 : Math.min(100, Math.max(0, measure.value));
-          return <div className={styles.measureRingItem} key={measure.label} title={measure.detail}>
-              <span className={styles.measureRing} style={{ '--measure-progress': `${value}%`, '--measure-color': ringColors[index] } as CSSProperties} role="img" aria-label={`${measure.label}: ${percentage(measure.value)}`}>
-              <span>{percentage(measure.value)}</span>
-            </span>
-            <strong>{measure.label}</strong>
-            <small>{measure.detail}</small>
-            {(() => {
-              const { count, unit } = measureCount(measure.label, measure.detail);
-              return <span className={styles.measureCount}><b>{count}</b>{unit ? <em>{unit}</em> : null}</span>;
-            })()}
-          </div>;
-        })}
-      </div> : <p className={styles.empty}>Select a module to see attendance, activities, hours and KSBs.</p>}
+      {selected ? <ProgressMeasureRings measures={selectedMeasures} label={`${selected.title} progress measures`} />
+        : <p className={styles.empty}>Select a module to see attendance, activities, hours and KSBs.</p>}
     </section>}
     <section className={`${styles.card} ${styles.programmeProgressCard}`} aria-label="Programme module progress">
-      <header><div><p className={styles.eyebrow}>Whole programme</p><h2>Programme progress</h2></div><span className={styles.moduleCount}>{modules.length} modules</span></header>
+      <header><div><p className={styles.eyebrow}>Whole programme</p><h2>Programme progress</h2></div><span className={styles.moduleCount}>{rows.length} modules</span></header>
       <div className={styles.programmeAxis} aria-hidden="true"><span>Module</span><span>Progress</span></div>
       <div className={styles.programmeRows}>{rows.length ? visibleRows.map(module => {
-        const progress = moduleProgress(module, data);
+        const progress = { value: module.value, available: module.available };
         return <button type="button" key={module.id} className={styles.module} aria-pressed={selected?.id === module.id}
-          onClick={() => onModuleSelect(module)} aria-label={`${module.title}: ${percentage(progress.value)} overall progress`}>
+          onClick={() => { const selectedModule = modules.find(item => item.id === module.id); if (selectedModule) onModuleSelect(selectedModule); }} aria-label={`${module.title}: ${percentage(progress.value)} overall progress`}>
           <span className={styles.rowHeading}><strong>{module.title}</strong><b>{percentage(progress.value)}</b></span>
           <span className={styles.moduleTrack}><span style={{ width: `${progress.value || 0}%` }} /></span>
-          <span className={styles.coverage}>{progress.available} of {progress.measures.length} measures available</span>
+          {module.measureCount !== undefined && <span className={styles.coverage}>{progress.available} of {module.measureCount} measures available</span>}
         </button>;
       }) : <p className={styles.empty}>Your modules will appear here once assigned.</p>}</div>
       {rows.length > pageSize && <nav className={styles.pagination} aria-label="Programme module pages">
@@ -157,6 +172,6 @@ export function ProgressCharts({ modules, selected, data, onModuleSelect, progra
       </nav>}
       <p className={styles.note}>Module progress is based on activities. Attendance, hours and KSBs are shown independently.</p>
     </section>
-    {showOtjChart && <OtjHoursChart data={data} programmeStartMonth={programmeStartMonth} programmeEndMonth={programmeEndMonth} />}
+    {showOtjChart && <OtjHoursChart data={data} programmeStartMonth={programmeStartMonth} programmeEndMonth={programmeEndMonth} targetAsOfToday={targetAsOfToday} />}
   </div>;
 }

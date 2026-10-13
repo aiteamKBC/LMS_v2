@@ -226,15 +226,20 @@ class SharedTopicCoachingTests(SimpleTestCase):
             prepare_topic_save(self.booked_cursor(), payload)
         self.assertEqual(payload["monthlyAssignment"]["meetingKey"], "shared-mcm")
 
-    def test_cancelled_unowned_wrong_type_and_out_of_window_meetings_are_not_inherited(self):
-        from datetime import date
-        for record in (None, self.meeting(status="cancelled"), self.meeting(event_type="review"),
-                       self.meeting(scheduled_date=date(2026, 10, 15))):
+    def test_cancelled_unowned_and_wrong_type_meetings_are_not_inherited(self):
+        for record in (None, self.meeting(status="cancelled"), self.meeting(event_type="review")):
             with self.subTest(record=record):
                 payload = self.booking_payload()
                 with patch("learner_api.calendar._learner_calendar_record", return_value=record):
                     prepare_topic_save(self.booked_cursor(), payload)
                 self.assertEqual(payload["monthlyAssignment"]["meetingKey"], "")
+
+    def test_meeting_on_any_date_is_inherited(self):
+        from datetime import date
+        payload = self.booking_payload()
+        with patch("learner_api.calendar._learner_calendar_record", return_value=self.meeting(scheduled_date=date(2026, 10, 15))):
+            prepare_topic_save(self.booked_cursor(), payload)
+        self.assertNotEqual(payload["monthlyAssignment"]["meetingKey"], "")
 
     def test_completed_and_rescheduled_meetings_still_satisfy_other_topics(self):
         from datetime import date

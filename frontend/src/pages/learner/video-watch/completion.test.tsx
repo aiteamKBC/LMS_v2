@@ -10,6 +10,11 @@ import { fetchEvidence } from '@/api/evidence';
 import { loadLearningReflectionSubmission } from '@/api/reflectionSubmission';
 import ComponentViewPage, { ComponentBody } from './page';
 import { downloadReadingPdf } from './readingDownloads';
+const readingPdf = vi.hoisted(() => ({ getPage: vi.fn(), cleanup: vi.fn() }));
+vi.mock('pdfjs-dist', () => ({
+  GlobalWorkerOptions: {},
+  getDocument: () => ({ promise: Promise.resolve({ numPages: 1, ...readingPdf }) }),
+}));
 
 (globalThis as Record<string, unknown>).AppIcon = ({ className }: { className?: string }) => <i className={className} />;
 
@@ -38,7 +43,14 @@ vi.mock('@/hooks/useMyLearner', () => ({ rememberLearner: vi.fn() }));
 vi.mock('@/hooks/useAuth', () => ({ useAuth: () => ({ auth: { account: session.account }, isInitialized: session.isInitialized }) }));
 vi.mock('@/hooks/useComponentAccessWindow', () => ({ useComponentAccessWindow: () => ({ open: true, outsideWorkingHours: session.outsideWorkingHours, holidays: session.holidays, holidayCalendarReady: session.holidayCalendarReady, currentTimeLabel: 'Sunday, 14:02 BST' }) }));
 vi.mock('@/components/feature/WorkspaceShell', () => ({ WorkspaceShell: ({ children, pageSubtitle }: { children: ReactNode; pageSubtitle: string }) => <main><p>{pageSubtitle}</p>{children}</main> }));
-vi.mock('./AssignmentSubmissionWizard', () => ({ AssignmentSubmissionWizard: () => null }));
+vi.mock('./AssignmentSubmissionWizard', () => ({ AssignmentSubmissionWizard: ({ questionFiles }: {
+  questionFiles?: { url: string; fileName: string }[];
+}) => <div>{questionFiles?.map(file => <span key={file.url} data-testid="assignment-instruction" data-url={file.url}>{file.fileName}</span>)}</div> }));
+vi.mock('@/components/feature/SessionResults', () => ({
+  SessionResults: ({ onRecordingWatchTimeChange }: { onRecordingWatchTimeChange?: (seconds: number) => void }) => (
+    <button type="button" onClick={() => onRecordingWatchTimeChange?.(37)}>Simulate recording watch</button>
+  ),
+}));
 
 const component = (id: string, weekId: string, date: string) => ({
   componentId: id, component: 'Live Session · Live Teams Session 1', type: 'live_session',
@@ -57,8 +69,8 @@ const detail = (done = false) => ({
 }) as unknown as LearnerDetail;
 
 function Location() { return <span data-testid="location">{useLocation().pathname}</span>; }
-function mount(id = 'C1') {
-  return render(<MemoryRouter initialEntries={[`/learner/component/apprenticeship/1/${id}`]}>
+function mount(id = 'C1', kind = 'apprenticeship') {
+  return render(<MemoryRouter initialEntries={[`/learner/component/${kind}/1/${id}`]}>
     <Location /><Routes><Route path="/learner/component/:kind/:id/:componentId" element={<ComponentViewPage />} /></Routes>
   </MemoryRouter>);
 }
@@ -86,6 +98,62 @@ beforeEach(() => {
   vi.mocked(loadLearningReflectionSubmission).mockResolvedValue(null);
 });
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
+
+it.each(['commercial', 'apprenticeship'])('counts reading time only after the PDF page renders for %s learners', async kind => {
+  vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible');
+  let now = 0;
+  vi.spyOn(performance, 'now').mockImplementation(() => now);
+  let resolveFile!: (response: Response) => void;
+  const pendingFile = new Promise<Response>(resolve => { resolveFile = resolve; });
+  const request = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => (await pendingFile).clone());
+  let finishRender!: () => void;
+  const rendered = new Promise<void>(resolve => { finishRender = resolve; });
+  const renderPage = vi.fn(() => ({ promise: rendered, cancel: vi.fn() }));
+  readingPdf.getPage.mockResolvedValue({ getViewport: () => ({ width: 800, height: 1000 }), render: renderPage });
+  vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({ clearRect: vi.fn() } as unknown as CanvasRenderingContext2D);
+  const reading = { ...first, type: 'reading', component: 'Reading', resourceUrl: '/curriculum_api/curriculum/uploads/sample.pdf', fileName: 'sample.pdf' };
+  vi.mocked(fetchLearnerDetail).mockResolvedValue({ ...detail(), components: [reading] } as unknown as LearnerDetail);
+  mount('C1', kind);
+  await screen.findByRole('timer');
+  await waitFor(() => expect(request).toHaveBeenCalled());
+  now = 30000;
+  await act(async () => resolveFile(new Response(new Uint8Array([1]), { status: 200 })));
+  await waitFor(() => expect(renderPage).toHaveBeenCalled());
+  now = 60000;
+  expect(screen.getByRole('timer')).toHaveAccessibleName('Time on this activity: 00 hours, 00 minutes, 00 seconds');
+  await act(async () => finishRender());
+  now = 62000;
+  fireEvent.click(screen.getByRole('button', { name: 'Finish' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'Confirm' }));
+  await waitFor(() => expect(submitComponentProgress).toHaveBeenCalledWith('C1', kind, '1', expect.objectContaining({ timeTakenSeconds: 2 })));
+});
+
+it('does not count a failed reading preview as reading time', async () => {
+  vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible');
+  let now = 0;
+  vi.spyOn(performance, 'now').mockImplementation(() => now);
+  vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('', { status: 404 }));
+  const reading = { ...first, type: 'reading', component: 'Reading', resourceUrl: '/curriculum_api/curriculum/uploads/sample.pdf' };
+  vi.mocked(fetchLearnerDetail).mockResolvedValue({ ...detail(), components: [reading] } as unknown as LearnerDetail);
+  const { unmount } = mount();
+  await screen.findByText('File request failed (404)');
+  now = 60000;
+  unmount();
+  const saved = JSON.parse(localStorage.getItem('learner_activity_timer:v1:apprenticeship:1:C1')!);
+  expect(saved.elapsedSeconds).toBe(0);
+});
+
+it.each(['commercial', 'apprenticeship'])('passes every instruction file to the %s assignment without including another activity', async kind => {
+  const files = ['brief', 'guidance'].map(name => ({ url: `/curriculum_api/curriculum/uploads/${name}.pdf`, fileName: `${name}.pdf`, contentType: 'application/pdf', size: 10 }));
+  vi.mocked(fetchLearnerDetail).mockResolvedValue({ ...detail(), components: [
+    { ...first, type: 'assignment', component: 'Assignment instructions', assignmentBrief: 'Read both PDFs.', resourceUrl: files[0].url, fileName: files[0].fileName, files },
+    { ...second, type: 'assignment', resourceUrl: '/unrelated.pdf', files: [{ ...files[0], url: '/unrelated.pdf', fileName: 'unrelated.pdf' }] },
+  ] } as LearnerDetail);
+  mount('C1', kind);
+  const instructions = await screen.findAllByTestId('assignment-instruction');
+  expect(instructions.map(file => file.getAttribute('data-url'))).toEqual(files.map(file => file.url));
+  expect(screen.queryByText('unrelated.pdf')).toBeNull();
+});
 
 it('keeps direct audio tied to real playback events', () => {
   const onPlayingChange = vi.fn();
@@ -118,6 +186,42 @@ it('keeps direct audio tied to real playback events', () => {
   fireEvent.ended(audio);
   expect(onPlayingChange).toHaveBeenLastCalledWith(false);
   expect(onEnded).toHaveBeenCalledOnce();
+});
+
+it('waits for Finish before offering reflection after media playback ends', async () => {
+  const audio = {
+    ...first,
+    componentId: 'A1',
+    component: 'Podcast',
+    type: 'audio',
+    audioUrl: 'https://example.test/podcast.mp3',
+    reflectionRequired: true,
+  };
+  vi.mocked(fetchLearnerDetail).mockResolvedValue({ ...detail(), components: [audio] } as unknown as LearnerDetail);
+
+  mount('A1');
+
+  await waitFor(() => expect(document.querySelector('audio')).toBeInTheDocument());
+  fireEvent.ended(document.querySelector('audio')!);
+
+  expect(screen.queryByRole('dialog', { name: 'Do you want to complete a reflection?' })).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: 'Finish' }));
+  expect(await screen.findByRole('dialog', { name: 'Do you want to complete a reflection?' })).toBeVisible();
+});
+
+it('lays out recording watch time, evidence, manual input, and Finish in one live-session panel', async () => {
+  const live = { ...first, teamsLiveSessionId: 'LIVE-1', teamsSessionNumber: 1 };
+  vi.mocked(fetchLearnerDetail).mockResolvedValue({ ...detail(), components: [live] } as unknown as LearnerDetail);
+  mount();
+
+  const input = await screen.findByLabelText('Minutes spent');
+  const timer = screen.getByRole('timer', { name: 'Time on this activity: 00 hours, 00 minutes, 00 seconds' });
+  const actionPanel = timer.parentElement;
+  expect(actionPanel).toContainElement(input);
+  expect(actionPanel).toContainElement(screen.getByText('Upload evidence'));
+  expect(actionPanel).toContainElement(screen.getByRole('button', { name: 'Finish' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Simulate recording watch' }));
+  expect(screen.getByRole('timer')).toHaveAccessibleName('Time on this activity: 00 hours, 00 minutes, 37 seconds');
 });
 
 it('connects the content Upload evidence control to a mounted file input', async () => {

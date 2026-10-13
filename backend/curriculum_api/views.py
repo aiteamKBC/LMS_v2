@@ -37,9 +37,12 @@ from django.views.decorators.clickjacking import xframe_options_sameorigin
 from login.permissions import require_role
 from .weekly_schedule import module_weekly_schedule, merged_weekly_schedule
 from .teams_weekly_calendar import calendar_groups, save_weekday_calendar, stored_calendar_series, graph_event_utc
+from .teams_options_retry import microsoft_update_summary
 from .session_overrides import apply_session_overrides, override_clock, session_overrides
+from .attendance_identity import keep_directory_lookup, resolve_directory_accounts
 from .teams_calendar_checks import (CalendarMismatch, attendee_differences, attendees_already_match, calendar_targets, event_organizer_address,
-                                    graph_calendar_time, local_calendar_recurrence, publish_attendees, safe_teams_join_url,
+                                    graph_calendar_time, local_calendar_recurrence, publish_attendees, remove_attendees_silently,
+                                    safe_teams_join_url,
                                     dropped_sessions_sentence, sessions_a_rewrite_would_drop,
                                     unconfirmed_attendee_detail, utc_datetime, verify_calendar)
 
@@ -1242,6 +1245,11 @@ TEAMS_LOBBY_VALUES = {
     'everyone': 'everyone',
     'organizer': 'organizer',
 }
+# Only the people invited skip the lobby. A learner taken off a calendar keeps
+# the join link they were sent -- removal is silent and never cancels -- so it
+# is the lobby, not the link, that stops them walking straight back in. The
+# per-weekday calendar read this name before it existed here.
+DEFAULT_TEAMS_LOBBY_BYPASS = 'invited'
 
 
 def ensure_live_sessions_table():
@@ -1373,6 +1381,12 @@ def provision_live_session_tracking_tables():
             cursor.execute(f"alter table {live_sessions} add column presenters {json_type} not null default '[]'")
         if connection.vendor != 'postgresql' and 'co_organizers' not in column_names(LIVE_SESSIONS_TABLE):
             cursor.execute(f"alter table {live_sessions} add column co_organizers {json_type} not null default '[]'")
+        # The meeting ID and passcode under the join link (teams_dial_in.py).
+        for column in ('join_meeting_code', 'join_passcode', 'dial_in_join_url'):
+            if connection.vendor == 'postgresql':
+                cursor.execute(f"alter table {live_sessions} add column if not exists {column} text not null default ''")
+            elif column not in column_names(LIVE_SESSIONS_TABLE):
+                cursor.execute(f"alter table {live_sessions} add column {column} text not null default ''")
         cursor.execute(f'''
             create table if not exists {occurrences} (
                 id varchar(128) primary key, live_session_id varchar(128) not null,
@@ -1647,9 +1661,14 @@ def replace_live_session_occurrences(live_session_id, payload, utc_start, durati
         if rows:
             # Rows no planned session kept remain audit history. A parked row
             # stays in the negative range so it cannot block a future active
-            # session from reclaiming its former positive number.
+            # session from reclaiming its former positive number. They are
+            # 'superseded' -- "not in plan, still on Teams" -- and never
+            # 'cancelled': nobody pressed Cancel, and the Teams slot is still
+            # there until somebody does. A row already cancelled stays cancelled.
             for row in unclaimed:
-                values = {'status': 'cancelled', 'updated_at': now}
+                if clean_str(row.get('status')).lower() in {'cancelled', 'canceled'}:
+                    continue
+                values = {'status': 'superseded', 'updated_at': now}
                 update_authoring_rows(LIVE_SESSION_OCCURRENCES_TABLE, 'id = %s', [clean_str(row.get('id'))], values)
     return rows
 
@@ -1661,7 +1680,7 @@ def saved_live_session_occurrences(live_session_id):
     planned items ``replace_live_session_occurrences`` returns carry neither an
     id nor a stored start, so handing those to the walk matched no component.
     """
-    return authoring_fetch_all(LIVE_SESSION_OCCURRENCES_TABLE, "live_session_id = %s and status <> 'cancelled'",
+    return authoring_fetch_all(LIVE_SESSION_OCCURRENCES_TABLE, "live_session_id = %s and status not in ('cancelled', 'superseded')",
                                [live_session_id], 'session_number')
 
 
@@ -2345,6 +2364,7 @@ def apply_teams_occurrence_shifts(
     invited_people,
     meeting_options=None,
     existing_occurrences=None,
+    missing=None,
 ):
     """Move the plain weekly Graph occurrences onto the wizard's shifted dates.
 
@@ -2354,10 +2374,14 @@ def apply_teams_occurrence_shifts(
     shifted dates on both calls, and skipping the reconciliation leaves Teams showing
     sessions on the very holidays the wizard moved them off.
 
-    Returns `(warnings, recreated)`. A recurrence occurrence that Microsoft has
-    already deleted cannot be restored inside the series. In that one case a
-    standalone online event is created without recipients, given the same meeting
-    options, and returned so its real event/link identity can be persisted.
+    Returns `(warnings, recreated, stale)`. ``recreated`` holds only standalone
+    replacements that ALREADY exist (moved and re-configured on their own
+    events). A planned session whose occurrence Microsoft no longer lists in the
+    series is never re-created here: a new event is a new join link, and quietly
+    creating one is how learners ended up split across two rooms. It is appended
+    to ``missing`` (when the caller passes a list) and reported as "Missing from
+    Teams -- resolution required"; only the explicit, confirmed Calendar health
+    resolution may create a replacement.
     """
     from coach_api.views import microsoft_graph_request
 
@@ -2388,7 +2412,7 @@ def apply_teams_occurrence_shifts(
         # series spans more weekly slots than there are sessions.
         sorted_targets = sorted(target_occurrences, key=lambda item: item['session_number'])
         series_event_id = urllib_parse.unquote(event_key)
-        active_statuses = {'cancelled', 'canceled', 'declined', 'deleted', 'removed'}
+        active_statuses = {'cancelled', 'canceled', 'declined', 'deleted', 'removed', 'superseded'}
         standalone_rows = [
             row for row in (existing_occurrences or [])
             if clean_str(row.get('graph_event_id'))
@@ -2594,27 +2618,15 @@ def apply_teams_occurrence_shifts(
             target_key = teams_calendar_minute_key(target['start'])
             if target_key in master_keys or int(target['session_number']) in standalone_numbers:
                 continue
-            transaction_seed = f'{series_event_id}:{target["session_number"]}:{target_key}'
-            transaction_id = hashlib.sha256(transaction_seed.encode('utf-8')).hexdigest()
-            # The intended roster goes on at creation, silently. Publishing it
-            # afterwards used to be the only way people reached a recovered
-            # session, and that publish was gated on the author having asked for
-            # email -- so an author who chose not to email got a session with
-            # nobody on it. Membership is settled here, once, whatever the
-            # notification choice is.
-            recreated = microsoft_graph_request(
-                'POST',
-                f'users/{owner_key}/events',
-                payload=teams_single_occurrence_payload(
-                    title, target, invited_people, transaction_id,
-                ),
-                extra_headers=GRAPH_SILENT_INVITE_HEADERS,
-            )
-            standalone = teams_standalone_occurrence_meeting(
-                owner_key, recreated, target, invited_people, meeting_options,
-            )
-            warnings.extend(standalone.pop('warnings'))
-            recreated_details.append(standalone)
+            # Reported, never re-created. See the docstring: a save must not
+            # mint a second join link for a session learners already hold one for.
+            if missing is not None:
+                missing.append({
+                    'sessionNumber': int(target['session_number']),
+                    'startDateTimeUtc': target['start'].isoformat(),
+                    'endDateTimeUtc': target['end'].isoformat(),
+                    'reason': 'not_in_recurring_series',
+                })
     except RuntimeError as exc:
         logger.warning('Unable to reconcile individual Teams event instances: %s', exc)
         warnings.append({
@@ -2713,6 +2725,10 @@ def publish_teams_calendar_attendees(
         )
 
     if force:
+        if announce:
+            # Whoever this announced write drops is taken off silently first, so
+            # Exchange sends them no cancellation; the people who stay still hear.
+            event, _removed = remove_attendees_silently(request, owner_key, event, attendees)
         if needs_force_patch(event):
             request(
                 'PATCH',
@@ -2734,6 +2750,8 @@ def publish_teams_calendar_attendees(
             'GET', f'users/{owner_key}/events/{urllib_parse.quote(event_id, safe="")}',
         )
         if force:
+            if announce:
+                standalone, _removed = remove_attendees_silently(request, owner_key, standalone, attendees)
             if needs_force_patch(standalone):
                 request(
                     'PATCH',
@@ -2957,6 +2975,8 @@ def apply_teams_meeting_options(
     co_organizers=(),
     online_meeting_id='',
     meeting=None,
+    groups=None,
+    live_session_id='',
 ):
     """Apply this deployment's meeting policy to the onlineMeeting behind an event.
 
@@ -2968,20 +2988,34 @@ def apply_teams_meeting_options(
     skips it opens with nothing recording, no transcript afterwards, and every
     guest a presenter.
 
+    ``groups`` limits the PATCH to the option groups that need sending (see
+    teams_meeting_options_policy); None sends all of them, as every caller
+    creating a meeting does. An empty set sends nothing and reports applied.
+
     Returns ``(applied, meeting, warnings)`` and never raises. The calendar
     invitation is real work already done, and these options need
     OnlineMeetings.ReadWrite.All plus an application access policy on the
-    organizer that a deployment may not have granted yet.
+    organizer that a deployment may not have granted yet. Every refusal is
+    kept by teams_graph_failure_log (``live_session_id`` names the series).
     """
     from coach_api.views import microsoft_graph_request
+    from .teams_graph_failure_log import OPTIONS_PATCH, OPTIONS_RESOLVE, record_graph_failure
+    from .teams_meeting_options_policy import ALL_GROUPS, graph_error_details, meeting_options_patch
 
+    groups = set(ALL_GROUPS) if groups is None else set(groups)
     resolved = meeting if isinstance(meeting, dict) else {}
+    if not groups:
+        # Nothing about how this meeting runs changed: no Graph call at all.
+        return True, resolved, []
     meeting_id = clean_str(online_meeting_id) or clean_str(resolved.get('id'))
     if not meeting_id and join_url:
         try:
             resolved = teams_online_meeting_from_join_url(organizer, join_url) or {}
         except RuntimeError as exc:
             logger.warning('Unable to resolve the onlineMeeting behind a Teams event: %s', exc)
+            record_graph_failure(OPTIONS_RESOLVE, str(exc), live_session_id=live_session_id, organizer=organizer,
+                                 organizer_object_id=teams_online_meeting_owner_id(organizer, join_url),
+                                 groups=groups)
             return False, resolved, [{
                 'code': 'teams_meeting_options_not_applied',
                 'message': (
@@ -3005,51 +3039,15 @@ def apply_teams_meeting_options(
     lobby_choice = clean_str(lobby_bypass).lower() or 'invited'
     if lobby_choice not in TEAMS_LOBBY_VALUES:
         lobby_choice = 'invited'
-    recording_choice = clean_str(recording).lower() or 'none'
     # Never `list(...)` these: a caller that passes the stored JSON text instead
     # of a parsed list would have it split into characters here.
-    co_organizer_emails = teams_series_email_list(co_organizers)
-    co_organizer_set = set(co_organizer_emails)
-    presenter_emails = [
-        email for email in teams_series_email_list(presenters)
-        if email not in co_organizer_set
-    ]
-    presenter_set = set(presenter_emails)
-    attendee_emails = [
-        email for email in teams_series_email_list(attendees)
-        if email not in co_organizer_set and email not in presenter_set
-    ]
-    roster = [*co_organizer_emails, *presenter_emails, *attendee_emails]
-    patch = {
-        'lobbyBypassSettings': {
-            'scope': TEAMS_LOBBY_VALUES[lobby_choice],
-            'isDialInBypassEnabled': False,
-        },
-        'allowRecording': recording_choice != 'none',
-        'recordAutomatically': recording_choice != 'none',
-        'allowTranscription': recording_choice == 'record-transcribe',
-        'meetingSpokenLanguageTag': clean_str(spoken_language) or 'en-GB',
-    }
-    # The roster goes on the meeting whether or not anyone presents: it is what
-    # tells Teams these people belong to this meeting rather than being guests who
-    # found the link. `allowedPresenters` stays at the tenant default until a
-    # presenter is actually named, because naming nobody would mute the tutor too.
-    if roster:
-        patch['participants'] = {
-            'attendees': [
-                {
-                    'upn': email,
-                    'role': (
-                        'coorganizer' if email in co_organizer_set
-                        else 'presenter' if email in presenter_set
-                        else 'attendee'
-                    ),
-                }
-                for email in roster
-            ],
-        }
-    if presenter_emails or co_organizer_emails:
-        patch['allowedPresenters'] = 'roleIsPresenter'
+    patch = meeting_options_patch(
+        groups, recording=recording, lobby_scope=TEAMS_LOBBY_VALUES[lobby_choice],
+        spoken_language=spoken_language, attendees=teams_series_email_list(attendees),
+        presenters=teams_series_email_list(presenters), co_organizers=teams_series_email_list(co_organizers),
+    )
+    if not patch:
+        return True, resolved, []
     meeting_path = teams_meeting_base_path(organizer, meeting_id, join_url)
     organizer_object_id = teams_online_meeting_owner_id(organizer, join_url)
     try:
@@ -3072,6 +3070,8 @@ def apply_teams_meeting_options(
             meeting_id,
             exc,
         )
+        record_graph_failure(OPTIONS_PATCH, str(exc), live_session_id=live_session_id, online_meeting_id=meeting_id,
+                             organizer=organizer, organizer_object_id=organizer_object_id, groups=groups)
         return False, resolved, [{
             'code': 'teams_meeting_options_not_applied',
             'message': (
@@ -3079,11 +3079,16 @@ def apply_teams_meeting_options(
                 'and presenter options. Check the Graph error detail for the exact cause.'
             ),
             'detail': str(exc),
+            'groups': sorted(groups),
+            'graphError': graph_error_details(str(exc)),
+            'organizer': clean_str(organizer),
+            'organizerObjectId': organizer_object_id,
+            'failureLogged': True,
         }]
     return True, resolved, []
 
 
-def teams_standalone_occurrence_meeting(owner_key, event, target, invited_people, meeting_options):
+def teams_standalone_occurrence_meeting(owner_key, event, target, invited_people, meeting_options, groups=None):
     """Give an occurrence recreated on its own event the options its series has.
 
     Graph builds a fresh onlineMeeting for a fresh event, at the tenant defaults,
@@ -3116,6 +3121,7 @@ def teams_standalone_occurrence_meeting(owner_key, event, target, invited_people
             attendees=invited_people,
             presenters=options.get('presenters') or [],
             co_organizers=options.get('co_organizers') or [],
+            groups=groups,
         )
         warnings.extend(option_warnings)
         online_meeting_id = clean_str((meeting or {}).get('id'))
@@ -3126,6 +3132,38 @@ def teams_standalone_occurrence_meeting(owner_key, event, target, invited_people
         'online_meeting_id': online_meeting_id,
         'warnings': warnings,
     }
+
+
+def refresh_standalone_occurrence_options(owner_key, series_event_id, occurrences, invited_people, meeting_options, groups=None):
+    """Re-apply roles and options to sessions restored on events of their own.
+
+    The people-only counterpart of the standalone half of
+    ``apply_teams_occurrence_shifts``: the same onlineMeeting options, and
+    nothing else. It never reads or writes a date, never moves an event and
+    never creates one -- a people-only save must leave the schedule exactly as
+    Microsoft holds it. Returns ``(warnings, details)`` in that function's shape.
+    ``groups`` is the option groups this save changed; empty sends nothing.
+    """
+    warnings, details = [], []
+    if groups is not None and not groups:
+        return warnings, details
+    series_event_id = clean_str(series_event_id)
+    for row in occurrences or []:
+        standalone_id = clean_str(row.get('graph_event_id'))
+        if not standalone_id or standalone_id == series_event_id:
+            continue
+        if clean_str(row.get('status')).lower() in ('cancelled', 'canceled', 'superseded'):
+            continue
+        event = {'id': standalone_id, 'onlineMeeting': {'joinUrl': clean_str(row.get('join_url'))}}
+        detail = teams_standalone_occurrence_meeting(
+            owner_key, event, {'session_number': row.get('session_number')}, invited_people, meeting_options,
+            groups=groups,
+        )
+        warnings.extend(detail.pop('warnings'))
+        if not detail.get('online_meeting_id'):
+            detail['online_meeting_id'] = clean_str(row.get('online_meeting_id'))
+        details.append(detail)
+    return warnings, details
 
 
 def persist_recreated_occurrence_details(live_session_id, recreated_details):
@@ -3362,6 +3400,9 @@ def curriculum_teams_meeting(request):
     }
     recreated_details = []
     leftover_slots = []
+    # Planned sessions the new series does not hold. Reported, never re-created
+    # on events of their own -- see apply_teams_occurrence_shifts.
+    missing_occurrences = []
     # Graph has just built a plain weekly series. Move its occurrences onto the
     # wizard's holiday-shifted dates now, otherwise the calendar keeps sessions on
     # holidays the wizard already moved them off and the two disagree from day one.
@@ -3378,6 +3419,7 @@ def curriculum_teams_meeting(request):
             teams_shifted_occurrence_targets(payload, duration),
             invited_people,
             meeting_options,
+            missing=missing_occurrences,
         )
         # Never deleted: the weekly filler a gap leaves behind is reported and
         # left on Teams. See flag_teams_occurrence_leftovers.
@@ -3418,8 +3460,9 @@ def curriculum_teams_meeting(request):
     try:
         if warnings or not settings_applied:
             raise RuntimeError('The calendar or meeting options could not be verified. Invitations remain pending.')
+        from .teams_calendar_integrity import without_missing
         event = verify_teams_calendar_with_standalones(
-            microsoft_graph_request, owner_key, event_id, targets, join_url,
+            microsoft_graph_request, owner_key, event_id, without_missing(targets, missing_occurrences), join_url,
             repeat != 'none', recreated_details,
         )
         publish_teams_calendar_attendees(
@@ -3428,7 +3471,7 @@ def curriculum_teams_meeting(request):
         )
         # Publishing must not resurrect deleted slots or change the shared link.
         event = verify_teams_calendar_with_standalones(
-            microsoft_graph_request, owner_key, event_id, targets, join_url,
+            microsoft_graph_request, owner_key, event_id, without_missing(targets, missing_occurrences), join_url,
             repeat != 'none', recreated_details,
             expected_attendees=event_payload['attendees'],
         )
@@ -3437,10 +3480,13 @@ def curriculum_teams_meeting(request):
             event_id=event_id, join_url=join_url,
         )
         persist_recreated_occurrence_details(live_session_id, recreated_details)
+        from .teams_calendar_integrity import record_reconcile
+        record_reconcile(live_session_id, missing_occurrences, module_catalogue_id=resolved_catalogue_id or '',
+                         source='Teams calendar created')
         occurrence_rows = authoring_fetch_all(
             LIVE_SESSION_OCCURRENCES_TABLE,
-            'live_session_id = %s and status != %s',
-            [live_session_id, 'cancelled'],
+            "live_session_id = %s and status not in ('cancelled', 'superseded')",
+            [live_session_id],
             'session_number asc',
         )
         tracked_occurrences = len(occurrence_rows)
@@ -3448,6 +3494,9 @@ def curriculum_teams_meeting(request):
             'warnings': json_db_value([]), 'online_meeting_id': meeting_id,
             'meeting_options_url': meeting_options_url, 'join_url': join_url, 'updated_at': datetime.utcnow(),
         })
+        from .teams_dial_in import remember_teams_dial_in
+        remember_teams_dial_in({'id': live_session_id, 'join_url': join_url, 'online_meeting_id': meeting_id,
+                                'organizer_email': organizer}, graph_meeting)
         # Persist component links before returning, even if the browser has
         # stopped waiting. Only verified occurrences may be attached.
         if resolved_catalogue_id:
@@ -3507,6 +3556,9 @@ def curriculum_teams_meeting(request):
         # Slots on Teams that are not module sessions. Kept apart from
         # `warnings`, which hold back the creation emails: nothing failed.
         'leftoverSlots': (event.get('unplannedInstances') or []) or leftover_slots,
+        # Planned sessions the series does not hold: resolution required in
+        # Calendar health. No separate meeting was created for any of them.
+        'missingOccurrences': missing_occurrences,
     }, status=201)
 
 
@@ -3754,16 +3806,47 @@ def held_schedule_snapshot(live_session_id):
     """The series' live sessions as they are stored right now, for a change notice."""
     from .teams_schedule_notice import schedule_snapshot
     return schedule_snapshot(authoring_fetch_all(
-        LIVE_SESSION_OCCURRENCES_TABLE, "live_session_id = %s and status <> 'cancelled'", [live_session_id],
+        LIVE_SESSION_OCCURRENCES_TABLE, "live_session_id = %s and status not in ('cancelled', 'superseded')", [live_session_id],
     ))
 
 
-def with_schedule_change_notice(response, live_session_id, before):
-    """Add a signed before/after record to a successful schedule update.
+def teams_series_invited(series):
+    """Everyone a stored calendar row invites, in any role, lower-cased."""
+    return {email.lower() for email in teams_series_email_list(
+        [series.get('organizer_email')], series.get('attendees'), series.get('presenters'), series.get('co_organizers'))}
+
+
+def with_schedule_change_notice(response, live_session_id, before, request=None, notify=False, series_before=None):
+    """Add a signed before/after record to a successful schedule update, and send its emails.
 
     The update overwrites the occurrence rows, so this is the last moment the
-    dates learners were told about still exist. The notice is only a record:
-    nothing is emailed unless the author asks for it with this token.
+    dates learners were told about still exist. The emails go from the server,
+    as the create's do, so closing the browser cannot lose them:
+
+    * ``scheduleEmail`` -- the change email to everyone on the calendar, when
+      the author chose to tell them (``notify``).
+    * ``addedEmail`` -- the full schedule to the people this save put on the
+      calendar and nobody else, read from the stored roster before and after.
+
+    Only for a caller who may send mail; anybody else gets the notice alone and
+    the browser's own request meets the schedule-email endpoint's refusal. A
+    mail problem rides beside the saved calendar, never in place of it, and the
+    browser can retry it through the same ledger without emailing anyone twice.
+
+    The two audiences never overlap. Somebody this save added was never told the
+    old dates, so a "was / now" describes nothing they knew: they get the full
+    schedule and are left out of the change email.
+
+    The update itself decides whether there was anything to announce. Its body
+    carries ``announced`` (False when the dates did not really change -- a retry
+    of an update that already landed, or an invitation-only edit) and
+    ``changeId``, the stable name of the logical change, which becomes the
+    notice's ledger key so a retry of the same change is never emailed twice.
+
+    The added people's full schedule goes under a key of its own per save,
+    never the calendar's creation key: somebody removed and later added back is
+    a new membership and must be sent the schedule again, while a retry of the
+    same add finds them already on the stored roster and adds nobody.
     """
     from .teams_schedule_notice import issue_change_notice
     if getattr(response, 'status_code', 0) != 200:
@@ -3774,7 +3857,25 @@ def with_schedule_change_notice(response, live_session_id, before):
         return response
     if not (isinstance(body, dict) and body.get('updated')):
         return response
-    body['changeNotice'] = issue_change_notice(live_session_id, before, held_schedule_snapshot(live_session_id))
+    if body.get('announced') is False:
+        notify = False
+    body['changeNotice'] = issue_change_notice(live_session_id, before, held_schedule_snapshot(live_session_id),
+                                               notice_id=clean_str(body.get('changeId')) or None)
+    from .teams_week_meeting import may_send_schedule_email
+    if request is not None and may_send_schedule_email(request):
+        from .teams_schedule_delivery import send_change_emails, send_creation_emails
+        added = []
+        if series_before is not None:
+            saved = authoring_fetch_all(LIVE_SESSIONS_TABLE, 'id = %s', [live_session_id])
+            was = teams_series_invited(series_before)
+            added = sorted(teams_series_invited(saved[0]) - was) if saved else []
+        if notify and body['changeNotice']:
+            body['scheduleEmail'] = send_change_emails(live_session_id, body['changeNotice'], exclude=added)
+        if added:
+            added_key = uuid.uuid4().hex
+            body['addedPeople'] = added
+            body['addedEmailKey'] = added_key
+            body['addedEmail'] = send_creation_emails(live_session_id, added=added, key=f'{live_session_id}+{added_key}')
     return JsonResponse(body, status=response.status_code)
 
 
@@ -3816,6 +3917,10 @@ def curriculum_teams_meeting_schedule(request, live_session_id):
     # invited, while newly added people are forwarded separately after the
     # calendar is verified.
     notify_attendees = False if people_only else bool(payload.get('notifyAttendees'))
+    # "Save invitations" only saves who is invited. It sends nothing to anybody:
+    # no Microsoft invitation or forward, and no LMS email -- not even to the
+    # people it adds. Only ever on a people-only save.
+    invitations_only = people_only and bool(payload.get('invitationsOnly'))
     series = series_rows[0]
     schedule_before = held_schedule_snapshot(live_session_id)
     # Omitted options retain their saved values for schedule-only callers.
@@ -3831,7 +3936,8 @@ def curriculum_teams_meeting_schedule(request, live_session_id):
     except (TypeError, ValueError) as exc:
         return json_error(str(exc), status=400)
     if stored_calendar_series(series) or weekday_groups:
-        return with_schedule_change_notice(save_weekday_calendar(payload, graph_settings, series), live_session_id, schedule_before)
+        return with_schedule_change_notice(save_weekday_calendar(payload, graph_settings, series), live_session_id, schedule_before,
+                                           request=None if invitations_only else request, notify=notify_attendees, series_before=series)
 
     # The stored organizer, never the caller's. This event already exists on one
     # mailbox, and asking Graph for it on another is a 404 that would strand a
@@ -3919,6 +4025,14 @@ def curriculum_teams_meeting_schedule(request, live_session_id):
         {'sessionNumber': item['session_number'], 'startDateTimeUtc': item['start'].isoformat(),
          'durationMinutes': int((item['end'] - item['start']).total_seconds() / 60)} for item in targets
     ]}
+    # The logical change this request asks for, named by its content. A retry of
+    # the same request after a timeout carries the same id until the LMS has
+    # saved the result; see teams_update_guard.
+    from .teams_schedule_notice import same_schedule
+    from .teams_update_guard import (claim_announcement, finish_announcement, graph_failure_outcome,
+                                     logical_change_id, targets_snapshot)
+    requested_schedule = targets_snapshot(targets)
+    change_id = logical_change_id(live_session_id, schedule_before, requested_schedule, invited_people, title)
     event_patch = {
         'subject': title,
         'hideAttendees': True,
@@ -3929,13 +4043,23 @@ def curriculum_teams_meeting_schedule(request, live_session_id):
 
     owner_key = urllib_parse.quote(organizer, safe='')
     event_key = urllib_parse.quote(event_id, safe='')
-    current_occurrences = authoring_fetch_all(
+    # Every row still holding a Teams slot, including "not in plan" ones: the
+    # drop guard must see them all. The rest of the update works on the planned.
+    slot_rows = authoring_fetch_all(
         LIVE_SESSION_OCCURRENCES_TABLE,
         'live_session_id = %s and status != %s',
         [live_session_id, 'cancelled'],
         'session_number asc',
     )
+    current_occurrences = [row for row in slot_rows if clean_str(row.get('status')).lower() != 'superseded']
     dates_already_verified = False
+    # Sessions the last save already reported missing from the series. They are
+    # under review in Calendar health, so their absence is not re-read as drift
+    # here -- which would otherwise refuse every invitation save and rewrite the
+    # series on every schedule save while the review is pending.
+    from .teams_calendar_integrity import known_missing_numbers, record_reconcile, without_missing
+    known_missing = [{'sessionNumber': number} for number in known_missing_numbers(live_session_id)]
+    missing_occurrences = []
     try:
         current = microsoft_graph_request('GET', f'users/{owner_key}/events/{event_key}')
         if current.get('isCancelled'):
@@ -3945,12 +4069,23 @@ def curriculum_teams_meeting_schedule(request, live_session_id):
             return json_error('The Microsoft join link differs from the saved calendar. Review it before continuing.', status=409)
         try:
             current = verify_teams_calendar_with_standalones(
-                microsoft_graph_request, owner_key, event_id, targets, current_join,
+                microsoft_graph_request, owner_key, event_id, without_missing(targets, known_missing), current_join,
                 repeat != 'none', current_occurrences,
             )
             dates_already_verified = True
-        except CalendarMismatch:
-            pass  # A known difference is the reason to update. Read failures still abort.
+        except CalendarMismatch as mismatch:
+            # A known difference is the reason to update. Read failures still abort.
+            if people_only:
+                # Except on a people-only save, which must never touch a date.
+                # Repairing the drift here would move, or re-create, sessions
+                # as a side effect of saving who is invited. Nothing has been
+                # written yet; the author updates the schedule on its own.
+                return json_error(
+                    'The Teams calendar dates no longer match the dates saved here, so the invitations were not '
+                    'saved. Nothing was changed in Teams. Update the Teams calendar dates first, then save the '
+                    'invitations again.',
+                    status=409, code='teams_schedule_drift', detail=str(mismatch), liveSessionId=live_session_id,
+                )
         if payload.get('peopleOnly'):
             # Saving people must not reapply a series pattern and revive cancelled slots.
             event = current
@@ -3972,7 +4107,7 @@ def curriculum_teams_meeting_schedule(request, live_session_id):
             # a cancellation Exchange emails to everyone, that nobody pressed
             # Cancel for. Refuse and name it instead.
             dropped = sessions_a_rewrite_would_drop(
-                targets, repeat != 'none', current_occurrences, graph_timezone_iana(graph_settings),
+                targets, repeat != 'none', slot_rows, graph_timezone_iana(graph_settings),
             )
             if dropped:
                 return json_error(
@@ -3988,6 +4123,8 @@ def curriculum_teams_meeting_schedule(request, live_session_id):
             event = microsoft_graph_request('GET', f'users/{owner_key}/events/{event_key}')
     except RuntimeError as exc:
         logger.warning('Unable to update Module Builder Teams event schedule: %s', exc)
+        from .teams_graph_failure_log import EVENT_SAVE, record_graph_failure
+        record_graph_failure(EVENT_SAVE, str(exc), live_session_id=live_session_id, organizer=organizer)
         return json_error('Microsoft Teams could not update the meeting schedule.', status=502, detail=str(exc))
 
     meeting_options = {
@@ -3998,37 +4135,105 @@ def curriculum_teams_meeting_schedule(request, live_session_id):
         'presenters': presenters,
         'co_organizers': co_organizers,
     }
+    # Is there a date change to announce at all? Against both sides: the dates
+    # the LMS last saved (what learners were told) and what Microsoft holds now.
+    # A retry of an update that already landed finds both equal to the request
+    # and announces nothing; a people-only save never announces.
+    dates_changed = not people_only and (
+        not dates_already_verified or not same_schedule(schedule_before, requested_schedule)
+    )
+    announce = notify_attendees and dates_changed
+    # How the meeting runs is its own operation, sent only for what changed (or
+    # a previous save could not apply). A save of who is invited sends none of
+    # it: re-sending unchanged lobby/recording/roles there turned a missing
+    # organiser permission into a failed invitation save.
+    from .teams_meeting_options_policy import (ALL_GROUPS as ALL_OPTION_GROUPS, json_list, option_groups_to_apply,
+                                              pending_option_groups, pending_warning, remaining_pending,
+                                              reported_failure, stored_options as saved_meeting_options)
+    stored_options = saved_meeting_options(series)
+    saved_warnings = json_list(series.get('warnings'))
+    pending_options = pending_option_groups(saved_warnings)
+    option_groups = option_groups_to_apply(
+        stored_options, meeting_options, pending_options,
+        new_meeting=not people_only and not clean_str(series.get('online_meeting_id')),
+        retry_pending=not people_only,
+    )
     warnings, recreated_details, stale_deletions, leftover_slots = [], [], [], []
-    if repeat != 'none':
+    if repeat != 'none' and not people_only:
         # `current_occurrences` is what makes the cleanup provable: the LMS's own
         # occurrence rows, carrying each session's number and the date this
         # calendar last recorded for it. Nothing is deleted from the shape of the
         # target list alone.
+        #
+        # Never on a people-only save: this is the step that moves sessions and
+        # re-creates a missing one, and saving who is invited must not do
+        # either. Its dates were verified unchanged above.
         warnings, recreated_details, stale_deletions = apply_teams_occurrence_shifts(
             owner_key, event_key, title,
             teams_shifted_occurrence_targets(payload, duration), invited_people,
-            meeting_options, current_occurrences,
+            meeting_options, current_occurrences, missing=missing_occurrences,
+        )
+    elif people_only:
+        # The sessions already restored on events of their own keep the series'
+        # roles and options -- options only, no date is read or written.
+        warnings, recreated_details = refresh_standalone_occurrence_options(
+            owner_key, event_id, current_occurrences, invited_people, meeting_options, groups=option_groups,
         )
 
     join_url = clean_str((event.get('onlineMeeting') or {}).get('joinUrl')) or clean_str(series.get('join_url'))
-    # Re-applied on every save, not only when the people change. Graph resets an
-    # onlineMeeting's options to the tenant defaults whenever it hands out a new
-    # one, so a series that was only ever configured at creation quietly loses its
-    # automatic recording, its transcript and its presenter roles later on.
-    _applied, graph_meeting, option_warnings = apply_teams_meeting_options(
-        organizer,
-        join_url,
-        recording=meeting_options['recording'],
-        lobby_bypass=meeting_options['lobby_bypass'],
-        spoken_language=meeting_options['spoken_language'],
-        attendees=invited_people,
-        presenters=presenters,
-        co_organizers=co_organizers,
-        online_meeting_id=series.get('online_meeting_id'),
-    )
-    warnings.extend(option_warnings)
+    # Only the changed (or still unapplied) option groups, and no call at all
+    # when there are none. A meeting Microsoft hands out afresh -- a session
+    # recreated on its own event -- is configured in full by
+    # apply_teams_occurrence_shifts; the series meeting keeps its id.
+    _applied, graph_meeting, option_warnings = True, {}, []
+    if option_groups:
+        _applied, graph_meeting, option_warnings = apply_teams_meeting_options(
+            organizer,
+            join_url,
+            recording=meeting_options['recording'],
+            lobby_bypass=meeting_options['lobby_bypass'],
+            spoken_language=meeting_options['spoken_language'],
+            attendees=invited_people,
+            presenters=presenters,
+            co_organizers=co_organizers,
+            online_meeting_id=series.get('online_meeting_id'),
+            groups=option_groups,
+            live_session_id=live_session_id,
+        )
+        if not _applied and not option_warnings:
+            option_warnings = [{'code': 'teams_meeting_options_not_applied', 'groups': sorted(option_groups),
+                                'message': 'Microsoft did not apply this meeting\u2019s options.', 'detail': ''}]
+    # A refused options PATCH on a meeting that already exists is reported, not
+    # fatal: the invitation and the dates are separate operations and still go
+    # ahead. A meeting this save created (a session recreated on its own event)
+    # still stops the save, so nobody is invited to one still at the tenant
+    # defaults -- the same rule as creating a calendar.
+    option_failures = list(option_warnings)
+    if people_only:
+        # Standalone sessions refreshed here already existed.
+        option_failures += [item for item in warnings
+                            if isinstance(item, dict) and item.get('code') == 'teams_meeting_options_not_applied']
+        warnings = [item for item in warnings if item not in option_failures]
+    # What became of Microsoft's own announcement, for the result and the guard.
+    claim = ''
+    announcement = 'silent' if dates_changed else 'not_needed'
+    announced_writes = {'count': 0}
+
+    def announcing_request(method, path, *, payload=None, extra_headers=None):
+        """Counts every announced write that reached -- or may have reached -- Microsoft."""
+        announced = method == 'PATCH' and not extra_headers
+        try:
+            result = microsoft_graph_request(method, path, payload=payload, extra_headers=extra_headers)
+        except RuntimeError as exc:
+            if announced and graph_failure_outcome(exc) == 'unknown':
+                announced_writes['count'] += 1
+            raise
+        if announced:
+            announced_writes['count'] += 1
+        return result
+
     try:
-        if warnings or not _applied:
+        if warnings:
             # Say what Microsoft actually refused. Every warning already carries
             # Graph's own message and detail; raising a generic sentence here
             # threw that away, so the dialog -- and the row this is recorded on
@@ -4047,7 +4252,20 @@ def curriculum_teams_meeting_schedule(request, live_session_id):
             source='update_reconcile',
         )
         occurrence_details = recreated_details or current_occurrences
-        if not notify_attendees:
+        # A session missing from the series is reported, not verified: nothing
+        # was created for it, so there is nothing of it on Teams to confirm.
+        shifts_ran = repeat != 'none' and not people_only
+        verifiable_targets = without_missing(targets, missing_occurrences if shifts_ran else known_missing)
+        if announce:
+            # Claimed durably BEFORE Microsoft is asked. An earlier attempt at
+            # this same change -- one whose response was lost to a timeout --
+            # already holds the claim, and its announcement is not repeated:
+            # Graph cannot say whether that write reached anyone, so it is
+            # reported, never sent twice.
+            claim = claim_announcement(live_session_id, change_id)
+            announcement = 'already_attempted' if claim == 'attempted' else 'sent'
+        announce_now = announce and claim != 'attempted'
+        if not announce_now:
             # An author who chose not to email still gets a structurally correct
             # calendar. The write is the narrow attendees-only patch under the
             # silent preference, and it is skipped outright when the list already
@@ -4059,30 +4277,32 @@ def curriculum_teams_meeting_schedule(request, live_session_id):
                 occurrence_details, title=title, silent=True,
             )
         event = verify_teams_calendar_with_standalones(
-            microsoft_graph_request, owner_key, event_id, targets, join_url,
+            microsoft_graph_request, owner_key, event_id, verifiable_targets, join_url,
             repeat != 'none', occurrence_details,
             # The author who is emailing has not published the list yet; that
             # branch checks the people on its own final pass below.
-            expected_attendees=None if notify_attendees else calendar_attendees,
+            expected_attendees=None if announce_now else calendar_attendees,
         )
         # Keep the saved attendee/presenter/co-organizer roles in the online
         # meeting. The admin review flow opts in to email with notifyAttendees=true.
-        if notify_attendees:
+        if announce_now:
             # Only notify after the organizer's master and every exception have
             # been reconciled and verified. Updating the master then lets
             # Exchange send the final series/exception state to attendees; it
             # also avoids telling learners about a half-applied repair.
             publish_teams_calendar_attendees(
-                microsoft_graph_request, owner_key, event, calendar_attendees,
+                announcing_request, owner_key, event, calendar_attendees,
                 occurrence_details, force=True, title=title,
-                dates_unchanged=bool(payload.get('peopleOnly')),
             )
             event = verify_teams_calendar_with_standalones(
-                microsoft_graph_request, owner_key, event_id, targets, join_url,
+                microsoft_graph_request, owner_key, event_id, verifiable_targets, join_url,
                 repeat != 'none', occurrence_details,
                 expected_attendees=calendar_attendees,
             )
-        if not notify_attendees and newly_invited:
+        # The people this save adds are on the announced write when there is
+        # one -- including an earlier attempt's, which carried this same list --
+        # so only a save that announces nothing forwards the meeting to them.
+        if not announce and newly_invited and not invitations_only:
             # After verification: nobody is invited to a calendar Microsoft has
             # not confirmed, and a half-applied repair is not what a learner
             # should be looking at in their first invitation.
@@ -4093,16 +4313,38 @@ def curriculum_teams_meeting_schedule(request, live_session_id):
                 comment=f'You have been added to {title}.',
             ))
     except RuntimeError as exc:
+        if claim == 'claimed':
+            # Never asked, or refused outright: a retry may announce. Anything
+            # that may have reached Microsoft keeps the claim.
+            finish_announcement(live_session_id, change_id,
+                                outcome='unknown' if announced_writes['count'] else 'failed')
+        # Keep the unapplied-options marker: this failed save wrote no options.
+        unapplied = set(pending_options) | {group for item in option_failures for group in (item.get('groups') or option_groups)}
+        saved_marker = next((item for item in saved_warnings if isinstance(item, dict)
+                             and item.get('code') == 'teams_meeting_options_not_applied'), None) or {}
+        requested_settings = ({key: meeting_options[key] for key in ('recording', 'lobby_bypass', 'spoken_language')}
+                              if 'settings' in option_groups else saved_marker.get('requested'))
         update_authoring_rows(LIVE_SESSIONS_TABLE, 'id = %s', [live_session_id], {
-            'warnings': json_db_value([*warnings, {'code': 'teams_calendar_unverified', 'message': str(exc)}]),
+            'warnings': json_db_value([*warnings, {'code': 'teams_calendar_unverified', 'message': str(exc)},
+                                       *([pending_warning(unapplied, (option_failures or [{}])[0], requested_settings)]
+                                         if unapplied else [])]),
             'updated_at': datetime.utcnow(),
         })
         # `errors` is the field the curriculum client already appends to the
         # sentence it shows, so the reason travels all the way to the dialog
         # instead of living only in this row's `warnings` column.
-        return json_error('Microsoft did not confirm the reviewed calendar. Requested dates have not been marked as synchronized.',
-                          status=502, detail=str(exc), partial=True, liveSessionId=live_session_id,
-                          errors=[warning for warning in warnings if isinstance(warning, dict)] or [str(exc)])
+        verification_required = claim == 'attempted' or bool(announced_writes['count'])
+        return json_error(
+            ('Microsoft did not confirm the reviewed calendar. Requested dates have not been marked as synchronized. '
+             'Microsoft may already have sent this update to the invitees, so it will not be announced again; '
+             'check the calendar in Outlook before retrying.') if verification_required else
+            'Microsoft did not confirm the reviewed calendar. Requested dates have not been marked as synchronized.',
+            status=502, detail=str(exc), partial=True, liveSessionId=live_session_id,
+            code='teams_update_verification_required' if verification_required else 'teams_calendar_unverified',
+            verificationRequired=verification_required,
+            errors=[warning for warning in [*warnings, *option_failures] if isinstance(warning, dict)] or [str(exc)])
+    if claim == 'claimed':
+        finish_announcement(live_session_id, change_id, outcome='accepted')
     occurrence_rows = authoring_fetch_all(LIVE_SESSION_OCCURRENCES_TABLE, 'live_session_id = %s', [live_session_id]) if payload.get('peopleOnly') else replace_live_session_occurrences(
         live_session_id,
         payload,
@@ -4114,17 +4356,34 @@ def curriculum_teams_meeting_schedule(request, live_session_id):
         join_url=join_url,
     )
     persist_recreated_occurrence_details(live_session_id, recreated_details)
+    if repeat != 'none' and not people_only:
+        record_reconcile(live_session_id, missing_occurrences,
+                         module_catalogue_id=clean_str(series.get('module_catalogue_id')), source='Teams calendar update')
     if recreated_details:
         occurrence_rows = authoring_fetch_all(
             LIVE_SESSION_OCCURRENCES_TABLE,
-            'live_session_id = %s and status != %s',
-            [live_session_id, 'cancelled'],
+            "live_session_id = %s and status not in ('cancelled', 'superseded')",
+            [live_session_id],
             'session_number asc',
         )
+    failed_groups = {group for item in option_failures for group in (item.get('groups') or option_groups or ALL_OPTION_GROUPS)}
+    still_pending = remaining_pending(pending_options, option_groups, failed_groups)
+    previous_pending = next((item for item in saved_warnings if isinstance(item, dict)
+                             and item.get('code') == 'teams_meeting_options_not_applied'), None)
+    # A refused settings change keeps what the author asked for, so Retry can send it.
+    requested_settings = ({key: meeting_options[key] for key in ('recording', 'lobby_bypass', 'spoken_language')}
+                          if 'settings' in failed_groups else (previous_pending or {}).get('requested'))
+    stored_option_warnings = ([pending_warning(still_pending, (option_failures or [previous_pending])[0], requested_settings)]
+                              if still_pending else [])
+    # The LMS keeps the settings Microsoft last accepted: a refused lobby or
+    # recording change is not saved as if it had happened. Roles are also the
+    # invitation list, which Microsoft did accept, so they are saved and the
+    # unapplied role change stays marked for a retry.
+    saved_option_updates = {} if 'settings' in failed_groups else option_updates
     series_update = {
-        **option_updates,
+        **saved_option_updates,
         'hide_attendees': True,
-        'warnings': json_db_value([]),
+        'warnings': json_db_value(stored_option_warnings),
         'online_meeting_id': clean_str(graph_meeting.get('id')) or clean_str(series.get('online_meeting_id')),
         'module_title': title,
         'start_datetime': utc_start,
@@ -4164,121 +4423,46 @@ def curriculum_teams_meeting_schedule(request, live_session_id):
             'presenters': presenters,
             'coOrganizers': co_organizers,
         },
-        'warnings': warnings,
+        'warnings': [*warnings, *[reported_failure(item) for item in option_failures]],
+        # The onlineMeeting options, reported apart from the invitation: which
+        # groups this save sent, whether Microsoft took them, and what is still
+        # unapplied from this or an earlier save.
+        'optionGroupsSent': sorted(option_groups),
+        'optionsApplied': not option_failures,
+        'optionsPending': sorted(still_pending),
+        'partial': bool(option_failures),
         'leftoverSlots': (event.get('unplannedInstances') or []) or leftover_slots,
-    }), live_session_id, schedule_before)
+        # Whether this save carried a date change to announce, and what Microsoft
+        # was asked: 'sent', 'already_attempted' (an earlier attempt at this same
+        # change asked; not repeated), 'silent' (the author chose no notice) or
+        # 'not_needed' (no date changed). A request, not proof of delivery.
+        'announced': announce,
+        'microsoftUpdate': announcement,
+        'retryGuard': 'unavailable' if claim == 'unguarded' else 'on',
+        'changeId': change_id,
+        # Planned sessions missing from the recurring series: resolution
+        # required in Calendar health. No separate meeting was created.
+        'missingOccurrences': missing_occurrences,
+    }), live_session_id, schedule_before, request=None if invitations_only else request, notify=notify_attendees,
+        series_before=series)
 
 
 @csrf_exempt
 def curriculum_teams_meeting_occurrence_schedule(request, live_session_id, session_number):
-    """Move one session of a live-session series to a date/time of its own.
+    """Retired: moving one session goes through the calendar's Edit session action.
 
-    Only that occurrence moves; the rest of the series and the module's default
-    time are left exactly as they are. The tracked occurrence row is the source
-    of truth for which instant and duration to move, so the caller sends only the
-    new start (and an optional duration override).
+    This route used to move one session in Microsoft silently -- no announced
+    update to the people invited and no LMS change email -- and nothing in the
+    LMS called it any more. Left in place it was a way round every rule the
+    calendar actions keep: the review, the forced Microsoft notice, the change
+    email after Microsoft confirms, and the action record. It now refuses
+    before reading or writing anything, and says where the move belongs.
     """
-    from coach_api.views import has_graph_credentials
-
-    ensure_live_session_tracking_tables()
-    if request.method != 'PATCH':
-        return json_error('Method not allowed.', status=405)
-    series_rows = authoring_fetch_all(LIVE_SESSIONS_TABLE, 'id = %s', [live_session_id])
-    if not series_rows:
-        return json_error('Live session series not found.', status=404)
-    try:
-        session_number = int(session_number)
-    except (TypeError, ValueError):
-        return json_error('A valid session number is required.', status=400)
-    occurrence_rows = authoring_fetch_all(
-        LIVE_SESSION_OCCURRENCES_TABLE,
-        'live_session_id = %s and session_number = %s',
-        [live_session_id, session_number],
+    return json_error(
+        'Moving one session is done with the Edit session action on the Teams calendar, which tells the '
+        'people invited. This older route no longer changes Teams.',
+        status=410, code='use_calendar_action', liveSessionId=clean_str(live_session_id),
     )
-    if not occurrence_rows:
-        return json_error('That session is not tracked for this series.', status=404)
-    if not has_graph_credentials():
-        return json_error('Microsoft Graph credentials are not configured.', status=503)
-
-    payload = json_body(request)
-    if not isinstance(payload, dict):
-        return json_error('A valid JSON body is required.')
-    new_start = parse_graph_datetime(payload.get('startDateTimeUtc'))
-    if not new_start:
-        return json_error('A valid meeting start date and time is required.', status=400)
-    if new_start.tzinfo is not None:
-        new_start = new_start.astimezone(timezone.utc).replace(tzinfo=None)
-
-    non_delivery_reason = teams_non_delivery_reason(
-        [{'session_number': session_number, 'start': new_start.replace(tzinfo=timezone.utc)}],
-        graph_timezone_iana(teams_schedule_settings({}, series=series_rows[0])),
-    )
-    if non_delivery_reason:
-        return json_error(non_delivery_reason, status=400, code='non_delivery_date')
-
-    series = series_rows[0]
-    occurrence = occurrence_rows[0]
-    # Keep the session's own length by default: only a caller that means to change
-    # it sends a duration, so nudging the time never quietly reshapes the meeting.
-    start_at = parse_graph_datetime(occurrence.get('scheduled_start'))
-    end_at = parse_graph_datetime(occurrence.get('scheduled_end'))
-    if start_at and end_at and end_at > start_at:
-        default_duration = int((end_at - start_at).total_seconds() // 60) or 60
-    else:
-        default_duration = parse_int(series.get('duration_minutes'), 60) or 60
-    duration = max(15, min(1440, parse_int(payload.get('durationMinutes'), default_duration) or default_duration))
-
-    join_url, online_meeting_id, event_id, warnings = reschedule_single_live_session_occurrence(
-        series, occurrence, new_start, duration,
-    )
-
-    # Only persist a time Teams actually adopted. The helper moves the recurring
-    # instance or reports one of the hard-failure codes below -- in which case Teams still
-    # runs the session at the old time, so writing the new one here would make
-    # the LMS claim a slot that does not exist and read as a success.
-    warning_codes = {clean_str(item.get('code')) for item in warnings}
-    hard_failures = warning_codes & {
-        'teams_occurrence_not_moved',
-        'teams_occurrence_missing_event',
-        'teams_occurrence_not_found',
-    }
-    if hard_failures:
-        message = next(
-            (clean_str(item.get('message')) for item in warnings if clean_str(item.get('code')) in hard_failures),
-            'Microsoft Teams could not move this session.',
-        )
-        return json_error(message, status=502, warnings=warnings, updated=False)
-
-    now = datetime.utcnow()
-    update = {
-        'scheduled_start': new_start,
-        'scheduled_end': new_start + timedelta(minutes=duration),
-        'updated_at': now,
-    }
-    if event_id:
-        update['graph_event_id'] = event_id
-    if join_url:
-        update['join_url'] = join_url
-    if online_meeting_id:
-        update['online_meeting_id'] = online_meeting_id
-    update_authoring_rows(
-        LIVE_SESSION_OCCURRENCES_TABLE,
-        'live_session_id = %s and session_number = %s',
-        [live_session_id, session_number],
-        update,
-    )
-    return JsonResponse({
-        'updated': True,
-        'occurrence': {
-            'liveSessionId': live_session_id,
-            'sessionNumber': session_number,
-            'startDateTimeUtc': utc_iso_value(new_start),
-            'durationMinutes': duration,
-            'joinUrl': join_url,
-            'eventId': event_id,
-        },
-        'warnings': warnings,
-    })
 
 
 def upsert_live_session_artifact(occurrence, artifact_type, artifact):
@@ -4518,6 +4702,9 @@ def curriculum_teams_meeting_artifacts(request, live_session_id):
     # the loaded row in step with it, or the grouping below reads the blank value
     # the row was loaded with and asks Graph for nothing at all.
     series['online_meeting_id'] = meeting_id
+    # The meeting ID and passcode shown under the join link, once per link.
+    from .teams_dial_in import remember_teams_dial_in
+    remember_teams_dial_in(series)
     errors = []
     if any(clean_str(row.get('join_url')) not in ('', join_url) and not clean_str(row.get('online_meeting_id')) for row in occurrences):
         errors.append('A weekday series has no online meeting ID yet. Update the calendar to retry its Teams configuration.')
@@ -4528,6 +4715,7 @@ def curriculum_teams_meeting_artifacts(request, live_session_id):
     # can be an event of its own with an online meeting of its own (see
     # apply_teams_occurrence_shifts). Asking the series for that session's
     # attendance, transcript or recording returns nothing at all.
+    from .teams_calendar_integrity import note_completion, note_premature_run, run_precedes_session
     for base, group in live_session_meeting_groups(series, occurrences):
         launches = live_session_join_launches(group)
         try:
@@ -4567,17 +4755,30 @@ def curriculum_teams_meeting_artifacts(request, live_session_id):
                     microsoft_graph_request, f'{base}/attendanceReports/{report_key}/attendanceRecords', get_graph_settings()['base_url'])
                 if not parse_graph_datetime(detail.get('meetingEndDateTime')):
                     continue  # an ongoing report cannot establish absence
+                run_start = parse_graph_datetime(detail.get('meetingStartDateTime'))
+                run_end = parse_graph_datetime(detail.get('meetingEndDateTime'))
+                if run_precedes_session(occurrence, run_start, run_end):
+                    # Somebody opened the meeting before this session was due -- a
+                    # fresh link being tried, a rehearsal. That is not delivery: it
+                    # neither completes the session nor gives it attendance. What
+                    # an earlier sync already stored is left exactly as it is.
+                    note_premature_run(series, occurrence, report_id, run_start, run_end,
+                                       job_id=clean_str(getattr(request, 'session_result_job_id', '')))
+                    continue
                 with transaction.atomic():
                     returned_report_ids.add(report_id)
                     update_authoring_rows(LIVE_SESSION_OCCURRENCES_TABLE, 'id = %s', [occurrence['id']], {
                         'attendance_report_id': report_id,
                         'participant_count': int(detail.get('totalParticipantCount') or len(records)),
-                        'actual_start': parse_graph_datetime(detail.get('meetingStartDateTime')),
-                        'actual_end': parse_graph_datetime(detail.get('meetingEndDateTime')),
+                        'actual_start': run_start,
+                        'actual_end': run_end,
                         'status': 'completed',
                         'artifacts_synced_at': now,
                         'last_sync_error': '',
                     })
+                    if clean_str(occurrence.get('status')).lower() != 'completed':
+                        note_completion(series, occurrence, report_id, run_start, run_end,
+                                        job_id=clean_str(getattr(request, 'session_result_job_id', '')))
                     for record in records:
                         display_name, identity_id = attendance_identity(record)
                         display_name = display_name or attendance_display_name(record)
@@ -4612,6 +4813,8 @@ def curriculum_teams_meeting_artifacts(request, live_session_id):
                             'attendanceReportEnd': clean_str(detail.get('meetingEndDateTime') or report.get('meetingEndDateTime')),
                         }
                         merged_raw = graph_item_with_occurrence_link(merged_raw, occurrence, launch)
+                        # Keep an earlier directory lookup of the same account (read-only identity check).
+                        merged_raw = keep_directory_lookup(existing_raw, merged_raw)
                         authoring_upsert(LIVE_SESSION_ATTENDANCE_TABLE, ['id'], {
                             'id': attendance_id,
                             'occurrence_id': occurrence['id'],
@@ -4683,6 +4886,24 @@ def curriculum_teams_meeting_artifacts(request, live_session_id):
                         )
             except RuntimeError as exc:
                 errors.append(f'{artifact_type.title()}: {exc}')
+
+    # Identity check only: look up the email behind signed-in college accounts
+    # so staff can compare it with the LMS email. Reads the directory, writes
+    # nothing to Microsoft and leaves attendance seconds and status untouched.
+    try:
+        lookup = resolve_directory_accounts(
+            [row for occurrence in occurrences
+             for row in authoring_fetch_all(LIVE_SESSION_ATTENDANCE_TABLE, 'occurrence_id = %s', [occurrence['id']])],
+            graph_request=microsoft_graph_request,
+            save_raw=lambda row, raw: update_authoring_rows(
+                LIVE_SESSION_ATTENDANCE_TABLE, 'id = %s', [row['id']], {'raw_data': json_db_value(raw)}),
+            home_tenant=get_graph_settings().get('tenant_id') or '',
+        )
+        synced['accountsLookedUp'] = lookup['resolved'] + lookup['notFound']
+        if lookup['denied']:
+            logger.warning('Teams account check: Microsoft refused the directory lookup (User.Read.All).')
+    except Exception:
+        logger.exception('Teams account check: directory lookup failed; attendance is unaffected.')
 
     try:
         from learner_api.teams_attendance import sync_verified_teams_attendance_reporting
@@ -7129,6 +7350,8 @@ def curriculum_teams_meeting_join(request, live_session_id, occurrence_id):
     series = series_rows[0] if series_rows else {}
     if series.get('status') == 'cancelled' or occurrence.get('status') == 'cancelled':
         return json_error('This Teams session has been cancelled.', status=410)
+    if occurrence.get('status') == 'superseded':
+        return json_error('This Teams session is no longer part of the module plan.', status=410)
     join_url = clean_str(occurrence.get('join_url')) or clean_str(series.get('join_url'))
     parsed = urlparse(join_url)
     hostname = (parsed.hostname or '').lower()
@@ -17993,7 +18216,7 @@ def curriculum_module_teams_meeting_restore(request, module_catalogue_id):
     # order, which is the same pairing the Teams page shows its rows in.
     occurrence_rows = authoring_fetch_all(
         LIVE_SESSION_OCCURRENCES_TABLE,
-        "live_session_id = %s and status <> 'cancelled'",
+        "live_session_id = %s and status not in ('cancelled', 'superseded')",
         [clean_str(sessions[0].get('id'))],
         'session_number asc',
     )
@@ -18220,7 +18443,7 @@ def curriculum_module_teams_links_replace(request, module_catalogue_id):
 #: `replace_live_session_occurrences` marks a shrunk series' trailing rows
 #: `cancelled` rather than deleting them, so counting those as extras would
 #: report every shortened module as out of sync forever.
-TEAMS_OFF_CALENDAR_OCCURRENCE_STATUSES = {'cancelled', 'canceled', 'declined', 'deleted', 'removed'}
+TEAMS_OFF_CALENDAR_OCCURRENCE_STATUSES = {'cancelled', 'canceled', 'declined', 'deleted', 'removed', 'superseded'}
 
 #: How many differing dates a verdict names before it stops listing them. The
 #: badge only needs the count; the list is for the drawer that shows them.
@@ -18604,6 +18827,9 @@ def curriculum_teams_meeting_summary(request):
             'moduleTitle': clean_str(row.get('module_title')),
             'calendarSeries': stored_calendar_series(row),
             'verificationPending': bool(parse_json_value(row.get('warnings'), [])),
+            # Saved / pending / failed for the meeting options, from the saved
+            # marker; read only, no Graph call (see teams_options_retry).
+            'microsoftUpdate': microsoft_update_summary(row.get('warnings')),
             'joinUrl': clean_str(row.get('join_url')),
             'webLink': clean_str(row.get('web_link')),
             'meetingOptionsUrl': clean_str(row.get('meeting_options_url')),
@@ -21658,7 +21884,7 @@ def save_module_authoring_structure(module_catalogue_id, payload, *, repair_link
     calendars = authoring_fetch_all(LIVE_SESSIONS_TABLE, "module_catalogue_id = %s and status = 'active'", [module_catalogue_id])
     if calendars and stored_calendar_series(calendars[0]):
         calendar = calendars[0]
-        occurrences = authoring_fetch_all(LIVE_SESSION_OCCURRENCES_TABLE, "live_session_id = %s and status <> 'cancelled'", [calendar['id']], 'session_number')
+        occurrences = authoring_fetch_all(LIVE_SESSION_OCCURRENCES_TABLE, "live_session_id = %s and status not in ('cancelled', 'superseded')", [calendar['id']], 'session_number')
         attach_teams_meeting_to_module_weeks(module_catalogue_id, calendar, live_session_row_to_component_settings(calendar), occurrences)
     result = get_authoring_structure_payload(module_catalogue_id)
     result['qualityChecklist'] = checklist
@@ -24828,6 +25054,10 @@ def convert_module_to_free_course(module_catalogue_id, *, free_programme_id='FRE
     if not structure:
         raise LookupError('Module not found.')
     course_title = clean_str(structure.get('title')) or 'Untitled course'
+    if mode == 'move' and module_future_teams_sessions(module_catalogue_id):
+        # Moving archives the source module, and an archive never leaves a
+        # running Teams calendar behind it (see module_teams_calendar_block_response).
+        raise ValueError(MODULE_TEAMS_CALENDAR_BLOCKS_ARCHIVE)
 
     free_programme_id = clean_str(free_programme_id) or 'FREE-COURSES'
     with transaction.atomic(), versioning.source('module-to-free-course'):
@@ -25486,6 +25716,9 @@ def curriculum_uploaded_file(request, path):
         or mimetypes.guess_type(relative_path)[0]
         or 'application/octet-stream'
     )
+    if response['Content-Type'].lower().startswith('video/'):
+        from config.video_streaming import video_chunks
+        response.streaming_content = video_chunks(request, stream)
     if requested:
         response['Content-Range'] = f'bytes {offset}-{offset + length - 1}/{total_size}'
     return response
@@ -29033,6 +29266,11 @@ def curriculum_module_detail(request, identifier):
             # deletes read it: a bare DELETE still archives.
             if request_wants_permanent_delete(request):
                 return permanent_module_delete_response(existing_authoring)
+            # Never archive past a running Teams calendar, and never cancel it
+            # on the author's behalf: they cancel it, then archive.
+            blocked = module_teams_calendar_block_response(module_catalogue_id)
+            if blocked is not None:
+                return blocked
             delete_module_authoring_structure(module_catalogue_id)
             log_curriculum_decision(
                 'module.archive', outcome='soft_deleted', entity_id=module_catalogue_id,
@@ -31051,6 +31289,69 @@ def curriculum_module_restore(request, identifier):
     })
 
 
+MODULE_TEAMS_CALENDAR_BLOCKS_ARCHIVE = (
+    'This module has an active Teams calendar with future sessions. Cancel the Teams calendar before archiving '
+    'the module.'
+)
+
+
+def module_future_teams_sessions(module_catalogue_id, now=None):
+    """Future Teams sessions still standing on this module's calendars.
+
+    Every calendar the module owns -- its module series and its additional week
+    meetings -- that has not been cancelled, and every session on it that has
+    not been cancelled and has not ended yet. A session marked "not in plan"
+    ('superseded') counts: its Teams slot is still in everyone's calendar, which
+    is exactly what an archive must not leave running unseen. Past sessions
+    never block: their attendance and history stay where they are.
+
+    Read-only. Archiving never cancels anything; the author does, with Cancel.
+    """
+    now = utc_datetime(now or datetime.utcnow())
+    series_rows = authoring_fetch_all(
+        LIVE_SESSIONS_TABLE, "module_catalogue_id = %s and coalesce(status, '') not in ('cancelled', 'canceled')",
+        [clean_str(module_catalogue_id)],
+    )
+    standing = []
+    for series in series_rows:
+        rows = authoring_fetch_all(
+            LIVE_SESSION_OCCURRENCES_TABLE, "live_session_id = %s and coalesce(status, '') not in ('cancelled', 'canceled')",
+            [clean_str(series.get('id'))],
+        )
+        if not rows and series.get('start_datetime'):
+            # A calendar with no occurrence rows still has its own start.
+            start = parse_graph_datetime(series.get('start_datetime'))
+            minutes = parse_int(series.get('duration_minutes'), 60) or 60
+            rows = [{'session_number': 1, 'scheduled_start': start,
+                     'scheduled_end': start + timedelta(minutes=minutes) if start else None}]
+        for row in rows:
+            ends = row.get('scheduled_end') or row.get('scheduled_start')
+            if ends and utc_datetime(ends) > now:
+                standing.append({'liveSessionId': clean_str(series.get('id')),
+                                 'sessionNumber': row.get('session_number'),
+                                 'startDateTimeUtc': utc_iso_value(parse_graph_datetime(row.get('scheduled_start')))})
+    return standing
+
+
+def module_teams_calendar_block_response(module_catalogue_id):
+    """409 when the module still has future Teams sessions, else None. Fails closed."""
+    try:
+        standing = module_future_teams_sessions(module_catalogue_id)
+    except DatabaseError:
+        logger.warning('Teams sessions of module %s could not be read before archiving.', module_catalogue_id)
+        return json_error(
+            'The module’s Teams calendar could not be checked, so it was not archived. Try again.',
+            status=503, reason='module-teams-calendar-unchecked', deleted=False,
+        )
+    if not standing:
+        return None
+    return json_error(
+        MODULE_TEAMS_CALENDAR_BLOCKS_ARCHIVE, status=409, reason='module-has-active-teams-calendar',
+        code='module_has_active_teams_calendar', deleted=False,
+        liveSessionIds=sorted({item['liveSessionId'] for item in standing}), futureSessions=len(standing),
+    )
+
+
 def permanent_module_delete_response(module_row):
     """HTTP outcome of a permanent module delete: the module and all its authoring."""
     catalogue_id = clean_str(module_row.get('module_catalogue_id'))
@@ -31059,6 +31360,11 @@ def permanent_module_delete_response(module_row):
             'Archive the module before deleting it permanently.',
             status=409, reason='module-not-archived', deleted=False, permanent=False, id=catalogue_id,
         )
+    # A module archived before this check existed can still own a running
+    # calendar; deleting it would orphan that calendar's rows for good.
+    blocked = module_teams_calendar_block_response(catalogue_id)
+    if blocked is not None:
+        return blocked
 
     try:
         with transaction.atomic():
@@ -32389,7 +32695,7 @@ def tutor_workspace_next_session_by_module(module_ids):
           on session.id = occurrence.live_session_id
         where session.module_catalogue_id in ({placeholders})
           and coalesce(session.status, '') <> 'superseded'
-          and coalesce(occurrence.status, '') <> 'cancelled'
+          and coalesce(occurrence.status, '') not in ('cancelled', 'superseded')
           and occurrence.scheduled_end >= %s
         order by occurrence.scheduled_start
     """

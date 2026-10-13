@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react';
+import { useCaseFileModuleDetail } from '@/features/coach/case-file/hooks/useCaseFileModuleDetail';
 import { Link } from 'react-router-dom';
 import { ArrowRight, CalendarDays, X } from 'lucide-react';
 import type { TimelineModule } from './model';
@@ -7,13 +8,16 @@ import { dateLabel, hours, moduleStatus, sessionTime } from './presentation';
 import layout from './ModuleTimeline.module.css';
 
 export function TimelineInspector({ module, coach, href, onClose }: { module: TimelineModule; coach: string; href?: string; onClose: () => void }) {
+  const focused = useCaseFileModuleDetail(module.detail?.id);
+  const detail = focused?.module ?? module.detail;
   const close = useRef<HTMLButtonElement>(null);
   useEffect(() => { close.current?.focus({ preventScroll: true }); }, [module.id]);
   return <aside className={layout.inspector} aria-label="Timeline module details">
     <header><span>Module details</span><button ref={close} type="button" aria-label="Close module details" onClick={onClose}><X size={17} /></button></header>
     <div className={layout.inspectorContent}>
       <span className={layout.status}>{moduleStatus(module)}</span><h3>{module.title}</h3>
-      {module.detail?.description && <p className={layout.description}>{module.detail.description}</p>}
+      {focused?.error && <p role="alert">{focused.error} <button type="button" onClick={focused.refresh}>Retry module details</button></p>}
+      {detail?.description && <p className={layout.description}>{detail.description}</p>}
       <div className={layout.progressHeading}><span>Activity progress</span><strong>{module.progress}%</strong></div>
       <div className={layout.inspectorMeter}><span style={{ width: `${module.progress}%` }} /></div>
       <p className={layout.muted}>{module.done} of {module.activityCount} activities completed</p>

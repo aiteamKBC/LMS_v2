@@ -1,5 +1,5 @@
 import { learningFetch } from '@/lib/personalLearning';
-import { createCachedResource } from './cachedRequest';
+import { createCachedResource, invalidateCachedResource } from './cachedRequest';
 
 export const LEARNER_READ_TIMEOUT_MS = 45_000;
 export const LEARNER_SOURCE_READ_TIMEOUT_MS = 180_000;
@@ -137,6 +137,7 @@ export function subscribeLearnerReadInvalidation(listener: () => void): () => vo
 }
 
 export function invalidateLearnerReads(): void {
+  invalidateCachedResource('coach-case-file-session');
   cached.invalidate();
   live.invalidate();
   invalidationListeners.forEach(listener => listener());

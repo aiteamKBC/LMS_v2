@@ -8,6 +8,12 @@ export type LogSummary = Omit<JournalSummary, 'months'> & {
   months: LogMonth[]; total_months: number; completed_months: number; read_only: boolean; csrf_token: string;
   training_plan_totals?: { accepted_hours: number; planned_hours: number | null };
 };
+/** The per-month hour totals the dashboard reads; a LogSummary satisfies it. */
+export type MonthlyLogHours = {
+  learner?: { aptem_id?: number | null; planned_end_date?: string | null } | null;
+  months: Pick<LogMonth, 'month' | 'source' | 'training_plan_target' | 'not_accepted_hours' | 'actual_hours'>[];
+  training_plan_totals?: LogSummary['training_plan_totals'];
+};
 export type LogLearner = { id: number; name: string; programme: string };
 export type LogPerspective = 'learner' | 'coach';
 

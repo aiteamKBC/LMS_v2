@@ -102,10 +102,11 @@ class OccurrencePairingTests(unittest.TestCase):
         self.assertEqual(instant(table.rows['OCC-3']['scheduled_start']), instant(thursday(3)))
         self.assertEqual(len(table.rows), 3)
 
-    def test_a_dropped_date_is_cancelled_and_steps_off_a_number_now_needed(self):
+    def test_a_dropped_date_is_not_in_plan_never_cancelled_and_steps_off_a_number_now_needed(self):
         table = Table([stored(1, 0), stored(2, 1), stored(3, 2)])
         self.replace(table, [0, 2])
-        self.assertEqual(table.rows['OCC-2']['status'], 'cancelled')
+        # Out of the plan, but nobody pressed Cancel: 'superseded', never 'cancelled'.
+        self.assertEqual(table.rows['OCC-2']['status'], 'superseded')
         self.assertEqual(table.rows['OCC-3']['session_number'], 2)
         self.assertEqual(instant(table.rows['OCC-3']['scheduled_start']), instant(thursday(2)))
         self.assertNotIn(table.rows['OCC-2']['session_number'], (1, 2))

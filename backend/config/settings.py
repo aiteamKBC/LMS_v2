@@ -99,11 +99,9 @@ DB_POOL_OPTIONS = {
     'min_size': 1,
     'max_size': int(os.environ.get('DB_POOL_MAX_SIZE', '10')),
     'timeout': DB_POOL_TIMEOUT,
-    # Neon closes idle server-side connections; retire pooled connections
-    # before that happens so requests never receive a dead socket. Django 6
-    # already installs psycopg_pool's check_connection on every pool it
-    # builds, so no explicit 'check' entry here (passing one crashes startup
-    # with a duplicate-keyword error).
+    # max_idle shrinks connections above min_size; it isn't a health check.
+    # Django installs psycopg_pool.check_connection only when
+    # CONN_HEALTH_CHECKS is enabled (including pooled connections).
     'max_idle': int(os.environ.get('DB_POOL_MAX_IDLE', '180')),
 }
 
@@ -143,7 +141,7 @@ def database_from_url(database_url):
         'PORT': str(parsed.port or ''),
         'OPTIONS': options,
         'CONN_MAX_AGE': 0 if pooled else DB_CONN_MAX_AGE,
-        'CONN_HEALTH_CHECKS': False if pooled else DB_CONN_HEALTH_CHECKS,
+        'CONN_HEALTH_CHECKS': DB_CONN_HEALTH_CHECKS,
     }
 
 
@@ -664,7 +662,7 @@ if DATABASE_URL and not USE_SQLITE_FOR_TESTS:
             "PORT": parsed_db.port or "5432",
             "OPTIONS": db_options,
             "CONN_MAX_AGE": 0 if DB_POOL else DB_CONN_MAX_AGE,
-            "CONN_HEALTH_CHECKS": False if DB_POOL else DB_CONN_HEALTH_CHECKS,
+            "CONN_HEALTH_CHECKS": DB_CONN_HEALTH_CHECKS,
         }
     }
 else:

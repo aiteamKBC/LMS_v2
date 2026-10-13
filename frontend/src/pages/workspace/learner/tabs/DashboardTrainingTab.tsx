@@ -1,5 +1,5 @@
 import type { DashboardTabsProps } from '../DashboardTabs';
 import { DashboardTrainingPlan } from '../DashboardTrainingPlan';
-export default function DashboardTrainingTab({ kind, learnerId, plan, programmeStartDate, programmeEndDate, pageError }: DashboardTabsProps) {
-  return <DashboardTrainingPlan kind={kind} learnerId={learnerId} plan={plan} canOpenActivities showRewards={false} trainingOnly programmeStartDate={programmeStartDate} programmeEndDate={programmeEndDate} pageError={pageError} />;
+export default function DashboardTrainingTab({ kind, learnerId, plan, programmeStartDate, programmeEndDate, pageError, learningSubjects, learningSubjectsLoading, learningSubjectsError, onRetryLearningSubjects }: DashboardTabsProps) {
+  return <DashboardTrainingPlan kind={kind} learnerId={learnerId} plan={plan} canOpenActivities showRewards={false} trainingOnly programmeStartDate={programmeStartDate} programmeEndDate={programmeEndDate} pageError={pageError} learningSubjects={learningSubjects} learningSubjectsLoading={learningSubjectsLoading} learningSubjectsError={learningSubjectsError} onRetryLearningSubjects={onRetryLearningSubjects} />;
 }

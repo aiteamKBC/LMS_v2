@@ -6,6 +6,7 @@
 import { Fragment, useEffect, useState } from 'react';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { SessionResults } from '@/components/feature/SessionResults';
+import { loadModuleSessions, type ModuleSessionResults } from '@/api/sessionResults';
 import { formatSystemTimestamp, SYSTEM_TIME_ZONE, systemDateParts } from '@/lib/format';
 import {
   fetchLiveSessionArtifacts,
@@ -503,6 +504,65 @@ function OccurrenceSessionResults({ session, occurrenceId }: {
         className="rounded-lg border px-3 py-2 font-semibold disabled:opacity-50">Refresh saved results</button>
     </div>
   );
+}
+
+/**
+ * A component saved without its own Teams series (a link entered by hand, or a
+ * shared module whose identity lives on the source) still belongs to a module
+ * whose Sessions & Recordings list holds the meeting. Read that same list and
+ * take the one saved session held on this component's date (UK time). Two
+ * sessions on the same day are never guessed between.
+ */
+export function ModuleLiveSessionResults({ moduleId, date, unmatched }: {
+  moduleId: string;
+  /** The component's session date, `YYYY-MM-DD` in UK time. */
+  date: string;
+  /** What to say when no single saved session is held on that date. */
+  unmatched: string;
+}) {
+  const [state, setState] = useState<{ status: 'loading' } | { status: 'error'; message: string } | { status: 'ready'; data: ModuleSessionResults }>({ status: 'loading' });
+  const [revision, setRevision] = useState(0);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    setState({ status: 'loading' });
+    loadModuleSessions(moduleId, controller.signal)
+      .then(data => { if (!controller.signal.aborted) setState({ status: 'ready', data }); })
+      .catch(error => {
+        if (!controller.signal.aborted) setState({
+          status: 'error',
+          message: error instanceof Error ? error.message : 'Unable to load saved sessions.',
+        });
+      });
+    return () => controller.abort();
+  }, [moduleId, revision]);
+
+  const matches = state.status === 'ready' ? matchModuleSessionsByDate(state.data, date) : [];
+  if (matches.length === 1) {
+    const [match] = matches;
+    return <SessionResults key={`${match.seriesId}:${match.sessionNumber}`} seriesId={match.seriesId} sessionNumber={match.sessionNumber} />;
+  }
+
+  return (
+    <div className="space-y-3 rounded-xl border border-background-200 bg-background-50/60 p-4 text-[12px] text-foreground-500">
+      {state.status === 'loading' ? <p role="status">Loading saved session…</p>
+        : state.status === 'error' ? <p role="alert" className="text-red-800">{state.message}</p>
+          : matches.length > 1 ? <p>{matches.length} saved Teams sessions are held on this date, so this session can’t tell which recording is its own. Open Sessions & Recordings to choose one.</p>
+            : <p>{unmatched}</p>}
+      <button type="button" disabled={state.status === 'loading'} onClick={() => setRevision(value => value + 1)}
+        className="rounded-lg border px-3 py-2 font-semibold disabled:opacity-50">Refresh saved results</button>
+    </div>
+  );
+}
+
+function ukDateKey(value: string): string {
+  const parts = systemDateParts(value);
+  return parts ? `${parts.year}-${String(parts.month).padStart(2, '0')}-${String(parts.day).padStart(2, '0')}` : '';
+}
+
+export function matchModuleSessionsByDate(data: ModuleSessionResults, date: string) {
+  if (!date) return [];
+  return data.series.flatMap(series => series.sessions).filter(session => ukDateKey(session.startsAt) === date);
 }
 
 /** Never replace an explicit identity with another session sharing its date. */
