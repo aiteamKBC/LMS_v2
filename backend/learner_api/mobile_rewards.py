@@ -62,7 +62,13 @@ def observations(request):
     body=mobile._only(mobile._body(request),
         {"trackingToken","componentId","mode","eventId","sequence","intervals"})
     component=mobile._component(request,body.get("componentId"))
+    # Wider course visibility does not extend the separately activated PMP
+    # reward policy or admit observations from another assigned course.
+    if component.get("moduleId") != mobile.PILOT_MODULE_ID or component.get("_standaloneQuiz"):
+        raise mobile.MobileError("This course has no active mobile rewards policy.",404,"module_not_assigned")
     mode=body.get("mode")
+    if mode != component.get("mobileMode"):
+        raise mobile.MobileError("The selected activity has no media for this mode.",409,"media_unavailable")
     if mode=="audio" and component.get("audioUrl"):
         activity_kind,activity_id,counting="component",component["componentId"],"active_playback"
     elif mode=="video" and component.get("videoUrl"):

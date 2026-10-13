@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import copy
 import functools
+import hashlib
 import io
 import json
 import math
@@ -24,6 +25,7 @@ from login.permissions import auth_gate_enabled
 from login.sessions import authenticate_request, session_unreadable
 from .models import EnrolmentUser, LearnerProfile
 from .learner_detail import build_learner_detail
+from .learning_plan import effective_training_plan
 from .mobile_progress import measured_time, project_progress
 
 BASE = "/learner_api/mobile/"
@@ -32,6 +34,9 @@ PILOT_MODULE_ID = "MOD-KBC-PMP-M01-SMR"
 PILOT_MODULE_TITLE = "Stakeholder Management and Reporting"
 MAX_BODY_BYTES = 64 * 1024
 DISABLED = {"0", "false", "no", "off"}
+CHOICE_QUESTION_TYPES = {"single_choice", "true_false", "multiple_choice"}
+MEDIA_COMPONENT_TYPES = {"audio", "podcast", "reading", "video"}
+ACTIVITY_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,179}")
 CAPABILITIES = {
     "cookieLogin": True, "assignedCatalogue": True, "canonicalProgress": True,
     "signedTiming": True, "quizSubmission": True, "pointsRead": True,
@@ -41,12 +46,10 @@ CAPABILITIES = {
 }
 COMPONENT_FIELDS = {
     "componentId", "moduleId", "weekId", "module", "week", "component", "type",
-    "description", "audioUrl", "videoUrl", "liveSessionUrl", "resourceUrl",
-    "fileName", "downloadAllowed", "durationMinutes", "expectedOtjh",
+    "description", "audioUrl", "videoUrl", "durationMinutes", "expectedOtjh",
     "reflectionPrompt", "reflectionRequired", "reflectionQuestion",
     "tutorValidationRequired", "ksbMappings", "ksbMappingCount", "ksbWeightTotal",
-    "isQuiz", "quizMeta", "teamsLiveSessionId", "teamsSessionNumber",
-    "sessionDate", "sessionTime", "sessionDateTimeUtc",
+    "isQuiz", "quizMeta",
 }
 PROGRESS_FIELDS = {
     "quizAttempts", "videoProgress", "componentProgress", "componentMarkingStatus",
@@ -175,14 +178,14 @@ def _detail(request):
 
 def _component(request, component_id):
     # Do not guess by a title, a week number, a local ID or an origin ID.
-    if not isinstance(component_id, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,179}", component_id):
+    _require_active_profile(request)
+    if not isinstance(component_id, str) or not ACTIVITY_ID.fullmatch(component_id):
         raise MobileError("A valid activity ID is required.")
     detail = _detail(request)
     if _learning_blocked(detail):
         raise MobileError("Your LMS learning access is not open yet.", 403, "learning_access_blocked")
-    for component in detail.get("components", []):
-        if (component.get("moduleId") == PILOT_MODULE_ID and
-                str(component.get("componentId", "")) == str(component_id)):
+    for component in _eligible_components(request):
+        if component["componentId"] == component_id:
             return component
     raise MobileError("Activity not found in your learning plan.", 404, "activity_not_assigned")
 
@@ -206,10 +209,121 @@ def _quiz_id(component):
     return value
 
 
+def _assigned_courses(request):
+    """Canonical effective plan IDs, including assigned courses with no media.
+
+    Titles are display data only. An empty explicit plan must never inherit
+    entitlement from a similarly named module or a saved progress record.
+    """
+    if not hasattr(request, "_mobile_courses"):
+        detail = _detail(request)
+        source = request.mobile_context[1]
+        courses = {}
+        for row in effective_training_plan(source):
+            if not isinstance(row, dict):
+                continue
+            mid = row.get("moduleId")
+            if not isinstance(mid, str) or not mid.strip():
+                continue
+            courses.setdefault(mid, {"moduleId": mid,
+                "title": row.get("moduleTitle") or row.get("module") or mid})
+        for row in detail.get("week", []) + detail.get("components", []):
+            if row.get("moduleId") in courses and row.get("module"):
+                courses[row["moduleId"]]["title"] = row["module"]
+        request._mobile_courses = list(courses.values())
+    return request._mobile_courses
+
+
+def _published_choice_quiz_ids(quiz_ids):
+    """One read of publication/type metadata; never load or expose answer keys."""
+    if not quiz_ids:
+        return set()
+    with connections["enrolment"].cursor() as cursor:
+        cursor.execute("""SELECT q.id FROM curriculum.quizzes q
+            WHERE q.id=ANY(%s) AND lower(COALESCE(q.status, ''))='published'
+              AND EXISTS (SELECT 1 FROM curriculum.quiz_questions x
+                          WHERE x.quiz_id=q.id AND x.is_archived=false)
+              AND NOT EXISTS (SELECT 1 FROM curriculum.quiz_questions x
+                  WHERE x.quiz_id=q.id AND x.is_archived=false AND (
+                    COALESCE(x.question_type, '') <> ALL(%s)
+                    OR NOT EXISTS (SELECT 1 FROM curriculum.quiz_answers a WHERE a.question_id=x.id)))""",
+            [sorted(quiz_ids), sorted(CHOICE_QUESTION_TYPES)])
+        return {row[0] for row in cursor.fetchall()}
+
+
+def _media_url(value):
+    return isinstance(value, str) and bool(re.match(r"^(?:https?://[^/\s]+|/(?!/))", value.strip(), re.I))
+
+
+def _eligible_components(request):
+    """Use the same server-resolved mobile entitlement for lists and actions."""
+    if hasattr(request, "_mobile_components"):
+        return request._mobile_components
+    detail = _detail(request)
+    if _learning_blocked(detail):
+        return []
+    modules = {row["moduleId"] for row in _assigned_courses(request)}
+    candidates, quiz_ids = [], set()
+    for row in detail.get("components", []):
+        if not isinstance(row, dict) or row.get("moduleId") not in modules:
+            continue
+        kind = str(row.get("type") or "").strip().lower().replace("-", "_")
+        # Assignments and live sessions have separate maintained workflows;
+        # an accidental attached URL/quiz must not make them mobile activities.
+        if kind not in MEDIA_COMPONENT_TYPES | {"quiz", ""}:
+            continue
+        if row.get("isQuiz"):
+            try:
+                qid = _quiz_id(row)
+            except MobileError:
+                continue
+            quiz_ids.add(qid)
+            candidates.append((row, "quiz", qid))
+        elif kind in MEDIA_COMPONENT_TYPES:
+            mode = "audio" if _media_url(row.get("audioUrl")) else "video" if _media_url(row.get("videoUrl")) else None
+            if mode:
+                candidates.append((row, mode, None))
+    published = _published_choice_quiz_ids(quiz_ids)
+    by_id, ambiguous = {}, set()
+    for row, mode, qid in candidates:
+        if qid is not None and qid not in published:
+            continue
+        cid = row.get("componentId")
+        standalone = qid is not None and not cid
+        if standalone:
+            identity = json.dumps([row["moduleId"], row.get("weekId"), qid], separators=(",", ":"))
+            cid = "mobile-quiz-" + hashlib.sha256(identity.encode("utf-8")).hexdigest()
+        if not isinstance(cid, str) or not ACTIVITY_ID.fullmatch(cid):
+            continue
+        item = {**row, "componentId": cid, "mobileMode": mode,
+                "_standaloneQuiz": standalone}
+        previous = by_id.get(cid)
+        if previous and (previous["moduleId"], previous.get("weekId")) != (row["moduleId"], row.get("weekId")):
+            ambiguous.add(cid)
+        by_id[cid] = item
+    request._mobile_components = [row for cid, row in by_id.items() if cid not in ambiguous]
+    return request._mobile_components
+
+
+def _selected_module(request):
+    ids = [row["moduleId"] for row in _assigned_courses(request)]
+    selected = request.GET.get("moduleId")
+    if selected is not None:
+        if selected not in ids:
+            raise MobileError("This course is not assigned to your account.", 404, "module_not_assigned")
+        return selected
+    return PILOT_MODULE_ID if PILOT_MODULE_ID in ids else ids[0] if ids else None
+
+
+def _mobile_progress(request, module_id):
+    detail = _detail(request)
+    return project_progress({**detail, "components": _eligible_components(request)}, module_id)
+
+
 def _presentation_metadata(components):
-    """Read only whitelisted presentation fields for already-entitled PMP IDs."""
+    """Read only whitelisted presentation fields for already-entitled IDs."""
     eligible = {row["componentId"]: row for row in components
-                if row.get("moduleId") == PILOT_MODULE_ID and row.get("componentId")}
+                if row.get("componentId") and not row.get("_standaloneQuiz")}
     if not eligible:
         return {}
     with connections["enrolment"].cursor() as cursor:
@@ -227,20 +341,21 @@ def _presentation_metadata(components):
                 'full_content_planned_minutes', c.settings_json->'full_content_planned_minutes',
                 'plannedLearningMinutes', c.settings_json->'plannedLearningMinutes',
                 'source_content_type', c.settings_json->'source_content_type',
-                'parent_activity_id', c.settings_json->'parent_activity_id')
+                'parent_activity_id', c.settings_json->'parent_activity_id'), c.module_catalogue_id,
+            w.week_number, w.display_order
             FROM curriculum.components c
             JOIN curriculum.weeks w ON w.id=c.week_id AND w.module_catalogue_id=c.module_catalogue_id
             JOIN curriculum.modules m ON m.module_catalogue_id=c.module_catalogue_id
-            WHERE c.module_catalogue_id=%s AND c.id=ANY(%s)
+            WHERE c.module_catalogue_id=ANY(%s) AND c.id=ANY(%s)
               AND (c.deleted_at IS NULL OR COALESCE(c.deleted_via_parent, '') <> '')
               AND (w.deleted_at IS NULL OR COALESCE(w.deleted_via_parent, '') <> '')
               AND (m.deleted_at IS NULL OR COALESCE(m.deleted_via_parent, '') <> '')""",
-            [PILOT_MODULE_ID, list(eligible)])
+            [list(dict.fromkeys(row["moduleId"] for row in eligible.values())), list(eligible)])
         rows = cursor.fetchall()
     result = {}
-    for cid, week_id, order, teaching_week, point_number, asset_id, reading_ids, has_transcript, legacy, requirement, direct in rows:
+    for cid, week_id, order, teaching_week, point_number, asset_id, reading_ids, has_transcript, legacy, requirement, direct, module_id, week_number, week_order in rows:
         component = eligible.get(cid)
-        if component is None or component.get("weekId") != week_id:
+        if component is None or component.get("weekId") != week_id or component["moduleId"] != module_id:
             continue
         item = {"displayOrder": order}
         if isinstance(legacy, str):
@@ -273,7 +388,10 @@ def _presentation_metadata(components):
                 item[target] = value
         if teaching_week is None:
             teaching_week = legacy.get("teachingWeek")
-        for key, value in (("teachingWeek", teaching_week), ("pointNumber", point_number)):
+        if point_number is None:
+            point_number = legacy.get("pointNumber")
+        for key, value in (("teachingWeek", teaching_week), ("pointNumber", point_number),
+                           ("weekNumber", week_number), ("weekDisplayOrder", week_order)):
             if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
                 item[key] = value
         if isinstance(asset_id, str) and asset_id:
@@ -363,19 +481,18 @@ def _completion_payload(request, component, activity_kind, activity_id):
 @endpoint("GET")
 def download_android(request):
     """Deliver the internal Android build only to an entitled learner account."""
+    _require_active_profile(request)
     detail = _detail(request)
     if _learning_blocked(detail):
         raise MobileError("Your LMS learning access is not open yet.", 403, "learning_access_blocked")
-    assigned = any(row.get("moduleId") == PILOT_MODULE_ID
-                   for row in detail.get("week", []) + detail.get("components", []))
-    if not assigned:
-        raise MobileError("This Android build is for learners enrolled on PMP 1.", 403, "module_not_assigned")
+    if not _assigned_courses(request):
+        raise MobileError("No courses are assigned to your account.", 403, "module_not_assigned")
     try:
         apk = open(ANDROID_APK_PATH, "rb")
     except OSError:
         raise MobileError("The Android download is not available yet.", 503, "download_unavailable") from None
     response = FileResponse(apk, as_attachment=True,
-                            filename="KBC-Learn-PMP1-Android-test.apk",
+                            filename="KBC-Learn-Android-test.apk",
                             content_type="application/vnd.android.package-archive")
     response["X-Content-Type-Options"] = "nosniff"
     return response
@@ -388,6 +505,7 @@ def session(request):
     shared_rewards_enabled=rewards_enabled(request)
     return JsonResponse({
         "authenticated": True,
+        "rewardModuleIds": [PILOT_MODULE_ID] if shared_rewards_enabled else [],
         "user": {"id": str(source.pk), "accountId": str(account.pk),
                  "displayName": account.display_name, "learnerKind": kind,
                  "learnerProfileId": str(profile.pk) if profile else None},
@@ -400,13 +518,13 @@ def session(request):
 
 @endpoint("GET")
 def catalogue(request):
+    _require_active_profile(request)
     detail = _detail(request)
-    scoped = [row for row in detail.get("components", [])
-              if row.get("moduleId") == PILOT_MODULE_ID]
-    weeks = [row for row in detail.get("week", [])
-             if row.get("moduleId") == PILOT_MODULE_ID]
+    courses = _assigned_courses(request)
+    course_ids = {course["moduleId"] for course in courses}
     blocked = _learning_blocked(detail)
-    presentation = {} if blocked else _presentation_metadata(scoped)
+    scoped = _eligible_components(request)
+    presentation = _presentation_metadata(scoped)
     components = []
     for row in ([] if blocked else scoped):
         item = {key: value for key, value in row.items() if key in COMPONENT_FIELDS}
@@ -416,19 +534,28 @@ def catalogue(request):
             item["quizMeta"] = {key: meta[key] for key in ("quizId", "duration", "timeUnit") if key in meta}
             if isinstance(meta.get("questions"), int) and not isinstance(meta.get("questions"), bool):
                 item["quizMeta"]["questions"] = meta["questions"]
-        # Reading is an audio activity only when real audio is attached.
-        item["mobileMode"] = ("quiz" if row.get("isQuiz") else
-                              "audio" if row.get("audioUrl") else
-                              "video" if row.get("videoUrl") else
-                              "session" if row.get("liveSessionUrl") else "unavailable")
+        item["mobileMode"] = row["mobileMode"]
+        # Linked mixed content still has one canonical activity/mode; a quiz
+        # does not expose incidental document, session or media attachments.
+        for field, mode in (("audioUrl", "audio"), ("videoUrl", "video")):
+            if item["mobileMode"] != mode:
+                item.pop(field, None)
         item["mechanicalNarrationAllowed"] = False
+        # Reward observations require a real curriculum component. A standalone
+        # quiz's facade ID must never become a persisted reward component ID.
+        item["rewardObservationsSupported"] = row["moduleId"] == PILOT_MODULE_ID and not row["_standaloneQuiz"]
         components.append(item)
     return JsonResponse({
-        "schemaVersion": 1, "source": "lms",
+        "schemaVersion": 2, "source": "lms", "catalogueScope": "assigned",
+        "courses": [{**course, "availableActivityCount": sum(
+            row["moduleId"] == course["moduleId"] for row in scoped)} for course in courses],
+        # Kept only for older PMP clients. Authorization uses the effective plan.
         "moduleScope": {"moduleId": PILOT_MODULE_ID, "title": PILOT_MODULE_TITLE,
-                        "assigned": bool(weeks or scoped)},
-        "modules": list(dict.fromkeys(row["module"] for row in weeks + scoped if row.get("module"))),
-        "weeks": weeks, "components": components,
+                        "assigned": PILOT_MODULE_ID in course_ids},
+        "modules": list(dict.fromkeys(course["title"] for course in courses)),
+        "weeks": [{key: row[key] for key in ("moduleId", "module", "weekId", "week") if key in row}
+                  for row in detail.get("week", []) if row.get("moduleId") in course_ids],
+        "components": components,
         "learningAccess": detail.get("learningAccess"), "accessGate": detail.get("accessGate"),
     })
 
@@ -436,7 +563,7 @@ def catalogue(request):
 @endpoint("GET")
 def transcript(request, component_id):
     component = _component(request, component_id)
-    if not component.get("audioUrl"):
+    if component["mobileMode"] != "audio":
         raise MobileError("This activity has no published audio transcript.", 404, "transcript_unavailable")
     blocked = refusal_for(f"/learner_api/components/{component_id}/transcript/",
                           request.mobile_context[0], method="GET")
@@ -452,7 +579,7 @@ def transcript(request, component_id):
               AND (c.deleted_at IS NULL OR COALESCE(c.deleted_via_parent, '') <> '')
               AND (w.deleted_at IS NULL OR COALESCE(w.deleted_via_parent, '') <> '')
               AND (m.deleted_at IS NULL OR COALESCE(m.deleted_via_parent, '') <> '')""",
-            [component_id, PILOT_MODULE_ID, component.get("weekId")])
+            [component_id, component["moduleId"], component.get("weekId")])
         row = cursor.fetchone()
     if not row or not isinstance(row[0], str) or not row[0].strip():
         raise MobileError("A transcript is not available for this recording.", 404, "transcript_unavailable")
@@ -461,29 +588,31 @@ def transcript(request, component_id):
 
 @endpoint("GET")
 def progress(request):
-    _require_profile(request)
+    _require_active_profile(request)
     detail = _detail(request)
-    projection, rows = project_progress(detail, PILOT_MODULE_ID)
+    module_id = _selected_module(request)
+    projection, rows = _mobile_progress(request, module_id)
     return JsonResponse({"schemaVersion": 1, "source": "lms",
                          **{key: value for key, value in detail.items() if key in PROGRESS_FIELDS},
-                         **projection, "moduleId": PILOT_MODULE_ID,
-                         "mobileMeasuredTime": measured_time(rows, PILOT_MODULE_ID)})
+                         **projection, "moduleId": module_id,
+                         "mobileMeasuredTime": measured_time(rows, module_id)})
 
 
 @endpoint("GET")
 def hours(request):
     from .overview_week import overview_week
-    _require_profile(request)
+    _require_active_profile(request)
+    module_id = _selected_module(request)
     _, source, kind, _ = request.mobile_context
     response = _delegate(request, f"/learner_api/overview-week/{kind}/{source.pk}/",
                          overview_week, query={"section": "home"}, kind=kind, pk=source.pk)
     if response.status_code != 200:
         return response
     data = json.loads(response.content)
-    _, rows = project_progress(_detail(request), PILOT_MODULE_ID)
-    return JsonResponse({**data, "source": "lms", "moduleId": PILOT_MODULE_ID,
+    _, rows = _mobile_progress(request, module_id)
+    return JsonResponse({**data, "source": "lms", "moduleId": module_id,
                          "canonicalProgrammeOtjh": data.get("otjh"),
-                         "mobileMeasuredTime": measured_time(rows, PILOT_MODULE_ID)})
+                         "mobileMeasuredTime": measured_time(rows, module_id)})
 
 
 @endpoint("GET")
@@ -509,6 +638,8 @@ def start_learning_session(request):
     payload = _only(_body(request), {"componentId", "mode"})
     component = _component(request, payload.get("componentId"))
     mode = payload.get("mode")
+    if mode != component["mobileMode"]:
+        raise MobileError("This activity has no published media for that mode.", 409, "media_unavailable")
     if mode == "quiz":
         activity_kind, activity_id, counting = "quiz", _quiz_id(component), "active_quiz"
         completion = f'{BASE}quizzes/{component["componentId"]}/submit/'
@@ -536,7 +667,7 @@ def complete_component(request, component_id):
     from .components import submit_component_progress
     _require_active_profile(request)
     component = _component(request, component_id)
-    if not component.get("audioUrl"):
+    if component["mobileMode"] != "audio":
         raise MobileError("This activity has no published audio.", 409, "audio_unavailable")
     payload = _completion_payload(request, component, "component", component_id)
     return _delegate(request, f"/learner_api/components/{component_id}/complete/",
@@ -548,7 +679,7 @@ def complete_video(request, component_id):
     from .videos import submit_video_progress
     _require_active_profile(request)
     component = _component(request, component_id)
-    if not component.get("videoUrl"):
+    if component["mobileMode"] != "video":
         raise MobileError("This activity has no published video.", 409, "video_unavailable")
     payload = _completion_payload(request, component, "video", component_id)
     return _delegate(request, f"/learner_api/videos/{component_id}/complete/",
@@ -573,7 +704,7 @@ def _validated_quiz_answers(quiz, submitted):
     normalised = {}
     for question_id, question in questions_by_id.items():
         qtype = question.get("type")
-        if qtype not in {"single_choice", "true_false", "multiple_choice"}:
+        if qtype not in CHOICE_QUESTION_TYPES:
             raise MobileError("This question format is not supported in the mobile app yet.",
                               409, "quiz_type_unsupported")
         value = submitted[question_id]
@@ -606,6 +737,8 @@ def _validated_quiz_answers(quiz, submitted):
 def quiz(request, component_id):
     from .quizzes import quiz_detail
     component = _component(request, component_id)
+    if component["mobileMode"] != "quiz":
+        raise MobileError("This activity has no published quiz.", 409, "quiz_unavailable")
     quiz_id = _quiz_id(component)
     return _delegate(request, f"/learner_api/quizzes/{quiz_id}/", quiz_detail, quiz_id=quiz_id)
 
@@ -615,6 +748,8 @@ def submit_quiz(request, component_id):
     from .quizzes import submit_quiz_attempt, _fetch_quiz
     _require_active_profile(request)
     component = _component(request, component_id)
+    if component["mobileMode"] != "quiz":
+        raise MobileError("This activity has no published quiz.", 409, "quiz_unavailable")
     quiz_id = _quiz_id(component)
     payload = _completion_payload(request, component, "quiz", quiz_id)
     payload["answers"] = _validated_quiz_answers(_fetch_quiz(quiz_id), payload.get("answers"))
