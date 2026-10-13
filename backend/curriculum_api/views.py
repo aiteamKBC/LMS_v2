@@ -25735,7 +25735,7 @@ COMPONENT_HEAVY_COLUMNS = ('settings_json',)
 # JSON/text fields made the shared scan exceed the request statement timeout.
 COMPONENT_KSB_SCOPE_COLUMNS = (
     'id', 'week_id', 'module_catalogue_id', 'type', 'title', 'expected_otjh',
-    'is_programme_deleted', 'deleted_at', 'library_state',
+    'points', 'display_order', 'is_programme_deleted', 'deleted_at', 'library_state',
 )
 
 
@@ -27510,6 +27510,111 @@ def learner_activity_trace(progress_rows, excluded_progress_rows, reflection_row
     )
 
 
+def learner_activity_plan(learners, component_rows, module_rows, week_rows,
+                          activities, plan, learner_plans=None):
+    """Project authored components onto every learner assigned to the scope.
+
+    The historical activity trace contains rows only after a learner has made
+    progress. This separate, in-memory projection keeps assigned components
+    visible as ``not_started`` without manufacturing progress records or doing
+    one query per learner/component.
+    """
+    learners = list(learners or [])
+    component_rows = list(component_rows or [])
+    module_rows = list(module_rows or [])
+    week_rows = list(week_rows or [])
+    learner_plans = learner_plans or learner_plans_for_scope(plan or {}, learners)
+    modules_by_id = {
+        clean_str(row.get('module_catalogue_id')): row
+        for row in module_rows if clean_str(row.get('module_catalogue_id'))
+    }
+    weeks_by_id = {
+        clean_str(row.get('id')): row
+        for row in week_rows if clean_str(row.get('id'))
+    }
+    by_learner_component = defaultdict(list)
+    for activity in activities or []:
+        learner_id = activity.get('learnerId')
+        component_id = clean_str(activity.get('componentId'))
+        if learner_id in (None, '') or not component_id:
+            continue
+        if activity.get('scopeStatus') not in (None, '', 'in_scope', 'unfiltered', 'lineage'):
+            continue
+        by_learner_component[(str(learner_id), component_id)].append(activity)
+
+    def component_group_key(module):
+        group_id = clean_str(module.get('group_id'))
+        if group_id:
+            key = (plan or {}).get('groupKeyById', {}).get(group_id)
+            if key:
+                return key
+        return normalise(module.get('group_name') or group_id)
+
+    def include_component(learner, learner_plan, module):
+        basis = clean_str((learner_plan or {}).get('basis'))
+        if basis in {'module', 'scope'}:
+            return True
+        if basis == 'none':
+            return False
+        return component_group_key(module) == learner_plan_group_key(plan or {}, learner)
+
+    rows = []
+    for learner in learners:
+        learner_id = learner.get('id')
+        learner_plan = learner_plans.get(learner_id) or learner_authored_plan(plan or {}, learner)
+        for component in component_rows:
+            component_id = clean_str(component.get('id'))
+            module_id = clean_str(component.get('module_catalogue_id'))
+            module = modules_by_id.get(module_id, {})
+            if not component_id or not include_component(learner, learner_plan, module):
+                continue
+            linked = list(by_learner_component.get((str(learner_id), component_id), ()))
+            linked.sort(key=lambda item: (
+                clean_str(item.get('submittedAt')),
+                int(item.get('progressId') or 0) if str(item.get('progressId') or '').isdigit() else 0,
+            ), reverse=True)
+            latest = linked[0] if linked else {}
+            statuses = {clean_str(item.get('progressStatus')).lower() for item in linked}
+            calculated_status = (
+                'completed' if 'achieved' in statuses else
+                'in_progress' if statuses else 'not_started'
+            )
+            try:
+                points = int(component.get('points')) if component.get('points') not in (None, '') else 0
+            except (TypeError, ValueError):
+                points = 0
+            week_id = clean_str(component.get('week_id'))
+            week = weeks_by_id.get(week_id, {})
+            rows.append({
+                'activityPlanId': f'{learner_id}:{component_id}',
+                'learnerId': learner_id,
+                'learnerName': learner.get('name') or '',
+                'email': learner.get('email') or '',
+                'cohort': learner.get('cohort') or '',
+                'group': learner.get('group') or '',
+                'componentId': component_id,
+                'componentTitle': component.get('title') or '',
+                'componentType': frontend_component_type(component.get('type')),
+                'moduleCatalogueId': module_id,
+                'module': module.get('title') or '',
+                'weekId': week_id,
+                'week': week.get('title') or '',
+                'displayOrder': parse_int(component.get('display_order'), 0),
+                'expectedOtjh': otjh_number(component.get('expected_otjh')),
+                'points': points,
+                'calculatedStatus': calculated_status,
+                'displayStatus': calculated_status,
+                'statusSource': 'calculated',
+                'progressId': latest.get('progressId'),
+                'progressIds': [item.get('progressId') for item in linked if item.get('progressId') not in (None, '')],
+                'progressStatus': latest.get('progressStatus') or '',
+                'submittedAt': latest.get('submittedAt') or '',
+                'countsTowardAchievement': any(item.get('countsTowardAchievement') for item in linked) if linked else None,
+                'source': 'curriculum_component',
+            })
+    return rows
+
+
 def merge_ksb_totals(*sources):
     merged = defaultdict(lambda: defaultdict(float))
     for source in sources:
@@ -28250,6 +28355,9 @@ def _scope_learner_ksb_impact_payload(request, scope, identifier):
     )
     learners = apply_reflection_otjh_to_learners(learners, reflection_rows)
     learner_plans = learner_plans_for_scope(plan, learners)
+    activity_plan = learner_activity_plan(
+        learners, component_rows, module_rows, week_rows, activities, plan, learner_plans,
+    )
     learner_consumption = learner_consumption_payload(
         learners,
         coverage.get('items', []),
@@ -28300,6 +28408,8 @@ def _scope_learner_ksb_impact_payload(request, scope, identifier):
         'learnerKsbConsumption': learner_consumption,
         'learnerActivities': activities,
         'learnerActivityCount': len(activities),
+        'learnerActivityPlan': activity_plan,
+        'learnerActivityPlanCount': len(activity_plan),
         'ksbAchievementPolicy': {
             'achievedWeightSource': 'learner_progress_ksbs',
             'reflectionKsbRole': 'supplementary_evidence',
@@ -28733,6 +28843,12 @@ def curriculum_group_learner_ksb_impact(request, group_id):
 @require_GET
 def curriculum_module_learner_ksb_impact(request, module_catalogue_id):
     payload, error = scope_learner_ksb_impact_payload(request, 'module', module_catalogue_id)
+    if not error and request.GET.get('moduleProgress') == '1':
+        from .learner_activity_status import enrich
+        try:
+            enrich(payload, getattr(request, 'login_account', None))
+        except (SchemaNotProvisioned, DatabaseError):
+            return json_error('Activity status storage is unavailable. Apply curriculum migration 0070.', status=503)
     return error or JsonResponse(payload)
 
 
