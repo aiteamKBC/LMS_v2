@@ -16,5 +16,5 @@ export function useEmployerDashboardPlan(employerId: string, kind: LearnerKind, 
     schedule: { read: (k, id, signal) => fetchEmployerLearnerSchedule(employerId, k, id, signal), peek: noPeek },
     logSummary: (k, id, signal) => fetchEmployerLearnerHours(employerId, k, id, signal),
   }), [employerId]);
-  return useDashboardPlan(kind, learnerId, enabled, sources);
+  return useDashboardPlan(kind, learnerId, enabled, 'overview', sources);
 }
