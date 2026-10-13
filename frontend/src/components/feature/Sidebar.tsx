@@ -145,6 +145,8 @@ interface SidebarProps {
   mobileOpen: boolean;
   onCloseMobile: () => void;
   onHoverChange?: (hovered: boolean) => void;
+  /** Borrow another workspace's look (e.g. 'learner') without its behaviour. Defaults to `role`. */
+  appearance?: string;
 }
 
 /**
@@ -340,7 +342,9 @@ export function Sidebar({
   mobileOpen,
   onCloseMobile,
   onHoverChange,
+  appearance,
 }: SidebarProps) {
+  const look = appearance ?? role;
   const location = useLocation();
   const secondaryNavigationId = `${role}-secondary-navigation`;
   const { auth, canSeeNavItem, logout } = useAuth();
@@ -348,7 +352,7 @@ export function Sidebar({
   const [activeDropdown, setActiveDropdown] = useState<string | null>(null);
   const [previewId, setPreviewId] = useState<string | null>(null);
   const [isHovering, setIsHovering] = useState(false);
-  const fullHeightNavigation = role === 'learner' || role === 'advanced-admin';
+  const fullHeightNavigation = look === 'learner' || role === 'advanced-admin';
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(() => {
     try {
       const stored = localStorage.getItem('kbc_sidebar_expanded');
@@ -691,7 +695,7 @@ export function Sidebar({
       {fullHeightNavigation ? (
         <aside
           aria-label={`${roleLabel} sidebar`}
-          data-workspace-role={role}
+          data-workspace-role={look}
           className="kbc-learner-sidebar fixed bottom-0 left-0 top-0 z-40 hidden flex-col overflow-hidden shadow-sm transition-[width] duration-200 motion-reduce:transition-none lg:flex"
           style={{ width: learnerCollapsed ? LEARNER_SIDEBAR_COLLAPSED_WIDTH : LEARNER_SIDEBAR_WIDTH }}
         >
@@ -701,7 +705,7 @@ export function Sidebar({
       <aside
           aria-label={`${roleLabel} sidebar`}
           className="fixed bottom-3 left-3 top-3 z-40 hidden overflow-hidden rounded-[24px] shadow-sm transition-[width] duration-300 ease-in-out motion-reduce:transition-none lg:flex"
-          data-workspace-role={role}
+          data-workspace-role={look}
           style={{ width: pinned ? SIDEBAR_EXPANDED_WIDTH : SIDEBAR_RAIL_WIDTH }}
           onMouseEnter={handleMouseEnter}
           onMouseLeave={() => {

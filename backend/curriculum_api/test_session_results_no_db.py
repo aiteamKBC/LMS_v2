@@ -882,6 +882,18 @@ class EndpointTests(unittest.TestCase):
         self.assertEqual(self.ns['read'].call_args.args[1], ['A', 'S'])
         storage.get_read_sas.assert_called_once_with('session-recordings', 'M/G/S/file.mp4', ttl_minutes=240)
 
+    def test_staff_download_signs_an_attachment_name_into_the_private_url(self):
+        storage = types.ModuleType('learner_api.evidence_storage')
+        storage.get_read_sas = Mock(return_value='https://storage.invalid/private/read')
+        self.ns['recording_download_name'] = Mock(return_value='Module-session-1-2026-09-07.mp4')
+        req = self.req(); req.GET = {'download': '1'}
+        with patch.dict(sys.modules, {'learner_api.evidence_storage': storage}):
+            self.ns['read'].return_value = [{'status': 'ready', 'artifact_type': 'recording', 'container': 'session-recordings', 'blob_name': 'M/G/S/file.mp4'}]
+            response = self.ns['stored_content'](req, 'S', 'A')
+        self.assertEqual(response.status_code, 302)
+        storage.get_read_sas.assert_called_once_with('session-recordings', 'M/G/S/file.mp4', ttl_minutes=240,
+            content_disposition='attachment; filename="Module-session-1-2026-09-07.mp4"')
+
     def test_timed_cues_are_read_from_database_without_signing_or_fetching_storage(self):
         cues = [{'start': 1, 'end': 3, 'speaker': 'Speaker', 'text': 'Saved words'}]
         self.ns['read'].return_value = [{'status': 'ready', 'artifact_type': 'transcript',

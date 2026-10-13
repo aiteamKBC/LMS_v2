@@ -5,6 +5,10 @@ from system_audit import activity as system_activity
 
 from . import activity, learner_assignments, programme_audit, quality, review_schedule, review_types, reviews, views
 from .teams_attendee_compare import teams_meeting_attendee_comparison
+from .teams_permission_check import teams_meeting_permission_check
+from .teams_dial_in import teams_meeting_dial_in
+from .teams_options_retry import teams_meeting_options_retry
+from .teams_endpoint_guard import teams_staff_required
 from .teams_create_guard import teams_create_status, teams_meeting_collection
 from .teams_create_drafts import teams_create_draft
 from .teams_schedule_delivery import forward_schedule_email, schedule_email
@@ -16,10 +20,12 @@ from .teams_week_meeting import (
     curriculum_week_teams_meeting,
     curriculum_week_teams_meeting_detail,
 )
-from . import session_results, tutor_notifications
+from . import recordings_library, session_results, tutor_notifications
+from .learner_activity_status import activity_status
 
 
 urlpatterns = [
+    path('curriculum/modules/<str:module_id>/learners/<int:learner_id>/activities/<str:component_id>/status/', activity_status),
     path('curriculum/migrated-review-templates/', migrated_template_views.collection),
     path('curriculum/migrated-review-templates/preview/', migrated_template_views.preview),
     path('curriculum/migrated-review-templates/reset/', migrated_template_views.reset),
@@ -32,6 +38,8 @@ urlpatterns = [
     # "tutor-email" as a module id, exactly as `resolve-structures/` and
     # `archived/` are kept above it for the same reason.
     path('curriculum/modules/tutor-email/', tutor_notifications.modules_tutor_email, name='curriculum-modules-tutor-email'),
+    # Every saved recording across modules, for the Recordings page. Read only.
+    path('curriculum/session-recordings/', recordings_library.recordings_library, name='curriculum-session-recordings'),
     path('curriculum/session-results/<str:series_id>/sync/', session_results.queue_sync),
     path('curriculum/session-results/<str:series_id>/sessions/<int:session_number>/', session_results.admin_session),
     path('curriculum/session-results/<str:series_id>/sessions/<int:session_number>/attendance-alias/', session_results.link_attendance_alias),
@@ -123,14 +131,14 @@ urlpatterns = [
     path('curriculum/modules/<str:module_catalogue_id>/settings/', views.curriculum_module_settings, name='curriculum-module-settings'),
     path('curriculum/modules/<str:module_catalogue_id>/session-plan/', views.curriculum_module_session_plan, name='curriculum-module-session-plan'),
     path('curriculum/modules/<str:module_catalogue_id>/ai-material/', views.curriculum_module_ai_material, name='curriculum-module-ai-material'),
-    path('curriculum/modules/<str:module_catalogue_id>/teams-meetings/restore/', views.curriculum_module_teams_meeting_restore, name='curriculum-module-teams-meeting-restore'),
-    path('curriculum/modules/<str:module_catalogue_id>/teams-links/', views.curriculum_module_teams_links_replace, name='curriculum-module-teams-links-replace'),
+    path('curriculum/modules/<str:module_catalogue_id>/teams-meetings/restore/', teams_staff_required(views.curriculum_module_teams_meeting_restore), name='curriculum-module-teams-meeting-restore'),
+    path('curriculum/modules/<str:module_catalogue_id>/teams-links/', teams_staff_required(views.curriculum_module_teams_links_replace), name='curriculum-module-teams-links-replace'),
     # A one-off meeting on a single week, with its own organiser and guests.
     # Separate from the module's calendar above in both directions -- see
     # teams_week_meeting.py.
-    path('curriculum/modules/<str:module_catalogue_id>/week-teams-meetings/', curriculum_week_teams_meeting, name='curriculum-week-teams-meeting'),
-    path('curriculum/modules/<str:module_catalogue_id>/week-teams-meetings/<str:live_session_id>/', curriculum_week_teams_meeting_detail, name='curriculum-week-teams-meeting-detail'),
-    path('curriculum/modules/<str:module_catalogue_id>/live-session-meeting-scope/', curriculum_live_session_meeting_scope, name='curriculum-live-session-meeting-scope'),
+    path('curriculum/modules/<str:module_catalogue_id>/week-teams-meetings/', teams_staff_required(curriculum_week_teams_meeting), name='curriculum-week-teams-meeting'),
+    path('curriculum/modules/<str:module_catalogue_id>/week-teams-meetings/<str:live_session_id>/', teams_staff_required(curriculum_week_teams_meeting_detail), name='curriculum-week-teams-meeting-detail'),
+    path('curriculum/modules/<str:module_catalogue_id>/live-session-meeting-scope/', teams_staff_required(curriculum_live_session_meeting_scope), name='curriculum-live-session-meeting-scope'),
     path('curriculum/modules/<str:module_catalogue_id>/meeting-invitees/', views.curriculum_module_meeting_invitees, name='curriculum-module-meeting-invitees'),
     path('curriculum/modules/<str:module_catalogue_id>/ksb-coverage/', views.curriculum_module_ksb_coverage, name='curriculum-module-ksb-coverage'),
     # A module has no roster of its own: these report the learners in the group
@@ -152,18 +160,21 @@ urlpatterns = [
     path('curriculum/components/<str:component_id>/upload/', views.curriculum_component_upload, name='curriculum-component-upload'),
     path('curriculum/components/<str:component_id>/ksb-mappings/', views.curriculum_component_ksb_mappings, name='curriculum-component-ksb-mappings'),
     path('curriculum/components/<str:component_id>/', views.curriculum_component_detail, name='curriculum-component-detail'),
-    path('curriculum/teams-meetings/', teams_meeting_collection, name='curriculum-teams-meeting'),
+    path('curriculum/teams-meetings/', teams_staff_required(teams_meeting_collection), name='curriculum-teams-meeting'),
     path('curriculum/teams-meetings/create-status/', teams_create_status, name='curriculum-teams-create-status'),
-    path('curriculum/teams-meetings/create-draft/', teams_create_draft, name='curriculum-teams-create-draft'),
+    path('curriculum/teams-meetings/create-draft/', teams_staff_required(teams_create_draft), name='curriculum-teams-create-draft'),
     path('curriculum/teams-meetings/summary/', views.curriculum_teams_meeting_summary, name='curriculum-teams-meeting-summary'),
     path('curriculum/live-sessions/occurrences/', views.curriculum_live_session_occurrences, name='curriculum-live-session-occurrences'),
-    path('curriculum/teams-meetings/<str:live_session_id>/schedule/', views.curriculum_teams_meeting_schedule, name='curriculum-teams-meeting-schedule'),
+    path('curriculum/teams-meetings/<str:live_session_id>/schedule/', teams_staff_required(views.curriculum_teams_meeting_schedule), name='curriculum-teams-meeting-schedule'),
     path('curriculum/teams-meetings/<str:live_session_id>/schedule-email/', schedule_email, name='curriculum-teams-schedule-email'),
     path('curriculum/teams-meetings/<str:live_session_id>/forward-email/', forward_schedule_email, name='curriculum-teams-forward-email'),
     path('curriculum/teams-meetings/<str:live_session_id>/calendar-state/', sync_calendar_state, name='curriculum-teams-calendar-state'),
     path('curriculum/teams-meetings/<str:live_session_id>/actions/', calendar_action, name='curriculum-teams-calendar-action'),
     path('curriculum/teams-meetings/<str:live_session_id>/compare-attendees/', teams_meeting_attendee_comparison, name='curriculum-teams-compare-attendees'),
-    path('curriculum/teams-meetings/<str:live_session_id>/occurrences/<int:session_number>/schedule/', views.curriculum_teams_meeting_occurrence_schedule, name='curriculum-teams-meeting-occurrence-schedule'),
+    path('curriculum/teams-meetings/<str:live_session_id>/permission-check/', teams_meeting_permission_check, name='curriculum-teams-permission-check'),
+    path('curriculum/teams-meetings/<str:live_session_id>/dial-in/', teams_staff_required(teams_meeting_dial_in), name='curriculum-teams-dial-in'),
+    path('curriculum/teams-meetings/<str:live_session_id>/retry-options/', teams_meeting_options_retry, name='curriculum-teams-retry-options'),
+    path('curriculum/teams-meetings/<str:live_session_id>/occurrences/<int:session_number>/schedule/', teams_staff_required(views.curriculum_teams_meeting_occurrence_schedule), name='curriculum-teams-meeting-occurrence-schedule'),
     path('curriculum/teams-meetings/<str:live_session_id>/occurrences/<str:occurrence_id>/join/', views.curriculum_teams_meeting_join, name='curriculum-teams-meeting-join'),
     path('curriculum/teams-meetings/<str:live_session_id>/artifacts/', views.curriculum_teams_meeting_artifacts, name='curriculum-teams-meeting-artifacts'),
     path('curriculum/teams-meetings/<str:live_session_id>/artifacts/<str:artifact_id>/content/', views.curriculum_teams_meeting_artifact_content, name='curriculum-teams-meeting-artifact-content'),

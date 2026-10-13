@@ -287,6 +287,20 @@ def journal_activity_date(entry):
     return next(iter(dates)) if len(dates) == 1 else None
 
 
+def input_activity_date(entry):
+    """A staff Input declaration has a date and no fabricated clock times."""
+    if entry.get('actual_basis') != 'staff:module-progress' or entry.get('reporting_timestamp_label') not in {'Input', 'attended'}:
+        return None
+    metadata = source_payload_metadata(entry.get('source_payload'))
+    declared = metadata.get('staff_time_entry')
+    value = declared.get('activity_date') if isinstance(declared, dict) and declared.get('mode') == 'input' else None
+    try:
+        parsed = datetime.strptime(value, '%Y-%m-%d')
+    except (TypeError, ValueError):
+        return None
+    return value if parsed.strftime('%Y-%m-%d') == value and value[:7] == entry.get('reporting_month') else None
+
+
 def rows_for(owner, records=None):
     result = []
     for entry in (part for record in (records if records is not None else entries_for(owner)) for part in allocations(record)):
@@ -306,6 +320,9 @@ def rows_for(owner, records=None):
         if not at or at.strftime('%Y-%m') != entry.get('reporting_month'):
             item['activity_date'] = journal_activity_date(entry) or item['activity_date']
         timestamp_label = entry.get('reporting_timestamp_label') or source.get('timestamp_label') or ''
+        declared_date = input_activity_date(entry)
+        if declared_date:
+            item['activity_date'] = declared_date
         # Translate the historical system label for display without rewriting the ledger.
         if timestamp_label == '\u062a\u0642\u062f\u064a\u0631\u064a \u2014 \u064a\u062d\u062a\u0627\u062c \u0627\u0639\u062a\u0645\u0627\u062f':
             timestamp_label = 'Estimated — approval required'

@@ -60,6 +60,12 @@ def project_current(records, markings):
     """
     result, native = [], {}
     retained = {source_reference(p) for p in records if p.get('source_system')}
+    # A staff hours correction is scoped to one activity. Retain every attempt
+    # as evidence, but do not add native attempt time to the corrected ledger
+    # allocation. No other activity's dedupe policy changes.
+    manual_keys = {(p.get('learner_id'), p.get('component_ref')) for p in records
+                   if p.get('actual_basis') == 'staff:module-progress'
+                   and p.get('actual_seconds') is not None and p.get('component_ref')}
     for original in records:
         p = dict(original)
         if (p.get('component_link_source') not in {'direct', 'quiz_ref'}
@@ -68,6 +74,8 @@ def project_current(records, markings):
             result.append(p)
             continue
         if p.get('kind') == 'activity_event' or not p.get('submitted_at'):
+            continue
+        if (p.get('learner_id'), p.get('component_ref')) in manual_keys:
             continue
         if f"progress:{p['id']}" in retained:
             continue

@@ -175,6 +175,13 @@ it.each(homeAccounts.flatMap(account => [false, true].map(existingSession => ({ 
   },
 );
 
+it('always offers Microsoft sign-in, and reports an unconfigured deployment on click', async () => {
+  vi.mocked(apiMicrosoftStart).mockRejectedValue(new AuthError('Microsoft sign-in is not configured.', 503));
+  render(<MemoryRouter initialEntries={['/login']}><LoginPage/></MemoryRouter>);
+  fireEvent.click(screen.getByRole('button', { name: /Sign in with Microsoft/i }));
+  expect(await screen.findByText('Microsoft sign-in is not configured.')).toBeInTheDocument();
+});
+
 it('starts Microsoft sign-in without forwarding a remembered page', async () => {
   vi.mocked(apiAuthHealth).mockResolvedValue({ microsoftSso: { configured: true } } as Awaited<ReturnType<typeof apiAuthHealth>>);
   // Stop before the external handoff; verify the destination argument and error recovery.
