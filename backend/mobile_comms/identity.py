@@ -98,7 +98,9 @@ def peer_directory(viewer):
     else:
         profiles = profiles.filter(coach_email__iexact=viewer.email)
     entries = []
-    for profile in profiles.order_by("full_name", "id").iterator(chunk_size=200):
+    # Neon transaction pooling cannot retain a named server cursor between
+    # fetches. A cohort/caseload is bounded by the current assignment query.
+    for profile in profiles.order_by("full_name", "id"):
         try:
             person = active_learner(profile.enrolment_id)
         except AccessError:
