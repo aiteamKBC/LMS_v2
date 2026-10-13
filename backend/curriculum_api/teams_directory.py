@@ -1,10 +1,13 @@
 """Staff-only, bounded Entra directory lookup for Teams role pickers."""
+import logging
 import re
 from urllib.parse import urlencode
 
 from django.http import JsonResponse
 from django.views.decorators.http import require_GET
 from login.permissions import require_role
+
+logger = logging.getLogger(__name__)
 
 
 def directory_query(value):
@@ -50,7 +53,10 @@ def search_teams_directory(request):
         response = JsonResponse(result)
     except ValueError as exc:
         response = JsonResponse({'error': str(exc)}, status=400)
-    except RuntimeError:
+    except RuntimeError as exc:
+        # The browser gets a generic message; Graph's code and request id stay
+        # server-side, where an access or token failure can be diagnosed.
+        logger.warning('Entra directory search failed: %s', exc)
         response = JsonResponse({'error': 'Entra search is unavailable. Retry or enter a full email address.'}, status=502)
     response['Cache-Control'] = 'no-store, private'
     return response

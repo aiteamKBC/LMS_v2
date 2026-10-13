@@ -58,13 +58,24 @@ export function Media({ value, kind, title, fileName, canEmbed = true, onEnded }
   try { url = new URL(value, window.location.origin); } catch { return <p>Material link is unavailable.</p>; }
   if (!['https:', 'http:'].includes(url.protocol)) return <p>Material link is unavailable.</p>;
   const fileUrl = url.href;
+  const storedFile = url.origin === window.location.origin
+    && (/^\/learner_api\/student-activity\/[^/]+\/\d+\/\d+\/\d+\/source-file\/$/.test(url.pathname)
+      || /^\/login_api\/advanced-admin\/learners\/\d+\/learning\/material\/\d+\/\d+\/source-file\/$/.test(url.pathname));
   const original = <a href={fileUrl} target="_blank" rel="noopener noreferrer" className="text-sm font-semibold text-primary-700 underline">Open material in a new tab</a>;
   if (!canEmbed) return <div className="rounded-xl border bg-background-100 p-4"><p className="mb-2 text-sm">Open this material in a new tab to view it.</p>{original}</div>;
-  if (kind === 'video') return <section className="space-y-2"><div className="relative aspect-video overflow-hidden rounded-xl bg-black"><VideoPlayer parsed={parseVideoUrl(url.href)} title={title} onEnded={onEnded} /></div>{original}</section>;
+  if (kind === 'video') return <section className="space-y-2"><div className="relative aspect-video overflow-hidden rounded-xl bg-black"><VideoPlayer parsed={storedFile ? { kind: 'file', src: fileUrl } : parseVideoUrl(fileUrl)} title={title} onEnded={onEnded} /></div>{original}</section>;
   if (kind === 'pdf') return <section className="space-y-2"><Suspense fallback={<p role="status">Loading file preview…</p>}><AttachmentPreview url={fileUrl} title={title} fileName={fileName || 'document.pdf'} /></Suspense>{original}</section>;
   if (kind === 'audio') {
     const drive = url.href.match(/drive\.google\.com\/(?:file\/d\/|(?:open|uc)\?[^#]*id=)([\w-]{10,})/);
     return <section className="space-y-2"><audio controls src={drive ? `/learner_api/media/google-drive/${drive[1]}/` : fileUrl} onEnded={onEnded} className="w-full" />{original}</section>;
+  }
+  if (storedFile && kind === 'document') {
+    if (/\.(pptx?|ppsx?|pptm|ppsm|doc|docm)$/i.test(fileName || '')) {
+      const preview = new URL(fileUrl);
+      preview.searchParams.set('preview', '1');
+      return <section className="space-y-2"><iframe title={title} src={preview.href} className="h-[65vh] min-h-[320px] w-full rounded-xl border bg-white" allowFullScreen />{original}</section>;
+    }
+    return <section className="space-y-2"><Suspense fallback={<p role="status">Loading file preview…</p>}><AttachmentPreview url={fileUrl} title={title} fileName={fileName} /></Suspense>{original}</section>;
   }
   if (url.origin === window.location.origin && /\.(docx|xlsx?|csv|txt|md|rtf|pdf|pptx|ppsx|pptm|ppsm)$/i.test(url.pathname)) return <section className="space-y-2"><Suspense fallback={<p role="status">Loading file preview…</p>}><AttachmentPreview url={url.href} title={title} /></Suspense>{original}</section>;
   let src = url.href;

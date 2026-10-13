@@ -71,7 +71,11 @@ describe('Progress KSB detailed breakdown', () => {
     expect(within(dialog).getByText('Status: Completed')).toBeInTheDocument();
     expect(within(dialog).getByText('Status: NotStarted')).toBeInTheDocument();
     expect(within(dialog).getAllByText('Achieved this KSB')).toHaveLength(1);
-    expect(within(dialog).getByText('Achieved this KSB').parentElement).toHaveClass('bg-emerald-50');
+    const achievement = within(dialog).getByText('Achieved this KSB');
+    expect(achievement).toHaveClass('text-emerald-700');
+    expect(achievement.parentElement).toHaveClass('bg-white', 'border-foreground-200', 'rounded-xl', 'p-4');
+    expect(achievement.parentElement).not.toHaveClass('bg-emerald-50', 'border-emerald-300');
+    expect(within(dialog).getByText('Status: NotStarted').parentElement).toHaveClass('border-background-200', 'bg-background-50');
     fireEvent.keyDown(dialog, { key: 'Escape' });
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   });

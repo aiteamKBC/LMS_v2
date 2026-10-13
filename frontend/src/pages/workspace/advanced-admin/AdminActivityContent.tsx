@@ -6,7 +6,27 @@ import {
   type AdvancedAdminQuizReview,
 } from '@/api/advancedAdmin';
 import { normalizeReadingHtml } from '@/lib/readingHtml';
+import { SkeletonBlock } from '@/components/feature/Skeletons';
 import { Media } from '@/pages/learner/my-learning/StudentMaterial';
+
+function ActivityContentSkeleton() {
+  return <section role="status" aria-busy="true" aria-label="Loading activity content"
+    className="space-y-4 rounded-xl border border-foreground-200 bg-background-50 p-4">
+    <span className="sr-only">Preparing activity content...</span>
+    <div className="flex items-center justify-between gap-4">
+      <div className="w-full max-w-md space-y-2">
+        <SkeletonBlock className="h-4 w-2/5 min-w-32" />
+        <SkeletonBlock className="h-3 w-3/5 min-w-48" />
+      </div>
+      <SkeletonBlock className="h-9 w-24 shrink-0 rounded-xl" />
+    </div>
+    <SkeletonBlock className="h-[65vh] min-h-[320px] w-full rounded-xl" />
+    <div className="space-y-2">
+      <SkeletonBlock className="h-3 w-1/3" />
+      <SkeletonBlock className="h-3 w-2/3" />
+    </div>
+  </section>;
+}
 
 function AdminPdfPreview({ url, title }: { url: string; title: string }) {
   const [preview, setPreview] = useState<{ src?: string; error?: string }>({});
@@ -45,26 +65,57 @@ function AdminPdfPreview({ url, title }: { url: string; title: string }) {
   return <iframe title={title} src={preview.src} className="h-[65vh] min-h-[320px] w-full rounded-xl border bg-white" />;
 }
 
+function inferredMediaKind(item: SubjectMaterial['media'][number], url: URL): string {
+  const path = `${url.pathname} ${item.file_name || ''}`.toLowerCase();
+  if (/\.(mp4|webm|mov|m4v|ogv)(?:\s|$)/.test(path)) return 'video';
+  if (/\.(mp3|wav|m4a|aac|ogg|oga|flac)(?:\s|$)/.test(path)) return 'audio';
+  if (/\.pdf(?:\s|$)/.test(path)) return 'pdf';
+  return item.kind;
+}
+
+function AdminAudioPlayer({ url, title }: { url: string; title: string }) {
+  const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading');
+  return <section className="space-y-2">
+    {status === 'loading' && <div role="status" aria-label="Loading audio" aria-busy="true"
+      className="rounded-xl border border-foreground-200 bg-background-50 p-3">
+      <span className="sr-only">Loading audio...</span>
+      <SkeletonBlock className="h-12 w-full rounded-xl" />
+    </div>}
+    {status === 'error' && <p role="alert" className="rounded-xl border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
+      This audio could not be loaded. Open it in a new tab or try again.
+    </p>}
+    <audio src={url} controls preload="metadata" aria-label={title}
+      className={status === 'ready' ? 'w-full' : 'hidden'}
+      onLoadedMetadata={() => setStatus('ready')} onError={() => setStatus('error')} />
+    <a href={url} target="_blank" rel="noopener noreferrer" className="text-sm font-semibold text-primary-700 underline">Open material in a new tab</a>
+  </section>;
+}
+
 function AdminMedia({ item }: { item: SubjectMaterial['media'][number] }) {
   let url: URL;
   try { url = new URL(item.url, window.location.origin); } catch {
     return <Media value={item.url} kind={item.kind} title={item.title} fileName={item.file_name} canEmbed={item.can_embed} />;
   }
-  if (item.kind === 'pdf' && item.can_embed !== false && url.origin === window.location.origin
+  const kind = inferredMediaKind(item, url);
+  if (kind === 'pdf' && item.can_embed !== false && url.origin === window.location.origin
       && /^\/login_api\/advanced-admin\/learners\/\d+\/learning\/material\/\d+\/\d+\/(?:files\/\d+|source-file|media\/\d+)\/$/.test(url.pathname)) {
     return <section className="space-y-2">
       <AdminPdfPreview url={url.href} title={item.title} />
       <a href={url.href} target="_blank" rel="noopener noreferrer" className="text-sm font-semibold text-primary-700 underline">Open material in a new tab</a>
     </section>;
   }
-  if (item.kind === 'video' && item.can_embed !== false && url.origin === window.location.origin
-      && /^\/login_api\/advanced-admin\/learners\/\d+\/learning\/material\/\d+\/\d+\/media\/\d+\/$/.test(url.pathname)) {
+  const scopedMedia = url.origin === window.location.origin
+    && /^\/login_api\/advanced-admin\/learners\/\d+\/learning\/material\/\d+\/\d+\/media\/\d+\/$/.test(url.pathname);
+  if (kind === 'video' && item.can_embed !== false && scopedMedia) {
     return <section className="space-y-2">
       <video src={url.href} controls preload="metadata" className="aspect-video w-full rounded-xl bg-black" aria-label={item.title} />
       <a href={url.href} target="_blank" rel="noopener noreferrer" className="text-sm font-semibold text-primary-700 underline">Open material in a new tab</a>
     </section>;
   }
-  if (item.kind === 'audio' && item.can_embed !== false && url.protocol === 'https:'
+  if (kind === 'audio' && item.can_embed !== false && scopedMedia) {
+    return <AdminAudioPlayer url={url.href} title={item.title} />;
+  }
+  if (kind === 'audio' && item.can_embed !== false && url.protocol === 'https:'
       && (url.hostname === 'kentbusinesscollege.org' || url.hostname.endsWith('.kentbusinesscollege.org'))
       && /^\/wp-json\/kbc-lms\/v1\/material\/\d+\/view\/?$/.test(url.pathname)) {
     return <section className="space-y-2">
@@ -73,7 +124,7 @@ function AdminMedia({ item }: { item: SubjectMaterial['media'][number] }) {
       <a href={url.href} target="_blank" rel="noopener noreferrer" className="text-sm font-semibold text-primary-700 underline">Open material in a new tab</a>
     </section>;
   }
-  if (item.can_embed !== false && (item.kind === 'video' || item.kind === 'embed')
+  if (item.can_embed !== false && (kind === 'video' || kind === 'embed')
       && (url.origin === 'https://www.youtube.com' || url.origin === 'https://youtube.com')
       && url.pathname === '/playlist') {
     const playlistId = url.searchParams.get('list') || '';
@@ -89,7 +140,7 @@ function AdminMedia({ item }: { item: SubjectMaterial['media'][number] }) {
       </section>;
     }
   }
-  if (item.can_embed !== false && item.kind === 'document' && url.protocol === 'https:'
+  if (item.can_embed !== false && kind === 'document' && url.protocol === 'https:'
       && url.hostname === 'view.officeapps.live.com' && url.pathname === '/op/embed.aspx'
       && url.searchParams.has('src')) {
     return <section className="space-y-2">
@@ -99,7 +150,7 @@ function AdminMedia({ item }: { item: SubjectMaterial['media'][number] }) {
       <a href={url.href} target="_blank" rel="noopener noreferrer" className="text-sm font-semibold text-primary-700 underline">Open material in a new tab</a>
     </section>;
   }
-  return <Media value={item.url} kind={item.kind} title={item.title} fileName={item.file_name} canEmbed={item.can_embed} />;
+  return <Media value={item.url} kind={kind} title={item.title} fileName={item.file_name} canEmbed={item.can_embed} />;
 }
 
 export function RichContent({ value }: { value: string }) {
@@ -208,7 +259,7 @@ export function AdminLegacyActivityContent({ learnerId, groupId, activityId, kin
   return <div className="space-y-5 rounded-2xl border border-foreground-200 bg-white p-5">
     <div className="rounded-xl border border-primary-100 bg-primary-50 p-4"><h4 className="font-semibold">Activity progress</h4>
       <p className={`mt-1 text-sm font-semibold ${completed ? 'text-emerald-700' : 'text-foreground-600'}`}>{completed ? 'Complete' : 'Not complete'}</p></div>
-    {(materialLoading || quizLoading) && <p role="status" className="text-sm">Preparing activity content...</p>}
+    {(materialLoading || quizLoading) && <ActivityContentSkeleton />}
     {materialError && <p role="alert" className="text-sm text-amber-800">{materialError}</p>}
     {quizError && <p role="alert" className="text-sm text-amber-800">{quizError}</p>}
     {material?.media.map((item, index) => <AdminMedia key={`${index}:${item.url}`} item={item} />)}

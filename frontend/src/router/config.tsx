@@ -97,6 +97,7 @@ const CurriculumGroupWorkspace = lazyRoute(() => import("../pages/curriculum/gro
 const CurriculumEnglandHolidays = lazyRoute(() => import("../pages/curriculum/england-holidays/page"));
 const CurriculumModuleWorkspace = lazyRoute(() => import("../pages/curriculum/module-workspace/page"));
 const CurriculumTeamsMeetings = lazyRoute(() => import("../pages/curriculum/teams-meetings/page"));
+const CurriculumRecordings = lazyRoute(() => import("../pages/curriculum/recordings/page"));
 const CurriculumProgrammes = lazyRoute(() => import("../pages/curriculum/programmes/page"));
 const CurriculumPublishedPage = lazyRoute(() => import("../pages/curriculum/published/page"));
 const CurriculumQAPage = lazyRoute(() => import("../pages/curriculum/curriculum-qa/page"));
@@ -1144,6 +1145,11 @@ const routes: RouteObject[] = [
     // per-module view of the same meeting is the module workspace's Teams tab.
     path: "/curriculum/teams-meetings",
     element: <CurriculumTeamsMeetings />,
+  },
+  {
+    // Every saved live-session recording, by module, group and week. Read only.
+    path: "/curriculum/recordings",
+    element: <CurriculumRecordings />,
   },
   {
     // The bank holiday calendar: GOV.UK holidays stay synced here, and extra

@@ -102,7 +102,7 @@ class DashboardSectionTests(SimpleTestCase):
         expected = [row["id"] for row in rows if row["otjh"]["ragStatus"] == "at-risk"]
         self.assertEqual([row["id"] for row in rows], ["1", "2", "3"])
         self.assertEqual(expected, ["1", "2"])
-        self.assertEqual(result["learnerPopup"]["atRisk"], expected)
+        self.assertEqual(set(result["learnerPopup"]), {"all"})
         self.assertEqual(result["summary"]["otjh"]["atRisk"], len(expected))
 
     def test_initial_sections_omit_details_without_mutating_legacy_snapshot(self):
@@ -320,7 +320,7 @@ class DashboardSectionTests(SimpleTestCase):
             result = summarize_meetings(project_section(self.payload, "summary"))
         self.assertEqual(set(result), {"owner", "summary", "learnerPopup", "markingPopup", "meetingsPopup"})
         self.assertEqual(result["owner"], {"name": "Synthetic Coach"})
-        self.assertEqual(result["learnerPopup"]["atRisk"], ["1"])
+        self.assertEqual([row["id"] for row in result["learnerPopup"]["all"] if row["otjh"]["ragStatus"] == "at-risk"], ["1"])
         row = result["learnerPopup"]["all"][0]
         self.assertEqual(set(row), {"id", "name", "programme", "programmeStatus", "group", "otjh"})
         self.assertEqual(row["programmeStatus"], "Delivery")

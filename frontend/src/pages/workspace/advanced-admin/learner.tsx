@@ -5,6 +5,7 @@ import { advancedAdminLearner, advancedAdminLearning, advancedAdminModuleProgres
 import type { StudentActivityResponse } from '@/api/studentActivity';
 import type { LearnerDetail } from '@/api/learnerDetail';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
+import { SkeletonBlock } from '@/components/feature/Skeletons';
 import { roleNavMap } from '@/mocks/navigation';
 import { useAuth } from '@/hooks/useAuth';
 import ReadOnlyLearning from './ReadOnlyLearning';
@@ -16,6 +17,37 @@ import { isLearnerSection, learnerNavigation, learnerSectionHref, sections } fro
 import { achievedWordPressCourses } from './wordpressLearning';
 
 const nav = roleNavMap['advanced-admin'];
+
+function CourseCatalogueSkeleton() {
+  return <section role="status" aria-busy="true" aria-label="Loading courses and activities" className="space-y-5">
+    <span className="sr-only">Loading courses and activities...</span>
+    <div className="grid gap-4 lg:grid-cols-[3fr_2fr]">
+      <SkeletonBlock className="h-28 w-full rounded-2xl" />
+      <SkeletonBlock className="h-28 w-full rounded-2xl" />
+    </div>
+    <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+      {Array.from({ length: 4 }).map((_, index) => <div key={index}
+        className="flex items-center gap-3 rounded-xl border border-foreground-200 bg-white p-4">
+        <SkeletonBlock className="h-10 w-10 shrink-0 rounded-xl" />
+        <div className="w-full space-y-2"><SkeletonBlock className="h-5 w-14" /><SkeletonBlock className="h-3 w-2/3" /></div>
+      </div>)}
+    </div>
+    <div className="grid items-start gap-4 xl:grid-cols-[minmax(0,1fr)_15rem]">
+      <div className="space-y-4">
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          {Array.from({ length: 4 }).map((_, index) => <SkeletonBlock key={index} className="h-11 w-full rounded-xl" />)}
+        </div>
+        <div className="flex items-center justify-between gap-4"><SkeletonBlock className="h-5 w-32" /><SkeletonBlock className="h-3 w-40" /></div>
+        {Array.from({ length: 2 }).map((_, index) => <div key={index}
+          className="flex min-h-28 items-center gap-4 rounded-xl border border-foreground-200 bg-white p-4">
+          <SkeletonBlock className="h-20 w-24 shrink-0 rounded-xl" />
+          <div className="w-full space-y-3"><SkeletonBlock className="h-4 w-2/5" /><SkeletonBlock className="h-3 w-3/5" /><SkeletonBlock className="h-2 w-full" /></div>
+        </div>)}
+      </div>
+      <div className="space-y-3"><SkeletonBlock className="h-36 w-full rounded-xl" /><SkeletonBlock className="h-24 w-full rounded-xl" /></div>
+    </div>
+  </section>;
+}
 
 function ModuleProgressPreview({ progress }: { progress: AdvancedAdminModuleProgress }) {
   return <section aria-label="Available module metrics" className="space-y-3 rounded-xl border border-primary-100 bg-white p-5">
@@ -160,21 +192,22 @@ export default function AdvancedAdminLearnerPage() {
                 </div>
               </div>
               {learningError && <p role="alert" className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-amber-800">{learningError}</p>}
-              {learningView === 'courses' && !learning && !learningError && <p role="status" className="rounded-xl border border-foreground-200 bg-white p-5">Loading learning…</p>}
+              {learningView === 'courses' && (!learning || !achievedCourses) && !learningError && !wordpressError &&
+                <CourseCatalogueSkeleton />}
               {wordpressError && <div role="alert" className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-800">
                 <p>{wordpressError} Course progress needs a verified WordPress match.</p>
                 <button type="button" onClick={() => setWordpressRetry(value => value + 1)} className="mt-2 font-semibold underline">Try again</button>
               </div>}
-              {!achievedCourses && !wordpressError && ((learningView === 'courses' && learning) ||
-                (learningView === 'progress' && moduleProgress)) && <p role="status" className="rounded-xl border border-foreground-200 bg-white p-5">Verifying course activities. Available records will appear first.</p>}
+              {!achievedCourses && !wordpressError && learningView === 'progress' && moduleProgress &&
+                <p role="status" className="rounded-xl border border-foreground-200 bg-white p-5">Verifying course activities. Available records will appear first.</p>}
               {learningView === 'progress' && progressError && <p role="alert" className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-amber-800">{progressError}</p>}
               {learningView === 'progress' && !moduleProgress && !progressError && <p role="status" className="rounded-xl border border-foreground-200 bg-white p-5">Loading module progress…</p>}
               {learningView === 'progress' && moduleProgress && (!learning || !achievedCourses) &&
                 <ModuleProgressPreview progress={moduleProgress} />}
               {learningView === 'progress' && learning && moduleProgress && achievedCourses && <LearnerModuleProgress key={id} learner={learner} learning={learning} progress={moduleProgress} wordpressCourses={achievedCourses}
                 onOpenActivity={(subjectId, activityId) => { setActivitySelection({ subjectId, activityId }); navigate(`${learnerSectionHref(id, 'learning')}?view=courses`); }} />}
-              {learningView === 'courses' && learning && <ReadOnlyLearning key={`${id}:${activitySelection?.subjectId || ''}:${activitySelection?.activityId || ''}`}
-                learnerId={id} learning={learning} wordpressCourses={achievedCourses || []} initialSelection={activitySelection} />}
+              {learningView === 'courses' && learning && achievedCourses && <ReadOnlyLearning key={`${id}:${activitySelection?.subjectId || ''}:${activitySelection?.activityId || ''}`}
+                learnerId={id} learning={learning} wordpressCourses={achievedCourses} initialSelection={activitySelection} />}
             </section>}
             {selectedSection === 'inclusion' && <InclusionDashboard key={id} learnerId={id} learner={learner} />}
             {selectedSection !== 'learning' && selectedSection !== 'inclusion' && <ReviewSections key={id} learnerId={id} learner={learner} assigned={assigned} selectedTab={selectedSection as RecordTab} showTabs={false} />}

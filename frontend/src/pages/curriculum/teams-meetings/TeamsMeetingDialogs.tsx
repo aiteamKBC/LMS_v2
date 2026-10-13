@@ -41,6 +41,10 @@ import {
   InlineError,
   SelectControl,
 } from '../shared/entities/ui';
+import { TeamsPermissionCheckPanel } from './TeamsPermissionCheckPanel';
+import { MicrosoftUpdateStatus } from './MicrosoftUpdateStatus';
+import { readMicrosoftUpdate } from './microsoftUpdateState';
+import { CalendarHealthPanel } from './CalendarHealthPanel';
 import { STATE_LABELS, STATE_TONES, meetingRunState, type MeetingSettingsForm, type TeamsMeetingsWorkspace } from './useTeamsMeetingsWorkspace';
 
 
@@ -917,6 +921,37 @@ export function TeamsMeetingDialogs({ workspace, secondTab }: {
                     disabled={Boolean(blockedReason) || !graphConfigured}
                     onCompare={() => void compareAttendees(selected)}
                   />
+                  {/* Three separate questions, never folded into one status: have
+                      Microsoft applied the meeting settings; is the calendar
+                      structurally sound; is each session's lifecycle and history
+                      trustworthy. */}
+                  <section aria-label="Meeting health" className="space-y-2">
+                    <div>
+                      <p className="text-[11px] font-bold uppercase tracking-wider text-foreground-600">Meeting health</p>
+                      <p className="text-[11px] text-foreground-500">
+                        Meeting settings show whether Microsoft applied them. Calendar health shows whether every session is on the right Teams meeting, and its lifecycle and history.
+                      </p>
+                    </div>
+                    {/* Saved / Pending Microsoft update / Failed, with Retry: re-sends
+                        only the meeting settings Microsoft has not applied. */}
+                    <MicrosoftUpdateStatus
+                      liveSessionId={selected.summary?.liveSessionId || ''}
+                      status={readMicrosoftUpdate(selected.summary?.microsoftUpdate)}
+                      disabled={!graphConfigured}
+                    />
+                    {/* Read-only, like the comparison: it says whether Microsoft lets the
+                        LMS manage this organiser's meeting, and never changes it. */}
+                    <TeamsPermissionCheckPanel
+                      liveSessionId={selected.summary?.liveSessionId || ''}
+                      disabled={!graphConfigured}
+                    />
+                    {/* Read-only until a resolution is reviewed and confirmed: meeting type,
+                        link integrity, lifecycle and attribution for every session. */}
+                    <CalendarHealthPanel
+                      liveSessionId={selected.summary?.liveSessionId || ''}
+                      disabled={!graphConfigured}
+                    />
+                  </section>
                   {updateDrawer.error && <InlineError message={updateDrawer.error} />}
                   {addedInvitees(selected).length > 0 && (
                     <p role="note" className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-[11px] font-semibold text-amber-900">

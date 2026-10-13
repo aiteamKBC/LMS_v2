@@ -373,12 +373,33 @@ def _definition_for(stored, group_id=None, *, attachment_resolver=None):
             definition['quiz'] = quiz_definition(recovered_quiz)
             definition['available'] = True
     if row.get('_material_blob_ready'):
+        import mimetypes
+        from urllib.parse import unquote, urlsplit
+
         mime = row.get('material_blob_content_type') or ''
         media_kind = 'pdf' if mime == 'application/pdf' else 'audio' if mime.startswith('audio/') else 'video' if mime.startswith('video/') else 'document'
-        definition['media'] = [{'kind': media_kind, 'url': '', 'title': stored['title'],
-            'file_name': stored['title'], 'source_material_file': True, 'can_embed': True}]
+        file_name = (row.get('material_blob_name') or '').rsplit('/', 1)[-1]
+        if not mimetypes.guess_type(file_name)[0]:
+            file_name = stored['title']
+            if not mimetypes.guess_type(file_name)[0]:
+                file_name += mimetypes.guess_extension(mime) or ''
+        primary = {'kind': media_kind, 'url': '', 'title': stored['title'],
+            'file_name': file_name or stored['title'], 'source_material_file': True, 'can_embed': True}
+        archive_path = '/curriculum_api/curriculum/uploads/' + (row.get('material_blob_name') or '')
+        # Re-linked legacy lessons can also contain a reading companion or
+        # other attachments. Replace only their exact registered primary file.
+        def is_registered_file(value):
+            parsed = urlsplit(value or '')
+            return not parsed.netloc and unquote(parsed.path) == archive_path
+        archived = [item for item in definition['media'] if is_registered_file(item['url'])]
+        registered_primary = any(is_registered_file(stored.get(field))
+                                 for field in ('video_url', 'audio_url', 'reading_url'))
+        if archived or registered_primary:
+            definition['media'] = [primary, *[item for item in definition['media'] if item not in archived]]
+        else:
+            definition['media'] = [primary]
         definition['available'] = True
-        definition['has_reading'] = media_kind in {'pdf', 'document'}
+        definition['has_reading'] = definition['has_reading'] or media_kind in {'pdf', 'document'}
     definition['source_live'] = False
     if row.get('quiz_definition_ambiguous') and definition.get('quiz'):
         # The same reading is linked to different quizzes in the original LMS.
@@ -458,13 +479,18 @@ def _owned_material(kind, pk, group_id, activity_id):
 @learner_self_or_staff(kwarg='pk')
 def source_material_file(request, kind, pk, group_id, activity_id):
     from django.conf import settings
-    from .material_storage import read_url
+    from .material_storage import curriculum_archive_url, read_url
     try:
         _aptem_id, stored = _owned_material(kind, pk, group_id, activity_id)
         row = stored['_source']
         if not row.get('_material_blob_ready'):
             return _error('This file has not been copied to the LMS yet.', 404)
-        if row.get('material_blob_content_type') == 'application/pdf':
+        archive_url = curriculum_archive_url(row, settings)
+        if archive_url:
+            if str(request.GET.get('preview') or '').lower() in {'1', 'true', 'yes'}:
+                archive_url += '?preview=1'
+            response = HttpResponseRedirect(archive_url)
+        elif row.get('material_blob_content_type') == 'application/pdf':
             from .material_storage import pdf_response
             response = pdf_response(row, settings, request)
         else:

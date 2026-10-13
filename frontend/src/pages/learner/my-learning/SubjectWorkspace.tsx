@@ -356,10 +356,13 @@ export function nativeHref(entry: SubjectEntry, kind?: string, learnerId?: strin
 
 function ActivityRow({ entry, kind, learnerId, onProgress, defaultOpen = false }: { defaultOpen?: boolean; entry: SubjectEntry; kind?: string; learnerId?: string; onProgress?: (result: SubjectAttemptResult) => void }) {
   const [open, setOpen] = useState(defaultOpen);
+  useEffect(() => { if (defaultOpen) setOpen(true); }, [defaultOpen]);
   const contentId = useId();
   const href = nativeHref(entry, kind, learnerId);
   const legacy = entry.legacy;
   const canOpenMaterial = legacy?.can_open_material !== false;
+  const sourceHref = legacy?.source_material_activity_id && kind && learnerId
+    ? `${learningHref('catalogue', kind, learnerId, `legacy:${legacy.group_id}`)}&activity=${encodeURIComponent(legacy.source_material_activity_id)}` : null;
   const score = entry.bestScorePercent ?? legacy?.best_score_percent ?? (legacy?.quiz_score != null && legacy.quiz_maximum_score ? legacy.quiz_score / legacy.quiz_maximum_score * 100 : null);
   return <div role="group" aria-label={`${entry.title} activity`} className="border-t border-foreground-100 first:border-t-0"><div className="grid grid-cols-[2rem_minmax(0,1fr)] items-start gap-3 p-4 sm:flex sm:flex-wrap sm:items-center">
     <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full ${entry.completed ? 'bg-emerald-50 text-emerald-600' : 'bg-background-100 text-foreground-400'}`}>{entry.completed ? <CheckCircle2 size={18} /> : <BookOpen size={16} />}</span>
@@ -372,7 +375,8 @@ function ActivityRow({ entry, kind, learnerId, onProgress, defaultOpen = false }
     <div className="col-start-2 flex flex-wrap items-center gap-2 sm:ml-auto"><span className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${entry.completed ? 'bg-emerald-50 text-emerald-700' : 'bg-background-100 text-foreground-600'}`}>{entry.completed ? 'Complete' : 'Not complete'}</span>
     {legacy && canOpenMaterial && kind && learnerId && <button onClick={() => setOpen((value) => !value)} aria-expanded={open} aria-controls={contentId} className="rounded-lg border border-foreground-200 px-3 py-2 text-xs font-semibold text-primary-700">{open ? 'Close activity' : 'Open activity'}</button>}
     {!legacy && href && <Link to={href} className="rounded-lg border border-foreground-200 px-3 py-2 text-xs font-semibold text-primary-700">Open activity</Link>}
-    {((legacy && !canOpenMaterial) || (!legacy && !href)) && <span className="text-xs text-foreground-500">{entry.native?.retired ? 'No longer in this module' : 'Content not available yet'}</span>}</div>
+    {sourceHref && <Link to={sourceHref} className="rounded-lg border border-foreground-200 px-3 py-2 text-xs font-semibold text-primary-700">View source material</Link>}
+    {((legacy && !canOpenMaterial && !sourceHref) || (!legacy && !href)) && <span className="text-xs text-foreground-500">{entry.native?.retired ? 'No longer in this module' : 'Content not available yet'}</span>}</div>
   </div>
     {legacy && <p className="px-4 pb-3 text-[11px] text-foreground-400">OTJH: {legacy.hours_mapped ? formatHoursMinutes(legacy.actual) : 'Unavailable'} · Planned: {legacy.planned_hours_mapped ? formatHoursMinutes(legacy.planned) : 'Unavailable'}</p>}
     <div id={contentId}>{open && legacy && canOpenMaterial && kind && learnerId && <div role="region" aria-label={`${entry.title} content`} className="p-3 pt-0"><StudentMaterial kind={kind} learnerId={learnerId} groupId={legacy.group_id} activityId={legacy.source_activity_id} completed={entry.completed} onProgress={onProgress} /></div>}</div>
@@ -554,7 +558,7 @@ export function StudentActivityPanel({ data: incomingData, loading, error, onRet
             const visibleEntries = activities.filter((entry) => visibleActivityIds.has(entry.id));
             if (!visibleEntries.length) return null;
             if (month === 'introduction') return visibleEntries.map((entry) => <ActivityRow key={entry.id} defaultOpen={entry.id === activityTarget?.entry.id} entry={entry} kind={kind} learnerId={learnerId} onProgress={(result) => { if (entry.legacy) recordProgress(entry.legacy.activity_id, result); }} />);
-            const weekTitle = week === 'undated' ? 'Activities awaiting a date' : /^\d{4}-/.test(week) ? `Week ${index + 1} · ${week} – ${activities[0].schedule.week_end || ''}` : week;
+            const weekTitle = week === 'undated' ? (month === 'undated' ? 'Activities awaiting a date' : 'Activities in this month') : /^\d{4}-/.test(week) ? `Week ${index + 1} · ${week} – ${activities[0].schedule.week_end || ''}` : week;
             return <ActivityGroup key={week} title={weekTitle} label={`${monthTitle}, ${weekTitle}`} activities={activities} level={4}>
               {visibleEntries.map((entry) => <ActivityRow key={entry.id} defaultOpen={entry.id === activityTarget?.entry.id} entry={entry} kind={kind} learnerId={learnerId} onProgress={(result) => { if (entry.legacy) recordProgress(entry.legacy.activity_id, result); }} />)}
             </ActivityGroup>;

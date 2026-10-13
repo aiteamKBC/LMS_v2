@@ -1,6 +1,7 @@
 """Private material files use their recorded account, independently of evidence."""
 from datetime import datetime, timedelta, timezone
 from urllib.parse import quote
+import re
 import urllib.error
 import urllib.request
 
@@ -10,6 +11,20 @@ from azure.storage.blob import generate_blob_sas, BlobSasPermissions
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, request, file, code, message, headers, target):
         return None
+
+
+def curriculum_archive_url(row, settings):
+    """Reuse the existing same-origin delivery route for verified legacy blobs."""
+    account = getattr(settings, 'AZURE_STORAGE_ACCOUNT', '')
+    container = getattr(settings, 'AZURE_CURRICULUM_CONTAINER', '')
+    name = row.get('material_blob_name') or ''
+    if (not account or not container
+            or row.get('material_blob_account') != account
+            or row.get('material_blob_container') != container
+            or not re.fullmatch(r'_legacy_files/[0-9]+/[^/\\\x00-\x1f]+', name)
+            or name.rsplit('/', 1)[-1] in {'.', '..'}):
+        return ''
+    return '/curriculum_api/curriculum/uploads/' + quote(name, safe='/')
 
 
 def read_url(row, settings):

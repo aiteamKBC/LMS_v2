@@ -1,4 +1,4 @@
-import { render, screen, within } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import {
   advancedAdminComponentQuizReview, advancedAdminLegacyQuizReview, advancedAdminMaterial,
@@ -21,6 +21,14 @@ beforeEach(() => {
   vi.mocked(advancedAdminComponentQuizReview).mockReset();
 });
 afterEach(() => vi.unstubAllGlobals());
+
+it('shows a structured skeleton while the activity content is loading', () => {
+  vi.mocked(advancedAdminMaterial).mockReturnValue(new Promise(() => {}));
+  render(<AdminLegacyActivityContent learnerId={42} groupId={8} activityId={12} kind="material" completed />);
+  const skeleton = screen.getByRole('status', { name: 'Loading activity content' });
+  expect(skeleton).toHaveAttribute('aria-busy', 'true');
+  expect(skeleton.querySelectorAll('.kbc-skeleton')).toHaveLength(6);
+});
 
 it('opens saved media and formatted text while displaying the quiz key and recorded selection read only', async () => {
   vi.mocked(advancedAdminMaterial).mockResolvedValue({
@@ -161,6 +169,40 @@ it('plays a scoped Drive video directly in Advanced Admin', async () => {
   const video = await screen.findByLabelText('Recorded lesson');
   expect(video.tagName).toBe('VIDEO');
   expect(video).toHaveAttribute('src', `${window.location.origin}${stream}`);
+  expect(screen.queryByTestId('saved-media')).not.toBeInTheDocument();
+});
+
+it('infers returned media types from the URL or attachment filename extension', async () => {
+  vi.mocked(advancedAdminMaterial).mockResolvedValue({
+    media: [
+      { kind: 'document', url: 'https://files.example.test/lesson.MP4?token=synthetic', title: 'Video file' },
+      { kind: 'embed', url: 'https://files.example.test/media', file_name: 'podcast.MP3', title: 'Audio file' },
+      { kind: 'document', url: 'https://files.example.test/download', file_name: 'handout.PDF', title: 'PDF file' },
+    ],
+    reading_html: '', unavailable_attachments: [], quiz: null, has_quiz_review: false,
+    historical: { answers: [] }, history: [],
+  } as never);
+  render(<AdminLegacyActivityContent learnerId={42} groupId={8} activityId={12} kind="material" completed />);
+  const media = await screen.findAllByTestId('saved-media');
+  expect(media.map(item => item.getAttribute('data-kind'))).toEqual(['video', 'audio', 'pdf']);
+  expect(advancedAdminLegacyQuizReview).not.toHaveBeenCalled();
+});
+
+it('plays a scoped audio source in a native audio element', async () => {
+  const stream = '/login_api/advanced-admin/learners/42/learning/material/8/12/media/0/';
+  vi.mocked(advancedAdminMaterial).mockResolvedValue({
+    media: [{ kind: 'document', url: stream, file_name: 'recording.mp3', title: 'Recorded audio' }],
+    reading_html: '', unavailable_attachments: [], quiz: null, has_quiz_review: false,
+    historical: { answers: [] }, history: [],
+  } as never);
+  render(<AdminLegacyActivityContent learnerId={42} groupId={8} activityId={12} kind="material" completed />);
+  const audio = await screen.findByLabelText('Recorded audio');
+  expect(audio.tagName).toBe('AUDIO');
+  expect(audio).toHaveAttribute('src', `${window.location.origin}${stream}`);
+  expect(screen.getByRole('status', { name: 'Loading audio' })).toHaveAttribute('aria-busy', 'true');
+  fireEvent.loadedMetadata(audio);
+  expect(screen.queryByRole('status', { name: 'Loading audio' })).not.toBeInTheDocument();
+  expect(audio).toHaveClass('w-full');
   expect(screen.queryByTestId('saved-media')).not.toBeInTheDocument();
 });
 
