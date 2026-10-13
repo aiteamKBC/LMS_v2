@@ -48,6 +48,19 @@ def adapter(query):
 
 
 class CanonicalLearningTests(unittest.TestCase):
+    def test_staff_input_date_reaches_activity_log_without_inventing_a_timestamp(self):
+        self.query.return_value=[]
+        entry={'id':1,'accepted':True,'actual_seconds':3617,'actual_basis':'staff:module-progress','reporting_month':'2026-10',
+            'reporting_timestamp_label':'Input','reporting_started_at':None,'reporting_ended_at':None,'ksbs':[],
+            'source_payload':{'staff_time_entry':{'mode':'input','activity_date':'2026-10-01'}}}
+        row=self.scope['rows_for'](self.owner,[entry])[0]
+        self.assertEqual(row['activity_date'],'2026-10-01')
+        self.assertEqual(row['timestamp_label'],'Input')
+        self.assertAlmostEqual(row['actual_hours'],3617/3600)
+        self.assertIsNone(entry['reporting_started_at']);self.assertIsNone(entry['reporting_ended_at'])
+        for day in ('2026-09-30','2026-02-30'):
+            invalid={**entry,'source_payload':{'staff_time_entry':{'mode':'input','activity_date':day}}}
+            self.assertIsNone(self.scope['input_activity_date'](invalid))
     def test_completion_status_does_not_invent_accepted_otj_hours(self):
         completed = {'activity_status': 'completed', 'accepted': False,
                      'actual_seconds': None, 'ksbs': []}

@@ -710,3 +710,29 @@ it.each(['timer', 'input'])('excludes muted video time while preserving the sele
   })));
   await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent(source === 'timer' ? '00:00:05' : '00:40:00'));
 });
+
+
+it.each(['previous', 'current'])('lets a learner choose the %s attempt duration without adding the times', async choice => {
+  const reading = { ...first, type: 'reading', component: 'Reading', contentHtml: '<p>Learning material</p>' };
+  vi.mocked(fetchLearnerDetail).mockResolvedValue({ ...detail(true), components: [reading] } as unknown as LearnerDetail);
+  mount();
+  fireEvent.click(await screen.findByRole('button', { name: 'Record another attempt' }));
+  fireEvent.change(await screen.findByLabelText('Minutes spent'), { target: { value: '2' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Finish' }));
+  const previous = await screen.findByRole('button', { name: /Previous attempt/ });
+  expect(previous).toHaveTextContent('00:00:20');
+  const current = screen.getByRole('button', { name: /Current attempt/ });
+  expect(current).toHaveTextContent('00:02:00');
+  fireEvent.click(choice === 'previous' ? previous : current);
+  expect(screen.getByText('Save time').parentElement).toHaveTextContent(choice === 'previous' ? '00:00:20' : '00:02:00');
+  fireEvent.click(screen.getByRole('button', { name: 'Confirm' }));
+  if (choice === 'previous') {
+    expect(submitComponentProgress).not.toHaveBeenCalled();
+    expect(await screen.findByRole('status')).toHaveTextContent('00:00:20');
+    expect(screen.queryByRole('button', { name: 'Confirm' })).not.toBeInTheDocument();
+  } else {
+    await waitFor(() => expect(submitComponentProgress).toHaveBeenCalledWith('C1', 'apprenticeship', '1', expect.objectContaining({
+      timeTakenSeconds: 120, timeEntrySource: 'input', reportedTime: '2 minutes',
+    })));
+  }
+});

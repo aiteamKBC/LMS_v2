@@ -257,6 +257,7 @@ export default function ComponentViewPage() {
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [record, setRecord] = useState<DoneRecord | null>(null);
   const [repeating, setRepeating] = useState(false);
+  const [keepPreviousTime, setKeepPreviousTime] = useState(false);
   const [refreshError, setRefreshError] = useState<string | null>(null);
   // Bumped by the uploader so the criteria panel re-checks after an upload.
   const [evidenceVersion, setEvidenceVersion] = useState(0);
@@ -585,6 +586,7 @@ export default function ComponentViewPage() {
   const finishConsuming = () => {
     if (!recordingAttempt) return;
     timerRef.current?.stop();
+    setKeepPreviousTime(false);
     if (component?.reflectionRequired === false) {
       setPhase('confirm');
       return;
@@ -594,6 +596,16 @@ export default function ComponentViewPage() {
 
   const confirmCompletion = () => {
     if (!component) return;
+    if (keepPreviousTime && completedTime) {
+      clearActivityTimer(timerStorageKey);
+      setWallElapsed(0);
+      timerRemainder.current.milliseconds = 0;
+      setManualTimeSeconds(null);
+      setTimeSource(usesManualTimeOnly ? 'input' : 'timer');
+      setRepeating(false);
+      setPhase('consume');
+      return;
+    }
     void finalizeSubmit({
       ksbs: (component.ksbMappings || []).map(mapping => mapping.code),
       feedback: '',
@@ -1100,6 +1112,9 @@ export default function ComponentViewPage() {
           <CompletionConfirmPopup
             title={pageTitle}
             noun={noun}
+            previousTimeLabel={completed ? completedTime : null}
+            keepPreviousTime={keepPreviousTime}
+            onKeepPreviousTimeChange={setKeepPreviousTime}
             timerLabel={formatClock(elapsedSeconds)}
             inputLabel={manualTimeSeconds == null ? null : formatClock(manualTimeSeconds)}
             inputSeconds={manualTimeSeconds}
@@ -1154,6 +1169,9 @@ function CompletionConfirmPopup({
   title,
   noun,
   timerLabel,
+  previousTimeLabel,
+  keepPreviousTime,
+  onKeepPreviousTimeChange,
   inputLabel,
   inputSeconds,
   onInputChange,
@@ -1167,11 +1185,12 @@ function CompletionConfirmPopup({
   onConfirm,
 }: {
   title: string; noun: string; timerLabel: string; inputLabel: string | null; selectedSource: TimeSource; manualTimeOnly: boolean; evidenceFileName?: string | null;
+  previousTimeLabel?: string | null; keepPreviousTime: boolean; onKeepPreviousTimeChange: (keep: boolean) => void;
   submitting: boolean; error: string | null;
   inputSeconds: number | null; onInputChange: (seconds: number | null) => void;
   onSelectSource: (source: TimeSource) => void; onCancel: () => void; onConfirm: () => void;
 }) {
-  const selectedTimeLabel = selectedSource === 'input'
+  const selectedTimeLabel = keepPreviousTime && previousTimeLabel ? previousTimeLabel : selectedSource === 'input'
     ? inputLabel || '--:--:--'
     : timerLabel;
 
@@ -1200,6 +1219,32 @@ function CompletionConfirmPopup({
               </span>
             </div>
           )}
+          {previousTimeLabel && (
+            <>
+              <p className="text-xs text-foreground-500">Choose which attempt time to keep. Times will not be added together.</p>
+              <button
+                type="button"
+                aria-pressed={keepPreviousTime}
+                onClick={() => onKeepPreviousTimeChange(true)}
+                disabled={submitting}
+                className={`flex w-full items-center justify-between gap-3 rounded-lg border px-3 py-2 text-left ${keepPreviousTime ? 'border-primary-300 bg-primary-50 text-primary-800' : 'border-background-300 bg-white text-foreground-700'}`}
+              >
+                <span className="text-sm font-semibold">Previous attempt</span>
+                <span className="font-mono text-sm font-bold tabular-nums">{previousTimeLabel}</span>
+              </button>
+              <button
+                type="button"
+                aria-pressed={!keepPreviousTime}
+                onClick={() => onKeepPreviousTimeChange(false)}
+                disabled={submitting}
+                className={`flex w-full items-center justify-between gap-3 rounded-lg border px-3 py-2 text-left ${!keepPreviousTime ? 'border-primary-300 bg-primary-50 text-primary-800' : 'border-background-300 bg-white text-foreground-700'}`}
+              >
+                <span className="text-sm font-semibold">Current attempt</span>
+                <span className="font-mono text-sm font-bold tabular-nums">{selectedSource === 'input' ? inputLabel || '--:--:--' : timerLabel}</span>
+              </button>
+            </>
+          )}
+          <fieldset disabled={submitting || keepPreviousTime} className="space-y-3 disabled:opacity-50">
           {!manualTimeOnly && (
             <button
               type="button"
@@ -1239,6 +1284,7 @@ function CompletionConfirmPopup({
               <ActivityTimeSpentInput initialSeconds={inputSeconds} onChange={onInputChange} />
             </fieldset>
           )}
+          </fieldset>
         </div>
 
         {error && (
@@ -1259,7 +1305,7 @@ function CompletionConfirmPopup({
           <button
             type="button"
             onClick={onConfirm}
-            disabled={submitting || ((manualTimeOnly || selectedSource === 'input') && (inputSeconds == null || inputSeconds <= 0))}
+            disabled={submitting || (!keepPreviousTime && (manualTimeOnly || selectedSource === 'input') && (inputSeconds == null || inputSeconds <= 0))}
             className="inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 py-3 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
           >
             <AppIcon className={submitting ? 'ri-loader-4-line animate-spin' : 'ri-check-line'} />

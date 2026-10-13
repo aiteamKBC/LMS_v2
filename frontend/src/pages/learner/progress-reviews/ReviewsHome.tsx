@@ -142,7 +142,7 @@ export default function ReviewsHome(props: ReviewsHomeProps) {
     <header className={styles.header}><div><h1 ref={heading} tabIndex={-1}>{allView ? 'All reviews' : employer ? 'Progress reviews' : 'My reviews'}</h1><p className={styles.intro}>{allView ? 'Find a review, check its status or read a previous record.' : employer ? 'This learner’s reviews and anything that needs your employer signature.' : 'Your next review and anything that needs your attention.'}</p></div>
       <div className={styles.headerLinks}>{allView ? listLink(false, <><ArrowLeft size={19} aria-hidden="true"/>Back to current review</>, styles.secondaryButton) : listLink(true, <><List size={19} aria-hidden="true"/>View all reviews ({sessions.length})</>, styles.secondaryButton)}</div>
     </header>
-    {sessions.length > 0 && <ProgrammeReviewTimeline label="Progress review" activeId={current?.session.id || null} onSelect={selectTimelineItem} items={overview.all.map(state => ({
+    {sessions.length > 0 && <ProgrammeReviewTimeline label={basePath === '/learner/reviews' ? 'Review' : 'Progress review'} activeId={current?.session.id || null} onSelect={selectTimelineItem} items={overview.all.map(state => ({
       id: state.session.id, title: titleOf(state.session), date: state.date,
       status: progressTimelineStatus(state, definitions),
     }))} />}

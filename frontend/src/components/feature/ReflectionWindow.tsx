@@ -224,6 +224,10 @@ export function ReflectionWindow({
   const recordingTimeoutRef = useRef<number | null>(null);
   const submissionInFlightRef = useRef(false);
 
+  const draftKey = learnerKind && learnerId && evidenceSectionRef
+    ? `reflection-draft:${learnerKind}:${learnerId}:${noun}:${evidenceSectionRef}` : null;
+  const [loadedDraftKey, setLoadedDraftKey] = useState<string | null>(null);
+
   const hasAuthoredKsbs = Array.isArray(autoKsbs) && autoKsbs.length > 0;
   // A component with no authored mapping falls back to the programme's KSBs:
   // the learner picks the ones this activity developed and must pick at least
@@ -370,7 +374,18 @@ export function ReflectionWindow({
       activityId: evidenceSectionRef,
     })
       .then(saved => {
-        if (cancelled || !saved) return;
+        if (cancelled) return;
+        setLoadedDraftKey(draftKey);
+        let localDraft = null;
+        try {
+          const raw = draftKey ? localStorage.getItem(draftKey) : null;
+          localDraft = raw ? JSON.parse(raw) : null;
+        } catch { /* Browser storage may be unavailable. */ }
+        if (localDraft && (!saved || saved.status === 'draft' || saved.status === '')) {
+          saved = { ...saved, ...localDraft, status: saved?.status || 'draft' };
+          if (TABS.some(item => item.id === localDraft.tab)) setTab(localDraft.tab);
+        }
+        if (!saved) return;
         setSubmissionStatus(saved.status || '');
         setCoachFeedback(saved.coachFeedback);
         setReflection(saved.learningReflection || '');
@@ -399,26 +414,49 @@ export function ReflectionWindow({
         }
       })
       .finally(() => {
-        if (!cancelled) setLoadingExisting(false);
+        if (!cancelled) {
+          setLoadingExisting(false);
+        }
       });
 
     return () => {
       cancelled = true;
     };
-  }, [evidenceSectionRef, learnerId, learnerKind, noun, plannedHours, inMinutes]);
+  }, [evidenceSectionRef, learnerId, learnerKind, noun, plannedHours, inMinutes, draftKey]);
+
+  // Persist each edit locally so leaving the activity does not lose progress.
+  // Files themselves are uploaded by the evidence flow; only uploaded names are stored.
+  useEffect(() => {
+    if (!draftKey || loadedDraftKey !== draftKey || loadingExisting || submissionStatus === 'accepted'
+      || submissionStatus === 'submitted_for_tutor_review') return;
+    setDraftSaved(false);
+    try {
+      localStorage.setItem(draftKey, JSON.stringify({
+        tab, learningReflection: reflection, ksbCodes: selectedKsbs, ksbExplanations,
+        confidenceBefore, confidenceAfter, applicationType, applicationText,
+        evidenceFiles: storedEvidenceFileNames, evidenceConsentConfirmed: coachVisibilityConfirmed,
+        selectedBenefits, benefitExplanation,
+        actualTimeHours: inMinutes && actualTime.trim() ? String(Number(actualTime) / 60) : actualTime,
+        completedDuringPaidHours: paidHours, dateCompleted, otjhConfirmed, signedDeclaration, qualityScore,
+      }));
+    } catch { /* Explicit server draft saving remains available. */ }
+  }, [draftKey, loadedDraftKey, loadingExisting, submissionStatus, tab, reflection, selectedKsbs,
+    ksbExplanations, confidenceBefore, confidenceAfter, applicationType, applicationText,
+    storedEvidenceFileNames, coachVisibilityConfirmed, selectedBenefits, benefitExplanation,
+    actualTime, inMinutes, paidHours, dateCompleted, otjhConfirmed, signedDeclaration, qualityScore]);
 
   const handleNext = () => {
     const nextTab = TABS[activeIndex + 1];
     if (nextTab) setTab(nextTab.id);
   };
 
-  const handleSubmit = async () => {
+  const handleSubmit = async (mode: 'draft' | 'submit' = 'submit') => {
     if (submissionInFlightRef.current) return;
     if (submissionLocked) {
       setReflectionSaveError('This reflection has already been accepted and can no longer be changed.');
       return;
     }
-    if (!canSubmit) {
+    if (mode === 'submit' && !canSubmit) {
       const firstIncomplete = TABS.find(item => !readiness[item.id]);
       if (firstIncomplete && firstIncomplete.id !== 'review') setTab(firstIncomplete.id);
       return;
@@ -453,7 +491,8 @@ export function ReflectionWindow({
     setReflectionSaving(true);
     setReflectionSaveError('');
     try {
-      await saveLearningReflectionSubmission({
+      const saved = await saveLearningReflectionSubmission({
+        submissionMode: mode,
         learnerKind,
         learnerId,
         learnerName,
@@ -483,7 +522,13 @@ export function ReflectionWindow({
         signedDeclaration,
         qualityScore,
       });
-      await onSubmit(result);
+      if (mode === 'draft') {
+        setDraftSaved(true);
+      } else {
+        setSubmissionStatus(saved.status || 'submitted_for_tutor_review');
+        try { if (draftKey) localStorage.removeItem(draftKey); } catch { /* Storage unavailable. */ }
+        await onSubmit(result);
+      }
     } catch (error) {
       setReflectionSaveError(error instanceof Error ? error.message : 'Could not save the reflection for tutor review.');
     } finally {
@@ -1265,15 +1310,15 @@ export function ReflectionWindow({
           ) : (
             <>
               <button
-                onClick={() => setDraftSaved(true)}
-                disabled={loadingExisting}
+                onClick={() => void handleSubmit('draft')}
+                disabled={loadingExisting || reflectionSaving || submitting || evidenceUploading}
                 className="rounded-xl border border-[#cbd5df] bg-[#f8fcff] px-5 py-2.5 text-sm font-medium text-[#142033] shadow-sm disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {draftSaved ? 'Draft saved' : 'Save draft'}
               </button>
               {tab === 'review' ? (
                 <button
-                  onClick={handleSubmit}
+                  onClick={() => void handleSubmit()}
                   disabled={submitting || reflectionSaving || loadingExisting || !canSubmit}
                   className="inline-flex items-center gap-2 rounded-xl bg-[#102d52] px-5 py-2.5 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:bg-[#91a0b3]"
                 >
