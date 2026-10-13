@@ -325,6 +325,57 @@ class AzureTransferTests(unittest.TestCase):
         worker.host, worker.emit = 'source.example', Mock()
         return worker, worker.store.get_blob_client.return_value
 
+    def test_source_probe_requires_a_strong_version_and_valid_signature(self):
+        session = Mock()
+        session.get.return_value = RangeDownloadTests.response(b'%PDF-small', 0, 1000)
+        result = m.source_file_header(session, 'https://source.example/file.pdf', 2000, 'application/pdf')
+        self.assertEqual(result['size'], 1000)
+        self.assertEqual(result['head'], b'%PDF-small')
+        session.get.return_value = RangeDownloadTests.response(b'%PDF-small', 0, 1000, etag='W/"weak"')
+        self.assertIsNone(m.source_file_header(session, 'https://source.example/file.pdf', 2000))
+        session.get.return_value = RangeDownloadTests.response(b'<html>login', 0, 1000)
+        with self.assertRaisesRegex(ValueError, 'invalid_file_content'):
+            m.source_file_header(session, 'https://source.example/file.pdf', 2000)
+
+    def test_conditional_copy_checks_version_size_mime_and_destination_signature(self):
+        import requests
+        from azure.core import MatchConditions
+        from azure.core.exceptions import ResourceNotFoundError
+        worker, blob = self.worker()
+        worker.requests, worker.args = requests, SimpleNamespace(max_mb=1)
+        source = {'head': b'%PDF-small', 'etag': '"version-one"', 'size': 1000, 'mime': 'application/pdf'}
+        def properties():
+            if not blob.upload_blob_from_url.called:
+                raise ResourceNotFoundError()
+            return SimpleNamespace(size=1000, metadata=blob.upload_blob_from_url.call_args.kwargs['metadata'],
+                                   content_settings=SimpleNamespace(content_type='application/pdf'))
+        blob.get_blob_properties.side_effect = properties
+        blob.download_blob.return_value.readall.return_value = source['head']
+        with patch.object(m, 'source_file_header', return_value=source):
+            result = worker.copy_public_file('attachment:9', 'https://source.example/wp-content/uploads/lesson.pdf', '', '')
+        self.assertEqual(blob.upload_blob_from_url.call_args.kwargs['source_etag'], source['etag'])
+        self.assertEqual(blob.upload_blob_from_url.call_args.kwargs['source_match_condition'], MatchConditions.IfNotModified)
+        self.assertFalse(blob.upload_blob_from_url.call_args.kwargs['overwrite'])
+        self.assertIsNone(result['sha256'])
+        self.assertTrue(result['source_version'])
+        blob.upload_blob.assert_not_called()
+        blob.download_blob.return_value.readall.return_value = b'wrong file'
+        with patch.object(m, 'source_file_header', return_value=source), self.assertRaisesRegex(ValueError, 'copied_signature_mismatch'):
+            worker.copy_public_file('attachment:9', 'https://source.example/wp-content/uploads/lesson.pdf', '', '')
+
+    def test_conditional_copy_does_not_accept_a_changed_source_version(self):
+        import requests
+        from azure.core.exceptions import ResourceModifiedError, ResourceNotFoundError
+        worker, blob = self.worker()
+        worker.requests, worker.args = requests, SimpleNamespace(max_mb=1)
+        source = {'head': b'%PDF-small', 'etag': '"version-one"', 'size': 1000, 'mime': 'application/pdf'}
+        blob.get_blob_properties.side_effect = ResourceNotFoundError()
+        blob.upload_blob_from_url.side_effect = ResourceModifiedError()
+        with patch.object(m, 'source_file_header', return_value=source):
+            self.assertIsNone(worker.copy_public_file('attachment:9', 'https://source.example/wp-content/uploads/lesson.pdf', '', ''))
+        self.assertEqual(worker.blobs, {})
+        blob.download_blob.assert_not_called()
+
     def test_server_copy_validates_source_bytes_and_never_overwrites(self):
         from azure.core.exceptions import ResourceNotFoundError
         worker, blob = self.worker()
