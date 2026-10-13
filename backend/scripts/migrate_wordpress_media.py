@@ -18,6 +18,7 @@ import json
 from pathlib import Path
 import re
 import sys
+import time
 from tempfile import TemporaryFile
 from threading import Lock, local
 from urllib.parse import parse_qs, quote, unquote, urljoin, urlsplit
@@ -99,6 +100,87 @@ def valid_signature(mime, data):
     if mime.startswith('image/'):
         return data.startswith((b'\x89PNG', b'\xff\xd8\xff', b'GIF8', b'RIFF', b'BM'))
     return mime in {'text/plain', 'text/csv', 'application/rtf'}
+
+
+def download_parts(session, url, output, max_bytes, expected_mime='', progress=None):
+    """Bounded, retryable ranges; never combine different versions of a file."""
+    import requests
+    offset, total, validator, digest, mime = 0, None, '', hashlib.sha256(), ''
+    block = 512 * 1024
+    while total is None or offset < total:
+        headers = {'Accept-Encoding': 'identity', 'Range': f'bytes={offset}-{offset + block - 1}'}
+        if validator:
+            headers['If-Range'] = validator
+        for attempt in range(3):
+            try:
+                with session.get(url, headers=headers, stream=True, allow_redirects=False, timeout=(10, 20)) as response:
+                    response.raise_for_status()
+                    current_mime = response.headers.get('Content-Type', '').split(';')[0].lower().strip()
+                    if current_mime == 'application/octet-stream' and expected_mime:
+                        current_mime = expected_mime
+                    if (expected_mime and current_mime != expected_mime) or (mime and mime != current_mime):
+                        raise ValueError('source_mime_mismatch')
+                    current_validator = response.headers.get('ETag') or response.headers.get('Last-Modified') or ''
+                    if validator and current_validator != validator:
+                        raise ValueError('source_changed_during_download')
+                    if response.status_code == 206:
+                        match = re.fullmatch(r'bytes ([0-9]+)-([0-9]+)/([0-9]+)', response.headers.get('Content-Range', ''))
+                        if not match:
+                            raise ValueError('invalid_content_range')
+                        start, end, length = map(int, match.groups())
+                        if start != offset or end < start or end >= length or end - start + 1 > block:
+                            raise ValueError('invalid_content_range')
+                        if total is not None and total != length:
+                            raise ValueError('source_changed_during_download')
+                        if length > max_bytes:
+                            raise ValueError('file_too_large')
+                        data = bytearray()
+                        for chunk in response.iter_content(65536):
+                            data.extend(chunk)
+                            if len(data) > end - start + 1:
+                                raise ValueError('invalid_content_range')
+                        if len(data) != end - start + 1:
+                            raise requests.exceptions.ChunkedEncodingError('Incomplete source range')
+                        total = length
+                    elif response.status_code == 200 and offset == 0:
+                        declared = response.headers.get('Content-Length')
+                        if declared and int(declared) > max_bytes:
+                            raise ValueError('file_too_large')
+                        # A source without ranges is still streamed to disk.
+                        output.seek(0)
+                        output.truncate()
+                        digest, size = hashlib.sha256(), 0
+                        for chunk in response.iter_content(256*1024):
+                            if not chunk:
+                                continue
+                            if size == 0 and not valid_signature(current_mime, chunk):
+                                raise ValueError('invalid_file_content')
+                            size += len(chunk)
+                            if size > max_bytes:
+                                raise ValueError('file_too_large')
+                            output.write(chunk)
+                            digest.update(chunk)
+                        if not size or (declared and size != int(declared)):
+                            raise requests.exceptions.ChunkedEncodingError('Incomplete source file')
+                        return current_mime, size, digest.hexdigest()
+                    else:
+                        raise ValueError('source_changed_or_redirected')
+                    if offset == 0 and not valid_signature(current_mime, data):
+                        raise ValueError('invalid_file_content')
+                    mime, validator = current_mime, current_validator
+                    output.write(data)
+                    digest.update(data)
+                    offset += len(data)
+                    if progress and (offset == total or offset % (32 * block) == 0):
+                        progress(offset, total)
+                    break
+            except (requests.ConnectionError, requests.Timeout, requests.exceptions.ChunkedEncodingError):
+                if attempt == 2:
+                    raise
+                time.sleep(attempt + 1)
+        else:
+            raise ValueError('incomplete_download')
+    return mime, offset, digest.hexdigest()
 
 
 class ReadingHTML(HTMLParser):
@@ -332,33 +414,10 @@ class Migrator:
             url = self.origin + quote(parsed.path, safe='/%') + ('?' + parsed.query if parsed.query else '')
             with TemporaryFile() as output, self.requests.Session() as session:
                 session.trust_env = False
-                with session.get(url, headers={'Accept-Encoding': 'identity'}, stream=True,
-                                 allow_redirects=False, timeout=(10, 60)) as response:
-                    response.raise_for_status()
-                    if response.status_code != 200:
-                        raise ValueError('source_redirect')
-                    mime = response.headers.get('Content-Type', '').split(';')[0].lower().strip()
-                    if mime == 'application/octet-stream' and expected_mime:
-                        mime = expected_mime
-                    if expected_mime and mime != expected_mime:
-                        raise ValueError('source_mime_mismatch')
-                    size, digest = 0, hashlib.sha256()
-                    for chunk in response.iter_content(256*1024):
-                        if not chunk:
-                            continue
-                        if size == 0 and not valid_signature(mime, chunk):
-                            raise ValueError('invalid_file_content')
-                        size += len(chunk)
-                        if size > self.args.max_mb*1024*1024:
-                            raise ValueError('file_too_large')
-                        digest.update(chunk)
-                        output.write(chunk)
-                    if not size:
-                        raise ValueError('empty_file')
-                    declared = response.headers.get('Content-Length')
-                    if declared and not response.headers.get('Content-Encoding') and int(declared) != size:
-                        raise ValueError('incomplete_download')
-                sha = digest.hexdigest()
+                self.emit(stage='source_download', source_key=key)
+                mime, size, sha = download_parts(session, url, output, self.args.max_mb*1024*1024,
+                    expected_mime, lambda done, total: self.emit(stage='download_progress', source_key=key,
+                                                              bytes_read=done, total_bytes=total))
                 filename = safe_filename(filename or parsed.path)
                 # Content-addressed names never overwrite an older migrated file.
                 folder = '_legacy_files/' + key.split(':')[1] if key.startswith('attachment:') else '_wordpress_files/' + sha
