@@ -1,4 +1,4 @@
-"""Protect the cohort-only internal APK against anonymous/staff/unassigned access."""
+"""Protect the assigned-course internal APK against anonymous/staff/unassigned access."""
 import tempfile,unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -17,7 +17,8 @@ class DownloadTests(unittest.TestCase):
         self.account.role='admin'
         self.assertEqual(base.mobile.download_android(self.request()).status_code,403)
 
-    def test_other_module_denied(self):
+    def test_unassigned_denied_even_with_stale_content(self):
+        self.plan.clear()
         self.detail['week']=[];self.detail['components']=[{'moduleId':'OTHER'}]
         self.assertEqual(base.mobile.download_android(self.request()).status_code,403)
 
@@ -34,6 +35,7 @@ class DownloadTests(unittest.TestCase):
             self.assertEqual(base.mobile.download_android(self.request()).status_code,503)
 
     def test_entitled_learner_gets_private_attachment(self):
+        self.plan[:] = [{"moduleId": "RISK-M01", "moduleTitle": "Risk"}]
         with tempfile.TemporaryDirectory(dir=Path(__file__).resolve().parent) as d:
             assert Path(d).resolve().is_relative_to(Path(__file__).resolve().parent)
             p=Path(d)/'test.apk';p.write_bytes(b'synthetic-apk-fixture')

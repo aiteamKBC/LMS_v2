@@ -1,4 +1,4 @@
-"""PMP mobile projections over saved canonical learner records; no persistence."""
+"""Mobile course projections over saved canonical learner records; no persistence."""
 from datetime import datetime, timedelta, timezone
 from math import isfinite
 from zoneinfo import ZoneInfo
@@ -28,9 +28,14 @@ def _scope(detail, module_id):
 
 
 def _row_component_ids(row, by_id, quizzes):
-    if row.get("kind") == "quiz":
-        return quizzes.get(str(row.get("quizId")), [])
     cid = str(row.get("componentId") or "")
+    if row.get("kind") == "quiz":
+        # The maintained projection can retain an exact component association
+        # after its quiz bank changes. Never credit a different course's slot
+        # merely because it now references the same quiz ID.
+        if cid:
+            return [cid] if cid in by_id else []
+        return quizzes.get(str(row.get("quizId")), [])
     return [cid] if cid in by_id else []
 
 

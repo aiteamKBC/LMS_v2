@@ -51,6 +51,7 @@ class Profile:
     objects = Mock()
 fixture_module("learner_api.models", EnrolmentUser=Source, LearnerProfile=Profile)
 fixture_module("learner_api.learner_detail", build_learner_detail=Mock())
+fixture_module("learner_api.learning_plan", effective_training_plan=Mock())
 rules_path = ROOT.parent / "learner_api" / "progress_rules.py"
 rules_spec = importlib.util.spec_from_file_location("learner_api.progress_rules", rules_path)
 rules = importlib.util.module_from_spec(rules_spec)
@@ -95,6 +96,11 @@ class MobileFacadeTests(unittest.TestCase):
         mobile.refusal_for.return_value = None
         self.cursor = MagicMock()
         self.cursor.fetchall.return_value = []
+        self.published_quiz_ids = {77}
+        self.cursor.fetchall.side_effect = lambda: (
+            [(qid,) for qid in self.published_quiz_ids]
+            if "SELECT q.id" in self.cursor.execute.call_args.args[0]
+            else self.cursor.fetchall.return_value)
         self.cursor.fetchone.return_value = None
         database = MagicMock()
         database.cursor.return_value.__enter__.return_value = self.cursor
@@ -116,6 +122,8 @@ class MobileFacadeTests(unittest.TestCase):
                        "quizAttempts": [], "videoProgress": [], "componentProgress": [],
                        "componentMarkingStatus": {}, "ksbs": [], "progressKsbCodes": []}
         mobile.build_learner_detail.return_value = self.detail
+        self.plan = [{"moduleId": mobile.PILOT_MODULE_ID, "moduleTitle": "PMP"}]
+        mobile.effective_training_plan.return_value = self.plan
         self.mode = "active_playback"
         quizzes._fetch_quiz.return_value = {"id": 77, "questions": [{"id": 10, "type": "multiple_choice", "answers": [{"id": 12}, {"id": 13}]}]}
         def verify(token, **kwargs):
@@ -199,11 +207,9 @@ class MobileFacadeTests(unittest.TestCase):
     def test_no_mechanical_narration_or_reading_html_in_catalogue(self):
         self.audio["audioUrl"] = None
         result = self.body(mobile.catalogue(self.request()))
-        component = result["components"][0]
-        self.assertNotIn("contentHtml", component)
-        self.assertEqual(component["mobileMode"], "unavailable")
-        self.assertFalse(component["mechanicalNarrationAllowed"])
-        self.assertEqual(component["componentId"], "PMP-AUDIO-1")
+        self.assertEqual([x["componentId"] for x in result["components"]], ["PMP-QUIZ-1"])
+        self.assertNotIn("contentHtml", json.dumps(result))
+        self.assertFalse(result["components"][0]["mechanicalNarrationAllowed"])
 
     def test_catalogue_scrubs_unexpected_nested_quiz_answer_payload(self):
         self.quiz_component["quizMeta"]["questions"] = [{"correctAnswer": "secret"}]
@@ -378,7 +384,7 @@ class MobileFacadeTests(unittest.TestCase):
         self.assertEqual(response.status_code, 409)
         quizzes.submit_quiz_attempt.assert_not_called()
 
-    def test_same_title_copied_module_is_never_the_pilot(self):
+    def test_same_title_unassigned_copy_does_not_gain_entitlement(self):
         other = {**self.audio, "componentId": "COPY-AUDIO", "moduleId": "PMP-COPIED-DELIVERY"}
         self.detail["components"].append(other)
         self.detail["week"].append({"moduleId": "PMP-COPIED-DELIVERY", "weekId": "COPY-W01", "module": "PMP"})
@@ -394,6 +400,7 @@ class MobileFacadeTests(unittest.TestCase):
         components.submit_component_progress.assert_not_called()
 
     def test_unassigned_module_returns_empty_without_query_or_implicit_assignment(self):
+        self.plan.clear()
         self.detail["components"] = [{**self.audio, "moduleId": "PMP-COPIED-DELIVERY"}]
         self.detail["week"] = [{"moduleId": "PMP-COPIED-DELIVERY", "weekId": "PMP-W01"}]
         data = self.body(mobile.catalogue(self.request()))
@@ -410,9 +417,9 @@ class MobileFacadeTests(unittest.TestCase):
 
     def test_presentation_uses_only_authorised_ids_and_same_week(self):
         self.cursor.fetchall.return_value = [
-            ("PMP-AUDIO-1", "PMP-W01", 12, 1, 2, "PMP/M1W01P02/main", ["READING-2"], True, {}, None, {}),
-            ("PMP-QUIZ-1", "WRONG-WEEK", 99, 14, 7, "wrong", [], True, {}, None, {}),
-            ("UNASSIGNED", "PMP-W01", 13, 1, 2, "wrong", [], True, {}, None, {})]
+            ("PMP-AUDIO-1", "PMP-W01", 12, 1, 2, "PMP/M1W01P02/main", ["READING-2"], True, {}, None, {}, mobile.PILOT_MODULE_ID, 1, 1),
+            ("PMP-QUIZ-1", "WRONG-WEEK", 99, 14, 7, "wrong", [], True, {}, None, {}, mobile.PILOT_MODULE_ID, 1, 1),
+            ("UNASSIGNED", "PMP-W01", 13, 1, 2, "wrong", [], True, {}, None, {}, mobile.PILOT_MODULE_ID, 1, 1)]
         data = self.body(mobile.catalogue(self.request()))
         item = data["components"][0]
         self.assertEqual((item["displayOrder"], item["teachingWeek"], item["pointNumber"]), (12, 1, 2))
@@ -421,7 +428,7 @@ class MobileFacadeTests(unittest.TestCase):
         self.assertEqual(item["transcriptPath"], mobile.BASE + "components/PMP-AUDIO-1/transcript/")
         self.assertNotIn("displayOrder", data["components"][1])
         self.assertNotIn("transcript", item)
-        self.assertEqual(self.cursor.execute.call_args.args[1], [mobile.PILOT_MODULE_ID, ["PMP-AUDIO-1", "PMP-QUIZ-1"]])
+        self.assertEqual(self.cursor.execute.call_args.args[1], [[mobile.PILOT_MODULE_ID], ["PMP-AUDIO-1", "PMP-QUIZ-1"]])
 
     def test_audio_transcript_uses_exact_entitled_module_week_and_gate(self):
         self.cursor.fetchone.return_value = ("Alice: A definition. George: An example.",)
@@ -433,12 +440,12 @@ class MobileFacadeTests(unittest.TestCase):
         self.cursor.execute.reset_mock()
         mobile.refusal_for.return_value = JsonResponse({"code": "programme_not_started"}, status=403)
         self.assertEqual(mobile.transcript(self.request(), "PMP-AUDIO-1").status_code, 403)
-        self.cursor.execute.assert_not_called()
+        self.assertFalse(any("transcript'" in call.args[0] for call in self.cursor.execute.call_args_list))
 
     def test_missing_unassigned_and_non_audio_transcripts_are_not_fabricated(self):
         self.assertEqual(mobile.transcript(self.request(), "UNKNOWN").status_code, 404)
         self.assertEqual(mobile.transcript(self.request(), "PMP-QUIZ-1").status_code, 404)
-        self.cursor.execute.assert_not_called()
+        self.assertFalse(any("transcript'" in call.args[0] for call in self.cursor.execute.call_args_list))
         self.assertEqual(mobile.transcript(self.request(), "PMP-AUDIO-1").status_code, 404)
         self.cursor.fetchone.return_value = ("  ",)
         self.assertEqual(mobile.transcript(self.request(), "PMP-AUDIO-1").status_code, 404)
@@ -521,9 +528,9 @@ class MobileFacadeTests(unittest.TestCase):
                   "source_content_type": "quiz", "parent_activity_id": "M01-W03-KNOWLEDGE",
                   "answerKey": "never expose"}
         self.cursor.fetchall.return_value = [
-            ("PMP-QUIZ-1", "PMP-W01", 12, None, None, None, None, False, json.dumps(legacy), None, {}),
+            ("PMP-QUIZ-1", "PMP-W01", 12, None, None, None, None, False, json.dumps(legacy), None, {}, mobile.PILOT_MODULE_ID, 3, 3),
             ("PMP-AUDIO-1", "PMP-W01", 13, 3, 2, "PMP/audio", [], True, legacy, None,
-             {"required": False, "optional": True, "countsTowardsRequiredCompletion": False})]
+             {"required": False, "optional": True, "countsTowardsRequiredCompletion": False}, mobile.PILOT_MODULE_ID, 3, 3)]
         data = self.body(mobile.catalogue(self.request()))
         audio, quiz = data["components"]
         self.assertFalse(audio["learningRoute"]["required"])
@@ -534,7 +541,7 @@ class MobileFacadeTests(unittest.TestCase):
         self.assertEqual(quiz["sourceContentType"], "quiz")
         self.assertNotIn("answerKey", json.dumps(data))
         self.cursor.fetchall.return_value = [
-            ("PMP-AUDIO-1", "PMP-W01", 1, None, None, None, None, False, "{bad", None, {})]
+            ("PMP-AUDIO-1", "PMP-W01", 1, None, None, None, None, False, "{bad", None, {}, mobile.PILOT_MODULE_ID, 1, 1)]
         self.assertNotIn("learningRoute", self.body(mobile.catalogue(self.request()))["components"][0])
 
     def test_programme_otjh_never_becomes_weekly_measured_seconds(self):
@@ -597,7 +604,7 @@ class MobileFacadeTests(unittest.TestCase):
         components.submit_component_progress.assert_not_called()
         videos.submit_video_progress.assert_not_called()
         quizzes.submit_quiz_attempt.assert_not_called()
-        self.assertEqual(mobile.progress(self.request()).status_code, 200)
+        self.assertEqual(mobile.progress(self.request()).status_code, 409)
 
     def test_profile_deactivation_during_detail_hydration_stops_writer(self):
         Profile.objects.filter.return_value.exists.side_effect = [True, False]
