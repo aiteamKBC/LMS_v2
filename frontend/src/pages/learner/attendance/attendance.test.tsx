@@ -483,14 +483,12 @@ describe('Attendance lecture workspace', () => {
     expect(destination.pathname).not.toContain('/monthly-logs/');
   });
 
-  it('requests manager approval and keeps Live Sessions effective while pending', async () => {
+  it('shows Live Sessions without a Lazy Mode control', async () => {
     mount();
-    fireEvent.click(await screen.findByRole('button', { name: 'Lazy Mode' }));
-    expect(await screen.findByText('Your request has been emailed to your manager for approval.')).toBeInTheDocument();
-    await waitFor(() => expect(screen.getByText(/Awaiting manager approval/)).toBeInTheDocument());
-    expect(payload.mode.mode).toBe('live');
-    expect(JSON.parse(String(posts[0].body))).toEqual({ mode: 'lazy' });
-    expect(screen.getByText('Absence reminders: paused')).toBeInTheDocument();
+    expect(await screen.findByText('Live Sessions')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Lazy Mode' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('switch', { name: 'Lazy Mode' })).not.toBeInTheDocument();
+    expect(posts).toHaveLength(0);
   });
 
   it('refreshes live source edits when the window regains focus', async () => {
