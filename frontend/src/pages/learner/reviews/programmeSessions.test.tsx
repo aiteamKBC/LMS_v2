@@ -11,6 +11,7 @@ import type { ImportedReview } from '@/api/reviewHistory';
 import { ToastProvider } from '@/hooks/useToast';
 import ProgressReviewPage, { ProgressReviewsListPage } from '../progress-reviews/page';
 import MonthlyCoachingPage, { MonthlyCoachingListPage } from '../monthly-coaching/page';
+import { CurriculumReviewPage, CurriculumReviewsListPage } from './curriculumReviews';
 
 vi.mock('@/components/feature/WorkspaceShell', () => ({ WorkspaceShell: ({ children }: { children: React.ReactNode }) => <>{children}</> }));
 vi.mock('@/pages/coach/progress-reviews/page', () => ({ buildProgressReviewSlidesDeck: vi.fn() }));
@@ -22,6 +23,8 @@ const cases = [
   { source: 'progress-review', path: 'progress-reviews', region: 'Reviews sessions', Page: ProgressReviewsListPage, Detail: ProgressReviewPage },
   { source: 'mcr', path: 'monthly-coaching', region: 'Monthly Coaching Meetings', Page: MonthlyCoachingListPage, Detail: MonthlyCoachingPage },
 ] as const;
+const reviewsCase = { source: 'review', path: 'reviews', region: 'Reviews sessions',
+  Page: CurriculumReviewsListPage, Detail: CurriculumReviewPage } as const;
 let events: LearnerCalendarEvent[];
 let calendarFails: boolean;
 let detailFails: boolean;
@@ -101,7 +104,7 @@ it('renders server-owned Native occurrences without requiring imported history',
   expect(within(region).getAllByRole('link', { name: 'View meeting' })[0]).toBeVisible();
 });
 
-it('keeps completed imported review history in all Reviews', async () => {
+it('keeps completed ordinary imported history in Reviews', async () => {
   detailActivityAvailable = true;
   historyReviews = [{
     id: 'review-1', aptemReviewId: 'A-1', name: 'Eligibility Review & FS Discussion',
@@ -112,12 +115,66 @@ it('keeps completed imported review history in all Reviews', async () => {
   events = [{ ...session('progress-review', 1, 'completed'), id: 'imported-review:A-900', eventKey: 'imported-review:A-900',
     reviewSource: 'aptem', reviewId: historyReviews[0].id, importedReview: historyReviews[0], title: historyReviews[0].name,
     date: historyReviews[0].plannedDate, targetDate: historyReviews[0].plannedDate }];
-  mount(cases[0]);
+  mount(reviewsCase);
 
   const region = await screen.findByRole('region', { name: 'Reviews sessions' });
   fireEvent.click(within(region).getByRole('button', { name: /^Past \(/ }));
   expect((await within(region).findAllByText('Eligibility Review & FS Discussion')).at(-1)).toBeVisible();
   expect(within(region).getByRole('button', { name: 'All (1)' })).toBeVisible();
+  expect(screen.getByRole('heading', { name: 'Review timeline' })).toBeVisible();
+});
+
+describe.each(['apprenticeship', 'commercial'])('%s imported review classification', kind => {
+  const types = ['Eligibility Review & FS Discussion', 'RPL and Experience', 'Progress Review',
+    'Progress Review (+ Skills Radar)', 'Monthly Coaching Meeting'];
+  function mixedReviews() {
+    return types.map((type, index) => ({ ...session(type === 'Monthly Coaching Meeting' ? 'mcr' : 'progress-review', index + 1, 'completed'),
+      id: `imported-review:A-${index}`, eventKey: `imported-review:A-${index}`, importedReviewType: type,
+      reviewSource: 'aptem' as const, title: type, reviewTypeCode: type === 'Monthly Coaching Meeting' ? 'mcm' : 'progress_review',
+      importedReview: { id: String(index), aptemReviewId: `A-${index}`, name: type, type,
+        reviewerName: 'Synthetic coach', plannedDate: '2026-10-31', plannedTime: null, completedDate: '2026-10-31',
+        status: 'completed', extractionStatus: 'complete', detailsAvailable: true,
+        sections: [{ id: 'answer', name: 'Recorded answers', order: 1, fields: [{ label: 'Outcome', value: 'Synthetic saved answer',
+          links: [{ text: 'Review evidence', url: 'https://example.invalid/evidence.pdf' }] }], tables: [], rawText: '' }] },
+    }));
+  }
+
+  it.each([reviewsCase, ...cases])('shows only the stored category in $path', async item => {
+    events = mixedReviews();
+    const original = JSON.stringify(events);
+    mount(item, `?kind=${kind}&learner=125`);
+    if (item.source === 'mcr') fireEvent.click(await screen.findByRole('tab', { name: /Past/ }));
+    await waitFor(() => {
+      const count = item.source === 'mcr' ? 1 : 2;
+      const links = item.source === 'mcr'
+        ? within(screen.getByRole('tabpanel')).getAllByRole('link', { name: 'View meeting' }).filter(link => link.hasAttribute('aria-label'))
+        : within(screen.getByRole('region', { name: 'All reviews' })).getAllByRole('link', { name: 'View review' });
+      expect(links).toHaveLength(count);
+      for (const link of links) {
+        const index = Number(decodeURIComponent(link.getAttribute('href') || '').match(/A-(\d+)/)?.[1]);
+        expect(index).toBeGreaterThanOrEqual(item.source === 'review' ? 0 : item.source === 'mcr' ? 4 : 2);
+        expect(index).toBeLessThanOrEqual(item.source === 'review' ? 1 : item.source === 'mcr' ? 4 : 3);
+        expect(link).toHaveAttribute('href', expect.stringContaining(`/learner/${item.path}/`));
+      }
+      expect(JSON.stringify(events)).toBe(original);
+    });
+  });
+
+  it('opens the ordinary saved review with its answers, attachments and PDF action', async () => {
+    events = mixedReviews();
+    mount(reviewsCase, `/imported-review%3AA-0?kind=${kind}&learner=125`);
+    expect(await screen.findByRole('heading', { name: types[0], level: 1 })).toBeVisible();
+    expect(screen.getByText('Synthetic saved answer')).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Download PDF' })).toBeEnabled();
+    fireEvent.click(screen.getByRole('button', { name: 'Review evidence' }));
+    expect(screen.getByRole('dialog', { name: 'Review evidence' })).toBeVisible();
+    expect(screen.getByTitle('Review evidence')).toHaveAttribute('src', 'https://example.invalid/evidence.pdf');
+    fireEvent.click(screen.getByRole('button', { name: 'Close attachment preview' }));
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Back to Reviews' })).toBeVisible();
+    expect(requests.some(url => url.includes('/review-history/') || url.includes('/review/'))).toBe(false);
+    expect(bookings).toEqual([]);
+  });
 });
 afterEach(() => {
   vi.useRealTimers();
@@ -130,7 +187,7 @@ function SwitchLearner({ path }: { path: string }) {
   const navigate = useNavigate();
   return <button onClick={() => navigate(`/learner/${path}?kind=commercial&learner=126`)}>Switch learner</button>;
 }
-function mount(item: typeof cases[number], suffix = '?kind=apprenticeship&learner=125', view: 'all' | 'current' = 'all') {
+function mount(item: typeof cases[number] | typeof reviewsCase, suffix = '?kind=apprenticeship&learner=125', view: 'all' | 'current' = 'all') {
   const allView = view === 'all' && !suffix.startsWith('/');
   const target = `/learner/${item.path}${suffix}${allView ? `${suffix.includes('?') ? '&' : '?'}view=all` : ''}`;
   return render(<React.StrictMode><ToastProvider><MemoryRouter initialEntries={[target]}>
