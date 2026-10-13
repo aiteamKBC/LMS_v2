@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useCaseFileSession } from '@/features/coach/case-file/hooks/CaseFileSession';
 import type { LearnerKind } from '@/api/learnerDetail';
-import { overviewSchedule, overviewWeek } from '@/api/learnerOverview';
-import type { TrainingPlanContract } from '@/api/trainingPlanDashboard';
-import { getLogSummary, type LogSummary } from '@/features/monthly-logs/api';
+import { overviewSchedule, overviewWeek, type OverviewWeek } from '@/api/learnerOverview';
+import type { TrainingPlanContract, TrainingPlanDashboard } from '@/api/trainingPlanDashboard';
+import { getLogSummary, type LogSummary, type MonthlyLogHours } from '@/features/monthly-logs/api';
 import { useLiveLearnerRead } from '@/hooks/useLiveLearnerRead';
 
 function hours(value: number | string | null | undefined) {
@@ -47,12 +47,36 @@ export function contractPlannedOtjh(contract: TrainingPlanContract | undefined) 
   if (!months.length || months.some(month => month.planned == null || !Number.isFinite(month.planned) || month.planned < 0)) return null;
   return Math.round(months.reduce((total, month) => total + month.planned!, 0) * 10_000) / 10_000;
 }
-export function useDashboardPlan(kind?: LearnerKind | null, id?: string | null, enabled = true, caseFileSection = 'overview') {
+
+type SourceRead<T> = { read: (kind: LearnerKind, id: string, signal?: AbortSignal, fresh?: boolean) => Promise<T>;
+  peek: (kind: LearnerKind, id: string) => T | undefined };
+
+/** Where the dashboard reads come from. Callers outside the learner's own session (the employer portal) supply their own. */
+export type DashboardPlanSources = {
+  week: SourceRead<OverviewWeek>;
+  schedule: SourceRead<TrainingPlanDashboard>;
+  logSummary: (kind: LearnerKind, id: string, signal?: AbortSignal, fresh?: boolean) => Promise<MonthlyLogHours>;
+};
+
+const LEARNER_SOURCES: DashboardPlanSources = {
+  week: overviewWeek,
+  schedule: overviewSchedule,
+  logSummary: (_kind, id, signal) => getLogSummary(id, signal, 'learner'),
+};
+
+/**
+ * Explicit `sources` win; otherwise a coach case-file session supplies the reads,
+ * falling back to the learner's own endpoints. `sources` must be stable across
+ * renders (module constant or memoised).
+ */
+export function useDashboardPlan(kind?: LearnerKind | null, id?: string | null, enabled = true, caseFileSection = 'overview',
+  sources?: DashboardPlanSources) {
   const session = useCaseFileSession();
-  const readers = useMemo(() => session ? {
-    week: { read: (_kind: LearnerKind, _id: string, signal?: AbortSignal, fresh = false) => session.read<Awaited<ReturnType<typeof overviewWeek.read>>>(caseFileSection, { resource: 'week' }, { signal, refresh: fresh }), peek: () => undefined },
-    schedule: { read: (_kind: LearnerKind, _id: string, signal?: AbortSignal, fresh = false) => session.read<Awaited<ReturnType<typeof overviewSchedule.read>>>(caseFileSection, { resource: 'schedule' }, { signal, refresh: fresh }), peek: () => undefined },
-  } : { week: overviewWeek, schedule: overviewSchedule }, [session, caseFileSection]);
+  const readers = useMemo<DashboardPlanSources>(() => sources ?? (session ? {
+    week: { read: (_kind, _id, signal, fresh = false) => session.read<OverviewWeek>(caseFileSection, { resource: 'week' }, { signal, refresh: fresh }), peek: () => undefined },
+    schedule: { read: (_kind, _id, signal, fresh = false) => session.read<TrainingPlanDashboard>(caseFileSection, { resource: 'schedule' }, { signal, refresh: fresh }), peek: () => undefined },
+    logSummary: (_kind, _id, signal, fresh = false) => session.read<LogSummary>(caseFileSection, { resource: 'hours' }, { signal, refresh: fresh }),
+  } : LEARNER_SOURCES), [sources, session, caseFileSection]);
   const active = enabled && !!kind && !!id;
   const week = useLiveLearnerRead(kind, id, active, readers.week.read, readers.week.peek);
   const schedule = useLiveLearnerRead(kind, id, active, readers.schedule.read, readers.schedule.peek);
@@ -61,7 +85,7 @@ export function useDashboardPlan(kind?: LearnerKind | null, id?: string | null, 
   const [ssot, setSsot] = useState<{ identity: string; data: ReturnType<typeof monthlyLogOtjh>; error: string } | null>(null);
   const retryContract = useCallback(() => setAttempt(value => value + 1), []);
   useEffect(() => {
-    if (!active || !id) {
+    if (!active || !kind || !id) {
       setSsot(null);
       return;
     }
@@ -75,7 +99,7 @@ export function useDashboardPlan(kind?: LearnerKind | null, id?: string | null, 
     // The shared reader owns the request deadline and retry. A shorter
     // dashboard timer would discard a successful response after a cold connection.
     const controller = new AbortController();
-    void (session ? session.read<LogSummary>(caseFileSection, { resource: 'hours' }, { signal: controller.signal, refresh: attempt > 0 }) : getLogSummary(id, controller.signal, 'learner')).then(summary => {
+    void readers.logSummary(kind, id, controller.signal, attempt > 0).then(summary => {
       if (!controller.signal.aborted) setSsot({ identity, data: monthlyLogOtjh(summary), error: '' });
     }).catch((error: unknown) => {
       if (!controller.signal.aborted) setSsot({ identity, data: { months: {}, plannedEndDate: null,
@@ -83,7 +107,7 @@ export function useDashboardPlan(kind?: LearnerKind | null, id?: string | null, 
         error: error instanceof Error ? error.message : 'SSOT learning hours could not be loaded.' });
     });
     return () => { controller.abort(); };
-  }, [active, id, identity, attempt, session, caseFileSection]);
+  }, [active, kind, id, identity, attempt, readers]);
   const refresh = () => { week.refresh(); schedule.refresh(); retryContract(); };
   const ssotData = ssot?.identity === identity ? ssot.data : { months: {}, plannedEndDate: null,
     acceptedTotal: null, plannedTotal: null };

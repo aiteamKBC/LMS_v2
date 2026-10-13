@@ -21,9 +21,10 @@ vi.mock('@/hooks/useLearnerNavGate', () => ({
 vi.mock('../GlobalSearch', () => ({ GlobalSearch: () => null }));
 vi.mock('../CoachViewAsBar', () => ({ CoachViewAsBar: () => null }));
 vi.mock('../Header', () => ({
-  Header: ({ onToggleMobileSidebar }: { onToggleMobileSidebar: () => void }) => (
-    <button onClick={onToggleMobileSidebar}>Open mobile navigation</button>
+  Header: ({ onToggleMobileSidebar, sidebarSignOut, appearance }: { onToggleMobileSidebar: () => void; sidebarSignOut?: boolean; appearance?: string }) => (
+    <button onClick={onToggleMobileSidebar} data-sidebar-signout={sidebarSignOut ? 'true' : undefined} data-appearance={appearance}>Open mobile navigation</button>
   ),
+  SignOutConfirmModal: () => <div role="dialog" aria-label="Confirm sign out" />,
 }));
 
 function CurrentRoute() {
@@ -170,6 +171,34 @@ it('keeps the learner drawer keyboard accessible and restores focus on close', a
   expect(document.body.style.overflow).toBe('');
   expect(opener).toHaveFocus();
   expect(sidebar).toBeInTheDocument();
+});
+
+it('gives a workspace borrowing the learner look one working Sign out', () => {
+  const { container } = render(
+    <MemoryRouter initialEntries={['/employers/8']}>
+      <WorkspaceShell role="employer" appearance="learner" roleLabel="Employer" pageTitle="Learners"
+        navItems={[{ id: 'employer-portal-learners', label: 'My learners', icon: 'ri-group-line', href: '/employers/8' }]}>
+        <CurrentRoute />
+      </WorkspaceShell>
+    </MemoryRouter>,
+  );
+  // The sidebar's own Sign out replaces the floating button other workspaces get.
+  expect(screen.getByRole('button', { name: 'Open mobile navigation' }))
+    .toHaveAttribute('data-sidebar-signout', 'true');
+  expect(screen.getByRole('button', { name: 'Open mobile navigation' }))
+    .toHaveAttribute('data-appearance', 'learner');
+  const sidebar = screen.getByRole('complementary', { name: 'Employer sidebar' });
+  const shell = container.querySelector<HTMLElement>('.workspace-shell')!;
+  expect(sidebar.style.width).toBe('240px');
+  expect(shell.style.getPropertyValue('--kbc-sidebar-width')).toBe('240px');
+
+  fireEvent.click(within(sidebar).getByRole('button', { name: 'Collapse learner navigation' }));
+  expect(sidebar.style.width).toBe('64px');
+  expect(shell.style.getPropertyValue('--kbc-sidebar-width')).toBe('64px');
+  expect(localStorage.getItem('kbc_learner_sidebar_collapsed')).toBe('true');
+
+  fireEvent.click(within(sidebar).getByRole('button', { name: 'Sign out' }));
+  expect(screen.getByRole('dialog', { name: 'Confirm sign out' })).toBeInTheDocument();
 });
 
 it.each(['/users', '/users/42', '/users/42/wizard/introduction', '/employers/8', '/employers/8/learner/commercial/42'])(

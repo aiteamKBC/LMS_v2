@@ -43,6 +43,7 @@ throughout. The display TITLE also stays live, as it did before this policy.
 from __future__ import annotations
 
 import logging
+from collections import defaultdict
 from copy import deepcopy
 from datetime import date, datetime, timedelta
 from decimal import Decimal
@@ -1422,6 +1423,137 @@ def get_review_instance_signatures(instance_id):
     return {row.get('role'): row for row in rows}
 
 
+def _fetch_rows_in(table, column, values, *, where='', order_by=''):
+    """`select * ... where column in (values)` -- one query for many keys."""
+    values = list(dict.fromkeys(values))
+    if not values:
+        return []
+    placeholders = ', '.join(['%s'] * len(values))
+    extra = f' and {where}' if where else ''
+    order = f' order by {order_by}' if order_by else ''
+    return curriculum_views.fetch_all(
+        f'select * from {curriculum_views.table_name(table)} where {column} in ({placeholders}){extra}{order}',
+        values,
+    )
+
+
+def list_review_instances_for_learners(learner_ids):
+    """{str(learner_id): [instance rows by target_date]} in one query --
+    list_review_instances_for_learner for many learners at once."""
+    grouped = {}
+    for row in _fetch_rows_in(REVIEW_INSTANCES_TABLE, 'learner_id', learner_ids, order_by='target_date'):
+        grouped.setdefault(str(row.get('learner_id')), []).append(row)
+    return grouped
+
+
+def _rows_by_instance(table, instance_ids, key):
+    grouped = {}
+    for row in _fetch_rows_in(table, 'review_instance_id', instance_ids):
+        grouped.setdefault(row.get('review_instance_id'), {})[row.get(key)] = row
+    return grouped
+
+
+def review_instance_signing_definitions(instance_rows):
+    """{instance id: the signing-relevant slice of review_instance_form_definition}.
+
+    Lists that show many Reviews only need who must sign, who has, and what the
+    Review is called -- not answers, overrides, RAG history or PDF state. The
+    full definition costs about eight queries per instance; this costs a fixed
+    handful for any number of instances. The values it does return are computed
+    exactly as review_instance_form_definition computes them.
+    """
+    instance_rows = [row for row in instance_rows if row.get('id')]
+    if not instance_rows:
+        return {}
+    instance_ids = [row.get('id') for row in instance_rows]
+    answers = _rows_by_instance(REVIEW_INSTANCE_ANSWERS_TABLE, instance_ids, 'field_id')
+    signatures = _rows_by_instance(REVIEW_INSTANCE_SIGNATURES_TABLE, instance_ids, 'role')
+    templates = {
+        row.get('id'): row
+        for row in _fetch_rows_in(
+            reviews.REVIEW_TEMPLATES_TABLE, 'id', [row.get('review_template_id') for row in instance_rows],
+        )
+    }
+    type_index = review_types.review_type_index()
+
+    # Only an editable Review nobody has signed follows the live, non-deleted
+    # form (see effective_review_definition_snapshot), so only those templates'
+    # current sections are read -- for all of them in two queries, not two each.
+    def follows_live_form(instance_row):
+        template = templates.get(instance_row.get('review_template_id'))
+        return (
+            instance_row.get('status') in EDITABLE_DEFINITION_STATUSES
+            and not any(row.get('signed_at') for row in signatures.get(instance_row.get('id'), {}).values())
+            and template is not None and not template.get('deleted_at')
+        )
+
+    live_template_ids = [row.get('review_template_id') for row in instance_rows if follows_live_form(row)]
+    section_rows, field_rows = defaultdict(list), defaultdict(list)
+    for row in _fetch_rows_in(reviews.REVIEW_SECTIONS_TABLE, 'review_id', live_template_ids,
+                              where='deleted_at is null', order_by='display_order asc'):
+        section_rows[row.get('review_id')].append(row)
+    for row in _fetch_rows_in(reviews.REVIEW_FIELDS_TABLE, 'review_id', live_template_ids,
+                              order_by='display_order asc'):
+        field_rows[row.get('review_id')].append(row)
+    live_snapshots = {
+        template_id: json_safe(reviews.review_template_detail_payload(
+            templates[template_id],
+            reviews.assemble_review_sections(
+                template_id, section_rows=section_rows[template_id], field_rows=field_rows[template_id],
+            ),
+            type_index=type_index,
+        ))
+        for template_id in dict.fromkeys(live_template_ids)
+    }
+
+    definitions = {}
+    for instance_row in instance_rows:
+        instance_id = instance_row.get('id')
+        answers_by_field = answers.get(instance_id, {})
+        signatures_by_role = signatures.get(instance_id, {})
+        stored_snapshot = curriculum_views.as_json_value(instance_row.get('definition_snapshot'), {})
+        live_template = templates.get(instance_row.get('review_template_id'))
+        snapshot = effective_review_definition_snapshot(
+            instance_row,
+            snapshot=stored_snapshot,
+            live_snapshot=live_snapshots.get(instance_row.get('review_template_id'), {}),
+            answers_by_field=answers_by_field,
+            signatures_by_role=signatures_by_role,
+        )
+        type_row = type_index.get((live_template or {}).get('review_type_id')) if live_template else None
+        definitions[instance_id] = {
+            'template': {
+                'name': (live_template or {}).get('name') or stored_snapshot.get('name') or '',
+                'reviewTypeCode': snapshot.get('reviewTypeCode') or (type_row or {}).get('code'),
+                'visibleTo': snapshot.get('visibleTo', {}),
+            },
+            'sections': snapshot.get('sections', []),
+            'signatures': _signature_payload(snapshot, signatures_by_role),
+        }
+    return definitions
+
+
+def _signature_payload(snapshot, signatures_by_role):
+    required_roles = set(required_signature_roles(snapshot.get('signatures', {})))
+    return {
+        role: {
+            'required': role in required_roles,
+            'signed': bool(signatures_by_role.get(role, {}).get('signed_at')),
+            'signedBy': signatures_by_role.get(role, {}).get('signed_by'),
+            'signedName': signatures_by_role.get(role, {}).get('signed_name'),
+            'signedAt': curriculum_views.format_created_at(signatures_by_role.get(role, {}).get('signed_at')),
+            # Return the recorded mark as well as the sign-off metadata.
+            # Old sign-offs may contain a non-image acknowledgement; clients
+            # must only render supported image data URIs, never infer a mark.
+            'signature': (
+                signatures_by_role.get(role, {}).get('signature') or None
+                if signatures_by_role.get(role, {}).get('signed_at') else None
+            ),
+        }
+        for role in SIGNATURE_ROLES
+    }
+
+
 def _flatten_snapshot_fields(sections):
     """Every field in a definition_snapshot's sections tree, conditional
     children included -- unlike reviews.flatten_fields (which is a
@@ -1682,7 +1814,6 @@ def review_instance_form_definition(instance_row):
         answers_by_field=answers_by_field,
         signatures_by_role=signatures_by_role,
     )
-    required_roles = set(required_signature_roles(snapshot.get('signatures', {})))
 
     def _attach_answers(fields):
         decorated = []
@@ -1731,23 +1862,7 @@ def review_instance_form_definition(instance_row):
             'allowEditingPriorDays': snapshot.get('allowEditingPriorDays', 0),
         },
         'sections': sections,
-        'signatures': {
-            role: {
-                'required': role in required_roles,
-                'signed': bool(signatures_by_role.get(role, {}).get('signed_at')),
-                'signedBy': signatures_by_role.get(role, {}).get('signed_by'),
-                'signedName': signatures_by_role.get(role, {}).get('signed_name'),
-                'signedAt': curriculum_views.format_created_at(signatures_by_role.get(role, {}).get('signed_at')),
-                # Return the recorded mark as well as the sign-off metadata.
-                # Old sign-offs may contain a non-image acknowledgement; clients
-                # must only render supported image data URIs, never infer a mark.
-                'signature': (
-                    signatures_by_role.get(role, {}).get('signature') or None
-                    if signatures_by_role.get(role, {}).get('signed_at') else None
-                ),
-            }
-            for role in SIGNATURE_ROLES
-        },
+        'signatures': _signature_payload(snapshot, signatures_by_role),
         # None for the overwhelming majority of instances -- only ever set
         # for one that was moved to in-progress by an authorised manual
         # override rather than real Teams attendance (Phase 5).

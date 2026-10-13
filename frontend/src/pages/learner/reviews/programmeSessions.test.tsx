@@ -43,6 +43,9 @@ function session(source: string, sequence = 1, status = 'not-scheduled'): Learne
 }
 
 beforeEach(() => {
+  // Booking dates in these fixtures are relative to this server-provided day.
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime(new Date('2026-09-14T09:00:00Z'));
   clearAllCachedResources();
   rememberSignedInLearner(undefined, undefined);
   localStorage.clear(); rememberLearner('commercial', '19');

@@ -20,9 +20,11 @@ enrolment_api/documents.py.
 CSRF is exempted for the same reason as the rest of learner_api: an internal
 same-origin dev API behind the Vite proxy.
 """
+import json
 import logging
 
 from django.db import DatabaseError
+from django.db.models import JSONField
 from django.core.exceptions import ValidationError
 from django.http import JsonResponse
 from django.utils import timezone
@@ -33,7 +35,7 @@ from login.permissions import employer_or_staff
 from .learner_detail import SOURCE_MODELS
 from .identity import learner_profile_for_source
 from .mappers import _s, to_employer_row
-from .models import Employer, EnrolmentReview
+from .models import Employer, EnrolmentReview, LearnerProfile
 from .review_form import (
     MAX_SIGNATURE_CHARS,
     _lookup as _lookup_enrolment_review,
@@ -63,30 +65,89 @@ def _learner_kind(learner):
     return "commercial" if _s(getattr(learner, "learner_type", "")) == "commercial" else "apprenticeship"
 
 
-def _review_signing_rows(kind, learner_id, *, employer_only=True):
-    """This learner's reviews as the employer sees them.
+def _review_signing_rows(kind, learner_id, *, employer_only=True, learner=None):
+    """One learner's reviews as the employer sees them.
+
+    `learner` is their Created_users row when the caller already holds it, so
+    it is not read a second time. See _review_signing_rows_for.
+    """
+    if learner is None:
+        source_model = SOURCE_MODELS.get(kind)
+        if source_model is not None:
+            try:
+                learner = source_model.all_learners.get(pk=learner_id)
+            except (source_model.DoesNotExist, DatabaseError):
+                learner = None
+    rows = _review_signing_rows_for([(kind, learner_id, learner)], employer_only=employer_only)
+    return rows[(kind, learner_id)]
+
+
+def _active_profile_ids(learners):
+    """{learner_id: active LearnerProfile pk}, read in one query.
+
+    learner_profile_for_source resolves one learner at a time; this does the
+    enrolment_id match -- the real link -- for all of them at once, and falls
+    back to it (email matching, self-healing) only for the ones it missed.
+    """
+    sources = {learner_id: source for _kind, learner_id, source in learners if source is not None}
+    if not sources:
+        return {}
+    found = {}
+    try:
+        # Lowest pk first: the same profile .first() picks for one learner.
+        for profile in LearnerProfile.objects.filter(
+            enrolment_id__in=list(sources), lifecycle_status="active",
+        ).order_by("pk"):
+            found.setdefault(profile.enrolment_id, profile.pk)
+        for learner_id, source in sources.items():
+            if learner_id in found:
+                continue
+            profile = learner_profile_for_source(source, learner_id, active_only=True)
+            if profile is not None:
+                found[learner_id] = profile.pk
+    except DatabaseError:
+        logger.exception("_active_profile_ids: lookup failed for %s", list(sources))
+    return found
+
+
+def _review_signing_rows_for(learners, *, employer_only=True):
+    """{(kind, learner_id): reviews} for many learners in a fixed number of queries.
+
+    `learners` is (kind, learner_id, Created_users row or None) per learner.
+    Asking per learner cost ~30 round trips each, which made an employer's
+    landing page take minutes; every lookup here covers all of them at once.
 
     `employer_only` keeps the list to reviews that actually want an employer
     signature — the employer has no business being shown the RPL review.
     """
+    keys = [(kind, learner_id) for kind, learner_id, _source in learners]
+    rows_by_learner = {key: [] for key in keys}
+    if not keys:
+        return rows_by_learner
+    learner_ids = list(dict.fromkeys(learner_id for _kind, learner_id in keys))
+
     try:
         # A cancelled booking's review belongs to a meeting that is not
         # happening -- the learner re-books, and that new review is the one to
         # sign. Same rule as the board's and the coach's review documents.
-        reviews = EnrolmentReview.objects.filter(
-            learner_kind=kind, learner_id=learner_id
-        ).exclude(status=EnrolmentReview.STATUS_CANCELLED).order_by("scheduled_date", "id")
+        reviews = list(
+            EnrolmentReview.objects.filter(learner_id__in=learner_ids)
+            .exclude(status=EnrolmentReview.STATUS_CANCELLED)
+            .order_by("scheduled_date", "id")
+        )
     except DatabaseError:
-        logger.exception("_review_signing_rows: lookup failed for %s/%s", kind, learner_id)
-        return []
+        logger.exception("_review_signing_rows_for: lookup failed for %s", keys)
+        return rows_by_learner
 
-    rows = []
     for review in reviews:
+        key = (review.learner_kind, review.learner_id)
+        if key not in rows_by_learner:
+            continue
         required = employer_signature_required(review)
         if employer_only and not required:
             continue
         signed = bool(_s(review.employer_signature))
-        rows.append({
+        rows_by_learner[key].append({
             "kind": "review",
             "eventKey": review.event_key,
             "reviewType": _s(review.review_type),
@@ -105,47 +166,64 @@ def _review_signing_rows(kind, learner_id, *, employer_only=True):
             "learnerSigned": bool(_s(review.learner_signature)),
             "adminSigned": bool(_s(review.admin_signature)),
         })
+
     # Curriculum instances are the canonical review records. Keep them in the
     # existing employer queue shape while the old EnrolmentReview records drain.
     # Instances are normally keyed by the internal LearnerProfile id, while
     # this portal is addressed by the source enrolment id. Read both identities
     # so a valid review cannot disappear from the employer queue.
-    instance_learner_ids = [str(learner_id)]
-    source_model = SOURCE_MODELS.get(kind)
-    if source_model is not None:
-        try:
-            source_learner = source_model.all_learners.get(pk=learner_id)
-            profile = learner_profile_for_source(source_learner, learner_id, active_only=True)
-            if profile is not None and str(profile.pk) not in instance_learner_ids:
-                instance_learner_ids.append(str(profile.pk))
-        except (source_model.DoesNotExist, DatabaseError):
-            pass
-    instance_rows = []
-    seen_instance_ids = set()
-    for instance_learner_id in instance_learner_ids:
-        try:
-            candidates = review_instances.list_review_instances_for_learner(instance_learner_id)
-        except DatabaseError:
-            candidates = []
-        for instance in candidates:
-            instance_id = _s(instance.get('id'))
-            if instance_id and instance_id in seen_instance_ids:
+    profile_ids = _active_profile_ids(learners)
+    identity_ids = {}
+    for kind, learner_id in keys:
+        ids = [str(learner_id)]
+        profile_id = profile_ids.get(learner_id)
+        if profile_id is not None and str(profile_id) not in ids:
+            ids.append(str(profile_id))
+        identity_ids[(kind, learner_id)] = ids
+    all_identity_ids = list(dict.fromkeys(i for ids in identity_ids.values() for i in ids))
+
+    try:
+        instances_by_identity = review_instances.list_review_instances_for_learners(all_identity_ids)
+    except DatabaseError:
+        instances_by_identity = {}
+    instances_by_learner = {}
+    unique_instances = {}
+    for key, ids in identity_ids.items():
+        instance_rows = []
+        seen_instance_ids = set()
+        for instance_learner_id in ids:
+            for instance in instances_by_identity.get(instance_learner_id, []):
+                instance_id = _s(instance.get('id'))
+                if instance_id and instance_id in seen_instance_ids:
+                    continue
+                if instance_id:
+                    seen_instance_ids.add(instance_id)
+                instance_rows.append(instance)
+                unique_instances.setdefault(instance.get('id'), instance)
+        instances_by_learner[key] = instance_rows
+    definitions = review_instances.review_instance_signing_definitions(list(unique_instances.values()))
+
+    wanted = []
+    for key, instance_rows in instances_by_learner.items():
+        for instance in instance_rows:
+            definition = definitions.get(instance.get('id'))
+            if definition is None:
                 continue
-            if instance_id:
-                seen_instance_ids.add(instance_id)
-            instance_rows.append(instance)
-    for instance in instance_rows:
-        definition = review_instances.review_instance_form_definition(instance)
-        if employer_only and not definition['template']['visibleTo'].get('employer', False):
-            continue
-        employer_state = definition['signatures'].get('employer', {})
-        if not employer_state.get('required'):
-            continue
+            if employer_only and not definition['template']['visibleTo'].get('employer', False):
+                continue
+            if not definition['signatures'].get('employer', {}).get('required'):
+                continue
+            wanted.append((key, instance, definition))
+    calendar_ids = {instance.get('calendar_event_id') for _key, instance, _d in wanted if instance.get('calendar_event_id')}
+    event_keys = dict(
+        CoachCalendarEvent.objects.filter(pk__in=calendar_ids).values_list("pk", "event_key")
+    ) if calendar_ids else {}
+    for key, instance, definition in wanted:
         signatures = definition['signatures']
-        calendar_record = CoachCalendarEvent.objects.filter(pk=instance.get('calendar_event_id')).first() if instance.get('calendar_event_id') else None
-        rows.append({
+        employer_state = signatures.get('employer', {})
+        rows_by_learner[key].append({
             "kind": "review",
-            "eventKey": _s(getattr(calendar_record, 'event_key', '')) or _s(instance.get('id')),
+            "eventKey": _s(event_keys.get(instance.get('calendar_event_id'), '')) or _s(instance.get('id')),
             "reviewInstanceId": _s(instance.get('id')),
             "reviewType": _s(definition['template'].get('reviewTypeCode')) or 'review',
             "label": _s(definition['template'].get('name')) or 'Review',
@@ -160,58 +238,54 @@ def _review_signing_rows(kind, learner_id, *, employer_only=True):
             "learnerSigned": bool(signatures.get('participant', {}).get('signed')),
             "adminSigned": bool(signatures.get('advisor', {}).get('signed')),
         })
+
     # Imported Aptem continuations have their own overlay and signature store.
-    # Only this learner's profile ids are queried; native review rows above
+    # Only these learners' profile ids are queried; native review rows above
     # keep their existing behavior and document identity.
-    for overlay in ImportedReviewInstance.objects.select_related("migrated_template").filter(
-        learner_id__in=[int(value) for value in instance_learner_ids],
-        source_review_id__isnull=False,
-        status__in=[ImportedReviewInstance.STATUS_AWAITING_SIGNATURE, ImportedReviewInstance.STATUS_COMPLETED],
-    ):
-        if not overlay.migrated_template_id or overlay.migrated_template.review_family != "PR":
-            continue
-        signatures = signature_states(overlay)
-        employer_state = signatures["employer"]
-        rows.append({
-            "kind": "review", "eventKey": overlay.event_key,
-            "reviewInstanceId": overlay.event_key, "migratedForm": True,
-            "reviewType": "aptem_progress_review",
-            "label": overlay.template_snapshot.get("name") or "Migrated Progress Review",
-            "scheduledDate": "", "signable": overlay.status == ImportedReviewInstance.STATUS_AWAITING_SIGNATURE,
-            "completed": overlay.status == ImportedReviewInstance.STATUS_COMPLETED,
-            "sectionsTotal": len(overlay.template_snapshot.get("sections") or []),
-            "employerSignatureRequired": True,
-            "signed": employer_state["signed"],
-            "signedName": employer_state["signedName"] or "",
-            "signedAt": employer_state["signedAt"],
-            "learnerSigned": signatures["participant"]["signed"],
-            "adminSigned": signatures["advisor"]["signed"],
-        })
-    return rows
+    overlays = [
+        overlay
+        for overlay in ImportedReviewInstance.objects.select_related("migrated_template")
+        .prefetch_related("migrated_signatures")
+        .filter(
+            learner_id__in=[int(value) for value in all_identity_ids],
+            source_review_id__isnull=False,
+            status__in=[ImportedReviewInstance.STATUS_AWAITING_SIGNATURE, ImportedReviewInstance.STATUS_COMPLETED],
+        )
+        if overlay.migrated_template_id and overlay.migrated_template.review_family == "PR"
+    ]
+    for key, ids in identity_ids.items():
+        ids = {int(value) for value in ids}
+        for overlay in overlays:
+            if overlay.learner_id not in ids:
+                continue
+            signatures = signature_states(overlay)
+            employer_state = signatures["employer"]
+            rows_by_learner[key].append({
+                "kind": "review", "eventKey": overlay.event_key,
+                "reviewInstanceId": overlay.event_key, "migratedForm": True,
+                "reviewType": "aptem_progress_review",
+                "label": overlay.template_snapshot.get("name") or "Migrated Progress Review",
+                "scheduledDate": "", "signable": overlay.status == ImportedReviewInstance.STATUS_AWAITING_SIGNATURE,
+                "completed": overlay.status == ImportedReviewInstance.STATUS_COMPLETED,
+                "sectionsTotal": len(overlay.template_snapshot.get("sections") or []),
+                "employerSignatureRequired": True,
+                "signed": employer_state["signed"],
+                "signedName": employer_state["signedName"] or "",
+                "signedAt": employer_state["signedAt"],
+                "learnerSigned": signatures["participant"]["signed"],
+                "adminSigned": signatures["advisor"]["signed"],
+            })
+    return rows_by_learner
 
 
-def _agreement_signing_rows(kind, learner_id):
+def _agreement_signing_row(agreement):
     """The learner's active Apprenticeship Agreement, as a signable row.
 
     The agreement lives in its own table rather than Enrolment_Documents, but the
     employer sees it in the same list as everything else they must sign — so it
     is projected onto the same row shape here.
     """
-    from .models import ApprenticeshipAgreement
-
-    try:
-        agreement = ApprenticeshipAgreement.objects.filter(
-            learner_kind=kind,
-            learner_id=learner_id,
-            status=ApprenticeshipAgreement.STATUS_ACTIVE,
-        ).first()
-    except DatabaseError:
-        logger.exception("_agreement_signing_rows: lookup failed for %s/%s", kind, learner_id)
-        return []
-    if agreement is None:
-        return []
-
-    return [{
+    return {
         "kind": "agreement",
         "id": str(agreement.id),
         "docType": "apprenticeship-agreement",
@@ -226,30 +300,16 @@ def _agreement_signing_rows(kind, learner_id):
         "learnerSigned": agreement.apprentice_signed,
         "learnerSignedName": _s(agreement.apprentice_signed_name),
         "learnerSignedAt": _iso(agreement.apprentice_signed_at),
-    }]
+    }
 
 
-def _training_plan_signing_rows(kind, learner_id):
+def _training_plan_signing_row(plan):
     """The learner's active Training Plan, as a signable row.
 
     Signed by all three parties; the employer is one of them, so it appears in
     their queue alongside the reviews and the apprenticeship agreement.
     """
-    from .models import TrainingPlanDocument
-
-    try:
-        plan = TrainingPlanDocument.objects.filter(
-            learner_kind=kind,
-            learner_id=learner_id,
-            status=TrainingPlanDocument.STATUS_ACTIVE,
-        ).first()
-    except DatabaseError:
-        logger.exception("_training_plan_signing_rows: lookup failed for %s/%s", kind, learner_id)
-        return []
-    if plan is None:
-        return []
-
-    return [{
+    return {
         "kind": "training-plan",
         "id": str(plan.id),
         "docType": "training-plan",
@@ -267,30 +327,16 @@ def _training_plan_signing_rows(kind, learner_id):
         "providerSigned": plan.provider_signed,
         "providerSignedName": _s(plan.provider_signed_name),
         "providerSignedAt": _iso(plan.provider_signed_at),
-    }]
+    }
 
 
-def _written_agreement_signing_rows(kind, learner_id):
+def _written_agreement_signing_row(doc):
     """The learner's active Written Agreement, as a signable row.
 
     Signed by the learner, the employer and the provider — the employer is one
     of the three, so it appears in their queue.
     """
-    from .models import WrittenAgreement
-
-    try:
-        doc = WrittenAgreement.objects.filter(
-            learner_kind=kind,
-            learner_id=learner_id,
-            status=WrittenAgreement.STATUS_ACTIVE,
-        ).first()
-    except DatabaseError:
-        logger.exception("_written_agreement_signing_rows: lookup failed for %s/%s", kind, learner_id)
-        return []
-    if doc is None:
-        return []
-
-    return [{
+    return {
         "kind": "written-agreement",
         "id": str(doc.id),
         "docType": "written-agreement",
@@ -307,14 +353,43 @@ def _written_agreement_signing_rows(kind, learner_id):
         "providerSigned": doc.provider_signed,
         "providerSignedName": _s(doc.provider_signed_name),
         "providerSignedAt": _iso(doc.provider_signed_at),
-    }]
+    }
+
+
+def _active_documents(model, keys):
+    """{(kind, learner_id): the active row of `model`}, in one query.
+
+    The models order newest first, so the first row seen per learner is the
+    one .first() returned when this was asked one learner at a time. The
+    frozen document content (JSON columns) is never shown here, so it is not
+    fetched.
+    """
+    frozen_content = [field.name for field in model._meta.concrete_fields if isinstance(field, JSONField)]
+    try:
+        found = {}
+        for doc in model.objects.filter(
+            learner_id__in=list(dict.fromkeys(learner_id for _kind, learner_id in keys)),
+            status=model.STATUS_ACTIVE,
+        ).defer(*frozen_content):
+            found.setdefault((doc.learner_kind, doc.learner_id), doc)
+        return found
+    except DatabaseError:
+        logger.exception("_active_documents: %s lookup failed for %s", model.__name__, keys)
+        return {}
 
 
 def _document_signing_rows(kind, learner_id):
-    """The learner's generated compliance PDFs, with employer sign-off state.
+    """One learner's signable documents. See _document_signing_rows_for."""
+    return _document_signing_rows_for([(kind, learner_id)])[(kind, learner_id)]
 
-    Read with raw SQL rather than a model: enrolment."Enrolment_Documents" is
-    owned by enrolment_api and has no Django model — see its document_tables.py.
+
+def _document_signing_rows_for(keys):
+    """{(kind, learner_id): signable documents} for many learners at once.
+
+    The Apprenticeship Agreement, Training Plan and Written Agreement come
+    first, then the generated compliance PDFs. Those are read with raw SQL
+    rather than a model: enrolment."Enrolment_Documents" is owned by
+    enrolment_api and has no Django model — see its document_tables.py.
     """
     from django.db import connections
 
@@ -322,43 +397,57 @@ def _document_signing_rows(kind, learner_id):
 
     from enrolment_api.documents import SIGNING_PARTIES
 
-    rows_out = (
-        _agreement_signing_rows(kind, learner_id)
-        + _training_plan_signing_rows(kind, learner_id)
-        + _written_agreement_signing_rows(kind, learner_id)
-    )
+    from .models import ApprenticeshipAgreement, TrainingPlanDocument, WrittenAgreement
 
+    out = {key: [] for key in keys}
+    if not keys:
+        return out
+    for model, to_row in (
+        (ApprenticeshipAgreement, _agreement_signing_row),
+        (TrainingPlanDocument, _training_plan_signing_row),
+        (WrittenAgreement, _written_agreement_signing_row),
+    ):
+        for key, doc in _active_documents(model, keys).items():
+            if key in out:
+                out[key].append(to_row(doc))
+
+    learner_ids = list(dict.fromkeys(learner_id for _kind, learner_id in keys))
+    placeholders = ", ".join(["%s"] * len(learner_ids))
     try:
         ensure_enrolment_documents_table()
         with connections["enrolment"].cursor() as cur:
             cur.execute(
-                '''
-                select id, "Doc_type", "Doc_name", "Generated_at",
+                f'''
+                select "Learner_kind", "Learner_id",
+                       id, "Doc_type", "Doc_name", "Generated_at",
                        "Employer_signature", "Employer_signed_name", "Employer_signed_at",
                        "Learner_signature", "Learner_signed_name", "Learner_signed_at"
                 from enrolment."Enrolment_Documents"
-                where "Learner_kind" = %s and "Learner_id" = %s
+                where "Learner_id" in ({placeholders})
                 order by "Generated_at" desc
                 ''',
-                [kind, learner_id],
+                learner_ids,
             )
             rows = cur.fetchall()
     except DatabaseError:
-        logger.exception("_document_signing_rows: lookup failed for %s/%s", kind, learner_id)
-        return rows_out
+        logger.exception("_document_signing_rows_for: lookup failed for %s", keys)
+        return out
 
-    out = list(rows_out)
     for row in rows:
         (
+            learner_kind, row_learner_id,
             doc_id, doc_type, doc_name, generated_at,
             sig, sig_name, sig_at,
             learner_sig, learner_sig_name, learner_sig_at,
         ) = row
+        key = (learner_kind, row_learner_id)
+        if key not in out:
+            continue
         doc_type = _s(doc_type)
         # Only offer documents this type actually asks the employer to sign —
         # a learner-only document has no business appearing in their queue.
         parties = SIGNING_PARTIES.get(doc_type, ("employer",))
-        out.append({
+        out[key].append({
             "kind": "document",
             "id": str(doc_id),
             "docType": doc_type,
@@ -397,17 +486,20 @@ def _learner_cards(employer_id):
     """
     model = SOURCE_MODELS["apprenticeship"]
     try:
-        learners = model.all_learners.filter(employer_id=employer_id).order_by("username", "id")
+        learners = list(model.all_learners.filter(employer_id=employer_id).order_by("username", "id"))
     except DatabaseError:
         logger.exception("_learner_cards: lookup failed for employer %s", employer_id)
         return []
 
+    entries = [(_learner_kind(learner), learner.pk, learner) for learner in learners]
+    reviews_by_learner = _review_signing_rows_for(entries)
+    documents_by_learner = _document_signing_rows_for([(kind, pk) for kind, pk, _learner in entries])
+
     cards = []
-    for learner in learners:
-        kind = _learner_kind(learner)
+    for kind, _pk, learner in entries:
         status = _s(learner.programme_status)
-        reviews = _review_signing_rows(kind, learner.pk)
-        documents = _document_signing_rows(kind, learner.pk)
+        reviews = reviews_by_learner[(kind, learner.pk)]
+        documents = documents_by_learner[(kind, learner.pk)]
         # Only counts what the employer can actually act on now: an unfinished
         # review is not yet signable, so counting it would show a task they
         # cannot complete.
@@ -496,6 +588,54 @@ def employer_portal(request, employer_id):
 
 @csrf_exempt
 @employer_or_staff()
+def employer_portal_documents(request, employer_id):
+    """Every signable item across this employer's learners, in one list.
+
+    The same rows the learner page's Documents tab shows (reviews wanting an
+    employer signature, then compliance PDFs), each tagged with its learner so
+    the portal can sign or open it without visiting that learner first. The
+    learners are exactly the employer's own — the same query as the landing
+    page's cards — so no learner id from the client is trusted here.
+    """
+    if request.method != "GET":
+        return _error("Method not allowed.", 405)
+
+    employer, err = _employer_or_404(employer_id)
+    if err:
+        return err
+
+    model = SOURCE_MODELS["apprenticeship"]
+    try:
+        learners = list(model.all_learners.filter(employer_id=employer.pk).order_by("username", "id"))
+    except DatabaseError:
+        logger.exception("employer_portal_documents: lookup failed for employer %s", employer.pk)
+        return _error("Could not load documents. Please try again.", 503)
+
+    entries = [(_learner_kind(learner), learner.pk, learner) for learner in learners]
+    reviews_by_learner = _review_signing_rows_for(entries)
+    documents_by_learner = _document_signing_rows_for([(kind, pk) for kind, pk, _learner in entries])
+
+    items = []
+    for kind, _pk, learner in entries:
+        owner = {
+            "id": str(learner.pk),
+            "kind": kind,
+            "name": _s(learner.username),
+            "programme": _s(learner.programme),
+        }
+        key = (kind, learner.pk)
+        for item in (*reviews_by_learner[key], *documents_by_learner[key]):
+            items.append({**item, "learner": owner})
+
+    return JsonResponse({
+        "employer": {"id": str(employer.pk), "name": employer.full_name},
+        "items": items,
+        "outstandingTotal": len([i for i in items if i["signable"] and not i["signed"]]),
+    })
+
+
+@csrf_exempt
+@employer_or_staff()
 def employer_portal_learner(request, employer_id, kind, learner_id):
     """One learner, as their employer sees them.
 
@@ -527,7 +667,7 @@ def employer_portal_learner(request, employer_id, kind, learner_id):
         return _error("That learner does not belong to this employer.", 403)
 
     status = _s(learner.programme_status)
-    reviews = _review_signing_rows(kind, learner.pk)
+    reviews = _review_signing_rows(kind, learner.pk, learner=learner)
     documents = _document_signing_rows(kind, learner.pk)
 
     return JsonResponse({
@@ -543,6 +683,10 @@ def employer_portal_learner(request, employer_id, kind, learner_id):
             "phone": _s(learner.phone_number),
             "programme": _s(learner.programme),
             "cohort": _s(learner.cohort),
+            # The learner record's employer display name, as the learner's own
+            # dashboard header shows it.
+            "employer": _s(learner.employer),
+            "organization": _s(learner.organization),
             "programmeStatus": status,
             "onboardingStatus": _s(learner.onboarding_status),
             "startDate": _s(learner.start_date),
@@ -576,12 +720,17 @@ def employer_review_instance(request, employer_id, kind, learner_id, event_key):
         return _error("Learner not found.", 404)
     if learner.employer_id != employer.pk:
         return _error("That learner does not belong to this employer.", 403)
+    from .calendar import _calendar_profile
+    profile = _calendar_profile(learner, learner.pk)
+    owner_id = profile.pk if profile is not None else learner.pk
     record = CoachCalendarEvent.objects.filter(event_key=event_key).first()
-    if record and str(record.learner_id or '') != str(learner_id) and _s(record.learner_email).casefold() != _s(learner.email).casefold():
+    if record and str(record.learner_id or '') not in {str(learner_id), str(owner_id)} and _s(record.learner_email).casefold() != _s(learner.email).casefold():
         record = None
     instance = review_instances.get_review_instance(getattr(record, 'review_instance_id', '')) if record else review_instances.get_review_instance(event_key)
     if not instance:
         return _error("Review instance not found.", 404)
+    if str(instance.get('learner_id')) != str(owner_id):
+        return _error("Review instance not found for this learner.", 404)
     definition = review_instances.review_instance_form_definition(instance)
     if not definition['template']['visibleTo'].get('employer', False):
         return _error("This review is not visible to the employer.", 403)
@@ -695,6 +844,515 @@ def employer_portal_learner_plan(request, employer_id, kind, learner_id):
         return JsonResponse(build_learner_detail(learner, learner.pk))
     except DatabaseError as exc:
         return _error(f"Database error: {exc}", 502)
+
+
+#: The learner-dashboard reads behind the employer's Overview tab. Each part is
+#: served by the same reader as the learner's own endpoint (overview-week,
+#: training-plan-dashboard, monthly-logs, profile-photo), so the employer sees
+#: the learner's timeline and progress rather than a second calculation of them.
+OVERVIEW_PARTS = frozenset({"week", "schedule", "contract", "hours", "photo", "attendance"})
+
+#: Attendance-register totals the dashboard's Attendance figure needs. The
+#: employer gets the counts only, never the per-session register behind them.
+_ATTENDANCE_FIELDS = ("sessions", "present", "absent", "late", "attendanceRate")
+
+#: Monthly-log fields the dashboard's hours figures need. The employer gets the
+#: per-month totals only, never the activity rows or signatures behind them.
+_HOURS_MONTH_FIELDS = ("month", "source", "training_plan_target", "not_accepted_hours", "actual_hours")
+
+
+def _without_meeting_links(payload):
+    """Drop join and booking links: the employer's view is read-only.
+
+    Teaching-session join URLs, review meeting links and the coach's booking
+    link are the learner's to use. The cards render without them.
+    """
+    return {
+        **payload,
+        "sessions": [{**session, "joinUrl": None} for session in payload.get("sessions") or []],
+        "reviews": [{**review, "meetingLink": None} for review in payload.get("reviews") or []],
+        "coach": {**(payload.get("coach") or {}), "bookingUrl": None},
+    }
+
+
+def _overview_part(part, learner, kind=None):
+    if part == "week":
+        from .overview_week import read_week
+
+        # Match the coach overview's canonical whole-programme metrics while
+        # retaining the employer ownership gate around this endpoint.
+        return read_week(learner, dashboard_kind=kind)
+    if part in ("schedule", "contract"):
+        from .training_plan_dashboard import read_dashboard
+
+        if part == "contract":
+            return read_dashboard(learner, section="contract")
+        return _without_meeting_links(read_dashboard(learner, section="overview"))
+    if part == "attendance":
+        from .attendance import _summarize_attendance
+        from .attendance_lectures import lecture_register
+
+        # The same register the learner's dashboard and the coach case file
+        # count, so all three show one figure. Timetabled sessions are not
+        # attendance: a class with no register entry is neither attended nor
+        # missed. Read-only: catch-up outcomes are settled by the learner's
+        # own reads, not by their employer viewing the page.
+        summary = _summarize_attendance(lecture_register(learner))
+        return {"attendance": {key: summary[key] for key in _ATTENDANCE_FIELDS} if summary else None}
+
+    from old_otjh import service as old_service
+    from . import monthly_log_sources, monthly_logs
+
+    record = old_service.resolve_record(learner.pk)
+    summary = monthly_logs.summary_data(
+        {**record, "_profile": monthly_log_sources.profile(learner.pk), "_view_as": True},
+        include_open=True,
+    )
+    return {
+        "learner": {key: summary["learner"].get(key) for key in ("aptem_id", "planned_end_date")},
+        "months": [{key: month.get(key) for key in _HOURS_MONTH_FIELDS} for month in summary["months"]],
+        "training_plan_totals": summary.get("training_plan_totals"),
+    }
+
+
+@csrf_exempt
+@employer_or_staff()
+def employer_portal_learner_overview(request, employer_id, kind, learner_id, part):
+    """The learner's dashboard timeline and progress — for their employer.
+
+    The learner's own dashboard endpoints admit only the learner and staff, so
+    an employer signed in to their portal could not load them. This serves the
+    same payloads behind the same employer-owns-this-learner check as the rest
+    of the portal. GET only, with meeting and booking links removed.
+    """
+    if request.method != "GET":
+        return _error("Method not allowed.", 405)
+    if part not in OVERVIEW_PARTS:
+        return _error("Unknown overview part.", 404)
+
+    employer, err = _employer_or_404(employer_id)
+    if err:
+        return err
+
+    model = SOURCE_MODELS.get(kind)
+    if model is None:
+        return _error(f"Unknown kind: {kind!r}.", 404)
+
+    try:
+        learner = model.all_learners.get(pk=learner_id)
+    except model.DoesNotExist:
+        return _error("Learner not found.", 404)
+    except DatabaseError:
+        logger.exception("employer_portal_learner_overview: learner lookup failed")
+        return _error("Could not load this learner. Please try again.", 503)
+
+    if learner.employer_id != employer.pk:
+        return _error("That learner does not belong to this employer.", 403)
+
+    if part == "photo":
+        from azure.core.exceptions import AzureError
+        from django.http import HttpResponse
+        from .profile_photo import photo_bytes
+
+        try:
+            content = photo_bytes(learner.pk)
+        except (AzureError, RuntimeError):
+            logger.warning("Profile photo storage unavailable for learner %s", learner.pk)
+            return _error("The photo could not be loaded.", 503)
+        response = HttpResponse(content, content_type="image/jpeg") if content is not None else HttpResponse(status=204)
+        response["Cache-Control"] = "private, no-store"
+        response["X-Content-Type-Options"] = "nosniff"
+        return response
+
+    from old_otjh.service import ServiceError
+
+    try:
+        payload = _overview_part(part, learner, kind)
+    except ServiceError as exc:
+        return _error(str(exc), exc.status)
+    except LookupError as exc:
+        return _error(str(exc), 404)
+    except DatabaseError:
+        logger.exception("employer_portal_learner_overview: %s unavailable for %s", part, learner.pk)
+        return _error("Could not load this learner's progress. Please try again.", 503)
+    response = JsonResponse(payload)
+    response["Cache-Control"] = "private, no-store"
+    return response
+
+
+def _owned_learner(employer_id, kind, learner_id):
+    """(learner, None) when this learner belongs to this employer, else (None, error response)."""
+    employer, err = _employer_or_404(employer_id)
+    if err:
+        return None, err
+    model = SOURCE_MODELS.get(kind)
+    if model is None:
+        return None, _error(f"Unknown kind: {kind!r}.", 404)
+    try:
+        learner = model.all_learners.get(pk=learner_id)
+    except model.DoesNotExist:
+        return None, _error("Learner not found.", 404)
+    except DatabaseError:
+        logger.exception("_owned_learner: learner lookup failed")
+        return None, _error("Could not load this learner. Please try again.", 503)
+    if learner.employer_id != employer.pk:
+        return None, _error("That learner does not belong to this employer.", 403)
+    return learner, None
+
+
+def _employer_progress_definition(event, learner, profile, template_cache):
+    """Read an owned occurrence or its template preview without creating it."""
+    from curriculum_api import reviews
+
+    instance_id = _s(event.get("reviewInstanceId"))
+    template_id = _s(event.get("reviewTemplateId"))
+    instance = review_instances.get_review_instance(instance_id) if instance_id else None
+    if instance is None and template_id and profile is not None:
+        occurrence = event.get("occurrenceNumber") or event.get("sequence")
+        instance = review_instances.find_review_instance(template_id, str(profile.pk), occurrence)
+    if instance is not None:
+        owner_id = profile.pk if profile is not None else learner.pk
+        if str(instance.get("learner_id")) != str(owner_id):
+            return None
+        definition = review_instances.review_instance_form_definition(instance)
+    elif template_id:
+        if template_id not in template_cache:
+            template = reviews.get_review_template_row(template_id, include_deleted=True)
+            template_cache[template_id] = review_instances.build_definition_snapshot(template) if template else None
+        snapshot = template_cache[template_id]
+        if snapshot is None:
+            return None
+        definition = {
+            "instance": None, "occurrenceNumber": event.get("occurrenceNumber") or event.get("sequence"),
+            "template": snapshot, "sections": snapshot["sections"],
+            "signatures": {role: {"required": bool(snapshot["signatures"].get(role)), "signed": False}
+                           for role in review_instances.SIGNATURE_ROLES},
+        }
+    else:
+        return None
+    return definition if definition["template"]["visibleTo"].get("employer", False) else None
+
+
+@csrf_exempt
+@employer_or_staff()
+def employer_portal_progress_reviews(request, employer_id, kind, learner_id, event_key=None, as_pdf=False):
+    """Same programme review source as the learner, with employer visibility."""
+    if request.method != "GET":
+        return _error("Method not allowed.", 405)
+    learner, err = _owned_learner(employer_id, kind, learner_id)
+    if err is not None:
+        return err
+    from .calendar import _calendar_profile, coaching_events_for_learner
+
+    try:
+        profile = _calendar_profile(learner, learner.pk)
+        events = coaching_events_for_learner(learner, profile)
+        rows, definitions, template_cache = [], {}, {}
+        for source in events:
+            code = source.get("reviewTypeCode")
+            is_progress = code == "progress_review" if code else not source.get("reviewTemplateId") and source.get("source") == "progress-review"
+            if not is_progress or (event_key is not None and event_key not in {source.get("id"), source.get("eventKey")}):
+                continue
+            event = dict(source)
+            definition = None
+            if event.get("reviewTemplateId") or event.get("reviewInstanceId"):
+                definition = _employer_progress_definition(event, learner, profile, template_cache)
+                if definition is None:
+                    continue
+                state = definition["signatures"].get("employer", {})
+                instance = definition.get("instance") or {}
+                event.update({"employerSigned": bool(state.get("signed")),
+                              "employerSignatureRequired": bool(state.get("required"))})
+                if instance:
+                    event["reviewInstanceId"] = instance["id"]
+                    event["status"] = instance["status"]
+                definitions[event["eventKey"]] = definition
+            elif event.get("migratedForm"):
+                overlay = ImportedReviewInstance.objects.filter(
+                    event_key=event["eventKey"], learner_id=getattr(profile, "pk", learner.pk),
+                ).first()
+                if overlay is None:
+                    continue
+                state = signature_states(overlay)["employer"]
+                event.update({"employerSigned": bool(state["signed"]), "employerSignatureRequired": bool(state["required"])})
+            # Meeting access stays with the existing learner/coach calendar.
+            event["meetingLink"] = ""
+            rows.append(event)
+        rows.sort(key=lambda event: (event.get("date") or event.get("targetDate") or "", event.get("sequence") or 0, event["eventKey"]))
+    except DatabaseError:
+        logger.exception("employer_portal_progress_reviews: review read unavailable for %s", learner.pk)
+        return _error("Could not load progress reviews. Please try again.", 503)
+    if event_key is not None:
+        if not rows:
+            return _error("Progress review not found for this learner.", 404)
+        definition = definitions.get(rows[0]["eventKey"])
+        if as_pdf:
+            from curriculum_api.review_pdf import learner_information, mcm_pdf_response, historical_pdf_response
+            information = learner_information(learner)
+            if definition is not None:
+                response = mcm_pdf_response(definition, information)
+            elif rows[0].get("importedReview") and not rows[0].get("migratedForm"):
+                from .aptem_review_pdf import original_review_pdf
+                review = rows[0]["importedReview"]
+                response = historical_pdf_response(review, information, identifier=review["id"],
+                                                   original_content=original_review_pdf(review))
+            else:
+                return _error("A review document is not available yet.", 409)
+        else:
+            response = JsonResponse({"event": rows[0], "definition": definition})
+    else:
+        response = JsonResponse({"events": rows, "definitions": definitions})
+    response["Cache-Control"] = "private, no-store"
+    return response
+
+
+def _monthly_log_urls(payload, employer_id, kind, learner_id):
+    """Keep report materials and evidence behind the portal ownership check."""
+    import re
+
+    prefix = f"/learner_api/employer-portal/{employer_id}/learner/{kind}/{learner_id}/monthly-logs/"
+    source = f"/learner_api/monthly-logs/{learner_id}/"
+    if isinstance(payload, dict):
+        return {key: _monthly_log_urls(value, employer_id, kind, learner_id) for key, value in payload.items()}
+    if isinstance(payload, list):
+        return [_monthly_log_urls(value, employer_id, kind, learner_id) for value in payload]
+    if isinstance(payload, str) and payload.startswith(source):
+        suffix = payload[len(source):]
+        if re.fullmatch(r"(?:documents/[\w-]+|canonical-documents/\d+|\d{4}-\d{2}/activities/\d+/materials/\d+)/", suffix):
+            return prefix + suffix
+    return payload
+
+
+@csrf_exempt
+@employer_or_staff()
+def employer_portal_monthly_logs(request, employer_id, kind, learner_id, month=None,
+                                 row_id=None, material_id=None, file_id=None, document_source=None):
+    """The learner Monthly Logs reader, scoped to this employer and GET only."""
+    if request.method != "GET":
+        return _error("Method not allowed.", 405)
+    learner, err = _owned_learner(employer_id, kind, learner_id)
+    if err is not None:
+        return err
+
+    from old_otjh.service import ServiceError
+    from . import canonical_learning, monthly_logs
+    from .journal_sources import learner_journal_reads
+    from .subject_content import ContentUnavailable
+
+    def read_report(request):
+        profile = canonical_learning.require_profile(learner.pk)
+        record = {**profile, "id": learner.pk, "_profile": profile,
+                  "_canonical_profile": profile, "_view_as": True}
+        if file_id is not None:
+            reader = monthly_logs.canonical_document_response if document_source == "canonical" else monthly_logs.document_response
+            return reader(learner.pk, file_id)
+        if material_id is not None:
+            return monthly_logs.material_response(record, month, row_id, material_id)
+        if row_id is not None:
+            response = monthly_logs.content_response(record, month, row_id)
+            payload = json.loads(response.content)
+        elif month is not None:
+            payload = monthly_logs.detail_data(record, month, include_open=True)
+        else:
+            payload = {**monthly_logs.summary_data(record, include_open=True), "read_only": True, "csrf_token": ""}
+        return JsonResponse(_monthly_log_urls(payload, employer_id, kind, learner_id))
+
+    try:
+        with learner_journal_reads():
+            response = read_report(request)
+    except ServiceError as exc:
+        return _error(str(exc), exc.status)
+    except ContentUnavailable as exc:
+        return _error(str(exc), 503)
+    except DatabaseError:
+        logger.exception("employer_portal_monthly_logs: logs unavailable for %s", learner.pk)
+        return _error("Could not load this learner's monthly logs. Please try again.", 503)
+    response["Cache-Control"] = "private, no-store"
+    response["Vary"] = "Cookie"
+    return response
+
+
+#: A learner's handed-in assignments: every status except an unsent draft.
+_SUBMITTED_ASSIGNMENTS_SQL = """
+    select activity_id, activity_title, module_title, week_title, status, submitted_at, date_completed
+    from "Learner"."learning_reflection_submissions"
+    where learner_kind = %s and learner_id = %s and activity_type = 'assignment' and status <> 'draft'
+    order by coalesce(submitted_at, date_completed) desc nulls last, activity_title
+"""
+
+#: Scanned-clean uploads, keyed by the activity they were uploaded to.
+_ASSIGNMENT_FILES_SQL = """
+    select id, original_filename, section_ref, uploaded_at
+    from "Learner"."evidence_files"
+    where learner_kind = %s and learner_id = %s and status = 'approved' and section_ref = any(%s)
+    order by uploaded_at
+"""
+
+
+def _iso_any(value):
+    return value.isoformat() if hasattr(value, "isoformat") else (_s(value) or None)
+
+
+def _learner_assignments(kind, learner):
+    """The learner's submitted assignments, LMS then legacy Aptem, without marks or feedback.
+
+    The employer sees what was handed in, when, and where it stands; the tutor's
+    score, written feedback and the Aptem assessment report are left out.
+    """
+    from django.db import connections
+
+    from . import legacy_assignments
+
+    with connections["enrolment"].cursor() as cur:
+        cur.execute(_SUBMITTED_ASSIGNMENTS_SQL, [kind, str(learner.pk)])
+        submissions = cur.fetchall()
+        files_by_activity = {}
+        activity_ids = [row[0] for row in submissions]
+        if activity_ids:
+            cur.execute(_ASSIGNMENT_FILES_SQL, [kind, str(learner.pk), activity_ids])
+            for file_id, name, section_ref, uploaded_at in cur.fetchall():
+                files_by_activity.setdefault(section_ref, []).append(
+                    {"source": "lms", "id": str(file_id), "name": _s(name) or "Uploaded file"},
+                )
+
+    items = [{
+        "id": f"lms:{activity_id}",
+        "source": "lms",
+        "title": _s(title) or "Assignment",
+        "moduleTitle": _s(module),
+        "weekTitle": _s(week),
+        "status": _s(status),
+        "submittedAt": _iso_any(submitted_at) or _iso_any(completed),
+        "files": files_by_activity.get(activity_id, []),
+    } for activity_id, title, module, week, status, submitted_at, completed in submissions]
+
+    for row in legacy_assignments.classified_rows(kind, learner.pk):
+        submission = legacy_assignments.classified_submission(row, kind, learner.pk)
+        documents = submission["legacyAssignment"]["documents"]
+        items.append({
+            "id": submission["id"],
+            "source": "aptem",
+            "title": submission["activityTitle"] or "Assignment",
+            "moduleTitle": submission["moduleTitle"] or "",
+            "weekTitle": "",
+            "status": submission["status"],
+            "submittedAt": submission["submittedAt"] or submission["dateCompleted"] or None,
+            # The learner's own upload only; the "report" part is the assessor's.
+            "files": [
+                {"source": "aptem", "id": str(doc["evidenceId"]), "activityId": submission["activityId"], "name": doc["name"]}
+                for doc in documents if doc["part"] == "file"
+            ],
+        })
+    return items
+
+
+@csrf_exempt
+@employer_or_staff()
+def employer_portal_learner_assignments(request, employer_id, kind, learner_id):
+    """Every assignment this learner has handed in, with their uploaded files."""
+    if request.method != "GET":
+        return _error("Method not allowed.", 405)
+    learner, err = _owned_learner(employer_id, kind, learner_id)
+    if err:
+        return err
+    try:
+        items = _learner_assignments(kind, learner)
+    except DatabaseError:
+        logger.exception("employer_portal_learner_assignments: unavailable for %s", learner.pk)
+        return _error("Could not load assignments. Please try again.", 503)
+    response = JsonResponse({"assignments": items})
+    response["Cache-Control"] = "private, no-store"
+    return response
+
+
+@csrf_exempt
+@employer_or_staff()
+def employer_portal_assignment_file(request, employer_id, kind, learner_id, file_id):
+    """A short-lived link to one uploaded assignment file.
+
+    Only a scanned-clean file, uploaded by this learner, to an assignment they
+    have handed in — an evidence upload with no submitted assignment behind it
+    is not the employer's to open.
+    """
+    if request.method != "GET":
+        return _error("Method not allowed.", 405)
+    learner, err = _owned_learner(employer_id, kind, learner_id)
+    if err:
+        return err
+    from django.conf import settings
+    from django.db import connections
+
+    from .evidence_storage import azure_configured, get_download_sas
+
+    if not azure_configured():
+        return _error("Document storage is not configured.", 503)
+    try:
+        with connections["enrolment"].cursor() as cur:
+            cur.execute(
+                """
+                select f.blob_name, f.original_filename
+                from "Learner"."evidence_files" f
+                where f.id = %s and f.learner_kind = %s and f.learner_id = %s and f.status = 'approved'
+                  and exists (
+                    select 1 from "Learner"."learning_reflection_submissions" s
+                    where s.learner_kind = f.learner_kind and s.learner_id = f.learner_id
+                      and s.activity_type = 'assignment' and s.status <> 'draft'
+                      and s.activity_id = f.section_ref
+                  )
+                """,
+                [str(file_id), kind, str(learner.pk)],
+            )
+            row = cur.fetchone()
+    except DatabaseError:
+        logger.exception("employer_portal_assignment_file: lookup failed")
+        return _error("Could not open the file. Please try again.", 503)
+    if not row:
+        return _error("File not found.", 404)
+    blob_name, name = row
+    try:
+        url = get_download_sas(settings.AZURE_APPROVED_CONTAINER, blob_name, filename=_s(name) or None)
+    except Exception:
+        logger.warning("employer_portal_assignment_file: SAS failed for %s", file_id)
+        return _error("Could not open the file. Please try again.", 503)
+    response = JsonResponse({"url": url})
+    response["Cache-Control"] = "private, no-store"
+    return response
+
+
+@csrf_exempt
+@employer_or_staff()
+def employer_portal_legacy_assignment_file(request, employer_id, kind, learner_id, evidence_id):
+    """A short-lived link to a legacy (Aptem) assignment upload — the learner's file, never the assessor's report."""
+    if request.method != "GET":
+        return _error("Method not allowed.", 405)
+    learner, err = _owned_learner(employer_id, kind, learner_id)
+    if err:
+        return err
+    from . import evidence_storage, legacy_assignments
+
+    activity_id = _s(request.GET.get("activityId"))
+    if not activity_id:
+        return _error("activityId is required.", 400)
+    if not evidence_storage.azure_configured():
+        return _error("Document storage is not configured.", 503)
+    try:
+        rows = legacy_assignments.classified_rows(kind, learner.pk, activity_id)
+    except DatabaseError:
+        logger.exception("employer_portal_legacy_assignment_file: lookup failed")
+        return _error("Could not open the file. Please try again.", 503)
+    if not rows or str(rows[0]["evidence_id"]) != str(evidence_id) or not rows[0].get("file_blob"):
+        return _error("File not found.", 404)
+    document = rows[0]
+    try:
+        url = evidence_storage.get_download_sas(
+            "fetch-aptem-evidences", document["file_blob"], filename=_s(document["evidence_name"]) or None,
+        )
+    except Exception:
+        logger.warning("employer_portal_legacy_assignment_file: SAS failed for %s", evidence_id)
+        return _error("Could not open the file. Please try again.", 503)
+    response = JsonResponse({"url": url})
+    response["Cache-Control"] = "private, no-store"
+    return response
 
 
 def _performance(kind, learner):
