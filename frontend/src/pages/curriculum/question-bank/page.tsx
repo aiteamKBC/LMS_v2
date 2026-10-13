@@ -4,6 +4,7 @@ import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { WorkspaceHeroBanner } from '@/components/feature/WorkspaceHeroBanner';
 import { ThemedSelect } from '@/components/feature/ThemedSelect';
 import { QuestionAnswersView } from '@/components/feature/QuestionTypeRenderer';
+import { QuizQuestionImage } from '@/components/feature/QuizQuestionImage';
 import { useToast } from '@/hooks/useToast';
 import { roleNavMap } from '@/mocks/navigation';
 
@@ -33,6 +34,7 @@ interface QuestionBankProgramme {
 interface QuestionBankQuestion {
   id: number;
   text: string;
+  imageUrl?: string;
   questionType: QuestionType;
   explanation: string;
   quizStatus: string;
@@ -228,6 +230,7 @@ export default function QuestionBankPage() {
           questions: prev.questions.map(question => {
             const sameQuestion = question.programmeKey === sourceQuestion.programmeKey
               && question.questionType === sourceQuestion.questionType
+              && (question.imageUrl || '') === (sourceQuestion.imageUrl || '')
               && question.text.trim().toLowerCase() === sourceQuestion.text.trim().toLowerCase();
             if (!sameQuestion) return question;
             const existingLinked = question.linkedQuizzes?.length
@@ -436,6 +439,7 @@ export default function QuestionBankPage() {
                                 </button>
                               </div>
                             </div>
+                            <QuizQuestionImage imageUrl={question.imageUrl} />
                             <QuestionAnswersView type={question.questionType} answers={question.answers} fallbackText={question.explanation} compact />
                           </article>
                         );

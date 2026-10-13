@@ -48,6 +48,7 @@ from .learner_detail import (
 from .mappers import _normalize_free_courses, _s
 from .models import LearnerFreeCourseProgress
 from .quizzes import _fetch_quiz, _grade_question
+from quiz_api.answer_keys import quiz_submission_error
 
 FREE_COURSES_PROGRAMME_ID = "FREE-COURSES"
 
@@ -365,6 +366,10 @@ def submit_free_course_quiz(request, kind, pk, component_id):
         return _error(f"Database error: {exc}", 502)
     if quiz is None:
         return _error("Quiz not found.", 404)
+
+    grading_error = quiz_submission_error(quiz, submitted)
+    if grading_error:
+        return _error(grading_error, 409)
 
     earned = 0.0
     possible = 0.0

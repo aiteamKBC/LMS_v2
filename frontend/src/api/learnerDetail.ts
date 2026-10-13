@@ -97,16 +97,19 @@ export interface LearnerKsbItem {
   description: string;
 }
 
-// Slim stored per-question result — references answers by id (resolved to text
-// on display via the fetched quiz). Free-text types (fill_gap/keywords/matching)
-// have no answer id, so they carry chosenText instead.
+// New results include a text/key snapshot; older attempts may only have IDs.
 export interface LearnerQuizQuestionResult {
   questionId: number;
+  questionText?: string;
+  type?: string;
+  possible?: number;
+  imageUrl?: string;
   earned: number;
   correct: boolean;
   chosenAnswerId?: number | number[] | null;
   correctAnswerId?: number[] | null;
-  chosenText?: string | null;   // free-text answer types only
+  chosenText?: string | null;
+  correctText?: string | null;
 }
 
 export interface LearnerQuizAttempt {
