@@ -15,7 +15,7 @@ import time
 from dataclasses import dataclass
 
 from . import assets as asset_extractor
-from . import chunking, extract, storage, structure
+from . import chunking, extract, providers, storage, structure
 from .tokens import count_tokens
 
 PAGE_BATCH = 20
@@ -36,6 +36,12 @@ def build_versions():
 
 class PermanentFailure(RuntimeError):
     """The file itself cannot be processed; retrying will not help."""
+
+
+class ProviderMismatch(RuntimeError):
+    """The provider does not produce this build's kind of vectors. Raised before
+    anything is embedded or stored: such vectors are meaningless in this space,
+    and the content-hash cache would keep reusing them."""
 
 
 @dataclass
@@ -183,7 +189,12 @@ def _asset_chunk(occ, section, sections, book_title, ordinal):
 
 
 def _embed(ctx):
-    space_id = ctx.info["embedding_space_id"]
+    info = ctx.info
+    if not providers.matches_space(ctx.provider, info["space_provider"], info["space_model"], info["space_dims"]):
+        raise ProviderMismatch(
+            f"This book is embedded with {info['space_provider']} {info['space_model']}, but the worker uses "
+            f"{ctx.provider.provider} {ctx.provider.model}. Nothing was stored.")
+    space_id = info["embedding_space_id"]
     embedded = 0
     while True:
         batch = ctx.repo.chunks_without_vectors(ctx.info["build_id"], space_id, EMBED_BATCH)
@@ -198,9 +209,11 @@ def _embed(ctx):
         new = []
         if missing:
             result = ctx.provider.embed(list(missing.values()))
-            per_item = max(1, result.total_tokens // max(1, len(missing)))
-            for sha, vector in zip(missing.keys(), result.vectors):
-                new.append((sha, vector, per_item))
+            # The provider's billed total, split exactly, so the stored token
+            # counts add up to what the API key was charged.
+            base, extra = divmod(result.total_tokens, len(missing))
+            for i, (sha, vector) in enumerate(zip(missing.keys(), result.vectors)):
+                new.append((sha, vector, base + (1 if i < extra else 0)))
         literals = dict(cached)
         literals.update({sha: _literal(vec) for sha, vec, _ in new})
         ctx.repo.store_vectors(ctx.job, space_id, new,

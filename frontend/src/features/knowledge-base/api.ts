@@ -82,6 +82,15 @@ export async function fetchBook(bookId: string): Promise<KbBookDetail> {
   return readJson<KbBookDetail>(await fetch(`${BASE}/books/${bookId}/`, { credentials: 'same-origin' }));
 }
 
+export async function renameBook(bookId: string, title: string) {
+  return readJson<{ id: string; title: string }>(await fetch(`${BASE}/books/${bookId}/`, {
+    method: 'PATCH',
+    credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ title }),
+  }));
+}
+
 export async function retryBuild(buildId: string) {
   return readJson<{ queued: boolean }>(await fetch(`${BASE}/builds/${buildId}/retry/`, { method: 'POST', credentials: 'same-origin' }));
 }

@@ -26,6 +26,26 @@ beforeEach(() => {
 });
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
+it.each(['commercial', 'apprenticeship'] as const)('shows actual time beside expected time for each %s activity', async kind => {
+  const response = payload();
+  response.selectedWeek!.activities[0] = { ...response.selectedWeek!.activities[0], expectedHours: 2, durationMinutes: 120, actualHours: 1.25 };
+  response.selectedWeek!.activities[1].actualHours = 0;
+  response.selectedWeek!.activities.push({ ...response.selectedWeek!.activities[0], id: 'missing', title: 'Unreported activity', actualHours: undefined });
+  transport.mockResolvedValue(new Response(JSON.stringify(response)));
+  render(<MemoryRouter><CaseFileSessionProvider learnerId="101" coach="coach@example.test">
+    <CaseFileWeeklyLearningTab kind={kind} learnerId="201" />
+  </CaseFileSessionProvider></MemoryRouter>);
+  const reading = within((await screen.findByText('Reading M1:1')).closest('tr')!);
+  expect(screen.getByRole('columnheader', { name: 'Actual time' })).toBeVisible();
+  expect(reading.getByRole('cell', { name: '2h' })).toBeVisible();
+  expect(reading.getByRole('cell', { name: '1h 15m' })).toBeVisible();
+  const quiz = within(screen.getByText('Quiz M1:1').closest('tr')!);
+  expect(quiz.getByRole('cell', { name: '0h' })).toBeVisible();
+  const missing = within(screen.getByText('Unreported activity').closest('tr')!);
+  expect(missing.getByTitle('Recorded hours unavailable')).toHaveTextContent('—');
+  expect(reading.getByText('Completed')).toBeVisible();
+});
+
 it.each(['commercial', 'apprenticeship'] as const)('prefetches only adjacent weeks for %s and renders cached navigation immediately', async kind => {
   let resolveInitial!: (response: Response) => void;
   transport.mockImplementationOnce(() => new Promise<Response>(resolve => { resolveInitial = resolve; }));

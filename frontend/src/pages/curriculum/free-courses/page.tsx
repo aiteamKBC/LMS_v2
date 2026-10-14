@@ -216,7 +216,10 @@ export default function FreeCoursesPage() {
   const [importCohortId, setImportCohortId] = useState('');
   const [importGroupId, setImportGroupId] = useState('');
   const [importSearch, setImportSearch] = useState('');
-  const [importSelectedId, setImportSelectedId] = useState('');
+  // Kept as module objects (not ids) so a pick survives switching programme,
+  // cohort or group — the scoped list no longer contains it, the selection does.
+  const [importSelected, setImportSelected] = useState<CurriculumModule[]>([]);
+  const [importSelectionOpen, setImportSelectionOpen] = useState(false);
   const [importMode, setImportMode] = useState<'clone' | 'move'>('clone');
   const [importing, setImporting] = useState(false);
   const moduleKey = (module: CurriculumModule) => module.moduleCatalogueId || module.id;
@@ -254,6 +257,13 @@ export default function FreeCoursesPage() {
       [module.name, module.cohort, module.group].filter(Boolean).some(value => String(value).toLowerCase().includes(term)),
     );
   }, [importOptions, importSearch]);
+  const importSelectedKeys = useMemo(() => new Set(importSelected.map(moduleKey)), [importSelected]);
+  const toggleImportSelected = (module: CurriculumModule) => {
+    const key = moduleKey(module);
+    setImportSelected(current => (current.some(item => moduleKey(item) === key)
+      ? current.filter(item => moduleKey(item) !== key)
+      : [...current, module]));
+  };
   const selectedComponent = course.components.find(component => component.id === selectedComponentId) || course.components[0];
   const firstLockedIndex = course.components.findIndex(component => component.kind === 'quiz');
   const learnerCompletedCount = course.components.filter(component => completedPreviewIds.has(component.id)).length;
@@ -739,7 +749,8 @@ export default function FreeCoursesPage() {
     setImportCohortId('');
     setImportGroupId('');
     setImportSearch('');
-    setImportSelectedId('');
+    setImportSelected([]);
+    setImportSelectionOpen(false);
     setImportMode('clone');
   };
 
@@ -749,28 +760,42 @@ export default function FreeCoursesPage() {
   };
 
   const submitImport = async () => {
-    if (!importSelectedId || importing) return;
-    const module = importOptions.find(item => moduleKey(item) === importSelectedId);
-    if (!module) return;
+    const modules = importSelected;
+    if (!modules.length || importing) return;
     const isMove = importMode === 'move';
+    const count = modules.length;
+    const subject = count === 1 ? `"${modules[0].name}"` : `${count} modules`;
+    const sourceLabel = count === 1 ? modules[0].programme || 'its programme' : 'their programmes';
     let imported = false;
     setImporting(true);
     try {
       await showCurriculumConfirm({
-        title: isMove ? 'Move to a free course?' : 'Copy to a free course?',
+        title: isMove ? 'Move to free courses?' : 'Copy to free courses?',
         text: isMove
-          ? `"${module.name}" will be copied into a new free course, then ARCHIVED from ${module.programme || 'its programme'}. Its KSB mappings and hours are not carried over.`
-          : `"${module.name}" will be copied into a new free course. The module stays in ${module.programme || 'its programme'}. Its KSB mappings and hours are not carried over.`,
+          ? `${subject} will each be copied into a new free course, then ARCHIVED from ${sourceLabel}. KSB mappings and hours are not carried over.`
+          : `${subject} will each be copied into a new free course. ${count === 1 ? 'The module stays' : 'The modules stay'} in ${sourceLabel}. KSB mappings and hours are not carried over.`,
         icon: isMove ? 'warning' : 'question',
-        confirmButtonText: isMove ? 'Move it' : 'Create free course',
+        confirmButtonText: isMove ? 'Move' : count === 1 ? 'Create free course' : `Create ${count} free courses`,
         cancelButtonText: 'Cancel',
         onConfirm: async () => {
-          const result = await importModuleToFreeCourses('FREE-COURSES', { moduleCatalogueId: moduleKey(module), mode: importMode });
-          setSavedModules(result.modules || []);
+          // One request per module, in order. Each done module leaves the
+          // selection, so after a mid-batch failure a retry only does the rest.
+          let done = 0;
+          try {
+            for (const module of modules) {
+              const result = await importModuleToFreeCourses('FREE-COURSES', { moduleCatalogueId: moduleKey(module), mode: importMode });
+              setSavedModules(result.modules || []);
+              done += 1;
+            }
+          } catch (err) {
+            if (done) setImportSelected(modules.slice(done));
+            const reason = err instanceof Error ? err.message : 'Unable to complete this action.';
+            throw new Error(done ? `${done} of ${count} done; stopped at "${modules[done].name}": ${reason}` : reason);
+          }
           imported = true;
         },
-        successTitle: isMove ? 'Module moved to free courses' : 'Free course created',
-        successText: `"${module.name}" is now available under Free courses.`,
+        successTitle: isMove ? 'Moved to free courses' : count === 1 ? 'Free course created' : 'Free courses created',
+        successText: `${subject} ${count === 1 ? 'is' : 'are'} now available under Free courses.`,
       });
     } finally {
       setImporting(false);
@@ -1358,7 +1383,7 @@ export default function FreeCoursesPage() {
                     <span className="mb-1.5 block text-xs font-bold uppercase tracking-wide text-foreground-500">Programme</span>
                     <select
                       value={importProgrammeId}
-                      onChange={event => { setImportProgrammeId(event.target.value); setImportCohortId(''); setImportGroupId(''); setImportSelectedId(''); }}
+                      onChange={event => { setImportProgrammeId(event.target.value); setImportCohortId(''); setImportGroupId(''); }}
                       disabled={convertProgrammesLoading}
                       className="w-full rounded-lg border border-background-300 bg-white px-3 py-2.5 text-sm text-foreground-900 focus:border-primary-400 focus:outline-none focus:ring-2 focus:ring-primary-100 disabled:opacity-60"
                     >
@@ -1374,7 +1399,7 @@ export default function FreeCoursesPage() {
                       <span className="mb-1.5 block text-xs font-bold uppercase tracking-wide text-foreground-500">Cohort</span>
                       <select
                         value={importCohortId}
-                        onChange={event => { setImportCohortId(event.target.value); setImportGroupId(''); setImportSelectedId(''); }}
+                        onChange={event => { setImportCohortId(event.target.value); setImportGroupId(''); }}
                         disabled={!importDetail || !importCohorts.length}
                         className="w-full rounded-lg border border-background-300 bg-white px-3 py-2.5 text-sm text-foreground-900 focus:border-primary-400 focus:outline-none focus:ring-2 focus:ring-primary-100 disabled:opacity-60"
                       >
@@ -1388,7 +1413,7 @@ export default function FreeCoursesPage() {
                       <span className="mb-1.5 block text-xs font-bold uppercase tracking-wide text-foreground-500">Group</span>
                       <select
                         value={importGroupId}
-                        onChange={event => { setImportGroupId(event.target.value); setImportSelectedId(''); }}
+                        onChange={event => { setImportGroupId(event.target.value); }}
                         disabled={!importCohortId || !importGroups.length}
                         className="w-full rounded-lg border border-background-300 bg-white px-3 py-2.5 text-sm text-foreground-900 focus:border-primary-400 focus:outline-none focus:ring-2 focus:ring-primary-100 disabled:opacity-60"
                       >
@@ -1400,17 +1425,68 @@ export default function FreeCoursesPage() {
                     </label>
                   </div>
 
-                  <div className="flex h-10 items-center gap-2 rounded-lg border border-background-300 px-3 focus-within:border-primary-400 focus-within:ring-2 focus-within:ring-primary-100">
-                    <AppIcon name="ri-search-line" size={16} className="text-foreground-400" />
-                    <input
-                      type="text"
-                      value={importSearch}
-                      onChange={event => setImportSearch(event.target.value)}
-                      disabled={!importDetail}
-                      placeholder="Search modules by name…"
-                      className="h-full w-full bg-transparent text-sm text-foreground-900 outline-none placeholder:text-foreground-400 disabled:cursor-not-allowed"
-                    />
+                  <div className="flex gap-2">
+                    <div className="flex h-10 min-w-0 flex-1 items-center gap-2 rounded-lg border border-background-300 px-3 focus-within:border-primary-400 focus-within:ring-2 focus-within:ring-primary-100">
+                      <AppIcon name="ri-search-line" size={16} className="text-foreground-400" />
+                      <input
+                        type="text"
+                        value={importSearch}
+                        onChange={event => setImportSearch(event.target.value)}
+                        disabled={!importDetail}
+                        placeholder="Search modules by name…"
+                        className="h-full w-full bg-transparent text-sm text-foreground-900 outline-none placeholder:text-foreground-400 disabled:cursor-not-allowed"
+                      />
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setImportSelectionOpen(open => !open)}
+                      disabled={!importSelected.length}
+                      aria-expanded={importSelectionOpen && importSelected.length > 0}
+                      className={`inline-flex h-10 shrink-0 items-center gap-1.5 rounded-lg border px-3 text-sm font-bold transition disabled:cursor-not-allowed disabled:opacity-50 ${
+                        importSelectionOpen && importSelected.length ? 'border-primary-300 bg-primary-50 text-primary-700' : 'border-background-300 bg-white text-foreground-700 hover:border-background-400'
+                      }`}
+                    >
+                      <AppIcon name="ri-checkbox-multiple-line" size={15} />
+                      My selection
+                      <span className="rounded-full bg-primary-700 px-1.5 text-[11px] leading-5 text-white">{importSelected.length}</span>
+                      <AppIcon name={importSelectionOpen && importSelected.length ? 'ri-arrow-up-s-line' : 'ri-arrow-down-s-line'} size={15} />
+                    </button>
                   </div>
+
+                  {importSelectionOpen && importSelected.length > 0 && (
+                    <div className="rounded-lg border border-primary-200 bg-primary-50/40">
+                      <div className="flex items-center justify-between px-3 py-2">
+                        <span className="text-xs font-bold uppercase tracking-wide text-foreground-500">{importSelected.length} selected</span>
+                        <button
+                          type="button"
+                          onClick={() => { setImportSelected([]); setImportSelectionOpen(false); }}
+                          disabled={importing}
+                          className="text-xs font-bold text-red-600 hover:text-red-700 disabled:opacity-50"
+                        >
+                          Clear all
+                        </button>
+                      </div>
+                      <ul className="max-h-40 space-y-1 overflow-y-auto px-2 pb-2">
+                        {importSelected.map(module => (
+                          <li key={moduleKey(module)} className="flex items-center gap-2 rounded-md bg-white px-2.5 py-1.5">
+                            <span className="min-w-0 flex-1">
+                              <span className="block truncate text-sm font-bold text-foreground-900">{module.name || 'Untitled module'}</span>
+                              <span className="block truncate text-[11px] text-foreground-500">{[module.programme, module.cohort, module.group].filter(Boolean).join(' · ')}</span>
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => toggleImportSelected(module)}
+                              disabled={importing}
+                              className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-foreground-400 transition hover:bg-red-50 hover:text-red-600 disabled:opacity-50"
+                              aria-label={`Unselect ${module.name || 'module'}`}
+                            >
+                              <AppIcon name="ri-close-line" size={16} />
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
                 </div>
 
                 <div className="min-h-[180px] flex-1 overflow-y-auto px-2 py-2">
@@ -1424,14 +1500,15 @@ export default function FreeCoursesPage() {
                     <ul className="space-y-1">
                       {importFiltered.map(module => {
                         const key = moduleKey(module);
-                        const selected = key === importSelectedId;
+                        const selected = importSelectedKeys.has(key);
                         const context = [module.programme, module.cohort, module.group].filter(Boolean).join(' · ');
                         const facts = [`${module.weeks || 0} ${module.weeks === 1 ? 'week' : 'weeks'}`, `${module.lessons || 0} lessons`, `${module.quizzes || 0} quizzes`].join(' · ');
                         return (
                           <li key={key}>
                             <button
                               type="button"
-                              onClick={() => setImportSelectedId(key)}
+                              onClick={() => toggleImportSelected(module)}
+                              aria-pressed={selected}
                               className={`flex w-full items-center gap-3 rounded-lg border px-3 py-2.5 text-left transition ${
                                 selected ? 'border-primary-300 bg-primary-50 ring-1 ring-primary-200' : 'border-transparent hover:border-background-300 hover:bg-background-50'
                               }`}
@@ -1444,7 +1521,7 @@ export default function FreeCoursesPage() {
                                 {context && <span className="block truncate text-[11px] text-foreground-500">{context}</span>}
                                 <span className="mt-0.5 block text-[11px] text-foreground-400">{facts}</span>
                               </span>
-                              {selected && <AppIcon name="ri-checkbox-circle-fill" size={18} className="shrink-0 text-primary-600" />}
+                              <AppIcon name={selected ? 'ri-checkbox-fill' : 'ri-checkbox-blank-line'} size={18} className={`shrink-0 ${selected ? 'text-primary-600' : 'text-foreground-300'}`} />
                             </button>
                           </li>
                         );
@@ -1498,11 +1575,12 @@ export default function FreeCoursesPage() {
                     <button
                       type="button"
                       onClick={() => { void submitImport(); }}
-                      disabled={importing || !importSelectedId}
+                      disabled={importing || !importSelected.length}
                       className="inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-primary-700 px-4 text-sm font-bold text-white transition hover:bg-primary-600 disabled:opacity-60"
                     >
                       <AppIcon name={importing ? 'ri-loader-4-line' : 'ri-download-2-line'} className={importing ? 'animate-spin' : ''} size={15} />
-                      {importMode === 'move' ? 'Move to free course' : 'Convert to free course'}
+                      {importMode === 'move' ? 'Move to free courses' : 'Convert to free courses'}
+                      {importSelected.length > 1 && ` (${importSelected.length})`}
                     </button>
                   </div>
                 </div>

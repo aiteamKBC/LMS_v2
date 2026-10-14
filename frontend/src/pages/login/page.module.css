@@ -229,3 +229,28 @@
 @media (prefers-reduced-motion: reduce) {
   .primaryButton, .microsoftButton, .inputShell input { transition: none; }
 }
+.downloadPage {
+  min-height: 100dvh;
+  display: grid;
+  place-items: center;
+  padding: 24px 20px;
+  background: #f7f6f0;
+  color: #153f35;
+}
+.downloadCard {
+  display: grid;
+  gap: 24px;
+  width: 100%;
+  max-width: 440px;
+  font-size: 17px;
+  line-height: 1.6;
+}
+.downloadCard h1 { font-size: 30px; line-height: 1.2; }
+.downloadCard img { background: #153f35; padding: 8px; border-radius: 8px; box-sizing: content-box; }
+.downloadCard a { display: flex; align-items: center; justify-content: center; text-decoration: none; }
+.downloadCard a, .downloadCard button { min-height: 56px; font-size: 17px; }
+.downloadCard a { background: #153f35; box-shadow: none; }
+.downloadCard a:focus-visible, .downloadCard button:focus-visible {
+  outline: 3px solid #153f35;
+  outline-offset: 4px;
+}

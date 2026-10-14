@@ -12,7 +12,7 @@ const counts: CaseloadCounts = {
 };
 
 const learner = {
-  id: '42', name: 'Emma Carter', initials: 'EC', employer: '--', cohortId: 'c1', cohortName: 'Business Admin L3', programmeName: 'Customer Service Practitioner L2', group: 'G1',
+  id: '42', name: 'Emma Carter', initials: 'EC', learnerType: 'commercial', enrolmentId: '1002', employer: '--', cohortId: 'c1', cohortName: 'Business Admin L3', programmeName: 'Customer Service Practitioner L2', group: 'G1',
   status: 'on-track', enrollmentStatus: 'active', riskFlags: [], otjhStatus: 'on-track', overallProgress: 78, overallProgressAvailable: true,
   attendanceRate: 80, attendanceRateAvailable: true, attendanceSessions: 10, attendancePresent: 9, attendanceAbsent: 1, componentsCompleted: 8, componentsPlanned: 10,
   otjhCompleted: 70, otjhTarget: 90, ksbProgress: 65, ksbProgressAvailable: true, ksbCompleted: 13, ksbTarget: 20,
@@ -48,7 +48,7 @@ describe('My Learners table design', () => {
       otjhTarget: 0,
       otjhPlanned: 0,
     }]} insights={insights} selectionMode={false} selectedLearnerIds={new Set()}
-      sortKey="name" sortDirection="asc" onSort={vi.fn()} onToggleSelect={vi.fn()} onOpenProfile={vi.fn()} />);
+      sortKey="name" sortDirection="asc" onSort={vi.fn()} onToggleSelect={vi.fn()} onOpenProfile={vi.fn()} onOpenLearnerPage={vi.fn()} />);
 
     expect(screen.getByLabelText('Activities: 88.8%')).toHaveTextContent('443 / 499');
     expect(screen.getByLabelText('Attendance: 82%')).not.toHaveTextContent('23 / 28');
@@ -87,7 +87,7 @@ describe('My Learners table design', () => {
       { ...learner, id: '43', name: 'Sam Example', initials: 'SE', rawProgramStatus: 'Withdrawn', enrollmentStatus: 'withdrawn' },
       { ...learner, id: '44', name: 'No Status', initials: 'NS', rawProgramStatus: '--' },
     ]} insights={insights} selectionMode={false} selectedLearnerIds={new Set()}
-      sortKey="risk" sortDirection="desc" onSort={vi.fn()} onToggleSelect={vi.fn()} onOpenProfile={vi.fn()} />);
+      sortKey="risk" sortDirection="desc" onSort={vi.fn()} onToggleSelect={vi.fn()} onOpenProfile={vi.fn()} onOpenLearnerPage={vi.fn()} />);
     const header = screen.getByRole('columnheader', { name: 'Status' });
     expect(header).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Sort by Status' })).not.toBeInTheDocument();
@@ -118,7 +118,7 @@ describe('My Learners table design', () => {
       startDate: '15 Jun 2026',
       plannedEndDate: '01 Apr 2027',
     }]} insights={insights} selectionMode={false} selectedLearnerIds={new Set()}
-      sortKey="name" sortDirection="asc" onSort={vi.fn()} onToggleSelect={vi.fn()} onOpenProfile={vi.fn()} />);
+      sortKey="name" sortDirection="asc" onSort={vi.fn()} onToggleSelect={vi.fn()} onOpenProfile={vi.fn()} onOpenLearnerPage={vi.fn()} />);
     const row = screen.getByText('Emma Carter').closest('tr')!;
     const cells = within(row).getAllByRole('cell');
     expect(cells[2]).toHaveTextContent(label);
@@ -127,9 +127,10 @@ describe('My Learners table design', () => {
 
   it('shows real learner progress and profile actions without a risk status label', () => {
     const onOpenProfile = vi.fn();
+    const onOpenLearnerPage = vi.fn();
     const onSort = vi.fn();
     render(<LearnerTable learners={[learner]} insights={insights} selectionMode={false} selectedLearnerIds={new Set()}
-      sortKey="risk" sortDirection="desc" onSort={onSort} onToggleSelect={vi.fn()} onOpenProfile={onOpenProfile} />);
+      sortKey="risk" sortDirection="desc" onSort={onSort} onToggleSelect={vi.fn()} onOpenProfile={onOpenProfile} onOpenLearnerPage={onOpenLearnerPage} />);
     const row = screen.getByText('Emma Carter').closest('tr')!;
     expect(within(row).getByText('EC')).toBeInTheDocument();
     expect(within(row).getByText('Customer Service Practitioner L2')).toBeInTheDocument();
@@ -162,6 +163,16 @@ describe('My Learners table design', () => {
     expect(onSort).toHaveBeenCalledWith('otjh');
     fireEvent.click(within(row).getByRole('button', { name: 'View Profile' }));
     expect(onOpenProfile).toHaveBeenCalledWith(learner);
+    fireEvent.click(within(row).getByRole('button', { name: 'View' }));
+    expect(onOpenLearnerPage).toHaveBeenCalledWith(learner);
+  });
+
+  it('hides the learner-page View button when the learner has no enrolment record', () => {
+    render(<LearnerTable learners={[{ ...learner, enrolmentId: null }]} insights={insights} selectionMode={false} selectedLearnerIds={new Set()}
+      sortKey="risk" sortDirection="desc" onSort={vi.fn()} onToggleSelect={vi.fn()} onOpenProfile={vi.fn()} onOpenLearnerPage={vi.fn()} />);
+    const row = screen.getByText('Emma Carter').closest('tr')!;
+    expect(within(row).queryByRole('button', { name: 'View' })).not.toBeInTheDocument();
+    expect(within(row).getByRole('button', { name: 'View Profile' })).toBeInTheDocument();
   });
 
   it('colours overdue activity, progress reviews and MCMs only after their thresholds', () => {
@@ -195,7 +206,7 @@ describe('My Learners table design', () => {
 
     render(<LearnerTable learners={[thresholdLearner, warningLearner, criticalLearner]} insights={datedInsights}
       selectionMode={false} selectedLearnerIds={new Set()} sortKey="name" sortDirection="asc" onSort={vi.fn()}
-      onToggleSelect={vi.fn()} onOpenProfile={vi.fn()} today={today} />);
+      onToggleSelect={vi.fn()} onOpenProfile={vi.fn()} onOpenLearnerPage={vi.fn()} today={today} />);
 
     const tones = (name: string) => {
       const row = screen.getByText(name).closest('tr')!;
@@ -223,7 +234,7 @@ describe('My Learners table design', () => {
 
     render(<LearnerTable learners={[noReview, noDates]} insights={new Map()} selectionMode={false}
       selectedLearnerIds={new Set()} sortKey="name" sortDirection="asc" onSort={vi.fn()} onToggleSelect={vi.fn()}
-      onOpenProfile={vi.fn()} today={new Date(2026, 8, 30)} />);
+      onOpenProfile={vi.fn()} onOpenLearnerPage={vi.fn()} today={new Date(2026, 8, 30)} />);
 
     const noReviewRow = screen.getByText('No Review Learner').closest('tr')!;
     expect(noReviewRow.querySelector('[data-metric="progress-review"]')).toHaveAttribute('data-tone', 'critical');
@@ -238,7 +249,7 @@ describe('My Learners table design', () => {
 
   it('does not show the cohort under the learner name when a programme is unavailable', () => {
     render(<LearnerTable learners={[{ ...learner, programmeName: undefined }]} insights={insights} selectionMode={false} selectedLearnerIds={new Set()}
-      sortKey="name" sortDirection="asc" onSort={vi.fn()} onToggleSelect={vi.fn()} onOpenProfile={vi.fn()} />);
+      sortKey="name" sortDirection="asc" onSort={vi.fn()} onToggleSelect={vi.fn()} onOpenProfile={vi.fn()} onOpenLearnerPage={vi.fn()} />);
     const row = screen.getByText('Emma Carter').closest('tr')!;
     const learnerCell = within(row).getAllByRole('cell')[0];
     expect(within(learnerCell).queryByText('Business Admin L3')).not.toBeInTheDocument();
@@ -251,7 +262,7 @@ describe('My Learners table design', () => {
     [90, 'positive'],
   ] as const)('uses the canonical gap for target %s to colour OTJH', (otjhTarget, tone) => {
     render(<LearnerTable learners={[{ ...learner, otjhTarget, otjhPlanned: otjhTarget }]} insights={insights} selectionMode={false} selectedLearnerIds={new Set()}
-      sortKey="risk" sortDirection="desc" onSort={vi.fn()} onToggleSelect={vi.fn()} onOpenProfile={vi.fn()} />);
+      sortKey="risk" sortDirection="desc" onSort={vi.fn()} onToggleSelect={vi.fn()} onOpenProfile={vi.fn()} onOpenLearnerPage={vi.fn()} />);
     expect(document.querySelector('[data-metric="otjh"]')).toHaveAttribute('data-tone', tone);
   });
 
@@ -267,7 +278,7 @@ describe('My Learners table design', () => {
       attendancePresent: null,
       attendanceSessions: null,
     }]} insights={insights} selectionMode={false} selectedLearnerIds={new Set()}
-      sortKey="risk" sortDirection="desc" onSort={vi.fn()} onToggleSelect={vi.fn()} onOpenProfile={vi.fn()} />);
+      sortKey="risk" sortDirection="desc" onSort={vi.fn()} onToggleSelect={vi.fn()} onOpenProfile={vi.fn()} onOpenLearnerPage={vi.fn()} />);
 
     expect(screen.getByLabelText('Attendance: not available').querySelector('[class*="miniRatio"]')).toBeNull();
     expect(screen.getByLabelText('Activities: 80%')).toHaveTextContent('8 / 10');

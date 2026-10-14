@@ -52,7 +52,7 @@ import time
 import os
 
 from django.db import DatabaseError
-from django.http import JsonResponse
+from django.http import JsonResponse, HttpResponseRedirect
 
 from .sessions import (
     authenticate_request,
@@ -367,6 +367,17 @@ class ApiSessionGateMiddleware:
                 method=request.method,
             )
             if refusal is not None:
+                # Only the human-facing APK link gets a sign-in journey. API
+                # clients retain their 401 contract; no protected view is run.
+                if (refusal.status_code == 401
+                        and request.method == "GET"
+                        and request.path_info == "/learner_api/mobile/download/android/"
+                        and "text/html" in request.headers.get("Accept", "")
+                        and request.headers.get("X-Requested-With") != "XMLHttpRequest"):
+                    response = HttpResponseRedirect("/login?download=android")
+                    response["Cache-Control"] = "private, no-store"
+                    response["Vary"] = "Accept, Cookie, X-Requested-With"
+                    return response
                 return refusal
 
         return self.get_response(request)
