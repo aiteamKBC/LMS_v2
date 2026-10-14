@@ -38,9 +38,10 @@ const learnerNav = roleNavMap.learner;
 
 type Phase = 'intro' | 'quiz' | 'reflect' | 'results';
 
-function latestQuizAttempt(attempts: LearnerQuizAttempt[], quizId: string | undefined) {
+function latestQuizAttempt(attempts: LearnerQuizAttempt[], quizId: string | undefined, componentId?: string | null) {
   return attempts
-    .filter((attempt) => String(attempt.quizId) === String(quizId))
+    .filter((attempt) => String(attempt.quizId) === String(quizId)
+      || (Boolean(componentId) && attempt.componentId === componentId))
     .sort((left, right) => {
       const submittedDifference = Date.parse(right.submittedAt || '') - Date.parse(left.submittedAt || '');
       if (Number.isFinite(submittedDifference) && submittedDifference !== 0) return submittedDifference;
@@ -85,7 +86,8 @@ function durationSeconds(value: string | null | undefined) {
 /** Rebuild the full result view from the slim attempt stored on the learner. */
 function resultFromStoredAttempt(quiz: Quiz, attempt: LearnerQuizAttempt): QuizAttemptResult {
   const breakdown = (attempt.questions || []).map((stored) => {
-    const question = quiz.questions.find(q => String(q.id) === String(stored.questionId));
+    const question = String(attempt.quizId) === String(quiz.id)
+      ? quiz.questions.find(q => String(q.id) === String(stored.questionId)) : undefined;
     return {
       questionId: stored.questionId,
       questionText: stored.questionText ?? question?.text ?? 'Question no longer available',
@@ -250,8 +252,16 @@ export default function QuizTakePage() {
 
   const totalPoints = useMemo(() => (quiz ? quiz.questions.reduce((n, q) => n + q.points, 0) : 0), [quiz]);
   const latestAttempt = useMemo(
-    () => latestQuizAttempt(detail?.quizAttempts || [], quizId),
-    [detail?.quizAttempts, quizId],
+    () => {
+      const components = (detail?.components || []).filter(component =>
+        String(component.quizMeta?.quizId ?? '') === String(quizId)
+        && (!moduleTitle || component.module === moduleTitle)
+        && (!weekTitle || component.week === weekTitle),
+      );
+      return latestQuizAttempt(detail?.quizAttempts || [], quizId,
+        components.length === 1 ? components[0].componentId : null);
+    },
+    [detail?.quizAttempts, detail?.components, quizId, moduleTitle, weekTitle],
   );
 
   // Where this quiz sits in the plan, for the list beside it. A quiz reached
@@ -1004,7 +1014,7 @@ function ResultsScreen({ quiz, result, kind, learnerId, onBack, onRetake }: {
       </div>
 
       <QuizReadingPanel
-        quizId={quiz.id}
+        quizId={Number(attempt.quizId)}
         attemptNumber={attempt.attempt}
         kind={kind}
         learnerId={learnerId}

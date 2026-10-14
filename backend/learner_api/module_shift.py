@@ -39,6 +39,7 @@ import re
 import unicodedata
 
 from django.db import DatabaseError, connections, transaction
+from django.db.models import Q
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 
@@ -309,6 +310,66 @@ def _weeks_with_components(module_id):
     return weeks
 
 
+def _quiz_component_slots(profile, component_ids):
+    """Include other assigned slots so a shared quiz is never guessed twice."""
+    return _rows(
+        """
+        SELECT c.id AS component_id, c.module_catalogue_id AS module_id,
+               c.week_id, c.settings_json->>'linkedQuizId' AS quiz_id
+        FROM curriculum.components c
+        WHERE c.type = 'quiz'
+          AND nullif(c.settings_json->>'linkedQuizId', '') IS NOT NULL
+          AND c.module_catalogue_id IN (
+              SELECT module_ref FROM "Learner".learner_training_plan_modules
+              WHERE learner_id = %s
+              UNION
+              SELECT module_catalogue_id FROM curriculum.components
+              WHERE id = ANY(%s::text[])
+          )
+        """,
+        [profile.pk, list(component_ids)],
+    )
+
+
+def _progress_entries_by_component(profile, component_ids):
+    """Resolve unplaced quiz attempts as well as directly linked progress.
+
+    Quiz submissions historically store quiz_ref without component_ref. Only
+    one matching slot in the learner's plan may claim such an attempt. Explicit
+    module/week references narrow that choice; an existing component reference
+    always wins, including progress already moved by an earlier shift.
+    """
+    if profile is None or not component_ids:
+        return {}
+    component_ids = set(component_ids)
+    grouped = {}
+    for entry in LearnerProgressEntry.objects.filter(
+        learner=profile, component_ref__in=list(component_ids),
+    ).exclude(kind="activity_event"):
+        grouped.setdefault(_s(entry.component_ref), []).append(entry)
+
+    slots = _quiz_component_slots(profile, component_ids)
+    quiz_ids = {_s(slot["quiz_id"]) for slot in slots if slot["component_id"] in component_ids}
+    if not quiz_ids:
+        return grouped
+    attempts = LearnerProgressEntry.objects.filter(
+        Q(component_ref__isnull=True) | Q(component_ref=""),
+        learner=profile, kind="quiz", quiz_ref__in=list(quiz_ids),
+    )
+    for entry in attempts:
+        candidates = {
+            _s(slot["component_id"]) for slot in slots
+            if _s(slot["quiz_id"]) == _s(entry.quiz_ref)
+            and (not _s(entry.module_ref) or _s(slot["module_id"]) == _s(entry.module_ref))
+            and (not _s(entry.week_ref) or _s(slot["week_id"]) == _s(entry.week_ref))
+        }
+        if len(candidates) == 1:
+            component_id = next(iter(candidates))
+            if component_id in component_ids:
+                grouped.setdefault(component_id, []).append(entry)
+    return grouped
+
+
 def _progress_by_component(profile, component_ids):
     """What the learner has recorded against each of these components.
 
@@ -317,24 +378,22 @@ def _progress_by_component(profile, component_ids):
     """
     if profile is None or not component_ids:
         return {}
-    entries = LearnerProgressEntry.objects.filter(
-        learner=profile, component_ref__in=list(component_ids),
-    ).exclude(kind="activity_event")
-
     progress = {}
-    for entry in entries:
-        item = progress.setdefault(_s(entry.component_ref), {
+    grouped = _progress_entries_by_component(profile, component_ids)
+    for component_id, entries in grouped.items():
+        item = progress.setdefault(component_id, {
             "entries": 0, "kinds": [], "lastAt": "", "otjHours": 0.0, "points": 0,
         })
-        item["entries"] += 1
-        kind = _s(entry.kind)
-        if kind and kind not in item["kinds"]:
-            item["kinds"].append(kind)
-        at = entry.submitted_at or entry.started_at
-        if at and at.isoformat() > item["lastAt"]:
-            item["lastAt"] = at.isoformat()
-        item["otjHours"] += float(entry.expected_otjh or 0)
-        item["points"] += int(entry.points or 0)
+        for entry in entries:
+            item["entries"] += 1
+            kind = _s(entry.kind)
+            if kind and kind not in item["kinds"]:
+                item["kinds"].append(kind)
+            at = entry.submitted_at or entry.started_at
+            if at and at.isoformat() > item["lastAt"]:
+                item["lastAt"] = at.isoformat()
+            item["otjHours"] += float(entry.expected_otjh or 0)
+            item["points"] += int(entry.points or 0)
     return progress
 
 
@@ -683,7 +742,7 @@ def _move_review(learner, source_id, target_id, context):
     return moved, kept
 
 
-def _repoint_progress(learner, profile, pairs):
+def _repoint_progress(learner, profile, pairs, entries_by_component=None):
     """Move the learner's progress from each source component to its target.
 
     Only where the activity sits is rewritten — module, week, component, and the
@@ -694,18 +753,18 @@ def _repoint_progress(learner, profile, pairs):
     with it, for the same reason.
     """
     counts = {"entries": 0, "reviews": 0, "reviewsKept": 0}
+    if entries_by_component is None:
+        entries_by_component = _progress_entries_by_component(profile, [source for source, _ in pairs])
     for source_id, target_id in pairs:
         context = _component_learning_context(target_id)
         if not context:
             continue
-        entries = LearnerProgressEntry.objects.filter(
-            learner=profile, component_ref=source_id,
-        ).exclude(kind="activity_event")
+        entries = entries_by_component.get(source_id, [])
         for entry in entries:
             # What it first pointed at, kept once: the column exists so a
             # repointed row never loses its original reference.
             if not _s(entry.legacy_component_ref):
-                entry.legacy_component_ref = entry.component_ref
+                entry.legacy_component_ref = entry.component_ref or source_id
             entry.programme_ref = _s(context.get("programmeId")) or entry.programme_ref
             entry.programme_title = _s(context.get("programme")) or entry.programme_title
             entry.module_ref = _s(context.get("moduleId")) or entry.module_ref
@@ -1030,6 +1089,11 @@ def module_shift(request, pk):
         # module with their progress still on the old one, or the reverse, is
         # worse than the shift not happening.
         with transaction.atomic(using="enrolment"):
+            # Resolve against the old plan before its mirror is replaced. The
+            # destination's quiz slots must not make an old attempt ambiguous.
+            entries_by_component = _progress_entries_by_component(
+                profile, [source for source, _ in pairs],
+            ) if pairs else {}
             # One entry replaced, the rest kept exactly as stored — including any
             # whose module has left the curriculum, which is not this shift's
             # business to rewrite or drop.
@@ -1040,7 +1104,7 @@ def module_shift(request, pk):
                 learner, shifted_plan, from_id, to_id,
             )
             counts = (
-                _repoint_progress(learner, profile, pairs) if pairs
+                _repoint_progress(learner, profile, pairs, entries_by_component) if pairs
                 else {"entries": 0, "reviews": 0, "reviewsKept": 0}
             )
 
