@@ -171,6 +171,21 @@ SHARED_TEAMS_SOURCES_SQL = '''WITH RECURSIVE shared(module_id,source_id,depth) A
         SELECT DISTINCT module_id,source_id FROM shared'''
 
 
+def _shared_native_occurrences_sql():
+    shared_select = '\n        SELECT DISTINCT module_id,source_id FROM shared'
+    module_filter = 'WHERE s.module_catalogue_id=ANY(%s)'
+    assert SHARED_TEAMS_SOURCES_SQL.endswith(shared_select) and NATIVE_OCCURRENCES_SQL.count(module_filter) == 1
+    return (SHARED_TEAMS_SOURCES_SQL[:-len(shared_select)] + '\n        '
+            + NATIVE_OCCURRENCES_SQL.replace(module_filter, 'WHERE (s.module_catalogue_id=ANY(%s)'
+                                             ' OR s.module_catalogue_id IN (SELECT source_id FROM shared))'))
+
+
+# NATIVE_OCCURRENCES_SQL for the given modules and the modules whose Teams
+# meetings they share (SHARED_TEAMS_SOURCES_SQL), as one statement. Parameters:
+# the shared lookup's module ids, then NATIVE_OCCURRENCES_SQL's own.
+SHARED_NATIVE_OCCURRENCES_SQL = _shared_native_occurrences_sql()
+
+
 def shared_teams_sources(module_ids, *, cursor=None):
     """{assigned shared duplicate: the modules whose Teams meeting it attends}."""
     module_ids = sorted({_text(value) for value in module_ids} - {''})
@@ -213,9 +228,15 @@ def read_native_occurrences(source, *, module_ids=None):
             module_ids = [value for value in module_ids if value]
         if not module_ids:
             return []
-        shared = shared_teams_sources(module_ids, cursor=cur)
-        module_ids = list(dict.fromkeys([*module_ids, *sorted(set().union(*shared.values()))]))
-        cur.execute(NATIVE_OCCURRENCES_SQL, [_key(source.email), module_ids])
+        try:
+            # The shared-meeting lookup and the occurrences, in one round trip.
+            cur.execute(SHARED_NATIVE_OCCURRENCES_SQL, [
+                sorted({_text(value) for value in module_ids} - {''}), _key(source.email), module_ids])
+        except DatabaseError:
+            # As before: if shared meetings are unreadable, the learner's own modules still load.
+            shared = shared_teams_sources(module_ids, cursor=cur)
+            module_ids = list(dict.fromkeys([*module_ids, *sorted(set().union(*shared.values()))]))
+            cur.execute(NATIVE_OCCURRENCES_SQL, [_key(source.email), module_ids])
         result = dict_rows(cur)
     return normalize_native_occurrences(source, result)
 

@@ -3,6 +3,7 @@ import type { LearnerKind } from '@/api/learnerDetail';
 import type { DashboardPlanState } from './useDashboardPlan';
 import type { Subject } from '@/pages/learner/my-learning/SubjectWorkspace';
 import styles from './DashboardTabs.module.css';
+import { initialDashboardTab, type DashboardTabId } from './initialDashboardTab';
 
 const OverviewTab = lazy(() => import('./tabs/DashboardOverviewTab'));
 const WeeklyTab = lazy(() => import('./tabs/DashboardWeeklyTab'));
@@ -10,7 +11,7 @@ const MonthlyTab = lazy(() => import('./tabs/DashboardMonthlyTab'));
 const TrainingTab = lazy(() => import('./tabs/DashboardTrainingTab'));
 const RewardsTab = lazy(() => import('./tabs/DashboardRewardsTab'));
 
-export type DashboardTabId = 'overview' | 'weekly' | 'monthly' | 'training' | 'rewards';
+export type { DashboardTabId };
 const tabs: { id: DashboardTabId; label: string }[] = [
   { id: 'weekly', label: 'Weekly Learning' }, { id: 'monthly', label: 'Monthly Plan' }, { id: 'training', label: 'Training Plan' },
   { id: 'overview', label: 'Overview' }, { id: 'rewards', label: 'Rewards' },
@@ -26,24 +27,16 @@ export type DashboardTabsProps = {
   learningSubjects?: Subject[]; learningSubjectsLoading?: boolean; learningSubjectsError?: string | null;
   onRetryLearningSubjects?: () => void;
   overviewExtra?: ReactNode;
+  /** Called when a tab is opened, so the page can start that tab's reads on demand. */
+  onTabOpen?: (id: DashboardTabId) => void;
 };
 
-function initialTab(): DashboardTabId {
-  const params = new URLSearchParams(window.location.search);
-  const requested = params.get('tab');
-  if (tabs.some(tab => tab.id === requested)) return requested as DashboardTabId;
-  if (params.has('subject') || params.has('month') || window.location.hash === '#module-timeline' || window.location.hash === '#training-plan-details') {
-    return window.location.hash === '#module-timeline' || window.location.hash === '#training-plan-details' ? 'training' : 'monthly';
-  }
-  return 'weekly';
-}
-
 export function DashboardTabs(props: DashboardTabsProps) {
-  const [active, setActive] = useState<DashboardTabId>(initialTab);
-  const [visited, setVisited] = useState<Set<DashboardTabId>>(() => new Set([initialTab()]));
+  const [active, setActive] = useState<DashboardTabId>(initialDashboardTab);
+  const [visited, setVisited] = useState<Set<DashboardTabId>>(() => new Set([initialDashboardTab()]));
   useEffect(() => { setVisited(current => current.has(active) ? current : new Set(current).add(active)); }, [active]);
   const activeIndex = tabs.findIndex(tab => tab.id === active);
-  const activate = (id: DashboardTabId) => setActive(id);
+  const activate = (id: DashboardTabId) => { props.onTabOpen?.(id); setActive(id); };
   const onKeyDown = (event: KeyboardEvent<HTMLButtonElement>) => {
     if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
     event.preventDefault();

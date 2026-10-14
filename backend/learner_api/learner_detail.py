@@ -2076,7 +2076,7 @@ def learner_summary(request, kind, pk):
             "id", "username", "email", "phone_number", "programme",
             "programme_status", "cohort", "group", "employer", "employer_id", "organization",
             "learner_type", "aptem_id", "start_date", "end_date",
-            "learner_start_date",
+            "learner_start_date", "learner_end_date",
             "practical_period_end_date", "apprenticeship_end_date",
             "onboarding_status",
         ).get(pk=pk)
@@ -2092,7 +2092,10 @@ def learner_summary(request, kind, pk):
 
     from .apprenticeship_agreement import _group_dates
 
-    start, end, _ = _group_dates(source)
+    start, end, origin = _group_dates(source)
+    # access_gate resolves the same programme start; reuse this request's answer
+    # instead of reading the cohort again.
+    source._resolved_group_dates = (start, end, origin)
     return JsonResponse({
         "id": str(source.id),
         "name": _s(source.username),

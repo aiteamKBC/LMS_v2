@@ -1,5 +1,5 @@
 import { learnerRecordedDates } from '@/lib/learnerRecordedDates';
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { ClipboardList, FileText, Monitor } from 'lucide-react';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
@@ -23,6 +23,7 @@ import { canViewAssignedProgramme, waitingCopy } from '@/utils/learnerAccessGate
 import { displayValue, EMPTY_VALUE } from '@/lib/format';
 import overviewStyles from './Overview.module.css';
 import { DashboardTabs } from './DashboardTabs';
+import { initialDashboardTab, type DashboardTabId } from './initialDashboardTab';
 import { learnerHeaderPlan, learnerModuleHref } from './learnerHeaderPlan';
 import { useDashboardPlan } from './useDashboardPlan';
 import { useLearnerMetrics } from '@/hooks/useLearnerMetrics';
@@ -85,14 +86,23 @@ export default function LearnerOverview() {
     && !real.studentActivityAvailable && !hasAssignedProgramme;
   const skipPreStartData = isRealMode && (!real || isCommercialPreStart);
   const learnerKind: LearnerKind | null = kind === 'commercial' || kind === 'apprenticeship' ? kind : null;
-  const dashboardPlan = useDashboardPlan(learnerKind, id, isRealMode && !skipPreStartData);
+  const dashboardDataEnabled = isRealMode && !skipPreStartData;
+  // Reads used only by tabs that are not open start when such a tab is first
+  // opened; the page keeps them afterwards, so revisiting a tab does not refetch.
+  const [openedTabs, setOpenedTabs] = useState<ReadonlySet<DashboardTabId>>(() => new Set([initialDashboardTab()]));
+  const openTab = useCallback((tab: DashboardTabId) => setOpenedTabs(current =>
+    current.has(tab) ? current : new Set(current).add(tab)), []);
+  const overviewOpened = openedTabs.has('overview');
+  const planTabOpened = overviewOpened || openedTabs.has('monthly') || openedTabs.has('training');
+  const dashboardPlan = useDashboardPlan(learnerKind, id, dashboardDataEnabled, 'overview', undefined, planTabOpened);
   const learnerDetailRead = useLearnerDetailParam(kind, id);
   // Programme and KSB cards share the canonical metrics with My Learning.
   // Actual combines retained Audit hours and measured LMS completions once.
   // Migrated Planned hours use the retained Aptem total.
-  const metrics = useLearnerMetrics(learnerKind, id, isRealMode && !skipPreStartData, 'learner-overview');
+  const metrics = useLearnerMetrics(learnerKind, id, dashboardDataEnabled && overviewOpened, 'learner-overview');
+  const metricsLoading = metrics.loading || (dashboardDataEnabled && !overviewOpened);
   const unifiedLearning = useUnifiedLearningSummary(learnerDetailRead.real, learnerKind, id,
-    isRealMode && !skipPreStartData && !!learnerDetailRead.real);
+    dashboardDataEnabled && planTabOpened && !!learnerDetailRead.real);
   const scheduleRead = dashboardPlan.schedule;
   const [now, setNow] = useState(Date.now);
   useEffect(() => {
@@ -100,8 +110,9 @@ export default function LearnerOverview() {
     return () => window.clearInterval(timer);
   }, []);
 
-  const attendanceRead = useLearnerAttendance(learnerKind, id, isRealMode && !skipPreStartData);
-  const { data: attendance, loading: attendanceLoading } = attendanceRead;
+  const attendanceRead = useLearnerAttendance(learnerKind, id, dashboardDataEnabled && overviewOpened);
+  const { data: attendance } = attendanceRead;
+  const attendanceLoading = attendanceRead.loading || (dashboardDataEnabled && !overviewOpened);
   /* ── Onboarding learners land on their enrolment wizard, not the overview ──
      Gated on `!loading` so a not-yet-loaded status never reads as "not onboarding". */
   const redirectingToOnboarding = useOnboardingRedirect(real?.programmeStatus, isRealMode && !loading && !reviewingLearner, kind);
@@ -279,9 +290,9 @@ export default function LearnerOverview() {
     metrics.data?.otjh.targetToDate,
   );
   const otjTargetValue = otjTargetHours != null ? `${otjTargetHours.toFixed(2)} h`
-    : metrics.loading ? 'Loading…' : 'Unavailable';
+    : metricsLoading ? 'Loading…' : 'Unavailable';
   const otjActualValue = otjActualHours != null ? `${otjActualHours.toFixed(2)} h`
-    : metrics.loading ? 'Loading...' : 'Unavailable';
+    : metricsLoading ? 'Loading...' : 'Unavailable';
   const ksb = metrics.data?.ksb;
   const ksbPercent = ksb?.percent ?? null;
   const ksbValue = ksbPercent == null ? EMPTY_VALUE : `${ksbPercent}%`;
@@ -475,15 +486,15 @@ export default function LearnerOverview() {
           <button className="ml-2 font-semibold underline" onClick={attendanceRead.refresh}>Retry attendance</button>
         </div>}
         <DashboardTabs kind={learnerKind} learnerId={id} plan={dashboardPlan} programmeStartDate={programmeStartDate} programmeEndDate={programmeEndDate}
-          canOpenRewards={!reviewingLearner} real={real || undefined} canSeeNavItem={canSeeNavItem} pageError={loadError}
+          canOpenRewards={!reviewingLearner} real={real || undefined} canSeeNavItem={canSeeNavItem} pageError={loadError} onTabOpen={openTab}
           learningSubjects={unifiedLearning.summary?.subjects}
-          learningSubjectsLoading={isRealMode && !skipPreStartData && (!learnerDetailRead.real || unifiedLearning.loading)}
+          learningSubjectsLoading={dashboardDataEnabled && (!planTabOpened || !learnerDetailRead.real || unifiedLearning.loading)}
           learningSubjectsError={unifiedLearning.error}
           onRetryLearningSubjects={unifiedLearning.retry}
           metrics={{ programmeValue: programmeProgressValue, programmeSummary: programmeProgressSummary, programmePercent: programmeProgressPercent,
             attendanceValue, attendanceSummary, attendanceTotalValue, attendancePercent, otjActualValue, otjSummary: `${otjActualHours?.toFixed(2) ?? EMPTY_VALUE} / ${otjTargetHours?.toFixed(2) ?? EMPTY_VALUE} h`,
             otjTargetValue, otjTargetHours, otjPercent, ksbValue, ksbSummary, ksbPercent,
-            attendanceLoading: attendanceLoading && !attendance, metricsLoading: metrics.loading && !metrics.data }} />
+            attendanceLoading: attendanceLoading && !attendance, metricsLoading: metricsLoading && !metrics.data }} />
       </PageContainer>
     </WorkspaceShell>
   );

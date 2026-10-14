@@ -308,6 +308,7 @@ describe('learner loading and recovery', () => {
     }));
     const Page = (await modules['/src/pages/workspace/learner/page.tsx']()).default;
     render(<MemoryRouter><ToastProvider><Page /></ToastProvider></MemoryRouter>);
+    fireEvent.click(await screen.findByRole('tab', { name: 'Overview' }));
     const card = within(await screen.findByRole('link', { name: 'Open Attendance' }));
     expect(await card.findByText(present == null || sessions == null ? '--' : `${present} / ${sessions}`, { selector: 'p' })).toBeVisible();
     expect(card.getByText('Attended').nextElementSibling).toHaveTextContent(present == null ? '--' : String(present));
@@ -330,6 +331,7 @@ describe('learner loading and recovery', () => {
     }));
     const Page = (await modules['/src/pages/workspace/learner/page.tsx']()).default;
     render(<MemoryRouter><ToastProvider><Page /></ToastProvider></MemoryRouter>);
+    fireEvent.click(await screen.findByRole('tab', { name: 'Overview' }));
     const card = within(await screen.findByRole('link', { name: 'Open KSB Progress' }));
     await waitFor(() => expect(card.getByText('Current').nextElementSibling).toHaveTextContent('--'));
     expect(card.getByText('--', { selector: 'p' })).toBeVisible();
@@ -365,6 +367,7 @@ describe('learner loading and recovery', () => {
     }));
     const Page = (await modules['/src/pages/workspace/learner/page.tsx']()).default;
     render(<MemoryRouter><ToastProvider><Page /></ToastProvider></MemoryRouter>);
+    fireEvent.click(await screen.findByRole('tab', { name: 'Overview' }));
 
     const programme = within(await screen.findByRole('link', { name: 'Open Programme Progress' }));
     await waitFor(() => expect(programme.getByText('Current').nextElementSibling).toHaveTextContent('11.73%'));
@@ -396,6 +399,7 @@ describe('learner loading and recovery', () => {
     }));
     const Page = (await modules['/src/pages/workspace/learner/page.tsx']()).default;
     render(<MemoryRouter><ToastProvider><Page /></ToastProvider></MemoryRouter>);
+    fireEvent.click(await screen.findByRole('tab', { name: 'Overview' }));
     const card = within(await screen.findByRole('link', { name: 'Open OTJ Hours' }));
     await waitFor(() => expect(card.getByText('Actual').nextElementSibling).toHaveTextContent('500.00 h'));
     await waitFor(() => expect(card.getByText('Target to date').nextElementSibling).toHaveTextContent('Unavailable'));
@@ -420,6 +424,7 @@ describe('learner loading and recovery', () => {
     }));
     const Page = (await modules['/src/pages/workspace/learner/page.tsx']()).default;
     render(<MemoryRouter><ToastProvider><Page /></ToastProvider></MemoryRouter>);
+    fireEvent.click(await screen.findByRole('tab', { name: 'Overview' }));
     const card = within(await screen.findByRole('link', { name: 'Open OTJ Hours' }));
     await waitFor(() => expect(card.getByText('Actual').nextElementSibling).toHaveTextContent('500.00 h'));
     await waitFor(() => expect(card.getByText('Target to date').nextElementSibling).toHaveTextContent('410.00 h'));
@@ -447,6 +452,7 @@ describe('learner loading and recovery', () => {
     }));
     const Page = (await modules['/src/pages/workspace/learner/page.tsx']()).default;
     render(<MemoryRouter><ToastProvider><Page /></ToastProvider></MemoryRouter>);
+    fireEvent.click(await screen.findByRole('tab', { name: 'Overview' }));
 
     const otjh = within(await screen.findByRole('link', { name: 'Open OTJ Hours' }));
     await waitFor(() => expect(otjh.getByText('Actual').nextElementSibling).toHaveTextContent('294.63 h'));
@@ -544,6 +550,7 @@ describe('learner loading and recovery', () => {
     expect(await screen.findByRole('heading', { name: 'Dashboard' })).toBeVisible();
     expect(await screen.findByText('Ready to invite')).toBeVisible();
     expect(screen.queryByText('Your start date has not been set yet')).not.toBeInTheDocument();
+    fireEvent.click(await screen.findByRole('tab', { name: 'Overview' }));
     await waitFor(() => {
       const requests = vi.mocked(fetch).mock.calls.map(([url]) => String(url));
       for (const endpoint of ['/attendance/', '/overview-week/', '/training-plan-dashboard/']) {
@@ -568,6 +575,7 @@ describe('learner loading and recovery', () => {
       <Route path="/workspace/learner/:kind?/:id?" element={<Page />} />
     </Routes></ToastProvider></MemoryRouter>);
     expect(await screen.findByRole('heading', { name: 'Dashboard' })).toBeVisible();
+    fireEvent.click(await screen.findByRole('tab', { name: 'Overview' }));
     await waitFor(() => {
       const requests = vi.mocked(fetch).mock.calls.map(([url]) => String(url));
       expect(requests.some(url => url.includes('/metrics/'))).toBe(true);
@@ -626,31 +634,56 @@ describe('learner loading and recovery', () => {
     expect(screen.queryByRole('heading', { name: 'Onboarding destination' })).not.toBeInTheDocument();
     viewer.role = 'learner';
   });
-  it('loads all dashboard cards without requesting full learner detail or historical activity', async () => {
+  it('loads only the Weekly Learning reads first and the reads for each hidden tab once it is opened', async () => {
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
       const fullDetail = url.includes('/learner-detail/') && !url.includes('content=summary');
-      if (fullDetail || /student-activity|subject-covers/.test(url)) throw new Error('Dashboard must not load lesson graphs');
+      if (fullDetail) throw new Error('Dashboard must not load lesson graphs');
+      if (/\/learner-(summary|detail)\//.test(url)) return new Response(JSON.stringify({ ...detail(), studentActivityAvailable: true }));
+      if (url.includes('/student-activity/')) return new Response(JSON.stringify({ learner_name: 'Test learner', count: 0,
+        unique_activity_count: 0, module_count: 0, completed_count: 0, actual_total: null, planned_total: null,
+        mapped_count: 0, planned_mapped_count: 0, activities: [], subjects: [] }));
       return new Response(JSON.stringify(payload(url)));
     }));
+    const requests = () => vi.mocked(fetch).mock.calls.map(([url]) => String(url));
+    const count = (pattern: RegExp) => requests().filter(url => pattern.test(url)).length;
+    const hidden = /\/metrics\/|\/attendance\/|\/monthly-logs\/|\/student-activity\/|\/subject-covers\//;
     const Page = (await modules['/src/pages/workspace/learner/page.tsx']()).default;
     render(<MemoryRouter><ToastProvider><Page /></ToastProvider></MemoryRouter>);
+    expect(await screen.findByRole('heading', { name: 'Test learner' })).toBeVisible();
+    expect(screen.getByRole('tab', { name: 'Weekly Learning' })).toHaveAttribute('aria-selected', 'true');
     await waitFor(() => {
-      const paths = vi.mocked(fetch).mock.calls.map(([url]) => String(url));
-      expect(paths.some(url => url.includes('/metrics/'))).toBe(true);
-      expect(paths.some(url => url.includes('/attendance/'))).toBe(true);
-      expect(paths.some(url => url.includes('/overview-week/'))).toBe(true);
-      expect(paths.some(url => url.includes('/training-plan-dashboard/'))).toBe(true);
+      expect(count(/\/overview-week\//)).toBe(1);
+      expect(count(/\/training-plan-dashboard\/.*section=overview/)).toBe(1);
+      expect(count(/\/learner-detail\/.*content=summary/)).toBeGreaterThan(0);
     });
-    expect(screen.getByRole('heading', { name: 'Dashboard' })).toBeVisible();
-    expect(screen.getByRole('heading', { name: 'Test learner' })).toBeVisible();
-    await screen.findByRole('region', { name: 'Monthly study plan' });
-    const requests = vi.mocked(fetch).mock.calls.map(([url]) => String(url));
-    expect(requests.filter(url => (url.includes('/learner-detail/') && !url.includes('content=summary'))
-      || /student-activity|subject-covers/.test(url))).toEqual([]);
-    expect(requests.filter(url => url.includes('overview-week'))).toHaveLength(1);
-    expect(requests.some(url => url.includes('section=dashboard'))).toBe(false);
-    expect(requests.filter(url => url.includes('section=overview'))).toHaveLength(1);
+    // Hero, Due soon and the Weekly panel are all served; nothing for the closed tabs.
+    expect(requests().filter(url => hidden.test(url))).toEqual([]);
+
+    fireEvent.click(screen.getByRole('tab', { name: 'Monthly Plan' }));
+    await waitFor(() => {
+      expect(count(/\/monthly-logs\//)).toBe(1);
+      expect(count(/\/student-activity\//)).toBe(1);
+      expect(count(/\/subject-covers\//)).toBe(1);
+    });
+    // The Monthly tab's own lecture list is separate from the Overview attendance summary.
+    expect(requests().filter(url => /\/metrics\/|\/attendance\/commercial\/125\/$/.test(url))).toEqual([]);
+
+    fireEvent.click(screen.getByRole('tab', { name: 'Overview' }));
+    expect(await screen.findByRole('link', { name: 'Open Attendance' }, { timeout: 5_000 })).toBeVisible();
+    await waitFor(() => {
+      expect(count(/\/metrics\//)).toBe(1);
+      expect(count(/\/attendance\/commercial\/125\/$/)).toBe(1);
+    });
+
+    // Revisiting tabs reuses what was loaded.
+    fireEvent.click(screen.getByRole('tab', { name: 'Weekly Learning' }));
+    fireEvent.click(screen.getByRole('tab', { name: 'Monthly Plan' }));
+    fireEvent.click(screen.getByRole('tab', { name: 'Overview' }));
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 50)); });
+    for (const endpoint of [/\/metrics\//, /\/attendance\/commercial\/125\/$/, /\/monthly-logs\//, /\/student-activity\//, /\/subject-covers\//,
+      /\/overview-week\//, /\/training-plan-dashboard\/.*section=overview/]) expect(count(endpoint), String(endpoint)).toBe(1);
+    expect(requests().some(url => url.includes('section=dashboard'))).toBe(false);
     expect(screen.queryByTestId('page-crash')).not.toBeInTheDocument();
   });
   it('ignores an old evidence response after navigating to another learner', async () => {
