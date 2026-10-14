@@ -76,6 +76,13 @@ function checkedSource(source, patch) {
 
 function planPatches(projectRoot) {
   const root = fs.realpathSync(projectRoot);
+  const manifest = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
+  const buildFromSource = manifest.expo?.autolinking?.android?.buildFromSource;
+  // SDK 57 prefers bundled AARs unless these packages explicitly opt out.
+  // A correct source patch alone cannot protect the compiled media transport.
+  if (!Array.isArray(buildFromSource) || !['expo-audio', 'expo-video'].every(name => buildFromSource.includes(name))) {
+    throw new Error('Native media cookie patch requires package.json expo.autolinking.android.buildFromSource to include expo-audio and expo-video explicitly; prebuilt AARs bypass the patch');
+  }
   const lock = JSON.parse(fs.readFileSync(path.join(root, 'package-lock.json'), 'utf8'));
   for (const [name, expected] of Object.entries(VERSIONS)) {
     const installed = JSON.parse(fs.readFileSync(path.join(root, 'node_modules', name, 'package.json'), 'utf8'));
@@ -95,7 +102,7 @@ function planPatches(projectRoot) {
 }
 
 function applyPatches(projectRoot, { checkOnly = false } = {}) {
-  // Validate ALL files and versions before the first write. A changed second
+  // Validate build configuration, ALL files and versions before the first write. A changed second
   // package must not leave a partially patched dependency tree behind.
   const plan = planPatches(projectRoot);
   if (checkOnly && plan.some(item => item.changed)) throw new Error('Native media cookie patch is missing; run npm run patch:native-media');

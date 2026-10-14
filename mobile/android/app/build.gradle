@@ -4,6 +4,17 @@ apply plugin: "com.facebook.react"
 
 def projectRoot = rootDir.getAbsoluteFile().getParentFile().getAbsolutePath()
 
+// Prebuilt Expo media AARs bypass local source patches. Fail the native build
+// if source compilation or the reviewed cookie transport is missing, even
+// when dependencies were prepared without running npm's install lifecycle.
+def verifyNativeMediaCookies = tasks.register('verifyNativeMediaCookies', Exec) {
+    workingDir projectRoot
+    commandLine 'node', 'scripts/patch-native-media-cookies.cjs', '--check'
+}
+tasks.named('preBuild').configure {
+    dependsOn verifyNativeMediaCookies
+}
+
 /**
  * This is the configuration block to customize your React Native Android app.
  * By default you don't need to apply any configuration, just uncomment the lines you need.
@@ -94,8 +105,8 @@ android {
         applicationId 'com.kentbusinesscollege.learn.lmscandidate'
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 7
-        versionName "0.4.0"
+        versionCode 8
+        versionName "0.4.1"
 
         // Client Firebase configuration is supplied by the release operator.
         // The server notification-sender credential must NEVER be used here.

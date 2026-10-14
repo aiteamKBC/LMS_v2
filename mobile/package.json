@@ -3,6 +3,13 @@
   "version": "0.1.0",
   "private": true,
   "main": "index.ts",
+  "expo": {
+    "autolinking": {
+      "android": {
+        "buildFromSource": ["expo-audio", "expo-video"]
+      }
+    }
+  },
   "scripts": {
     "postinstall": "node scripts/patch-native-media-cookies.cjs",
     "patch:native-media": "node scripts/patch-native-media-cookies.cjs",
