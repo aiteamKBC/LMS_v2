@@ -4498,6 +4498,12 @@ def upsert_live_session_artifact(occurrence, artifact_type, artifact):
     # LMS visibility, including a toggle committed while discovery was running.
     with transaction.atomic(), connection.cursor() as cursor:
         lock = ' FOR UPDATE' if connection.vendor == 'postgresql' else ''
+        if lock:
+            # Two syncs of one meeting (a retry overlapping a worker) both find
+            # no row for a new id and would both insert. One session's artifacts
+            # of one type are written one at a time; the lock ends with the transaction.
+            cursor.execute('SELECT pg_advisory_xact_lock(hashtext(%s))',
+                           [f"live-session-artifact|{occurrence['id']}|{artifact_type}"])
         cursor.execute(f'SELECT metadata FROM {authoring_table_name(LIVE_SESSION_ARTIFACTS_TABLE)} '
                        'WHERE occurrence_id=%s AND artifact_type=%s AND graph_artifact_id=%s' + lock,
                        [occurrence['id'], artifact_type, graph_id])
@@ -4535,13 +4541,30 @@ def upsert_live_session_artifact(occurrence, artifact_type, artifact):
 def _same_artifact_under_new_graph_id(cursor, lock, payload):
     """(row id, metadata) of this occurrence's artifact for the same call and recording window.
 
-    Graph has returned one recording under a second id on a later sync; matching
-    only on graph_artifact_id then saved and archived it twice.
+    Graph has returned one recording under a second id on a later sync, and two
+    ids for one recording in the same listing; matching only on
+    graph_artifact_id then saved and archived it twice. Microsoft's content
+    correlation id names the recording itself (one per recording, shared by no
+    other in production), so it matches even when the timing is reported with a
+    different precision -- but never across calls, which keeps two recordings of
+    one session apart.
     """
+    table = authoring_table_name(LIVE_SESSION_ARTIFACTS_TABLE)
+    correlation = clean_str(payload.get('content_correlation_id'))
+    if correlation:
+        cursor.execute(
+            f'SELECT id, metadata FROM {table} WHERE occurrence_id=%s AND artifact_type=%s '
+            "AND content_correlation_id=%s AND (call_id=%s OR call_id='' OR call_id IS NULL OR %s='') "
+            'ORDER BY created_at LIMIT 1' + lock,
+            [payload['occurrence_id'], payload['artifact_type'], correlation, payload['call_id'], payload['call_id']],
+        )
+        row = cursor.fetchone()
+        if row:
+            return row
     if not payload['call_id'] or not payload['created_datetime']:
         return None
     cursor.execute(
-        f'SELECT id, metadata FROM {authoring_table_name(LIVE_SESSION_ARTIFACTS_TABLE)} '
+        f'SELECT id, metadata FROM {table} '
         'WHERE occurrence_id=%s AND artifact_type=%s AND call_id=%s AND created_datetime=%s '
         'AND end_datetime IS NOT DISTINCT FROM %s ORDER BY created_at LIMIT 1' + lock,
         [payload['occurrence_id'], payload['artifact_type'], payload['call_id'],
@@ -4715,8 +4738,14 @@ def curriculum_teams_meeting_artifacts(request, live_session_id):
     # can be an event of its own with an online meeting of its own (see
     # apply_teams_occurrence_shifts). Asking the series for that session's
     # attendance, transcript or recording returns nothing at all.
-    from .teams_calendar_integrity import note_completion, note_premature_run, run_precedes_session
+    from .teams_calendar_integrity import (
+        completion_to_reopen, note_completion, note_premature_run, note_reopened_by_sync,
+        run_not_delivery, run_replaces_stored, stored_run_is_delivery,
+    )
     for base, group in live_session_meeting_groups(series, occurrences):
+        # The delivery run each session was given by this sync. Kept apart from
+        # the loaded rows so report bindings below still read what was stored.
+        delivered = {}
         launches = live_session_join_launches(group)
         try:
             response = {'value': collection(microsoft_graph_request, f'{base}/attendanceReports', get_graph_settings()['base_url'])}
@@ -4746,7 +4775,9 @@ def curriculum_teams_meeting_artifacts(request, live_session_id):
                 if (not getattr(request, 'session_result_force', False) and stored_end
                         and (now - stored_end.replace(tzinfo=None)).total_seconds() > 48 * 3600
                         and clean_str(occurrence.get('attendance_report_id')) == report_id
-                        and expected_count >= 0 and len(matching) >= expected_count):
+                        and expected_count >= 0 and len(matching) >= expected_count
+                        # A saved test open is judged again, never trusted for being old.
+                        and stored_run_is_delivery(occurrence)):
                     continue
                 report_key = urllib_parse.quote(report_id, safe='')
                 detail = microsoft_graph_request('GET', f'{base}/attendanceReports/{report_key}?$expand=attendanceRecords')
@@ -4757,28 +4788,43 @@ def curriculum_teams_meeting_artifacts(request, live_session_id):
                     continue  # an ongoing report cannot establish absence
                 run_start = parse_graph_datetime(detail.get('meetingStartDateTime'))
                 run_end = parse_graph_datetime(detail.get('meetingEndDateTime'))
-                if run_precedes_session(occurrence, run_start, run_end):
-                    # Somebody opened the meeting before this session was due -- a
-                    # fresh link being tried, a rehearsal. That is not delivery: it
-                    # neither completes the session nor gives it attendance. What
-                    # an earlier sync already stored is left exactly as it is.
+                participants = int(detail.get('totalParticipantCount') or len(records))
+                current = {**occurrence, **delivered.get(occurrence['id'], {})}
+                not_delivery = run_not_delivery(current, run_start, run_end, participants)
+                if not_delivery:
+                    # Somebody opened the meeting for something other than this
+                    # session -- a fresh link being tried before it, another day's
+                    # use after it, one person checking the room. That is not
+                    # delivery: it neither completes the session nor gives it
+                    # attendance. What an earlier sync already stored is left as it is.
                     note_premature_run(series, occurrence, report_id, run_start, run_end,
-                                       job_id=clean_str(getattr(request, 'session_result_job_id', '')))
+                                       job_id=clean_str(getattr(request, 'session_result_job_id', '')),
+                                       reason=not_delivery)
                     continue
                 with transaction.atomic():
                     returned_report_ids.add(report_id)
-                    update_authoring_rows(LIVE_SESSION_OCCURRENCES_TABLE, 'id = %s', [occurrence['id']], {
-                        'attendance_report_id': report_id,
-                        'participant_count': int(detail.get('totalParticipantCount') or len(records)),
-                        'actual_start': run_start,
-                        'actual_end': run_end,
-                        'status': 'completed',
-                        'artifacts_synced_at': now,
-                        'last_sync_error': '',
-                    })
-                    if clean_str(occurrence.get('status')).lower() != 'completed':
-                        note_completion(series, occurrence, report_id, run_start, run_end,
-                                        job_id=clean_str(getattr(request, 'session_result_job_id', '')))
+                    if run_replaces_stored(current, report_id, run_start, run_end, participants):
+                        delivery = {
+                            'attendance_report_id': report_id,
+                            'participant_count': participants,
+                            'actual_start': run_start,
+                            'actual_end': run_end,
+                            'status': 'completed',
+                        }
+                        update_authoring_rows(LIVE_SESSION_OCCURRENCES_TABLE, 'id = %s', [occurrence['id']], {
+                            **delivery, 'artifacts_synced_at': now, 'last_sync_error': '',
+                        })
+                        if clean_str(current.get('status')).lower() != 'completed':
+                            note_completion(series, occurrence, report_id, run_start, run_end,
+                                            job_id=clean_str(getattr(request, 'session_result_job_id', '')))
+                        delivered[occurrence['id']] = delivery
+                    else:
+                        # A smaller run of a session already delivered (a reconnect,
+                        # a second room): its attendance is kept below, but the run
+                        # that delivered the session stays its saved run.
+                        update_authoring_rows(LIVE_SESSION_OCCURRENCES_TABLE, 'id = %s', [occurrence['id']], {
+                            'artifacts_synced_at': now, 'last_sync_error': '',
+                        })
                     for record in records:
                         display_name, identity_id = attendance_identity(record)
                         display_name = display_name or attendance_display_name(record)
@@ -4848,6 +4894,10 @@ def curriculum_teams_meeting_artifacts(request, live_session_id):
                     source_ids = set(source_ids) if isinstance(source_ids, list) else set()
                     if source_ids & returned_report_ids:
                         authoring_delete(LIVE_SESSION_ATTENDANCE_TABLE, 'id = %s', [existing_id])
+                if occurrence['id'] in delivered:
+                    # This sync saved the session's delivery run just now; a stored
+                    # report that has since moved elsewhere must not clear it.
+                    continue
                 stored_report_id = clean_str(occurrence.get('attendance_report_id'))
                 if stored_report_id in returned_report_ids and stored_report_id not in assigned_reports_by_occurrence.get(occurrence['id'], set()):
                     update_authoring_rows(LIVE_SESSION_OCCURRENCES_TABLE, 'id = %s', [occurrence['id']], {
@@ -4857,6 +4907,19 @@ def curriculum_teams_meeting_artifacts(request, live_session_id):
                         'actual_end': None,
                         'status': 'scheduled',
                     })
+                elif completion_to_reopen(occurrence):
+                    # Completed by a test open before it was due: the session has
+                    # not happened yet. Its attendance rows and Teams meeting stay
+                    # exactly as they are; the event keeps what the row held.
+                    update_authoring_rows(LIVE_SESSION_OCCURRENCES_TABLE, 'id = %s', [occurrence['id']], {
+                        'attendance_report_id': '',
+                        'participant_count': 0,
+                        'actual_start': None,
+                        'actual_end': None,
+                        'status': 'scheduled',
+                    })
+                    note_reopened_by_sync(series, occurrence,
+                                          job_id=clean_str(getattr(request, 'session_result_job_id', '')))
         except RuntimeError as exc:
             errors.append(f'Attendance: {exc}')
 
@@ -4872,7 +4935,24 @@ def curriculum_teams_meeting_artifacts(request, live_session_id):
                         'artifact_type = %s AND graph_artifact_id = %s', [artifact_type, clean_str(artifact.get('id'))])
                     existing_ids = {row['occurrence_id'] for row in existing_artifacts}
                     stored = next((row for row in group if row['id'] in existing_ids), None)
+                    correlation = clean_str(artifact.get('contentCorrelationId'))
+                    if not stored and correlation:
+                        # The same recording saved before under another Graph id stays
+                        # on the session it was filed under.
+                        same = authoring_fetch_all(LIVE_SESSION_ARTIFACTS_TABLE,
+                            'artifact_type = %s AND content_correlation_id = %s', [artifact_type, correlation])
+                        same_ids = {row['occurrence_id'] for row in same}
+                        stored = next((row for row in group if row['id'] in same_ids), None)
                     occurrence, launch = (stored, None) if stored else launch_linked_live_occurrence(group, timestamp, launches)
+                    if occurrence and not stored and launch is None and run_not_delivery(
+                            occurrence, parse_graph_datetime(artifact.get('createdDateTime')) or timestamp, timestamp):
+                        # Matched only as the nearest scheduled session, yet recorded
+                        # outside it -- another day's use of the link (a week with no
+                        # session, a session booked on its own meeting). Filing it
+                        # under that week would be wrong; it waits for a person.
+                        logger.info('Teams %s %s is outside every session of this meeting; not filed.',
+                                    artifact_type, clean_str(artifact.get('id'))[-12:])
+                        continue
                     linked_artifact = graph_item_with_occurrence_link(artifact, occurrence, launch) if occurrence else artifact
                     if occurrence:
                         remove_artifact_from_wrong_occurrences(group, occurrence, artifact_type, linked_artifact)

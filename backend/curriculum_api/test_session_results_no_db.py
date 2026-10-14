@@ -1065,7 +1065,9 @@ class ArchiveWorkerTests(unittest.TestCase):
             'save_archive': Mock(), 'tempfile': tempfile, 'httpx': types.SimpleNamespace(Client=lambda **kwargs: nullcontext(http)),
             'quote': __import__('urllib.parse', fromlist=['quote']).quote,
             'ResourceExistsError': type('ResourceExistsError', (Exception,), {}),
-            'result_rows': lambda series: [], 'log': Mock()}
+            'result_rows': lambda series: [], 'log': Mock(),
+            # No other row holds a saved copy of the same Teams file in these scenarios.
+            'saved_copy_of_same_recording': lambda artifact: None}
         functions(ROOT / 'session_archive.py', {'archive_series'}, self.ns)
         return self.ns['archive_series']('S', lease_id='owned-lease'), blob
 

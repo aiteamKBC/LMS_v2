@@ -405,10 +405,85 @@ def run_precedes_session(occurrence, run_start, run_end=None):
     return finished <= scheduled and (started is None or started < scheduled)
 
 
+# A run starting this long after the session's scheduled end is another day's
+# use of the same link, not this session's delivery.
+LATE_RUN_TOLERANCE = timedelta(hours=12)
+# Somebody alone in the room for a few minutes is checking the link, not teaching.
+TEST_OPEN_SECONDS = 5 * 60
+RUN_BEFORE_SESSION = 'before_session'
+RUN_AFTER_SESSION = 'after_session'
+RUN_TEST_OPEN = 'test_open'
+
+
+def run_not_delivery(occurrence, run_start, run_end, participants=None):
+    """Why a finished Teams run is not this session's delivery, or '' when it is.
+
+    Three shapes of the same link being opened for something else: the run
+    finished before the session started (a fresh link being tried), it started
+    long after the session ended (another day's use), or one person was in the
+    room for a few minutes (a test open). None of them may complete the
+    session, give it attendance or replace the run that delivered it.
+    """
+    if as_utc(run_end) is None:
+        return ''  # an ongoing run is not judged
+    if run_precedes_session(occurrence, run_start, run_end):
+        return RUN_BEFORE_SESSION
+    started, finished = as_utc(run_start), as_utc(run_end)
+    scheduled_start = as_utc((occurrence or {}).get('scheduled_start'))
+    scheduled_end = as_utc((occurrence or {}).get('scheduled_end')) or (
+        scheduled_start + timedelta(hours=2) if scheduled_start else None)
+    if started and scheduled_end and started >= scheduled_end + LATE_RUN_TOLERANCE:
+        return RUN_AFTER_SESSION
+    count = None if participants is None else int(participants or 0)
+    if count is not None and count <= 1 and started and (finished - started).total_seconds() < TEST_OPEN_SECONDS:
+        return RUN_TEST_OPEN
+    return ''
+
+
+def stored_run_is_delivery(occurrence):
+    """Whether the run already saved on a completed session stands as its delivery."""
+    if clean((occurrence or {}).get('status')).lower() != 'completed':
+        return False
+    return not run_not_delivery(occurrence, occurrence.get('actual_start'), occurrence.get('actual_end'),
+                                occurrence.get('participant_count'))
+
+
+def run_replaces_stored(occurrence, report_id, run_start, run_end, participants):
+    """Whether a delivery run should become the session's saved run.
+
+    A session can have several qualifying runs (a reconnect, a second room).
+    The saved run is the one that best evidences delivery -- most people, then
+    longest -- so the order Microsoft lists reports in can never let a smaller
+    run overwrite the real lesson. The same report always refreshes itself.
+    """
+    if clean((occurrence or {}).get('attendance_report_id')) == clean(report_id):
+        return True
+    if not stored_run_is_delivery(occurrence):
+        return True
+    stored_start, stored_end = as_utc(occurrence.get('actual_start')), as_utc(occurrence.get('actual_end'))
+    stored_length = (stored_end - stored_start).total_seconds() if stored_start and stored_end else 0
+    length = (as_utc(run_end) - as_utc(run_start)).total_seconds() if as_utc(run_start) and as_utc(run_end) else 0
+    return (int(participants or 0), length) > (int(occurrence.get('participant_count') or 0), stored_length)
+
+
+def completion_to_reopen(occurrence, now=None):
+    """Whether a session saved as completed is in fact still to come.
+
+    Only a session whose scheduled start is in the future and whose saved run
+    is not its delivery qualifies. A past session is never reopened here: its
+    real run replaces the test open on the next sync, and anything else is for
+    Calendar health to show and a person to resolve.
+    """
+    now = now or datetime.now(timezone.utc)
+    scheduled_start = as_utc((occurrence or {}).get('scheduled_start'))
+    return (clean((occurrence or {}).get('status')).lower() == 'completed' and scheduled_start is not None
+            and scheduled_start > now and not stored_run_is_delivery(occurrence))
+
+
 _NOTED_PREMATURE = set()
 
 
-def note_premature_run(series, occurrence, report_id, run_start, run_end, job_id=''):
+def note_premature_run(series, occurrence, report_id, run_start, run_end, job_id='', reason=RUN_BEFORE_SESSION):
     """Log, once per process, that a Teams run was not used to complete a session."""
     key = (clean(occurrence.get('id')), clean(report_id))
     if key in _NOTED_PREMATURE:
@@ -418,7 +493,20 @@ def note_premature_run(series, occurrence, report_id, run_start, run_end, job_id
                  module_catalogue_id=clean(series.get('module_catalogue_id')), job_id=job_id,
                  trigger='Teams attendance sync', outcome='ignored',
                  detail={'scheduledStart': iso(occurrence.get('scheduled_start')), 'runStart': iso(run_start),
-                         'runEnd': iso(run_end), 'statusKept': clean(occurrence.get('status'))})
+                         'runEnd': iso(run_end), 'statusKept': clean(occurrence.get('status')), 'reason': reason})
+
+
+def note_reopened_by_sync(series, occurrence, job_id=''):
+    """Log the sync putting a not-yet-delivered session back to Scheduled, with what it held before."""
+    record_event(clean(series.get('id')), EVENT_REOPENED, session_number=occurrence.get('session_number'),
+                 module_catalogue_id=clean(series.get('module_catalogue_id')), job_id=job_id,
+                 trigger='Teams attendance sync',
+                 detail={'statusBefore': clean(occurrence.get('status')), 'statusAfter': 'scheduled',
+                         'scheduledStart': iso(occurrence.get('scheduled_start')),
+                         'actualStart': iso(occurrence.get('actual_start')), 'actualEnd': iso(occurrence.get('actual_end')),
+                         'attendanceReportId': clean(occurrence.get('attendance_report_id')),
+                         'participantCount': occurrence.get('participant_count'),
+                         'reason': 'The saved run was a test open before this session; its attendance rows are kept.'})
 
 
 def note_completion(series, occurrence, report_id, run_start, run_end, job_id=''):
