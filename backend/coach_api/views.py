@@ -91,6 +91,7 @@ from learner_api.models import (
     learner_ksbs_relation_exists,
 )
 from learner_api.constants import ACCESS_COACH, ACCESS_SUPER_ADMIN
+from learner_api.ksb_exclusions import and_not_excluded
 from learner_api import canonical_learning
 # The one audited shape for the submissions table, shared with the two learner
 # write paths so all three record the same columns. See submission_audit.
@@ -2115,7 +2116,8 @@ def caseload_completed_ksb_codes(rows) -> dict[int, set[str]]:
     if not learner_ids:
         return {}
     result: dict[int, set[str]] = defaultdict(set)
-    with connections[get_learner_db_alias()].cursor() as cursor:
+    alias = get_learner_db_alias()
+    with connections[alias].cursor() as cursor:
         cursor.execute(
             '''SELECT p.learner_id,k.ksb_code
                FROM "Learner".learner_progress_entries p
@@ -2123,7 +2125,7 @@ def caseload_completed_ksb_codes(rows) -> dict[int, set[str]]:
                WHERE p.learner_id=ANY(%s) AND p.deleted_at IS NULL
                  AND p.passed IS NOT FALSE
                  AND btrim(lower(coalesce(p.kind,''))) <> 'activity_event'
-                 AND (btrim(lower(coalesce(p.kind,''))) <> 'quiz' OR p.passed IS TRUE)''',
+                 AND (btrim(lower(coalesce(p.kind,''))) <> 'quiz' OR p.passed IS TRUE)''' + and_not_excluded('k', connections[alias]),
             [learner_ids],
         )
         for learner_id, raw_code in cursor.fetchall():

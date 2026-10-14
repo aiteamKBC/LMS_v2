@@ -64,7 +64,6 @@ import {
   fetchCurriculumComponents,
   fetchCurriculumLiveSessionOccurrences,
   type CurriculumLiveSessionOccurrence,
-  fetchCurriculumProgrammes,
   fetchCurriculumProgrammeDetail,
   fetchProgrammeKsbStats,
   fetchCurriculumProgrammeKsbCoverage,
@@ -84,6 +83,7 @@ import { VideoPlayer, parseVideoUrl } from '@/components/feature/VideoPlayer';
 import { resolveDocEmbed } from '@/lib/docEmbed';
 import { type KsbMapping } from '../module-builder/moduleAuthoringData';
 import { SessionsTree } from './SessionsTree';
+import { useCompleteComponent } from './useCompleteComponent';
 import { ReviewsTab } from './reviews/ReviewsTab';
 
 // ============================================================
@@ -973,6 +973,23 @@ function programmeDetailToOverview(
   };
 }
 
+/**
+ * Resolves once the browser has a moment to spare -- or after `timeoutMs` at
+ * the latest -- so a page's non-critical reads start behind the ones it is
+ * waiting on instead of alongside them.
+ */
+function whenBrowserIdle(signal?: AbortSignal, timeoutMs = 2_000): Promise<void> {
+  return new Promise(resolve => {
+    if (signal?.aborted) {
+      resolve();
+      return;
+    }
+    const requestIdle = (globalThis as { requestIdleCallback?: (callback: () => void, options?: { timeout?: number }) => number }).requestIdleCallback;
+    if (typeof requestIdle === 'function') requestIdle(() => resolve(), { timeout: timeoutMs });
+    else setTimeout(resolve, 200);
+  });
+}
+
 function useProgrammeDetailData(programmeId: string) {
   const [data, setData] = useState<CurriculumOverview | null>(null);
   const [loading, setLoading] = useState(true);
@@ -1001,9 +1018,22 @@ function useProgrammeDetailData(programmeId: string) {
       // Archived cohorts/groups are fetched so the status filter can reach them.
       // The default view still hides them (see filteredCohorts), but "All statuses"
       // would otherwise silently omit rows that exist in the database.
+      // `omitComponents`: this page reads its components through
+      // fetchCurriculumComponents (see detailComponents) and replaces the
+      // detail's own copy with that list, so the server need not send it.
+      // `omitTree`: programmeDetailToOverview reads `detail.flat` only, never
+      // the nested cohorts view that repeats every module.
+      // `omitWeekComponents`: each module's weekStructure comes as an outline.
+      // buildModuleWeeks reads week ids, numbers, titles and order from it and
+      // nothing else; the components themselves come from detailComponents.
+      // Nothing here saves a module from these rows -- the module drawer gets a
+      // moduleFormTarget, and a Teams push re-reads the module's structure.
       const detail = await fetchCurriculumProgrammeDetail(programmeId, signal, {
         visibility: 'all',
         deferStats: true,
+        omitComponents: true,
+        omitTree: true,
+        omitWeekComponents: true,
         skipCache: options.skipCache,
         revalidate: options.revalidate,
       });
@@ -1034,15 +1064,21 @@ function useProgrammeDetailData(programmeId: string) {
         })
         .catch(() => undefined);
 
-      void Promise.all([
+      // Reference lists for the drawers, filters and labels. Started once the
+      // browser is idle rather than in the same tick as the detail, so the
+      // reads the open tab is waiting on (coverage, roster, components) are
+      // not queued behind them. The whole programme list used to be read here
+      // too, only to find this programme again: the detail's own programme row
+      // comes from the same build_programmes() call, so it is used as it is.
+      void whenBrowserIdle(signal).then(() => (signal?.aborted ? null : Promise.all([
         fetchCurriculumCoaches(signal).catch(() => []),
         fetchCurriculumTutors(signal).catch(() => []),
-        fetchCurriculumProgrammes(signal).catch(() => []),
         fetchCurriculumKsbFrameworks(signal).catch(() => []),
         fetchCurriculumHolidays(signal).catch(() => []),
-      ]).then(([coaches, tutors, programmes, ksbFrameworks, holidays]) => {
-        if (signal?.aborted) return;
-        const supplemental = programmeDetailToOverview(detail, { coaches, tutors }, { programmes, ksbFrameworks, holidays });
+      ]))).then((references) => {
+        if (!references || signal?.aborted) return;
+        const [coaches, tutors, ksbFrameworks, holidays] = references;
+        const supplemental = programmeDetailToOverview(detail, { coaches, tutors }, { ksbFrameworks, holidays });
         setData((current) => {
           if (!current) return supplemental;
           const hydratedProgramme = current.programmes[0];
@@ -2612,7 +2648,10 @@ export default function ProgrammeDetailPage() {
     if (componentsRequestKeyRef.current === componentsKey) return;
     componentsRequestKeyRef.current = componentsKey;
     const controller = new AbortController();
-    fetchCurriculumComponents(controller.signal, { moduleCatalogueIds })
+    // Without the authored long text: the counts, KSB roll-ups and session
+    // rows read none of it. The KSB placement preview loads one component's
+    // full settings when it opens (see useCompleteComponent).
+    fetchCurriculumComponents(controller.signal, { moduleCatalogueIds, omitContent: true })
       .then(setDetailComponents)
       .catch(error => {
         if (!controller.signal.aborted) {
@@ -5719,6 +5758,7 @@ function KsbPlacementPreviewModal({
   // rather than one standing in for the other.
   const [measuredSeconds, setMeasuredSeconds] = useState(0);
   useEffect(() => { setMeasuredSeconds(0); }, [placement, component]);
+  const content = useCompleteComponent(component);
 
   const title = clean(component?.title, clean(placement.component, 'This placement'));
   const type = clean(component?.type, clean(placement.componentType));
@@ -5832,7 +5872,21 @@ function KsbPlacementPreviewModal({
                   component carries 50% of K1 is not the same as seeing what it
                   actually teaches, and the second question is the one nobody
                   could answer without leaving this page. */}
-              <PlacementContentSections component={component} onMeasuredDuration={setMeasuredSeconds} />
+              {content.status === 'ready' && content.component ? (
+                <PlacementContentSections component={content.component} onMeasuredDuration={setMeasuredSeconds} />
+              ) : content.status === 'error' ? (
+                <div role="alert" className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-3 text-[11px] leading-relaxed text-amber-800">
+                  <p className="font-bold">The content of this component could not be loaded.</p>
+                  <p className="mt-1">{content.error}</p>
+                  <button type="button" onClick={content.retry} className="mt-2 rounded-lg border border-amber-300 bg-white px-2.5 py-1 text-[11px] font-bold text-amber-800 hover:bg-amber-100">
+                    Try again
+                  </button>
+                </div>
+              ) : (
+                <p role="status" className="rounded-xl border border-dashed border-background-200 bg-background-100/50 px-3 py-4 text-center text-[11px] font-semibold text-foreground-400">
+                  Loading this component&apos;s content…
+                </p>
+              )}
 
               {clean(component.description) && (
                 <p className="text-[12px] leading-relaxed text-foreground-700">{component.description}</p>

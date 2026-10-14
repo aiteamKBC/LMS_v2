@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { showCurriculumConfirm } from '@/components/feature/CurriculumSweetAlert';
@@ -54,6 +54,76 @@ function otjhFor(learners: CurriculumScopeOtjhLearner[], key: string | null) {
   return key == null ? undefined : learners.find(row => learnerKey(row.learnerId) === key);
 }
 
+/** Completion counted from learner_progress_entries by the module's moduleProgress read. */
+interface ActivityLogProgressLearner {
+  learnerId: string | number;
+  totalActivities: number;
+  completedActivities: number;
+  inProgressActivities: number;
+  /** Rows tagged with this module whose activity is no longer in its plan. */
+  earlierRecords: number;
+  earlierCompleted: number;
+}
+
+interface ActivityLogProgress {
+  learners: ActivityLogProgressLearner[];
+  completedActivities: number;
+  totalActivities: number;
+  earlierRecords: number;
+}
+
+function plural(count: number, word: string) {
+  return `${count} ${word}${count === 1 ? '' : 's'}`;
+}
+
+/** A figure whose meaning is explained on hover or keyboard focus. */
+function Hint({ text, children }: { text: string; children: ReactNode }) {
+  return (
+    <span title={text} tabIndex={0} className="cursor-help underline decoration-dotted decoration-foreground-300 underline-offset-2 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-200">
+      {children}
+    </span>
+  );
+}
+
+function otjhHint(achieved: number | null, planned: number, progress: number | null, whose: 'learner' | 'module') {
+  if (achieved == null) {
+    return whose === 'learner'
+      ? 'N/A: some of this learner’s accepted activity records in this module have no hours allocated in the Activity Log yet, so their total cannot be calculated. Time the timer recorded counts here once it is allocated.'
+      : 'N/A: at least one assigned learner has accepted activity records with no hours allocated in the Activity Log yet, so the module total cannot be calculated.';
+  }
+  if (planned <= 0) {
+    return whose === 'learner'
+      ? 'N/A: this learner has no planned OTJH in this module, so there is no target to measure against.'
+      : 'N/A: no planned OTJH is assigned to these learners in this module, so there is no target to measure against.';
+  }
+  if (!progress) {
+    return whose === 'learner'
+      ? '0%: no accepted Activity Log hours are recorded for this learner in this module yet.'
+      : '0%: no accepted Activity Log hours are recorded for any assigned learner in this module yet.';
+  }
+  return `${percentage(progress)}% of the planned OTJH, counted from accepted Activity Log hours.`;
+}
+
+function ksbHint(achieved: number, expected: number, whose: 'learner' | 'module') {
+  if (expected <= 0) {
+    return whose === 'learner'
+      ? 'No KSB weight is expected from this module for this learner: no KSBs are mapped to the activities their group takes.'
+      : 'No KSB weight is expected from this module: no KSBs are mapped to its activities.';
+  }
+  if (achieved <= 0) {
+    return whose === 'learner'
+      ? '0%: none of this learner’s activities in this module has KSB progress linked yet.'
+      : '0%: no assigned learner has KSB progress linked to this module’s activities yet.';
+  }
+  return `${weight(achieved)} of ${weight(expected)} expected KSB weight earned.`;
+}
+
+function completionHint(completed: number, total: number) {
+  if (total <= 0) return 'N/A: no activities in this module are planned for this learner’s group.';
+  if (completed <= 0) return '0%: none of the planned activities has a completed progress record yet.';
+  return `${completed} of ${total} planned activities have a completed progress record.`;
+}
+
 function ksbFor(learners: CurriculumLearnerKsbConsumption[], key: string | null) {
   return key == null ? undefined : learners.find(row => learnerKey(row.learnerId) === key);
 }
@@ -80,6 +150,8 @@ export function ModuleLearnerProgressDialog({ moduleName, moduleId, impact, assi
   const otjhRows = impact.otjhAchievement?.learners || [];
   const ksbRows = impact.learnerKsbConsumption || [];
   const log = impact.activityLogOtjh;
+  const activity = (impact as CurriculumScopeLearnerKsbImpactResponse & { activityLogProgress?: ActivityLogProgress }).activityLogProgress;
+  const activityPercent = activity && activity.totalActivities > 0 ? Math.round(activity.completedActivities / activity.totalActivities * 100) : null;
   const totalHours = log ? log.achievedTotal : impact.otjhAchievement?.achievedTotal || 0;
   const plannedHours = log ? log.plannedTotal : impact.otjhAchievement?.plannedTotal || 0;
   const totalPercent = totalHours != null && plannedHours > 0 ? Math.round(totalHours / plannedHours * 100) : null;
@@ -120,18 +192,31 @@ export function ModuleLearnerProgressDialog({ moduleName, moduleId, impact, assi
           </div>
         </header>
 
-        <div className="grid gap-3 border-b border-background-200 bg-background-100/60 p-4 sm:grid-cols-2">
+        <div className={`grid gap-3 border-b border-background-200 bg-background-100/60 p-4 ${activity ? 'sm:grid-cols-3' : 'sm:grid-cols-2'}`}>
+          {activity && (
+            <div className="rounded-xl border border-background-200 bg-background-50 p-3">
+              <p className="text-[10px] font-bold uppercase tracking-wider text-foreground-400">Activities completed</p>
+              <p className="mt-1 text-lg font-black text-foreground-900">{activity.completedActivities} <span className="text-[11px] font-bold text-foreground-400">/ {activity.totalActivities}</span></p>
+              <ProgressBar value={activityPercent || 0} tone="emerald" />
+              <p className="mt-1 text-[10px] font-semibold text-foreground-500">
+                <Hint text={activity.totalActivities > 0 ? completionHint(activity.completedActivities, activity.totalActivities) : 'N/A: no activities in this module are planned for the assigned learners.'}>
+                  {activityPercent == null ? 'No activities planned for these learners' : `${percentage(activityPercent)}% of planned activities, all assigned learners`}
+                </Hint>
+                {activity.earlierRecords > 0 ? ` · ${plural(activity.earlierRecords, 'record')} from activities no longer in this module also counted in hours` : ''}
+              </p>
+            </div>
+          )}
           <div className="rounded-xl border border-background-200 bg-background-50 p-3">
             <p className="text-[10px] font-bold uppercase tracking-wider text-foreground-400">OTJH progress</p>
-            <p className="mt-1 text-lg font-black text-foreground-900">{totalHours == null ? 'N/A' : formatHoursMinutes(totalHours)} <span className="text-[11px] font-bold text-foreground-400">/ {formatHoursMinutes(plannedHours)}</span></p>
+            <p className="mt-1 text-lg font-black text-foreground-900"><Hint text={otjhHint(totalHours ?? null, plannedHours, totalPercent, 'module')}>{totalHours == null ? 'N/A' : formatHoursMinutes(totalHours)}</Hint> <span className="text-[11px] font-bold text-foreground-400">/ {formatHoursMinutes(plannedHours)}</span></p>
             <ProgressBar value={totalPercent || 0} tone="primary" />
-            <p className="mt-1 text-[10px] font-semibold text-foreground-500">{totalPercent == null ? 'N/A' : `${percentage(totalPercent)}%`} of assigned planned hours{log ? ' · Activity Log accepted hours' : ''}</p>
+            <p className="mt-1 text-[10px] font-semibold text-foreground-500"><Hint text={otjhHint(totalHours ?? null, plannedHours, totalPercent, 'module')}>{`${totalPercent == null ? 'N/A' : `${percentage(totalPercent)}%`} of assigned planned hours${log ? ' · Activity Log accepted hours' : ''}`}</Hint></p>
           </div>
           <div className="rounded-xl border border-background-200 bg-background-50 p-3">
             <p className="text-[10px] font-bold uppercase tracking-wider text-foreground-400">KSB weights achieved</p>
             <p className="mt-1 text-lg font-black text-foreground-900">{weight(impact.ksbAchievement?.achievedWeightTotal || 0)} <span className="text-[11px] font-bold text-foreground-400">/ {weight(impact.ksbAchievement?.expectedWeightTotal || 0)}</span></p>
             <ProgressBar value={impact.ksbAchievement?.progressPercentage || 0} tone="emerald" />
-            <p className="mt-1 text-[10px] font-semibold text-foreground-500">{percentage(impact.ksbAchievement?.progressPercentage || 0)}% of expected KSB weight</p>
+            <p className="mt-1 text-[10px] font-semibold text-foreground-500"><Hint text={ksbHint(impact.ksbAchievement?.achievedWeightTotal || 0, impact.ksbAchievement?.expectedWeightTotal || 0, 'module')}>{`${percentage(impact.ksbAchievement?.progressPercentage || 0)}% of expected KSB weight`}</Hint></p>
           </div>
         </div>
 
@@ -150,6 +235,8 @@ export function ModuleLearnerProgressDialog({ moduleName, moduleId, impact, assi
                 const ksb = ksbFor(ksbRows, key);
                 const otjhProgress = achieved != null && planned > 0 ? Math.round(achieved / planned * 100) : null;
                 const ksbProgress = ksb?.progressPercentage || 0;
+                const done = key == null ? undefined : activity?.learners.find(row => learnerKey(row.learnerId) === key);
+                const doneProgress = done && done.totalActivities > 0 ? Math.round(done.completedActivities / done.totalActivities * 100) : null;
                 const id = learnerKey(learner.id);
                 return (
                   <article key={id} className="rounded-xl border border-background-200 bg-background-50 p-3">
@@ -195,14 +282,31 @@ export function ModuleLearnerProgressDialog({ moduleName, moduleId, impact, assi
                         View progress
                       </Link>
                     )}
+                    {activity && (
+                      <div className="mt-3">
+                        <div className="flex items-baseline justify-between text-[10px] font-bold text-foreground-600">
+                          <span>Activities completed</span>
+                          <span>{done ? `${done.completedActivities} / ${done.totalActivities}` : 'No progress record'}</span>
+                        </div>
+                        <ProgressBar value={doneProgress || 0} tone="emerald" />
+                        <p className="mt-1 text-[10px] font-semibold text-foreground-400">
+                          {!done ? 'No progress record matched this learner' : (
+                            <Hint text={completionHint(done.completedActivities, done.totalActivities)}>
+                              {doneProgress == null ? 'No activities planned for this learner' : `${percentage(doneProgress)}% complete${done.inProgressActivities ? ` · ${done.inProgressActivities} in progress` : ''}`}
+                            </Hint>
+                          )}
+                          {done && done.earlierRecords > 0 ? ` · ${plural(done.earlierRecords, 'earlier record')} (${done.earlierCompleted} completed)` : ''}
+                        </p>
+                      </div>
+                    )}
                     <div className="mt-3 grid gap-3 sm:grid-cols-2">
                       <div>
                         <div className="flex items-baseline justify-between text-[10px] font-bold text-foreground-600">
                           <span>OTJH</span>
-                          <span>{achieved == null ? 'N/A' : formatHoursMinutes(achieved)} / {formatHoursMinutes(planned)}</span>
+                          <Hint text={otjhHint(achieved, planned, otjhProgress, 'learner')}>{`${achieved == null ? 'N/A' : formatHoursMinutes(achieved)} / ${formatHoursMinutes(planned)}`}</Hint>
                         </div>
                         <ProgressBar value={otjhProgress || 0} tone="primary" />
-                        <p className="mt-1 text-[10px] font-semibold text-foreground-400">{otjhProgress == null ? 'N/A' : `${percentage(otjhProgress)}%`} complete</p>
+                        <p className="mt-1 text-[10px] font-semibold text-foreground-400"><Hint text={otjhHint(achieved, planned, otjhProgress, 'learner')}>{`${otjhProgress == null ? 'N/A' : `${percentage(otjhProgress)}%`} complete`}</Hint></p>
                       </div>
                       <div>
                         <div className="flex items-baseline justify-between text-[10px] font-bold text-foreground-600">
@@ -210,7 +314,7 @@ export function ModuleLearnerProgressDialog({ moduleName, moduleId, impact, assi
                           <span>{weight(ksb?.consumedWeightTotal || 0)} / {weight(ksb?.expectedWeightTotal || 0)}</span>
                         </div>
                         <ProgressBar value={ksbProgress} tone="emerald" />
-                        <p className="mt-1 text-[10px] font-semibold text-foreground-400">{percentage(ksbProgress)}% achieved</p>
+                        <p className="mt-1 text-[10px] font-semibold text-foreground-400"><Hint text={ksbHint(ksb?.consumedWeightTotal || 0, ksb?.expectedWeightTotal || 0, 'learner')}>{`${percentage(ksbProgress)}% achieved`}</Hint></p>
                       </div>
                     </div>
                   </article>

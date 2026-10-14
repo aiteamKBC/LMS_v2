@@ -401,6 +401,68 @@ class LifecycleTests(unittest.TestCase):
         self.assertFalse(issues[0]['confirmed'])
 
 
+class DeliveryRunTests(unittest.TestCase):
+    """Production, 5-9 Oct 2026: seconds-long opens days early completed week-1 sessions, and the real
+    lesson could be overwritten by whichever Teams report was listed last."""
+
+    SESSION = datetime(2026, 10, 9, 8, tzinfo=UTC)
+
+    def session(self, **extra):
+        return occurrence(1, self.SESSION, **extra)
+
+    def test_a_test_open_days_before_is_not_delivery(self):
+        self.assertEqual(integrity.run_not_delivery(self.session(), datetime(2026, 10, 5, 7, 39, 40),
+                                                    datetime(2026, 10, 5, 7, 39, 43), 1), integrity.RUN_BEFORE_SESSION)
+
+    def test_a_lone_open_of_a_few_minutes_during_the_slot_is_a_test_open(self):
+        self.assertEqual(integrity.run_not_delivery(self.session(), datetime(2026, 10, 9, 8, 1),
+                                                    datetime(2026, 10, 9, 8, 3), 1), integrity.RUN_TEST_OPEN)
+
+    def test_a_run_days_after_the_session_is_another_days_use(self):
+        self.assertEqual(integrity.run_not_delivery(self.session(), datetime(2026, 10, 12, 9),
+                                                    datetime(2026, 10, 12, 10), 12), integrity.RUN_AFTER_SESSION)
+
+    def test_the_lesson_itself_is_delivery_even_starting_early_or_overrunning(self):
+        self.assertEqual(integrity.run_not_delivery(self.session(), datetime(2026, 10, 9, 7, 33),
+                                                    datetime(2026, 10, 9, 10, 9), 16), '')
+        # A tutor alone for the whole slot is a run of the session, not a test open.
+        self.assertEqual(integrity.run_not_delivery(self.session(), datetime(2026, 10, 9, 8),
+                                                    datetime(2026, 10, 9, 9), 1), '')
+        # Unknown participant count never makes a run a test open.
+        self.assertEqual(integrity.run_not_delivery(self.session(), datetime(2026, 10, 9, 8, 1),
+                                                    datetime(2026, 10, 9, 8, 3), None), '')
+        # An ongoing run is not judged.
+        self.assertEqual(integrity.run_not_delivery(self.session(), datetime(2026, 10, 5, 7, 39), None, 1), '')
+
+    def test_a_stored_test_open_never_stands_as_delivery(self):
+        falsely = self.session(status='completed', attendance_report_id='blip', participant_count=1,
+                               actual_start=datetime(2026, 10, 8, 14, 42, 25), actual_end=datetime(2026, 10, 8, 14, 42, 49))
+        self.assertFalse(integrity.stored_run_is_delivery(falsely))
+        self.assertTrue(integrity.run_replaces_stored(falsely, 'real', datetime(2026, 10, 9, 7, 33), datetime(2026, 10, 9, 10, 9), 16))
+
+    def test_the_bigger_run_keeps_the_session_whatever_order_teams_lists_reports(self):
+        real = self.session(status='completed', attendance_report_id='real', participant_count=16,
+                            actual_start=datetime(2026, 10, 9, 7, 33), actual_end=datetime(2026, 10, 9, 10, 9))
+        self.assertFalse(integrity.run_replaces_stored(real, 'reconnect', datetime(2026, 10, 9, 9, 30),
+                                                       datetime(2026, 10, 9, 9, 45), 3))
+        self.assertTrue(integrity.run_replaces_stored(real, 'real', datetime(2026, 10, 9, 7, 33),
+                                                      datetime(2026, 10, 9, 10, 10), 15), 'the same report refreshes itself')
+        self.assertTrue(integrity.run_replaces_stored(real, 'bigger', datetime(2026, 10, 9, 7, 30),
+                                                      datetime(2026, 10, 9, 10, 15), 18))
+
+    def test_only_a_future_session_completed_by_a_test_open_is_reopened(self):
+        now = datetime(2026, 10, 7, 12, tzinfo=UTC)
+        falsely = self.session(status='completed', attendance_report_id='blip', participant_count=1,
+                               actual_start=datetime(2026, 10, 5, 7, 39, 40), actual_end=datetime(2026, 10, 5, 7, 39, 43))
+        self.assertTrue(integrity.completion_to_reopen(falsely, now))
+        # Once the session's date has passed, the real run replaces it; a person resolves anything else.
+        self.assertFalse(integrity.completion_to_reopen(falsely, datetime(2026, 10, 9, 12, tzinfo=UTC)))
+        delivered = self.session(status='completed', attendance_report_id='real', participant_count=16,
+                                 actual_start=datetime(2026, 10, 9, 7, 33), actual_end=datetime(2026, 10, 9, 10, 9))
+        self.assertFalse(integrity.completion_to_reopen(delivered, now))
+        self.assertFalse(integrity.completion_to_reopen(self.session(), now))
+
+
 class AttributionTests(unittest.TestCase):
     def tearDown(self):
         versioning.set_actor(None)
