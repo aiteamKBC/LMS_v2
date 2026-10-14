@@ -198,13 +198,13 @@ def _file_attachment(item):
         "contentType": item.get("content_type") or "application/octet-stream",
         "contentBytes": base64.b64encode(item["content"]).decode("ascii"),
     }
-    if item.get("content_id"):
-        # An inline part. The HTML names it as ``cid:<content_id>``, so the
-        # picture travels inside the message instead of being fetched from a
-        # server the reader's mail client may not be able to reach -- and that
-        # Gmail and Outlook both hold back until the reader asks for images.
-        attachment["isInline"] = True
-        attachment["contentId"] = item["content_id"]
+    content_id = str(item.get("content_id") or "").strip()
+    if content_id:
+        # The HTML names inline parts as ``cid:<content_id>``. Keep the
+        # explicit flag supported by RSVP/event mail while defaulting CID
+        # attachments, including the brand logo, to inline rendering.
+        attachment["contentId"] = content_id
+        attachment["isInline"] = bool(item.get("is_inline", True))
     return attachment
 
 
@@ -216,29 +216,19 @@ _BRAND_LOGO_PATH = Path(__file__).resolve().parent / "assets" / "report_logo_ken
 
 @lru_cache(maxsize=1)
 def _brand_logo_bytes():
-    """Read once per process. ~62 KB, so every send would otherwise re-read it."""
+    """Read the logo once per process and let mail fall back to its alt text."""
     try:
         return _BRAND_LOGO_PATH.read_bytes()
     except OSError:
         logger.warning(
-            "Brand logo missing at %s -- mail will fall back to its alt text.", _BRAND_LOGO_PATH,
+            "Brand logo missing at %s -- mail will fall back to its alt text.",
+            _BRAND_LOGO_PATH,
         )
         return b""
 
 
 def brand_logo_attachment():
-    """The logo as an inline attachment, or None when the file is unreadable.
-
-    Linking it (``<img src="https://...">``) would tie the picture to
-    FRONTEND_URL being reachable from wherever the mail is opened. It is not
-    reachable from a developer machine, where it is ``localhost``, and need not
-    be from a locked-down corporate network -- and both Gmail and Outlook hold
-    external images back until the reader allows them, so the first impression
-    of a branded mail would be a broken box. An inline part is simply there.
-
-    None rather than raising: a missing asset must not stop a tutor being told
-    about their module. The ``alt`` text carries the brand name either way.
-    """
+    """Return the embedded KBC logo, or None when the asset is unavailable."""
     raw = _brand_logo_bytes()
     if not raw:
         return None
@@ -259,9 +249,8 @@ def send_mail(*, to, subject, html_body, text_body=None, sender_name=None, save_
 
     ``attachments`` is an optional list of ``{"name", "content_type", "content"}``
     (content as bytes), sent as Graph file attachments -- e.g. a calendar invite.
-    An item may also carry ``content_id``, which makes it an inline part the
-    HTML can show with ``<img src="cid:...">``. The brand logo is appended
-    automatically when the HTML names it, so templates need only reference it.
+    An item may also carry ``content_id`` and an optional ``is_inline`` flag.
+    The brand logo is appended automatically when the HTML references its CID.
 
     ``sent`` is True only when Graph accepted it. When Azure is not configured
     this returns ``(False, "not-configured: …")`` after logging the message —

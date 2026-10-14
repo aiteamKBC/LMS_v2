@@ -140,7 +140,11 @@ def entries(learner_id):
     return entries_for(owner)
 
 
-def entries_for(owner, *, overview_only=False):
+def entries_for(owner, *, overview_only=False, entry_ids=None):
+    # Optional caller-owned selection is applied before the evidence/lineage
+    # joins. The learner predicate always remains mandatory.
+    selection = '' if entry_ids is None else ' AND progress.id=ANY(%s)'
+    params = [owner['id']] if entry_ids is None else [owner['id'], list(entry_ids)]
     columns = 'progress.*'
     if overview_only:
         # Completion projection needs saved timing/attempt facts, never raw
@@ -156,7 +160,7 @@ def entries_for(owner, *, overview_only=False):
     records = query(f'''WITH canonical AS (
         SELECT {columns}
         FROM "Learner".learner_progress_entries progress
-        WHERE progress.learner_id=%s AND progress.deleted_at IS NULL
+        WHERE progress.learner_id=%s AND progress.deleted_at IS NULL{selection}
     ), progress_ksbs AS (
         SELECT k.progress_id,jsonb_agg(k.ksb_code ORDER BY k.position) AS payload
         FROM "Learner".learner_progress_ksbs k
@@ -217,7 +221,7 @@ def entries_for(owner, *, overview_only=False):
         LEFT JOIN journal_routes j ON j.progress_id=p.id
         LEFT JOIN historical_components h ON h.progress_id=p.id
         ORDER BY p.reporting_month,p.reporting_started_at NULLS LAST,p.id''',
-        [owner['id']])
+        params)
     from learner_api import journal_sources
     journal_enabled = journal_sources.enabled()
     loaded = []
@@ -1025,19 +1029,20 @@ def metrics(learner_id):
 
 
 def otjh_summary_bulk(learner_ids):
-    """Profile OTJH facts in three bounded reads, without content/KSB hydration.
+    """Profile OTJH facts in bounded reads, without content/KSB hydration.
 
     Accepted seconds belong to progress rows, not their source snapshots,
     segments or unpersisted submissions. The plan uses the same scoped monthly
     targets as Monthly Logs and the Coach Profile (not Created_users.Planned_hours).
     Invalid or ambiguous identities remain unavailable, just as in metrics().
     """
+    from .canonical_hours import pending_hour_records
     enrolment_ids = list(dict.fromkeys(int(value) for value in learner_ids if value is not None))
     if not enrolment_ids:
         return {}
     candidates = {}
     for owner in query('''SELECT l.id,l.enrolment_id,l.aptem_id,l.programme_id,
-        l.email,l.start_date,l.end_date,
+        l.email,l.start_date,l.end_date,l.learner_type,
         u.id AS account_record_id,u."Email" AS account_email,u.aptem_id AS account_aptem_id
         FROM "Learner".learners l
         LEFT JOIN enrolment."Created_users" u ON u.id=l.enrolment_id
@@ -1065,6 +1070,8 @@ def otjh_summary_bulk(learner_ids):
         WHERE learner_id=ANY(%s) AND deleted_at IS NULL AND accepted IS TRUE
         GROUP BY learner_id''', [profile_ids]):
         records[int(item['learner_id'])].append({**item, 'accepted': True})
+    for profile_id, pending in pending_hour_records(owners.values()).items():
+        records[profile_id].extend(pending)
     targets = {profile_id: {} for profile_id in profile_ids}
     for item in query('''SELECT DISTINCT ON (t.learner_id,t.report_month)
         t.learner_id,t.report_month,t.target_hours

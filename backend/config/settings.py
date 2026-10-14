@@ -458,6 +458,12 @@ PERFORMANCE_DIAGNOSTIC_ACCOUNT_IDS = frozenset(
 )
 PERFORMANCE_SAMPLE_RETENTION_DAYS = int(os.environ.get('PERFORMANCE_SAMPLE_RETENTION_DAYS', '14'))
 
+# Learner-facing feedback is controlled independently from Django's global DEBUG
+# mode. Staff authoring/reporting and token-scoped public event flows are separate.
+LEARNER_FEEDBACK_ENABLED = (
+    os.environ.get("LEARNER_FEEDBACK_ENABLED", "false").lower() == "true"
+)
+
 ROOT_URLCONF = 'config.urls'
 
 # Enable only after the owner applies the reviewed SQL metadata tables.
@@ -942,6 +948,8 @@ FILE_UPLOAD_MAX_MEMORY_SIZE = int(os.environ.get('FILE_UPLOAD_MAX_MEMORY_SIZE', 
 # Azure Blob Storage (learner evidence uploads — see learner_api/evidence_storage.py).
 AZURE_STORAGE_ACCOUNT = os.environ.get("AZURE_STORAGE_ACCOUNT", "")
 AZURE_STORAGE_KEY = os.environ.get("AZURE_STORAGE_KEY", "")
+KNOWLEDGE_BASE_AZURE_CONTAINER = os.environ.get("KNOWLEDGE_BASE_AZURE_CONTAINER", "")
+KNOWLEDGE_BASE_STORAGE = os.environ.get("KNOWLEDGE_BASE_STORAGE", "local")
 AZURE_QUARANTINE_CONTAINER = os.environ.get("AZURE_QUARANTINE_CONTAINER", "evidence-quarantine")
 AZURE_APPROVED_CONTAINER = os.environ.get("AZURE_APPROVED_CONTAINER", "evidence-approved")
 AZURE_REJECTED_CONTAINER = os.environ.get("AZURE_REJECTED_CONTAINER", "evidence-rejected")

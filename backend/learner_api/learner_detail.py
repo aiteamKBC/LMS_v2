@@ -1548,9 +1548,14 @@ def _resolve_from_master(modules, weeks, components, assigned_modules=None, *, c
 
             if component_ids:
                 cur.execute(
-                    "SELECT component_id, quiz_id FROM curriculum.quiz_component_links "
-                    "WHERE component_id = ANY(%s)",
-                    [component_ids],
+                    "SELECT link.component_id, link.quiz_id "
+                    "FROM curriculum.quiz_component_links link "
+                    "JOIN curriculum.components component ON component.id = link.component_id "
+                    "WHERE component.module_catalogue_id = ANY(%s) "
+                    "AND component.type = 'quiz' "
+                    "AND (component.deleted_at IS NULL "
+                    "OR COALESCE(component.deleted_via_parent, '') <> '')",
+                    [module_ids],
                 )
                 for component_id, quiz_id in cur.fetchall():
                     quiz_id_by_component[component_id] = quiz_id
@@ -1586,17 +1591,23 @@ def _resolve_from_master(modules, weeks, components, assigned_modules=None, *, c
             # no longer picks KSBs by hand on completion — these are applied
             # automatically (see components.py), so the UI shows what will be
             # credited rather than asking.
-            missing_ksb_component_ids = [component_id for component_id in component_ids if component_id not in ksbs_by_component]
-            if missing_ksb_component_ids:
+            if component_ids:
                 cur.execute(
-                    "SELECT component_id, ksb_code, ksb_description, classification, weight, weight_class "
-                    "FROM curriculum.ksb_mappings "
-                    "WHERE component_id = ANY(%s) "
-                    "AND (deleted_at IS NULL OR COALESCE(deleted_via_parent, '') <> '') "
-                    "ORDER BY component_id, ksb_code",
-                    [missing_ksb_component_ids],
+                    "SELECT mapping.component_id, mapping.ksb_code, mapping.ksb_description, "
+                    "mapping.classification, mapping.weight, mapping.weight_class "
+                    "FROM curriculum.ksb_mappings mapping "
+                    "JOIN curriculum.components component ON component.id = mapping.component_id "
+                    "WHERE component.module_catalogue_id = ANY(%s) "
+                    "AND (component.deleted_at IS NULL "
+                    "OR COALESCE(component.deleted_via_parent, '') <> '') "
+                    "AND (mapping.deleted_at IS NULL "
+                    "OR COALESCE(mapping.deleted_via_parent, '') <> '') "
+                    "ORDER BY mapping.component_id, mapping.ksb_code",
+                    [module_ids],
                 )
                 for comp_id, code, description, classification, weight, weight_class in cur.fetchall():
+                    if comp_id in ksbs_by_component:
+                        continue
                     ksbs_by_component.setdefault(comp_id, []).append({
                         "code": _s(code),
                         "description": _s(description) or None,
@@ -1969,7 +1980,10 @@ def build_learner_detail(source, pk, *, compact=False, read_only=False, quiz_vie
     # After the hours snapshot so OTJH persistence is unaffected; this only
     # re-attaches earned quiz results to slots an author has since re-linked
     # or removed.
-    retain_quiz_progress(detail)
+    # The compact workspace projection only needs historical slots that can
+    # contribute to completion. Failed attempts remain in quizAttempts, but a
+    # potentially huge curriculum-revision scan cannot change their outcome.
+    retain_quiz_progress(detail, completed_only=compact)
 
     if compact:
         # Nullable optional fields dominate the JSON for large plans. Omission
