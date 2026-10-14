@@ -124,6 +124,20 @@ def report_id(row):
     return _kbc_attendance_report_id(key)
 
 
+# An ended Teams lecture stays 'unmarked' until its attendance report syncs; the
+# learner can still say they missed it.
+REPORTABLE_ABSENCE_STATUSES = frozenset({'absent', 'unmarked', 'upcoming', 'in_progress'})
+
+
+def can_report_absence_status(status, session_date):
+    """One rule for the lecture list's Report Absence and the absence form/submit."""
+    status = _text(status).lower()
+    if status in REPORTABLE_ABSENCE_STATUSES:
+        return True
+    day = session_date.isoformat() if hasattr(session_date, 'isoformat') else _text(session_date)
+    return status == 'pending' and day == timezone.localdate().isoformat()
+
+
 NATIVE_OCCURRENCES_SQL = '''SELECT o.id AS session_id,o.id AS occurrence_id,
             s.id AS live_session_id,s.module_catalogue_id,m.title AS module_title,
             o.scheduled_start,o.scheduled_end,o.updated_at,o.session_number,
@@ -141,6 +155,41 @@ NATIVE_OCCURRENCES_SQL = '''SELECT o.id AS session_id,o.id AS occurrence_id,
               AND lower(btrim(s.status)) NOT IN ('cancelled','canceled','deleted','failed','superseded')
               AND lower(btrim(o.status)) NOT IN ('cancelled','canceled','deleted','failed','superseded')
             ORDER BY o.scheduled_start,o.id'''
+
+# A module duplicated to share another module's Teams meeting deliberately has no
+# live_sessions row of its own (curriculum_api.views.teams_module_owner_id); its
+# learners attend the source's meeting. Follow the same short chain to its owner.
+SHARED_TEAMS_SOURCES_SQL = '''WITH RECURSIVE shared(module_id,source_id,depth) AS (
+            SELECT m.module_catalogue_id,btrim(m.teams_shared_source_module_id),1
+            FROM curriculum.modules m
+            WHERE m.module_catalogue_id=ANY(%s) AND coalesce(btrim(m.teams_shared_source_module_id),'')<>''
+            UNION ALL
+            SELECT shared.module_id,btrim(m.teams_shared_source_module_id),shared.depth+1
+            FROM shared JOIN curriculum.modules m ON m.module_catalogue_id=shared.source_id
+            WHERE coalesce(btrim(m.teams_shared_source_module_id),'')<>'' AND shared.depth<5
+        )
+        SELECT DISTINCT module_id,source_id FROM shared'''
+
+
+def shared_teams_sources(module_ids, *, cursor=None):
+    """{assigned shared duplicate: the modules whose Teams meeting it attends}."""
+    module_ids = sorted({_text(value) for value in module_ids} - {''})
+    if not module_ids:
+        return {}
+    if cursor is None:
+        with connections['enrolment'].cursor() as cursor:
+            return shared_teams_sources(module_ids, cursor=cursor)
+    try:
+        cursor.execute(SHARED_TEAMS_SOURCES_SQL, [module_ids])
+        rows = cursor.fetchall()
+    except DatabaseError:
+        # The learner's own modules still load; shared meetings return once readable.
+        log.warning('Could not read shared Teams modules for %s.', module_ids, exc_info=True)
+        return {}
+    result = {}
+    for module_id, source_id in rows:
+        result.setdefault(module_id, set()).add(source_id)
+    return result
 
 
 def read_native_occurrences(source, *, module_ids=None):
@@ -164,6 +213,8 @@ def read_native_occurrences(source, *, module_ids=None):
             module_ids = [value for value in module_ids if value]
         if not module_ids:
             return []
+        shared = shared_teams_sources(module_ids, cursor=cur)
+        module_ids = list(dict.fromkeys([*module_ids, *sorted(set().union(*shared.values()))]))
         cur.execute(NATIVE_OCCURRENCES_SQL, [_key(source.email), module_ids])
         result = dict_rows(cur)
     return normalize_native_occurrences(source, result)
@@ -890,8 +941,7 @@ def read_workspace(source, kind):
         lecture['coach'] = coach or lecture['coach']
         report = reported.get(lecture['reportId'])
         lecture['absenceReport'] = {'id': report['id'], 'status': report['status']} if report else None
-        lecture['canReportAbsence'] = (lecture['status'] in {'absent', 'upcoming', 'in_progress'} or
-            (lecture['status'] == 'pending' and lecture['date'] == timezone.localdate().isoformat())) and not report
+        lecture['canReportAbsence'] = can_report_absence_status(lecture['status'], lecture['date']) and not report
         if lecture['status'] == 'present' and lecture['updatedAt']:
             recent.append({'id': lecture['id'], 'title': f"{lecture['title']} attended", 'at': lecture['updatedAt'], 'type': 'attendance'})
     _attach_recovery(lectures, reported)

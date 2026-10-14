@@ -17,6 +17,13 @@ function show(changes: Partial<Parameters<typeof ProgressCard>[0]> = {}) {
 }
 afterEach(cleanup);
 describe('home progress card', () => {
+  it('shows placeholders rather than dashes until the first read lands', () => {
+    show({ data: undefined, loading: true });
+    expect(screen.getByRole('complementary')).toHaveAttribute('aria-busy', 'true');
+    expect(screen.getByRole('status')).toHaveTextContent('Loading progress…');
+    expect(screen.queryByText('—')).not.toBeInTheDocument();
+    expect(screen.queryByText(/Start date to this week/)).not.toBeInTheDocument();
+  });
   it('shows actual and submitted hours against the activity plan, with four distinct totals', () => {
     show();
     expect(screen.getByRole('progressbar', { name: 'OTJ progress' })).toHaveAttribute('aria-valuenow', '2.74');

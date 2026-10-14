@@ -4,7 +4,8 @@ import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AttendanceLecture } from '@/api/attendanceLectures';
 import AttendanceLectureList from './components/AttendanceLectureList';
-import { featuredLecture, isLectureLive, lectureJoinUrl, lectureToday } from './liveLecture';
+import FeaturedLecture from './components/FeaturedLecture';
+import { featuredLecture, isLectureJoinable, isLectureLive, lectureJoinUrl, lectureToday } from './liveLecture';
 
 const lecture: AttendanceLecture = {
   id: 'live', sessionId: 'teams:live', reportId: '123', date: '2026-09-14', title: 'Live lecture',
@@ -26,9 +27,9 @@ describe('live lecture action', () => {
     expect(featuredLecture([{ ...lecture, id: 'completed', status: 'completed' }, lecture], current)?.id).toBe('live');
     expect(featuredLecture([{ ...lecture, date: '2026-09-13', status: 'absent' }], current)).toBeNull();
   });
-  it('changes at the start and end without a fetch, including the grouped view', () => {
+  it('offers Join from 15 minutes before the start until the end without a fetch, including the grouped view', () => {
     vi.useFakeTimers();
-    vi.setSystemTime(new Date('2026-09-14T08:59:59Z'));
+    vi.setSystemTime(new Date('2026-09-14T08:44:59Z'));
     render(<MemoryRouter><AttendanceLectureList lectures={[lecture]} moduleId="all" onModuleChange={vi.fn()}
       filter="all" onFilterChange={vi.fn()} tabs={[]} onOpen={vi.fn()} onReport={vi.fn()} onCatchup={vi.fn()} /></MemoryRouter>);
     expect(screen.getByRole('button', { name: 'Open Activities' })).toBeInTheDocument();
@@ -37,9 +38,26 @@ describe('live lecture action', () => {
     expect(screen.queryByRole('button', { name: 'Open Activities' })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Group by month' }));
     expect(screen.getByRole('link', { name: 'Join session' })).toHaveAttribute('rel', 'noopener noreferrer');
-    act(() => { vi.advanceTimersByTime(60 * 60 * 1000); });
+    act(() => { vi.advanceTimersByTime(75 * 60 * 1000); });
     expect(screen.queryByRole('link', { name: 'Join session' })).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Open Activities' })).toBeInTheDocument();
+  });
+
+  it('shares one join window between the list and the featured lecture', () => {
+    expect(isLectureJoinable(lecture, Date.parse('2026-09-14T08:44:59Z'))).toBe(false);
+    expect(isLectureJoinable(lecture, Date.parse('2026-09-14T08:45:00Z'))).toBe(true);
+    expect(isLectureJoinable(lecture, Date.parse('2026-09-14T09:59:59Z'))).toBe(true);
+    expect(isLectureJoinable(lecture, Date.parse('2026-09-14T10:00:00Z'))).toBe(false);
+    expect(isLectureJoinable({ ...lecture, endsAt: lecture.startsAt }, Date.parse('2026-09-14T08:50:00Z'))).toBe(false);
+    expect(isLectureJoinable({ ...lecture, startsAt: null }, Date.parse('2026-09-14T09:30:00Z'))).toBe(false);
+    const teams = { ...lecture, joinUrl: '/learner_api/session-results/apprenticeship/12/S/sessions/1/join/' };
+    const featured = (now: string) => render(<FeaturedLecture lecture={teams} now={Date.parse(now)} timeZone="Europe/London"
+      busy={false} canAttend error="" notice="" onAttend={vi.fn()} onReport={vi.fn()} />);
+    featured('2026-09-14T08:00:00Z');
+    expect(screen.queryByRole('link', { name: 'Join session' })).not.toBeInTheDocument();
+    cleanup();
+    featured('2026-09-14T08:50:00Z');
+    expect(screen.getByRole('link', { name: 'Join session' })).toHaveAttribute('href', teams.joinUrl);
   });
 
   it('uses timestamp offsets and excludes incomplete or invalid time windows', () => {

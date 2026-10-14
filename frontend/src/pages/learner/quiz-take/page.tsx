@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { AppIcon } from '@/components/feature/AppIcon';
+import { QuizQuestionImage } from '@/components/feature/QuizQuestionImage';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { roleNavMap } from '@/mocks/navigation';
 import { EmptyState } from '@/pages/users/components/ui';
@@ -54,10 +55,12 @@ function answerText(question: QuizQuestion, ids: number | number[] | null | unde
     .map((answerId) => question.answers.find((answer) => answer.id === answerId))
     .map((answer) => answer?.text || answer?.left || answer?.label)
     .filter((label): label is string => Boolean(label));
-  return labels.length ? labels.join(', ') : null;
+  if (!answerIds.length) return null;
+  return labels.length === answerIds.length ? labels.join(question.type === 'ordering' ? ' -> ' : ', ') : 'Answer text unavailable for this historical attempt';
 }
 
 function historicalCorrectAnswer(question: QuizQuestion, stored: LearnerQuizQuestionResult) {
+  if ('correctText' in stored) return stored.correctText;
   const byId = answerText(question, stored.correctAnswerId);
   if (byId) return byId;
   if (question.type === 'fill_gap' || question.type === 'keywords') {
@@ -81,19 +84,19 @@ function durationSeconds(value: string | null | undefined) {
 
 /** Rebuild the full result view from the slim attempt stored on the learner. */
 function resultFromStoredAttempt(quiz: Quiz, attempt: LearnerQuizAttempt): QuizAttemptResult {
-  const storedByQuestion = new Map((attempt.questions || []).map((question) => [String(question.questionId), question]));
-  const breakdown = quiz.questions.map((question) => {
-    const stored = storedByQuestion.get(String(question.id));
+  const breakdown = (attempt.questions || []).map((stored) => {
+    const question = quiz.questions.find(q => String(q.id) === String(stored.questionId));
     return {
-      questionId: question.id,
-      questionText: question.text,
-      type: question.type,
-      points: question.points,
-      earned: Number(stored?.earned || 0),
-      possible: question.points,
-      correct: Boolean(stored?.correct),
-      chosenAnswer: stored?.chosenText ?? answerText(question, stored?.chosenAnswerId),
-      correctAnswer: stored ? historicalCorrectAnswer(question, stored) : null,
+      questionId: stored.questionId,
+      questionText: stored.questionText ?? question?.text ?? 'Question no longer available',
+      imageUrl: stored.imageUrl ?? question?.imageUrl,
+      type: (stored.type ?? question?.type ?? 'single_choice') as QuizQuestion['type'],
+      points: stored.possible ?? question?.points ?? 0,
+      earned: Number(stored.earned || 0),
+      possible: stored.possible ?? question?.points ?? 0,
+      correct: Boolean(stored.correct),
+      chosenAnswer: 'chosenText' in stored ? stored.chosenText ?? null : question ? answerText(question, stored.chosenAnswerId) : null,
+      correctAnswer: 'correctText' in stored ? stored.correctText ?? null : question ? historicalCorrectAnswer(question, stored) ?? null : null,
     };
   });
   const earned = breakdown.reduce((total, question) => total + question.earned, 0);
@@ -204,7 +207,7 @@ export default function QuizTakePage() {
     setDetailLoading(true);
     setDetailError(null);
     setDetail(null);
-    fetchLearnerDetail(kind as LearnerKind, id)
+    fetchLearnerDetail(kind as LearnerKind, id, { quizView: true })
       .then((d) => {
         if (!cancelled) {
           // Kept whole: the sidebar is built from the learner's plan, not just
@@ -264,7 +267,7 @@ export default function QuizTakePage() {
   const showSidebar = Boolean(placement) && (phase === 'intro' || phase === 'results');
 
   const startQuiz = () => {
-    if (!quiz || !kind || !id || !canUseComponent || detailLoading || detailError) return;
+    if (!quiz || quiz.unavailableReason || !kind || !id || !canUseComponent || detailLoading || detailError) return;
     setSubmitError(null);
     setReflectionChoiceOpen(false);
     trackingSessionRef.current = null;
@@ -562,7 +565,7 @@ function IntroScreen({ quiz, totalPoints, latestAttempt, onStart, onViewResult, 
             <p className="text-[11px] font-semibold uppercase tracking-wider text-primary-700">Another attempt</p>
             <p className="mt-1 text-base font-heading font-bold text-foreground-900">Ready to try again?</p>
             <p className="mt-1 text-xs leading-5 text-foreground-500">Your previous result will stay saved when you start a new attempt.</p>
-            <button type="button" onClick={onStart} disabled={quiz.questions.length === 0} className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-lg bg-primary-600 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-50">
+            <button type="button" onClick={onStart} disabled={quiz.questions.length === 0 || Boolean(quiz.unavailableReason)} className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-lg bg-primary-600 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-50">
               <AppIcon className="ri-refresh-line" /> Retake Quiz
             </button>
           </div>
@@ -575,12 +578,13 @@ function IntroScreen({ quiz, totalPoints, latestAttempt, onStart, onViewResult, 
         </button>
         {!latestAttempt && <button
           onClick={onStart}
-          disabled={quiz.questions.length === 0}
+          disabled={quiz.questions.length === 0 || Boolean(quiz.unavailableReason)}
           className="flex-1 px-4 py-2.5 rounded-xl text-sm font-semibold bg-primary-600 text-white hover:bg-primary-700 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed inline-flex items-center justify-center gap-2"
         >
           <AppIcon className="ri-play-fill" /> Start Quiz
         </button>}
       </div>
+      {quiz.unavailableReason && <p role="alert" className="text-sm text-red-700 mt-3">{quiz.unavailableReason}</p>}
       {quiz.questions.length === 0 && (
         <p className="text-xs text-foreground-400 mt-3">This quiz has no questions yet.</p>
       )}
@@ -672,6 +676,7 @@ function QuizScreen({
           <span className="text-[11px] text-foreground-400">· {question.points} {question.points === 1 ? 'point' : 'points'}</span>
         </div>
         <p className="text-base font-semibold text-foreground-900 mb-5">{question.text}</p>
+        <QuizQuestionImage imageUrl={question.imageUrl} />
 
         <QuestionInput question={question} value={answers[String(question.id)]} onChange={(v) => onAnswer(question.id, v)} />
       </div>
@@ -989,11 +994,13 @@ function ResultsScreen({ quiz, result, kind, learnerId, onBack, onRetake }: {
           </button>
           <button
             onClick={onRetake}
+            disabled={Boolean(quiz.unavailableReason)}
             className="inline-flex items-center justify-center gap-2 px-6 py-2.5 rounded-xl text-sm font-semibold bg-primary-600 text-white hover:bg-primary-700 transition-colors cursor-pointer"
           >
             <AppIcon className="ri-refresh-line" /> Retake Quiz
           </button>
         </div>
+        {quiz.unavailableReason && <p role="alert" className="mt-3 text-sm text-red-700">{quiz.unavailableReason}</p>}
       </div>
 
       <QuizReadingPanel
@@ -1025,6 +1032,7 @@ function ResultsScreen({ quiz, result, kind, learnerId, onBack, onRetake }: {
                 <span className="shrink-0 text-[11px] text-foreground-400">{q.earned}/{q.possible} pt</span>
               </div>
               <div className="pl-7 space-y-1">
+                <QuizQuestionImage imageUrl={q.imageUrl} />
                 <p className="text-xs text-foreground-600">
                   <span className="font-medium text-foreground-500">Your answer: </span>
                   {q.chosenAnswer || <span className="italic text-foreground-400">No answer</span>}

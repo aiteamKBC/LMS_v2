@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { showCurriculumConfirm } from '@/components/feature/CurriculumSweetAlert';
 import { formatHoursMinutes } from '@/lib/format';
@@ -43,16 +44,23 @@ function ProgressBar({ value, tone }: { value: number; tone: 'primary' | 'emeral
   );
 }
 
-function otjhFor(learners: CurriculumScopeOtjhLearner[], learner: CurriculumProgrammeAssignedLearner) {
-  return learners.find(row => learnerKey(row.learnerId) === learnerKey(learner.id));
+function profileKey(learner: CurriculumProgrammeAssignedLearner, roster: CurriculumProgrammeAssignedLearner[]) {
+  if (learner.enrolmentId == null) return learnerKey(learner.id);
+  const matches = roster.filter(row => row.enrolmentId != null && learnerKey(row.enrolmentId) === learnerKey(learner.enrolmentId!));
+  return matches.length === 1 ? learnerKey(matches[0].id) : null;
 }
 
-function ksbFor(learners: CurriculumLearnerKsbConsumption[], learner: CurriculumProgrammeAssignedLearner) {
-  return learners.find(row => learnerKey(row.learnerId) === learnerKey(learner.id));
+function otjhFor(learners: CurriculumScopeOtjhLearner[], key: string | null) {
+  return key == null ? undefined : learners.find(row => learnerKey(row.learnerId) === key);
 }
 
-export function ModuleLearnerProgressDialog({ moduleName, impact, assignedLearners, onClose, onAssignMore, onRemoveLearner }: {
+function ksbFor(learners: CurriculumLearnerKsbConsumption[], key: string | null) {
+  return key == null ? undefined : learners.find(row => learnerKey(row.learnerId) === key);
+}
+
+export function ModuleLearnerProgressDialog({ moduleName, moduleId, impact, assignedLearners, onClose, onAssignMore, onRemoveLearner }: {
   moduleName: string;
+  moduleId?: string;
   impact: CurriculumScopeLearnerKsbImpactResponse;
   /**
    * Module membership comes from the assignment directory. The impact read is
@@ -71,6 +79,10 @@ export function ModuleLearnerProgressDialog({ moduleName, impact, assignedLearne
   );
   const otjhRows = impact.otjhAchievement?.learners || [];
   const ksbRows = impact.learnerKsbConsumption || [];
+  const log = impact.activityLogOtjh;
+  const totalHours = log ? log.achievedTotal : impact.otjhAchievement?.achievedTotal || 0;
+  const plannedHours = log ? log.plannedTotal : impact.otjhAchievement?.plannedTotal || 0;
+  const totalPercent = totalHours != null && plannedHours > 0 ? Math.round(totalHours / plannedHours * 100) : null;
   const [removingLearnerId, setRemovingLearnerId] = useState<string | null>(null);
 
   useEffect(() => {
@@ -111,9 +123,9 @@ export function ModuleLearnerProgressDialog({ moduleName, impact, assignedLearne
         <div className="grid gap-3 border-b border-background-200 bg-background-100/60 p-4 sm:grid-cols-2">
           <div className="rounded-xl border border-background-200 bg-background-50 p-3">
             <p className="text-[10px] font-bold uppercase tracking-wider text-foreground-400">OTJH progress</p>
-            <p className="mt-1 text-lg font-black text-foreground-900">{formatHoursMinutes(impact.otjhAchievement?.achievedTotal || 0)} <span className="text-[11px] font-bold text-foreground-400">/ {formatHoursMinutes(impact.otjhAchievement?.plannedTotal || 0)}</span></p>
-            <ProgressBar value={impact.otjhAchievement?.progressPercentage || 0} tone="primary" />
-            <p className="mt-1 text-[10px] font-semibold text-foreground-500">{percentage(impact.otjhAchievement?.progressPercentage || 0)}% of assigned planned hours</p>
+            <p className="mt-1 text-lg font-black text-foreground-900">{totalHours == null ? 'N/A' : formatHoursMinutes(totalHours)} <span className="text-[11px] font-bold text-foreground-400">/ {formatHoursMinutes(plannedHours)}</span></p>
+            <ProgressBar value={totalPercent || 0} tone="primary" />
+            <p className="mt-1 text-[10px] font-semibold text-foreground-500">{totalPercent == null ? 'N/A' : `${percentage(totalPercent)}%`} of assigned planned hours{log ? ' · Activity Log accepted hours' : ''}</p>
           </div>
           <div className="rounded-xl border border-background-200 bg-background-50 p-3">
             <p className="text-[10px] font-bold uppercase tracking-wider text-foreground-400">KSB weights achieved</p>
@@ -130,9 +142,13 @@ export function ModuleLearnerProgressDialog({ moduleName, impact, assignedLearne
             <div className="grid gap-3 lg:grid-cols-2">
               {learners.map(learner => {
                 const name = learner.name || learner.email || `Learner ${learner.id}`;
-                const otjh = otjhFor(otjhRows, learner);
-                const ksb = ksbFor(ksbRows, learner);
-                const otjhProgress = otjh?.progressPercentage || 0;
+                const key = profileKey(learner, impact.assignedLearners || []);
+                const otjh = otjhFor(otjhRows, key);
+                const logHours = log?.learners.find(row => learnerKey(row.learnerId) === key);
+                const achieved = logHours ? logHours.achievedOtjh : otjh?.achievedOtjh || 0;
+                const planned = logHours?.plannedOtjh ?? otjh?.plannedOtjh ?? 0;
+                const ksb = ksbFor(ksbRows, key);
+                const otjhProgress = achieved != null && planned > 0 ? Math.round(achieved / planned * 100) : null;
                 const ksbProgress = ksb?.progressPercentage || 0;
                 const id = learnerKey(learner.id);
                 return (
@@ -170,14 +186,23 @@ export function ModuleLearnerProgressDialog({ moduleName, impact, assignedLearne
                         {removingLearnerId === id ? 'Removing…' : 'Remove'}
                       </button>
                     </div>
+                    {moduleId && (
+                      <Link
+                        to={`/curriculum/learner-module-progress?moduleId=${encodeURIComponent(moduleId)}&${learner.enrolmentId != null ? 'enrolmentId' : 'learnerId'}=${encodeURIComponent(String(learner.enrolmentId ?? id))}`}
+                        className="mt-3 inline-flex h-8 items-center gap-1.5 rounded-lg border border-primary-200 bg-primary-50 px-3 text-[10px] font-bold text-primary-700 hover:bg-primary-100"
+                      >
+                        <AppIcon name="ri-bar-chart-2-line" size={14}></AppIcon>
+                        View progress
+                      </Link>
+                    )}
                     <div className="mt-3 grid gap-3 sm:grid-cols-2">
                       <div>
                         <div className="flex items-baseline justify-between text-[10px] font-bold text-foreground-600">
                           <span>OTJH</span>
-                          <span>{formatHoursMinutes(otjh?.achievedOtjh || 0)} / {formatHoursMinutes(otjh?.plannedOtjh || 0)}</span>
+                          <span>{achieved == null ? 'N/A' : formatHoursMinutes(achieved)} / {formatHoursMinutes(planned)}</span>
                         </div>
-                        <ProgressBar value={otjhProgress} tone="primary" />
-                        <p className="mt-1 text-[10px] font-semibold text-foreground-400">{percentage(otjhProgress)}% complete</p>
+                        <ProgressBar value={otjhProgress || 0} tone="primary" />
+                        <p className="mt-1 text-[10px] font-semibold text-foreground-400">{otjhProgress == null ? 'N/A' : `${percentage(otjhProgress)}%`} complete</p>
                       </div>
                       <div>
                         <div className="flex items-baseline justify-between text-[10px] font-bold text-foreground-600">

@@ -319,6 +319,24 @@ class LearnerOverviewMetricsEndpointTests(SimpleTestCase):
         self.assertNotIn('_ksb_evidence_sources', json.loads(response.content))
         self.assertEqual(response['Cache-Control'], 'private, no-store')
 
+    def test_overview_target_uses_the_learning_plan_without_an_ssot_plan(self):
+        source = SimpleNamespace(pk=125)
+        model = MagicMock()
+        model.DoesNotExist = type('Missing', (Exception,), {})
+        model.all_learners.only.return_value.get.return_value = source
+        payload = {'ksb': {}, 'otjh': {'actual': 6.59, 'planned': None}}
+        with patch.dict('learner_api.dashboard_metrics.SOURCE_MODELS', {'commercial': model}), \
+             patch('learner_api.dashboard_metrics.canonical_learning.metrics_bulk', return_value={125: payload}), \
+             patch('learner_api.dashboard_metrics.canonical_learning.profile', return_value={'id': 7}), \
+             patch('learner_api.dashboard_metrics.plan_planned_hours', return_value=576.13) as plan, \
+             patch('learner_api.dashboard_metrics.coach_otjh_target_to_date', return_value=39.25) as target_to_date:
+            response = learner_metrics.__wrapped__.__wrapped__(
+                RequestFactory().get('/', {'view': 'learner-overview'}), 'commercial', 125)
+        plan.assert_called_once_with(source, {'id': 7})
+        target_to_date.assert_called_once_with(ANY, {'actual': 6.59, 'planned': 576.13, 'targetToDate': 39.25})
+        self.assertEqual(json.loads(response.content)['otjh']['planned'], 576.13)
+        self.assertEqual(json.loads(response.content)['otjh']['targetToDate'], 39.25)
+
     def test_existing_metrics_call_retains_its_source(self):
         response, ordinary, overview, target_to_date = self.call({}, {'ksb': {'status': 'empty'}})
         self.assertEqual(response.status_code, 200)

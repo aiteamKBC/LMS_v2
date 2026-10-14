@@ -117,6 +117,32 @@ class MaterialPdfTests(unittest.TestCase):
             self.assertEqual(scope['source_material_file'](None, 'learner', 3, 5, 1), 404)
             stream.assert_not_called()
 
+    def test_other_files_are_streamed_same_origin_not_redirected_to_azure(self):
+        # A redirect left the inline Word/Excel preview fetching from Azure,
+        # which sends no CORS headers for this site: "Failed to fetch".
+        docx = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+        upstream = self.upstream(b'PK-docx', mime='application/octet-stream')
+        row = {'material_blob_name': 'source-materials/9/brief.docx', 'material_blob_content_type': docx}
+        with patch.object(material_storage, 'read_url', return_value='https://storage.test/file?sig=private'), \
+                patch.object(material_storage.urllib.request, 'build_opener') as opener:
+            opener.return_value.open.return_value = upstream
+            response = material_storage.file_response(row, settings, SimpleNamespace(headers={}))
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response['Content-Type'], docx)
+            self.assertNotIn('Location', response)
+            self.assertEqual(b''.join(response.streaming_content), b'PK-docx')
+            response.close()
+            self.assertTrue(upstream.closed)
+
+    def test_office_preview_page_hands_microsoft_the_sas_url(self):
+        row = {'material_blob_name': 'source-materials/9/slides.ppt'}
+        with patch.object(material_storage, 'read_url', return_value='https://acct.blob.core.windows.net/c/slides.ppt?sig=x'):
+            response = material_storage.office_preview_response(row, settings)
+        page = response.content.decode()
+        self.assertIn('view.officeapps.live.com/op/embed.aspx?src=https%3A%2F%2Facct.blob.core.windows.net', page)
+        self.assertEqual(response['X-Frame-Options'], 'SAMEORIGIN')
+        self.assertIn("frame-src https://view.officeapps.live.com", response['Content-Security-Policy'])
+
 
 if __name__ == '__main__':
     unittest.main()

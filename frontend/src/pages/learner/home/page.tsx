@@ -13,6 +13,7 @@ import { LearnerLoadError } from '@/components/feature/LearnerLoadError';
 import { learnerHref } from '@/lib/learnerRoutes';
 import { homeActions, greeting, upcomingEvents, withLearner } from './homeData';
 import { ReferenceIcon } from './ReferenceIcon';
+import { SkeletonBlock } from '@/components/feature/Skeletons';
 import { ProgressCard } from './ProgressCard';
 import { ShieldAction, ShieldCrest } from './ShieldArtwork';
 import { ContinueLearning } from './ContinueLearning';
@@ -136,7 +137,7 @@ function LearnerHome({ kind, id, preview = false }: { kind?: LearnerKind; id?: s
         <div className={styles.cardHeading}><h2 id="home-upcoming-heading"><CalendarCheck2 aria-hidden="true"/>Upcoming</h2><Link to={link('/learner/calendar')} aria-label="View all upcoming events">View all</Link></div>
         <ul>{events.map(event => {
           const source = event.kind === 'assignment' ? week : schedule;
-          const detail = !event.date && source.loading ? 'Loading upcoming activity…'
+          const detail = !event.date && source.loading ? <SkeletonBlock className="mt-1 h-2.5 w-28"/>
             : !event.date && source.error ? 'Upcoming activity unavailable' : event.detail;
           return <li key={event.kind} aria-label={`Next ${event.kind}`}>
             {event.date ? <time dateTime={event.date}>
@@ -146,7 +147,7 @@ function LearnerHome({ kind, id, preview = false }: { kind?: LearnerKind; id?: s
             <Link to={event.href}><strong>{event.title}</strong><span>{detail}</span></Link>
           </li>;
         })}</ul>
-        {(schedule.loading || week.loading) && <p role="status" className={styles.empty}>Loading upcoming activity…</p>}
+        {(schedule.loading || week.loading) && <p role="status" className="sr-only">Loading upcoming activity…</p>}
         {(schedule.error || week.error) && <div className={styles.empty} role="alert">Some upcoming activity could not be loaded. <button onClick={() => { schedule.refresh(); week.refresh(); }}>Try again</button></div>}
       </aside>
       <footer className={styles.footer}><span>KENT BUSINESS COLLEGE&nbsp;&nbsp; LEARN&nbsp;&nbsp; BELONG&nbsp;&nbsp; ACHIEVE</span><p>A Brighter Kent<br/>A Bolder You</p></footer>

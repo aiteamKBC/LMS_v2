@@ -450,3 +450,21 @@
 :global([data-theme='dark']) .status:is([data-status='rejected'], [data-status='referred'], [data-status='returned']) { background: #462a32; color: #edb1b1; }
 :global([data-theme='dark']) .status:is([data-status='todo'], [data-status='partial'], [data-status='escalated']) { background: #413923; color: #f5d3a0; }
 :global([data-theme='dark']) .status[data-status='submitted_for_tutor_review'] { background: #203c61; color: #b9d7ff; }
+
+/* Assignment brief sections: the plan's wording, instructions, options and resources. */
+.planAssignment { margin: 0 0 14px; padding: 10px 12px; border: 1px solid #ddd3f5; border-left: 4px solid #5b21b6; border-radius: 9px; background: #f7f4ff; color: #3b2a77; font-size: 13px; line-height: 1.5; overflow-wrap: anywhere; }
+.monthSelector p.planAssignment { margin-top: 8px; color: #3b2a77; }
+.briefSection { margin-top: 16px; }
+.briefSection > .eyebrow { color: #77728f; font-size: 10px; }
+.options { display: grid; gap: 10px; margin: 0; padding: 0; list-style: none; }
+.options > li { padding: 12px 14px; border: 1px solid #e3e6f5; border-radius: 10px; background: #fbfaff; }
+.options > li > strong { display: block; margin-bottom: 4px; color: #281861; font-size: 13px; }
+.optionLabel { margin: 8px 0 2px; color: #77728f; font-size: 10px; font-weight: 700; letter-spacing: 1.2px; text-transform: uppercase; }
+.resourceLinks { display: grid; gap: 6px; margin: 6px 0 0; padding: 0; list-style: none; font-size: 12px; }
+.resourceLinks a { display: inline-flex; align-items: center; gap: 6px; color: #225d9d; text-decoration: underline; overflow-wrap: anywhere; }
+
+:global([data-theme='dark']) :is(.planAssignment, .monthSelector p.planAssignment) { background: #302748; border-color: #8060b1; color: #e8dcff; }
+:global([data-theme='dark']) .options > li { background: #213854; border-color: var(--kbc-border); }
+:global([data-theme='dark']) .options > li > strong { color: var(--kbc-text); }
+:global([data-theme='dark']) :is(.optionLabel, .briefSection > .eyebrow) { color: var(--kbc-muted); }
+:global([data-theme='dark']) .resourceLinks a { color: #b9d7ff; }

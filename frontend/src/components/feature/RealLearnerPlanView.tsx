@@ -287,7 +287,7 @@ function ModuleSection({ module, defaultOpen, kind, learnerId, completedIds, mar
             <p className="px-5 py-4 text-[12px] text-foreground-400 italic">No weeks added yet</p>
           ) : (
             <div className={compact ? 'bg-background-100/35 p-2 sm:p-2.5' : 'bg-background-100/35 p-2.5 sm:p-3 md:p-5'}>
-              <div className={`grid grid-cols-1 gap-2.5 ${compact ? '' : 'xl:grid-cols-2'}`}>
+              <div className="grid grid-cols-1 gap-2.5">
                 {module.weeks.map((w) => (
                   <WeekCard
                     key={w.week}
@@ -332,7 +332,7 @@ function WeekCard({ week, module, kind, learnerId, completedIds, marking, compac
   const weekPercent = openableComponents.length ? Math.round((doneCount / openableComponents.length) * 100) : 0;
 
   return (
-    <div className={`min-w-0 transition-all ${open && !compact ? 'xl:col-span-2' : ''}`}>
+    <div className="min-w-0 transition-all">
       <div className={`overflow-hidden rounded-xl border bg-white transition-all duration-200 hover:border-primary-200 hover:shadow-sm ${
         isCurrentWeek ? 'border-primary-300' : 'border-background-300'
       } ${compact ? '' : 'shadow-[0_6px_18px_-18px_rgba(15,23,42,0.8)]'}`}>

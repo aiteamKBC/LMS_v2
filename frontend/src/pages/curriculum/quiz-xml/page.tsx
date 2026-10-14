@@ -1,6 +1,8 @@
 import { ChangeEvent, FormEvent, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { AppIcon } from '@/components/feature/AppIcon';
+import { QuizQuestionImage } from '@/components/feature/QuizQuestionImage';
+import { QuizQuestionImageField } from '@/components/feature/QuizQuestionImageField';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { WorkspaceHeroBanner } from '@/components/feature/WorkspaceHeroBanner';
 import { ThemedSelect } from '@/components/feature/ThemedSelect';
@@ -94,6 +96,7 @@ interface QuizPackage {
 interface QuizPreviewQuestion {
   id: number;
   text: string;
+  imageUrl?: string;
   questionType: QuestionType;
   explanation: string;
   answers: {
@@ -111,6 +114,7 @@ interface QuizPreviewData {
 interface QuizStudentQuestionResult {
   number: number;
   text: string;
+  imageUrl?: string;
   type: string;
   chosenAnswer: string | null;
   correctAnswer: string | null;
@@ -856,6 +860,7 @@ function formatLinkedSummary(courses: number, groups?: number) {
 function serializeEditorQuestions(questions: QuizPreviewQuestion[]) {
   return JSON.stringify(questions.map(question => ({
     text: question.text,
+    imageUrl: question.imageUrl || '',
     questionType: question.questionType,
     explanation: question.explanation,
     answers: question.answers.map(answer => ({
@@ -891,6 +896,7 @@ export default function QuizXmlWorkspacePage() {
   const [form, setForm] = useState<QuizFormState>(emptyForm);
   const [savingQuiz, setSavingQuiz] = useState(false);
   const [savingManualQuiz, setSavingManualQuiz] = useState(false);
+  const [readingQuestionImage, setReadingQuestionImage] = useState(false);
   const [manualQuestions, setManualQuestions] = useState<QuizPreviewQuestion[]>(() => [createManualQuestion(1)]);
   const [openManualQuestionId, setOpenManualQuestionId] = useState<number | null>(null);
   const [gradeSettings, setGradeSettings] = useQuizGradeSettings();
@@ -1373,7 +1379,7 @@ export default function QuizXmlWorkspacePage() {
 
   const submitManualQuiz = async (event: FormEvent) => {
     event.preventDefault();
-    if (savingManualQuiz) return;
+    if (savingManualQuiz || readingQuestionImage) return;
     const validationMessage = validateManualQuestions();
     if (validationMessage) {
       setError(validationMessage);
@@ -1713,6 +1719,7 @@ export default function QuizXmlWorkspacePage() {
   };
 
   const saveQuestionEditor = async () => {
+    if (readingQuestionImage) return;
     if (!editorData) return;
     setEditorSaving(true);
     setError('');
@@ -2392,6 +2399,7 @@ export default function QuizXmlWorkspacePage() {
                                 {questionTypeOptions.find(option => option.value === question.questionType)?.label || question.questionType}
                               </span>
                             </div>
+                            <QuizQuestionImage imageUrl={question.imageUrl} />
                             <QuestionAnswersView type={question.questionType} answers={question.answers} fallbackText={question.explanation} />
                             {question.explanation && (
                               <div className="mt-5 rounded-xl border border-[#ddd2ff] bg-[#fbf9ff] px-4 py-3.5">
@@ -2537,6 +2545,7 @@ export default function QuizXmlWorkspacePage() {
                                   <div className="min-w-0">
                                     <p className="text-xs font-bold text-[#64748b] mb-1">Question {question.number}</p>
                                     <p className="text-sm font-semibold text-[#0f172a] leading-6 break-words [overflow-wrap:anywhere]">{question.text}</p>
+                                    <QuizQuestionImage imageUrl={question.imageUrl} />
                                   </div>
                                   <span className={`text-[11px] font-bold px-2.5 py-1 rounded-full shrink-0 ${question.correct ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'}`}>
                                     {question.correct ? 'Correct' : 'Incorrect'}
@@ -2614,6 +2623,10 @@ export default function QuizXmlWorkspacePage() {
                         />
                       </div>
 
+                      <QuizQuestionImageField key={activeEditorQuestion.id} imageUrl={activeEditorQuestion.imageUrl}
+                        onChange={imageUrl => updateEditorQuestion(activeEditorQuestion.id, { imageUrl })}
+                        disabled={editorSaving || readingQuestionImage} onBusyChange={setReadingQuestionImage} />
+
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                         <div>
                           <label className="block text-xs font-semibold text-foreground-500 mb-2">Question type</label>
@@ -2675,7 +2688,7 @@ export default function QuizXmlWorkspacePage() {
 
               <div className="flex items-center justify-end gap-2 p-5 border-t border-foreground-200/60">
                 <button onClick={() => setEditorData(null)} className="px-4 py-2 rounded-lg bg-background-100 text-sm font-semibold hover:bg-background-200">Close</button>
-                <button onClick={() => void saveQuestionEditor()} disabled={editorSaving || !editorDirty} className="px-5 py-2 rounded-lg bg-primary-500 text-white text-sm font-semibold hover:bg-primary-600 disabled:opacity-45 disabled:cursor-not-allowed disabled:hover:bg-primary-500">
+                <button onClick={() => void saveQuestionEditor()} disabled={editorSaving || !editorDirty || readingQuestionImage} className="px-5 py-2 rounded-lg bg-primary-500 text-white text-sm font-semibold hover:bg-primary-600 disabled:opacity-45 disabled:cursor-not-allowed disabled:hover:bg-primary-500">
                   {editorSaving ? 'Saving...' : 'Save changes'}
                 </button>
               </div>
@@ -2869,6 +2882,7 @@ export default function QuizXmlWorkspacePage() {
                                   {questionTypeOptions.find(option => option.value === question.questionType)?.label}
                                 </span>
                               </div>
+                              <QuizQuestionImage imageUrl={question.imageUrl} />
                             </div>
                           </div>
                           <div className="border-t border-[#edf2f7] bg-[#fbfcff] p-4 sm:p-5">
@@ -2917,7 +2931,7 @@ export default function QuizXmlWorkspacePage() {
                   <h3 className="text-lg font-heading font-bold text-foreground-900">Create quiz manually</h3>
                   <p className="text-sm text-foreground-400">Add each question, choose its type, then mark the correct answer.</p>
                 </div>
-                <button type="button" onClick={resetManualModal} disabled={savingManualQuiz} className="w-9 h-9 rounded-lg bg-background-100 hover:bg-background-200 shrink-0 disabled:cursor-not-allowed disabled:opacity-50">
+                <button type="button" onClick={resetManualModal} disabled={savingManualQuiz || readingQuestionImage} className="w-9 h-9 rounded-lg bg-background-100 hover:bg-background-200 shrink-0 disabled:cursor-not-allowed disabled:opacity-50">
                   <AppIcon className="ri-close-line"></AppIcon>
                 </button>
               </div>
@@ -3019,6 +3033,9 @@ export default function QuizXmlWorkspacePage() {
                                   placeholder="Question text"
                                   className="w-full min-h-24 rounded-xl border border-foreground-200/60 bg-background-50 p-3 text-sm leading-relaxed outline-none focus:border-primary-400"
                                 />
+                                <QuizQuestionImageField imageUrl={question.imageUrl}
+                                  onChange={imageUrl => updateManualQuestion(question.id, { imageUrl })}
+                                  disabled={savingManualQuiz || readingQuestionImage} onBusyChange={setReadingQuestionImage} />
                                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                                   <ThemedSelect
                                     value={question.questionType}
@@ -3144,11 +3161,11 @@ export default function QuizXmlWorkspacePage() {
               <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 p-5 border-t border-foreground-200/60 bg-white">
                 <p className="text-xs text-foreground-400">The quiz will be saved with {manualQuestions.length} manual question{manualQuestions.length === 1 ? '' : 's'}.</p>
                 <div className="flex flex-col sm:flex-row gap-2">
-                  <button type="button" disabled={savingManualQuiz} onClick={addManualQuestion} className="px-4 py-2 rounded-lg bg-white border border-primary-200 text-primary-700 text-sm font-semibold hover:bg-primary-50 disabled:cursor-not-allowed disabled:opacity-60">
+                  <button type="button" disabled={savingManualQuiz || readingQuestionImage} onClick={addManualQuestion} className="px-4 py-2 rounded-lg bg-white border border-primary-200 text-primary-700 text-sm font-semibold hover:bg-primary-50 disabled:cursor-not-allowed disabled:opacity-60">
                     <AppIcon className="ri-add-line mr-1"></AppIcon>Add question
                   </button>
-                  <button type="button" disabled={savingManualQuiz} onClick={resetManualModal} className="px-4 py-2 rounded-lg bg-background-100 text-sm font-semibold hover:bg-background-200 disabled:cursor-not-allowed disabled:opacity-60">Cancel</button>
-                  <button type="submit" disabled={savingManualQuiz} className="inline-flex min-w-32 items-center justify-center gap-2 px-4 py-2 rounded-lg bg-primary-500 text-white text-sm font-semibold hover:bg-primary-600 disabled:cursor-wait disabled:opacity-70">
+                  <button type="button" disabled={savingManualQuiz || readingQuestionImage} onClick={resetManualModal} className="px-4 py-2 rounded-lg bg-background-100 text-sm font-semibold hover:bg-background-200 disabled:cursor-not-allowed disabled:opacity-60">Cancel</button>
+                  <button type="submit" disabled={savingManualQuiz || readingQuestionImage} className="inline-flex min-w-32 items-center justify-center gap-2 px-4 py-2 rounded-lg bg-primary-500 text-white text-sm font-semibold hover:bg-primary-600 disabled:cursor-wait disabled:opacity-70">
                     {savingManualQuiz && <span className="h-4 w-4 rounded-full border-2 border-white/40 border-t-white animate-spin" aria-hidden="true"></span>}
                     {savingManualQuiz ? 'Saving...' : 'Save Manual Quiz'}
                   </button>

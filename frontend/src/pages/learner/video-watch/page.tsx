@@ -20,7 +20,7 @@ import { EvidenceFilesButton, EvidencePreviewModal, type EvidencePreview } from 
 import { AssignmentEvidence } from '@/components/feature/AssignmentEvidence';
 import {
   buildLearnerJourney, componentTypeMeta, componentContentKind, componentNoun, hasComponentContent, isOpenableComponent, gradePercent, formatHoursMinutes,
-  componentCriteria, componentRequiresEvidence, completedComponentIds, isComponentComplete,
+  componentCriteria, componentRequiresEvidence, completedComponentIds, isComponentComplete, isMonthlyAssignment,
   type JourneyComponent,
 } from '@/utils/learnerJourney';
 import { fetchEvidence, getEvidenceDownloadUrl, deleteEvidence, type EvidenceRecord } from '@/api/evidence';
@@ -51,6 +51,7 @@ import { ActivityElapsedTimer } from './ActivityElapsedTimer';
 import manualTimeStyles from './ActivityManualTimeInput.module.css';
 import layoutStyles from './ComponentActivityLayout.module.css';
 import { AssignmentSubmissionWizard, type AssignmentAnswers } from './AssignmentSubmissionWizard';
+import { AssignmentBriefPanel } from './AssignmentBriefSections';
 import { useSavedAssignmentAccess } from './useSavedAssignmentAccess';
 import { absoluteDocUrl, resolveDocEmbed } from '@/lib/docEmbed';
 import { normalizeReadingHtml } from '@/lib/readingHtml';
@@ -256,6 +257,7 @@ export default function ComponentViewPage() {
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [record, setRecord] = useState<DoneRecord | null>(null);
   const [repeating, setRepeating] = useState(false);
+  const [keepPreviousTime, setKeepPreviousTime] = useState(false);
   const [refreshError, setRefreshError] = useState<string | null>(null);
   // Bumped by the uploader so the criteria panel re-checks after an upload.
   const [evidenceVersion, setEvidenceVersion] = useState(0);
@@ -350,7 +352,10 @@ export default function ComponentViewPage() {
   // and verify the submitted duration.
   const isLiveSession = (component?.type || '').trim().toLowerCase().replace(/-/g, '_') === 'live_session';
   const hasActivityPanel = isVideo || isLiveSession;
-  const isAssignment = (component?.type || '').trim().toLowerCase().replace(/-/g, '_') === 'assignment';
+  // The monthly assignment uses the eight-step submission. Once an author flags
+  // one, the plan's other assignments are completed like any other activity.
+  const isAssignment = isMonthlyAssignment(component, detail?.components);
+  const isPlainAssignment = !isAssignment && componentRequiresEvidence(component?.type);
   const completed = !!component && isComponentComplete(component, completedIds);
   const recordingAttempt = isAssignment || !completed || repeating;
   const nextActivity = useMemo(() => nextActivityRoute(detail, componentId, kind, id), [detail, componentId, kind, id]);
@@ -581,6 +586,7 @@ export default function ComponentViewPage() {
   const finishConsuming = () => {
     if (!recordingAttempt) return;
     timerRef.current?.stop();
+    setKeepPreviousTime(false);
     if (component?.reflectionRequired === false) {
       setPhase('confirm');
       return;
@@ -590,6 +596,16 @@ export default function ComponentViewPage() {
 
   const confirmCompletion = () => {
     if (!component) return;
+    if (keepPreviousTime && completedTime) {
+      clearActivityTimer(timerStorageKey);
+      setWallElapsed(0);
+      timerRemainder.current.milliseconds = 0;
+      setManualTimeSeconds(null);
+      setTimeSource(usesManualTimeOnly ? 'input' : 'timer');
+      setRepeating(false);
+      setPhase('consume');
+      return;
+    }
     void finalizeSubmit({
       ksbs: (component.ksbMappings || []).map(mapping => mapping.code),
       feedback: '',
@@ -792,6 +808,7 @@ export default function ComponentViewPage() {
                   onUnsupported={() => setUnsupported(true)}
                 />
               )}
+              {isPlainAssignment && <AssignmentBriefPanel component={component} />}
               {(component.type || '').trim().toLowerCase().replace(/-/g, '_') === 'live_session' && component.teamsLiveSessionId && (
                 component.teamsSessionNumber ? <SessionResults
                   seriesId={component.teamsLiveSessionId}
@@ -1095,6 +1112,9 @@ export default function ComponentViewPage() {
           <CompletionConfirmPopup
             title={pageTitle}
             noun={noun}
+            previousTimeLabel={completed ? completedTime : null}
+            keepPreviousTime={keepPreviousTime}
+            onKeepPreviousTimeChange={setKeepPreviousTime}
             timerLabel={formatClock(elapsedSeconds)}
             inputLabel={manualTimeSeconds == null ? null : formatClock(manualTimeSeconds)}
             inputSeconds={manualTimeSeconds}
@@ -1149,6 +1169,9 @@ function CompletionConfirmPopup({
   title,
   noun,
   timerLabel,
+  previousTimeLabel,
+  keepPreviousTime,
+  onKeepPreviousTimeChange,
   inputLabel,
   inputSeconds,
   onInputChange,
@@ -1162,11 +1185,12 @@ function CompletionConfirmPopup({
   onConfirm,
 }: {
   title: string; noun: string; timerLabel: string; inputLabel: string | null; selectedSource: TimeSource; manualTimeOnly: boolean; evidenceFileName?: string | null;
+  previousTimeLabel?: string | null; keepPreviousTime: boolean; onKeepPreviousTimeChange: (keep: boolean) => void;
   submitting: boolean; error: string | null;
   inputSeconds: number | null; onInputChange: (seconds: number | null) => void;
   onSelectSource: (source: TimeSource) => void; onCancel: () => void; onConfirm: () => void;
 }) {
-  const selectedTimeLabel = selectedSource === 'input'
+  const selectedTimeLabel = keepPreviousTime && previousTimeLabel ? previousTimeLabel : selectedSource === 'input'
     ? inputLabel || '--:--:--'
     : timerLabel;
 
@@ -1195,6 +1219,32 @@ function CompletionConfirmPopup({
               </span>
             </div>
           )}
+          {previousTimeLabel && (
+            <>
+              <p className="text-xs text-foreground-500">Choose which attempt time to keep. Times will not be added together.</p>
+              <button
+                type="button"
+                aria-pressed={keepPreviousTime}
+                onClick={() => onKeepPreviousTimeChange(true)}
+                disabled={submitting}
+                className={`flex w-full items-center justify-between gap-3 rounded-lg border px-3 py-2 text-left ${keepPreviousTime ? 'border-primary-300 bg-primary-50 text-primary-800' : 'border-background-300 bg-white text-foreground-700'}`}
+              >
+                <span className="text-sm font-semibold">Previous attempt</span>
+                <span className="font-mono text-sm font-bold tabular-nums">{previousTimeLabel}</span>
+              </button>
+              <button
+                type="button"
+                aria-pressed={!keepPreviousTime}
+                onClick={() => onKeepPreviousTimeChange(false)}
+                disabled={submitting}
+                className={`flex w-full items-center justify-between gap-3 rounded-lg border px-3 py-2 text-left ${!keepPreviousTime ? 'border-primary-300 bg-primary-50 text-primary-800' : 'border-background-300 bg-white text-foreground-700'}`}
+              >
+                <span className="text-sm font-semibold">Current attempt</span>
+                <span className="font-mono text-sm font-bold tabular-nums">{selectedSource === 'input' ? inputLabel || '--:--:--' : timerLabel}</span>
+              </button>
+            </>
+          )}
+          <fieldset disabled={submitting || keepPreviousTime} className="space-y-3 disabled:opacity-50">
           {!manualTimeOnly && (
             <button
               type="button"
@@ -1234,6 +1284,7 @@ function CompletionConfirmPopup({
               <ActivityTimeSpentInput initialSeconds={inputSeconds} onChange={onInputChange} />
             </fieldset>
           )}
+          </fieldset>
         </div>
 
         {error && (
@@ -1254,7 +1305,7 @@ function CompletionConfirmPopup({
           <button
             type="button"
             onClick={onConfirm}
-            disabled={submitting || ((manualTimeOnly || selectedSource === 'input') && (inputSeconds == null || inputSeconds <= 0))}
+            disabled={submitting || (!keepPreviousTime && (manualTimeOnly || selectedSource === 'input') && (inputSeconds == null || inputSeconds <= 0))}
             className="inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 py-3 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
           >
             <AppIcon className={submitting ? 'ri-loader-4-line animate-spin' : 'ri-check-line'} />
@@ -1278,7 +1329,9 @@ const VIDEO_FILE_RE = /\.(mp4|webm|ogg|mov|m4v)(\?.*)?$/i;
 const PDF_FILE_RE = /\.pdf(\?.*)?$/i;
 const WORD_FILE_RE = /\.docx(\?.*)?$/i;
 const EXCEL_FILE_RE = /\.(xlsx|xls|csv)(\?.*)?$/i;
-const TEXT_FILE_RE = /\.(txt|md|rtf)(\?.*)?$/i;
+// Not .rtf: printed as text it is a wall of control codes. It goes to the
+// Office preview with the other word-processor formats (see docEmbed).
+const TEXT_FILE_RE = /\.(txt|md)(\?.*)?$/i;
 
 function googleDriveFileId(url: string): string | null {
   const match =
@@ -1350,6 +1403,32 @@ const DEFAULT_READING_PREFERENCES: ReadingPreferences = {
   letterSpacing: 0,
   ruler: false,
 };
+
+/** A saved reading is the authored HTML plus the learner's <mark>s. DOMPurify's
+ * defaults drop <iframe>, so every embedded video vanished once a learner had
+ * saved highlights; keep the embeds the live reading shows. */
+const SAVED_READING_SANITIZE = {
+  ADD_TAGS: ['iframe'],
+  ADD_ATTR: ['allow', 'allowfullscreen', 'frameborder', 'scrolling', 'target'],
+};
+
+/** What to tell the learner when a file request fails. The server's own
+ * message ("Learning activities open on 1 October…", "This file is empty…")
+ * says what to do; a bare status code does not. */
+async function fileRequestError(response: Response): Promise<string> {
+  try {
+    if ((response.headers.get('Content-Type') || '').includes('application/json')) {
+      const body = await response.json() as { error?: unknown };
+      if (typeof body.error === 'string' && body.error.trim()) return body.error;
+    }
+  } catch {
+    // Fall through to the status-based messages.
+  }
+  if (response.status === 404) return 'This file could not be found on the server. Please let your coach or the curriculum team know.';
+  if (response.status === 401) return 'Your session has ended. Sign in again to open this file.';
+  if (response.status === 403) return 'You do not have access to this file yet.';
+  return `File request failed (${response.status}). Please try again.`;
+}
 
 function readingStorageKey(componentId: string, suffix: string): string {
   return `kbc-reading:${componentId || 'unknown'}:${suffix}`;
@@ -1469,7 +1548,7 @@ function AccessibleReadingMaterial({
   const savedDocument = readStoredJson(readingStorageKey(componentId, 'document'), { sourceHtml: '', html: '' });
   const [html, setHtml] = useState(
     savedDocument.sourceHtml === sourceHtml && savedDocument.html
-      ? DOMPurify.sanitize(savedDocument.html)
+      ? DOMPurify.sanitize(savedDocument.html, SAVED_READING_SANITIZE)
       : sourceHtml,
   );
   // React 19 re-applies innerHTML whenever this object's identity changes, so a
@@ -1478,6 +1557,7 @@ function AccessibleReadingMaterial({
   const innerHtml = useMemo(() => ({ __html: html }), [html]);
   const [preferences, setPreferences] = useState<ReadingPreferences>(() => readStoredJson(readingStorageKey(componentId, 'preferences'), DEFAULT_READING_PREFERENCES));
   const [saved, setSaved] = useState(true);
+  const [saveError, setSaveError] = useState('');
   const narration = useReadingNarration(`${componentId}:${component.resourceUrl || ''}:${sourceHtml}`);
   const { speaking } = narration;
   const [rulerY, setRulerY] = useState<number | null>(null);
@@ -1519,12 +1599,23 @@ function AccessibleReadingMaterial({
   };
 
   const save = () => {
+    // Saved apart, so a reading too large for the browser's storage still keeps
+    // the learner's display preferences -- and the learner is told which part
+    // was not kept instead of the button silently staying on "Save changes".
     try {
       window.localStorage.setItem(readingStorageKey(componentId, 'preferences'), JSON.stringify(preferences));
-      window.localStorage.setItem(readingStorageKey(componentId, 'document'), JSON.stringify({ sourceHtml, html }));
-      setSaved(true);
     } catch {
       setSaved(false);
+      setSaveError('Your browser would not let this page save on this device (storage may be full or blocked in private browsing).');
+      return;
+    }
+    try {
+      window.localStorage.setItem(readingStorageKey(componentId, 'document'), JSON.stringify({ sourceHtml, html }));
+      setSaved(true);
+      setSaveError('');
+    } catch {
+      setSaved(false);
+      setSaveError('Your reading preferences were saved, but your highlights are too large to keep on this device. Use “Download highlighted reading” to keep a copy.');
     }
   };
 
@@ -1583,6 +1674,7 @@ function AccessibleReadingMaterial({
         </div>
       )}
       {downloadError && <p role="alert" className="mb-3 text-sm text-red-700">{downloadError}</p>}
+      {saveError && <p role="alert" className="mb-3 text-sm text-red-700">{saveError}</p>}
       {narration.speechError && <p role="alert" className="mb-3 text-sm text-red-700">{narration.speechError}</p>}
       <div ref={readingBodyRef}>
       {component.contentHtml && (
@@ -1735,10 +1827,16 @@ function DownloadFileButton({ url, fileName, label = 'Download' }: {
   fileName?: string | null;
   label?: string;
 }) {
+  const href = proxiedMaterialUrl(url);
+  // Browsers ignore `download` on another site's link and navigate instead,
+  // which took the learner off the activity (and its timer). Open those apart.
+  const absolute = absoluteDocUrl(href);
+  const external = absolute !== null && new URL(absolute).origin !== window.location.origin;
   return (
     <a
-      href={proxiedMaterialUrl(url)}
+      href={href}
       download={fileLabelFrom(url, fileName)}
+      {...(external ? { target: '_blank', rel: 'noopener noreferrer' } : {})}
       className="inline-flex shrink-0 items-center justify-center gap-1.5 rounded-xl border border-primary-200 bg-primary-50 px-3.5 py-2 text-xs font-bold text-primary-700 transition-colors hover:border-primary-300 hover:bg-primary-100"
     >
       <AppIcon className="ri-download-2-line" />
@@ -1827,7 +1925,7 @@ export function InlineAttachmentPreview({ url, title, fileName, readingPreferenc
     async function loadPreview() {
       try {
         const response = await fetch(previewUrl, { credentials: 'same-origin' });
-        if (!response.ok) throw new Error(`File request failed (${response.status})`);
+        if (!response.ok) throw new Error(await fileRequestError(response));
 
         if (isWord) {
           const arrayBuffer = await response.arrayBuffer();
@@ -1925,7 +2023,7 @@ export function InlineAttachmentPreview({ url, title, fileName, readingPreferenc
 
   return (
     <>
-      <DocumentEmbed url={url} title={title} onReady={onReady} />
+      <DocumentEmbed url={url} title={title} fileName={fileName} onReady={onReady} />
       <div className="mt-3">
         {/* DocumentEmbed above draws the deck itself where it can, so the card
             below offers the file rather than apologising for a missing
@@ -1981,7 +2079,7 @@ function PdfCanvasPreview({ url, title, fileName, readingPreferences, annotation
           credentials: 'same-origin',
           headers: { Accept: 'application/pdf,*/*' },
         }).catch(error => { requestFailed = true; throw error; });
-        if (!response.ok) throw new Error(`File request failed (${response.status})`);
+        if (!response.ok) throw new Error(await fileRequestError(response));
         const buffer = await response.arrayBuffer();
         const { GlobalWorkerOptions, getDocument } = await import('pdfjs-dist');
         GlobalWorkerOptions.workerSrc = new URL('pdfjs-dist/build/pdf.worker.min.mjs', import.meta.url).toString();
@@ -2290,8 +2388,8 @@ function PdfCanvasPreview({ url, title, fileName, readingPreferences, annotation
  * "open it instead" card where it is not — an uploaded .pptx can only be
  * previewed by Microsoft's Office viewer, which cannot reach a file that isn't
  * published on the public internet. See @/lib/docEmbed. */
-function DocumentEmbed({ url, title, onReady }: { url: string; title: string; onReady?: () => void }) {
-  const embed = resolveDocEmbed(url);
+function DocumentEmbed({ url, title, fileName, onReady }: { url: string; title: string; fileName?: string | null; onReady?: () => void }) {
+  const embed = resolveDocEmbed(url, undefined, fileName);
   // Say why there is no preview. Returning null left a learner looking at a
   // header, a download card, and nothing in between — with no way to tell a
   // file that cannot be shown from one that failed to load. The file itself is

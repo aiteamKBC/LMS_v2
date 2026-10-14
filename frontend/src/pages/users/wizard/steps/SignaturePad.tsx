@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import SignaturePadLib from 'signature_pad';
+import { LoaderCircle } from 'lucide-react';
 import { btnPrimary, btnSecondary } from '../../components/ui';
 import { useAuth } from '@/hooks/useAuth';
 import { fetchSavedSignature, saveSignature } from '@/api/savedSignature';
@@ -322,7 +323,9 @@ export function SignaturePad({
         {mode === 'saved' ? (
           <>
             <button type="button" className={btnPrimary} onClick={() => sign(saved)} disabled={saving || !name}>
-              <i className="ri-check-line" />
+              {saving
+                ? <LoaderCircle data-testid="signature-action-spinner" aria-hidden="true" className="h-4 w-4 animate-spin" />
+                : <i className="ri-check-line" aria-hidden="true" />}
               {saving ? 'Signing...' : 'Sign with this signature'}
             </button>
             <button type="button" className={btnSecondary} onClick={() => { touchedRef.current = true; setMode('draw'); }} disabled={saving}>
@@ -331,12 +334,16 @@ export function SignaturePad({
           </>
         ) : mode === 'draw' ? (
           <button type="button" className={btnPrimary} onClick={commitDrawn} disabled={saving || !name || !hasInk}>
-            <i className="ri-check-line" />
+            {saving
+              ? <LoaderCircle data-testid="signature-action-spinner" aria-hidden="true" className="h-4 w-4 animate-spin" />
+              : <i className="ri-check-line" aria-hidden="true" />}
             {saving ? 'Signing...' : 'Sign'}
           </button>
         ) : (
           <button type="button" className={btnPrimary} onClick={() => sign(uploaded)} disabled={saving || !name || !uploaded}>
-            <i className="ri-check-line" />
+            {saving
+              ? <LoaderCircle data-testid="signature-action-spinner" aria-hidden="true" className="h-4 w-4 animate-spin" />
+              : <i className="ri-check-line" aria-hidden="true" />}
             {saving ? 'Signing...' : 'Sign'}
           </button>
         )}

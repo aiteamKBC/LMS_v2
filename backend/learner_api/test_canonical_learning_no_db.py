@@ -42,12 +42,25 @@ def adapter(query):
                      owner['enrolment_id']: records.get(owner['id'], []) for owner in owners
                  })
     functions('monthly_log_sources.py', scope, {'decoded', 'number', 'stable_id', 'row'})
-    functions('current_learning.py', scope, {'source_payload_metadata'})
+    functions('current_learning.py', scope, {'source_payload_metadata', 'is_unsynchronised_direct_save'})
     functions('canonical_learning.py', scope)
     return scope
 
 
 class CanonicalLearningTests(unittest.TestCase):
+    def test_staff_input_date_reaches_activity_log_without_inventing_a_timestamp(self):
+        self.query.return_value=[]
+        entry={'id':1,'accepted':True,'actual_seconds':3617,'actual_basis':'staff:module-progress','reporting_month':'2026-10',
+            'reporting_timestamp_label':'Input','reporting_started_at':None,'reporting_ended_at':None,'ksbs':[],
+            'source_payload':{'staff_time_entry':{'mode':'input','activity_date':'2026-10-01'}}}
+        row=self.scope['rows_for'](self.owner,[entry])[0]
+        self.assertEqual(row['activity_date'],'2026-10-01')
+        self.assertEqual(row['timestamp_label'],'Input')
+        self.assertAlmostEqual(row['actual_hours'],3617/3600)
+        self.assertIsNone(entry['reporting_started_at']);self.assertIsNone(entry['reporting_ended_at'])
+        for day in ('2026-09-30','2026-02-30'):
+            invalid={**entry,'source_payload':{'staff_time_entry':{'mode':'input','activity_date':day}}}
+            self.assertIsNone(self.scope['input_activity_date'](invalid))
     def test_completion_status_does_not_invent_accepted_otj_hours(self):
         completed = {'activity_status': 'completed', 'accepted': False,
                      'actual_seconds': None, 'ksbs': []}
@@ -187,14 +200,14 @@ class CanonicalLearningTests(unittest.TestCase):
     def test_monthly_material_redirect_checks_owner_month_row_and_material(self):
         row = {'id': 9, 'progress_id': 20}
         parts = [{'id': 100, 'url': 'https://materials.example/private?sig=test'}]
-        scope = {'scope': Mock(return_value=({'_profile': self.owner}, 'learner')),
+        scope = {'scope': Mock(return_value=({'id': 271, '_profile': self.owner}, 'learner')),
             'valid_month': lambda month: None,
             'canonical': SimpleNamespace(enabled=lambda _: True, content_row=Mock(return_value=(row, {'id': 20})), material_parts=Mock(return_value=parts),
                 content=Mock(return_value={'id': 9, 'parts': [dict(parts[0])]})),
             'detail_data': Mock(return_value={'source': 'lms', 'rows': [row]}),
             'old': SimpleNamespace(ServiceError=ServiceError),
             'HttpResponseRedirect': lambda url: {'Location': url}, 'JsonResponse': lambda value: value}
-        functions('monthly_logs.py', scope, {'canonical_material', 'content'})
+        functions('monthly_logs.py', scope, {'canonical_material', 'material_response', 'content', 'content_response'})
         response = scope['canonical_material'](None, 271, '2026-08', 9, 100)
         self.assertEqual(response['Location'], parts[0]['url'])
         self.assertEqual(response['Cache-Control'], 'private, no-store')
@@ -346,6 +359,30 @@ class CanonicalLearningTests(unittest.TestCase):
         self.assertEqual(result[0]['achieved_score'], 80)
         self.assertNotIn('completed', stored[0])
         self.assertEqual(self.scope['metrics_from_records'](result, {})['otjh']['actual'], .8333)
+
+    def test_unsynchronised_direct_save_uses_projected_time_and_decision(self):
+        stored = [
+            {'id': 1, 'component_link_source': 'direct', 'source_system': '', 'accepted': True,
+             'actual_seconds': None, 'reporting_month': '', 'segments': [], 'ksbs': []},
+            {'id': 2, 'component_link_source': 'direct', 'source_system': '', 'accepted': True,
+             'actual_seconds': None, 'reporting_month': '', 'segments': [], 'ksbs': [],
+             'component_type': 'assignment'},
+            {'id': 3, 'component_link_source': 'direct', 'source_system': '', 'accepted': True,
+             'actual_seconds': 600, 'reporting_month': '2026-09', 'segments': [], 'ksbs': []},
+        ]
+        current = [
+            {**stored[0], 'accepted': True, 'actual_seconds': 1800, 'reporting_month': '2026-10',
+             'activity_status': 'Completed'},
+            # An assignment awaiting tutor review is submitted, not accepted.
+            {**stored[1], 'accepted': False, 'actual_seconds': 3600, 'reporting_month': '2026-10',
+             'activity_status': 'Submitted'},
+            {**stored[2], 'actual_seconds': 9900, 'reporting_month': '2026-10'},
+        ]
+        result = self.scope['progress_records_with_completion'](stored, current)
+        self.assertEqual([r['actual_seconds'] for r in result], [1800, 3600, 600])
+        self.assertEqual([r['accepted'] for r in result], [True, False, True])
+        self.assertEqual([r['reporting_month'] for r in result], ['2026-10', '2026-10', '2026-09'])
+        self.assertEqual(self.scope['metrics_from_records'](result, {})['otjh']['actual'], .6667)
 
     def test_single_reader_retains_distinct_accepted_rows_sharing_a_source_key(self):
         first = {'id': 1, 'canonical_activity_key': 'shared', 'accepted': True,
@@ -761,7 +798,7 @@ class CanonicalLearningTests(unittest.TestCase):
         query = Mock(return_value=[])
         scope = dict(scope=Mock(), canonical=SimpleNamespace(profile=lambda _: self.owner),
                      old_repo=SimpleNamespace(query=query), old=SimpleNamespace(ServiceError=ServiceError))
-        functions('monthly_logs.py', scope, {'canonical_document'})
+        functions('monthly_logs.py', scope, {'canonical_document', 'canonical_document_response'})
         with self.assertRaises(ServiceError):
             scope['canonical_document'](object(), 271, 999)
         sql, params = query.call_args.args
