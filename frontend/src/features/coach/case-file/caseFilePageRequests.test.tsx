@@ -5,6 +5,7 @@ import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { clearAllCachedResources } from '@/api/cachedRequest';
 import LearnerCaseFile from '@/pages/coach/learner-case-file/page';
+import { moduleOverviewFixture } from './caseFileOverview.fixture';
 
 const transport = vi.hoisted(() => vi.fn());
 vi.mock('@/lib/coachFetch', () => ({ coachFetch: transport }));
@@ -17,7 +18,7 @@ const attendance = { learnerId: 201, sessions: 2, present: 1, absent: 1, attenda
 const schedule = { months: {}, contractStatus: 'not-available', actual: [], actualAvailable: false, modules: [], moduleLinks: {}, sessions: [], reviews: [], coach: { name: '', bookingUrl: '' }, generatedAt: '', programmeStartDate: '2026-01-01', programmeEndDate: '2027-01-01' };
 const sections: Record<string, unknown> = {
   profile: { learner: { id: '101', enrolmentId: '201', aptemId: null, learnerType: 'apprenticeship', name: 'Synthetic Learner', email: 'learner@example.test', programme: 'Programme', group: 'Synthetic Group', employer: 'Synthetic Employer', status: 'Active', startDate: '2026-01-01', plannedEndDate: '2027-01-01' } },
-  overview: { wholeProgrammeProgress: { overall: metrics.programme, ksb: metrics.ksb, attendance: { ...attendance, percent: 50 }, otjh: { actual: 12, planned: 100, targetToDate: 25, percent: 48 } }, programmeProgress: [] },
+  overview: { wholeProgrammeProgress: { overall: metrics.programme, ksb: metrics.ksb, attendance: { ...attendance, percent: 50 }, otjh: { actual: 12, planned: 100, targetToDate: 25, percent: 48 } }, programmeProgress: [], moduleOverview: moduleOverviewFixture },
   'weekly-learning': { weeks: [], selectedWeek: null },
   'monthly-focus': { month: '2026-09', summary: { requiredHours: 50, achievedHours: 0, differenceHours: -50, ksbCount: null }, reviews: [], assignments: [], lectures: [] },
   'otjh-ksb': { otjh: { actualHours: 12, targetToDateHours: 25, plannedHours: 100, remainingHours: 13, progressPercent: 48,
@@ -59,7 +60,7 @@ it.each(['apprenticeship', 'commercial'])('real %s tab consumers issue one ownin
   expect(header).toHaveTextContent('learner@example.test');
   expect(header).toHaveTextContent('2027-01-01');
   expect(screen.queryByRole('alert')).not.toBeInTheDocument();
-  await waitFor(() => expect(screen.getByRole('region', { name: 'Whole programme progress' })).toHaveTextContent('1 / 2 sessions attended'));
+  await waitFor(() => expect(screen.getByRole('region', { name: 'Module progress' })).toHaveTextContent('0 / 12 scheduled sessions attended'));
   expect(screen.queryByText('KSB progress unavailable')).not.toBeInTheDocument();
   expect(screen.queryByText('Recorded hours unavailable')).not.toBeInTheDocument();
   const tabs = [['Overview', 'overview'], ['Weekly Learning', 'weekly-learning'], ['Monthly Focus', 'monthly-focus'], ['OTJH & KSB Progress', 'otjh-ksb'], ['Attendance', 'attendance'], ['Learning Plan', 'learning-plan'], ['Reviews', 'reviews'], ['Assignments', 'assignments'], ['Enrolment Documents', 'enrolment-documents']];
