@@ -1695,6 +1695,13 @@ class MicrosoftSsoStartTests(SimpleTestCase):
         with self.assertRaises(signing.BadSignature):
             signing.loads(forged, salt=microsoft_sso.STATE_SALT)
 
+    def test_only_fixed_android_intent_survives_in_signed_state(self):
+        from urllib.parse import parse_qs, urlparse
+        for value in ("android", "https://evil.test", "//evil.test", "/workspace/admin"):
+            state = parse_qs(urlparse(self._authorize_url(download=value)).query)["state"][0]
+            payload = signing.loads(state, salt=microsoft_sso.STATE_SALT)
+            self.assertEqual(payload.get("download"), "android" if value == "android" else None)
+
     def test_absolute_next_is_refused(self):
         """An attacker-supplied return target would make this an open redirect."""
         from urllib.parse import parse_qs, urlparse

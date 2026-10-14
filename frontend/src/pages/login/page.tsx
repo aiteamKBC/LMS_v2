@@ -15,6 +15,7 @@ export default function LoginPage() {
   const { login, auth, isInitialized } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
+  const androidDownload = new URLSearchParams(location.search).get('download') === 'android';
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [rememberMe, setRememberMe] = useState(false);
@@ -43,8 +44,9 @@ export default function LoginPage() {
   // and round again.
   useEffect(() => {
     if (!isInitialized || !auth.account) return;
+    if (androidDownload && auth.account.role === 'learner') return;
     navigate(postLoginRouteFor(auth.account), { replace: true });
-  }, [isInitialized, auth.account, navigate]);
+  }, [isInitialized, auth.account, androidDownload, navigate]);
 
   const handleLogin = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -67,10 +69,15 @@ export default function LoginPage() {
     setIsLoading(true);
     try {
       const account = await login(email, password, rememberMe);
+      if (androidDownload && account.role === 'learner') {
+        setIsLoading(false);
+        return;
+      }
       navigate(postLoginRouteFor(account), { replace: true });
     } catch (err) {
       if (err instanceof PasswordSetupRequired) {
-        navigate(err.setPasswordPath, { replace: true, state: { firstSignIn: true } });
+        const path = androidDownload ? `${err.setPasswordPath}&download=android` : err.setPasswordPath;
+        navigate(path, { replace: true, state: { firstSignIn: true } });
         return;
       }
       setError(
@@ -88,7 +95,7 @@ export default function LoginPage() {
     try {
       // This is a full navigation so Microsoft can return to the callback that
       // creates the server session cookie.
-      window.location.href = await apiMicrosoftStart();
+      window.location.href = await (androidDownload ? apiMicrosoftStart('android') : apiMicrosoftStart());
     } catch (err) {
       setError(
         err instanceof AuthError
@@ -98,6 +105,25 @@ export default function LoginPage() {
       setSsoLoading(false);
     }
   };
+
+  if (androidDownload && isInitialized && auth.account?.role === 'learner') {
+    return (
+      <main className={styles.downloadPage}>
+        <section className={styles.downloadCard} aria-labelledby="download-heading">
+          <img src={SIDEBAR_LOGO_URL} alt="Kent Business College" width="88" />
+          <h1 id="download-heading">Get KBC Learn for Android</h1>
+          <p>You are signed in. Download the test app, open the downloaded file and follow your phone’s installation steps.</p>
+          <a className={styles.primaryButton} href="/learner_api/mobile/download/android/">
+            Download Android app
+          </a>
+          <p>After installation, sign in to the app with your usual LMS account.</p>
+          <button className={styles.microsoftButton} onClick={() => navigate(postLoginRouteFor(auth.account!), { replace: true })}>
+            Go to my learning
+          </button>
+        </section>
+      </main>
+    );
+  }
 
   return (
     <main className={styles.page}>
@@ -127,7 +153,7 @@ export default function LoginPage() {
 
             <header className={styles.intro}>
               <h1 id="login-heading">Welcome back</h1>
-              <p>Sign in to your workspace</p>
+              <p>{androidDownload ? 'Sign in to download KBC Learn for Android' : 'Sign in to your workspace'}</p>
             </header>
 
             <form onSubmit={handleLogin} className={styles.form} noValidate={false}>

@@ -9,7 +9,7 @@ from threading import Lock
 from collections import Counter
 from types import SimpleNamespace
 import unittest
-from unittest.mock import Mock, patch
+from unittest.mock import MagicMock, Mock, patch
 
 spec = importlib.util.spec_from_file_location('migration', Path(__file__).with_name('migrate_wordpress_media.py'))
 m = importlib.util.module_from_spec(spec)
@@ -95,6 +95,76 @@ class WordPressMigrationTests(unittest.TestCase):
     def test_patch_is_idempotent(self):
         row = {'source_url': '/local.pdf', 'payload': {'iframe_url': '/local.pdf'}}
         self.assertEqual(m.material_patch(row, {}, self.host, []), ({}, {}))
+
+    def test_nested_authoring_media_migrates_without_changing_meetings_or_provenance(self):
+        url = 'https://source.example/wp-content/uploads/brief.pdf'
+        mapping = {m.source_key(url, self.host): {'url': '/local/brief.pdf'}}
+        legacy = {'assignmentContent': '<a href="' + url + '">Brief</a>',
+                  'resourceDownloadsHtml': url, 'sourceFiles': [{'url': url}],
+                  'teamsOccurrenceId': 'retained', 'teamsMeetingUrl': 'https://teams.example/meeting',
+                  'completed': True}
+        for original in (legacy, json.dumps(legacy)):
+            with self.subTest(serialised=isinstance(original, str)):
+                settings = {'assignmentContent': '', 'legacySettings': original}
+                patch = m.native_media_patch(settings, mapping, self.host)
+                self.assertNotIn('assignmentContent', patch)
+                self.assertEqual(settings['legacySettings'], original)
+                changed = patch['legacySettings']
+                if isinstance(original, str):
+                    self.assertIsInstance(changed, str)
+                    changed = json.loads(changed)
+                self.assertEqual(changed, {**legacy, 'assignmentContent': '<a href="/local/brief.pdf">Brief</a>',
+                                          'resourceDownloadsHtml': '/local/brief.pdf'})
+                self.assertEqual(m.native_media_patch({**settings, **patch}, mapping, self.host), {})
+
+    def test_provenance_and_invalid_legacy_data_do_not_become_media(self):
+        url = 'https://source.example/wp-content/uploads/original.pdf'
+        for legacy in ({'sourceFiles': [{'url': url}]}, 'invalid json', [url]):
+            self.assertEqual(m.native_media_values({'legacySettings': legacy}), {})
+            self.assertEqual(m.native_media_patch({'legacySettings': legacy}, {}, self.host), {})
+
+    def test_resume_state_survives_a_temporary_windows_reader_lock(self):
+        worker = m.Migrator.__new__(m.Migrator)
+        worker.guard, worker.state = Lock(), {'files': {}}
+        original_replace, calls = Path.replace, []
+        def busy_once(path, target):
+            calls.append(path)
+            if len(calls) == 1:
+                raise PermissionError('reader still holds the file')
+            return original_replace(path, target)
+        with TemporaryDirectory() as folder:
+            worker.state_path = Path(folder) / 'state.json'
+            with patch.object(Path, 'replace', autospec=True, side_effect=busy_once), patch.object(m.time, 'sleep'):
+                worker.save_file('attachment:9', {'blob': 'verified.pdf'})
+            self.assertEqual(json.loads(worker.state_path.read_text()), {'files': {'attachment:9': {'blob': 'verified.pdf'}}})
+            self.assertFalse(worker.state_path.with_suffix('.tmp').exists())
+            with patch.object(Path, 'replace', side_effect=PermissionError()), patch.object(m.time, 'sleep'):
+                with self.assertRaises(PermissionError):
+                    worker.save_file('attachment:10', {'blob': 'second.pdf'})
+            self.assertNotIn('attachment:10', json.loads(worker.state_path.read_text())['files'])
+
+    def test_material_rewrites_a_verified_cross_lesson_link_in_reading(self):
+        url = 'https://source.example/user-account/edit-course/1/curriculum/sections/2/lessons/3'
+        body = '<a href="' + url + '">Read the brief</a>'
+        file = {'url': '/local/brief.pdf', 'blob': 'verified.pdf', 'mime': 'application/pdf', 'size': 12}
+        key = m.source_key(url, self.host)
+        row = {'id': 1, 'material_id': 7, 'content_type': 'text', 'updated_at': None,
+               'backup_status': 'pending', 'has_quiz': False, 'payload': {'text_body': body}}
+        worker = m.Migrator.__new__(m.Migrator)
+        worker.host, worker.state = self.host, {'files': {key: file}, 'providers': {}}
+        worker.guard, worker.counts = Lock(), Counter()
+        worker.blobs, worker.unavailable = {}, {}
+        worker.known = lambda reference: worker.state['files'].get(reference)
+        worker.get_json, worker.writer, worker.Jsonb = Mock(), MagicMock(), lambda value: value
+        cursor = worker.writer.return_value.cursor.return_value.__enter__.return_value
+        expected = {'text_body': '<a href="/local/brief.pdf">Read the brief</a>'}
+        cursor.fetchone.side_effect = [{'id': 1}, {'payload': expected}]
+        result = worker.process_material(row)
+        self.assertTrue(result['changed'])
+        self.assertEqual(result['unresolved'], [])
+        self.assertEqual(cursor.execute.call_args_list[0].args[1][0], expected)
+        self.assertEqual(row['payload']['text_body'], body)
+        worker.get_json.assert_not_called()
 
     def test_local_quiz_does_not_restore_a_legacy_navigation_fallback(self):
         url = 'https://source.example/stm-quizzes/example/'
@@ -324,6 +394,87 @@ class AzureTransferTests(unittest.TestCase):
         worker.guard, worker.counts, worker.blobs = Lock(), Counter(), {}
         worker.host, worker.emit = 'source.example', Mock()
         return worker, worker.store.get_blob_client.return_value
+
+    def test_source_probe_requires_a_strong_version_and_valid_signature(self):
+        session = Mock()
+        session.get.return_value = RangeDownloadTests.response(b'%PDF-small', 0, 1000)
+        result = m.source_file_header(session, 'https://source.example/file.pdf', 2000, 'application/pdf')
+        self.assertEqual(result['size'], 1000)
+        self.assertEqual(result['head'], b'%PDF-small')
+        session.get.return_value = RangeDownloadTests.response(b'%PDF-small', 0, 1000, etag='W/"weak"')
+        self.assertIsNone(m.source_file_header(session, 'https://source.example/file.pdf', 2000))
+        session.get.return_value = RangeDownloadTests.response(b'<html>login', 0, 1000)
+        with self.assertRaisesRegex(ValueError, 'invalid_file_content'):
+            m.source_file_header(session, 'https://source.example/file.pdf', 2000)
+
+    def test_conditional_copy_checks_version_size_mime_and_destination_signature(self):
+        import requests
+        from azure.core import MatchConditions
+        from azure.core.exceptions import ResourceNotFoundError
+        worker, blob = self.worker()
+        worker.requests, worker.args = requests, SimpleNamespace(max_mb=1)
+        source = {'head': b'%PDF-small', 'etag': '"version-one"', 'size': 1000, 'mime': 'application/pdf'}
+        def properties():
+            if not blob.upload_blob_from_url.called:
+                raise ResourceNotFoundError()
+            return SimpleNamespace(size=1000, metadata=blob.upload_blob_from_url.call_args.kwargs['metadata'],
+                                   content_settings=SimpleNamespace(content_type='application/pdf'))
+        blob.get_blob_properties.side_effect = properties
+        blob.download_blob.return_value.readall.return_value = source['head']
+        with patch.object(m, 'source_file_header', return_value=source):
+            result = worker.copy_public_file('attachment:9', 'https://source.example/wp-content/uploads/lesson.pdf', '', '')
+        self.assertEqual(blob.upload_blob_from_url.call_args.kwargs['source_etag'], source['etag'])
+        self.assertEqual(blob.upload_blob_from_url.call_args.kwargs['source_match_condition'], MatchConditions.IfNotModified)
+        self.assertFalse(blob.upload_blob_from_url.call_args.kwargs['overwrite'])
+        self.assertIsNone(result['sha256'])
+        self.assertTrue(result['source_version'])
+        blob.upload_blob.assert_not_called()
+        blob.download_blob.return_value.readall.return_value = b'wrong file'
+        with patch.object(m, 'source_file_header', return_value=source), self.assertRaisesRegex(ValueError, 'copied_signature_mismatch'):
+            worker.copy_public_file('attachment:9', 'https://source.example/wp-content/uploads/lesson.pdf', '', '')
+
+    def test_conditional_copy_does_not_accept_a_changed_source_version(self):
+        import requests
+        from azure.core.exceptions import ResourceModifiedError, ResourceNotFoundError
+        worker, blob = self.worker()
+        worker.requests, worker.args = requests, SimpleNamespace(max_mb=1)
+        source = {'head': b'%PDF-small', 'etag': '"version-one"', 'size': 1000, 'mime': 'application/pdf'}
+        blob.get_blob_properties.side_effect = ResourceNotFoundError()
+        blob.upload_blob_from_url.side_effect = ResourceModifiedError()
+        with patch.object(m, 'source_file_header', return_value=source):
+            self.assertIsNone(worker.copy_public_file('attachment:9', 'https://source.example/wp-content/uploads/lesson.pdf', '', ''))
+        self.assertEqual(worker.blobs, {})
+        blob.download_blob.assert_not_called()
+
+    def test_timestamp_copy_rechecks_strong_version_before_linking(self):
+        import requests
+        from email.utils import parsedate_to_datetime
+        from azure.core.exceptions import ResourceNotFoundError
+        worker, blob = self.worker()
+        worker.requests, worker.args = requests, SimpleNamespace(max_mb=1)
+        source = {'head': b'%PDF-small', 'etag': '"first"', 'size': 1000, 'mime': 'application/pdf',
+                  'last_modified': 'Thu, 02 Jul 2026 14:52:44 GMT'}
+        def properties():
+            if not blob.upload_blob_from_url.called:
+                raise ResourceNotFoundError()
+            return SimpleNamespace(size=1000, metadata=blob.upload_blob_from_url.call_args.kwargs['metadata'],
+                                   content_settings=SimpleNamespace(content_type='application/pdf'))
+        blob.get_blob_properties.side_effect = properties
+        blob.download_blob.return_value.readall.return_value = source['head']
+        with patch.object(m, 'source_file_header', return_value=source) as probe:
+            result = worker.copy_public_file('attachment:9', 'https://source.example/wp-content/uploads/lesson.pdf', '', '')
+        self.assertEqual(probe.call_count, 2)
+        kwargs = blob.upload_blob_from_url.call_args.kwargs
+        self.assertEqual(kwargs['source_if_unmodified_since'], parsedate_to_datetime(source['last_modified']))
+        self.assertNotIn('source_etag', kwargs)
+        self.assertFalse(kwargs['overwrite'])
+        self.assertIsNone(result['sha256'])
+        worker.blobs.clear()
+        # Same timestamp and size do not make a changed strong version safe.
+        with patch.object(m, 'source_file_header', side_effect=[source, {**source, 'etag': '"changed"'}]):
+            with self.assertRaisesRegex(ValueError, 'source_changed_during_copy'):
+                worker.copy_public_file('attachment:9', 'https://source.example/wp-content/uploads/lesson.pdf', '', '')
+        self.assertEqual(worker.blobs, {})
 
     def test_server_copy_validates_source_bytes_and_never_overwrites(self):
         from azure.core.exceptions import ResourceNotFoundError
