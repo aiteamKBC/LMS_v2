@@ -26,6 +26,8 @@ export function TopicAssignment({ topics, ...props }: FormProps & { topics: Assi
   const timer = useAssignmentTimer(`assignment-work-time:v1:${props.kind}:${props.learnerId}:${props.componentId}`);
   const identity = { learnerKind: props.kind, learnerId: props.learnerId, activityId: props.componentId };
   const draft = states.find(state => state.topicId && !submitted(state.status));
+  // Keep saved work accessible even if curriculum content is later removed.
+  const visibleTopics = topics.filter(topic => topicHasContent(topic) || states.some(state => state.topicId === topic.id));
   const chosen = topics.find(topic => topic.id === selected);
   const instructionFiles = useMemo(() => readingFiles(undefined, undefined, chosen?.instructions || chosen?.question || '', chosen?.resources), [chosen]);
   const activeTopic = topics.find(topic => topic.id === opened);
@@ -100,8 +102,8 @@ export function TopicAssignment({ topics, ...props }: FormProps & { topics: Assi
         <div className="mt-4 flex flex-wrap gap-2"><button type="button" className="rounded-lg bg-primary-600 px-3 py-2 text-xs font-bold text-white">1 Instructions</button>{MONTHLY_STEPS.map((label, index) => <button key={label} type="button" disabled className="rounded-lg border px-3 py-2 text-xs opacity-50">{index + 2} {label}</button>)}</div>
       </div>
       <div className="space-y-5 p-5">
-        <p className="text-sm text-foreground-600">Choose a topic, read its instructions, then select Next. Finish and submit its eight steps before choosing another topic.</p>
-        <div className="grid gap-3 sm:grid-cols-3">{topics.map(topic => {
+        <p className="text-sm text-foreground-600">{visibleTopics.length ? 'Choose a topic, read its instructions, then select Next. Finish and submit its eight steps before choosing another topic.' : 'No assignment topics are available yet.'}</p>
+        <div className="grid gap-3 sm:grid-cols-3">{visibleTopics.map(topic => {
           const state = states.find(row => row.topicId === topic.id);
           const locked = submitted(state?.status);
           return <div key={topic.id} className="space-y-2">

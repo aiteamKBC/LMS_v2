@@ -22,6 +22,51 @@ const props = { topics, kind: 'commercial' as const, learnerId: 'synthetic-1', l
 beforeEach(() => { localStorage.clear(); vi.mocked(loadAssignmentTopicStates).mockResolvedValue([]); vi.mocked(selectAssignmentTopic).mockResolvedValue(undefined); vi.clearAllMocks(); });
 afterEach(cleanup);
 
+it.each(['commercial', 'apprenticeship'] as const)('hides empty curriculum slots and starts the uploaded topic with its original ID for %s learners', async kind => {
+  const file = { fileName: 'brief.pdf', url: '/curriculum_api/curriculum/uploads/brief.pdf', contentType: 'application/pdf', size: 10 };
+  const choices = assignmentTopics([
+    { id: '1', name: 'Empty slot', question: '   ' },
+    { id: '2', name: 'Uploaded assignment', resources: [file] },
+    { id: '3', question: '<p><br></p>' },
+  ]);
+  render(<TopicAssignment {...props} kind={kind} topics={choices} />);
+  const uploaded = await screen.findByRole('button', { name: /Topic 2.*Available/ });
+  expect(screen.queryByRole('button', { name: /Topic 1/ })).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: /Topic 3/ })).not.toBeInTheDocument();
+  expect(screen.queryByText('Not yet configured')).not.toBeInTheDocument();
+  fireEvent.click(uploaded);
+  expect(screen.getByTestId('instruction-file')).toHaveAttribute('data-url', file.url);
+  fireEvent.click(screen.getByRole('button', { name: 'Next' }));
+  expect(await screen.findByText('Form topic 2')).toBeVisible();
+  expect(selectAssignmentTopic).toHaveBeenCalledWith(expect.objectContaining({ learnerKind: kind, assignmentTopicId: '2' }));
+});
+
+it('shows authored questions and uploaded resources while hiding an unused third slot', async () => {
+  render(<TopicAssignment {...props} topics={assignmentTopics([
+    { ...topics[0], resources: [] },
+    { ...topics[1], question: '' },
+  ])} />);
+  expect(await screen.findByRole('button', { name: /Topic 1.*Available/ })).toBeEnabled();
+  expect(screen.getByRole('button', { name: /Topic 2.*Available/ })).toBeEnabled();
+  expect(screen.queryByRole('button', { name: /Topic 3/ })).not.toBeInTheDocument();
+});
+
+it('explains when no topics have been configured without showing empty choices', async () => {
+  render(<TopicAssignment {...props} topics={assignmentTopics([])} />);
+  expect(await screen.findByText('No assignment topics are available yet.')).toBeVisible();
+  expect(screen.queryByRole('button', { name: /Topic [123]/ })).not.toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Next' })).toBeDisabled();
+  expect(selectAssignmentTopic).not.toHaveBeenCalled();
+});
+
+it('keeps the preview of a submitted topic accessible if its curriculum content is later cleared', async () => {
+  vi.mocked(loadAssignmentTopicStates).mockResolvedValue([{ topicId: '2', status: 'accepted', elapsedSeconds: 70 }]);
+  render(<TopicAssignment {...props} topics={assignmentTopics([])} />);
+  fireEvent.click(await screen.findByRole('button', { name: 'Preview Topic 2' }));
+  expect(screen.getByText('Form topic 2')).toBeVisible();
+  expect(selectAssignmentTopic).not.toHaveBeenCalled();
+});
+
 it('opens both instruction PDFs with reading tools and keeps files scoped to the selected topic', async () => {
   const files = ['brief', 'guidance'].map(name => ({ url: `/curriculum_api/curriculum/uploads/${name}.pdf`, fileName: `${name}.pdf`, contentType: 'application/pdf', size: 10 }));
   const choices = assignmentTopics([

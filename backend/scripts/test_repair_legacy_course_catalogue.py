@@ -162,6 +162,20 @@ class CourseRepairTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'source ownership is invalid'):
             self.plan()
 
+    def test_cross_course_merged_reading_restores_completion_without_moving_hours(self):
+        self.merged_journal()
+        self.state['progress'][0]['source_payload'] = {'original_source_ref': 'la:60:30'}
+        self.state['snapshot']['component_progress'][0]['material_type'] = 'slides'
+        plan = self.plan()
+        self.assertIsNone(plan['restores'][0]['progress_id'])
+        self.assertEqual(plan['restores'][0]['retained_history_id'], 100)
+        after = simulated_after(self.state, plan)
+        projection = verify(self.state, after, plan)
+        self.assertEqual(sum(i['completed'] for i in projection[1]['items']), 1)
+        self.assertEqual(projection[1]['accepted_hours'], 0)
+        self.assertEqual(after['progress'][0], self.state['progress'][0])
+        self.assertEqual(after['journals'], self.state['journals'])
+
     def test_retyping_preserves_every_placement_of_a_merged_record(self):
         self.state['sources'] = [dict(id=50, learner_id=1, source_system='journal',
             source_activity_id='journal:1', source_catalog_activity_id=None,
@@ -183,6 +197,60 @@ class CourseRepairTests(unittest.TestCase):
         verify(self.state, after, plan)
         self.assertEqual(self.state, original)
         self.assertEqual(after['progress'][2], original['progress'][2])
+
+    def test_catalogue_only_keeps_newer_content_and_does_not_restore_progress(self):
+        plan = plan_repair(self.state, [], [], catalogue_only=True)
+        self.assertEqual(plan['archive'], [4, 5])
+        self.assertIn('material:99', plan['expected'])
+        self.assertEqual(plan['restores'], [])
+        after = simulated_after(self.state, plan)
+        verify(self.state, after, plan)
+        self.assertEqual(plan_repair(after, [], [], catalogue_only=True)['archive'], [])
+
+    def test_catalogue_only_retains_native_mappings_and_missing_export_items(self):
+        self.state['definitions'][3]['curriculum_component_ref'] = 'NATIVE'
+        self.state['export']['curriculum']['sections'][0]['materials'].append({
+            'source_component_id': 800, 'component_kind': 'quiz', 'post_type': 'stm-quizzes'})
+        plan = plan_repair(self.state, [], [], catalogue_only=True)
+        self.assertNotIn(4, plan['archive'])
+        self.assertNotIn('quiz:800', plan['expected'])
+        verify(self.state, simulated_after(self.state, plan), plan)
+
+    def test_unexported_pair_cannot_establish_its_own_authoritative_type(self):
+        self.state['definitions'].append({**self.state['definitions'][-1],
+            'id': 90, 'source_activity_id': 'quiz:99', 'source_activity_kind': 'quiz'})
+        for definitions in (self.state['definitions'], list(reversed(self.state['definitions']))):
+            self.state['definitions'] = definitions
+            plan = plan_repair(self.state, [], [], catalogue_only=True)
+            self.assertIn('material:99', plan['expected'])
+            self.assertIn('quiz:99', plan['expected'])
+            verify(self.state, simulated_after(self.state, plan), plan)
+
+    def test_catalogue_only_preserves_unsupported_assignments(self):
+        self.state['export']['curriculum']['sections'][0]['materials'].append({
+            'source_component_id': 99, 'component_kind': 'assignment', 'post_type': 'stm-assignments'})
+        plan = plan_repair(self.state, [], [], catalogue_only=True)
+        self.assertIn('material:99', plan['expected'])
+        verify(self.state, simulated_after(self.state, plan), plan)
+
+    def test_catalogue_only_preserves_conflicting_source_for_another_record(self):
+        self.state['sources'] = [dict(id=50, learner_id=1, source_system='old_lms',
+            source_activity_id='quiz:20', source_catalog_activity_id=2,
+            canonical_progress_id=999, deleted_at=None, completed=True)]
+        plan = plan_repair(self.state, [], [], catalogue_only=True)
+        self.assertNotIn('material:20', plan['replacements'])
+        self.assertEqual(plan['links'], [])
+        verify(self.state, simulated_after(self.state, plan), plan)
+
+    def test_catalogue_only_preserves_pair_claimed_by_two_progress_records(self):
+        self.state['progress'].append({**self.state['progress'][0], 'id': 101})
+        plan = plan_repair(self.state, [], [], catalogue_only=True)
+        self.assertNotIn('material:20', plan['replacements'])
+        verify(self.state, simulated_after(self.state, plan), plan)
+
+    def test_catalogue_only_never_silently_ignores_requested_restorations(self):
+        with self.assertRaisesRegex(ValueError, 'cannot remove unmatched'):
+            plan_repair(self.state, [], [10], catalogue_only=True)
 
 
 if __name__ == '__main__':

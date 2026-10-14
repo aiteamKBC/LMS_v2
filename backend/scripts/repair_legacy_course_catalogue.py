@@ -8,6 +8,7 @@ import argparse
 from collections import defaultdict
 from datetime import datetime
 import json
+import re
 from pathlib import Path
 import sys
 from zoneinfo import ZoneInfo
@@ -44,11 +45,16 @@ def typed_ref(item):
     return ('material:' if kind == 'lesson' else 'quiz:') + ident
 
 
-def catalogue_plan(definitions, export, removals):
+def catalogue_plan(definitions, export, removals, *, preserve_unmatched=False, preserve_refs=()):
     expected = {}
     for section in export['sections']:
         for item in section.get('materials', []):
-            ref = typed_ref(item)
+            try:
+                ref = typed_ref(item)
+            except ValueError:
+                if preserve_unmatched:
+                    continue
+                raise
             if ref in expected:
                 raise ValueError('Export contains duplicate typed components.')
             expected[ref] = item
@@ -56,8 +62,18 @@ def catalogue_plan(definitions, export, removals):
         raise ValueError('Removal conflicts with the retained curriculum.')
     live = [d for d in definitions if d['deleted_at'] is None]
     by_ref = {d['source_activity_id']: d for d in live}
-    if len(by_ref) != len(live) or not set(expected) <= set(by_ref):
+    if len(by_ref) != len(live) or (not preserve_unmatched and not set(expected) <= set(by_ref)):
         raise ValueError('Owned catalogue is ambiguous or missing exported items.')
+    if preserve_unmatched:
+        # A partial/older export cannot authorize deleting later content or
+        # creating missing components. Only collapse proven, present pairs.
+        expected = {ref: item for ref, item in expected.items() if ref in by_ref}
+        verified_refs = set(expected)
+        for ref, definition in by_ref.items():
+            other = ('quiz:' if ref.startswith('material:') else 'material:') + ref.partition(':')[2]
+            if (ref in preserve_refs or definition.get('curriculum_component_ref')
+                    or other not in verified_refs):
+                expected.setdefault(ref, definition)
     archive, replacements = [], {}
     for ref, definition in by_ref.items():
         if ref in expected:
@@ -73,7 +89,7 @@ def catalogue_plan(definitions, export, removals):
     return expected, sorted(archive), replacements
 
 
-def read_state(cur, course_id, aptem_id):
+def read_state(cur, course_id, aptem_id, *, catalogue_only=False):
     courses = cur.execute('''SELECT * FROM curriculum.source_courses
         WHERE source_system='old_lms' AND source_course_ref=%s AND deleted_at IS NULL''',
         [str(course_id)]).fetchall()
@@ -100,10 +116,39 @@ def read_state(cur, course_id, aptem_id):
         raise ValueError('No retained curriculum export.')
     state = dict(course=course, memberships=memberships, owners=owners, owner=owner, export=export)
     state['definitions'] = cur.execute('SELECT * FROM curriculum.source_activities WHERE source_course_id=%s ORDER BY id', [course['id']]).fetchall()
+    progress_ids = None
+    if catalogue_only:
+        # Keep every record that can project into this course, including retired
+        # journal aliases. Load its other sources too, so foreign routes remain
+        # authoritative. Avoid loading every member's entire evidence history.
+        progress_ids = [r['id'] for r in cur.execute('''SELECT p.id
+            FROM "Learner".learner_progress_entries p WHERE p.learner_id=ANY(%s)
+            AND (p.source_payload->>'original_source_ref' LIKE %s
+                OR EXISTS (SELECT 1 FROM "Learner".learner_activity_sources s
+                    JOIN curriculum.source_activities a ON a.id=s.source_catalog_activity_id
+                    WHERE s.canonical_progress_id=p.id AND s.learner_id=p.learner_id AND a.source_course_id=%s)
+                OR EXISTS (SELECT 1 FROM "Learner".learner_journal_rows j
+                    WHERE j.progress_id=p.id AND j.canonical_learner_id=p.learner_id
+                        AND j.source_ref LIKE %s)) ORDER BY p.id''',
+            [learner_ids, f'la:{course_id}:%', course['id'], f'la:{course_id}:%']).fetchall()]
+        state['accepted_totals'] = cur.execute('''SELECT learner_id,sum(coalesce(actual_seconds,0)) AS seconds
+            FROM "Learner".learner_progress_entries WHERE learner_id=ANY(%s)
+            AND deleted_at IS NULL AND accepted=true GROUP BY learner_id ORDER BY learner_id''', [learner_ids]).fetchall()
     for key, table in [('progress', 'learner_progress_entries'), ('sources', 'learner_activity_sources'),
                        ('segments', 'learner_activity_reporting_segments'), ('identities', 'learner_external_identities')]:
-        state[key] = cur.execute(f'SELECT * FROM "Learner".{table} WHERE learner_id=ANY(%s) ORDER BY id', [learner_ids]).fetchall()
-    state['journals'] = cur.execute('SELECT * FROM "Learner".learner_journal_rows WHERE canonical_learner_id=ANY(%s) ORDER BY id', [learner_ids]).fetchall()
+        condition, params = 'learner_id=ANY(%s)', [learner_ids]
+        if progress_ids is not None and key in ('progress', 'segments'):
+            condition += ' AND ' + ('id' if key == 'progress' else 'progress_id') + '=ANY(%s)'
+            params.append(progress_ids)
+        elif progress_ids is not None and key == 'sources':
+            condition += ' AND (canonical_progress_id=ANY(%s) OR (source_system=\'old_lms\' AND source_activity_id=ANY(%s)))'
+            params.extend([progress_ids, [d['source_activity_id'] for d in state['definitions']]])
+        state[key] = cur.execute(f'SELECT * FROM "Learner".{table} WHERE {condition} ORDER BY id', params).fetchall()
+    condition, params = 'canonical_learner_id=ANY(%s)', [learner_ids]
+    if progress_ids is not None:
+        condition += ' AND (progress_id=ANY(%s) OR source_ref LIKE %s)'
+        params.extend([progress_ids, f'la:{course_id}:%'])
+    state['journals'] = cur.execute(f'SELECT * FROM "Learner".learner_journal_rows WHERE {condition} ORDER BY id', params).fetchall()
     state['source_routes'] = cur.execute('''SELECT a.id,c.source_course_ref
         FROM curriculum.source_activities a
         JOIN curriculum.source_courses c ON c.id=a.source_course_id AND c.deleted_at IS NULL
@@ -119,8 +164,8 @@ def read_state(cur, course_id, aptem_id):
         FROM "MBA".student_progress p JOIN "MBA".students s ON s.user_id=p.user_id
         WHERE p.user_id=%s AND p.course_id=%s''', [int(identity['source_learner_id']), course_id]).fetchone()
     email = metadata(identity['source_payload']).get('source_email') or metadata(identity['source_payload']).get('learner_email')
-    if (not state['snapshot'] or not email or
-            state['snapshot']['source_email'].strip().casefold() != email.strip().casefold()):
+    if ((not state['snapshot'] and not catalogue_only) or not email or
+            (state['snapshot'] and state['snapshot']['source_email'].strip().casefold() != email.strip().casefold())):
         raise ValueError('Retained source identity does not match.')
     return state
 
@@ -180,14 +225,38 @@ def projections(state):
     return result
 
 
-def plan_repair(state, removals, restore_ids):
+def plan_repair(state, removals, restore_ids, *, catalogue_only=False):
     export = decoded(state['export']['curriculum'])
-    expected, archive, replacements = catalogue_plan(state['definitions'], export, removals)
+    expected, archive, replacements = catalogue_plan(state['definitions'], export, removals,
+        preserve_unmatched=catalogue_only)
     definitions = {d['source_activity_id']: d for d in state['definitions'] if d['deleted_at'] is None}
     progress = {p['id']: p for p in state['progress']}
     existing = {(s['learner_id'], s['source_system'], s['source_activity_id']): s
                 for s in state['sources'] if s['deleted_at'] is None}
     before = projections(state)
+    if catalogue_only:
+        if removals or restore_ids:
+            raise ValueError('Catalogue-only mode cannot remove unmatched content or restore completions.')
+        # Global legacy source keys sometimes belong to another course or a
+        # different retained record. Preserve that pair pending reconciliation.
+        preserve_refs, claims = set(), defaultdict(set)
+        for learner_id, projection in before.items():
+            for pid, refs in projection['placements'].items():
+                if not any(ref in replacements for ref in refs):
+                    continue
+                for ref in refs:
+                    target = replacements.get(ref, ref)
+                    linked = existing.get((learner_id, 'old_lms', target))
+                    claims[(learner_id, target)].add(pid)
+                    if linked and (linked['canonical_progress_id'] != pid
+                            or linked['source_catalog_activity_id'] != definitions[target]['id']):
+                        preserve_refs.update(r for r in refs if r in replacements)
+        for learner_id, projection in before.items():
+            for pid, refs in projection['placements'].items():
+                if any(len(claims[(learner_id, replacements.get(ref, ref))]) > 1 for ref in refs):
+                    preserve_refs.update(r for r in refs if r in replacements)
+        expected, archive, replacements = catalogue_plan(state['definitions'], export, [],
+            preserve_unmatched=True, preserve_refs=preserve_refs)
     links = []
     for learner_id, projection in before.items():
         for pid, refs in projection['placements'].items():
@@ -206,7 +275,7 @@ def plan_repair(state, removals, restore_ids):
     if len({(x['learner_id'], x['new_ref']) for x in links}) != len(links):
         raise ValueError('More than one record claims a typed destination.')
     owner = state['owner']
-    snapshot = {typed_ref(c): c for c in decoded(state['snapshot']['component_progress'])}
+    snapshot = {typed_ref(c): c for c in decoded(state['snapshot']['component_progress'])} if restore_ids else {}
     restores = []
     for ident in restore_ids:
         ref = f'material:{ident}'
@@ -225,6 +294,7 @@ def plan_repair(state, removals, restore_ids):
         journals = [j for j in state['journals']
                     if j['canonical_learner_id'] == owner['id'] and j['source_ref'] == route]
         retained_progress = None
+        retained_history_id = None
         if journals:
             # A retired journal alias can point to a retained merged record.
             # Reuse that record; keep its primary placement and counted hours.
@@ -243,7 +313,15 @@ def plan_repair(state, removals, restore_ids):
                     raise ValueError('Historical journal source ownership is invalid.')
             primary = before[owner['id']]['placements'].get(retained_progress['id'], [])
             if not primary:
-                raise ValueError('Merged progress has no current course placement.')
+                historical_route = re.fullmatch(r'la:(\d+):(\d+)',
+                    str(metadata(retained_progress['source_payload']).get('original_source_ref') or ''))
+                if not historical_route or historical_route[1] == str(state['course']['source_course_ref']):
+                    raise ValueError('Merged progress has no current course placement.')
+                # A retired alias merged into another course cannot carry this
+                # course's completion without also allocating its accepted hours.
+                # Retain that history and recover only the evidenced completion.
+                retained_history_id = retained_progress['id']
+                retained_progress = None
             for prior in primary:
                 target = replacements.get(prior, prior)
                 if target not in expected:
@@ -262,10 +340,11 @@ def plan_repair(state, removals, restore_ids):
         end = datetime.fromisoformat(saved['completed_at_utc'].replace('Z', '+00:00'))
         if not start.tzinfo or not end.tzinfo or end < start:
             raise ValueError('Completion needs valid UTC timestamps.')
-        if component.get('material_type') not in ('pdf', 'text'):
+        if component.get('material_type') not in ('pdf', 'text', 'slides'):
             raise ValueError('This recovery supports completed readings only.')
         restores.append(dict(ref=ref, definition=definitions[ref], component=component, start=start, end=end,
-                             progress_id=retained_progress['id'] if retained_progress else None))
+                             progress_id=retained_progress['id'] if retained_progress else None,
+                             retained_history_id=retained_history_id))
     return dict(archive=archive, replacements=replacements, links=links, restores=restores,
                 expected=expected, before=before)
 
@@ -308,6 +387,7 @@ def apply_plan(cur, state, plan, fingerprint):
         payload = {'original_source_ref': route, 'retained_completion_recovery': {
             'source_table': 'MBA.student_progress', 'source_identity_id': state['identity']['id'],
             'snapshot_synced_at': str(state['snapshot']['synced_at']), 'component': item['component'],
+            'retained_history_progress_id': item.get('retained_history_id'),
             'actual_time_review_required': True,
             'timing_note': 'Calendar elapsed time is not verified study time.'}}
         common = dict(learner_id=owner['id'], enrolment_id=owner['enrolment_id'],
@@ -361,6 +441,8 @@ def verify(before, after, plan):
             raise ValueError('Course ownership or retained evidence changed.')
     if hours(before) != hours(after):
         raise ValueError('Accepted hours changed.')
+    if before.get('accepted_totals') != after.get('accepted_totals'):
+        raise ValueError('Learner-wide accepted totals changed.')
     if len(after['progress']) != len(before['progress']) + sum(r['progress_id'] is None for r in plan['restores']):
         raise ValueError('Unexpected progress record count.')
     if len(after['sources']) != len(before['sources']) + len(plan['links']) + len(plan['restores']):
@@ -386,6 +468,7 @@ def verify(before, after, plan):
 
 
 def run(args):
+    catalogue_only = getattr(args, 'catalogue_only', False)
     with psycopg.connect(database_url(), connect_timeout=10, row_factory=dict_row) as conn:
         conn.read_only = not args.apply
         conn.isolation_level = psycopg.IsolationLevel.SERIALIZABLE if args.apply else psycopg.IsolationLevel.REPEATABLE_READ
@@ -395,13 +478,14 @@ def run(args):
             database = cur.execute('SELECT current_database() AS name').fetchone()['name']
             if args.apply and (database != args.expected_database or conn.info.host != args.expected_host):
                 raise ValueError('Database target differs from the preview.')
-            state = read_state(cur, args.course_id, args.aptem_id)
+            state = read_state(cur, args.course_id, args.aptem_id, catalogue_only=catalogue_only)
             if args.apply:
                 cur.execute('SELECT id FROM curriculum.source_courses WHERE id=%s FOR UPDATE', [state['course']['id']])
-                for owner in state['owners']:
-                    cur.execute("SELECT pg_advisory_xact_lock(hashtext('learner-journal-progress'),%s::integer)", [owner['id']])
-                    cur.execute('SELECT id FROM "Learner".learners WHERE id=%s FOR UPDATE', [owner['id']])
-            plan = plan_repair(state, args.remove_activity, args.restore_material_ids)
+                owner_ids = sorted(o['id'] for o in state['owners'])
+                cur.execute("""SELECT pg_advisory_xact_lock(hashtext('learner-journal-progress'),id::integer)
+                    FROM unnest(%s::bigint[]) owner(id) ORDER BY id""", [owner_ids])
+                cur.execute('SELECT id FROM "Learner".learners WHERE id=ANY(%s) ORDER BY id FOR UPDATE', [owner_ids])
+            plan = plan_repair(state, args.remove_activity, args.restore_material_ids, catalogue_only=catalogue_only)
             fingerprint = digest(state)
             projection = plan['before'][state['owner']['id']]
             output = dict(database=database, host=conn.info.host, fingerprint=fingerprint,
@@ -416,9 +500,9 @@ def run(args):
                     raise ValueError('State changed after preview; preview again.')
                 if plan['archive'] or plan['links'] or plan['restores']:
                     sync_run = apply_plan(cur, state, plan, fingerprint)
-                    after = read_state(cur, args.course_id, args.aptem_id)
+                    after = read_state(cur, args.course_id, args.aptem_id, catalogue_only=catalogue_only)
                     projected = verify(state, after, plan)
-                    pending = plan_repair(after, args.remove_activity, args.restore_material_ids)
+                    pending = plan_repair(after, args.remove_activity, args.restore_material_ids, catalogue_only=catalogue_only)
                     if pending['archive'] or pending['links'] or pending['restores']:
                         raise ValueError('Repair is not idempotent.')
                     final = projected[state['owner']['id']]
@@ -440,6 +524,8 @@ def main():
     parser.add_argument('--aptem-id', type=int, required=True)
     parser.add_argument('--restore-material-ids', type=ids, default=[])
     parser.add_argument('--remove-activity', action='append', default=[])
+    parser.add_argument('--catalogue-only', action='store_true',
+        help='Collapse proven unambiguous pairs only; preserve unmatched/native content and all saved progress.')
     parser.add_argument('--apply', action='store_true')
     parser.add_argument('--expected-database')
     parser.add_argument('--expected-host')
