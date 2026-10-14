@@ -12,7 +12,7 @@ from unittest.mock import Mock, patch
 
 from django.test import RequestFactory, SimpleTestCase
 
-from . import module_shift
+from . import learning_plan, module_shift
 
 # Two modules built from the same shape: three components in week 1, one of
 # which differs in type, plus a second week with none. Enough to exercise
@@ -27,7 +27,7 @@ SOURCE_ROWS = [
 TARGET_ROWS = [
     ("W-B1", 1, "Week 1", "C-B1", "video", "Recorded Session 1", 0.0),
     ("W-B1", 1, "Week 1", "C-B2", "reading", "Reading Material 2", 2.0),
-    ("W-B1", 1, "Week 1", "C-B3", "powerpoint", "shift ppt", 3.0),
+    ("W-B1", 1, "Week 1", "C-B3", "powerpoint", "PowerPoint 3", 3.0),
     ("W-B1", 1, "Week 1", "C-B4", "video", "Recorded Session 2", 1.0),
     ("W-B2", 2, "Week 2", None, None, None, None),
 ]
@@ -199,34 +199,130 @@ class ProgressPairingTests(PairingCase, SimpleTestCase):
 
 
 class SuggestedPairTests(SimpleTestCase):
-    """The suggestion is only a starting point, but it should be the obvious one."""
+    """Suggestions use identity, then an exact cleaned title and type."""
 
     def setUp(self):
         with patch("learner_api.module_shift._rows", side_effect=_fake_rows):
             self.target = module_shift._weeks_with_components("MOD-B")[0]
 
-    def test_same_position_wins_when_the_types_agree(self):
-        component = {"componentId": "C-A2", "type": "reading"}
+    def test_same_cleaned_title_and_type_are_suggested(self):
+        component = {
+            "componentId": "C-A2", "type": "reading",
+            "title": "  READING\u00a0material 2 ",
+        }
 
-        self.assertEqual(module_shift._suggested_pair(component, 1, 0, self.target), "C-B2")
+        self.assertEqual(module_shift._suggested_pair(component, self.target), "C-B2")
 
-    def test_a_moved_position_falls_back_to_the_same_rank_of_that_type(self):
-        component = {"componentId": "C-A4", "type": "video"}
+    def test_same_position_and_type_do_not_override_a_different_title(self):
+        component = {"componentId": "C-A9", "type": "video", "title": "Different lesson"}
 
-        # Second video on each side, even though the positions have drifted.
-        self.assertEqual(module_shift._suggested_pair(component, 9, 1, self.target), "C-B4")
+        self.assertEqual(module_shift._suggested_pair(component, self.target), "")
 
-    def test_nothing_of_that_type_suggests_nothing_rather_than_a_near_miss(self):
-        component = {"componentId": "C-A9", "type": "quiz"}
+    def test_same_id_wins_even_when_the_title_changed(self):
+        component = {"componentId": "C-B4", "type": "video", "title": "Old title"}
 
-        # The target week has no quiz; suggesting the component in that slot
-        # would be proposing a video as evidence of a quiz.
-        self.assertEqual(module_shift._suggested_pair(component, 0, 0, self.target), "")
+        self.assertEqual(module_shift._suggested_pair(component, self.target), "C-B4")
+
+    def test_an_already_claimed_target_is_not_suggested_twice(self):
+        component = {"componentId": "C-A2", "type": "reading", "title": "Reading Material 2"}
+
+        self.assertEqual(module_shift._suggested_pair(component, self.target, {"C-B2"}), "")
+
+    def test_ambiguous_title_is_left_unmatched(self):
+        component = {"componentId": "C-A2", "type": "reading", "title": "Reading Material 2"}
+        target = {
+            "components": [
+                *self.target["components"],
+                {"componentId": "C-B5", "type": "reading", "title": "reading material 2"},
+            ],
+        }
+
+        self.assertEqual(module_shift._suggested_pair(component, target), "")
 
     def test_a_week_that_does_not_exist_suggests_nothing(self):
-        component = {"componentId": "C-A2", "type": "reading"}
+        component = {"componentId": "C-A2", "type": "reading", "title": "Reading Material 2"}
 
-        self.assertEqual(module_shift._suggested_pair(component, 1, 0, None), "")
+        self.assertEqual(module_shift._suggested_pair(component, None), "")
+
+
+class ShiftedPlanTests(SimpleTestCase):
+    """A shift must remain visible after group inheritance and mirror reads."""
+
+    def setUp(self):
+        self.source = {"moduleId": "MOD-A", "moduleTitle": "Martech - Thur"}
+        self.target = {"moduleId": "MOD-B", "moduleTitle": "Martech - Fri"}
+        self.learner = SimpleNamespace(
+            pk=62,
+            programme="Marketing", group="G1-MarTech",
+            learning_plan=[self.source], training_plan=None, save=Mock(),
+        )
+
+    def test_leaving_a_group_module_makes_the_shift_explicit(self):
+        with patch("learner_api.module_shift._group_module_ids", return_value=["MOD-A"]):
+            shifted = module_shift._shifted_plan(
+                self.learner, [self.source], self.target, "MOD-A",
+            )
+
+        self.assertEqual([entry["moduleId"] for entry in shifted], ["MOD-B"])
+        self.assertEqual(shifted[0]["assignmentMode"], "explicit")
+        self.learner.learning_plan = shifted
+        self.assertEqual(learning_plan._effective_plan_ids(self.learner, {}), ["MOD-B"])
+
+    def test_a_non_group_module_does_not_freeze_the_rest_of_the_plan(self):
+        with patch("learner_api.module_shift._group_module_ids", return_value=["MOD-X"]):
+            shifted = module_shift._shifted_plan(
+                self.learner, [self.source], self.target, "MOD-A",
+            )
+
+        self.assertNotIn("assignmentMode", shifted[0])
+
+    def test_save_uses_the_selected_plan_field_and_updates_only_the_shifted_mirror(self):
+        profile = SimpleNamespace(pk=248, learning_plan=None)
+        with (
+            patch("learner_api.module_shift.learner_profile_for_source", return_value=profile),
+            patch("learner_api.module_shift.LearnerProfile"),
+            patch("learner_api.module_shift.EnrolmentUser"),
+            patch("learner_api.module_shift._replace_json_plan_module", return_value=True) as json_replace,
+            patch("learner_api.module_shift._sync_legacy_titles_from_json"),
+            patch("learner_api.module_shift._replace_mirrored_module", return_value=True) as replace,
+            patch("learner_api.module_shift.sync_learning_plan_mirror") as full_mirror,
+        ):
+            field, saved_profile, mirrored = module_shift._save_shifted_plan(
+                self.learner, [self.target], "MOD-A", "MOD-B",
+            )
+
+        self.assertEqual(field, "learning_plan")
+        self.assertIs(saved_profile, profile)
+        self.assertTrue(mirrored)
+        self.assertEqual(self.learner.learning_plan, [self.target])
+        self.learner.save.assert_not_called()
+        self.assertEqual(json_replace.call_count, 2)
+        replace.assert_called_once_with(profile, "MOD-A", self.target)
+        full_mirror.assert_not_called()
+
+    def test_save_respects_a_training_plan_backed_learner(self):
+        self.learner.learning_plan = None
+        self.learner.training_plan = [self.source]
+
+        profile = SimpleNamespace(pk=248, learning_plan=None)
+        with (
+            patch("learner_api.module_shift.learner_profile_for_source", return_value=profile),
+            patch("learner_api.module_shift.LearnerProfile"),
+            patch("learner_api.module_shift.EnrolmentUser"),
+            patch("learner_api.module_shift._replace_json_plan_module", return_value=True),
+            patch("learner_api.module_shift._sync_legacy_titles_from_json"),
+            patch("learner_api.module_shift._replace_mirrored_module", return_value=True),
+            patch("learner_api.module_shift.sync_learning_plan_mirror") as full_mirror,
+        ):
+            field, _profile, mirrored = module_shift._save_shifted_plan(
+                self.learner, [self.target], "MOD-A", "MOD-B",
+            )
+
+        self.assertEqual(field, "training_plan")
+        self.assertTrue(mirrored)
+        self.assertEqual(self.learner.training_plan, [self.target])
+        self.learner.save.assert_not_called()
+        full_mirror.assert_not_called()
 
 
 class MappingValidationTests(SimpleTestCase):
@@ -254,14 +350,12 @@ class MappingValidationTests(SimpleTestCase):
         self.assertIn("is a video", error)
         self.assertIn("is a reading", error)
 
-    def test_the_same_type_at_a_different_position_is_allowed(self):
-        # The picker offers this: matching is by type, not by slot.
-        pairs, error = self._validate([
+    def test_the_same_type_with_a_different_title_is_rejected(self):
+        _pairs, error = self._validate([
             {"fromComponentId": "C-A1", "toComponentId": "C-B4"},
         ])
 
-        self.assertEqual(error, "")
-        self.assertEqual(pairs, [("C-A1", "C-B4")])
+        self.assertIn("same title and type", error)
 
     def test_two_components_cannot_land_on_the_same_one(self):
         _pairs, error = self._validate([
