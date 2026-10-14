@@ -36,6 +36,12 @@ it('retries a temporary server failure without changing the requested range',asy
  expect((await run(fetcher)).size).toBe(bytes.length);
  expect(fetcher.mock.calls[0][1].headers).toEqual(fetcher.mock.calls[1][1].headers);
 });
+it('accepts the gzip middleware weak ETag while verifying the decoded APK bytes',async()=>{
+ const fetcher=source((_call,part,headers)=>new Response(part,{status:206,headers:{...headers,ETag:'W/'+headers.ETag}}));
+ const blob=await run(fetcher);
+ expect(Buffer.from(await blob.arrayBuffer()).equals(Buffer.from(bytes))).toBe(true);
+ expect(fetcher.mock.calls[1][1].headers).toMatchObject({'If-Range':'"'+hash+'"'});
+});
 it('refuses mixed releases even when every chunk has the expected length',async()=>{
  const fetcher=source((call,part,headers)=>call===2?new Response(part,{status:206,headers:{...headers,ETag:'"'+('a'.repeat(64))+'"','X-APK-SHA256':'a'.repeat(64)}}):undefined);
  await expect(run(fetcher)).rejects.toThrow('verified');
