@@ -1,22 +1,12 @@
-"""Cohort-mates of a module — the modules a learner can be shifted onto.
+"""Modules in the same programme that a learner can be shifted onto.
 
-Shifting a learner means swapping one module on their learning plan for another
-*taught to the same cohort*. A cohort runs several groups, each group teaching
-its own modules, so the alternatives to a module are found by walking outwards:
-
-    module -> its group -> that group's cohort -> every group in the cohort
-           -> every module those groups teach
-
-The walk has fallbacks at each step because the three link shapes all exist in
-the data. Modules authored in the curriculum tree carry cohort_id and group_id
-outright; bulk-imported ones carry neither, and are tied to a group only by that
-group's `module_ids` list (the same list the learning plan's preset reads). A
-module with none of the three simply has no cohort yet — that is a 200 with an
-empty list and a reason, not an error: nothing is wrong, there is just nothing
-to offer.
+Alternatives span all cohorts and groups in the source module's programme.
+Programme identity comes from the module, with cohort/group links as fallbacks
+for older catalogue rows. A module without a resolvable programme returns an
+empty list and an explanation.
 
 The shift itself writes here rather than through the learning-plan endpoint, for
-two reasons. The cohort rule is the point of the feature, so it belongs to the
+two reasons. The programme rule is the point of the feature, so it belongs to the
 server and not to whichever screen happens to be calling; and a plan may hold
 entries whose module has since left the curriculum, which the plan endpoint
 rejects wholesale. A shift touches one entry and leaves every other exactly as
@@ -39,7 +29,7 @@ to the component, so it travels with it: the submission is repointed and its
 status, feedback and reviewer are left untouched.
 
     GET   /learner_api/module-shift/options/?moduleId=<id>
-          -> {cohort, groups, modules: [...], reason}
+          -> {programme, cohort, groups, modules: [...], reason}
     GET   /learner_api/module-shift/<pk>/progress/?from=<id>&to=<id>
           -> {weeks: [{order, from, to}], suggested: [...], reason}
     PATCH /learner_api/module-shift/<pk>/  {fromModuleId, toModuleId,
@@ -79,7 +69,7 @@ from .submission_audit import SUBMISSION_AUDIT_SQL, record_submission_row
 logger = logging.getLogger(__name__)
 
 MODULE_COLUMNS = """
-    module_catalogue_id, title, group_name, programme_name, total_otjh,
+    module_catalogue_id, title, group_name, programme_id, programme_name, total_otjh,
     start_date, end_date
 """
 
@@ -114,7 +104,7 @@ def _module_row(module_id):
 def _all_groups():
     return _rows(
         """
-        SELECT group_id, group_name, cohort_id, cohort_name, module_ids
+        SELECT group_id, group_name, cohort_id, cohort_name, programme_id, programme_name, module_ids
         FROM curriculum.groups
         """,
         [],
@@ -146,31 +136,73 @@ def _cohort_of(module, groups):
     return None, ""
 
 
-def _cohort_modules(cohort_id, groups):
-    """Every module taught to a cohort, however it is linked to its group.
+def _all_cohorts():
+    return _rows(
+        "SELECT cohort_id, programme_id, programme_name FROM curriculum.cohorts", []
+    )
 
-    Three sources, unioned: the module's own cohort column, its group column
-    pointing at one of the cohort's groups, and the cohort's groups listing it in
-    `module_ids`. A module reachable by any of them belongs to the cohort.
-    """
-    cohort_groups = [g for g in groups if _s(g.get("cohort_id")) == cohort_id]
-    group_ids = [_s(g.get("group_id")) for g in cohort_groups if _s(g.get("group_id"))]
-    listed_ids = sorted({i for g in cohort_groups for i in _id_list(g.get("module_ids"))})
 
+def _programme_of(row, groups, cohorts):
+    """Prefer explicit programme identity; retain legacy cohort/group links."""
+    programme = (_s(row.get("programme_id")), _s(row.get("programme_name")))
+    if any(programme):
+        return programme
+    cohort_id = _s(row.get("cohort_id"))
+    cohort = next(
+        (c for c in cohorts if cohort_id and _s(c.get("cohort_id")) == cohort_id),
+        None,
+    )
+    if cohort and (cohort.get("programme_id") or cohort.get("programme_name")):
+        return _s(cohort.get("programme_id")), _s(cohort.get("programme_name"))
+    group_id = _s(row.get("group_id"))
+    module_id = _s(row.get("module_catalogue_id"))
+    linked = [g for g in groups if group_id and _s(g.get("group_id")) == group_id]
+    linked += [g for g in groups if module_id and module_id in _id_list(g.get("module_ids"))]
+    for group in linked:
+        programme = _programme_of(group, [], cohorts)
+        if any(programme):
+            return programme
+    return "", ""
+
+
+def _same_programme(left, right):
+    # Stable ids win when both exist; names support legacy name-only rows.
+    if left[0] and right[0]:
+        return left[0] == right[0]
+    return bool(left[1] and right[1] and left[1] == right[1])
+
+
+def _programme_shift_modules(programme, groups, cohorts):
+    """Collect alternatives across cohorts, preserving legacy module links."""
+    programme_groups = [
+        g for g in groups if _same_programme(programme, _programme_of(g, [], cohorts))
+    ]
+    cohort_ids = [
+        _s(c.get("cohort_id")) for c in cohorts
+        if _s(c.get("cohort_id")) and _same_programme(
+            programme, (_s(c.get("programme_id")), _s(c.get("programme_name")))
+        )
+    ]
+    group_ids = [_s(g.get("group_id")) for g in programme_groups if _s(g.get("group_id"))]
+    listed_ids = sorted({i for g in programme_groups for i in _id_list(g.get("module_ids"))})
     rows = _rows(
         f"""
-        SELECT {MODULE_COLUMNS}
+        SELECT {MODULE_COLUMNS}, cohort_id, cohort_name, group_id
         FROM curriculum.modules
-        WHERE cohort_id = %s
-           -- Cast both arrays: a cohort whose groups list no modules sends an
-           -- empty list, and Postgres cannot type an empty array on its own.
-           OR (group_id IS NOT NULL AND group_id = ANY(%s::text[]))
+        WHERE (programme_id = %s AND programme_id <> '')
+           OR (programme_name = %s AND programme_name <> '')
+           OR cohort_id = ANY(%s::text[])
+           OR group_id = ANY(%s::text[])
            OR module_catalogue_id = ANY(%s::text[])
         ORDER BY start_date NULLS LAST, group_name NULLS LAST, title
         """,
-        [cohort_id, group_ids, listed_ids],
+        [*programme, cohort_ids, group_ids, listed_ids],
     )
-    return [_module_payload(r) for r in rows], cohort_groups
+    # An old group list must not override an explicit different programme id.
+    return [
+        _module_payload(r) for r in rows
+        if _same_programme(programme, _programme_of(r, groups, cohorts))
+    ], programme_groups
 
 
 def module_shift_options(request):
@@ -189,33 +221,38 @@ def module_shift_options(request):
             # nothing left to walk outwards from.
             return JsonResponse({
                 "cohort": {"id": "", "name": ""},
+                "programme": {"id": "", "name": ""},
                 "groups": [],
                 "modules": [],
-                "reason": "This module is no longer in the curriculum, so its cohort cannot be found.",
+                "reason": "This module is no longer in the curriculum, so its programme cannot be found.",
             })
 
         groups = _all_groups()
-        cohort_id, cohort_name = _cohort_of(module, groups)
-        if not cohort_id:
+        cohorts = _all_cohorts()
+        programme = _programme_of(module, groups, cohorts)
+        if not any(programme):
             return JsonResponse({
                 "cohort": {"id": "", "name": ""},
+                "programme": {"id": "", "name": ""},
                 "groups": [],
                 "modules": [],
                 "reason": (
-                    f"“{_s(module.get('title')) or module_id}” is not linked to a group or cohort yet, "
-                    "so there are no cohort modules to shift to. Link it in the curriculum first."
+                    f"“{_s(module.get('title')) or module_id}” is not linked to a programme yet, "
+                    "so there are no programme modules to shift to. Link it in the curriculum first."
                 ),
             })
 
-        modules, cohort_groups = _cohort_modules(cohort_id, groups)
+        modules, programme_groups = _programme_shift_modules(programme, groups, cohorts)
+        cohort_id, cohort_name = _cohort_of(module, groups)
     except DatabaseError as exc:
         logger.exception("module_shift_options: lookup failed")
         return _error(f"Database error: {exc}", 502)
 
     return JsonResponse({
-        "cohort": {"id": cohort_id, "name": cohort_name},
+        "cohort": {"id": cohort_id or "", "name": cohort_name},
+        "programme": {"id": programme[0], "name": programme[1]},
         # Named so the picker can say which groups the alternatives came from.
-        "groups": [_s(g.get("group_name")) for g in cohort_groups if _s(g.get("group_name"))],
+        "groups": [_s(g.get("group_name")) for g in programme_groups if _s(g.get("group_name"))],
         "modules": modules,
         "reason": "",
     })
@@ -695,7 +732,7 @@ def _base_plan(learner):
 # entries; only the learner themselves or staff may write it.
 @learner_self_or_staff(kwarg="pk")
 def module_shift(request, pk):
-    """Move a learner from one module to another taught to the same cohort."""
+    """Move a learner from one module to another taught to the same programme."""
     if request.method not in ("PATCH", "POST"):
         return _error("Method not allowed.", 405)
 
@@ -728,27 +765,28 @@ def module_shift(request, pk):
         if any(_s(m.get("moduleId")) == to_id for m in plan):
             return _error("That module is already on this learner's plan.", 400)
 
-        # The same walk the picker offered, re-run here: the cohort rule is the
+        # The same walk the picker offered, re-run here: the programme rule is the
         # rule, so it is checked server-side rather than trusted from the client.
         module = _module_row(from_id)
         if module is None:
             return _error(
-                f"Module '{from_id}' is no longer in the curriculum, so its cohort cannot be found.",
+                f"Module '{from_id}' is no longer in the curriculum, so its programme cannot be found.",
                 400,
             )
         groups = _all_groups()
-        cohort_id, cohort_name = _cohort_of(module, groups)
-        if not cohort_id:
+        cohorts = _all_cohorts()
+        programme = _programme_of(module, groups, cohorts)
+        if not any(programme):
             return _error(
-                f"'{_s(module.get('title')) or from_id}' is not linked to a group or cohort, "
+                f"'{_s(module.get('title')) or from_id}' is not linked to a programme, "
                 "so there is nothing to shift within.",
                 400,
             )
-        options, _cohort_groups = _cohort_modules(cohort_id, groups)
+        options, _programme_groups = _programme_shift_modules(programme, groups, cohorts)
         target = next((m for m in options if m["moduleId"] == to_id), None)
         if target is None:
             return _error(
-                f"That module is not taught to {cohort_name or 'this cohort'}.",
+                f"That module is not taught to {programme[1] or programme[0] or 'this programme'}.",
                 400,
             )
 

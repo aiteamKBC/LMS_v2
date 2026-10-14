@@ -24,9 +24,8 @@ import { RowsSkeleton } from '@/components/feature/Skeletons';
 //
 // Step 1 — the modules. Two sections, left to right in the order the decision is
 // made: the modules this learner is assigned, then the modules taught to the
-// same cohort as whichever of theirs is selected. The alternatives are
-// cohort-wide, not group-wide: a cohort runs several groups, and a learner being
-// moved is usually being moved between them.
+// same programme as whichever of theirs is selected, across all its cohorts
+// and groups. Only the selected learner's module is changed.
 //
 // Step 2 — the progress. A learner part-way through a module has work recorded
 // against its components, and that work has to land somewhere in the module they
@@ -35,7 +34,7 @@ import { RowsSkeleton } from '@/components/feature/Skeletons';
 // so it is asked rather than guessed. The server suggests the obvious pairing
 // and anything left unmatched stays where it is.
 //
-// The write has its own endpoint, which re-runs the cohort walk and moves plan
+// The write has its own endpoint, which re-runs the programme lookup and moves plan
 // and progress in one transaction — see module_shift.py.
 // ============================================================================
 
@@ -319,7 +318,7 @@ export function ShiftModuleModal({ learnerId, learnerName, onClose, onSaved }: P
         const res = await fetchLearningPlan(learnerId);
         if (cancelled) return;
         setPlan(res.plan);
-        // A single module is not a choice, so it selects itself and the cohort
+        // A single module is not a choice, so it selects itself and the programme
         // list loads without a click.
         if (res.plan.length === 1) setFrom(res.plan[0].moduleId);
       } catch (err) {
@@ -334,8 +333,8 @@ export function ShiftModuleModal({ learnerId, learnerName, onClose, onSaved }: P
     };
   }, [learnerId]);
 
-  // The cohort's modules, refetched whenever the module being moved changes —
-  // each one can resolve to a different cohort.
+  // The programme's modules, refetched whenever the module being moved changes —
+  // each one can resolve to a different programme.
   useEffect(() => {
     if (!from) {
       setOptions(null);
@@ -351,7 +350,7 @@ export function ShiftModuleModal({ learnerId, learnerName, onClose, onSaved }: P
       } catch (err) {
         if (!cancelled) {
           setOptions(null);
-          setError(err instanceof Error ? err.message : 'Could not load the cohort’s modules.');
+          setError(err instanceof Error ? err.message : 'Could not load the programme’s modules.');
         }
       } finally {
         if (!cancelled) setLoadingOptions(false);
@@ -545,19 +544,19 @@ export function ShiftModuleModal({ learnerId, learnerName, onClose, onSaved }: P
               )}
             </div>
 
-            {/* 2 — everything the same cohort is taught, whichever group teaches it. */}
+            {/* 2 — everything in the same programme, across cohorts and groups. */}
             <div className={cardClass}>
               <p className={sectionTitle}>
-                Cohort modules
-                {options?.cohort.name && (
+                Programme modules
+                {options?.programme.name && (
                   <span className="ml-1 font-normal text-foreground-400">
-                    &mdash; {options.cohort.name}
+                    &mdash; {options.programme.name}
                   </span>
                 )}
               </p>
               {!from ? (
                 <p className={emptyNote}>
-                  Pick one of the learner&rsquo;s modules first — its cohort decides what can be
+                  Pick one of the learner&rsquo;s modules first — its programme decides what can be
                   offered here.
                 </p>
               ) : loadingOptions ? (
@@ -569,7 +568,7 @@ export function ShiftModuleModal({ learnerId, learnerName, onClose, onSaved }: P
                 <p className={emptyNote}>{options.reason}</p>
               ) : choices.length === 0 ? (
                 <p className={emptyNote}>
-                  {options?.cohort.name || 'This cohort'} teaches no other modules.
+                  {options?.programme.name || 'This programme'} teaches no other modules.
                 </p>
               ) : (
                 <>

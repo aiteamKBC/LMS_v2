@@ -108,6 +108,7 @@ def week_rows(modules, today):
 
 
 def read_weekly_learning(context, selection=None):
+    from learner_api.weekly_hours import module_activity_hours, selected_activity_hours
     from learner_api.learning_plan import _effective_plan_ids
     from learner_api import canonical_learning
     from learner_api.training_plan_dashboard import rows, attach_curriculum_slots, plan_session
@@ -299,7 +300,12 @@ def read_weekly_learning(context, selection=None):
     codes = {code for item in activities for code in item['ksbCodes']}
     achieved = {code for item in activities if item['completed'] for code in item['ksbCodes']}
     planned = sum(item['expectedHours'] or 0 for item in activities)
-    completed_hours = sum(item['expectedHours'] or 0 for item in activities if item['completed'])
+    activity_hours = module_activity_hours(canonical_learning.entries_for(owner), modules)
+    module_hours = activity_hours[str(selected['moduleId'])]
+    module_components = [component for component in components if component['module_catalogue_id'] == selected['moduleId']]
+    completed_hours = selected_activity_hours(module_hours, selected_components, module_components)
+    for activity in activities:
+        activity['actualHours'] = selected_activity_hours(module_hours, [selected_by_id[activity['id']]], module_components)
     return {'weeks': weeks, 'selectedWeek': {**selected, 'summary': {
         'completedActivities': sum(item['completed'] for item in activities), 'totalActivities': len(activities),
         'progress': selected['progress'], 'ksbCount': len(codes), 'achievedKsbCount': len(achieved),
