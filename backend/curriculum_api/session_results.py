@@ -118,7 +118,28 @@ def college_tenant_id():
         return ''
 
 
-def result_rows(series, *, session_number=None, email=None, identity=False):
+def replaced_module_register_rows(module_catalogue_id, source_occurrence_ids):
+    """Destination roster rows whose replaced link resolves to these source occurrences."""
+
+    if not module_catalogue_id or not source_occurrence_ids:
+        return []
+    from learner_api.replaced_teams_attendance import REPLACED_ATTENDANCE_LATERAL_SQL
+    return read(f'''SELECT replaced_attendance.occurrence_id AS source_occurrence_id,
+        r.occurrence_id,r.learner_profile_id,r.learner_email,r.learner_name,
+        r.attendance_status,r.recovery_status,r.attended_seconds,
+        r.attendance_report_id,r.first_join_at,r.last_leave_at
+        FROM curriculum.live_session_occurrences o
+        JOIN curriculum.live_sessions s ON s.id=o.live_session_id
+        {REPLACED_ATTENDANCE_LATERAL_SQL}
+        LEFT JOIN curriculum.live_session_learner_attendance r ON r.occurrence_id=o.id
+        WHERE s.module_catalogue_id=%s
+          AND replaced_attendance.occurrence_id=ANY(%s)
+        ORDER BY r.learner_name,r.learner_profile_id''', [
+            module_catalogue_id, source_occurrence_ids,
+        ])
+
+
+def result_rows(series, *, session_number=None, email=None, identity=False, module_catalogue_id=''):
     params = [series['id']]
     where = ''
     if session_number is not None:
@@ -133,7 +154,19 @@ def result_rows(series, *, session_number=None, email=None, identity=False):
         attendance_status,recovery_status,attended_seconds,attendance_report_id,first_join_at,last_leave_at
         FROM curriculum.live_session_learner_attendance
         WHERE occurrence_id=ANY(%s) ORDER BY learner_name,learner_profile_id''', [ids])
-    aliases = attendance_alias_rows(series.get('module_catalogue_id')) if email is None else []
+    context_register_rows = []
+    if email is None and module_catalogue_id and str(module_catalogue_id) != str(series.get('module_catalogue_id') or ''):
+        context_register_rows = replaced_module_register_rows(module_catalogue_id, ids)
+    context_by_source_id = defaultdict(list)
+    context_source_ids = set()
+    for row in context_register_rows:
+        source_id = row.get('source_occurrence_id')
+        if source_id:
+            context_source_ids.add(source_id)
+            if row.get('learner_profile_id') is not None:
+                context_by_source_id[source_id].append(row)
+    roster_module_id = module_catalogue_id if context_source_ids else series.get('module_catalogue_id')
+    aliases = attendance_alias_rows(roster_module_id) if email is None else []
     identity_links = attendance_identity_link_rows(ids) if email is None else []
     archive_ready = True
     try:
@@ -195,7 +228,7 @@ def result_rows(series, *, session_number=None, email=None, identity=False):
         if str(value or '').strip()
     }
     if identity and email is None:
-        staff = staff_roles(series, module_tutor_emails(series.get('module_catalogue_id')))
+        staff = staff_roles(series, module_tutor_emails(roster_module_id))
         alias_targets = {
             str(row.get('alias_email') or '').strip().casefold(): str(row.get('canonical_email') or '').strip().casefold()
             for row in aliases if str(row.get('alias_email') or '').strip()
@@ -203,7 +236,9 @@ def result_rows(series, *, session_number=None, email=None, identity=False):
         home_tenant = college_tenant_id()
     for item in occurrences:
         complete = bool(item.get('attendance_report_id') and item.get('actual_end'))
-        saved_register = register_by_id[item['id']]
+        replaced_roster = item['id'] in context_source_ids
+        saved_register = (context_by_source_id[item['id']]
+                          if replaced_roster else register_by_id[item['id']])
         learner_by_email = {
             str(row.get('learner_email') or '').strip().casefold(): row
             for row in saved_register if str(row.get('learner_email') or '').strip()
@@ -239,17 +274,23 @@ def result_rows(series, *, session_number=None, email=None, identity=False):
             if not saved:
                 continue
             status = saved.get('attendance_status')
-            person.update(
-                name=saved.get('learner_name') or person['name'],
-                seconds=max(0, int(saved.get('attended_seconds') or 0)),
-                status=status,
-                attendance=1 if status == 'present' else 0,
-                rawStatus=status,
-                rawAttendance=1 if status == 'present' else 0,
-                effectiveStatus=status,
-                effectiveAttendance=1 if status == 'present' else 0,
-                finalOutcome=status,
-            )
+            person['name'] = saved.get('learner_name') or person['name']
+            # A replaced module compares its own roster directly with the
+            # source report.  Its reporting row may still contain an older
+            # absence until the background reporting refresh runs.  Preserve
+            # a saved positive match (aliases/name review), but never let that
+            # stale absence erase direct source evidence for this learner.
+            if not replaced_roster or person.get('status') != 'present':
+                person.update(
+                    seconds=max(0, int(saved.get('attended_seconds') or 0)),
+                    status=status,
+                    attendance=1 if status == 'present' else 0,
+                    rawStatus=status,
+                    rawAttendance=1 if status == 'present' else 0,
+                    effectiveStatus=status,
+                    effectiveAttendance=1 if status == 'present' else 0,
+                    finalOutcome=status,
+                )
         runs = session_runs(item, attendance_by_id[item['id']])
         unmatched_records = [] if email is not None else [
             row for row in attendance_by_id[item['id']]
@@ -399,6 +440,7 @@ def link_attendance_alias(request, series_id, session_number):
     except (TypeError, ValueError):
         return JsonResponse({'error': 'Invalid JSON body.'}, status=400)
     alias_email = str(payload.get('aliasEmail') or '').strip().casefold()
+    requested_module_id = str(payload.get('moduleId') or '').strip()
     raw_source_record_ids = payload.get('sourceRecordIds') or []
     if not isinstance(raw_source_record_ids, list):
         return JsonResponse({'error': 'Attendance record IDs must be a list.'}, status=400)
@@ -427,6 +469,13 @@ def link_attendance_alias(request, series_id, session_number):
         if not occurrence_rows:
             return JsonResponse({'error': 'Session not found.'}, status=404)
         occurrence = occurrence_rows[0]
+        roster_module_id = occurrence['module_catalogue_id']
+        context_rows = []
+        if requested_module_id and requested_module_id != str(roster_module_id):
+            context_rows = replaced_module_register_rows(requested_module_id, [occurrence['id']])
+            if not any(row.get('source_occurrence_id') == occurrence['id'] for row in context_rows):
+                return JsonResponse({'error': 'This session is not linked to that module.'}, status=400)
+            roster_module_id = requested_module_id
         if alias_email:
             reported = read('''SELECT id,display_name FROM curriculum.live_session_attendance
                 WHERE occurrence_id=%s AND lower(btrim(email))=%s''', [occurrence['id'], alias_email])
@@ -438,9 +487,12 @@ def link_attendance_alias(request, series_id, session_number):
                 reported = []
         if not reported:
             return JsonResponse({'error': 'That identity is not present in this Teams attendance report.'}, status=404)
-        candidates = read('''SELECT learner_profile_id,lower(btrim(learner_email)) AS learner_email,learner_name
-            FROM curriculum.live_session_learner_attendance
-            WHERE occurrence_id=%s AND learner_profile_id=%s''', [occurrence['id'], learner_profile_id])
+        if context_rows:
+            candidates = [row for row in context_rows if row.get('learner_profile_id') == learner_profile_id]
+        else:
+            candidates = read('''SELECT learner_profile_id,lower(btrim(learner_email)) AS learner_email,learner_name
+                FROM curriculum.live_session_learner_attendance
+                WHERE occurrence_id=%s AND learner_profile_id=%s''', [occurrence['id'], learner_profile_id])
         if not candidates:
             return JsonResponse({'error': 'Choose a learner assigned to this module session.'}, status=400)
         candidate = candidates[0]
@@ -450,7 +502,7 @@ def link_attendance_alias(request, series_id, session_number):
         if alias_email:
             existing = read('''SELECT learner_profile_id FROM curriculum.live_session_attendance_aliases
                 WHERE module_catalogue_id=%s AND alias_email=%s''',
-                [occurrence['module_catalogue_id'], alias_email])
+                [roster_module_id, alias_email])
         else:
             existing = read('''SELECT attendance_row_id,learner_profile_id
                 FROM curriculum.live_session_attendance_identity_links
@@ -467,7 +519,7 @@ def link_attendance_alias(request, series_id, session_number):
                     cursor.execute('''INSERT INTO curriculum.live_session_attendance_aliases
                         (module_catalogue_id,alias_email,learner_profile_id,canonical_email,created_by)
                         VALUES (%s,%s,%s,%s,%s)''', [
-                            occurrence['module_catalogue_id'], alias_email, learner_profile_id,
+                            roster_module_id, alias_email, learner_profile_id,
                             canonical_email, actor_label,
                         ])
                 if not alias_email:
@@ -487,7 +539,7 @@ def link_attendance_alias(request, series_id, session_number):
                             ])
 
         from learner_api.teams_attendance import sync_verified_teams_attendance_reporting
-        sync_verified_teams_attendance_reporting(module_refs=[occurrence['module_catalogue_id']])
+        sync_verified_teams_attendance_reporting(module_refs=[roster_module_id])
         return JsonResponse({
             'aliasEmail': alias_email,
             'sourceRecordIds': source_record_ids,
@@ -567,7 +619,11 @@ def admin_session(request, series_id, session_number):
         if series:
             from .teams_week_meeting import ensure_week_meeting_occurrence
             ensure_week_meeting_occurrence(series[0])
-        sessions = result_rows(series[0], session_number=session_number, identity=True) if series else []
+        module_catalogue_id = str(request.GET.get('moduleId') or '').strip()
+        result_options = {'session_number': session_number, 'identity': True}
+        if module_catalogue_id:
+            result_options['module_catalogue_id'] = module_catalogue_id
+        sessions = result_rows(series[0], **result_options) if series else []
         if not sessions:
             return JsonResponse({'error': 'Session not found.'}, status=404)
         job = None
@@ -863,7 +919,11 @@ def recording_visibility(request, series_id, artifact_id):
 def export_attendance(request, series_id, session_number, file_format='csv'):
     try:
         series = read('SELECT * FROM curriculum.live_sessions WHERE id=%s', [series_id])
-        sessions = result_rows(series[0], session_number=session_number) if series else []
+        module_catalogue_id = str(request.GET.get('moduleId') or '').strip()
+        result_options = {'session_number': session_number}
+        if module_catalogue_id:
+            result_options['module_catalogue_id'] = module_catalogue_id
+        sessions = result_rows(series[0], **result_options) if series else []
         if not sessions:
             return JsonResponse({'error': 'Session not found.'}, status=404)
         if file_format == 'pdf':

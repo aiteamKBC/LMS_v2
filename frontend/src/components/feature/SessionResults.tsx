@@ -31,8 +31,9 @@ const recoveryLabel = (person: SessionPerson) => {
   if (person.recoveryStatus === 'requested') return 'Recovery requested';
   return 'Not requested';
 };
-export function SessionResults({ seriesId, sessionNumber, learner, attendanceType, preview = false, onRecordingWatchTimeChange }: {
+export function SessionResults({ seriesId, sessionNumber, moduleId, learner, attendanceType, preview = false, onRecordingWatchTimeChange }: {
   seriesId: string; sessionNumber: number; learner?: SessionLearner; attendanceType?: string | null; preview?: boolean;
+  moduleId?: string;
   onRecordingWatchTimeChange?: (seconds: number) => void;
 }) {
   const [error, setError] = useState('');
@@ -49,15 +50,15 @@ export function SessionResults({ seriesId, sessionNumber, learner, attendanceTyp
   const kind = learner?.kind, learnerId = learner?.id;
   const recordedSessionsLearner = (attendanceType || '').trim().toLowerCase() === 'recorded';
   const load = useCallback((signal: AbortSignal) =>
-    loadSessionResult(seriesId, sessionNumber, kind && learnerId ? { kind, id: learnerId } : undefined, signal),
-  [seriesId, sessionNumber, kind, learnerId]);
+    loadSessionResult(seriesId, sessionNumber, kind && learnerId ? { kind, id: learnerId } : undefined, signal, moduleId),
+  [seriesId, sessionNumber, moduleId, kind, learnerId]);
   const saved = useSavedSessionData(load, true, data => ['queued', 'running'].includes(data?.job?.state || ''));
   const session = saved.data?.sessions[0];
   const loading = saved.loading;
   useEffect(() => {
     setError(''); setPage(0); setNotice(''); setTab('recordings');
     setUnmatchedOpen(false); setAliasChoices({}); setAliasBusy('');
-  }, [seriesId, sessionNumber, kind, learnerId]);
+  }, [seriesId, sessionNumber, moduleId, kind, learnerId]);
   const files = session?.artifacts?.filter(file => (!learner && !preview) || !file.hiddenFromLearners) || [];
   const recordings = files.filter(file => file.type === 'recording');
   const transcripts = files.filter(file => file.type === 'transcript');
@@ -92,7 +93,7 @@ export function SessionResults({ seriesId, sessionNumber, learner, attendanceTyp
     if (!learnerProfileId) return;
     setAliasBusy(key); setError(''); setNotice('');
     try {
-      const linked = await linkAttendanceAlias(seriesId, sessionNumber, person.email, learnerProfileId, person.sourceRecordIds || []);
+      const linked = await linkAttendanceAlias(seriesId, sessionNumber, person.email, learnerProfileId, person.sourceRecordIds || [], moduleId);
       setNotice(`${linked.aliasEmail || person.name} is now matched to ${linked.learnerName}. Saved attendance was recalculated.`);
       await saved.refresh();
     } catch (reason) {
@@ -145,8 +146,8 @@ export function SessionResults({ seriesId, sessionNumber, learner, attendanceTyp
         </div>}
         {tab === 'attendance' && !learner && !preview && <div className="space-y-4">
           <div className="flex flex-wrap items-center justify-between gap-3"><input aria-label="Search attendance" value={query} onChange={event => { setQuery(event.target.value); setPage(0); }} placeholder="Search name or email" className="rounded-lg border px-3 py-2 text-sm" />
-            <div className="flex flex-wrap gap-2"><a href={sessionAttendanceUrl(session)} className="rounded-lg border px-4 py-2 text-sm font-semibold"><AppIcon className="ri-download-line mr-2" />Export attendance CSV</a>
-              <a href={sessionAttendanceUrl(session, 'pdf')} className="rounded-lg bg-primary-600 px-4 py-2 text-sm font-semibold text-white"><AppIcon className="ri-download-line mr-2" />Export attendance PDF</a></div></div>
+            <div className="flex flex-wrap gap-2"><a href={sessionAttendanceUrl(session, 'csv', moduleId)} className="rounded-lg border px-4 py-2 text-sm font-semibold"><AppIcon className="ri-download-line mr-2" />Export attendance CSV</a>
+              <a href={sessionAttendanceUrl(session, 'pdf', moduleId)} className="rounded-lg bg-primary-600 px-4 py-2 text-sm font-semibold text-white"><AppIcon className="ri-download-line mr-2" />Export attendance PDF</a></div></div>
           {!session.reportReady && <p role="status" className="rounded-lg bg-amber-50 p-3 text-sm">Awaiting a completed Teams report. Pending learners are not marked absent.</p>}
           {!!session.unmatchedAttendance?.length && <div className="rounded-xl border border-amber-200 bg-amber-50/60">
             <button type="button" aria-expanded={unmatchedOpen} onClick={() => setUnmatchedOpen(value => !value)}
