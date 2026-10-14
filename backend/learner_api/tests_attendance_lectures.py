@@ -97,6 +97,8 @@ class AttendanceLectureTests(SimpleTestCase):
         self.assertIn('s.module_catalogue_id=ANY(%s)', schedule_sql)
         self.assertIn('curriculum.live_session_attendance', schedule_sql)
         self.assertIn('a.total_attendance_seconds>180', schedule_sql)
+        self.assertIn("liveSessionLinkOverride", schedule_sql)
+        self.assertIn('COALESCE(replaced_attendance.occurrence_id,o.id)', schedule_sql)
         self.assertIn('m.title AS module_title', schedule_sql)
         self.assertNotIn('jsonb_array_elements_text', schedule_sql)
         self.assertNotIn('live_session_join_launches', schedule_sql)
@@ -157,6 +159,28 @@ class AttendanceLectureTests(SimpleTestCase):
         self.assertEqual(len(result), 1)
         self.assertEqual(result[0]['attendance_status'], 'present')
         self.assertEqual(result[0]['source'], 'microsoft-teams')
+
+    def test_replaced_link_projects_source_evidence_onto_destination_occurrence(self):
+        source = SimpleNamespace(id=12, username='Learner', email='learner@example.test')
+        now = timezone.now()
+        scheduled = [register_row(
+            source='microsoft-teams', session_id='destination-occ', occurrence_id='destination-occ',
+            attendance_source_occurrence_id='source-occ', live_session_id='destination-live',
+            module_catalogue_id='destination-module', module_title='Destination module', session_number=4,
+            scheduled_start=now-timedelta(hours=2), scheduled_end=now-timedelta(hours=1),
+            session_date=timezone.localdate(), attendance_status='absent',
+        )]
+        evidence = [register_row(
+            source='microsoft-teams', session_id='source-occ', occurrence_id='source-occ',
+            live_session_id='source-live', module_catalogue_id='source-module', module_title='Source module',
+            scheduled_start=now-timedelta(hours=2), scheduled_end=now-timedelta(hours=1),
+            session_date=timezone.localdate(), attendance_status='present',
+        )]
+        result = lecture_register(source, scheduled=scheduled, records=evidence, apply_adjustments=False)
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]['session_id'], 'destination-occ')
+        self.assertEqual(result[0]['module_catalogue_id'], 'destination-module')
+        self.assertEqual(result[0]['attendance_status'], 'present')
 
     def test_schedule_excludes_deleted_modules_and_superseded_or_failed_series_and_occurrences(self):
         conn = MagicMock()
