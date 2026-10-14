@@ -102,9 +102,27 @@ class TrainingPlanDashboardTests(SimpleTestCase):
         result = _canonical_module_progress(records, modules)
 
         self.assertEqual(result, {'M1': {
-            'hours': {'actual': 1.5}, 'ksb': {'completed': 2, 'total': 3},
+            'hours': {'actual': 1.5}, 'ksb': {'completed': 2, 'total': 3, 'achievedCodes': ['K1', 'S1']},
             'attendance': {'attended': 2, 'total': 2},
         }})
+
+    def test_achieved_ksb_codes_use_accepted_evidence_and_stay_with_their_module(self):
+        modules = [{'id': 'M1', 'title': 'Marketing'}, {'id': 'M2', 'title': 'Strategy'},
+                   {'id': 'M3', 'title': 'Duplicate'}, {'id': 'M4', 'title': 'Duplicate'}]
+        records = [
+            {'module_ref': 'M1', 'accepted': True, 'ksbs': ['K1', 'K1', ' ', 'S2']},
+            {'module_title': 'Marketing', 'accepted': True, 'ksbs': ['K1']},
+            {'module_ref': 'M1', 'accepted': False, 'ksbs': ['B3']},
+            {'module_ref': 'M1', 'accepted': None, 'ksbs': ['K4']},
+            {'module_ref': 'M2', 'accepted': True, 'ksbs': ['B2']},
+            {'module_title': 'Duplicate', 'accepted': True, 'ksbs': ['K9']},
+            {'module_ref': 'unassigned', 'accepted': True, 'ksbs': ['K8']},
+        ]
+        result = _canonical_module_progress(records, modules)
+        self.assertEqual(result['M1']['ksb'], {'completed': 3, 'total': 5, 'achievedCodes': ['K1', 'S2']})
+        self.assertEqual(result['M2']['ksb']['achievedCodes'], ['B2'])
+        self.assertEqual(result['M3']['ksb']['achievedCodes'], [])
+        self.assertEqual(result['M4']['ksb']['achievedCodes'], [])
 
     def test_learning_section_returns_only_module_selection_data(self):
         source = SimpleNamespace(pk=125, aptem_id=987, email='learner@example.com')

@@ -315,6 +315,46 @@ class GateResponseTests(SimpleTestCase):
 
         self.assertEqual(a.content, b.content)
 
+    def test_android_browser_link_goes_to_fixed_login_without_running_download(self):
+        with _gate_on():
+            response = self.middleware(self.factory.get(
+                "/learner_api/mobile/download/android/?next=https://evil.test",
+                HTTP_ACCEPT="text/html,application/xhtml+xml",
+            ))
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response["Location"], "/login?download=android")
+        self.assertIn("no-store", response["Cache-Control"])
+        self.assertEqual(self.reached, [])
+
+    def test_android_redirect_does_not_change_api_or_other_route_contracts(self):
+        cases = [
+            ("get", "/learner_api/mobile/download/android/", {}),
+            ("get", "/learner_api/mobile/download/android/", {"HTTP_ACCEPT": "application/json"}),
+            ("get", "/learner_api/mobile/download/android/", {"HTTP_ACCEPT": "text/html", "HTTP_X_REQUESTED_WITH": "XMLHttpRequest"}),
+            ("post", "/learner_api/mobile/download/android/", {"HTTP_ACCEPT": "text/html"}),
+            ("get", "/learner_api/mobile/bootstrap/", {"HTTP_ACCEPT": "text/html"}),
+        ]
+        for method, path, headers in cases:
+            with self.subTest(method=method, path=path, headers=headers), _gate_on():
+                response = self.middleware(getattr(self.factory, method)(path, **headers))
+                self.assertEqual(response.status_code, 401)
+                self.assertEqual(json.loads(response.content)["code"], "unauthenticated")
+        self.assertEqual(self.reached, [])
+
+    def test_android_session_outage_is_not_a_login_redirect(self):
+        with _gate_on(), mock.patch.object(api_gate, "session_unreadable", return_value=True):
+            response = self.middleware(self.factory.get(
+                "/learner_api/mobile/download/android/", HTTP_ACCEPT="text/html"))
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(self.reached, [])
+
+    def test_authenticated_android_link_still_reaches_entitlement_checks(self):
+        with _gate_on(), mock.patch.object(self.middleware, "_account", return_value=_account("learner")):
+            response = self.middleware(self.factory.get(
+                "/learner_api/mobile/download/android/", HTTP_ACCEPT="text/html"))
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(self.reached, ["/learner_api/mobile/download/android/"])
+
     def test_ungated_prefix_is_untouched(self):
         with _gate_on():
             response = self.middleware(self.factory.get("/login_api/health/"))

@@ -1,6 +1,6 @@
-import type { CaseFileOverview } from './hooks/useCaseFileOverview';
+import type { LegacyModuleOverview } from './hooks/useCaseFileOverview';
 
-export const moduleOverviewFixture: CaseFileOverview['moduleOverview'] = {
+export const moduleOverviewFixture: LegacyModuleOverview = {
   learning: {
     detail: {
       modules: ['Synthetic module', 'Second module'],

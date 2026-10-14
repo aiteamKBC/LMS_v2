@@ -65,7 +65,7 @@ import {
 
 const learnerNav = roleNavMap.learner;
 
-type Phase = 'consume' | 'reflection-choice' | 'reflect' | 'confirm';
+type Phase = 'consume' | 'time-entry' | 'reflection-choice' | 'reflect' | 'confirm';
 type TimeSource = 'timer' | 'input';
 
 interface DoneRecord { activityKey: string; componentId: string; timeTaken: string | null }
@@ -111,11 +111,13 @@ function ActivityTimeSpentInput({ onChange, initialSeconds = null }: { onChange:
   const [parts, setParts] = useState(() => partsFromSeconds(initialSeconds));
 
   useEffect(() => {
-    setParts(current => (
-      current.hours || current.minutes
-        ? current
-        : partsFromSeconds(initialSeconds)
-    ));
+    setParts(current => {
+      const currentSeconds = current.hours || current.minutes
+        ? (Number(current.hours) || 0) * 3600 + (Number(current.minutes) || 0) * 60
+        : null;
+      // Keep in-progress typing, but reflect time edited in the other control.
+      return currentSeconds === initialSeconds ? current : partsFromSeconds(initialSeconds);
+    });
   }, [initialSeconds]);
 
   const totalSeconds = (next: typeof parts): number | null => {
@@ -394,6 +396,7 @@ export default function ComponentViewPage() {
   }, [needsEvidence, kind, id, componentId, evidenceVersion]);
 
   const criteria = component ? componentCriteria(component, evidenceCount) : null;
+  const finishDisabled = (!!criteria && !criteria.met) || (!isLiveSession && manualTimeMissing);
 
   const moduleTitle = ctx?.moduleTitle ?? searchParams.get('module') ?? '';
   const weekTitle = ctx?.weekTitle ?? searchParams.get('week') ?? '';
@@ -587,6 +590,10 @@ export default function ComponentViewPage() {
     if (!recordingAttempt) return;
     timerRef.current?.stop();
     setKeepPreviousTime(false);
+    if (isLiveSession && manualTimeMissing) {
+      setPhase('time-entry');
+      return;
+    }
     if (component?.reflectionRequired === false) {
       setPhase('confirm');
       return;
@@ -604,6 +611,11 @@ export default function ComponentViewPage() {
       setTimeSource(usesManualTimeOnly ? 'input' : 'timer');
       setRepeating(false);
       setPhase('consume');
+      return;
+    }
+    if (manualTimeMissing) return;
+    if (phase === 'time-entry' && component.reflectionRequired !== false) {
+      setPhase('reflection-choice');
       return;
     }
     void finalizeSubmit({
@@ -839,6 +851,7 @@ export default function ComponentViewPage() {
                   <div className={hasActivityPanel ? layoutStyles.videoTools : 'contents'}>
                   <ActivityTimeSpentInput
                     key={timerStorageKey}
+                    initialSeconds={isLiveSession ? manualTimeSeconds : undefined}
                     onChange={(seconds) => {
                       setManualTimeSeconds(seconds);
                       setTimeSource(seconds == null && !usesManualTimeOnly ? 'timer' : 'input');
@@ -929,23 +942,23 @@ export default function ComponentViewPage() {
                   <div className={hasActivityPanel ? layoutStyles.videoFooter : 'flex min-w-0 max-w-full items-center gap-3'}>
                     <button
                       onClick={finishConsuming}
-                      disabled={(!!criteria && !criteria.met) || manualTimeMissing}
+                      disabled={finishDisabled}
                       title={
                         criteria && !criteria.met
                           ? 'Complete the criteria below before finishing.'
-                          : manualTimeMissing
+                          : manualTimeMissing && !isLiveSession
                             ? 'Enter the time spent before finishing.'
                             : undefined
                       }
                       className={`inline-flex shrink-0 items-center gap-1.5 text-sm font-semibold px-4 py-2 rounded-xl transition-colors ${
-                        (criteria && !criteria.met) || manualTimeMissing
+                        finishDisabled
                           ? 'bg-background-200 text-foreground-400 cursor-not-allowed'
                           : isVideo
                             ? 'bg-primary-600 text-white hover:bg-primary-700 cursor-pointer'
                             : 'bg-emerald-600 text-white hover:bg-emerald-700 cursor-pointer'
                       }`}
                     >
-                      <AppIcon className={(criteria && !criteria.met) || manualTimeMissing ? 'ri-lock-line' : 'ri-check-line'} />
+                      <AppIcon className={finishDisabled ? 'ri-lock-line' : 'ri-check-line'} />
                       Finish
                     </button>
                   </div>
@@ -1108,7 +1121,7 @@ export default function ComponentViewPage() {
             />
           </div>
         )}
-        {phase === 'confirm' && (
+        {(phase === 'confirm' || phase === 'time-entry') && (
           <CompletionConfirmPopup
             title={pageTitle}
             noun={noun}
@@ -1124,6 +1137,8 @@ export default function ComponentViewPage() {
             }}
             selectedSource={timeSource}
             manualTimeOnly={usesManualTimeOnly}
+            continueToReflection={phase === 'time-entry' && component?.reflectionRequired !== false && !keepPreviousTime}
+            timeEntryHint={isLiveSession ? 'Enter the time you spent on this session to continue.' : undefined}
             evidenceFileName={evidenceFileLabel}
             submitting={submitting}
             error={submitError}
@@ -1177,6 +1192,8 @@ function CompletionConfirmPopup({
   onInputChange,
   selectedSource,
   manualTimeOnly,
+  continueToReflection = false,
+  timeEntryHint,
   evidenceFileName,
   submitting,
   error,
@@ -1188,22 +1205,46 @@ function CompletionConfirmPopup({
   previousTimeLabel?: string | null; keepPreviousTime: boolean; onKeepPreviousTimeChange: (keep: boolean) => void;
   submitting: boolean; error: string | null;
   inputSeconds: number | null; onInputChange: (seconds: number | null) => void;
+  continueToReflection?: boolean; timeEntryHint?: string;
   onSelectSource: (source: TimeSource) => void; onCancel: () => void; onConfirm: () => void;
 }) {
+  const titleId = useId();
+  const panelRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const previous = document.activeElement as HTMLElement | null;
+    const panel = panelRef.current;
+    (panel?.querySelector<HTMLInputElement>('input') || panel?.querySelector<HTMLButtonElement>('button'))?.focus();
+    return () => { if (previous?.isConnected) previous.focus(); };
+  }, []);
   const selectedTimeLabel = keepPreviousTime && previousTimeLabel ? previousTimeLabel : selectedSource === 'input'
     ? inputLabel || '--:--:--'
     : timerLabel;
 
   return (
     <div className="fixed inset-0 z-50 grid place-items-center bg-foreground-950/35 px-4 py-6 backdrop-blur-[2px]">
-      <div className="w-full max-w-md rounded-2xl border border-background-300 bg-white p-6 text-center shadow-2xl">
+      <div ref={panelRef} role="dialog" aria-modal="true" aria-labelledby={titleId}
+        onKeyDownCapture={(event) => {
+          if (event.key === 'Escape' && !submitting) {
+            event.preventDefault();
+            event.stopPropagation();
+            onCancel();
+          }
+          if (event.key === 'Tab') {
+            const controls = panelRef.current?.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled)');
+            const first = controls?.[0], last = controls?.[controls.length - 1];
+            if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
+            else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
+          }
+        }}
+        className="max-h-full w-full max-w-md overflow-y-auto rounded-2xl border border-background-300 bg-white p-6 text-center shadow-2xl">
         <div className="mx-auto mb-4 grid h-14 w-14 place-items-center rounded-full bg-primary-100">
           <AppIcon className="ri-question-line text-2xl text-primary-700" />
         </div>
-        <h1 className="text-lg font-heading font-bold text-foreground-900">
-          Confirm {noun} completion?
+        <h1 id={titleId} className="text-lg font-heading font-bold text-foreground-900">
+          {continueToReflection ? 'Enter time spent' : `Confirm ${noun} completion?`}
         </h1>
         <p className="mt-1 text-sm text-foreground-500">{title}</p>
+        {timeEntryHint && <p className="mt-3 text-sm font-medium text-foreground-700">{timeEntryHint}</p>}
 
         <div className="mt-5 space-y-3 rounded-xl border border-background-300 bg-background-50 p-4 text-left">
           <div className="flex items-center justify-between gap-3 border-b border-background-300 pb-3">
@@ -1309,7 +1350,7 @@ function CompletionConfirmPopup({
             className="inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 py-3 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
           >
             <AppIcon className={submitting ? 'ri-loader-4-line animate-spin' : 'ri-check-line'} />
-            {submitting ? 'Saving...' : 'Confirm'}
+            {submitting ? 'Saving...' : continueToReflection ? 'Continue' : 'Confirm'}
           </button>
         </div>
       </div>

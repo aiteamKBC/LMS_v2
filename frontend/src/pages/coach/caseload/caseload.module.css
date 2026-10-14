@@ -203,6 +203,9 @@
 .actions { display: flex; align-items: center; justify-content: flex-end; gap: 12px; }
 .profileButton { min-width: 104px; padding: 9px 13px; border: 1px solid #cfc4ff; border-radius: 7px; color: #5e36d2; font-size: 12px; font-weight: 800; white-space: nowrap; transition: background .15s, color .15s; }
 .profileButton:hover { background: #6840d8; color: #fff; }
+.viewButton { display: inline-flex; align-items: center; gap: 6px; padding: 9px 13px; border: 1px solid #e1dcf7; border-radius: 7px; color: #5e36d2; font-size: 12px; font-weight: 700; white-space: nowrap; transition: background .15s, color .15s, border-color .15s; }
+.viewButton svg { width: 13px; height: 13px; }
+.viewButton:hover { border-color: #cfc4ff; background: #f0ecff; }
 .iconButton { display: grid; place-items: center; width: 28px; height: 28px; border-radius: 6px; color: #574f70; }
 .iconButton:hover { background: #f0ecff; color: #5e36d2; }
 .selection { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 9px 12px; border-bottom: 1px solid #e7e1ff; background: #f8f6ff; color: #5531c5; font-size: 10px; }
@@ -273,6 +276,8 @@
 :global(html[data-theme="dark"]) .track { background: #e9edf3; }
 :global(html[data-theme="dark"]) .profileButton { border-color: #8f74bd; color: #d8c5f6; }
 :global(html[data-theme="dark"]) .profileButton:hover { background: var(--action-primary-hover); color: #fff; }
+:global(html[data-theme="dark"]) .viewButton { border-color: var(--coach-dark-border); color: #d8c5f6; }
+:global(html[data-theme="dark"]) .viewButton:hover { background: var(--coach-dark-hover); border-color: #8f74bd; }
 :global(html[data-theme="dark"]) .iconButton { color: var(--coach-dark-muted); }
 :global(html[data-theme="dark"]) .iconButton:hover { background: var(--coach-dark-hover); color: var(--coach-dark-accent); }
 :global(html[data-theme="dark"]) .selection { border-color: var(--coach-dark-border); background: var(--coach-dark-soft); color: #d8c5f6; }

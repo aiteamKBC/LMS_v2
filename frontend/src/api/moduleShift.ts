@@ -4,7 +4,7 @@
 // moved onto — the week-by-week pairing of their progress, and the move itself.
 //
 // The move has its own endpoint rather than going through a plan save: the
-// cohort rule is enforced server-side, a plan's other entries are left exactly
+// programme rule is enforced server-side, a plan's other entries are left exactly
 // as stored, and the learner's recorded progress moves in the same transaction.
 // ============================================================================
 import type { LearningPlanModule } from './learningPlan';
@@ -12,9 +12,11 @@ import type { LearningPlanModule } from './learningPlan';
 const BASE = '/learner_api/module-shift';
 
 export interface ModuleShiftOptions {
+  /** The source module's programme, across all of its cohorts. */
+  programme: { id: string; name: string };
   /** The cohort the walk resolved to. Empty when the module has no cohort. */
   cohort: { id: string; name: string };
-  /** The cohort's groups, so the picker can say where the options came from. */
+  /** The programme's groups, so the picker can say where the options came from. */
   groups: string[];
   modules: LearningPlanModule[];
   /** Why the list is empty, when it is. '' when there are options. */
@@ -94,7 +96,17 @@ async function parse(res: Response) {
 }
 
 export async function fetchModuleShiftOptions(moduleId: string): Promise<ModuleShiftOptions> {
-  return parse(await fetch(`${BASE}/options/?moduleId=${encodeURIComponent(moduleId)}`));
+  const options = await parse(await fetch(`${BASE}/options/?moduleId=${encodeURIComponent(moduleId)}`));
+  // Older servers return cohort-scoped options without programme metadata.
+  // Do not render those as programme-wide choices or crash the whole page.
+  if (
+    !options?.programme ||
+    typeof options.programme.id !== 'string' ||
+    typeof options.programme.name !== 'string'
+  ) {
+    throw new Error('Programme-wide module options are unavailable. Please contact support.');
+  }
+  return options;
 }
 
 /** The weeks of `fromModuleId` holding progress, paired with `toModuleId`. */

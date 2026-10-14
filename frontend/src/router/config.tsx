@@ -1,6 +1,6 @@
 import type { RouteObject } from "react-router-dom";
 import { Navigate } from "react-router-dom";
-import { CHAT_ENABLED } from "@/lib/featureFlags";
+import { CHAT_ENABLED, LEARNER_FEEDBACK_ENABLED } from "@/lib/featureFlags";
 import { RequireAuth } from "@/components/feature/RequireAuth";
 import { lazyRoute } from "./lazyRoute";
 import { LearnerDashboardRedirect } from "./LearnerDashboardRedirect";
@@ -47,6 +47,9 @@ const BadgeDetailPage = lazyRoute(() => import("../pages/learner/rewards/badge-d
 const BoardPage = lazyRoute(() => import("../pages/users/BoardPage"));
 const EmployerPortalPage = lazyRoute(() => import("../pages/employer/EmployerPortalPage"));
 const EmployerLearnerPage = lazyRoute(() => import("../pages/employer/EmployerLearnerPage"));
+const EventFeedbackPage = lazyRoute(() => import("../pages/event-feedback/page"));
+const EventRsvpPage = lazyRoute(() => import("../pages/event-rsvp/page"));
+const EventCheckInPage = lazyRoute(() => import("../pages/event-check-in/page"));
 const EmployerDocumentsPage = lazyRoute(() => import("../pages/employer/EmployerDocumentsPage"));
 const BudgetsPage = lazyRoute(() => import("../pages/finance/budgets/page"));
 const CallLogsPage = lazyRoute(() => import("../pages/engagement/call-logs/page"));
@@ -130,9 +133,14 @@ const EngagementClubsPage = lazyRoute(() => import("../pages/engagement/clubs/pa
 const EngagementDashboard = lazyRoute(() => import("../pages/workspace/engagement/page"));
 const EngagementFeedbacksPage = lazyRoute(() => import("../pages/engagement/feedbacks/page"));
 const EngagementReportsPage = lazyRoute(() => import("../pages/engagement/reports/page"));
+const FeedbackPage = lazyRoute(() => import("../pages/engagement/feedback/page"));
+const FeedbackEditorPage = lazyRoute(() => import("../pages/engagement/feedback/editor/page"));
+const FeedbackPreviewPage = lazyRoute(() => import("../pages/engagement/feedback/preview/page"));
 const EventDetailPage = lazyRoute(() => import("../pages/learner/clubs/events/detail/page"));
 const EventsPage = lazyRoute(() => import("../pages/engagement/events/page"));
 const LearnerFlashCardsPage = lazyRoute(() => import("../pages/learner/flash-cards/page"));
+const LearnerFeedbackPage = lazyRoute(() => import("../pages/learner/feedback/page"));
+const LearnerFeedbackFormPage = lazyRoute(() => import("../pages/learner/feedback/form/page"));
 const FinanceReportsPage = lazyRoute(() => import("../pages/finance/reports/page"));
 const FinanceWorkspace = lazyRoute(() => import("../pages/workspace/finance/page"));
 const FlashCardsPage = lazyRoute(() => import("../pages/engagement/flash-cards/page"));
@@ -315,6 +323,18 @@ const routes: RouteObject[] = [
     // also what makes the logo and the breadcrumb home icon do the right thing.
     path: "/",
     element: <LoginPage />,
+  },
+  {
+    path: "/event-feedback",
+    element: <EventFeedbackPage />,
+  },
+  {
+    path: "/event-rsvp",
+    element: <EventRsvpPage />,
+  },
+  {
+    path: "/event-check-in",
+    element: <EventCheckInPage />,
   },
   {
     // The public launcher that used to be at "/". Kept reachable: it is the
@@ -611,8 +631,16 @@ const routes: RouteObject[] = [
     element: <AttendancePage />,
   },
   {
-    path: "/learner/attendance/:kind/:id",
-    element: <AttendancePage />,
+    path: "/learner/feedback",
+    element: LEARNER_FEEDBACK_ENABLED ? <LearnerFeedbackPage /> : <Navigate to="/workspace/learner" replace />,
+  },
+  {
+    path: "/learner/feedback/:formId",
+    element: LEARNER_FEEDBACK_ENABLED ? <LearnerFeedbackFormPage /> : <Navigate to="/workspace/learner" replace />,
+  },
+  {
+    path: "/learner/feedback/delivery/:deliveryId",
+    element: LEARNER_FEEDBACK_ENABLED ? <LearnerFeedbackFormPage /> : <Navigate to="/workspace/learner" replace />,
   },
   {
     path: "/learner/catchup",
@@ -1405,6 +1433,22 @@ const routes: RouteObject[] = [
     element: <EngagementReportsPage />,
   },
   {
+    path: "/engagement/reports/feedback",
+    element: <FeedbackPage />,
+  },
+  {
+    path: "/engagement/reports/feedback/create",
+    element: <FeedbackEditorPage />,
+  },
+  {
+    path: "/engagement/reports/feedback/forms/:formId/edit",
+    element: <FeedbackEditorPage />,
+  },
+  {
+    path: "/engagement/reports/feedback/forms/:formId/preview",
+    element: <FeedbackPreviewPage />,
+  },
+  {
     path: "/engagement/flash-cards",
     element: <FlashCardsPage />,
   },
@@ -1744,6 +1788,8 @@ const routes: RouteObject[] = [
  *
  * What is here and why:
  *  - "/" and "/login" are the sign-in form itself.
+ *  - "/event-feedback" opens a token-scoped form for an event attendee; an LMS
+ *    account is not required and the backend still validates the personal token.
  *  - "/forgot-password", "/set-password", "/reset-password" are reached from an
  *    emailed link by someone who by definition cannot sign in yet; each carries
  *    its own single-use token, which the backend validates.
@@ -1762,6 +1808,9 @@ const PUBLIC_PATHS = new Set([
   "/apprenticeship_application",
   "/",
   "/login",
+  "/event-feedback",
+  "/event-rsvp",
+  "/event-check-in",
   "/access-required",
   "/forgot-password",
   "/set-password",

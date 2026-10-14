@@ -179,7 +179,8 @@ class CaseFileTransportTests(SimpleTestCase):
         read.assert_not_called()
 
     def test_unauthenticated_semantic_endpoints_are_rejected(self):
-        for section in ('profile', 'header-summary', 'attendance', 'reviews', 'otjh-ksb', 'ksb-search', 'ksbs/K1'):
+        for section in ('profile', 'header-summary', 'overview', 'overview?moduleId=current:M1',
+                        'attendance', 'reviews', 'otjh-ksb', 'ksb-search', 'ksbs/K1'):
             with self.subTest(section=section):
                 response = self.client.get(f'/coach_api/coach/case-file/101/{section}')
                 self.assertIn(response.status_code, (401, 403))
@@ -197,11 +198,13 @@ class CaseFileAggregationTests(SimpleTestCase):
                 {'id': 'legacy:1', 'source': 'legacy', 'title': 'Old', 'total': 2, 'completed': 1, 'percent': 50, 'dates': [], 'directHours': None},
                 {'id': 'current:M1', 'source': 'current', 'title': 'New', 'total': 2, 'completed': 2, 'percent': 100, 'dates': [], 'directHours': 3},
             ],
-            'moduleOverview': {'learning': {}, 'moduleLinks': {}, 'modules': [], 'sessions': [], 'actual': [], 'actualAvailable': False},
+            'catalogue': {'moduleLinks': {}, 'modules': []},
         }
         result = build_overview(context)
-        self.assertEqual(set(result), {'wholeProgrammeProgress', 'programmeProgress', 'moduleOverview'})
-        self.assertNotIn('reviews', result['moduleOverview'])
+        self.assertEqual(set(result), {'wholeProgrammeProgress', 'programmeProgress', 'moduleIndex'})
+        self.assertEqual(set(result['moduleIndex']), {'subjects', 'modules', 'moduleLinks'})
+        self.assertEqual(result['moduleIndex']['subjects'][0]['completed'], 1)
+        self.assertNotIn('learning', result['moduleIndex'])
         self.assertEqual(result['programmeProgress'], [{'id': 'legacy:1', 'title': 'Old', 'percent': 50}, {'id': 'current:M1', 'title': 'New', 'percent': 100}])
         self.assertNotIn('points', result['wholeProgrammeProgress']['ksb'])
         self.assertEqual(result['wholeProgrammeProgress']['attendance'], {'present': 1, 'sessions': 2, 'percent': 50})

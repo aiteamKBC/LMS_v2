@@ -1,9 +1,7 @@
-"""Cohort-mates of a module — the options offered when shifting a learner.
+"""Programme-wide shift options and writes, with legacy curriculum links.
 
-The point of these is the walk outwards from a module to its cohort. All three
-link shapes exist in the data (a module naming its cohort, a module naming only
-its group, and a module named only by a group's `module_ids`), so each gets a
-test — a missed shape shows up as an empty picker, not an error.
+All database and delivery side effects are mocked. Cross-cohort shifts are
+allowed within a programme; explicit programme boundaries remain enforced.
 """
 import json
 from contextlib import nullcontext
@@ -15,7 +13,7 @@ from django.test import RequestFactory, SimpleTestCase
 
 from . import module_shift
 
-# Two groups in one cohort, plus a group in another cohort that must not leak in.
+# Groups in two cohorts of the same programme.
 GROUPS = [
     {
         "group_id": "G-1",
@@ -48,6 +46,7 @@ MODULES = {
         "title": "Module 1 T",
         "group_name": "G1 T",
         "programme_name": "Test 25/8",
+        "programme_id": "PROG-1",
         "total_otjh": 7,
         "start_date": date(2025, 10, 1),
         "end_date": date(2026, 2, 4),
@@ -60,7 +59,7 @@ MODULES = {
         "module_catalogue_id": "MOD-GROUP-ONLY",
         "title": "Group only",
         "group_name": "G2 T",
-        "programme_name": "Test 25/8",
+        "programme_name": "",
         "total_otjh": 3,
         "start_date": None,
         "end_date": None,
@@ -73,7 +72,7 @@ MODULES = {
         "module_catalogue_id": "MOD-LISTED",
         "title": "Listed by a group",
         "group_name": None,
-        "programme_name": "Test 25/8",
+        "programme_name": "",
         "total_otjh": 5,
         "start_date": None,
         "end_date": None,
@@ -86,7 +85,7 @@ MODULES = {
         "module_catalogue_id": "MOD-LOOSE",
         "title": "Nathan - Customer Journey Optimisation",
         "group_name": None,
-        "programme_name": "MBA",
+        "programme_name": "",
         "total_otjh": 7,
         "start_date": None,
         "end_date": None,
@@ -97,22 +96,48 @@ MODULES = {
 }
 
 
+COHORTS = [
+    {"cohort_id": "COH-1", "programme_id": "PROG-1", "programme_name": "Test 25/8"},
+    {"cohort_id": "COH-OTHER", "programme_id": "PROG-1", "programme_name": "Test 25/8"},
+]
+MODULES.update({
+    "MOD-OTHER-COHORT": {
+        **MODULES["MOD-1"], "module_catalogue_id": "MOD-OTHER-COHORT",
+        "title": "Another cohort module", "cohort_id": "COH-OTHER", "group_id": "G-9",
+        "group_name": "Other",
+    },
+    "MOD-OTHER-PROGRAMME": {
+        **MODULES["MOD-1"], "module_catalogue_id": "MOD-OTHER-PROGRAMME",
+        "title": "Different programme", "programme_id": "PROG-2",
+        # Same name and stale cohort link must not override an explicit id.
+    },
+    "MOD-PROGRAMME-ONLY": {
+        **MODULES["MOD-LOOSE"], "module_catalogue_id": "MOD-PROGRAMME-ONLY",
+        "title": "Programme only", "programme_name": "Test 25/8",
+    },
+})
+
+
 def _fake_rows(sql, params):
     """Stand in for the queries module_shift makes, by shape of SQL."""
     if "FROM curriculum.weeks" in sql:
         # These fixtures carry no weeks: nothing here maps progress.
         return []
+    if "FROM curriculum.cohorts" in sql:
+        return [dict(c) for c in COHORTS]
     if "FROM curriculum.groups" in sql:
         return [dict(g) for g in GROUPS]
     if "WHERE module_catalogue_id = %s" in sql:
         row = MODULES.get(params[0])
         return [dict(row)] if row else []
-    # The cohort collection: cohort_id, group ids, listed ids.
-    cohort_id, group_ids, listed_ids = params
+    # Match the candidate SQL; production code then verifies programme identity.
+    programme_id, programme_name, cohort_ids, group_ids, listed_ids = params
     return [
         dict(m)
         for m in MODULES.values()
-        if m["cohort_id"] == cohort_id
+        if (programme_id and m.get("programme_id") == programme_id)
+        or (programme_name and m.get("programme_name") == programme_name)
+        or m["cohort_id"] in cohort_ids
         or (m["group_id"] and m["group_id"] in group_ids)
         or m["module_catalogue_id"] in listed_ids
     ]
@@ -126,17 +151,18 @@ class ModuleShiftOptionTests(SimpleTestCase):
             response = module_shift.module_shift_options(request)
         return response, json.loads(response.content)
 
-    def test_a_module_naming_its_cohort_finds_the_cohorts_modules(self):
+    def test_options_span_cohorts_but_exclude_other_programmes(self):
         _response, body = self._call("MOD-1")
 
         self.assertEqual(body["cohort"]["name"], "25/8/26")
-        self.assertEqual(body["groups"], ["G1 T", "G2 T"])
+        self.assertEqual(body["groups"], ["G1 T", "G2 T", "Other"])
+        self.assertEqual(body["programme"], {"id": "PROG-1", "name": "Test 25/8"})
         self.assertEqual(
             sorted(m["moduleId"] for m in body["modules"]),
-            ["MOD-1", "MOD-GROUP-ONLY", "MOD-LISTED"],
+            ["MOD-1", "MOD-GROUP-ONLY", "MOD-LISTED", "MOD-OTHER-COHORT", "MOD-PROGRAMME-ONLY"],
         )
-        # Another cohort's group is not searched.
-        self.assertNotIn("Other", body["groups"])
+        # An explicit different programme id is never offered.
+        self.assertNotIn("MOD-OTHER-PROGRAMME", [m["moduleId"] for m in body["modules"]])
 
     def test_a_module_naming_only_its_group_resolves_through_the_group(self):
         _response, body = self._call("MOD-GROUP-ONLY")
@@ -148,6 +174,33 @@ class ModuleShiftOptionTests(SimpleTestCase):
         _response, body = self._call("MOD-LISTED")
 
         self.assertEqual(body["cohort"]["id"], "COH-1")
+        self.assertIn("MOD-1", [m["moduleId"] for m in body["modules"]])
+
+    def test_a_programme_only_module_needs_no_cohort_or_group(self):
+        response, body = self._call("MOD-PROGRAMME-ONLY")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(body["programme"]["name"], "Test 25/8")
+        self.assertIn("MOD-OTHER-COHORT", [m["moduleId"] for m in body["modules"]])
+
+    def test_a_cohort_only_module_resolves_its_programme(self):
+        with patch.dict(MODULES["MOD-1"], {"programme_id": "", "programme_name": "", "group_id": ""}):
+            response, body = self._call("MOD-1")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(body["programme"]["id"], "PROG-1")
+        self.assertIn("MOD-OTHER-COHORT", [m["moduleId"] for m in body["modules"]])
+
+    def test_a_group_can_supply_the_programme_without_a_cohort(self):
+        with patch.dict(GROUPS[1], {"cohort_id": "", "programme_id": "PROG-1", "programme_name": "Test 25/8"}):
+            response, body = self._call("MOD-GROUP-ONLY")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(body["programme"]["id"], "PROG-1")
+        self.assertIn("MOD-OTHER-COHORT", [m["moduleId"] for m in body["modules"]])
+
+    def test_legacy_text_module_lists_work_across_cohorts(self):
+        with patch.dict(GROUPS[2], {"module_ids": json.dumps(["MOD-LOOSE"])}):
+            response, body = self._call("MOD-LOOSE")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(body["programme"]["id"], "PROG-1")
         self.assertIn("MOD-1", [m["moduleId"] for m in body["modules"]])
 
     def test_options_carry_the_window_and_hours_the_picker_shows(self):
@@ -163,7 +216,7 @@ class ModuleShiftOptionTests(SimpleTestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(body["modules"], [])
-        self.assertIn("not linked to a group or cohort", body["reason"])
+        self.assertIn("not linked to a programme", body["reason"])
 
     def test_a_module_missing_from_the_catalogue_explains_itself(self):
         response, body = self._call("MOD-GONE")
@@ -237,6 +290,7 @@ class ModuleShiftWriteTests(SimpleTestCase):
         ):
             model.all_learners.get.return_value = learner
             response = module_shift.module_shift(request, 62)
+            model.all_learners.get.assert_called_once_with(pk=62)
             self.sync = sync
             self.advance = advance
         return response, json.loads(response.content)
@@ -277,10 +331,21 @@ class ModuleShiftWriteTests(SimpleTestCase):
             ["MOD-LISTED", "MOD-GROUP-ONLY"],
         )
 
-    def test_a_module_outside_the_cohort_is_refused(self):
+    def test_a_module_in_another_cohort_of_the_programme_can_be_selected(self):
+        learner = _learner([{"moduleId": "MOD-1"}, {"moduleId": "MOD-GONE", "hours": 4}])
+        response, _body = self._shift(learner, {
+            "fromModuleId": "MOD-1", "toModuleId": "MOD-OTHER-COHORT",
+        })
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(learner.learning_plan[0]["moduleId"], "MOD-OTHER-COHORT")
+        self.assertEqual(learner.learning_plan[1], {"moduleId": "MOD-GONE", "hours": 4})
+        self.assertEqual((learner.programme, learner.cohort, learner.group), ("Test 25/8", "25/8/26", "G1 T"))
+        learner.save.assert_called_once_with(update_fields=["learning_plan"])
+
+    def test_a_module_outside_the_programme_is_refused(self):
         learner = _learner([{"moduleId": "MOD-1"}])
 
-        response, body = self._shift(learner, {"fromModuleId": "MOD-1", "toModuleId": "MOD-OTHER-COHORT"})
+        response, body = self._shift(learner, {"fromModuleId": "MOD-1", "toModuleId": "MOD-OTHER-PROGRAMME"})
 
         self.assertEqual(response.status_code, 400)
         self.assertIn("not taught to", body["error"])
@@ -304,13 +369,13 @@ class ModuleShiftWriteTests(SimpleTestCase):
         self.assertIn("not on this learner's plan", body["error"])
         learner.save.assert_not_called()
 
-    def test_a_module_with_no_cohort_cannot_be_shifted_from(self):
+    def test_a_module_with_no_programme_cannot_be_shifted_from(self):
         learner = _learner([{"moduleId": "MOD-LOOSE"}])
 
         response, body = self._shift(learner, {"fromModuleId": "MOD-LOOSE", "toModuleId": "MOD-1"})
 
         self.assertEqual(response.status_code, 400)
-        self.assertIn("not linked to a group or cohort", body["error"])
+        self.assertIn("not linked to a programme", body["error"])
         learner.save.assert_not_called()
 
     def test_the_same_module_twice_is_refused_before_any_lookup(self):

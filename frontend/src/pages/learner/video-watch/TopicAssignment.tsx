@@ -26,10 +26,11 @@ export function TopicAssignment({ topics, ...props }: FormProps & { topics: Assi
   const timer = useAssignmentTimer(`assignment-work-time:v1:${props.kind}:${props.learnerId}:${props.componentId}`);
   const identity = { learnerKind: props.kind, learnerId: props.learnerId, activityId: props.componentId };
   const draft = states.find(state => state.topicId && !submitted(state.status));
-  // Work saved against a topic the author has since emptied stays reachable.
+  // Hide unused slots, but keep work saved against emptied or removed topics reachable.
   const choices = useMemo(() => [...topics, ...states
     .filter(state => state.topicId && !topics.some(topic => topic.id === state.topicId))
-    .map(state => ({ id: state.topicId, name: '', question: '', instructions: '', resources: [] }))], [topics, states]);
+    .map(state => ({ id: state.topicId, name: '', question: '', instructions: '', resources: [] }))]
+    .filter(topic => topicHasContent(topic) || states.some(state => state.topicId === topic.id)), [topics, states]);
   // A single topic is the assignment itself: there is nothing to choose.
   const showPicker = choices.length > 1;
   const chosen = choices.find(topic => topic.id === (selected || (showPicker ? '' : choices[0]?.id)));
@@ -120,7 +121,7 @@ export function TopicAssignment({ topics, ...props }: FormProps & { topics: Assi
         <div className="mt-4 flex flex-wrap gap-2"><button type="button" className="rounded-lg bg-primary-600 px-3 py-2 text-xs font-bold text-white">1 Instructions</button>{MONTHLY_STEPS.map((label, index) => <button key={label} type="button" disabled className="rounded-lg border px-3 py-2 text-xs opacity-50">{index + 2} {label}</button>)}</div>
       </div>
       <div className="space-y-5 p-5">
-        <p className="text-sm text-foreground-600">{showPicker
+        <p className="text-sm text-foreground-600">{!choices.length ? 'No assignment topics are available yet.' : showPicker
           ? 'Choose a topic, read its instructions, then select Next. Finish and submit its eight steps before choosing another topic.'
           : 'Read the assignment question and instructions, then select Next to work through the eight steps.'}</p>
         {showPicker && <div className="grid gap-3 sm:grid-cols-3">{choices.map(topic => {
