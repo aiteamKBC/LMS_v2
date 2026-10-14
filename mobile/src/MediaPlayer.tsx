@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AppState, Platform, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
+import { AppState, Linking, Platform, Pressable, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import Constants from 'expo-constants';
 import { WebView } from 'react-native-webview';
 import { PLAYER_CHANNEL, createNativePlayerHTML, isAllowedPlayerNavigation, isTrustedFrameMessage, parsePlayerMessage, parseYouTubeVideoId } from './youtube-player.mjs';
@@ -21,9 +21,10 @@ function nativeOrigin() {
 
 /** Visible official player only: no autoplay, downloaded streams, audio extraction or background video. */
 export default function MediaPlayer(props: MediaPlayerProps) {
-  return <PlayerInstance key={props.url} {...props} />;
+  const [attempt, setAttempt] = useState(0);
+  return <PlayerInstance key={props.url + ':' + attempt} {...props} onRetry={() => setAttempt(value => value + 1)} />;
 }
-function PlayerInstance({ url, title, onState, paused = false }: MediaPlayerProps) {
+function PlayerInstance({ url, title, onState, paused = false, onRetry }: MediaPlayerProps & {onRetry: () => void}) {
   const dimensions = useWindowDimensions(), viewportHeight = useRef(dimensions.height);
   viewportHeight.current = dimensions.height;
   const videoId = useMemo(() => parseYouTubeVideoId(url), [url]);
@@ -137,9 +138,16 @@ function PlayerInstance({ url, title, onState, paused = false }: MediaPlayerProp
       onError={() => reportFailure('The video player could not load. Open the official video or try again later.')}
       onContentProcessDidTerminate={() => reportFailure('The video player stopped. Reopen this activity to continue.')}
     />)}
-    {!!error && <Text accessibilityRole="alert" style={styles.error}>{error}</Text>}
+    {!!error && <><Text accessibilityRole="alert" style={styles.error}>{error}</Text>
+      <Pressable accessibilityRole="button" onPress={onRetry} style={styles.action}><Text style={styles.actionText}>Try video again</Text></Pressable>
+      {!!videoId && <Pressable accessibilityRole="link" onPress={async () => {
+        reportFailure('Opening YouTube. Time watched outside this app is not recorded here.');
+        try { await Linking.openURL('https://www.youtube.com/watch?v=' + videoId); }
+        catch { setError('YouTube could not open. Check your connection and try again.'); }
+      }} style={styles.action}><Text style={styles.actionText}>Open on YouTube</Text></Pressable>}
+    </>}
   </View>;
 }
-const styles = StyleSheet.create({ container: { width: '100%', minHeight: 230, overflow: 'hidden', borderRadius: 16, backgroundColor: '#10271f' }, error: { color: '#fff', padding: 14, fontSize: 15, lineHeight: 22 } });
+const styles = StyleSheet.create({ container: { width: '100%', minHeight: 230, overflow: 'hidden', borderRadius: 16, backgroundColor: '#10271f' }, error: { color: '#fff', padding: 14, fontSize: 15, lineHeight: 22 }, action: {minHeight: 48, padding: 14, justifyContent: 'center'}, actionText: {color: '#fff', fontSize: 16, textDecorationLine: 'underline'} });
 
 export { MediaPlayer };

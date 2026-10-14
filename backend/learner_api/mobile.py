@@ -17,7 +17,7 @@ import re
 
 from django.conf import settings
 from django.db import DatabaseError, connections
-from django.http import JsonResponse, FileResponse
+from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 
 from login.api_gate import refusal_for
@@ -28,6 +28,7 @@ from .models import EnrolmentUser, LearnerProfile
 from .learner_detail import build_learner_detail
 from .learning_plan import effective_training_plan
 from .mobile_progress import measured_time, project_progress
+from .android_download import installer_response
 
 BASE = "/learner_api/mobile/"
 ANDROID_APK_PATH = "/var/lib/kbc-mobile-release/20261013/KBC-Learn-LMS-internal-candidate.apk"
@@ -149,7 +150,7 @@ def endpoint(method, *, context=None):
                     return _error("Missing request security header.", 403, "csrf")
                 request.mobile_context = (context or _context)(request)
                 response = view(request, *args, **kwargs)
-                response["Cache-Control"] = "private, no-store"
+                response.setdefault("Cache-Control", "private, no-store")
                 return response
             except MobileError as exc:
                 return _error(exc.message, exc.status, exc.code)
@@ -509,11 +510,7 @@ def download_android(request):
         apk = open(ANDROID_APK_PATH, "rb")
     except OSError:
         raise MobileError("The Android download is not available yet.", 503, "download_unavailable") from None
-    response = FileResponse(apk, as_attachment=True,
-                            filename="KBC-Learn-Android-test.apk",
-                            content_type="application/vnd.android.package-archive")
-    response["X-Content-Type-Options"] = "nosniff"
-    return response
+    return installer_response(request, apk)
 
 
 @endpoint("GET")
