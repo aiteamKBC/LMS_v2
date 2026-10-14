@@ -471,12 +471,13 @@ class EndpointTests(unittest.TestCase):
             'transcript_timing_ready': transcript_timing_ready, 'artifact_metadata': artifact_metadata,
             'timezone': types.SimpleNamespace(now=lambda: datetime(2026, 9, 16, 12, tzinfo=timezone.utc))}
         functions(ROOT.parent / 'login/permissions.py', {'require_role', '_learner_progress_gate', 'learner_self_or_staff'}, self.ns)
-        functions(ROOT / 'session_results.py', {'json_value', 'result_rows', 'admin_session', 'learner_results', 'learner_content',
+        functions(ROOT / 'session_results.py', {'json_value', 'replaced_module_register_rows', 'result_rows', 'admin_session', 'learner_results', 'learner_content',
             'module_results', 'stored_content', 'queue_sync', 'learner_join', 'apply_recovery', 'unavailable', 'archive_schema_missing',
             'attendance_alias_rows', 'attendance_identity_link_rows', 'learner_series', 'join_url_for', 'learner_join_failure',
             'recording_visibility', 'export_attendance', 'link_attendance_alias'}, self.ns)
         self.real_attendance_identity_link_rows = self.ns['attendance_identity_link_rows']
         self.ns['attendance_identity_link_rows'] = Mock(return_value=[])
+        self.ns['replaced_module_register_rows'] = Mock(return_value=[])
         self.cursor = Mock(); self.cursor.__enter__ = Mock(return_value=self.cursor); self.cursor.__exit__ = Mock(return_value=False)
         self.ns['connections'] = {'default': types.SimpleNamespace(cursor=lambda: self.cursor)}
         self.ns['read'] = Mock(return_value=[])
@@ -672,7 +673,7 @@ class EndpointTests(unittest.TestCase):
         }], [{
             'occurrence_id': 'O', 'learner_profile_id': 7,
             'learner_email': 'learner@example.invalid', 'learner_name': 'Module Learner',
-            'attendance_status': 'present', 'attended_seconds': 240,
+            'attendance_status': 'absent', 'attended_seconds': 0,
          }], [], []]
 
         rows = self.ns['result_rows']({'id': 'S', 'presenters': ['tutor@example.invalid']}, session_number=1)
@@ -680,6 +681,60 @@ class EndpointTests(unittest.TestCase):
         self.assertEqual([person['email'] for person in rows[0]['attendance']], ['learner@example.invalid'])
         self.assertEqual(rows[0]['attendance'][0]['name'], 'Module Learner')
         self.assertNotIn('tutor@example.invalid', json.dumps(rows, default=str))
+
+    def test_replaced_session_uses_destination_module_roster(self):
+        self.ns['apply_recovery'] = lambda rows: None
+        self.ns['replaced_module_register_rows'].return_value = [{
+            'source_occurrence_id': 'O', 'occurrence_id': 'DEST-O', 'learner_profile_id': 33,
+            'learner_email': 'destination@example.invalid', 'learner_name': 'Destination Learner',
+            'attendance_status': 'present', 'attended_seconds': 240,
+        }]
+        self.ns['read'].side_effect = [[{
+            'id': 'O', 'session_number': 1, 'status': 'completed', 'attendance_report_id': 'R',
+            'actual_end': '2026-09-16T10:00Z', 'scheduled_start': '2026-09-16T09:00Z',
+            'scheduled_end': '2026-09-16T10:00Z',
+        }], [{
+            'id': 'A', 'occurrence_id': 'O', 'email': 'destination@example.invalid',
+            'display_name': 'Destination Learner', 'total_attendance_seconds': 240,
+        }], [{
+            'occurrence_id': 'O', 'learner_profile_id': 1, 'learner_email': 'source@example.invalid',
+            'learner_name': 'Source Learner', 'attendance_status': 'absent', 'attended_seconds': 0,
+        }], [], []]
+
+        rows = self.ns['result_rows'](
+            {'id': 'S', 'module_catalogue_id': 'SOURCE'}, session_number=1,
+            module_catalogue_id='DEST',
+        )
+
+        self.assertEqual([person['email'] for person in rows[0]['attendance']], ['destination@example.invalid'])
+        self.assertEqual(rows[0]['attendance'][0]['status'], 'present')
+        self.assertEqual(rows[0]['attendance'][0]['seconds'], 240)
+        self.assertEqual(rows[0]['attendanceCandidates'][0]['learnerProfileId'], 33)
+        self.assertNotIn('source@example.invalid', json.dumps(rows, default=str))
+        self.ns['replaced_module_register_rows'].assert_called_once_with('DEST', ['O'])
+
+    def test_destination_alias_link_validates_and_recalculates_destination_module(self):
+        req = self.req('staff', method='POST')
+        req.body = b'{"aliasEmail":"guest@example.invalid","learnerProfileId":33,"moduleId":"DEST"}'
+        self.ns['replaced_module_register_rows'].return_value = [{
+            'source_occurrence_id': 'O', 'occurrence_id': 'DEST-O', 'learner_profile_id': 33,
+            'learner_email': 'destination@example.invalid', 'learner_name': 'Destination Learner',
+        }]
+        self.ns['read'].side_effect = [
+            [{'id': 'O', 'module_catalogue_id': 'SOURCE'}],
+            [{'id': 'A', 'display_name': 'Guest'}],
+            [],
+        ]
+        attendance = types.ModuleType('learner_api.teams_attendance')
+        attendance.sync_verified_teams_attendance_reporting = Mock(return_value=1)
+        with patch.dict(sys.modules, {'learner_api.teams_attendance': attendance}):
+            response = self.ns['link_attendance_alias'](req, 'S', 1)
+
+        self.assertEqual(response.status_code, 200)
+        sql, params = self.cursor.execute.call_args.args
+        self.assertIn('live_session_attendance_aliases', sql)
+        self.assertEqual(params[:4], ['DEST', 'guest@example.invalid', 33, 'destination@example.invalid'])
+        attendance.sync_verified_teams_attendance_reporting.assert_called_once_with(module_refs=['DEST'])
 
     def account_check_rows(self, identity):
         from curriculum_api.attendance_identity import identity_check, staff_roles
@@ -1167,7 +1222,9 @@ class ArchiveWorkerTests(unittest.TestCase):
             'save_archive': Mock(), 'tempfile': tempfile, 'httpx': types.SimpleNamespace(Client=lambda **kwargs: nullcontext(http)),
             'quote': __import__('urllib.parse', fromlist=['quote']).quote,
             'ResourceExistsError': type('ResourceExistsError', (Exception,), {}),
-            'result_rows': lambda series: [], 'log': Mock()}
+            'result_rows': lambda series: [], 'log': Mock(),
+            # No other row holds a saved copy of the same Teams file in these scenarios.
+            'saved_copy_of_same_recording': lambda artifact: None}
         functions(ROOT / 'session_archive.py', {'archive_series'}, self.ns)
         return self.ns['archive_series']('S', lease_id='owned-lease'), blob
 

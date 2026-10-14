@@ -91,6 +91,28 @@ describe('performance diagnostics', () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
+  it('holds a finished sample back while the next page is still reading', async () => {
+    const recordCalls = () => fetchMock.mock.calls.filter(call => call[0] === '/curriculum_api/performance/record/');
+    recordPerformanceNavigation('/workspace/coach');
+    await fetch('/coach_api/coach/dashboard');
+
+    // Navigate away before the first sample has finished; the next page's read
+    // is slow, and the first sample must not queue its write in front of it.
+    let release: (response: Response) => void = () => undefined;
+    fetchMock.mockImplementationOnce(() => new Promise<Response>(resolve => { release = resolve; }));
+    recordPerformanceNavigation('/coach/caseload');
+    const slowRead = fetch('/coach_api/coach/caseload');
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(recordCalls()).toHaveLength(0);
+
+    release(new Response('{}', { status: 200, headers: { 'X-LMS-Performance-Diagnostic': '1' } }));
+    await slowRead;
+    await vi.advanceTimersByTimeAsync(600);
+    const first = JSON.parse((recordCalls()[0][1] as RequestInit).body as string);
+    expect(first.path).toBe('/workspace/coach');
+    expect((recordCalls()[0][1] as RequestInit & { priority?: string }).priority).toBe('low');
+  });
+
   it('ignores writes and marks a route warm on its second navigation', async () => {
     recordPerformanceNavigation('/workspace/coach');
     await fetch('/coach_api/coach/dashboard');

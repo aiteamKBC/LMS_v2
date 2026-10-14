@@ -79,9 +79,17 @@ def selected_rows(profiles, occurrence_id, timing):
 
     with timing.stage('attendance_state'):
         emails = [source.email for source in sources.values() if source.email]
+        evidence_wanted = sorted(
+            {str(value) for value in wanted}
+            | {str(row.get('attendance_source_occurrence_id') or row['session_id'])
+               for rows in scheduled.values() for row in rows}
+        )
         # This reader uses stored report rows, reviewed aliases, reconnect
         # deduplication, and persisted recovery. It never calls Graph.
-        evidence = fetch_verified_teams_attendance_rows(learner_emails=emails, occurrence_ids=wanted, independent_learner_scope=True) if emails else []
+        evidence = fetch_verified_teams_attendance_rows(
+            learner_emails=emails, occurrence_ids=evidence_wanted,
+            independent_learner_scope=True,
+        ) if emails and evidence_wanted else []
         for row in evidence:
             source_id = row.get('enrolment_id')
             if source_id in sources:

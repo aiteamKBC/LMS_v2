@@ -260,6 +260,30 @@ class ActivityStatusTests(SimpleTestCase):
         self.assertEqual(payload['learnerActivityPlan'][1]['calculatedStatus'],'not_started')
         self.assertEqual(payload['activityLogOtjh']['achievedTotal'],1)
 
+    def test_enrichment_counts_module_ref_rows_once_and_reports_completion(self):
+        payload = {'identifier':'MOD-1', 'otjhAchievement':{'learners':[{'learnerId':1,'plannedOtjh':10}]},
+            'learnerActivityPlan':[{'learnerId':1,'componentId':'c0','componentType':'reading','calculatedStatus':'completed'},
+                                   {'learnerId':1,'componentId':'c1','componentType':'reading'}]}
+        rows = [{'id':1,'learner_id':1,'component_ref':'c0','module_ref':'MOD-1','actual_seconds':3600,'accepted':True,'canonical_activity_key':'k0'},
+                # Same canonical activity under a component the module no longer has: not counted twice.
+                {'id':2,'learner_id':1,'component_ref':'old-c0','module_ref':'MOD-1','actual_seconds':3600,'accepted':True,'canonical_activity_key':'k0'},
+                {'id':3,'learner_id':1,'component_ref':'old-c9','module_ref':'MOD-1','actual_seconds':1800,'accepted':True,'canonical_activity_key':'k9'}]
+        def bulk(sql, params=()):
+            if 'learner_progress_entries' in sql:
+                self.assertIn('module_ref=%s', sql)
+                self.assertEqual(params[-1], 'MOD-1')
+                return rows
+            if 'learners' in sql: return [{'id':1,'coach_email':''}]
+            if 'modules' in sql: return [{'tutor_email':''}]
+            return []
+        with patch.object(status,'query',side_effect=bulk) as read, patch.object(status,'_accesses_of',return_value={'curriculum'}):
+            status.enrich(payload,self.actor)
+        self.assertEqual(read.call_count,4)
+        progress = payload['activityLogProgress']['learners'][0]
+        self.assertEqual((progress['completedActivities'], progress['totalActivities']), (1, 2))
+        self.assertEqual((progress['earlierRecords'], progress['earlierOtjh']), (1, 0.5))
+        self.assertEqual(payload['activityLogOtjh']['achievedTotal'],1.5)
+
     def test_endpoint_denies_unauthenticated_and_unauthorized_roles_and_preserves_csrf(self):
         factory = RequestFactory()
         for role, grants, expected in [('learner',{'curriculum'},403),('employer',{'curriculum'},403),('staff',set(),403),('staff',{'coach'},200)]:
