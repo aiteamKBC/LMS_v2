@@ -97,8 +97,10 @@ async function read<T>(url: string, signal?: AbortSignal): Promise<T> {
 }
 export const loadModuleSessions = (moduleId: string, signal?: AbortSignal) =>
   read<ModuleSessionResults>(`/curriculum_api/curriculum/modules/${encodeURIComponent(moduleId)}/session-results/`, signal);
-export const loadSessionResult = (seriesId: string, number: number, learner?: SessionLearner, signal?: AbortSignal) =>
-  read<{ sessions: SessionResult[]; job?: SessionSyncJob | null }>(`${sessionBase(seriesId, learner)}/sessions/${number}/`, signal);
+export const loadSessionResult = (seriesId: string, number: number, learner?: SessionLearner, signal?: AbortSignal, moduleId?: string) => {
+  const context = !learner && moduleId ? `?moduleId=${encodeURIComponent(moduleId)}` : '';
+  return read<{ sessions: SessionResult[]; job?: SessionSyncJob | null }>(`${sessionBase(seriesId, learner)}/sessions/${number}/${context}`, signal);
+};
 export const sessionFileUrl = (seriesId: string, file: SessionFile, learner?: SessionLearner, text = false) =>
   personalLearningUrl(`${sessionBase(seriesId, learner)}/artifacts/${encodeURIComponent(file.id)}/${text ? '?format=txt' : ''}`);
 export interface RecordingWatchState { watchedSeconds: number; durationSeconds: number; csrfToken?: string }
@@ -122,8 +124,8 @@ export async function recordRecordingWatch(seriesId: string, file: SessionFile, 
 }
 export const loadTranscriptCues = (seriesId: string, artifactId: string, learner?: SessionLearner, signal?: AbortSignal) =>
   read<{ cues: TranscriptCue[] }>(`${sessionBase(seriesId, learner)}/artifacts/${encodeURIComponent(artifactId)}/?format=cues`, signal);
-export const sessionAttendanceUrl = (session: SessionResult, format: 'csv' | 'pdf' = 'csv') =>
-  `${sessionBase(session.seriesId)}/sessions/${session.sessionNumber}/attendance.${format}`;
+export const sessionAttendanceUrl = (session: SessionResult, format: 'csv' | 'pdf' = 'csv', moduleId?: string) =>
+  `${sessionBase(session.seriesId)}/sessions/${session.sessionNumber}/attendance.${format}${moduleId ? `?moduleId=${encodeURIComponent(moduleId)}` : ''}`;
 export async function requestSessionSync(seriesId: string) {
   const response = await coachFetch(`${adminBase}/${encodeURIComponent(seriesId)}/sync/`, { method: 'POST' });
   const result = await response.json();
@@ -131,10 +133,10 @@ export async function requestSessionSync(seriesId: string) {
   return result as { state: 'queued'; message: string };
 }
 
-export async function linkAttendanceAlias(seriesId: string, sessionNumber: number, aliasEmail: string, learnerProfileId: number, sourceRecordIds: string[] = []) {
+export async function linkAttendanceAlias(seriesId: string, sessionNumber: number, aliasEmail: string, learnerProfileId: number, sourceRecordIds: string[] = [], moduleId?: string) {
   const response = await coachFetch(`${adminBase}/${encodeURIComponent(seriesId)}/sessions/${sessionNumber}/attendance-alias/`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ aliasEmail, learnerProfileId, sourceRecordIds }),
+    body: JSON.stringify({ aliasEmail, learnerProfileId, sourceRecordIds, ...(moduleId ? { moduleId } : {}) }),
   });
   const result = await response.json();
   if (!response.ok) throw new Error(result.error || 'Could not link the reported email.');
