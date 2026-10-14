@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {normaliseLmsCourses,normaliseLmsLearning,lmsCourseSession,learningMediaUrl,completedLmsActivityIds,PMP_ID} from '../src/lms-learning-model.mjs';
+import {normaliseLmsCourses,normaliseLmsLearning,findLmsWeekSong,lmsCourseSession,learningMediaUrl,completedLmsActivityIds,PMP_ID} from '../src/lms-learning-model.mjs';
 const weekId=PMP_ID+'-W01';
 const row=(suffix,fields={})=>({moduleId:PMP_ID,componentId:PMP_ID+'-W01-'+suffix,weekId,week:'First week',component:suffix,mobileMode:'audio',audioUrl:'https://kentbusinesscollege.org/audio/example.mp3',...fields});
 const plan=rows=>({source:'lms',components:rows});
@@ -22,6 +22,31 @@ test('audio-video-MCQ journey preserves canonical display order and excludes liv
  const model=normaliseLmsLearning(plan(items));
  assert.deepEqual(model.weeks[0].activities.map(a=>a.title),['SONG','PODCAST','P01-VIDEO','P01-AUDIOBOOK','P01-Q','P02-AUDIOBOOK','CASE']);
  assert.deepEqual(model.weeks[0].points,[1,2]);
+});
+
+test('weekly songs use authored metadata and established labels for canonical generic component IDs',()=>{
+ const rows=[row('EXPLICIT',{sourceContentType:'song'}),row('STAGED',{stage:'song'}),row('SONG-AUDIO'),
+  row('GENERIC-A',{component:'Week 5 warm-up song — audio'}),row('GENERIC-B',{component:'Week 13 | Warm-up song',mobileMode:'video',videoUrl:'/media/song.mp4'}),
+  row('GENERIC-C',{component:'Course Training | Week 01 Song | Learning together'}),row('GENERIC-D',{component:'A revision refrain | Risk Management Song | W02',mobileMode:'video',videoUrl:'/media/song.mp4'}),
+  row('GENERIC-E',{component:'Song of the week'}),row('LESSON',{component:'How a song can communicate an idea'}),row('QUIZ-SONG',{mobileMode:'quiz',sourceContentType:'song'})];
+ const model=normaliseLmsLearning(plan(rows));
+ assert.deepEqual(model.activities.filter(item=>item.kind==='song').map(item=>item.id),rows.slice(0,8).map(item=>item.componentId));
+ assert(model.activities.filter(item=>item.kind==='song').every(item=>!item.recommended));
+ assert.equal(model.activities.at(-1).kind,'quiz');
+});
+
+test('song selection stays in the exact selected module and week and prefers playable audio',()=>{
+ const model=normaliseLmsLearning(plan([
+  row('VIDEO-SONG',{mobileMode:'video',videoUrl:'/media/song.mp4',displayOrder:1}),row('AUDIO-SONG',{displayOrder:2}),
+  row('SECOND-SONG',{weekId:PMP_ID+'-W02',displayOrder:0}),row('FOREIGN-SONG',{moduleId:'MOD-OTHER'})]));
+ assert.equal(findLmsWeekSong(model,weekId).id,row('AUDIO-SONG').componentId);
+ assert.equal(findLmsWeekSong(model,PMP_ID+'-W02').id,row('SECOND-SONG').componentId);
+ assert.equal(findLmsWeekSong(model,PMP_ID+'-W03'),null);
+ assert.equal(findLmsWeekSong({...model,activities:[{...model.activities[0],moduleId:'MOD-OTHER'}]},weekId),null);
+ model.activities.find(item=>item.id.endsWith('AUDIO-SONG')).available=false;
+ assert.equal(findLmsWeekSong(model,weekId).mode,'video');
+ model.activities.filter(item=>item.weekId===weekId).forEach(item=>item.available=false);
+ assert.equal(findLmsWeekSong(model,weekId).available,false,'Unavailable song is explicit, never replaced by a different week');
 });
 
 test('assigned courses use canonical IDs even when titles match and include a course with no mobile materials',()=>{

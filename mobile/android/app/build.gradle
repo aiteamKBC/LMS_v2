@@ -94,8 +94,8 @@ android {
         applicationId 'com.kentbusinesscollege.learn.lmscandidate'
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 6
-        versionName "0.3.0"
+        versionCode 7
+        versionName "0.4.0"
 
         // Client Firebase configuration is supplied by the release operator.
         // The server notification-sender credential must NEVER be used here.
