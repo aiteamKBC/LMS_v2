@@ -56,6 +56,8 @@ const EXCLUDED_PREFIXES = [
   '/verify-personal-certificate',
   // Public booking pages must not call the authenticated audit endpoint.
   '/coach-booking/',
+  // Neither must the public apprenticeship application.
+  '/apprenticeship_application',
   '/learner/quiz/',
   '/learner/video/',
   '/learner/component/',

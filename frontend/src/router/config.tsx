@@ -33,6 +33,7 @@ const AdminSystemSettingsPage = lazyRoute(() => import("../pages/admin/system/pa
 const CoachDirectoryPage = lazyRoute(() => import("../pages/admin/coach-directory/page"));
 const CoachBookingPage = lazyRoute(() => import("../pages/coach-booking/page"));
 const LmsIntroductionPage = lazyRoute(() => import("../pages/lms-introduction/page"));
+const ApprenticeshipApplicationPage = lazyRoute(() => import("../pages/apprenticeship-application/page"));
 const AdminUsersPage = lazyRoute(() => import("../pages/admin/users/page"));
 const PlatformReportPage = lazyRoute(() => import("../pages/admin/platform-report/page"));
 const AttendancePage = lazyRoute(() => import("../pages/learner/attendance/page"));
@@ -1000,6 +1001,11 @@ const routes: RouteObject[] = [
     element: <LmsIntroductionPage />,
   },
   {
+    // The public apprenticeship eligibility form, for people with no account.
+    path: "/apprenticeship_application",
+    element: <ApprenticeshipApplicationPage />,
+  },
+  {
     path: "/admin/system",
     element: <AdminSystemSettingsPage />,
   },
@@ -1743,6 +1749,8 @@ const routes: RouteObject[] = [
  *    its own single-use token, which the backend validates.
  *  - "/access-required" is where a signed-in staff account with no access grant
  *    lands. It holds no data — only the request-access button.
+ *  - "/apprenticeship_application" is the eligibility form for applicants, who
+ *    have no account. It only submits a new application and reads nothing back.
  *
  * "/home" is deliberately NOT here. It was the public launcher, and its "explore
  * this section" buttons opened real workspaces reading live data for a visitor
@@ -1751,6 +1759,7 @@ const routes: RouteObject[] = [
 const PUBLIC_PATHS = new Set([
   "/coach-booking/:slug",
   "/lms-introduction",
+  "/apprenticeship_application",
   "/",
   "/login",
   "/access-required",

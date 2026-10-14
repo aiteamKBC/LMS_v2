@@ -213,6 +213,11 @@ def rule_for(path):
         return None
     if path.startswith(('/learner_api/certificates/verify/', '/learner_api/personal-learning/verify/')):
         return None
+    # The public apprenticeship application (/apprenticeship_application) is
+    # filled in by people with no account yet. Exact path only: the view accepts
+    # a POST that inserts one new row and returns nothing that is stored.
+    if path == '/enrolment_api/public/apprenticeship-application/':
+        return None
     # Fetched by Microsoft's Office Online servers, which carry no session. The
     # view authenticates on a signed, 15-minute token naming one upload.
     if path.startswith('/curriculum_api/office-preview/'):
