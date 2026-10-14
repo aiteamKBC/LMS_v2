@@ -103,7 +103,7 @@ DB_POOL = os.environ.get('DB_POOL', 'true').lower() != 'false'
 # A local runserver can start before Neon has finished opening a connection.
 # Pool checkout needs its own budget: connect_timeout applies per address.
 DB_POOL_TIMEOUT = int(os.environ.get(
-    'DB_POOL_TIMEOUT', '45' if 'runserver' in sys.argv else str(DB_CONNECT_TIMEOUT),
+    'DB_POOL_TIMEOUT', '65' if 'runserver' in sys.argv else str(DB_CONNECT_TIMEOUT),
 ))
 DB_POOL_OPTIONS = {
     'min_size': 1,
