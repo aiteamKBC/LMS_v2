@@ -68,6 +68,7 @@ export function ProgressCharts({ modules, selected, data, onModuleSelect, progra
   const [programmePage, setProgrammePage] = useState(0);
   const selectedProgress = selected ? moduleProgress(selected, data) : null;
   const selectedMeasures = selected ? moduleMeasures(selected, data) : [];
+  const pickerRows = [...modules].sort((a, b) => (a.start || '9999').localeCompare(b.start || '9999') || a.title.localeCompare(b.title));
   const rows = (programmeRows || modules.map(module => {
     const progress = moduleProgress(module, data);
     return { ...module, value: progress.value, available: progress.available, measureCount: progress.measures.length };
@@ -142,9 +143,9 @@ export function ProgressCharts({ modules, selected, data, onModuleSelect, progra
         <label className={styles.modulePicker}><span className={styles.srOnly}>Select module</span><select value={selected?.id || ''} onChange={event => {
           const next = modules.find(module => module.id === event.target.value);
           if (next) onModuleSelect(next);
-        }} disabled={!rows.length}>
-          {!rows.length && <option value="">No modules</option>}
-          {rows.map(module => <option key={module.id} value={module.id}>{module.title}</option>)}
+        }} disabled={!pickerRows.length}>
+          {!pickerRows.length && <option value="">No modules</option>}
+          {pickerRows.map(module => <option key={module.id} value={module.id}>{module.title}</option>)}
         </select></label>
       </header>
       {selected ? <ProgressMeasureRings measures={selectedMeasures} label={`${selected.title} progress measures`} />

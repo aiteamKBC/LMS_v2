@@ -1,11 +1,11 @@
 """Overview regressions using synthetic rows; no database or external writes."""
 from datetime import date
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, patch, call
 
 from django.test import SimpleTestCase
 
-from coach_api.case_file import build_overview, read_overview_learning, merge_overview_subjects
+from coach_api.case_file import build_overview, read_overview_learning, merge_overview_subjects, project_overview_modules
 from learner_api import canonical_learning
 
 
@@ -15,7 +15,11 @@ class CaseFileOverviewTests(SimpleTestCase):
         context.profile = SimpleNamespace(enrolment_id=201, aptem_id=aptem, start_date=None, end_date=None)
         context.source = SimpleNamespace(start_date='2026-01-01', end_date='2026-01-11')
         context.parallel.side_effect = lambda readers: {name: reader() for name, reader in readers.items()}
-        context.payload.return_value = {'attendance': {'present': 1, 'sessions': 3}}
+        context.payload.side_effect = lambda resource: {
+            'summary': {'attendance': {'present': 1, 'sessions': 3}},
+            'week': {'planSubjects': []},
+            'schedule': {'modules': [], 'sessions': [], 'moduleLinks': {}, 'actual': [], 'actualAvailable': False},
+        }[resource]
         return context
 
     def render(self, *, today=date(2026, 1, 6), actual=12, planned=100, subjects=None, activity=None):
@@ -27,8 +31,37 @@ class CaseFileOverviewTests(SimpleTestCase):
              patch('learner_api.module_progress.canonical_module_progress', return_value=self.shared_rows(subjects or [], activity)), \
              patch('coach_api.views.timezone.localdate', return_value=today):
             result = build_overview(context)
-        context.payload.assert_called_once_with('summary')
+        context.payload.assert_has_calls([call('summary'), call('week'), call('schedule')], any_order=True)
+        self.assertEqual(context.payload.call_count, 3)
         return result
+
+    def test_module_projection_preserves_learner_facts_without_content_or_meeting_links(self):
+        subject = {'id': 'current:M1', 'title': 'Synthetic', 'source': 'current',
+                   'completed': 20, 'total': 57, 'dates': [], 'moduleIds': ['M1'],
+                   'sessionTitles': [], 'ksbProgress': None, 'directHours': None}
+        progress = {'M1': {'attendance': {'attended': 0, 'total': 12},
+                          'hours': {'actual': 4.9}, 'ksb': {'completed': 15, 'total': 15}}}
+        parts = {'week': {'planSubjects': [{**subject, 'monthlyActivities': ['private content']}]},
+                 'schedule': {'modules': [{'id': 'M1', 'title': 'Synthetic', 'total_otjh': 83,
+                                           'description': 'private content', 'curriculumSlots': ['unused']}],
+                              'sessions': [{'id': 'S1', 'moduleId': 'M1', 'attended': None,
+                                            'joinUrl': 'https://example.test/private'}],
+                              'moduleLinks': {'legacy:1': {'id': 'M1', 'title': 'Synthetic'}},
+                              'actual': [], 'actualAvailable': False, 'moduleProgress': progress,
+                              'reviews': ['private'], 'coach': {'email': 'private@example.test'}}}
+        result = project_overview_modules(parts)
+        self.assertEqual(result['subjects'], [subject])
+        self.assertEqual(result['moduleProgress'], progress)
+        self.assertEqual(result['modules'], [{'id': 'M1', 'title': 'Synthetic', 'total_otjh': 83}])
+        self.assertEqual(result['sessions'], [{'id': 'S1', 'moduleId': 'M1', 'attended': None}])
+        self.assertEqual(result['moduleLinks'], parts['schedule']['moduleLinks'])
+        self.assertFalse(result['actualAvailable'])
+        self.assertNotIn('reviews', result)
+        self.assertNotIn('coach', result)
+
+    def test_missing_module_summaries_fail_instead_of_presenting_an_empty_plan(self):
+        with self.assertRaisesRegex(ValueError, 'Module summaries could not be loaded'):
+            project_overview_modules({'week': {}, 'schedule': {}})
 
     @staticmethod
     def shared_rows(subjects, activity):
