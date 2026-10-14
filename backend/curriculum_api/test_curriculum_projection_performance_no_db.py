@@ -7,6 +7,51 @@ from . import views
 
 
 class CurriculumProjectionPerformanceTests(SimpleTestCase):
+    def test_programme_detail_enrichment_omits_heavy_component_content(self):
+        module = {'moduleCatalogueId': 'MOD-1', 'name': 'Module'}
+
+        with patch.object(
+            views,
+            'get_authoring_structure_payloads',
+            return_value={},
+        ) as structures:
+            self.assertEqual(
+                views.enrich_curriculum_modules_with_authoring_details([module]),
+                [module],
+            )
+
+        structures.assert_called_once_with(
+            ['MOD-1'],
+            include_staff=False,
+            include_quality=False,
+            include_extra=False,
+            component_columns=views.CATALOGUE_SUMMARY_COMPONENT_COLUMNS,
+        )
+        self.assertNotIn('settings_json', views.CATALOGUE_SUMMARY_COMPONENT_COLUMNS)
+        self.assertNotIn('ksb_mappings', views.CATALOGUE_SUMMARY_COMPONENT_COLUMNS)
+
+    def test_programme_authoring_modules_omits_heavy_component_content(self):
+        programme = {'id': 'PROG-1', 'name': 'Programme'}
+        module_row = {
+            'module_catalogue_id': 'MOD-1',
+            'programme_id': 'PROG-1',
+            'programme_name': 'Programme',
+        }
+
+        with patch.object(views, 'safe_authoring_module_rows', return_value=[module_row]), \
+             patch.object(
+                 views,
+                 'get_authoring_structure_payloads',
+                 return_value={},
+             ) as structures:
+            modules = views.programme_authoring_modules(programme)
+
+        self.assertEqual(len(modules), 1)
+        structures.assert_called_once_with(
+            ['MOD-1'],
+            component_columns=views.CATALOGUE_SUMMARY_COMPONENT_COLUMNS,
+        )
+
     def test_ksb_scope_reads_only_component_columns_used_by_projection(self):
         module = {'module_catalogue_id': 'MOD-1', 'title': 'Module'}
 

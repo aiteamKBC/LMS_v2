@@ -8000,7 +8000,8 @@ def programme_authoring_modules(programme, config=None):
     # get_authoring_structure_payloads() returns the identical payload in seven
     # queries total -- the two are compared field by field before this swap.
     payloads_by_id = get_authoring_structure_payloads(
-        [clean_str(row.get('module_catalogue_id')) for row in rows]
+        [clean_str(row.get('module_catalogue_id')) for row in rows],
+        component_columns=CATALOGUE_SUMMARY_COMPONENT_COLUMNS,
     )
     for row in rows:
         module_id = clean_str(row.get('module_catalogue_id'))
@@ -20205,7 +20206,13 @@ def _live_component_rows_paged(module_ids, order_sql):
         offset += COMPONENT_FULL_READ_PAGE_ROWS
 
 
-def get_authoring_structure_payloads(module_catalogue_ids, include_staff=True, include_quality=True, include_extra=True):
+def get_authoring_structure_payloads(
+    module_catalogue_ids,
+    include_staff=True,
+    include_quality=True,
+    include_extra=True,
+    component_columns=None,
+):
     catalogue_ids = unique([clean_str(value) for value in (module_catalogue_ids or []) if clean_str(value)])
     if not catalogue_ids:
         return {}
@@ -20217,7 +20224,16 @@ def get_authoring_structure_payloads(module_catalogue_ids, include_staff=True, i
     found_ids = [clean_str(row.get('module_catalogue_id')) for row in module_rows if clean_str(row.get('module_catalogue_id'))]
     placeholders = ', '.join(['%s'] * len(found_ids))
     week_rows = active_week_rows(authoring_fetch_all(AUTHORING_WEEKS_TABLE, f'module_catalogue_id in ({placeholders})', found_ids, 'display_order, week_number, id'))
-    component_rows = active_component_rows(live_component_rows_paged(found_ids, 'display_order, id'))
+    if component_columns is None:
+        component_rows = active_component_rows(live_component_rows_paged(found_ids, 'display_order, id'))
+    else:
+        component_rows = active_component_rows(authoring_fetch_all(
+            AUTHORING_COMPONENTS_TABLE,
+            f'module_catalogue_id in ({placeholders})',
+            found_ids,
+            'display_order, id',
+            columns=component_columns,
+        ))
     mapping_rows = mappings_with_inferred_sources(
         active_mapping_rows(authoring_fetch_all(AUTHORING_KSB_MAPPINGS_TABLE, f'module_catalogue_id in ({placeholders})', found_ids, 'created_at, id')),
         module_rows,
@@ -20840,6 +20856,7 @@ def enrich_curriculum_modules_with_authoring_details(modules):
         include_staff=False,
         include_quality=False,
         include_extra=False,
+        component_columns=CATALOGUE_SUMMARY_COMPONENT_COLUMNS,
     )
     enriched = []
     for module in modules or []:
