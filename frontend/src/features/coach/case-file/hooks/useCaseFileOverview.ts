@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useCaseFileSession } from './CaseFileSession';
+import type { PlanSubjectSummary } from '@/api/learnerOverview';
+import type { PlanModule, PlanSession, TrainingPlanDashboard } from '@/api/trainingPlanDashboard';
 export type CaseFileOverview = {
   wholeProgrammeProgress: {
     overall: { completed: number; total: number; percent: number | null };
@@ -8,6 +10,11 @@ export type CaseFileOverview = {
     ksb: { completed: number; total: number; percent: number | null };
   };
   programmeProgress: { id: string; title: string; percent: number | null }[];
+  moduleOverview: Pick<TrainingPlanDashboard, 'moduleLinks' | 'actual' | 'actualAvailable' | 'moduleProgress'> & {
+    subjects: PlanSubjectSummary[];
+    modules: Pick<PlanModule, 'id' | 'title' | 'start_date' | 'end_date' | 'total_otjh'>[];
+    sessions: Omit<PlanSession, 'joinUrl'>[];
+  };
 };
 
 export function useCaseFileOverview() {

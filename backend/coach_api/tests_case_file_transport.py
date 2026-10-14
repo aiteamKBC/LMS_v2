@@ -197,10 +197,12 @@ class CaseFileAggregationTests(SimpleTestCase):
                 {'id': 'legacy:1', 'source': 'legacy', 'title': 'Old', 'total': 2, 'completed': 1, 'percent': 50, 'dates': [], 'directHours': None},
                 {'id': 'current:M1', 'source': 'current', 'title': 'New', 'total': 2, 'completed': 2, 'percent': 100, 'dates': [], 'directHours': 3},
             ],
-            'schedule': {'moduleLinks': {'legacy:1': {'id': 'M1', 'title': 'Verified title'}}, 'modules': [], 'sessions': [], 'actual': [], 'reviews': ['private']},
+            'week': {'planSubjects': []},
+            'schedule': {'moduleLinks': {'legacy:1': {'id': 'M1', 'title': 'Verified title'}}, 'modules': [], 'sessions': [], 'actual': [], 'actualAvailable': False, 'reviews': ['private']},
         }
         result = build_overview(context)
-        self.assertEqual(set(result), {'wholeProgrammeProgress', 'programmeProgress'})
+        self.assertEqual(set(result), {'wholeProgrammeProgress', 'programmeProgress', 'moduleOverview'})
+        self.assertNotIn('reviews', result['moduleOverview'])
         self.assertEqual(result['programmeProgress'], [{'id': 'legacy:1', 'title': 'Old', 'percent': 50}, {'id': 'current:M1', 'title': 'New', 'percent': 100}])
         self.assertNotIn('points', result['wholeProgrammeProgress']['ksb'])
         self.assertEqual(result['wholeProgrammeProgress']['attendance'], {'present': 1, 'sessions': 2, 'percent': 50})
