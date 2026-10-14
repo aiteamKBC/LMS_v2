@@ -1016,19 +1016,20 @@ def metrics(learner_id):
 
 
 def otjh_summary_bulk(learner_ids):
-    """Profile OTJH facts in three bounded reads, without content/KSB hydration.
+    """Profile OTJH facts in bounded reads, without content/KSB hydration.
 
     Accepted seconds belong to progress rows, not their source snapshots,
     segments or unpersisted submissions. The plan uses the same scoped monthly
     targets as Monthly Logs and the Coach Profile (not Created_users.Planned_hours).
     Invalid or ambiguous identities remain unavailable, just as in metrics().
     """
+    from .canonical_hours import pending_hour_records
     enrolment_ids = list(dict.fromkeys(int(value) for value in learner_ids if value is not None))
     if not enrolment_ids:
         return {}
     candidates = {}
     for owner in query('''SELECT l.id,l.enrolment_id,l.aptem_id,l.programme_id,
-        l.email,l.start_date,l.end_date,
+        l.email,l.start_date,l.end_date,l.learner_type,
         u.id AS account_record_id,u."Email" AS account_email,u.aptem_id AS account_aptem_id
         FROM "Learner".learners l
         LEFT JOIN enrolment."Created_users" u ON u.id=l.enrolment_id
@@ -1056,6 +1057,8 @@ def otjh_summary_bulk(learner_ids):
         WHERE learner_id=ANY(%s) AND deleted_at IS NULL AND accepted IS TRUE
         GROUP BY learner_id''', [profile_ids]):
         records[int(item['learner_id'])].append({**item, 'accepted': True})
+    for profile_id, pending in pending_hour_records(owners.values()).items():
+        records[profile_id].extend(pending)
     targets = {profile_id: {} for profile_id in profile_ids}
     for item in query('''SELECT DISTINCT ON (t.learner_id,t.report_month)
         t.learner_id,t.report_month,t.target_hours

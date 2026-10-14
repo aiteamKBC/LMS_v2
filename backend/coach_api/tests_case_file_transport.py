@@ -197,8 +197,7 @@ class CaseFileAggregationTests(SimpleTestCase):
                 {'id': 'legacy:1', 'source': 'legacy', 'title': 'Old', 'total': 2, 'completed': 1, 'percent': 50, 'dates': [], 'directHours': None},
                 {'id': 'current:M1', 'source': 'current', 'title': 'New', 'total': 2, 'completed': 2, 'percent': 100, 'dates': [], 'directHours': 3},
             ],
-            'week': {'planSubjects': []},
-            'schedule': {'moduleLinks': {'legacy:1': {'id': 'M1', 'title': 'Verified title'}}, 'modules': [], 'sessions': [], 'actual': [], 'actualAvailable': False, 'reviews': ['private']},
+            'moduleOverview': {'learning': {}, 'moduleLinks': {}, 'modules': [], 'sessions': [], 'actual': [], 'actualAvailable': False},
         }
         result = build_overview(context)
         self.assertEqual(set(result), {'wholeProgrammeProgress', 'programmeProgress', 'moduleOverview'})

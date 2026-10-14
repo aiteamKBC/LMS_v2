@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useCaseFileSession } from './CaseFileSession';
-import type { PlanSubjectSummary } from '@/api/learnerOverview';
+import type { CoverMetadata, LearningSummaryActivity, LearningSummaryDetail } from '@/pages/learner/my-learning/learningSummary';
 import type { PlanModule, PlanSession, TrainingPlanDashboard } from '@/api/trainingPlanDashboard';
 export type CaseFileOverview = {
   wholeProgrammeProgress: {
@@ -11,7 +11,7 @@ export type CaseFileOverview = {
   };
   programmeProgress: { id: string; title: string; percent: number | null }[];
   moduleOverview: Pick<TrainingPlanDashboard, 'moduleLinks' | 'actual' | 'actualAvailable' | 'moduleProgress'> & {
-    subjects: PlanSubjectSummary[];
+    learning: { detail: LearningSummaryDetail; activity: LearningSummaryActivity | null; metadata: CoverMetadata };
     modules: Pick<PlanModule, 'id' | 'title' | 'start_date' | 'end_date' | 'total_otjh'>[];
     sessions: Omit<PlanSession, 'joinUrl'>[];
   };
