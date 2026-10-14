@@ -1,0 +1,8 @@
+import http from 'node:http';import fs from 'node:fs';import path from 'node:path';
+const root=path.resolve('dist'),port=Number(process.env.PORT||8082);
+const mime={'.html':'text/html','.js':'text/javascript','.css':'text/css','.png':'image/png','.ico':'image/x-icon','.ttf':'font/ttf','.mp3':'audio/mpeg','.json':'application/json'};
+http.createServer((req,res)=>{let relative;try{relative=decodeURIComponent(new URL(req.url,'http://localhost').pathname);}catch{res.writeHead(400);res.end();return;}
+const file=path.resolve(root,'.'+(relative==='/'?'/index.html':relative));if(!file.startsWith(root+path.sep)){res.writeHead(403);res.end();return;}
+fs.stat(file,(err,st)=>{if(err||!st.isFile()){res.writeHead(404);res.end();return;}let start=0,end=st.size-1,status=200;const headers={'Content-Type':mime[path.extname(file)]||'application/octet-stream','Accept-Ranges':'bytes','Cache-Control':'no-store','X-Content-Type-Options':'nosniff'};
+if(req.headers.range){const match=/^bytes=(\d+)-(\d*)$/.exec(req.headers.range);if(!match){res.writeHead(416);res.end();return;}start=+match[1];end=match[2]?Math.min(+match[2],end):end;if(start>end){res.writeHead(416,{'Content-Range':'bytes */'+st.size});res.end();return;}status=206;headers['Content-Range']='bytes '+start+'-'+end+'/'+st.size;}headers['Content-Length']=end-start+1;res.writeHead(status,headers);if(req.method==='HEAD')res.end();else fs.createReadStream(file,{start,end}).pipe(res);});
+}).listen(port,'127.0.0.1',()=>console.log('KBC Learn preview: http://127.0.0.1:'+port));

@@ -1,11 +1,12 @@
-import { render, screen, cleanup } from '@testing-library/react';
+import { render, screen, cleanup, fireEvent, within } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { CaseFileOverviewTab } from '@/pages/coach/learner-case-file/tabs/CaseFileOverviewTab';
 import { clearCaseFileCache, readCaseFileCache } from './cache/caseFileCache';
 import type { CaseFileOverview } from './hooks/useCaseFileOverview';
+import { moduleOverviewFixture } from './caseFileOverview.fixture';
 
-const mocks = vi.hoisted(() => ({ state: {} as { data?: CaseFileOverview }, transport: vi.fn() }));
-vi.mock('./hooks/useCaseFileOverview', () => ({ useCaseFileOverview: () => ({ ...mocks.state, retry: vi.fn() }) }));
+const mocks = vi.hoisted(() => ({ state: {} as { data?: CaseFileOverview; error?: string }, transport: vi.fn(), retry: vi.fn() }));
+vi.mock('./hooks/useCaseFileOverview', () => ({ useCaseFileOverview: () => ({ ...mocks.state, retry: mocks.retry }) }));
 vi.mock('@/lib/coachFetch', () => ({ coachFetch: mocks.transport }));
 vi.mock('@/pages/coach/caseload/lib/format', () => ({ otjhProgressAsOfToday: () => { throw new Error('Overview must not pace hours in React'); } }));
 
@@ -17,6 +18,7 @@ const response: CaseFileOverview = {
     ksb: { completed: 1, total: 3, percent: 33.33 },
   },
   programmeProgress: [{ id: 'current:M1', title: 'Synthetic module', percent: 76.54 }],
+  moduleOverview: moduleOverviewFixture,
 };
 const stale = { overall: 1, activitiesCompleted: 1, activitiesTotal: 100, activitiesPercent: 1,
   otjhActual: 999, otjhTarget: 1000, ksb: 2, ksbAvailable: false, attendancePresent: 99, attendanceTotal: 100 };
@@ -24,31 +26,56 @@ const stale = { overall: 1, activitiesCompleted: 1, activitiesTotal: 100, activi
 beforeEach(() => {
   clearCaseFileCache();
   mocks.state = { data: response };
+  mocks.retry.mockReset();
   mocks.transport.mockReset().mockResolvedValue(new Response(JSON.stringify(response)));
 });
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
-it('renders final endpoint percentages and hours without recalculation or snapshot overrides', () => {
+it('renders learner module rings and counts while preserving the programme row percentage', () => {
   render(<CaseFileOverviewTab snapshot={stale} hasActivitySnapshot />);
-  const chart = screen.getByRole('img');
-  expect(chart).toHaveTextContent('49.12%');
-  expect(chart).toHaveTextContent('47.13%');
-  expect(chart).toHaveTextContent('75%');
-  expect(chart).toHaveTextContent('33.33%');
-  expect(screen.getByText('12 / 25 hours')).toBeInTheDocument();
-  expect(screen.getByText('1 / 2 sessions attended')).toBeInTheDocument();
+  const chart = within(screen.getByRole('region', { name: 'Module progress' }));
+  for (const name of ['Attendance: 0%', 'Activities: 35.09%', 'Hours: 5.9%', 'KSBs: 100%']) {
+    expect(chart.getByRole('img', { name })).toBeInTheDocument();
+  }
+  for (const count of ['0 / 12', '20 / 57', '4.9 / 83', '15 / 15']) expect(chart.getByText(count)).toBeInTheDocument();
+  expect(screen.queryByRole('region', { name: 'Whole programme progress' })).not.toBeInTheDocument();
   expect(screen.getByRole('button', { name: 'Synthetic module: 76.54% overall progress' })).toBeInTheDocument();
   expect(screen.queryByText('999 / 1,000 hours')).not.toBeInTheDocument();
 });
 
-it('preserves explicit unavailable percentages instead of reconstructing them', () => {
-  mocks.state = { data: { ...response, wholeProgrammeProgress: { ...response.wholeProgrammeProgress,
-    attendance: { present: 1, sessions: 2, percent: null },
-    otjh: { actual: 12, targetToDate: 25, planned: 100, percent: null } } } };
+it('switches all four measures by module id, including modules absent from the programme rows', () => {
   render(<CaseFileOverviewTab snapshot={stale} />);
-  const chart = screen.getByRole('img');
-  expect(chart.querySelector('desc')).toHaveTextContent('Attendance: N/A');
-  expect(chart.querySelector('desc')).toHaveTextContent('Hours: N/A');
+  fireEvent.change(screen.getByRole('combobox', { name: 'Select module' }), { target: { value: 'current:M2' } });
+  for (const name of ['Attendance: 50%', 'Activities: 25%', 'Hours: 35%', 'KSBs: 60%']) {
+    expect(screen.getByRole('img', { name })).toBeInTheDocument();
+  }
+  expect(screen.getByText('3.5 / 10')).toBeInTheDocument();
+  expect(screen.queryByText('4.9 / 83')).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: 'Synthetic module: 76.54% overall progress' }));
+  expect(screen.getByRole('combobox')).toHaveValue('current:M1');
+  expect(screen.getByText('4.9 / 83')).toBeInTheDocument();
+});
+
+it('keeps unavailable module measures distinct from zero and handles an empty plan', () => {
+  mocks.state = { data: { ...response, moduleOverview: { ...moduleOverviewFixture, moduleProgress: undefined } } };
+  const { rerender } = render(<CaseFileOverviewTab snapshot={stale} />);
+  fireEvent.change(screen.getByRole('combobox'), { target: { value: 'current:M2' } });
+  for (const name of ['Attendance: N/A', 'Hours: N/A', 'KSBs: N/A']) expect(screen.getByRole('img', { name })).toBeInTheDocument();
+  mocks.state = { data: { ...response, moduleOverview: { ...moduleOverviewFixture, subjects: [], modules: [] } } };
+  rerender(<CaseFileOverviewTab snapshot={stale} />);
+  expect(screen.getByRole('combobox')).toBeDisabled();
+  expect(screen.queryByRole('img')).not.toBeInTheDocument();
+});
+
+it('shows loading and retryable errors without displaying stale module values', () => {
+  mocks.state = {};
+  const { rerender } = render(<CaseFileOverviewTab snapshot={stale} />);
+  expect(screen.getByRole('status', { name: 'Loading overview' })).toBeInTheDocument();
+  mocks.state = { error: 'Module source unavailable' };
+  rerender(<CaseFileOverviewTab snapshot={stale} />);
+  expect(screen.getByRole('alert')).toHaveTextContent('Module source unavailable');
+  fireEvent.click(screen.getByRole('button', { name: 'Retry overview' }));
+  expect(mocks.retry).toHaveBeenCalledOnce();
 });
 
 it('shares pending requests, hits immediate revisits and refreshes Overview after 60 seconds', async () => {

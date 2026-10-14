@@ -1840,12 +1840,23 @@ export function useTeamsMeetingsWorkspace(options: TeamsMeetingsWorkspaceOptions
           // has. Another request already creating this module is the same
           // question. Either way, ask the server -- never send Create again.
           const code = err instanceof ApiError ? String(err.data?.code || '') : '';
+          const savedLiveSessionId = err instanceof ApiError ? String(err.data?.liveSessionId || '') : '';
           if (code === 'teams_calendar_create_uncertain') {
             endCreateProgress();
             setCreateRecovery({ phase: 'uncertain', message: UNCERTAIN_MESSAGE });
             return;
           }
-          if (!(err instanceof CurriculumRequestTimeout) && code !== 'teams_calendar_create_in_progress') throw err;
+          // The create endpoint can answer 502 after the event and LMS row are
+          // already saved, when Graph has not exposed the onlineMeeting options
+          // yet. Read that saved result instead of showing the raw 403 or ever
+          // sending Create again. A response without a live-session id is not
+          // treated this way: it has no saved calendar we can safely recover.
+          const savedPartial = err instanceof ApiError
+            && err.data?.meetingCreated === true
+            && Boolean(savedLiveSessionId);
+          if (!(err instanceof CurriculumRequestTimeout)
+            && code !== 'teams_calendar_create_in_progress'
+            && !savedPartial) throw err;
           result = await recoverCreate(row);
         }
       }

@@ -11,7 +11,9 @@ import re
 from old_otjh.repository import query
 from old_otjh.service import ServiceError
 from .monthly_log_sources import decoded, number, row
-from .current_learning import current_records, current_records_bulk, source_payload_metadata
+from .current_learning import (
+    current_records, current_records_bulk, is_unsynchronised_direct_save, source_payload_metadata,
+)
 
 UK = ZoneInfo('Europe/London')
 
@@ -235,13 +237,20 @@ def progress_records_with_completion(records, current):
     Counts, acceptance, seconds and reporting months belong to progress entries.
     Newer attempts may still supply completion and scores for those same entries.
     Unpersisted submissions cannot become extra accepted-hour records on a read.
+
+    The exception is a stored direct LMS save that nothing has given seconds
+    yet: its projected time and decision are the only record of that learning,
+    so they fill the empty ledger fields rather than leaving it at zero hours.
     """
     by_id = {str(record['id']): record for record in current}
     result = []
     for record in records:
         latest = by_id.get(str(record['id']), {})
-        result.append({**record, **{key: latest[key] for key in (
-            'completed', 'achieved_score', 'total_score') if key in latest}})
+        fields = ('completed', 'achieved_score', 'total_score')
+        if is_unsynchronised_direct_save(record):
+            fields += ('accepted', 'actual_seconds', 'activity_status', 'reporting_month',
+                       'reporting_started_at', 'reporting_ended_at')
+        result.append({**record, **{key: latest[key] for key in fields if key in latest}})
     return result
 
 

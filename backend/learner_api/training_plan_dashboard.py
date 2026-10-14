@@ -337,6 +337,45 @@ def _canonical_module_progress(records, modules):
     return result
 
 
+def plan_module_ids(cur, source, owner):
+    """Every module on the learner's plan, as the dashboard schedule lists them."""
+    # Effective current assignments are authoritative for the schedule.
+    # Builder metadata enriches those assignments (and supplies legacy
+    # links), but a missing builder row must not hide an assigned module.
+    current_module_ids = list(dict.fromkeys(_effective_plan_ids(source, {})))
+    # Imported learners can have real assigned subjects in the Aptem
+    # mirror without those ids ever being written to the native learning
+    # plan. Include those subjects in the same dashboard projection unless
+    # staff explicitly limited the learner to a native assignment set.
+    if owner is not None:
+        current_module_ids.extend(canonical_learning.curriculum_module_ids_for(owner))
+    current_module_ids = list(dict.fromkeys(current_module_ids))
+    refs = [f'current:{module_id}' for module_id in current_module_ids]
+    _, links = _builder_subject_metadata(cur, refs)
+    builder_ids = {
+        item['id'] for item in links.values() if item.get('id')
+    }
+    return sorted(builder_ids | set(current_module_ids)), links
+
+
+def plan_planned_hours(source, owner):
+    """Whole-programme planned OTJ hours: the authored total_otjh of the plan's modules.
+
+    This is the learning-plan total the Apprenticeship Agreement states, over
+    the same modules the dashboard lists. Callers use it only when the SSOT
+    holds no programme plan for the enrolment.
+    """
+    with connections['enrolment'].cursor() as cur:
+        ids, _ = plan_module_ids(cur, source, owner)
+        if not ids:
+            return None
+        cur.execute('''SELECT sum(total_otjh) FROM curriculum.modules
+            WHERE module_catalogue_id=ANY(%s)''', [ids])
+        total = cur.fetchone()[0]
+    total = number(total)
+    return round(total, 2) if total else None
+
+
 def read_dashboard(source, section=None):
     owner = getattr(source, '_canonical_profile', None)
     email = str(source.email or '').strip().casefold()
@@ -365,24 +404,7 @@ def read_dashboard(source, section=None):
         if section != 'learning' and owner is not None:
             progress_records = canonical_learning.entries_for(owner)
             actual = _canonical_actual_rows(owner, progress_records)
-        # Effective current assignments are authoritative for the schedule.
-        # Builder metadata enriches those assignments (and supplies legacy
-        # links), but a missing builder row must not hide an assigned module.
-        current_module_ids = list(dict.fromkeys(_effective_plan_ids(source, {})))
-        # Imported learners can have real assigned subjects in the Aptem
-        # mirror without those ids ever being written to the native learning
-        # plan. Include those subjects in the same dashboard projection unless
-        # staff explicitly limited the learner to a native assignment set.
-        if owner is not None:
-            current_module_ids.extend(canonical_learning.curriculum_module_ids_for(owner))
-        current_module_ids = list(dict.fromkeys(current_module_ids))
-        refs = [f'current:{module_id}' for module_id in current_module_ids]
-        _, links = _builder_subject_metadata(cur, refs)
-        builder_ids = {
-            item['id'] for item in links.values() if item.get('id')
-        }
-        authoritative_ids = set(current_module_ids)
-        ids = sorted(builder_ids | authoritative_ids)
+        ids, links = plan_module_ids(cur, source, owner)
         if ids:
             # cohort_id is read so the curriculum scheduler can resolve this
             # module's cohort holidays -- including the ones a delivery team

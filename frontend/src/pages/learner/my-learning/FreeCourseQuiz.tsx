@@ -6,6 +6,7 @@ import type { LearnerKind } from '@/api/learnerDetail';
 // The question renderer is shared with the normal quiz player — only the submit
 // path differs (free courses store nothing in OTJH/KSBs).
 import { QuestionInput } from '@/pages/learner/quiz-take/page';
+import { QuizQuestionImage } from '@/components/feature/QuizQuestionImage';
 
 export function FreeCourseQuiz({ kind, learnerId, componentId, quizId, onPassed }: {
   kind: LearnerKind; learnerId: string; componentId: string; quizId: number;
@@ -49,6 +50,7 @@ export function FreeCourseQuiz({ kind, learnerId, componentId, quizId, onPassed 
     );
   }
   if (!quiz) return <p role="status" className="p-3 text-sm text-foreground-500">Loading quiz…</p>;
+  if (quiz.unavailableReason) return <p role="alert" className="p-3 text-sm text-red-700">{quiz.unavailableReason}</p>;
 
   if (result) {
     const correct = result.breakdown.filter((item) => item.correct).length;
@@ -77,6 +79,7 @@ export function FreeCourseQuiz({ kind, learnerId, componentId, quizId, onPassed 
       {quiz.questions.map((question, index) => (
         <div key={question.id} className="space-y-3">
           <p className="text-sm font-semibold text-foreground-900"><span className="text-foreground-400">{index + 1}. </span>{question.text}</p>
+          <QuizQuestionImage imageUrl={question.imageUrl} />
           <QuestionInput
             question={question}
             value={answers[String(question.id)]}

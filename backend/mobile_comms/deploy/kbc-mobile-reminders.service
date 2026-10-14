@@ -1,0 +1,14 @@
+[Unit]
+Description=KBC mobile reminders and notification delivery
+After=network-online.target
+[Service]
+Type=oneshot
+WorkingDirectory=/var/www/LMS_v2/backend
+EnvironmentFile=/etc/kbc-mobile/notifications.env
+ExecStart=/var/www/LMS_v2/backend/venv/bin/python manage.py run_mobile_reminders
+RuntimeDirectory=kbc-mobile
+RuntimeDirectoryPreserve=yes
+UMask=0077
+TimeoutStartSec=900
+NoNewPrivileges=true
+PrivateTmp=true

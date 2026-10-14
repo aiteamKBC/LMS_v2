@@ -24,6 +24,7 @@ from urllib.parse import urlparse
 from zoneinfo import ZoneInfo
 
 from django.conf import settings
+from django.core import signing
 from django.core.cache import cache
 from django.core.files.base import ContentFile
 from django.core.files.storage import default_storage
@@ -3019,11 +3020,13 @@ def apply_teams_meeting_options(
             return False, resolved, [{
                 'code': 'teams_meeting_options_not_applied',
                 'message': (
-                    'The Teams link was created, but its online meeting could not be resolved, so the recording, '
-                    'transcription and lobby options were not applied. Grant OnlineMeetings.ReadWrite.All and an '
-                    'application access policy to the organizer.'
+                    'The Teams link was created and saved, but Microsoft has not exposed its meeting options yet. '
+                    'Recording, transcription and lobby settings remain pending; open the calendar review to retry.'
                 ),
-                'detail': str(exc),
+                # The raw Graph refusal is kept in teams_graph_failures for
+                # diagnosis. It is not shown as a permissions verdict here:
+                # Graph can return the same 403 briefly after creating an event.
+                'detail': '',
             }]
         meeting_id = clean_str(resolved.get('id'))
     if not meeting_id:
@@ -3446,6 +3449,7 @@ def curriculum_teams_meeting(request):
         attendees=invited_people,
         presenters=presenters,
         co_organizers=co_organizers,
+        live_session_id=live_session_id,
     )
     for option_warning in option_warnings:
         message = clean_str(option_warning.get('message'))
@@ -4657,7 +4661,7 @@ def curriculum_teams_meeting_artifacts(request, live_session_id):
             logger.warning('Unable to backfill onlineMeeting ID for %s: %s', live_session_id, exc)
             return json_error(
                 'The Teams meeting exists, but Microsoft Graph cannot resolve it for tracking. '
-                'Grant OnlineMeetings.Read.All and an application access policy to the organizer, then retry.',
+                'Retry after Microsoft finishes publishing the meeting. If it continues, check the organizer access policy.',
                 status=409,
                 detail=str(exc),
             )
@@ -16077,6 +16081,10 @@ COMPONENT_SETTINGS_SCHEMA = {
         'uploadSource': '',
         'assignmentFileName': '',
         'assignmentFileUrl': '',
+        # Read by learner_api.assignment_settings: the title learners are given,
+        # and whether this is the eight-step monthly assignment.
+        'learnerTitle': '',
+        'isMonthlyAssignment': False,
     },
     'checkpoint': {
         **BASE_COMPONENT_SETTINGS,
@@ -25620,6 +25628,56 @@ def curriculum_presentation_slides(request):
     return JsonResponse(deck)
 
 
+#: Formats the ``?preview=1`` page hands to Microsoft's Office Online viewer.
+#: The learner page parses .docx/.xlsx itself and renders decks in-house, so in
+#: practice this is the formats nothing in the browser can read.
+OFFICE_PREVIEW_EXTENSIONS = frozenset({
+    '.doc', '.docx', '.docm', '.dot', '.dotx', '.rtf', '.odt',
+    '.xls', '.xlsx', '.xlsm', '.ods',
+    '.ppt', '.pptx', '.pptm', '.pps', '.ppsx', '.odp',
+})
+OFFICE_PREVIEW_SALT = 'curriculum.office-preview'
+#: Long enough for Office to fetch the file once the frame loads; the link is
+#: minted per page view, so nothing holds it for longer.
+OFFICE_PREVIEW_MAX_AGE_SECONDS = 15 * 60
+
+
+def office_preview_link(relative_path):
+    """A session-free link to one upload, for Office Online to fetch.
+
+    Microsoft's servers download the file themselves and carry no LMS session,
+    so the normal upload URL is refused at the API gate. The token names exactly
+    one file and expires, which is the same promise an Azure SAS URL makes for a
+    file that has a blob copy. The file name rides along because Office decides
+    how to open a document from the URL's extension.
+    """
+    token = signing.dumps(relative_path, salt=OFFICE_PREVIEW_SALT, compress=True)
+    return f'/curriculum_api/office-preview/{token}/{urllib_parse.quote(Path(relative_path).name)}'
+
+
+@require_GET
+def curriculum_office_preview_file(request, token, filename):
+    """Serve the upload an ``office_preview_link`` token names, without a session."""
+    try:
+        relative_path = signing.loads(token, salt=OFFICE_PREVIEW_SALT, max_age=OFFICE_PREVIEW_MAX_AGE_SECONDS)
+    except signing.BadSignature:
+        raise Http404('File not found.')
+    if (not isinstance(relative_path, str)
+            or not relative_path.startswith(f'{COMPONENT_UPLOAD_ROOT}/')
+            or '..' in relative_path.split('/')):
+        raise Http404('File not found.')
+    opened = upload_storage.open_stream(relative_path)
+    if opened is None:
+        raise Http404('File not found.')
+    stream, total_size, content_type = opened
+    response = FileResponse(stream, as_attachment=False, filename=Path(relative_path).name)
+    response['Content-Length'] = str(total_size)
+    response['Content-Type'] = content_type or mimetypes.guess_type(relative_path)[0] or 'application/octet-stream'
+    response['Cache-Control'] = 'private, no-store'
+    response['X-Robots-Tag'] = 'noindex, nofollow'
+    return response
+
+
 @require_GET
 @xframe_options_sameorigin
 def curriculum_uploaded_file(request, path):
@@ -25647,16 +25705,19 @@ def curriculum_uploaded_file(request, path):
     # database continues to store the stable LMS path without any token.
     preview_requested = clean_str(request.GET.get('preview')).lower() in {'1', 'true', 'yes'}
     extension = Path(relative_path).suffix.lower()
-    office_extensions = {'.doc', '.docx', '.docm', '.xls', '.xlsx', '.ppt', '.pptx', '.pptm'}
-    if preview_requested and extension in office_extensions:
-        if not upload_storage.exists(relative_path):
+    if preview_requested and extension in OFFICE_PREVIEW_EXTENSIONS:
+        probe = upload_storage.open_stream(relative_path, offset=0, length=1)
+        if probe is None:
             raise Http404('File not found.')
+        if not probe[1]:
+            raise Http404('This file is empty on the server. Ask the curriculum team to upload it again.')
         source_url = upload_storage.signed_read_url(relative_path)
         if not source_url:
-            # Local-development fallback.  It works when this Django origin is
-            # publicly reachable; Office Online will show its own error when it
-            # is a localhost/private address.
-            source_url = request.build_absolute_uri(request.path)
+            # No Azure copy to sign: the file is still on this server's disk.
+            # Microsoft fetches without the learner's session, so it gets a
+            # short-lived signed link to this one file. Handing it the normal
+            # upload URL made Office show "File not found" for every such file.
+            source_url = request.build_absolute_uri(office_preview_link(relative_path))
         viewer_url = (
             'https://view.officeapps.live.com/op/embed.aspx?src='
             f'{urllib_parse.quote(source_url, safe="")}'
@@ -25686,6 +25747,15 @@ def curriculum_uploaded_file(request, path):
     if probe is None:
         raise Http404('File not found.')
     _discard, total_size, content_type = probe
+    if not total_size:
+        # Some imported legacy files are zero-byte placeholders. The importer
+        # kept the original source, which the legacy attachment proxy can still
+        # fetch; anything else is genuinely missing and must say so rather than
+        # hand the viewer an empty "document".
+        legacy = re.match(r'_legacy_files/([0-9]{1,20})/', path)
+        if legacy:
+            return HttpResponseRedirect(f'/learner_api/media/legacy-attachment/{legacy.group(1)}/')
+        raise Http404('This file is empty on the server. Ask the curriculum team to upload it again.')
 
     # An <audio> element seeking a podcast, and a PDF viewer jumping to a page,
     # both do it with a byte range; without this they can only play or render

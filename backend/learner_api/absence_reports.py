@@ -1,12 +1,13 @@
 """Learner-facing absence report API backed by Coach.coach_absence_report."""
 import hashlib
 import logging
+import threading
 from datetime import date, datetime, time, timezone as dt_timezone
 from html import escape
 from uuid import uuid4
 
 from django.conf import settings
-from django.db import DatabaseError, IntegrityError, router, transaction
+from django.db import DatabaseError, IntegrityError, connections, router, transaction
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.utils import timezone
@@ -17,7 +18,7 @@ from curriculum_api.models import LiveSessionAbsence
 from login import email_azure
 from login.permissions import learner_self_or_admin
 
-from .attendance_lectures import lecture_register, session_key, report_id
+from .attendance_lectures import can_report_absence_status, lecture_register, session_key, report_id
 from .evidence_storage import (
     azure_configured,
     blob_url,
@@ -80,9 +81,7 @@ def _attendance_rows_for_learner(learner, learner_id, *, meetings=False, kind=No
 
 
 def _can_report_absence(row):
-    status = str(row.get('attendance_status') or '').strip().lower()
-    return status in {'absent', 'upcoming', 'in_progress'} or (
-        status == 'pending' and row.get('session_date') == timezone.localdate())
+    return can_report_absence_status(row.get('attendance_status'), row.get('session_date'))
 
 
 def _fetch_missed_sessions(learner, learner_id, *, meetings=False, kind=None):
@@ -157,13 +156,23 @@ def _serialize(report):
         settings.AZURE_QUARANTINE_CONTAINER,
         settings.AZURE_APPROVED_CONTAINER,
     }
+    # Signing the evidence link and reading the alternative session are extras:
+    # a saved report must still be returned when either lookup fails.
     evidence_url = ""
     if report.status != CoachAbsenceReport.STATUS_DECLINED:
-        evidence_url = resolve_read_url(report.evidence_image_url, allowed_containers)
-    alternative = alternative_target_details(
-        report.catchup_event_key,
-        include_join_url=report.status == CoachAbsenceReport.STATUS_APPROVED,
-    ) if report.recovery_method == ALTERNATIVE_METHOD else None
+        try:
+            evidence_url = resolve_read_url(report.evidence_image_url, allowed_containers)
+        except Exception:
+            logger.exception("Could not sign evidence for absence report %s", report.id)
+    alternative = None
+    if report.recovery_method == ALTERNATIVE_METHOD:
+        try:
+            alternative = alternative_target_details(
+                report.catchup_event_key,
+                include_join_url=report.status == CoachAbsenceReport.STATUS_APPROVED,
+            )
+        except Exception:
+            logger.exception("Could not read the alternative session for absence report %s", report.id)
     return {
         "id": report.id,
         "attendanceId": str(report.attendance_id),
@@ -187,6 +196,17 @@ def _serialize(report):
         "createdAt": report.created_at.isoformat(),
         "updatedAt": report.updated_at.isoformat(),
     }
+
+
+def _existing_report_response(existing, learner_id):
+    """A retried submission gets the learner's saved report back instead of an error.
+
+    The first attempt may have been saved after the proxy had already given up
+    on it. Another learner's report for the same key remains a conflict.
+    """
+    if str(existing.learner_id) != str(learner_id):
+        return _error("An absence report already exists for this session.", 409)
+    return JsonResponse(_serialize(existing), status=200)
 
 
 class RecoveryPlanError(ValueError):
@@ -313,6 +333,36 @@ def _email_learner_alternative_invite(report, target_occurrence_id):
             logger.warning("Alternative session invite was not sent for absence report %s: %s", report.id, detail)
     except Exception:
         logger.exception("Alternative session invite failed for absence report %s", report.id)
+
+
+def _send_after_commit(task, *args, **kwargs):
+    """Send a notification once the report is committed, off the request path.
+
+    A slow Graph call used to hold the response until the proxy gave up with a
+    502, so the learner retried a report that had in fact been saved. The email
+    is best-effort: it never fails or delays the saved report.
+    """
+    name = getattr(task, "__name__", "notification")
+
+    def run():
+        try:
+            task(*args, **kwargs)
+        except Exception:
+            logger.exception("Absence report notification %s failed", name)
+        finally:
+            # This thread's own connections (the invite reads the occurrence).
+            connections.close_all()
+
+    def start():
+        try:
+            threading.Thread(target=run, name="absence-report-email", daemon=True).start()
+        except RuntimeError:
+            logger.exception("Could not start absence report notification %s", name)
+
+    try:
+        transaction.on_commit(start, using=router.db_for_write(CoachAbsenceReport))
+    except Exception:
+        logger.exception("Could not schedule absence report notification %s", name)
 
 
 def _catchup_booking(learner, mirror, event_key, session_date, *, lock=False, for_report_id=None):
@@ -462,9 +512,14 @@ def learner_absence_reports(request, kind, learner_id):
         )
         return _error("Could not validate the attendance session.", 502)
     if attendance_id is None:
-        return _error("Choose a valid absent, upcoming or in-progress session.")
-    if CoachAbsenceReport.objects.filter(attendance_id=attendance_id).exists():
-        return _error("An absence report already exists for this session.", 409)
+        return _error("Choose a valid absent, unmarked, upcoming or in-progress session.")
+    try:
+        existing = CoachAbsenceReport.objects.filter(attendance_id=attendance_id)
+        if existing.exists():
+            return _existing_report_response(existing.first(), learner_id)
+    except Exception:
+        logger.exception("Could not check for an existing absence report for %s learner %s", kind, learner_id)
+        return _error("Could not check your existing absence reports. Please retry.", 502)
 
     if upload is not None:
         if upload.content_type not in ALLOWED_UPLOAD_TYPES:
@@ -481,7 +536,14 @@ def learner_absence_reports(request, kind, learner_id):
     except (TypeError, ValueError):
         attendance_rate = None
 
-    active = learner_profile_for_source(learner, learner_id, active_only=True)
+    try:
+        # A learner whose profile is not marked active (e.g. paused) still owns
+        # their lectures: the active profile wins, but any linked one will do.
+        active = (learner_profile_for_source(learner, learner_id, active_only=True)
+                  or learner_profile_for_source(learner, learner_id))
+    except Exception:
+        logger.exception("Could not load the learner profile for %s learner %s", kind, learner_id)
+        return _error("Could not load your learner profile. Please retry.", 502)
     original_occurrence_id = session_id[len('teams:'):] if session_id.startswith('teams:') else ''
     if original_occurrence_id and active is None:
         return _error('This live-session absence could not be linked to your learner profile.', 409)
@@ -603,8 +665,12 @@ def learner_absence_reports(request, kind, learner_id):
                 delete_blob(quarantine_container, blob_name)
             except Exception:
                 pass
-        if CoachAbsenceReport.objects.filter(attendance_id=attendance_id).exists():
-            return _error("An absence report already exists for this session.", 409)
+        try:
+            existing = CoachAbsenceReport.objects.filter(attendance_id=attendance_id).first()
+        except Exception:
+            existing = None
+        if existing is not None:
+            return _existing_report_response(existing, learner_id)
         logger.exception('Could not save absence report')
         return _error('The absence report could not be saved. Please retry.', 502)
     except Exception:
@@ -619,7 +685,8 @@ def learner_absence_reports(request, kind, learner_id):
                 delete_blob(quarantine_container, blob_name)
             except Exception:
                 pass
-        return _error("The evidence was uploaded, but the absence report could not be saved.", 502)
+            return _error("The evidence was uploaded, but the absence report could not be saved. Please retry.", 502)
+        return _error("The absence report could not be saved. Please retry.", 502)
 
     recovery_details = ""
     if recovery_method == 'recorded':
@@ -634,7 +701,11 @@ def learner_absence_reports(request, kind, learner_id):
     elif recovery_method == ALTERNATIVE_METHOD:
         target = alternative or {}
         recovery_details = " ".join(filter(None, [target.get('dateIso'), target.get('startTime'), target.get('group')]))
-    _email_coach_recovery(report, recovery_details=recovery_details)
+    _send_after_commit(_email_coach_recovery, report, recovery_details=recovery_details)
     if recovery_method == ALTERNATIVE_METHOD:
-        _email_learner_alternative_invite(report, target_occurrence_id)
-    return JsonResponse(_serialize(report), status=201)
+        _send_after_commit(_email_learner_alternative_invite, report, target_occurrence_id)
+    try:
+        return JsonResponse(_serialize(report), status=201)
+    except Exception:
+        logger.exception("Could not return saved absence report %s", getattr(report, "id", None))
+        return _error("Your absence report was saved. Refresh the page to see it.", 502)

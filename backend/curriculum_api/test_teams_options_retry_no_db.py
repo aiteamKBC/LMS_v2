@@ -27,7 +27,7 @@ import unittest
 from datetime import datetime, timezone
 from pathlib import Path
 
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 from urllib.parse import urlparse
 
 ROOT = Path(__file__).parent
@@ -223,6 +223,21 @@ class Forbidden403Tests(harness.CalendarChecksTests):
         self.assertIn('added@example.invalid', [item['emailAddress']['address'] for item in self.events['event-1']['attendees']])
         self.assertIn('added@example.invalid', self.series[0]['attendees'])
         self.assert_nothing_cancelled_or_announced()
+
+    def test_a_new_meeting_resolve_403_is_pending_not_a_permission_verdict(self):
+        self.v.teams_online_meeting_from_join_url = Mock(side_effect=RuntimeError(FORBIDDEN))
+        applied, _meeting, warnings = self.v.apply_teams_meeting_options(
+            'tutor@example.invalid', 'https://teams.microsoft.com/meet/new',
+            recording='record-transcribe', live_session_id='LIVE-NEW',
+        )
+
+        self.assertFalse(applied)
+        self.assertIn('created and saved', warnings[0]['message'])
+        self.assertIn('open the calendar review to retry', warnings[0]['message'])
+        self.assertNotIn('Grant OnlineMeetings', warnings[0]['message'])
+        self.assertEqual(warnings[0]['detail'], '')
+        self.assertEqual(self.failures[0][0][0], 'online_meeting_resolve')
+        self.assertEqual(self.failures[0][1]['live_session_id'], 'LIVE-NEW')
 
     def test_removing_someone_is_also_invitation_only(self):
         self.created()

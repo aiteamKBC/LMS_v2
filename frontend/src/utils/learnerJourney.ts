@@ -1,4 +1,5 @@
 import type { ComponentKsbMapping, LearnerDetail, LearnerQuizAttempt } from '@/api/learnerDetail';
+import { topicHasContent } from '@/lib/assignmentTopics';
 export { formatHoursMinutes } from '@/lib/format';
 
 export interface JourneyComponent {
@@ -13,6 +14,8 @@ export interface JourneyComponent {
   type?: string | null;
   description?: string | null;
   assignmentTopics?: import('@/lib/assignmentTopics').AssignmentTopic[];
+  /** The author flagged this as the monthly (eight-step) assignment. */
+  monthlyAssignment?: boolean;
   assignmentBrief?: string | null;
   assignmentBriefHtml?: string | null;
   videoUrl?: string | null;
@@ -86,6 +89,26 @@ export function componentContentKind(type: string | null | undefined): ContentKi
  * are the completion gate. */
 export function componentRequiresEvidence(type: string | null | undefined): boolean {
   return (type || '').trim().toLowerCase().replace(/-/g, '_') === 'assignment';
+}
+
+type MonthlyAssignmentCandidate = { type?: string | null; monthlyAssignment?: boolean | null };
+
+/** Has an author flagged any assignment in this learner's plan as the monthly assignment? */
+export function monthlyAssignmentFlagsInUse(components: readonly MonthlyAssignmentCandidate[] | null | undefined): boolean {
+  return Boolean(components?.some(component => componentRequiresEvidence(component.type) && component.monthlyAssignment === true));
+}
+
+/** Is this the assignment learners submit through the eight-step monthly
+ * submission (and list under Monthly submission)? Until an author flags one,
+ * every assignment is. Once any assignment in the plan is flagged, only the
+ * flagged ones are and the others are completed like any other activity.
+ * learner_api.assignment_settings applies the same rule on completion. */
+export function isMonthlyAssignment(
+  component: MonthlyAssignmentCandidate | null | undefined,
+  components: readonly MonthlyAssignmentCandidate[] | null | undefined,
+): boolean {
+  if (!component || !componentRequiresEvidence(component.type)) return false;
+  return component.monthlyAssignment === true || !monthlyAssignmentFlagsInUse(components);
 }
 
 export interface ComponentCriteria {
@@ -380,7 +403,7 @@ export function hasComponentContent(c: JourneyComponent): boolean {
   // Builder rows can retain a default reflection question even when reflection
   // is disabled. That follow-up question is not the assignment's task/brief.
   if (type === 'assignment') {
-    return Boolean(c.assignmentTopics?.some(topic => topic.question.trim() || topic.resources.length)) || hasText(c.assignmentBrief) || hasText(c.assignmentBriefHtml)
+    return Boolean(c.assignmentTopics?.some(topicHasContent)) || hasText(c.assignmentBrief) || hasText(c.assignmentBriefHtml)
       || hasUrl(c.resourceUrl) || hasText(c.contentHtml)
       || c.hasReadingContent === true || hasDescription;
   }
@@ -644,6 +667,7 @@ export function buildLearnerJourney(real: LearnerDetail | null): JourneyModule[]
             ksbMappings: c.ksbMappings,
             componentId: c.componentId, type: c.type, description: c.description,
             assignmentBrief: c.assignmentBrief, assignmentBriefHtml: c.assignmentBriefHtml, assignmentTopics: c.assignmentTopics,
+            monthlyAssignment: c.monthlyAssignment,
             videoUrl: c.videoUrl, durationMinutes: c.durationMinutes,
             audioUrl: c.audioUrl, contentHtml: c.contentHtml, fileName: c.fileName, files: c.files,
             hasReadingContent: c.hasReadingContent,

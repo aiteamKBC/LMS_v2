@@ -4,15 +4,16 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { EntraPeopleInput } from '../EntraPeopleInput';
 import { searchEntraPeople } from '../entraDirectory';
+import { TeamsPeopleFields } from '../createCalendarForm';
 
 vi.mock('../entraDirectory', () => ({ searchEntraPeople: vi.fn() }));
 const people = [
   { id: '1', name: 'Alex Example', email: 'alex@example.invalid' },
   { id: '2', name: 'Jamie Example', email: 'jamie@example.invalid' },
 ];
-function Picker({ single = false, initial = '' }) {
+function Picker({ single = false, initial = '', includeGuests = false }) {
   const [value, setValue] = useState(initial);
-  return <><EntraPeopleInput label="Presenter" value={value} onChange={setValue} single={single} /><output data-testid="value">{value}</output><button type="button">Outside</button></>;
+  return <><EntraPeopleInput label="Presenter" value={value} onChange={setValue} single={single} includeGuests={includeGuests} /><output data-testid="value">{value}</output><button type="button">Outside</button></>;
 }
 beforeEach(() => {
   vi.clearAllMocks();
@@ -28,6 +29,19 @@ it('selects a named Entra result while preserving the email payload', async () =
   await user.click(await screen.findByRole('option', { name: /Alex Example/ }));
   expect(screen.getByTestId('value')).toHaveTextContent('alex@example.invalid');
   expect(screen.queryByRole('listbox')).not.toBeInTheDocument();
+  expect(searchEntraPeople).toHaveBeenCalledWith('Alex', expect.any(AbortSignal), false);
+});
+
+it('requests guests only from the attendee field', async () => {
+  render(<TeamsPeopleFields
+    form={{ lobbyBypass: 'everyone', recording: 'none', spokenLanguage: 'en-GB', presenters: '', coOrganizers: '', attendees: '' }}
+    patch={vi.fn()}
+  />);
+
+  fireEvent.change(screen.getByRole('combobox', { name: 'Presenters' }), { target: { value: 'Member' } });
+  await waitFor(() => expect(searchEntraPeople).toHaveBeenCalledWith('Member', expect.any(AbortSignal), false));
+  fireEvent.change(screen.getByRole('combobox', { name: 'Attendees' }), { target: { value: 'Guest' } });
+  await waitFor(() => expect(searchEntraPeople).toHaveBeenCalledWith('Guest', expect.any(AbortSignal), true));
 });
 
 it('replaces the organizer and supports arrow-up selection', async () => {
