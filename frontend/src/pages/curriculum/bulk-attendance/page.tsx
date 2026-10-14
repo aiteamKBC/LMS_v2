@@ -1,10 +1,22 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { WorkspaceShell } from "@/components/feature/WorkspaceShell";
 import { curriculumNavItems } from "@/mocks/navigation";
 import type { AttendanceStatus, Learner, Lecture } from "@/types/bulkAttendance";
 import { useAttendance } from "@/hooks/useBulkAttendance";
 import { useBulkAttendanceData } from "@/hooks/useBulkAttendanceData";
 import { useArchivedLearners } from "@/hooks/useArchivedBulkLearners";
+import {
+  fetchCurriculumScopeLearnerRoster,
+  type CurriculumProgrammeAssignedLearner,
+} from "@/lib/curriculumApi";
+import {
+  fetchBulkAttendanceKbcHistory,
+  fetchBulkAttendanceLiveHistory,
+  updateBulkAttendanceKbcRecord,
+  updateBulkAttendanceLiveRecord,
+  type BulkAttendanceKbcHistoryRecord,
+  type BulkAttendanceLiveHistoryRecord,
+} from "@/api/bulkAttendanceLearners";
 import {
   formatDateLabel,
   formatShortDate,
@@ -23,7 +35,9 @@ import AttendanceTable, {
 } from "./components/AttendanceTable";
 import WeeklyGrid from "./components/WeeklyGrid";
 import SummaryReport from "./components/SummaryReport";
-import LearnerHistoryModal from "./components/LearnerHistoryModal";
+import LearnerHistoryModal, {
+  type LearnerHistoryRecord,
+} from "./components/LearnerHistoryModal";
 import LearnerDirectoryModal from "./components/LearnerDirectoryModal";
 import ArchiveDialog from "./components/ArchiveDialog";
 import ArchiveView from "./components/ArchiveView";
@@ -35,26 +49,85 @@ function statusLabel(status: AttendanceStatus): string {
   return "Unmarked";
 }
 
+interface AttendanceHistoryEntry {
+  id: string;
+  sessionDate: string;
+  moduleCatalogueId?: string;
+  moduleName: string;
+  lectureName: string;
+  cohortName?: string;
+  sessionNumber: number | null;
+  attendance: "present" | "absent" | null;
+  source: "live" | "kbc" | "merged";
+  recordKey?: string;
+  occurrenceId?: string;
+  learnerProfileId?: string;
+}
+
+function normalizeHistoryLabel(value: string, lecture = false): string {
+  let normalized = value.normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
+  if (lecture) {
+    normalized = normalized.replace(/^(?:lecture|lec|l)\s*\.?\s*\d+\s*[:.\-]?\s*/, "");
+    normalized = normalized.replace(
+      /\s+(?:\d{1,2}[/-]\d{1,2}(?:[/-]\d{2,4})?|[a-z]{3,9}\s+\d{1,2},?\s+\d{2,4})\s*$/,
+      "",
+    );
+  }
+  return normalized.replace(/[^a-z0-9]+/g, " ").trim().replace(/\s+/g, " ");
+}
+
+function moduleLabelsMatch(left: string, right: string): boolean {
+  const first = normalizeHistoryLabel(left);
+  const second = normalizeHistoryLabel(right);
+  return Boolean(first && second && (` ${first} `.includes(` ${second} `) || ` ${second} `.includes(` ${first} `)));
+}
+
+function lectureNumber(value: string): number | null {
+  const match = value.match(/^\s*(?:lecture|lec|l)\s*\.?\s*(\d+)/i);
+  return match ? Number(match[1]) : null;
+}
+
+function mergeHistoryStatus(
+  first: AttendanceHistoryEntry["attendance"],
+  second: AttendanceHistoryEntry["attendance"],
+): AttendanceHistoryEntry["attendance"] {
+  return first && first === second ? first : null;
+}
+
 export default function AttendancePage() {
+  const { manualIds, restoredIds, archiveMany, restoreMany } =
+    useArchivedLearners();
+  const legacyArchiveIds = useMemo(
+    () => [...new Set([...manualIds, ...restoredIds])],
+    [manualIds, restoredIds],
+  );
   const {
     programmes,
     cohorts,
-    groups,
     learners,
     lectures,
     modules,
     loading: dataLoading,
     error: dataError,
-  } = useBulkAttendanceData();
+    retry: retryData,
+  } = useBulkAttendanceData(legacyArchiveIds);
   const [programmeId, setProgrammeId] = useState("");
   const [cohortId, setCohortId] = useState("");
-  const [groupId, setGroupId] = useState("");
   const [moduleId, setModuleId] = useState("");
   const [lectureId, setLectureId] = useState("");
+  const [scopeLearnerEmails, setScopeLearnerEmails] = useState<Set<string> | null>(null);
+  const [scopeLearnersByEmail, setScopeLearnersByEmail] = useState<Map<string, CurriculumProgrammeAssignedLearner>>(new Map());
+  const [scopeRosterLoading, setScopeRosterLoading] = useState(false);
+  const [scopeRosterError, setScopeRosterError] = useState<string | null>(null);
   const [date, setDate] = useState(todayIso());
   const [query, setQuery] = useState("");
   const [tab, setTab] = useState<RegisterTab>("daily");
-  const [historyLearnerId, setHistoryLearnerId] = useState<string | null>(null);
+  const [historyRow, setHistoryRow] = useState<AttendanceRow | null>(null);
+  const [detailKbcHistory, setDetailKbcHistory] = useState<BulkAttendanceKbcHistoryRecord[]>([]);
+  const [detailLiveHistory, setDetailLiveHistory] = useState<BulkAttendanceLiveHistoryRecord[]>([]);
+  const [detailHistoryLoading, setDetailHistoryLoading] = useState(false);
+  const [detailHistoryError, setDetailHistoryError] = useState<string | null>(null);
+  const [statusFilter, setStatusFilter] = useState<AttendanceStatus | null>(null);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [showActions, setShowActions] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
@@ -66,17 +139,73 @@ export default function AttendancePage() {
     label: string;
   } | null>(null);
 
-  const { manualIds, restoredIds, archiveMany, restoreMany } =
-    useArchivedLearners();
-
   const today = useMemo(() => todayIso(), []);
+  const selectedLecture = useMemo(
+    () => lectures.find((lecture) => lecture.id === lectureId) ?? null,
+    [lectureId, lectures]
+  );
+
+  useEffect(() => {
+    const scopedModuleId = moduleId || selectedLecture?.moduleId || "";
+    const scope = scopedModuleId ? "module" : cohortId ? "cohort" : programmeId ? "programme" : null;
+    const identifier = scopedModuleId
+      ? modules.find((module) => module.id === scopedModuleId)?.rosterId || scopedModuleId
+      : cohortId || programmeId;
+    if (!scope) {
+      setScopeLearnerEmails((previous) => previous === null ? previous : null);
+      setScopeLearnersByEmail((previous) => previous.size === 0 ? previous : new Map());
+      setScopeRosterLoading(false);
+      setScopeRosterError(null);
+      return;
+    }
+
+    const controller = new AbortController();
+    setScopeLearnerEmails(null);
+    setScopeLearnersByEmail(new Map());
+    setScopeRosterLoading(true);
+    setScopeRosterError(null);
+    void fetchCurriculumScopeLearnerRoster(
+      scope,
+      identifier,
+      { learnerStatus: "all" },
+      controller.signal,
+    )
+      .then((roster) => {
+        if (controller.signal.aborted) return;
+        const rowsByEmail = new Map<string, CurriculumProgrammeAssignedLearner[]>();
+        roster.assignedLearners.forEach((learner) => {
+          const email = learner.email.trim().toLowerCase();
+          if (!email) return;
+          rowsByEmail.set(email, [...(rowsByEmail.get(email) ?? []), learner]);
+        });
+        setScopeLearnerEmails(new Set(rowsByEmail.keys()));
+        setScopeLearnersByEmail(new Map(
+          [...rowsByEmail.entries()]
+            .filter(([, assignments]) => assignments.length === 1)
+            .map(([email, assignments]) => [email, assignments[0]]),
+        ));
+      })
+      .catch((reason: unknown) => {
+        if (controller.signal.aborted) return;
+        setScopeRosterError(reason instanceof Error
+          ? reason.message
+          : "Unable to load learners for this selection.");
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setScopeRosterLoading(false);
+      });
+
+    return () => controller.abort();
+  }, [programmeId, cohortId, moduleId, modules, selectedLecture]);
 
   // A learner is archived when the user archived them by hand, or once their
-  // enrolment end date has passed â€” unless they were explicitly restored.
+  // enrolment end date has passed — unless they were explicitly restored.
   const isArchived = useCallback(
-    (learner: Learner) =>
-      !restoredIds.includes(learner.id) &&
-      (manualIds.includes(learner.id) || isPastEndDate(learner.endDate, today)),
+    (learner: Learner) => {
+      const ids = [learner.id, learner.curriculumId].filter((id): id is string => Boolean(id));
+      return !ids.some((id) => restoredIds.includes(id)) &&
+        (ids.some((id) => manualIds.includes(id)) || isPastEndDate(learner.endDate, today));
+    },
     [manualIds, restoredIds, today]
   );
 
@@ -90,61 +219,49 @@ export default function AttendancePage() {
     ];
   }, [programmeId, cohorts]);
 
-  const groupOptions = useMemo<FilterOption[]>(() => {
-    let list = groups;
-    if (cohortId) {
-      list = groups.filter((group) => group.cohortId === cohortId);
-    } else if (programmeId) {
-      const cohortIds = cohorts
-        .filter((cohort) => cohort.programmeId === programmeId)
-        .map((cohort) => cohort.id);
-      list = groups.filter((group) => cohortIds.includes(group.cohortId));
-    }
-    return [
-      { value: "", label: "All Groups" },
-      ...list.map((group) => ({ value: group.id, label: group.name })),
-    ];
-  }, [programmeId, cohortId, groups, cohorts]);
-
   const moduleOptions = useMemo<FilterOption[]>(() => {
-    const list = programmeId
-      ? modules.filter((module) => module.programmeId === programmeId)
-      : modules;
+    const list = modules.filter((module) => {
+      if (programmeId && module.programmeId !== programmeId) return false;
+      if (cohortId && module.cohortId && module.cohortId !== cohortId) return false;
+      return true;
+    });
     return [
       { value: "", label: "All Modules" },
       ...list.map((module) => ({ value: module.id, label: module.name })),
     ];
-  }, [programmeId, modules]);
+  }, [programmeId, cohortId, modules]);
 
   const lectureOptions = useMemo<FilterOption[]>(() => {
-    const list = moduleId
-      ? lectures.filter((lecture) => lecture.moduleId === moduleId)
-      : lectures;
+    const allowedModuleIds = new Set(moduleOptions.slice(1).map((option) => option.value));
+    const list = lectures.filter((lecture) =>
+      allowedModuleIds.has(lecture.moduleId)
+      && (!moduleId || lecture.moduleId === moduleId),
+    );
     return [
       { value: "", label: "All Lectures" },
       ...list.map((lecture) => ({
         value: lecture.id,
-        label: `${lecture.name} â€” ${formatShortDate(lecture.sessionDate)}`,
+        label: `${lecture.name} — ${formatShortDate(lecture.sessionDate)}`,
       })),
     ];
-  }, [moduleId, lectures]);
+  }, [moduleId, moduleOptions, lectures]);
 
-  const selectedLecture = useMemo(
-    () => lectures.find((lecture) => lecture.id === lectureId) ?? null,
-    [lectureId, lectures]
-  );
-
-  // Structured filters (Programme / Cohort / Group) applied on their own, so
+  // Structured filters (Programme / Cohort / Module) applied on their own, so
   // the archive view can reuse them without the register search leaking in.
   const scopedLearners = useMemo(
     () =>
-      learners.filter((learner) => {
-        if (programmeId && learner.programmeId !== programmeId) return false;
-        if (cohortId && learner.cohortId !== cohortId) return false;
-        if (groupId && learner.groupId !== groupId) return false;
+      learners.map((learner) => {
+        const placement = scopeLearnersByEmail.get(learner.email.trim().toLowerCase());
+        return placement ? { ...learner, curriculumId: String(placement.id) } : learner;
+      }).filter((learner) => {
+        const hasScopeFilter = Boolean(programmeId || cohortId || moduleId || selectedLecture);
+        if (hasScopeFilter) {
+          if (!scopeLearnerEmails) return false;
+          return scopeLearnerEmails.has(learner.email.trim().toLowerCase());
+        }
         return true;
       }),
-    [programmeId, cohortId, groupId, learners]
+    [programmeId, cohortId, moduleId, selectedLecture, scopeLearnerEmails, scopeLearnersByEmail, learners]
   );
 
   const filteredLearners = useMemo(() => {
@@ -162,36 +279,83 @@ export default function AttendancePage() {
     [filteredLearners, isArchived]
   );
 
-  const moduleKey = moduleId || "general";
+  const attendanceLecture = useMemo(() => {
+    if (!selectedLecture) return null;
+    return {
+      ...selectedLecture,
+      moduleName: selectedLecture.moduleName
+        || modules.find((module) => module.id === selectedLecture.moduleId)?.name
+        || "",
+    };
+  }, [selectedLecture, modules]);
+  const moduleKey = selectedLecture
+    ? `${selectedLecture.moduleId}:${selectedLecture.id}`
+    : moduleId || "general";
+  const selectedModuleCatalogueId = modules.find((module) => module.id === moduleId)?.rosterId ?? "";
+  const attendanceScope = useMemo(() => ({
+    programmeId,
+    cohortId,
+    groupId: "",
+    moduleCatalogueId: selectedModuleCatalogueId,
+  }), [programmeId, cohortId, selectedModuleCatalogueId]);
+  const kbcHistoryModuleNames = useMemo(() => {
+    const hasCurriculumScope = Boolean(programmeId || cohortId || moduleId || selectedLecture);
+    if (!hasCurriculumScope) return [];
+
+    const scopedModules = modules.filter((module) => {
+      if (moduleId && module.id !== moduleId) return false;
+      if (selectedLecture && !moduleId
+        && module.id !== selectedLecture.moduleId
+        && module.rosterId !== selectedLecture.moduleCatalogueId) return false;
+      if (programmeId && module.programmeId && module.programmeId !== programmeId) return false;
+      if (cohortId && module.cohortId && module.cohortId !== cohortId) return false;
+      return true;
+    });
+    const lectureNames = selectedLecture
+      ? [selectedLecture.moduleName, ...(selectedLecture.moduleAliases ?? [])]
+      : [];
+    return [...new Set([...scopedModules.map((module) => module.name), ...lectureNames]
+      .map((name) => name.trim())
+      .filter(Boolean))];
+  }, [programmeId, cohortId, moduleId, selectedLecture, modules]);
+  const selectedLectureIsUnique = useMemo(() => {
+    if (!selectedLecture) return false;
+    return lectures.filter((lecture) => {
+      if (lecture.sessionDate !== selectedLecture.sessionDate) return false;
+      return lecture.moduleId === selectedLecture.moduleId
+        || Boolean(lecture.moduleCatalogueId && selectedLecture.moduleCatalogueId
+          && lecture.moduleCatalogueId === selectedLecture.moduleCatalogueId);
+    }).length === 1;
+  }, [selectedLecture, lectures]);
 
   const {
     loading: attendanceLoading,
+    sourceError: attendanceSourceError,
+    liveHistory,
+    kbcHistory,
     statuses,
     getStatus,
-    setStatus,
     setStatusForDate,
     markSelected,
     clearMarks,
     presentCount,
     absentCount,
     unmarkedCount,
-    attendanceRate,
     dirty,
     pendingCount,
     save,
     undo,
-    profileGetStatus,
-    setProfileStatusForDate,
-    profileDirty,
-    profilePendingCount,
-    saveProfile,
-    undoProfile,
-  } = useAttendance({ learners: activeLearners, moduleKey, date });
-  const loading = dataLoading || attendanceLoading;
-
-  const handleSetStatus = (learnerId: string, status: AttendanceStatus) => {
-    setStatus(learnerId, status);
-  };
+  } = useAttendance({
+    learners: activeLearners,
+    historyLearners: scopedLearners,
+    kbcHistoryModuleNames,
+    moduleKey,
+    date: selectedLecture?.sessionDate || date,
+    selectedLecture: attendanceLecture,
+    selectedLectureIsUnique,
+    scope: attendanceScope,
+  });
+  const loading = dataLoading || attendanceLoading || scopeRosterLoading;
 
   const handleGridToggle = (learnerId: string, day: string) => {
     const current = getStatus(learnerId, day);
@@ -204,18 +368,6 @@ export default function AttendancePage() {
         ? prev.filter((id) => id !== learnerId)
         : [...prev, learnerId]
     );
-  };
-
-  const handleToggleSelectAll = () => {
-    setSelectedIds((prev) => {
-      const visibleIds = activeLearners.map((learner) => learner.id);
-      const allSelected =
-        visibleIds.length > 0 && visibleIds.every((id) => prev.includes(id));
-      if (allSelected) {
-        return prev.filter((id) => !visibleIds.includes(id));
-      }
-      return Array.from(new Set([...prev, ...visibleIds]));
-    });
   };
 
   const handleMarkSelected = (status: AttendanceStatus) => {
@@ -235,10 +387,6 @@ export default function AttendancePage() {
     setShowDeleteConfirm(false);
   };
 
-  const groupNameMap = useMemo(
-    () => Object.fromEntries(groups.map((group) => [group.id, group.name])),
-    [groups]
-  );
   const cohortNameMap = useMemo(
     () => Object.fromEntries(cohorts.map((cohort) => [cohort.id, cohort.name])),
     [cohorts]
@@ -252,18 +400,145 @@ export default function AttendancePage() {
     [programmes]
   );
 
+  const historyForLearner = useCallback((
+    learner: Learner,
+    options?: {
+      allDates?: boolean;
+      kbcHistoryRecords?: BulkAttendanceKbcHistoryRecord[];
+    },
+  ) => {
+    const allDates = options?.allDates ?? false;
+    const historyRecords = options?.kbcHistoryRecords ?? kbcHistory;
+    const email = learner.email.trim().toLowerCase();
+    const matchedLive = liveHistory.filter((record) => {
+      const belongsToLearner = learner.curriculumId
+        ? record.learnerProfileId === learner.curriculumId
+        : Boolean(email && record.learnerEmail.trim().toLowerCase() === email);
+      if (!belongsToLearner) return false;
+      if (allDates) return true;
+      return record.sessionDate <= date
+        && (!programmeId || record.programmeId === programmeId)
+        && (!cohortId || record.cohortId === cohortId)
+        && (!selectedModuleCatalogueId || record.moduleCatalogueId === selectedModuleCatalogueId);
+    });
+
+    const liveEntries: AttendanceHistoryEntry[] = matchedLive.map((record) => ({
+      id: `live:${record.occurrenceId}`,
+      sessionDate: record.sessionDate,
+      moduleCatalogueId: record.moduleCatalogueId,
+      moduleName: record.moduleTitle || moduleNameMap[record.moduleCatalogueId] || "",
+      lectureName: `${record.moduleTitle || moduleNameMap[record.moduleCatalogueId] || "Live session"}${record.sessionNumber ? ` · Session ${record.sessionNumber}` : ""}`,
+      cohortName: record.cohortName,
+      sessionNumber: record.sessionNumber,
+      attendance: record.attendance,
+      source: "live",
+      occurrenceId: record.occurrenceId,
+      learnerProfileId: record.learnerProfileId,
+    }));
+    const matchedKbc: AttendanceHistoryEntry[] = historyRecords
+      .filter((record) => record.learnerId === learner.kbcId && (allDates || record.sessionDate <= date))
+      .map((record) => ({
+        id: `kbc:${record.learnerId}:${record.sessionDate}:${record.sessionNumber ?? ""}:${normalizeHistoryLabel(record.moduleName)}:${normalizeHistoryLabel(record.lectureName, true)}`,
+        sessionDate: record.sessionDate,
+        moduleName: record.moduleName,
+        lectureName: record.lectureName || record.moduleName || "Lecture title not recorded",
+        sessionNumber: record.sessionNumber,
+        attendance: record.attendance,
+        source: "kbc",
+        recordKey: record.recordKey,
+      }));
+
+    const combined = [...liveEntries];
+    matchedKbc.forEach((kbcRecord) => {
+      const sameModuleAndDay = (record: AttendanceHistoryEntry) =>
+        record.sessionDate === kbcRecord.sessionDate
+        && moduleLabelsMatch(record.moduleName, kbcRecord.moduleName)
+        && (!record.sessionNumber || !kbcRecord.sessionNumber || record.sessionNumber === kbcRecord.sessionNumber);
+      const liveMatches = combined
+        .map((record, index) => ({ record, index }))
+        .filter(({ record }) => record.source === "live" && sameModuleAndDay(record));
+      const kbcMatches = matchedKbc.filter((record) => sameModuleAndDay(record));
+
+      if (liveMatches.length === 1 && kbcMatches.length === 1) {
+        const { record: liveRecord, index } = liveMatches[0];
+        combined[index] = {
+          ...liveRecord,
+          lectureName: kbcRecord.lectureName || liveRecord.lectureName,
+          attendance: mergeHistoryStatus(liveRecord.attendance, kbcRecord.attendance),
+          source: "merged",
+        };
+      } else {
+        combined.push(kbcRecord);
+      }
+    });
+
+    const byOccurrence = new Map<string, AttendanceHistoryEntry>();
+    combined.forEach((record) => {
+      const existing = byOccurrence.get(record.id);
+      if (!existing) byOccurrence.set(record.id, record);
+      else byOccurrence.set(record.id, {
+        ...existing,
+        attendance: mergeHistoryStatus(existing.attendance, record.attendance),
+      });
+    });
+    return [...byOccurrence.values()].sort((a, b) =>
+      a.sessionDate.localeCompare(b.sessionDate)
+      || (a.sessionNumber ?? 0) - (b.sessionNumber ?? 0)
+      || normalizeHistoryLabel(a.moduleName).localeCompare(normalizeHistoryLabel(b.moduleName))
+      || normalizeHistoryLabel(a.lectureName, true).localeCompare(normalizeHistoryLabel(b.lectureName, true)),
+    );
+  }, [
+    liveHistory,
+    kbcHistory,
+    date,
+    programmeId,
+    cohortId,
+    selectedModuleCatalogueId,
+    moduleNameMap,
+  ]);
+
   const buildRows = useCallback(
     (list: typeof learners): AttendanceRow[] =>
-      list.map((learner, index) => ({
-        learner,
-        index,
-        groupName: groupNameMap[learner.groupId] ?? "â€”",
-        cohortName: cohortNameMap[learner.cohortId] ?? "â€”",
-      })),
-    [groupNameMap, cohortNameMap]
+      list.map((learner, index) => {
+        const email = learner.email.trim().toLowerCase();
+        const placement = scopeLearnersByEmail.get(email);
+        const placementIsAmbiguous = Boolean(scopeLearnerEmails?.has(email) && !placement);
+        const cohortName = placementIsAmbiguous
+          ? "—"
+          : placement
+          ? (placement.cohortId ? cohortNameMap[String(placement.cohortId)] : "") || placement.cohort || "—"
+          : cohortNameMap[learner.cohortId] ?? "—";
+        return {
+          learner,
+          index,
+          cohortName,
+        };
+      }),
+    [cohortNameMap, scopeLearnersByEmail, scopeLearnerEmails]
   );
 
   const rows = useMemo(() => buildRows(activeLearners), [activeLearners, buildRows]);
+  const visibleRows = useMemo(
+    () => statusFilter
+      ? rows.filter((row) => (statuses[row.learner.id] ?? "unmarked") === statusFilter)
+      : rows,
+    [rows, statusFilter, statuses]
+  );
+  const visibleLearners = useMemo(() => visibleRows.map((row) => row.learner), [visibleRows]);
+
+  const handleToggleSelectAll = () => {
+    setSelectedIds((previous) => {
+      const visibleIds = visibleRows.map((row) => row.learner.id);
+      const allSelected = visibleIds.length > 0 && visibleIds.every((id) => previous.includes(id));
+      if (allSelected) return previous.filter((id) => !visibleIds.includes(id));
+      return Array.from(new Set([...previous, ...visibleIds]));
+    });
+  };
+
+  const handleStatusCardClick = (nextStatus: AttendanceStatus) => {
+    setStatusFilter((previous) => previous === nextStatus ? null : nextStatus);
+    setSelectedIds([]);
+  };
 
   // Anyone still in the register can be archived early / by hand.
   const eligibleRows = useMemo(
@@ -326,26 +601,66 @@ export default function AttendancePage() {
       const list = learnerLectureList(learner);
       const upToDate = list.filter((lecture) => lecture.sessionDate <= date);
       const pool = upToDate.length > 0 ? upToDate : list;
-      let name = "â€”";
+      const history = historyForLearner(learner);
+      const recentHistory = history.slice(-4).map((record) => ({
+        id: record.id,
+        name: record.lectureName || record.moduleName || "Lecture title not recorded",
+        sessionDate: record.sessionDate,
+        status: record.attendance ?? "unmarked" as AttendanceStatus,
+      }));
+      let name = "—";
+      let moduleName = "";
       let lectureDate: string | null = null;
       if (selectedLecture) {
         name = selectedLecture.name;
+        moduleName = selectedLecture.moduleName || moduleNameMap[selectedLecture.moduleId] || "";
         lectureDate = selectedLecture.sessionDate;
+      } else if (history.length > 0) {
+        const latest = history[history.length - 1];
+        name = latest.lectureName || latest.moduleName || "Attendance record";
+        moduleName = latest.moduleName;
+        lectureDate = latest.sessionDate;
       } else if (pool.length > 0) {
         const latest = pool[pool.length - 1];
         name = latest.name;
+        moduleName = latest.moduleName || moduleNameMap[latest.moduleId] || "";
         lectureDate = latest.sessionDate;
       }
-      const recent = pool.slice(-4).map((lecture) => ({
+      let recent = recentHistory;
+      const selectedModuleNames = selectedLecture
+        ? [selectedLecture.moduleName, ...(selectedLecture.moduleAliases ?? []), moduleNameMap[selectedLecture.moduleId] ?? ""]
+        : [];
+      const selectedLectureHasHistory = selectedLecture && history.some((record) => {
+        if (record.sessionDate !== selectedLecture.sessionDate) return false;
+        if (record.moduleCatalogueId && selectedLecture.moduleCatalogueId
+          && record.moduleCatalogueId === selectedLecture.moduleCatalogueId) return true;
+        if (record.source !== "kbc" || !selectedModuleNames.some((name) => moduleLabelsMatch(record.moduleName, name))) return false;
+        if (record.sessionNumber && lectureNumber(selectedLecture.name)) {
+          return record.sessionNumber === lectureNumber(selectedLecture.name);
+        }
+        if (record.lectureName && record.lectureName !== record.moduleName) {
+          return normalizeHistoryLabel(record.lectureName, true) === normalizeHistoryLabel(selectedLecture.name, true);
+        }
+        return selectedLectureIsUnique;
+      });
+      if (selectedLecture && !selectedLectureHasHistory) {
+        recent = [...recent, {
+          id: selectedLecture.id,
+          name: selectedLecture.name,
+          sessionDate: selectedLecture.sessionDate,
+          status: getStatus(learner.id, selectedLecture.sessionDate),
+        }].slice(-4);
+      }
+      if (recent.length === 0) recent = pool.slice(-4).map((lecture) => ({
         id: lecture.id,
         name: lecture.name,
         sessionDate: lecture.sessionDate,
         status: getStatus(learner.id, lecture.sessionDate),
       }));
-      map[learner.id] = { name, date: lectureDate, recent };
+      map[learner.id] = { name, moduleName, date: lectureDate, recent };
     });
     return map;
-  }, [activeLearners, learnerLectureList, selectedLecture, date, getStatus]);
+  }, [activeLearners, learnerLectureList, selectedLecture, selectedLectureIsUnique, date, getStatus, historyForLearner, moduleNameMap]);
 
   const weekDays = useMemo(() => getWeekDays(date), [date]);
 
@@ -354,7 +669,7 @@ export default function AttendancePage() {
       value.toLocaleDateString("en-US", { month: "short", day: "numeric" });
     const start = new Date(`${weekDays[0].iso}T00:00:00`);
     const end = new Date(`${weekDays[6].iso}T00:00:00`);
-    return `${fmt(start)} â€“ ${fmt(end)}`;
+    return `${fmt(start)} – ${fmt(end)}`;
   }, [weekDays]);
 
   const handleExport = () => {
@@ -363,27 +678,23 @@ export default function AttendancePage() {
       "Email",
       "Programme",
       "Cohort",
-      "Group",
       "Module",
       "Lecture",
       "Date",
       "Status",
     ];
-    const body = activeLearners.map((learner) => [
+    const body = visibleLearners.map((learner) => [
       learner.name,
       learner.email,
       programmeNameMap[learner.programmeId] ?? "",
       cohortNameMap[learner.cohortId] ?? "",
-      groupNameMap[learner.groupId] ?? "",
       activeModuleLabel,
       activeLectureLabel,
       date,
       statusLabel(statuses[learner.id] ?? "present"),
     ]);
 
-    const scopeName = groupId
-      ? groupNameMap[groupId]
-      : cohortId
+    const scopeName = cohortId
       ? cohortNameMap[cohortId]
       : programmeId
       ? programmeNameMap[programmeId]
@@ -396,36 +707,129 @@ export default function AttendancePage() {
   };
 
   const exportScope = useMemo(() => {
-    const scopeName = groupId
-      ? groupNameMap[groupId]
-      : cohortId
+    const scopeName = cohortId
       ? cohortNameMap[cohortId]
       : programmeId
       ? programmeNameMap[programmeId]
       : "all-learners";
     return slugify(scopeName ?? "all-learners");
   }, [
-    groupId,
     cohortId,
     programmeId,
-    groupNameMap,
     cohortNameMap,
     programmeNameMap,
   ]);
 
-  const historyRow = useMemo(
-    () => rows.find((row) => row.learner.id === historyLearnerId) ?? null,
-    [rows, historyLearnerId]
-  );
+  useEffect(() => {
+    if (!historyRow) {
+      setDetailKbcHistory([]);
+      setDetailLiveHistory([]);
+      setDetailHistoryLoading(false);
+      setDetailHistoryError(null);
+      return undefined;
+    }
 
-  const historyLectureNames = useMemo(() => {
-    if (!historyRow) return {};
-    const map: Record<string, string> = {};
-    learnerLectureList(historyRow.learner).forEach((lecture) => {
-      map[lecture.sessionDate] = lecture.name;
-    });
-    return map;
-  }, [historyRow, learnerLectureList]);
+    const controller = new AbortController();
+    setDetailKbcHistory([]);
+    setDetailLiveHistory([]);
+    setDetailHistoryLoading(true);
+    setDetailHistoryError(null);
+    const requests: Promise<void>[] = [];
+    if (historyRow.learner.kbcId) {
+      requests.push(fetchBulkAttendanceKbcHistory({
+        learnerIds: [historyRow.learner.kbcId],
+        moduleNames: [],
+        allHistory: true,
+      }, controller.signal).then((records) => {
+        if (!controller.signal.aborted) setDetailKbcHistory(records);
+      }));
+    }
+    if (historyRow.learner.email) {
+      requests.push(fetchBulkAttendanceLiveHistory({
+        learnerProfileIds: historyRow.learner.curriculumId ? [historyRow.learner.curriculumId] : [],
+        learnerEmail: historyRow.learner.email,
+      }, controller.signal).then((records) => {
+        if (!controller.signal.aborted) setDetailLiveHistory(records);
+      }));
+    }
+    if (!requests.length) {
+      setDetailHistoryLoading(false);
+      return undefined;
+    }
+    void Promise.allSettled(requests)
+      .then((results) => {
+        if (controller.signal.aborted) return;
+        const messages = results
+          .filter((result): result is PromiseRejectedResult => result.status === "rejected")
+          .map((result) => result.reason instanceof Error
+            ? result.reason.message
+            : "Unable to load this learner's full attendance history.");
+        if (messages.length) setDetailHistoryError([...new Set(messages)].join(" "));
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setDetailHistoryLoading(false);
+      });
+
+    return () => controller.abort();
+  }, [historyRow?.learner.id, historyRow?.learner.kbcId, historyRow?.learner.curriculumId, historyRow?.learner.email]);
+
+  const detailHistory = useMemo<LearnerHistoryRecord[]>(() => {
+    const kbcRecords: LearnerHistoryRecord[] = detailKbcHistory.map((record) => ({
+      id: `kbc:${record.recordKey ?? `${record.learnerId}:${record.sessionDate}:${record.lectureName}`}`,
+      source: "kbc",
+      recordKey: record.recordKey,
+      sessionDate: record.sessionDate,
+      moduleName: record.moduleName,
+      lectureName: record.lectureName || record.moduleName || "Lecture title not recorded",
+      attendance: record.attendance ?? ("unmarked" as AttendanceStatus),
+    }));
+    const liveRecords: LearnerHistoryRecord[] = detailLiveHistory.map((record) => ({
+      id: `live:${record.occurrenceId}:${record.learnerProfileId}`,
+      source: "live",
+      occurrenceId: record.occurrenceId,
+      learnerProfileId: record.learnerProfileId,
+      sessionDate: record.sessionDate,
+      moduleName: record.moduleTitle || moduleNameMap[record.moduleCatalogueId] || "Module not recorded",
+      lectureName: `${record.moduleTitle || moduleNameMap[record.moduleCatalogueId] || "Live session"}${record.sessionNumber ? ` · Session ${record.sessionNumber}` : ""}`,
+      attendance: record.attendance ?? ("unmarked" as AttendanceStatus),
+    }));
+    return [...kbcRecords, ...liveRecords]
+      .sort((left, right) => right.sessionDate.localeCompare(left.sessionDate)
+        || left.moduleName.localeCompare(right.moduleName)
+        || left.lectureName.localeCompare(right.lectureName));
+  }, [detailKbcHistory, detailLiveHistory, moduleNameMap]);
+
+  const handleDetailStatusToggle = useCallback(async (entry: LearnerHistoryRecord) => {
+    if (entry.attendance !== "present" && entry.attendance !== "absent") return;
+    const attendance = entry.attendance === "present" ? "absent" : "present";
+    try {
+      if (entry.source === "kbc" && entry.recordKey) {
+        await updateBulkAttendanceKbcRecord({ recordKey: entry.recordKey, attendance });
+        setDetailKbcHistory((records) => records.map((record) =>
+          record.recordKey === entry.recordKey ? { ...record, attendance } : record,
+        ));
+      } else if (entry.source === "live" && entry.occurrenceId && entry.learnerProfileId) {
+        await updateBulkAttendanceLiveRecord({
+          occurrenceId: entry.occurrenceId,
+          learnerProfileId: entry.learnerProfileId,
+          attendance,
+        });
+        setDetailLiveHistory((records) => records.map((record) =>
+          record.occurrenceId === entry.occurrenceId
+            && record.learnerProfileId === entry.learnerProfileId
+            ? { ...record, attendance }
+            : record,
+        ));
+      } else {
+        throw new Error("This attendance record cannot be updated.");
+      }
+      setDetailHistoryError(null);
+    } catch (reason) {
+      const message = reason instanceof Error ? reason.message : "Unable to save the attendance update.";
+      setDetailHistoryError(message);
+      throw new Error(message);
+    }
+  }, []);
 
   const handleArchiveConfirm = (learnerIds: string[]) => {
     archiveMany(learnerIds);
@@ -472,18 +876,18 @@ export default function AttendancePage() {
                 <>
                   {archivedTotal}{" "}
                   {archivedTotal === 1 ? "learner" : "learners"}
-                  <span className="mx-2 text-foreground-300">â€¢</span>
+                  <span className="mx-2 text-foreground-300">•</span>
                   Restore anyone to bring them back
                 </>
               ) : (
                 <>
                   {formatDateLabel(date)}
-                  <span className="mx-2 text-foreground-300">â€¢</span>
+                  <span className="mx-2 text-foreground-300">•</span>
                   {activeModuleLabel}
                   {selectedLecture && (
                     <>
-                      <span className="mx-2 text-foreground-300">â€¢</span>
-                      {selectedLecture.name} â€”{" "}
+                      <span className="mx-2 text-foreground-300">•</span>
+                      {selectedLecture.name} —{" "}
                       {formatShortDate(selectedLecture.sessionDate)}
                     </>
                   )}
@@ -494,7 +898,29 @@ export default function AttendancePage() {
               <p className="mt-2 text-xs text-foreground-500">Loading current curriculum data…</p>
             )}
             {dataError && (
-              <p className="mt-2 text-xs text-danger-600">{dataError}</p>
+              <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-danger-600" role="alert">
+                <span>{dataError}</span>
+                <button
+                  type="button"
+                  onClick={retryData}
+                  disabled={dataLoading}
+                  className="font-medium underline underline-offset-2 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  Retry loading data
+                </button>
+              </div>
+            )}
+            {attendanceSourceError && (
+              <p className="mt-2 text-xs text-danger-600">{attendanceSourceError}</p>
+            )}
+            {!selectedLecture && (
+              <p className="mt-2 text-xs text-foreground-500">Choose a lecture to focus the register; saved live-session history is shown below.</p>
+            )}
+            {scopeRosterLoading && (
+              <p className="mt-2 text-xs text-foreground-500">Loading learners for this selection…</p>
+            )}
+            {scopeRosterError && (
+              <p className="mt-2 text-xs text-danger-600">{scopeRosterError}</p>
             )}
           </div>
 
@@ -507,7 +933,10 @@ export default function AttendancePage() {
               <input
                 type="date"
                 value={date}
-                onChange={(event) => setDate(event.target.value)}
+                onChange={(event) => {
+                  setDate(event.target.value);
+                  setLectureId("");
+                }}
                 className="cursor-pointer bg-transparent text-sm text-foreground-950 outline-none"
               />
             </label>
@@ -528,9 +957,9 @@ export default function AttendancePage() {
           </div>
         </div>
 
-        {/* Compact filter toolbar â€” shared by the register and the archive. */}
+        {/* Compact filter toolbar — shared by the register and the archive. */}
         <section className="mt-5">
-          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-5">
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-4">
             <FilterCard
               variant="compact"
               icon="ri-stack-line"
@@ -547,7 +976,8 @@ export default function AttendancePage() {
               onChange={(value) => {
                 setProgrammeId(value);
                 setCohortId("");
-                setGroupId("");
+                setModuleId("");
+                setLectureId("");
               }}
             />
             <FilterCard
@@ -559,17 +989,9 @@ export default function AttendancePage() {
               options={cohortOptions}
               onChange={(value) => {
                 setCohortId(value);
-                setGroupId("");
+                setModuleId("");
+                setLectureId("");
               }}
-            />
-            <FilterCard
-              variant="compact"
-              icon="ri-community-line"
-              label="Group"
-              value={groupId}
-              placeholder="All Groups"
-              options={groupOptions}
-              onChange={setGroupId}
             />
             <FilterCard
               variant="compact"
@@ -590,7 +1012,11 @@ export default function AttendancePage() {
               value={lectureId}
               placeholder="All Lectures"
               options={lectureOptions}
-              onChange={setLectureId}
+              onChange={(value) => {
+                setLectureId(value);
+                const lecture = lectures.find((item) => item.id === value);
+                if (lecture?.sessionDate) setDate(lecture.sessionDate);
+              }}
             />
           </div>
         </section>
@@ -614,27 +1040,28 @@ export default function AttendancePage() {
             {tab === "daily" && (
               <section className="mt-5 space-y-4">
                 <StatCards
-                  total={learners.length}
+                  total={activeLearners.length}
                   present={loading ? 0 : presentCount}
                   absent={loading ? 0 : absentCount}
                   unmarked={loading ? 0 : unmarkedCount}
-                  rate={loading ? 0 : attendanceRate}
+                  selectedStatus={statusFilter}
                   onLearnersClick={() => setShowLearnerDirectory(true)}
+                  onStatusClick={handleStatusCardClick}
                 />
 
                 <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
                   <SearchBar
                     value={query}
-                    resultCount={activeLearners.length}
+                    resultCount={visibleRows.length}
                     onChange={setQuery}
                   />
                   <div className="flex flex-wrap items-center gap-2">
                     <span className="mr-1 text-sm text-foreground-500">
                       {loading
-                        ? "Loading learnersâ€¦"
+                        ? "Loading learners…"
                         : selectedIds.length > 0
                         ? `${selectedIds.length} selected`
-                        : `${activeLearners.length} learners`}
+                        : `${visibleRows.length} learners`}
                     </span>
                     <button
                       type="button"
@@ -714,7 +1141,7 @@ export default function AttendancePage() {
                     <button
                       type="button"
                       onClick={handleExport}
-                      disabled={loading || activeLearners.length === 0}
+                      disabled={loading || visibleRows.length === 0}
                       className="flex cursor-pointer items-center gap-1.5 whitespace-nowrap rounded-md bg-primary-500 px-3 py-2 text-sm font-medium text-background-50 transition-colors hover:bg-primary-600 disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       <i className="ri-download-2-line" />
@@ -724,15 +1151,13 @@ export default function AttendancePage() {
                 </div>
 
                 <AttendanceTable
-                  rows={rows}
-                  statuses={statuses}
+                  rows={visibleRows}
                   loading={loading}
                   selectedIds={selectedIds}
                   lectureInfo={lectureInfo}
-                  onSetStatus={handleSetStatus}
                   onToggleSelect={handleToggleSelect}
                   onToggleSelectAll={handleToggleSelectAll}
-                  onOpenHistory={(learner) => setHistoryLearnerId(learner.id)}
+                  onOpenHistory={setHistoryRow}
                 />
               </section>
             )}
@@ -746,7 +1171,7 @@ export default function AttendancePage() {
                     </h3>
                     <p className="mt-0.5 text-xs text-foreground-500">
                       {weekLabel}
-                      <span className="mx-2 text-foreground-300">â€¢</span>
+                      <span className="mx-2 text-foreground-300">•</span>
                       Tap any day to update it
                     </p>
                   </div>
@@ -831,26 +1256,19 @@ export default function AttendancePage() {
         <LearnerHistoryModal
           learner={historyRow.learner}
           index={historyRow.index}
-          groupName={historyRow.groupName}
-          cohortName={historyRow.cohortName}
           moduleLabel={activeModuleLabel}
-          anchorDate={date}
-          lectureNameByDate={historyLectureNames}
-          getStatus={profileGetStatus}
-          onToggleStatus={(day, status) =>
-            setProfileStatusForDate(historyRow.learner.id, day, status)
-          }
-          dirty={profileDirty}
-          pendingCount={profilePendingCount}
-          onSave={saveProfile}
-          onUndo={undoProfile}
-          onClose={() => setHistoryLearnerId(null)}
+          cohortName={historyRow.cohortName}
+          history={detailHistory}
+          loading={detailHistoryLoading}
+          error={detailHistoryError}
+          onToggleAttendance={handleDetailStatusToggle}
+          onClose={() => setHistoryRow(null)}
         />
       )}
 
       {showLearnerDirectory && (
         <LearnerDirectoryModal
-          learners={learners}
+          learners={activeLearners}
           loading={dataLoading}
           onClose={() => setShowLearnerDirectory(false)}
         />

@@ -178,7 +178,7 @@ export default function ArchiveDialog({
                     </span>
                     <span className="block truncate text-xs text-foreground-500">
                       {groupName}
-                      <span className="mx-1 text-foreground-300">â€¢</span>
+                      <span className="mx-1 text-foreground-300">•</span>
                       {cohortName}
                     </span>
                   </span>

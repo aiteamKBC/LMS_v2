@@ -4,7 +4,6 @@ import { avatarClass, formatShortDate, getInitials } from "@/utils/bulkAttendanc
 export interface AttendanceRow {
   learner: Learner;
   index: number;
-  groupName: string;
   cohortName: string;
 }
 
@@ -17,55 +16,25 @@ export interface RecentLecture {
 
 export interface LectureInfo {
   name: string;
+  moduleName: string;
   date: string | null;
   recent: RecentLecture[];
 }
 
 interface AttendanceTableProps {
   rows: AttendanceRow[];
-  statuses: Record<string, AttendanceStatus>;
   loading: boolean;
   selectedIds: string[];
   lectureInfo: Record<string, LectureInfo>;
-  onSetStatus: (learnerId: string, status: AttendanceStatus) => void;
   onToggleSelect: (learnerId: string) => void;
   onToggleSelectAll: () => void;
-  onOpenHistory: (learner: Learner) => void;
+  onOpenHistory: (row: AttendanceRow) => void;
 }
 
 function formatBadgeDate(iso: string): string {
   const date = new Date(`${iso}T00:00:00`);
   if (Number.isNaN(date.getTime())) return "";
   return date.toLocaleDateString("en-US", { month: "short", day: "numeric" });
-}
-
-function statusPill(status: AttendanceStatus): {
-  className: string;
-  icon: string;
-  label: string;
-} {
-  if (status === "present") {
-    return {
-      className:
-        "border-green-200 bg-green-100 text-green-800 hover:bg-green-200",
-      icon: "ri-check-line",
-      label: "Present",
-    };
-  }
-  if (status === "absent") {
-    return {
-      className:
-        "border-red-200 bg-red-100 text-red-800 hover:bg-red-200",
-      icon: "ri-close-line",
-      label: "Absent",
-    };
-  }
-  return {
-    className:
-      "border-background-300 bg-background-100 text-foreground-500 hover:bg-background-200",
-    icon: "ri-subtract-line",
-    label: "â€”",
-  };
 }
 
 function SkeletonRows() {
@@ -91,11 +60,9 @@ function SkeletonRows() {
 
 export default function AttendanceTable({
   rows,
-  statuses,
   loading,
   selectedIds,
   lectureInfo,
-  onSetStatus,
   onToggleSelect,
   onToggleSelectAll,
   onOpenHistory,
@@ -128,14 +95,14 @@ export default function AttendanceTable({
         <span className="w-56 whitespace-nowrap font-label text-xs uppercase tracking-wide text-foreground-500">
           Last 4 lectures
         </span>
-        <span className="w-28 font-label text-xs uppercase tracking-wide text-foreground-500">
-          Group
+        <span className="w-36 font-label text-xs uppercase tracking-wide text-foreground-500">
+          Module
         </span>
         <span className="w-24 font-label text-xs uppercase tracking-wide text-foreground-500">
           Cohort
         </span>
         <span className="w-40 text-right font-label text-xs uppercase tracking-wide text-foreground-500">
-          Attendance
+          Details
         </span>
       </div>
 
@@ -154,12 +121,10 @@ export default function AttendanceTable({
           </p>
         </div>
       ) : (
-        rows.map(({ learner, index, groupName, cohortName }) => {
-          const status = statuses[learner.id] ?? "present";
+        rows.map(({ learner, index, cohortName }) => {
           const selected = selectedIds.includes(learner.id);
           const info = lectureInfo[learner.id];
           const recent = info?.recent ?? [];
-          const pill = statusPill(status);
           return (
             <div
               key={learner.id}
@@ -191,7 +156,7 @@ export default function AttendanceTable({
                 <div className="min-w-0">
                   <button
                     type="button"
-                    onClick={() => onOpenHistory(learner)}
+                    onClick={() => onOpenHistory({ learner, index, cohortName })}
                     className="flex cursor-pointer items-center gap-1.5 truncate text-left text-sm font-medium text-foreground-950 transition-colors hover:text-primary-700"
                   >
                     <span className="truncate">{learner.name}</span>
@@ -209,7 +174,7 @@ export default function AttendanceTable({
                 </span>
                 <span className="min-w-0">
                   <span className="block truncate text-sm text-foreground-800">
-                    {info?.name ?? "â€”"}
+                    {info?.name ?? "—"}
                   </span>
                   {info?.date && (
                     <span className="hidden text-xs text-foreground-500 md:block">
@@ -225,7 +190,7 @@ export default function AttendanceTable({
                 </span>
                 <span className="flex items-start gap-1.5">
                   {recent.length === 0 ? (
-                    <span className="text-xs text-foreground-400">â€”</span>
+                    <span className="text-xs text-foreground-400">—</span>
                   ) : (
                     recent.map((lecture) => {
                       const isPresent = lecture.status === "present";
@@ -251,9 +216,9 @@ export default function AttendanceTable({
                           className="flex w-10 flex-col items-center gap-1"
                         >
                           <span
-                            title={`${lecture.name} â€¢ ${formatShortDate(
+                            title={`${lecture.name} • ${formatShortDate(
                               lecture.sessionDate
-                            )} â€¢ ${badgeLabel}`}
+                            )} • ${badgeLabel}`}
                             className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-xs ${badgeClass}`}
                           >
                             <i className={badgeIcon} />
@@ -268,12 +233,12 @@ export default function AttendanceTable({
                 </span>
               </div>
 
-              <div className="flex items-center gap-2 md:w-28">
-                <span className="rounded-full bg-secondary-100 px-2.5 py-1 font-label text-xs text-secondary-900 md:hidden">
-                  {groupName}
+              <div className="flex min-w-0 items-center gap-2 md:w-36">
+                <span className="font-label text-xs uppercase tracking-wide text-foreground-500 md:hidden">
+                  Module
                 </span>
-                <span className="hidden truncate text-sm text-foreground-700 md:block">
-                  {groupName}
+                <span className="truncate text-sm text-foreground-700">
+                  {info?.moduleName || "—"}
                 </span>
               </div>
 
@@ -289,18 +254,12 @@ export default function AttendanceTable({
               <div className="md:w-40 md:text-right">
                 <button
                   type="button"
-                  onClick={() =>
-                    onSetStatus(
-                      learner.id,
-                      status === "present" ? "absent" : "present"
-                    )
-                  }
-                  title="Click to switch status"
-                  aria-label={`${learner.name} is ${status}, click to change`}
-                  className={`inline-flex cursor-pointer items-center gap-1.5 whitespace-nowrap rounded-full border px-3 py-1.5 text-xs font-medium transition-colors ${pill.className}`}
+                  onClick={() => onOpenHistory({ learner, index, cohortName })}
+                  aria-label={`View details for ${learner.name}`}
+                  className="inline-flex cursor-pointer items-center gap-1.5 whitespace-nowrap rounded-full border border-primary-200 bg-primary-50 px-3 py-1.5 text-xs font-medium text-primary-700 transition-colors hover:border-primary-300 hover:bg-primary-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-400"
                 >
-                  <i className={pill.icon} />
-                  {pill.label}
+                  <i className="ri-eye-line" />
+                  View details
                 </button>
               </div>
             </div>

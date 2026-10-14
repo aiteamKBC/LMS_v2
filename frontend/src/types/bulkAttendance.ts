@@ -11,6 +11,7 @@ export interface Cohort {
   name: string;
   programmeId: string;
   startDate: string;
+  endDate?: string;
 }
 
 export interface Group {
@@ -21,19 +22,27 @@ export interface Group {
 
 export interface Module {
   id: string;
+  rosterId?: string;
   name: string;
   programmeId: string;
+  cohortId?: string;
+  groupId?: string;
 }
 
 export interface Lecture {
   id: string;
   name: string;
   moduleId: string;
+  moduleCatalogueId?: string;
+  moduleName?: string;
+  moduleAliases?: string[];
   sessionDate: string;
 }
 
 export interface Learner {
   id: string;
+  kbcId?: string;
+  curriculumId?: string;
   name: string;
   email: string;
   programmeId: string;

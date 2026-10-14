@@ -481,6 +481,13 @@ export function CoachCaseloadContent({ embedded = false, embeddedLearners, dashb
 
   const handleOpenProfile = useCallback((learner: Learner) => openProfile(learner), [openProfile]);
 
+  // Opens the same admin learner-workspace view the Enrolment Users directory
+  // links to, rather than the coach case-file route `openProfile` uses.
+  const openLearnerPage = useCallback((learner: Learner) => {
+    if (!learner.learnerType) return;
+    navigate(`/workspace/learner/${learner.learnerType}/${learner.id}`);
+  }, [navigate]);
+
   const runExport = useCallback((rows: Learner[]) => {
     if (rows.length === 0) return;
     setIsExportingPdf(true);
@@ -650,6 +657,7 @@ export function CoachCaseloadContent({ embedded = false, embeddedLearners, dashb
               selectionMode={selectionMode}
               onToggleSelect={handleToggleSelect}
               onOpenProfile={handleOpenProfile}
+              onOpenLearnerPage={openLearnerPage}
               today={today}
             />
           )}

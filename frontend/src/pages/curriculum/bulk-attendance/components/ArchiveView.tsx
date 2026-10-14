@@ -40,7 +40,7 @@ export default function ArchiveView({
               {rows.length} {rows.length === 1 ? "learner" : "learners"}
             </span>
             <span className="hidden text-foreground-500 sm:inline">
-              â€” restore anyone to bring them back, or archive more below.
+              — restore anyone to bring them back, or archive more below.
             </span>
           </div>
           <div className="flex flex-wrap items-center gap-2">
