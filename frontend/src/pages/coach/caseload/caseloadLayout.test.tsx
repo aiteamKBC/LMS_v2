@@ -12,7 +12,7 @@ const counts: CaseloadCounts = {
 };
 
 const learner = {
-  id: '42', name: 'Emma Carter', initials: 'EC', employer: '--', cohortId: 'c1', cohortName: 'Business Admin L3', programmeName: 'Customer Service Practitioner L2', group: 'G1',
+  id: '42', name: 'Emma Carter', initials: 'EC', learnerType: 'commercial', employer: '--', cohortId: 'c1', cohortName: 'Business Admin L3', programmeName: 'Customer Service Practitioner L2', group: 'G1',
   status: 'on-track', enrollmentStatus: 'active', riskFlags: [], otjhStatus: 'on-track', overallProgress: 78, overallProgressAvailable: true,
   attendanceRate: 80, attendanceRateAvailable: true, attendanceSessions: 10, attendancePresent: 9, attendanceAbsent: 1, componentsCompleted: 8, componentsPlanned: 10,
   otjhCompleted: 70, otjhTarget: 90, ksbProgress: 65, ksbProgressAvailable: true, ksbCompleted: 13, ksbTarget: 20,
