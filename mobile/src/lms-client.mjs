@@ -10,6 +10,10 @@ const componentId = value => {
   return encodeURIComponent(value);
 };
 const validIdentity = value => (typeof value === 'number' && Number.isSafeInteger(value) && value > 0) || (typeof value === 'string' && /^[1-9][0-9]*$/.test(value));
+const coachProfileId = value => {
+  if(!validIdentity(value)||String(value).length>19)throw new LmsServiceError('Choose an assigned learner with a valid LMS profile.',400,'INVALID_PROFILE');
+  return String(value);
+};
 function checkedMobileSession(result, expectedAccountId) {
   if (result?.authenticated !== true || !result.user || !validIdentity(result.user.id) || !validIdentity(result.user.accountId)) {
     throw new LmsServiceError('The LMS did not confirm a valid learner session.', 502, 'INVALID_SESSION_RESPONSE');
@@ -87,6 +91,12 @@ export function createLmsClient({fetchImpl = globalThis.fetch, timeoutMs = 30000
     catalogue:() => mobile('catalogue/'),
     progress:moduleId => mobile('progress/'+(moduleId===undefined?'':'?moduleId='+componentId(moduleId))),
     hours:moduleId => mobile('hours/'+(moduleId===undefined?'':'?moduleId='+componentId(moduleId))),
+    coachLearners:before => mobile('coach/learners/'+(before===undefined?'':'?before='+coachProfileId(before))),
+    coachLearner:id => mobile('coach/learners/'+coachProfileId(id)+'/'),
+    coachCatalogue:id => mobile('coach/learners/'+coachProfileId(id)+'/catalogue/'),
+    coachProgress:(id,moduleId) => mobile('coach/learners/'+coachProfileId(id)+'/progress/?moduleId='+componentId(moduleId)),
+    coachQuiz:(id,activityId) => mobile('coach/learners/'+coachProfileId(id)+'/quizzes/'+componentId(activityId)+'/'),
+    coachTranscript:(id,activityId) => mobile('coach/learners/'+coachProfileId(id)+'/components/'+componentId(activityId)+'/transcript/'),
     points:() => mobile('points/'),
     rewardsSummary:() => mobile('rewards/summary/'),
     recordObservations:body => mobile('rewards/observations/','POST',ownPayload(body)),
