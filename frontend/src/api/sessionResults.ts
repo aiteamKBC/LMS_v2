@@ -153,11 +153,13 @@ export async function setRecordingVisibility(seriesId: string, artifactId: strin
 export type LibraryRecordingStatus = 'available' | 'missingAzureFile' | 'verificationRequired';
 /** One saved recording on the Recordings page. `state` is the saved playback copy, not Teams. */
 export interface LibraryRecording {
-  id: string; seriesId: string; sessionNumber: number | null;
+  id: string; seriesId: string; occurrenceId?: string | null; sessionNumber: number | null;
   startsAt: string | null; recordedAt: string | null; endsAt: string | null;
   state: 'pending' | 'ready' | 'failed'; status: LibraryRecordingStatus;
   /** More stored copies of this same Teams recording (Graph listed it under another id). */
   duplicateCount: number; hiddenFromLearners: boolean;
+  /** Saved file exists, but its Teams run did not confirm the assigned lecture date. */
+  placementReview?: boolean;
 }
 /** A past session with no recording, judged only from persisted sync results. */
 export interface RecordingsAttention {
@@ -175,10 +177,40 @@ export interface RecordingsDelivery {
   moduleId: string; title: string; programme: string; programmeActive: boolean; archived: boolean;
   cohort: string; group: string; weeks: RecordingsWeek[]; recordingCount: number; attention: RecordingsAttention[];
 }
+/** A persisted LMS Teams occurrence, whether or not a week component is linked. */
+export interface RecordingsSession {
+  occurrenceId: string; moduleId: string; title: string; weekId: string | null;
+  moduleTitle: string; programme: string; programmeActive: boolean; cohort: string; group: string;
+  weekNumber: number | null; weekTitle: string; sessionNumber: number | null;
+  startsAt: string | null; endsAt: string | null;
+  source?: 'occurrence' | 'authored';
+  seriesId?: string; archived?: boolean; status?: string; joinUrl?: string;
+  attentionStatus?: 'missingSync' | 'notRecorded' | 'verificationRequired' | null;
+  attentionReason?: string;
+}
+export interface RecordingsModule {
+  moduleId: string; title: string; programme: string; cohort: string; group: string;
+  archived: boolean; programmeActive: boolean;
+}
 /** `attentionChecked` false: the session checks could not be read; the recordings are still complete. */
-export interface RecordingsLibrary { deliveries: RecordingsDelivery[]; recordingCount: number; attentionChecked: boolean }
+export interface RecordingsLibrary {
+  deliveries: RecordingsDelivery[]; recordingCount: number; attentionChecked: boolean;
+  sessions?: RecordingsSession[]; modules?: RecordingsModule[]; calendarAvailable?: boolean;
+}
 export const loadRecordingsLibrary = (signal?: AbortSignal) =>
   read<RecordingsLibrary>('/curriculum_api/curriculum/session-recordings/', signal);
 /** Staff only: the saved copy, signed to save as a file rather than play. */
 export const recordingDownloadUrl = (seriesId: string, artifactId: string) =>
   `${adminBase}/${encodeURIComponent(seriesId)}/artifacts/${encodeURIComponent(artifactId)}/?download=1`;
+
+/** Resolve one staff-only Azure URL while the browser session is still valid. */
+export async function resolveRecordingUrl(seriesId: string, artifactId: string, download = false, signal?: AbortSignal): Promise<string> {
+  const path = download ? recordingDownloadUrl(seriesId, artifactId) : sessionFileUrl(seriesId, { id: artifactId, type: 'recording', state: 'ready' });
+  const response = await learningFetch(`${path}${path.includes('?') ? '&' : '?'}resolve=1`, {
+    credentials: 'include', cache: 'no-store', signal,
+  });
+  if (response.status === 401) throw new Error('Your session has expired. Sign in again to play or download this recording.');
+  const result = await response.json() as { url?: string; error?: string };
+  if (!response.ok || !result.url) throw new Error(result.error || 'The saved recording could not be opened.');
+  return result.url;
+}

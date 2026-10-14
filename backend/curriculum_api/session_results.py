@@ -712,10 +712,21 @@ def stored_content(request, series_id, artifact_id, *, learner_view=False):
             # A two-hour lesson must remain seekable beyond the default 15-minute
             # document URL lifetime. This URL still grants read access to one blob.
             options = {'ttl_minutes': 240} if row['artifact_type'] == 'recording' else {}
+            if row['artifact_type'] == 'recording':
+                # Some older blobs carry generic/attachment headers. Override
+                # them in the signed response so browser video playback works.
+                options['content_type'] = 'video/mp4'
+                options['content_disposition'] = 'inline'
             # Staff asking to keep a copy get the file saved, not played.
             if row['artifact_type'] == 'recording' and not learner_view and request.GET.get('download') == '1':
                 options['content_disposition'] = f'attachment; filename="{recording_download_name(row)}"'
-            response = HttpResponseRedirect(get_read_sas(row['container'], row['blob_name'], **options))
+            signed_url = get_read_sas(row['container'], row['blob_name'], **options)
+            if row['artifact_type'] == 'recording' and not learner_view and request.GET.get('resolve') == '1':
+                # The staff calendar fetches this while its cookie is present.
+                # It can report an expired login instead of navigating to a JSON 401.
+                response = JsonResponse({'url': signed_url})
+            else:
+                response = HttpResponseRedirect(signed_url)
         except Exception as error:
             log.warning('Session file signing failed: %s', type(error).__name__)
             return JsonResponse({'error': 'File access is temporarily unavailable.'}, status=503)

@@ -37,18 +37,25 @@ class RuntimeTests(unittest.TestCase):
 
     def test_import_does_not_start_scheduler_or_import_django(self):
         self.assertIsNone(self.runtime._automatic_thread)
+        self.assertIsNone(self.runtime._review_thread)
         self.thread.assert_not_called()
         self.command.assert_not_called()
 
     def test_serving_process_starts_once_and_restarts_a_dead_thread(self):
         self.assertTrue(self.runtime.start_automatic_sync())
         self.assertTrue(self.runtime.start_automatic_sync())
-        self.thread.assert_called_once()
-        self.thread.return_value.start.assert_called_once()
+        self.assertEqual(self.thread.call_count, 2)
+        self.assertEqual(self.thread.return_value.start.call_count, 2)
+        self.assertEqual({call.kwargs['name'] for call in self.thread.call_args_list},
+                         {'session-results-auto', 'session-recording-review'})
         self.assertTrue(self.thread.call_args.kwargs['daemon'])
         self.thread.return_value.is_alive.return_value = False
+        fresh = [Mock(), Mock()]
+        for item in fresh:
+            item.is_alive.return_value = True
+        self.thread.side_effect = fresh
         self.assertTrue(self.runtime.start_automatic_sync())
-        self.assertEqual(self.thread.call_count, 2)
+        self.assertEqual(self.thread.call_count, 4)
         self.command.assert_not_called()
 
     def test_external_scheduler_opt_out_and_test_environments_do_not_start(self):
@@ -80,6 +87,21 @@ class RuntimeTests(unittest.TestCase):
         self.assertTrue(all(call.kwargs['scheduled'] for call in self.command.call_args_list))
         self.runtime._stop.wait.assert_called_with(60)
 
+    def test_reviewer_runs_independently_every_five_minutes(self):
+        self.runtime._stop = Mock()
+        self.runtime._stop.is_set.side_effect = [False, False, False, True]
+        self.runtime.run_reviewer = Mock()
+        self.runtime.run_worker = Mock()
+        self.runtime._review_loop()
+        self.assertEqual(self.runtime.run_reviewer.call_count, 3)
+        self.runtime.run_worker.assert_not_called()
+        self.runtime._stop.wait.assert_called_with(300)
+
+    def test_reviewer_command_uses_the_separate_queue_check(self):
+        self.runtime.run_reviewer()
+        self.assertEqual(self.command.call_args.args, ('review_session_recordings',))
+        self.connections.close_all.assert_called_once()
+
     def test_periodic_loop_recovers_from_worker_initialization_failure(self):
         self.runtime._stop = Mock()
         self.runtime._stop.is_set.side_effect = [False, False, True]
@@ -87,6 +109,18 @@ class RuntimeTests(unittest.TestCase):
         with self.assertLogs(self.runtime.log, level='ERROR') as logs:
             self.runtime._automatic_loop()
         self.assertEqual(self.runtime.run_worker.call_count, 2)
+        self.assertNotIn('private detail', '\n'.join(logs.output))
+
+    def test_reviewer_failure_does_not_stop_the_primary_worker(self):
+        self.runtime._stop = Mock()
+        self.runtime._stop.is_set.side_effect = [False, True]
+        self.runtime.run_reviewer = Mock(side_effect=RuntimeError('private detail'))
+        self.runtime.run_worker = Mock()
+        with self.assertLogs(self.runtime.log, level='ERROR') as logs:
+            self.runtime._review_loop()
+        self.runtime._stop.is_set.side_effect = [False, True]
+        self.runtime._automatic_loop()
+        self.runtime.run_worker.assert_called_once_with(scheduled=True)
         self.assertNotIn('private detail', '\n'.join(logs.output))
 
     def test_manual_sync_dispatch_is_immediate_targeted_and_coalesced(self):
@@ -129,7 +163,7 @@ class RuntimeTests(unittest.TestCase):
         environ, response = {}, Mock()
         self.assertEqual(self.runtime.SessionSyncWSGI(app)(environ, response), [b'saved-response'])
         app.assert_called_once_with(environ, response)
-        self.thread.return_value.start.assert_called_once()
+        self.assertEqual(self.thread.return_value.start.call_count, 2)
         self.command.assert_not_called()
 
     def test_asgi_wrapper_preserves_response_and_does_not_bootstrap_websockets(self):
@@ -146,7 +180,7 @@ class RuntimeTests(unittest.TestCase):
             if kind == 'websocket':
                 self.thread.assert_not_called()
         self.assertEqual(seen, ['websocket', 'http'])
-        self.thread.return_value.start.assert_called_once()
+        self.assertEqual(self.thread.return_value.start.call_count, 2)
 
 
 class OccurrenceBindingTests(unittest.TestCase):

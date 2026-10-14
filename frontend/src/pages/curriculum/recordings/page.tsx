@@ -1,171 +1,51 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { AppIcon } from '@/components/feature/AppIcon';
-import { SessionRecordingPlayer } from '@/components/feature/SessionRecordingPlayer';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { loadRecordingsLibrary, type RecordingsLibrary } from '@/api/sessionResults';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { curriculumNavItems } from '@/mocks/navigation';
-import { formatSystemTimestamp } from '@/lib/format';
-import {
-  loadRecordingsLibrary, recordingDownloadUrl,
-  type LibraryRecording, type LibraryRecordingStatus, type RecordingsAttention, type RecordingsDelivery,
-  type RecordingsLibrary, type RecordingsWeek, type SessionFile,
-} from '@/api/sessionResults';
-import { EntityFilterBar, EntityHero, InlineError, WorkspacePanel } from '../shared/entities/ui';
-import { matchesSearch } from '../shared/entities/model';
+import DayGrid from './components/DayGrid';
+import LectureDetailsPanel from './components/LectureDetailsPanel';
+import MiniCalendar from './components/MiniCalendar';
+import SearchAndFilters from './components/SearchAndFilters';
+import SummaryChips from './components/SummaryChips';
+import RecordingDownloadButton from './components/RecordingDownloadButton';
+import ModuleDirectory from './components/ModuleDirectory';
+import { buildCalendarLectures } from './model';
+import type { Lecture, RecordingFilter } from './types';
+import { addDays, CALENDAR_TIME_ZONES, formatFullDate, lectureNeedsAttention, lectureReadyCount, parseIsoDate, TIME_ZONE_LABEL, todayIso } from './utils';
 
-/**
- * Every saved live-session recording for the person who looks after them,
- * narrowed Programme -> Cohort -> Group -> Module -> Week. Each level shows
- * every recording under what is chosen so far. Read only: playing and
- * downloading go through the staff file route; nothing here syncs, contacts
- * Teams or storage, or touches a meeting. Every status comes from what the
- * last synchronization stored.
- */
-
-type StatusFilter = '' | LibraryRecordingStatus | RecordingsAttention['status'] | 'archived';
-
-const STATUS_LABELS: Record<Exclude<StatusFilter, ''>, string> = {
-  available: 'Available',
-  missingAzureFile: 'Missing Azure file',
-  verificationRequired: 'Verification required',
-  missingSync: 'Missing sync',
-  notRecorded: 'Not recorded',
-  archived: 'Archived',
-};
-const STATUS_ORDER = Object.keys(STATUS_LABELS) as Exclude<StatusFilter, ''>[];
-const STATUS_TONES: Record<Exclude<StatusFilter, ''>, string> = {
-  available: 'border-emerald-200 bg-emerald-50 text-emerald-800',
-  missingAzureFile: 'border-rose-200 bg-rose-50 text-rose-800',
-  verificationRequired: 'border-amber-200 bg-amber-50 text-amber-900',
-  missingSync: 'border-amber-200 bg-amber-50 text-amber-900',
-  notRecorded: 'border-slate-200 bg-slate-100 text-slate-700',
-  archived: 'border-slate-300 bg-slate-100 text-slate-700',
-};
-
-const plural = (count: number, word: string) => `${count} ${word}${count === 1 ? '' : 's'}`;
-const recordingsIn = (weeks: RecordingsWeek[]) => weeks.reduce((sum, week) => sum + week.recordings.length, 0);
-const recordingsOf = (deliveries: RecordingsDelivery[]) => deliveries.flatMap(item => item.weeks.flatMap(week => week.recordings.map(recording => ({ item, recording }))));
-// An archived module's recordings are counted as archived, never with running modules.
-const recordingFilterStatus = (item: RecordingsDelivery, recording: LibraryRecording): Exclude<StatusFilter, ''> => (item.archived ? 'archived' : recording.status);
-
-// An empty name is still a real bucket; the menu needs a non-empty value for it.
-const NONE = '\u0000none';
-const matches = (chosen: string, value: string) => !chosen || chosen === (value || NONE);
-
-/** Distinct values of one level, in the order the server filed them, with how many recordings sit under each. */
-function levelOptions(deliveries: RecordingsDelivery[], pick: (delivery: RecordingsDelivery) => string, all: string, missing: string) {
-  const counts = new Map<string, number>();
-  deliveries.forEach(delivery => counts.set(pick(delivery), (counts.get(pick(delivery)) ?? 0) + delivery.recordingCount));
-  return [{ value: '', label: all }, ...[...counts].map(([value, count]) => ({ value: value || NONE, label: `${value || missing} (${count})` }))];
+const TIME_ZONE_STORAGE_KEY = 'lms-recordings-calendar-zone';
+function savedTimeZone() {
+  try {
+    const saved = window.localStorage.getItem(TIME_ZONE_STORAGE_KEY);
+    return saved && CALENDAR_TIME_ZONES.includes(saved) ? saved : TIME_ZONE_LABEL;
+  } catch {
+    return TIME_ZONE_LABEL;
+  }
 }
 
-function weekLabel(week: Pick<RecordingsWeek, 'weekId' | 'weekNumber' | 'title'>) {
-  if (!week.weekId) return 'Not matched to a week';
-  const number = week.weekNumber ? `Week ${week.weekNumber}` : 'Week';
-  return week.title ? `${number} · ${week.title}` : number;
-}
-
-const attentionWeekLabel = (session: RecordingsAttention) => weekLabel({ weekId: session.weekId, weekNumber: session.weekNumber, title: session.weekTitle });
-
-function sessionLabel(session: { sessionNumber: number | null; startsAt: string | null }) {
-  const when = session.startsAt
-    ? formatSystemTimestamp(session.startsAt, { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })
-    : 'Session date not recorded';
-  return session.sessionNumber ? `Session ${session.sessionNumber} · ${when}` : when;
-}
-
-function stateMessage(recording: LibraryRecording) {
-  if (recording.status === 'missingAzureFile') return 'Saving a copy of this recording to storage failed, so there is no file to play or download. Request synchronization from the module\'s Sessions tab to retry.';
-  return 'Teams has this recording, but no saved copy is confirmed yet, so it cannot be played or downloaded. A saved copy may still be being made; if this does not change, request synchronization from the module\'s Sessions tab.';
-}
-
-function StatusChip({ status }: { status: Exclude<StatusFilter, ''> }) {
-  return <span className={`inline-flex h-6 shrink-0 items-center rounded-full border px-2 text-[11px] font-bold ${STATUS_TONES[status]}`}>{STATUS_LABELS[status]}</span>;
-}
-
-function RecordingRow({ recording, playing, onTogglePlay }: {
-  recording: LibraryRecording; playing: boolean; onTogglePlay: () => void;
-}) {
-  const ready = recording.state === 'ready';
-  const file: SessionFile = { id: recording.id, type: 'recording', state: recording.state, createdAt: recording.recordedAt ?? undefined };
-  return (
-    <li className="rounded-xl border border-slate-200 bg-white p-3">
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-        <div className="min-w-0 space-y-1">
-          <div className="flex flex-wrap items-center gap-2">
-            <p className="text-[13px] font-semibold text-slate-900">{sessionLabel(recording)}</p>
-            <StatusChip status={recording.status} />
-          </div>
-          {recording.hiddenFromLearners && <p className="text-[12px] text-amber-700">Hidden from learners</p>}
-          {recording.duplicateCount > 0 && (
-            <p className="text-[12px] text-slate-500">
-              Teams listed this recording more than once; {plural(recording.duplicateCount, 'identical copy')} {recording.duplicateCount === 1 ? 'is' : 'are'} also stored and not shown.
-            </p>
-          )}
-        </div>
-        {ready && (
-          <div className="flex shrink-0 gap-2">
-            <button type="button" onClick={onTogglePlay} aria-expanded={playing}
-              className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-primary-200 bg-white px-3 text-[12px] font-bold text-primary-800 hover:bg-primary-50">
-              <AppIcon className={playing ? 'ri-close-line' : 'ri-play-line'} />
-              {playing ? 'Close player' : 'Play'}
-            </button>
-            <a href={recordingDownloadUrl(recording.seriesId, recording.id)}
-              className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-primary-600 px-3 text-[12px] font-bold text-white hover:bg-primary-700">
-              <AppIcon className="ri-download-line" />
-              Download
-            </a>
-          </div>
-        )}
-      </div>
-      {!ready && <p role="status" className="mt-2 rounded-lg bg-amber-50 p-2 text-[12px] text-amber-900">{stateMessage(recording)}</p>}
-      {ready && playing && (
-        <div className="mt-3">
-          <SessionRecordingPlayer seriesId={recording.seriesId} file={file} transcripts={[]} label={sessionLabel(recording)} />
-        </div>
-      )}
-    </li>
-  );
-}
-
-function AttentionList({ sessions }: { sessions: RecordingsAttention[] }) {
-  return (
-    <section aria-label="Sessions to check" className="mt-3 rounded-xl border border-amber-200 bg-amber-50/50 p-3">
-      <p className="text-[12px] font-bold text-amber-950">{plural(sessions.length, 'past session')} without a recording to check</p>
-      <ul className="mt-2 space-y-2">
-        {sessions.map(session => (
-          <li key={session.occurrenceId} className="rounded-lg border border-amber-100 bg-white p-2.5">
-            <div className="flex flex-wrap items-center gap-2">
-              <p className="text-[12px] font-semibold text-slate-900">{attentionWeekLabel(session)} · {sessionLabel(session)}</p>
-              <StatusChip status={session.status} />
-            </div>
-            <p className="mt-1 text-[12px] text-slate-600">{session.reason}</p>
-          </li>
-        ))}
-      </ul>
-    </section>
-  );
-}
-
+/** Read-only calendar: every session and status comes from persisted LMS results. */
 export default function CurriculumRecordingsPage() {
   const [library, setLibrary] = useState<RecordingsLibrary | null>(null);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
-  const [search, setSearch] = useState('');
-  const [includeInactive, setIncludeInactive] = useState(false);
-  const [programme, setProgramme] = useState('');
-  const [cohort, setCohort] = useState('');
-  const [group, setGroup] = useState('');
-  const [moduleTitle, setModuleTitle] = useState('');
-  const [week, setWeek] = useState('');
-  const [status, setStatus] = useState<StatusFilter>('');
-  const [openWeeks, setOpenWeeks] = useState<Set<string>>(new Set());
-  const [playing, setPlaying] = useState('');
+  const [timeZone, setTimeZone] = useState(savedTimeZone);
+  const [selectedDate, setSelectedDate] = useState(() => todayIso(savedTimeZone()));
+  const [view, setView] = useState(() => { const { year, month } = parseIsoDate(todayIso(savedTimeZone())); return { year, month }; });
+  const lastLoad = useRef(0);
+  const [selectedLectureId, setSelectedLectureId] = useState<string | null>(null);
+  const [playingId, setPlayingId] = useState<string | null>(null);
+  const [query, setQuery] = useState('');
+  const [programme, setProgramme] = useState('all');
+  const [statusFilter, setStatusFilter] = useState<RecordingFilter>('all');
+  const [includeInactive, setIncludeInactive] = useState(true);
+  const [mobileCalendarOpen, setMobileCalendarOpen] = useState(false);
+  const [viewMode, setViewMode] = useState<'calendar' | 'modules'>('calendar');
 
   const load = useCallback((signal?: AbortSignal) => {
+    lastLoad.current = Date.now();
     setLoading(true);
     setError('');
-    loadRecordingsLibrary(signal)
-      .then(result => setLibrary(result))
+    void loadRecordingsLibrary(signal).then(setLibrary)
       .catch(caught => { if (!signal?.aborted) setError(caught instanceof Error ? caught.message : 'Recordings could not be loaded.'); })
       .finally(() => { if (!signal?.aborted) setLoading(false); });
   }, []);
@@ -176,206 +56,188 @@ export default function CurriculumRecordingsPage() {
     return () => controller.abort();
   }, [load]);
 
-  // Each level is narrowed by the ones above it, so every menu offers only what has recordings under the choice so far.
-  const levels = useMemo(() => {
-    // Draft and archived programmes, and deleted (archived) modules, stay out unless asked for.
-    const running = (library?.deliveries ?? []).filter(item => includeInactive || (item.programmeActive && !item.archived));
-    const inProgramme = running.filter(item => matches(programme, item.programme));
-    const inCohort = inProgramme.filter(item => matches(cohort, item.cohort));
-    const inGroup = inCohort.filter(item => matches(group, item.group));
-    const inModule = inGroup.filter(item => matches(moduleTitle, item.title));
-    // Weeks are matched by their label: the same module title in two groups has different week records.
-    const weekCounts = new Map<string, number>();
-    inModule.forEach(item => {
-      item.weeks.forEach(entry => weekCounts.set(weekLabel(entry), (weekCounts.get(weekLabel(entry)) ?? 0) + entry.recordings.length));
-      item.attention.forEach(session => weekCounts.set(attentionWeekLabel(session), weekCounts.get(attentionWeekLabel(session)) ?? 0));
-    });
-    return {
-      running, inModule,
-      programmes: levelOptions(running, item => item.programme, includeInactive ? 'All programmes' : 'All active programmes', 'Programme not named'),
-      cohorts: levelOptions(inProgramme, item => item.cohort, 'All cohorts', 'Cohort not named'),
-      groups: levelOptions(inCohort, item => item.group, 'All groups', 'Group not named'),
-      modules: levelOptions(inGroup, item => item.title, 'All modules', 'Untitled module'),
-      weeks: [{ value: '', label: 'All weeks' }, ...[...weekCounts].map(([value, count]) => ({ value, label: `${value} (${count})` }))],
+  useEffect(() => {
+    const refreshIfVisible = () => {
+      if (document.visibilityState === 'visible' && Date.now() - lastLoad.current >= 30000) load();
     };
-  }, [library, includeInactive, programme, cohort, group, moduleTitle]);
+    window.addEventListener('focus', refreshIfVisible);
+    document.addEventListener('visibilitychange', refreshIfVisible);
+    const timer = window.setInterval(refreshIfVisible, 5 * 60 * 1000);
+    return () => {
+      window.removeEventListener('focus', refreshIfVisible);
+      document.removeEventListener('visibilitychange', refreshIfVisible);
+      window.clearInterval(timer);
+    };
+  }, [load]);
 
-  // Everything under the chosen levels, before the status filter, so the status menu can count each status.
-  const scoped = useMemo(() => levels.inModule
-    .filter(item => matchesSearch(search, [item.title, item.programme, item.cohort, item.group]))
-    .map(item => ({
-      ...item,
-      weeks: week ? item.weeks.filter(entry => weekLabel(entry) === week) : item.weeks,
-      attention: week ? item.attention.filter(session => attentionWeekLabel(session) === week) : item.attention,
-    })), [levels, search, week]);
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') { setSelectedLectureId(null); setPlayingId(null); }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
 
-  const statusOptions = useMemo(() => {
-    const counts = new Map<string, number>();
-    recordingsOf(scoped).forEach(({ item, recording }) => {
-      const key = recordingFilterStatus(item, recording);
-      counts.set(key, (counts.get(key) ?? 0) + 1);
-    });
-    scoped.forEach(item => item.attention.forEach(session => counts.set(session.status, (counts.get(session.status) ?? 0) + 1)));
-    return [{ value: '', label: 'All statuses' }, ...STATUS_ORDER
-      .filter(key => counts.get(key) || key === status)
-      .map(key => ({ value: key, label: `${STATUS_LABELS[key]} (${counts.get(key) ?? 0})` }))];
-  }, [scoped, status]);
+  const calendar = useMemo(() => library ? buildCalendarLectures(library, timeZone) : { lectures: [], undated: [] }, [library, timeZone]);
+  const visible = useMemo(() => calendar.lectures.filter(item => includeInactive || (item.programmeActive && !item.archived)), [calendar, includeInactive]);
+  const undated = useMemo(() => calendar.undated.filter(item => includeInactive || (item.programmeActive && !item.archived)), [calendar, includeInactive]);
+  const programmes = useMemo(() => [...new Set([...(library?.modules ?? []).map(item => item.programme), ...visible.map(item => item.programme)].filter(Boolean))].sort(), [library, visible]);
+  const lectureDates = useMemo(() => new Set(visible.map(item => item.date)), [visible]);
 
-  const deliveries = useMemo(() => scoped
-    .map(item => {
-      const weeks = status
-        ? item.weeks.map(entry => ({ ...entry, recordings: entry.recordings.filter(recording => recordingFilterStatus(item, recording) === status) }))
-          .filter(entry => entry.recordings.length)
-        : item.weeks;
-      const attention = status ? item.attention.filter(session => session.status === status) : item.attention;
-      return { ...item, weeks, attention, recordingCount: recordingsIn(weeks) };
-    })
-    .filter(item => item.recordingCount > 0 || item.attention.length > 0), [scoped, status]);
+  const matchesFilters = useCallback((lecture: Lecture) => {
+    if (programme !== 'all' && lecture.programme !== programme) return false;
+    if (statusFilter === 'ready' && lectureReadyCount(lecture) === 0) return false;
+    if (statusFilter === 'attention' && !lectureNeedsAttention(lecture)) return false;
+    return true;
+  }, [programme, statusFilter]);
+  const matchesQuery = useCallback((lecture: Lecture, value: string) => {
+    const needle = value.trim().toLocaleLowerCase();
+    return !needle || `${lecture.title} ${lecture.module} ${lecture.programme} ${lecture.group} ${lecture.cohort} ${lecture.weekTitle}`.toLocaleLowerCase().includes(needle);
+  }, []);
+  const rawDayLectures = useMemo(() => visible.filter(item => item.date === selectedDate), [visible, selectedDate]);
+  const dayLectures = useMemo(() => rawDayLectures.filter(item => matchesFilters(item) && matchesQuery(item, query)), [rawDayLectures, matchesFilters, matchesQuery, query]);
+  const searchResults = useMemo(() => query.trim()
+    ? visible.filter(item => matchesFilters(item) && matchesQuery(item, query)).slice(0, 8) : [], [query, visible, matchesFilters, matchesQuery]);
+  const selectedLecture = visible.find(item => item.id === selectedLectureId) ?? null;
+  const readyCount = rawDayLectures.reduce((sum, item) => sum + lectureReadyCount(item), 0);
+  const attentionCount = rawDayLectures.filter(lectureNeedsAttention).length;
 
-  // Choosing a level clears every level below it, so a stale cohort or week can never hide recordings.
-  const clearBelow = () => { setOpenWeeks(new Set()); setPlaying(''); };
-  const chooseWeek = (value: string) => { setWeek(value); clearBelow(); };
-  const chooseModule = (value: string) => { setModuleTitle(value); chooseWeek(''); };
-  const chooseGroup = (value: string) => { setGroup(value); chooseModule(''); };
-  const chooseCohort = (value: string) => { setCohort(value); chooseGroup(''); };
-  const chooseProgramme = (value: string) => { setProgramme(value); chooseCohort(''); };
-  const chooseStatus = (value: string) => { setStatus(value as StatusFilter); clearBelow(); };
-  const toggleInactive = (value: boolean) => { setIncludeInactive(value); setStatus(''); chooseProgramme(''); };
-  const reset = () => { setSearch(''); toggleInactive(false); };
-  const toggleWeek = (key: string) => setOpenWeeks(current => {
-    const next = new Set(current);
-    if (next.has(key)) next.delete(key); else next.add(key);
-    return next;
-  });
-
-  const shown = recordingsOf(deliveries);
-  const total = shown.length;
-  const available = shown.filter(({ item, recording }) => !item.archived && recording.status === 'available').length;
-  const archived = shown.filter(({ item }) => item.archived).length;
-  const sessionsToCheck = deliveries.reduce((sum, item) => sum + item.attention.length, 0);
-  const needsAttention = shown.filter(({ item, recording }) => !item.archived && recording.status !== 'available').length + sessionsToCheck;
-  const withRecordings = deliveries.filter(item => item.recordingCount > 0).length;
-  const hasRecordings = Boolean(library?.deliveries.length);
+  const goToDate = useCallback((iso: string) => {
+    const parts = parseIsoDate(iso);
+    setSelectedDate(iso);
+    setView({ year: parts.year, month: parts.month });
+    setSelectedLectureId(null);
+    setPlayingId(null);
+    setMobileCalendarOpen(false);
+  }, []);
+  const moveMonth = useCallback((delta: number) => setView(current => {
+    const date = new Date(Date.UTC(current.year, current.month - 1 + delta, 1));
+    return { year: date.getUTCFullYear(), month: date.getUTCMonth() + 1 };
+  }), []);
+  const selectResult = (lecture: Lecture) => {
+    setQuery('');
+    goToDate(lecture.date);
+    setViewMode('calendar');
+    setSelectedLectureId(lecture.id);
+  };
+  const clearFilters = () => { setQuery(''); setProgramme('all'); setStatusFilter('all'); };
+  const changeTimeZone = (zone: string) => {
+    setTimeZone(zone);
+    setSelectedLectureId(null);
+    setPlayingId(null);
+    try { window.localStorage.setItem(TIME_ZONE_STORAGE_KEY, zone); } catch { /* Storage may be disabled. */ }
+  };
+  const nextLectureDay = () => {
+    const dates = [...lectureDates].sort();
+    const next = dates.find(date => date > selectedDate) ?? dates[0];
+    if (next) goToDate(next);
+  };
+  const closePanel = () => { setSelectedLectureId(null); setPlayingId(null); };
 
   return (
-    <WorkspaceShell role="curriculum" roleLabel="Curriculum Designer" navItems={curriculumNavItems} workspaceLabel="Curriculum Studio"
-      pageTitle="Session Recordings" pageSubtitle="Live-session recordings by programme, cohort, group, module and week" userName="Rachel Myers" userRole="Curriculum Designer">
-      <div className="min-h-full space-y-4 bg-background-50 p-4 sm:p-5 lg:p-6">
-        <EntityHero
-          eyebrow="Curriculum Studio"
-          title="Session Recordings"
-          description="Every saved Teams recording. Choose a programme, then a cohort, group, module and week; each choice shows every recording under it. Statuses come from the last results synchronization; this page never contacts Teams or storage by itself."
-          loading={loading && !library}
-          stats={[
-            { icon: 'ri-vidicon-line', label: 'Recordings', value: total },
-            { icon: 'ri-download-line', label: 'Available', value: available },
-            { icon: 'ri-error-warning-line', label: 'Need attention', value: needsAttention },
-            includeInactive
-              ? { icon: 'ri-archive-line', label: 'Archived', value: archived }
-              : { icon: 'ri-stack-line', label: 'Modules with recordings', value: withRecordings },
-          ]}
-        />
+    <WorkspaceShell role="curriculum" roleLabel="Curriculum Designer" navItems={curriculumNavItems}
+      workspaceLabel="Curriculum Studio" pageTitle="Session Recordings"
+      pageSubtitle="Find a lecture and download its saved recordings">
+      <main className="min-h-full bg-background-100 px-4 py-5 sm:px-6 lg:px-7">
+        <div className="mx-auto max-w-[1500px]">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+            <div>
+              <h1 className="font-heading text-2xl font-extrabold tracking-tight text-foreground-950 md:text-3xl">Session Recordings</h1>
+              <p className="mt-1.5 max-w-2xl text-sm text-foreground-600">Find a lecture, review its recordings, and download the saved files. Jump to any day to see what was captured.</p>
+            </div>
+            <SummaryChips dayIso={selectedDate} isToday={selectedDate === todayIso(timeZone)} lecturesToday={rawDayLectures.length}
+              readyCount={readyCount} attentionCount={attentionCount} />
+          </div>
 
-        {error && <InlineError message={error} onRetry={() => load()} />}
+          {loading && !library && <p role="status" className="mt-5 rounded-lg border border-background-200 bg-background-50 p-4 text-sm text-foreground-600">Loading sessions and recordings…</p>}
+          {error && <div role="alert" className="mt-5 flex items-center justify-between gap-3 rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800">
+            <span>{error}</span><button type="button" onClick={() => load()} className="font-semibold underline">Retry</button>
+          </div>}
+          {library && !library.attentionChecked && library.calendarAvailable !== false && <p role="status" className="mt-5 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">The session status check could not be loaded. Saved recordings are still listed.</p>}
+          {library && library.calendarAvailable === false && <div role="alert" className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm text-rose-900">
+            <span>The LMS calendar could not be loaded. Sessions may be missing.</span>
+            <button type="button" onClick={() => load()} className="font-semibold underline">Retry calendar</button>
+          </div>}
 
-        {!error && library && !hasRecordings && (
-          <WorkspacePanel title="No recordings yet">
-            <p className="text-[13px] text-slate-600">No live session has a saved Teams recording yet. Recordings appear here after a recorded session ends and its results are synchronized.</p>
-          </WorkspacePanel>
-        )}
+          {library && <>
+            <div className="mt-5 flex flex-wrap gap-2" role="group" aria-label="Recordings view">
+              <button type="button" aria-pressed={viewMode === 'calendar'} onClick={() => setViewMode('calendar')}
+                className={`rounded-md px-4 py-2 text-sm font-semibold ${viewMode === 'calendar' ? 'bg-primary-600 text-white' : 'border border-background-200 bg-background-50 text-foreground-700'}`}>Calendar</button>
+              <button type="button" aria-pressed={viewMode === 'modules'} onClick={() => { closePanel(); setViewMode('modules'); }}
+                className={`rounded-md px-4 py-2 text-sm font-semibold ${viewMode === 'modules' ? 'bg-primary-600 text-white' : 'border border-background-200 bg-background-50 text-foreground-700'}`}>All LMS modules ({library.modules?.length ?? 0})</button>
+            </div>
+            <div className="mt-5">
+              <SearchAndFilters query={query} onQueryChange={setQuery} programmes={programmes} programme={programme}
+                onProgrammeChange={setProgramme} statusFilter={statusFilter} onStatusFilterChange={setStatusFilter}
+                results={searchResults} onSelectResult={selectResult} />
+              <label className="mt-2.5 inline-flex items-center gap-2 text-xs font-medium text-foreground-700">
+                <input type="checkbox" checked={includeInactive} onChange={event => { setIncludeInactive(event.target.checked); closePanel(); }} />
+                Include draft programmes and archived modules
+              </label>
+            </div>
 
-        {library && hasRecordings && (
-          <>
-            <EntityFilterBar
-              search={search}
-              onSearch={setSearch}
-              placeholder="Search module, programme, cohort or group"
-              selects={[
-                { label: 'Programme', value: programme, onChange: chooseProgramme, options: levels.programmes },
-                { label: 'Cohort', value: cohort, onChange: chooseCohort, options: levels.cohorts },
-                { label: 'Group', value: group, onChange: chooseGroup, options: levels.groups },
-                { label: 'Module', value: moduleTitle, onChange: chooseModule, options: levels.modules },
-                {
-                  label: 'Week', value: week, onChange: chooseWeek, options: levels.weeks,
-                  disabled: !moduleTitle, disabledHint: 'Choose a module to pick one of its weeks.',
-                },
-                { label: 'Status', value: status, onChange: chooseStatus, options: statusOptions },
-              ]}
-              isDirty={Boolean(search || includeInactive || programme || cohort || group || moduleTitle || status)}
-              onReset={reset}
-              summary={`${plural(total, 'recording')} in ${plural(withRecordings, 'group module')}${sessionsToCheck ? ` · ${plural(sessionsToCheck, 'session')} to check` : ''}`}
-              trailing={(
-                <label className="inline-flex h-10 items-center gap-2 text-[12px] font-semibold text-foreground-600">
-                  <input type="checkbox" checked={includeInactive} onChange={event => toggleInactive(event.target.checked)} />
-                  Include draft and archived
-                </label>
-              )}
-            />
+            {viewMode === 'modules' ? <ModuleDirectory modules={library.modules ?? []} deliveries={library.deliveries}
+              lectures={calendar.lectures} query={query} programme={programme} statusFilter={statusFilter} includeInactive={includeInactive}
+              onOpenLecture={selectResult} /> : <div className="mt-4 flex items-start gap-5">
+              <div className="hidden w-[252px] shrink-0 xl:block">
+                <MiniCalendar selectedDate={selectedDate} viewYear={view.year} viewMonth={view.month} lectureDates={lectureDates}
+                  timeZone={timeZone} onSelectDate={goToDate} onMonthChange={moveMonth} onToday={() => goToDate(todayIso(timeZone))}
+                  onPrevDay={() => goToDate(addDays(selectedDate, -1))} onNextDay={() => goToDate(addDays(selectedDate, 1))} />
+              </div>
+              <section className="min-w-0 flex-1" aria-label="Recordings calendar">
+                <div className="rounded-lg border border-background-200 bg-background-50 p-4">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <p className="text-xs font-semibold uppercase tracking-wide text-primary-600">Day view</p>
+                      <h2 className="mt-1 font-heading text-lg font-bold text-foreground-950 md:text-xl">{formatFullDate(selectedDate)}</h2>
+                      <label className="mt-2 flex flex-wrap items-center gap-2 text-xs text-foreground-600">
+                        Calendar time zone
+                        <select aria-label="Calendar time zone" value={timeZone} onChange={event => changeTimeZone(event.target.value)}
+                          className="rounded-md border border-background-200 bg-background-50 px-2 py-1 text-xs text-foreground-900">
+                          {CALENDAR_TIME_ZONES.map(zone => <option key={zone} value={zone}>{zone}{zone === TIME_ZONE_LABEL ? ' (device)' : ''}</option>)}
+                        </select>
+                      </label>
+                    </div>
+                    <div className="flex gap-2 xl:hidden">
+                      <button type="button" aria-label="Previous day" onClick={() => goToDate(addDays(selectedDate, -1))} className="rounded-md border border-background-200 px-3 py-2">‹</button>
+                      <button type="button" onClick={() => goToDate(todayIso(timeZone))} className="rounded-md bg-primary-600 px-3 py-2 text-sm font-semibold text-white">Today</button>
+                      <button type="button" aria-label="Next day" onClick={() => goToDate(addDays(selectedDate, 1))} className="rounded-md border border-background-200 px-3 py-2">›</button>
+                    </div>
+                  </div>
+                </div>
+                <div className="mt-3 xl:hidden">
+                  <button type="button" aria-expanded={mobileCalendarOpen} onClick={() => setMobileCalendarOpen(open => !open)}
+                    className="w-full rounded-lg border border-background-200 bg-background-50 px-4 py-3 text-left text-sm font-semibold">
+                    {mobileCalendarOpen ? 'Hide calendar' : 'Change date'}
+                  </button>
+                  {mobileCalendarOpen && <div className="mt-3"><MiniCalendar selectedDate={selectedDate} viewYear={view.year} viewMonth={view.month}
+                    lectureDates={lectureDates} timeZone={timeZone} onSelectDate={goToDate} onMonthChange={moveMonth} onToday={() => goToDate(todayIso(timeZone))}
+                    onPrevDay={() => goToDate(addDays(selectedDate, -1))} onNextDay={() => goToDate(addDays(selectedDate, 1))} /></div>}
+                </div>
+                <div className="mt-3">
+                  {library.calendarAvailable !== false && <DayGrid date={selectedDate} lectures={dayLectures} selectedLectureId={selectedLectureId}
+                    emptyReason={rawDayLectures.length ? 'filtered' : 'none'} onSelectLecture={lecture => setSelectedLectureId(lecture.id)}
+                    onFindNextLectureDay={nextLectureDay} onClearFilters={clearFilters} />}
+                </div>
+              </section>
+              {selectedLecture && <>
+                <div className="fixed inset-0 z-40 bg-foreground-950/40" onClick={closePanel} aria-hidden="true" />
+                <LectureDetailsPanel lecture={selectedLecture} timeZone={timeZone} playingId={playingId} onClose={closePanel}
+                  onPlay={(_lecture, recording) => setPlayingId(current => current === recording.id ? null : recording.id)} />
+              </>}
+            </div>}
 
-            {!library.attentionChecked && (
-              <p role="status" className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-[12px] text-amber-900">
-                The check for past sessions without a recording could not be loaded. Every saved recording is still listed below.
-              </p>
-            )}
-
-            {!deliveries.length && (
-              <WorkspacePanel title="No recordings match">
-                <p className="text-[13px] text-slate-600">
-                  {levels.running.length
-                    ? 'Nothing matches this search and status under the chosen programme, cohort, group, module and week.'
-                    : 'Every recording belongs to a draft or archived programme or a deleted module. Tick "Include draft and archived" to see them.'}
-                </p>
-              </WorkspacePanel>
-            )}
-
-            {deliveries.map(item => (
-              <WorkspacePanel key={item.moduleId} title={item.title}
-                description={[item.programme, item.cohort && `Cohort: ${item.cohort}`, `Group: ${item.group || 'not named'}`,
-                  item.archived && 'Archived / Deleted module',
-                  !item.archived && !item.programmeActive && 'Programme is draft or archived', plural(item.recordingCount, 'recording')].filter(Boolean).join(' · ')}>
-                {item.archived && (
-                  <p className="mb-3 rounded-lg border border-slate-200 bg-slate-50 p-2.5 text-[12px] text-slate-600">
-                    Read only. This module was deleted; its recordings are kept here and can still be played or downloaded. Nothing on this page restores or changes the module.
-                  </p>
-                )}
-                {item.weeks.length > 0 && (
-                  <ul className="space-y-2">
-                    {item.weeks.map(entry => {
-                      const key = `${item.moduleId}:${entry.weekId ?? 'unmatched'}`;
-                      // A chosen week is the answer, so it opens by itself.
-                      const open = Boolean(week) || openWeeks.has(key);
-                      return (
-                        <li key={key} className="rounded-xl border border-slate-200 bg-slate-50/60">
-                          <button type="button" onClick={() => toggleWeek(key)} aria-expanded={open} disabled={Boolean(week)}
-                            className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left">
-                            <span className="text-[13px] font-bold text-slate-900">{weekLabel(entry)}</span>
-                            <span className="flex items-center gap-2 text-[12px] text-slate-500">
-                              {plural(entry.recordings.length, 'recording')}
-                              {!week && <AppIcon className={open ? 'ri-arrow-up-s-line' : 'ri-arrow-down-s-line'} />}
-                            </span>
-                          </button>
-                          {open && (
-                            <div className="space-y-2 px-4 pb-4">
-                              {!entry.weekId && <p className="text-[12px] text-slate-600">These recordings come from sessions that no live session in the course structure is linked to, so their week is unknown. The date shows when each one ran.</p>}
-                              <ul className="space-y-2">
-                                {entry.recordings.map(recording => (
-                                  <RecordingRow key={recording.id} recording={recording} playing={playing === recording.id}
-                                    onTogglePlay={() => setPlaying(current => current === recording.id ? '' : recording.id)} />
-                                ))}
-                              </ul>
-                            </div>
-                          )}
-                        </li>
-                      );
-                    })}
-                  </ul>
-                )}
-                {item.attention.length > 0 && <AttentionList sessions={item.attention} />}
-              </WorkspacePanel>
-            ))}
-          </>
-        )}
-      </div>
+            {viewMode === 'calendar' && undated.length > 0 && <section className="mt-5 rounded-lg border border-background-200 bg-background-50 p-4" aria-label="Undated recordings">
+              <h2 className="font-heading text-sm font-bold text-foreground-950">Recordings without a session date</h2>
+              <ul className="mt-2 space-y-2 text-sm">{undated.map(({ recording }) => <li key={recording.id} className="flex items-center justify-between gap-3">
+                <span>Recording {recording.id}</span>
+                {recording.state === 'ready' ? <RecordingDownloadButton seriesId={recording.seriesId} artifactId={recording.id}
+                  className="inline-flex items-center gap-1 font-semibold text-primary-700 underline disabled:opacity-60" /> : <span>Not ready</span>}
+              </li>)}</ul>
+            </section>}
+          </>}
+        </div>
+      </main>
     </WorkspaceShell>
   );
 }

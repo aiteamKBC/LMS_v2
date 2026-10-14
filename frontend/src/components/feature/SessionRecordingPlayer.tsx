@@ -84,8 +84,9 @@ function useWatchTracking(video: RefObject<HTMLVideoElement | null>, seriesId: s
   };
 }
 
-export function SessionRecordingPlayer({ seriesId, file, transcripts, learner, label, trackWatch = false, onWatchTimeChange }: {
+export function SessionRecordingPlayer({ seriesId, file, transcripts, learner, label, sourceUrl, trackWatch = false, onWatchTimeChange }: {
   seriesId: string; file: SessionFile; transcripts: SessionFile[]; learner?: SessionLearner; label: string; trackWatch?: boolean;
+  sourceUrl?: string;
   onWatchTimeChange?: (seconds: number) => void;
 }) {
   const video = useRef<HTMLVideoElement>(null);
@@ -148,7 +149,7 @@ export function SessionRecordingPlayer({ seriesId, file, transcripts, learner, l
   };
   return <div className="space-y-3">
     <video ref={video} controls playsInline preload="none" className="aspect-video w-full rounded-xl bg-black"
-      src={sessionFileUrl(seriesId, file, learner)} aria-label={label}
+      src={sourceUrl || sessionFileUrl(seriesId, file, learner)} aria-label={label}
       onTimeUpdate={() => { readTime(); watch.onPlayedTime(); }} onSeeked={() => { readTime(); watch.onSeeked(); }}
       onLoadedMetadata={readTime} onPause={() => { readTime(); watch.onStop(); }} onEnded={watch.onStop} />
     {trackWatch && (watch.saveError

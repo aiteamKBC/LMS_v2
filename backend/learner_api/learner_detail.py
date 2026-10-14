@@ -14,12 +14,11 @@ authored expected_otjh (curriculum.components) and a programme-wide total.
 import json
 import logging
 import re
-from datetime import datetime, timedelta, timezone as datetime_timezone
+from datetime import datetime, timedelta
 from decimal import Decimal
 from html import unescape
 from pathlib import Path
 from urllib.parse import urlparse
-from zoneinfo import ZoneInfo
 
 from django.db import DatabaseError, connections
 from django.db.models import prefetch_related_objects
@@ -28,6 +27,7 @@ from .projection_performance import measure_projection
 from django.utils import timezone
 
 from login.permissions import learner_self_or_staff
+from curriculum_api.session_component_identity import occurrence_fallbacks as _live_session_occurrence_fallbacks
 
 from .active_users import completed_hours_from_progress, fmt_hours, hydrate_source_training_plan, target_by_elapsed_time, week_by_elapsed_time
 from .identity import learner_profile_for_source
@@ -1370,54 +1370,6 @@ def _iso_date(value):
     if not value:
         return ""
     return value.isoformat() if hasattr(value, "isoformat") else _s(value)[:10]
-
-
-_TEAMS_TIMEZONE_ALIASES = {
-    "GMT Standard Time": "Europe/London",
-    "UTC": "UTC",
-    "W. Europe Standard Time": "Europe/Berlin",
-    "Romance Standard Time": "Europe/Paris",
-    "Egypt Standard Time": "Africa/Cairo",
-    "Arabian Standard Time": "Asia/Dubai",
-}
-
-
-def _live_session_occurrence_fallbacks(rows):
-    """Unique ``(module, local date)`` links for learner live-session cards.
-
-    Imported/copied curriculum can contain a new live-session component whose
-    date is correct but whose Teams occurrence fields were not copied. The
-    recording still belongs to the module occurrence, so expose that existing
-    identity to the learner page. Ambiguous dates are deliberately omitted: a
-    recording must never be guessed onto the wrong component.
-    """
-    candidates = {}
-    ambiguous = set()
-    for module_id, series_id, windows_zone, occurrence_id, session_number, scheduled_start in rows:
-        try:
-            start = scheduled_start
-            if not isinstance(start, datetime):
-                start = datetime.fromisoformat(_s(start).replace("Z", "+00:00"))
-            if start.tzinfo is None:
-                start = start.replace(tzinfo=datetime_timezone.utc)
-            zone_name = _TEAMS_TIMEZONE_ALIASES.get(_s(windows_zone), _s(windows_zone) or "Europe/London")
-            local_date = start.astimezone(ZoneInfo(zone_name)).date().isoformat()
-            number = int(session_number or 0)
-        except (KeyError, TypeError, ValueError):
-            continue
-        if not (_s(module_id) and _s(series_id) and _s(occurrence_id) and number > 0):
-            continue
-        key = (_s(module_id), local_date)
-        value = {
-            "teamsLiveSessionId": _s(series_id),
-            "teamsSessionNumber": number,
-            "teamsOccurrenceId": _s(occurrence_id),
-        }
-        if key in candidates and candidates[key] != value:
-            ambiguous.add(key)
-        else:
-            candidates[key] = value
-    return {key: value for key, value in candidates.items() if key not in ambiguous}
 
 
 def _apply_cohort_schedule(detail, source):

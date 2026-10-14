@@ -2,11 +2,13 @@
 import json
 import logging
 import os
+import re
 import tempfile
+from time import sleep
 from urllib.parse import quote
 
 import httpx
-from azure.core.exceptions import ResourceExistsError
+from azure.core.exceptions import HttpResponseError, ResourceExistsError, ServiceRequestError, ServiceResponseError
 from django.db import connections
 
 from .session_results import read, result_rows
@@ -14,9 +16,11 @@ from .session_results_policy import archive_prefix, attendance_csv, transcript_t
 from .session_media_policy import transcript_timing_ready
 from .session_transcripts import parse_vtt_cues
 from .session_transfer_progress import TransferProgress, byte_count
+from .session_cloud_archive import copy_matched_recording, verify_existing_recording
 
 log = logging.getLogger(__name__)
 CONTAINER = os.environ.get('AZURE_SESSION_RECORDINGS_CONTAINER', 'session-recordings')
+DOWNLOAD_RANGE_BYTES = 16 * 1024 * 1024
 
 
 def storage_client():
@@ -45,26 +49,32 @@ def save_archive(artifact, name, *, text=None, state='ready', error=''):
         cursor.execute('''INSERT INTO curriculum.session_result_archive
             (artifact_id,occurrence_id,container,blob_name,status,transcript_text,last_error)
             VALUES (%s,%s,%s,%s,%s,%s,%s)
-            ON CONFLICT(artifact_id) DO UPDATE SET status=EXCLUDED.status,
+            ON CONFLICT(artifact_id) DO UPDATE SET occurrence_id=EXCLUDED.occurrence_id,
+              container=EXCLUDED.container,blob_name=EXCLUDED.blob_name,status=EXCLUDED.status,
               transcript_text=coalesce(EXCLUDED.transcript_text,session_result_archive.transcript_text),
               last_error=EXCLUDED.last_error,updated_at=now()''',
             [artifact['id'], artifact['occurrence_id'], CONTAINER, name, state, text, error])
 
 
-def archive_series(series_id, *, lease_id=None):
-    from coach_api.views import get_graph_settings, microsoft_graph_token
+def archive_series(series_id, *, lease_id=None, artifact_ids=None):
+    from coach_api.views import get_graph_settings, microsoft_graph_request, microsoft_graph_token
     from learner_api.evidence_storage import upload_blob
     from .views import teams_online_meeting_owner_id
     series = read('SELECT * FROM curriculum.live_sessions WHERE id=%s', [series_id])[0]
     modules = read('SELECT group_id,group_name FROM curriculum.modules WHERE module_catalogue_id=%s', [series['module_catalogue_id']])
     occurrences = read('SELECT * FROM curriculum.live_session_occurrences WHERE live_session_id=%s', [series_id])
     by_id = {row['id']: row for row in occurrences}
-    artifacts = read('''SELECT a.*,r.status AS saved_status,r.blob_name AS saved_name FROM curriculum.live_session_artifacts a
+    artifacts = read('''SELECT a.*,r.status AS saved_status,r.blob_name AS saved_name,
+        r.occurrence_id AS saved_occurrence_id FROM curriculum.live_session_artifacts a
         JOIN curriculum.live_session_occurrences o ON o.id=a.occurrence_id
         LEFT JOIN curriculum.session_result_archive r ON r.artifact_id=a.id WHERE o.live_session_id=%s''', [series_id])
+    if artifact_ids is not None:
+        selected = set(artifact_ids)
+        artifacts = [artifact for artifact in artifacts if artifact['id'] in selected]
     errors = []
     client = storage_client()
     token = None
+    drive_cache = {}
     for artifact in artifacts:
         if artifact['saved_status'] == 'ready':
             # Backfill timing for previously archived transcripts from Azure once.
@@ -84,37 +94,131 @@ def archive_series(series_id, *, lease_id=None):
         if kind not in {'recording', 'transcript'}:
             continue
         prefix = archive_prefix(series, occurrence, modules[0] if modules else {})
-        name = artifact['saved_name'] or f"{prefix}/{kind}-{artifact['id']}.{'mp4' if kind == 'recording' else 'vtt'}"
+        saved_name = artifact['saved_name'] if artifact.get('saved_occurrence_id') == artifact['occurrence_id'] else None
+        name = saved_name or f"{prefix}/{kind}-{artifact['id']}.{'mp4' if kind == 'recording' else 'vtt'}"
         save_archive(artifact, name, state='pending')
         progress = TransferProgress(series_id, artifact['id'], lease_id)
         progress.update('preparing')
         try:
             blob = client.get_blob_client(CONTAINER, name)
             text = None
-            if not blob.exists():
+            blob_present = blob.exists()
+            base = path = None
+            if blob_present and kind == 'recording':
                 meeting_id = occurrence.get('online_meeting_id') or series['online_meeting_id']
                 owner = teams_online_meeting_owner_id(series['organizer_email'], occurrence.get('join_url') or series['join_url'])
                 if not meeting_id or not owner:
                     raise ValueError('The stored meeting identity is incomplete.')
                 base = get_graph_settings()['base_url'].rstrip('/')
-                path = f"users/{quote(owner, safe='')}/onlineMeetings/{quote(meeting_id, safe='')}/{kind}s/{quote(artifact['graph_artifact_id'], safe='')}/content"
+                path = f"users/{quote(owner, safe='')}/onlineMeetings/{quote(meeting_id, safe='')}/recordings/{quote(artifact['graph_artifact_id'], safe='')}/content"
+                token = token or microsoft_graph_token()
+                graph_url = f'{base}/{path}'
+                if not verify_existing_recording(blob, graph_url, token):
+                    # Preserve an old partial blob and use a new immutable path.
+                    # A worker crash cannot turn an incomplete copy into ready.
+                    original_name = name.rsplit('.', 1)[0]
+                    for repair_number in range(1, 6):
+                        candidate_name = f'{original_name}-repair-{repair_number}.mp4'
+                        candidate = client.get_blob_client(CONTAINER, candidate_name)
+                        candidate_present = candidate.exists()
+                        if candidate_present and not verify_existing_recording(candidate, graph_url, token):
+                            continue
+                        name, blob, blob_present = candidate_name, candidate, candidate_present
+                        save_archive(artifact, name, state='pending')
+                        break
+                    else:
+                        raise ValueError('No unused archive repair path is available.')
+            if not blob_present:
+                meeting_id = occurrence.get('online_meeting_id') or series['online_meeting_id']
+                owner = teams_online_meeting_owner_id(series['organizer_email'], occurrence.get('join_url') or series['join_url'])
+                if not meeting_id or not owner:
+                    raise ValueError('The stored meeting identity is incomplete.')
+                base = base or get_graph_settings()['base_url'].rstrip('/')
+                path = path or f"users/{quote(owner, safe='')}/onlineMeetings/{quote(meeting_id, safe='')}/{kind}s/{quote(artifact['graph_artifact_id'], safe='')}/content"
                 token = token or microsoft_graph_token()
                 headers = {'Authorization': f'Bearer {token}'}
                 if kind == 'transcript':
                     headers['Accept'] = 'text/vtt'
+                copied = False
+                if kind == 'recording':
+                    try:
+                        copied = copy_matched_recording(
+                            artifact, series['organizer_email'], f'{base}/{path}', token, blob,
+                            graph_get=microsoft_graph_request, graph_base=base,
+                            progress=progress, drive_cache=drive_cache)
+                    except Exception as cloud_failure:
+                        # An Azure blob left by a failed copy must be checked,
+                        # never silently treated as a completed archive.
+                        if blob.exists():
+                            raise
+                        log.warning('OneDrive copy for %s unavailable (%s); using Graph ranges.',
+                                    artifact['id'], type(cloud_failure).__name__)
+                if copied:
+                    progress.update('finalizing')
+                    save_archive(artifact, name)
+                    continue
                 # Disk-backed, bounded memory. No video buffers or transfer in a web request.
-                with tempfile.TemporaryFile() as stream, httpx.Client(follow_redirects=True, timeout=120) as transport:
-                    progress.update('downloading')
-                    with transport.stream('GET', f'{base}/{path}', headers=headers) as response:
-                        response.raise_for_status()
-                        total = None if response.headers.get('Content-Encoding') not in (None, '', 'identity') else byte_count(response.headers.get('Content-Length')) or None
-                        downloaded = 0
-                        progress.update('downloading', 0, total, force=True)
-                        for chunk in response.iter_bytes(1024 * 1024):
-                            stream.write(chunk)
-                            downloaded += len(chunk)
-                            progress.update('downloading', downloaded, total)
-                    progress.update('downloading', downloaded, total, force=True)
+                with tempfile.TemporaryFile(dir=os.environ.get('SESSION_RECORDINGS_TEMP_DIR') or None) as stream, httpx.Client(follow_redirects=True, timeout=120) as transport:
+                    downloaded = 0
+                    total = None
+                    while True:
+                        offset = downloaded
+                        request_headers = dict(headers)
+                        if kind == 'recording':
+                            # Large full-content responses can time out in Graph.
+                            # Each range is independently retried without losing
+                            # previously downloaded bytes.
+                            request_headers['Range'] = f'bytes={offset}-{offset + DOWNLOAD_RANGE_BYTES - 1}'
+                            request_headers['Accept-Encoding'] = 'identity'
+                        for attempt in range(3):
+                            stream.seek(offset)
+                            stream.truncate()
+                            if attempt:
+                                progress = TransferProgress(series_id, artifact['id'], lease_id)
+                            progress.update('downloading', offset, total, force=True)
+                            try:
+                                with transport.stream('GET', f'{base}/{path}', headers=request_headers) as response:
+                                    response.raise_for_status()
+                                    ranged = kind == 'recording' and response.status_code == 206
+                                    expected = None
+                                    if ranged:
+                                        match = re.fullmatch(r'bytes (\d+)-(\d+)/(\d+)', response.headers.get('Content-Range', ''))
+                                        if not match:
+                                            raise ValueError('Microsoft returned an invalid recording range.')
+                                        start, end, size = map(int, match.groups())
+                                        if (start != offset or end < start or end >= size
+                                                or end - start + 1 > DOWNLOAD_RANGE_BYTES
+                                                or (total is not None and total != size)):
+                                            raise ValueError('Microsoft returned an inconsistent recording range.')
+                                        total = size
+                                        expected = end - start + 1
+                                    elif offset or response.status_code == 206:
+                                        raise ValueError('Microsoft did not return the requested recording range.')
+                                    else:
+                                        total = None if response.headers.get('Content-Encoding') not in (None, '', 'identity') else byte_count(response.headers.get('Content-Length')) or None
+                                    received = 0
+                                    progress.update('downloading', offset, total, force=True)
+                                    for chunk in response.iter_bytes(1024 * 1024):
+                                        stream.write(chunk)
+                                        received += len(chunk)
+                                        if expected is not None and received > expected:
+                                            raise ValueError('Microsoft returned more recording bytes than requested.')
+                                        progress.update('downloading', offset + received, total)
+                                if expected is not None and received != expected:
+                                    raise httpx.ReadError('Microsoft returned an incomplete recording range.')
+                                downloaded = offset + received
+                                progress.update('downloading', downloaded, total, force=True)
+                                break
+                            except httpx.HTTPError as failure:
+                                status = getattr(getattr(failure, 'response', None), 'status_code', None)
+                                transient = isinstance(failure, httpx.RequestError) or status in (408, 429) or (status is not None and status >= 500)
+                                if not transient or attempt == 2:
+                                    raise
+                                sleep(2 ** attempt)
+                        if not ranged or downloaded >= total:
+                            break
+                    if kind == 'recording' and not downloaded:
+                        raise ValueError('Microsoft returned an empty recording.')
                     stream.seek(0)
                     if kind == 'transcript':
                         raw = stream.read(16 * 1024 * 1024 + 1)
@@ -122,13 +226,29 @@ def archive_series(series_id, *, lease_id=None):
                             raise ValueError('Transcript exceeds the supported size.')
                         text = transcript_text(raw.decode('utf-8-sig', errors='replace'))
                         stream.seek(0)
-                    try:
+                    for attempt in range(3):
+                        stream.seek(0)
+                        if attempt:
+                            # A transient Azure response failure should not fetch
+                            # the whole recording from Graph again.
+                            progress = TransferProgress(series_id, artifact['id'], lease_id)
                         progress.update('uploading', 0, downloaded)
-                        upload_blob(stream, CONTAINER, name, 'video/mp4' if kind == 'recording' else 'text/vtt', overwrite=False,
-                                    upload_block_bytes=4 * 1024 * 1024, max_concurrency=2,
-                                    progress_hook=progress.uploaded)
-                    except ResourceExistsError:
-                        pass  # a previous completed upload can outlive its worker lease
+                        try:
+                            upload_blob(stream, CONTAINER, name, 'video/mp4' if kind == 'recording' else 'text/vtt', overwrite=False,
+                                        upload_block_bytes=1024 * 1024, max_concurrency=8,
+                                        retry_total=2, read_timeout=45,
+                                        progress_hook=progress.uploaded)
+                            break
+                        except ResourceExistsError:
+                            break  # a completed upload can outlive its response
+                        except (ServiceRequestError, ServiceResponseError, HttpResponseError) as failure:
+                            status = getattr(failure, 'status_code', None)
+                            transient = isinstance(failure, (ServiceRequestError, ServiceResponseError)) or status in (408, 429) or (status is not None and status >= 500)
+                            if not transient or attempt == 2:
+                                raise
+                            sleep(2 ** attempt)
+                    if kind == 'recording' and blob.get_blob_properties(logging_enable=False).size != downloaded:
+                        raise ValueError('The archived recording size differs from the Teams download.')
             progress.update('finalizing')
             if kind == 'transcript':
                 if text is None:
@@ -142,9 +262,15 @@ def archive_series(series_id, *, lease_id=None):
         except Exception as failure:
             log.warning('Session artifact %s archive failed: %s', artifact['id'], type(failure).__name__)
             # Never persist a token-bearing URL or response body in user-visible errors.
-            error = f"Could not archive {kind} {artifact['id']}. Check worker logs and storage access."
+            phase = progress.phase if isinstance(progress.phase, str) else 'preparing'
+            status = getattr(failure, 'status_code', None) or getattr(getattr(failure, 'response', None), 'status_code', None)
+            status_label = f', HTTP {status}' if isinstance(status, int) and 400 <= status < 600 else ''
+            detail = ', temporary disk full' if isinstance(failure, OSError) and getattr(failure, 'errno', None) == 28 else ''
+            error = f"Could not archive {kind} {artifact['id']} during {phase} ({type(failure).__name__}{status_label}{detail}). Check worker logs and access."
             save_archive(artifact, name, state='failed', error=error)
             errors.append(error)
+    if artifact_ids is not None:
+        return errors
     for session in result_rows(series):
         if not session['reportReady']:
             continue

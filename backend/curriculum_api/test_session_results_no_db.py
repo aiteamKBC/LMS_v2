@@ -2,8 +2,10 @@
 import ast
 import functools
 import hashlib
+import httpx
 import json
 import logging
+import os
 import re
 import tempfile
 import uuid
@@ -45,10 +47,16 @@ class Response(dict):
 class AlternativeRecoveryMatchingTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.ns = {'defaultdict': defaultdict, 'INACTIVE_STATUSES': {
+        cls.ns = {'defaultdict': defaultdict, 're': re, 'INACTIVE_STATUSES': {
             'cancelled', 'canceled', 'deleted', 'failed', 'superseded',
         }}
-        functions(ROOT.parent / 'learner_api' / 'alternative_recovery.py', {
+        source = ROOT.parent / 'learner_api' / 'alternative_recovery.py'
+        tree = ast.parse(source.read_text(encoding='utf-8'))
+        suffix = next(node for node in tree.body if isinstance(node, ast.Assign)
+                      and any(isinstance(target, ast.Name) and target.id == '_WEEKDAY_SUFFIX'
+                              for target in node.targets))
+        exec(compile(ast.Module(body=[suffix], type_ignores=[]), str(source), 'exec'), cls.ns)
+        functions(source, {
             '_active', '_module_key', '_matching_alternative_series',
         }, cls.ns)
 
@@ -337,6 +345,9 @@ class StorageUrlTests(unittest.TestCase):
         self.assertAlmostEqual((sign.call_args.kwargs['expiry'] - before).total_seconds(), 14400, delta=2)
         self.assertEqual(sign.call_args.kwargs['permission'], {'read': True})
         self.assertEqual(sign.call_args.kwargs['blob_name'], 'recording.mp4')
+        ns['get_read_sas']('session-recordings', 'recording.mp4', content_type='video/mp4', content_disposition='inline')
+        self.assertEqual(sign.call_args.kwargs['content_type'], 'video/mp4')
+        self.assertEqual(sign.call_args.kwargs['content_disposition'], 'inline')
 
 
 class RegisterTests(unittest.TestCase):
@@ -880,7 +891,8 @@ class EndpointTests(unittest.TestCase):
         self.assertEqual(response.status_code, 302)
         self.assertEqual(response['Cache-Control'], 'private, no-store')
         self.assertEqual(self.ns['read'].call_args.args[1], ['A', 'S'])
-        storage.get_read_sas.assert_called_once_with('session-recordings', 'M/G/S/file.mp4', ttl_minutes=240)
+        storage.get_read_sas.assert_called_once_with('session-recordings', 'M/G/S/file.mp4', ttl_minutes=240,
+            content_type='video/mp4', content_disposition='inline')
 
     def test_staff_download_signs_an_attachment_name_into_the_private_url(self):
         storage = types.ModuleType('learner_api.evidence_storage')
@@ -892,7 +904,21 @@ class EndpointTests(unittest.TestCase):
             response = self.ns['stored_content'](req, 'S', 'A')
         self.assertEqual(response.status_code, 302)
         storage.get_read_sas.assert_called_once_with('session-recordings', 'M/G/S/file.mp4', ttl_minutes=240,
-            content_disposition='attachment; filename="Module-session-1-2026-09-07.mp4"')
+            content_type='video/mp4', content_disposition='attachment; filename="Module-session-1-2026-09-07.mp4"')
+
+    def test_staff_resolves_inline_and_download_urls_without_exposing_unauthenticated_file(self):
+        storage = types.ModuleType('learner_api.evidence_storage')
+        storage.get_read_sas = Mock(return_value='https://storage.invalid/private/read')
+        self.ns['read'].return_value = [{'status': 'ready', 'artifact_type': 'recording',
+            'container': 'session-recordings', 'blob_name': 'M/G/S/file.mp4'}]
+        req = self.req(); req.GET = {'resolve': '1'}
+        with patch.dict(sys.modules, {'learner_api.evidence_storage': storage}):
+            response = self.ns['stored_content'](req, 'S', 'A')
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response['url'], 'https://storage.invalid/private/read')
+        self.assertEqual(response['Cache-Control'], 'private, no-store')
+        storage.get_read_sas.assert_called_once_with('session-recordings', 'M/G/S/file.mp4', ttl_minutes=240,
+            content_type='video/mp4', content_disposition='inline')
 
     def test_timed_cues_are_read_from_database_without_signing_or_fetching_storage(self):
         cues = [{'start': 1, 'end': 3, 'speaker': 'Speaker', 'text': 'Saved words'}]
@@ -1029,16 +1055,23 @@ class ArchiveWorkerTests(unittest.TestCase):
         self.transport = types.ModuleType('coach_api.views')
         self.transport.get_graph_settings = lambda: {'base_url': 'https://graph.microsoft.com/v1.0'}
         self.transport.microsoft_graph_token = Mock(return_value='synthetic-token')
+        self.transport.microsoft_graph_request = Mock()
         self.storage = types.ModuleType('learner_api.evidence_storage')
         self.storage.upload_blob = Mock()
+        self.response_error = type('ServiceResponseError', (Exception,), {})
+        self.request_error = type('ServiceRequestError', (Exception,), {})
+        self.http_error = type('HttpResponseError', (Exception,), {})
         self.views = types.ModuleType('curriculum_api.views')
         self.views.teams_online_meeting_owner_id = lambda *args: 'owner'
         modules = patch.dict(sys.modules, {'coach_api.views': self.transport,
             'learner_api.evidence_storage': self.storage, 'curriculum_api.views': self.views})
         modules.start(); self.addCleanup(modules.stop)
 
-    def archive(self, *, state=None, exists=True, failure=False, kind='recording', timed=False, headers=None):
+    def archive(self, *, state=None, exists=True, failure=False, kind='recording', timed=False, headers=None,
+                artifact_ids=None, download_fail_once=False, http_status=None, range_responses=None,
+                saved_occurrence_id='O', cloud_error=None, azure_size=15):
         blob = Mock(); blob.exists.return_value = exists
+        blob.get_blob_properties.return_value.size = azure_size
         blob.download_blob.return_value.readall.return_value = b'WEBVTT\n\n00:00:01.000 --> 00:00:03.000\n<v Speaker>Hello</v>'
         client = Mock(); client.get_blob_client.return_value = blob
         response = Mock()
@@ -1046,10 +1079,29 @@ class ArchiveWorkerTests(unittest.TestCase):
             if kind == 'transcript' else [b'synthetic-', b'movie'])
         if failure:
             response.raise_for_status.side_effect = RuntimeError('synthetic private error')
+        if http_status:
+            request = httpx.Request('GET', 'https://graph.invalid/private')
+            failure_response = httpx.Response(http_status, request=request)
+            response.raise_for_status.side_effect = httpx.HTTPStatusError(
+                'synthetic private response', request=request, response=failure_response)
+        if download_fail_once:
+            calls = 0
+            def chunks(_size):
+                nonlocal calls
+                calls += 1
+                if calls == 1:
+                    yield b'partial-'
+                    raise httpx.ReadTimeout('synthetic interruption')
+                yield b'synthetic-'
+                yield b'movie'
+            response.iter_bytes.side_effect = chunks
         http = Mock()
+        self.http = http
         def graph_content(_method, _url, *, headers):
             if kind == 'transcript' and headers.get('Accept') != 'text/vtt':
                 raise RuntimeError('Graph requires a supported transcript content format')
+            if range_responses is not None:
+                return nullcontext(range_responses.pop(0))
             return nullcontext(response)
         response.headers = headers or {}
         http.stream.side_effect = graph_content
@@ -1058,16 +1110,36 @@ class ArchiveWorkerTests(unittest.TestCase):
                 'organizer_email': 'owner@example.invalid', 'online_meeting_id': 'meeting', 'join_url': 'https://teams.microsoft.com/meet/example'}],
                 [{'group_id': 'G', 'group_name': 'Group'}], [{'id': 'O', 'session_number': 1}],
                 [{'id': 'A', 'occurrence_id': 'O', 'artifact_type': kind, 'graph_artifact_id': 'GRA', 'saved_status': state,
+                  'saved_occurrence_id': saved_occurrence_id,
                   'saved_name': 'existing/module/session/recording.mp4' if exists else None}]]),
             'storage_client': lambda: client, 'CONTAINER': 'session-recordings', 'archive_prefix': archive_prefix,
             'transcript_text': transcript_text, 'transcript_timing_ready': lambda artifact: timed,
             'save_transcript_timing': Mock(), 'TransferProgress': Mock(), 'byte_count': byte_count,
-            'save_archive': Mock(), 'tempfile': tempfile, 'httpx': types.SimpleNamespace(Client=lambda **kwargs: nullcontext(http)),
+            'save_archive': Mock(), 'tempfile': tempfile, 'sleep': Mock(),
+            'copy_matched_recording': Mock(return_value=False),
+            'verify_existing_recording': Mock(return_value=True),
+            'os': os, 're': re, 'DOWNLOAD_RANGE_BYTES': 16 * 1024 * 1024,
+            'httpx': types.SimpleNamespace(Client=lambda **kwargs: nullcontext(http),
+                                           HTTPError=httpx.HTTPError, RequestError=httpx.RequestError,
+                                           ReadError=httpx.ReadError),
             'quote': __import__('urllib.parse', fromlist=['quote']).quote,
             'ResourceExistsError': type('ResourceExistsError', (Exception,), {}),
+            'ServiceResponseError': self.response_error, 'ServiceRequestError': self.request_error,
+            'HttpResponseError': self.http_error,
             'result_rows': lambda series: [], 'log': Mock()}
+        reporter = self.ns['TransferProgress'].return_value
+        reporter.update.side_effect = lambda phase, *args, **kwargs: setattr(reporter, 'phase', phase)
+        if cloud_error:
+            self.ns['copy_matched_recording'].side_effect = cloud_error
         functions(ROOT / 'session_archive.py', {'archive_series'}, self.ns)
-        return self.ns['archive_series']('S', lease_id='owned-lease'), blob
+        return self.ns['archive_series']('S', lease_id='owned-lease', artifact_ids=artifact_ids), blob
+
+    def test_targeted_recovery_skips_other_artifacts_and_attendance_exports(self):
+        errors, blob = self.archive(exists=False, artifact_ids=['OTHER'])
+        self.assertEqual(errors, [])
+        blob.exists.assert_not_called()
+        self.storage.upload_blob.assert_not_called()
+        self.ns['save_archive'].assert_not_called()
 
     def test_ready_recording_does_not_redownload_or_reupload(self):
         errors, blob = self.archive(state='ready')
@@ -1090,9 +1162,39 @@ class ArchiveWorkerTests(unittest.TestCase):
     def test_uploaded_file_after_crash_is_reused_at_original_path(self):
         errors, _ = self.archive()
         self.assertEqual(errors, [])
-        self.transport.microsoft_graph_token.assert_not_called()
+        self.transport.microsoft_graph_token.assert_called_once()
+        self.ns['verify_existing_recording'].assert_called_once()
         self.storage.upload_blob.assert_not_called()
         self.assertEqual(self.ns['save_archive'].call_args.args[1], 'existing/module/session/recording.mp4')
+
+    def test_incomplete_existing_blob_uses_a_new_path_and_is_never_overwritten(self):
+        errors, blob = self.archive(state='failed')
+        # Re-run with the first blob mismatched and a fresh repair path.
+        self.ns['read'].side_effect = [
+            [{'id': 'S', 'module_catalogue_id': 'M', 'module_title': 'Calculus',
+              'organizer_email': 'owner@example.invalid', 'online_meeting_id': 'meeting',
+              'join_url': 'https://teams.microsoft.com/meet/example'}],
+            [{'group_id': 'G', 'group_name': 'Group'}], [{'id': 'O', 'session_number': 1}],
+            [{'id': 'A', 'occurrence_id': 'O', 'artifact_type': 'recording',
+              'graph_artifact_id': 'GRA', 'saved_status': 'failed', 'saved_occurrence_id': 'O',
+              'saved_name': 'existing/module/session/recording.mp4'}],
+        ]
+        blob.exists.side_effect = [True, False]
+        self.ns['verify_existing_recording'].return_value = False
+        self.storage.upload_blob.reset_mock()
+        self.ns['save_archive'].reset_mock()
+        self.assertEqual(self.ns['archive_series']('S', lease_id='owned-lease', artifact_ids=['A']), [])
+        self.assertTrue(any(call.args[1].endswith('recording-repair-1.mp4')
+                            for call in self.ns['save_archive'].call_args_list))
+        self.assertTrue(all(call.kwargs.get('overwrite') is False
+                            for call in self.storage.upload_blob.call_args_list))
+
+    def test_failed_recording_moved_to_correct_session_gets_new_archive_path(self):
+        errors, _ = self.archive(state='failed', exists=False, saved_occurrence_id='OTHER')
+        self.assertEqual(errors, [])
+        self.assertNotEqual(self.ns['save_archive'].call_args.args[1],
+                            'existing/module/session/recording.mp4')
+        self.assertTrue(self.ns['save_archive'].call_args.args[1].endswith('/recording-A.mp4'))
 
     def test_recording_streams_to_bounded_upload_without_overwrite(self):
         captured = []
@@ -1101,8 +1203,131 @@ class ArchiveWorkerTests(unittest.TestCase):
         self.assertEqual(errors, [])
         self.assertEqual(captured[0][0], b'synthetic-movie')
         self.assertEqual(captured[0][1][0], 'session-recordings')
-        self.assertEqual(captured[0][2], {'overwrite': False, 'upload_block_bytes': 4194304, 'max_concurrency': 2,
+        self.assertEqual(captured[0][2], {'overwrite': False, 'upload_block_bytes': 1048576, 'max_concurrency': 8,
+            'retry_total': 2, 'read_timeout': 45,
             'progress_hook': self.ns['TransferProgress'].return_value.uploaded})
+
+    def test_verified_onedrive_copy_skips_local_transfer(self):
+        errors, _ = self.archive(exists=False)
+        self.assertEqual(errors, [])
+        self.ns['copy_matched_recording'].assert_called_once()
+        # A separate run with a verified cloud copy must never fetch/upload
+        # the same MP4 through this worker's temporary file.
+        original = self.ns['copy_matched_recording']
+        original.return_value = True
+        self.ns['read'].side_effect = [
+            [{'id': 'S', 'module_catalogue_id': 'M', 'module_title': 'Calculus',
+              'organizer_email': 'owner@example.invalid', 'online_meeting_id': 'meeting',
+              'join_url': 'https://teams.microsoft.com/meet/example'}],
+            [{'group_id': 'G', 'group_name': 'Group'}], [{'id': 'O', 'session_number': 1}],
+            [{'id': 'A', 'occurrence_id': 'O', 'artifact_type': 'recording',
+              'graph_artifact_id': 'GRA', 'saved_status': None, 'saved_occurrence_id': 'O',
+              'saved_name': None}],
+        ]
+        self.ns['storage_client']().get_blob_client.return_value.exists.return_value = False
+        self.http.stream.reset_mock()
+        self.storage.upload_blob.reset_mock()
+        self.assertEqual(self.ns['archive_series']('S', lease_id='owned-lease', artifact_ids=['A']), [])
+        self.http.stream.assert_not_called()
+        self.storage.upload_blob.assert_not_called()
+
+    def test_onedrive_failure_falls_back_to_graph_download(self):
+        errors, _ = self.archive(exists=False, cloud_error=RuntimeError('synthetic private URL'))
+        self.assertEqual(errors, [])
+        self.storage.upload_blob.assert_called_once()
+        self.assertEqual(self.ns['save_archive'].call_args.kwargs.get('state', 'ready'), 'ready')
+        self.assertNotIn('synthetic private URL', str(self.ns['log'].warning.call_args))
+
+    def test_transient_azure_response_retries_without_downloading_recording_again(self):
+        uploaded = []
+        def upload(stream, *args, **kwargs):
+            uploaded.append(stream.read())
+            if len(uploaded) == 1:
+                raise self.response_error('synthetic connection loss')
+        self.storage.upload_blob.side_effect = upload
+        errors, _ = self.archive(exists=False)
+        self.assertEqual(errors, [])
+        self.assertEqual(uploaded, [b'synthetic-movie', b'synthetic-movie'])
+        self.assertEqual(self.ns['save_archive'].call_args.kwargs.get('state', 'ready'), 'ready')
+
+    def test_interrupted_graph_stream_retries_from_empty_file(self):
+        uploaded = []
+        self.storage.upload_blob.side_effect = lambda stream, *args, **kwargs: uploaded.append(stream.read())
+        errors, _ = self.archive(exists=False, download_fail_once=True)
+        self.assertEqual(errors, [])
+        self.assertEqual(self.http.stream.call_count, 2)
+        self.assertEqual(uploaded, [b'synthetic-movie'])
+        self.ns['sleep'].assert_called_once_with(1)
+
+    def test_large_recording_downloads_validated_ranges_in_order(self):
+        parts = []
+        for span, content in [('bytes 0-4/10', b'abcde'), ('bytes 5-9/10', b'fghij')]:
+            response = Mock(status_code=206, headers={'Content-Range': span})
+            response.iter_bytes.return_value = [content]
+            parts.append(response)
+        uploaded = []
+        self.storage.upload_blob.side_effect = lambda stream, *args, **kwargs: uploaded.append(stream.read())
+        errors, _ = self.archive(exists=False, range_responses=parts, azure_size=10)
+        self.assertEqual(errors, [])
+        self.assertEqual(uploaded, [b'abcdefghij'])
+        self.assertEqual([call.kwargs['headers']['Range'] for call in self.http.stream.call_args_list],
+                         ['bytes=0-16777215', 'bytes=5-16777220'])
+
+    def test_incomplete_range_retries_only_that_range(self):
+        parts = []
+        for span, content in [('bytes 0-4/10', b'abcde'), ('bytes 5-9/10', b'fg'),
+                              ('bytes 5-9/10', b'fghij')]:
+            response = Mock(status_code=206, headers={'Content-Range': span})
+            response.iter_bytes.return_value = [content]
+            parts.append(response)
+        uploaded = []
+        self.storage.upload_blob.side_effect = lambda stream, *args, **kwargs: uploaded.append(stream.read())
+        errors, _ = self.archive(exists=False, range_responses=parts, azure_size=10)
+        self.assertEqual(errors, [])
+        self.assertEqual(uploaded, [b'abcdefghij'])
+        self.assertEqual([call.kwargs['headers']['Range'] for call in self.http.stream.call_args_list],
+                         ['bytes=0-16777215', 'bytes=5-16777220', 'bytes=5-16777220'])
+        self.ns['sleep'].assert_called_once_with(1)
+
+    def test_wrong_range_cannot_publish_a_truncated_video(self):
+        response = Mock(status_code=206, headers={'Content-Range': 'bytes 1-5/10'})
+        response.iter_bytes.return_value = [b'abcde']
+        errors, _ = self.archive(exists=False, range_responses=[response])
+        self.assertEqual(len(errors), 1)
+        self.assertIn('ValueError', errors[0])
+        self.storage.upload_blob.assert_not_called()
+
+    def test_incomplete_azure_upload_is_not_marked_ready(self):
+        errors, _ = self.archive(exists=False, azure_size=5)
+        self.assertEqual(len(errors), 1)
+        self.assertIn('ValueError', errors[0])
+        self.assertEqual(self.ns['save_archive'].call_args.kwargs['state'], 'failed')
+
+    def test_azure_connection_failure_retries_from_local_file(self):
+        uploaded = []
+        def upload(stream, *args, **kwargs):
+            uploaded.append(stream.read())
+            if len(uploaded) == 1:
+                raise self.request_error('synthetic connection loss')
+        self.storage.upload_blob.side_effect = upload
+        errors, _ = self.archive(exists=False)
+        self.assertEqual(errors, [])
+        self.assertEqual(uploaded, [b'synthetic-movie', b'synthetic-movie'])
+        self.assertEqual(self.http.stream.call_count, 1)
+
+    def test_failed_archive_records_safe_phase_and_exception_type(self):
+        errors, _ = self.archive(exists=False, failure=True)
+        self.assertEqual(len(errors), 1)
+        self.assertIn('during downloading (RuntimeError)', errors[0])
+        self.assertNotIn('synthetic private error', errors[0])
+        self.assertEqual(self.ns['save_archive'].call_args.kwargs['state'], 'failed')
+
+    def test_graph_permission_denial_is_not_retried_and_keeps_only_status(self):
+        errors, _ = self.archive(exists=False, http_status=403)
+        self.assertEqual(self.http.stream.call_count, 1)
+        self.assertIn('HTTP 403', errors[0])
+        self.assertNotIn('synthetic private response', errors[0])
+        self.storage.upload_blob.assert_not_called()
 
     def test_reports_actual_download_bytes_then_upload_phase_without_invented_total(self):
         errors, _ = self.archive(exists=False)
@@ -1143,8 +1368,10 @@ class ArchiveWorkerTests(unittest.TestCase):
         cursor.fetchone.side_effect = [('S', True), None] if queued else [None]
         self.views.curriculum_teams_meeting_artifacts = Mock(return_value=Response(json.dumps({'errors': ['partial'] if partial else []}), 207 if partial else 200))
         ns = {'BaseCommand': object, 'CommandError': RuntimeError, 'json': json, 'uuid': uuid, 'logging': logging,
+            're': re,
             'connections': {'default': types.SimpleNamespace(cursor=lambda: cursor)},
             'transaction': types.SimpleNamespace(atomic=nullcontext), 'archive_series': Mock(return_value=[]),
+            'reconcile_component_links': Mock(return_value=0),
             'RequestFactory': lambda: types.SimpleNamespace(post=lambda path: types.SimpleNamespace())}
         tree = ast.parse((ROOT / 'management/commands/process_session_results.py').read_text(encoding='utf-8'))
         node = next(n for n in tree.body if isinstance(n, ast.ClassDef))
@@ -1163,12 +1390,15 @@ class ArchiveWorkerTests(unittest.TestCase):
         command.handle(limit=2, scheduled=False, provision_container=False)
         queries = cursor.execute.call_args_list
         self.assertIn('FOR UPDATE SKIP LOCKED', queries[0].args[0])
+        self.assertIn("state='running' AND next_attempt_at < now()-interval '2 hours'", queries[0].args[0])
+        self.assertIn('next_attempt_at=now()', queries[1].args[0])
         finish = next(call for call in queries if 'finished_at=now()' in call.args[0])
         self.assertIn('lease_id=%s', finish.args[0])
         self.assertIn('requested_at>started_at', finish.args[0])
         self.assertEqual(finish.args[1][0], 'complete')
         self.assertTrue(self.views.curriculum_teams_meeting_artifacts.call_args.args[0].session_result_force)
         ns['archive_series'].assert_called_once_with('S', lease_id=queries[1].args[1][0])
+        ns['reconcile_component_links'].assert_called_once_with('S')
 
     def test_targeted_worker_limits_both_queued_and_expired_jobs_to_requested_series(self):
         command, ns, cursor = self.worker()
@@ -1191,12 +1421,34 @@ class ArchiveWorkerTests(unittest.TestCase):
     def test_discovery_does_not_exclude_early_or_late_recordings_by_planned_date(self):
         command, _, cursor = self.worker(queued=False)
         command.handle(limit=2, scheduled=True, provision_container=False)
-        selection = cursor.execute.call_args_list[0].args[0]
+        query = cursor.execute.call_args_list[0].args[0]
+        selection = query.split('ON CONFLICT', 1)[0]
         self.assertNotIn('scheduled_end', selection)
-        self.assertIn("coalesce(s.online_meeting_id,'')<>''", selection)
+        self.assertIn("coalesce(s.organizer_email,'')<>''", selection)
+        self.assertIn("(coalesce(s.online_meeting_id,'')<>'' OR coalesce(s.join_url,'')<>'')", selection)
         self.assertIn('m.deleted_at IS NULL', selection)
-        self.assertIn("session_result_jobs.state='complete'", selection)
-        self.assertIn("interval '5 minutes'", selection)
+        self.assertIn("session_result_jobs.state='complete'", query)
+        self.assertIn("interval '5 minutes'", query)
+        self.assertIn("interval '24 hours'", query)
+        self.assertIn("recent.live_session_id=session_result_jobs.live_session_id", query)
+        self.assertIn("interval '48 hours'", query)
+
+    def test_failed_job_requeues_for_newly_ended_session_even_before_attempts_are_exhausted(self):
+        command, _, cursor = self.worker(queued=False)
+        command.handle(limit=2, scheduled=True, provision_container=False)
+        requeue = cursor.execute.call_args_list[0].args[0].split('ON CONFLICT', 1)[1]
+        self.assertIn("session_result_jobs.state='failed'", requeue)
+        self.assertIn("OR (session_result_jobs.attempts>=8", requeue)
+        self.assertIn("session_result_jobs.finished_at < now()-interval '6 hours'", requeue)
+        self.assertIn("session_result_jobs.finished_at < now()-interval '1 hour'", requeue)
+        self.assertIn("pending_artifact.artifact_type='recording'", requeue)
+        self.assertIn("coalesce(pending_archive.status,'')<>'ready'", requeue)
+        self.assertIn('later.live_session_id=session_result_jobs.live_session_id', requeue)
+        self.assertIn("later.status NOT IN ('cancelled','deleted','superseded')", requeue)
+        self.assertIn("later.scheduled_end > (session_result_jobs.finished_at AT TIME ZONE 'UTC')", requeue)
+        self.assertIn("later.scheduled_end <= (now() AT TIME ZONE 'UTC')", requeue)
+        self.assertLess(requeue.index('later.scheduled_end'), requeue.index('session_result_jobs.attempts>=8'))
+        self.assertNotIn("session_result_jobs.state IN ('queued','running')", requeue)
 
     def test_default_worker_keeps_processing_the_shared_queue(self):
         command, _, cursor = self.worker(queued=False)
@@ -1234,6 +1486,26 @@ class ArchiveWorkerTests(unittest.TestCase):
         ns['archive_series'].assert_called_once_with('S', lease_id=cursor.execute.call_args_list[1].args[1][0])
         finish = next(call for call in cursor.execute.call_args_list if 'finished_at=now()' in call.args[0])
         self.assertEqual(finish.args[1][0], 'failed')
+
+    def test_link_repair_error_keeps_archive_and_retries_job(self):
+        command, ns, cursor = self.worker()
+        ns['reconcile_component_links'].side_effect = RuntimeError('private database error')
+        with self.assertRaises(RuntimeError):
+            command.handle(limit=2, scheduled=False, provision_container=False)
+        ns['archive_series'].assert_called_once()
+        finish = next(call for call in cursor.execute.call_args_list if 'finished_at=now()' in call.args[0])
+        self.assertEqual(finish.args[1][0], 'failed')
+        self.assertIn('Curriculum recording link repair failed.', finish.args[1][1])
+        self.assertNotIn('private database error', finish.args[1][1])
+
+    def test_graph_failure_summary_keeps_status_without_private_graph_details(self):
+        command, _, _ = self.worker(queued=False)
+        errors = command._sync_error_summary({'errors': [
+            'Recording: Microsoft Graph GET users/private/onlineMeetings/private/recordings failed: HTTP 403; '
+            'code=Forbidden; message=private tenant text',
+            'Transcript: Microsoft Graph GET users/private/onlineMeetings/private/transcripts failed: HTTP 503',
+        ]})
+        self.assertEqual(errors, ['Recording sync failed (HTTP 403)', 'Transcript sync failed (HTTP 503)'])
 
 
 if __name__ == '__main__':

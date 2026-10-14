@@ -39,6 +39,7 @@ from .weekly_schedule import module_weekly_schedule, merged_weekly_schedule
 from .teams_weekly_calendar import calendar_groups, save_weekday_calendar, stored_calendar_series, graph_event_utc
 from .teams_options_retry import microsoft_update_summary
 from .session_overrides import apply_session_overrides, override_clock, session_overrides
+from .session_artifact_placement import recording_matches_occurrence
 from .attendance_identity import keep_directory_lookup, resolve_directory_accounts
 from .teams_calendar_checks import (CalendarMismatch, attendee_differences, attendees_already_match, calendar_targets, event_organizer_address,
                                     graph_calendar_time, local_calendar_recurrence, publish_attendees, remove_attendees_silently,
@@ -4864,15 +4865,17 @@ def curriculum_teams_meeting_artifacts(request, live_session_id):
             try:
                 response = {'value': collection(microsoft_graph_request, f'{base}/{endpoint}', get_graph_settings()['base_url'])}
                 for artifact in response.get('value') or []:
-                    timestamp = (
-                        parse_graph_datetime(artifact.get('endDateTime'))
-                        or parse_graph_datetime(artifact.get('createdDateTime'))
-                    )
+                    primary_time = 'createdDateTime' if artifact_type == 'recording' else 'endDateTime'
+                    fallback_time = 'endDateTime' if artifact_type == 'recording' else 'createdDateTime'
+                    timestamp = parse_graph_datetime(artifact.get(primary_time)) or parse_graph_datetime(artifact.get(fallback_time))
                     existing_artifacts = authoring_fetch_all(LIVE_SESSION_ARTIFACTS_TABLE,
                         'artifact_type = %s AND graph_artifact_id = %s', [artifact_type, clean_str(artifact.get('id'))])
                     existing_ids = {row['occurrence_id'] for row in existing_artifacts}
                     stored = next((row for row in group if row['id'] in existing_ids), None)
                     occurrence, launch = (stored, None) if stored else launch_linked_live_occurrence(group, timestamp, launches)
+                    if (artifact_type == 'recording' and occurrence and not stored
+                            and not recording_matches_occurrence(artifact, occurrence, linked_by_launch=bool(launch))):
+                        continue
                     linked_artifact = graph_item_with_occurrence_link(artifact, occurrence, launch) if occurrence else artifact
                     if occurrence:
                         remove_artifact_from_wrong_occurrences(group, occurrence, artifact_type, linked_artifact)
