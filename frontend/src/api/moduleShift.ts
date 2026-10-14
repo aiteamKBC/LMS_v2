@@ -96,7 +96,17 @@ async function parse(res: Response) {
 }
 
 export async function fetchModuleShiftOptions(moduleId: string): Promise<ModuleShiftOptions> {
-  return parse(await fetch(`${BASE}/options/?moduleId=${encodeURIComponent(moduleId)}`));
+  const options = await parse(await fetch(`${BASE}/options/?moduleId=${encodeURIComponent(moduleId)}`));
+  // Older servers return cohort-scoped options without programme metadata.
+  // Do not render those as programme-wide choices or crash the whole page.
+  if (
+    !options?.programme ||
+    typeof options.programme.id !== 'string' ||
+    typeof options.programme.name !== 'string'
+  ) {
+    throw new Error('Programme-wide module options are unavailable. Please contact support.');
+  }
+  return options;
 }
 
 /** The weeks of `fromModuleId` holding progress, paired with `toModuleId`. */

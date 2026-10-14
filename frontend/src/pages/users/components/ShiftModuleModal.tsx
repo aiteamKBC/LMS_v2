@@ -355,6 +355,8 @@ export function ShiftModuleModal({ learnerId, learnerName, onClose, onSaved }: P
       return;
     }
     let cancelled = false;
+    setError('');
+    setOptions(null);
     setLoadingOptions(true);
     setTo('');
     (async () => {
@@ -577,7 +579,9 @@ export function ShiftModuleModal({ learnerId, learnerName, onClose, onSaved }: P
                 <div className="p-3">
                   <RowsSkeleton rows={3} avatar={false} />
                 </div>
-              ) : options?.reason ? (
+              ) : !options ? (
+                <p className={emptyNote}>Module options could not be loaded.</p>
+              ) : options.reason ? (
                 // Says why there is nothing here, rather than looking broken.
                 <p className={emptyNote}>{options.reason}</p>
               ) : choices.length === 0 ? (
