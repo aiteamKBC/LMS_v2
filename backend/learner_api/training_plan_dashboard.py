@@ -307,6 +307,7 @@ def _canonical_module_progress(records, modules):
                     'attendance': {'attended': 0, 'total': 0}}
         for module_id in by_id
     }
+    achieved_codes = defaultdict(set)
     for record in records:
         module_id = module_id_for(record)
         if module_id is None:
@@ -322,6 +323,8 @@ def _canonical_module_progress(records, modules):
                 continue
             metric['ksb']['total'] += 1
             metric['ksb']['completed'] += record.get('accepted') is True
+            if record.get('accepted') is True:
+                achieved_codes[module_id].add(str(code).strip())
         if (record.get('kind') == 'activity_event'
                 and record.get('feed_kind') == 'attendance_confirmation'):
             metric['attendance']['attended'] += 1
@@ -333,6 +336,7 @@ def _canonical_module_progress(records, modules):
             authored_sessions = number(module.get('sessions_number'))
         attended = metric['attendance']['attended']
         metric['hours']['actual'] = round(metric['hours']['actual'], 4)
+        metric['ksb']['achievedCodes'] = sorted(achieved_codes[module_id])
         # Confirmations prove attendance; the authored plan remains the session target.
         metric['attendance']['total'] = max(attended, int(authored_sessions or 0))
     return result
@@ -378,6 +382,8 @@ def plan_planned_hours(source, owner):
 
 
 def read_dashboard(source, section=None):
+    from .weekly_hours import module_activity_hours
+
     owner = getattr(source, '_canonical_profile', None)
     email = str(source.email or '').strip().casefold()
     actual, modules, sessions = [], [], []
@@ -508,6 +514,7 @@ def read_dashboard(source, section=None):
     if phone:
         coach['phone'] = phone
     return {**contract_data, 'actual': actual, 'actualAvailable': owner is not None,
+            'moduleActivityHours': module_activity_hours(progress_records, modules) if owner is not None else None,
             'moduleProgress': _canonical_module_progress(progress_records, modules) if owner is not None else {},
             'modules': modules, 'moduleLinks': links,
             'sessions': sessions, 'reviews': reviews, 'coach': coach,

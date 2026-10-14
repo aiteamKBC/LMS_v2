@@ -23,8 +23,8 @@ def _generate_learning_statements(request):
         if not isinstance(payload, dict):
             raise ValueError()
         answer = str(payload.get('text') or '').strip()
-        if len(answer.split()) < 120 or len(answer) > 20000:
-            return _error('Write at least 120 words (up to 20,000 characters) before generating learning statements.', 400, 'invalid_answer')
+        if len(answer.split()) < 120:
+            return _error('Write at least 120 words before generating learning statements.', 400, 'invalid_answer')
     except (ValueError, UnicodeDecodeError):
         return _error('Invalid request.', 400, 'invalid_json')
     if not settings.OPENAI_API_KEY:

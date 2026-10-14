@@ -10,6 +10,7 @@ from .source_material_content import hydrate_material
 from audit_api.last_audit_ledger_views import _activity_payload, _dict_rows
 from audit_api.last_audit_ledger_views import _json_list
 from .subject_dates import activity_schedule, apply_section_placement
+from .ksb_exclusions import and_not_excluded
 
 
 def read_activity_sources(cursor, group_ids, module_ids):
@@ -343,7 +344,7 @@ def read_evidenced_ksb_counts_bulk(cursor, aptem_ids):
         FROM "Learner".learners l
         LEFT JOIN "Learner".learner_progress_entries p
           ON p.learner_id=l.id AND p.deleted_at IS NULL AND p.accepted IS TRUE
-        LEFT JOIN "Learner".learner_progress_ksbs k ON k.progress_id=p.id
+        LEFT JOIN "Learner".learner_progress_ksbs k ON k.progress_id=p.id''' + and_not_excluded('k', getattr(cursor, 'db', None)) + '''
         WHERE l.aptem_id=ANY(%s)
           AND (SELECT count(*) FROM "Learner".learners other WHERE other.aptem_id=l.aptem_id)=1
         GROUP BY l.aptem_id''', [ids])

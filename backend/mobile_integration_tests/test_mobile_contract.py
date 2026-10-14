@@ -165,6 +165,37 @@ class MobileFacadeTests(unittest.TestCase):
         mobile.authenticate_request.return_value = None
         self.assertEqual(mobile.session(self.request()).status_code, 401)
 
+    def test_android_download_streams_only_for_entitled_learner_types(self):
+        import io
+        for kind in ("apprenticeship", "commercial"):
+            with self.subTest(kind=kind), patch("builtins.open", return_value=io.BytesIO(b"synthetic-apk")):
+                self.source.learner_type = kind
+                response = mobile.download_android(self.request())
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(b"".join(response.streaming_content), b"synthetic-apk")
+                self.assertIn("attachment", response["Content-Disposition"])
+                self.assertIn("no-store", response["Cache-Control"])
+                response.close()
+
+    def test_android_download_keeps_identity_and_entitlement_refusals(self):
+        with patch("builtins.open") as apk:
+            mobile.authenticate_request.return_value = None
+            self.assertEqual(mobile.download_android(self.request()).status_code, 401)
+            mobile.authenticate_request.return_value = self.account
+            for role in ("staff", "admin", "employer"):
+                self.account.role = role
+                self.assertEqual(mobile.download_android(self.request()).status_code, 403)
+            self.account.role = "learner"
+            self.account.is_active = False
+            self.assertEqual(mobile.download_android(self.request()).status_code, 401)
+            self.account.is_active = True
+            self.detail["learningAccess"]["blocked"] = True
+            self.assertEqual(mobile.download_android(self.request()).status_code, 403)
+            self.detail["learningAccess"]["blocked"] = False
+            mobile.effective_training_plan.return_value = []
+            self.assertEqual(mobile.download_android(self.request()).status_code, 403)
+            apk.assert_not_called()
+
     def test_auth_outage_is_not_signout(self):
         mobile.authenticate_request.return_value = None
         mobile.session_unreadable.return_value = True

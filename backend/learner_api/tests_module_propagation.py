@@ -104,7 +104,7 @@ class LiveAssignedModuleTests(SimpleTestCase):
 
     def test_content_added_after_assignment_is_read_live_without_reassigning(self):
         html = '<iframe src="https://example.test/lesson"></iframe>'
-        result, _ = self.resolve([
+        result, cursor = self.resolve([
             [('MOD-NEW', 'New module')],
             [('W-NEW', 'MOD-NEW', 'Week 1', 1, 0)],
             [('C-NEW', 'W-NEW', 'MOD-NEW', 'reading', 'New activity', '',
@@ -114,6 +114,10 @@ class LiveAssignedModuleTests(SimpleTestCase):
         self.assertEqual(result[2][0]['componentId'], 'C-NEW')
         self.assertEqual(result[2][0]['contentHtml'], html)
         self.assertEqual(result[2][0]['moduleId'], 'MOD-NEW')
+        for table in ('curriculum.quiz_component_links', 'curriculum.ksb_mappings'):
+            query = next(call for call in cursor.execute.call_args_list if table in call.args[0])
+            self.assertIn('JOIN curriculum.components', query.args[0])
+            self.assertEqual(query.args[1], [['MOD-NEW']])
 
     def test_removing_the_video_removes_the_component_from_the_learner(self):
         """A coach clearing videoUrl in Module Builder is a content removal: the

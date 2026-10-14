@@ -1,4 +1,4 @@
-import { useEffect, useId, useState, type CSSProperties } from 'react';
+import { useEffect, useId, useState, type CSSProperties, type ReactNode } from 'react';
 import type { TrainingPlanDashboard } from '@/api/trainingPlanDashboard';
 import { percent, type TimelineModule } from './model';
 import { moduleMeasures, moduleProgress, type ModuleMeasure } from './progress';
@@ -16,6 +16,7 @@ type Props = {
   showOtjChart?: boolean;
   wholeProgrammeRings?: boolean;
   targetAsOfToday?: number | null;
+  moduleStatus?: ReactNode;
   programmeRows?: { id: string; title: string; start?: string; value: number | null; available?: number; measureCount?: number }[];
 };
 export type ProgrammeProgressSnapshot = {
@@ -63,11 +64,12 @@ function ProgressMeasureRings({ measures, label }: { measures: ModuleMeasure[]; 
 
 
 export function ProgressCharts({ modules, selected, data, onModuleSelect, programmeStartMonth, programmeEndMonth, programmeSnapshot,
-  showOtjChart = true, wholeProgrammeRings = false, targetAsOfToday, programmeRows }: Props) {
+  showOtjChart = true, wholeProgrammeRings = false, targetAsOfToday, programmeRows, moduleStatus }: Props) {
   const chartId = useId();
   const [programmePage, setProgrammePage] = useState(0);
   const selectedProgress = selected ? moduleProgress(selected, data) : null;
   const selectedMeasures = selected ? moduleMeasures(selected, data) : [];
+  const pickerRows = [...modules].sort((a, b) => (a.start || '9999').localeCompare(b.start || '9999') || a.title.localeCompare(b.title));
   const rows = (programmeRows || modules.map(module => {
     const progress = moduleProgress(module, data);
     return { ...module, value: progress.value, available: progress.available, measureCount: progress.measures.length };
@@ -142,13 +144,13 @@ export function ProgressCharts({ modules, selected, data, onModuleSelect, progra
         <label className={styles.modulePicker}><span className={styles.srOnly}>Select module</span><select value={selected?.id || ''} onChange={event => {
           const next = modules.find(module => module.id === event.target.value);
           if (next) onModuleSelect(next);
-        }} disabled={!rows.length}>
-          {!rows.length && <option value="">No modules</option>}
-          {rows.map(module => <option key={module.id} value={module.id}>{module.title}</option>)}
+        }} disabled={!pickerRows.length}>
+          {!pickerRows.length && <option value="">No modules</option>}
+          {pickerRows.map(module => <option key={module.id} value={module.id}>{module.title}</option>)}
         </select></label>
       </header>
-      {selected ? <ProgressMeasureRings measures={selectedMeasures} label={`${selected.title} progress measures`} />
-        : <p className={styles.empty}>Select a module to see attendance, activities, hours and KSBs.</p>}
+      {moduleStatus || (selected ? <ProgressMeasureRings measures={selectedMeasures} label={`${selected.title} progress measures`} />
+        : <p className={styles.empty}>Select a module to see attendance, activities, hours and KSBs.</p>)}
     </section>}
     <section className={`${styles.card} ${styles.programmeProgressCard}`} aria-label="Programme module progress">
       <header><div><p className={styles.eyebrow}>Whole programme</p><h2>Programme progress</h2></div><span className={styles.moduleCount}>{rows.length} modules</span></header>

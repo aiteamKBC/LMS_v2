@@ -106,7 +106,8 @@ class OtjhKsbProjectionTests(SimpleTestCase):
         self.assertEqual(coach['summary'], dict(total=6, achieved=5, remaining=1))
 
     def test_readers_aggregate_before_transfer_and_bind_learner_identity(self):
-        with patch.object(canonical, 'query', return_value=[]) as read:
+        with patch.object(canonical, 'query', return_value=[]) as read, \
+             patch.object(projection, 'pending_hour_records', return_value={101: []}):
             projection.read_ksb_rows(101)
             projection.read_hour_totals({'id': 101})
         for call in read.call_args_list:
@@ -133,7 +134,8 @@ class OtjhKsbProjectionTests(SimpleTestCase):
                 # SQLite spelling only; exercise the actual aggregate/predicates.
                 cursor = db.execute(sql.replace('actual_seconds::text', 'CAST(actual_seconds AS TEXT)').replace('%s', '?'), params)
                 return [dict(zip([column[0] for column in cursor.description], values)) for values in cursor.fetchall()]
-            with patch.object(canonical, 'query', side_effect=query):
+            with patch.object(canonical, 'query', side_effect=query), \
+                 patch.object(projection, 'pending_hour_records', return_value={101: []}):
                 result = projection.read_hour_totals({'id': 101})
         self.assertAlmostEqual(result[0]['completed'], 3900 / 3600)
         self.assertAlmostEqual(result[0]['submitted'], .5)

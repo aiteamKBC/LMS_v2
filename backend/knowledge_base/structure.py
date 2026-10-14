@@ -1,7 +1,8 @@
 """Book structure: Chapter -> Section -> Subsection, each with its page range.
 
 The PDF outline (bookmarks) is the primary source. Books without one fall back
-to heading detection by font size. Every text line is assigned to exactly one
+to their own heading numbering (Chapter 3 / 3.1 / 3.1.1) when they clearly use
+it, and otherwise to heading detection by font size. Every text line is assigned to exactly one
 section, so chunks never cross a section boundary and every line is
 accounted for in the completeness check.
 """
@@ -11,7 +12,7 @@ import re
 from collections import Counter
 from dataclasses import dataclass, field
 
-STRUCTURE_VERSION = "1"
+STRUCTURE_VERSION = "2"
 
 
 @dataclass
@@ -52,6 +53,66 @@ def sections_from_toc(toc, page_count):
     return sections
 
 
+@dataclass
+class _Heading:
+    text: str
+    size: float
+
+
+_CHAPTER = re.compile(r"^\s*(?:chapter|appendix|part|unit|module)\s*(\d+)\b", re.IGNORECASE)
+_DOTTED = re.compile(r"^\s*(\d+(?:\.\d+)+)\.?\s*(?=[^\d\s.%])")
+_BARE = re.compile(r"^\s*(\d+)[\s.:]+(?=[^\d\s.%])")
+
+
+def _numbered_heading(line, body):
+    """(level, number) for a line styled and numbered as a heading, else None."""
+    if len(line.text) > 120 or line.size <= body:
+        return None
+    big = line.size >= body * 1.5
+    match = _CHAPTER.match(line.text)
+    if match and big:
+        return 1, match.group(1)
+    match = _DOTTED.match(line.text)
+    if match and line.bold:
+        return min(match.group(1).count(".") + 1, 3), match.group(1)
+    match = _BARE.match(line.text)
+    if match and big and line.bold:
+        return 1, match.group(1)
+    return None
+
+
+def sections_from_numbering(pages, body):
+    """Books whose headings carry their own numbering (Chapter 3, 3.1, 3.1.1):
+    the numbering gives the level, so a large cover title cannot become the only
+    chapter. Returns [] when the book does not clearly number its headings."""
+    styled = [line for page in pages for line in page.lines
+              if line.bold and line.size > body and len(line.text) <= 120]
+    found = []
+    for page in pages:
+        for index, line in enumerate(page.lines):
+            heading = _numbered_heading(line, body)
+            if not heading:
+                continue
+            title = line.text
+            following = page.lines[index + 1] if index + 1 < len(page.lines) else None
+            # A heading wrapped onto a second line keeps its full title.
+            if (following and following.size == line.size and following.bold == line.bold
+                    and not _numbered_heading(following, body) and len(title) + len(following.text) <= 120):
+                title = f"{title} {following.text}"
+            found.append((page, _Heading(title, line.size), heading))
+    if len(found) < 10 or len(found) * 2 < len(styled) or not any(level == 1 for _, _, (level, _) in found):
+        return []
+    sections, stack = [], []
+    for page, line, (level, number) in found:
+        while stack and stack[-1].level >= level:
+            stack.pop()
+        section = Section(ordinal=len(sections), level=level, title=line.text, pdf_page_start=page.pdf_page,
+                          number=number, parent=stack[-1].ordinal if stack else None)
+        sections.append(section)
+        stack.append(section)
+    return sections
+
+
 def sections_from_headings(pages):
     """Fallback: lines clearly larger than body text are headings."""
     sizes = Counter()
@@ -61,6 +122,9 @@ def sections_from_headings(pages):
     if not sizes:
         return []
     body = sizes.most_common(1)[0][0]
+    numbered = sections_from_numbering(pages, body)
+    if numbered:
+        return numbered
     heading_sizes = sorted({line.size for p in pages for line in p.lines if line.size >= body * 1.25}, reverse=True)
     level_of = {size: min(index + 1, 3) for index, size in enumerate(heading_sizes)}
     sections = []

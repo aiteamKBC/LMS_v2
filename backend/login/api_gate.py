@@ -52,7 +52,7 @@ import time
 import os
 
 from django.db import DatabaseError
-from django.http import JsonResponse
+from django.http import JsonResponse, HttpResponseRedirect
 
 from .sessions import (
     authenticate_request,
@@ -211,7 +211,22 @@ def rule_for(path):
     # Exact path only: the learner's attendance APIs still require a session.
     if path == '/learner_api/attendance-mode/review/':
         return None
+    # A post-event attendee arrives from an emailed, high-entropy bearer link.
+    # The view validates only a hash and exposes forms for that token's event;
+    # keeping this narrow prefix public lets guests respond without opening any
+    # other Engagement endpoint.
+    if path.startswith('/engagement_api/feedback/public-event/'):
+        return None
+    if path.startswith('/engagement_api/feedback/public-rsvp/'):
+        return None
+    if path.startswith('/engagement_api/event-check-in/'):
+        return None
     if path.startswith(('/learner_api/certificates/verify/', '/learner_api/personal-learning/verify/')):
+        return None
+    # The public apprenticeship application (/apprenticeship_application) is
+    # filled in by people with no account yet. Exact path only: the view accepts
+    # a POST that inserts one new row and returns nothing that is stored.
+    if path == '/enrolment_api/public/apprenticeship-application/':
         return None
     # Fetched by Microsoft's Office Online servers, which carry no session. The
     # view authenticates on a signed, 15-minute token naming one upload.
@@ -357,6 +372,17 @@ class ApiSessionGateMiddleware:
                 method=request.method,
             )
             if refusal is not None:
+                # Only the human-facing APK link gets a sign-in journey. API
+                # clients retain their 401 contract; no protected view is run.
+                if (refusal.status_code == 401
+                        and request.method == "GET"
+                        and request.path_info == "/learner_api/mobile/download/android/"
+                        and "text/html" in request.headers.get("Accept", "")
+                        and request.headers.get("X-Requested-With") != "XMLHttpRequest"):
+                    response = HttpResponseRedirect("/login?download=android")
+                    response["Cache-Control"] = "private, no-store"
+                    response["Vary"] = "Accept, Cookie, X-Requested-With"
+                    return response
                 return refusal
 
         return self.get_response(request)

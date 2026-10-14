@@ -1757,11 +1757,14 @@ def _fetch_ksb_items_from_profile_source(profile_source_id):
         return _coerce_ksb_items(standard_required_ksbs(profile_source_id.split(":", 1)[1]))
     try:
         # Savepointed: see the note above _fetch_ksb_items_for_programme.
+        # The programme applies this profile, so it is read even once archived
+        # (is_active = false); only name-based discovery is limited to active
+        # profiles.
         with transaction.atomic(using="enrolment"), connections["enrolment"].cursor() as cursor:
             cursor.execute(
                 "SELECT ksb_items FROM curriculum.ksb_profiles "
-                "WHERE is_active AND (id = %s OR ksb_profile_id = %s) "
-                "ORDER BY updated_at DESC NULLS LAST LIMIT 1",
+                "WHERE (id = %s OR ksb_profile_id = %s) "
+                "ORDER BY COALESCE(is_active, true) DESC, updated_at DESC NULLS LAST LIMIT 1",
                 [profile_source_id, profile_source_id],
             )
             row = cursor.fetchone()
