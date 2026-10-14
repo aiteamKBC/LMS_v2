@@ -29,7 +29,8 @@ class CaseFileOverviewTests(SimpleTestCase):
                    'ksb': {'completed': 1, 'total': 4, 'percent': 25, 'historicalCompleted': 1}}
         with patch('coach_api.case_file.read_overview_learning', return_value=(metrics, activity)), \
              patch('learner_api.module_progress.canonical_module_progress', return_value=self.shared_rows(subjects or [], activity)), \
-             patch('coach_api.overview_modules.read_overview_modules', return_value={'learning': {}}), \
+             patch('coach_api.overview_modules.read_overview_catalogue', return_value={'modules': [], 'moduleLinks': {}}), \
+             patch('coach_api.overview_modules.read_overview_modules', side_effect=AssertionError('No bulk module details')), \
              patch('coach_api.views.timezone.localdate', return_value=today):
             result = build_overview(context)
         context.payload.assert_called_once_with('summary')

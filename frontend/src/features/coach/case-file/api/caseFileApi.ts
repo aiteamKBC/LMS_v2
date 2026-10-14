@@ -27,6 +27,7 @@ export async function caseFileSectionRead<T>(scope: string, learnerId: string, s
   }
   const { resource, ...selection } = params;
   const query: Record<string, string> = {};
+  if (section === 'overview' && selection.moduleId) query.moduleId = selection.moduleId;
   if (section === 'attendance') {
     for (const [key, value] of Object.entries(selection)) {
       if (value && !(['status', 'month'].includes(key) && value === 'all')
