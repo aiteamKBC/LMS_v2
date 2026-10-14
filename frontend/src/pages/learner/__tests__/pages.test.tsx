@@ -47,7 +47,7 @@ function payload(url: string): unknown {
     metrics: { migrated: false, programme: { completed: 0, total: 0, percent: null, status: 'empty' },
       ksb: { completed: 0, total: 0, percent: null, status: 'empty', codes: [] },
       otjh: { historical: 0, new: 0, actual: 0, planned: null } } };
-  if (/\/learner-(detail|summary)\//.test(url)) return detail();
+  if (url.endsWith('/profile/') || /\/learner-(detail|summary)\//.test(url)) return detail();
   if (url.includes('/subject-covers/')) return { covers: {}, current_subjects: [], builder_subjects: {}, modules: {} };
   if (url.includes('/training-plan-dashboard/')) return { months: {}, actual: [], actualAvailable: false, modules: [], moduleLinks: {}, sessions: [], reviews: [], coach: { name: '', bookingUrl: null }, contractStatus: 'not-available', generatedAt: '' };
   if (url.includes('/reflection/submissions/')) return { statuses: [], assignments: [], submission: null };
@@ -165,10 +165,35 @@ function NavigationDestination() {
 }
 
 describe('learner loading and recovery', () => {
+  it('renders the compact Dashboard profile without removed fields and shares its initial read', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith('/profile/')) return new Response(JSON.stringify({
+        id: '125', name: 'Synthetic Learner', email: '', programme: 'Example Programme',
+        programmeStatus: 'Active', learnerType: 'commercial', cohort: 'Example Cohort', group: '',
+        employer: 'Example Employer', organization: 'Example Organization',
+        onboardingStatus: '', firstSessionUnlocked: false, studentActivityAvailable: false,
+        learnerStartDate: '', learnerEndDate: '', programmeStartDate: '', programmeEndDate: '',
+        accessGate: { blocked: false, reasons: [], startDate: '', outstandingDocuments: [] },
+        learningAccess: { blocked: false, startDate: '' },
+      }));
+      return new Response(JSON.stringify(payload(url)));
+    }));
+    const Page = (await modules['/src/pages/workspace/learner/page.tsx']()).default;
+    render(<React.StrictMode><MemoryRouter><ToastProvider><Page /></ToastProvider></MemoryRouter></React.StrictMode>);
+    expect(await screen.findByRole('heading', { name: 'Synthetic Learner' })).toBeVisible();
+    expect(screen.getByText('Example Organization')).toBeVisible();
+    expect(screen.getByText('Example Employer')).toBeVisible();
+    expect(screen.getByRole('heading', { name: 'Dashboard' })).toBeVisible();
+    const requests = vi.mocked(fetch).mock.calls.map(([url]) => String(url));
+    expect(requests.filter(url => url.endsWith('/profile/'))).toEqual(['/learner_api/dashboard/commercial/125/profile/']);
+    expect(requests.some(url => url.includes('/learner-summary/'))).toBe(false);
+  });
+
   it('uses the learner start date and SSOT planned end date in the learner programme header', async () => {
     vi.stubGlobal('fetch', vi.fn(async (input: Parameters<typeof globalThis.fetch>[0]) => {
       const url = String(input);
-      if (url.includes('/learner-summary/')) return new Response(JSON.stringify({
+      if (url.endsWith('/profile/')) return new Response(JSON.stringify({
         ...detail(), learnerStartDate: '2026-01-10', programmeStartDate: '2026-02-01', programmeEndDate: '2027-01-31',
         learningAccess: { blocked: false, startDate: '2026-02-01' },
       }));
@@ -263,7 +288,7 @@ describe('learner loading and recovery', () => {
     ]};
     vi.stubGlobal('fetch',vi.fn(async(input:RequestInfo|URL)=>{
       const url=String(input);
-      return new Response(JSON.stringify(url.includes('/learner-summary/') ? {...detail(),...placement}
+      return new Response(JSON.stringify(url.endsWith('/profile/') ? {...detail(),...placement}
         : url.includes('/training-plan-dashboard/') ? plan
         : url.includes('/overview-week/') ? {...(payload(url) as Record<string,unknown>),latestModuleId:'current:social',modules:[{id:'current:social',title:'Social Media',weekLabels:[],completed:0,total:0,percent:null,ksbCodes:[],ksbMappingMissing:false}]}
         : payload(url)));
@@ -488,7 +513,7 @@ describe('learner loading and recovery', () => {
   it('shows an assigned programme and plan before cohort start with study open', async () => {
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
-      return new Response(JSON.stringify(url.includes('/learner-summary/')
+      return new Response(JSON.stringify(url.endsWith('/profile/')
         ? { ...detail(), name: 'Ayman Learner', programme: 'Marketing Executive Level 4', cohort: 'October 2026',
           programmeStatus: 'Delivery', programmeStartDate: '2026-10-01',
           learningAccess: { blocked: true, startDate: '2026-10-01' },
@@ -511,7 +536,7 @@ describe('learner loading and recovery', () => {
   it('opens learning using the cohort date even when the individual date and saved status are still in the future', async () => {
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
-      return new Response(JSON.stringify(url.includes('/learner-summary/')
+      return new Response(JSON.stringify(url.endsWith('/profile/')
         ? { ...detail(), programmeStatus: 'Delivery', programmeStartDate: '2026-10-01',
           learningAccess: { blocked: false, startDate: '2026-09-10' },
           accessGate: { blocked: true, reasons: ['start-date-future'], startDate: '2026-10-01', outstandingDocuments: [] } }
@@ -530,7 +555,7 @@ describe('learner loading and recovery', () => {
     viewer.role = role;
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
-      return new Response(JSON.stringify(url.includes('/learner-summary/')
+      return new Response(JSON.stringify(url.endsWith('/profile/')
         ? { ...detail(), programmeStatus: 'Delivery', isActive: false, studentActivityAvailable: false,
           programmeStartDate: '2025-10-01', accessGate: {
             blocked: true, reasons: ['invitation'], startDate: '2025-10-01', outstandingDocuments: [],
@@ -557,7 +582,7 @@ describe('learner loading and recovery', () => {
     viewer.role = role;
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
-      return new Response(JSON.stringify(url.includes('/learner-summary/')
+      return new Response(JSON.stringify(url.endsWith('/profile/')
         ? { ...detail(), programmeStatus: 'Delivery', studentActivityAvailable: true, programmeStartDate: null,
           accessGate: { blocked: true, reasons: ['start-date-missing'], startDate: '', outstandingDocuments: [] } }
         : payload(url)));
@@ -582,7 +607,7 @@ describe('learner loading and recovery', () => {
     // workspace with a waiting page, just a notice that the date is pending.
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
-      return new Response(JSON.stringify(url.includes('/learner-summary/')
+      return new Response(JSON.stringify(url.endsWith('/profile/')
         ? { ...detail(), programmeStatus: 'Delivery', programmeStartDate: null,
           accessGate: { blocked: true, reasons: ['start-date-missing'], startDate: '', outstandingDocuments: [] } }
         : payload(url)));
@@ -597,7 +622,7 @@ describe('learner loading and recovery', () => {
     // Not a date: there is genuinely no plan behind the workspace to open.
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
-      return new Response(JSON.stringify(url.includes('/learner-summary/')
+      return new Response(JSON.stringify(url.endsWith('/profile/')
         ? { ...detail(), programmeStatus: 'Delivery', programmeStartDate: null,
           accessGate: { blocked: true, reasons: ['plan'], startDate: '', outstandingDocuments: [] } }
         : payload(url)));
@@ -614,7 +639,7 @@ describe('learner loading and recovery', () => {
     viewer.role = 'admin'; viewer.kind = 'apprenticeship';
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
-      return new Response(JSON.stringify(url.includes('/learner-summary/')
+      return new Response(JSON.stringify(url.endsWith('/profile/')
         ? { ...detail(), programmeStatus: 'Onboarding' } : payload(url)));
     }));
     const Page = (await modules['/src/pages/workspace/learner/page.tsx']()).default;

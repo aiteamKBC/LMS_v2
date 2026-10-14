@@ -60,7 +60,7 @@ describe('learner navigation with the real request cache', () => {
     let finishPlan!: (response: Response) => void;
     vi.mocked(fetch).mockImplementation(url => {
       const path = String(url);
-      if (path.includes('/learner-summary/')) return Promise.resolve(reply(learner));
+      if (path.endsWith('/profile/')) return Promise.resolve(reply(learner));
       if (path.includes('/student-activity/')) return Promise.resolve(reply({ activities: [], subjects: [] }));
       if (path.includes('/learner-detail/')) return new Promise(resolve => { finishPlan = resolve; });
       throw new Error(`Unexpected read: ${path}`);
@@ -82,6 +82,6 @@ describe('learner navigation with the real request cache', () => {
     renderHook(() => usePrefetchStudentActivity('commercial', '125'));
     await act(async () => {});
     expect(fetch).toHaveBeenCalledTimes(1);
-    expect(String(vi.mocked(fetch).mock.calls[0][0])).toContain('/learner-summary/');
+    expect(String(vi.mocked(fetch).mock.calls[0][0])).toContain('/dashboard/commercial/125/profile/');
   });
 });

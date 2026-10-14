@@ -2064,6 +2064,16 @@ def learner_summary(request, kind, pk):
     Attendance and similar pages need the learner's heading only. They must not
     pay for the full training-plan/progress graph that ``learner_detail`` builds.
     """
+    return _learner_identity(request, kind, pk)
+
+
+@learner_self_or_staff(kwarg="pk")
+def learner_dashboard_profile(request, kind, pk):
+    """Compact identity, shared with navigation through the summary cache."""
+    return _learner_identity(request, kind, pk, compact=True)
+
+
+def _learner_identity(request, kind, pk, *, compact=False):
     if request.method != "GET":
         return _error("Method not allowed.", 405)
 
@@ -2072,14 +2082,17 @@ def learner_summary(request, kind, pk):
         return _error(f"Unknown kind: {kind!r}. Expected 'commercial' or 'apprenticeship'.", 404)
 
     try:
-        source = model.all_learners.only(
-            "id", "username", "email", "phone_number", "programme",
-            "programme_status", "cohort", "group", "employer", "employer_id", "organization",
+        fields = [
+            "id", "username", "email", "programme",
+            "programme_status", "cohort", "group", "employer", "organization",
             "learner_type", "aptem_id", "start_date", "end_date",
-            "learner_start_date",
+            "learner_start_date", "learner_end_date",
             "practical_period_end_date", "apprenticeship_end_date",
             "onboarding_status",
-        ).get(pk=pk)
+        ]
+        if not compact:
+            fields.extend(["phone_number", "employer_id"])
+        source = model.all_learners.only(*fields).get(pk=pk)
         # A blank status is an account nobody has moved on yet: 'Fresh user',
         # as learner detail and the first-login check already read it. Left
         # blank here, the learner workspace took it for "status unknown" and
@@ -2093,11 +2106,10 @@ def learner_summary(request, kind, pk):
     from .apprenticeship_agreement import _group_dates
 
     start, end, _ = _group_dates(source)
-    return JsonResponse({
+    payload = {
         "id": str(source.id),
         "name": _s(source.username),
         "email": _s(source.email),
-        "phone": _s(source.phone_number),
         "programme": _s(source.programme),
         "programmeStatus": resolved_status,
         # 'Submitted' once the learner hands in their enrolment wizard,
@@ -2109,10 +2121,8 @@ def learner_summary(request, kind, pk):
         "cohort": _s(source.cohort),
         "group": _s(source.group),
         "employer": _s(source.employer),
-        "employerId": source.employer_id,
         "organization": _s(getattr(source, "organization", "")),
         "learnerType": _s(getattr(source, "learner_type", "")) or "apprenticeship",
-        "isActive": resolved_status.casefold() == "active",
         "programmeStartDate": _iso_date(start),
         # See mappers.learner_detail_payload: the learner's own recorded start,
         # unmediated by the cohort fallback that programmeStartDate applies.
@@ -2126,4 +2136,11 @@ def learner_summary(request, kind, pk):
         "accessGate": access_gate(source),
         "learningAccess": learning_access(source),
         "studentActivityAvailable": student_activity_available(getattr(source, "aptem_id", None)),
-    })
+    }
+    if not compact:
+        payload.update({
+            "phone": _s(source.phone_number),
+            "employerId": source.employer_id,
+            "isActive": resolved_status.casefold() == "active",
+        })
+    return JsonResponse(payload)

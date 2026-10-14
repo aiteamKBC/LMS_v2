@@ -26,7 +26,11 @@ const componentResource = createCachedResource<LearnerDetail>('learner-component
   return { ...detail, components: detail.components.map(item => item === component ? { ...item, contentHtml: reading.contentHtml } : item) };
 });
 const summaryResource = createCachedResource<LearnerSummary>('learner-summary', key =>
-  readLearnerJson(`/learner_api/learner-summary/${key.replace(':', '/')}/`));
+  // Personal course identities use a separate adapter, whose legacy summary
+  // contract must remain independent of the learner Dashboard profile.
+  readLearnerJson(key.startsWith('commercial:pl.')
+    ? `/learner_api/learner-summary/${key.replace(':', '/')}/`
+    : `/learner_api/dashboard/${key.replace(':', '/')}/profile/`));
 
 export type LearnerKind = 'commercial' | 'apprenticeship';
 
@@ -237,8 +241,8 @@ export interface LearnerDetail {
 }
 
 export type LearnerSummary = Pick<LearnerDetail,
-  'id' | 'name' | 'email' | 'phone' | 'programme' | 'programmeStatus' | 'onboardingStatus' | 'firstSessionUnlocked' |
-  'cohort' | 'group' | 'employer' | 'employerId' | 'organization' | 'learnerType' | 'isActive'
+  'id' | 'name' | 'email' | 'programme' | 'programmeStatus' | 'onboardingStatus' | 'firstSessionUnlocked' |
+  'cohort' | 'group' | 'employer' | 'organization' | 'learnerType'
 > & Pick<LearnerDetail, 'studentActivityAvailable' | 'programmeStartDate' | 'learnerStartDate' | 'learnerEndDate' | 'programmeEndDate' | 'accessGate' | 'learningAccess'>;
 
 /** Small identity response for pages that only need the learner heading. */

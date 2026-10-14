@@ -208,6 +208,7 @@ urlpatterns = [
     path("employers/<int:pk>/", employers.employer_detail, name="employer-detail"),
     path("learner-detail/<str:kind>/<int:pk>/", learner_detail.learner_detail, name="learner-detail"),
     path("learner-summary/<str:kind>/<int:pk>/", learner_detail.learner_summary, name="learner-summary"),
+    path("dashboard/<str:kind>/<int:pk>/profile/", learner_detail.learner_dashboard_profile, name="learner-dashboard-profile"),
     path("metrics/<str:kind>/<int:pk>/", learner_metrics, name="learner-metrics"),
     path("overview-week/<str:kind>/<int:pk>/", overview_week, name="learner-overview-week"),
     path("rewards-summary/<str:kind>/<int:pk>/", learner_rewards_summary, name="learner-rewards-summary"),
