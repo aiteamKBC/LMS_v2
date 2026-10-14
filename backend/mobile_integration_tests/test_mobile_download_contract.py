@@ -43,7 +43,7 @@ class DownloadTests(unittest.TestCase):
                 response=base.mobile.download_android(self.request())
                 try:
                     self.assertEqual(response.status_code,200)
-                    self.assertEqual(response['Cache-Control'],'private, no-store')
+                    self.assertEqual(response['Cache-Control'],'private, no-store, no-transform')
                     self.assertIn('attachment',response['Content-Disposition'])
                     self.assertEqual(b''.join(response.streaming_content),b'synthetic-apk-fixture')
                 finally:response.close()

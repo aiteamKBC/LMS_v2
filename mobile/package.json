@@ -2,7 +2,6 @@
   "name": "kbc-learn",
   "version": "0.1.0",
   "private": true,
-  "main": "index.ts",
   "expo": {
     "autolinking": {
       "android": {
@@ -10,6 +9,7 @@
       }
     }
   },
+  "main": "index.ts",
   "scripts": {
     "postinstall": "node scripts/patch-native-media-cookies.cjs",
     "patch:native-media": "node scripts/patch-native-media-cookies.cjs",

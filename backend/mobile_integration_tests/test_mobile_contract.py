@@ -24,7 +24,7 @@ from django.http import JsonResponse
 from django.test import RequestFactory, override_settings
 
 ROOT = Path(__file__).resolve().parent
-for name in ("login", "learner_api"):
+for name in ("login", "learner_api", "config"):
     module = types.ModuleType(name)
     module.__path__ = [str(ROOT.parent / name)]
     sys.modules[name] = module

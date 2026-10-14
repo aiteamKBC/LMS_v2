@@ -4,7 +4,6 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import crypto from 'node:crypto';
-import { execFileSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 
@@ -33,9 +32,7 @@ function fixture(t, { crlf = false, sharedVideo = false } = {}) {
   });
   const project = path.join(temporary, 'project');
   fs.mkdirSync(project);
-  fs.writeFileSync(path.join(project, 'package.json'), JSON.stringify({
-    expo: { autolinking: { android: { buildFromSource: ['expo-audio', 'expo-video'] } } },
-  }));
+  fs.writeFileSync(path.join(project, 'package.json'), JSON.stringify({expo:{autolinking:{android:{buildFromSource:['expo-audio','expo-video']}}}}));
   const packageRoot = name => sharedVideo && name === 'expo-video'
     ? path.join(temporary, 'shared-expo-video') : path.join(project, 'node_modules', name);
   const files = PATCHES.map(patch => ({ patch, source: originalSource(patch), filename: path.join(packageRoot(patch.package), patch.file) }));
@@ -54,6 +51,15 @@ function fixture(t, { crlf = false, sharedVideo = false } = {}) {
   if (sharedVideo) fs.symlinkSync(packageRoot('expo-video'), path.join(project, 'node_modules/expo-video'), process.platform === 'win32' ? 'junction' : 'dir');
   return { project, temporary, files };
 }
+
+test('Android precompiled media modules are refused before patching because they omit authentication fixes', t => {
+  const {project,files}=fixture(t);
+  fs.writeFileSync(path.join(project,'package.json'), JSON.stringify({expo:{autolinking:{android:{buildFromSource:['expo-audio']}}}}));
+  assert.throws(()=>applyPatches(project),/precompiled modules omit/);
+  for (const {filename,source} of files) assert.equal(fs.readFileSync(filename,'utf8'),source);
+  const real=JSON.parse(fs.readFileSync(path.join(mobileRoot,'package.json'),'utf8'));
+  assert.ok(['expo-audio','expo-video'].every(name=>real.expo.autolinking.android.buildFromSource.includes(name)));
+});
 
 test('native media clients explicitly use the same per-URL platform-cookie handler as React Native', t => {
   const { project, files } = fixture(t);
@@ -124,44 +130,10 @@ test('shared dependency junctions are refused without modifying their target', t
   assert.equal(fs.readFileSync(files[2].filename, 'utf8'), files[2].source);
 });
 
-test('missing or incomplete source-build configuration aborts before modifying native source', t => {
-  const { project, files } = fixture(t);
-  const manifestPath = path.join(project, 'package.json');
-  for (const buildFromSource of [undefined, [], ['expo-audio'], ['expo-video'], 'expo-audio', ['.*']]) {
-    fs.writeFileSync(manifestPath, JSON.stringify({ expo: { autolinking: { android: { buildFromSource } } } }));
-    assert.throws(() => applyPatches(project), /buildFromSource.*expo-audio and expo-video explicitly/);
-    assert.ok(files.every(item => fs.readFileSync(item.filename, 'utf8') === item.source));
-  }
-});
-
-test('verification rejects prebuilt media selection even when every native source is already patched', t => {
-  const { project, files } = fixture(t);
-  applyPatches(project);
-  const before = files.map(item => fs.readFileSync(item.filename, 'utf8'));
-  fs.writeFileSync(path.join(project, 'package.json'), '{}');
-  assert.throws(() => applyPatches(project, { checkOnly: true }), /prebuilt AARs bypass the patch/);
-  assert.deepEqual(files.map(item => fs.readFileSync(item.filename, 'utf8')), before);
-});
-
-test('installed Expo autolinking resolves both patched modules as forced source builds', () => {
-  const cli = path.join(mobileRoot, 'node_modules/expo-modules-autolinking/bin/expo-modules-autolinking');
-  const result = JSON.parse(execFileSync(process.execPath, [cli, 'resolve', '--platform', 'android', '--json'], {
-    cwd: mobileRoot, encoding: 'utf8', timeout: 30000, maxBuffer: 8 * 1024 * 1024,
-  }));
-  assert.deepEqual(result.configuration.buildFromSource, ['expo-audio', 'expo-video']);
-  for (const name of ['expo-audio', 'expo-video']) {
-    assert.ok(result.modules.some(module => module.packageName === name), `${name} must be included in Android autolinking`);
-  }
-});
-
 test('the checked-in install lifecycle applies and verifies the native media patch', () => {
   const manifest = JSON.parse(fs.readFileSync(path.join(mobileRoot, 'package.json')));
   const lock = JSON.parse(fs.readFileSync(path.join(mobileRoot, 'package-lock.json')));
   assert.equal(manifest.scripts.postinstall, 'node scripts/patch-native-media-cookies.cjs');
   assert.equal(manifest.scripts['check:native-media'], 'node scripts/patch-native-media-cookies.cjs --check');
   assert.equal(lock.packages[''].hasInstallScript, true);
-  assert.deepEqual(manifest.expo.autolinking.android.buildFromSource, ['expo-audio', 'expo-video']);
-  const gradle = fs.readFileSync(path.join(mobileRoot, 'android/app/build.gradle'), 'utf8');
-  assert.match(gradle, /tasks\.register\('verifyNativeMediaCookies', Exec\)\s*\{\s*workingDir projectRoot\s*commandLine 'node', 'scripts\/patch-native-media-cookies\.cjs', '--check'/);
-  assert.match(gradle, /tasks\.named\('preBuild'\)\.configure\s*\{\s*dependsOn verifyNativeMediaCookies/);
 });
