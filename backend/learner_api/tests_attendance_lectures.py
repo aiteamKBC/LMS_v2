@@ -68,9 +68,12 @@ class AttendanceLectureTests(SimpleTestCase):
     def test_native_timestamp_columns_are_interpreted_as_utc(self):
         source = SimpleNamespace(id=12, username='Learner', email='learner@example.test')
         conn = MagicMock()
-        conn.cursor.return_value.__enter__.return_value.fetchall.return_value = [('business', 'Business')]
+        conn.cursor.return_value.__enter__.return_value.fetchall.side_effect = [
+            [('business', 'Business')], [], [('business', 'Business')],
+        ]
         raw = {'scheduled_start': datetime(2026, 9, 1, 23, 30), 'scheduled_end': datetime(2026, 9, 2, 0, 30),
-               'updated_at': datetime(2026, 9, 1, 12), 'module_title': 'Business', 'session_number': 1}
+               'updated_at': datetime(2026, 9, 1, 12), 'module_catalogue_id': 'business',
+               'module_title': 'Business', 'session_number': 1}
         with patch('learner_api.attendance_lectures.connections', {'enrolment': conn}), \
              patch('learner_api.attendance_lectures.dict_rows', return_value=[raw]), \
              timezone.override('Europe/London'):
@@ -82,7 +85,11 @@ class AttendanceLectureTests(SimpleTestCase):
     def test_schedule_uses_current_module_assignment_without_stale_invitation_gate(self):
         conn = MagicMock()
         cur = conn.cursor.return_value.__enter__.return_value
-        cur.fetchall.side_effect = [[('assigned-module', 'Current module title')], []]
+        cur.fetchall.side_effect = [
+            [('assigned-module', 'Current module title')],
+            [],
+            [('assigned-module', 'Current module title')],
+        ]
         with patch('learner_api.attendance_lectures.connections', {'enrolment': conn}), \
              patch('learner_api.attendance_lectures.dict_rows', return_value=[]):
             read_native_occurrences(SimpleNamespace(id=12, email=' LEARNER@example.test '))
@@ -102,6 +109,9 @@ class AttendanceLectureTests(SimpleTestCase):
         self.assertIn('m.title AS module_title', schedule_sql)
         self.assertNotIn('jsonb_array_elements_text', schedule_sql)
         self.assertNotIn('live_session_join_launches', schedule_sql)
+        title_sql, title_params = cur.execute.call_args_list[3].args
+        self.assertIn('SELECT module_catalogue_id,title', title_sql)
+        self.assertEqual(title_params, [['assigned-module']])
 
     def test_schedule_reuses_already_loaded_home_assignment(self):
         conn = MagicMock()
@@ -116,8 +126,8 @@ class AttendanceLectureTests(SimpleTestCase):
 
         statements = [call.args[0] for call in cur.execute.call_args_list]
         self.assertFalse(any('Created_users' in sql for sql in statements))
-        self.assertEqual(len(statements), 2)
-        schedule_sql, schedule_params = cur.execute.call_args.args
+        self.assertEqual(len(statements), 3)
+        schedule_sql, schedule_params = cur.execute.call_args_list[1].args
         self.assertIn('s.module_catalogue_id=ANY(%s)', schedule_sql)
         self.assertEqual(schedule_params, ['learner@example.test', ['assigned-module']])
 
@@ -125,13 +135,34 @@ class AttendanceLectureTests(SimpleTestCase):
         # A duplicate sharing another module's meeting has no series of its own.
         conn = MagicMock()
         cur = conn.cursor.return_value.__enter__.return_value
-        cur.fetchall.side_effect = [[('alias-module', 'Alias')], [('alias-module', 'source-module')]]
+        cur.fetchall.side_effect = [
+            [('alias-module', 'Alias')],
+            [('alias-module', 'source-module')],
+            [('alias-module', 'Alias')],
+        ]
+        now = timezone.now()
+        raw = {
+            'session_id': 'source-occ', 'occurrence_id': 'source-occ',
+            'attendance_source_occurrence_id': 'source-occ', 'live_session_id': 'source-live',
+            'module_catalogue_id': 'source-module', 'module_title': 'Source',
+            'scheduled_start': now - timedelta(hours=2),
+            'scheduled_end': now - timedelta(hours=1), 'updated_at': now,
+            'session_number': 1, 'attendance_report_id': 'report-1', 'attended': True,
+        }
         with patch('learner_api.attendance_lectures.connections', {'enrolment': conn}), \
-             patch('learner_api.attendance_lectures.dict_rows', return_value=[]):
-            read_native_occurrences(SimpleNamespace(id=12, email='learner@example.test'))
-        schedule_sql, schedule_params = cur.execute.call_args.args
+             patch('learner_api.attendance_lectures.dict_rows', return_value=[raw]):
+            result = read_native_occurrences(
+                SimpleNamespace(id=12, username='Learner', email='learner@example.test')
+            )
+        schedule_sql, schedule_params = cur.execute.call_args_list[2].args
         self.assertIn('s.module_catalogue_id=ANY(%s)', schedule_sql)
         self.assertEqual(schedule_params, ['learner@example.test', ['alias-module', 'source-module']])
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]['module_catalogue_id'], 'alias-module')
+        self.assertEqual(result[0]['module_title'], 'Alias')
+        self.assertEqual(result[0]['session_id'], 'source-occ:alias-module')
+        self.assertEqual(result[0]['attendance_source_occurrence_id'], 'source-occ')
+        self.assertEqual(result[0]['attendance_status'], 'present')
 
     def test_empty_json_plan_still_uses_normalized_module_assignments(self):
         conn = MagicMock()
@@ -189,7 +220,7 @@ class AttendanceLectureTests(SimpleTestCase):
         with patch('learner_api.attendance_lectures.connections', {'enrolment': conn}), \
              patch('learner_api.attendance_lectures.dict_rows', return_value=[]):
             read_native_occurrences(SimpleNamespace(id=12, email='learner@example.test'))
-        sql = cur.execute.call_args.args[0]
+        sql = cur.execute.call_args_list[2].args[0]
         self.assertIn('m.deleted_at IS NULL', sql)
         self.assertIn('NOT coalesce(m.is_programme_deleted,false)', sql)
         for alias in ('s', 'o'):

@@ -221,10 +221,33 @@ def read_native_occurrences(source, *, module_ids=None):
             module_ids = [value for value in module_ids if value]
         if not module_ids:
             return []
-        shared = shared_teams_sources(module_ids, cursor=cur)
-        module_ids = list(dict.fromkeys([*module_ids, *sorted(set().union(*shared.values()))]))
-        cur.execute(NATIVE_OCCURRENCES_SQL, [_key(source.email), module_ids])
-        result = dict_rows(cur)
+        assigned_module_ids = list(module_ids)
+        shared = shared_teams_sources(assigned_module_ids, cursor=cur)
+        source_module_ids = sorted(set().union(*shared.values())) if shared else []
+        query_module_ids = list(dict.fromkeys([*assigned_module_ids, *source_module_ids]))
+        cur.execute(NATIVE_OCCURRENCES_SQL, [_key(source.email), query_module_ids])
+        source_rows = dict_rows(cur)
+        cur.execute('''SELECT module_catalogue_id,title FROM curriculum.modules
+            WHERE module_catalogue_id=ANY(%s)''', [assigned_module_ids])
+        module_titles = {row[0]: row[1] for row in cur.fetchall()}
+    aliases_by_source = {}
+    for alias_id, source_ids in shared.items():
+        for source_id in source_ids:
+            aliases_by_source.setdefault(source_id, []).append(alias_id)
+    result = []
+    for row in source_rows:
+        source_module_id = row.get('module_catalogue_id')
+        targets = ([source_module_id] if source_module_id in assigned_module_ids else [])
+        targets += aliases_by_source.get(source_module_id, [])
+        for target_module_id in dict.fromkeys(targets):
+            projected = {**row, 'module_catalogue_id': target_module_id,
+                         'module_title': module_titles.get(target_module_id) or row.get('module_title')}
+            if target_module_id != source_module_id:
+                evidence_id = str(row.get('attendance_source_occurrence_id') or row.get('session_id') or '')
+                projected['attendance_source_occurrence_id'] = evidence_id
+                projected['session_id'] = f'{evidence_id}:{target_module_id}'
+                projected['occurrence_id'] = projected['session_id']
+            result.append(projected)
     return normalize_native_occurrences(source, result)
 
 
