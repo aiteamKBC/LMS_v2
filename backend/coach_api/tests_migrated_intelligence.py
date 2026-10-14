@@ -75,7 +75,9 @@ class MigratedMeetingIntelligenceTests(SimpleTestCase):
         definition = {"template": {"reviewTypeCode": "aptem_mcm"}}
         with patch("coach_api.migrated_intelligence_views._coach_review", return_value=("coach@example.invalid", definition)), \
              patch("coach_api.views._owned_migrated_overlay", return_value=self.overlay), \
+             patch("coach_api.reconciliation_links.active_links") as links, \
              patch("coach_api.migrated_intelligence_views.CoachCalendarEvent.objects.filter") as rows:
+            links.return_value.select_related.return_value.first.return_value = None
             rows.return_value.__getitem__.return_value = [self.record]
             assert _association(self.factory.get("/"), ID)[1] is self.record
             self.record.review_instance_id = "native-review-id"

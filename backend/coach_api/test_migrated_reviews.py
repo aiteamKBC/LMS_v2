@@ -639,6 +639,8 @@ class MigratedModelTests(TestCase):
 
 class MigratedWriteTests(TestCase):
     def setUp(self):
+        from .tests_support.persisted_fixtures import review_identity
+        review_identity(source_ids=[(407, "A-7", "Progress Review")], programme_id="P-42")
         from .migrated_templates import snapshot_for
         self.definition_json = candidate_definition(SOURCE)
         self.template = MigratedReviewTemplate.objects.create(
@@ -722,6 +724,8 @@ class MigratedBookingTests(TestCase):
     """Aptem booking uses one calendar identity and mocked Graph transport."""
 
     def setUp(self):
+        from .tests_support.persisted_fixtures import review_identity
+        review_identity(source_ids=[(409, "A-9", "Progress Review")], enrolment_id=101, programme_id="P-42")
         self.template = MigratedReviewTemplate.objects.create(
             programme_key="id:P-42", review_family="PR", name="Approved",
             definition_json=candidate_definition(SOURCE), is_active=True,

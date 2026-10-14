@@ -17,6 +17,10 @@ export interface ReviewActionMatrix {
   join: boolean;
 }
 
+export function canRescheduleReconciledReview(event: Pick<CoachCalendarEvent, 'reviewSource' | 'reconciledReview' | 'calendarEventKey' | 'status'> | null | undefined) {
+  return Boolean(event?.reviewSource === 'aptem' && event.reconciledReview && event.calendarEventKey && event.status === 'scheduled');
+}
+
 /** Normalize source statuses only after both adapters have produced the common event contract. */
 export function normalizedReviewStatus(event: CoachCalendarEvent): NormalizedReviewStatus {
   if (event.status === 'completed') return 'completed';
@@ -51,7 +55,7 @@ export function reviewActionMatrix(event: CoachCalendarEvent): ReviewActionMatri
     (event.reviewSource === 'aptem' || event.aptemReviewId) && status !== 'completed',
   );
   return {
-    schedule: importedActiveReview ? null : status === 'not-scheduled' ? 'Schedule' : status === 'scheduled' ? 'Reschedule' : null,
+    schedule: canRescheduleReconciledReview(event) ? 'Reschedule' : importedActiveReview ? null : status === 'not-scheduled' ? 'Schedule' : status === 'scheduled' ? 'Reschedule' : null,
     view: true,
     // Imported reviews remain reachable through local progress and signature
     // stages even when the Aptem source still has summary metadata only.

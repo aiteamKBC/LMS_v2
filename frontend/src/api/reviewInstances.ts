@@ -566,7 +566,7 @@ export async function fetchLearnerAdditionReviewTemplates(learnerId: number | st
     `/coach_api/coach/reviews/learner-additions/templates?learnerId=${encodeURIComponent(String(learnerId))}`,
     { signal },
   );
-  return readJsonResponse<{ learnerId: number; programmeId: string | null; templates: LearnerAdditionReviewTemplate[] }>(response);
+  return readJsonResponse<{ learnerId: number; programmeId: string | null; templates: LearnerAdditionReviewTemplate[]; reviewSource: 'curriculum' | 'aptem' | 'conflict' | 'unavailable'; canAddReview: boolean; detail?: string; code?: string }>(response);
 }
 
 /**
