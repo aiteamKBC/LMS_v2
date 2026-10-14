@@ -15,8 +15,12 @@ export type UnifiedLearningSummary = {
   completedActivityCount: number;
   percent: number;
 };
+export type LearningSummaryDetail = Pick<LearnerDetail,
+  'modules' | 'components' | 'retiredQuizComponents' | 'quizAttempts' | 'videoProgress' | 'componentProgress'>;
+export type LearningSummaryActivity = Pick<StudentActivityResponse,
+  'subjects' | 'activities' | 'progress_basis' | 'activity_sources'>;
 
-export function subjectRefs(data: StudentActivityResponse | null, real: LearnerDetail | null) {
+export function subjectRefs(data: LearningSummaryActivity | null, real: LearningSummaryDetail | null) {
   return [...new Set([
     ...(data?.subjects || []).map(subject => `legacy:${subject.id}`),
     ...(data?.activities || []).map(activity => `legacy:${activity.group_id}`),
@@ -47,7 +51,7 @@ function nativeActivitySchedule(schedule: Schedule | undefined, sessionDate?: st
 }
 
 
-export function subjectsFrom(data: StudentActivityResponse | null, real: LearnerDetail | null, metadata?: CoverMetadata | null): Subject[] {
+export function subjectsFrom(data: LearningSummaryActivity | null, real: LearningSummaryDetail | null, metadata?: CoverMetadata | null): Subject[] {
   const { activity_dates: dates = {}, current_subjects: currentSubjects = [], builder_subjects: builderSubjects = {} } = metadata || {};
   const activitySources = data?.activity_sources ?? metadata?.activity_sources ?? {};
   const recordedHistory = data?.progress_basis === 'recorded_activities';
@@ -130,8 +134,8 @@ export function subjectsFrom(data: StudentActivityResponse | null, real: Learner
 
 /** One roll-up for imported history and all later current-platform progress. */
 export function buildUnifiedLearningSummary(
-  data: StudentActivityResponse | null,
-  real: LearnerDetail | null,
+  data: LearningSummaryActivity | null,
+  real: LearningSummaryDetail | null,
   metadata?: CoverMetadata | null,
 ): UnifiedLearningSummary {
   const subjects = subjectsFrom(data, real, metadata);
