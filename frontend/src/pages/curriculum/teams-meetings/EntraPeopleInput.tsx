@@ -4,8 +4,8 @@ import { searchEntraPeople, type EntraPerson } from './entraDirectory';
 
 const isEmail = (value: string) => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(value);
 
-export function EntraPeopleInput({ value, onChange, label, single = false }: {
-  value: string; onChange: (value: string) => void; label: string; single?: boolean;
+export function EntraPeopleInput({ value, onChange, label, single = false, includeGuests = false }: {
+  value: string; onChange: (value: string) => void; label: string; single?: boolean; includeGuests?: boolean;
 }) {
   type RemovedEmail = { email: string; index: number; remaining: string[] };
   const [draft, setDraft] = useState('');
@@ -29,7 +29,7 @@ export function EntraPeopleInput({ value, onChange, label, single = false }: {
     setLoading(true);
     const timer = window.setTimeout(async () => {
       try {
-        const result = await searchEntraPeople(draft, controller.signal);
+        const result = await searchEntraPeople(draft, controller.signal, includeGuests);
         if (controller.signal.aborted) return;
         setPeople(result.people);
         setHasMore(result.hasMore);
@@ -40,7 +40,7 @@ export function EntraPeopleInput({ value, onChange, label, single = false }: {
       }
     }, 300);
     return () => { window.clearTimeout(timer); controller.abort(); };
-  }, [draft, open]);
+  }, [draft, includeGuests, open]);
 
   const commit = (raw: string) => {
     const additions = emailList(raw);

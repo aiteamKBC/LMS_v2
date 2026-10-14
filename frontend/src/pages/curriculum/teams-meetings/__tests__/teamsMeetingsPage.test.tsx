@@ -1113,6 +1113,47 @@ describe('Teams Meetings page', () => {
     expect(restoreModuleTeamsMeeting).not.toHaveBeenCalled();
   });
 
+  it('recovers a saved calendar when Graph has not exposed its meeting options yet', async () => {
+    const { ApiError } = await import('../../module-builder/moduleAuthoringData');
+    createTeamsMeeting.mockRejectedValueOnce(new ApiError(
+      502,
+      'The calendar is saved, but verification is incomplete.',
+      undefined,
+      { meetingCreated: true, liveSessionId: 'LIVE-PARTIAL' },
+    ));
+    fetchTeamsCreateStatus.mockResolvedValueOnce({
+      state: 'done',
+      claim: { outcomeStatus: 502, outcomeCode: '', liveSessionId: 'LIVE-PARTIAL', claimedAt: '', leaseUntil: '' },
+      calendar: {
+        liveSessionId: 'LIVE-PARTIAL',
+        joinUrl: 'https://teams.microsoft.com/meet/partial',
+        organizerEmail: 'tutor@example.com',
+        warnings: ['Meeting options are pending.'],
+        settingsApplied: false,
+      },
+    } as never);
+
+    await renderPage();
+    expect(await screen.findByText('Reporting Basics')).toBeInTheDocument();
+    await userEvent.click(within(rowFor('Reporting Basics')).getByRole('button', { name: 'Create Teams meetings calendar' }));
+    const dialog = await screen.findByRole('dialog');
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Create' }));
+
+    await waitFor(() => expect(finishTeamsCreation).toHaveBeenCalledTimes(1));
+    expect(finishTeamsCreation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        created: true,
+        warnings: expect.arrayContaining([
+          'Meeting options are pending.',
+          expect.stringContaining('did not finish verification'),
+        ]),
+        meeting: expect.objectContaining({ liveSessionId: 'LIVE-PARTIAL', settingsApplied: false }),
+      }),
+      expect.anything(),
+    );
+    expect(createTeamsMeeting).toHaveBeenCalledTimes(1);
+  });
+
   it('keeps Create locked after an uncertain create until the author confirms they checked Outlook', async () => {
     const { CurriculumRequestTimeout } = await import('../../module-builder/moduleAuthoringData');
     createTeamsMeeting.mockRejectedValueOnce(new CurriculumRequestTimeout());
