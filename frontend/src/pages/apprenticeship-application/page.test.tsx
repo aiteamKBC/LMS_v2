@@ -157,6 +157,6 @@ it('shows a failed submission and sends the applicant to the answer the server r
 
 it('is a public route that the signed-in activity recorder skips', () => {
   // Public routes are the top-level entries; everything else sits under RequireAuth.
-  expect(routes.some(route => route.path === '/apprenticeship_application')).toBe(true);
+  expect(routes.some(route => 'path' in route && route.path === '/apprenticeship_application')).toBe(true);
   expect(isRecordedPath('/apprenticeship_application')).toBe(false);
 });

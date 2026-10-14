@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
-import { ArrowLeft, ArrowRight, CheckCircle2 } from 'lucide-react';
+import { ArrowLeft, ArrowRight, CheckCircle2, ClipboardCheck, ClipboardList } from 'lucide-react';
 import { ApplicationSubmitError, submitApprenticeshipApplication, type ApplicationField } from '@/api/apprenticeshipApplication';
 import {
   SECTIONS,
@@ -13,6 +13,10 @@ import {
   type Errors,
   type Question,
 } from './form';
+// The LMS public-page frame (logo bar, banner, footer), shared with the coach
+// booking and LMS introduction pages; application.module.css styles the form
+// and the dark-theme version of that frame.
+import frame from '../coach-booking/booking.module.css';
 import styles from './application.module.css';
 
 /**
@@ -129,17 +133,26 @@ export default function ApprenticeshipApplicationPage() {
   let number = 0;
 
   return (
-    <main className={styles.page}>
-      <div className={styles.inner}>
-        <header className={styles.header}>
-          <h1>Eligibility Form</h1>
-          <p>Assess learner eligibility against the England apprenticeship funding rules. All fields marked with * are required.</p>
+    <main className={`${frame.page} ${styles.page}`}>
+      <div className={frame.container}>
+        <div className={`${frame.brandBar} ${styles.brandBar}`}>
+          <img src="/assets/kbc-logo.png" alt="Kent Business College" width="175" height="80" />
+          <span><ClipboardList size={17} aria-hidden="true" />Apprenticeship application</span>
+        </div>
+        <header className={frame.hero}>
+          <div className={frame.heroCopy}>
+            <p className={frame.eyebrow}>APPRENTICESHIP FUNDING ELIGIBILITY</p>
+            <h1>Eligibility Form</h1>
+            <p>Assess learner eligibility against the England apprenticeship funding rules. All fields marked with * are required.</p>
+            <span className={frame.accessNote}><CheckCircle2 size={16} aria-hidden="true" />No LMS account needed to apply</span>
+          </div>
+          <div className={frame.heroIcon} aria-hidden="true"><ClipboardCheck strokeWidth={1.3} /></div>
         </header>
 
         {submitted ? (
           <section className={styles.card} aria-labelledby="application-submitted">
             <div className={styles.success}>
-              <CheckCircle2 className={styles.successIcon} aria-hidden="true" />
+              <span className={styles.successIcon} aria-hidden="true"><CheckCircle2 /></span>
               <h2 id="application-submitted" ref={successRef} tabIndex={-1}>Application submitted</h2>
               <p>
                 Thank you, {answers.firstName.trim()}. We have received your application for{' '}
@@ -194,7 +207,7 @@ export default function ApprenticeshipApplicationPage() {
 
             {submitError && <p className={styles.alert} role="alert">{submitError}</p>}
 
-            <div className={styles.footer}>
+            <div className={styles.actions}>
               {step > 0 && (
                 <button type="button" className={styles.secondary} onClick={() => goTo(step - 1)} disabled={submitting}>
                   <ArrowLeft aria-hidden="true" /> Previous
@@ -207,6 +220,10 @@ export default function ApprenticeshipApplicationPage() {
             </div>
           </form>
         )}
+        <footer className={`${frame.footer} ${styles.footer}`}>
+          <span>Kent Business College</span>
+          <span>Learning support, one conversation at a time.</span>
+        </footer>
       </div>
     </main>
   );
