@@ -94,8 +94,8 @@ android {
         applicationId 'com.kentbusinesscollege.learn.lmscandidate'
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 7
-        versionName "0.4.0"
+        versionCode 8
+        versionName "0.4.1"
 
         // Client Firebase configuration is supplied by the release operator.
         // The server notification-sender credential must NEVER be used here.
@@ -197,3 +197,10 @@ dependencies {
         implementation jscFlavor
     }
 }
+
+// Fail before packaging if authenticated media would use unpatched binaries.
+def verifyNativeMediaCookies = tasks.register("verifyNativeMediaCookies", Exec) {
+    workingDir projectRoot
+    commandLine "node", "scripts/patch-native-media-cookies.cjs", "--check"
+}
+tasks.named("preBuild").configure { dependsOn verifyNativeMediaCookies }
