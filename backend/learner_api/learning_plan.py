@@ -465,6 +465,16 @@ def _meetings(learner):
     """
     from coach_api.views import resolve_curriculum_programme_id
     from curriculum_api import review_otjh
+    from coach_api.migrated_otjh import owner_from_profile, planned_meetings as migrated_meetings
+    from coach_api.review_sources import review_profile_for_source
+    from .student_activity_access import student_activity_available
+
+    imported_rows = []
+    if student_activity_available(getattr(learner, 'aptem_id', None)):
+        profile = review_profile_for_source(learner)
+        if profile and _parse_day(learner.start_date) and _parse_day(learner.end_date):
+            imported_rows = migrated_meetings(owner_from_profile(profile),
+                window_start=learner.start_date, window_end=learner.end_date)
 
     try:
         programme_id = resolve_curriculum_programme_id(_s(learner.programme))
@@ -477,7 +487,7 @@ def _meetings(learner):
     # Review templates to project. Not an error: not every programme runs
     # Reviews, and inventing a programme id here would show another one's.
     if not programme_id:
-        return [], "no-programme"
+        return (imported_rows, "") if imported_rows else ([], "no-programme")
 
     start_date = _parse_day(learner.start_date)
     # The plan is a lifetime commitment, so the projection runs to the end of
@@ -500,8 +510,8 @@ def _meetings(learner):
         logger.exception("learning_plan: could not resolve review meetings for learner %s", learner.pk)
         return [], "unavailable"
 
-    if rows:
-        return rows, ""
+    if rows or imported_rows:
+        return rows + imported_rows, ""
     # The programme resolved and the learner has a window, so the only reasons
     # left are that no Review is flagged countsTowardsOtjh with hours on it, or
     # that none is eligible for this learner's status. Distinguishing the two

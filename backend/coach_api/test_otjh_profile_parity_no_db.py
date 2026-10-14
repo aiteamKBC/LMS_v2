@@ -14,6 +14,13 @@ from coach_api.services.dashboard.service import CoachDashboardService
 
 
 class OtjhParityTests(SimpleTestCase):
+    def setUp(self):
+        # These fixtures cover activity hours; continuation contributions have
+        # their own ORM and cross-consumer regressions in test_migrated_otjh.
+        reviews = patch.object(canonical, 'review_rows_bulk', return_value={})
+        reviews.start()
+        self.addCleanup(reviews.stop)
+
     def test_source_text_window_and_profile_fallback_do_not_require_contracts(self):
         from coach_api.selectors.otjh import learner_programme_window
         profile = SimpleNamespace(start_date=date(2025,5,1), end_date=date(2027,6,30))

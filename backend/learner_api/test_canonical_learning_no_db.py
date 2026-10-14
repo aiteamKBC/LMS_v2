@@ -36,6 +36,8 @@ def functions(filename, scope, names=None):
 
 def adapter(query):
     scope = dict(query=query, json=json, math=math, hashlib=hashlib, re=re,
+                 review_rows_bulk=lambda owners: {},
+                 add_review_hours=lambda metrics, rows: metrics,
                  datetime=datetime, escape=escape, UK=ZoneInfo('Europe/London'), ServiceError=ServiceError,
                  current_records=lambda owner, records: records,
                  current_records_bulk=lambda owners, records: {

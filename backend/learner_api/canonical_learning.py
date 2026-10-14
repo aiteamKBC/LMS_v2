@@ -14,6 +14,7 @@ from .monthly_log_sources import decoded, number, row
 from .current_learning import (
     current_records, current_records_bulk, is_unsynchronised_direct_save, source_payload_metadata,
 )
+from coach_api.migrated_otjh import add_to_metrics as add_review_hours, review_rows_bulk
 
 UK = ZoneInfo('Europe/London')
 
@@ -1012,7 +1013,7 @@ def metrics(learner_id):
         planned = programme_planned_hours(learner_id)
         result['otjh']['planned'] = planned
         result['aptem_planned_total'] = planned
-    return result
+    return add_review_hours(result, review_rows_bulk([owner]).get(int(owner['id']), []))
 
 
 def otjh_summary_bulk(learner_ids):
@@ -1028,7 +1029,7 @@ def otjh_summary_bulk(learner_ids):
     if not enrolment_ids:
         return {}
     candidates = {}
-    for owner in query('''SELECT l.id,l.enrolment_id,l.aptem_id,l.programme_id,
+    for owner in query('''SELECT l.id,l.enrolment_id,l.aptem_id,l.programme_id,l.programme,
         l.email,l.start_date,l.end_date,l.learner_type,
         u.id AS account_record_id,u."Email" AS account_email,u.aptem_id AS account_aptem_id
         FROM "Learner".learners l
@@ -1073,12 +1074,14 @@ def otjh_summary_bulk(learner_ids):
           t.updated_at DESC,t.id DESC''', [profile_ids]):
         if item['target_hours'] is not None:
             targets[int(item['learner_id'])][item['report_month']] = float(item['target_hours'])
+    review_rows = review_rows_bulk(owners.values())
     for enrolment_id, owner in owners.items():
         profile_id = int(owner['id'])
         result[enrolment_id] = {
             'profile_id': profile_id,
             'start_date': owner.get('start_date'), 'end_date': owner.get('end_date'),
-            **metrics_from_records(records[profile_id], targets[profile_id])['otjh'],
+            **add_review_hours(metrics_from_records(records[profile_id], targets[profile_id]),
+                               review_rows.get(profile_id, []))['otjh'],
         }
     return result
 
@@ -1206,6 +1209,7 @@ def metrics_bulk(learner_ids, *, learner_workspace=False, include_ksb_points=Fal
         if target.get('target_hours') is not None:
             targets_by_learner.setdefault(int(target['learner_id']), {})[target['report_month']] = float(target['target_hours'])
 
+    review_rows = review_rows_bulk(valid_owners.values())
     for enrolment_id, owner in valid_owners.items():
         records = progress_records_with_completion(
             records_by_learner.get(int(owner['id']), []),
@@ -1229,6 +1233,7 @@ def metrics_bulk(learner_ids, *, learner_workspace=False, include_ksb_points=Fal
             planned = programme_planned_hours(enrolment_id, owner=owner)
             result[enrolment_id]['otjh']['planned'] = planned
             result[enrolment_id]['aptem_planned_total'] = planned
+        add_review_hours(result[enrolment_id], review_rows.get(int(owner['id']), []))
     return result
 
 

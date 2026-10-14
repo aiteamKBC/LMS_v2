@@ -9,7 +9,8 @@ from copy import deepcopy
 from django.db import connections, transaction
 from django.utils import timezone
 
-from .migrated_reviews import EDITABLE_STATUSES, all_fields, validate_answers, _visible_fields
+from .migrated_reviews import EDITABLE_STATUSES, INITIAL_STATUSES, all_fields, validate_answers, _visible_fields
+from .migrated_otjh import preserve_otjh
 from .migrated_templates import FAMILIES, fingerprint, resolve_template, snapshot_for, validate_managed_definition
 
 
@@ -42,7 +43,7 @@ def lock_template_family(family):
 
 def snapshot_fingerprint(snapshot):
     # Exclude bookkeeping and retained field history from the definition version.
-    return fingerprint({key: snapshot.get(key) for key in ("sections", "name", "templateSource")})
+    return fingerprint({key: snapshot.get(key) for key in ("sections", "name", "templateSource", "otjh")})
 
 
 def snapshot_state(overlay):
@@ -67,7 +68,7 @@ def preserve_inactive_answers(snapshot, previous, incoming):
     return {**{key: value for key, value in previous.items() if key not in active}, **incoming}
 
 
-def merge_snapshot(previous, answers, template, family):
+def merge_snapshot(previous, answers, template, family, *, freeze_otjh=False):
     """Pure merge by exact field key. A regenerated key is a new field, never guessed."""
     if template.review_family != family or (previous.get("templateSource") or {}).get("family", family) != family:
         raise TemplateSyncConflict("The resolved template does not match this review family.")
@@ -76,6 +77,8 @@ def merge_snapshot(previous, answers, template, family):
     except ValueError as exc:
         raise TemplateSyncConflict("The resolved migrated template is invalid. Ask a template administrator to correct it.") from exc
     latest = snapshot_for(template)
+    if freeze_otjh:
+        preserve_otjh(previous, latest)
     old_fields = {field["key"]: field for field in all_fields(previous)}
     new_fields = {field["key"]: field for field in all_fields(latest)}
     retired = deepcopy((previous.get("templateSync") or {}).get("retiredFields") or {})
@@ -119,9 +122,13 @@ def synchronize_locked(overlay, family, programme_key):
     template = resolve_template(programme_key, family, lock=True)
     if template is None:
         raise TemplateSyncConflict("No active migrated template is available for this review family. Your saved work is unchanged. Ask a template administrator to configure one.", code="template_sync_missing")
-    if overlay.migrated_template_id == template.pk and snapshot_fingerprint(overlay.template_snapshot) == snapshot_fingerprint(snapshot_for(template)):
+    freeze_otjh = overlay.status not in INITIAL_STATUSES
+    candidate = snapshot_for(template)
+    if freeze_otjh:
+        preserve_otjh(overlay.template_snapshot, candidate)
+    if overlay.migrated_template_id == template.pk and snapshot_fingerprint(overlay.template_snapshot) == snapshot_fingerprint(candidate):
         return False
-    latest = merge_snapshot(overlay.template_snapshot, overlay.answers or {}, template, family)
+    latest = merge_snapshot(overlay.template_snapshot, overlay.answers or {}, template, family, freeze_otjh=freeze_otjh)
     overlay.template_snapshot = latest
     overlay.migrated_template = template
     overlay.save(update_fields=["template_snapshot", "migrated_template", "updated_at"])

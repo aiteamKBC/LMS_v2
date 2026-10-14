@@ -162,6 +162,8 @@ class MigratedReviewTemplate(models.Model):
     name = models.CharField(max_length=255)
     definition_json = models.JSONField(default=dict)
     source_metadata = models.JSONField(default=dict, blank=True)
+    expected_otjh = models.DecimalField(max_digits=8, decimal_places=2, default=0)
+    counts_towards_otjh = models.BooleanField(default=False)
     is_active = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -169,6 +171,7 @@ class MigratedReviewTemplate(models.Model):
     class Meta:
         db_table = _table_name('coach_test_migrated_review_templates', 'Coach"."coach_migrated_review_template')
         constraints = [
+            models.CheckConstraint(condition=models.Q(expected_otjh__gte=0), name="coach_migrated_otjh_nonnegative"),
             models.UniqueConstraint(
                 fields=["scope", "programme_key", "review_family"],
                 condition=models.Q(is_active=True, scope="PROGRAMME"),

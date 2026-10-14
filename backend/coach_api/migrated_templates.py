@@ -121,7 +121,9 @@ def resolution_metadata(template, family):
 
 
 def snapshot_for(template):
+    from .migrated_otjh import template_settings
     snapshot = {**deepcopy(template.definition_json), "name": template.name,
+            "otjh": template_settings(template),
             "templateSource": {"id": template.pk, "scope": template.scope,
                                "programmeKey": template.programme_key, "family": template.review_family}}
     from .migrated_template_sync import snapshot_fingerprint
@@ -178,7 +180,8 @@ def serialize_template(template, *, definition=False):
     result = {"id": template.pk, "scope": template.scope, "programme_key": template.programme_key,
               "review_family": template.review_family, "name": template.name,
               "is_active": template.is_active, "updated_at": template.updated_at.isoformat(),
-              "source_metadata": template.source_metadata, "fingerprint": fingerprint(template.definition_json)}
+              "source_metadata": template.source_metadata, "fingerprint": fingerprint(template.definition_json),
+              "expected_otjh": float(template.expected_otjh), "counts_towards_otjh": template.counts_towards_otjh}
     if definition:
         result["definition"] = template.definition_json
     return result

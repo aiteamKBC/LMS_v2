@@ -18,6 +18,7 @@ from .migrated_templates import (
 )
 from .models import MigratedReviewTemplate
 from .migrated_template_sync import lock_template_family
+from .migrated_otjh import validate_expected_hours
 
 
 def management_endpoint(methods):
@@ -98,6 +99,8 @@ def collection(request):
         template = MigratedReviewTemplate.objects.create(
             scope=scope, programme_key=key, review_family=family, name=name,
             definition_json=definition, source_metadata=metadata, is_active=False,
+            expected_otjh=source.expected_otjh if scope == "PROGRAMME" else 0,
+            counts_towards_otjh=source.counts_towards_otjh if scope == "PROGRAMME" else False,
         )
     return JsonResponse(serialize_template(template, definition=True), status=201)
 
@@ -117,14 +120,20 @@ def detail(request, template_id):
             return JsonResponse({"detail": "Migrated template not found."}, status=404)
         if request.method == "PATCH":
             payload = body(request)
-            if set(payload) - {"name", "definition", "is_active", "updated_at"}:
-                raise ValueError("Only name, definition and active state may be edited. Template identity is fixed.")
+            if set(payload) - {"name", "definition", "is_active", "updated_at", "expected_otjh", "counts_towards_otjh"}:
+                raise ValueError("Only name, definition, OTJ hours and active state may be edited. Template identity is fixed.")
             if payload.get("updated_at") != template.updated_at.isoformat():
                 return JsonResponse({"detail": "This template changed since it was opened. Reload before saving."}, status=409)
             if "name" in payload:
                 template.name = template_name(payload["name"])
             if "definition" in payload:
                 template.definition_json = validate_managed_definition(payload["definition"])
+            if "expected_otjh" in payload:
+                template.expected_otjh = validate_expected_hours(payload["expected_otjh"])
+            if "counts_towards_otjh" in payload:
+                if type(payload["counts_towards_otjh"]) is not bool:
+                    raise ValueError("Counts towards OTJH must be true or false.")
+                template.counts_towards_otjh = payload["counts_towards_otjh"]
             if "is_active" in payload:
                 if type(payload["is_active"]) is not bool:
                     raise ValueError("Active state must be true or false.")
@@ -132,7 +141,7 @@ def detail(request, template_id):
             validate_slot(template.scope, template.review_family, template.programme_key)
             if template.is_active:
                 validate_managed_definition(template.definition_json)
-            template.save(update_fields=["name", "definition_json", "is_active", "updated_at"])
+            template.save(update_fields=["name", "definition_json", "is_active", "expected_otjh", "counts_towards_otjh", "updated_at"])
         response = JsonResponse(serialize_template(template, definition=True))
         response["Cache-Control"] = "no-store"
         return response

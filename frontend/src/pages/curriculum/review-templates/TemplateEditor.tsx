@@ -74,11 +74,15 @@ export function PreviewForm({ preview }: { preview: TemplatePreview }) {
 
 export function TemplateEditor({ template, programmeName, onClose, onSaved }: { template: TemplateDetail; programmeName: string; onClose: () => void; onSaved: () => void }) {
   const [name, setName] = useState(template.name);
+  const [expectedOtjh, setExpectedOtjh] = useState(String(template.expected_otjh ?? 0));
+  const [countsTowardsOtjh, setCountsTowardsOtjh] = useState(template.counts_towards_otjh ?? false);
   const [definition, setDefinition] = useState<MigratedDefinition>(() => structuredClone(template.definition));
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [preview, setPreview] = useState<TemplatePreview | null>(null);
-  const dirty = name !== template.name || JSON.stringify(definition) !== JSON.stringify(template.definition);
+  const hoursChanged = expectedOtjh !== String(template.expected_otjh ?? 0)
+    || countsTowardsOtjh !== (template.counts_towards_otjh ?? false);
+  const dirty = hoursChanged || name !== template.name || JSON.stringify(definition) !== JSON.stringify(template.definition);
   useEffect(() => {
     if (!dirty) return;
     const beforeUnload = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = ''; };
@@ -89,8 +93,15 @@ export function TemplateEditor({ template, programmeName, onClose, onSaved }: { 
   const sections = definition.sections;
   const updateSections = (next: MigratedDefinition['sections']) => setDefinition({ sections: next });
   const save = async () => {
+    const hours = Number(expectedOtjh);
+    if (!expectedOtjh.trim() || !Number.isFinite(hours) || hours < 0 || hours > 999999.99
+      || !/^\d+(\.\d{1,2})?$/.test(expectedOtjh.trim())) {
+      setError('Expected OTJH must be zero or a positive number with up to two decimal places (maximum 999999.99).');
+      return;
+    }
     setBusy(true); setError('');
-    try { await updateMigratedTemplate(template, { name, definition }); onSaved(); }
+    try { await updateMigratedTemplate(template, { name, definition,
+      ...(hoursChanged ? { expected_otjh: hours, counts_towards_otjh: countsTowardsOtjh } : {}) }); onSaved(); }
     catch (err) { setError(err instanceof Error ? err.message : 'Unable to save template.'); }
     finally { setBusy(false); }
   };
@@ -115,6 +126,22 @@ export function TemplateEditor({ template, programmeName, onClose, onSaved }: { 
     {!template.is_active && <p className="mb-4 rounded-lg bg-amber-50 p-3 text-sm text-amber-900">Saved but not in use. Saving your changes does not enable this version.{template.scope === 'PROGRAMME' ? ' Choose Use Custom Version when it is ready.' : ' Enable it from More when it is ready.'}</p>}
     {preview ? <PreviewForm preview={preview} /> : <fieldset disabled={busy} className="space-y-5">
       <FormField label="Template name"><TextControl value={name} onChange={setName} /></FormField>
+      <div className="space-y-3 rounded-xl border border-background-200 p-4">
+        <div className="grid items-end gap-4 sm:grid-cols-[160px_1fr]">
+          <FormField label="Expected OTJH (hours)">
+            <TextControl value={expectedOtjh} onChange={setExpectedOtjh} type="number" min={0} max={999999.99} step="0.5" inputMode="decimal" />
+          </FormField>
+          <label className="flex items-start gap-3 rounded-lg border border-primary-100 p-3 text-sm">
+            <input type="checkbox" className="mt-0.5" checked={countsTowardsOtjh}
+              onChange={event => setCountsTowardsOtjh(event.target.checked)}
+              aria-label="Counts towards learner's total OTJH" />
+            <span><span className="font-semibold">Counts towards learner's total OTJH</span>
+              <span className="mt-1 block text-xs text-foreground-500">When completed, adds the hours above to the learner's OTJH total.</span>
+            </span>
+          </label>
+        </div>
+        <p className="text-sm text-foreground-500">OTJ hour changes apply only to reviews that have not started. In-progress reviews, reviews awaiting signatures and completed reviews keep their existing hours.</p>
+      </div>
       {sections.map((section, index) => <section key={section.key} className="space-y-3 rounded-2xl border border-background-200 p-4">
         <FormField label={`Section ${index + 1} title`}><TextControl value={section.title} onChange={title => updateSections(sections.map((s, i) => i === index ? { ...s, title } : s))} /></FormField>
         <div className="flex flex-wrap gap-2">

@@ -121,8 +121,26 @@ def read_otjh(context, owner):
     from .selectors.otjh import learner_programme_window
     from .views import apply_otjh_to_date_metrics
     totals = read_hour_totals(owner)
+    from .migrated_otjh import review_rows_bulk, summarize
+    review_rows = review_rows_bulk([owner]).get(int(owner['id']), [])
+    review_hours = summarize(review_rows)
+    # Add each new signed continuation to its own completion month; retained
+    # source history and stored monthly targets remain untouched.
+    totals = [dict(row) for row in totals]
+    for row in review_rows:
+        if row['status'] == 'completed' and row['completedDate']:
+            totals.append({'month': row['completedDate'].strftime('%Y-%m'),
+                           'completed': row['hoursEach'], 'submitted': 0})
+    combined = {}
+    for row in totals:
+        month = combined.setdefault(row['month'], {'month': row['month'], 'completed': 0, 'submitted': 0})
+        month['completed'] += float(row['completed'] or 0)
+        month['submitted'] += float(row['submitted'] or 0)
+    totals = list(combined.values())
     actual = round(sum(float(row['completed'] or 0) for row in totals), 4)
     planned = canonical.programme_planned_hours(context.profile.enrolment_id, owner=owner)
+    if planned is not None:
+        planned = round(planned + review_hours['planned'], 4)
     start, end = learner_programme_window(context.profile, context.source)
     today = timezone.localdate()
     paced = apply_otjh_to_date_metrics({'otjhCompleted': actual, 'otjhPlanned': planned,
@@ -131,10 +149,17 @@ def read_otjh(context, owner):
     targets = canonical.targets_for(owner)
     signed_months = [row['report_month'] for row in canonical.query(
         'SELECT DISTINCT report_month FROM "Learner".learner_monthly_signatures WHERE learner_id=%s AND review_confirmed IS TRUE', [owner['id']])]
+    months = {row['month']: row for row in project_months(totals, targets, signed_months, read_chart_plan(context), today=today)}
+    for review in review_rows:
+        if review['targetDate']:
+            key = review['targetDate'].strftime('%Y-%m')
+            month = months.setdefault(key, {'month': key, 'targetHours': 0, 'submittedHours': 0, 'completedHours': 0})
+            if month['targetHours'] is not None:
+                month['targetHours'] = round(month['targetHours'] + review['hoursEach'], 4)
     return {'actualHours': actual, 'targetToDateHours': target, 'plannedHours': planned,
         'remainingHours': max(0, target - actual) if target is not None else None,
         'progressPercent': paced['otjhProgressAsOfToday'],
-        'months': project_months(totals, targets, signed_months, read_chart_plan(context), today=today)}
+        'months': [months[key] for key in sorted(months)]}
 
 
 def read_otjh_ksb(context):

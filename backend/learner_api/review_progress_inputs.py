@@ -52,6 +52,9 @@ def review_planned_target_hours(
         return 0.0, 0.0
 
     from curriculum_api import review_otjh
+    from coach_api.migrated_otjh import owner_from_profile, review_rows_bulk, summarize
+    owner = owner_from_profile(learner_profile)
+    migrated_rows = review_rows_bulk([owner]).get(learner_id, [])
 
     programme_id = _text(getattr(learner_profile, "programme_id", ""))
     programme_status = _text(getattr(learner_profile, "programme_status", ""))
@@ -78,4 +81,7 @@ def review_planned_target_hours(
             min(due_through, end_date),
             template_cache=template_cache,
         )
+    planned += summarize(migrated_rows, window_start=start_date, window_end=end_date)['planned']
+    if due_through >= start_date:
+        due += summarize(migrated_rows, window_start=start_date, window_end=min(due_through, end_date))['planned']
     return planned, due

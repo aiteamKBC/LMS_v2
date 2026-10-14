@@ -1009,6 +1009,8 @@ def _review_otjh_hours(learner_profile):
         return 0.0, 0.0
 
     from curriculum_api import review_otjh
+    from coach_api.migrated_otjh import hours_for_profile
+    migrated = hours_for_profile(learner_profile)
 
     learner_id = getattr(learner_profile, "id", None)
     start_date = getattr(learner_profile, "start_date", None)
@@ -1019,7 +1021,7 @@ def _review_otjh_hours(learner_profile):
     # horizon that would silently inflate the total.
     end_date = getattr(learner_profile, "end_date", None)
     if not learner_id or not start_date or not end_date:
-        return 0.0, review_otjh.completed_hours(learner_id) if learner_id else 0.0
+        return migrated['planned'], (review_otjh.completed_hours(learner_id) if learner_id else 0.0) + migrated['completed']
 
     planned = review_otjh.planned_hours(
         _s(getattr(learner_profile, "programme_id", "")),
@@ -1029,7 +1031,7 @@ def _review_otjh_hours(learner_profile):
         start_date,
         end_date,
     )
-    return planned, review_otjh.completed_hours(learner_id)
+    return planned + migrated['planned'], review_otjh.completed_hours(learner_id) + migrated['completed']
 
 
 def _live_otjh_snapshot(detail, learner_profile=None):

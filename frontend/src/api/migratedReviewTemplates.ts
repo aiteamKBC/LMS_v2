@@ -17,6 +17,8 @@ export interface MigratedTemplate {
   review_family: MigratedFamily; name: string; is_active: boolean; updated_at: string;
   source_metadata: { sourceReviewId?: number; aptemReviewId?: string; programme?: string; copiedFromTemplateId?: number };
   fingerprint: string;
+  expected_otjh?: number;
+  counts_towards_otjh?: boolean;
 }
 export interface TemplateDetail extends MigratedTemplate { definition: MigratedDefinition }
 export interface TemplateResolution {
@@ -55,7 +57,7 @@ export const importMigratedTemplate = (review_family: MigratedFamily, source_rev
   request<TemplateDetail>('', 'POST', { scope: 'GLOBAL', review_family, source_review_id, name });
 export const createMigratedOverride = (programme_key: string, review_family: MigratedFamily, name: string) =>
   request<TemplateDetail>('', 'POST', { scope: 'PROGRAMME', programme_key, review_family, name });
-export const updateMigratedTemplate = (template: MigratedTemplate, changes: { name?: string; definition?: MigratedDefinition; is_active?: boolean }) =>
+export const updateMigratedTemplate = (template: MigratedTemplate, changes: { name?: string; definition?: MigratedDefinition; is_active?: boolean; expected_otjh?: number; counts_towards_otjh?: boolean }) =>
   request<TemplateDetail>(`${template.id}/`, 'PATCH', { ...changes, updated_at: template.updated_at });
 export const resetMigratedOverride = (template: MigratedTemplate) =>
   request<TemplateResolution>('reset/', 'POST', { template_id: template.id, programme_key: template.programme_key,
