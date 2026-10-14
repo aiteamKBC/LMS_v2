@@ -1913,6 +1913,7 @@ function LiveSessionBody({ component, onChange, setSetting, rulePoints, weekSess
       <Section title="Recording & attendance">
         {teamsLiveSessionId ? (
           <LiveSessionArtifactsPanel
+            moduleId={moduleId}
             session={{
               liveSessionId: teamsLiveSessionId,
               title: component.title,
