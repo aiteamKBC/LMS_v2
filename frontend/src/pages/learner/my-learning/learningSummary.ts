@@ -4,7 +4,7 @@ import { completedComponentIds, isComponentComplete, quizAttemptsFor, type Journ
 
 export type Schedule = Pick<StudentActivityItem, 'date' | 'month' | 'week_start' | 'week_end' | 'date_needs_review' | 'date_source'> & { due_timing?: string };
 export type SubjectEntry = { id: string; title: string; category: string; completed: boolean; position: number; schedule: Schedule; week?: string; legacy?: StudentActivityItem; native?: JourneyComponent; bestScorePercent?: number | null };
-export type Subject = { id: string; title: string; source: 'legacy' | 'current'; activities: SubjectEntry[]; recordedHistory?: boolean; catalogueProgress?: boolean; catalogueCount?: number; acceptedHours?: number };
+export type Subject = { id: string; title: string; source: 'legacy' | 'current'; moduleId?: string | null; activities: SubjectEntry[]; recordedHistory?: boolean; catalogueProgress?: boolean; catalogueCount?: number; acceptedHours?: number };
 type BuilderSubject = { id: string; title: string };
 type ActivitySource = { module_id: string; group_id: number; activity_id: number };
 export type CoverMetadata = { covers: Record<string, string>; activity_dates?: Record<string, Schedule>; current_subjects?: BuilderSubject[]; builder_subjects?: Record<string, BuilderSubject>; activity_sources?: Record<string, ActivitySource> };
@@ -59,7 +59,7 @@ export function subjectsFrom(data: LearningSummaryActivity | null, real: Learnin
   const canonicalCourses = recordedHistory || catalogueProgress;
   const historicalModules = new Set(canonicalCourses ? (data?.subjects || []).flatMap(s => s.module_id ? [s.module_id] : []) : []);
   const subjects = new Map<string, Subject>();
-  for (const subject of data?.subjects || []) subjects.set(`legacy:${subject.id}`, { id: `legacy:${subject.id}`, title: subject.name, source: 'legacy', activities: [], recordedHistory, catalogueProgress, catalogueCount: subject.catalogue_count, acceptedHours: subject.accepted_hours });
+  for (const subject of data?.subjects || []) subjects.set(`legacy:${subject.id}`, { id: `legacy:${subject.id}`, title: subject.name, source: 'legacy', moduleId: subject.module_id, activities: [], recordedHistory, catalogueProgress, catalogueCount: subject.catalogue_count, acceptedHours: subject.accepted_hours });
   for (const item of data?.activities || []) {
     const key = `legacy:${item.group_id}`;
     const subject = subjects.get(key) || { id: key, title: item.group_name || 'Unnamed subject', source: 'legacy' as const, activities: [] };
