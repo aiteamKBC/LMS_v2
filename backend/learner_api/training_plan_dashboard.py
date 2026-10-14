@@ -391,7 +391,19 @@ def _plan_session_rows(cur, email, ids, since=None, until=None):
     """Session rows on the plan's modules, earliest first, starting in ``[since, until)`` when given."""
     bounds = [(since, '>='), (until, '<')]
     window = ''.join(f' AND coalesce(o.scheduled_start,s.start_datetime){op}%s' for bound, op in bounds if bound)
-    cur.execute(f'''SELECT s.id AS session_id,s.module_catalogue_id AS module_id,s.module_title,
+    cur.execute(f'''WITH RECURSIVE owners(module_id,owner_id,depth) AS (
+        SELECT m.module_catalogue_id,
+               coalesce(nullif(btrim(m.teams_shared_source_module_id),''),m.module_catalogue_id),0
+        FROM curriculum.modules m WHERE m.module_catalogue_id=ANY(%s)
+        UNION ALL
+        SELECT owners.module_id,btrim(m.teams_shared_source_module_id),owners.depth+1
+        FROM owners JOIN curriculum.modules m ON m.module_catalogue_id=owners.owner_id
+        WHERE coalesce(btrim(m.teams_shared_source_module_id),'')<>'' AND owners.depth<5
+    ), delivery AS (
+        SELECT DISTINCT ON (module_id) module_id,owner_id
+        FROM owners ORDER BY module_id,depth DESC
+    )
+        SELECT s.id AS session_id,delivery.module_id,target_module.title AS module_title,
         s.start_datetime,s.duration_minutes,s.join_url AS series_join_url,s.repeat_pattern,s.status AS series_status,
         o.id AS occurrence_id,o.scheduled_start,o.scheduled_end,o.join_url,o.status,
         CASE WHEN coalesce(CASE WHEN replaced_attendance.occurrence_id IS NOT NULL
@@ -400,12 +412,14 @@ def _plan_session_rows(cur, email, ids, since=None, until=None):
              ELSE EXISTS(SELECT 1 FROM curriculum.live_session_attendance a
                  WHERE a.occurrence_id=COALESCE(replaced_attendance.occurrence_id,o.id)
                    AND lower(btrim(a.email))=%s AND a.total_attendance_seconds>0) END AS attended
-        FROM curriculum.live_sessions s LEFT JOIN curriculum.live_session_occurrences o ON o.live_session_id=s.id
+        FROM delivery
+        JOIN curriculum.live_sessions s ON s.module_catalogue_id=delivery.owner_id
+        JOIN curriculum.modules target_module ON target_module.module_catalogue_id=delivery.module_id
+        LEFT JOIN curriculum.live_session_occurrences o ON o.live_session_id=s.id
         {REPLACED_ATTENDANCE_LATERAL_SQL}
-        WHERE s.module_catalogue_id=ANY(%s) AND lower(s.status) NOT IN ('cancelled','deleted','failed','superseded')
+        WHERE lower(s.status) NOT IN ('cancelled','deleted','failed','superseded')
           AND (o.id IS NULL OR lower(o.status) NOT IN ('cancelled','deleted','failed','superseded')){window}
-        ORDER BY coalesce(o.scheduled_start,s.start_datetime)''',
-                [email, ids, *(bound.astimezone(timezone.utc).replace(tzinfo=None) for bound, _ in bounds if bound)])
+        ORDER BY coalesce(o.scheduled_start,s.start_datetime)''', [ids, email, *(bound.astimezone(timezone.utc).replace(tzinfo=None) for bound, _ in bounds if bound)])
     return rows(cur)
 
 

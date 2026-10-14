@@ -277,7 +277,7 @@ class UpcomingSectionTests(SimpleTestCase):
         self.assertIn(' AND coalesce(o.scheduled_start,s.start_datetime)>=%s'
                       ' AND coalesce(o.scheduled_start,s.start_datetime)<%s', sql)
         self.assertNotIn('FETCH', sql)
-        self.assertEqual(params, ['learner@example.test', ['MOD-1'],
+        self.assertEqual(params, [['MOD-1'], 'learner@example.test',
                                   datetime(2026, 10, 18, 23), datetime(2026, 10, 23, 23)])
 
     def test_overview_session_query_has_no_time_filter(self):
@@ -286,7 +286,7 @@ class UpcomingSectionTests(SimpleTestCase):
             plan_module.plan_sessions(cursor, 'learner@example.test', ['MOD-1'])
         sql, params = cursor.execute.call_args.args
         self.assertNotIn('>=%s', sql)
-        self.assertEqual(params, ['learner@example.test', ['MOD-1']])
+        self.assertEqual(params, [['MOD-1'], 'learner@example.test'])
 
     def test_dispatches_the_upcoming_section(self):
         with patch.object(plan_module, 'read_upcoming', return_value={'sessions': []}) as upcoming:

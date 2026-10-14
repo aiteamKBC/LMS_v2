@@ -519,6 +519,7 @@ describe('Programme workspace', { timeout: 15000 }, () => {
     vi.mocked(api.fetchCurriculumProgrammeDetail).mockResolvedValueOnce({
       schema: 'test',
       programme,
+      cohorts: [],
       flat: { cohorts, groups, groupIds: ['GROUP-1'], modules: [outlineModule], sessions: [] },
     });
     vi.mocked(api.fetchCurriculumComponents).mockResolvedValueOnce(trimmedComponents);

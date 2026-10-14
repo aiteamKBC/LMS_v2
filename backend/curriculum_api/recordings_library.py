@@ -28,6 +28,7 @@ copies are shown once, with ``duplicateCount`` saying how many more are stored.
 """
 import json
 from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from django.db import DatabaseError
 from django.http import JsonResponse
@@ -35,13 +36,21 @@ from django.views.decorators.http import require_GET
 from login.permissions import require_role
 
 from .session_media_policy import artifact_metadata
+from .session_component_identity import TIMEZONE_ALIASES
 from .session_results import read, unavailable
 from .session_results_policy import instant
+
+MODULES_SQL = '''SELECT m.module_catalogue_id, m.title, m.programme_name, m.cohort_name,
+        m.group_name, m.deleted_at, m.is_programme_deleted, p.status AS programme_status
+    FROM curriculum.modules m
+    LEFT JOIN curriculum.programmes p ON p.programme_id=m.programme_id
+    ORDER BY m.programme_name, m.cohort_name, m.group_name, m.title, m.module_catalogue_id'''
 
 # Same series filter as the module Sessions tab, so both list the same recordings.
 RECORDINGS_SQL = '''SELECT a.id AS artifact_id, a.created_datetime, a.end_datetime, a.metadata,
         a.call_id, a.content_correlation_id,
         o.id AS occurrence_id, o.live_session_id AS series_id, o.session_number, o.scheduled_start,
+        s.timezone AS series_timezone,
         m.module_catalogue_id, m.title AS module_title, m.programme_name, m.cohort_name, m.group_name,
         (m.deleted_at IS NOT NULL OR COALESCE(m.is_programme_deleted, false)) AS module_archived,
         p.status AS programme_status, r.status AS archive_status
@@ -73,7 +82,8 @@ LIVE_COMPONENTS_SQL = '''SELECT x.week_id, x.module_catalogue_id, x.settings_jso
     ORDER BY x.display_order, x.id'''
 
 # Every live session of every running module, for the sessions that need attention.
-ATTENTION_COMPONENTS_SQL = '''SELECT c.week_id, c.module_catalogue_id, c.settings_json,
+ATTENTION_COMPONENTS_SQL = '''SELECT c.id AS component_id, c.title AS component_title,
+        c.week_id, c.module_catalogue_id, c.settings_json,
         w.week_number, w.title AS week_title, w.display_order,
         m.title AS module_title, m.programme_name, m.cohort_name, m.group_name, p.status AS programme_status
     FROM curriculum.components c
@@ -86,15 +96,41 @@ ATTENTION_COMPONENTS_SQL = '''SELECT c.week_id, c.module_catalogue_id, c.setting
     AND m.deleted_at IS NULL AND NOT COALESCE(m.is_programme_deleted, false)
     ORDER BY w.display_order, w.week_number, c.display_order, c.id'''
 
-# Sessions that have started, with what the last results sync of their meeting reported.
-PAST_OCCURRENCES_SQL = '''SELECT o.id, o.live_session_id, o.session_number, o.scheduled_start, o.scheduled_end,
+# Author labels also remain useful for archived deliveries. Keep only weeks
+# deleted with their parent module; a separately removed component is not a link.
+CALENDAR_COMPONENTS_SQL = '''SELECT c.id AS component_id, c.title AS component_title,
+        c.live_sessions_link, c.week_id,
+        c.module_catalogue_id, c.settings_json, w.week_number, w.title AS week_title,
+        m.title AS module_title, m.programme_name, m.cohort_name, m.group_name,
+        (m.deleted_at IS NOT NULL OR COALESCE(m.is_programme_deleted, false)) AS module_archived,
+        p.status AS programme_status
+    FROM curriculum.components c
+    JOIN curriculum.weeks w ON w.id=c.week_id AND w.module_catalogue_id=c.module_catalogue_id
+    JOIN curriculum.modules m ON m.module_catalogue_id=c.module_catalogue_id
+    LEFT JOIN curriculum.programmes p ON p.programme_id=m.programme_id
+    WHERE c.type IN ('live-session','live_session')
+      AND COALESCE(c.library_state, '')<>'library'
+      AND COALESCE(w.library_state, '')<>'library'
+      AND ''' + _KEPT_WITH_MODULE.replace('x.', 'c.') + '''
+      AND ''' + _KEPT_WITH_MODULE.replace('x.', 'w.') + '''
+    ORDER BY c.id'''
+
+# Scheduled sessions, with what the last results sync of their meeting reported.
+OCCURRENCES_SQL = '''SELECT o.id, o.live_session_id, o.session_number, o.scheduled_start, o.scheduled_end,
         o.status, o.actual_start, s.status AS series_status, j.state AS job_state, j.finished_at AS job_finished_at,
+        s.module_catalogue_id, s.module_title AS series_module_title, s.timezone AS series_timezone,
+        COALESCE(NULLIF(o.join_url, ''), s.join_url) AS join_url,
+        m.title AS module_title, m.programme_name, m.cohort_name, m.group_name,
+        (m.deleted_at IS NOT NULL OR COALESCE(m.is_programme_deleted, false)) AS module_archived,
+        p.status AS programme_status,
         EXISTS (SELECT 1 FROM curriculum.live_session_artifacts a
                 WHERE a.occurrence_id=o.id AND a.artifact_type='recording') AS has_recording
     FROM curriculum.live_session_occurrences o
     JOIN curriculum.live_sessions s ON s.id=o.live_session_id
+    LEFT JOIN curriculum.modules m ON m.module_catalogue_id=s.module_catalogue_id
+    LEFT JOIN curriculum.programmes p ON p.programme_id=m.programme_id
     LEFT JOIN curriculum.session_result_jobs j ON j.live_session_id=s.id
-    WHERE o.scheduled_start < %s'''
+    WHERE o.scheduled_start IS NOT NULL AND s.status NOT IN ('deleted','superseded','failed')'''
 
 # Teams can take a while to publish a recording after a meeting ends. A session
 # is judged only after this, and only by a sync that finished after it.
@@ -147,6 +183,35 @@ def _iso(value):
     return moment.isoformat().replace('+00:00', 'Z') if moment else None
 
 
+def _component_start(settings):
+    """The authored instant; never invent a time from a date alone."""
+    explicit = settings.get('sessionDateTimeUtc') or settings.get('teamsStartDateTimeUtc')
+    if explicit:
+        try:
+            return instant(explicit)
+        except (TypeError, ValueError):
+            return None
+    date, clock = _text(settings.get('sessionDate')), _text(settings.get('sessionTime'))
+    if not date or not clock:
+        return None
+    try:
+        zone = ZoneInfo(_text(settings.get('sessionTimeZone')) or 'Europe/London')
+        return datetime.fromisoformat(f'{date}T{clock}').replace(tzinfo=zone).astimezone(timezone.utc)
+    except (TypeError, ValueError, ZoneInfoNotFoundError):
+        return None
+
+
+def module_index(rows):
+    """Every saved module delivery, including one without a booked lecture."""
+    return [{
+        'moduleId': row['module_catalogue_id'], 'title': _text(row.get('title')) or 'Untitled module',
+        'programme': _text(row.get('programme_name')),
+        'cohort': _text(row.get('cohort_name')), 'group': _text(row.get('group_name')),
+        'archived': bool(row.get('deleted_at') or row.get('is_programme_deleted')),
+        'programmeActive': programme_active(row.get('programme_status')),
+    } for row in rows]
+
+
 def programme_active(status):
     # Draft and archived programmes are not running; a module with no programme row counts as active.
     return _text(status).lower() not in ('draft', 'archived')
@@ -170,6 +235,47 @@ def same_recording_key(row):
         return ('id', row['artifact_id'])
     return (_text(row.get('occurrence_id')), _text(row.get('call_id')), correlation,
             _text(row.get('created_datetime')), _text(row.get('end_datetime')))
+
+
+def placement_review_ids(recordings, occurrences):
+    """Flag historical media whose recorded day cannot confirm its saved week.
+
+    Teams exposes one recording list for a recurring meeting. Older imports
+    assigned rehearsals to the nearest planned occurrence. Keep those files and
+    their database links intact, but do not present them as confirmed lectures.
+    """
+    local_days = {}
+    for occurrence in occurrences:
+        start = instant(occurrence.get('scheduled_start')) if occurrence.get('scheduled_start') else None
+        if not start:
+            continue
+        zone_name = _text(occurrence.get('series_timezone')) or 'Europe/London'
+        zone_name = TIMEZONE_ALIASES.get(zone_name, zone_name)
+        try:
+            day = start.astimezone(ZoneInfo(zone_name)).date().isoformat()
+        except ZoneInfoNotFoundError:
+            continue
+        key = (_text(occurrence.get('live_session_id')), _text(occurrence.get('module_catalogue_id')), day)
+        local_days.setdefault(key, set()).add(_text(occurrence.get('id')))
+
+    review = set()
+    for recording in recordings:
+        recorded = instant(recording.get('created_datetime')) if recording.get('created_datetime') else None
+        scheduled = instant(recording.get('scheduled_start')) if recording.get('scheduled_start') else None
+        if not recorded or not scheduled:
+            continue
+        zone_name = _text(recording.get('series_timezone')) or 'Europe/London'
+        zone_name = TIMEZONE_ALIASES.get(zone_name, zone_name)
+        try:
+            day = recorded.astimezone(ZoneInfo(zone_name)).date().isoformat()
+        except ZoneInfoNotFoundError:
+            continue
+        key = (_text(recording.get('series_id')), _text(recording.get('module_catalogue_id')), day)
+        matches = local_days.get(key, set())
+        if ((len(matches) == 1 and _text(recording.get('occurrence_id')) not in matches)
+                or (len(matches) != 1 and abs(recorded - scheduled) > RUN_DATE_TOLERANCE)):
+            review.add(recording['artifact_id'])
+    return review
 
 
 def session_attention(occurrence, now):
@@ -233,6 +339,104 @@ def attention_by_module(components, occurrences, now):
     return modules
 
 
+def calendar_sessions(components, occurrences, now=None):
+    """List every persisted LMS Teams occurrence, enriching it with its week when linked.
+
+    The occurrence ID is authoritative. A missing curriculum component must
+    never hide the meeting or turn its week number into a lecture title.
+    """
+    by_occurrence, by_session, by_extra_series, by_start = {}, {}, {}, {}
+    for component in components:
+        settings = _settings(component.get('settings_json'))
+        module_id = _text(component.get('module_catalogue_id'))
+        occurrence_id = _text(settings.get('teamsOccurrenceId'))
+        series_id = _text(settings.get('teamsLiveSessionId'))
+        session_number = _text(settings.get('teamsSessionNumber'))
+        extra_series = _text(settings.get('extraTeamsLiveSessionId'))
+        if occurrence_id:
+            by_occurrence.setdefault((module_id, occurrence_id), component)
+        if series_id and session_number:
+            by_session.setdefault((module_id, series_id, session_number), component)
+        if extra_series:
+            by_extra_series.setdefault((module_id, extra_series), component)
+        start = _component_start(settings)
+        if start:
+            by_start.setdefault((module_id, _iso(start)), []).append(component)
+
+    sessions, matched = [], set()
+    for occurrence in occurrences:
+        module_id = _text(occurrence.get('module_catalogue_id'))
+        series_id = _text(occurrence.get('live_session_id'))
+        component = (by_occurrence.get((module_id, _text(occurrence.get('id'))))
+                     or by_session.get((module_id, series_id, _text(occurrence.get('session_number'))))
+                     or by_extra_series.get((module_id, series_id)) or {})
+        if not component:
+            candidates = by_start.get((module_id, _iso(occurrence.get('scheduled_start'))), [])
+            if len(candidates) == 1:
+                component = candidates[0]
+        if component:
+            matched.add(id(component))
+        cancelled = (_text(occurrence.get('status')).lower() == 'cancelled'
+                     or _text(occurrence.get('series_status')).lower() == 'cancelled')
+        verdict = session_attention(occurrence, now) if now and not cancelled else None
+        module_title = (_text(occurrence.get('module_title'))
+                        or _text(occurrence.get('series_module_title'))
+                        or _text(component.get('module_title')) or 'Untitled module')
+        sessions.append({
+            'source': 'occurrence',
+            'occurrenceId': occurrence['id'], 'seriesId': series_id,
+            'moduleId': module_id or f'live-session:{series_id}',
+            'title': _text(component.get('component_title')) or _text(occurrence.get('series_module_title'))
+                     or module_title,
+            'moduleTitle': module_title,
+            'programme': _text(occurrence.get('programme_name')),
+            'programmeActive': programme_active(occurrence.get('programme_status')),
+            'archived': bool(occurrence.get('module_archived')),
+            'cohort': _text(occurrence.get('cohort_name')),
+            'group': _text(occurrence.get('group_name')),
+            'weekId': component.get('week_id'), 'weekNumber': component.get('week_number'),
+            'weekTitle': _text(component.get('week_title')),
+            'startsAt': _iso(occurrence.get('scheduled_start')),
+            'endsAt': _iso(occurrence.get('scheduled_end')),
+            'sessionNumber': occurrence.get('session_number'),
+            'status': 'cancelled' if cancelled else _text(occurrence.get('status')),
+            'joinUrl': '' if cancelled else _text(occurrence.get('join_url')),
+            'attentionStatus': verdict[0] if verdict else None,
+            'attentionReason': verdict[1] if verdict else '',
+        })
+    for component in components:
+        if id(component) in matched:
+            continue
+        settings = _settings(component.get('settings_json'))
+        start = _component_start(settings)
+        if not start:
+            continue
+        try:
+            duration = int(settings.get('durationMinutes') or settings.get('teamsDurationMinutes') or 60)
+        except (TypeError, ValueError):
+            duration = 60
+        duration = duration if 0 < duration <= 24 * 60 else 60
+        module_title = _text(component.get('module_title')) or 'Untitled module'
+        sessions.append({
+            'source': 'authored',
+            'occurrenceId': f"authored:{component['component_id']}", 'seriesId': '',
+            'moduleId': component['module_catalogue_id'],
+            'title': _text(component.get('component_title')) or module_title,
+            'moduleTitle': module_title,
+            'programme': _text(component.get('programme_name')),
+            'programmeActive': programme_active(component.get('programme_status')),
+            'archived': bool(component.get('module_archived')),
+            'cohort': _text(component.get('cohort_name')),
+            'group': _text(component.get('group_name')),
+            'weekId': component.get('week_id'), 'weekNumber': component.get('week_number'),
+            'weekTitle': _text(component.get('week_title')),
+            'startsAt': _iso(start), 'endsAt': _iso(start + timedelta(minutes=duration)),
+            'sessionNumber': None, 'status': 'planned', 'joinUrl': '',
+            'attentionStatus': None, 'attentionReason': '',
+        })
+    return sorted(sessions, key=lambda item: (item['startsAt'] or '', str(item['occurrenceId'])))
+
+
 def _delivery(row, archived=False):
     return {'moduleId': row['module_catalogue_id'], 'title': _text(row.get('module_title')) or 'Untitled module',
             'programme': _text(row.get('programme_name')), 'programmeActive': programme_active(row.get('programme_status')),
@@ -240,8 +444,9 @@ def _delivery(row, archived=False):
             'weeks': {}, 'attention': []}
 
 
-def build_library(recordings, weeks, components, attention=None):
+def build_library(recordings, weeks, components, attention=None, placement_reviews=None):
     owners = week_owners(components)
+    placement_reviews = placement_reviews or set()
     week_rows = {row['id']: row for row in weeks}
     week_order = {row['id']: index for index, row in enumerate(weeks)}
     deliveries, kept = {}, {}
@@ -266,11 +471,13 @@ def build_library(recordings, weeks, components, attention=None):
             'recordings': []})
         state = _text(row.get('archive_status')) or 'pending'
         item = {
-            'id': row['artifact_id'], 'seriesId': row['series_id'], 'sessionNumber': row.get('session_number'),
+            'id': row['artifact_id'], 'seriesId': row['series_id'], 'occurrenceId': row.get('occurrence_id'),
+            'sessionNumber': row.get('session_number'),
             'startsAt': _iso(row.get('scheduled_start')), 'recordedAt': _iso(row.get('created_datetime')),
             'endsAt': _iso(row.get('end_datetime')),
             'state': state if state in ('pending', 'ready', 'failed') else 'pending',
             'status': recording_status(row.get('archive_status')), 'duplicateCount': 0,
+            'placementReview': row['artifact_id'] in placement_reviews,
             'hiddenFromLearners': artifact_metadata(row).get('lmsHiddenFromLearners') is True}
         kept[key] = item
         bucket['recordings'].append(item)
@@ -294,18 +501,36 @@ def build_library(recordings, weeks, components, attention=None):
 @require_role('admin', 'staff')
 def recordings_library(request):
     try:
+        modules = module_index(read(MODULES_SQL))
         recordings = read(RECORDINGS_SQL)
         module_ids = sorted({row['module_catalogue_id'] for row in recordings})
         weeks = read(WEEKS_SQL, [module_ids]) if module_ids else []
         components = read(LIVE_COMPONENTS_SQL, [module_ids]) if module_ids else []
     except DatabaseError:
         return unavailable()
+    placement_reviews = set()
     try:
         now = datetime.now(timezone.utc)
-        attention = attention_by_module(read(ATTENTION_COMPONENTS_SQL), read(PAST_OCCURRENCES_SQL, [now]), now)
+        schedule_components = read(ATTENTION_COMPONENTS_SQL)
+        calendar_components = read(CALENDAR_COMPONENTS_SQL)
+        occurrences = read(OCCURRENCES_SQL)
+        placement_reviews = placement_review_ids(recordings, occurrences)
+        confirmed_occurrences = {row['occurrence_id'] for row in recordings
+                                 if row['artifact_id'] not in placement_reviews}
+        for occurrence in occurrences:
+            occurrence['has_recording'] = occurrence['id'] in confirmed_occurrences
+        attention = attention_by_module(schedule_components, occurrences, now)
+        sessions = calendar_sessions(calendar_components, occurrences, now)
+        calendar_available = True
     except DatabaseError:
-        # The recordings still list; the page says the session checks could not run.
+        # The recordings still list, but an empty calendar would be misleading.
         attention = None
-    response = JsonResponse(build_library(recordings, weeks, components, attention))
+        sessions = []
+        calendar_available = False
+    payload = build_library(recordings, weeks, components, attention, placement_reviews)
+    payload['modules'] = modules
+    payload['sessions'] = sessions
+    payload['calendarAvailable'] = calendar_available
+    response = JsonResponse(payload)
     response['Cache-Control'] = 'private, no-store'
     return response

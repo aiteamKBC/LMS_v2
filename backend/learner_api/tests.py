@@ -1512,6 +1512,18 @@ class EvidenceStorageUrlTests(SimpleTestCase):
         self.assertEqual(blob_client.upload_blob.call_args.kwargs["connection_timeout"], 60)
         self.assertEqual(blob_client.upload_blob.call_args.kwargs["read_timeout"], 60)
 
+    @patch("learner_api.evidence_storage._service_client")
+    def test_direct_upload_can_extend_timeout_for_large_recordings(self, service_client):
+        evidence_storage.upload_blob(
+            BytesIO(b"synthetic-recording"), "private-recordings", "lesson.mp4", "video/mp4",
+            retry_total=4, read_timeout=180,
+        )
+
+        service_client.assert_called_once_with(upload_block_bytes=None, retry_total=4)
+        options = service_client.return_value.get_blob_client.return_value.upload_blob.call_args.kwargs
+        self.assertEqual(options["read_timeout"], 180)
+        self.assertEqual(options["connection_timeout"], 60)
+
     def test_canonical_url_round_trips_container_and_blob_name(self):
         url = blob_url(
             "evidence-quarantine",

@@ -124,7 +124,7 @@ def replaced_module_register_rows(module_catalogue_id, source_occurrence_ids):
     if not module_catalogue_id or not source_occurrence_ids:
         return []
     from learner_api.replaced_teams_attendance import REPLACED_ATTENDANCE_LATERAL_SQL
-    return read(f'''SELECT replaced_attendance.occurrence_id AS source_occurrence_id,
+    rows = read(f'''SELECT replaced_attendance.occurrence_id AS source_occurrence_id,
         r.occurrence_id,r.learner_profile_id,r.learner_email,r.learner_name,
         r.attendance_status,r.recovery_status,r.attended_seconds,
         r.attendance_report_id,r.first_join_at,r.last_leave_at
@@ -137,6 +137,34 @@ def replaced_module_register_rows(module_catalogue_id, source_occurrence_ids):
         ORDER BY r.learner_name,r.learner_profile_id''', [
             module_catalogue_id, source_occurrence_ids,
         ])
+    if rows:
+        return rows
+    # A shared Teams duplicate deliberately owns no live_sessions or
+    # occurrences. The builder projects the source module's meeting identity
+    # onto it at read time (views.apply_shared_teams_settings_to_weeks). Match
+    # that same explicit ownership relation and use the duplicate's learner
+    # plan mirror as its roster; never fall back to the source module's roster.
+    return read('''SELECT source_o.id AS source_occurrence_id,
+        NULL AS occurrence_id,learner.id AS learner_profile_id,
+        lower(btrim(learner.email)) AS learner_email,
+        learner.full_name AS learner_name,
+        CASE WHEN coalesce(source_o.attendance_report_id,'')<>'' AND source_o.actual_end IS NOT NULL
+             THEN 'absent' ELSE 'pending' END AS attendance_status,
+        'none' AS recovery_status,0 AS attended_seconds,
+        source_o.attendance_report_id,NULL AS first_join_at,NULL AS last_leave_at
+        FROM curriculum.modules target_module
+        JOIN curriculum.live_sessions source_session
+          ON source_session.module_catalogue_id=target_module.teams_shared_source_module_id
+        JOIN curriculum.live_session_occurrences source_o
+          ON source_o.live_session_id=source_session.id
+        LEFT JOIN "Learner".learner_training_plan_modules plan_module
+          ON plan_module.module_ref=target_module.module_catalogue_id
+        LEFT JOIN "Learner".learners learner ON learner.id=plan_module.learner_id
+        WHERE target_module.module_catalogue_id=%s
+          AND source_o.id=ANY(%s)
+          AND lower(btrim(source_session.status)) NOT IN ('cancelled','canceled','deleted','failed','superseded')
+          AND lower(btrim(source_o.status)) NOT IN ('cancelled','canceled','deleted','failed','superseded')
+        ORDER BY learner.full_name,learner.id''', [module_catalogue_id, source_occurrence_ids])
 
 
 def result_rows(series, *, session_number=None, email=None, identity=False, module_catalogue_id=''):
@@ -155,7 +183,9 @@ def result_rows(series, *, session_number=None, email=None, identity=False, modu
         FROM curriculum.live_session_learner_attendance
         WHERE occurrence_id=ANY(%s) ORDER BY learner_name,learner_profile_id''', [ids])
     context_register_rows = []
-    if email is None and module_catalogue_id and str(module_catalogue_id) != str(series.get('module_catalogue_id') or ''):
+    context_requested = (email is None and module_catalogue_id
+                         and str(module_catalogue_id) != str(series.get('module_catalogue_id') or ''))
+    if context_requested:
         context_register_rows = replaced_module_register_rows(module_catalogue_id, ids)
     context_by_source_id = defaultdict(list)
     context_source_ids = set()
@@ -165,6 +195,8 @@ def result_rows(series, *, session_number=None, email=None, identity=False, modu
             context_source_ids.add(source_id)
             if row.get('learner_profile_id') is not None:
                 context_by_source_id[source_id].append(row)
+    if context_requested and not context_source_ids:
+        return []
     roster_module_id = module_catalogue_id if context_source_ids else series.get('module_catalogue_id')
     aliases = attendance_alias_rows(roster_module_id) if email is None else []
     identity_links = attendance_identity_link_rows(ids) if email is None else []
@@ -856,10 +888,21 @@ def stored_content(request, series_id, artifact_id, *, learner_view=False):
             # A two-hour lesson must remain seekable beyond the default 15-minute
             # document URL lifetime. This URL still grants read access to one blob.
             options = {'ttl_minutes': 240} if row['artifact_type'] == 'recording' else {}
+            if row['artifact_type'] == 'recording':
+                # Some older blobs carry generic/attachment headers. Override
+                # them in the signed response so browser video playback works.
+                options['content_type'] = 'video/mp4'
+                options['content_disposition'] = 'inline'
             # Staff asking to keep a copy get the file saved, not played.
             if row['artifact_type'] == 'recording' and not learner_view and request.GET.get('download') == '1':
                 options['content_disposition'] = f'attachment; filename="{recording_download_name(row)}"'
-            response = HttpResponseRedirect(get_read_sas(row['container'], row['blob_name'], **options))
+            signed_url = get_read_sas(row['container'], row['blob_name'], **options)
+            if row['artifact_type'] == 'recording' and not learner_view and request.GET.get('resolve') == '1':
+                # The staff calendar fetches this while its cookie is present.
+                # It can report an expired login instead of navigating to a JSON 401.
+                response = JsonResponse({'url': signed_url})
+            else:
+                response = HttpResponseRedirect(signed_url)
         except Exception as error:
             log.warning('Session file signing failed: %s', type(error).__name__)
             return JsonResponse({'error': 'File access is temporarily unavailable.'}, status=503)

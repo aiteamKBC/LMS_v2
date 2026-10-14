@@ -107,6 +107,34 @@ describe('Saved session results', () => {
     expect(screen.getByText(/^Recorded meeting:/)).toHaveTextContent('31 Aug 2026');
     expect(screen.getByText(/No recording is saved for this session/)).toBeInTheDocument();
   });
+  it('explains a future staff session without calling its missing results an error', async () => {
+    fetchMock.mockImplementation(() => ok({ sessions: [{ ...session,
+      startsAt: '2099-10-16T09:00:00Z', endsAt: '2099-10-16T11:00:00Z',
+      state: 'scheduled', reportReady: false, syncedAt: undefined, attendance: [], artifacts: [],
+    }], job: { live_session_id: 'S1', state: 'failed', last_error: 'A prior sync needs retry.' } }));
+    render(<SessionResults seriesId="S1" sessionNumber={1} />);
+    expect(await screen.findByText(/This session has not taken place yet/)).toBeInTheDocument();
+    expect(screen.getByText('Results will be available after this session.')).toBeInTheDocument();
+    expect(screen.getByText('Recordings will appear here if this session is recorded.')).toBeInTheDocument();
+    expect(screen.getByText('Sync status for the full meeting series')).toBeInTheDocument();
+    expect(screen.getByRole('alert')).toHaveTextContent('A prior sync needs retry.');
+    fireEvent.click(screen.getByRole('tab', { name: 'attendance' }));
+    expect(screen.getByText(/Attendance will be available after this session ends/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('tab', { name: 'transcripts' }));
+    expect(screen.getByText('Transcripts will appear here if this session is transcribed.')).toBeInTheDocument();
+  });
+  it('shows the future session message to a learner without an absence warning', async () => {
+    fetchMock.mockImplementation(() => ok({ sessions: [{ ...session,
+      startsAt: '2099-10-16T09:00:00Z', endsAt: '2099-10-16T11:00:00Z',
+      state: 'scheduled', reportReady: false, syncedAt: undefined, attendance: [], artifacts: [],
+    }] }));
+    render(<MemoryRouter><SessionResults seriesId="S1" sessionNumber={1}
+      learner={{ kind: 'commercial', id: '7' }} /></MemoryRouter>);
+    expect(await screen.findByText(/This session has not taken place yet/)).toBeInTheDocument();
+    expect(screen.getByText('Your original attendance: Not available yet')).toBeInTheDocument();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    expect(screen.queryByText(/Sync status for the full meeting series/)).not.toBeInTheDocument();
+  });
   it('loads one saved session and embeds private playback without Graph sync', async () => {
     render(<MemoryRouter><SessionResults seriesId="S1" sessionNumber={1} /></MemoryRouter>);
     const video = await screen.findByLabelText('Session recording 1');
@@ -268,9 +296,11 @@ describe('Saved session results', () => {
   });
 
   it('shows a failed archive without attempting playback', async () => {
-    fetchMock.mockImplementation(() => ok({ sessions: [{ ...session, artifacts: [{ id: 'A', type: 'recording', state: 'failed' }] }] }));
+    fetchMock.mockImplementation(() => ok({ sessions: [{ ...session, artifacts: [{ id: 'A', type: 'recording', state: 'failed' }] }],
+      job: { live_session_id: 'S1', state: 'failed', last_error: 'Recording storage needs retry.' } }));
     render(<SessionResults seriesId="S1" sessionNumber={1} />);
     expect(await screen.findByText(/Saving this recording needs retry/)).toBeInTheDocument();
+    expect(screen.getByRole('alert')).toHaveTextContent('Recording storage needs retry.');
     expect(screen.queryByLabelText('Session recording 1')).not.toBeInTheDocument();
   });
 
@@ -302,7 +332,7 @@ describe('Saved session results', () => {
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
   });
 
-  it('shows running and failed worker status while retaining saved playback', async () => {
+  it('keeps a completed session calm while retaining the worker error for staff', async () => {
     let state = 'running';
     fetchMock.mockImplementation(() => ok({ sessions: [session],
       job: { live_session_id: 'S1', state, last_error: state === 'failed' ? 'Recording storage needs retry.' : '' } }));
@@ -311,7 +341,10 @@ describe('Saved session results', () => {
     expect(screen.getByText(/Sync in progress/)).toBeInTheDocument();
     state = 'failed';
     fireEvent.click(screen.getByRole('button', { name: 'Refresh saved results' }));
-    expect(await screen.findByRole('alert')).toHaveTextContent('Recording storage needs retry.');
+    expect(await screen.findByText('The recording and attendance for this session are saved.')).toBeInTheDocument();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByText('View background sync notice'));
+    expect(screen.getByText(/The last sync for this meeting series reported an issue/)).toHaveTextContent('Recording storage needs retry.');
     expect(screen.getByLabelText('Session recording 1')).toBe(video);
     expect(coachFetch).not.toHaveBeenCalled();
   });

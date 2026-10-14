@@ -1,233 +1,255 @@
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ReactNode } from 'react';
-import { loadRecordingsLibrary, recordingDownloadUrl, type RecordingsLibrary } from '@/api/sessionResults';
+import { loadRecordingsLibrary, resolveRecordingUrl, type RecordingsLibrary } from '@/api/sessionResults';
+import { addDays, todayIso } from '../utils';
+import { buildCalendarLectures } from '../model';
 import CurriculumRecordingsPage from '../page';
-
-/**
- * The page is read only: it narrows what the server filed Programme -> Cohort
- * -> Group -> Module -> Week, and every level shows every recording under the
- * choice so far. Play/download go to the existing staff file route. What
- * matters is that each choice keeps exactly the recordings beneath it, that
- * draft and archived programmes stay out unless asked for, and that a
- * recording without a saved copy says so instead of offering a failing link.
- */
 
 vi.mock('@/components/feature/WorkspaceShell', () => ({
   WorkspaceShell: ({ children }: { children: ReactNode }) => <div>{children}</div>,
 }));
-
 vi.mock('@/components/feature/SessionRecordingPlayer', () => ({
   SessionRecordingPlayer: ({ label }: { label: string }) => <div data-testid="player">{label}</div>,
 }));
-
 vi.mock('@/api/sessionResults', async () => {
   const actual = await vi.importActual<typeof import('@/api/sessionResults')>('@/api/sessionResults');
-  return { ...actual, loadRecordingsLibrary: vi.fn() };
+  return { ...actual, loadRecordingsLibrary: vi.fn(), resolveRecordingUrl: vi.fn() };
 });
 
-const STATUS = { ready: 'available', pending: 'verificationRequired', failed: 'missingAzureFile' } as const;
-const recording = (id: string, sessionNumber: number, state: 'ready' | 'pending' | 'failed' = 'ready', duplicateCount = 0) => ({
-  id, seriesId: 'SERIES-1', sessionNumber, startsAt: '2026-09-07T08:00:00Z', recordedAt: '2026-09-07T08:02:00Z',
-  endsAt: null, state, status: STATUS[state], duplicateCount, hiddenFromLearners: false,
-});
-
-type Delivery = RecordingsLibrary['deliveries'][number];
-const delivery = (moduleId: string, title: string, programme: string, cohort: string, group: string,
-  weeks: Delivery['weeks'], programmeActive = true, extra: Partial<Delivery> = {}): Delivery => ({
-  moduleId, title, programme, programmeActive, archived: false, cohort, group, weeks, attention: [],
-  recordingCount: weeks.reduce((sum, week) => sum + week.recordings.length, 0), ...extra,
-});
-
+const date = todayIso();
+const at = (hour: number) => `${date}T${String(hour).padStart(2, '0')}:00:00Z`;
 const library: RecordingsLibrary = {
-  recordingCount: 5,
-  attentionChecked: true,
-  deliveries: [
-    delivery('MOD-A', 'Data Analysis', 'Level 4 Data', 'Sep 26', 'Group A', [
-      { weekId: 'W1', weekNumber: 1, title: 'Intro', recordings: [recording('REC-1', 1)] },
-      { weekId: null, weekNumber: null, title: '', recordings: [recording('REC-2', 5, 'pending')] },
-    ]),
-    delivery('MOD-B', 'Data Analysis', 'Level 4 Data', 'Sep 26', 'Group B', [
-      { weekId: 'W9', weekNumber: 3, title: 'Cleaning', recordings: [recording('REC-3', 3)] },
-    ]),
-    delivery('MOD-P', 'Project Management', 'Level 4 Data', 'Jan 27', 'Group P', [
-      { weekId: 'WP', weekNumber: 2, title: 'Planning', recordings: [recording('REC-4', 2)] },
-    ]),
-    delivery('MOD-X', 'Retired Module', 'Old Programme', 'Jan 24', 'Group X', [
-      { weekId: 'WX', weekNumber: 1, title: 'Gone', recordings: [recording('REC-5', 1)] },
-    ], false),
+  recordingCount: 2, attentionChecked: true,
+  modules: [
+    { moduleId: 'M1', title: 'Data Analysis', programme: 'Level 4', cohort: 'Sep 26', group: 'Group A', archived: false, programmeActive: true },
+    { moduleId: 'M2', title: 'Leadership', programme: 'Level 4', cohort: 'Sep 26', group: 'Group B', archived: false, programmeActive: true },
   ],
+  sessions: [
+    { occurrenceId: 'O1', moduleId: 'M1', title: 'Intro to analysis', moduleTitle: 'Data Analysis',
+      programme: 'Level 4', programmeActive: true, cohort: 'Sep 26', group: 'Group A',
+      weekId: 'W1', weekNumber: 1, weekTitle: 'Introduction', sessionNumber: 1, startsAt: at(9), endsAt: at(11) },
+    { occurrenceId: 'O2', moduleId: 'M1', title: 'Cleaning data', moduleTitle: 'Data Analysis',
+      programme: 'Level 4', programmeActive: true, cohort: 'Sep 26', group: 'Group A',
+      weekId: 'W2', weekNumber: 2, weekTitle: 'Cleaning', sessionNumber: 2, startsAt: at(13), endsAt: at(15) },
+  ],
+  deliveries: [{ moduleId: 'M1', title: 'Data Analysis', programme: 'Level 4', programmeActive: true,
+    archived: false, cohort: 'Sep 26', group: 'Group A', recordingCount: 2, attention: [],
+    weeks: [
+      { weekId: 'W1', weekNumber: 1, title: 'Introduction', recordings: [
+        { id: 'R1', seriesId: 'S1', occurrenceId: 'O1', sessionNumber: 1, startsAt: at(9), recordedAt: at(9), endsAt: at(11),
+          state: 'ready', status: 'available', duplicateCount: 0, hiddenFromLearners: false },
+      ] },
+      { weekId: 'W2', weekNumber: 2, title: 'Cleaning', recordings: [
+        { id: 'R2', seriesId: 'S1', occurrenceId: 'O2', sessionNumber: 2, startsAt: at(13), recordedAt: at(13), endsAt: at(15),
+          state: 'pending', status: 'verificationRequired', duplicateCount: 0, hiddenFromLearners: false },
+      ] },
+    ] }],
 };
 
 const renderPage = () => render(<MemoryRouter><CurriculumRecordingsPage /></MemoryRouter>);
 
-async function choose(user: ReturnType<typeof userEvent.setup>, level: string, option: string) {
-  await user.click(screen.getByRole('combobox', { name: level }));
-  await user.click(await screen.findByRole('option', { name: option }));
-}
-
-const weekButton = (name: RegExp) => screen.queryByRole('button', { name });
-
-describe('Session recordings page', () => {
+describe('Session recordings calendar', () => {
   beforeEach(() => {
+    window.localStorage.removeItem('lms-recordings-calendar-zone');
     vi.mocked(loadRecordingsLibrary).mockReset().mockResolvedValue(library);
+    vi.mocked(resolveRecordingUrl).mockReset().mockResolvedValue('https://storage.invalid/inline-video');
   });
 
-  it('shows every recording of the active programmes until something is chosen', async () => {
-    const user = userEvent.setup();
-    renderPage();
-    expect(await screen.findByText('4 recordings in 3 group modules')).toBeInTheDocument();
-    expect(weekButton(/Week 1 · Intro/)).toBeInTheDocument();
-    expect(weekButton(/Week 3 · Cleaning/)).toBeInTheDocument();
-    expect(weekButton(/Week 2 · Planning/)).toBeInTheDocument();
-    expect(weekButton(/Week 1 · Gone/)).not.toBeInTheDocument();
-
-    await user.click(screen.getByRole('checkbox', { name: 'Include draft and archived' }));
-    expect(weekButton(/Week 1 · Gone/)).toBeInTheDocument();
-    expect(screen.getByText(/Programme is draft or archived/)).toBeInTheDocument();
+  it('converts the same UTC lecture across Cairo and London including the date boundary and daylight saving', () => {
+    const sample = { ...library, deliveries: [], sessions: [{ ...(library.sessions ?? [])[0],
+      startsAt: '2026-07-01T23:30:00Z', endsAt: '2026-07-02T00:30:00Z' }] };
+    const cairo = buildCalendarLectures(sample, 'Africa/Cairo').lectures[0];
+    const london = buildCalendarLectures(sample, 'Europe/London').lectures[0];
+    expect([cairo.date, cairo.startTime]).toEqual(['2026-07-02', '02:30']);
+    expect([london.date, london.startTime]).toEqual(['2026-07-02', '00:30']);
+    const october = { ...sample, sessions: [{ ...sample.sessions[0],
+      startsAt: '2026-10-14T08:00:00Z', endsAt: '2026-10-14T10:00:00Z' }] };
+    expect(buildCalendarLectures(october, 'Africa/Cairo').lectures[0].startTime).toBe('11:00');
+    expect(buildCalendarLectures(october, 'Europe/London').lectures[0].startTime).toBe('09:00');
+    const spring = { ...sample, sessions: [{ ...sample.sessions[0],
+      startsAt: '2026-04-01T08:00:00Z', endsAt: '2026-04-01T09:00:00Z' }] };
+    expect(buildCalendarLectures(spring, 'Africa/Cairo').lectures[0].startTime).toBe('10:00');
+    expect(buildCalendarLectures(spring, 'Europe/London').lectures[0].startTime).toBe('09:00');
+    const winter = { ...sample, sessions: [{ ...sample.sessions[0],
+      startsAt: '2026-12-01T09:00:00Z', endsAt: '2026-12-01T10:00:00Z' }] };
+    expect(buildCalendarLectures(winter, 'Africa/Cairo').lectures[0].startTime).toBe('11:00');
+    expect(buildCalendarLectures(winter, 'Europe/London').lectures[0].startTime).toBe('09:00');
   });
 
-  it('narrows to everything under the chosen programme, then cohort', async () => {
-    const user = userEvent.setup();
-    vi.mocked(loadRecordingsLibrary).mockResolvedValue({
-      ...library, deliveries: library.deliveries.map(item => ({ ...item, programmeActive: true })),
-    });
-    renderPage();
-    await screen.findByText('5 recordings in 4 group modules');
-    await choose(user, 'Programme', 'Level 4 Data (4)');
-    expect(screen.getByText('4 recordings in 3 group modules')).toBeInTheDocument();
-    expect(weekButton(/Week 1 · Gone/)).not.toBeInTheDocument();
-
-    await choose(user, 'Cohort', 'Jan 27 (1)');
-    expect(screen.getByText('1 recording in 1 group module')).toBeInTheDocument();
-    expect(weekButton(/Week 2 · Planning/)).toBeInTheDocument();
-    expect(weekButton(/Week 1 · Intro/)).not.toBeInTheDocument();
+  it('shows an early Teams run on its recorded day for review without confirming the planned lecture', () => {
+    const saved = (library.deliveries[0].weeks[0].recordings[0]);
+    const sample: RecordingsLibrary = {
+      ...library,
+      sessions: [{ ...library.sessions![0], startsAt: '2026-10-14T08:00:00Z', endsAt: '2026-10-14T10:00:00Z' }],
+      deliveries: [{ ...library.deliveries[0], weeks: [{ ...library.deliveries[0].weeks[0], recordings: [
+        { ...saved, startsAt: '2026-10-14T08:00:00Z', recordedAt: '2026-10-12T09:00:00Z',
+          endsAt: '2026-10-12T09:30:00Z', placementReview: true },
+      ] }] }],
+    };
+    const { lectures } = buildCalendarLectures(sample, 'Europe/London');
+    const planned = lectures.find(item => item.date === '2026-10-14');
+    const review = lectures.find(item => item.date === '2026-10-12');
+    expect(planned?.recordings).toHaveLength(0);
+    expect(review?.source).toBe('recording-review');
+    expect(review?.status).toBe('review');
+    expect(review?.recordings[0].status).toBe('ready');
   });
 
-  it('narrows group, then module, then opens the chosen week with play and download', async () => {
+  it('shows a calendar read failure instead of treating it as an empty day', async () => {
+    vi.mocked(loadRecordingsLibrary).mockResolvedValue({ ...library, sessions: [], calendarAvailable: false });
+    renderPage();
+    expect(await screen.findByRole('alert')).toHaveTextContent('Sessions may be missing');
+    expect(screen.queryByText('No lectures scheduled')).not.toBeInTheDocument();
+  });
+
+  it('refreshes persisted LMS sessions when returning to an old browser tab', async () => {
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(1000);
+    try {
+      renderPage();
+      await screen.findAllByRole('button', { name: /Intro to analysis/ });
+      expect(loadRecordingsLibrary).toHaveBeenCalledTimes(1);
+      clock.mockReturnValue(32000);
+      fireEvent.focus(window);
+      await waitFor(() => expect(loadRecordingsLibrary).toHaveBeenCalledTimes(2));
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
+  it('shows authored lecture titles and resolves the private playback URL', async () => {
     const user = userEvent.setup();
     renderPage();
-    await screen.findByText('4 recordings in 3 group modules');
-    expect(screen.getByRole('combobox', { name: 'Week' })).toBeDisabled();
-
-    await choose(user, 'Group', 'Group A (2)');
-    expect(weekButton(/Week 3 · Cleaning/)).not.toBeInTheDocument();
-    await choose(user, 'Module', 'Data Analysis (2)');
-    await choose(user, 'Week', 'Week 1 · Intro (1)');
-    expect(weekButton(/Not matched to a week/)).not.toBeInTheDocument();
-
-    const download = screen.getByRole('link', { name: 'Download' });
-    expect(download).toHaveAttribute('href', recordingDownloadUrl('SERIES-1', 'REC-1'));
-    expect(download.getAttribute('href')).toContain('download=1');
+    expect(await screen.findAllByRole('button', { name: /Intro to analysis/ })).not.toHaveLength(0);
+    expect(screen.getAllByRole('button', { name: /Cleaning data/ })).not.toHaveLength(0);
+    await user.click(screen.getAllByRole('button', { name: /Intro to analysis/ })[0]);
+    expect(screen.getByRole('complementary', { name: 'Lecture details' })).toHaveTextContent('Introduction');
+    expect(screen.getByRole('button', { name: 'Download' })).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Play' }));
-    expect(screen.getByTestId('player')).toHaveTextContent('Session 1');
+    await waitFor(() => expect(resolveRecordingUrl).toHaveBeenCalledWith('S1', 'R1', false, expect.any(AbortSignal)));
+    expect(await screen.findByTestId('player')).toHaveTextContent('Intro to analysis');
   });
 
-  it('clears the lower levels when a higher one changes', async () => {
+  it('resolves download after authentication and never navigates to a JSON 401', async () => {
     const user = userEvent.setup();
-    renderPage();
-    await screen.findByText('4 recordings in 3 group modules');
-    await choose(user, 'Group', 'Group B (1)');
-    expect(screen.getByText('1 recording in 1 group module')).toBeInTheDocument();
-    await choose(user, 'Cohort', 'Sep 26 (3)');
-    expect(screen.getByText('3 recordings in 2 group modules')).toBeInTheDocument();
-  });
-
-  it('says why an unmatched or unsaved recording cannot be downloaded yet', async () => {
-    const user = userEvent.setup();
-    renderPage();
-    const week = await screen.findByRole('button', { name: /Not matched to a week/ });
-    await user.click(week);
-    const panel = week.closest('li') as HTMLElement;
-    expect(within(panel).getByText(/no live session in the course structure is linked/)).toBeInTheDocument();
-    expect(within(panel).getByRole('status')).toHaveTextContent('no saved copy is confirmed yet');
-    expect(within(panel).queryByRole('link', { name: 'Download' })).not.toBeInTheDocument();
-  });
-
-  it('keeps a deleted module\'s recordings out until asked for, then lists them read only and apart from active counts', async () => {
-    const user = userEvent.setup();
-    vi.mocked(loadRecordingsLibrary).mockResolvedValue({
-      ...library,
-      deliveries: [...library.deliveries, delivery('MOD-OLD', 'Deleted Module', 'Level 4 Data', 'Sep 26', 'Group Old', [
-        { weekId: 'WO', weekNumber: 4, title: 'Kept', recordings: [recording('REC-OLD', 4)] },
-      ], true, { archived: true })],
+    const clicked: string[] = [];
+    const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (this: HTMLAnchorElement) {
+      clicked.push(this.href);
     });
     renderPage();
-    await screen.findByText('4 recordings in 3 group modules');
-    expect(weekButton(/Week 4 · Kept/)).not.toBeInTheDocument();
-    await user.click(screen.getByRole('combobox', { name: 'Status' }));
-    expect(screen.queryByRole('option', { name: /Archived/ })).not.toBeInTheDocument();
-    expect(screen.getByRole('option', { name: 'Available (3)' })).toBeInTheDocument();
-    await user.keyboard('{Escape}');
-
-    await user.click(screen.getByRole('checkbox', { name: 'Include draft and archived' }));
-    expect(screen.getByText(/Archived \/ Deleted module/)).toBeInTheDocument();
-    expect(screen.getByText(/Read only\. This module was deleted/)).toBeInTheDocument();
-    await choose(user, 'Status', 'Archived (1)');
-    expect(screen.getByText('1 recording in 1 group module')).toBeInTheDocument();
-    await user.click(screen.getByRole('button', { name: /Week 4 · Kept/ }));
-    expect(screen.getByRole('link', { name: 'Download' })).toHaveAttribute('href', recordingDownloadUrl('SERIES-1', 'REC-OLD'));
-    expect(screen.getByRole('button', { name: 'Play' })).toBeInTheDocument();
+    await user.click((await screen.findAllByRole('button', { name: /Intro to analysis/ }))[0]);
+    await user.click(screen.getByRole('button', { name: 'Download' }));
+    await waitFor(() => expect(resolveRecordingUrl).toHaveBeenCalledWith('S1', 'R1', true));
+    await waitFor(() => expect(clicked).toEqual(['https://storage.invalid/inline-video']));
+    click.mockRestore();
   });
 
-  it('lists past sessions to check with the reason, and filters by status', async () => {
+  it('explains expired login instead of opening the 401 response', async () => {
     const user = userEvent.setup();
-    vi.mocked(loadRecordingsLibrary).mockResolvedValue({
-      ...library,
-      deliveries: library.deliveries.map(item => item.moduleId !== 'MOD-B' ? item : {
-        ...item,
-        attention: [{
-          occurrenceId: 'OCC-9', weekId: 'W10', weekNumber: 4, weekTitle: 'Modelling', sessionNumber: 4,
-          startsAt: '2026-09-28T08:00:00Z', status: 'missingSync' as const,
-          reason: 'The last results synchronization for this meeting did not complete, so a recording may not have been collected.',
-        }],
-      }),
-    });
+    vi.mocked(resolveRecordingUrl).mockRejectedValue(new Error('Your session has expired. Sign in again to play or download this recording.'));
+    const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => undefined);
     renderPage();
-    expect(await screen.findByText('4 recordings in 3 group modules · 1 session to check')).toBeInTheDocument();
-    const list = screen.getByRole('region', { name: 'Sessions to check' });
-    expect(within(list).getByText(/Week 4 · Modelling/)).toBeInTheDocument();
-    expect(within(list).getByText('Missing sync')).toBeInTheDocument();
-    expect(within(list).getByText(/did not complete/)).toBeInTheDocument();
-
-    await choose(user, 'Status', 'Missing sync (1)');
-    expect(screen.getByText('0 recordings in 0 group modules · 1 session to check')).toBeInTheDocument();
-    expect(weekButton(/Week 3 · Cleaning/)).not.toBeInTheDocument();
-
-    await choose(user, 'Status', 'Verification required (1)');
-    expect(screen.queryByRole('region', { name: 'Sessions to check' })).not.toBeInTheDocument();
-    expect(weekButton(/Not matched to a week/)).toBeInTheDocument();
+    await user.click((await screen.findAllByRole('button', { name: /Intro to analysis/ }))[0]);
+    await user.click(screen.getByRole('button', { name: 'Download' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('Sign in again');
+    expect(click).not.toHaveBeenCalled();
+    click.mockRestore();
   });
 
-  it('shows a recording Graph listed twice once, and says a failed copy is missing from storage', async () => {
+  it('never offers a download for a recording without a ready saved file', async () => {
     const user = userEvent.setup();
-    vi.mocked(loadRecordingsLibrary).mockResolvedValue({
-      ...library,
-      deliveries: [delivery('MOD-A', 'Data Analysis', 'Level 4 Data', 'Sep 26', 'Group A', [
-        { weekId: 'W1', weekNumber: 1, title: 'Intro', recordings: [recording('REC-1', 1, 'ready', 1), recording('REC-F', 2, 'failed')] },
-      ])],
-    });
     renderPage();
-    await user.click(await screen.findByRole('button', { name: /Week 1 · Intro/ }));
-    expect(screen.getByText(/1 identical copy is also stored and not shown/)).toBeInTheDocument();
-    expect(screen.getByText('Missing Azure file')).toBeInTheDocument();
-    expect(screen.getByRole('status')).toHaveTextContent('Saving a copy of this recording to storage failed');
-    expect(screen.getAllByRole('link', { name: 'Download' })).toHaveLength(1);
+    await user.click((await screen.findAllByRole('button', { name: /Cleaning data/ }))[0]);
+    expect(screen.getByRole('complementary', { name: 'Lecture details' })).toHaveTextContent('A saved archive copy has not been confirmed');
+    expect(screen.queryByRole('button', { name: 'Download' })).not.toBeInTheDocument();
   });
 
-  it('still lists recordings when the session check could not be loaded', async () => {
-    vi.mocked(loadRecordingsLibrary).mockResolvedValue({ ...library, attentionChecked: false });
+  it('opens a lecture from the title search', async () => {
+    const user = userEvent.setup();
     renderPage();
-    expect(await screen.findByText(/could not be loaded\. Every saved recording is still listed/)).toBeInTheDocument();
-    expect(screen.getByText('4 recordings in 3 group modules')).toBeInTheDocument();
+    await screen.findAllByRole('button', { name: /Intro to analysis/ });
+    await user.type(screen.getByRole('textbox', { name: 'Search lectures by title' }), 'Cleaning');
+    await user.click(screen.getAllByRole('button', { name: /Cleaning data/ })[0]);
+    expect(screen.getByRole('complementary', { name: 'Lecture details' })).toHaveTextContent('Cleaning data');
   });
 
-  it('shows the load error with a retry', async () => {
-    vi.mocked(loadRecordingsLibrary).mockRejectedValueOnce(new Error('Saved results are temporarily unavailable.'));
+  it('keeps modules without booked lectures in the LMS directory', async () => {
+    const user = userEvent.setup();
     renderPage();
-    await waitFor(() => expect(screen.getByText('Saved results are temporarily unavailable.')).toBeInTheDocument());
+    await user.click(await screen.findByRole('button', { name: 'All LMS modules (2)' }));
+    expect(screen.getByRole('region', { name: 'All LMS modules' })).toHaveTextContent('2 of 2 modules');
+    await user.click(screen.getByText('Leadership'));
+    expect(screen.getByText(/No dated lecture is saved for this module/)).toBeInTheDocument();
   });
 
+  it('shows a scheduled lecture without inventing a recording or download', async () => {
+    const user = userEvent.setup();
+    const tomorrow = addDays(date, 1);
+    vi.mocked(loadRecordingsLibrary).mockResolvedValue({ ...library, sessions: [...(library.sessions ?? []), {
+      occurrenceId: 'O3', moduleId: 'M3', title: 'Future seminar', moduleTitle: 'Planning',
+      programme: 'Level 4', programmeActive: true, cohort: 'Sep 26', group: 'Group A',
+      weekId: null, weekNumber: null, weekTitle: '', sessionNumber: 3,
+      joinUrl: 'https://teams.microsoft.com/l/meetup-join/future',
+      startsAt: `${tomorrow}T09:00:00Z`, endsAt: `${tomorrow}T10:00:00Z`,
+    }] });
+    renderPage();
+    await screen.findAllByRole('button', { name: /Intro to analysis/ });
+    await user.click(screen.getAllByRole('button', { name: 'Next day' })[0]);
+    await user.click(screen.getAllByRole('button', { name: /Future seminar/ })[0]);
+    expect(screen.getByRole('complementary', { name: 'Lecture details' })).toHaveTextContent('This lecture has not started yet');
+    expect(screen.getByRole('link', { name: 'Open Teams meeting' })).toHaveAttribute('href', 'https://teams.microsoft.com/l/meetup-join/future');
+    expect(screen.getByRole('complementary', { name: 'Lecture details' })).not.toHaveTextContent('Not matched to a week');
+    expect(screen.queryByRole('button', { name: 'Download' })).not.toBeInTheDocument();
+  });
+
+  it('shows an LMS meeting without a week component using its saved title', async () => {
+    const user = userEvent.setup();
+    const tomorrow = addDays(date, 1);
+    vi.mocked(loadRecordingsLibrary).mockResolvedValue({ ...library, sessions: [...(library.sessions ?? []), {
+      occurrenceId: 'O4', moduleId: 'M4', title: 'Marketing Strategy', moduleTitle: 'Marketing Strategy',
+      programme: 'Level 4', programmeActive: true, cohort: 'Sep 26', group: 'Group A',
+      weekId: null, weekNumber: null, weekTitle: '', sessionNumber: 5,
+      startsAt: `${tomorrow}T11:00:00Z`, endsAt: `${tomorrow}T13:00:00Z`,
+    }] });
+    renderPage();
+    await screen.findAllByRole('button', { name: /Intro to analysis/ });
+    await user.click(screen.getAllByRole('button', { name: 'Next day' })[0]);
+    await user.click(screen.getAllByRole('button', { name: /Marketing Strategy/ })[0]);
+    expect(screen.getByRole('complementary', { name: 'Lecture details' })).toHaveTextContent('Marketing Strategy');
+    expect(screen.getByRole('complementary', { name: 'Lecture details' })).not.toHaveTextContent('Week 5');
+  });
+
+  it('distinguishes a running meeting from a cancelled future meeting', () => {
+    const now = Date.now();
+    const base = library.sessions![0];
+    const { lectures } = buildCalendarLectures({ ...library, deliveries: [], sessions: [
+      { ...base, occurrenceId: 'LIVE', startsAt: new Date(now - 5 * 60000).toISOString(),
+        endsAt: new Date(now + 5 * 60000).toISOString(), status: 'scheduled' },
+      { ...base, occurrenceId: 'CANCELLED', startsAt: new Date(now + 60 * 60000).toISOString(),
+        endsAt: new Date(now + 120 * 60000).toISOString(), status: 'cancelled',
+        joinUrl: 'https://teams.microsoft.com/l/meetup-join/cancelled' },
+    ] });
+    expect(lectures.find(item => item.id.endsWith(':LIVE'))?.status).toBe('inProgress');
+    expect(lectures.find(item => item.id.endsWith(':CANCELLED'))).toMatchObject({ status: 'cancelled', joinUrl: undefined });
+  });
+
+  it('keeps an authored LMS slot distinct from a confirmed Teams meeting', () => {
+    const base = library.sessions![0];
+    const planned = { ...base, occurrenceId: 'authored:C1', source: 'authored' as const,
+      status: 'planned', joinUrl: 'https://teams.microsoft.com/inherited' };
+    const { lectures } = buildCalendarLectures({ ...library, deliveries: [], sessions: [planned] });
+    expect(lectures).toHaveLength(1);
+    expect(lectures[0]).toMatchObject({ status: 'planned', source: 'authored', joinUrl: undefined, recordings: [] });
+  });
+
+  it('shows a load error and retries the authenticated library request', async () => {
+    const user = userEvent.setup();
+    vi.mocked(loadRecordingsLibrary).mockRejectedValueOnce(new Error('Library unavailable'));
+    renderPage();
+    expect(await screen.findByRole('alert')).toHaveTextContent('Library unavailable');
+    await user.click(screen.getByRole('button', { name: 'Retry' }));
+    await waitFor(() => expect(screen.getAllByRole('button', { name: /Intro to analysis/ }).length).toBeGreaterThan(0));
+  });
 });

@@ -183,14 +183,21 @@ def _shared_native_occurrences_sql():
     shared_select = '\n        SELECT DISTINCT module_id,source_id FROM shared'
     module_filter = 'WHERE s.module_catalogue_id=ANY(%s)'
     assert SHARED_TEAMS_SOURCES_SQL.endswith(shared_select) and NATIVE_OCCURRENCES_SQL.count(module_filter) == 1
-    return (SHARED_TEAMS_SOURCES_SQL[:-len(shared_select)] + '\n        '
-            + NATIVE_OCCURRENCES_SQL.replace(module_filter, 'WHERE (s.module_catalogue_id=ANY(%s)'
-                                             ' OR s.module_catalogue_id IN (SELECT source_id FROM shared))'))
+    native = NATIVE_OCCURRENCES_SQL.replace(module_filter,
+        'WHERE (s.module_catalogue_id=ANY(%s) OR s.module_catalogue_id IN (SELECT source_id FROM shared))')
+    return (SHARED_TEAMS_SOURCES_SQL[:-len(shared_select)] + ', native AS (' + native + """),
+        targets AS (
+            SELECT module_catalogue_id AS module_id,module_catalogue_id AS source_id
+            FROM curriculum.modules WHERE module_catalogue_id=ANY(%s)
+            UNION SELECT module_id,source_id FROM shared
+        )
+        SELECT native.*,targets.module_id AS target_module_id,m.title AS target_module_title
+        FROM native JOIN targets ON targets.source_id=native.module_catalogue_id
+        JOIN curriculum.modules m ON m.module_catalogue_id=targets.module_id
+        ORDER BY native.scheduled_start,native.session_id,targets.module_id""")
 
 
-# NATIVE_OCCURRENCES_SQL for the given modules and the modules whose Teams
-# meetings they share (SHARED_TEAMS_SOURCES_SQL), as one statement. Parameters:
-# the shared lookup's module ids, then NATIVE_OCCURRENCES_SQL's own.
+# Shared source traversal, occurrence evidence and assigned-module titles in one read.
 SHARED_NATIVE_OCCURRENCES_SQL = _shared_native_occurrences_sql()
 
 
@@ -236,16 +243,46 @@ def read_native_occurrences(source, *, module_ids=None):
             module_ids = [value for value in module_ids if value]
         if not module_ids:
             return []
+        assigned_module_ids = list(module_ids)
         try:
-            # The shared-meeting lookup and the occurrences, in one round trip.
             cur.execute(SHARED_NATIVE_OCCURRENCES_SQL, [
-                sorted({_text(value) for value in module_ids} - {''}), _key(source.email), module_ids])
+                sorted({_text(value) for value in module_ids} - {''}), _key(source.email),
+                module_ids, assigned_module_ids])
+            source_rows = dict_rows(cur)
+            projections = [(row, row.get('target_module_id') or row.get('module_catalogue_id'),
+                            row.get('target_module_title') or row.get('module_title')) for row in source_rows]
         except DatabaseError:
-            # As before: if shared meetings are unreadable, the learner's own modules still load.
-            shared = shared_teams_sources(module_ids, cursor=cur)
-            module_ids = list(dict.fromkeys([*module_ids, *sorted(set().union(*shared.values()))]))
-            cur.execute(NATIVE_OCCURRENCES_SQL, [_key(source.email), module_ids])
-        result = dict_rows(cur)
+            # Preserve the separate-read fallback when the combined lookup is unavailable.
+            shared = shared_teams_sources(assigned_module_ids, cursor=cur)
+            source_module_ids = sorted(set().union(*shared.values())) if shared else []
+            query_module_ids = list(dict.fromkeys([*assigned_module_ids, *source_module_ids]))
+            cur.execute(NATIVE_OCCURRENCES_SQL, [_key(source.email), query_module_ids])
+            source_rows = dict_rows(cur)
+            cur.execute('''SELECT module_catalogue_id,title FROM curriculum.modules
+                WHERE module_catalogue_id=ANY(%s)''', [assigned_module_ids])
+            module_titles = {row[0]: row[1] for row in cur.fetchall()}
+            aliases_by_source = {}
+            for alias_id, source_ids in shared.items():
+                for source_id in source_ids:
+                    aliases_by_source.setdefault(source_id, []).append(alias_id)
+            projections = []
+            for row in source_rows:
+                source_id = row.get('module_catalogue_id')
+                targets = ([source_id] if source_id in assigned_module_ids else [])
+                targets += aliases_by_source.get(source_id, [])
+                projections.extend((row, target, module_titles.get(target) or row.get('module_title'))
+                                   for target in dict.fromkeys(targets))
+    result = []
+    for row, target_module_id, title in projections:
+        projected = {key: value for key, value in row.items()
+                     if key not in {'target_module_id', 'target_module_title'}}
+        projected.update(module_catalogue_id=target_module_id, module_title=title)
+        if target_module_id != row.get('module_catalogue_id'):
+            evidence_id = str(row.get('attendance_source_occurrence_id') or row.get('session_id') or '')
+            projected['attendance_source_occurrence_id'] = evidence_id
+            projected['session_id'] = f'{evidence_id}:{target_module_id}'
+            projected['occurrence_id'] = projected['session_id']
+        result.append(projected)
     return normalize_native_occurrences(source, result)
 
 
