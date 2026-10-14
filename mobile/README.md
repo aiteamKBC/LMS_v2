@@ -45,4 +45,15 @@ For a Windows checkout using a short drive alias or shared dependency junction, 
 
 The script also supplies Expo Audio's explicit React Android dependency. It fails on unexpected versions/source or on shared package junctions, validates all target files before writing, and is safe to rerun. If sharing the rest of `node_modules`, keep private copies of `expo-audio` and `expo-video` inside this checkout first. Run `npm run patch:native-media` after preparing those copies, then `npm run check:native-media` before the native build. The Node contract tests exercise the exact patch, idempotence, source/version drift and refusal to modify shared dependencies; they do not replace authenticated playback checks on an Android device.
 
+Expo SDK 57 normally uses bundled Android AARs for these packages, which bypass patched local source. `package.json` therefore explicitly includes both `expo-audio` and `expo-video` in `expo.autolinking.android.buildFromSource`. The patch/check command rejects missing or incomplete configuration, and Gradle's `preBuild` runs that check even if the npm install lifecycle was skipped. Dependency versions remain pinned. See [Expo's prebuilt module guidance](https://docs.expo.dev/guides/prebuilt-expo-modules/).
+
+After building, verify the actual APK before distributing it, from this directory:
+
+```text
+python scripts/verify-native-media-apk.py android/app/build/outputs/apk/release/app-release.apk --report native-media-apk-receipt.json
+python -m unittest discover -s tests -p test_native_media_apk.py
+```
+
+The APK check inspects the compiled audio and video client methods for the cookie-handler construction and attachment. Source tests, a successful build, or unrelated cookie classes elsewhere in the APK cannot establish that the media clients use the patched code. Keep generated receipts outside source control. This static check establishes the packaged transport; physical Android sign-in, protected audio/video playback and logout/account switching still require device acceptance.
+
 The LMS facade must be deployed and enabled for learner sign-in and course access. Physical device installation, learner sign-in, media playback, saved-progress readback and account switching remain separate acceptance checks from compilation and automated tests.
