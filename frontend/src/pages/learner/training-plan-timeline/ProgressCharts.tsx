@@ -1,4 +1,4 @@
-import { useEffect, useId, useState, type CSSProperties } from 'react';
+import { useEffect, useId, useState, type CSSProperties, type ReactNode } from 'react';
 import type { TrainingPlanDashboard } from '@/api/trainingPlanDashboard';
 import { percent, type TimelineModule } from './model';
 import { moduleMeasures, moduleProgress, type ModuleMeasure } from './progress';
@@ -16,6 +16,7 @@ type Props = {
   showOtjChart?: boolean;
   wholeProgrammeRings?: boolean;
   targetAsOfToday?: number | null;
+  moduleStatus?: ReactNode;
   programmeRows?: { id: string; title: string; start?: string; value: number | null; available?: number; measureCount?: number }[];
 };
 export type ProgrammeProgressSnapshot = {
@@ -63,7 +64,7 @@ function ProgressMeasureRings({ measures, label }: { measures: ModuleMeasure[]; 
 
 
 export function ProgressCharts({ modules, selected, data, onModuleSelect, programmeStartMonth, programmeEndMonth, programmeSnapshot,
-  showOtjChart = true, wholeProgrammeRings = false, targetAsOfToday, programmeRows }: Props) {
+  showOtjChart = true, wholeProgrammeRings = false, targetAsOfToday, programmeRows, moduleStatus }: Props) {
   const chartId = useId();
   const [programmePage, setProgrammePage] = useState(0);
   const selectedProgress = selected ? moduleProgress(selected, data) : null;
@@ -148,8 +149,8 @@ export function ProgressCharts({ modules, selected, data, onModuleSelect, progra
           {pickerRows.map(module => <option key={module.id} value={module.id}>{module.title}</option>)}
         </select></label>
       </header>
-      {selected ? <ProgressMeasureRings measures={selectedMeasures} label={`${selected.title} progress measures`} />
-        : <p className={styles.empty}>Select a module to see attendance, activities, hours and KSBs.</p>}
+      {moduleStatus || (selected ? <ProgressMeasureRings measures={selectedMeasures} label={`${selected.title} progress measures`} />
+        : <p className={styles.empty}>Select a module to see attendance, activities, hours and KSBs.</p>)}
     </section>}
     <section className={`${styles.card} ${styles.programmeProgressCard}`} aria-label="Programme module progress">
       <header><div><p className={styles.eyebrow}>Whole programme</p><h2>Programme progress</h2></div><span className={styles.moduleCount}>{rows.length} modules</span></header>

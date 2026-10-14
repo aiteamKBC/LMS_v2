@@ -133,7 +133,11 @@ def entries(learner_id):
     return entries_for(owner)
 
 
-def entries_for(owner, *, overview_only=False):
+def entries_for(owner, *, overview_only=False, entry_ids=None):
+    # Optional caller-owned selection is applied before the evidence/lineage
+    # joins. The learner predicate always remains mandatory.
+    selection = '' if entry_ids is None else ' AND progress.id=ANY(%s)'
+    params = [owner['id']] if entry_ids is None else [owner['id'], list(entry_ids)]
     columns = 'progress.*'
     if overview_only:
         # Completion projection needs saved timing/attempt facts, never raw
@@ -149,7 +153,7 @@ def entries_for(owner, *, overview_only=False):
     records = query(f'''WITH canonical AS (
         SELECT {columns}
         FROM "Learner".learner_progress_entries progress
-        WHERE progress.learner_id=%s AND progress.deleted_at IS NULL
+        WHERE progress.learner_id=%s AND progress.deleted_at IS NULL{selection}
     ), progress_ksbs AS (
         SELECT k.progress_id,jsonb_agg(k.ksb_code ORDER BY k.position) AS payload
         FROM "Learner".learner_progress_ksbs k
@@ -209,7 +213,7 @@ def entries_for(owner, *, overview_only=False):
         LEFT JOIN journal_routes j ON j.progress_id=p.id
         LEFT JOIN historical_components h ON h.progress_id=p.id
         ORDER BY p.reporting_month,p.reporting_started_at NULLS LAST,p.id''',
-        [owner['id']])
+        params)
     from learner_api import journal_sources
     journal_enabled = journal_sources.enabled()
     loaded = []
