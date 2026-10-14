@@ -31,7 +31,8 @@ NATIVE_FIELDS = ('videoUrl', 'audioUrl', 'resourceUrl', 'podcastUrl', 'presentat
                  'uploadedFileUrl', 'assignmentFileUrl', 'readingContent', 'embedCode',
                  'lessonContent', 'transcript', 'attachments',
                  'lessonMaterialLinks', 'speakerNotes', 'assignmentBrief',
-                 'componentFiles', 'readingUrl', 'handbookUrl')
+                 'componentFiles', 'readingUrl', 'handbookUrl', 'podcastEmbedCode',
+                 'assignmentContent', 'resourceDownloadsHtml')
 URL_PATTERN = re.compile(r'https?://[^\s"\'<>\\]+')
 
 
@@ -84,6 +85,34 @@ def safe_filename(value):
     if not name or name in {'.', '..'}:
         raise ValueError('invalid_filename')
     return name[:180]
+
+
+def native_media_values(settings):
+    """Select only active media, including the author's legacy field aliases."""
+    values = {key: settings[key] for key in NATIVE_FIELDS if key in settings}
+    legacy = settings.get('legacySettings')
+    if isinstance(legacy, str):
+        try:
+            legacy = json.loads(legacy)
+        except ValueError:
+            legacy = None
+    if isinstance(legacy, dict):
+        media = {key: legacy[key] for key in NATIVE_FIELDS if key in legacy}
+        if media:
+            values['legacySettings'] = media
+    return values
+
+
+def native_media_patch(settings, mapping, host):
+    values = native_media_values(settings)
+    patch = {key: replace_urls(value, mapping, host) for key, value in values.items()
+             if replace_urls(value, mapping, host) != value}
+    if 'legacySettings' in patch:
+        original = settings['legacySettings']
+        legacy = json.loads(original) if isinstance(original, str) else original
+        merged = {**legacy, **patch['legacySettings']}
+        patch['legacySettings'] = json.dumps(merged) if isinstance(original, str) else merged
+    return patch
 
 
 def valid_signature(mime, data):
@@ -214,7 +243,8 @@ def source_file_header(session, url, max_bytes, expected_mime=''):
                 raise ValueError('invalid_content_range')
         if len(data) != end + 1 or not valid_signature(mime, data):
             raise ValueError('invalid_file_content')
-        return {'etag': etag, 'size': size, 'mime': mime, 'head': bytes(data)}
+        return {'etag': etag, 'size': size, 'mime': mime, 'head': bytes(data),
+                'last_modified': response.headers.get('Last-Modified')}
 
 
 class ReadingHTML(HTMLParser):
@@ -452,23 +482,32 @@ class Migrator:
                 self.write_connections.append(conn)
         return conn
 
+    def _persist_state(self):
+        # Called under the writer lock. On Windows a short-lived reader can
+        # prevent atomic replacement; retry the rename, never drop the state.
+        self.state_path.parent.mkdir(parents=True, exist_ok=True)
+        temp = self.state_path.with_suffix('.tmp')
+        temp.write_text(json.dumps(self.state), encoding='utf-8')
+        for attempt in range(3):
+            try:
+                temp.replace(self.state_path)
+                return
+            except PermissionError:
+                if attempt == 2:
+                    raise
+                time.sleep(0.1 * (attempt + 1))
+
     def save_file(self, key, result):
         with self.guard:
             self.state['files'][key] = result
-            self.state_path.parent.mkdir(parents=True, exist_ok=True)
-            temp = self.state_path.with_suffix('.tmp')
-            temp.write_text(json.dumps(self.state), encoding='utf-8')
-            temp.replace(self.state_path)
+            self._persist_state()
 
     def save_provider(self, key, result):
         if not key.startswith('page:') or not provider_reference(result.get('provider'), result.get('url')):
             raise ValueError('invalid_provider_reference')
         with self.guard:
             self.state['providers'][key] = result
-            self.state_path.parent.mkdir(parents=True, exist_ok=True)
-            temp = self.state_path.with_suffix('.tmp')
-            temp.write_text(json.dumps(self.state), encoding='utf-8')
-            temp.replace(self.state_path)
+            self._persist_state()
 
     def get_json(self, path, *, authenticated=False):
         url = path if path.startswith('https://') else self.origin + path
@@ -601,7 +640,8 @@ class Migrator:
         return result
 
     def copy_public_file(self, key, url, filename, expected_mime):
-        """Azure copies the exact source version; no full local relay is needed."""
+        """Conditionally copy, checking source stability and destination bytes."""
+        from email.utils import parsedate_to_datetime
         from azure.core import MatchConditions
         from azure.core.exceptions import AzureError, ResourceExistsError, ResourceNotFoundError
         parsed = urlsplit(url)
@@ -622,20 +662,35 @@ class Migrator:
                 props = blob.get_blob_properties()
             except ResourceNotFoundError:
                 try:
-                    blob.upload_blob_from_url(url, overwrite=False, source_etag=source['etag'],
-                        source_match_condition=MatchConditions.IfNotModified, include_source_blob_properties=False,
+                    conditions = {'source_etag': source['etag'],
+                                  'source_match_condition': MatchConditions.IfNotModified}
+                    # This external HTTP origin's ETag is rejected by Azure's
+                    # copy API. Its Last-Modified condition is supported. Also
+                    # compare the strong source version after copying: a changed
+                    # source must never be linked, including same-second edits.
+                    if source.get('last_modified'):
+                        modified = parsedate_to_datetime(source['last_modified'])
+                        if modified.tzinfo is not None:
+                            conditions = {'source_if_unmodified_since': modified}
+                    blob.upload_blob_from_url(url, overwrite=False, **conditions, include_source_blob_properties=False,
                         metadata={'source_version': version},
                         content_settings=self.ContentSettings(content_type=source['mime'], content_disposition='inline'))
                 except ResourceExistsError:
                     pass
                 props = blob.get_blob_properties()
+            with self.requests.Session() as session:
+                session.trust_env = False
+                after = source_file_header(session, url, self.args.max_mb*1024*1024, expected_mime)
+            if not after or any(after[field] != source[field] for field in ('etag', 'size', 'mime', 'head')):
+                raise ValueError('source_changed_during_copy')
             if (props.size != source['size'] or props.metadata.get('source_version') != version
                     or props.content_settings.content_type != source['mime']):
                 raise ValueError('copy_verification_failed')
             if blob.download_blob(offset=0, length=len(source['head'])).readall() != source['head']:
                 raise ValueError('copied_signature_mismatch')
             # This is a version identity, not a SHA-256 of the file body.
-            # Azure enforces the strong source ETag during the copy operation.
+            # Azure enforces the source condition; the strong ETag is checked
+            # before and after the operation, even for timestamp conditions.
             result = {'blob': name, 'mime': source['mime'], 'size': source['size'], 'sha256': None,
                       'source_version': version, 'url': PREFIX + quote(name, safe='/')}
             with self.guard:
@@ -809,6 +864,10 @@ class Migrator:
         # Resolve identities before their direct URL aliases to avoid copying
         # large files that already have a verified Azure attachment.
         for key, value in sorted(needed.items(), key=lambda pair: not pair[0].startswith('attachment:')):
+            if key.startswith('page:') and key not in page_keys:
+                found = self.known(key)
+                if found:
+                    mapping[key] = found
             if not key.startswith(('attachment:', 'file:')):
                 continue
             if key in mapping:
@@ -915,6 +974,7 @@ class Migrator:
 
     def native_rows(self):
         rows, after = [], ''
+        fields = [*NATIVE_FIELDS, 'legacySettings']
         while True:
             with self.connect() as conn, conn.cursor() as cur:
                 cur.execute("SET LOCAL statement_timeout='30s'")
@@ -924,17 +984,17 @@ class Migrator:
                 AND EXISTS (SELECT 1 FROM jsonb_each(settings_json)
                     WHERE key=ANY(%s) AND value::text LIKE %s)
                 ORDER BY id::text LIMIT 500''',
-                [list(NATIVE_FIELDS), '%' + self.host + '%', after, list(NATIVE_FIELDS), '%' + self.host + '%'])
+                [fields, '%' + self.host + '%', after, fields, '%' + self.host + '%'])
                 batch = cur.fetchall()
             if not batch:
                 return rows
             rows.extend(row for row in batch if any(source_key(url, self.host)
-                for key in NATIVE_FIELDS for url in urls((row['settings_json'] or {}).get(key))))
+                for url in urls(native_media_values(row['settings_json'] or {}))))
             after = str(batch[-1]['id'])
             self.emit(stage='component_inventory', candidates=len(rows))
 
     def process_native(self, row):
-        values = {k: row['settings_json'][k] for k in NATIVE_FIELDS if k in row['settings_json']}
+        values = native_media_values(row['settings_json'])
         references = {source_key(url, self.host): unwrap(url) for url in urls(values) if source_key(url, self.host)}
         mapping, unresolved = {}, []
         for key, value in references.items():
@@ -954,8 +1014,7 @@ class Migrator:
                         self.unavailable[key] = {'key': key, 'error': type(error).__name__,
                             'status': getattr(getattr(error, 'response', None), 'status_code', None)}
             unresolved.append(key)
-        patch = {k: replace_urls(v, mapping, self.host) for k, v in values.items()
-                 if replace_urls(v, mapping, self.host) != v}
+        patch = native_media_patch(row['settings_json'], mapping, self.host)
         if patch:
             conn = self.writer()
             with conn.transaction(), conn.cursor() as cur:
@@ -1031,8 +1090,8 @@ def main():
     parser.add_argument('--max-mb', type=int, default=1024)
     parser.add_argument('--phase', choices=['materials', 'native', 'audit', 'all'], default='all')
     args = parser.parse_args()
-    if not 1 <= args.workers <= 4:
-        parser.error('Use one to four transfer workers.')
+    if not 1 <= args.workers <= 12:
+        parser.error('Use one to twelve transfer workers.')
     if args.max_mb < 1 or (args.limit is not None and args.limit < 1):
         parser.error('Size and selection limits must be positive.')
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))

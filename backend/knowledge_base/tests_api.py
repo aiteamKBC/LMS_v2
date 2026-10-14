@@ -53,6 +53,13 @@ class ApiRepository(FakeRepository):
         job.update(state="queued", attempts=0, next=self.now, error="")
         return True
 
+    def rename_book(self, book_id, title):
+        book = self.books.get(str(book_id))
+        if book is None:
+            return False
+        book["title"] = title
+        return True
+
     def worker_last_seen(self):
         return None, datetime.datetime.now(datetime.timezone.utc)
 
@@ -155,3 +162,30 @@ class ApiTests(SimpleTestCase):
     def test_worker_status_reports_offline_when_never_seen(self):
         import json
         self.assertFalse(json.loads(views.worker_status(self.factory.get("/x")).content)["online"])
+
+    def rename(self, book_id, body):
+        request = self.factory.patch("/x", data=body, content_type="application/json")
+        return views.book_detail(request, book_id)
+
+    def test_rename_changes_only_the_title(self):
+        import json
+        self.upload(_book_pdf(), title="STRATEGY_PLANNING")
+        book_id = self.repo.list_books()[0]["id"]
+        response = self.rename(book_id, json.dumps({"title": "  Marketing Strategy  &  Planning "}))
+        self.assertEqual(response.status_code, 200)
+        book = self.repo.list_books()[0]
+        self.assertEqual(book["title"], "Marketing Strategy & Planning")
+        self.assertEqual(book["scopes"], ["ME"])
+        self.assertEqual(len(self.repo.jobs), 1)
+
+    def test_rename_refuses_bad_titles_unknown_books_and_other_staff(self):
+        import json
+        self.upload(_book_pdf())
+        book_id = self.repo.list_books()[0]["id"]
+        self.assertEqual(self.rename(book_id, json.dumps({"title": "   "})).status_code, 400)
+        self.assertEqual(self.rename(book_id, json.dumps({"title": "x" * 201})).status_code, 400)
+        self.assertEqual(self.rename(book_id, "not json").status_code, 400)
+        self.assertEqual(self.rename("00000000-0000-0000-0000-000000000000", json.dumps({"title": "A"})).status_code, 404)
+        self.as_user(["enrolment"])
+        self.assertEqual(self.rename(book_id, json.dumps({"title": "A"})).status_code, 403)
+        self.assertEqual(self.repo.list_books()[0]["title"], "Marketing Book")

@@ -36,6 +36,7 @@ export function CaseFileWeeklyLearningTab({ kind, learnerId }: { kind: LearnerKi
       expectedOtjh: null, quizMeta: activity.isQuiz ? { duration: activity.quizDuration, timeUnit: activity.quizTimeUnit } : undefined }),
   }]));
   const completedIds = new Set((selected?.activities || []).filter(item => item.completed).map(item => item.id));
+  const actualHours = Object.fromEntries((selected?.activities || []).map(activity => [activity.id, activity.actualHours ?? null]));
   if (!weeks.length && !response.error && !response.data) return <WeeklyLearningPlanSkeleton />;
   return <section aria-label="Weekly learning plan" className={`${styles.weeklyPlan} grid grid-cols-1 gap-3 lg:grid-cols-[240px_minmax(0,1fr)]`}>
     <aside className={`${styles.weekRail} rounded-2xl border border-foreground-100 bg-background-50 p-3 shadow-sm`}>
@@ -97,7 +98,7 @@ export function CaseFileWeeklyLearningTab({ kind, learnerId }: { kind: LearnerKi
                   : <p id="weekly-session-heading">No live session is scheduled for this week.</p>}
             </section>
             {selected.kind !== 'reading-week' && <section className="mt-5" aria-labelledby="weekly-activities-heading">
-              <ActivitiesTableModern components={activities} completedIds={completedIds} kind={kind} learnerId={learnerId} week={selected.title} canOpenActivities={false} summaries={summaries} />
+              <ActivitiesTableModern components={activities} completedIds={completedIds} kind={kind} learnerId={learnerId} week={selected.title} canOpenActivities={false} summaries={summaries} actualHours={actualHours} />
             </section>}
           </>}
     </div>

@@ -24,6 +24,7 @@ export function ModuleOverview({ module, hasModules, coachName, href, canOpenAct
     ? `${detail.session_start_time}${detail.session_end_time ? `–${detail.session_end_time}` : ''}` : ''].filter(Boolean).join(' · ');
   const outcomes = detail?.learning_outcomes || [];
   const codes = module?.ksbCodes || [];
+  const achievedCodes = module?.achievedKsbCodes;
   const deliveryEnd = (detail?.effectiveEndDate || '').slice(0, 10);
   const studyHoursProgress = detail?.total_otjh != null && module?.actual != null
     ? percent(module.actual, detail.total_otjh) : null;
@@ -81,10 +82,15 @@ export function ModuleOverview({ module, hasModules, coachName, href, canOpenAct
       </div>}
       <div className={layout.moduleSection}>
         <h3>Knowledge, skills &amp; behaviours <span>{codes.length || ''}</span></h3>
+        {achievedCodes == null ? <p className={styles.hint}>Achieved KSBs are not available yet.</p>
+          : achievedCodes.length > 0 ? <div role="group" aria-label="Achieved KSBs">
+            <h4>Achieved KSBs ({achievedCodes.length})</h4>
+            <div className={layout.ksbCodes}>{achievedCodes.map(code => <span key={code}>{code}</span>)}</div>
+          </div> : <p className={styles.hint}>No KSBs achieved yet.</p>}
         {codes.length ? <details className={layout.moduleDisclosure}>
           <summary>View {codes.length} mapped KSBs</summary>
           <div className={layout.ksbCodes}>{codes.map(code => <span key={code}>{code}</span>)}</div>
-        </details> : <p className={styles.hint}>{module.ksbMappingMissing ? 'KSB mapping is not available yet.' : 'No KSBs mapped yet.'}</p>}
+        </details> : !achievedCodes?.length && <p className={styles.hint}>{module.ksbMappingMissing ? 'KSB mapping is not available yet.' : 'No KSBs mapped yet.'}</p>}
         {codes.length > 0 && module.ksbMappingMissing && <p className={styles.hint}>Some activities are still awaiting KSB mapping.</p>}
       </div>
       {outcomes.length > 0 && <details className={`${layout.moduleSection} ${layout.moduleDisclosure}`}>

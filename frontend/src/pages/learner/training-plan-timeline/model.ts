@@ -36,7 +36,12 @@ export function buildPlanModules(subjects: (Subject | PlanSubjectSummary)[], dat
   return subjects.map(subject => {
     const initialSummary = 'activities' in subject ? null : subject;
     const activities = 'activities' in subject ? subject.activities : [];
-    const moduleId = data.moduleLinks[subject.id]?.id || (subject.id.startsWith('current:') ? subject.id.slice(8) : null);
+    // Imported courses carry an explicit curriculum link in student-activity.
+    // The schedule's moduleLinks only contains current subjects, so retain that
+    // link when resolving the course's hours, attendance and KSB evidence.
+    const moduleId = data.moduleLinks[subject.id]?.id
+      || ('activities' in subject ? subject.moduleId : null)
+      || (subject.id.startsWith('current:') ? subject.id.slice(8) : null);
     // Reuse the already-loaded overview summary for current modules too. The
     // detail panel receives these summaries, while the timeline previously
     // only used them for legacy subjects, dropping direct recorded hours and
@@ -67,9 +72,7 @@ export function buildPlanModules(subjects: (Subject | PlanSubjectSummary)[], dat
     }, {});
     const ksbCodes = summary?.ksbCodes || [...new Set(activities.flatMap(activity =>
       (activity.native?.ksbMappings || []).map(mapping => mapping.code).filter(Boolean)))].sort();
-    // Activity-to-KSB mappings are occurrence counts, not canonical learner KSB
-    // evidence/profile progress.  No safe per-module canonical KSB source is
-    // present in this payload, so the module indicator remains unavailable.
+    // Achievement comes from accepted learner evidence, not curriculum mappings.
     const entryProgress = moduleId ? data.moduleProgress?.[moduleId] : undefined;
     const ksbProgress = entryProgress?.ksb ?? summary?.ksbProgress ?? null;
     const historicalHours = actual.length ? actual.reduce((sum, row) => sum + row.hours, 0) : null;
@@ -78,6 +81,7 @@ export function buildPlanModules(subjects: (Subject | PlanSubjectSummary)[], dat
       : historicalHours;
     const recordedHours = entryProgress?.hours.actual ?? summaryHours;
     return { ...subject, activities, activityCount, activityCounts, ksbCodes,
+      achievedKsbCodes: entryProgress?.ksb.achievedCodes ?? null,
       ksbMappingMissing: summary ? summary.ksbMappingMissing : activities.some(activity => !activity.native?.ksbMappings),
       moduleId, detail, sessions, dates, start, end,
       weeks: new Set(dates.map(weekKey)).size, done, progress: percent(done, activityCount), ksbProgress,

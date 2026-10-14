@@ -376,13 +376,13 @@ def read_overview_learning(context):
 def build_overview(context):
     """Programme totals and the same module facts used by the learner rings."""
     from learner_api.module_progress import canonical_module_progress, compact_module_progress
+    from .overview_modules import read_overview_modules
     parts = context.parallel({
         'progress': lambda: canonical_module_progress(context.source, context.profile),
         'learning': lambda: read_overview_learning(context),
         # Read the established attendance projection without catch-up writes.
         'attendance': lambda: context.payload('summary').get('attendance') or {},
-        'week': lambda: context.payload('week'),
-        'schedule': lambda: context.payload('schedule'),
+        'moduleOverview': lambda: read_overview_modules(context),
     })
     metrics, _ = parts['learning']
     attendance = parts['attendance']
@@ -402,29 +402,7 @@ def build_overview(context):
         'otjh': {'actual': hours['actual'], 'targetToDate': target, 'planned': hours['planned'],
                  'percent': overview_percent(hours['actual'], target)},
         'ksb': {key: metrics['ksb'][key] for key in ('completed', 'total', 'percent')},
-    }, 'programmeProgress': rows, 'moduleOverview': project_overview_modules(parts)}
-
-
-def project_overview_modules(parts):
-    """Keep module metrics and verified links, without content or meeting URLs."""
-    subjects = parts['week'].get('planSubjects')
-    if subjects is None:
-        raise ValueError('Module summaries could not be loaded.')
-    schedule = parts['schedule']
-    subject_fields = ('id', 'title', 'source', 'completed', 'total', 'dates',
-                      'moduleIds', 'sessionTitles', 'ksbProgress', 'directHours')
-    module_fields = ('id', 'title', 'start_date', 'end_date', 'total_otjh')
-    session_fields = ('id', 'moduleId', 'title', 'start', 'end', 'minutes', 'status', 'attended')
-    return {
-        'subjects': [{key: value for key, value in row.items() if key in subject_fields}
-                     for row in subjects],
-        'modules': [{key: value for key, value in row.items() if key in module_fields}
-                    for row in schedule['modules']],
-        'sessions': [{key: value for key, value in row.items() if key in session_fields}
-                     for row in schedule['sessions']],
-        **{key: schedule[key] for key in ('moduleLinks', 'actual', 'actualAvailable')},
-        **({'moduleProgress': schedule['moduleProgress']} if 'moduleProgress' in schedule else {}),
-    }
+    }, 'programmeProgress': rows, 'moduleOverview': parts['moduleOverview']}
 
 
 def project_attendance(response, *, history=False):
