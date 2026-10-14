@@ -27,7 +27,9 @@ export async function fetchVerifiedInstaller(
         if (response.status >= 500 || response.status === 429) throw new Error('The download service is busy. Please retry.');
         if (response.status !== 206) throw new Error('The download changed or is unavailable. Please start again.');
         const match = /^bytes (\d+)-(\d+)\/(\d+)$/.exec(response.headers.get('Content-Range') || '');
-        const hash = response.headers.get('X-APK-SHA256') || '', nextEtag = response.headers.get('ETag') || '';
+        // Django gzip marks the transport ETag weak. Fetch decodes the body;
+        // the full SHA-256 below still verifies the original APK bytes.
+        const hash = response.headers.get('X-APK-SHA256') || '', nextEtag = (response.headers.get('ETag') || '').replace(/^W\//, '');
         if (!match || Number(match[1]) !== offset || !/^[a-f0-9]{64}$/.test(hash)
           || nextEtag !== '"' + hash + '"' || (etag && nextEtag !== etag)
           || Number(match[3]) <= 0 || Number(match[3]) > MAX_BYTES
