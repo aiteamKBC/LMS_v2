@@ -245,7 +245,6 @@ export default function ComponentViewPage() {
   const elapsedRef = useRef(wallElapsed);
   elapsedRef.current = wallElapsed;
   const [manualTimeSeconds, setManualTimeSeconds] = useState<number | null>(null);
-  const [recordingWatchSeconds, setRecordingWatchSeconds] = useState(0);
   const [timeSource, setTimeSource] = useState<TimeSource>('timer');
   // Opened only by a server refusal of the Finish click; null while learning.
   const [correction, setCorrection] = useState<{ reason: WorkingRuleReason | ''; holidayName: string } | null>(null);
@@ -290,7 +289,6 @@ export default function ComponentViewPage() {
     setWallElapsed(readActivityTimer(timerStorageKey)?.elapsedSeconds ?? 0);
     timerRemainder.current.milliseconds = 0;
     setManualTimeSeconds(null);
-    setRecordingWatchSeconds(0);
     setTimeSource('timer');
     setCorrection(null);
     setCorrectionError('');
@@ -827,7 +825,6 @@ export default function ComponentViewPage() {
                   sessionNumber={component.teamsSessionNumber}
                   learner={{ kind: kind as LearnerKind, id: id || '' }}
                   attendanceType={detail?.attendanceType}
-                  onRecordingWatchTimeChange={setRecordingWatchSeconds}
                   preview={Boolean(parsePersonalLearning(id))}
                 /> : <p className="mt-4 rounded-xl border bg-amber-50 p-4 text-sm">This live session needs its saved session number before results can be shown. Please contact your tutor.</p>
               )}
@@ -843,10 +840,10 @@ export default function ComponentViewPage() {
                 {!isAssignment && recordingAttempt && <div className={isVideo
                   ? layoutStyles.videoActions
                   : isLiveSession
-                    ? `${layoutStyles.liveActions} ${layoutStyles.liveActionsWithTimer}`
+                    ? layoutStyles.liveActions
                     : 'ml-auto flex min-w-0 max-w-full flex-wrap items-center justify-end gap-3'}>
-                  {(!usesManualTimeOnly || isLiveSession) && (
-                    <ActivityElapsedTimer time={formatClock(isLiveSession ? recordingWatchSeconds : elapsedSeconds)} />
+                  {!usesManualTimeOnly && (
+                    <ActivityElapsedTimer time={formatClock(elapsedSeconds)} />
                   )}
                   <div className={hasActivityPanel ? layoutStyles.videoTools : 'contents'}>
                   <ActivityTimeSpentInput

@@ -802,6 +802,8 @@ def sync_verified_teams_attendance_reporting(
             if params:
                 cursor.executemany(query, params)
             upsert_live_session_register(cursor, rows)
+        from .live_session_completion import complete_attended_live_sessions
+        complete_attended_live_sessions(rows)
     _award_attendance_points(rows)
     return len(rows)
 

@@ -209,19 +209,42 @@ it('waits for Finish before offering reflection after media playback ends', asyn
   expect(await screen.findByRole('dialog', { name: 'Do you want to complete a reflection?' })).toBeVisible();
 });
 
-it('lays out recording watch time, evidence, manual input, and Finish in one live-session panel', async () => {
+it.each(['commercial', 'apprenticeship'])('hides the live-session timer and preserves manual time and evidence for %s learners', async kind => {
   const live = { ...first, teamsLiveSessionId: 'LIVE-1', teamsSessionNumber: 1 };
   vi.mocked(fetchLearnerDetail).mockResolvedValue({ ...detail(), components: [live] } as unknown as LearnerDetail);
-  mount();
+  mount('C1', kind);
 
   const input = await screen.findByLabelText('Minutes spent');
-  const timer = screen.getByRole('timer', { name: 'Time on this activity: 00 hours, 00 minutes, 00 seconds' });
-  const actionPanel = timer.parentElement;
-  expect(actionPanel).toContainElement(input);
-  expect(actionPanel).toContainElement(screen.getByText('Upload evidence'));
-  expect(actionPanel).toContainElement(screen.getByRole('button', { name: 'Finish' }));
+  expect(screen.queryByRole('timer')).not.toBeInTheDocument();
+  expect(screen.getByText('Upload evidence')).toBeVisible();
+  expect(screen.getByRole('button', { name: 'Finish' })).toBeEnabled();
+  fireEvent.change(input, { target: { value: '5' } });
   fireEvent.click(screen.getByRole('button', { name: 'Simulate recording watch' }));
-  expect(screen.getByRole('timer')).toHaveAccessibleName('Time on this activity: 00 hours, 00 minutes, 37 seconds');
+  expect(screen.queryByRole('timer')).not.toBeInTheDocument();
+  expect(input).toHaveValue('5');
+  fireEvent.click(screen.getByRole('button', { name: 'Finish' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'Confirm' }));
+  await waitFor(() => expect(submitComponentProgress).toHaveBeenCalledWith('C1', kind, '1', expect.objectContaining({
+    timeTakenSeconds: 300, timeEntrySource: 'input',
+  })));
+});
+
+it.each(['commercial', 'apprenticeship'])('shows verified attendance as completed without asking for reflection for %s learners', async kind => {
+  vi.mocked(fetchLearnerDetail).mockResolvedValue({
+    ...detail(), components: [{ ...first, reflectionRequired: true }],
+    componentProgress: [{
+      kind: 'component', componentId: 'C1', componentType: 'live_session',
+      timeTrackingSource: 'microsoft_teams_attendance', submittedAt: '2026-10-22T13:00:00Z',
+      claimedSeconds: 0, verifiedSeconds: 0, reportedTime: '0 minutes',
+    }],
+  } as unknown as LearnerDetail);
+  mount('C1', kind);
+  expect(await screen.findByRole('status')).toHaveTextContent('Completed');
+  expect(screen.queryByRole('timer')).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Finish' })).not.toBeInTheDocument();
+  expect(screen.queryByLabelText('Minutes spent')).not.toBeInTheDocument();
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  expect(submitComponentProgress).not.toHaveBeenCalled();
 });
 
 it.each(['commercial', 'apprenticeship'])('opens live session Finish before entering time for %s learners', async kind => {
