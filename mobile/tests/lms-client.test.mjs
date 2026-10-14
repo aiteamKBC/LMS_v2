@@ -3,6 +3,19 @@ import assert from 'node:assert/strict';
 import {createLmsClient,LMS_ORIGIN} from '../src/lms-client.mjs';
 const response=(body,status=200,type='application/json')=>({ok:status>=200&&status<300,status,headers:{get:()=>type},json:async()=>body});
 
+test('absence requests use same authenticated LMS with bounded scope and no supplied learner identity',async()=>{
+ const calls=[],client=createLmsClient({fetchImpl:async(url,options)=>{calls.push({url,options});return response({});}});
+ await client.absenceReports('lectures');await client.absenceReports('meetings');
+ await client.reportAbsence({scope:'meetings',sessionId:'meeting:42:mcr:17',reasonCategory:'illness'});
+ assert.equal(calls[0].url,LMS_ORIGIN+'/learner_api/mobile/absence-reports/?scope=lectures');
+ assert.equal(calls[1].url,LMS_ORIGIN+'/learner_api/mobile/absence-reports/?scope=meetings');
+ assert.equal(calls[2].options.method,'POST');assert.equal(calls[2].options.credentials,'include');
+ assert.equal(calls[2].options.headers['X-Requested-With'],'XMLHttpRequest');
+ assert.equal(JSON.parse(calls[2].options.body).sessionId,'meeting:42:mcr:17');
+ for(const scope of ['meetings&learnerId=4','../','',null])assert.throws(()=>client.absenceReports(scope));
+ assert.throws(()=>client.reportAbsence({learnerId:99}));assert.equal(calls.length,3);
+});
+
 test('selected-course progress and hours preserve the canonical module ID without allowing query injection',async()=>{
  const calls=[],client=createLmsClient({fetchImpl:async url=>{calls.push(url);return response({});}});
  await client.progress('MOD-RISK:DELIVERY-1');await client.hours('MOD-RISK:DELIVERY-1');

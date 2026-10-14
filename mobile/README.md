@@ -6,6 +6,10 @@ The learning catalogue contains published audio, video and supported choice quiz
 
 ## Develop and check
 
+The learner home screen has two primary actions. **Song of the week** opens an eligible song from the exact selected module and week, using authored song metadata or established legacy labels/IDs. It never falls back to another course/week. **Authorised absence** offers the next reportable lecture, monthly coaching meeting, or progress review from the learner's canonical absence register. Dates are UK time and a request requires explicit confirmation.
+
+The authenticated `mobile/absence-reports/` facade delegates to the maintained absence handler: meeting requests remain pending coach approval; lecture recording/alternative recovery follows existing LMS policy. The native form supports recording plans and eligible alternative sessions. Evidence uploads and coach catch-up booking use the full LMS form. Saved approval does not credit attendance or hours. Recent reports are shown after refreshing, including when an earlier submission response timed out. No absence is submitted by merely opening the screen.
+
 Use a Node version supported by the lockfile's React Native engine range (`^20.19.4 || ^22.13.0 || ^24.3.0 || >=25.0.0`). From this directory:
 
 ```text

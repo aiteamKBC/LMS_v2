@@ -29,7 +29,7 @@ export function createLmsClient({fetchImpl = globalThis.fetch, timeoutMs = 30000
   if (typeof fetchImpl !== 'function') throw new TypeError('A native HTTPS fetch implementation is required.');
   let generation = 0;
   async function request(path, method = 'GET', body, {mobile = true, sessionSensitive = true} = {}) {
-    if (typeof path !== 'string' || !/^\/[A-Za-z0-9_\-/%.:]+(?:\?(?:moduleId=[A-Za-z0-9_%.:-]+|before=[0-9]+))?$/.test(path) || path.includes('..') || path.includes('//')) throw new LmsServiceError('The LMS request address is not valid.', 400);
+    if (typeof path !== 'string' || !/^\/[A-Za-z0-9_\-/%.:]+(?:\?(?:moduleId=[A-Za-z0-9_%.:-]+|before=[0-9]+|scope=(?:lectures|meetings)))?$/.test(path) || path.includes('..') || path.includes('//')) throw new LmsServiceError('The LMS request address is not valid.', 400);
     const url = new URL(path, LMS_ORIGIN);
     if (url.origin !== LMS_ORIGIN || (!url.pathname.startsWith(LMS_MOBILE_BASE) && !url.pathname.startsWith('/learner_api/communications/') && !['/login_api/login/','/login_api/logout/','/login_api/me/'].includes(url.pathname))) throw new LmsServiceError('This destination is not an LMS service.', 400);
     const requestGeneration = generation, controller = new AbortController(), timeout = setTimeout(() => controller.abort(), timeoutMs);
@@ -93,6 +93,11 @@ export function createLmsClient({fetchImpl = globalThis.fetch, timeoutMs = 30000
     requestVoucher:body => mobile('rewards/voucher-requests/','POST',ownPayload(body)),
     setLeaderboard:body => mobile('rewards/leaderboard/','POST',ownPayload(body)),
     meetings:() => mobile('meetings/'),
+    absenceReports:scope => {
+      if(!['lectures','meetings'].includes(scope))throw new LmsServiceError('Choose a session or meeting.',400);
+      return mobile('absence-reports/?scope='+scope);
+    },
+    reportAbsence:body => mobile('absence-reports/','POST',ownPayload(body)),
     quiz:id => mobile('quizzes/'+componentId(id)+'/'),
     transcript:id => mobile('components/'+componentId(id)+'/transcript/'),
     startLearning(id,mode) {
