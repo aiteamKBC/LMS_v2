@@ -8,7 +8,7 @@ import type { CoverMetadata } from '../my-learning/SubjectWorkspace';
 import { clearAllCachedResources } from '@/api/cachedRequest';
 import { useLearnerDetailParam } from '@/hooks/useLearnerDetailParam';
 import MonthlySubmissionPage from './page';
-import { assignmentToday, defaultAssignmentMonth, groupMonthlyAssignments, isOverdueAssignment } from './model';
+import { assignmentToday, defaultAssignmentMonth, groupMonthlyAssignments, isOverdueAssignment, trainingPlanAssignments } from './model';
 
 vi.mock('@/components/feature/WorkspaceShell', () => ({ WorkspaceShell: ({ children }: { children: ReactNode }) => <>{children}</> }));
 vi.mock('@/hooks/useMyLearner', () => ({ useResolvedLearner: () => ({ kind: 'commercial', id: '125' }) }));
@@ -31,11 +31,11 @@ const metadata = { covers: {}, activity_dates: {
 const contract = { months: { '2026-09': { label: 'Month 4 — Martech', topics: ['Data, Insight and Analytics'], planned: 42, source: 'contract' },
   '2026-10': { label: '', topics: ['Marketing strategy'], planned: 30, source: 'contract' } }, contractStatus: 'ready' };
 
-function mockRequests(options: { failed?: 'dates' | 'statuses' | 'contract'; statuses?: Record<string, string>; counts?: Record<string, number>; extras?: ExtraActivity[]; dates?: CoverMetadata } = {}) {
+function mockRequests(options: { failed?: 'dates' | 'statuses' | 'contract'; statuses?: Record<string, string>; counts?: Record<string, number>; extras?: ExtraActivity[]; dates?: CoverMetadata; contract?: unknown } = {}) {
   const fetcher = vi.fn(async (url: string) => {
     if (url.includes('/reflection/extra-activities/')) return { ok: true, json: async () => ({ activities: options.extras || [] }) };
     const source = url.includes('/subject-covers/') ? 'dates' : url.includes('/training-plan-dashboard/') ? 'contract' : 'statuses';
-    const data = source === 'dates' ? options.dates || metadata : source === 'contract' ? contract : { statuses: [
+    const data = source === 'dates' ? options.dates || metadata : source === 'contract' ? options.contract || contract : { statuses: [
       { activityType: 'assignment', activityId: 'A1', status: options.statuses?.A1 || 'draft', submissionCount: options.counts?.A1 },
       { activityType: 'assignment', activityId: 'A2', status: options.statuses?.A2 || 'submitted_for_tutor_review', submissionCount: options.counts?.A2 },
       ...Object.entries(options.statuses || {}).filter(([id]) => id !== 'A1' && id !== 'A2')
@@ -419,4 +419,74 @@ it('opens the extra activity form beside the month selector for this learner', a
   const link = await screen.findByRole('link', { name: /Extra activities/ });
   expect(link).toHaveAttribute('href', '/learner/monthly-submission/commercial/125/extra-activities');
   expect(screen.getByRole('combobox', { name: 'Choose month' })).toBeInTheDocument();
+});
+
+const planContract = { ...contract, months: { ...contract.months, '2026-09': { ...contract.months['2026-09'], activities: [
+  { date: '2026-09-02', title: 'Data, Insight and Analytics - Attendance', method: 'Attendance', hours: 6 },
+  { date: '2026-09-09', title: 'Data, Insight and Analytics - Coach Led Assignment', method: 'Coach Led Assignment', hours: 7 },
+  { date: '2026-09-16', title: 'Data, Insight and Analytics (Coach-Led Assignment)', method: 'Coach Led Assignment', hours: 7 },
+  { date: '2026-09-23', title: 'September - Assignment', method: 'Assignment', hours: 2 },
+  { date: '2026-09-30', title: 'LMS Activity', method: 'LMS Activity', hours: 4 },
+] } } };
+const mockPlan = (components: LearnerComponentEntry[]) => vi.mocked(useLearnerDetailParam).mockReturnValue({
+  real: { ...real, components }, loading: false, loadError: null, isRealMode: true, refresh: vi.fn() });
+
+it('reads the assignment a Training Plan month names from its coach-led assignment rows only', () => {
+  expect(trainingPlanAssignments(planContract.months['2026-09'])).toEqual(['Data, Insight and Analytics']);
+  expect(trainingPlanAssignments(contract.months['2026-09'])).toEqual([]);
+  expect(trainingPlanAssignments(undefined)).toEqual([]);
+  const groups = groupMonthlyAssignments(real, metadata, planContract, {});
+  expect(groups.find(group => group.month === '2026-09')?.planAssignments).toEqual(['Data, Insight and Analytics']);
+  expect(groups.find(group => group.month === '2026-10')?.planAssignments).toEqual([]);
+});
+
+it('lists only flagged assignments once an author flags the monthly assignment, under the title learners were given', async () => {
+  mockPlan([component('A1'), component('A2', { week: 'Digital analytics', monthlyAssignment: true,
+    component: 'Assignment · Month 4 coach led assignment', assignmentBrief: 'Evaluate the analytics tools.' }), component('R1', { type: 'reading' })]);
+  mount();
+  const cards = await screen.findByRole('region', { name: 'Assignments for Month 4 — Martech' });
+  expect(within(cards).getByRole('button', { name: /Month 4 coach led assignment/ })).toBeVisible();
+  expect(within(cards).queryByRole('button', { name: /Data and insight/ })).toBeNull();
+  expect(within(cards).queryByText(/Assignment ·/)).toBeNull();
+  expect(screen.getByRole('heading', { name: 'Month 4 coach led assignment' })).toBeVisible();
+  expect(screen.getByRole('region', { name: 'Selected submission month' })).toHaveTextContent('1 assignment · 1 submitted');
+  expect(screen.getByRole('link', { name: 'View submission' })).toHaveAttribute('href', '/learner/monthly-submission/commercial/125/A2?month=2026-09');
+  expect(groupMonthlyAssignments({ ...real, components: [component('A1'), component('A2', { monthlyAssignment: false })] }, metadata, contract, {})
+    .flatMap(group => group.assignments.map(row => row.id))).toEqual(['A1', 'A2']);
+});
+
+it('labels the Training Plan assignment and shows the options and their instructions before starting', async () => {
+  mockPlan([component('A1', { assignmentTopics: [
+    { id: '1', name: 'Campaign review', question: 'Review a recent campaign.', instructions: 'Use the STAR format.', resources: [] },
+    { id: '2', name: 'Data audit', question: '<p>Audit your <strong>data sources</strong>.</p>', instructions: '', resources: [] },
+  ] })]);
+  mockRequests({ contract: planContract });
+  mount();
+  const labels = await screen.findAllByText(/Assignment in your training plan:/);
+  expect(labels).toHaveLength(2);
+  for (const label of labels) expect(label).toHaveTextContent('Assignment in your training plan: Data, Insight and Analytics');
+  expect(screen.getAllByText(/Data, Insight and Analytics/)).toHaveLength(2);
+  const options = screen.getByRole('region', { name: 'Assignment options' });
+  expect(within(options).getByText('Topic 1 — Campaign review')).toBeVisible();
+  expect(within(options).getByText('Review a recent campaign.')).toBeVisible();
+  expect(within(options).getByText('Use the STAR format.')).toBeVisible();
+  expect(within(options).getByText('Topic 2 — Data audit')).toBeVisible();
+  expect(within(options).getByText('data sources')).toHaveProperty('tagName', 'STRONG');
+  expect(screen.queryByRole('region', { name: 'Instructions' })).toBeNull();
+});
+
+it('shows a single topic as the assignment itself, with its instructions and the imported links as resources', async () => {
+  const imported = '<p><strong>Additional materials</strong></p><ul><li><a href="https://old.example.test/guide.pdf" target="_blank" rel="noreferrer">Guide &amp; template</a></li></ul>';
+  mockPlan([component('A1', { assignmentBrief: 'An older copy of the brief.', assignmentTopics: [
+    { id: '1', name: '', question: 'Explain how data informs your marketing decisions.', instructions: `<p>Write 800 words.</p>${imported}`, resources: [] },
+  ] })]);
+  mount();
+  expect(await screen.findByText('Explain how data informs your marketing decisions.')).toBeVisible();
+  expect(screen.queryByText('An older copy of the brief.')).toBeNull();
+  expect(screen.getByRole('region', { name: 'Instructions' })).toHaveTextContent('Write 800 words.');
+  expect(screen.getByRole('region', { name: 'Instructions' })).not.toHaveTextContent('Additional materials');
+  expect(within(screen.getByRole('region', { name: 'Resources' })).getByRole('link', { name: /Guide & template/ }))
+    .toHaveAttribute('href', 'https://old.example.test/guide.pdf');
+  expect(screen.queryByRole('region', { name: 'Assignment options' })).toBeNull();
+  expect(screen.queryByText(/Assignment in your training plan/)).toBeNull();
 });

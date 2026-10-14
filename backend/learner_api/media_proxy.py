@@ -17,6 +17,7 @@ import urllib.request
 
 from django.db import DatabaseError, connections
 from django.http import HttpResponse, JsonResponse, StreamingHttpResponse
+from django.views.decorators.clickjacking import xframe_options_sameorigin
 from django.views.decorators.http import require_GET
 
 from curriculum_api import upload_storage
@@ -188,7 +189,9 @@ def _legacy_attachment_upload_path(attachment_id):
                     for candidate in row:
                         path = urllib.parse.urlparse(candidate or '').path
                         if marker in path:
-                            relative = path.split(marker, 1)[1].lstrip('/')
+                            # Decoded like the hint path: stored names keep
+                            # their spaces, the audit URL carries %20.
+                            relative = urllib.parse.unquote(path.split(marker, 1)[1]).lstrip('/')
                             if relative.startswith(f'_legacy_files/{attachment_id}/'):
                                 return relative
         except (DatabaseError, KeyError):
@@ -322,8 +325,12 @@ def _load_legacy_attachment_bytes(attachment_id, upload_hint=''):
     for upload_path in upload_paths:
         opened = upload_storage.open_stream(upload_path)
         if opened is not None:
-            stream, _total, _content_type = opened
-            return b''.join(stream), None
+            stream, total, _content_type = opened
+            data = b''.join(stream)
+            # A zero-byte placeholder is not the file; fall through to the
+            # original source below instead of handing back an empty document.
+            if total and data:
+                return data, None
 
     try:
         upstream = _open_legacy_attachment(attachment_id)
@@ -374,6 +381,9 @@ def google_drive_media(request, file_id):
 
 
 @require_GET
+# Same reason as curriculum uploads: the site-wide DENY blanks a PDF the learner
+# page frames itself. SAMEORIGIN still refuses every other site.
+@xframe_options_sameorigin
 def legacy_attachment_media(request, attachment_id):
     if not LEGACY_ATTACHMENT_ID_RE.match(attachment_id or ""):
         return HttpResponse("Invalid attachment id.", status=400)
@@ -381,7 +391,8 @@ def legacy_attachment_media(request, attachment_id):
     upload_path = _legacy_attachment_upload_path(attachment_id)
     if upload_path:
         probe = upload_storage.open_stream(upload_path, offset=0, length=1)
-        if probe is not None:
+        # Zero-byte placeholders skip to the original source further down.
+        if probe is not None and probe[1]:
             _probe_stream, total_size, content_type = probe
             start, end = 0, max(total_size - 1, 0)
             range_header = request.headers.get("Range") or ''

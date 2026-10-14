@@ -96,7 +96,7 @@ class WeeklyLearningTests(SimpleTestCase):
         self.assertEqual(report['newTopLevel'], ['weeks', 'selectedWeek'])
         self.assertGreater(report['reductionPercent'], 90)
 
-    def projection(self, selection='M1:1', kind='commercial', future_report=False):
+    def projection(self, selection='M1:1', kind='commercial', future_report=False, records=None, duration='60'):
         context = MagicMock()
         context.source = SimpleNamespace(pk=201, email='learner@example.test', learner_type=kind)
         context.profile.progress_entries.filter.return_value.values.return_value = [
@@ -113,7 +113,7 @@ class WeeklyLearningTests(SimpleTestCase):
             {'id': 'C1', 'week_id': 'W1', 'module_catalogue_id': 'M1', 'type': 'reading', 'quiz_id': None, 'is_quiz': False, 'has_content': True},
             {'id': 'C2', 'week_id': 'W2', 'module_catalogue_id': 'M1', 'type': 'reading', 'quiz_id': None, 'is_quiz': False, 'has_content': True}],
             [], [{'id': f'C{selected}', 'title': f'Reading {selected}', 'type': 'reading', 'ksb_mappings': [{'code': 'K1'}],
-              'duration_minutes': '60', 'quiz_title': None, 'quiz_duration': None, 'quiz_time_unit': None}],
+              'duration_minutes': duration, 'quiz_title': None, 'quiz_duration': None, 'quiz_time_unit': None}],
             [{'session_id': 'S1', 'module_id': 'M1', 'module_title': 'Synthetic session', 'start_datetime': datetime(2026,10,5 if selected == 1 else 12,8),
               'duration_minutes': 120, 'series_join_url': 'https://example.test/teams', 'series_status': 'scheduled',
               'occurrence_id': f'O{selected}', 'scheduled_start': None, 'scheduled_end': None, 'join_url': None, 'status': None, 'attended': True}]]
@@ -129,11 +129,34 @@ class WeeklyLearningTests(SimpleTestCase):
              patch('learner_api.learning_plan._effective_plan_ids', return_value=['M1']), \
              patch('learner_api.canonical_learning.require_profile', return_value={}), \
              patch('learner_api.canonical_learning.curriculum_module_ids_for', return_value=[]), \
+             patch('learner_api.canonical_learning.entries_for', return_value=records if records is not None else [
+                 {'module_ref': 'M1', 'component_ref': 'C1', 'accepted': True, 'actual_seconds': 3600}]), \
              patch('learner_api.training_plan_dashboard.attach_curriculum_slots', side_effect=spine), \
              patch('learner_api.training_plan_dashboard.rows', side_effect=datasets):
             connections.__getitem__.return_value.cursor.return_value.__enter__.return_value = cursor
             payload = read_weekly_learning(context, selection)
         return payload, cursor, context
+
+    def test_completed_two_hour_assignment_uses_one_accepted_hour_only(self):
+        records = [
+            {'module_ref': 'M1', 'component_ref': 'C1', 'accepted': True, 'actual_seconds': 3600},
+            {'module_ref': 'M1', 'component_ref': 'C1', 'accepted': False, 'actual_seconds': 7200},
+            {'module_ref': 'M1', 'component_ref': 'C2', 'accepted': True, 'actual_seconds': 18000},
+            {'module_ref': 'M2', 'component_ref': 'C1', 'accepted': True, 'actual_seconds': 18000},
+        ]
+        for kind in ('commercial', 'apprenticeship'):
+            payload, _, _ = self.projection(kind=kind, records=records, duration='120')
+            self.assertEqual(payload['selectedWeek']['summary']['otjhHours'], 1)
+            self.assertEqual(payload['selectedWeek']['summary']['plannedOtjhHours'], 2)
+            self.assertEqual(payload['selectedWeek']['summary']['completedActivities'], 1)
+            self.assertTrue(payload['selectedWeek']['activities'][0]['completed'])
+            self.assertEqual(payload['selectedWeek']['activities'][0]['expectedHours'], 2)
+            self.assertEqual(payload['selectedWeek']['activities'][0]['actualHours'], 1)
+            empty, _, _ = self.projection(kind=kind, records=[], duration='120')
+            self.assertEqual(empty['selectedWeek']['summary']['otjhHours'], 0)
+            self.assertEqual(empty['selectedWeek']['activities'][0]['actualHours'], 0)
+            second, _, _ = self.projection(selection='M1:2', kind=kind, records=records, duration='120')
+            self.assertEqual(second['selectedWeek']['activities'][0]['actualHours'], 5)
 
     def test_compact_response_and_selected_activity_session_for_each_learner_type(self):
         for kind in ('commercial', 'apprenticeship'):

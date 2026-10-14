@@ -501,4 +501,42 @@ describe('Programme workspace', { timeout: 15000 }, () => {
     expect(screen.getByRole('button', { name: /Getting started/ })).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Join' })).toHaveAttribute('href', 'https://teams.example/meet/1');
   });
+
+  it('builds weeks and sessions from a week outline and components read without their long text', async () => {
+    const api = await import('@/lib/curriculumApi');
+    // What the server sends for omitWeekComponents / omitContent: weeks with no
+    // `components` key, and a component whose transcript was left out.
+    const outlineModule = {
+      ...modules[0],
+      weekStructureOutline: true,
+      weekStructure: [{ id: 'WEEK-1', weekNumber: 1, title: 'Kick-off week', componentsOmitted: true }],
+    } as unknown as CurriculumModule;
+    const trimmedComponents = [
+      { ...components[0], weekId: 'WEEK-1', settingsOmitted: ['transcript'] },
+    ] as unknown as CurriculumComponent[];
+    vi.mocked(api.fetchCurriculumProgrammeDetail).mockClear();
+    vi.mocked(api.fetchCurriculumComponents).mockClear();
+    vi.mocked(api.fetchCurriculumProgrammeDetail).mockResolvedValueOnce({
+      schema: 'test',
+      programme,
+      cohorts: [],
+      flat: { cohorts, groups, groupIds: ['GROUP-1'], modules: [outlineModule], sessions: [] },
+    });
+    vi.mocked(api.fetchCurriculumComponents).mockResolvedValueOnce(trimmedComponents);
+
+    await renderWorkspace();
+    expect(api.fetchCurriculumProgrammeDetail).toHaveBeenCalledWith(
+      'PROG-DATA', expect.anything(), expect.objectContaining({ omitWeekComponents: true, omitComponents: true, omitTree: true }),
+    );
+    await vi.waitFor(() => expect(api.fetchCurriculumComponents).toHaveBeenCalledWith(
+      expect.anything(), expect.objectContaining({ moduleCatalogueIds: ['MOD-1'], omitContent: true }),
+    ));
+    await openTab(/Sessions/);
+
+    // The week title comes from the outline; the session, its schedule and its
+    // Teams link from the trimmed component -- none of which was left out.
+    expect(await screen.findByRole('button', { name: /Kick-off week/ })).toBeInTheDocument();
+    expect(screen.getByText('Intro live session')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Join' })).toHaveAttribute('href', 'https://teams.example/meet/1');
+  });
 });

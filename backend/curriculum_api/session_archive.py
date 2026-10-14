@@ -56,6 +56,29 @@ def save_archive(artifact, name, *, text=None, state='ready', error=''):
             [artifact['id'], artifact['occurrence_id'], CONTAINER, name, state, text, error])
 
 
+def saved_copy_of_same_recording(artifact):
+    """The ready Azure copy of this same Teams file saved under another LMS row, if any.
+
+    Graph has listed one recording under two ids; each row then fetched and
+    uploaded its own byte-identical copy. A row that is the same file (same
+    session and type, and the same content correlation id or the same call and
+    recording window) points at the copy already saved instead.
+    """
+    correlation = (artifact.get('content_correlation_id') or '').strip()
+    call = (artifact.get('call_id') or '').strip()
+    if not correlation and not (call and artifact.get('created_datetime')):
+        return None
+    rows = read('''SELECT r.blob_name, r.transcript_text FROM curriculum.live_session_artifacts a
+        JOIN curriculum.session_result_archive r ON r.artifact_id=a.id
+        WHERE a.occurrence_id=%s AND a.artifact_type=%s AND a.id<>%s AND r.status='ready' AND r.container=%s
+          AND ((%s<>'' AND a.content_correlation_id=%s AND (a.call_id=%s OR a.call_id='' OR %s=''))
+               OR (%s<>'' AND a.call_id=%s AND a.created_datetime=%s AND a.end_datetime IS NOT DISTINCT FROM %s))
+        ORDER BY r.updated_at LIMIT 1''',
+        [artifact['occurrence_id'], artifact['artifact_type'], artifact['id'], CONTAINER,
+         correlation, correlation, call, call, call, call, artifact.get('created_datetime'), artifact.get('end_datetime')])
+    return rows[0] if rows else None
+
+
 def archive_series(series_id, *, lease_id=None, artifact_ids=None):
     from coach_api.views import get_graph_settings, microsoft_graph_request, microsoft_graph_token
     from learner_api.evidence_storage import upload_blob
@@ -92,6 +115,11 @@ def archive_series(series_id, *, lease_id=None, artifact_ids=None):
         occurrence = by_id[artifact['occurrence_id']]
         kind = artifact['artifact_type']
         if kind not in {'recording', 'transcript'}:
+            continue
+        twin = saved_copy_of_same_recording(artifact)
+        if twin:
+            # Already in Azure under another row: no download, no second upload.
+            save_archive(artifact, twin['blob_name'], text=twin.get('transcript_text') if kind == 'transcript' else None)
             continue
         prefix = archive_prefix(series, occurrence, modules[0] if modules else {})
         saved_name = artifact['saved_name'] if artifact.get('saved_occurrence_id') == artifact['occurrence_id'] else None

@@ -17,7 +17,7 @@ export type WeeklyLearningResponse = {
     liveSession: { id: string; title: string; date: string; startTime: string; endTime: string | null;
       start: string; durationMinutes: number | null; status: string; sessionState?: WeeklyLearningWeek['sessionState']; attended: boolean | null; joinUrl: string | null } | null;
     activities: { id: string; title: string; type: string; completed: boolean; isQuiz: boolean;
-      status: 'completed' | 'in-progress' | 'not-started'; expectedHours: number | null; durationMinutes: number | null;
+      status: 'completed' | 'in-progress' | 'not-started'; expectedHours: number | null; actualHours?: number | null; durationMinutes: number | null;
       quizDuration: number | null; quizTimeUnit: string | null; ksbCodes: string[] }[];
   }) | null;
 };

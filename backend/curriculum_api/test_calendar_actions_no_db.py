@@ -15,7 +15,7 @@ import uuid
 from contextlib import contextmanager, nullcontext
 from datetime import datetime, timedelta, timezone
 from unittest.mock import Mock, patch
-from urllib.parse import quote, urlencode, unquote
+from urllib.parse import quote, urlencode, unquote_plus
 from zoneinfo import ZoneInfo
 import unittest
 
@@ -428,20 +428,27 @@ class PureTests(unittest.TestCase):
     def test_directory_escapes_query_and_limits_results(self):
         ns = {'re': re, 'urlencode': urlencode}
         functions(ROOT / 'teams_directory.py', ['directory_query', 'directory_people'], ns)
-        query = unquote(ns['directory_query']("O'Neil"))
+        query = unquote_plus(ns['directory_query']("O'Neil"))
         self.assertIn("O''Neil", query)
         self.assertIn('$top=12', query)
+        self.assertIn("userType eq 'Member'", query)
+        self.assertNotIn("userType eq 'Guest'", query)
+        guest_query = unquote_plus(ns['directory_query']("O'Neil", include_guests=True))
+        self.assertIn("userType eq 'Member' or userType eq 'Guest'", guest_query)
         self.assertIsNone(ns['directory_query']('A'))
         with self.assertRaises(ValueError):
             ns['directory_query']('a' * 81)
-        people = ns['directory_people']({'value': [
+        response = {'value': [
             {'id': '1', 'displayName': 'Synthetic Person', 'mail': 'one@example.invalid', 'accountEnabled': True, 'userType': 'Member'},
             {'id': '2', 'mail': 'one@example.invalid', 'accountEnabled': True, 'userType': 'Member'},
             {'id': '3', 'mail': 'disabled@example.invalid', 'accountEnabled': False, 'userType': 'Member'},
             {'id': '4', 'mail': 'guest@example.invalid', 'accountEnabled': True, 'userType': 'Guest'},
-        ]})
+        ]}
+        people = ns['directory_people'](response)
         self.assertEqual(len(people['people']), 1)
         self.assertEqual(people['people'][0]['id'], '1')
+        people_with_guests = ns['directory_people'](response, include_guests=True)
+        self.assertEqual([person['id'] for person in people_with_guests['people']], ['1', '4'])
 
     def test_graph_transport_checks_identity_and_updates_only_time_and_privacy(self):
         graph = types.ModuleType('coach_api.views')
@@ -479,8 +486,10 @@ class PureTests(unittest.TestCase):
             return lambda fn: lambda request, *args: fn(request, *args) if request.method == method else Response(status=405)
         review = Mock(return_value={'reviewToken': 'synthetic'})
         directory = Mock(return_value={'people': [], 'hasMore': False})
+        directory_query = Mock(return_value='users?synthetic')
         ns.update(transaction=types.SimpleNamespace(non_atomic_requests=lambda fn: fn), require_POST=method_only('POST'),
-            require_GET=method_only('GET'), json=json, action_preview=review, directory_query=lambda _: 'users?synthetic',
+            require_GET=method_only('GET'), json=json, action_preview=review,
+            directory_query=directory_query,
             directory_people=directory, signing=types.SimpleNamespace(BadSignature=type('BadSignature', (Exception,), {})),
             CalendarStateError=CalendarStateError, httpx=types.SimpleNamespace(HTTPError=TransportError))
         functions(ROOT / 'teams_calendar_actions.py', ['calendar_action'], ns)
@@ -494,8 +503,14 @@ class PureTests(unittest.TestCase):
                 self.assertEqual(ns['calendar_action'](request, 'LIVE-1').status_code, code)
                 request.method = 'GET'
                 self.assertEqual(ns['search_teams_directory'](request).status_code, code)
+            account = types.SimpleNamespace(role='admin', pk='ACTOR')
+            guest_request = types.SimpleNamespace(account=account, login_account=account, method='GET',
+                                                  GET={'q': 'Alex', 'includeGuests': '1'})
+            self.assertEqual(ns['search_teams_directory'](guest_request).status_code, 200)
+            self.assertTrue(directory_query.call_args.kwargs['include_guests'])
+            self.assertTrue(directory.call_args.kwargs['include_guests'])
             self.assertEqual(review.call_count, 2)
-            self.assertEqual(graph.microsoft_graph_request.call_count, 2)
+            self.assertEqual(graph.microsoft_graph_request.call_count, 3)
             self.assertFalse(getattr(ns['calendar_action'], 'csrf_exempt', False))
 
     def test_readers_apply_rescheduled_component_dates_and_preserve_other_settings(self):

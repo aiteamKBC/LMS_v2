@@ -144,19 +144,25 @@ def _skills_radar_context(review, learner):
         logger.exception("_skills_radar_context: lookup failed")
         return {"skillsRadar": {"standardId": "", "assessments": [], "ksbs": []}}
 
-    # Resolve the KSB list for this learner's programme so each answer can be
-    # shown with its title and theme instead of a bare id.
+    # Resolve the KSB list each answer was given against, so it is shown with
+    # its title and theme instead of a bare id. That is the source recorded on
+    # the learner's own Skills Radar (a profile, even one archived since, or a
+    # standard); the programme's current source is only the fallback -- a
+    # programme that later moved to a standard must not orphan signed answers.
     ksbs, standard = [], None
     programme = _s(getattr(learner, "programme", ""))
-    if programme:
-        try:
-            from .curriculum import ksb_profile_for_programme
+    answered_against = _s(getattr(radar, "standard_id", ""))
+    try:
+        from .curriculum import ksb_profile_for_programme, ksb_profile_for_source
 
+        if answered_against:
+            standard, ksbs = ksb_profile_for_source(answered_against, programme)
+        if not ksbs and programme:
             standard, ksbs = ksb_profile_for_programme(programme)
-        except DatabaseError:
-            # The panel still lists the answers without titles, so this is not
-            # worth failing the whole form over.
-            logger.exception("_skills_radar_context: KSB profile lookup failed")
+    except DatabaseError:
+        # The panel still lists the answers without titles, so this is not
+        # worth failing the whole form over.
+        logger.exception("_skills_radar_context: KSB profile lookup failed")
 
     answers = {
         _s(row.ksb_id): {

@@ -35,6 +35,15 @@ def _list(value):
     return value if isinstance(value, list) else []
 
 
+def _activity_title(payload, assignment_topic):
+    """The coach's queue title: "Title - Topic 2: Name", without an empty name."""
+    title = _text(payload.get("activityTitle"))
+    if not assignment_topic:
+        return title
+    name = _text(payload.get("assignmentTopicName"))
+    return f"{title} - Topic {assignment_topic}" + (f": {name}" if name else "")
+
+
 def _component_ksb_weights(component_ref):
     component_ref = _text(component_ref)
     if not component_ref:
@@ -444,7 +453,7 @@ def _submit_reflection(request):
                     _text(payload.get("programmeName")),
                     activity_type,
                     activity_id,
-                    _text(payload.get("activityTitle")) + (f" - Topic {assignment_topic}: " + payload.get("assignmentTopicName", "") if assignment_topic else ""),
+                    _activity_title(payload, assignment_topic),
                     _text(payload.get("moduleTitle")),
                     _text(payload.get("weekTitle")),
                     _text(payload.get("plannedOtjh")),

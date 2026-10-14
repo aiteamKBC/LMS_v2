@@ -1500,9 +1500,14 @@ def _resolve_from_master(modules, weeks, components, assigned_modules=None, *, c
 
             if component_ids:
                 cur.execute(
-                    "SELECT component_id, quiz_id FROM curriculum.quiz_component_links "
-                    "WHERE component_id = ANY(%s)",
-                    [component_ids],
+                    "SELECT link.component_id, link.quiz_id "
+                    "FROM curriculum.quiz_component_links link "
+                    "JOIN curriculum.components component ON component.id = link.component_id "
+                    "WHERE component.module_catalogue_id = ANY(%s) "
+                    "AND component.type = 'quiz' "
+                    "AND (component.deleted_at IS NULL "
+                    "OR COALESCE(component.deleted_via_parent, '') <> '')",
+                    [module_ids],
                 )
                 for component_id, quiz_id in cur.fetchall():
                     quiz_id_by_component[component_id] = quiz_id
@@ -1538,17 +1543,23 @@ def _resolve_from_master(modules, weeks, components, assigned_modules=None, *, c
             # no longer picks KSBs by hand on completion — these are applied
             # automatically (see components.py), so the UI shows what will be
             # credited rather than asking.
-            missing_ksb_component_ids = [component_id for component_id in component_ids if component_id not in ksbs_by_component]
-            if missing_ksb_component_ids:
+            if component_ids:
                 cur.execute(
-                    "SELECT component_id, ksb_code, ksb_description, classification, weight, weight_class "
-                    "FROM curriculum.ksb_mappings "
-                    "WHERE component_id = ANY(%s) "
-                    "AND (deleted_at IS NULL OR COALESCE(deleted_via_parent, '') <> '') "
-                    "ORDER BY component_id, ksb_code",
-                    [missing_ksb_component_ids],
+                    "SELECT mapping.component_id, mapping.ksb_code, mapping.ksb_description, "
+                    "mapping.classification, mapping.weight, mapping.weight_class "
+                    "FROM curriculum.ksb_mappings mapping "
+                    "JOIN curriculum.components component ON component.id = mapping.component_id "
+                    "WHERE component.module_catalogue_id = ANY(%s) "
+                    "AND (component.deleted_at IS NULL "
+                    "OR COALESCE(component.deleted_via_parent, '') <> '') "
+                    "AND (mapping.deleted_at IS NULL "
+                    "OR COALESCE(mapping.deleted_via_parent, '') <> '') "
+                    "ORDER BY mapping.component_id, mapping.ksb_code",
+                    [module_ids],
                 )
                 for comp_id, code, description, classification, weight, weight_class in cur.fetchall():
+                    if comp_id in ksbs_by_component:
+                        continue
                     ksbs_by_component.setdefault(comp_id, []).append({
                         "code": _s(code),
                         "description": _s(description) or None,
@@ -1700,12 +1711,19 @@ def _resolve_from_master(modules, weeks, components, assigned_modules=None, *, c
         ):
             continue
         from .assignment_topics import topics_from_settings
+        from .assignment_settings import flagged_monthly, learner_title
+        # The programme team's name for an assignment replaces the (often
+        # imported) curriculum title wherever the learner sees it.
+        display_title = (normalised_type == "assignment" and learner_title(settings)) or ctitle
         comps_by_week.setdefault(week_id, []).append({
             "componentId": comp_id,
-            "display": _display_quiz_title(linked_quiz["title"]) if linked_quiz else _display_component_title(ctype, ctitle),
+            "display": _display_quiz_title(linked_quiz["title"]) if linked_quiz else _display_component_title(ctype, display_title),
             "type": ctype,
             "description": _s(cdesc) or None,
             "assignmentTopics": topics_from_settings(settings) if normalised_type == "assignment" else [],
+            # The author's flag only; which assignments are monthly for this
+            # learner is decided across their whole plan (assignment_settings).
+            "monthlyAssignment": normalised_type == "assignment" and flagged_monthly(settings),
             "assignmentBrief": assignment_brief,
             "assignmentBriefHtml": assignment_brief_html,
             "videoUrl": video_url,
@@ -1780,6 +1798,7 @@ def _resolve_from_master(modules, weeks, components, assigned_modules=None, *, c
                     "type": comp["type"],
                     "description": comp["description"],
                     "assignmentTopics": comp["assignmentTopics"],
+                    "monthlyAssignment": comp["monthlyAssignment"],
                     "assignmentBrief": comp["assignmentBrief"],
                     "assignmentBriefHtml": comp["assignmentBriefHtml"],
                     "videoUrl": comp["videoUrl"],
@@ -1847,7 +1866,7 @@ def _annotate_otjh(components):
     return components, round(total, 2)
 
 
-def build_learner_detail(source, pk, *, compact=False, read_only=False):
+def build_learner_detail(source, pk, *, compact=False, read_only=False, quiz_view=False):
     """The learner's full workspace payload for one already-loaded source row.
 
     Split out of the view so other callers can serve the same shape behind their
@@ -1900,9 +1919,12 @@ def build_learner_detail(source, pk, *, compact=False, read_only=False):
     detail["week"], detail["components"] = _append_week_quizzes(
         detail["week"], detail["components"], assigned_modules=assigned_modules,
     )
-    snapshot = _live_otjh_snapshot(detail, learner_profile)
-    _apply_live_otjh_snapshot(detail, snapshot)
-    if learner_profile is not None and not read_only:
+    # Quiz runners need the plan, progress and reflection requirements, not
+    # dashboard totals or their persistence on a GET request.
+    snapshot = None if quiz_view else _live_otjh_snapshot(detail, learner_profile)
+    if snapshot is not None:
+        _apply_live_otjh_snapshot(detail, snapshot)
+    if snapshot is not None and learner_profile is not None and not read_only:
         try:
             persist_live_otjh_snapshot(learner_profile, snapshot)
         except DatabaseError as exc:
@@ -1910,7 +1932,10 @@ def build_learner_detail(source, pk, *, compact=False, read_only=False):
     # After the hours snapshot so OTJH persistence is unaffected; this only
     # re-attaches earned quiz results to slots an author has since re-linked
     # or removed.
-    retain_quiz_progress(detail)
+    # The compact workspace projection only needs historical slots that can
+    # contribute to completion. Failed attempts remain in quizAttempts, but a
+    # potentially huge curriculum-revision scan cannot change their outcome.
+    retain_quiz_progress(detail, completed_only=compact)
 
     if compact:
         # Nullable optional fields dominate the JSON for large plans. Omission
@@ -1975,6 +2000,8 @@ def learner_detail(request, kind, pk):
             response['Cache-Control'] = 'private, no-store'
             return response
         options = {"compact": True} if request.GET.get("content") == "summary" else {}
+        if request.GET.get("content") == "quiz":
+            options = {"compact": True, "read_only": True, "quiz_view": True}
         with measure_projection(
             'learner-detail', kind=kind, learner_id=pk,
             section=request.GET.get('content') or 'complete',

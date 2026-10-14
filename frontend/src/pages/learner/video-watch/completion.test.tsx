@@ -136,7 +136,7 @@ it('does not count a failed reading preview as reading time', async () => {
   const reading = { ...first, type: 'reading', component: 'Reading', resourceUrl: '/curriculum_api/curriculum/uploads/sample.pdf' };
   vi.mocked(fetchLearnerDetail).mockResolvedValue({ ...detail(), components: [reading] } as unknown as LearnerDetail);
   const { unmount } = mount();
-  await screen.findByText('File request failed (404)');
+  await screen.findByText('This file could not be found on the server. Please let your coach or the curriculum team know.');
   now = 60000;
   unmount();
   const saved = JSON.parse(localStorage.getItem('learner_activity_timer:v1:apprenticeship:1:C1')!);
@@ -222,6 +222,100 @@ it('lays out recording watch time, evidence, manual input, and Finish in one liv
   expect(actionPanel).toContainElement(screen.getByRole('button', { name: 'Finish' }));
   fireEvent.click(screen.getByRole('button', { name: 'Simulate recording watch' }));
   expect(screen.getByRole('timer')).toHaveAccessibleName('Time on this activity: 00 hours, 00 minutes, 37 seconds');
+});
+
+it.each(['commercial', 'apprenticeship'])('opens live session Finish before entering time for %s learners', async kind => {
+  mount('C1', kind);
+  const finishButton = await screen.findByRole('button', { name: 'Finish' });
+  expect(finishButton).toBeEnabled();
+  fireEvent.click(finishButton);
+
+  const dialog = await screen.findByRole('dialog', { name: /Confirm .* completion/ });
+  expect(within(dialog).getByText('Enter the time you spent on this session to continue.')).toBeVisible();
+  const confirm = within(dialog).getByRole('button', { name: 'Confirm' });
+  expect(confirm).toBeDisabled();
+  fireEvent.change(within(dialog).getByLabelText('Minutes spent'), { target: { value: '0' } });
+  expect(confirm).toBeDisabled();
+  expect(submitComponentProgress).not.toHaveBeenCalled();
+  fireEvent.change(within(dialog).getByLabelText('Minutes spent'), { target: { value: '5' } });
+  expect(confirm).toBeEnabled();
+  fireEvent.click(confirm);
+  await waitFor(() => expect(submitComponentProgress).toHaveBeenCalledWith('C1', kind, '1', expect.objectContaining({
+    timeTakenSeconds: 300, timeEntrySource: 'input',
+  })));
+  expect(submitComponentProgress).toHaveBeenCalledTimes(1);
+});
+
+it.each(['reflect', 'skip'])('asks for missing live-session time before the %s reflection path', async choice => {
+  vi.mocked(fetchLearnerDetail).mockResolvedValue({ ...detail(), components: [{ ...first, reflectionRequired: true }] } as unknown as LearnerDetail);
+  mount();
+  fireEvent.click(await screen.findByRole('button', { name: 'Finish' }));
+  const dialog = await screen.findByRole('dialog', { name: 'Enter time spent' });
+  const next = within(dialog).getByRole('button', { name: 'Continue' });
+  expect(next).toBeDisabled();
+  expect(screen.queryByRole('dialog', { name: 'Do you want to complete a reflection?' })).not.toBeInTheDocument();
+  fireEvent.change(within(dialog).getByLabelText('Minutes spent'), { target: { value: '5' } });
+  fireEvent.click(next);
+  const reflection = await screen.findByRole('dialog', { name: 'Do you want to complete a reflection?' });
+  expect(submitComponentProgress).not.toHaveBeenCalled();
+  if (choice === 'skip') {
+    fireEvent.click(within(reflection).getByRole('button', { name: 'No, finish without reflection' }));
+    await waitFor(() => expect(submitComponentProgress).toHaveBeenCalledWith('C1', 'apprenticeship', '1', expect.objectContaining({
+      timeTakenSeconds: 300, timeEntrySource: 'input', skipReflection: true,
+    })));
+  } else {
+    fireEvent.click(within(reflection).getByRole('button', { name: 'Yes, add reflection' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'OTJH' }));
+    expect(screen.getByLabelText('Selected activity time')).toHaveValue('00:05:00');
+    expect(submitComponentProgress).not.toHaveBeenCalled();
+  }
+});
+
+it.each([
+  { kind: 'commercial', reflectionRequired: false },
+  { kind: 'commercial', reflectionRequired: true },
+  { kind: 'apprenticeship', reflectionRequired: false },
+  { kind: 'apprenticeship', reflectionRequired: true },
+])('keeps previous live-session time without new time for $kind (reflection: $reflectionRequired)', async ({ kind, reflectionRequired }) => {
+  vi.mocked(fetchLearnerDetail).mockResolvedValue({
+    ...detail(true), components: [{ ...first, reflectionRequired }],
+  } as unknown as LearnerDetail);
+  mount('C1', kind);
+  fireEvent.click(await screen.findByRole('button', { name: 'Record another attempt' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'Finish' }));
+  const dialog = await screen.findByRole('dialog');
+  expect(within(dialog).getByRole('button', { name: reflectionRequired ? 'Continue' : 'Confirm' })).toBeDisabled();
+  fireEvent.click(within(dialog).getByRole('button', { name: /Previous attempt/ }));
+  expect(within(dialog).getByText('Save time').parentElement).toHaveTextContent('00:00:20');
+  expect(within(dialog).getByLabelText('Minutes spent')).toBeDisabled();
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Confirm' }));
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  expect(screen.getByRole('status')).toHaveTextContent('00:00:20');
+  expect(submitComponentProgress).not.toHaveBeenCalled();
+
+  fireEvent.click(screen.getByRole('button', { name: 'Record another attempt' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'Finish' }));
+  const nextAttempt = await screen.findByRole('dialog');
+  expect(within(nextAttempt).getByRole('button', { name: /Previous attempt/ })).toHaveAttribute('aria-pressed', 'false');
+  expect(within(nextAttempt).getByRole('button', { name: reflectionRequired ? 'Continue' : 'Confirm' })).toBeDisabled();
+});
+
+it('retains live-session time on cancelling the prompt and restores keyboard focus', async () => {
+  mount();
+  const finishButton = await screen.findByRole('button', { name: 'Finish' });
+  fireEvent.change(screen.getByLabelText('Minutes spent'), { target: { value: '0' } });
+  finishButton.focus();
+  fireEvent.click(finishButton);
+  const dialog = await screen.findByRole('dialog', { name: /Confirm .* completion/ });
+  const minutes = within(dialog).getByLabelText('Minutes spent');
+  fireEvent.change(minutes, { target: { value: '5' } });
+  fireEvent.keyDown(minutes, { key: 'Escape' });
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  expect(screen.getByLabelText('Minutes spent')).toHaveValue('05');
+  expect(finishButton).toHaveFocus();
+  expect(submitComponentProgress).not.toHaveBeenCalled();
+  fireEvent.click(finishButton);
+  expect(within(await screen.findByRole('dialog')).getByLabelText('Minutes spent')).toHaveValue('05');
 });
 
 it('connects the content Upload evidence control to a mounted file input', async () => {
@@ -438,7 +532,9 @@ it('keeps the saved completion visible and asks before moving to the next same-n
 
   fireEvent.click(screen.getByRole('button', { name: /Next activity:.*Week 2/ }));
   await waitFor(() => expect(screen.getByTestId('location')).toHaveTextContent('/C2'));
-  expect(await screen.findByRole('button', { name: 'Finish' })).toBeDisabled();
+  // A fresh live session now opens the time prompt instead of locking Finish.
+  expect(await screen.findByRole('button', { name: 'Finish' })).toBeEnabled();
+  expect(screen.getByLabelText('Minutes spent')).toHaveValue('');
   expect(screen.queryByRole('status')).not.toBeInTheDocument();
   expect(screen.queryByText(/1 done/)).not.toBeInTheDocument();
 });
@@ -709,4 +805,30 @@ it.each(['timer', 'input'])('excludes muted video time while preserving the sele
     timeTakenSeconds: seconds, timeEntrySource: source, trackingToken: 'token', reportedTime: `${seconds / 60} minutes`,
   })));
   await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent(source === 'timer' ? '00:00:05' : '00:40:00'));
+});
+
+
+it.each(['previous', 'current'])('lets a learner choose the %s attempt duration without adding the times', async choice => {
+  const reading = { ...first, type: 'reading', component: 'Reading', contentHtml: '<p>Learning material</p>' };
+  vi.mocked(fetchLearnerDetail).mockResolvedValue({ ...detail(true), components: [reading] } as unknown as LearnerDetail);
+  mount();
+  fireEvent.click(await screen.findByRole('button', { name: 'Record another attempt' }));
+  fireEvent.change(await screen.findByLabelText('Minutes spent'), { target: { value: '2' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Finish' }));
+  const previous = await screen.findByRole('button', { name: /Previous attempt/ });
+  expect(previous).toHaveTextContent('00:00:20');
+  const current = screen.getByRole('button', { name: /Current attempt/ });
+  expect(current).toHaveTextContent('00:02:00');
+  fireEvent.click(choice === 'previous' ? previous : current);
+  expect(screen.getByText('Save time').parentElement).toHaveTextContent(choice === 'previous' ? '00:00:20' : '00:02:00');
+  fireEvent.click(screen.getByRole('button', { name: 'Confirm' }));
+  if (choice === 'previous') {
+    expect(submitComponentProgress).not.toHaveBeenCalled();
+    expect(await screen.findByRole('status')).toHaveTextContent('00:00:20');
+    expect(screen.queryByRole('button', { name: 'Confirm' })).not.toBeInTheDocument();
+  } else {
+    await waitFor(() => expect(submitComponentProgress).toHaveBeenCalledWith('C1', 'apprenticeship', '1', expect.objectContaining({
+      timeTakenSeconds: 120, timeEntrySource: 'input', reportedTime: '2 minutes',
+    })));
+  }
 });

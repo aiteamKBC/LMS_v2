@@ -14,7 +14,7 @@ import time
 import uuid
 
 from . import pipeline, storage
-from .providers import get_embedding_provider
+from .providers import get_embedding_provider, identity
 
 logger = logging.getLogger(__name__)
 STALE_MINUTES = 10
@@ -70,14 +70,15 @@ def backoff_minutes(attempts):
 
 
 def run_one(repo, store=None, provider=None, throttle=None):
-    """Claim and process at most one job. Returns the outcome or None if idle."""
+    """Claim and process at most one job. Returns the outcome or None if idle.
+    Only books whose vectors this provider produces are claimed."""
+    provider = provider or get_embedding_provider()
     lease_id = uuid.uuid4().hex
-    job = repo.claim_job(lease_id, STALE_MINUTES)
+    job = repo.claim_job(lease_id, STALE_MINUTES, space=identity(provider))
     if job is None:
         return None
     job["lease_id"] = lease_id
-    ctx = pipeline.Context(job=job, repo=repo, store=store or storage.get_storage(),
-                           provider=provider or get_embedding_provider(),
+    ctx = pipeline.Context(job=job, repo=repo, store=store or storage.get_storage(), provider=provider,
                            info=repo.job_context(job["build_id"]), throttle=throttle)
     try:
         status = pipeline.run_build(ctx)

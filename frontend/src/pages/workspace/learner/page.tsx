@@ -482,7 +482,8 @@ export default function LearnerOverview() {
           onRetryLearningSubjects={unifiedLearning.retry}
           metrics={{ programmeValue: programmeProgressValue, programmeSummary: programmeProgressSummary, programmePercent: programmeProgressPercent,
             attendanceValue, attendanceSummary, attendanceTotalValue, attendancePercent, otjActualValue, otjSummary: `${otjActualHours?.toFixed(2) ?? EMPTY_VALUE} / ${otjTargetHours?.toFixed(2) ?? EMPTY_VALUE} h`,
-            otjTargetValue, otjTargetHours, otjPercent, ksbValue, ksbSummary, ksbPercent }} />
+            otjTargetValue, otjTargetHours, otjPercent, ksbValue, ksbSummary, ksbPercent,
+            attendanceLoading: attendanceLoading && !attendance, metricsLoading: metrics.loading && !metrics.data }} />
       </PageContainer>
     </WorkspaceShell>
   );

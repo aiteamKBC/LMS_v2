@@ -22,6 +22,17 @@ export function isLectureLive(lecture: AttendanceLecture, now: number): boolean 
   return Number.isFinite(start) && Number.isFinite(end) && start <= now && now < end;
 }
 
+/** Teams holds early arrivals in the lobby, so Join opens a little before the start. */
+export const JOIN_EARLY_MINUTES = 15;
+const JOIN_EARLY_MS = JOIN_EARLY_MINUTES * 60_000;
+
+/** Join is offered from shortly before a timed lecture starts until it ends. */
+export function isLectureJoinable(lecture: AttendanceLecture, now: number): boolean {
+  const start = Date.parse(lecture.startsAt || '');
+  const end = Date.parse(lecture.endsAt || '');
+  return Number.isFinite(start) && Number.isFinite(end) && start < end && start - JOIN_EARLY_MS <= now && now < end;
+}
+
 export function lectureJoinUrl(lecture: AttendanceLecture): string | null {
   try {
     if (/^\/learner_api\/session-results\/[^?#]+\/join\/$/.test(lecture.joinUrl || '')) return lecture.joinUrl!;
@@ -39,8 +50,10 @@ export function useLectureClock(lectures: AttendanceLecture[]): number {
       clearTimeout(timer);
       const current = Date.now();
       setNow(current);
-      const next = lectures.flatMap(lecture => [Date.parse(lecture.startsAt || ''), Date.parse(lecture.endsAt || '')])
-        .filter(boundary => boundary > current);
+      const next = lectures.flatMap(lecture => {
+        const start = Date.parse(lecture.startsAt || '');
+        return [start - JOIN_EARLY_MS, start, Date.parse(lecture.endsAt || '')];
+      }).filter(boundary => boundary > current);
       // Periodically account for changes to the system clock as well as exact boundaries.
       timer = setTimeout(tick, Math.min(60_000, Math.max(1, Math.min(...next) - current)));
     };

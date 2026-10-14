@@ -374,13 +374,15 @@ def read_overview_learning(context):
 
 
 def build_overview(context):
-    """Final Overview numbers; no content, schedules or evidence hydration."""
+    """Programme totals and a small module picker; measures load on selection."""
     from learner_api.module_progress import canonical_module_progress, compact_module_progress
+    from .overview_modules import read_overview_catalogue, project_overview_index
     parts = context.parallel({
         'progress': lambda: canonical_module_progress(context.source, context.profile),
         'learning': lambda: read_overview_learning(context),
         # Read the established attendance projection without catch-up writes.
         'attendance': lambda: context.payload('summary').get('attendance') or {},
+        'catalogue': lambda: read_overview_catalogue(context),
     })
     metrics, _ = parts['learning']
     attendance = parts['attendance']
@@ -400,7 +402,7 @@ def build_overview(context):
         'otjh': {'actual': hours['actual'], 'targetToDate': target, 'planned': hours['planned'],
                  'percent': overview_percent(hours['actual'], target)},
         'ksb': {key: metrics['ksb'][key] for key in ('completed', 'total', 'percent')},
-    }, 'programmeProgress': rows}
+    }, 'programmeProgress': rows, 'moduleIndex': project_overview_index(parts['progress'], parts['catalogue'])}
 
 
 def project_attendance(response, *, history=False):
@@ -509,7 +511,12 @@ def case_file_section(request, learner_id, section='profile'):
                 from .serializers.case_file_profile import serialize_case_file_profile
                 response = JsonResponse(serialize_case_file_profile(context.profile, context.source))
             elif section == 'overview' and not request.GET.get('resource'):
-                response = JsonResponse(build_overview(context))
+                from .overview_modules import read_overview_module
+                try:
+                    response = JsonResponse(read_overview_module(context, request.GET['moduleId'])
+                        if 'moduleId' in request.GET else build_overview(context))
+                except LookupError as error:
+                    response = JsonResponse({'detail': str(error)}, status=404)
             elif section in {'learning-plan', 'learning-plan-module'} and not request.GET.get('resource'):
                 from .learning_plan_projection import read_learning_plan, read_journey
                 try:

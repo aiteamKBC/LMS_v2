@@ -6,15 +6,15 @@ import re
 from django.db import connections
 from django.utils import timezone
 from learner_api import canonical_learning as canonical
+from learner_api.canonical_hours import pending_hour_records
 
 log = logging.getLogger(__name__)
 
 
 def read_hour_totals(owner):
-    # Same stored-row/number predicate as canonical.otjh_summary_bulk. Group
-    # once for both programme actual and Monthly Logs; source snapshots and
-    # reporting segments are lineage, never additional hours.
-    return canonical.query('''SELECT reporting_month AS month,
+    # Aggregate stored history, then include the same unsynchronised direct
+    # saves that the learner's Dashboard and Monthly Logs project on reads.
+    totals = canonical.query('''SELECT reporting_month AS month,
         SUM(CASE WHEN accepted IS TRUE THEN seconds ELSE 0 END)/3600.0 AS completed,
         SUM(CASE WHEN accepted IS NOT TRUE THEN seconds ELSE 0 END)/3600.0 AS submitted
         FROM (SELECT reporting_month,accepted,
@@ -23,6 +23,14 @@ def read_hour_totals(owner):
             FROM "Learner".learner_progress_entries
             WHERE learner_id=%s AND deleted_at IS NULL) p
         GROUP BY reporting_month''', [owner['id']])
+    months = {row['month']: {**row, 'completed': float(row['completed'] or 0),
+                            'submitted': float(row['submitted'] or 0)} for row in totals}
+    for record in pending_hour_records([owner])[owner['id']]:
+        month = record.get('reporting_month')
+        row = months.setdefault(month, {'month': month, 'completed': 0, 'submitted': 0})
+        field = 'completed' if record.get('accepted') is True else 'submitted'
+        row[field] += canonical.recorded_seconds(record) / 3600
+    return list(months.values())
 
 
 def read_chart_plan(context):

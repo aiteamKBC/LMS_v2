@@ -102,9 +102,27 @@ class TrainingPlanDashboardTests(SimpleTestCase):
         result = _canonical_module_progress(records, modules)
 
         self.assertEqual(result, {'M1': {
-            'hours': {'actual': 1.5}, 'ksb': {'completed': 2, 'total': 3},
+            'hours': {'actual': 1.5}, 'ksb': {'completed': 2, 'total': 3, 'achievedCodes': ['K1', 'S1']},
             'attendance': {'attended': 2, 'total': 2},
         }})
+
+    def test_achieved_ksb_codes_use_accepted_evidence_and_stay_with_their_module(self):
+        modules = [{'id': 'M1', 'title': 'Marketing'}, {'id': 'M2', 'title': 'Strategy'},
+                   {'id': 'M3', 'title': 'Duplicate'}, {'id': 'M4', 'title': 'Duplicate'}]
+        records = [
+            {'module_ref': 'M1', 'accepted': True, 'ksbs': ['K1', 'K1', ' ', 'S2']},
+            {'module_title': 'Marketing', 'accepted': True, 'ksbs': ['K1']},
+            {'module_ref': 'M1', 'accepted': False, 'ksbs': ['B3']},
+            {'module_ref': 'M1', 'accepted': None, 'ksbs': ['K4']},
+            {'module_ref': 'M2', 'accepted': True, 'ksbs': ['B2']},
+            {'module_title': 'Duplicate', 'accepted': True, 'ksbs': ['K9']},
+            {'module_ref': 'unassigned', 'accepted': True, 'ksbs': ['K8']},
+        ]
+        result = _canonical_module_progress(records, modules)
+        self.assertEqual(result['M1']['ksb'], {'completed': 3, 'total': 5, 'achievedCodes': ['K1', 'S2']})
+        self.assertEqual(result['M2']['ksb']['achievedCodes'], ['B2'])
+        self.assertEqual(result['M3']['ksb']['achievedCodes'], [])
+        self.assertEqual(result['M4']['ksb']['achievedCodes'], [])
 
     def test_learning_section_returns_only_module_selection_data(self):
         source = SimpleNamespace(pk=125, aptem_id=987, email='learner@example.com')
@@ -495,6 +513,26 @@ class TrainingPlanDashboardTests(SimpleTestCase):
         row.update(occurrence_id=None,scheduled_start=None,scheduled_end=None,status=None,series_status='completed',join_url='')
         self.assertEqual(plan_session(row)['status'],'completed')
         self.assertEqual(plan_session(row)['joinUrl'],row['series_join_url'])
+
+    def test_overview_attendance_reads_the_meeting_behind_a_replaced_link(self):
+        source = SimpleNamespace(pk=125, aptem_id=None, email='learner@example.com',
+                                 programme='', cohort='', group='')
+        connection = MagicMock()
+        module = {'id': 'M1', 'title': 'Marketing', 'description': '', 'start_date': None, 'end_date': None,
+                  'weeks_number': 1, 'total_otjh': 0, 'sessions_number': 1, 'session_week_day': 'Monday',
+                  'session_start_time': '10:00', 'session_end_time': '12:00', 'coach_name': '',
+                  'programme_name': '', 'cohort_name': '', 'group_name': ''}
+        with patch('learner_api.training_plan_dashboard.connections', {'enrolment': connection}), \
+             patch('learner_api.training_plan_dashboard.LearnerProfile') as profiles, \
+             patch('learner_api.training_plan_dashboard._builder_subject_metadata', return_value=({}, {})), \
+             patch('learner_api.training_plan_dashboard.rows', side_effect=[[module], [], []]), \
+             patch('learner_api.calendar.coaching_events_for_learner', return_value=[]), \
+             patch('learner_api.training_plan_dashboard.coach_phone', return_value=''):
+            profiles.objects.filter.return_value.only.return_value.first.return_value = None
+            read_dashboard(source, section='overview')
+        sql = ' '.join(str(call.args[0]) for call in connection.cursor.return_value.__enter__.return_value.execute.call_args_list)
+        self.assertIn('liveSessionLinkOverride', sql)
+        self.assertIn('COALESCE(replaced_attendance.occurrence_id,o.id)', sql)
 
     def reviewed_extract(self, **changes):
         return json.dumps({'version':1,'pdf_sha256':sha256(b'reviewed PDF').hexdigest(),'printed_total':10,

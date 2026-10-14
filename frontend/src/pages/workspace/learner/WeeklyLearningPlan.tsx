@@ -20,7 +20,7 @@ import { RowsSkeleton } from '@/components/feature/Skeletons';
 import { cn } from '@/lib/cn';
 import {
   activityActionLabel, activityExpectedTimeLabel, activityHref, activityKsbCodes, activityStatus,
-  resolveInitialWeek, weekComponents, weekExpectedHours, weekKey, weekKsbProgress, weekProgress, weekWindow, type ActivityStatus,
+  resolveInitialWeek, weekComponents, weekOtjhHours, weekKey, weekKsbProgress, weekProgress, weekWindow, type ActivityStatus,
 } from './weeklyPlanHelpers';
 import planLayout from '@/pages/learner/training-plan-timeline/TrainingPlanDetails.module.css';
 
@@ -77,7 +77,11 @@ export function WeeklyLearningPlan({ kind, learnerId, schedule, scheduleLoading,
   const components = isTeachingWeek ? weekComponents(real, resolvedModuleId || undefined, (selectedWeek as SessionRow).weekId, selectedWeek?.slotNumber) : [];
   const progress = weekProgress(components, completedIds);
   const ksbProgress = weekKsbProgress(components, completedIds);
-  const weekHours = weekExpectedHours(components, completedIds);
+  const moduleHours = schedule?.moduleActivityHours?.[resolvedModuleId || ''];
+  const moduleComponents = real?.components?.filter(component => String(component.moduleId) === String(resolvedModuleId));
+  const weekHours = weekOtjhHours(components, moduleHours, moduleComponents);
+  const actualHours = Object.fromEntries(components.map(component => [component.componentId || '',
+    weekOtjhHours([component], moduleHours, moduleComponents).actualHours]));
 
   // A schedule failure with nothing cached is already surfaced by the
   // dashboard's own retry banner above this component -- a second, redundant
@@ -201,10 +205,10 @@ export function WeeklyLearningPlan({ kind, learnerId, schedule, scheduleLoading,
                 percent={ksbProgress.total ? ksbProgress.percent : null} tone="bg-emerald-600"
                 caption={ksbProgress.total ? `${ksbProgress.achieved} of ${ksbProgress.total} KSBs` : 'No KSBs mapped this week'}
                 title={ksbProgress.codes.join(', ') || undefined} />
-              <WeekStatCard label="OTJH this week" value={weekHours.plannedHours ? `${weekHours.percent}%` : '—'}
+              <WeekStatCard label="OTJH this week" value={weekHours.percent != null ? `${weekHours.percent}%` : '—'}
                 percent={weekHours.plannedHours ? weekHours.percent : null} tone="bg-amber-500"
-                caption={weekHours.plannedHours
-                  ? `${formatHoursMinutes(weekHours.completedHours)} of ${formatHoursMinutes(weekHours.plannedHours)} hours${weekHours.untimed ? ` · ${weekHours.untimed} untimed` : ''}`
+                caption={weekHours.actualHours == null ? 'Recorded hours unavailable' : weekHours.plannedHours
+                  ? `${formatHoursMinutes(weekHours.actualHours)} of ${formatHoursMinutes(weekHours.plannedHours)} hours${weekHours.untimed ? ` · ${weekHours.untimed} untimed` : ''}`
                   : 'No expected time set'} />
             </div>}
           </div>
@@ -226,7 +230,7 @@ export function WeeklyLearningPlan({ kind, learnerId, schedule, scheduleLoading,
               action={<button type="button" onClick={refreshDetail} className="rounded-lg bg-primary-600 px-3.5 py-2 text-xs font-semibold text-white">Try again</button>} /></Panel>
               : detailLoading && !real ? <><ActivitiesHeading count={components.length} /><Panel><RowsSkeleton rows={3} avatar={false} /></Panel></>
                 : <ActivitiesTableModern components={components} completedIds={completedIds} kind={kind} learnerId={learnerId}
-                  week={selectedWeek.weekTitle} canOpenActivities={canOpenActivities} />}
+                  week={selectedWeek.weekTitle} canOpenActivities={canOpenActivities} actualHours={actualHours} />}
           </div>
         </section>}
       </>}
@@ -400,9 +404,10 @@ function ActivitiesHeading({ count, controls }: { count: number; controls?: Reac
   </div>;
 }
 
-export function ActivitiesTableModern({ components, completedIds, kind, learnerId, week, canOpenActivities, summaries }: {
+export function ActivitiesTableModern({ components, completedIds, kind, learnerId, week, canOpenActivities, summaries, actualHours }: {
   components: JourneyComponent[]; completedIds: Set<string>; kind: LearnerKind; learnerId: string; week?: string;
   canOpenActivities: boolean;
+  actualHours?: Record<string, number | null>;
   summaries?: Record<string, { status: ActivityStatus; expectedTimeLabel: string; ksbCodes: string[] }>;
 }) {
   const [query, setQuery] = useState('');
@@ -454,15 +459,15 @@ export function ActivitiesTableModern({ components, completedIds, kind, learnerI
     <ActivitiesHeading count={components.length} controls={controls} />
     {!filteredComponents.length ? <EmptyState size="sm" title="No matching activities" description="Try changing your search or filters." className="m-4" /> : <>
     <div className="max-w-full" style={{ overflowX: 'auto' }}>
-      <table className="w-full min-w-[660px] table-fixed text-left text-[10px]">
+      <table className="w-full min-w-[760px] table-fixed text-left text-[10px]">
         <caption className="sr-only">This week's learning activities</caption>
-        <colgroup><col className="w-9" /><col className="w-24" /><col /><col className="w-24" /><col className="w-32" /><col className="w-24" />{canOpenActivities && <col className="w-24" />}</colgroup>
+        <colgroup><col className="w-9" /><col className="w-24" /><col /><col className="w-24" /><col className="w-24" /><col className="w-32" /><col className="w-24" />{canOpenActivities && <col className="w-24" />}</colgroup>
         <thead className="bg-background-100/90">
           <tr>
-            {['#', 'Type', 'Title', 'Expected time', 'KSB mapping', 'Status', ...(canOpenActivities ? ['Action'] : [])].map(label => (
+            {['#', 'Type', 'Title', 'Expected time', 'Actual time', 'KSB mapping', 'Status', ...(canOpenActivities ? ['Action'] : [])].map(label => (
               <th key={label} scope="col" className={cn(
                 'px-2 py-2 text-left text-[9px] font-bold uppercase tracking-[0.05em] text-foreground-500',
-                ['Expected time', 'KSB mapping', 'Status', 'Action'].includes(label) && 'text-center',
+                ['Expected time', 'Actual time', 'KSB mapping', 'Status', 'Action'].includes(label) && 'text-center',
               )}>
                 {label}
               </th>
@@ -475,6 +480,7 @@ export function ActivitiesTableModern({ components, completedIds, kind, learnerI
             const href = canOpenActivities ? activityHref(component, week, kind, learnerId, status === 'completed') : null;
             const typeLabel = activityTypeLabel(component);
             const meta = resourceTypeMeta(component.type || typeLabel);
+            const recordedHours = actualHours?.[component.componentId || ''];
             return <tr key={component.componentId || component.title} className="border-t border-foreground-100 transition-colors hover:bg-primary-50/30">
               <td className="px-2 py-2 text-center align-middle font-semibold tabular-nums text-foreground-500">{safePage * ACTIVITY_PAGE_SIZE + index + 1}</td>
               <td className="px-2 py-2 align-middle">
@@ -490,6 +496,11 @@ export function ActivitiesTableModern({ components, completedIds, kind, learnerI
               </td>
               <td className="px-2 py-2 text-center align-middle text-[10px] font-semibold tabular-nums text-foreground-700">
                 <span className="inline-flex items-center justify-center gap-1 whitespace-nowrap"><Clock3 size={12} className="text-foreground-400" aria-hidden="true" />{summaries?.[component.componentId || '']?.expectedTimeLabel ?? activityExpectedTimeLabel(component)}</span>
+              </td>
+              <td className="px-2 py-2 text-center align-middle text-[10px] font-semibold tabular-nums text-foreground-700">
+                <span className="inline-flex items-center justify-center gap-1 whitespace-nowrap" title={recordedHours == null ? 'Recorded hours unavailable' : 'Actual recorded time'}>
+                  <Clock3 size={12} className="text-foreground-400" aria-hidden="true" />{recordedHours == null ? '—' : formatHoursMinutes(recordedHours)}
+                </span>
               </td>
               <td className="px-2 py-2 text-center align-middle"><div className="flex justify-center"><KsbChips codes={summaries?.[component.componentId || '']?.ksbCodes ?? activityKsbCodes(component)} /></div></td>
               <td className="px-2 py-2 text-center align-middle"><StatusBadge tone={STATUS_TONE[status]} label={STATUS_LABEL[status]} size="sm" showIcon={status === 'completed'} className="whitespace-nowrap text-[10px]" /></td>

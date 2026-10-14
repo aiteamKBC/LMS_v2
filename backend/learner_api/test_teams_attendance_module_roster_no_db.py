@@ -57,3 +57,30 @@ class TeamsAttendanceModuleRosterTests(SimpleTestCase):
         self.assertEqual(result["MOD-1"], {"learner@example.test"})
         self.assertEqual(result["MOD-2"], {"second@example.test"})
         queryset.filter.assert_called_once_with(module_ref__in={"MOD-1", "MOD-2"})
+
+    def test_replaced_attendance_sources_map_destination_to_source_report(self):
+        cursor = MagicMock()
+        cursor.fetchall.return_value = [
+            ("destination-occurrence", "source-occurrence", "source-report"),
+        ]
+        connection = MagicMock()
+        connection.cursor.return_value.__enter__.return_value = cursor
+
+        with patch.object(teams_attendance, "connections", {"default": connection}):
+            result = teams_attendance._replaced_attendance_sources(
+                "default",
+                ["destination-occurrence"],
+            )
+
+        self.assertEqual(
+            result,
+            {
+                "destination-occurrence": {
+                    "occurrence_id": "source-occurrence",
+                    "attendance_report_id": "source-report",
+                },
+            },
+        )
+        sql, params = cursor.execute.call_args.args
+        self.assertIn("liveSessionLinkOverride", sql)
+        self.assertEqual(params, [["destination-occurrence"]])

@@ -601,6 +601,23 @@ class MailFallbackTests(SimpleTestCase):
                     )
         self.assertTrue(posted.call_args[1]["json"]["saveToSentItems"])
 
+    def test_inline_attachment_reaches_graph_with_content_id(self):
+        with mock.patch.dict("os.environ", _MAIL_ENV, clear=False):
+            with mock.patch.object(email_azure, "_access_token", return_value="tok"):
+                response = mock.Mock(status_code=202, text="")
+                with mock.patch("httpx.post", return_value=response) as posted:
+                    email_azure.send_mail(
+                        to="person@kbc.test", subject="Subject", html_body='<img src="cid:brand-logo">',
+                        attachments=[{
+                            "name": "logo.png", "content_type": "image/png", "content": b"png",
+                            "content_id": "brand-logo", "is_inline": True,
+                        }],
+                    )
+        attachment = posted.call_args[1]["json"]["message"]["attachments"][0]
+        self.assertEqual(attachment["contentId"], "brand-logo")
+        self.assertTrue(attachment["isInline"])
+        self.assertEqual(attachment["contentBytes"], "cG5n")
+
     def test_network_error_is_caught(self):
         import httpx
 
@@ -1694,6 +1711,13 @@ class MicrosoftSsoStartTests(SimpleTestCase):
         forged = signing.dumps({"next": "/"}, salt="learner-personal-calendar-oauth")
         with self.assertRaises(signing.BadSignature):
             signing.loads(forged, salt=microsoft_sso.STATE_SALT)
+
+    def test_only_fixed_android_intent_survives_in_signed_state(self):
+        from urllib.parse import parse_qs, urlparse
+        for value in ("android", "https://evil.test", "//evil.test", "/workspace/admin"):
+            state = parse_qs(urlparse(self._authorize_url(download=value)).query)["state"][0]
+            payload = signing.loads(state, salt=microsoft_sso.STATE_SALT)
+            self.assertEqual(payload.get("download"), "android" if value == "android" else None)
 
     def test_absolute_next_is_refused(self):
         """An attacker-supplied return target would make this an open redirect."""

@@ -230,7 +230,7 @@ describe('component editor saved session results', () => {
   it('plays the module’s saved session on this date when the component holds no series of its own', async () => {
     const moduleUrl = '/curriculum_api/curriculum/modules/M1/session-results/';
     const day = { ...saved, id: 'O1', sessionNumber: 1, startsAt: '2026-10-06T08:30:00Z' };
-    const firstUrl = '/curriculum_api/curriculum/session-results/S1/sessions/1/';
+    const firstUrl = '/curriculum_api/curriculum/session-results/S1/sessions/1/?moduleId=M1';
     fetchMock.mockImplementation((url: string) => {
       if (url === moduleUrl) return ok({ series: [{ id: 'S1', title: 'Module', sessions: [day,
         { ...day, id: 'O2', sessionNumber: 2, startsAt: '2026-10-13T08:30:00Z' }] }], jobs: [] });

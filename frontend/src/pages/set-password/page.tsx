@@ -95,6 +95,7 @@ export default function SetPasswordPage({ mode }: { mode: Mode }) {
   const navigate = useNavigate();
   const [params] = useSearchParams();
   const token = params.get('token') || '';
+  const signInPath = params.get('download') === 'android' ? '/login?download=android' : '/login';
   // Arrived from signing in with the shared first-sign-in password.
   const firstSignIn = (useLocation().state as { firstSignIn?: boolean } | null)?.firstSignIn === true;
 
@@ -198,7 +199,7 @@ export default function SetPasswordPage({ mode }: { mode: Mode }) {
           </button>
           <button
             type="button"
-            onClick={() => navigate('/login')}
+            onClick={() => navigate(signInPath)}
             className="px-4 py-3 rounded-xl border border-background-200 text-[13px] font-medium text-foreground-600 hover:bg-background-100 transition-colors cursor-pointer"
           >
             Sign in
@@ -222,7 +223,7 @@ export default function SetPasswordPage({ mode }: { mode: Mode }) {
         </p>
         <button
           type="button"
-          onClick={() => navigate('/login')}
+          onClick={() => navigate(signInPath)}
           className="w-full py-3 rounded-xl bg-primary-500 text-white text-[13px] font-semibold hover:bg-primary-600 transition-colors cursor-pointer"
         >
           Go to sign in

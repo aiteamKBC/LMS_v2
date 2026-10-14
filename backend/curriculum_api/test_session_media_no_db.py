@@ -99,7 +99,9 @@ class MediaPolicyTests(unittest.TestCase):
                     'endDateTime': '2026-09-17T12:55:09Z', 'recordingContentUrl': 'https://graph.example/new'}
         self.assertTrue(ns['upsert_live_session_artifact']({'id': 'O'}, 'recording', artifact))
         ns['authoring_upsert'].assert_not_called()
-        lookup = cursor.execute.call_args_list[1].args
+        # The per-session advisory lock comes first; find the lookup by what it asks, not by position.
+        self.assertIn('pg_advisory_xact_lock', cursor.execute.call_args_list[0].args[0])
+        lookup = next(call.args for call in cursor.execute.call_args_list if 'created_datetime=%s' in call.args[0])
         self.assertIn('call_id=%s AND created_datetime=%s', lookup[0])
         self.assertEqual(lookup[1][:3], ['O', 'recording', 'CALL'])
         update_sql, update_params = cursor.execute.call_args.args

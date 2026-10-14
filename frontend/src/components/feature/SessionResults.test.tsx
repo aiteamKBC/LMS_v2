@@ -212,7 +212,7 @@ describe('Saved session results', () => {
     expect(screen.getByText('Not requested')).toBeInTheDocument();
   });
 
-  it('keeps unknown Teams identities separate and lets staff link one to a module learner', async () => {
+  it('uses the destination module roster when reviewing a replaced Teams link', async () => {
     const unmatched = { email: 'other@example.invalid', name: 'Other identity', seconds: 600,
       attendance: 1, status: 'present', rawAttendance: 1, rawStatus: 'present',
       expected: false, excused: false, catchupCompleted: false };
@@ -225,8 +225,11 @@ describe('Saved session results', () => {
       learnerEmail: 'learner@example.invalid', learnerName: 'Learner One',
     }) } as Response);
 
-    render(<MemoryRouter><SessionResults seriesId="S1" sessionNumber={1} /></MemoryRouter>);
+    render(<MemoryRouter><SessionResults seriesId="S1" sessionNumber={1} moduleId="DEST" /></MemoryRouter>);
     fireEvent.click(await screen.findByRole('tab', { name: 'attendance' }));
+    expect(fetchMock.mock.calls[0][0]).toBe('/curriculum_api/curriculum/session-results/S1/sessions/1/?moduleId=DEST');
+    expect(screen.getByRole('link', { name: 'Export attendance CSV' })).toHaveAttribute(
+      'href', '/curriculum_api/curriculum/session-results/S1/sessions/1/attendance.csv?moduleId=DEST');
     expect(screen.queryByText('Other identity')).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Review unmatched participants (1)' }));
     fireEvent.change(screen.getByLabelText('Match other@example.invalid to learner'), { target: { value: '7' } });
@@ -234,7 +237,7 @@ describe('Saved session results', () => {
 
     await waitFor(() => expect(coachFetch).toHaveBeenCalledWith(
       '/curriculum_api/curriculum/session-results/S1/sessions/1/attendance-alias/',
-      expect.objectContaining({ method: 'POST', body: '{"aliasEmail":"other@example.invalid","learnerProfileId":7,"sourceRecordIds":[]}' }),
+      expect.objectContaining({ method: 'POST', body: '{"aliasEmail":"other@example.invalid","learnerProfileId":7,"sourceRecordIds":[],"moduleId":"DEST"}' }),
     ));
     expect(await screen.findByText(/is now matched to Learner One/)).toBeInTheDocument();
   });
@@ -415,7 +418,7 @@ describe('Module session index', () => {
     render(<ModuleSessions moduleId="M1" />);
     fireEvent.click(await screen.findByText('Session 1'));
     fireEvent.click(screen.getByRole('button', { name: /Session 6.*4 files/ }));
-    await waitFor(() => expect(fetchMock.mock.calls.some(call => call[0].endsWith('/sessions/6/'))).toBe(true));
+    await waitFor(() => expect(fetchMock.mock.calls.some(call => call[0].endsWith('/sessions/6/?moduleId=M1'))).toBe(true));
     expect(coachFetch).not.toHaveBeenCalled();
   });
 
