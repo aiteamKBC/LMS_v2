@@ -36,7 +36,7 @@ from .models import (
     FeedbackSection, FeedbackUpload,
 )
 from .permissions import (
-    actor_name, learner_read_scope, require_learner_identity,
+    actor_name, learner_identity, learner_read_scope, require_learner_identity,
     require_self_or_staff, require_staff,
 )
 
@@ -80,6 +80,20 @@ def _dt(value):
 
 def _iso(value):
     return value.isoformat() if value else None
+
+
+def _learner_feedback_disabled(request):
+    """Hide learner-owned feedback while preserving staff preview/reporting."""
+    return (
+        not getattr(settings, 'LEARNER_FEEDBACK_ENABLED', False)
+        and learner_identity(request) is not None
+    )
+
+
+def _learner_feedback_disabled_response(request):
+    if _learner_feedback_disabled(request):
+        return json_error('Feedback is not available.', status=404)
+    return None
 
 
 def _question_dict(question):
@@ -793,6 +807,9 @@ def _assignment_for(form, learner_id):
 
 
 def learner_forms(request):
+    disabled = _learner_feedback_disabled_response(request)
+    if disabled:
+        return disabled
     learner_id, error = learner_read_scope(request)
     if error:
         return error
@@ -1158,6 +1175,9 @@ def _learner_feedback_context(learner_id, *, form_id=None, delivery_id=None, eve
 
 
 def learner_form_detail(request, pk=None, delivery_id=None, event_recipient_id=None):
+    disabled = _learner_feedback_disabled_response(request)
+    if disabled:
+        return disabled
     learner_id, error = learner_read_scope(request)
     if error:
         return error
@@ -1236,6 +1256,9 @@ def _answer_empty(question, value):
 
 
 def learner_response_save(request, pk=None, delivery_id=None, event_recipient_id=None):
+    disabled = _learner_feedback_disabled_response(request)
+    if disabled:
+        return disabled
     learner_id, learner_name, error = require_learner_identity(request)
     if error:
         return error
@@ -1313,6 +1336,9 @@ def learner_response_save(request, pk=None, delivery_id=None, event_recipient_id
 
 def learner_photo_upload(request, pk=None, question_id=None, delivery_id=None):
     """Store one normalised, private image answer for the signed-in learner."""
+    disabled = _learner_feedback_disabled_response(request)
+    if disabled:
+        return disabled
     learner_id, learner_name, error = require_learner_identity(request)
     if error:
         return error
@@ -1394,6 +1420,9 @@ def learner_photo_upload(request, pk=None, question_id=None, delivery_id=None):
 
 def feedback_upload_content(request, upload_id):
     """Serve a private upload only to its owner or an authorised staff user."""
+    disabled = _learner_feedback_disabled_response(request)
+    if disabled:
+        return disabled
     if request.method != 'GET':
         return json_error('Method not allowed.', status=405)
     try:

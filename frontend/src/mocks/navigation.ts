@@ -1,5 +1,5 @@
 import type { SidebarNavItem } from '@/components/feature/Sidebar';
-import { CHAT_ENABLED } from '@/lib/featureFlags';
+import { CHAT_ENABLED, LEARNER_FEEDBACK_ENABLED } from '@/lib/featureFlags';
 import { inclusionLoginUrl } from '@/features/inclusion/navigation';
 
 const inclusionLoginHref = inclusionLoginUrl();
@@ -25,7 +25,9 @@ export const learnerNavItems: SidebarNavItem[] = [
   { id: 'learner-my-learning', label: 'My Learning', icon: 'ri-book-open-line', href: '/learner/my-learning', matchPaths: ['/learner/learning-plan'], badge: 1 },
 
   // Published forms explicitly assigned to the signed-in learner.
-  { id: 'learner-feedback', label: 'Feedback', icon: 'ri-survey-line', href: '/learner/feedback' },
+  ...(LEARNER_FEEDBACK_ENABLED
+    ? [{ id: 'learner-feedback', label: 'Feedback', icon: 'ri-survey-line', href: '/learner/feedback' }]
+    : []),
 
   // My Progress
   {

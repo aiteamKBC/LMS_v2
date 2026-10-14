@@ -15,12 +15,22 @@ from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest import mock
 
-from django.test import RequestFactory, SimpleTestCase
+from django.test import RequestFactory, SimpleTestCase, override_settings
 
 from . import feedback, feedback_delivery, hooks, permissions, services, views
 
 
+@override_settings(LEARNER_FEEDBACK_ENABLED=True)
 class FeedbackValidationTests(SimpleTestCase):
+    def test_disabled_feedback_is_hidden_from_learner_but_not_staff_preview(self):
+        with self.settings(LEARNER_FEEDBACK_ENABLED=False):
+            with _patched(_account(role='learner', subject_type='learner')):
+                response = feedback.learner_forms(RequestFactory().get('/'))
+            self.assertEqual(response.status_code, 404)
+
+            with _patched(_account(role='staff', subject_type='staff')):
+                self.assertFalse(feedback._learner_feedback_disabled(RequestFactory().get('/')))
+
     def test_feedback_section_icon_is_validated_and_preserved(self):
         sections = feedback._validated_sections([{
             'title': 'Your experience', 'icon': 'ri-star-line', 'questions': [],
