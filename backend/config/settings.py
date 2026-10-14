@@ -86,7 +86,7 @@ DB_CONN_MAX_AGE = int(os.environ.get('DB_CONN_MAX_AGE', '300'))
 DB_CONN_HEALTH_CHECKS = os.environ.get('DB_CONN_HEALTH_CHECKS', 'true').lower() != 'false'
 # Seconds to wait for a database connection before giving up. Keeps a stalled DNS
 # resolver or unreachable Neon endpoint from hanging a request indefinitely.
-DB_CONNECT_TIMEOUT = int(os.environ.get('DB_CONNECT_TIMEOUT', '10'))
+DB_CONNECT_TIMEOUT = int(os.environ.get('DB_CONNECT_TIMEOUT', '45'))
 # Milliseconds Postgres itself will run a statement (lock waits included) before
 # cancelling it. connect_timeout only bounds opening a connection; once one is
 # open, a query that stalls on a held lock or a slow-to-wake Neon compute has
