@@ -3020,11 +3020,13 @@ def apply_teams_meeting_options(
             return False, resolved, [{
                 'code': 'teams_meeting_options_not_applied',
                 'message': (
-                    'The Teams link was created, but its online meeting could not be resolved, so the recording, '
-                    'transcription and lobby options were not applied. Grant OnlineMeetings.ReadWrite.All and an '
-                    'application access policy to the organizer.'
+                    'The Teams link was created and saved, but Microsoft has not exposed its meeting options yet. '
+                    'Recording, transcription and lobby settings remain pending; open the calendar review to retry.'
                 ),
-                'detail': str(exc),
+                # The raw Graph refusal is kept in teams_graph_failures for
+                # diagnosis. It is not shown as a permissions verdict here:
+                # Graph can return the same 403 briefly after creating an event.
+                'detail': '',
             }]
         meeting_id = clean_str(resolved.get('id'))
     if not meeting_id:
@@ -3447,6 +3449,7 @@ def curriculum_teams_meeting(request):
         attendees=invited_people,
         presenters=presenters,
         co_organizers=co_organizers,
+        live_session_id=live_session_id,
     )
     for option_warning in option_warnings:
         message = clean_str(option_warning.get('message'))
@@ -4658,7 +4661,7 @@ def curriculum_teams_meeting_artifacts(request, live_session_id):
             logger.warning('Unable to backfill onlineMeeting ID for %s: %s', live_session_id, exc)
             return json_error(
                 'The Teams meeting exists, but Microsoft Graph cannot resolve it for tracking. '
-                'Grant OnlineMeetings.Read.All and an application access policy to the organizer, then retry.',
+                'Retry after Microsoft finishes publishing the meeting. If it continues, check the organizer access policy.',
                 status=409,
                 detail=str(exc),
             )
