@@ -22,6 +22,7 @@ from .subject_dates import is_introduction_section
 from .training_plan_contract import read_contract, contract_extract_metadata, selected_contract
 from .projection_performance import measure_projection
 from . import canonical_learning
+from .replaced_teams_attendance import REPLACED_ATTENDANCE_LATERAL_SQL
 
 log = logging.getLogger(__name__)
 
@@ -462,13 +463,17 @@ def read_dashboard(source, section=None):
                     }
             attach_curriculum_slots(module_rows, by_id, week_counts, weeks_by_number)
             if section != 'learning':
-                cur.execute('''SELECT s.id AS session_id,s.module_catalogue_id AS module_id,s.module_title,
+                cur.execute(f'''SELECT s.id AS session_id,s.module_catalogue_id AS module_id,s.module_title,
                     s.start_datetime,s.duration_minutes,s.join_url AS series_join_url,s.repeat_pattern,s.status AS series_status,
                     o.id AS occurrence_id,o.scheduled_start,o.scheduled_end,o.join_url,o.status,
-                    CASE WHEN o.attendance_report_id IS NULL OR o.attendance_report_id='' THEN NULL
+                    CASE WHEN coalesce(CASE WHEN replaced_attendance.occurrence_id IS NOT NULL
+                                            THEN replaced_attendance.attendance_report_id
+                                            ELSE o.attendance_report_id END,'')='' THEN NULL
                          ELSE EXISTS(SELECT 1 FROM curriculum.live_session_attendance a
-                             WHERE a.occurrence_id=o.id AND lower(btrim(a.email))=%s AND a.total_attendance_seconds>0) END AS attended
+                             WHERE a.occurrence_id=COALESCE(replaced_attendance.occurrence_id,o.id)
+                               AND lower(btrim(a.email))=%s AND a.total_attendance_seconds>0) END AS attended
                     FROM curriculum.live_sessions s LEFT JOIN curriculum.live_session_occurrences o ON o.live_session_id=s.id
+                    {REPLACED_ATTENDANCE_LATERAL_SQL}
                     WHERE s.module_catalogue_id=ANY(%s) AND lower(s.status) NOT IN ('cancelled','deleted','failed','superseded')
                       AND (o.id IS NULL OR lower(o.status) NOT IN ('cancelled','deleted','failed','superseded'))
                     ORDER BY coalesce(o.scheduled_start,s.start_datetime)''', [email, ids])

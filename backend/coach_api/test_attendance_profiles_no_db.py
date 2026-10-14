@@ -103,24 +103,33 @@ class AttendanceProfilesTests(unittest.TestCase):
         self.profiles = [SimpleNamespace(id=1, email="one@example.invalid", email_normalized="one@example.invalid",
                                         full_name="Learner One", enrolment_id=101, coach_name="Coach", learner_type="commercial"),
                          SimpleNamespace(id=2, email="two@example.invalid", email_normalized="two@example.invalid",
-                                         full_name="Learner Two", enrolment_id=202, coach_name="Coach", learner_type="apprenticeship")]
+                                         full_name="Learner Two", enrolment_id=202, coach_name="Coach", learner_type="apprenticeship"),
+                         SimpleNamespace(id=3, email="destination@example.invalid", email_normalized="destination@example.invalid",
+                                         full_name="Destination Learner", enrolment_id=303, coach_name="Coach", learner_type="apprenticeship")]
         self.series = [SimpleNamespace(id="S1", attendees=[], module_catalogue_id="M1", module_title="Module One"),
-                       SimpleNamespace(id="S2", attendees=[], module_catalogue_id="M2", module_title="Module Two")]
+                       SimpleNamespace(id="S2", attendees=[], module_catalogue_id="M2", module_title="Module Two"),
+                       SimpleNamespace(id="S3", attendees=[], module_catalogue_id="M3", module_title="Destination Module")]
         self.occurrences = [self.occurrence("O1", "S1", 1), self.occurrence("O2", "S1", 2),
                             self.occurrence("P1", "S1", 3), self.occurrence("P2", "S1", 4),
-                            self.occurrence("B1", "S2", 1)]
+                            self.occurrence("B1", "S2", 1), self.occurrence("D1", "S3", 1)]
         self.occurrences[2].actual_end = None
         self.occurrences[3].attendance_report_id = ""
+        self.occurrences[5].attendance_report_id = ""
         first = self.record("O1", " ONE@example.invalid ", [(0, 2)])
         self.records = [first, first, self.record("O1", "one@example.invalid", [(1, 4)]),
                         self.record("P1", "one@example.invalid", [(0, 5)]),
                         self.record("P2", "one@example.invalid", [(0, 5)]),
-                        self.record("B1", "two@example.invalid", [(0, 5)])]
+                        self.record("B1", "two@example.invalid", [(0, 5)]),
+                        self.record("O1", "destination@example.invalid", [(0, 5)])]
         self.launches = (defaultdict(set), defaultdict(set))
         self.plan_modules = [
             SimpleNamespace(module_ref="M1", learner=self.profiles[0]),
             SimpleNamespace(module_ref="M2", learner=self.profiles[1]),
+            SimpleNamespace(module_ref="M3", learner=self.profiles[2]),
         ]
+        self.replaced_sources = {
+            "D1": {"occurrence_id": "O1", "attendance_report_id": "report-O1"},
+        }
         self.recovery = Mock(side_effect=lambda rows: rows)
         results_module = types.ModuleType("curriculum_api.session_results")
         results_module.launch_expectations = Mock(side_effect=lambda *args: self.launches)
@@ -148,6 +157,7 @@ class AttendanceProfilesTests(unittest.TestCase):
             # This synthetic roster fixture intentionally has no reviewed aliases.
             "_attendance_alias_rows": lambda _database, _assignments: [],
             "_attendance_identity_link_rows": lambda _database, _occurrences: [],
+            "_replaced_attendance_sources": lambda _database, _occurrences: self.replaced_sources,
             "timezone": SimpleNamespace(now=lambda: self.start, is_aware=lambda value: value.tzinfo is not None,
                                         is_naive=lambda value: value.tzinfo is None,
                                         make_aware=lambda value, tz: value.replace(tzinfo=tz),
@@ -174,7 +184,8 @@ class AttendanceProfilesTests(unittest.TestCase):
                            ("LearnerTrainingPlanModule", self.plan_modules),
                            ("LiveSessionOccurrence", self.occurrences), ("LiveSessionAttendance", self.records),
                            ("ModuleAuthoringModule", [SimpleNamespace(module_catalogue_id="M1", group_id="G1", group_name="Group One"),
-                                                      SimpleNamespace(module_catalogue_id="M2", group_id="G2", group_name="Group Two")])]:
+                                                      SimpleNamespace(module_catalogue_id="M2", group_id="G2", group_name="Group Two"),
+                                                      SimpleNamespace(module_catalogue_id="M3", group_id="G3", group_name="Group Three")])]:
             self.namespace[name] = type(name, (), {"objects": Rows(rows)})
 
     def occurrence(self, identifier, series_id, number):
@@ -199,6 +210,58 @@ class AttendanceProfilesTests(unittest.TestCase):
     def test_module_roster_is_used_when_invitation_snapshot_is_empty(self):
         rows = self.fetch()
         self.assertEqual([row["session_id"] for row in rows], ["O1", "O2"])
+
+    def test_replaced_link_projects_source_report_to_destination_live_session(self):
+        rows = self.fetch(3, module_refs=["M3"])
+
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["session_id"], "D1")
+        self.assertEqual(rows[0]["occurrence_id"], "D1")
+        self.assertEqual(rows[0]["live_session_id"], "S3")
+        self.assertEqual(rows[0]["module_catalogue_id"], "M3")
+        self.assertEqual(rows[0]["attendance_report_id"], "report-O1")
+        self.assertEqual(rows[0]["attendance_status"], "present")
+
+    def test_replaced_link_compares_source_report_with_all_33_destination_learners(self):
+        extra_profiles = [
+            SimpleNamespace(
+                id=learner_id,
+                email=f"stakeholder-{learner_id}@example.invalid",
+                email_normalized=f"stakeholder-{learner_id}@example.invalid",
+                full_name=f"Stakeholder Learner {learner_id}",
+                enrolment_id=300 + learner_id,
+                coach_name="Coach",
+                learner_type="apprenticeship",
+            )
+            for learner_id in range(4, 36)
+        ]
+        self.profiles.extend(extra_profiles)
+        self.plan_modules.extend(
+            SimpleNamespace(module_ref="M3", learner=learner)
+            for learner in extra_profiles
+        )
+        # The saved source report has eight of the destination module's
+        # learners. The other 25 destination learners must remain absent, and
+        # source-module learners must never be copied into this roster.
+        self.records.extend(
+            self.record("O1", learner.email, [(0, 5)])
+            for learner in extra_profiles[:7]
+        )
+
+        rows = self.fetch(None, module_refs=["M3"])
+
+        self.assertEqual(len(rows), 33)
+        self.assertEqual(
+            sum(row["attendance_status"] == "present" for row in rows),
+            8,
+        )
+        self.assertEqual(
+            sum(row["attendance_status"] == "absent" for row in rows),
+            25,
+        )
+        self.assertEqual({row["module_catalogue_id"] for row in rows}, {"M3"})
+        self.assertEqual({row["occurrence_id"] for row in rows}, {"D1"})
+        self.assertNotIn("one@example.invalid", {row["learner_email"] for row in rows})
 
     def test_assigned_reported_learner_is_visible_and_expected(self):
         rows = self.fetch(include_reported_participants=True)
