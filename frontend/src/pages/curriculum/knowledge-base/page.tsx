@@ -12,6 +12,7 @@ import {
   fetchWorkerStatus,
   isProcessing,
   MAX_UPLOAD_BYTES,
+  renameBook,
   retryBuild,
   uploadBook,
   type KbBook,
@@ -228,6 +229,8 @@ export default function KnowledgeBasePage() {
   const [uploadOpen, setUploadOpen] = useState(false);
   const [expanded, setExpanded] = useState<string | null>(null);
   const [busyBuild, setBusyBuild] = useState<string | null>(null);
+  const [renaming, setRenaming] = useState<{ id: string; title: string } | null>(null);
+  const [savingTitle, setSavingTitle] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -268,6 +271,21 @@ export default function KnowledgeBasePage() {
       toastError('Action failed', err instanceof Error ? err.message : undefined);
     } finally {
       setBusyBuild(null);
+    }
+  };
+
+  const saveTitle = async () => {
+    if (!renaming || !renaming.title.trim()) return;
+    setSavingTitle(true);
+    try {
+      await renameBook(renaming.id, renaming.title.trim());
+      success('Title updated', 'The book keeps its programmes and processing.');
+      setRenaming(null);
+      await load();
+    } catch (err) {
+      toastError('Rename failed', err instanceof Error ? err.message : undefined);
+    } finally {
+      setSavingTitle(false);
     }
   };
 
@@ -342,7 +360,18 @@ export default function KnowledgeBasePage() {
                       <Fragment key={book.id}>
                         <tr className="border-b border-slate-100 align-top">
                           <td className="py-3 pe-3">
-                            <p className="font-semibold text-slate-900">{book.title}</p>
+                            {renaming?.id === book.id ? (
+                              <form className="flex flex-wrap items-center gap-1.5" onSubmit={event => { event.preventDefault(); void saveTitle(); }}>
+                                <input aria-label="Book title" autoFocus maxLength={200} value={renaming.title}
+                                  onChange={event => setRenaming({ id: book.id, title: event.target.value })}
+                                  onKeyDown={event => { if (event.key === 'Escape') setRenaming(null); }}
+                                  className="h-8 min-w-[220px] rounded-lg border border-slate-300 px-2 text-sm focus:border-violet-500 focus:outline-none" />
+                                <button type="submit" disabled={savingTitle || !renaming.title.trim()} className="h-8 rounded-lg bg-violet-600 px-3 text-xs font-semibold text-white hover:bg-violet-700 disabled:opacity-50">Save</button>
+                                <button type="button" onClick={() => setRenaming(null)} className="h-8 rounded-lg border border-slate-200 px-3 text-xs font-semibold text-slate-700 hover:bg-slate-50">Cancel</button>
+                              </form>
+                            ) : (
+                              <p className="font-semibold text-slate-900">{book.title}</p>
+                            )}
                             <p className="text-xs text-slate-500">{book.version.fileName} · {formatSize(book.version.sizeBytes)}{book.version.edition ? ` · ${book.version.edition}` : ''}</p>
                           </td>
                           <td className="py-3 pe-3">
@@ -362,6 +391,7 @@ export default function KnowledgeBasePage() {
                               {buildId && status === 'needs_review' ? (
                                 <button type="button" disabled={busyBuild === buildId} onClick={() => void act(buildId, 'accept')} className="h-8 rounded-lg border border-amber-300 bg-amber-50 px-3 text-xs font-semibold text-amber-800 hover:bg-amber-100">Accept with gaps</button>
                               ) : null}
+                              <button type="button" onClick={() => setRenaming({ id: book.id, title: book.title })} className="h-8 rounded-lg border border-slate-200 px-3 text-xs font-semibold text-slate-700 hover:bg-slate-50">Rename</button>
                               <button type="button" aria-expanded={open} onClick={() => setExpanded(open ? null : book.id)} className="h-8 rounded-lg border border-slate-200 px-3 text-xs font-semibold text-violet-700 hover:bg-violet-50">
                                 {open ? 'Hide' : 'Details'}
                               </button>
