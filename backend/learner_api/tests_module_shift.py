@@ -276,18 +276,23 @@ class ModuleShiftWriteTests(SimpleTestCase):
             patch("learner_api.module_shift.EnrolmentUser") as model,
             patch("learner_api.module_shift.transaction.atomic",
                   side_effect=lambda **kwargs: nullcontext()),
+            patch("learner_api.module_shift.hydrate_training_plan",
+                  side_effect=lambda plan, **_kwargs: plan),
+            patch("learner_api.module_shift.learner_profile_for_source", return_value=None),
+            patch("learner_api.module_shift._replace_json_plan_module", return_value=False),
+            patch("learner_api.module_shift._sync_legacy_titles_from_json"),
+            patch("learner_api.module_shift.advance_learner") as advance,
             patch("learner_api.module_shift.sync_active_user") as sync,
             patch("learner_api.module_shift.recompute_completed_hours"),
             patch("learner_api.module_shift._programme_modules",
                   return_value=[module_shift._module_payload(m) for m in MODULES.values()]),
             patch("learner_api.module_shift._group_module_ids", return_value=list(preset)),
-            patch("learner_api.module_shift._serialize",
-                  side_effect=lambda learner_row: {"plan": learner_row.learning_plan}),
         ):
             model.all_learners.get.return_value = learner
             response = module_shift.module_shift(request, 62)
             model.all_learners.get.assert_called_once_with(pk=62)
             self.sync = sync
+            self.advance = advance
         return response, json.loads(response.content)
 
     def test_the_chosen_entry_is_replaced_and_the_rest_kept_verbatim(self):
@@ -396,6 +401,16 @@ class ModuleShiftWriteTests(SimpleTestCase):
         self._shift(learner, {"fromModuleId": "MOD-1", "toModuleId": "MOD-LISTED"})
 
         self.sync.assert_called_once_with(learner)
+        self.advance.assert_not_called()
+
+    def test_a_pre_delivery_learner_still_gets_the_progression_check(self):
+        learner = _learner([{"moduleId": "MOD-1"}])
+        learner.programme_status = "Ready to start"
+
+        self._shift(learner, {"fromModuleId": "MOD-1", "toModuleId": "MOD-LISTED"})
+
+        self.advance.assert_called_once_with(learner)
+        self.sync.assert_not_called()
 
     def test_a_get_is_not_a_shift(self):
         request = RequestFactory().get("/learner_api/module-shift/62/")

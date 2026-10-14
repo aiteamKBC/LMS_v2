@@ -14,14 +14,10 @@ it was stored, so a learner part-way through delivery can still be moved.
 
 A learner part-way through a module has progress on its components, and that
 progress is the reason the shift is not just a swap of ids: it has to land on
-the equivalent components of the module they are moving to. Which component is
-"equivalent" is a human judgement, so it is asked rather than guessed — the
-progress endpoint pairs each week that has progress with the target module's
-week in the same position, and the shift accepts the component-to-component
-mapping the user chose — within one limit, that a component can only be matched
-to one of the same type. Progress on a video is evidence of having watched a
-video; crediting it to a reading would change what the record claims. Progress
-that is not mapped stays where it is.
+the equivalent components of the module they are moving to. Weeks are shown in
+the same position, but components are matched by stable component id first and,
+for cloned group modules with new ids, by one exact cleaned title and type.
+Ambiguous or unmatched progress stays where it is.
 
 A completed component often carries a reflection awaiting a tutor or coach, or
 one they have already marked with feedback. That review belongs to the work, not
@@ -36,8 +32,11 @@ status, feedback and reviewer are left untouched.
                                             progressMappings: [...]}
           -> the learner's plan, as the learning-plan endpoint returns it
 """
+import html
 import json
 import logging
+import re
+import unicodedata
 
 from django.db import DatabaseError, connections, transaction
 from django.http import JsonResponse
@@ -49,7 +48,9 @@ from .active_users import (
     _component_learning_context,
     _decimal,
     _normalise_weight_class,
+    hydrate_training_plan,
     recompute_completed_hours,
+    refresh_learner_ksb_snapshot,
     sync_active_user,
 )
 from .identity import learner_profile_for_source
@@ -60,10 +61,18 @@ from .learning_plan import (
     _programme_modules,
     _rows,
     _saved_modules,
-    _serialize,
+    sync_learning_plan_mirror,
 )
-from .mappers import _s
-from .models import EnrolmentUser, LearnerProgressEntry, LearnerProgressKsb
+from .mappers import _s, training_plan_field
+from .models import (
+    EnrolmentUser,
+    LearnerProfile,
+    LearnerProgressEntry,
+    LearnerProgressKsb,
+    LearnerTrainingPlanComponent,
+    LearnerTrainingPlanModule,
+    LearnerTrainingPlanWeek,
+)
 from .submission_audit import SUBMISSION_AUDIT_SQL, record_submission_row
 
 logger = logging.getLogger(__name__)
@@ -375,26 +384,43 @@ def _reviews_by_component(learner, component_ids):
     return reviews
 
 
-def _suggested_pair(component, position, type_index, target_week):
-    """The obvious target for a progressed component, or "" if there is none.
+def _component_title_key(value):
+    """Normalise display-only differences without weakening title identity."""
+    value = unicodedata.normalize("NFKC", html.unescape(_s(value)))
+    return re.sub(r"\s+", " ", value).strip().casefold()
 
-    Only ever a component of the same type: a watched video is evidence of
-    watching a video, and crediting it to a reading would be a different claim
-    about what the learner did.
 
-    Within that, the same slot wins — two modules built from one template line up
-    — then the same rank among the week's components of that type, which is what
-    rescues the pairing when a module has an extra component earlier in the week.
-    """
+def _components_match(source, target):
+    """Match by component id, else by one exact cleaned title and type."""
+    if _s(source.get("componentId")) == _s(target.get("componentId")):
+        return True
+    source_title = _component_title_key(source.get("title"))
+    return (
+        _s(source.get("type")) == _s(target.get("type"))
+        and bool(source_title)
+        and source_title == _component_title_key(target.get("title"))
+    )
+
+
+def _suggested_pair(component, target_week, claimed=None):
+    """Return one unambiguous id/title match, never a positional guess."""
     targets = (target_week or {}).get("components") or []
-    same_type = [t for t in targets if t["type"] == component["type"]]
-    if not same_type:
-        return ""
-    if position < len(targets) and targets[position]["type"] == component["type"]:
-        return targets[position]["componentId"]
-    if type_index < len(same_type):
-        return same_type[type_index]["componentId"]
-    return same_type[0]["componentId"]
+    claimed = claimed or set()
+    source_id = _s(component.get("componentId"))
+    same_id = [
+        target for target in targets
+        if _s(target.get("componentId")) == source_id
+        and _s(target.get("componentId")) not in claimed
+    ]
+    if len(same_id) == 1:
+        return same_id[0]["componentId"]
+
+    title_matches = [
+        target for target in targets
+        if _s(target.get("componentId")) not in claimed
+        and _components_match(component, target)
+    ]
+    return title_matches[0]["componentId"] if len(title_matches) == 1 else ""
 
 
 def _progress_pairing(learner, from_id, to_id):
@@ -416,7 +442,7 @@ def _progress_pairing(learner, from_id, to_id):
     # review moves with the work rather than being left behind.
     reviews = _reviews_by_component(learner, component_ids)
 
-    pairs, suggested = [], []
+    pairs, suggested, claimed_targets = [], [], set()
     for index, week in enumerate(source_weeks):
         # Only the weeks the learner has actually worked in.
         if not any(c["componentId"] in progress for c in week["components"]):
@@ -439,20 +465,16 @@ def _progress_pairing(learner, from_id, to_id):
             },
             "to": target,
         })
-        # Rank within type as well as position: the suggestion pairs the week's
-        # second video with the other week's second video.
-        seen_of_type = {}
-        for position, component in enumerate(week["components"]):
-            type_index = seen_of_type.get(component["type"], 0)
-            seen_of_type[component["type"]] = type_index + 1
+        for component in week["components"]:
             if component["componentId"] not in progress:
                 continue
-            match = _suggested_pair(component, position, type_index, target)
+            match = _suggested_pair(component, target, claimed_targets)
             if match:
                 suggested.append({
                     "fromComponentId": component["componentId"],
                     "toComponentId": match,
                 })
+                claimed_targets.add(match)
     return pairs, suggested, ""
 
 
@@ -521,9 +543,8 @@ def _validate_mappings(mappings, from_id, to_id):
             return None, f"Component '{source_id}' is not part of the module being left."
         if target_id not in target:
             return None, f"Component '{target_id}' is not part of the module being joined."
-        # Like for like: progress on a video is evidence of watching a video, so
-        # it can only be credited to another video. Checked here and not only in
-        # the picker, since this is what the record ends up claiming.
+        # Type, identity and exact-title rules are enforced here as well as in
+        # the picker, since this is what the stored progress ends up claiming.
         source_type = source[source_id]["type"]
         target_type = target[target_id]["type"]
         if source_type != target_type:
@@ -534,6 +555,11 @@ def _validate_mappings(mappings, from_id, to_id):
         # Two components' progress landing on one would credit it twice.
         if claimed.get(target_id, source_id) != source_id:
             return None, "Two components cannot be moved onto the same component."
+        if not _components_match(source[source_id], target[target_id]):
+            return None, (
+                f"'{source[source_id]['title']}' can only be matched by the same component id, "
+                "or to a component with the same title and type."
+            )
         claimed[target_id] = source_id
         pairs.append((source_id, target_id))
     return pairs, ""
@@ -727,6 +753,202 @@ def _base_plan(learner):
     return [catalogue[i] for i in preset_ids if i in catalogue]
 
 
+def _shifted_plan(learner, plan, target, from_id):
+    """Replace one module and keep the old group from inheriting it again."""
+    shifted = [
+        target if _s(module.get("moduleId")) == from_id else module
+        for module in plan
+    ]
+    preset_ids = set(_group_module_ids(_s(learner.programme), _s(learner.group)))
+    if from_id in preset_ids:
+        # The omission is deliberate: without an explicit assignment the
+        # effective-plan reader immediately adds the source module back from
+        # the learner's unchanged group preset.
+        shifted = [dict(module, assignmentMode="explicit") for module in shifted]
+    return shifted
+
+
+def _replace_mirrored_module(profile, from_id, target):
+    """Replace one module in the relational learner-plan mirror.
+
+    Rebuilding every module, week and component made a one-module shift take
+    more than a minute for a large learner plan.  The source JSON remains the
+    record of truth; this updates only the mirror branch whose id changed.
+    ``False`` asks the caller to use the full repair path when an old/incomplete
+    mirror cannot be updated safely.
+    """
+    matches = list(LearnerTrainingPlanModule.objects.filter(
+        learner=profile, module_ref=from_id,
+    )[:2])
+    if len(matches) != 1:
+        return False
+
+    module_row = matches[0]
+    module_row.module_ref = _s(target.get("moduleId")) or None
+    module_row.module_title = _s(target.get("moduleTitle"))
+    module_row.save(update_fields=["module_ref", "module_title"])
+    module_row.weeks.all().delete()
+
+    weeks = [week for week in target.get("weeks") or [] if isinstance(week, dict)]
+    week_rows = LearnerTrainingPlanWeek.objects.bulk_create([
+        LearnerTrainingPlanWeek(
+            plan_module=module_row,
+            position=position,
+            week_ref=_s(week.get("weekId")) or None,
+            week_title=_s(week.get("weekTitle")),
+        )
+        for position, week in enumerate(weeks, 1)
+    ])
+    if any(row.pk is None for row in week_rows):
+        week_rows = list(module_row.weeks.all().order_by("position", "id"))
+
+    LearnerTrainingPlanComponent.objects.bulk_create([
+        LearnerTrainingPlanComponent(
+            plan_week=week_row,
+            position=position,
+            component_ref=_s(component.get("componentId")) or None,
+            component_title=_s(component.get("componentTitle")),
+        )
+        for week_row, week in zip(week_rows, weeks)
+        for position, component in enumerate(week.get("components") or [], 1)
+        if isinstance(component, dict)
+    ], batch_size=1000)
+    return True
+
+
+def _replace_json_plan_module(model, pk, field_name, existing_plan, from_id, target, explicit):
+    """Replace one item in a stored jsonb plan without uploading the whole plan."""
+    if not isinstance(existing_plan, list) or not any(
+        isinstance(module, dict) and _s(module.get("moduleId")) == from_id
+        for module in existing_plan
+    ):
+        return False
+
+    connection = connections["enrolment"]
+    table = connection.ops.quote_name(model._meta.db_table)
+    column = connection.ops.quote_name(model._meta.get_field(field_name).column)
+    with connection.cursor() as cursor:
+        cursor.execute(
+            f"""
+            UPDATE {table} AS learner
+            SET {column} = rebuilt.plan
+            FROM (
+                SELECT coalesce(jsonb_agg(
+                    CASE
+                        WHEN item.module ->> 'moduleId' = %s THEN %s::jsonb
+                        WHEN %s THEN item.module || jsonb_build_object('assignmentMode', 'explicit')
+                        ELSE item.module
+                    END
+                    ORDER BY item.position
+                ), '[]'::jsonb) AS plan
+                FROM jsonb_array_elements(coalesce(
+                    (SELECT source.{column} FROM {table} AS source WHERE source.id = %s),
+                    '[]'::jsonb
+                )) WITH ORDINALITY AS item(module, position)
+            ) AS rebuilt
+            WHERE learner.id = %s
+            """,
+            [from_id, json.dumps(target), explicit, pk, pk],
+        )
+        return cursor.rowcount == 1
+
+
+def _sync_legacy_titles_from_json(learner, plan_field):
+    """Rebuild legacy title columns inside Postgres, without uploading them."""
+    connection = connections["enrolment"]
+    table = connection.ops.quote_name(EnrolmentUser._meta.db_table)
+    plan_column = connection.ops.quote_name(
+        EnrolmentUser._meta.get_field(plan_field).column,
+    )
+    modules_column = connection.ops.quote_name(EnrolmentUser._meta.get_field("modules").column)
+    weeks_column = connection.ops.quote_name(EnrolmentUser._meta.get_field("weeks").column)
+    components_column = connection.ops.quote_name(EnrolmentUser._meta.get_field("components").column)
+    array_or_empty = (
+        "CASE WHEN jsonb_typeof({value}) = 'array' THEN {value} ELSE '[]'::jsonb END"
+    )
+    weeks_json = array_or_empty.format(value="module.item -> 'weeks'")
+    components_json = array_or_empty.format(value="week.item -> 'components'")
+    with connection.cursor() as cursor:
+        cursor.execute(
+            f"""
+            UPDATE {table} AS learner
+            SET {modules_column} = coalesce((
+                    SELECT string_agg(module.item ->> 'moduleTitle', ', ' ORDER BY module.position)
+                    FROM jsonb_array_elements(coalesce(learner.{plan_column}, '[]'::jsonb))
+                         WITH ORDINALITY AS module(item, position)
+                    WHERE nullif(module.item ->> 'moduleTitle', '') IS NOT NULL
+                ), ''),
+                {weeks_column} = coalesce((
+                    SELECT string_agg(
+                        concat_ws(' · ', module.item ->> 'moduleTitle', week.item ->> 'weekTitle'),
+                        ', ' ORDER BY module.position, week.position
+                    )
+                    FROM jsonb_array_elements(coalesce(learner.{plan_column}, '[]'::jsonb))
+                         WITH ORDINALITY AS module(item, position)
+                    CROSS JOIN LATERAL jsonb_array_elements({weeks_json})
+                         WITH ORDINALITY AS week(item, position)
+                    WHERE nullif(week.item ->> 'weekTitle', '') IS NOT NULL
+                ), ''),
+                {components_column} = coalesce((
+                    SELECT string_agg(
+                        concat_ws(' · ', module.item ->> 'moduleTitle',
+                                  week.item ->> 'weekTitle', component.item ->> 'componentTitle'),
+                        ', ' ORDER BY module.position, week.position, component.position
+                    )
+                    FROM jsonb_array_elements(coalesce(learner.{plan_column}, '[]'::jsonb))
+                         WITH ORDINALITY AS module(item, position)
+                    CROSS JOIN LATERAL jsonb_array_elements({weeks_json})
+                         WITH ORDINALITY AS week(item, position)
+                    CROSS JOIN LATERAL jsonb_array_elements({components_json})
+                         WITH ORDINALITY AS component(item, position)
+                    WHERE nullif(component.item ->> 'componentTitle', '') IS NOT NULL
+                ), '')
+            WHERE learner.id = %s
+            """,
+            [learner.pk],
+        )
+
+
+def _save_shifted_plan(learner, shifted_plan, from_id="", to_id=""):
+    """Store a shift and update only the changed learner-plan mirror branch."""
+    plan_field = training_plan_field(learner)
+    existing_plan = getattr(learner, plan_field, None)
+    setattr(learner, plan_field, shifted_plan)
+    target = next(
+        (module for module in shifted_plan if _s(module.get("moduleId")) == to_id),
+        None,
+    )
+    explicit = bool(shifted_plan) and all(
+        not isinstance(module, dict) or module.get("assignmentMode") == "explicit"
+        for module in shifted_plan
+    )
+    if target is None or not _replace_json_plan_module(
+        EnrolmentUser, learner.pk, plan_field, existing_plan, from_id, target, explicit,
+    ):
+        learner.save(update_fields=[plan_field])
+
+    profile = learner_profile_for_source(learner)
+
+    mirrored = False
+    if profile is not None and target is not None:
+        if not _replace_json_plan_module(
+            LearnerProfile, profile.pk, "learning_plan", profile.learning_plan,
+            from_id, target, explicit,
+        ):
+            LearnerProfile.objects.filter(pk=profile.pk).update(
+                learning_plan=shifted_plan or None,
+            )
+        profile.learning_plan = shifted_plan or None
+        mirrored = _replace_mirrored_module(profile, from_id, target)
+
+    _sync_legacy_titles_from_json(learner, plan_field)
+    if profile is not None and not mirrored:
+        # Legacy/incomplete mirrors still get the established full repair.
+        sync_learning_plan_mirror(learner, strict=True)
+        mirrored = True
+    return plan_field, profile, mirrored
+
+
 @csrf_exempt
 # Shifting a module rewrites the learner's plan and repoints their progress
 # entries; only the learner themselves or staff may write it.
@@ -811,11 +1033,12 @@ def module_shift(request, pk):
             # One entry replaced, the rest kept exactly as stored — including any
             # whose module has left the curriculum, which is not this shift's
             # business to rewrite or drop.
-            learner.learning_plan = [
-                target if _s(m.get("moduleId")) == from_id else m
-                for m in plan
-            ]
-            learner.save(update_fields=["learning_plan"])
+            hydrated_target = hydrate_training_plan([target], strict=True)
+            target = hydrated_target[0] if hydrated_target else target
+            shifted_plan = _shifted_plan(learner, plan, target, from_id)
+            _plan_field, mirrored_profile, mirror_updated = _save_shifted_plan(
+                learner, shifted_plan, from_id, to_id,
+            )
             counts = (
                 _repoint_progress(learner, profile, pairs) if pairs
                 else {"entries": 0, "reviews": 0, "reviewsKept": 0}
@@ -827,19 +1050,31 @@ def module_shift(request, pk):
             # learner's own workspace reads the materialised plan rather than
             # this list — both are derived, so both are refreshed here.
             recompute_completed_hours(profile.id)
-        # The shift writes the same plan column the learning-plan endpoint does,
-        # so it owes progression the same check: a learner whose first plan
-        # arrives this way is as ready to start as one who agreed it there.
-        advance_learner(learner)
+        # An already-active learner cannot advance again.  Running the full
+        # progression workflow anyway dominated this endpoint for large plans
+        # (about 70 seconds in the reported case), while changing nothing.
+        # A pre-delivery learner can still become ready through their first
+        # saved plan, so preserve the check for that state only.
+        if _s(learner.programme_status).lower() != "active":
+            advance_learner(learner)
         if _s(learner.programme_status).lower() == "active":
-            sync_active_user(learner)
+            if mirror_updated and mirrored_profile is not None:
+                refresh_learner_ksb_snapshot(
+                    mirrored_profile, learner, training_plan=shifted_plan,
+                )
+            else:
+                sync_active_user(learner)
 
-        body = _serialize(learner)
-        body["progressMoved"] = moved
-        body["reviewsMoved"] = counts["reviews"]
-        # A review left behind because the target already had one of its own.
-        body["reviewsKept"] = counts["reviewsKept"]
-        return JsonResponse(body)
+        # The modal only needs the write result; its parent refetches the learner
+        # after closing.  Serialising the entire learning-plan catalogue here
+        # repeated several expensive curriculum lookups and added roughly a
+        # minute after the shift had already succeeded.
+        return JsonResponse({
+            "progressMoved": moved,
+            "reviewsMoved": counts["reviews"],
+            # A review left behind because the target already had one of its own.
+            "reviewsKept": counts["reviewsKept"],
+        })
     except DatabaseError as exc:
         logger.exception("module_shift: save failed")
         return _error(f"Database error: {exc}", 502)
