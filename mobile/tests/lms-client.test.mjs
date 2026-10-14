@@ -3,6 +3,15 @@ import assert from 'node:assert/strict';
 import {createLmsClient,LMS_ORIGIN} from '../src/lms-client.mjs';
 const response=(body,status=200,type='application/json')=>({ok:status>=200&&status<300,status,headers:{get:()=>type},json:async()=>body});
 
+test('coach reads use fixed authenticated GET routes and reject profile, course and activity injection',async()=>{
+ const calls=[],client=createLmsClient({fetchImpl:async(url,options)=>{calls.push({url,options});return response({});}});
+ await client.coachLearners();await client.coachLearners('100');await client.coachLearner('11');await client.coachCatalogue('11');await client.coachProgress('11','MOD-A');await client.coachQuiz('11','QUIZ-1');await client.coachTranscript('11','AUDIO-1');
+ assert.deepEqual(calls.map(x=>x.url.replace(LMS_ORIGIN+'/learner_api/mobile/','')),['coach/learners/','coach/learners/?before=100','coach/learners/11/','coach/learners/11/catalogue/','coach/learners/11/progress/?moduleId=MOD-A','coach/learners/11/quizzes/QUIZ-1/','coach/learners/11/components/AUDIO-1/transcript/']);
+ assert(calls.every(x=>x.options.method==='GET'&&x.options.body===undefined&&x.options.credentials==='include'));
+ for(const id of ['0','11/../../','11?accountId=8','https://elsewhere.test',null,true])assert.throws(()=>client.coachLearner(id));
+ assert.throws(()=>client.coachProgress('11','MOD-A&learnerId=9'));assert.throws(()=>client.coachQuiz('11','../quiz'));assert.equal(calls.length,7);
+});
+
 test('absence requests use same authenticated LMS with bounded scope and no supplied learner identity',async()=>{
  const calls=[],client=createLmsClient({fetchImpl:async(url,options)=>{calls.push({url,options});return response({});}});
  await client.absenceReports('lectures');await client.absenceReports('meetings');
