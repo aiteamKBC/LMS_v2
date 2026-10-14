@@ -19,7 +19,7 @@ from .absence_reports import (
 )
 from .alternative_recovery import _future_instant
 from .attendance_lectures import build_lectures, read_native_occurrences
-from .tests_attendance_lectures import register_row
+from .tests_attendance_lectures import register_row, run_now
 
 
 SOURCE = SimpleNamespace(id=12, email='learner@example.test', username='Learner')
@@ -130,6 +130,7 @@ class RecoverySubmissionTests(SimpleTestCase):
              patch('learner_api.absence_reports.record_reported_absence') as record_absence, \
              patch('learner_api.absence_reports.transaction.atomic', return_value=nullcontext()), \
              patch('learner_api.absence_reports.email_azure.send_mail', return_value=(True, 'sent')) as send_mail, \
+             patch('learner_api.absence_reports._send_after_commit', side_effect=run_now), \
              patch('learner_api.absence_reports._serialize', return_value={'id': 1}):
             manager.filter.return_value.exists.return_value = False
             manager.filter.return_value.count.return_value = 0
@@ -173,6 +174,7 @@ class RecoverySubmissionTests(SimpleTestCase):
              patch('learner_api.absence_reports.record_reported_absence') as record_absence, \
              patch('learner_api.absence_reports.transaction.atomic', return_value=nullcontext()), \
              patch('learner_api.absence_reports.email_azure.send_mail', return_value=(True, 'sent')) as send_mail, \
+             patch('learner_api.absence_reports._send_after_commit', side_effect=run_now), \
              patch('learner_api.absence_reports._serialize', return_value={'id': 1, 'status': 'approved'}):
             manager.filter.return_value.exists.return_value = False
             manager.filter.return_value.count.return_value = 0

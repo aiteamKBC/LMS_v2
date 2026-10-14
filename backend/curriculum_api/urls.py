@@ -21,9 +21,11 @@ from .teams_week_meeting import (
     curriculum_week_teams_meeting_detail,
 )
 from . import recordings_library, session_results, tutor_notifications
+from .learner_activity_status import activity_status
 
 
 urlpatterns = [
+    path('curriculum/modules/<str:module_id>/learners/<int:learner_id>/activities/<str:component_id>/status/', activity_status),
     path('curriculum/migrated-review-templates/', migrated_template_views.collection),
     path('curriculum/migrated-review-templates/preview/', migrated_template_views.preview),
     path('curriculum/migrated-review-templates/reset/', migrated_template_views.reset),
@@ -179,6 +181,7 @@ urlpatterns = [
     path('curriculum/teams-meetings/<str:live_session_id>/artifacts/<str:artifact_id>/recording-events/', views.curriculum_teams_recording_events, name='curriculum-teams-recording-events'),
     path('curriculum/presentations/slides/', views.curriculum_presentation_slides, name='curriculum-presentation-slides'),
     path('curriculum/uploads/<path:path>', views.curriculum_uploaded_file, name='curriculum-uploaded-file'),
+    path('office-preview/<str:token>/<str:filename>', views.curriculum_office_preview_file, name='curriculum-office-preview-file'),
     path('curriculum/weeks/<str:week_id>/ksb-coverage/', views.curriculum_week_ksb_coverage, name='curriculum-week-ksb-coverage'),
     path('curriculum/weeks/<str:week_id>/learner-roster/', views.curriculum_week_learner_roster, name='curriculum-week-learner-roster'),
     path('curriculum/weeks/<str:week_id>/learner-ksb-impact/', views.curriculum_week_learner_ksb_impact, name='curriculum-week-learner-ksb-impact'),

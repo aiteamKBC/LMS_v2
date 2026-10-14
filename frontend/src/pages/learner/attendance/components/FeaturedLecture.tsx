@@ -2,7 +2,7 @@ import { useId } from 'react';
 import type { AttendanceLecture } from '@/api/attendanceLectures';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { Panel } from '@/components/ui/Panel';
-import { isLectureLive, lectureJoinUrl, lectureToday } from '../liveLecture';
+import { isLectureJoinable, isLectureLive, lectureJoinUrl, lectureToday } from '../liveLecture';
 import styles from '../attendance.module.css';
 
 export default function FeaturedLecture({ lecture, now, timeZone, busy, canAttend, error, notice, onAttend, onReport }: {
@@ -22,6 +22,8 @@ export default function FeaturedLecture({ lecture, now, timeZone, busy, canAtten
   const hasDuration = Number.isFinite(lecture.durationMinutes) && (lecture.durationMinutes || 0) > 0;
   const hours = hasDuration ? Number((lecture.durationMinutes! / 60).toFixed(2)) : null;
   const nativeTeams = lecture.source === 'microsoft-teams';
+  // Timed Teams lectures share the list's join window; a date-only legacy row can be joined on its date.
+  const canJoin = Boolean(joinUrl) && (nativeTeams ? isLectureJoinable(lecture, now) : today);
   const help = nativeTeams ? 'Attendance is verified from Teams after more than 3 minutes in the session.' : attended ? `Attendance recorded${lecture.creditedMinutes != null ? ` · ${Number((lecture.creditedMinutes / 60).toFixed(2))} hours credited` : ''}.` :
     !canAttend ? 'Attendance can be recorded by the learner or an administrator.' :
       !today ? 'Attend will be available on the lecture date.' :
@@ -52,7 +54,7 @@ export default function FeaturedLecture({ lecture, now, timeZone, busy, canAtten
             aria-describedby={helpId} onClick={() => onAttend(lecture)}><AppIcon className="ri-checkbox-circle-line" />{busy ? 'Saving…' : attended ? 'Attended' : 'Attend'}</button>
           <button type="button" className={styles.reportButton} disabled={busy || !lecture.canReportAbsence}
             onClick={() => onReport(lecture)}><AppIcon className="ri-calendar-close-line" />{lecture.absenceReport ? 'Absence reported' : 'Report Absence'}</button>
-          {today && joinUrl && (!nativeTeams || Date.parse(lecture.endsAt || '') > now) && <a className={styles.joinSession} href={joinUrl} target="_blank" rel="noopener noreferrer">Join session<AppIcon className="ri-external-link-line" /></a>}
+          {canJoin && joinUrl && <a className={styles.joinSession} href={joinUrl} target="_blank" rel="noopener noreferrer">Join session<AppIcon className="ri-external-link-line" /></a>}
         </div>
       </div>
       {error && <p role="alert" className={styles.attendError}>{error}</p>}

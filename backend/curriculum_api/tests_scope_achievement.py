@@ -305,6 +305,43 @@ class ScopeOtjhSummaryTests(SimpleTestCase):
         self.assertEqual(summary['learners'][0]['progressPercentage'], 100)
 
 
+class LearnerActivityPlanTests(SimpleTestCase):
+    MODULES = [
+        {'module_catalogue_id': 'MOD-A1', 'title': 'Module A1', 'group_name': 'A1'},
+        {'module_catalogue_id': 'MOD-A2', 'title': 'Module A2', 'group_name': 'A2'},
+    ]
+    COMPONENTS = [
+        {'id': 'C1', 'module_catalogue_id': 'MOD-A1', 'week_id': 'W1', 'title': 'Reading one', 'type': 'reading', 'expected_otjh': 2, 'points': 10, 'display_order': 1},
+        {'id': 'C2', 'module_catalogue_id': 'MOD-A2', 'week_id': 'W2', 'title': 'Quiz two', 'type': 'quiz', 'expected_otjh': 1, 'points': 20, 'display_order': 1},
+    ]
+    WEEKS = [{'id': 'W1', 'title': 'Week 1'}, {'id': 'W2', 'title': 'Week 2'}]
+
+    def test_assigned_component_without_progress_is_not_started(self):
+        learners = [{'id': 19, 'name': 'Amelia', 'email': 'a@example.com', 'group': 'A1'}]
+        plan = views.scope_authored_plan(self.MODULES, self.COMPONENTS, [])
+        rows = views.learner_activity_plan(learners, self.COMPONENTS, self.MODULES, self.WEEKS, [], plan)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]['componentId'], 'C1')
+        self.assertEqual(rows[0]['calculatedStatus'], 'not_started')
+        self.assertIsNone(rows[0]['progressId'])
+        self.assertEqual(rows[0]['points'], 10)
+
+    def test_history_links_to_plan_and_completed_status(self):
+        learners = [{'id': 19, 'name': 'Amelia', 'email': 'a@example.com', 'group': 'A1'}]
+        plan = views.scope_authored_plan(self.MODULES, self.COMPONENTS, [])
+        activities = [{'progressId': 44, 'learnerId': 19, 'componentId': 'C1', 'progressStatus': 'achieved', 'submittedAt': '2026-10-06T09:00:00Z', 'countsTowardAchievement': True, 'scopeStatus': 'in_scope'}]
+        rows = views.learner_activity_plan(learners, self.COMPONENTS, self.MODULES, self.WEEKS, activities, plan)
+        self.assertEqual(rows[0]['calculatedStatus'], 'completed')
+        self.assertEqual(rows[0]['progressId'], 44)
+        self.assertEqual(rows[0]['progressIds'], [44])
+
+    def test_group_plan_does_not_assign_another_groups_components(self):
+        learners = [{'id': 19, 'name': 'Amelia', 'email': 'a@example.com', 'group': 'A1'}]
+        plan = views.scope_authored_plan(self.MODULES, self.COMPONENTS, [])
+        rows = views.learner_activity_plan(learners, self.COMPONENTS, self.MODULES, self.WEEKS, [], plan)
+        self.assertEqual([row['componentId'] for row in rows], ['C1'])
+
+
 class ScopeKsbAchievementTests(SimpleTestCase):
     COVERAGE = [
         {

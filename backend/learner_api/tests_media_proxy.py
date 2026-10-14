@@ -1,10 +1,11 @@
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from django.test import SimpleTestCase
 
 from .media_proxy import (
     _embedded_kbc_media_url,
     _legacy_upload_path_from_hint,
+    _load_legacy_attachment_bytes,
     _programme_audit_database_aliases,
     _raw_http_urls,
 )
@@ -81,3 +82,34 @@ class ProgrammeAuditMediaFallbackTests(SimpleTestCase):
 
         self.assertEqual(_embedded_kbc_media_url(wrong_id, '34'), '')
         self.assertEqual(_embedded_kbc_media_url(wrong_host, '34'), '')
+
+
+class LegacyAttachmentPlaceholderTests(SimpleTestCase):
+    """Some imported files are zero-byte placeholders; the original still exists."""
+
+    def test_zero_byte_copy_falls_back_to_the_original_source(self):
+        upstream = Mock(headers={'Content-Type': 'application/pdf'})
+        upstream.read.return_value = b'%PDF-real'
+        with patch('learner_api.media_proxy._legacy_attachment_upload_path', return_value='_legacy_files/7/a.pdf'), \
+                patch('learner_api.media_proxy.upload_storage.open_stream', return_value=(iter([]), 0, 'application/pdf')), \
+                patch('learner_api.media_proxy._open_legacy_attachment', return_value=upstream):
+            data, error = _load_legacy_attachment_bytes('7')
+
+        self.assertIsNone(error)
+        self.assertEqual(data, b'%PDF-real')
+
+    def test_a_real_stored_copy_is_used_without_fetching_the_original(self):
+        with patch('learner_api.media_proxy._legacy_attachment_upload_path', return_value='_legacy_files/7/a.pdf'), \
+                patch('learner_api.media_proxy.upload_storage.open_stream', return_value=(iter([b'%PDF-', b'ok']), 7, 'application/pdf')), \
+                patch('learner_api.media_proxy._open_legacy_attachment') as original:
+            data, error = _load_legacy_attachment_bytes('7')
+
+        self.assertIsNone(error)
+        self.assertEqual(data, b'%PDF-ok')
+        original.assert_not_called()
+
+    def test_the_legacy_routes_are_routed(self):
+        from django.urls import reverse
+
+        self.assertEqual(reverse('legacy-attachment-media', args=['42']), '/learner_api/media/legacy-attachment/42/')
+        self.assertEqual(reverse('legacy-attachment-pdf-page', args=['42', 3]), '/learner_api/media/legacy-attachment/42/pdf-page/3/')

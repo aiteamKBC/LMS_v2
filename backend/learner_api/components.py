@@ -317,17 +317,24 @@ def submit_component_progress(request, component_id):
     component_type = client_type or live_type or "component"
     component_title = client_title or live_title or TYPE_ACTIONS.get(component_type, (None, "Activity"))[1]
 
-    if normalise_component_type(live_type or client_type) == "assignment" and not _assignment_form_ready(
-        component_id, kind, learner_id, assignment_topic,
-    ):
-        return _error("Complete the monthly submission quality checks, presentation and coaching booking, then save before submitting.", 409)
-
     try:
         source = model.objects.get(pk=learner_id)
     except model.DoesNotExist:
         return _error("Learner not found.", 404)
     except (DatabaseError, ValueError) as exc:
         return _error(f"Database error: {exc}", 502)
+
+    # Only the monthly assignment goes through the eight-step submission. Once
+    # an author flags one, the plan's other assignments complete like any other
+    # activity (see assignment_settings).
+    monthly_submission = False
+    if normalise_component_type(live_type or client_type) == "assignment":
+        from .assignment_settings import monthly_assignment_required
+        monthly_submission = bool(assignment_topic) or monthly_assignment_required(component_id, source)
+    if monthly_submission and not _assignment_form_ready(
+        component_id, kind, learner_id, assignment_topic,
+    ):
+        return _error("Complete the monthly submission quality checks, presentation and coaching booking, then save before submitting.", 409)
 
     # Generic completion criteria. Assignment form readiness is enforced above
     # using the master component type, so it cannot be bypassed by a client that
@@ -428,7 +435,7 @@ def submit_component_progress(request, component_id):
         "at": submitted_at,
     }
     try:
-        if normalise_component_type(live_type or client_type) == "assignment":
+        if monthly_submission:
             from .monthly_assignment import complete_saved_assignment
             complete_saved_assignment(kind, learner_id, component_id, record, lambda: save_progress_record(active, record, activity), assignment_topic=assignment_topic)
         else:
@@ -459,7 +466,12 @@ def submit_component_progress(request, component_id):
             context={
                 "learnerName": str(getattr(source, "username", "") or "").strip(),
                 "programmeName": str(getattr(source, "programme", "") or "").strip(),
-                "activityType": component_type,
+                # A non-monthly assignment is handed in as an ordinary activity,
+                # the type its reflection is saved under, so it does not take
+                # the monthly submission's row.
+                "activityType": "activity" if (
+                    normalise_component_type(component_type) == "assignment" and not monthly_submission
+                ) else component_type,
                 "activityTitle": component_title or "Activity",
                 "moduleTitle": module_title or "",
                 "weekTitle": week_title or "",

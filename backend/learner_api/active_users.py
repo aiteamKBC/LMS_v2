@@ -1199,6 +1199,10 @@ def save_progress_record(learner, record, activity=None):
                 progress=progress,
                 position=position,
                 question_ref=int(answer.get("questionId")),
+                question_image_url=answer.get("imageUrl"),
+                result_snapshot={key: answer[key] for key in (
+                    "questionText", "type", "possible", "chosenText", "correctText",
+                ) if key in answer} or None,
                 chosen_answer_ref=chosen if not isinstance(chosen, list) else None,
                 is_correct=answer.get("correct") if isinstance(answer.get("correct"), bool) else None,
                 earned=_number(answer.get("earned")),
@@ -1247,7 +1251,7 @@ def save_progress_record(learner, record, activity=None):
             def _award_engagement_points():
                 from engagement_api.hooks import award_for_progress
 
-                award_for_progress(enrolment_id, learner_username, progress_snapshot)
+                award_for_progress(enrolment_id, learner_username, progress_snapshot, progress_id=progress.pk)
 
             transaction.on_commit(_award_engagement_points, using="enrolment")
 

@@ -55,6 +55,16 @@ def load_env_file(path):
 
 load_env_file(BASE_DIR / '.env')
 
+# New LMS mobile pilot: explicit default-off release gates.
+KBC_MOBILE_API_ENABLED = os.environ.get("KBC_MOBILE_API_ENABLED", "0").strip().lower() in {"1", "true", "yes", "on"}
+KBC_MOBILE_COMMS_ENABLED = os.environ.get("KBC_MOBILE_COMMS_ENABLED", "0").strip().lower() in {"1", "true", "yes", "on"}
+KBC_MOBILE_PUSH_ENABLED = os.environ.get("KBC_MOBILE_PUSH_ENABLED", "0").strip().lower() in {"1", "true", "yes", "on"}
+KBC_MOBILE_FCM_PROJECT = os.environ.get("KBC_MOBILE_FCM_PROJECT", "kbc-learn-mobile")
+KBC_MOBILE_FCM_CREDENTIAL = os.environ.get("KBC_MOBILE_FCM_CREDENTIAL", "/etc/kbc-mobile/notification-sender.json")
+KBC_MOBILE_CALENDAR_WRITES_ENABLED = os.environ.get("KBC_MOBILE_CALENDAR_WRITES_ENABLED", "0").strip().lower() in {"1", "true", "yes", "on"}
+KBC_SHARED_REWARDS_READY = os.environ.get("KBC_SHARED_REWARDS_READY", "0").strip().lower() in {"1", "true", "yes", "on"}
+
+
 SAFEGUARDING_SSO_SECRET = os.environ.get("SAFEGUARDING_SSO_SECRET", "").strip()
 INCLUSION_SSO_SECRET = os.environ.get("INCLUSION_SSO_SECRET", "").strip()
 INCLUSION_SSO_CALLBACK_URL = os.environ.get(
@@ -383,6 +393,7 @@ INSTALLED_APPS = [
     'progress_reviews_api',
     'knowledge_base',
     'chat',
+    'mobile_comms',
     # One shared projection table, one transactional outbox and one short-lived
     # performance-sample table for aggregate screens across every workspace.
     'read_models',

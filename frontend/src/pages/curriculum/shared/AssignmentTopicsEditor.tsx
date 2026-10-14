@@ -1,7 +1,7 @@
 import { useRef, useState } from 'react';
 import styles from './AssignmentTopicsEditor.module.css';
 import { RichTextDraft } from '../module-builder/RichTextEditor';
-import { assignmentTopics, ASSIGNMENT_RESOURCE_ACCEPT, topicLabel, type AssignmentTopic, type AssignmentTopicResource } from '@/lib/assignmentTopics';
+import { assignmentTopics, ASSIGNMENT_RESOURCE_ACCEPT, splitLegacyMaterials, topicLabel, type AssignmentTopic, type AssignmentTopicResource } from '@/lib/assignmentTopics';
 
 export function AssignmentTopicsEditor({ value, legacyQuestion = '', legacyInstructions = '', legacyResources = [], onChange, onUpload }: {
   value: unknown;
@@ -12,7 +12,12 @@ export function AssignmentTopicsEditor({ value, legacyQuestion = '', legacyInstr
   onUpload: (file: File) => Promise<AssignmentTopicResource>;
 }) {
   const configured = assignmentTopics(value);
-  const topics = configured.length ? configured : assignmentTopics([{ id: '1', question: legacyQuestion, instructions: legacyInstructions, resources: legacyResources }]);
+  // Imported assignments carry the legacy course's "Additional materials" link
+  // list in their instructions; seed it as Topic 1's resources instead.
+  const legacy = splitLegacyMaterials(legacyInstructions);
+  const legacyLinks = legacy.links.filter(link => !legacyResources.some(file => file.url === link.url))
+    .map(link => ({ fileName: link.label, url: link.url, size: 0, contentType: '', link: true }));
+  const topics = configured.length ? configured : assignmentTopics([{ id: '1', question: legacyQuestion, instructions: legacy.instructions, resources: [...legacyResources, ...legacyLinks] }]);
   const [selected, setSelected] = useState('1');
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState('');
@@ -36,7 +41,7 @@ export function AssignmentTopicsEditor({ value, legacyQuestion = '', legacyInstr
     finally { setUploading(false); }
   };
   return <section className="space-y-4 rounded-xl border border-background-200 bg-white p-4">
-    <div><h3 className="text-sm font-bold">Assignment topics</h3><p className="mt-1 text-xs text-foreground-500">Learners submit one topic at a time. One submitted topic completes the assignment. Planned hours apply once to the whole component.</p></div>
+    <div><h3 className="text-sm font-bold">Assignment topics</h3><p className="mt-1 text-xs text-foreground-500">Learners submit one topic at a time. One submitted topic completes the assignment. Planned hours apply once to the whole component. Only topics with a question, instructions or a file are shown to learners; fill in more than one to offer a choice.</p></div>
     <div className={`${styles.topicTabs} flex flex-wrap gap-2`} role="tablist" aria-label="Assignment topics">
       {topics.map(item => <button key={item.id} type="button" role="tab" aria-selected={selected === item.id} disabled={uploading} onClick={() => setSelected(item.id)} className={`${styles.topicTab} rounded-lg border px-3 py-2 text-sm ${selected === item.id ? 'border-primary-600 bg-primary-600 text-white' : 'border-background-200'}`}>{topicLabel(item)}</button>)}
     </div>

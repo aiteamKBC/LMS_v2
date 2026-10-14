@@ -479,7 +479,9 @@ def _owned_material(kind, pk, group_id, activity_id):
 @learner_self_or_staff(kwarg='pk')
 def source_material_file(request, kind, pk, group_id, activity_id):
     from django.conf import settings
-    from .material_storage import curriculum_archive_url, read_url
+    from .material_storage import (
+        OFFICE_PREVIEW_SUFFIXES, curriculum_archive_url, file_response, office_preview_response,
+    )
     try:
         _aptem_id, stored = _owned_material(kind, pk, group_id, activity_id)
         row = stored['_source']
@@ -493,8 +495,13 @@ def source_material_file(request, kind, pk, group_id, activity_id):
         elif row.get('material_blob_content_type') == 'application/pdf':
             from .material_storage import pdf_response
             response = pdf_response(row, settings, request)
+        elif (str(request.GET.get('preview') or '').lower() in {'1', 'true', 'yes'}
+              and str(row.get('material_blob_name') or '').lower().endswith(OFFICE_PREVIEW_SUFFIXES)):
+            response = office_preview_response(row, settings)
         else:
-            response = HttpResponseRedirect(read_url(row, settings))
+            # Streamed, not redirected: the inline Word/Excel preview fetches
+            # this, and Azure's response carries no CORS headers for this site.
+            response = file_response(row, settings, request)
         response['Cache-Control'] = 'private, no-store'
         response['Referrer-Policy'] = 'no-referrer'
         return response

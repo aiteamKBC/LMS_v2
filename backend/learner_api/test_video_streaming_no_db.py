@@ -15,7 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from django.conf import settings
 if not settings.configured:
     settings.configure(DEFAULT_CHARSET='utf-8', DATABASES={})
-from django.http import FileResponse, Http404, HttpResponse
+from django.http import FileResponse, Http404, HttpResponse, HttpResponseRedirect
 from django.test import AsyncRequestFactory, RequestFactory, override_settings
 from curriculum_api import upload_storage
 from learner_api import evidence_storage, media_proxy
@@ -37,7 +37,8 @@ def uploaded_view():
     namespace = dict(upload_storage=upload_storage, COMPONENT_UPLOAD_ROOT='curriculum_uploads',
                      Path=Path, clean_str=lambda value: str(value or '').strip(),
                      FileResponse=FileResponse, HttpResponse=HttpResponse, Http404=Http404,
-                     mimetypes=mimetypes)
+                     HttpResponseRedirect=HttpResponseRedirect, OFFICE_PREVIEW_EXTENSIONS=frozenset(),
+                     mimetypes=mimetypes, re=re)
     exec(compile(ast.Module(body=nodes, type_ignores=[]), str(path), 'exec'), namespace)
     return namespace['curriculum_uploaded_file']
 

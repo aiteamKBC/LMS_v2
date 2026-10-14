@@ -151,6 +151,8 @@ class EvidenceFixture:
                     and row.learner_email in params[1]]
         elif 'FROM curriculum.live_session_learner_attendance' in sql:
             rows = []
+        elif 'teams_shared_source_module_id' in sql:
+            rows = []  # No module here shares another module's Teams meeting.
         elif 'FROM curriculum.components' not in sql:
             raise AssertionError('Unexpected SQL in selected-occurrence audit')
         self.cursor.description = [(key,) for key in rows[0]] if rows else []
