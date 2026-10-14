@@ -170,7 +170,8 @@ class AuthoringIdentityTests(unittest.TestCase):
             'teamsOnlineMeetingId': 'MEETING-1', 'teamsMeetingUrl': 'https://teams.microsoft.com/meet/example',
             'teamsWebLink': 'https://outlook.office.com/calendar/item/example',
             'teamsStartDateTimeUtc': '2026-10-29T09:00:00Z', 'teamsDurationMinutes': 90,
-            'sessionDay': 'Thursday', 'sessionRescheduled': True}
+            'sessionDay': 'Thursday', 'sessionRescheduled': True,
+            'liveSessionLinkOverride': 'https://teams.microsoft.com/meet/replacement'}
 
     def test_save_retains_exact_occurrence_and_shifted_calendar_fields(self):
         for kind in ('live-session', 'live_session'):
@@ -472,7 +473,7 @@ class EndpointTests(unittest.TestCase):
         functions(ROOT.parent / 'login/permissions.py', {'require_role', '_learner_progress_gate', 'learner_self_or_staff'}, self.ns)
         functions(ROOT / 'session_results.py', {'json_value', 'result_rows', 'admin_session', 'learner_results', 'learner_content',
             'module_results', 'stored_content', 'queue_sync', 'learner_join', 'apply_recovery', 'unavailable', 'archive_schema_missing',
-            'attendance_alias_rows', 'attendance_identity_link_rows',
+            'attendance_alias_rows', 'attendance_identity_link_rows', 'learner_series', 'join_url_for', 'learner_join_failure',
             'recording_visibility', 'export_attendance', 'link_attendance_alias'}, self.ns)
         self.real_attendance_identity_link_rows = self.ns['attendance_identity_link_rows']
         self.ns['attendance_identity_link_rows'] = Mock(return_value=[])
@@ -680,6 +681,63 @@ class EndpointTests(unittest.TestCase):
         self.assertEqual(rows[0]['attendance'][0]['name'], 'Module Learner')
         self.assertNotIn('tutor@example.invalid', json.dumps(rows, default=str))
 
+    def account_check_rows(self, identity):
+        from curriculum_api.attendance_identity import identity_check, staff_roles
+        self.ns.update(identity_check=identity_check, staff_roles=staff_roles,
+                       module_tutor_emails=Mock(return_value=['tutor@example.invalid']),
+                       college_tenant_id=Mock(return_value='HOME'))
+        self.ns['apply_recovery'] = lambda rows: None
+        self.ns['read'].side_effect = [[{
+            'id': 'O', 'session_number': 1, 'status': 'completed', 'attendance_report_id': 'R',
+            'actual_end': '2026-09-16T10:00Z', 'scheduled_start': '2026-09-16T09:00Z',
+            'scheduled_end': '2026-09-16T10:00Z',
+        }], [{
+            'id': 'LEARNER', 'occurrence_id': 'O', 'email': 'learner@example.invalid', 'role': 'Attendee',
+            'total_attendance_seconds': 240,
+            'raw_data': {'identity': {'id': 'OID-L', 'displayName': 'Learner', 'tenantId': 'HOME'}},
+        }, {
+            'id': 'TUTOR', 'occurrence_id': 'O', 'email': 'tutor@example.invalid', 'role': 'Presenter',
+            'total_attendance_seconds': 3600,
+            'raw_data': {'identity': {'id': 'OID-T', 'displayName': 'Tutor', 'tenantId': 'HOME'}},
+        }, {
+            'id': 'ANON', 'occurrence_id': 'O', 'email': '', 'role': 'Attendee', 'display_name': 'Module Learner',
+            'total_attendance_seconds': 60,
+            'raw_data': {'identity': {'id': 'ANON-1', 'displayName': 'Module Learner', 'tenantId': None}},
+        }], [{
+            'occurrence_id': 'O', 'learner_profile_id': 7,
+            'learner_email': 'learner@example.invalid', 'learner_name': 'Module Learner',
+            'attendance_status': 'present', 'attended_seconds': 240,
+        }], [], []]
+        return self.ns['result_rows']({'id': 'S', 'module_catalogue_id': 'M'}, session_number=1, identity=identity)
+
+    def test_staff_account_check_is_added_without_changing_the_register(self):
+        plain = self.account_check_rows(False)
+        checked = self.account_check_rows(True)
+        self.assertNotIn('identityCheck', plain[0])
+        self.assertEqual({k: v for k, v in checked[0].items() if k != 'identityCheck'}, plain[0])
+        people = {person['name']: person for person in checked[0]['identityCheck']['participants']}
+        self.assertEqual(people['Tutor']['roles'], ['Tutor'])
+        self.assertEqual(people['Tutor']['status'], 'matched')
+        # The register's saved exact-name rule counts the anonymous row for the
+        # learner, so the check flags them: a name is not proof of identity.
+        learner = people['Module Learner']
+        self.assertEqual(learner['expectedEmail'], 'learner@example.invalid')
+        self.assertEqual(learner['linkedBy'], ['email', 'name'])
+        self.assertEqual(learner['status'], 'unverified-guest')
+        self.assertEqual([account['status'] for account in learner['accounts']], ['unverified-guest', 'matched'])
+        self.assertIn('not proof of identity', learner['reason'])
+        self.assertNotIn('raw_data', json.dumps(checked, default=str))
+
+    def test_learner_results_never_carry_the_account_check(self):
+        rows = self.account_check_rows(True)
+        self.ns['read'].side_effect = None
+        self.assertIn('identityCheck', rows[0])
+        self.ns['read'].side_effect = [[{'id': 'O', 'session_number': 1, 'status': 'completed', 'attendance_report_id': 'R',
+            'actual_end': '2026-09-16T10:00Z', 'scheduled_start': '2026-09-16T09:00Z', 'scheduled_end': '2026-09-16T10:00Z'}],
+            [], [], []]
+        own = self.ns['result_rows']({'id': 'S'}, session_number=1, email='learner@example.invalid', identity=True)
+        self.assertNotIn('identityCheck', own[0])
+
     def test_staff_sees_unknown_attendee_separately_from_module_roster(self):
         self.ns['apply_recovery'] = lambda rows: None
         self.ns['read'].side_effect = [[{
@@ -743,7 +801,8 @@ class EndpointTests(unittest.TestCase):
         response = self.ns['admin_session'](self.req(), series_id='S', session_number=12)
         self.assertEqual(response['job'], job)
         self.assertEqual(self.ns['read'].call_args.args[1], ['S'])
-        self.ns['result_rows'].assert_called_once_with({'id': 'S'}, session_number=12)
+        # identity=True adds the read-only account check; it starts no work either.
+        self.ns['result_rows'].assert_called_once_with({'id': 'S'}, session_number=12, identity=True)
         self.ns['start_requested_sync'].assert_not_called()
 
     def test_missing_job_table_does_not_hide_saved_session(self):
@@ -823,6 +882,18 @@ class EndpointTests(unittest.TestCase):
         self.assertEqual(self.ns['read'].call_args.args[1], ['A', 'S'])
         storage.get_read_sas.assert_called_once_with('session-recordings', 'M/G/S/file.mp4', ttl_minutes=240)
 
+    def test_staff_download_signs_an_attachment_name_into_the_private_url(self):
+        storage = types.ModuleType('learner_api.evidence_storage')
+        storage.get_read_sas = Mock(return_value='https://storage.invalid/private/read')
+        self.ns['recording_download_name'] = Mock(return_value='Module-session-1-2026-09-07.mp4')
+        req = self.req(); req.GET = {'download': '1'}
+        with patch.dict(sys.modules, {'learner_api.evidence_storage': storage}):
+            self.ns['read'].return_value = [{'status': 'ready', 'artifact_type': 'recording', 'container': 'session-recordings', 'blob_name': 'M/G/S/file.mp4'}]
+            response = self.ns['stored_content'](req, 'S', 'A')
+        self.assertEqual(response.status_code, 302)
+        storage.get_read_sas.assert_called_once_with('session-recordings', 'M/G/S/file.mp4', ttl_minutes=240,
+            content_disposition='attachment; filename="Module-session-1-2026-09-07.mp4"')
+
     def test_timed_cues_are_read_from_database_without_signing_or_fetching_storage(self):
         cues = [{'start': 1, 'end': 3, 'speaker': 'Speaker', 'text': 'Saved words'}]
         self.ns['read'].return_value = [{'status': 'ready', 'artifact_type': 'transcript',
@@ -835,25 +906,127 @@ class EndpointTests(unittest.TestCase):
         self.ns['read'].return_value[0]['metadata'] = {}
         self.assertEqual(self.ns['stored_content'](req, 'S', 'T').status_code, 409)
 
-    def test_expired_join_is_denied_without_launch_write(self):
-        checks = types.ModuleType('curriculum_api.teams_calendar_checks'); checks.safe_teams_join_url = lambda value: True
-        self.ns['learner_series'] = lambda *args: (types.SimpleNamespace(email='a@example.invalid'), {'id': 'S', 'status': 'active'})
-        self.ns['read'].return_value = [{'id': 'O', 'status': 'completed', 'scheduled_end': '2026-09-16T10:00Z'}]
+    def join(self, series=None, occurrence=None, components=(), learner=None):
+        """Call learner_join with a real link check, for one occurrence of series S."""
+        from curriculum_api.teams_calendar_checks import safe_teams_join_url
+        checks = types.ModuleType('curriculum_api.teams_calendar_checks'); checks.safe_teams_join_url = safe_teams_join_url
+        learner = learner or types.SimpleNamespace(email=' A@example.invalid ')
+        series = {'id': 'S', 'status': 'active', 'module_catalogue_id': 'MOD', 'join_url': '', **(series or {})}
+        self.ns['learner_series'] = lambda *args: (learner, series)
+        occurrence = {'id': 'O', 'session_number': 1, 'status': 'scheduled', 'scheduled_end': '2026-09-16T13:00Z',
+                      'join_url': 'https://teams.microsoft.com/meet/original', **(occurrence or {})}
+        self.ns['read'].side_effect = [[occurrence], list(components)]
         with patch.dict(sys.modules, {'curriculum_api.teams_calendar_checks': checks}):
-            response = self.ns['learner_join'](self.req('learner'), kind='commercial', learner_id=7, series_id='S', session_number=1)
-        self.assertEqual(response.status_code, 410); self.cursor.execute.assert_not_called()
+            return self.ns['learner_join'](self.req('learner'), kind='commercial', learner_id=7, series_id='S', session_number=1)
+
+    def assertJoinError(self, response, reason):
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response['location'], f'/learner/attendance/commercial/7?joinError={reason}')
+        self.cursor.execute.assert_not_called()
+
+    def test_expired_join_returns_to_attendance_without_launch_write(self):
+        self.assertJoinError(self.join(occurrence={'status': 'completed', 'scheduled_end': '2026-09-16T10:00Z'}), 'ended')
 
     def test_join_records_context_not_presence(self):
-        checks = types.ModuleType('curriculum_api.teams_calendar_checks'); checks.safe_teams_join_url = lambda value: True
-        self.ns['learner_series'] = lambda *args: (types.SimpleNamespace(email='a@example.invalid'), {'id': 'S', 'status': 'active'})
-        self.ns['read'].return_value = [{'id': 'O', 'status': 'scheduled', 'scheduled_end': '2026-09-16T13:00Z', 'join_url': 'https://teams.microsoft.com/meet/example'}]
-        with patch.dict(sys.modules, {'curriculum_api.teams_calendar_checks': checks}):
-            response = self.ns['learner_join'](self.req('learner'), kind='commercial', learner_id=7, series_id='S', session_number=1)
+        response = self.join()
         self.assertEqual(response.status_code, 302)
+        self.assertEqual(response['location'], 'https://teams.microsoft.com/meet/original')
         query, params = self.cursor.execute.call_args.args
         self.assertIn('live_session_join_launches', query)
         self.assertNotIn('attendance_status', query)
         self.assertEqual(params[1:], ['S', 'O', 'a@example.invalid'])
+
+    def test_join_opens_before_the_start_until_the_end(self):
+        # Only an ended session is refused; Teams holds early arrivals in the lobby.
+        response = self.join(occurrence={'scheduled_start': '2026-09-16T12:10Z', 'scheduled_end': '2026-09-16T13:00Z'})
+        self.assertEqual(response['location'], 'https://teams.microsoft.com/meet/original')
+
+    def test_replaced_teams_link_wins_over_the_meetings_own(self):
+        components = [
+            {'module_catalogue_id': 'MOD', 'series_id': 'S', 'session_number': '2',
+             'link_override': 'https://teams.microsoft.com/meet/other-week'},
+            {'module_catalogue_id': 'MOD', 'series_id': 'S', 'session_number': '1',
+             'link_override': 'https://teams.microsoft.com/meet/replaced',
+             'teams_meeting_url': 'https://teams.microsoft.com/meet/replaced'},
+        ]
+        response = self.join(components=components)
+        self.assertEqual(response['location'], 'https://teams.microsoft.com/meet/replaced')
+        components_query, params = self.ns['read'].call_args.args
+        self.assertIn("settings_json->>'liveSessionLinkOverride'", components_query)
+        self.assertNotIn('c.settings_json,', components_query)
+        self.assertEqual(params, [['MOD']])
+
+    def test_unsafe_override_and_stale_component_link_do_not_replace_the_meeting(self):
+        components = [{'module_catalogue_id': 'MOD', 'occurrence_id': 'O', 'link_override': 'https://evil.example/meet',
+                       'teams_meeting_url': 'https://teams.microsoft.com/meet/stale'}]
+        self.assertEqual(self.join(components=components)['location'], 'https://teams.microsoft.com/meet/original')
+        # The component's ordinary link is used only when the meeting rows have none.
+        response = self.join(occurrence={'join_url': ''}, components=components)
+        self.assertEqual(response['location'], 'https://teams.microsoft.com/meet/stale')
+
+    def test_shared_duplicate_joins_through_its_own_replaced_link_by_position(self):
+        components = [
+            {'module_catalogue_id': 'MOD', 'series_id': 'S', 'session_number': '2'},
+            {'module_catalogue_id': 'MOD', 'series_id': 'S', 'session_number': '1'},
+            {'module_catalogue_id': 'ALIAS', 'link_override': 'https://teams.microsoft.com/meet/alias-week-1'},
+            {'module_catalogue_id': 'ALIAS', 'link_override': 'https://teams.microsoft.com/meet/alias-week-2'},
+        ]
+        response = self.join(series={'learner_shared_module_ids': ['ALIAS']}, components=components)
+        self.assertEqual(response['location'], 'https://teams.microsoft.com/meet/alias-week-2')
+        self.assertEqual(self.ns['read'].call_args.args[1], [['MOD', 'ALIAS']])
+
+    def test_failed_launch_record_still_sends_the_learner_to_teams(self):
+        self.cursor.execute.side_effect = self.ns['DatabaseError']('launch table unavailable')
+        with self.assertLogs('test', 'WARNING'):
+            response = self.join()
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response['location'], 'https://teams.microsoft.com/meet/original')
+
+    def test_learner_without_email_still_joins(self):
+        response = self.join(learner=types.SimpleNamespace(email=None))
+        self.assertEqual(response['location'], 'https://teams.microsoft.com/meet/original')
+        self.cursor.execute.assert_not_called()
+
+    def test_join_failures_return_to_the_attendance_page(self):
+        self.ns['learner_series'] = lambda *args: (None, None)
+        self.assertJoinError(self.ns['learner_join'](self.req('learner'), kind='commercial', learner_id=7,
+                                                     series_id='S', session_number=1), 'not-found')
+        self.assertJoinError(self.join(series={'status': ' Cancelled '}), 'unavailable')
+        self.assertJoinError(self.join(series={'status': 'canceled'}), 'unavailable')
+        self.assertJoinError(self.join(occurrence={'status': 'Deleted'}), 'unavailable')
+        self.assertJoinError(self.join(occurrence={'join_url': 'https://evil.example/meet'}), 'unavailable')
+        self.ns['read'].side_effect = self.ns['DatabaseError']('offline')
+        with self.assertLogs('test', 'ERROR'):
+            response = self.ns['learner_join'](self.req('learner'), kind='commercial', learner_id=7, series_id='S', session_number=1)
+        self.assertJoinError(response, 'unavailable')
+
+    def learner_series(self, assigned, shared, series_row):
+        learner = types.SimpleNamespace(email='a@example.invalid')
+        model = types.SimpleNamespace(all_learners=types.SimpleNamespace(
+            filter=lambda **kwargs: types.SimpleNamespace(first=lambda: learner)))
+        detail = types.ModuleType('learner_api.learner_detail'); detail.SOURCE_MODELS = {'commercial': model}
+        lectures = types.ModuleType('learner_api.attendance_lectures')
+        lectures.read_assigned_modules = lambda source: [{'id': module_id} for module_id in assigned]
+        lectures.shared_teams_sources = Mock(return_value=shared)
+        self.ns['read'].return_value = [series_row] if series_row else []
+        with patch.dict(sys.modules, {'learner_api.learner_detail': detail, 'learner_api.attendance_lectures': lectures}):
+            return self.ns['learner_series']('commercial', 7, 'S'), lectures.shared_teams_sources
+
+    def test_learner_series_accepts_a_learner_on_a_shared_teams_duplicate(self):
+        series = {'id': 'S', 'module_catalogue_id': 'SOURCE', 'status': 'Active'}
+        (learner, found), shared = self.learner_series(['ALIAS', 'OTHER'], {'ALIAS': {'SOURCE'}}, series)
+        self.assertIsNotNone(learner)
+        self.assertEqual(found, {**series, 'learner_shared_module_ids': ['ALIAS']})
+        self.assertEqual(set(shared.call_args.args[0]), {'ALIAS', 'OTHER'})
+        self.assertIn("lower(btrim(s.status)) NOT IN ('deleted','superseded','failed')", self.ns['read'].call_args.args[0])
+
+    def test_learner_series_rejects_unassigned_and_keeps_direct_assignments_unchanged(self):
+        series = {'id': 'S', 'module_catalogue_id': 'SOURCE', 'status': 'active'}
+        self.assertEqual(self.learner_series(['OTHER'], {'OTHER': {'ELSEWHERE'}}, series)[0], (None, None))
+        (_, found), shared = self.learner_series(['SOURCE'], {}, series)
+        self.assertIs(found, series)
+        shared.assert_not_called()
+        self.assertEqual(self.learner_series(['SOURCE'], {}, None)[0], (None, None))
 
     def test_reported_catchup_is_shown_without_changing_original_absence(self):
         self.ns['read'].return_value = [{

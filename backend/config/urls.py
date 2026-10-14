@@ -34,9 +34,12 @@ urlpatterns = [
     path('curriculum_api/performance/record/', system_performance.performance_record, name='performance-record'),
     path('curriculum_api/performance/report/', system_performance.performance_report, name='performance-report'),
     path('curriculum_api/knowledge-base/', include('knowledge_base.urls')),
+    # Teams Calendar health (read-only views plus the confirmed resolution).
+    path('curriculum_api/', include('curriculum_api.integrity_urls')),
     path('curriculum_api/', include('curriculum_api.urls')),
     path('coach_api/', include('coach_api.urls')),
     path('quiz_api/', include('quiz_api.urls')),
+    path('learner_api/communications/', include('mobile_comms.urls')),
     path('learner_api/', include('learner_api.urls')),
     path('audit_api/', include('audit_api.urls')),
     # HOURS-TEST: the same audit API over the cloned Neon branch.

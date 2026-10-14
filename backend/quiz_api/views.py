@@ -26,6 +26,8 @@ from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
 
 from .models import QuizAnswer, QuizPackage, QuizQuestion
+from .question_images import validate_question_image
+from .answer_keys import choice_key_error, choice_label
 from learner_api.models import LearnerProfile
 
 logger = logging.getLogger(__name__)
@@ -731,22 +733,11 @@ def _normalise_generated_questions(data, default_type="single_choice"):
         if question_type in {"single_choice", "multiple_choice", "true_false"} and not options:
             continue
 
-        correct_indexes = set(range(len(options))) if question_type in {"matching", "image_matching", "keywords", "ordering"} else {0}
-        if correct_answer:
-            correct_indexes = set()
-            correct_tokens = [token.strip() for token in re.split(r"[,;/]", correct_answer) if token.strip()]
-            for token in correct_tokens or [correct_answer]:
-                lower_correct = token.lower()
-                for index, option in enumerate(options):
-                    if option.lower() == lower_correct:
-                        correct_indexes.add(index)
-                letter_index = _correct_answer_index(token)
-                if 0 <= letter_index < len(options):
-                    correct_indexes.add(letter_index)
-            if question_type in {"matching", "image_matching", "keywords", "ordering"} and not correct_indexes:
-                correct_indexes = set(range(len(options)))
-            if not correct_indexes:
-                correct_indexes = {0}
+        if question_type in {"matching", "image_matching", "keywords", "ordering", "fill_gap"}:
+            correct_indexes = set(range(len(options)))
+        else:
+            parsed = _question_from_parts(text, options, correct_answer, question_type=question_type)
+            correct_indexes = {answer["sort_order"] for answer in parsed["answers"] if answer["is_correct"]}
 
         answers = [
             {
@@ -2263,7 +2254,7 @@ def _normalise_correct_answer(value):
     if value is None:
         return ""
     text = str(value).strip()
-    match = re.match(r"^([A-Z])(?:[\).:\s]|$)", text, flags=re.IGNORECASE)
+    match = re.fullmatch(r"([A-Z])(?:[\).:]\s*.*)?", text, flags=re.IGNORECASE)
     return match.group(1).upper() if match else text.lower()
 
 
@@ -2278,27 +2269,40 @@ def _correct_answer_index(value):
 
 def _question_from_parts(text, options, correct_answer="", explanation="", question_type="single_choice"):
     question_type = _normalise_question_type(question_type or "single_choice")
-    cleaned_options = [str(option).strip() for option in options if option is not None and str(option).strip()]
-    correct_tokens = [
-        _normalise_correct_answer(token)
-        for token in re.split(r"[,;/|]", str(correct_answer or ""))
-        if str(token).strip()
-    ]
-    correct_keys = set(correct_tokens)
-    correct_key = next(iter(correct_keys), "")
     answers = []
-    for index, option in enumerate(cleaned_options):
+    option_positions = []
+    for index, raw_option in enumerate(options):
+        option = str(raw_option or "").strip()
+        if not option:
+            continue
         letter = chr(65 + index)
-        number = str(index + 1)
-        option_key = _normalise_correct_answer(option)
+        # Only remove an explicit marker for this option's position. Natural
+        # text such as 'A private memo' and 'X (Twitter)' is not a marker.
+        option = re.sub(rf"^{letter}[\).:]\s+", "", option, flags=re.IGNORECASE).strip()
         answers.append({
-            "text": re.sub(r"^[A-Z][\).:\s]+", "", option, flags=re.IGNORECASE).strip(),
-            "is_correct": bool({letter, number, option_key, option.lower()} & correct_keys),
+            "text": option,
+            "is_correct": False,
             "sort_order": index,
         })
+        option_positions.append(index)
 
-    if answers and correct_key and not any(answer["is_correct"] for answer in answers):
-        answers[0]["is_correct"] = True
+    key_text = str(correct_answer or "").strip()
+    # A complete answer may itself contain commas, slashes or semicolons.
+    # Position keys are resolved separately from option text; a word starting
+    # with A must never become a second correct answer for key A.
+    position_key = re.fullmatch(r"(?:[A-Z]|[1-9]\d*)(?:\s*[,;/|]\s*(?:[A-Z]|[1-9]\d*))*", key_text, re.IGNORECASE)
+    exact = [i for i, answer in enumerate(answers) if choice_label(answer["text"]) == choice_label(key_text)]
+    if exact and not position_key:
+        for index in exact:
+            answers[index]["is_correct"] = True
+    else:
+        tokens = re.split(r"\s*[,;/|]\s*", key_text) if position_key or question_type == "multiple_choice" else [key_text]
+        for token in tokens:
+            key = _normalise_correct_answer(token)
+            position = int(key) - 1 if key.isdigit() else ord(key) - ord("A") if len(key) == 1 and key.isupper() else None
+            for index, answer in enumerate(answers):
+                if (position is not None and option_positions[index] == position) or (position is None and key and choice_label(answer["text"]) == choice_label(token)):
+                    answer["is_correct"] = True
 
     return {
         "text": text.strip(),
@@ -3362,6 +3366,19 @@ def quizzes(request):
             valid = False
             message = message or "File uploaded, but no questions were detected. Use columns like Question Title, Option 1-5, and Answer."
         default_question_type = _default_question_type_from_questions(parsed_questions, request.POST.get("questionType") or "single_choice")
+        key_errors = []
+        for index, question in enumerate(parsed_questions, 1):
+            error = choice_key_error(question.get("question_type"), [
+                {"text": answer["text"], "isCorrect": answer["is_correct"]}
+                for answer in question.get("answers", [])
+            ], strict_duplicates=True)
+            if error:
+                key_errors.append(f"Question {index}: {error}")
+        if key_errors:
+            valid = False
+            message = " ".join(key_errors)
+            if _clean_quiz_status(request.POST.get("status"), "draft") == "published":
+                return JsonResponse({"error": message}, status=400)
         try:
             duration = int(request.POST.get("duration") or 60)
         except (TypeError, ValueError):
@@ -3475,6 +3492,7 @@ def _quiz_question_lookup(quiz_id):
     for question in questions:
         question_lookup[question.id] = {
             "text": question.question_text,
+            "imageUrl": question.image_url,
             "type": question.question_type,
             "possible": question.points,
         }
@@ -3492,15 +3510,16 @@ def _serialize_attempt_for_student(attempt, question_lookup, answer_lookup):
         except (TypeError, ValueError):
             pass
         question_meta = question_lookup.get(question_id) or {}
-        chosen_answer = question.get("chosenAnswer")
-        correct_answer = question.get("correctAnswer")
-        if chosen_answer is None:
+        chosen_answer = question.get("chosenText", question.get("chosenAnswer"))
+        correct_answer = question.get("correctText", question.get("correctAnswer"))
+        if chosen_answer is None and "chosenText" not in question:
             chosen_answer = _answer_label(question.get("chosenAnswerId"), answer_lookup)
-        if correct_answer is None:
+        if correct_answer is None and "correctText" not in question:
             correct_answer = _answer_label(question.get("correctAnswerId"), answer_lookup)
         questions.append({
             "number": index,
-            "text": question.get("text") or question_meta.get("text") or "",
+            "text": question.get("questionText") or question.get("text") or question_meta.get("text") or "",
+            "imageUrl": question.get("imageUrl", question_meta.get("imageUrl", "")),
             "type": question.get("type") or question_meta.get("type") or "",
             "chosenAnswer": chosen_answer,
             "correctAnswer": correct_answer,
@@ -3626,6 +3645,14 @@ def quiz_detail(request, pk):
         status = _clean_quiz_status(payload["status"], "")
         if not status:
             return JsonResponse({"error": "Unsupported quiz status"}, status=400)
+        if status == "published":
+            for index, question in enumerate(QuizQuestion.objects.filter(quiz_id=quiz.id, is_archived=False).prefetch_related("answers"), 1):
+                error = choice_key_error(question.question_type, [
+                    {"text": answer.answer_text, "isCorrect": answer.is_correct}
+                    for answer in question.answers.all()
+                ], strict_duplicates=True)
+                if error:
+                    return JsonResponse({"error": f"Question {index}: {error}"}, status=400)
         quiz.status = status
 
     for field in ["title", "module", "programme", "version", "author"]:
@@ -4168,6 +4195,7 @@ def _quiz_preview_payload(quiz, include_archived=False):
             "id": question.id,
             "text": question.question_text,
             "questionType": question.question_type,
+            "imageUrl": question.image_url,
             "explanation": question.explanation,
             "isArchived": question.is_archived,
             "answers": [
@@ -4253,6 +4281,7 @@ def question_bank(request):
             key,
             question.question_type,
             " ".join((question.question_text or "").split()).strip().lower(),
+            question.image_url,
         )
         linked_quizzes = question_usage_by_signature.setdefault(signature, {})
         linked_quizzes[question.quiz_id] = {
@@ -4273,12 +4302,14 @@ def question_bank(request):
             key,
             question.question_type,
             " ".join((question.question_text or "").split()).strip().lower(),
+            question.image_url,
         )
 
         questions.append({
             "id": question.id,
             "text": question.question_text,
             "questionType": question.question_type,
+            "imageUrl": question.image_url,
             "explanation": question.explanation,
             "programme": programme_name,
             "programmeKey": key,
@@ -4360,6 +4391,7 @@ def add_question_to_quiz(request, question_id):
         new_question = QuizQuestion.objects.create(
             quiz=target_quiz,
             question_text=source_question.question_text,
+            image_url=source_question.image_url,
             question_type=source_question.question_type,
             points=source_question.points,
             sort_order=next_sort_order,
@@ -4412,10 +4444,36 @@ def quiz_questions(request, pk):
     if not isinstance(questions, list):
         return JsonResponse({"error": "questions must be a list"}, status=400)
 
+    # Validate the complete batch before changing any questions or answers.
+    for index, question in enumerate(questions, start=1):
+        if not isinstance(question, dict):
+            return JsonResponse({"error": "Each question must be an object"}, status=400)
+        if "imageUrl" in question:
+            try:
+                question["imageUrl"] = validate_question_image(question["imageUrl"])
+            except ValueError as exc:
+                return JsonResponse({"error": f"Question {index}: {exc}"}, status=400)
+
     existing_questions = {
         question.id: question
         for question in QuizQuestion.objects.filter(quiz_id=quiz.id).prefetch_related("answers")
     }
+    for index, question in enumerate(questions, 1):
+        existing = existing_questions.get(question.get("id"))
+        if "answers" not in question and "questionType" not in question:
+            continue
+        answers = question.get("answers")
+        if answers is None:
+            answers = [{"text": a.answer_text, "isCorrect": a.is_correct} for a in existing.answers.all()] if existing else []
+        if not isinstance(answers, list) or any(not isinstance(a, dict) for a in answers):
+            return JsonResponse({"error": f"Question {index}: answers must be a list of objects."}, status=400)
+        error = choice_key_error(
+            question.get("questionType") or (existing.question_type if existing else quiz.default_question_type),
+            [answer for answer in answers if str(answer.get("text") or "").strip()],
+            strict_duplicates=True, require_key=quiz.status == "published" and not question.get("isArchived", getattr(existing, "is_archived", False)),
+        )
+        if error:
+            return JsonResponse({"error": f"Question {index}: {error}"}, status=400)
     remove_missing = bool(payload.get("removeMissing"))
     if remove_missing and len(questions) == 1 and len(existing_questions) > 1:
         return JsonResponse({
@@ -4427,19 +4485,43 @@ def quiz_questions(request, pk):
         for question_index, question in enumerate(questions):
             question_id = question.get("id")
             question_record = existing_questions.get(question_id)
+            replace_answers = True
             if question_record:
-                question_record.question_text = question.get("text", "").strip() or "Untitled question"
-                question_record.question_type = question.get("questionType") or quiz.default_question_type
-                question_record.explanation = question.get("explanation", "")
-                question_record.is_archived = bool(question.get("isArchived"))
                 question_record.sort_order = question_index
-                question_record.save(update_fields=["question_text", "question_type", "explanation", "is_archived", "sort_order", "updated_at"])
-                question_record.answers.all().delete()
+                update_fields = ["sort_order", "updated_at"]
+                if "text" in question:
+                    question_record.question_text = question["text"].strip() or "Untitled question"
+                    update_fields.append("question_text")
+                if "questionType" in question:
+                    question_record.question_type = question["questionType"] or quiz.default_question_type
+                    update_fields.append("question_type")
+                if "explanation" in question:
+                    question_record.explanation = question["explanation"]
+                    update_fields.append("explanation")
+                if "isArchived" in question:
+                    question_record.is_archived = bool(question["isArchived"])
+                    update_fields.append("is_archived")
+                if "imageUrl" in question:
+                    question_record.image_url = question["imageUrl"]
+                    update_fields.append("image_url")
+                question_record.save(update_fields=update_fields)
+                # An image-only edit must keep answer identities used by past attempts.
+                existing_answers = list(question_record.answers.all())
+                submitted_answers = question.get("answers")
+                replace_answers = submitted_answers is not None and [
+                    (answer.id, answer.answer_text, answer.is_correct)
+                    for answer in existing_answers
+                ] != [
+                    (answer.get("id"), answer.get("text", "").strip(), bool(answer.get("isCorrect")))
+                    for answer in submitted_answers
+                    if answer.get("text", "").strip()
+                ]
                 seen_question_ids.add(question_record.id)
             else:
                 question_record = QuizQuestion.objects.create(
                     quiz=quiz,
                     question_text=question.get("text", "").strip() or "Untitled question",
+                    image_url=question.get("imageUrl", ""),
                     question_type=question.get("questionType") or quiz.default_question_type,
                     explanation=question.get("explanation", ""),
                     is_archived=bool(question.get("isArchived")),
@@ -4447,16 +4529,8 @@ def quiz_questions(request, pk):
                 )
                 seen_question_ids.add(question_record.id)
 
-            for answer_index, answer in enumerate(question.get("answers", [])):
-                answer_text = answer.get("text", "").strip()
-                if not answer_text:
-                    continue
-                QuizAnswer.objects.create(
-                    question=question_record,
-                    answer_text=answer_text,
-                    is_correct=bool(answer.get("isCorrect")),
-                    sort_order=answer_index,
-                )
+            if replace_answers:
+                _update_question_answers(question_record, question.get("answers", []), existing_answers if question_id in existing_questions else [])
 
         if remove_missing:
             QuizQuestion.objects.filter(quiz_id=quiz.id).exclude(id__in=seen_question_ids).delete()
@@ -4474,3 +4548,31 @@ def quiz_questions(request, pk):
 
     quiz.refresh_from_db()
     return JsonResponse(_quiz_preview_payload(quiz))
+
+
+def _update_question_answers(question, answers, existing):
+    """Preserve IDs for unchanged options, including clients omitting IDs.
+
+    A changed label receives a new ID so an in-flight submission cannot silently
+    refer to a different answer. Answer keys and positions update in place.
+    """
+    remaining = {answer.id: answer for answer in existing}
+    for index, answer in enumerate(answers):
+        text = answer.get("text", "").strip()
+        if not text:
+            continue
+        record = remaining.get(answer.get("id"))
+        if record is not None and record.answer_text != text:
+            record = None
+        if record is None:
+            matches = [item for item in remaining.values() if item.answer_text == text]
+            record = matches[0] if len(matches) == 1 else None
+        if record is None:
+            QuizAnswer.objects.create(question=question, answer_text=text, is_correct=bool(answer.get("isCorrect")), sort_order=index)
+        else:
+            remaining.pop(record.id)
+            record.is_correct = bool(answer.get("isCorrect"))
+            record.sort_order = index
+            record.save(update_fields=["is_correct", "sort_order", "updated_at"])
+    if remaining:
+        question.answers.filter(id__in=list(remaining)).delete()

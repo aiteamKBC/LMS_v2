@@ -9,6 +9,7 @@ import asyncio
 import html
 import http.cookiejar
 import json
+import mimetypes
 import re
 import urllib.parse
 import urllib.error
@@ -16,9 +17,11 @@ import urllib.request
 
 from django.db import DatabaseError, connections
 from django.http import HttpResponse, JsonResponse, StreamingHttpResponse
+from django.views.decorators.clickjacking import xframe_options_sameorigin
 from django.views.decorators.http import require_GET
 
 from curriculum_api import upload_storage
+from config.video_streaming import video_chunks
 
 
 GOOGLE_DRIVE_ID_RE = re.compile(r"^[A-Za-z0-9_-]{10,}$")
@@ -57,11 +60,14 @@ def _programme_audit_database_aliases():
 
 
 def _stream_response(upstream):
-    while True:
-        chunk = upstream.read(CHUNK_SIZE)
-        if not chunk:
-            break
-        yield chunk
+    try:
+        while True:
+            chunk = upstream.read(CHUNK_SIZE)
+            if not chunk:
+                break
+            yield chunk
+    finally:
+        upstream.close()
 
 
 async def _async_stream_response(upstream):
@@ -183,7 +189,9 @@ def _legacy_attachment_upload_path(attachment_id):
                     for candidate in row:
                         path = urllib.parse.urlparse(candidate or '').path
                         if marker in path:
-                            relative = path.split(marker, 1)[1].lstrip('/')
+                            # Decoded like the hint path: stored names keep
+                            # their spaces, the audit URL carries %20.
+                            relative = urllib.parse.unquote(path.split(marker, 1)[1]).lstrip('/')
                             if relative.startswith(f'_legacy_files/{attachment_id}/'):
                                 return relative
         except (DatabaseError, KeyError):
@@ -317,8 +325,12 @@ def _load_legacy_attachment_bytes(attachment_id, upload_hint=''):
     for upload_path in upload_paths:
         opened = upload_storage.open_stream(upload_path)
         if opened is not None:
-            stream, _total, _content_type = opened
-            return b''.join(stream), None
+            stream, total, _content_type = opened
+            data = b''.join(stream)
+            # A zero-byte placeholder is not the file; fall through to the
+            # original source below instead of handing back an empty document.
+            if total and data:
+                return data, None
 
     try:
         upstream = _open_legacy_attachment(attachment_id)
@@ -351,10 +363,12 @@ def google_drive_media(request, file_id):
     except urllib.error.URLError:
         return HttpResponse("Could not load media.", status=502)
 
+    content_type = upstream.headers.get("Content-Type") or "application/octet-stream"
     response = StreamingHttpResponse(
-        _async_stream_response(upstream),
+        video_chunks(request, _stream_response(upstream)) if content_type.lower().startswith('video/')
+        else _async_stream_response(upstream),
         status=getattr(upstream, "status", 200),
-        content_type=upstream.headers.get("Content-Type") or "application/octet-stream",
+        content_type=content_type,
     )
     for header in ("Content-Length", "Content-Range", "Accept-Ranges"):
         value = upstream.headers.get(header)
@@ -367,6 +381,9 @@ def google_drive_media(request, file_id):
 
 
 @require_GET
+# Same reason as curriculum uploads: the site-wide DENY blanks a PDF the learner
+# page frames itself. SAMEORIGIN still refuses every other site.
+@xframe_options_sameorigin
 def legacy_attachment_media(request, attachment_id):
     if not LEGACY_ATTACHMENT_ID_RE.match(attachment_id or ""):
         return HttpResponse("Invalid attachment id.", status=400)
@@ -374,7 +391,8 @@ def legacy_attachment_media(request, attachment_id):
     upload_path = _legacy_attachment_upload_path(attachment_id)
     if upload_path:
         probe = upload_storage.open_stream(upload_path, offset=0, length=1)
-        if probe is not None:
+        # Zero-byte placeholders skip to the original source further down.
+        if probe is not None and probe[1]:
             _probe_stream, total_size, content_type = probe
             start, end = 0, max(total_size - 1, 0)
             range_header = request.headers.get("Range") or ''
@@ -391,10 +409,13 @@ def legacy_attachment_media(request, attachment_id):
             opened = upload_storage.open_stream(upload_path, offset=start, length=length)
             if opened is not None:
                 stream, _total, opened_type = opened
+                file_type = mimetypes.guess_type(upload_path)[0] or ''
+                served_type = opened_type or content_type or (
+                    file_type if file_type.startswith('video/') else 'application/octet-stream')
                 response = StreamingHttpResponse(
-                    stream,
+                    video_chunks(request, stream) if served_type.lower().startswith('video/') else stream,
                     status=206 if match else 200,
-                    content_type=opened_type or content_type or 'application/octet-stream',
+                    content_type=served_type,
                 )
                 response['Accept-Ranges'] = 'bytes'
                 response['Content-Length'] = str(length)
@@ -419,7 +440,8 @@ def legacy_attachment_media(request, attachment_id):
         return HttpResponse("Legacy attachment returned an HTML page, not a file.", status=502)
 
     response = StreamingHttpResponse(
-        _async_stream_response(upstream),
+        video_chunks(request, _stream_response(upstream)) if content_type.lower().startswith('video/')
+        else _async_stream_response(upstream),
         status=getattr(upstream, "status", 200),
         content_type=content_type,
     )

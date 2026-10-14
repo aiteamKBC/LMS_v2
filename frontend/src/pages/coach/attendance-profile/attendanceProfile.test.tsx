@@ -1,105 +1,137 @@
-import { fireEvent, render, screen, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
-import type { ReactNode } from 'react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { StrictMode, type ReactNode } from 'react';
+import { clearAllCachedResources } from '@/api/cachedRequest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { coachFetch } from '@/lib/coachFetch';
 import CoachAttendanceProfile from './page';
 vi.mock('@/hooks/useCoachIdentity', () => ({ useCoachIdentity: () => ({ isInitialized: true, email: 'coach@example.com', name: 'Coach Sara' }) }));
 vi.mock('@/lib/coachFetch', () => ({ coachFetch: vi.fn() }));
 vi.mock('@/components/feature/WorkspaceShell', () => ({ WorkspaceShell: ({ children }: { children: ReactNode }) => <>{children}</> }));
+const record = (index = 1) => ({ id: `microsoft-teams:occ-${index}`, title: `Session ${index}`, date: '2026-09-16', module: 'Data Foundations', status: index % 2 ? 'present' : 'absent', absenceReport: null });
+function payload(records = [record()], page = 1, total = records.length) {
+  return {
+    learner: { id: '42', name: 'Synthetic Learner', email: 'learner@example.test', programme: 'Data', cohort: 'September', group: 'Group A', learnerStartDate: '01 Sep 2026', learnerEndDate: '31 Aug 2027' },
+    coach: { name: 'Coach Sara', email: 'coach@example.com' }, tutor: null,
+    summary: { attendanceRate: 79, sessions: 32, present: 26, absent: 6 }, records,
+    pagination: { page, pageSize: 20, total, hasMore: page * 20 < total },
+  };
+}
+const pageElement = <MemoryRouter initialEntries={['/coach/attendance/42']}><Routes><Route path="/coach/attendance/:learnerId" element={<CoachAttendanceProfile />} /></Routes></MemoryRouter>;
 describe('coach attendance detail', () => {
   beforeEach(() => {
-    vi.mocked(coachFetch)
-      .mockClear()
-      .mockResolvedValueOnce(new Response(JSON.stringify({
-        learner: { id: '42', name: 'Aya Khater', email: 'same@example.com', programme: 'Data', cohort: 'September', group: 'Cairo A', programmeStartDate: '01 Sep 2020', programmeEndDate: '31 Aug 2021', learnerStartDate: '01 Sep 2026', learnerEndDate: '31 Aug 2027', coachName: 'Coach Sara' },
-        summary: { attendanceRate: 79, total: 32, present: 26, absent: 6, unknown: 0 },
-        sessions: [{ sessionId: 'session-2', source: 'microsoft-teams', sourceId: 'occ-2', sessionTitle: 'Data session', module: 'Data Foundations', sessionType: 'live_session', sessionDate: '2026-09-16', sessionDateLabel: '16 Sep 2026', status: 'present' }],
-      })));
+    clearAllCachedResources();
+    vi.mocked(coachFetch).mockReset().mockImplementation(async () => new Response(JSON.stringify(payload())));
   });
-  it('uses the canonical summary and id-only detail lookup', async () => {
-    render(<MemoryRouter initialEntries={['/coach/attendance/42']}><Routes><Route path="/coach/attendance/:learnerId" element={<CoachAttendanceProfile />} /></Routes></MemoryRouter>);
-    expect(await screen.findByRole('heading', { name: 'Aya Khater' })).toBeInTheDocument();
+  afterEach(() => vi.restoreAllMocks());
+
+  it('preserves header/cards/report totals and renders compact records by id-only lookup', async () => {
+    render(pageElement);
+    expect(await screen.findByRole('heading', { name: 'Synthetic Learner' })).toBeInTheDocument();
     expect(screen.getAllByText('79%')).toHaveLength(2);
     expect(screen.getByText('26 present out of 32')).toBeInTheDocument();
-    expect(screen.getAllByText('Data session')).toHaveLength(2);
+    expect(screen.getAllByText('Session 1')).toHaveLength(2);
+    expect(screen.getByText('September')).toBeInTheDocument();
+    expect(screen.getByText('Group A')).toBeInTheDocument();
+    expect(screen.getByText('Not assigned')).toBeInTheDocument();
+    const cards = screen.getByLabelText('Attendance summary');
+    expect(within(cards).getByText('Coach Sara')).toBeInTheDocument();
+    expect(within(cards).getByText('coach@example.com')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Edit' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Delete' })).toBeInTheDocument();
-    expect(screen.queryByText('Protected')).not.toBeInTheDocument();
-    expect(screen.getByLabelText('Student attendance report')).toBeInTheDocument();
-    expect(screen.getByText('01 Sep 2026 — 31 Aug 2027')).toBeInTheDocument();
-    expect(screen.getByText('Attendance rate').nextElementSibling).toHaveTextContent('79%');
-    expect(vi.mocked(coachFetch)).toHaveBeenCalledTimes(1);
-    expect(vi.mocked(coachFetch).mock.calls[0][0]).toBe('/coach_api/coach/attendance/details?learner_id=42');
-    expect(String(vi.mocked(coachFetch).mock.calls[0][0])).not.toContain('same%40example.com');
+    const report = screen.getByLabelText('Student attendance report');
+    expect(within(report).getByText('01 Sep 2026 \u2014 31 Aug 2027')).toBeInTheDocument();
+    expect(within(report).getByText('Attendance rate').nextElementSibling).toHaveTextContent('79%');
+    expect(coachFetch).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(coachFetch).mock.calls[0][0]).toBe('/coach_api/coach/attendance/details?learner_id=42&page=1&pageSize=20');
     expect(vi.mocked(coachFetch).mock.calls[0][1]?.signal).toBeInstanceOf(AbortSignal);
   });
 
-  it('displays unmarked separately and prints only backend summary totals', async () => {
-    vi.mocked(coachFetch).mockReset().mockResolvedValueOnce(new Response(JSON.stringify({
-      learner: { id: '42', name: 'Synthetic Learner' },
-      summary: { attendanceRate: 50, total: 2, present: 1, absent: 1, unknown: 0 },
-      sessions: [
-        { sessionId: 'a', sessionTitle: 'Unverified lecture', sessionDate: '2026-09-16', sessionDateLabel: '16 Sep 2026', status: 'unmarked', counted: false },
-        { sessionId: 'b', sessionTitle: 'Recovered lecture', sessionDate: '2026-09-15', sessionDateLabel: '15 Sep 2026', status: 'present', rawStatus: 'absent', effectiveStatus: 'made_up', counted: true },
-      ],
-    })));
-    render(<MemoryRouter initialEntries={['/coach/attendance/42']}><Routes><Route path="/coach/attendance/:learnerId" element={<CoachAttendanceProfile />} /></Routes></MemoryRouter>);
+  it('opens once under StrictMode and reuses the same learner on rerender and revisit', async () => {
+    const strictPage = <StrictMode>{pageElement}</StrictMode>;
+    const first = render(strictPage);
     expect(await screen.findByRole('heading', { name: 'Synthetic Learner' })).toBeInTheDocument();
-    expect(screen.getAllByText('Unmarked')).toHaveLength(2);
-    expect(screen.getAllByText('50%')).toHaveLength(2);
-    expect(screen.getByText('1 present out of 2')).toBeInTheDocument();
-    const report = screen.getByLabelText('Student attendance report');
-    expect(within(report).getByText('Attendance rate').nextElementSibling).toHaveTextContent('50%');
+    first.rerender(<StrictMode>{pageElement}</StrictMode>);
+    expect(coachFetch).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(coachFetch).mock.calls[0][1]?.signal?.aborted).toBe(false);
+    first.unmount();
+    render(strictPage);
+    expect(await screen.findByRole('heading', { name: 'Synthetic Learner' })).toBeInTheDocument();
+    expect(coachFetch).toHaveBeenCalledTimes(1);
   });
 
-  it('renders every attendance record in the printable document', async () => {
-    const sessions = Array.from({ length: 24 }, (_, index) => ({
-      sessionId: `session-${index}`,
-      sessionTitle: `Session ${index + 1}`,
-      sessionType: 'Live lecture',
-      sessionDate: '2026-09-16',
-      sessionDateLabel: '16 Sep 2026',
-      status: index % 2 ? 'absent' : 'present',
-    }));
-    vi.mocked(coachFetch)
-      .mockReset()
-      .mockResolvedValueOnce(new Response(JSON.stringify({
-        learner: { id: '42', name: 'Aya Khater' },
-        summary: { total: 24, present: 12, absent: 12, unknown: 0 },
-        sessions,
-      })));
+  it('uses backend totals without recalculating them from the requested page and displays an assigned tutor', async () => {
+    vi.mocked(coachFetch).mockImplementation(async () => new Response(JSON.stringify({ ...payload(), tutor: { name: 'Tutor One', email: 'tutor@example.test' } })));
+    render(pageElement);
+    expect(await screen.findByText('26 present out of 32')).toBeInTheDocument();
+    expect(screen.getByText('1 records')).toBeInTheDocument();
+    const cards = screen.getByLabelText('Attendance summary');
+    expect(within(cards).getByText('Tutor One')).toBeInTheDocument();
+    expect(within(cards).getByText('tutor@example.test')).toBeInTheDocument();
+  });
 
-    const { container } = render(<MemoryRouter initialEntries={['/coach/attendance/42']}><Routes><Route path="/coach/attendance/:learnerId" element={<CoachAttendanceProfile />} /></Routes></MemoryRouter>);
-
+  it('requests one page of 20, next requests once, and fresh previous/return reuse cached pages', async () => {
+    const all = Array.from({ length: 24 }, (_, i) => record(i + 1));
+    vi.mocked(coachFetch).mockImplementation(async url => {
+      const page = Number(new URL(String(url), 'http://localhost').searchParams.get('page'));
+      return new Response(JSON.stringify(payload(all.slice((page - 1) * 20, page * 20), page, 24)));
+    });
+    const first = render(pageElement);
     expect(await screen.findByText('24 records')).toBeInTheDocument();
-    expect(container.querySelector('.attendance-profile-print-page')).toBeInTheDocument();
-    const table = screen.getAllByRole('table')[0];
-    const report = screen.getByLabelText('Student attendance report');
-    expect(within(table).getAllByRole('row')).toHaveLength(11);
-    expect(within(report).getAllByRole('row')).toHaveLength(25);
-    expect(report.querySelectorAll('td[data-status="absent"]')).toHaveLength(12);
-    expect(report.querySelectorAll('td[data-status="present"]')).toHaveLength(12);
-    expect(within(report).getByText('Session 24')).toBeInTheDocument();
+    expect(within(screen.getAllByRole('table')[0]).getAllByRole('row')).toHaveLength(21);
     expect(screen.getByRole('button', { name: 'Previous' })).toBeDisabled();
-    expect(screen.getByText('Showing 1–10 of 24 records')).toBeInTheDocument();
+    expect(screen.getByText('Showing 1\u201320 of 24 records')).toBeInTheDocument();
+    expect(coachFetch).toHaveBeenCalledTimes(1);
     fireEvent.click(screen.getByRole('button', { name: 'Next' }));
-    expect(within(table).getByText('Session 11')).toBeInTheDocument();
-    expect(within(table).queryByText('Session 1')).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Next' }));
-    expect(within(table).getAllByRole('row')).toHaveLength(5);
-    expect(screen.getByText('Showing 21–24 of 24 records')).toBeInTheDocument();
+    expect(await screen.findByText('Page 2 of 2')).toBeInTheDocument();
+    expect(within(screen.getAllByRole('table')[0]).getByText('Session 24')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Next' })).toBeDisabled();
+    expect(coachFetch).toHaveBeenCalledTimes(2);
     fireEvent.click(screen.getByRole('button', { name: 'Previous' }));
-    expect(screen.getByText('Page 2 of 3')).toBeInTheDocument();
-    expect(within(report).getAllByRole('row')).toHaveLength(25);
+    expect(await screen.findByText('Page 1 of 2')).toBeInTheDocument();
+    expect(coachFetch).toHaveBeenCalledTimes(2);
+    first.unmount(); render(pageElement);
+    expect(await screen.findByText('Page 1 of 2')).toBeInTheDocument();
+    expect(coachFetch).toHaveBeenCalledTimes(2);
   });
 
-  it('keeps present records in the printable report when the learner has no absences', async () => {
-    const { container } = render(<MemoryRouter initialEntries={['/coach/attendance/42']}><Routes><Route path="/coach/attendance/:learnerId" element={<CoachAttendanceProfile />} /></Routes></MemoryRouter>);
+  it('loads additional pages only on Export PDF and prints all historical rows', async () => {
+    const all = Array.from({ length: 24 }, (_, i) => record(i + 1));
+    const print = vi.spyOn(window, 'print').mockImplementation(() => {});
+    vi.mocked(coachFetch).mockImplementation(async url => {
+      const page = Number(new URL(String(url), 'http://localhost').searchParams.get('page'));
+      return new Response(JSON.stringify(payload(all.slice((page - 1) * 20, page * 20), page, 24)));
+    });
+    render(pageElement);
+    expect(await screen.findByText('24 records')).toBeInTheDocument();
+    expect(coachFetch).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByRole('button', { name: 'Export PDF' }));
+    await waitFor(() => expect(print).toHaveBeenCalledTimes(1));
+    const report = screen.getByLabelText('Student attendance report');
+    expect(within(report).getAllByRole('row')).toHaveLength(25);
+    expect(within(report).getByText('Session 24')).toBeInTheDocument();
+    expect(coachFetch).toHaveBeenCalledTimes(2);
+  });
 
-    expect(await screen.findAllByText('Data session')).toHaveLength(2);
-    expect(container.querySelector('tbody tr[data-status="present"]')).toBeInTheDocument();
-    expect(container.querySelector('article[aria-label="Student attendance report"] td[data-status="present"]')).toHaveTextContent('Present');
+  it.each(['microsoft-teams:occ:stable', 'kbc-attendance:legacy:stable', 'coach-manual:9'])('preserves Edit/Delete identity for %s', async id => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    vi.mocked(coachFetch).mockImplementation(async (_url, init) => init?.method
+      ? new Response(JSON.stringify({ ok: true }))
+      : new Response(JSON.stringify(payload([{ ...record(), id }]))));
+    render(pageElement);
+    fireEvent.click(await screen.findByRole('button', { name: 'Edit' }));
+    expect(screen.getByLabelText('Manual attendance session')).toHaveValue('Session 1');
+    fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+    await waitFor(() => expect(vi.mocked(coachFetch).mock.calls.some(([, init]) => init?.method === 'PATCH')).toBe(true));
+    const patch = vi.mocked(coachFetch).mock.calls.find(([, init]) => init?.method === 'PATCH')!;
+    const source = id.slice(0, id.indexOf(':'));
+    const sourceId = id.slice(id.indexOf(':') + 1);
+    if (source === 'coach-manual') expect(patch[0]).toBe('/coach_api/coach/attendance/manual/9');
+    else expect(JSON.parse(String(patch[1]?.body))).toMatchObject({ learnerId: '42', source, sourceId });
+    fireEvent.click(await screen.findByRole('button', { name: 'Delete' }));
+    await waitFor(() => expect(vi.mocked(coachFetch).mock.calls.some(([, init]) => init?.method === 'DELETE')).toBe(true));
+    const deletion = vi.mocked(coachFetch).mock.calls.find(([, init]) => init?.method === 'DELETE')!;
+    if (source === 'coach-manual') expect(deletion[0]).toBe('/coach_api/coach/attendance/manual/9');
+    else expect(JSON.parse(String(deletion[1]?.body))).toMatchObject({ learnerId: '42', source, sourceId });
   });
 });

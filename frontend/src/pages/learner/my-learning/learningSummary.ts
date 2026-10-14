@@ -4,7 +4,7 @@ import { completedComponentIds, isComponentComplete, quizAttemptsFor, type Journ
 
 export type Schedule = Pick<StudentActivityItem, 'date' | 'month' | 'week_start' | 'week_end' | 'date_needs_review' | 'date_source'> & { due_timing?: string };
 export type SubjectEntry = { id: string; title: string; category: string; completed: boolean; position: number; schedule: Schedule; week?: string; legacy?: StudentActivityItem; native?: JourneyComponent; bestScorePercent?: number | null };
-export type Subject = { id: string; title: string; source: 'legacy' | 'current'; activities: SubjectEntry[]; recordedHistory?: boolean; catalogueCount?: number; acceptedHours?: number };
+export type Subject = { id: string; title: string; source: 'legacy' | 'current'; activities: SubjectEntry[]; recordedHistory?: boolean; catalogueProgress?: boolean; catalogueCount?: number; acceptedHours?: number };
 type BuilderSubject = { id: string; title: string };
 type ActivitySource = { module_id: string; group_id: number; activity_id: number };
 export type CoverMetadata = { covers: Record<string, string>; activity_dates?: Record<string, Schedule>; current_subjects?: BuilderSubject[]; builder_subjects?: Record<string, BuilderSubject>; activity_sources?: Record<string, ActivitySource> };
@@ -15,8 +15,12 @@ export type UnifiedLearningSummary = {
   completedActivityCount: number;
   percent: number;
 };
+export type LearningSummaryDetail = Pick<LearnerDetail,
+  'modules' | 'components' | 'retiredQuizComponents' | 'quizAttempts' | 'videoProgress' | 'componentProgress'>;
+export type LearningSummaryActivity = Pick<StudentActivityResponse,
+  'subjects' | 'activities' | 'progress_basis' | 'activity_sources'>;
 
-export function subjectRefs(data: StudentActivityResponse | null, real: LearnerDetail | null) {
+export function subjectRefs(data: LearningSummaryActivity | null, real: LearningSummaryDetail | null) {
   return [...new Set([
     ...(data?.subjects || []).map(subject => `legacy:${subject.id}`),
     ...(data?.activities || []).map(activity => `legacy:${activity.group_id}`),
@@ -47,13 +51,15 @@ function nativeActivitySchedule(schedule: Schedule | undefined, sessionDate?: st
 }
 
 
-export function subjectsFrom(data: StudentActivityResponse | null, real: LearnerDetail | null, metadata?: CoverMetadata | null): Subject[] {
+export function subjectsFrom(data: LearningSummaryActivity | null, real: LearningSummaryDetail | null, metadata?: CoverMetadata | null): Subject[] {
   const { activity_dates: dates = {}, current_subjects: currentSubjects = [], builder_subjects: builderSubjects = {} } = metadata || {};
   const activitySources = data?.activity_sources ?? metadata?.activity_sources ?? {};
   const recordedHistory = data?.progress_basis === 'recorded_activities';
-  const historicalModules = new Set(recordedHistory ? (data?.subjects || []).flatMap(s => s.module_id ? [s.module_id] : []) : []);
+  const catalogueProgress = data?.progress_basis === 'catalogue_activities';
+  const canonicalCourses = recordedHistory || catalogueProgress;
+  const historicalModules = new Set(canonicalCourses ? (data?.subjects || []).flatMap(s => s.module_id ? [s.module_id] : []) : []);
   const subjects = new Map<string, Subject>();
-  for (const subject of data?.subjects || []) subjects.set(`legacy:${subject.id}`, { id: `legacy:${subject.id}`, title: subject.name, source: 'legacy', activities: [], recordedHistory, catalogueCount: subject.catalogue_count, acceptedHours: subject.accepted_hours });
+  for (const subject of data?.subjects || []) subjects.set(`legacy:${subject.id}`, { id: `legacy:${subject.id}`, title: subject.name, source: 'legacy', activities: [], recordedHistory, catalogueProgress, catalogueCount: subject.catalogue_count, acceptedHours: subject.accepted_hours });
   for (const item of data?.activities || []) {
     const key = `legacy:${item.group_id}`;
     const subject = subjects.get(key) || { id: key, title: item.group_name || 'Unnamed subject', source: 'legacy' as const, activities: [] };
@@ -71,7 +77,7 @@ export function subjectsFrom(data: StudentActivityResponse | null, real: Learner
     legacyByBuilder.set(source.module_id, [...new Set([...(legacyByBuilder.get(source.module_id) || []), key])]);
   }
   const currentKey = (moduleId: string) => {
-    if (recordedHistory) return `current:${moduleId}`;
+    if (canonicalCourses) return `current:${moduleId}`;
     const matches = legacyByBuilder.get(moduleId);
     if (matches?.length === 1) return matches[0];
     return `current:${moduleId}`;
@@ -128,8 +134,8 @@ export function subjectsFrom(data: StudentActivityResponse | null, real: Learner
 
 /** One roll-up for imported history and all later current-platform progress. */
 export function buildUnifiedLearningSummary(
-  data: StudentActivityResponse | null,
-  real: LearnerDetail | null,
+  data: LearningSummaryActivity | null,
+  real: LearningSummaryDetail | null,
   metadata?: CoverMetadata | null,
 ): UnifiedLearningSummary {
   const subjects = subjectsFrom(data, real, metadata);

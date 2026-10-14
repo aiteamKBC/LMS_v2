@@ -180,3 +180,15 @@ it('opens an imported assignment independently of the current curriculum', async
   render(<MemoryRouter><AssignmentsTab kind="commercial" id="125" /></MemoryRouter>);
   expect(await screen.findByText('Open submission')).toHaveAttribute('href', '/learner/historical-assignment/commercial/125/aptem%3A92%3Aevidence%3A20128');
 });
+
+it('lists only the flagged monthly assignment once an author has flagged one', async () => {
+  assignedRequests();
+  const real = { ...assignedDetail, components: [
+    { ...assignedDetail.components[0], componentId: 'SLIDES-TASK', component: 'Assignment · Lecture slide task' },
+    { ...assignedDetail.components[0], componentId: 'MONTHLY', component: 'Assignment · Month 2 coach led assignment', monthlyAssignment: true },
+  ] };
+  render(<MemoryRouter><AssignmentsTab kind="apprenticeship" id="92" real={real} /></MemoryRouter>);
+  expect(await screen.findByRole('link', { name: 'Start assignment' })).toHaveAttribute('href', '/learner/monthly-submission/apprenticeship/92/MONTHLY');
+  expect(screen.getByText('Assignment · Month 2 coach led assignment')).toBeVisible();
+  expect(screen.queryByText('Assignment · Lecture slide task')).not.toBeInTheDocument();
+});

@@ -21,12 +21,12 @@ class CancelledReviewTests(SimpleTestCase):
         queryset.exclude.return_value.order_by.return_value = []
         with patch.object(EnrolmentReview.objects, "filter", return_value=queryset) as filt, \
                 patch.object(employer_portal, "SOURCE_MODELS", {}), \
-                patch.object(employer_portal.review_instances, "list_review_instances_for_learner", return_value=[]), \
+                patch.object(employer_portal.review_instances, "list_review_instances_for_learners", return_value={}), \
                 patch.object(employer_portal.ImportedReviewInstance.objects, "select_related") as migrated:
-            migrated.return_value.filter.return_value = []
+            migrated.return_value.prefetch_related.return_value.filter.return_value = []
             employer_portal._review_signing_rows("apprenticeship", 670)
 
-        filt.assert_called_once_with(learner_kind="apprenticeship", learner_id=670)
+        filt.assert_called_once_with(learner_id__in=[670])
         queryset.exclude.assert_called_once_with(status=EnrolmentReview.STATUS_CANCELLED)
         queryset.exclude.return_value.order_by.assert_called_once_with("scheduled_date", "id")
 
@@ -36,18 +36,20 @@ class CancelledReviewTests(SimpleTestCase):
         overlay = SimpleNamespace(
             migrated_template_id=3, migrated_template=SimpleNamespace(review_family="PR"),
             event_key="imported-review:C5-TEST-PR", template_snapshot={"name": "Test PR", "sections": [{}]},
-            status="awaiting-signature",
+            status="awaiting-signature", learner_id=670,
         )
+        # Fetched in the same batch, but another learner's: not listed for 670.
+        other_learners = SimpleNamespace(**{**vars(overlay), "learner_id": 671, "event_key": "imported-review:OTHER"})
         states = {
             "advisor": {"signed": True}, "participant": {"signed": False},
             "employer": {"signed": False, "signedName": None, "signedAt": None},
         }
         with patch.object(EnrolmentReview.objects, "filter", return_value=queryset), \
                 patch.object(employer_portal, "SOURCE_MODELS", {}), \
-                patch.object(employer_portal.review_instances, "list_review_instances_for_learner", return_value=[]), \
+                patch.object(employer_portal.review_instances, "list_review_instances_for_learners", return_value={}), \
                 patch.object(employer_portal.ImportedReviewInstance.objects, "select_related") as migrated, \
                 patch.object(employer_portal, "signature_states", return_value=states):
-            migrated.return_value.filter.return_value = [overlay]
+            migrated.return_value.prefetch_related.return_value.filter.return_value = [overlay, other_learners]
             rows = employer_portal._review_signing_rows("apprenticeship", 670)
         self.assertEqual(len(rows), 1)
         self.assertTrue(rows[0]["migratedForm"])

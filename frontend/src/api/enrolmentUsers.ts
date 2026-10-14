@@ -14,6 +14,9 @@ export const STATUS_OPTIONS = ['FullUser', 'Invited', 'Prospect', 'Expired', 'Ca
 
 export const TYPE_OPTIONS = ['User', 'Employer', 'Referrer', 'Admin', 'Caseowner'];
 
+// Mirrors ATTENDANCE_TYPE_CHOICES in backend/learner_api/constants.py.
+export const ATTENDANCE_TYPE_OPTIONS = ['Recorded', 'Not recorded'];
+
 // Mirrors PROGRAMME_STATUS_CHOICES in backend/learner_api/constants.py, which
 // validates writes — a value missing there is rejected on save.
 export const PROGRAMME_STATUS_OPTIONS = [
@@ -61,6 +64,8 @@ export interface AptemUserFields {
   mentor?: string;
   referenceNumber?: string;
   extendedBreak?: string;
+  /** One of ATTENDANCE_TYPE_OPTIONS; null clears it. */
+  attendanceType?: string | null;
   allowCheckpoint?: boolean;
   allowConsole?: boolean;
   allowClassic?: boolean;

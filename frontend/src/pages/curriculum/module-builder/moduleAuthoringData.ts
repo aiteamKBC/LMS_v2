@@ -759,6 +759,116 @@ export function moduleAuthoredLiveSessions(
 }
 
 /**
+ * Replace the saved join link for live-session components in selected weeks.
+ *
+ * The module calendar identity, occurrence ids and attendance metadata remain
+ * untouched. Additional one-off meetings also keep their own link because
+ * that meeting is owned by the component rather than the module calendar.
+ */
+export function replaceLiveSessionLinksInWeeks(
+  module: ModuleCatalogueItem,
+  weekIds: Iterable<string>,
+  link: string,
+): ModuleCatalogueItem {
+  const selectedWeekIds = new Set(Array.from(weekIds, value => String(value || '').trim()).filter(Boolean));
+  const nextLink = String(link || '').trim();
+  if (!selectedWeekIds.size || !nextLink) return module;
+
+  return {
+    ...module,
+    weekStructure: module.weekStructure.map(week => {
+      if (!selectedWeekIds.has(week.id)) return week;
+      return {
+        ...week,
+        components: week.components.map(component => {
+          if (
+            component.type !== 'live-session'
+            || String(component.settings.extraTeamsMeetingUrl || '').trim()
+            || !String(component.settings.liveSessionUrl || component.settings.teamsMeetingUrl || '').trim()
+          ) return component;
+          return {
+            ...component,
+            settings: {
+              ...component.settings,
+              liveSessionUrl: nextLink,
+              teamsMeetingUrl: nextLink,
+              liveSessionLinkOverride: nextLink,
+            },
+          };
+        }),
+      };
+    }),
+  };
+}
+
+/**
+ * Put a replaced join link onto exactly the components the server rewrote.
+ *
+ * By id rather than by re-running the week rule, so the workspace ends up
+ * holding what was stored: a live session added in this tab and not saved yet
+ * was not touched by the server, and is not touched here either.
+ */
+export function applyLiveSessionLinkToComponents(
+  module: ModuleCatalogueItem,
+  componentIds: Iterable<string>,
+  link: string,
+): ModuleCatalogueItem {
+  const ids = new Set(Array.from(componentIds, value => String(value || '').trim()).filter(Boolean));
+  const nextLink = String(link || '').trim();
+  if (!ids.size || !nextLink) return module;
+  return {
+    ...module,
+    weekStructure: module.weekStructure.map(week => (
+      week.components.some(component => ids.has(component.id))
+        ? {
+          ...week,
+          components: week.components.map(component => (
+            ids.has(component.id)
+              ? { ...component, settings: { ...component.settings, liveSessionUrl: nextLink, teamsMeetingUrl: nextLink, liveSessionLinkOverride: nextLink } }
+              : component
+          )),
+        }
+        : week
+    )),
+  };
+}
+
+export interface TeamsLinkReplacementResult {
+  updated: number;
+  updatedComponentIds: string[];
+  link: string;
+  structureRevision: string;
+  /** True when nothing else had changed the module since `expectedRevision`. */
+  revisionWasCurrent: boolean;
+}
+
+/**
+ * Save a replaced join link for the chosen weeks, on its own.
+ *
+ * Not through `saveModuleStructure`: that sends and rewrites the whole module,
+ * which on a large one outran the timeout for an edit touching a dozen rows.
+ * Stored links only -- nothing is sent to Microsoft, so the Teams meetings and
+ * their invitations stay as they are.
+ */
+export async function replaceModuleTeamsLinks(
+  moduleCatalogueId: string,
+  input: { weekIds: string[]; link: string; expectedRevision?: string },
+) {
+  const result = await apiJson<TeamsLinkReplacementResult>(`/curriculum/modules/${encodeURIComponent(moduleCatalogueId)}/teams-links/`, {
+    method: 'POST',
+    body: JSON.stringify({
+      weekIds: input.weekIds,
+      link: input.link,
+      ...(input.expectedRevision ? { expectedRevision: input.expectedRevision } : {}),
+    }),
+    timeoutMs: 60000,
+  });
+  // The components the cached module views describe have just changed.
+  if (result.updated) invalidateCurriculumCacheByEntity('module');
+  return result;
+}
+
+/**
  * Which authored weeks have a delivery day a ticked holiday falls on.
  *
  * States the fact, decides nothing: the plan stays exactly as authored, every
@@ -811,8 +921,8 @@ export interface LiveSessionDateDrift {
  * One date is not the planner's to move -- an occurrence Microsoft has
  * confirmed (`teamsLiveSessionId` with a `teamsSessionNumber`). That date is
  * where a meeting real people were invited to actually sits, and it changes
- * through `rescheduleTeamsOccurrence`, which asks Microsoft, or through a push
- * from the Teams Meetings page. So when such a session's week moves, the two
+ * through the Teams calendar's Edit session action, which asks Microsoft and
+ * tells the people invited, or through a push from the Teams Meetings page. So when such a session's week moves, the two
  * genuinely disagree -- and the screens say so rather than quietly re-dating a
  * booking the calendar would then contradict.
  *
@@ -933,7 +1043,7 @@ export function applyModuleWeekSessionPlan(
         // The single exception is an occurrence Microsoft has confirmed: that
         // date is not a copy of anything, it is where a meeting real people
         // have been invited to actually sits, and it moves through
-        // `rescheduleTeamsOccurrence` rather than behind the author's back.
+        // the calendar's Edit session action rather than behind the author's back.
         // `sessionDateTimeUtc` deliberately does NOT count -- the planner writes
         // it on every stamp, so treating it as a Teams booking froze every date
         // the planner had ever set.
@@ -1715,6 +1825,10 @@ export const TEAMS_MEETING_SETTING_KEYS = [
   'teamsWebLink',
   'teamsDurationMinutes',
   'sessionRescheduled',
+  // A bulk link replacement belongs to the source module's saved calendar;
+  // an independent copy keeps its join URL only through the explicit copy
+  // path below and must not inherit the override marker.
+  'liveSessionLinkOverride',
   // The one-off week meeting is the original's too: its organiser invited its
   // own guests to one date, and a copy placed in another week must arrive with
   // no link at all rather than pointing people at somebody else's meeting.
@@ -2553,6 +2667,39 @@ export class ModuleStructureConflictError extends Error {
 }
 
 /**
+ * The server's request-body ceiling (`DATA_UPLOAD_MAX_MEMORY_SIZE` in
+ * backend/config/settings.py). Past it Django refuses the PATCH with its own
+ * HTML 400 page before the view runs, so the reader would only ever see
+ * "returned 400". Kept here so the refusal can be explained instead.
+ */
+export const MODULE_STRUCTURE_SAVE_LIMIT_BYTES = 30 * 1024 * 1024;
+// Django's own default ceiling. A non-JSON 400 on a body smaller than this is
+// some other refusal, and is not blamed on size.
+const DJANGO_DEFAULT_UPLOAD_LIMIT_BYTES = Math.floor(2.5 * 1024 * 1024);
+
+function formatMegabytes(bytes: number) {
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+/** A save refused because the module is bigger than the server accepts in one request. */
+export class ModuleStructureTooLargeError extends Error {
+  sizeBytes: number;
+
+  constructor(sizeBytes: number, componentCount: number, limitKnown: boolean) {
+    const limit = limitKnown ? ` The most one save can carry is ${formatMegabytes(MODULE_STRUCTURE_SAVE_LIMIT_BYTES)}.` : '';
+    super(
+      `This module is too large to save in one go: it is ${formatMegabytes(sizeBytes)} across ${componentCount} components.${limit}`
+      + ' Your changes are still here and nothing was lost.'
+      + ' Large content pasted straight into components, such as images, is the usual cause:'
+      + ' remove or replace it with a link or uploaded file, or split the module, then save again.',
+    );
+    this.name = 'ModuleStructureTooLargeError';
+    this.sizeBytes = sizeBytes;
+    Object.setPrototypeOf(this, ModuleStructureTooLargeError.prototype);
+  }
+}
+
+/**
  * Write a module's whole structure back.
  *
  * `expectedRevision` is the `structureRevision` that came with the copy being
@@ -2569,26 +2716,114 @@ export class ModuleStructureConflictError extends Error {
  * module left open all afternoon produces one entry per real edit rather than
  * one per timer tick.
  */
+function stableStringify(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableStringify).join(',')}]`;
+  if (value && typeof value === 'object') {
+    return `{${Object.keys(value as Record<string, unknown>)
+      .filter(key => (value as Record<string, unknown>)[key] !== undefined)
+      .sort()
+      .map(key => `${JSON.stringify(key)}:${stableStringify((value as Record<string, unknown>)[key])}`)
+      .join(',')}}`;
+  }
+  return JSON.stringify(value) ?? 'null';
+}
+
+export interface ModuleStructureDelta {
+  /** Every week id, in order. Removing or reordering a week needs nothing else. */
+  weekOrder: string[];
+  /** Every week's component ids, in order -- so moves and removals carry no rows. */
+  componentOrder: Record<string, string[]>;
+  /** Weeks that are new or whose own fields changed, without their components. */
+  weeks: Record<string, Omit<ModuleWeek, 'components'>>;
+  /** Components that are new or changed. Everything else is the stored copy. */
+  components: Record<string, ModuleComponent>;
+}
+
+/**
+ * What changed between the last saved copy and this one.
+ *
+ * Compared with sorted keys, so two copies that differ only in the order their
+ * fields were written in read as the same; a false "changed" would only send
+ * a row the server then finds unchanged.
+ */
+export function moduleStructureDelta(base: ModuleCatalogueItem, current: ModuleCatalogueItem): ModuleStructureDelta {
+  const baseWeeks = new Map(base.weekStructure.map(week => [week.id, week]));
+  const baseComponents = new Map(base.weekStructure.flatMap(week => week.components.map(component => [component.id, component] as const)));
+  const delta: ModuleStructureDelta = { weekOrder: [], componentOrder: {}, weeks: {}, components: {} };
+  for (const week of current.weekStructure) {
+    const { components, ...fields } = week;
+    delta.weekOrder.push(week.id);
+    delta.componentOrder[week.id] = components.map(component => component.id);
+    const baseWeek = baseWeeks.get(week.id);
+    if (!baseWeek) {
+      delta.weeks[week.id] = fields;
+    } else {
+      const { components: _baseComponents, ...baseFields } = baseWeek;
+      if (stableStringify(fields) !== stableStringify(baseFields)) delta.weeks[week.id] = fields;
+    }
+    for (const component of components) {
+      const baseComponent = baseComponents.get(component.id);
+      if (!baseComponent || stableStringify(component) !== stableStringify(baseComponent)) delta.components[component.id] = component;
+    }
+  }
+  return delta;
+}
+
 export async function saveModuleStructure(
   moduleCatalogueId: string,
   payload: ModuleCatalogueItem,
-  options: { expectedRevision?: string; source?: 'auto-save' | 'manual' } = {},
+  options: {
+    expectedRevision?: string;
+    source?: 'auto-save' | 'manual';
+    /**
+     * The copy last agreed with the server at `expectedRevision`. With both,
+     * only what changed since is sent and written -- see moduleStructureDelta.
+     * Without either, the whole structure is sent, as every other caller does.
+     */
+    base?: ModuleCatalogueItem | null;
+  } = {},
 ) {
   const recalculated = recalculateModule(payload);
   // `weeksNumber` states the authored week count outright. `weeks` cannot carry
   // it: on this endpoint that name is the legacy alias for the week *list*, and
   // the backend rejects a number there.
-  const body = {
-    ...recalculated,
-    weeksNumber: recalculated.weekStructure.length || recalculated.weeks,
-    ...(options.expectedRevision ? { expectedRevision: options.expectedRevision } : {}),
-  };
+  const partial = Boolean(options.base && options.expectedRevision && options.base.catalogueId === recalculated.catalogueId);
+  const { weekStructure: _weekStructure, ...moduleFields } = recalculated;
+  const body = partial
+    ? {
+      ...moduleFields,
+      weeksNumber: recalculated.weekStructure.length || recalculated.weeks,
+      expectedRevision: options.expectedRevision,
+      saveMode: 'partial',
+      structureDelta: moduleStructureDelta(recalculateModule(options.base as ModuleCatalogueItem), recalculated),
+    }
+    : {
+      ...recalculated,
+      weeksNumber: recalculated.weekStructure.length || recalculated.weeks,
+      ...(options.expectedRevision ? { expectedRevision: options.expectedRevision } : {}),
+    };
+  const serialized = JSON.stringify(body);
+  const sizeBytes = new Blob([serialized]).size;
+  const componentCount = recalculated.weekStructure.reduce((total, week) => total + week.components.length, 0);
+  // Refused here rather than sent: the server would only answer with an HTML
+  // 400 after the whole body had been uploaded.
+  if (sizeBytes > MODULE_STRUCTURE_SAVE_LIMIT_BYTES) {
+    throw new ModuleStructureTooLargeError(sizeBytes, componentCount, true);
+  }
   const saved = recalculateModule(await apiJson<ModuleCatalogueItem>(`/curriculum/modules/${encodeURIComponent(moduleCatalogueId)}/structure/`, {
     method: 'PATCH',
-    body: JSON.stringify(body),
+    body: serialized,
     headers: { 'X-Curriculum-Save-Source': options.source || 'manual' },
     timeoutMs: 90000,
   }).catch((err: unknown) => {
+    // A deployment can set a lower ceiling than the one mirrored above. The
+    // view always answers in JSON, so a body-less 400 on a large payload (or a
+    // proxy's 413) is the size refusal.
+    if (err instanceof ApiError && !err.data && (
+      err.status === 413 || (err.status === 400 && sizeBytes > DJANGO_DEFAULT_UPLOAD_LIMIT_BYTES)
+    )) {
+      throw new ModuleStructureTooLargeError(sizeBytes, componentCount, false);
+    }
     if (!(err instanceof ApiError) || err.status !== 409 || !err.data?.conflict) throw err;
     const server = err.data.module as ModuleCatalogueItem | undefined;
     throw new ModuleStructureConflictError(
@@ -3196,6 +3431,10 @@ export interface WeekTeamsMeetingUpdateResult {
   meeting: WeekTeamsMeetingResult['meeting'];
   componentSettings: ComponentSettings;
   warnings: string[];
+  /** The LMS change email to everyone already invited, sent by the server when the time moved. */
+  scheduleEmail?: WeekTeamsMeetingResult['scheduleEmail'] | null;
+  /** The LMS schedule email to the people this save added, sent by the server. */
+  addedEmail?: WeekTeamsMeetingResult['scheduleEmail'] | null;
 }
 
 export async function updateWeekTeamsMeeting(
@@ -3213,7 +3452,7 @@ export async function updateWeekTeamsMeeting(
 }
 
 export async function cancelWeekTeamsMeeting(moduleCatalogueId: string, liveSessionId: string) {
-  return apiJson<{ cancelled: boolean; componentId: string; warnings: string[] }>(
+  return apiJson<{ cancelled: boolean; componentId: string; warnings: string[]; scheduleEmail?: WeekTeamsMeetingResult['scheduleEmail'] | null }>(
     `/curriculum/modules/${encodeURIComponent(moduleCatalogueId)}/week-teams-meetings/${encodeURIComponent(liveSessionId)}/`,
     { method: 'DELETE', timeoutMs: 45000 },
   ).then(result => {
@@ -3289,7 +3528,7 @@ function peopleAddedBySave(
  * `coOrganizers` are optional: omit them to move dates only, pass them to correct
  * who is invited, who presents and who co-runs it without recreating the meeting.
  */
-export async function updateTeamsMeetingSchedule(liveSessionId: string, input: Pick<TeamsMeetingInput, 'title' | 'organizerEmail' | 'localStartDateTime' | 'startDateTimeUtc' | 'durationMinutes' | 'repeat' | 'repeatOccurrences' | 'scheduledOccurrences'> & Partial<Pick<TeamsMeetingInput, 'lobbyBypass' | 'recording' | 'spokenLanguage' | 'seriesMode'>> & { eventId?: string; attendees?: string[]; presenters?: string[]; coOrganizers?: string[]; peopleOnly?: boolean; settingsOnly?: boolean; notifyAttendees?: boolean }, options: { onSubmitted?: () => void } = {}) {
+export async function updateTeamsMeetingSchedule(liveSessionId: string, input: Pick<TeamsMeetingInput, 'title' | 'organizerEmail' | 'localStartDateTime' | 'startDateTimeUtc' | 'durationMinutes' | 'repeat' | 'repeatOccurrences' | 'scheduledOccurrences'> & Partial<Pick<TeamsMeetingInput, 'lobbyBypass' | 'recording' | 'spokenLanguage' | 'seriesMode'>> & { eventId?: string; attendees?: string[]; presenters?: string[]; coOrganizers?: string[]; peopleOnly?: boolean; settingsOnly?: boolean; notifyAttendees?: boolean; invitationsOnly?: boolean }, options: { onSubmitted?: () => void } = {}) {
   // `settingsOnly` only labels the review ("meeting settings" rather than
   // "invitations"); the transport is the same people-only update either way.
   const { settingsOnly, ...sent } = input;
@@ -3297,7 +3536,7 @@ export async function updateTeamsMeetingSchedule(liveSessionId: string, input: P
   const { series: rawSeries, occurrences } = await loadTeamsMeetingArtifacts(liveSessionId);
   const series = calendarSeriesForReview(rawSeries);
   if (reviewed.peopleOnly) {
-    const held = occurrences.filter(item => item.status !== 'cancelled')
+    const held = occurrences.filter(item => item.status !== 'cancelled' && item.status !== 'superseded')
       .sort((a, b) => parseUtcInstant(a.scheduled_start).getTime() - parseUtcInstant(b.scheduled_start).getTime());
     if (!held.length) throw new Error('The saved session dates could not be loaded. Review the calendar dates before changing invitations.');
     reviewed.scheduledOccurrences = held.map(item => ({ sessionNumber: item.session_number,
@@ -3330,7 +3569,8 @@ export async function updateTeamsMeetingSchedule(liveSessionId: string, input: P
   // recording or the lobby -- sends no mail at all, to anybody, so a full
   // session-by-session review and a "Save and send" button confirm an act with
   // no outward effect. That save applies on the press instead.
-  if (!reviewed.peopleOnly || peopleAddedBySave(invitations, series).length) {
+  // "Save invitations" sends nothing to anybody, so there is nothing to review.
+  if (!reviewed.invitationsOnly && (!reviewed.peopleOnly || peopleAddedBySave(invitations, series).length)) {
     await reviewCalendar({ ...reviewed, settingsOnly, organizerEmail: series.organizer_email, joinUrl: series.join_url,
       notifyOnUpdate: notifyAttendees, ...invitations,
       recording: reviewed.recording ?? series.recording, lobbyBypass: reviewed.lobbyBypass ?? series.lobby_bypass, spokenLanguage: reviewed.spokenLanguage ?? series.spoken_language,
@@ -3341,7 +3581,7 @@ export async function updateTeamsMeetingSchedule(liveSessionId: string, input: P
   // The review is complete. The caller can now replace its form with a
   // progress panel without showing it behind the confirmation dialog.
   options.onSubmitted?.();
-  return apiJson<{ updated: boolean; meeting: TeamsMeetingResult['meeting']; warnings?: Array<{ code?: string; message: string; detail?: string }>; changeNotice?: string; leftoverSlots?: TeamsLeftoverSlot[] }>(`/curriculum/teams-meetings/${encodeURIComponent(liveSessionId)}/schedule/`, {
+  return apiJson<{ updated: boolean; meeting: TeamsMeetingResult['meeting']; warnings?: Array<{ code?: string; message: string; detail?: string }>; changeNotice?: string; leftoverSlots?: TeamsLeftoverSlot[]; scheduleEmail?: TeamsMeetingResult['scheduleEmail']; addedPeople?: string[]; addedEmail?: TeamsMeetingResult['scheduleEmail']; addedEmailKey?: string; announced?: boolean; microsoftUpdate?: TeamsMicrosoftUpdate }>(`/curriculum/teams-meetings/${encodeURIComponent(liveSessionId)}/schedule/`, {
     method: 'PATCH',
     body: JSON.stringify({ ...reviewed, notifyAttendees }),
     // One update is around ten SERIAL Microsoft Graph round trips -- read the
@@ -3355,56 +3595,25 @@ export async function updateTeamsMeetingSchedule(liveSessionId: string, input: P
     timeoutMs: 240000,
   }).then(result => {
     clearCurriculumGetCache();
-    return { ...result, notifyAttendees };
+    // The server has the last word on whether there was a date change to tell
+    // anyone about. A retry of an update that had already landed, or a save
+    // whose dates did not really move, comes back `announced: false`: nobody
+    // is sent a change email for it, from the server or from here.
+    return { ...result, notifyAttendees: result.announced === false ? false : notifyAttendees };
   });
-}
-
-export interface TeamsOccurrenceRescheduleResult {
-  updated: boolean;
-  occurrence: {
-    liveSessionId: string;
-    sessionNumber: number;
-    startDateTimeUtc: string;
-    durationMinutes: number;
-    joinUrl: string;
-    eventId: string;
-  };
-  warnings?: Array<{ code?: string; message: string; detail?: string }>;
 }
 
 /**
- * Move one session of a live-session series to a date/time of its own, leaving
- * every other session — and the module's default time — untouched. The tracked
- * occurrence keeps its own duration unless `durationMinutes` is passed.
+ * What Microsoft was asked to announce for one update. A request, never proof
+ * of delivery: Graph cannot say whether an invitee's mailbox received it.
+ *
+ * - `sent`: the date change was announced to everyone invited.
+ * - `already_attempted`: an earlier attempt at this same change (one whose
+ *   answer was lost to a timeout) already asked; it was not asked again.
+ * - `silent`: the dates changed without a notice, by the caller's choice.
+ * - `not_needed`: no date changed, so there was nothing to announce.
  */
-export async function rescheduleTeamsOccurrence(
-  liveSessionId: string,
-  sessionNumber: number,
-  input: { startDateTimeUtc: string; durationMinutes?: number },
-) {
-  const reviewed = { ...input };
-  const detail = await loadTeamsMeetingArtifacts(liveSessionId);
-  const series = calendarSeriesForReview(detail.series);
-  const occurrence = detail.occurrences.find(item => item.session_number === sessionNumber);
-  if (!occurrence) throw new Error('Load this session before reviewing a time change.');
-  const duration = reviewed.durationMinutes ?? (parseUtcInstant(occurrence.scheduled_end).getTime() - parseUtcInstant(occurrence.scheduled_start).getTime()) / 60000;
-  await reviewCalendar({ title: series.module_title, organizerEmail: series.organizer_email,
-    joinUrl: occurrence.join_url || series.join_url, attendees: series.attendees,
-    presenters: series.presenters, coOrganizers: series.co_organizers, previousOccurrences: [occurrence], seriesMode: 'shared',
-    scheduledOccurrences: [{ sessionNumber, startDateTimeUtc: reviewed.startDateTimeUtc, durationMinutes: duration }],
-  }, getCalendarTimeZone());
-  return apiJson<TeamsOccurrenceRescheduleResult>(
-    `/curriculum/teams-meetings/${encodeURIComponent(liveSessionId)}/occurrences/${sessionNumber}/schedule/`,
-    {
-      method: 'PATCH',
-      body: JSON.stringify(reviewed),
-      timeoutMs: 45000,
-    },
-  ).then(result => {
-    clearCurriculumGetCache();
-    return result;
-  });
-}
+export type TeamsMicrosoftUpdate = 'sent' | 'already_attempted' | 'silent' | 'not_needed';
 
 export interface TeamsArtifactSyncResult {
   synced: {

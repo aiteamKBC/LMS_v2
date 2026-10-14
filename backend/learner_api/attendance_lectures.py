@@ -124,6 +124,74 @@ def report_id(row):
     return _kbc_attendance_report_id(key)
 
 
+# An ended Teams lecture stays 'unmarked' until its attendance report syncs; the
+# learner can still say they missed it.
+REPORTABLE_ABSENCE_STATUSES = frozenset({'absent', 'unmarked', 'upcoming', 'in_progress'})
+
+
+def can_report_absence_status(status, session_date):
+    """One rule for the lecture list's Report Absence and the absence form/submit."""
+    status = _text(status).lower()
+    if status in REPORTABLE_ABSENCE_STATUSES:
+        return True
+    day = session_date.isoformat() if hasattr(session_date, 'isoformat') else _text(session_date)
+    return status == 'pending' and day == timezone.localdate().isoformat()
+
+
+NATIVE_OCCURRENCES_SQL = '''SELECT o.id AS session_id,o.id AS occurrence_id,
+            s.id AS live_session_id,s.module_catalogue_id,m.title AS module_title,
+            o.scheduled_start,o.scheduled_end,o.updated_at,o.session_number,
+            COALESCE(NULLIF(o.join_url,''),s.join_url) AS join_url,
+            o.attendance_report_id,coalesce(nullif(m.tutor_name,''),s.organizer_email) AS tutor_name,
+            CASE WHEN o.attendance_report_id IS NULL OR o.attendance_report_id='' THEN false
+                 ELSE EXISTS(SELECT 1 FROM curriculum.live_session_attendance a
+                     WHERE a.occurrence_id=o.id AND lower(btrim(a.email))=%s
+                       AND a.total_attendance_seconds>180) END AS attended
+            FROM curriculum.live_session_occurrences o
+            JOIN curriculum.live_sessions s ON s.id=o.live_session_id
+            JOIN curriculum.modules m ON m.module_catalogue_id=s.module_catalogue_id
+            WHERE s.module_catalogue_id=ANY(%s)
+              AND m.deleted_at IS NULL AND NOT coalesce(m.is_programme_deleted,false)
+              AND lower(btrim(s.status)) NOT IN ('cancelled','canceled','deleted','failed','superseded')
+              AND lower(btrim(o.status)) NOT IN ('cancelled','canceled','deleted','failed','superseded')
+            ORDER BY o.scheduled_start,o.id'''
+
+# A module duplicated to share another module's Teams meeting deliberately has no
+# live_sessions row of its own (curriculum_api.views.teams_module_owner_id); its
+# learners attend the source's meeting. Follow the same short chain to its owner.
+SHARED_TEAMS_SOURCES_SQL = '''WITH RECURSIVE shared(module_id,source_id,depth) AS (
+            SELECT m.module_catalogue_id,btrim(m.teams_shared_source_module_id),1
+            FROM curriculum.modules m
+            WHERE m.module_catalogue_id=ANY(%s) AND coalesce(btrim(m.teams_shared_source_module_id),'')<>''
+            UNION ALL
+            SELECT shared.module_id,btrim(m.teams_shared_source_module_id),shared.depth+1
+            FROM shared JOIN curriculum.modules m ON m.module_catalogue_id=shared.source_id
+            WHERE coalesce(btrim(m.teams_shared_source_module_id),'')<>'' AND shared.depth<5
+        )
+        SELECT DISTINCT module_id,source_id FROM shared'''
+
+
+def shared_teams_sources(module_ids, *, cursor=None):
+    """{assigned shared duplicate: the modules whose Teams meeting it attends}."""
+    module_ids = sorted({_text(value) for value in module_ids} - {''})
+    if not module_ids:
+        return {}
+    if cursor is None:
+        with connections['enrolment'].cursor() as cursor:
+            return shared_teams_sources(module_ids, cursor=cursor)
+    try:
+        cursor.execute(SHARED_TEAMS_SOURCES_SQL, [module_ids])
+        rows = cursor.fetchall()
+    except DatabaseError:
+        # The learner's own modules still load; shared meetings return once readable.
+        log.warning('Could not read shared Teams modules for %s.', module_ids, exc_info=True)
+        return {}
+    result = {}
+    for module_id, source_id in rows:
+        result.setdefault(module_id, set()).add(source_id)
+    return result
+
+
 def read_native_occurrences(source, *, module_ids=None):
     """Current assigned-module occurrences expected for, or attended by, the learner.
 
@@ -145,24 +213,14 @@ def read_native_occurrences(source, *, module_ids=None):
             module_ids = [value for value in module_ids if value]
         if not module_ids:
             return []
-        cur.execute('''SELECT o.id AS session_id,o.id AS occurrence_id,
-            s.id AS live_session_id,s.module_catalogue_id,m.title AS module_title,
-            o.scheduled_start,o.scheduled_end,o.updated_at,o.session_number,
-            COALESCE(NULLIF(o.join_url,''),s.join_url) AS join_url,
-            o.attendance_report_id,coalesce(nullif(m.tutor_name,''),s.organizer_email) AS tutor_name,
-            CASE WHEN o.attendance_report_id IS NULL OR o.attendance_report_id='' THEN false
-                 ELSE EXISTS(SELECT 1 FROM curriculum.live_session_attendance a
-                     WHERE a.occurrence_id=o.id AND lower(btrim(a.email))=%s
-                       AND a.total_attendance_seconds>180) END AS attended
-            FROM curriculum.live_session_occurrences o
-            JOIN curriculum.live_sessions s ON s.id=o.live_session_id
-            JOIN curriculum.modules m ON m.module_catalogue_id=s.module_catalogue_id
-            WHERE s.module_catalogue_id=ANY(%s)
-              AND m.deleted_at IS NULL AND NOT coalesce(m.is_programme_deleted,false)
-              AND lower(btrim(s.status)) NOT IN ('cancelled','canceled','deleted','failed','superseded')
-              AND lower(btrim(o.status)) NOT IN ('cancelled','canceled','deleted','failed','superseded')
-            ORDER BY o.scheduled_start,o.id''', [_key(source.email), module_ids])
+        shared = shared_teams_sources(module_ids, cursor=cur)
+        module_ids = list(dict.fromkeys([*module_ids, *sorted(set().union(*shared.values()))]))
+        cur.execute(NATIVE_OCCURRENCES_SQL, [_key(source.email), module_ids])
         result = dict_rows(cur)
+    return normalize_native_occurrences(source, result)
+
+
+def normalize_native_occurrences(source, result):
     now = timezone.now()
     for row in result:
         row['scheduled_start'] = _aware(row['scheduled_start'])
@@ -184,11 +242,12 @@ def read_native_occurrences(source, *, module_ids=None):
     return result
 
 
-def lecture_register(source, *, module_ids=None, records=None, learner_profile_id=None, apply_adjustments=True):
+def lecture_register(source, *, module_ids=None, records=None, learner_profile_id=None, apply_adjustments=True, preloaded=None, scheduled=None):
     # Bulk consumers can preload source rows; all schedule, recovery and saved
     # confirmation rules still run through this same learner register.
     records = combined_attendance_rows(source) if records is None else records
-    scheduled = read_native_occurrences(source, module_ids=module_ids)
+    if scheduled is None:
+        scheduled = read_native_occurrences(source, module_ids=module_ids) if preloaded is None else preloaded['scheduled']
     by_occurrence = {str(row['session_id']): row for row in scheduled}
     now = timezone.now()
     result = []
@@ -219,10 +278,10 @@ def lecture_register(source, *, module_ids=None, records=None, learner_profile_i
     # Ended sessions remain unmarked until evidence or a saved correction exists.
     result = [_ended_unmarked_status(row, now) for row in result]
     if attended_alternatives:
-        result = _apply_attended_alternatives(result, source.id, attended_alternatives)
-    result = _apply_completed_catchups(result, source.id)
+        result = _apply_attended_alternatives(result, source.id, attended_alternatives, **({} if preloaded is None else {'targets': preloaded['targets']}))
+    result = _apply_completed_catchups(result, source.id, **({} if preloaded is None else {'completed': preloaded['completed']}))
     from .attendance_confirmation import apply_confirmations, read_confirmations
-    merged = _merge_register_duplicates(apply_confirmations(result, read_confirmations(source.id)))
+    merged = _merge_register_duplicates(apply_confirmations(result, (read_confirmations(source.id) if preloaded is None else preloaded['confirmations'])))
     if not apply_adjustments:
         return merged
     if learner_profile_id is None:
@@ -231,7 +290,7 @@ def lecture_register(source, *, module_ids=None, records=None, learner_profile_i
         if len(profile_ids) > 1:
             raise ValueError('Attendance requires an unambiguous learner profile.')
         learner_profile_id = profile_ids[0] if profile_ids else None
-    return _apply_coach_source_adjustments(merged, learner_profile_id) if learner_profile_id is not None else merged
+    return _apply_coach_source_adjustments(merged, learner_profile_id, **({} if preloaded is None else {'adjustments': preloaded['adjustments']})) if learner_profile_id is not None else merged
 
 
 def _ended_unmarked_status(row, now):
@@ -243,18 +302,18 @@ def _ended_unmarked_status(row, now):
     return row
 
 
-def attendance_read_contract(source, *, learner_profile_id):
+def attendance_read_contract(source, *, learner_profile_id, register=None, manual_rows=None, compact=False):
     """Authoritative coach read; profile identity never substitutes for enrolment."""
     from coach_api.models import CoachManualAttendance, CoachAbsenceReport
-    rows = lecture_register(source, learner_profile_id=learner_profile_id)
+    rows = lecture_register(source, learner_profile_id=learner_profile_id) if register is None else register
     native_ids = {row['module_catalogue_id'] for row in rows
                   if row.get('source') == 'microsoft-teams' and row.get('module_catalogue_id')}
-    components, _ = read_native_components(source, native_ids) if native_ids else ([], [])
+    components, _ = read_native_components(source, native_ids) if native_ids and not compact else ([], [])
     by_module = {}
     for component in components:
         by_module.setdefault(component['module_catalogue_id'], []).append(component)
     reports = {str(report.attendance_id): report for report in
-               CoachAbsenceReport.objects.filter(learner_id=source.id).order_by('created_at', 'id')}
+               (CoachAbsenceReport.objects.filter(learner_id=source.id).order_by('created_at', 'id') if not compact else [])}
     history = []
     now = timezone.now()
     for row in rows:
@@ -278,7 +337,7 @@ def attendance_read_contract(source, *, learner_profile_id):
             'absenceReport': {'id': str(report.id), 'status': report.status,
                               'url': getattr(report, 'evidence_image_url', '') or None} if report else None,
         })
-    for row in CoachManualAttendance.objects.filter(learner_id=learner_profile_id):
+    for row in (CoachManualAttendance.objects.filter(learner_id=learner_profile_id) if manual_rows is None else manual_rows):
         outcome, counted = attendance_outcome({'attendance_status': row.status, 'session_date': row.session_date}, now)
         history.append({
             'learnerId': str(learner_profile_id), 'learner_profile_id': learner_profile_id,
@@ -306,12 +365,12 @@ def attendance_read_contract(source, *, learner_profile_id):
             'summary': summary, 'history': history, 'recentAttendance': counted[:4]}
 
 
-def _apply_coach_source_adjustments(rows, learner_profile_id):
+def _apply_coach_source_adjustments(rows, learner_profile_id, *, adjustments=None):
     """Apply persisted per-learner coach edits without changing the meeting."""
     from coach_api.models import CoachAttendanceSourceAdjustment
 
     try:
-        adjustments = {
+        adjustments = adjustments if adjustments is not None else {
             (item.source, item.source_id): item
             for item in CoachAttendanceSourceAdjustment.objects.filter(learner_id=learner_profile_id)
         }
@@ -357,13 +416,13 @@ def _approved_alternative_targets(learner_id):
     return {str(attendance_id): alternative_occurrence_id(key) for attendance_id, key in reports}
 
 
-def _apply_attended_alternatives(rows, learner_id, attended_occurrences):
+def _apply_attended_alternatives(rows, learner_id, attended_occurrences, *, targets=None):
     """Mark a missed Teams lecture made up once its approved alternative was attended.
 
     Attendance at the alternative comes from the verified Teams report (more
     than three minutes). The original absence keeps its raw Teams status.
     """
-    targets = _approved_alternative_targets(learner_id)
+    targets = _approved_alternative_targets(learner_id) if targets is None else targets
     made_up = {'catchup_completed': True, 'excused': True, 'effective_attendance': 1,
                'effective_attendance_status': 'made_up', 'final_outcome': 'made_up'}
     return [
@@ -384,7 +443,7 @@ def _completed_catchup_occurrences(learner_id, occurrence_ids):
     ).values_list('occurrence_id', flat=True))
 
 
-def _apply_completed_catchups(rows, learner_id):
+def _apply_completed_catchups(rows, learner_id, *, completed=None):
     """Credit a missed Teams lecture that has no attendance report of its own.
 
     Unmarked lectures can also have independently verified recovery evidence. The absence ledger still records
@@ -398,7 +457,7 @@ def _apply_completed_catchups(rows, learner_id):
     if not unreported:
         return rows
     try:
-        completed = _completed_catchup_occurrences(learner_id, unreported)
+        completed = _completed_catchup_occurrences(learner_id, unreported) if completed is None else completed
     except DatabaseError:
         # The register still loads; these lectures show as missed until the ledger is readable.
         log.warning('Could not read completed catch-ups for learner %s.', learner_id, exc_info=True)
@@ -882,8 +941,7 @@ def read_workspace(source, kind):
         lecture['coach'] = coach or lecture['coach']
         report = reported.get(lecture['reportId'])
         lecture['absenceReport'] = {'id': report['id'], 'status': report['status']} if report else None
-        lecture['canReportAbsence'] = (lecture['status'] in {'absent', 'upcoming', 'in_progress'} or
-            (lecture['status'] == 'pending' and lecture['date'] == timezone.localdate().isoformat())) and not report
+        lecture['canReportAbsence'] = can_report_absence_status(lecture['status'], lecture['date']) and not report
         if lecture['status'] == 'present' and lecture['updatedAt']:
             recent.append({'id': lecture['id'], 'title': f"{lecture['title']} attended", 'at': lecture['updatedAt'], 'type': 'attendance'})
     _attach_recovery(lectures, reported)

@@ -7,7 +7,7 @@
 // cohort rule is enforced server-side, a plan's other entries are left exactly
 // as stored, and the learner's recorded progress moves in the same transaction.
 // ============================================================================
-import type { LearningPlanModule, LearningPlanResponse } from './learningPlan';
+import type { LearningPlanModule } from './learningPlan';
 
 const BASE = '/learner_api/module-shift';
 
@@ -72,7 +72,7 @@ export interface ProgressMapping {
 
 export interface ModuleShiftProgress {
   weeks: ShiftWeekPair[];
-  /** The server's opening offer: same position, or the only one of its type. */
+  /** The server's opening offer: same component id, else exact cleaned title + type. */
   suggested: ProgressMapping[];
   /** Why there is nothing to map, when there isn't. '' when there is. */
   reason: string;
@@ -118,7 +118,7 @@ export async function shiftModule(
   fromModuleId: string,
   toModuleId: string,
   progressMappings: ProgressMapping[] = [],
-): Promise<LearningPlanResponse & {
+): Promise<{
   progressMoved?: number;
   reviewsMoved?: number;
   /** Left behind because the component joined already had a review of its own. */

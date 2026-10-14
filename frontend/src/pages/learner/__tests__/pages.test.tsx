@@ -354,7 +354,7 @@ describe('learner loading and recovery', () => {
         migrated: false,
         programme: { completed: 36, total: 307, percent: 11.73, status: 'available' },
         ksb: { completed: 14, total: 32, percent: 43.75, status: 'available', codes: [] },
-        otjh: { historical: 10, new: 62.7, actual: 72.7, completed_actual: 15, planned: 527.75 },
+        otjh: { historical: 10, new: 62.7, actual: 72.7, completed_actual: 15, planned: 527.75, targetToDate: 50 },
       }));
       if (url.includes('/monthly-logs/')) return new Response(JSON.stringify({
         ...(payload(url) as Record<string, unknown>),
@@ -372,7 +372,7 @@ describe('learner loading and recovery', () => {
 
     const otjh = within(screen.getByRole('link', { name: 'Open OTJ Hours' }));
     await waitFor(() => expect(otjh.getByText('Actual').nextElementSibling).toHaveTextContent('72.70 h'));
-    expect(otjh.getByText('Planned hours').nextElementSibling).toHaveTextContent('50.00 h');
+    expect(otjh.getByText('Target to date').nextElementSibling).toHaveTextContent('50.00 h');
     expect(otjh.getByText('72.70 / 50.00 h', { selector: 'p' })).toBeVisible();
 
     const ksb = within(screen.getByRole('link', { name: 'Open KSB Progress' }));
@@ -398,7 +398,7 @@ describe('learner loading and recovery', () => {
     render(<MemoryRouter><ToastProvider><Page /></ToastProvider></MemoryRouter>);
     const card = within(await screen.findByRole('link', { name: 'Open OTJ Hours' }));
     await waitFor(() => expect(card.getByText('Actual').nextElementSibling).toHaveTextContent('500.00 h'));
-    await waitFor(() => expect(card.getByText('Planned hours').nextElementSibling).toHaveTextContent('Unavailable'));
+    await waitFor(() => expect(card.getByText('Target to date').nextElementSibling).toHaveTextContent('Unavailable'));
     expect(card.getByRole('progressbar')).not.toHaveAttribute('aria-valuenow');
   });
 
@@ -408,7 +408,7 @@ describe('learner loading and recovery', () => {
       if (url.includes('/metrics/')) return new Response(JSON.stringify({
         ...(payload(url) as Record<string, unknown>),
         migrated: true, aptem_planned_total: 410,
-        otjh: { historical: 400, actual: 500, new: 100, planned: 600, completed_actual: 999 },
+        otjh: { historical: 400, actual: 500, new: 100, planned: 600, targetToDate: 410, completed_actual: 999 },
       }));
       if (url.includes('/monthly-logs/')) return new Response(JSON.stringify({
         learner: { id: 125, aptem_id: 7001, name: 'Test learner', programme: 'Leadership', coach_name: '' },
@@ -422,7 +422,7 @@ describe('learner loading and recovery', () => {
     render(<MemoryRouter><ToastProvider><Page /></ToastProvider></MemoryRouter>);
     const card = within(await screen.findByRole('link', { name: 'Open OTJ Hours' }));
     await waitFor(() => expect(card.getByText('Actual').nextElementSibling).toHaveTextContent('500.00 h'));
-    await waitFor(() => expect(card.getByText('Planned hours').nextElementSibling).toHaveTextContent('410.00 h'));
+    await waitFor(() => expect(card.getByText('Target to date').nextElementSibling).toHaveTextContent('410.00 h'));
   });
 
   it('does not replace the canonical total with the Monthly Logs month sum', async () => {
@@ -432,7 +432,7 @@ describe('learner loading and recovery', () => {
         migrated: true, aptem_planned_total: 410,
         programme: { completed: 36, total: 307, percent: 11.73, status: 'available' },
         ksb: { completed: 14, total: 32, percent: 43.75, status: 'available', codes: [] },
-        otjh: { historical: 294.63, new: 0, actual: 294.63, completed_actual: 297.13, planned: 353 },
+        otjh: { historical: 294.63, new: 0, actual: 294.63, completed_actual: 297.13, planned: 353, targetToDate: 410 },
       }));
       if (url.includes('/monthly-logs/')) return new Response(JSON.stringify({
         learner: { id: 125, aptem_id: 7001, name: 'Test learner', programme: 'Leadership', coach_name: '' },
@@ -450,7 +450,7 @@ describe('learner loading and recovery', () => {
 
     const otjh = within(await screen.findByRole('link', { name: 'Open OTJ Hours' }));
     await waitFor(() => expect(otjh.getByText('Actual').nextElementSibling).toHaveTextContent('294.63 h'));
-    expect(otjh.getByText('Planned hours').nextElementSibling).toHaveTextContent('410.00 h');
+    expect(otjh.getByText('Target to date').nextElementSibling).toHaveTextContent('410.00 h');
   });
 
   it('shows unavailable header facts when the schedule fails instead of claiming the coach is unassigned', async () => {

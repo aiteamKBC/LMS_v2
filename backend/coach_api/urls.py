@@ -3,13 +3,20 @@ from django.urls import path
 from .ai_marking import coach_marking_ai_feedback, coach_marking_ai_prompt
 from .csrf import coach_csrf_token
 from .bulk_attendance import coach_bulk_attendance
+from .attendance_loading import coach_attendance_options, coach_attendance_group, coach_attendance_session, coach_attendance_sessions, coach_attendance_context
 from . import personal_learning
+from . import monthly_logs
 from .monthly_reports import coach_monthly_report_detail, coach_monthly_reports
+from .support_tickets import (
+    coach_support_ticket_notes,
+    coach_support_ticket_status,
+    coach_support_ticket_wellbeing_report,
+    coach_support_tickets,
+)
 from .meeting_reminders import coach_meeting_reminder
 from .enrolment_documents import (
     coach_enrolment_document,
     coach_enrolment_documents,
-    coach_sign_enrolment_document,
 )
 from .review_pdf import coach_mcm_pdf
 from .migrated_completion_views import (
@@ -21,7 +28,8 @@ from .migrated_intelligence_views import (
 )
 from .migrated_summary_upload import migrated_review_summary_upload
 from .migrated_progress_views import migrated_review_progress
-from .dashboard_view import coach_dashboard
+from .dashboard_view import coach_dashboard, coach_dashboard_section
+from .case_file import case_file_section, case_file_ksb_detail, case_file_learning_module
 from .views import (
     coach_attendance,
     coach_attendance_details,
@@ -34,6 +42,7 @@ from .views import (
     coach_caseload,
     coach_caseload_coach_rag,
     coach_directory,
+    coach_directory_calendar,
     coach_evidence_awaiting_review,
     coach_marking_queue,
     coach_imported_review_history,
@@ -65,6 +74,14 @@ from .views import (
 
 
 urlpatterns = [
+    path('coach/monthly-logs/learners', monthly_logs.learners, name='coach-monthly-log-learners'),
+    path('coach/monthly-logs/<int:learner_id>', monthly_logs.learner_year, name='coach-monthly-log-year'),
+    path('coach/monthly-logs/<int:learner_id>/<str:month>', monthly_logs.learner_month, name='coach-monthly-log-month'),
+    path('coach/case-file/<int:learner_id>/profile', case_file_section, name='case-file-profile'),
+    path('coach/case-file/<int:learner_id>/learning-plan/module/<str:module_id>/week/<str:week_id>', case_file_learning_module, name='case-file-learning-week'),
+    path('coach/case-file/<int:learner_id>/learning-plan/module/<str:module_id>', case_file_learning_module, name='case-file-learning-module'),
+    path('coach/case-file/<int:learner_id>/ksbs/<str:code>', case_file_ksb_detail, name='case-file-ksb-detail'),
+    path('coach/case-file/<int:learner_id>/<str:section>', case_file_section, name='case-file-section'),
     path('migrated-reviews/<str:review_id>/progress', migrated_review_progress, name='migrated-review-progress'),
     path('migrated-reviews/<str:review_id>/intelligence', migrated_review_intelligence, name='migrated-review-intelligence'),
     path('migrated-reviews/<str:review_id>/check-session', migrated_review_check_session, name='migrated-review-check-session'),
@@ -80,19 +97,28 @@ urlpatterns = [
     path('coach/personal-marking/<uuid:submission_id>/evidence/<uuid:file_id>', personal_learning.evidence),
     path('csrf', coach_csrf_token, name='coach-csrf'),
     path('coaches', coach_directory, name='coach-directory'),
+    path('coaches/calendar', coach_directory_calendar, name='coach-directory-calendar'),
     path('coach/dashboard', coach_dashboard, name='coach-dashboard'),
+    path('coach/dashboard/summary', coach_dashboard_section, {"section": "summary"}, name='coach-dashboard-summary'),
+    path('coach/dashboard/learners', coach_dashboard_section, {"section": "learners"}, name='coach-dashboard-learners'),
+    path('coach/dashboard/meetings', coach_dashboard_section, {"section": "meetings"}, name='coach-dashboard-meetings'),
+    path('coach/dashboard/risk', coach_dashboard_section, {"section": "risk"}, name='coach-dashboard-risk'),
     path('coach/learners/<int:learner_id>/case-file', coach_learner_case_file, name='coach-learner-case-file'),
     path('coach/learners/<int:learner_id>/next-session', coach_learner_case_file_next_session, name='coach-learner-case-file-next-session'),
     path('coach/learners/<int:learner_id>/reviews', coach_learner_case_file_reviews, name='coach-learner-case-file-reviews'),
-    # Enrolment Documents tab: the learner's enrolment review documents, signed
-    # by the coach with their saved signature (coach_api/enrolment_documents.py).
+    # Enrolment Documents tab: review documents viewed and downloaded
+    # read-only in Case File (coach_api/enrolment_documents.py).
     path('coach/learners/<int:learner_id>/enrolment-documents', coach_enrolment_documents, name='coach-enrolment-documents'),
     path('coach/learners/<int:learner_id>/enrolment-documents/<str:event_key>', coach_enrolment_document, name='coach-enrolment-document'),
-    path('coach/learners/<int:learner_id>/enrolment-documents/<str:event_key>/sign', coach_sign_enrolment_document, name='coach-enrolment-document-sign'),
     path('coach/caseload', coach_caseload, name='coach-caseload'),
     path('coach/imported-review-history', coach_imported_review_history, name='coach-imported-review-history'),
     path('coach/caseload/<int:learner_id>/coach-rag', coach_caseload_coach_rag, name='coach-caseload-coach-rag'),
     path('coach/attendance', coach_attendance, name='coach-attendance'),
+    path('coach/attendance/options', coach_attendance_options, name='coach-attendance-options'),
+    path('coach/attendance/context', coach_attendance_context, name='coach-attendance-context'),
+    path('coach/attendance/group', coach_attendance_group, name='coach-attendance-group'),
+    path('coach/attendance/sessions', coach_attendance_sessions, name='coach-attendance-sessions'),
+    path('coach/attendance/session', coach_attendance_session, name='coach-attendance-session'),
     path('coach/attendance/bulk', coach_bulk_attendance, name='coach-bulk-attendance'),
     path('coach/attendance/details', coach_attendance_details, name='coach-attendance-details'),
     path('coach/attendance/manual', coach_manual_attendance, name='coach-manual-attendance-create'),
@@ -104,6 +130,10 @@ urlpatterns = [
     # the bare list route would otherwise never be reached for a report id.
     path('coach/monthly-reports/<uuid:report_id>', coach_monthly_report_detail, name='coach-monthly-report-detail'),
     path('coach/monthly-reports', coach_monthly_reports, name='coach-monthly-reports'),
+    path('coach/support-tickets', coach_support_tickets, name='coach-support-tickets'),
+    path('coach/support-tickets/<int:ticket_id>/status', coach_support_ticket_status, name='coach-support-ticket-status'),
+    path('coach/support-tickets/<int:ticket_id>/notes', coach_support_ticket_notes, name='coach-support-ticket-notes'),
+    path('coach/support-tickets/<int:ticket_id>/wellbeing-report', coach_support_ticket_wellbeing_report, name='coach-support-ticket-wellbeing-report'),
     path('coach/marking-queue', coach_marking_queue, name='coach-marking-queue'),
     path('coach/marking-queue/<uuid:submission_id>', coach_marking_queue, name='coach-marking-submission'),
     path('coach/marking-queue/<uuid:submission_id>/ai-feedback', coach_marking_ai_feedback, name='coach-marking-ai-feedback'),

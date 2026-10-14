@@ -31,7 +31,7 @@ it('never sends a week delivered by an additional meeting, or one not yet assign
     { weekNumber: 5, components: [live('C5', { teamsMeetingScope: 'additional' })] },
   ] } as never);
   vi.mocked(fetchModuleSessionPlan).mockResolvedValue({ sessions: [1, 2, 3, 4, 5].map(weekNumber => ({
-    weekNumber, date: `2026-11-0${weekNumber + 1}`, startTime: '09:00', endTime: '11:00', durationMinutes: 120,
+    sessionNumber: weekNumber, weekNumber, date: `2026-11-0${weekNumber + 1}`, startTime: '09:00', endTime: '11:00', durationMinutes: 120,
   })) } as never);
   vi.mocked(fetchCurriculumTeamsMeetingSummaries).mockResolvedValue([
     { moduleCatalogueId: 'MOD-1', liveSessionId: 'LIVE-1', organizerEmail: 'organizer@example.invalid', timeZone: 'Africa/Cairo' },
@@ -41,6 +41,7 @@ it('never sends a week delivered by an additional meeting, or one not yet assign
 
   const sent = vi.mocked(updateTeamsMeetingSchedule).mock.calls[0][1].scheduledOccurrences || [];
   expect(sent.map(item => item.startDateTimeUtc.slice(0, 10))).toEqual(['2026-11-02', '2026-11-05']);
+  expect(sent.map(item => item.sessionNumber)).toEqual([1, 4]);
   expect(pushed.sessionCount).toBe(2);
 });
 

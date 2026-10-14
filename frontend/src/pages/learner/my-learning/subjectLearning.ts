@@ -8,7 +8,7 @@ import { learnerHeaderPlan } from '@/pages/workspace/learner/learnerHeaderPlan';
 import { dateKey, weekKey } from '@/pages/learner/training-plan-timeline/model';
 import { hasComponentContent } from '@/utils/learnerJourney';
 
-export type LearningWeek = { id: string; label: string; title: string; start: string | null; end: string | null; activities: SubjectEntry[];
+export type LearningWeek = { id: string; label: string; title: string; start: string | null; end: string | null; month?: string; activities: SubjectEntry[];
   /** The authored curriculum week (curriculum.weeks.id) this card stands for, when it has one. */
   weekId?: string };
 export const learningToday = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Europe/London' });
@@ -79,10 +79,13 @@ export function subjectWeeks(subject: Subject): LearningWeek[] {
     const special = source === 'introduction' ? 'introduction' : source === 'extra_activity' ? 'extra' : '';
     const { start, end } = activityWeekRange(entry);
     const label = entry.week || entry.legacy?.section_title || '';
+    const month = /^\d{4}-(0[1-9]|1[0-2])$/.test(entry.schedule.month || '') ? entry.schedule.month! : undefined;
     const key = special === 'introduction' ? special : special === 'extra' ? `extra:${label}`
-      : start || entry.native?.weekId || label || 'undated';
-    const group = groups.get(key) || { id: key, label: special === 'introduction' ? 'Introduction' : special === 'extra' ? 'Extra activities' : '',
-      title: label, start: special ? null : start, end: special ? null : end, activities: [] };
+      : start || entry.native?.weekId || (month ? `${month}:${label || 'activities'}` : label || 'undated');
+    const monthLabel = !special && !start && month
+      ? new Date(`${month}-01T12:00:00Z`).toLocaleDateString('en-GB', { month: 'long', year: 'numeric', timeZone: 'UTC' }) : '';
+    const group = groups.get(key) || { id: key, label: special === 'introduction' ? 'Introduction' : special === 'extra' ? 'Extra activities' : monthLabel,
+      title: label, start: special ? null : start, end: special ? null : end, month: special ? undefined : month, activities: [] };
     group.activities.push(entry);
     // A calendar week can hold activities from more than one authored week; the
     // first one named owns the card, matching the title it already carries.
@@ -90,9 +93,9 @@ export function subjectWeeks(subject: Subject): LearningWeek[] {
     if (!special && end && (!group.end || end > group.end)) group.end = end;
     groups.set(key, group);
   }
-  const rank = (week: LearningWeek) => week.id === 'introduction' ? -1 : week.id.startsWith('extra:') ? 2 : week.start ? 0 : 1;
+  const rank = (week: LearningWeek) => week.id === 'introduction' ? -1 : week.id.startsWith('extra:') ? 2 : week.start || week.month ? 0 : 1;
   let number = 0;
-  return [...groups.values()].sort((a, b) => rank(a) - rank(b) || (a.start || a.id).localeCompare(b.start || b.id, undefined, { numeric: true })).map(week => {
+  return [...groups.values()].sort((a, b) => rank(a) - rank(b) || (a.start || a.month || a.id).localeCompare(b.start || b.month || b.id, undefined, { numeric: true }) || a.id.localeCompare(b.id, undefined, { numeric: true })).map(week => {
     const activities = [...week.activities].sort((a, b) => (a.schedule.date || '').localeCompare(b.schedule.date || '') || a.position - b.position);
     const label = week.label || (week.id === 'undated' ? 'Undated activities' : (number++, /^week\s*\d+/i.exec(week.title)?.[0] || `Week ${number}`));
     const title = week.title && !/^week\s*\d+\s*$/i.test(week.title) ? week.title

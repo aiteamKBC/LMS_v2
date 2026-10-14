@@ -61,6 +61,7 @@ describe('quiz requirements loading', () => {
     mocks.detail.mockReturnValue(new Promise(done => { resolve = done; }));
     renderPage();
     await act(async () => {});
+    expect(mocks.detail).toHaveBeenCalledWith('commercial', '501', { quizView: true });
     expect(screen.queryByRole('button', { name: 'Start Quiz' })).not.toBeInTheDocument();
     await act(async () => resolve(detail));
     fireEvent.click(await screen.findByRole('button', { name: 'Start Quiz' }));
@@ -96,6 +97,47 @@ describe('quiz requirements loading', () => {
     expect(screen.queryByRole('button', { name: 'Start Quiz' })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Retry quiz' }));
     expect(await screen.findByRole('button', { name: 'Start Quiz' })).toBeEnabled();
+  });
+
+  it('shows the diagram during the attempt and in the submitted answer review', async () => {
+    mocks.detail.mockResolvedValue(detail);
+    const imageUrl = 'data:image/png;base64,ZGlhZ3JhbQ==';
+    mocks.quiz.mockResolvedValue({ id: 1, title: 'Diagram quiz', questions: [{ id: 1, text: 'Read the diagram', imageUrl, points: 1, type: 'true_false', answers: [{ id: 1, text: 'True' }, { id: 2, text: 'False' }] }] });
+    mocks.submit.mockResolvedValue({ passed: true, achievedScore: 1, totalScore: 1, grade: 1, earned: 1, possible: 1,
+      attempt: { attempt: 1 }, breakdown: [{ questionId: 1, questionText: 'Read the diagram', imageUrl, correct: true, earned: 1, possible: 1, chosenAnswer: 'True' }] });
+    renderPage();
+    fireEvent.click(await screen.findByRole('button', { name: 'Start Quiz' }));
+    expect(screen.getByAltText('Question diagram')).toHaveAttribute('src', imageUrl);
+    fireEvent.click(screen.getByRole('button', { name: /True/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Finish Quiz' }));
+    await screen.findByText('Question Breakdown');
+    expect(screen.getByAltText('Question diagram')).toHaveAttribute('src', imageUrl);
+  });
+
+  it('keeps the stored question, answers and score when the live quiz changes', async () => {
+    mocks.detail.mockResolvedValue({ ...detail, quizAttempts: [{
+      quizId: 1, attempt: 1, grade: 1, achievedScore: 1, totalScore: 1, passed: true,
+      questions: [{ questionId: 90, questionText: 'Original question', type: 'single_choice', possible: 2,
+        earned: 2, correct: true, chosenText: 'Original answer', correctText: 'Original answer' }],
+    }] });
+    mocks.quiz.mockResolvedValue({ id: 1, title: 'Quiz', questions: [{ id: 91, text: 'New unrelated question', type: 'single_choice', points: 10, answers: [] }] });
+    renderPage();
+    fireEvent.click(await screen.findByRole('button', { name: /View Result Details/ }));
+    expect(await screen.findByText(/Original question/)).toBeVisible();
+    expect(screen.getByText('Original answer')).toBeVisible();
+    expect(screen.queryByText(/New unrelated question/)).not.toBeInTheDocument();
+    expect(mocks.submit).not.toHaveBeenCalled();
+  });
+
+  it('blocks new attempts with an invalid key while preserving access to previous results', async () => {
+    mocks.detail.mockResolvedValue({ ...detail, quizAttempts: [{ quizId: 1, attempt: 1, grade: 0, achievedScore: 0, totalScore: 1, passed: false, questions: [] }] });
+    mocks.quiz.mockResolvedValue({ id: 1, title: 'Quiz', unavailableReason: 'This quiz needs its answer key reviewed.', questions: [{ id: 1, text: 'Q', type: 'single_choice', points: 1, answers: [] }] });
+    renderPage();
+    expect(await screen.findByRole('alert')).toHaveTextContent('answer key reviewed');
+    expect(screen.getByRole('button', { name: /Retake Quiz/ })).toBeDisabled();
+    fireEvent.click(screen.getByRole('button', { name: /View Result Details/ }));
+    expect(await screen.findByText('Quiz Not Passed')).toBeVisible();
+    expect(mocks.start).not.toHaveBeenCalled();
   });
 
   it('offers the existing reflection page or a no-reflection quiz submission', async () => {

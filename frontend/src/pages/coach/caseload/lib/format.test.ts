@@ -53,6 +53,25 @@ describe('targetHoursAsOfToday', () => {
 });
 
 describe('otjhProgressAsOfToday', () => {
+  it('consumes authoritative scalars without recalculating percentage, shortfall or status', () => {
+    const source = { otjhCompleted: 100, otjhTarget: 999, otjhPlanned: 999,
+      otjhTargetAsOfToday: 200, otjhShortfallHours: 100, otjhProgressAsOfToday: 12.34,
+      otjhDeltaHours: -100, otjhRagStatus: 'on-track' as const,
+      status: 'at-risk', otjhStatus: 'at-risk' };
+    const result = otjhProgressAsOfToday(source);
+    expect(result).toEqual({ actualHours: 100, targetHours: 200, gapHours: 100,
+      percent: 12.34, deltaHours: -100, status: 'on-track' });
+  });
+
+  it('preserves authoritative nulls instead of reconstructing unavailable data from legacy fields', () => {
+    expect(otjhProgressAsOfToday({ otjhCompleted: 40, otjhTarget: 999, otjhPlanned: 120,
+      startDate: '01 Jun 2026', plannedEndDate: '01 Jul 2026',
+      otjhTargetAsOfToday: null, otjhProgressAsOfToday: null,
+      otjhShortfallHours: null, otjhDeltaHours: null, otjhRagStatus: 'unavailable',
+    }, new Date(2026, 5, 15))).toEqual({ actualHours: 40, targetHours: null, percent: null,
+      gapHours: null, deltaHours: null, status: 'unavailable' });
+  });
+
   it('uses the API-owned target and RAG contract when it is present', () => {
     const result = otjhProgressAsOfToday({
       otjhCompleted: 40,

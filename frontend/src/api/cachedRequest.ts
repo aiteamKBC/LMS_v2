@@ -48,6 +48,7 @@ export function createCachedResource<T>(
   name: string,
   fetcher: (key: string) => Promise<T>,
   ttlMs: number = DEFAULT_TTL_MS,
+  maxEntries: number = 200,
 ) {
   const read = (key: string, options: { force?: boolean; revalidate?: boolean } = {}): Promise<T> => {
     const cache = bucket<Entry<unknown>>(caches, name);
@@ -68,7 +69,7 @@ export function createCachedResource<T>(
         // A save, account change or newer forced read may have superseded this
         // request while it was in flight. Never put that older response back.
         if (pending.get(key) === promise) {
-          if (cache.size >= 200) cache.delete(cache.keys().next().value!);
+          if (cache.size >= maxEntries) cache.delete(cache.keys().next().value!);
           cache.set(key, { data, expiresAt: Date.now() + ttlMs });
         }
         return data;
@@ -129,4 +130,10 @@ export function clearAllCachedResources(): void {
   inFlight.forEach(pending => pending.clear());
   caches.clear();
   inFlight.clear();
+}
+
+/** Invalidate one registered resource even when its consuming page is unmounted. */
+export function invalidateCachedResource(name: string): void {
+  caches.get(name)?.clear();
+  inFlight.get(name)?.clear();
 }

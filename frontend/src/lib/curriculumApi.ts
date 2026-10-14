@@ -1207,6 +1207,91 @@ export interface CurriculumLearnerActivity {
   evidenceCount: number;
 }
 
+/** Authored activity for one assigned learner, including not-started rows. */
+export interface CurriculumLearnerActivityPlanItem {
+  lectureDate?: string | null;
+  logState?: CurriculumActivityLogState;
+  canChangeStatus?: boolean;
+  activityPlanId: string;
+  learnerId: number | string;
+  learnerName: string;
+  email: string;
+  cohort: string;
+  group: string;
+  componentId: string;
+  componentTitle: string;
+  componentType: string;
+  moduleCatalogueId: string;
+  module: string;
+  weekId: string;
+  week: string;
+  displayOrder: number;
+  expectedOtjh: number | null;
+  points: number;
+  calculatedStatus: 'completed' | 'in_progress' | 'not_started' | string;
+  displayStatus: 'completed' | 'in_progress' | 'not_started' | string;
+  statusSource: 'calculated' | string;
+  progressId: number | null;
+  progressIds: Array<number | string>;
+  progressStatus: string;
+  submittedAt: string;
+  countsTowardAchievement: boolean | null;
+  source: 'curriculum_component' | string;
+}
+
+export interface CurriculumActivityLogState {
+  revision: number;
+  snapshotHash: string;
+  displayStatus: string | null;
+  calculatedStatus: string;
+  statusSource: string;
+  actualOtjh: number | null;
+  acceptedOtjh: number | null;
+  hoursSource: string;
+  startedAt: string | null;
+  endedAt: string | null;
+  progressId: number | null;
+  accepted: boolean | null;
+  multipleRecordedAllocations?: boolean;
+  timeEntryMode?: 'input' | 'timestamp';
+  activityDate?: string | null;
+  attendanceMode?: 'attended' | 'recording' | null;
+  lectureDate?: string | null;
+}
+
+export type CurriculumActivityCompletionTime = { durationSeconds: number; attendanceMode?: 'attended' | 'recording' } & (
+  { timeEntryMode: 'input'; activityDate: string }
+  | { timeEntryMode: 'timestamp'; startedAt: string }
+);
+
+export interface CurriculumActivityStatusHistory {
+  revision: number; actor_id: number; reason: string; created_at: string; displayStatus: string;
+}
+
+export async function fetchCurriculumActivityStatusHistory(moduleId: string, learnerId: string, componentId: string, signal?: AbortSignal): Promise<{ history: CurriculumActivityStatusHistory[] }> {
+  const path = `/curriculum/modules/${encodeURIComponent(moduleId)}/learners/${encodeURIComponent(learnerId)}/activities/${encodeURIComponent(componentId)}/status/`;
+  const response = await coachFetch(`${API_BASE_URL}${path}`, { signal });
+  const data = await response.json();
+  if (!response.ok) throw new CurriculumApiError(data?.error || 'Unable to load status history.', response.status, path, data);
+  return data;
+}
+
+export async function saveCurriculumActivityStatus(moduleId: string, learnerId: string, componentId: string, body: {
+  displayStatus: 'completed' | 'not_started'; expectedRevision: number; snapshotHash: string;
+  durationSeconds?: number; startedAt?: string; timeEntryMode?: 'input' | 'timestamp'; activityDate?: string;
+  attendanceMode?: 'attended' | 'recording';
+}): Promise<{ state: CurriculumActivityLogState }> {
+  const path = `/curriculum/modules/${encodeURIComponent(moduleId)}/learners/${encodeURIComponent(learnerId)}/activities/${encodeURIComponent(componentId)}/status/`;
+  mutationEpoch += 1;
+  applyMutationInvalidation(path);
+  const response = await coachFetch(`${API_BASE_URL}${path}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  const data = await response.json();
+  if (!response.ok) throw new CurriculumApiError(data?.error || 'Unable to save activity status.', response.status, path, data);
+  clearCurriculumGetCache();
+  publishCrossTabWrite(CURRICULUM_WRITE_SCOPE, path);
+  return data;
+}
+
 // Learner placements are owned by the enrolment team. Curriculum reads this
 // roster to show who is arriving in a cohort/group and never writes to it.
 export interface CurriculumScopeLearnerRosterResponse {
@@ -1226,6 +1311,10 @@ export interface CurriculumScopeLearnerRosterResponse {
 export type CurriculumProgrammeLearnerRosterResponse = CurriculumScopeLearnerRosterResponse;
 
 export interface CurriculumScopeLearnerKsbImpactResponse {
+  activityLogOtjh?: {
+    learners: Array<{ learnerId: number | string; plannedOtjh: number; achievedOtjh: number | null }>;
+    achievedTotal: number | null; plannedTotal: number; source: string;
+  };
   scope: CurriculumLearnerScope | string;
   identifier: string;
   lineage: CurriculumScopeLineage;
@@ -1243,6 +1332,8 @@ export interface CurriculumScopeLearnerKsbImpactResponse {
   learnerKsbConsumption: CurriculumLearnerKsbConsumption[];
   learnerActivities?: CurriculumLearnerActivity[];
   learnerActivityCount?: number;
+  learnerActivityPlan?: CurriculumLearnerActivityPlanItem[];
+  learnerActivityPlanCount?: number;
   ksbAchievementPolicy?: {
     achievedWeightSource: string;
     reflectionKsbRole: string;
@@ -1494,6 +1585,8 @@ export interface CurriculumTeamsMeetingSummary {
    */
   syncState?: 'in-sync' | 'out-of-sync' | 'no-sessions' | 'unverified';
   syncReasons?: string[];
+  /** Saved / pending / failed for the meeting options; read with readMicrosoftUpdate. */
+  microsoftUpdate?: unknown;
   expectedOccurrenceCount?: number;
   differingOccurrenceCount?: number;
   missingFromTeams?: string[];
@@ -1595,6 +1688,9 @@ export interface LiveSessionArtifactsResponse {
  */
 const OFF_CALENDAR_OCCURRENCE_STATUSES = new Set([
   'cancelled', 'canceled', 'declined', 'deleted', 'removed',
+  // "Not in plan": a session a new plan left on Teams. Not cancelled -- its
+  // Teams slot stands until somebody cancels it -- but not a planned session.
+  'superseded',
 ]);
 
 /** The tracked occurrences that still stand for a meeting on the calendar. */
@@ -3548,13 +3644,14 @@ export function fetchCurriculumScopeLearnerRoster(
 export function fetchCurriculumScopeLearnerKsbImpact(
   scope: CurriculumLearnerScope,
   identifier: string,
-  params: { sourceType?: string; sourceId?: string; learnerStatus?: string } = {},
+  params: { sourceType?: string; sourceId?: string; learnerStatus?: string; moduleProgress?: boolean } = {},
   signal?: AbortSignal,
 ): Promise<CurriculumScopeLearnerKsbImpactResponse> {
   const query = new URLSearchParams();
   if (params.sourceType) query.set('source_type', params.sourceType);
   if (params.sourceId) query.set('source_id', params.sourceId);
   if (params.learnerStatus) query.set('learnerStatus', params.learnerStatus);
+  if (params.moduleProgress) query.set('moduleProgress', '1');
   return fetchJson<CurriculumScopeLearnerKsbImpactResponse>(
     scopePath(SCOPE_IMPACT_PATHS, '/curriculum/learner-ksb-impact/', scope, identifier, query),
     { signal },
@@ -3709,6 +3806,22 @@ export function fetchLiveSessionArtifacts(
   return fetchJson<LiveSessionArtifactsResponse>(
     `/curriculum/teams-meetings/${encodeURIComponent(liveSessionId)}/artifacts/`,
     { signal: options.signal, skipCache: options.skipCache },
+  );
+}
+
+/** The meeting ID and passcode Teams prints under `link`, one of the series'
+ *  own join links. Read from Microsoft on first ask, then stored; blanks when
+ *  Microsoft cannot say. Staff only. */
+export type TeamsMeetingDialIn = { joinUrl: string; meetingId: string; passcode: string };
+
+export function fetchTeamsMeetingDialIn(
+  liveSessionId: string,
+  link: string,
+  options: { signal?: AbortSignal } = {},
+): Promise<TeamsMeetingDialIn> {
+  return fetchJson<TeamsMeetingDialIn>(
+    `/curriculum/teams-meetings/${encodeURIComponent(liveSessionId)}/dial-in/?link=${encodeURIComponent(link)}`,
+    { signal: options.signal, skipCache: true },
   );
 }
 

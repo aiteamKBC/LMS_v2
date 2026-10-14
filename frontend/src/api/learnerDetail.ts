@@ -11,6 +11,8 @@ import type { LearnerAccessGate, LearnerLearningAccess } from '@/utils/learnerAc
 const BASE = '/learner_api/learner-detail';
 const detailResource = createCachedResource<LearnerDetail>('learner-detail', key =>
   readLearnerJson(`${BASE}/${key.replace(':', '/')}/?content=summary`));
+const quizDetailResource = createCachedResource<LearnerDetail>('learner-quiz-detail', key =>
+  readLearnerJson(`${BASE}/${key.replace(':', '/')}/?content=quiz`));
 const componentResource = createCachedResource<LearnerDetail>('learner-component-detail', async key => {
   const [kind, id, componentId] = JSON.parse(key) as [LearnerKind, string, string];
   const detail = await detailResource.read(`${kind}:${id}`);
@@ -56,6 +58,8 @@ export interface LearnerComponentEntry {
   type?: string | null;                 // master component type, e.g. 'video', 'live_session'
   description?: string | null;
   assignmentTopics?: import('@/lib/assignmentTopics').AssignmentTopic[];
+  /** Author flag: the monthly (eight-step) assignment. See isMonthlyAssignment. */
+  monthlyAssignment?: boolean;
   assignmentBrief?: string | null;      // assignment brief authored as plain text (Module Builder)
   assignmentBriefHtml?: string | null;  // assignment brief authored as rich text (Week Builder)
   videoUrl?: string | null;             // present on video components authored with a URL
@@ -97,16 +101,19 @@ export interface LearnerKsbItem {
   description: string;
 }
 
-// Slim stored per-question result — references answers by id (resolved to text
-// on display via the fetched quiz). Free-text types (fill_gap/keywords/matching)
-// have no answer id, so they carry chosenText instead.
+// New results include a text/key snapshot; older attempts may only have IDs.
 export interface LearnerQuizQuestionResult {
   questionId: number;
+  questionText?: string;
+  type?: string;
+  possible?: number;
+  imageUrl?: string;
   earned: number;
   correct: boolean;
   chosenAnswerId?: number | number[] | null;
   correctAnswerId?: number[] | null;
-  chosenText?: string | null;   // free-text answer types only
+  chosenText?: string | null;
+  correctText?: string | null;
 }
 
 export interface LearnerQuizAttempt {
@@ -167,6 +174,8 @@ export interface LearnerDetail {
   /** A Delivery apprentice who has signed all four compliance documents may book their first session. */
   firstSessionUnlocked?: boolean;
   learnerType?: LearnerKind;
+  /** Staff-owned Created_users.Attendance_type delivery classification. */
+  attendanceType?: string | null;
   programmeStartDate?: string;
   /** The learner's own recorded start, from Created_users.Learner_start_date.
    *  programmeStartDate falls back to the cohort when this is unset, so it can
@@ -314,14 +323,16 @@ export interface LearnerVideoProgress {
 export function invalidateLearnerDetailCache(kind?: LearnerKind, id?: string): void {
   const key = kind && id ? `${kind}:${id}` : undefined;
   detailResource.invalidate(key);
+  quizDetailResource.invalidate(key);
   componentResource.invalidate();
   summaryResource.invalidate(key);
   invalidateLearnerReads();
 }
 
 /** Share the expensive workspace payload between learner pages. */
-export function fetchLearnerDetail(kind: LearnerKind, id: string, options: { force?: boolean; revalidate?: boolean; componentId?: string } = {}): Promise<LearnerDetail> {
+export function fetchLearnerDetail(kind: LearnerKind, id: string, options: { force?: boolean; revalidate?: boolean; componentId?: string; quizView?: boolean } = {}): Promise<LearnerDetail> {
   if (options.force) invalidateLearnerDetailCache(kind, id);
+  if (options.quizView) return quizDetailResource.read(`${kind}:${id}`, { revalidate: options.revalidate });
   if (options.componentId) return componentResource.read(JSON.stringify([kind, id, options.componentId]));
   return detailResource.read(`${kind}:${id}`, { revalidate: options.revalidate });
 }

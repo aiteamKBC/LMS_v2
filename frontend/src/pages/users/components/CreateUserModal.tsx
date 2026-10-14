@@ -3,6 +3,7 @@ import { useToast } from '@/hooks/useToast';
 import { fetchProgrammes, fetchCohorts, fetchGroups } from '@/api/curriculum';
 import { fetchCaseOwners } from '@/api/staffUsers';
 import {
+  ATTENDANCE_TYPE_OPTIONS,
   createEnrolmentUser,
   fetchEnrolmentUserFields,
   updateEnrolmentUser,
@@ -184,6 +185,7 @@ const SECTIONS: SectionDef[] = [
       // learner cannot be enrolled without someone to hold it.
       { name: 'caseOwner', label: 'Case owner', type: 'select', lookup: 'caseOwner', required: true },
       { name: 'learningProvider', label: 'Learning provider', type: 'select', options: PROVIDER_OPTIONS },
+      { name: 'attendanceType', label: 'Attendance type', type: 'select', options: opts(ATTENDANCE_TYPE_OPTIONS) },
       // Picked from enrolment."Employers" — choosing one auto-fills the
       // organisation below it from that employer's Employer Group.
       { name: 'employer', label: 'Employer', type: 'select', lookup: 'employer' },
@@ -441,6 +443,9 @@ export function CreateUserModal({ onClose, onCreated, editing, onSaved }: {
       mentor: formData.mentor,
       referenceNumber: formData.referenceNumber,
       extendedBreak: formData.extendedBreak,
+      // Optional: "Select…" is sent as null, which clears it on edit and leaves
+      // it unset on create.
+      attendanceType: formData.attendanceType || null,
     };
 
     setSubmitting(true);

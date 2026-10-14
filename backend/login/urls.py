@@ -1,14 +1,69 @@
 """URLs for the login app, mounted at /login_api/ (see config/urls.py)."""
 from django.urls import path
+from django.views.decorators.cache import never_cache
 from . import safeguarding_sso
 from . import inclusion_sso
 from . import coach_directory
 from . import lms_introduction
 
-from . import admin_evidence, access_requests, microsoft_sso, platform_admin, saved_signature, views
+from . import admin_evidence, advanced_admin, advanced_admin_assignment_uploads, access_requests, microsoft_sso, platform_admin, saved_signature, views
 from old_otjh.entry import entry_status
 
+
+def restricted_path(route, view, *, name):
+    """Keep scoped learner data out of shared and browser caches."""
+    return path(route, never_cache(view), name=name)
+
+
 urlpatterns = [
+    restricted_path('advanced-admin/learners/<int:profile_id>/assignment-uploads/', advanced_admin_assignment_uploads.assignments, name='advanced-admin-assignment-uploads'),
+    restricted_path('advanced-admin/learners/<int:profile_id>/assignment-uploads/<uuid:record_id>/open/', advanced_admin_assignment_uploads.assignment_document, name='advanced-admin-assignment-upload-document'),
+    restricted_path('advanced-admin/learners/', advanced_admin.learners, name='advanced-admin-learners'),
+    restricted_path('advanced-admin/learners/<int:profile_id>/', advanced_admin.learner_detail, name='advanced-admin-learner-detail'),
+    restricted_path('advanced-admin/learners/<int:profile_id>/learning/', advanced_admin.learner_learning, name='advanced-admin-learner-learning'),
+    restricted_path('advanced-admin/learners/<int:profile_id>/learning/wordpress-courses/', advanced_admin.learner_wordpress_courses, name='advanced-admin-learner-wordpress-courses'),
+    restricted_path('advanced-admin/learners/<int:profile_id>/module-progress/', advanced_admin.learner_module_progress, name='advanced-admin-learner-module-progress'),
+    restricted_path('advanced-admin/learners/<int:profile_id>/learning/covers/<str:cover_key>/', advanced_admin.learner_cover, name='advanced-admin-learner-cover'),
+    restricted_path('advanced-admin/learners/<int:profile_id>/learning/material/<int:group_id>/<int:activity_id>/', advanced_admin.learner_material, name='advanced-admin-learner-material'),
+    restricted_path('advanced-admin/learners/<int:profile_id>/learning/quiz-review/<str:kind>/<int:group_id>/<int:activity_id>/', advanced_admin.learner_legacy_quiz_review, name='advanced-admin-learner-legacy-quiz-review'),
+    restricted_path('advanced-admin/learners/<int:profile_id>/learning/material/<int:group_id>/<int:activity_id>/media/<int:media_index>/', advanced_admin.learner_material_media, name='advanced-admin-learner-material-media'),
+    restricted_path('advanced-admin/learners/<int:profile_id>/learning/material/<int:group_id>/<int:activity_id>/source-file/', advanced_admin.learner_material_file, name='advanced-admin-learner-material-source-file'),
+    restricted_path('advanced-admin/learners/<int:profile_id>/learning/material/<int:group_id>/<int:activity_id>/files/<str:attachment_id>/', advanced_admin.learner_material_file, name='advanced-admin-learner-material-attachment'),
+    restricted_path('advanced-admin/learners/<int:profile_id>/learning/components/<str:component_id>/', advanced_admin.learner_component, name='advanced-admin-learner-component'),
+    restricted_path('advanced-admin/learners/<int:profile_id>/learning/components/<str:component_id>/quiz-review/', advanced_admin.learner_component_quiz_review, name='advanced-admin-learner-component-quiz-review'),
+    restricted_path('advanced-admin/learners/<int:profile_id>/learning/components/<str:component_id>/files/<str:slot>/', advanced_admin.learner_component_file, name='advanced-admin-learner-component-file'),
+    restricted_path('advanced-admin/learners/<int:profile_id>/attendance/', advanced_admin.learner_attendance, name='advanced-admin-learner-attendance'),
+    restricted_path('advanced-admin/learners/<int:profile_id>/lecture-workspace/', advanced_admin.learner_lecture_workspace, name='advanced-admin-learner-lecture-workspace'),
+    restricted_path('advanced-admin/learners/<int:profile_id>/enrolment/', advanced_admin.learner_enrolment, name='advanced-admin-learner-enrolment'),
+    restricted_path('advanced-admin/learners/<int:profile_id>/compliance/', advanced_admin.learner_compliance, name='advanced-admin-learner-compliance'),
+    restricted_path('advanced-admin/learners/<int:profile_id>/compliance/<uuid:document_id>/open/', advanced_admin.learner_compliance_file, name='advanced-admin-learner-compliance-file'),
+    restricted_path('advanced-admin/learners/<int:profile_id>/messages/', advanced_admin.learner_messages, name='advanced-admin-learner-messages'),
+    restricted_path('advanced-admin/learners/<int:profile_id>/monthly-logs/', advanced_admin.learner_monthly_logs, name='advanced-admin-learner-monthly-logs'),
+    restricted_path('advanced-admin/learners/<int:profile_id>/evidence/', advanced_admin.learner_evidence, name='advanced-admin-learner-evidence'),
+    restricted_path('advanced-admin/learners/<int:profile_id>/monthly-reports/', advanced_admin.learner_monthly_reports, name='advanced-admin-learner-monthly-reports'),
+    restricted_path('advanced-admin/learners/<int:profile_id>/legacy-assignments/', advanced_admin.learner_legacy_assignments, name='advanced-admin-learner-legacy-assignments'),
+    restricted_path('advanced-admin/learners/<int:profile_id>/audit-assignments/', advanced_admin.learner_audit_assignments, name='advanced-admin-learner-audit-assignments'),
+    restricted_path('advanced-admin/learners/<int:profile_id>/audit-assignments/check/<int:record_id>/mark/', advanced_admin.learner_audit_assignment_source_mark, name='advanced-admin-learner-audit-assignment-source-mark'),
+    restricted_path('advanced-admin/learners/<int:profile_id>/audit-assignments/evidence/<int:evidence_id>/mark/', advanced_admin.learner_audit_assignment_mark, name='advanced-admin-learner-audit-assignment-mark'),
+    restricted_path('advanced-admin/learners/<int:profile_id>/audit-assignments/evidence/<int:evidence_id>/<str:part>/open/', advanced_admin.learner_audit_assignment_document, name='advanced-admin-learner-audit-assignment-document'),
+    restricted_path('advanced-admin/learners/<int:profile_id>/legacy-assignments/<int:evidence_id>/mark/', advanced_admin.learner_legacy_marking, name='advanced-admin-learner-legacy-marking'),
+    restricted_path('advanced-admin/learners/<int:profile_id>/legacy-assignments/<int:evidence_id>/<str:part>/open/', advanced_admin.learner_legacy_assignment_document, name='advanced-admin-learner-legacy-assignment-document'),
+    restricted_path('advanced-admin/learners/<int:profile_id>/evidence/<uuid:file_id>/download/', advanced_admin.learner_evidence_download, name='advanced-admin-learner-evidence-download'),
+    restricted_path('advanced-admin/learners/<int:profile_id>/inclusion/', advanced_admin.learner_inclusion, name='advanced-admin-learner-inclusion'),
+    restricted_path('advanced-admin/learners/<int:profile_id>/inclusion/reports/<uuid:report_id>/pdf/', advanced_admin.learner_inclusion_report_pdf, name='advanced-admin-learner-inclusion-report-pdf'),
+    restricted_path('advanced-admin/learners/<int:profile_id>/quality/', advanced_admin.learner_quality, name='advanced-admin-learner-quality'),
+    restricted_path('advanced-admin/learners/<int:profile_id>/reviews/', advanced_admin.learner_reviews, name='advanced-admin-learner-reviews'),
+    restricted_path('advanced-admin/learners/<int:profile_id>/coaching-sessions/', advanced_admin.learner_coaching_sessions, name='advanced-admin-learner-coaching-sessions'),
+    restricted_path('advanced-admin/learners/<int:profile_id>/coaching-reviews/', advanced_admin.learner_coaching_reviews, name='advanced-admin-learner-coaching-reviews'),
+    restricted_path('advanced-admin/learners/<int:profile_id>/coaching-sessions/<uuid:session_id>/', advanced_admin.learner_coaching_session_detail, name='advanced-admin-learner-coaching-session-detail'),
+    restricted_path('advanced-admin/learners/<int:profile_id>/eligibility/', advanced_admin.learner_eligibility, name='advanced-admin-learner-eligibility'),
+    restricted_path('advanced-admin/learners/<int:profile_id>/eligibility/<str:event_key>/form/', advanced_admin.learner_eligibility_form, name='advanced-admin-learner-eligibility-form'),
+    restricted_path('advanced-admin/learners/<int:profile_id>/reviews/<str:aptem_review_id>/pdf/', advanced_admin.learner_review_pdf, name='advanced-admin-learner-review-pdf'),
+    restricted_path('advanced-admin/learners/<int:profile_id>/reviews/<str:aptem_review_id>/original-pdf/', advanced_admin.learner_original_review_pdf, name='advanced-admin-learner-original-review-pdf'),
+    restricted_path('advanced-admin/learners/<int:profile_id>/reviews/<str:aptem_review_id>/pdf-signatures/', advanced_admin.learner_review_pdf_signatures, name='advanced-admin-learner-review-pdf-signatures'),
+    restricted_path('advanced-admin/csrf/', advanced_admin.csrf_token, name='advanced-admin-csrf'),
+    restricted_path('advanced-admin/learners/<int:profile_id>/submissions/', advanced_admin.learner_submissions, name='advanced-admin-learner-submissions'),
+    restricted_path('advanced-admin/learners/<int:profile_id>/submissions/<uuid:submission_id>/', advanced_admin.learner_submissions, name='advanced-admin-learner-submission'),
     path("inclusion/authorize/", inclusion_sso.authorize, name="inclusion-authorize"),
     path('public/coaches/<slug:slug>/', coach_directory.public_coach, name='public-coach-booking'),
     path('public/lms-introduction/', lms_introduction.public_request, name='public-lms-introduction'),

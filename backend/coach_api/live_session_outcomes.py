@@ -15,7 +15,7 @@ from datetime import datetime, timedelta
 from django.utils import timezone
 
 LIVE_SESSION_SOURCE = 'live-session'
-CLOSED_STATUSES = frozenset({'cancelled', 'canceled'})
+CLOSED_STATUSES = frozenset({'cancelled', 'canceled', 'superseded'})
 
 
 def _start(event):

@@ -52,14 +52,14 @@ CURRENT_SUBJECTS_SQL = '''
     WHERE (cm.deleted_at IS NULL OR COALESCE(cm.deleted_via_parent, '') <> '')
 '''
 
-def _direct_progress_records(enrolment_id):
+def _direct_progress_records(enrolment_id, *, profile=None):
     """Progress recorded after the historical audit snapshot was imported.
 
     The Last_audit total already covers every legacy subject displayed by this
     endpoint.  Only direct/current-platform rows are added here; including the
     imported normalized rows as well would count the historical time twice.
     """
-    profile = (
+    profile = profile or (
         LearnerProfile.objects.using('enrolment')
         .filter(enrolment_id=enrolment_id)
         .only('id')
@@ -232,7 +232,10 @@ def student_activity(request, kind, pk):
         return _error("Learner not found.", 404)
 
     try:
-        source = model.all_learners.only("id", "aptem_id", "email").get(pk=pk)
+        from .case_file_sources import source_for_case_file
+        source = source_for_case_file(request, kind, pk)
+        if source is None:
+            source = model.all_learners.only("id", "aptem_id", "email").get(pk=pk)
     except model.DoesNotExist:
         return _error("Learner not found.", 404)
     except DatabaseError:
@@ -347,7 +350,7 @@ def _cover_url(path):
     return UPLOAD_URL_PREFIX + blob_name_for(path)
 
 
-def _definition_for(stored, group_id=None):
+def _definition_for(stored, group_id=None, *, attachment_resolver=None):
     row = stored['_source']
     quiz_id = row.get('quiz_id')
     # Never fetch definitions from the old LMS during learner requests.
@@ -357,7 +360,7 @@ def _definition_for(stored, group_id=None):
 
         path = _legacy_attachment_upload_path(reference)
         return '/curriculum_api/curriculum/uploads/' + path if path else ''
-    definition = build_material(stored, schema, attachment_resolver=archive_url)
+    definition = build_material(stored, schema, attachment_resolver=archive_url if attachment_resolver is None else attachment_resolver)
     if group_id is not None and quiz_id and definition.get('quiz') and not definition['quiz']['ready']:
         from .subject_quiz import imported_quiz
         try:
@@ -370,12 +373,33 @@ def _definition_for(stored, group_id=None):
             definition['quiz'] = quiz_definition(recovered_quiz)
             definition['available'] = True
     if row.get('_material_blob_ready'):
+        import mimetypes
+        from urllib.parse import unquote, urlsplit
+
         mime = row.get('material_blob_content_type') or ''
         media_kind = 'pdf' if mime == 'application/pdf' else 'audio' if mime.startswith('audio/') else 'video' if mime.startswith('video/') else 'document'
-        definition['media'] = [{'kind': media_kind, 'url': '', 'title': stored['title'],
-            'file_name': stored['title'], 'source_material_file': True, 'can_embed': True}]
+        file_name = (row.get('material_blob_name') or '').rsplit('/', 1)[-1]
+        if not mimetypes.guess_type(file_name)[0]:
+            file_name = stored['title']
+            if not mimetypes.guess_type(file_name)[0]:
+                file_name += mimetypes.guess_extension(mime) or ''
+        primary = {'kind': media_kind, 'url': '', 'title': stored['title'],
+            'file_name': file_name or stored['title'], 'source_material_file': True, 'can_embed': True}
+        archive_path = '/curriculum_api/curriculum/uploads/' + (row.get('material_blob_name') or '')
+        # Re-linked legacy lessons can also contain a reading companion or
+        # other attachments. Replace only their exact registered primary file.
+        def is_registered_file(value):
+            parsed = urlsplit(value or '')
+            return not parsed.netloc and unquote(parsed.path) == archive_path
+        archived = [item for item in definition['media'] if is_registered_file(item['url'])]
+        registered_primary = any(is_registered_file(stored.get(field))
+                                 for field in ('video_url', 'audio_url', 'reading_url'))
+        if archived or registered_primary:
+            definition['media'] = [primary, *[item for item in definition['media'] if item not in archived]]
+        else:
+            definition['media'] = [primary]
         definition['available'] = True
-        definition['has_reading'] = media_kind in {'pdf', 'document'}
+        definition['has_reading'] = definition['has_reading'] or media_kind in {'pdf', 'document'}
     definition['source_live'] = False
     if row.get('quiz_definition_ambiguous') and definition.get('quiz'):
         # The same reading is linked to different quizzes in the original LMS.
@@ -396,9 +420,10 @@ def _local_pdf_urls(definition, kind, pk, group_id, activity_id):
     ]}
 
 
-def _material_response(request, pk, aptem_id, stored, *, kind=None, group_id=None):
+def _material_response(request, pk, aptem_id, stored, *, kind=None, group_id=None, attachment_resolver=None):
     row = stored['_source']
-    definition = _local_pdf_urls(_definition_for(stored, group_id), kind, pk, group_id, row['activity_id'])
+    definition = _local_pdf_urls(_definition_for(stored, group_id, attachment_resolver=attachment_resolver),
+                                 kind, pk, group_id, row['activity_id'])
     try:
         saved = subject_store.state(pk, aptem_id, row['activity_id'], group_id=group_id)
     except DatabaseError:
@@ -454,17 +479,29 @@ def _owned_material(kind, pk, group_id, activity_id):
 @learner_self_or_staff(kwarg='pk')
 def source_material_file(request, kind, pk, group_id, activity_id):
     from django.conf import settings
-    from .material_storage import read_url
+    from .material_storage import (
+        OFFICE_PREVIEW_SUFFIXES, curriculum_archive_url, file_response, office_preview_response,
+    )
     try:
         _aptem_id, stored = _owned_material(kind, pk, group_id, activity_id)
         row = stored['_source']
         if not row.get('_material_blob_ready'):
             return _error('This file has not been copied to the LMS yet.', 404)
-        if row.get('material_blob_content_type') == 'application/pdf':
+        archive_url = curriculum_archive_url(row, settings)
+        if archive_url:
+            if str(request.GET.get('preview') or '').lower() in {'1', 'true', 'yes'}:
+                archive_url += '?preview=1'
+            response = HttpResponseRedirect(archive_url)
+        elif row.get('material_blob_content_type') == 'application/pdf':
             from .material_storage import pdf_response
             response = pdf_response(row, settings, request)
+        elif (str(request.GET.get('preview') or '').lower() in {'1', 'true', 'yes'}
+              and str(row.get('material_blob_name') or '').lower().endswith(OFFICE_PREVIEW_SUFFIXES)):
+            response = office_preview_response(row, settings)
         else:
-            response = HttpResponseRedirect(read_url(row, settings))
+            # Streamed, not redirected: the inline Word/Excel preview fetches
+            # this, and Azure's response carries no CORS headers for this site.
+            response = file_response(row, settings, request)
         response['Cache-Control'] = 'private, no-store'
         response['Referrer-Policy'] = 'no-referrer'
         return response

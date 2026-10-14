@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { ModuleLearnerProgressDialog } from '../ModuleLearnerProgressDialog';
+import { MemoryRouter } from 'react-router-dom';
 import type { CurriculumScopeLearnerKsbImpactResponse } from '@/lib/curriculumApi';
 
 vi.mock('@/components/feature/CurriculumSweetAlert', () => ({
@@ -60,6 +61,21 @@ const impact = {
 } as unknown as CurriculumScopeLearnerKsbImpactResponse;
 
 describe('ModuleLearnerProgressDialog', () => {
+  it('uses the same accepted Activity Log hours as the learner page when available', () => {
+    const enriched = { ...impact, activityLogOtjh:{ learners:[{ learnerId:'learner-1',plannedOtjh:4,achievedOtjh:1.25 }],achievedTotal:1.25,plannedTotal:4,source:'Activity Log' } };
+    render(<ModuleLearnerProgressDialog moduleName="Digital Leadership" impact={enriched} onClose={vi.fn()} onAssignMore={vi.fn()} onRemoveLearner={vi.fn()} />);
+    expect(screen.getByText('1h 15m / 4h')).toBeInTheDocument();
+    expect(screen.getByText('1.5 / 3')).toBeInTheDocument();
+    expect(screen.getByText(/Activity Log accepted hours/)).toBeInTheDocument();
+  });
+  it('links enrolment assignments through the explicit profile bridge', () => {
+    const directoryLearner = { ...impact.assignedLearners[0], id: 91, enrolmentId: 91 };
+    const enriched = { ...impact, assignedLearners: [{ ...impact.assignedLearners[0], enrolmentId: 91 }] };
+    render(<MemoryRouter><ModuleLearnerProgressDialog moduleId="MOD-1" moduleName="Digital Leadership"
+      impact={enriched} assignedLearners={[directoryLearner]} onClose={vi.fn()} onAssignMore={vi.fn()} onRemoveLearner={vi.fn()} /></MemoryRouter>);
+    expect(screen.getByRole('link', { name: 'View progress' })).toHaveAttribute('href', '/curriculum/learner-module-progress?moduleId=MOD-1&enrolmentId=91');
+    expect(screen.getByText('2h / 4h')).toBeInTheDocument();
+  });
   it('shows assigned learners with OTJH and achieved KSB weight progress', () => {
     const assignMore = vi.fn();
     render(<ModuleLearnerProgressDialog moduleName="Definition of Project Management" impact={impact} onClose={vi.fn()} onAssignMore={assignMore} onRemoveLearner={vi.fn()} />);

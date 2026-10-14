@@ -11,7 +11,7 @@ from pathlib import Path
 MODEL_ID = 'desklib/ai-text-detector-v1.01'
 MODEL_REVISION = '5fdea974cd4287c61674951ec78803aa274e2fb7'
 MODEL_DIR = Path(sys.prefix) / 'models' / 'desklib-ai-text-detector-v1.01'
-MIN_WORDS = 80
+TAIL_MERGE_WORDS = 80  # A shorter final passage joins the previous one; there is no minimum length.
 MAX_CHARACTERS = 24000
 _lock = threading.Lock()
 _runtime = None
@@ -27,12 +27,10 @@ class DetectorBusy(Exception):
 
 def text_windows(text):
     words = list(re.finditer(r'\S+', text))
-    if len(words) < MIN_WORDS:
-        return []
     windows = []
     for start in range(0, len(words), 180):
         end = min(start + 180, len(words))
-        if end - start < MIN_WORDS and windows:
+        if end - start < TAIL_MERGE_WORDS and windows:
             windows[-1] = (windows[-1][0], len(text))
         else:
             windows.append((0 if start == 0 else words[start].start(),
@@ -88,8 +86,6 @@ def screen_text(text, base):
     if not isinstance(text, str) or not text.strip() or len(text) > MAX_CHARACTERS:
         raise ValueError(f'Enter text up to {MAX_CHARACTERS:,} characters.')
     windows = text_windows(text)
-    if not windows:
-        return windows, {**base, 'status': 'insufficient_text', 'message': 'At least 80 words are required. Short answers cannot be assessed by this checker.'}
     letters = [c for c in text if c.isalpha()]
     if letters and sum('a' <= c.lower() <= 'z' for c in letters) / len(letters) < .9:
         return windows, {**base, 'status': 'unsupported_text', 'message': 'This check is intended for English text only.'}

@@ -343,6 +343,9 @@ class EnrolmentUser(models.Model):
     mentor = models.TextField(db_column="Mentor", null=True, blank=True)
     reference_number = models.TextField(db_column="Reference_number", null=True, blank=True)
     extended_break = models.TextField(db_column="Extended_break", null=True, blank=True)
+    # "Recorded" / "Not recorded" (ATTENDANCE_TYPE_CHOICES); NULL when not given.
+    # Added by the apply_created_users_attendance_type command.
+    attendance_type = models.TextField(db_column="Attendance_type", null=True, blank=True)
     employer_address = models.TextField(db_column="Employer_address", null=True, blank=True)
     target_programme = models.TextField(db_column="Target_programme", null=True, blank=True)
     invite_to_platform = models.BooleanField(db_column="Invite_to_platform", null=True, blank=True)
@@ -540,6 +543,10 @@ class LearnerProfile(models.Model):
     )
     full_name = models.TextField()
     email = models.EmailField(max_length=320, unique=True)
+    # An optional contact address.  Authentication and account ownership stay
+    # bound to ``email`` (and the linked Created_users row); this field must
+    # never be treated as a login identifier.
+    secondary_email = models.EmailField(max_length=320, null=True, blank=True)
     # GENERATED ALWAYS in Postgres — the database derives it from `email`, and an
     # INSERT/UPDATE that names the column is rejected outright. `editable=False`
     # only hides a field from forms; it stays in the write. GeneratedField with
@@ -827,6 +834,8 @@ class LearnerProfile(models.Model):
                 record["questions"] = [
                     {
                         "questionId": answer.question_ref,
+                        **(answer.result_snapshot or {}),
+                        **({"imageUrl": answer.question_image_url} if answer.question_image_url is not None else {}),
                         # Built from the prefetched rows rather than .exists(),
                         # which would issue its own query per answer and undo
                         # the prefetch above.
@@ -1125,6 +1134,10 @@ class LearnerQuizAnswer(models.Model):
     progress = models.ForeignKey(LearnerProgressEntry, on_delete=models.CASCADE, related_name="quiz_answers")
     position = models.PositiveIntegerField()
     question_ref = models.BigIntegerField()
+    # NULL means a legacy attempt without a snapshot; '' means no image was shown.
+    question_image_url = models.TextField(null=True, blank=True)
+    # New attempts retain the reviewed text/key even if the quiz changes later.
+    result_snapshot = models.JSONField(null=True, blank=True)
     chosen_answer_ref = models.BigIntegerField(null=True, blank=True)
     is_correct = models.BooleanField(null=True, blank=True)
     earned = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)

@@ -313,6 +313,11 @@ const definitions: ComponentAuthoringDefinition[] = [
       // strips it on save/reload, resetting the editor to the written-brief tab
       // and hiding an uploaded file that is actually still stored.
       assignmentSource: 'Text',
+      // The title learners see in place of `title` (blank keeps `title`), and
+      // whether this is the eight-step monthly assignment. Read by
+      // learner_api.assignment_settings; declared in the backend schema too.
+      learnerTitle: '',
+      isMonthlyAssignment: false,
     },
   },
   {
@@ -449,6 +454,10 @@ const LIVE_SESSION_TRACKING_SETTING_KEYS = [
   'teamsMeetingUrl', 'teamsWebLink', 'teamsStartDateTimeUtc',
   'teamsDurationMinutes', 'sessionDay', 'sessionRescheduled',
   'teamsMeetingScope',
+  // Explicit bulk link replacements are authoring overrides. They preserve
+  // the Teams identity and occurrence metadata while keeping the chosen link
+  // through the next module-structure save.
+  'liveSessionLinkOverride',
 ] as const;
 
 /**

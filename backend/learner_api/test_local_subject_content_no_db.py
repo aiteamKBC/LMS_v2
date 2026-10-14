@@ -125,6 +125,22 @@ class LocalSubjectContentTests(unittest.TestCase):
         self.assertEqual(row['video_iframe_url'], 'https://video.example/player')
         self.assertNotIn('iframe_url', row['_material_schema'])
 
+    def test_incomplete_snapshot_preserves_exact_stored_material_content(self):
+        row = hydrate_material({'material_payload': {}, 'material_content_type': 'reading',
+            'video_iframe_url': 'https://example.org/recording',
+            'reading_iframe_url': 'https://example.org/reading.pdf',
+            'audio_url': 'https://example.org/audio.mp3', 'reading_text_body': '<p>Original text</p>'})
+        self.assertEqual(row['video_iframe_url'], 'https://example.org/recording')
+        self.assertEqual(row['reading_iframe_url'], 'https://example.org/reading.pdf')
+        self.assertEqual(row['audio_url'], 'https://example.org/audio.mp3')
+        self.assertEqual(row['reading_text_body'], '<p>Original text</p>')
+
+    def test_recovered_fallback_does_not_override_current_snapshot_link(self):
+        row = hydrate_material({'material_content_type': 'video',
+            'video_iframe_url': 'https://example.org/old',
+            'material_payload': {'iframe_url': 'https://example.org/current'}})
+        self.assertEqual(row['video_iframe_url'], 'https://example.org/current')
+
     def test_pending_blob_is_not_presented_as_available(self):
         row = hydrate_material({'material_blob_container': 'materials', 'material_blob_name': 'lesson.pdf',
                                 'material_backup_status': 'pending'})
@@ -137,24 +153,71 @@ class LocalSubjectContentTests(unittest.TestCase):
         public = function('_local_pdf_urls', self.scope)(definition, 'commercial', 3, 5, 1)
         self.assertEqual(public['media'][0]['url'], '/learner_api/student-activity/commercial/3/5/1/source-file/')
         self.assertEqual(public['media'][0]['kind'], 'pdf')
+        self.assertEqual(public['media'][0]['file_name'], 'lesson.pdf')
         self.assertNotIn('source_material_file', public['media'][0])
 
-    def test_blob_redirect_requires_ownership_and_available_backup(self):
+    def test_blob_stream_requires_ownership_and_available_backup(self):
+        # Streamed on the LMS origin rather than redirected to Azure, whose
+        # responses carry no CORS headers for the inline preview's fetch.
         storage = ModuleType('learner_api.material_storage')
-        storage.read_url = Mock(return_value='https://storage.example/short-lived')
+        storage.curriculum_archive_url = Mock(return_value='')
+        storage.file_response = Mock(side_effect=lambda row, config, request: {})
+        storage.office_preview_response = Mock()
+        storage.OFFICE_PREVIEW_SUFFIXES = ('.doc',)
         owned = Mock(return_value=(8, {'_source': {'_material_blob_ready': True,
-            'material_blob_container': 'materials', 'material_blob_name': 'lesson.pdf'}}))
+            'material_blob_container': 'materials', 'material_blob_name': 'lesson.docx'}}))
         self.scope.update(_owned_material=owned, _error=lambda message, status: status,
                           HttpResponseRedirect=lambda url: {'Location': url})
         view = function('source_material_file', self.scope)
+        request = SimpleNamespace(GET={})
         with patch.dict(sys.modules, {'learner_api.material_storage': storage}):
-            response = view(None, 'commercial', 3, 5, 1)
+            response = view(request, 'commercial', 3, 5, 1)
             self.assertEqual(response['Cache-Control'], 'private, no-store')
-            storage.read_url.assert_called_once_with(owned.return_value[1]['_source'], settings)
-            storage.read_url.reset_mock()
+            self.assertNotIn('Location', response)
+            storage.file_response.assert_called_once_with(owned.return_value[1]['_source'], settings, request)
+            storage.office_preview_response.assert_not_called()
+            storage.file_response.reset_mock()
             owned.side_effect = LookupError('Not owned')
-            self.assertEqual(view(None, 'commercial', 3, 5, 1), 404)
-            storage.read_url.assert_not_called()
+            self.assertEqual(view(request, 'commercial', 3, 5, 1), 404)
+            storage.file_response.assert_not_called()
+
+    def test_extensionless_blob_keeps_the_pdf_preview_type(self):
+        row = hydrate_material({'activity_id': 1, 'material_title': 'Reading',
+            'material_blob_container': 'private', 'material_blob_name': 'source-materials/1/abcdef',
+            'material_blob_content_type': 'application/pdf', 'material_backup_status': 'available'})
+        result = function('_definition_for', self.scope)({'title': 'Reading', '_source': row}, 5)
+        self.assertEqual(result['media'][0]['file_name'], 'Reading.pdf')
+
+    def test_registered_primary_preserves_other_media_and_reading(self):
+        row = hydrate_material({'activity_id': 1, 'material_title': 'Video and reading',
+            'material_content_type': 'video', 'material_blob_container': 'curriculum',
+            'material_blob_name': '_legacy_files/9/lesson.mp4', 'material_blob_content_type': 'video/mp4',
+            'material_backup_status': 'available',
+            'material_video_url': '/curriculum_api/curriculum/uploads/_legacy_files/9/lesson.mp4',
+            'material_reading_url': 'https://example.test/companion.pdf',
+            'reading_text_body': '<p>Required companion reading</p>'})
+        stored = {'title': row['title'], 'video_url': row['video_iframe_url'],
+                  'reading_url': row['reading_iframe_url'], 'reading_html': row['reading_text_body'], '_source': row}
+        result = function('_definition_for', self.scope)(stored, 5)
+        self.assertTrue(result['media'][0]['source_material_file'])
+        self.assertEqual(result['media'][1]['url'], stored['reading_url'])
+        self.assertTrue(result['has_reading'])
+        self.assertEqual(result['reading_html'], stored['reading_html'])
+
+    def test_registered_primary_keeps_a_different_manifest_attachment(self):
+        self.proxy._legacy_attachment_upload_path.return_value = '_legacy_files/11/companion.pdf'
+        row = hydrate_material({'activity_id': 1, 'material_title': 'Video and attachment',
+            'material_content_type': 'video', 'material_blob_container': 'curriculum',
+            'material_blob_name': '_legacy_files/9/lesson.mp4', 'material_blob_content_type': 'video/mp4',
+            'material_backup_status': 'available',
+            'material_video_url': '/curriculum_api/curriculum/uploads/_legacy_files/9/lesson.mp4',
+            'material_payload': {'source': {'attachments': [
+                {'attachment_id': 11, 'content_type': 'pdf', 'filename': 'companion.pdf'}]}}})
+        stored = {'title': row['title'], 'video_url': row['video_iframe_url'], '_source': row}
+        result = function('_definition_for', self.scope)(stored, 5)
+        self.assertTrue(result['media'][0]['source_material_file'])
+        self.assertEqual(result['media'][1]['url'], '/curriculum_api/curriculum/uploads/_legacy_files/11/companion.pdf')
+        self.assertTrue(result['has_reading'])
 
     def test_material_query_follows_foreign_key_and_rejects_ambiguous_rows(self):
         path = Path(__file__).with_name('student_activity_data.py')
@@ -173,6 +236,44 @@ class LocalSubjectContentTests(unittest.TestCase):
         self.assertEqual(params, [1, 8, 5, 'material:1'])
         scope['_dict_rows'] = lambda _: [{}, {}]
         self.assertIsNone(scope['read_student_material'](self.cursor, 8, 5, 1))
+
+    def test_migrated_companion_uses_its_verified_path_without_wordpress_lookup(self):
+        local = '/curriculum_api/curriculum/uploads/_legacy_files/11/companion.pdf'
+        schema = {'source': {'attachments': [{'attachment_id': 11, 'content_type': 'pdf',
+                    'filename': 'companion.pdf', 'lms_url': local}]}}
+        resolver = Mock(side_effect=AssertionError('Unnecessary legacy lookup'))
+        result = build_material(self.stored, schema, attachment_resolver=resolver)
+        self.assertEqual(result['media'][0]['url'], local)
+        self.assertEqual(result['unavailable_attachments'], [])
+        resolver.assert_not_called()
+
+    def test_migrated_companion_keeps_string_provenance_and_uses_local_manifest(self):
+        local = '/curriculum_api/curriculum/uploads/_legacy_files/11/companion.pdf'
+        schema = {'source': 'legacy_import', 'lms_media_attachments': [
+            {'attachment_id': 11, 'content_type': 'pdf', 'filename': 'companion.pdf', 'lms_url': local}]}
+        resolver = Mock(side_effect=AssertionError('Unnecessary legacy lookup'))
+        result = build_material(self.stored, schema, attachment_resolver=resolver)
+        self.assertEqual(result['media'][0]['url'], local)
+        self.assertEqual(schema['source'], 'legacy_import')
+        resolver.assert_not_called()
+
+    def test_inline_migration_does_not_restore_the_old_wordpress_navigation(self):
+        row = hydrate_material({'material_content_type': 'video',
+            'video_iframe_url': 'https://source.example/stm-lessons/reading/',
+            'material_payload': {'reading_text_body': '<p>Stored lesson</p>',
+                'video_iframe_url': '', 'lms_cleared_media_fields': ['video_iframe_url']}})
+        self.assertEqual(row['video_iframe_url'], '')
+        self.assertEqual(row['reading_text_body'], '<p>Stored lesson</p>')
+
+    def test_migrated_companion_rejects_foreign_and_mismatched_attachment_paths(self):
+        for url in ('https://outside.example/file.pdf',
+                    '/curriculum_api/curriculum/uploads/_legacy_files/12/file.pdf',
+                    '/curriculum_api/curriculum/uploads/_legacy_files/11/..%2Fother.pdf'):
+            schema = {'source': {'attachments': [{'attachment_id': 11, 'lms_url': url}]}}
+            resolver = Mock(return_value='')
+            result = build_material(self.stored, schema, attachment_resolver=resolver)
+            self.assertFalse(result['media'])
+            resolver.assert_called_once_with('11')
 
 
 if __name__ == '__main__':

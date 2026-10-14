@@ -26,9 +26,9 @@ const material = { title: 'First reading', reading_html: '', media: [{ kind: 'em
 afterEach(() => { vi.restoreAllMocks(); vi.useRealTimers(); });
 
 describe('shared subject and week selection', () => {
-  it('shows the tutor, module dates and session count from the training plan in list view', () => {
+  it('shows the tutor, module dates and educational-session count from the training plan in list view', () => {
     const schedule = {
-      modules: [module('M1', '2026-09-01', '2026-12-18', { title: 'Leadership programme module', tutor_name: 'Tutor 2', sessions_number: 8 })],
+      modules: [module('M1', '2026-09-01', '2026-12-18', { title: 'Leadership programme module', tutor_name: 'Tutor 2', sessions_number: 17, educational_session_count: 14 })],
       moduleLinks: { 'legacy:1': { id: 'M1', title: 'Leadership' } },
     } as unknown as TrainingPlanDashboard;
     render(<MemoryRouter><StudentActivityPanel data={data} loading={false} error={null} onRetry={vi.fn()} schedule={schedule} /></MemoryRouter>);
@@ -42,7 +42,7 @@ describe('shared subject and week selection', () => {
     expect(within(details).queryByText('Module')).not.toBeInTheDocument();
     expect(within(details).getByText('1 Sept 2026')).toBeVisible();
     expect(within(details).getByText('18 Dec 2026')).toBeVisible();
-    expect(within(details).getByText('8 sessions')).toBeVisible();
+    expect(within(details).getByText('14 sessions')).toBeVisible();
   });
 
   it('orders list and grid cards by module start date with undated modules last', () => {

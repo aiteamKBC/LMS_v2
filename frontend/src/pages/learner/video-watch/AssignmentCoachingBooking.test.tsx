@@ -133,13 +133,14 @@ it('loads own meeting artifacts without a Teams join link', async () => {
   await waitFor(() => expect(fetchLearnerMeetingArtifacts).toHaveBeenCalledWith('commercial', '1', slot.eventKey, expect.any(AbortSignal)));
 });
 
-it('allows October 5 for September but rejects October 6', async () => {
+it('allows dates outside the old monthly windows, such as October 6 for September', async () => {
   render(<AssignmentCoachingBooking {...props} />);
   fireEvent.change(await screen.findByLabelText('Monthly Coaching Meeting slot'), { target: { value: slot.eventKey } });
-  const input = screen.getByLabelText('Date');
 
   chooseDate('2026-10-06');
-  expect(screen.getByRole('button', { name: 'Book 60-minute MCM' })).toBeDisabled();
+  await screen.findByRole('option', { name: '09:00' });
+  fireEvent.change(screen.getByLabelText('Time'), { target: { value: '09:00' } });
+  expect(screen.getByRole('button', { name: 'Book 60-minute MCM' })).toBeEnabled();
   chooseDate('2026-10-05');
   await screen.findByRole('option', { name: '09:00' });
   fireEvent.change(screen.getByLabelText('Time'), { target: { value: '09:00' } });
@@ -167,9 +168,9 @@ it('blocks booking when the coach calendar cannot be checked', async () => {
   expect(screen.getByLabelText('Time')).toBeDisabled();
 });
 
-it('labels the monthly slot with its permitted booking window instead of its old target date', async () => {
+it('labels the monthly slot with its month and coach instead of its old target date', async () => {
   render(<AssignmentCoachingBooking {...props} />);
-  expect(await screen.findByRole('option', { name: 'MCM 2026-09 | Booking windows: 2026-09-21 to 2026-10-05 or 2026-10-22 to 2026-11-05 | Coach' })).toHaveValue(slot.eventKey);
+  expect(await screen.findByRole('option', { name: 'MCM 2026-09 | Coach' })).toHaveValue(slot.eventKey);
   expect(screen.queryByRole('option', { name: /target 2026-09-15/ })).not.toBeInTheDocument();
 });
 
@@ -186,16 +187,16 @@ it('allows choosing and booking another available time when a meeting already ex
 });
 
 
-it('allows the next monthly window but excludes the intervening days and dates after it', async () => {
+it('allows any upcoming weekday but still excludes past dates and weekends', async () => {
   render(<AssignmentCoachingBooking {...props} />);
   fireEvent.change(await screen.findByLabelText('Monthly Coaching Meeting slot'), { target: { value: slot.eventKey } });
-  for (const date of ['2026-10-22', '2026-11-05']) {
+  for (const date of ['2026-10-14', '2026-11-18', '2026-12-10']) {
     chooseDate(date);
     await screen.findByRole('option', { name: '09:00' });
     fireEvent.change(screen.getByLabelText('Time'), { target: { value: '09:00' } });
     expect(screen.getByRole('button', { name: 'Book 60-minute MCM' })).toBeEnabled();
   }
-  for (const date of ['2026-10-21', '2026-11-06']) {
+  for (const date of ['2026-09-11', '2026-10-17']) {
     chooseDate(date);
     expect(screen.getByRole('button', { name: 'Book 60-minute MCM' })).toBeDisabled();
     expect(screen.getByLabelText('Date')).toHaveTextContent('Select a date');
@@ -203,25 +204,28 @@ it('allows the next monthly window but excludes the intervening days and dates a
 });
 
 
-it('disables October days outside the first five or final ten and every weekend in the calendar', async () => {
+it('enables every October weekday and disables every weekend in the calendar', async () => {
   render(<AssignmentCoachingBooking {...props} />);
   fireEvent.click(await screen.findByLabelText('Date'));
   fireEvent.click(screen.getByRole('button', { name: 'Next month' }));
-  const allowed = [1, 2, 5, 22, 23, 26, 27, 28, 29, 30];
+  const weekends = [3, 4, 10, 11, 17, 18, 24, 25, 31];
   for (let day = 1; day <= 31; day++) {
     const button = screen.getByRole('button', { name: `2026-10-${String(day).padStart(2, '0')}` });
-    if (allowed.includes(day)) expect(button).toBeEnabled();
-    else expect(button).toBeDisabled();
+    if (weekends.includes(day)) expect(button).toBeDisabled();
+    else expect(button).toBeEnabled();
   }
 });
 
 it('offers an Aptem learner their Aptem MCM instead of a Curriculum slot the coach cannot see', async () => {
-  withAptemMcms(aptemMcm('9839', '2026-09-30', 'completed'), aptemMcm('9840', '2026-10-27'), aptemMcm('9842', '2026-12-27'));
+  withAptemMcms(aptemMcm('9839', '2026-09-30', 'completed'), aptemMcm('9842', '2026-12-27'), aptemMcm('9840', '2026-10-27'), aptemMcm('9831', '2026-06-15'));
   render(<AssignmentCoachingBooking {...props} />);
   const select = await screen.findByLabelText('Monthly Coaching Meeting slot');
+  // Every open Aptem MCM is offered, overdue or later, in plan order.
   expect(within(select).getAllByRole('option').map(option => option.textContent)).toEqual([
     'Select your programme MCM',
-    'MCM 2026-10 | Booking windows: 2026-09-21 to 2026-10-05 or 2026-10-22 to 2026-11-05 | Aptem plan 2026-10-27',
+    'MCM 2026-06 | Aptem plan 2026-06-15',
+    'MCM 2026-10 | Aptem plan 2026-10-27',
+    'MCM 2026-12 | Aptem plan 2026-12-27',
   ]);
   expect(screen.queryByRole('option', { name: /\| Coach$/ })).not.toBeInTheDocument();
   fireEvent.change(select, { target: { value: 'imported-review:9840' } });
@@ -237,16 +241,26 @@ it('offers an Aptem learner their Aptem MCM instead of a Curriculum slot the coa
 
 it('does not offer an Aptem MCM that already has a booking', async () => {
   withAptemMcms(aptemMcm('9840', '2026-10-27'));
-  vi.mocked(fetchLearnerCalendarEvents).mockResolvedValueOnce({ learner: { kind: 'commercial', id: 1 }, events: [{ ...slot, eventKey: 'booked-1', status: 'scheduled', scheduledDate: '2026-10-27', scheduledTime: '10:00', reviewId: '9840' }], bookingCalendar: { division: 'england-and-wales', today: '2026-09-12', coveredYears: [2026], bankHolidays: [] } });
+  vi.mocked(fetchLearnerCalendarEvents).mockResolvedValueOnce({ learner: { kind: 'commercial', id: 1 }, events: [{ ...slot, eventKey: 'booked-1', calendarEventKey: 'booked-1', status: 'scheduled', scheduledDate: '2026-10-27', scheduledTime: '10:00', reviewId: '9840' }], bookingCalendar: { division: 'england-and-wales', today: '2026-09-12', coveredYears: [2026], bankHolidays: [] } });
   render(<AssignmentCoachingBooking {...props} />);
   expect(await screen.findByRole('option', { name: /2026-10-27 10:00/ })).toHaveValue('booked-1');
   expect(screen.queryByLabelText('Monthly Coaching Meeting slot')).not.toBeInTheDocument();
 });
 
-it('blocks booking an Aptem learner with no open Aptem MCM in either window', async () => {
-  withAptemMcms(aptemMcm('9842', '2026-12-27'));
+it('offers an Aptem MCM whose calendar event has no booking yet', async () => {
+  // The learner calendar returns every imported MCM as an event, booked or not.
+  withAptemMcms(aptemMcm('9840', '2026-10-27'));
+  vi.mocked(fetchLearnerCalendarEvents).mockResolvedValueOnce({ learner: { kind: 'commercial', id: 1 }, events: [{ ...slot, eventKey: 'imported-review:A-9840', calendarEventKey: null, status: 'not-scheduled', targetDate: '2026-10-27', reviewId: '9840' }], bookingCalendar: { division: 'england-and-wales', today: '2026-09-12', coveredYears: [2026], bankHolidays: [] } });
   render(<AssignmentCoachingBooking {...props} />);
-  expect(await screen.findByText(/No open Monthly Coaching Meeting from your programme plan/)).toBeInTheDocument();
+  const select = await screen.findByLabelText('Monthly Coaching Meeting slot');
+  expect(within(select).getByRole('option', { name: /Aptem plan 2026-10-27/ })).toHaveValue('imported-review:9840');
+  expect(screen.queryByText(/No open Monthly Coaching Meeting from your programme plan/)).not.toBeInTheDocument();
+});
+
+it('blocks booking an Aptem learner with no open Aptem MCM left', async () => {
+  withAptemMcms(aptemMcm('9842', '2026-09-30', 'completed'));
+  render(<AssignmentCoachingBooking {...props} />);
+  expect(await screen.findByText(/No open Monthly Coaching Meeting is left in your programme plan/)).toBeInTheDocument();
   expect(screen.queryByLabelText('Monthly Coaching Meeting slot')).not.toBeInTheDocument();
   chooseDate('2026-09-22');
   await screen.findByRole('option', { name: '09:00' });
@@ -280,9 +294,16 @@ it('uses the current rescheduled time and keeps the invitation warning visible',
   expect(screen.getByText(/calendar invitation has not been sent/)).toBeInTheDocument();
   expect(bookLearnerCalendarSession).not.toHaveBeenCalled();
 });
-it.each(['cancelled', 'missing', 'another-month', 'outside-window'])('does not reuse a %s shared meeting', async reason => {
+it('reuses a shared meeting booked outside the old monthly windows', async () => {
+  vi.mocked(loadAssignmentTopicStates).mockResolvedValue([savedTopic]);
+  vi.mocked(fetchLearnerCalendarEvents).mockResolvedValue({ learner: { kind: 'commercial', id: 1 }, events: [{ ...savedMeeting, scheduledDate: '2026-10-15' }] });
+  render(<AssignmentCoachingBooking {...props} assignmentId="COMP-TOPICS" topicId="2" />);
+  expect(await screen.findByText('MCM already booked: 2026-10-15 at 09:00 with Coach.')).toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Book 60-minute MCM' })).not.toBeInTheDocument();
+});
+it.each(['cancelled', 'missing', 'another-month'])('does not reuse a %s shared meeting', async reason => {
   vi.mocked(loadAssignmentTopicStates).mockResolvedValue([{ ...savedTopic, month: reason === 'another-month' ? '2026-08' : savedTopic.month }]);
-  const event = { ...savedMeeting, ...(reason === 'cancelled' ? { status: 'cancelled' as const } : {}), ...(reason === 'outside-window' ? { scheduledDate: '2026-10-15' } : {}) };
+  const event = { ...savedMeeting, ...(reason === 'cancelled' ? { status: 'cancelled' as const } : {}) };
   vi.mocked(fetchLearnerCalendarEvents).mockResolvedValue({ learner: { kind: 'commercial', id: 1 }, events: reason === 'missing' ? [] : [event] });
   render(<AssignmentCoachingBooking {...props} assignmentId="COMP-TOPICS" topicId="2" />);
   expect(await screen.findByRole('button', { name: 'Book 60-minute MCM' })).toBeInTheDocument();

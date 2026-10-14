@@ -1,3 +1,4 @@
+import { useCaseFileSession } from '@/features/coach/case-file/hooks/CaseFileSession';
 import { useEffect, useState } from 'react';
 import type { ComponentMarking, LearnerKind } from '@/api/learnerDetail';
 import type { SubmissionAttempt } from '@/api/assignmentAttempts';
@@ -12,6 +13,7 @@ export function AssignmentSubmissions({ kind, learnerId, activityId, status, sub
   kind: LearnerKind; learnerId: string; activityId: string; status: string;
   submissionCount?: number; marking?: ComponentMarking; month?: string;
 }) {
+  const session = useCaseFileSession();
   const [attempts, setAttempts] = useState<SubmissionAttempt[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -22,15 +24,15 @@ export function AssignmentSubmissions({ kind, learnerId, activityId, status, sub
     if (status === 'todo' || submissionCount === 0) { setLoading(false); return; }
     setLoading(true);
     const query = new URLSearchParams({ learnerKind: kind, learnerId, activityType: 'assignment', activityId });
-    void readLearnerJson<{ submission?: { submissionAttempts?: SubmissionAttempt[] } | null }>(
+    void (session ? session.read<{ submission?: { submissionAttempts?: SubmissionAttempt[] } | null }>('assignments', { resource: 'submission', activityId }, { signal: controller.signal, refresh: refresh > 0 }) : readLearnerJson<{ submission?: { submissionAttempts?: SubmissionAttempt[] } | null }>(
       `/learner_api/reflection/submissions/?${query}`, { signal: controller.signal, revalidate: true },
-    ).then(result => {
+    )).then(result => {
       if (!controller.signal.aborted) setAttempts(result.submission?.submissionAttempts || []);
     }).catch(() => {
       if (!controller.signal.aborted) setError('Could not load previous submissions. Please try again.');
     }).finally(() => { if (!controller.signal.aborted) setLoading(false); });
     return () => controller.abort();
-  }, [kind, learnerId, activityId, status, submissionCount, refresh]);
+  }, [kind, learnerId, activityId, status, submissionCount, refresh, session]);
 
   return <>
     {!attempts.length && <AssignmentFeedback marking={marking} status={status} />}

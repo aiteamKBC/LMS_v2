@@ -22,6 +22,7 @@ from .constants import (
     DEFAULT_PROGRAMME_STATUS,
     POSITION_CHOICES,
     LEARNER_TYPE_CHOICES,
+    ATTENDANCE_TYPE_CHOICES,
     ORGANISATION_STATUS_CHOICES,
     ORGANISATION_GROUP_TYPE_CHOICES,
     LEVY_PAYER_CHOICES,
@@ -380,6 +381,7 @@ APTEM_TEXT_FIELDS = {
     "mentor": "mentor",
     "referenceNumber": "reference_number",
     "extendedBreak": "extended_break",
+    "attendanceType": "attendance_type",
     "employerAddress": "employer_address",
     "targetProgramme": "target_programme",
     "legalSex": "legal_sex",
@@ -641,6 +643,7 @@ def validate_choices(payload):
         ("type", TYPE_CHOICES),
         ("programmeStatus", PROGRAMME_STATUS_CHOICES),
         ("learnerType", LEARNER_TYPE_CHOICES),
+        ("attendanceType", ATTENDANCE_TYPE_CHOICES),
     )
     for key, allowed in checks:
         val = payload.get(key)
@@ -689,6 +692,17 @@ def validate_learner_dates(fields, existing=None):
         raise ValidationError("End date must be on or after start date.")
 
 
+def _blank_attendance_type_to_null(fields):
+    """A cleared Attendance type is NULL, not ''.
+
+    The column's CHECK constraint admits only NULL or one of
+    ATTENDANCE_TYPE_CHOICES, so the empty string a cleared select sends would
+    otherwise fail at the database instead of clearing the value.
+    """
+    if fields.get("attendance_type") == "":
+        fields["attendance_type"] = None
+
+
 def write_fields(payload, *, require_create=False):
     """Validate a payload and return {model_attr: value} for the flat columns."""
     if not isinstance(payload, dict):
@@ -714,6 +728,7 @@ def write_fields(payload, *, require_create=False):
     if "trainingPlan" in payload:
         fields["learning_plan"] = _normalize_training_plan(payload["trainingPlan"])
     fields.update(_employer_id_field(payload))
+    _blank_attendance_type_to_null(fields)
     if require_create and not _s(fields.get("programme_status")):
         # Every account starts at 'Fresh user'. Left unset it was stored NULL,
         # which some readers took for "status unknown" rather than new.
@@ -809,6 +824,7 @@ def write_commercial_fields(payload, *, require_create=False):
     if "trainingPlan" in payload:
         fields["training_plan"] = _normalize_training_plan(payload["trainingPlan"])
     fields.update(_employer_id_field(payload))
+    _blank_attendance_type_to_null(fields)
     return fields
 
 

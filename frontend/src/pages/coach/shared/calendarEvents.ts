@@ -1,5 +1,6 @@
 import { fetchSharedJsonGet } from '@/lib/sharedGetJson';
 import { coachFetch } from '@/lib/coachFetch';
+import { reviewCategory } from '@/lib/reviewCategory';
 import { withCoachViewAs } from '@/lib/coachViewAs';
 
 interface CoachCalendarFetchOptions {
@@ -392,6 +393,29 @@ export async function fetchCoachCalendarEventsForCoach(
   });
 }
 
+export interface AllCoachesCalendarResponse {
+  calendars: Array<{
+    email: string;
+    events: CoachCalendarEvent[];
+    refreshedAt?: string | null;
+  }>;
+  missingCoaches?: string[];
+}
+
+/** One snapshot-backed request for the super-admin all-coaches week view. */
+export async function fetchAllCoachesCalendarEvents(
+  signal: AbortSignal | undefined,
+  options: Pick<CoachCalendarFetchOptions, 'start' | 'end'>,
+) {
+  const params = new URLSearchParams();
+  if (options.start) params.set('start', options.start);
+  if (options.end) params.set('end', options.end);
+  return fetchSharedJsonGet<AllCoachesCalendarResponse>(
+    `/coach_api/coaches/calendar?${params.toString()}`,
+    { signal, credentials: 'include' },
+  );
+}
+
 export async function fetchCoachMeetingArtifacts(
   eventKey: string,
   signal?: AbortSignal,
@@ -684,7 +708,7 @@ export function latestCompletedReviewDate(
   const latest = events
     .filter(event => (
       isCompletedEvent(event)
-      && event.source === source
+      && reviewCategory(event) === source
       && String(event.learnerId || '') === String(learnerId)
     ))
     .map(event => ({
