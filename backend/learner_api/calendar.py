@@ -602,8 +602,16 @@ def _assignment_imported_mcm_month(profile_id, review_id):
     return (review["plannedDate"] or "")[:7] or None, None
 
 
-def coaching_events_for_learner(learner, mirror, *, month=None):
-    """One source for the calendar and Training Plan coaching dates/statuses."""
+def coaching_events_for_learner(learner, mirror, *, month=None, only_sources=None, dates_only=False):
+    """One source for the calendar and Training Plan coaching dates/statuses.
+
+    ``only_sources`` is for a caller that keeps only those event sources. It
+    skips work whose events can never carry one of them; the caller still
+    filters, and every returned event is built exactly as without it.
+    ``dates_only`` (with ``only_sources``) is for a caller that reads only
+    each event's identity, title, status and dates: imported Aptem reviews
+    then omit their review history fields.
+    """
     if source_for_learner(learner, mirror).kind != "curriculum":
         mirror = review_profile_for_source(learner, mirror)
     review_source = source_for_learner(learner, mirror)
@@ -640,15 +648,33 @@ def coaching_events_for_learner(learner, mirror, *, month=None):
             records.append(record)
     if review_source.kind == "aptem":
         from .imported_review_calendar import imported_events_for_learner
-        imported = (imported_events_for_learner(learner, mirror, review_source.aptem_id, records, month=month)
-                    if month else imported_events_for_learner(learner, mirror, review_source.aptem_id, records))
+        if month:
+            imported = imported_events_for_learner(learner, mirror, review_source.aptem_id, records, month=month)
+        elif only_sources is not None:
+            # Section text only feeds ``importedReview``; the narrowed caller drops it.
+            imported = imported_events_for_learner(learner, mirror, review_source.aptem_id, records,
+                                                   include_sections=False, dates_only=dates_only)
+        else:
+            imported = imported_events_for_learner(learner, mirror, review_source.aptem_id, records)
+
+        def may_match(record):
+            # A stored row's source is its event type, unless a review template
+            # names the type (_serialize_event); keep those rows to be safe.
+            return (only_sources is None or _s(getattr(record, 'review_template_id', ''))
+                    or (_s(record.event_type) or "mcr") in only_sources)
+
         # Persisted native rows must not become a second occurrence or fallback.
         other = [] if month else [_serialize_event(record) for record in records
-                 if record.event_type not in {"mcr", "progress-review", "review"}]
-        if not _curriculum_mcm_fallback(learner, mirror):
-            return [*imported, *other]
+                 if record.event_type not in {"mcr", "progress-review", "review"} and may_match(record)]
         mcm_records = [record for record in records
                        if record.event_type == "mcr" and not record.event_key.startswith("imported-review:")]
+        # Curriculum fallback events are MCMs: generated ones are typed "mcr"
+        # and a stored "mcr" row is re-typed only through its review template.
+        if only_sources is not None and "mcr" not in only_sources and not any(
+                _s(getattr(record, 'review_template_id', '')) for record in mcm_records):
+            return [*imported, *other]
+        if not _curriculum_mcm_fallback(learner, mirror):
+            return [*imported, *other]
         return [*imported, *_curriculum_cycle_events(learner, mirror, mcm_records, mcm_only=True, month=month), *other]
     return _curriculum_cycle_events(learner, mirror, records, month=month)
 

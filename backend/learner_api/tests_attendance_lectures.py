@@ -89,11 +89,10 @@ class AttendanceLectureTests(SimpleTestCase):
         assignment_sql, assignment_params = cur.execute.call_args_list[0].args
         self.assertIn('enrolment."Created_users" WHERE id=%s', assignment_sql)
         self.assertEqual(assignment_params, [12])
-        shared_sql, shared_params = cur.execute.call_args_list[1].args
-        self.assertIn('teams_shared_source_module_id', shared_sql)
-        self.assertEqual(shared_params, [['assigned-module']])
-        schedule_sql, schedule_params = cur.execute.call_args_list[2].args
-        self.assertEqual(schedule_params, ['learner@example.test', ['assigned-module']])
+        schedule_sql, schedule_params = cur.execute.call_args_list[1].args
+        self.assertEqual(len(cur.execute.call_args_list), 2)
+        self.assertIn('teams_shared_source_module_id', schedule_sql)
+        self.assertEqual(schedule_params, [['assigned-module'], 'learner@example.test', ['assigned-module']])
         self.assertIn('s.module_catalogue_id=ANY(%s)', schedule_sql)
         self.assertIn('curriculum.live_session_attendance', schedule_sql)
         self.assertIn('a.total_attendance_seconds>180', schedule_sql)
@@ -116,15 +115,37 @@ class AttendanceLectureTests(SimpleTestCase):
 
         statements = [call.args[0] for call in cur.execute.call_args_list]
         self.assertFalse(any('Created_users' in sql for sql in statements))
-        self.assertEqual(len(statements), 2)
+        # The shared-meeting lookup and the occurrences are one statement.
+        self.assertEqual(len(statements), 1)
         schedule_sql, schedule_params = cur.execute.call_args.args
         self.assertIn('s.module_catalogue_id=ANY(%s)', schedule_sql)
-        self.assertEqual(schedule_params, ['learner@example.test', ['assigned-module']])
+        self.assertEqual(schedule_params, [['assigned-module'], 'learner@example.test', ['assigned-module']])
 
     def test_shared_teams_duplicate_reads_its_source_modules_meeting(self):
         # A duplicate sharing another module's meeting has no series of its own.
+        from .attendance_lectures import NATIVE_OCCURRENCES_SQL, SHARED_NATIVE_OCCURRENCES_SQL, SHARED_TEAMS_SOURCES_SQL
         conn = MagicMock()
         cur = conn.cursor.return_value.__enter__.return_value
+        cur.fetchall.side_effect = [[('alias-module', 'Alias')]]
+        with patch('learner_api.attendance_lectures.connections', {'enrolment': conn}), \
+             patch('learner_api.attendance_lectures.dict_rows', return_value=[]):
+            read_native_occurrences(SimpleNamespace(id=12, email='learner@example.test'))
+        schedule_sql, schedule_params = cur.execute.call_args.args
+        self.assertEqual(schedule_sql, SHARED_NATIVE_OCCURRENCES_SQL)
+        self.assertEqual(schedule_params, [['alias-module'], 'learner@example.test', ['alias-module']])
+        # The same recursive chain as the separate lookup, and the same occurrence query,
+        # whose modules now also include every shared source the chain reaches.
+        self.assertTrue(schedule_sql.startswith(SHARED_TEAMS_SOURCES_SQL.rsplit('SELECT DISTINCT', 1)[0]))
+        self.assertIn('WHERE (s.module_catalogue_id=ANY(%s) OR s.module_catalogue_id IN (SELECT source_id FROM shared))',
+                      schedule_sql)
+        self.assertEqual(schedule_sql.split('\n        ', 1)[0], SHARED_TEAMS_SOURCES_SQL.split('\n        ', 1)[0])
+        self.assertIn(NATIVE_OCCURRENCES_SQL.split('WHERE s.module_catalogue_id')[0], schedule_sql)
+
+    def test_an_unreadable_combined_read_falls_back_to_the_separate_shared_lookup(self):
+        from django.db import DatabaseError
+        conn = MagicMock()
+        cur = conn.cursor.return_value.__enter__.return_value
+        cur.execute.side_effect = [None, DatabaseError('combined unavailable'), None, None]
         cur.fetchall.side_effect = [[('alias-module', 'Alias')], [('alias-module', 'source-module')]]
         with patch('learner_api.attendance_lectures.connections', {'enrolment': conn}), \
              patch('learner_api.attendance_lectures.dict_rows', return_value=[]):

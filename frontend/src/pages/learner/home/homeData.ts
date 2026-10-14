@@ -1,4 +1,4 @@
-import type { OverviewWeek } from '@/api/learnerOverview';
+import type { OverviewWeek, UpcomingSchedule } from '@/api/learnerOverview';
 import type { TrainingPlanDashboard } from '@/api/trainingPlanDashboard';
 import { learnerHref, type LearnerRoutePage } from '@/lib/learnerRoutes';
 
@@ -44,7 +44,8 @@ export type ReviewOrMcmEvent = HomeEvent & {
 };
 
 /** One nearest event per category, in lecture / assignment / review order. */
-export function upcomingEvents(schedule?: TrainingPlanDashboard | null, week?: OverviewWeek | null, now = new Date()): HomeEvent[] {
+export function upcomingEvents(schedule?: Pick<TrainingPlanDashboard, 'sessions' | 'reviews'> | null,
+  week?: Pick<OverviewWeek, 'deadlines'> | null, now = new Date()): HomeEvent[] {
   const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/London' }).format(now);
   const time = new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/London', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(now);
   const events: DatedHomeEvent[] = [
@@ -71,6 +72,35 @@ export function upcomingEvents(schedule?: TrainingPlanDashboard | null, week?: O
     { id: 'next-review', kind: 'review', title: 'Next review', date: null, detail: 'No upcoming review scheduled', href: '/learner/calendar' },
   ];
   return slots.map(slot => upcoming.find(event => event.kind === slot.kind) || slot);
+}
+
+const HOME_EVENT = {
+  session: { kind: 'lecture', detail: 'Learning session', href: '/learner/attendance' },
+  assignment: { kind: 'assignment', detail: 'Assignment due', href: '/learner/monthly-submission' },
+  review: { kind: 'review', detail: 'Progress review', href: '/learner/calendar' },
+} as const;
+
+const ukDay = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/London' });
+
+/**
+ * Student Home's Upcoming card: the server's events for next week, Monday to
+ * Friday (UK), already merged and in time order. A cached response can outlive
+ * the week it was read in, so only events on next week's UK weekdays remain.
+ */
+export function homeUpcomingEvents(schedule?: UpcomingSchedule | null, now = new Date()): HomeEvent[] {
+  const today = new Date(`${ukDay.format(now)}T00:00:00Z`);
+  const monday = new Date(today.getTime() + (7 - (today.getUTCDay() + 6) % 7) * 86_400_000);
+  const [first, last] = [0, 4].map(days => new Date(monday.getTime() + days * 86_400_000).toISOString().slice(0, 10));
+  return (schedule?.events ?? []).filter(event => {
+    const day = /^\d{4}-\d{2}-\d{2}$/.test(event.date) ? event.date
+      : Number.isNaN(Date.parse(event.date)) ? '' : ukDay.format(new Date(event.date));
+    return day >= first && day <= last;
+  })
+    .map(event => {
+      const { kind, detail, href } = HOME_EVENT[event.type];
+      return { id: `${event.type}-${event.id}`, kind, title: event.title, date: event.date, href,
+        detail: event.type === 'review' && !event.booked ? 'Review to be booked' : detail };
+    });
 }
 
 /** Return the next scheduled or due MCM/progress review for dashboard actions. */

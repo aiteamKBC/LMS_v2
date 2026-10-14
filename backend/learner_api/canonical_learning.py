@@ -140,12 +140,16 @@ def entries(learner_id):
     return entries_for(owner)
 
 
-def entries_for(owner, *, overview_only=False, entry_ids=None):
-    # Optional caller-owned selection is applied before the evidence/lineage
-    # joins. The learner predicate always remains mandatory.
+def entries_for(owner, *, overview_only=False, entry_ids=None, lineage_only=False):
     selection = '' if entry_ids is None else ' AND progress.id=ANY(%s)'
     params = [owner['id']] if entry_ids is None else [owner['id'], list(entry_ids)]
     columns = 'progress.*'
+    payload = 'to_jsonb(p)'
+    if lineage_only:
+        payload = '''CASE WHEN jsonb_typeof(p.source_payload)='object'
+            THEN to_jsonb(p)-'source_payload'||jsonb_build_object('source_payload',
+                 jsonb_build_object('original_source_ref',p.source_payload->'original_source_ref'))
+            ELSE to_jsonb(p) END'''
     if overview_only:
         # Completion projection needs saved timing/attempt facts, never raw
         # evidence bodies. Keep lineage required by recorded course allocation.
@@ -207,7 +211,7 @@ def entries_for(owner, *, overview_only=False, entry_ids=None):
           AND h.deleted_at IS NULL AND h.historical_only=true
         GROUP BY link.progress_id
     )
-        SELECT to_jsonb(p) AS payload,
+        SELECT {payload} AS payload,
           coalesce(k.payload,'[]'::jsonb) AS ksbs,
           coalesce(seg.payload,'[]'::jsonb) AS segments,
           coalesce(src.payload,'[]'::jsonb) AS sources,
@@ -1016,13 +1020,17 @@ def metrics_from_records(records, monthly_targets, *, include_ksb_points=False):
     return result
 
 
-def metrics(learner_id):
-    """Return verified canonical dashboard metrics for one learner."""
-    owner = require_profile(learner_id)
+def metrics(learner_id, *, owner=None):
+    """Return verified canonical dashboard metrics for one learner.
+
+    ``owner`` is this learner's already-verified ``require_profile`` row.
+    """
+    owner = require_profile(learner_id) if owner is None else owner
     from learner_api import journal_sources
-    result = metrics_from_records(entries_for(owner), targets_for(owner))
+    # Only counts and hours leave here, so raw evidence bodies are not loaded.
+    result = metrics_from_records(entries_for(owner, lineage_only=True), targets_for(owner))
     if journal_sources.enabled():
-        planned = programme_planned_hours(learner_id)
+        planned = programme_planned_hours(learner_id, owner=owner)
         result['otjh']['planned'] = planned
         result['aptem_planned_total'] = planned
     return result
