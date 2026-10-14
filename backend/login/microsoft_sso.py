@@ -42,6 +42,7 @@ from django.http import HttpResponseRedirect, JsonResponse
 from django.views.decorators.http import require_GET
 
 from . import identity
+from .android_download_access import staff_download_allowed
 from .invitations import frontend_base_url, record
 from .models import EVENT_LOGIN
 from .security import (
@@ -395,7 +396,7 @@ def callback(request):
     # from its current access grant. Ignore `next` in older in-flight states too,
     # so all sign-in methods have the same landing behaviour.
     destination = "/learner/home" if account.role == "learner" else "/"
-    if payload.get("download") == "android" and account.role == "learner":
+    if payload.get("download") == "android" and (account.role == "learner" or staff_download_allowed(account)):
         destination = "/login?download=android"
     response = HttpResponseRedirect(f"{frontend_base_url()}{destination}")
     # Deliberately not remembered. There is no checkbox on this route to read a

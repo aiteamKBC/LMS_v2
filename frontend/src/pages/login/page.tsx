@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
-import { AuthError, PasswordSetupRequired, apiMicrosoftStart } from '@/api/auth';
+import { AuthError, PasswordSetupRequired, apiMicrosoftStart, type AuthUser } from '@/api/auth';
 import { AppIcon } from '@/components/feature/AppIcon';
 // Shared with RequireAuth, so the page you are sent to after signing in and
 // the page you are sent back to when refused are decided by one definition.
@@ -10,6 +10,14 @@ import styles from './page.module.css';
 
 const BOOK_IMAGE_URL = '/login-open-book.png';
 const SIDEBAR_LOGO_URL = 'https://jokdxsdbxorzciulkdyl.supabase.co/storage/v1/object/public/images/16480272afc94729b2911a62d1bbf85d.webp';
+
+// UI visibility only. The download endpoint checks the current server account
+// and the coach's live staff grants before serving any bytes.
+function canDownloadAndroid(account: AuthUser | null) {
+  return !!account && (account.role === 'learner' || account.role === 'admin'
+    || (account.role === 'staff' && account.subjectType === 'staff'
+      && (account.access === 'coach' || account.accesses?.includes('coach'))));
+}
 
 export default function LoginPage() {
   const { login, auth, isInitialized } = useAuth();
@@ -44,7 +52,7 @@ export default function LoginPage() {
   // and round again.
   useEffect(() => {
     if (!isInitialized || !auth.account) return;
-    if (androidDownload && auth.account.role === 'learner') return;
+    if (androidDownload && canDownloadAndroid(auth.account)) return;
     navigate(postLoginRouteFor(auth.account), { replace: true });
   }, [isInitialized, auth.account, androidDownload, navigate]);
 
@@ -69,7 +77,7 @@ export default function LoginPage() {
     setIsLoading(true);
     try {
       const account = await login(email, password, rememberMe);
-      if (androidDownload && account.role === 'learner') {
+      if (androidDownload && canDownloadAndroid(account)) {
         setIsLoading(false);
         return;
       }
@@ -106,7 +114,7 @@ export default function LoginPage() {
     }
   };
 
-  if (androidDownload && isInitialized && auth.account?.role === 'learner') {
+  if (androidDownload && isInitialized && canDownloadAndroid(auth.account)) {
     return (
       <main className={styles.downloadPage}>
         <section className={styles.downloadCard} aria-labelledby="download-heading">
@@ -117,8 +125,9 @@ export default function LoginPage() {
             Download Android app
           </a>
           <p>After installation, sign in to the app with your usual LMS account.</p>
+          {auth.account?.role === 'admin' && <p>Administrator download access does not add a learner or coach role. Use an existing learner or coach account to test those app screens.</p>}
           <button className={styles.microsoftButton} onClick={() => navigate(postLoginRouteFor(auth.account!), { replace: true })}>
-            Go to my learning
+            Go to my workspace
           </button>
         </section>
       </main>
