@@ -201,10 +201,10 @@ export function BulkAttendanceModeModal({ rows, onClose }: { rows: UserListRow[]
         <fieldset className="flex flex-wrap items-center gap-4 rounded-xl border border-foreground-100 bg-background-100/60 px-4 py-3" disabled={running}>
           <legend className="sr-only">Attendance mode</legend>
           <span className="text-[12px] font-semibold text-foreground-800">Set attendance mode to</span>
-          {(['live', 'lazy'] as const).map((m) => (
+          {(['live'] as const).map((m) => (
             <label key={m} className="inline-flex cursor-pointer items-center gap-2 text-[13px] text-foreground-700">
               <input type="radio" name="bulk-attendance-mode" value={m} checked={mode === m} onChange={() => { setMode(m); setConfirming(false); }} />
-              {m === 'live' ? 'Live Sessions' : 'Recorded'}
+              Live Sessions
             </label>
           ))}
         </fieldset>

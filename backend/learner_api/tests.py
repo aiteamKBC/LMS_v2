@@ -2036,6 +2036,42 @@ class QuizSubmitWorkingRulesTests(SimpleTestCase):
         self.assertIsNone(record["declaredCompletedAt"])
         self.assertEqual(record["submissionValidationReason"], "")
 
+    def test_diagram_is_returned_and_snapshotted_with_the_scored_question(self):
+        quiz = self._quiz()
+        quiz["questions"][0]["imageUrl"] = "data:image/png;base64,ZGlhZ3JhbQ=="
+        save = Mock()
+        with patch.object(self, "_quiz", return_value=quiz):
+            response, _audit = self._post(save)
+        self.assertEqual(response.status_code, 200)
+        body = json.loads(response.content)
+        expected = quiz["questions"][0]["imageUrl"]
+        self.assertEqual(body["breakdown"][0]["imageUrl"], expected)
+        self.assertEqual(save.call_args.args[1]["questions"][0]["imageUrl"], expected)
+        self.assertTrue(body["passed"])
+
+    def test_new_attempt_keeps_question_and_answer_text_for_later_review(self):
+        save = Mock()
+        response, _audit = self._post(save)
+        self.assertEqual(response.status_code, 200)
+        stored = save.call_args.args[1]["questions"][0]
+        self.assertEqual(stored["questionText"], "2 + 2?")
+        self.assertEqual(stored["chosenText"], "4")
+        self.assertEqual(stored["correctText"], "4")
+        self.assertEqual(stored["possible"], 1)
+
+    def test_broken_answer_key_and_stale_selection_store_no_attempt(self):
+        for broken_key in (False, True):
+            with self.subTest(broken_key=broken_key):
+                quiz = self._quiz()
+                if broken_key:
+                    quiz["questions"][0]["answers"][0]["isCorrect"] = False
+                save = Mock()
+                with patch.object(self, "_quiz", return_value=quiz):
+                    response, audit = self._post(save, payload={"answers": {"1": 10 if broken_key else 999}})
+                self.assertEqual(response.status_code, 409)
+                save.assert_not_called()
+                audit.assert_not_called()
+
     def test_out_of_hours_submit_is_refused_and_writes_nothing(self):
         save = Mock()
         response, audit = self._post(

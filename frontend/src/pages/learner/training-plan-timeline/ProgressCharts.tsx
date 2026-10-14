@@ -1,7 +1,7 @@
 import { useEffect, useId, useState, type CSSProperties } from 'react';
 import type { TrainingPlanDashboard } from '@/api/trainingPlanDashboard';
 import { percent, type TimelineModule } from './model';
-import { moduleMeasures, moduleProgress } from './progress';
+import { moduleMeasures, moduleProgress, type ModuleMeasure } from './progress';
 import { OtjHoursChart } from './OtjHoursChart';
 import styles from './ProgressCharts.module.css';
 
@@ -14,6 +14,7 @@ type Props = {
   programmeEndMonth?: string;
   programmeSnapshot?: ProgrammeProgressSnapshot;
   showOtjChart?: boolean;
+  wholeProgrammeRings?: boolean;
   targetAsOfToday?: number | null;
   programmeRows?: { id: string; title: string; start?: string; value: number | null; available?: number; measureCount?: number }[];
 };
@@ -43,13 +44,31 @@ function measureCount(label: string, detail: string) {
   return match ? { count: match[1], unit: measureUnits[label] || '' } : { count: detail, unit: '' };
 }
 
+function ProgressMeasureRings({ measures, label }: { measures: ModuleMeasure[]; label: string }) {
+  return <div className={styles.measureRings} aria-label={label}>
+    {measures.map((measure, index) => {
+      const value = measure.value == null ? 0 : Math.min(100, Math.max(0, measure.value));
+      const { count, unit } = measureCount(measure.label, measure.detail);
+      return <div className={styles.measureRingItem} key={measure.label} title={measure.detail}>
+        <span className={styles.measureRing} style={{ '--measure-progress': `${value}%`, '--measure-color': ringColors[index] } as CSSProperties} role="img" aria-label={`${measure.label}: ${percentage(measure.value)}`}>
+          <span>{percentage(measure.value)}</span>
+        </span>
+        <strong>{measure.label}</strong>
+        <small>{measure.detail}</small>
+        <span className={styles.measureCount}><b>{count}</b>{unit ? <em>{unit}</em> : null}</span>
+      </div>;
+    })}
+  </div>;
+}
+
 
 export function ProgressCharts({ modules, selected, data, onModuleSelect, programmeStartMonth, programmeEndMonth, programmeSnapshot,
-  showOtjChart = true, targetAsOfToday, programmeRows }: Props) {
+  showOtjChart = true, wholeProgrammeRings = false, targetAsOfToday, programmeRows }: Props) {
   const chartId = useId();
   const [programmePage, setProgrammePage] = useState(0);
   const selectedProgress = selected ? moduleProgress(selected, data) : null;
   const selectedMeasures = selected ? moduleMeasures(selected, data) : [];
+  const pickerRows = [...modules].sort((a, b) => (a.start || '9999').localeCompare(b.start || '9999') || a.title.localeCompare(b.title));
   const rows = (programmeRows || modules.map(module => {
     const progress = moduleProgress(module, data);
     return { ...module, value: progress.value, available: progress.available, measureCount: progress.measures.length };
@@ -94,6 +113,7 @@ export function ProgressCharts({ modules, selected, data, onModuleSelect, progra
         {chartProgress && <strong className={styles.total}>{percentage(chartProgress.value)}<small>Overall</small></strong>}
       </header>
       {chartProgress ? <>
+        {wholeProgrammeRings ? <ProgressMeasureRings measures={chartProgress.measures.slice(1)} label="Whole programme progress measures" /> : <>
         <svg className={styles.chart} viewBox={`0 0 ${chartWidth} 235`} role="img" aria-labelledby={`${chartId}-title ${chartId}-description`}>
           <title id={`${chartId}-title`}>Whole programme progress by measure</title>
           <desc id={`${chartId}-description`}>{chartProgress.measures.map(measure => `${measure.label}: ${percentage(measure.value)}, ${measure.detail}`).join('. ')}</desc>
@@ -111,38 +131,25 @@ export function ProgressCharts({ modules, selected, data, onModuleSelect, progra
         <dl className={styles.measures}>{chartProgress.measures.map((measure, index) => <div key={measure.label}>
           <dt><i style={{ background: colors[index] }} />{measure.label}</dt><dd>{measure.detail}</dd>
         </div>)}</dl>
-        <p className={styles.note}>{hasActivitySnapshot
+        </>}
+        {!wholeProgrammeRings && <p className={styles.note}>{hasActivitySnapshot
           ? programmeSnapshot?.attendancePercent !== undefined
             ? 'Activities use the supplied programme totals. Overall, OTJH, KSB and attendance match the case-file cards.'
             : 'Activities use the same programme totals as the coach learner table. Overall, OTJH, KSB and attendance match the case-file cards.'
-          : 'Overall, OTJH, KSB and attendance match the case-file cards. Activities are aggregated across all learner modules.'}</p>
+          : 'Overall, OTJH, KSB and attendance match the case-file cards. Activities are aggregated across all learner modules.'}</p>}
       </> : <p className={styles.empty}>Select a module to see attendance, activities, hours and KSBs.</p>}
     </section> : <section className={`${styles.card} ${styles.moduleProgressCard}`} aria-label="Module progress">
       <header><div><p className={styles.eyebrow}>Selected module</p><h2>Module progress</h2></div>
         <label className={styles.modulePicker}><span className={styles.srOnly}>Select module</span><select value={selected?.id || ''} onChange={event => {
           const next = modules.find(module => module.id === event.target.value);
           if (next) onModuleSelect(next);
-        }} disabled={!rows.length}>
-          {!rows.length && <option value="">No modules</option>}
-          {rows.map(module => <option key={module.id} value={module.id}>{module.title}</option>)}
+        }} disabled={!pickerRows.length}>
+          {!pickerRows.length && <option value="">No modules</option>}
+          {pickerRows.map(module => <option key={module.id} value={module.id}>{module.title}</option>)}
         </select></label>
       </header>
-      {selected ? <div className={styles.measureRings} aria-label={`${selected.title} progress measures`}>
-        {selectedMeasures.map((measure, index) => {
-          const value = measure.value == null ? 0 : Math.min(100, Math.max(0, measure.value));
-          return <div className={styles.measureRingItem} key={measure.label} title={measure.detail}>
-              <span className={styles.measureRing} style={{ '--measure-progress': `${value}%`, '--measure-color': ringColors[index] } as CSSProperties} role="img" aria-label={`${measure.label}: ${percentage(measure.value)}`}>
-              <span>{percentage(measure.value)}</span>
-            </span>
-            <strong>{measure.label}</strong>
-            <small>{measure.detail}</small>
-            {(() => {
-              const { count, unit } = measureCount(measure.label, measure.detail);
-              return <span className={styles.measureCount}><b>{count}</b>{unit ? <em>{unit}</em> : null}</span>;
-            })()}
-          </div>;
-        })}
-      </div> : <p className={styles.empty}>Select a module to see attendance, activities, hours and KSBs.</p>}
+      {selected ? <ProgressMeasureRings measures={selectedMeasures} label={`${selected.title} progress measures`} />
+        : <p className={styles.empty}>Select a module to see attendance, activities, hours and KSBs.</p>}
     </section>}
     <section className={`${styles.card} ${styles.programmeProgressCard}`} aria-label="Programme module progress">
       <header><div><p className={styles.eyebrow}>Whole programme</p><h2>Programme progress</h2></div><span className={styles.moduleCount}>{rows.length} modules</span></header>

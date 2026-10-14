@@ -49,6 +49,7 @@ const EmployerLearnerPage = lazyRoute(() => import("../pages/employer/EmployerLe
 const EventFeedbackPage = lazyRoute(() => import("../pages/event-feedback/page"));
 const EventRsvpPage = lazyRoute(() => import("../pages/event-rsvp/page"));
 const EventCheckInPage = lazyRoute(() => import("../pages/event-check-in/page"));
+const EmployerDocumentsPage = lazyRoute(() => import("../pages/employer/EmployerDocumentsPage"));
 const BudgetsPage = lazyRoute(() => import("../pages/finance/budgets/page"));
 const CallLogsPage = lazyRoute(() => import("../pages/engagement/call-logs/page"));
 const CatchUpPage = lazyRoute(() => import("../pages/learner/catchup/page"));
@@ -215,6 +216,7 @@ const MisTeamsSessionsPage = lazyRoute(() => import("../pages/mis/teams-sessions
 const MisTimetablesPage = lazyRoute(() => import("../pages/mis/timetables/page"));
 const MisTutorAssignmentPage = lazyRoute(() => import("../pages/mis/tutor-assignment/page"));
 const ModuleBuilder = lazyRoute(() => import("../pages/curriculum/module-builder/page"));
+const LearnerModuleProgressPage = lazyRoute(() => import("../pages/curriculum/learner-module-progress/page"));
 const ModulesPage = lazyRoute(() => import("../pages/learner/my-learning/page"));
 const ExtraActivityPage = lazyRoute(() => import("../pages/learner/monthly-submission/ExtraActivityPage"));
 const MonthlySubmissionPage = lazyRoute(() => import("../pages/learner/monthly-submission/page"));
@@ -511,6 +513,11 @@ const routes: RouteObject[] = [
   {
     path: "/employers/:employerId",
     element: <EmployerPortalPage />,
+  },
+  {
+    // Every document across the employer's learners.
+    path: "/employers/:employerId/documents",
+    element: <EmployerDocumentsPage />,
   },
   {
     path: "/employers/:employerId/learner/:kind/:learnerId",
@@ -1086,6 +1093,10 @@ const routes: RouteObject[] = [
   {
     path: "/curriculum/module-builder",
     element: <ModuleBuilder />,
+  },
+  {
+    path: "/curriculum/learner-module-progress",
+    element: <LearnerModuleProgressPage />,
   },
   {
     path: "/curriculum/ksb-mapping",

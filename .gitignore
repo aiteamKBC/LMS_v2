@@ -269,7 +269,7 @@ $RECYCLE.BIN/
 /frontend/*.mp4
 /screenshots/
 /frontend/screenshots/
-
+.baseline-head-tmp
 # One-off backfill / migration completion markers
 /backend/*_DONE.txt
 
@@ -317,6 +317,8 @@ $RECYCLE.BIN/
 !/AI_marking_prompt.MD
 !/backend/
 !/frontend/
+!/mobile/
+!/.gitattributes
 
 # performance diagnostics — local only
 /backend/perf/

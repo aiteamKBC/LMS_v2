@@ -1,6 +1,6 @@
 import { invalidateLearnerReads } from '@/api/learnerRead';
 import { useCallback, useMemo, useRef, useState, type CSSProperties } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { roleNavMap } from '@/mocks/navigation';
@@ -37,11 +37,24 @@ import { lectureCounts } from './lectureCounts';
 
 const learnerNav = roleNavMap.learner;
 
+// The Join endpoint returns here, in the tab it opened, when it cannot send the learner to Teams.
+function joinErrorMessage(reason: string) {
+  if (reason === 'ended') return 'That session has already ended, so it can no longer be joined.';
+  if (reason === 'not-found') return 'That session could not be found in your current modules. Please refresh your lectures or contact support.';
+  return 'The Teams link for that session is not available right now. Please try again in a few minutes or contact your tutor.';
+}
 
 export default function AttendancePage() {
   const learner = useMyLearner();
   const access = useLearnerWorkspaceAccess(learner.id);
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const joinError = searchParams.get('joinError');
+  const dismissJoinError = () => {
+    const next = new URLSearchParams(searchParams);
+    next.delete('joinError');
+    setSearchParams(next, { replace: true });
+  };
   const read = useLiveLearnerRead(learner.kind, learner.id, true, fetchAttendanceWorkspace, peekAttendanceWorkspace);
   const schedule = useLiveLearnerRead(learner.kind, learner.id, true, learningSchedule.read, learningSchedule.peek);
   useRefreshOnReturn(() => { read.refresh(); schedule.refresh(); }, { enabled: Boolean(learner.kind && learner.id) });
@@ -177,6 +190,10 @@ export default function AttendancePage() {
           <RowAction label="My recovery plans" icon="ri-calendar-todo-line" onClick={() => setShowRecoveryPlans(true)} />
           <RowAction label="Report absence" icon="ri-calendar-close-line" emphasis="primary" onClick={() => setReport('choose')} />
         </div> : undefined} />
+      {joinError && <div role="alert" className="flex items-start justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm">
+        <span>{joinErrorMessage(joinError)}</span>
+        <button type="button" onClick={dismissJoinError} className="shrink-0 font-semibold underline">Dismiss</button>
+      </div>}
       {read.error && data && <div role="alert" className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm">
         Lectures could not refresh. Showing the last loaded record. <button onClick={read.refresh} className="font-semibold underline">Retry</button>
       </div>}

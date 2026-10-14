@@ -45,7 +45,7 @@ _COMPONENT_TYPE_RULES = {
 }
 
 
-def award_for_progress(learner_id, learner_name, record):
+def award_for_progress(learner_id, learner_name, record, progress_id=None):
     """Grant engagement points for one progress record, if it qualifies.
 
     `record` is the same dict `save_progress_record` was called with — a
@@ -62,6 +62,20 @@ def award_for_progress(learner_id, learner_name, record):
     Never raises: a missing/inactive rule, a DB error, anything — all swallowed
     and logged, so a dropped grant never surfaces as a progress-save failure.
     """
+    # Registered shared-policy submissions own their entire award decision.
+    # Run before the legacy first-attempt guard: later accepted study still counts.
+    try:
+        from django.conf import settings
+        if getattr(settings, "KBC_SHARED_REWARDS_READY", False) is True:
+            from .saved_progress_rewards import owns_saved_progress
+            if owns_saved_progress(learner_id, record, progress_id):
+                return
+    except Exception:
+        # An unavailable authority cannot safely fall back to a second award.
+        # The transactional outbox retains registered work for reconciliation.
+        logger.warning("Shared reward reconciliation is pending.")
+        return
+
     if learner_id is None or not isinstance(record, dict) or record.get("attempt") != 1:
         return  # first attempt only — nothing else ever grants
 

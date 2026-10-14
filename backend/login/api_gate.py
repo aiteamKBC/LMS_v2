@@ -223,6 +223,10 @@ def rule_for(path):
         return None
     if path.startswith(('/learner_api/certificates/verify/', '/learner_api/personal-learning/verify/')):
         return None
+    # Fetched by Microsoft's Office Online servers, which carry no session. The
+    # view authenticates on a signed, 15-minute token naming one upload.
+    if path.startswith('/curriculum_api/office-preview/'):
+        return None
     from old_otjh.gate import is_transition_path
     if is_transition_path(path):
         return '/audit_api/', LEARNER_AND_STAFF

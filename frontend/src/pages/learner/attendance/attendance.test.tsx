@@ -6,7 +6,7 @@ import AttendancePage from './page';
 import { lectureCounts } from './lectureCounts';
 import AbsenceReportForm from './components/AbsenceReportForm';
 import { AppIcon } from '@/components/feature/AppIcon';
-import type { AttendanceLecture, AttendanceWorkspace } from '@/api/attendanceLectures';
+import { peekAttendanceWorkspace, type AttendanceLecture, type AttendanceWorkspace } from '@/api/attendanceLectures';
 import type { LearningSchedule } from '@/api/learnerOverview';
 import type { PlanModule } from '@/api/trainingPlanDashboard';
 import { clearAllCachedResources } from '@/api/cachedRequest';
@@ -483,14 +483,12 @@ describe('Attendance lecture workspace', () => {
     expect(destination.pathname).not.toContain('/monthly-logs/');
   });
 
-  it('requests manager approval and keeps Live Sessions effective while pending', async () => {
+  it('shows Live Sessions without a Lazy Mode control', async () => {
     mount();
-    fireEvent.click(await screen.findByRole('button', { name: 'Lazy Mode' }));
-    expect(await screen.findByText('Your request has been emailed to your manager for approval.')).toBeInTheDocument();
-    await waitFor(() => expect(screen.getByText(/Awaiting manager approval/)).toBeInTheDocument());
-    expect(payload.mode.mode).toBe('live');
-    expect(JSON.parse(String(posts[0].body))).toEqual({ mode: 'lazy' });
-    expect(screen.getByText('Absence reminders: paused')).toBeInTheDocument();
+    expect(await screen.findByText('Live Sessions')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Lazy Mode' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('switch', { name: 'Lazy Mode' })).not.toBeInTheDocument();
+    expect(posts).toHaveLength(0);
   });
 
   it('refreshes live source edits when the window regains focus', async () => {
@@ -540,6 +538,33 @@ describe('Attendance lecture workspace', () => {
     expect(await screen.findByText('Updated lecture')).toBeInTheDocument();
     expect(fetch).toHaveBeenCalledTimes(initialRequests + 2);
     expect(posts).toEqual([]);
+  });
+
+  it('re-opens from the saved workspace without treating every render as new data', async () => {
+    const first = mount();
+    await screen.findByText('First lecture');
+    first.unmount();
+    // The page peeks on each render until its read settles; a new object each time re-rendered in a loop.
+    const saved = peekAttendanceWorkspace('apprenticeship', '12');
+    expect(saved).toBeTruthy();
+    expect(peekAttendanceWorkspace('apprenticeship', '12')).toBe(saved);
+    mount();
+    expect(await screen.findByText('First lecture')).toBeInTheDocument();
+  });
+
+  it('explains a failed Join in the tab it opened and lets the learner dismiss it', async () => {
+    render(<MemoryRouter initialEntries={['/learner/attendance/apprenticeship/12?joinError=ended&module=all']}>
+      <AttendancePage /><CurrentLocation /></MemoryRouter>);
+    expect(await screen.findByRole('alert')).toHaveTextContent('That session has already ended, so it can no longer be joined.');
+    fireEvent.click(screen.getByRole('button', { name: 'Dismiss' }));
+    expect(screen.queryByText(/already ended/)).not.toBeInTheDocument();
+    expect(screen.getByTestId('location')).toHaveTextContent('/learner/attendance/apprenticeship/12?module=all');
+    cleanup();
+    render(<MemoryRouter initialEntries={['/learner/attendance?joinError=not-found']}><AttendancePage /></MemoryRouter>);
+    expect(await screen.findByText(/could not be found in your current modules/)).toBeInTheDocument();
+    cleanup();
+    render(<MemoryRouter initialEntries={['/learner/attendance?joinError=toString']}><AttendancePage /></MemoryRouter>);
+    expect(await screen.findByText(/Teams link for that session is not available/)).toBeInTheDocument();
   });
 
   it('offers working support and module destinations', async () => {

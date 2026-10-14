@@ -11,7 +11,9 @@ import re
 from old_otjh.repository import query
 from old_otjh.service import ServiceError
 from .monthly_log_sources import decoded, number, row
-from .current_learning import current_records, current_records_bulk, source_payload_metadata
+from .current_learning import (
+    current_records, current_records_bulk, is_unsynchronised_direct_save, source_payload_metadata,
+)
 
 UK = ZoneInfo('Europe/London')
 
@@ -235,13 +237,20 @@ def progress_records_with_completion(records, current):
     Counts, acceptance, seconds and reporting months belong to progress entries.
     Newer attempts may still supply completion and scores for those same entries.
     Unpersisted submissions cannot become extra accepted-hour records on a read.
+
+    The exception is a stored direct LMS save that nothing has given seconds
+    yet: its projected time and decision are the only record of that learning,
+    so they fill the empty ledger fields rather than leaving it at zero hours.
     """
     by_id = {str(record['id']): record for record in current}
     result = []
     for record in records:
         latest = by_id.get(str(record['id']), {})
-        result.append({**record, **{key: latest[key] for key in (
-            'completed', 'achieved_score', 'total_score') if key in latest}})
+        fields = ('completed', 'achieved_score', 'total_score')
+        if is_unsynchronised_direct_save(record):
+            fields += ('accepted', 'actual_seconds', 'activity_status', 'reporting_month',
+                       'reporting_started_at', 'reporting_ended_at')
+        result.append({**record, **{key: latest[key] for key in fields if key in latest}})
     return result
 
 
@@ -287,6 +296,20 @@ def journal_activity_date(entry):
     return next(iter(dates)) if len(dates) == 1 else None
 
 
+def input_activity_date(entry):
+    """A staff Input declaration has a date and no fabricated clock times."""
+    if entry.get('actual_basis') != 'staff:module-progress' or entry.get('reporting_timestamp_label') not in {'Input', 'attended'}:
+        return None
+    metadata = source_payload_metadata(entry.get('source_payload'))
+    declared = metadata.get('staff_time_entry')
+    value = declared.get('activity_date') if isinstance(declared, dict) and declared.get('mode') == 'input' else None
+    try:
+        parsed = datetime.strptime(value, '%Y-%m-%d')
+    except (TypeError, ValueError):
+        return None
+    return value if parsed.strftime('%Y-%m-%d') == value and value[:7] == entry.get('reporting_month') else None
+
+
 def rows_for(owner, records=None):
     result = []
     for entry in (part for record in (records if records is not None else entries_for(owner)) for part in allocations(record)):
@@ -306,6 +329,9 @@ def rows_for(owner, records=None):
         if not at or at.strftime('%Y-%m') != entry.get('reporting_month'):
             item['activity_date'] = journal_activity_date(entry) or item['activity_date']
         timestamp_label = entry.get('reporting_timestamp_label') or source.get('timestamp_label') or ''
+        declared_date = input_activity_date(entry)
+        if declared_date:
+            item['activity_date'] = declared_date
         # Translate the historical system label for display without rewriting the ledger.
         if timestamp_label == '\u062a\u0642\u062f\u064a\u0631\u064a \u2014 \u064a\u062d\u062a\u0627\u062c \u0627\u0639\u062a\u0645\u0627\u062f':
             timestamp_label = 'Estimated — approval required'

@@ -101,17 +101,39 @@ def queue_for_marking(*, component_id, kind, learner_id, context):
     """
     try:
         with connections["enrolment"].cursor() as cur:
+            # Only a committed, owner-bound registered mobile submission may
+            # reopen this activity for a NEW explicit progress row. Other callers
+            # keep the historical accepted-row behaviour.
+            shared_progress = context.get("sharedRewardProgressId")
+            scoped_refresh = False
+            if type(shared_progress) is int and shared_progress > 0:
+                cur.execute(
+                    'SELECT 1 FROM "Engagement".shared_reward_outbox o '
+                    'JOIN "Engagement".shared_reward_sessions s ON s.session_id=o.session_id '
+                    'JOIN "Learner".learner_progress_entries p ON p.id=o.progress_id '
+                    'WHERE o.progress_id=%s AND s.component_id=%s AND s.learner_id=%s '
+                    'AND s.learner_kind=%s AND s.profile_id=p.learner_id '
+                    'AND s.module_id=%s AND p.time_tracking_session_ref=s.session_id '
+                    'UNION ALL SELECT 1 FROM "Engagement".shared_reward_saved_progress j '
+                    'JOIN "Learner".learner_progress_entries p ON p.id=j.progress_id '
+                    'JOIN "Learner".learners l ON l.id=p.learner_id '
+                    'WHERE j.progress_id=%s AND j.module_id=%s AND j.component_id=%s '
+                    'AND l.enrolment_id::text=%s AND j.state=%s',
+                    [shared_progress, component_id, str(learner_id), kind, "MOD-KBC-PMP-M01-SMR",
+                     shared_progress, "MOD-KBC-PMP-M01-SMR", component_id, str(learner_id), "waiting_review"])
+                scoped_refresh = bool(cur.fetchone()) and context.get("progressEntryId")==shared_progress
             # An accepted submission is a coach's decision; re-completing the
             # activity must not quietly reopen it.
             cur.execute(
-                'select id, status from "Learner"."learning_reflection_submissions" '
+                'select id, status, progress_entry_id from "Learner"."learning_reflection_submissions" '
                 "where learner_kind = %s and learner_id = %s and activity_type = %s "
                 "and activity_id = %s and assignment_topic_id = ''",
                 [kind, str(learner_id), context.get("activityType") or "", component_id],
             )
             existing = cur.fetchone()
             if existing and str(existing[1] or "") in TERMINAL_STATUSES:
-                return existing[0]
+                if not scoped_refresh or existing[2]==shared_progress:
+                    return existing[0]
 
             evidence = _evidence_filenames(kind, learner_id, component_id)
             cur.execute(
@@ -137,10 +159,13 @@ def queue_for_marking(*, component_id, kind, learner_id, context):
                     planned_otjh = excluded.planned_otjh,
                     evidence_files = excluded.evidence_files,
                     actual_time_hours = excluded.actual_time_hours,
-                    progress_entry_id = excluded.progress_entry_id,
+                    progress_entry_id = coalesce(excluded.progress_entry_id,
+                        "learning_reflection_submissions".progress_entry_id),
                     component_ref = excluded.component_ref,
                     status = 'submitted_for_tutor_review',
                     submitted_at = now()
+                where "learning_reflection_submissions".status <> 'accepted'
+                  or (%s and "learning_reflection_submissions".progress_entry_id is distinct from %s)
                 returning """ + SUBMISSION_AUDIT_SQL + """
                 """,
                 [
@@ -166,6 +191,8 @@ def queue_for_marking(*, component_id, kind, learner_id, context):
                     100,
                     context.get("progressEntryId"),
                     component_id,
+                    scoped_refresh,
+                    shared_progress,
                 ],
             )
             row = cur.fetchone()

@@ -80,3 +80,75 @@ def pdf_response(row, settings, request):
     response['X-Content-Type-Options'] = 'nosniff'
     response['X-Frame-Options'] = 'SAMEORIGIN'
     return response
+
+
+def file_response(row, settings, request):
+    """Serve any other stored material on the LMS origin.
+
+    Redirecting to the SAS URL left the browser fetching a Word or Excel file
+    from Azure, which sends no CORS headers for this site, so the learner's
+    inline preview failed with "Failed to fetch". Same idea as ``pdf_response``,
+    without its PDF-only check.
+    """
+    from django.http import FileResponse, HttpResponse
+
+    headers = {}
+    if request.headers.get('Range'):
+        headers['Range'] = request.headers['Range']
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), _NoRedirect())
+    try:
+        upstream = opener.open(urllib.request.Request(read_url(row, settings), headers=headers), timeout=30)
+    except urllib.error.HTTPError as error:
+        status = error.code
+        error.close()
+        if status == 416:
+            return HttpResponse(status=416)
+        raise ValueError('The stored file is temporarily unavailable.') from None
+    except OSError:
+        raise ValueError('The stored file is temporarily unavailable.') from None
+    if upstream.status not in (200, 206):
+        upstream.close()
+        raise ValueError('The stored file is temporarily unavailable.')
+    filename = (row.get('material_blob_name') or 'material').rsplit('/', 1)[-1]
+    content_type = (row.get('material_blob_content_type')
+                    or upstream.headers.get_content_type() or 'application/octet-stream')
+    response = FileResponse(upstream, status=upstream.status, content_type=content_type,
+        as_attachment=False, filename=filename)
+    for header in ('Content-Length', 'Content-Range', 'Accept-Ranges'):
+        if upstream.headers.get(header):
+            response[header] = upstream.headers[header]
+    response['X-Content-Type-Options'] = 'nosniff'
+    response['X-Frame-Options'] = 'SAMEORIGIN'
+    return response
+
+
+#: Stored material the browser cannot draw; ``?preview=1`` hands these to Office.
+OFFICE_PREVIEW_SUFFIXES = ('.doc', '.docx', '.docm', '.rtf', '.odt', '.xls', '.xlsx', '.ods',
+                           '.ppt', '.pptx', '.pptm', '.pps', '.ppsx', '.odp')
+
+
+def office_preview_response(row, settings):
+    """A same-origin page framing Office Online on a short-lived SAS URL.
+
+    Office downloads the file from Microsoft's servers, which can read a SAS
+    URL but not anything behind the learner's session.
+    """
+    from html import escape
+    from django.http import HttpResponse
+
+    filename = (row.get('material_blob_name') or 'material').rsplit('/', 1)[-1]
+    viewer = 'https://view.officeapps.live.com/op/embed.aspx?src=' + quote(read_url(row, settings), safe='')
+    response = HttpResponse(
+        '<!doctype html><html lang="en"><head><meta charset="utf-8">'
+        '<meta name="viewport" content="width=device-width, initial-scale=1">'
+        f'<title>{escape(filename)}</title>'
+        '<style>html, body, iframe { width: 100%; height: 100%; margin: 0; border: 0; }</style></head>'
+        f'<body><iframe src="{escape(viewer, quote=True)}" title="{escape(filename, quote=True)}"></iframe></body></html>',
+        content_type='text/html; charset=utf-8',
+    )
+    response['Content-Security-Policy'] = (
+        "default-src 'none'; frame-src https://view.officeapps.live.com; "
+        "style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'"
+    )
+    response['X-Frame-Options'] = 'SAMEORIGIN'
+    return response

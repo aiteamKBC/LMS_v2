@@ -86,7 +86,7 @@ export default function SignReviewModal({
             <p className="text-[12px] text-foreground-700 mb-2">{label} <span className="text-red-500">*</span></p>
             <SignaturePad
               signatoryName={name}
-              onCommit={(url) => { void submit(url); }}
+              onCommit={submit}
               onCancel={onClose}
             />
           </div>

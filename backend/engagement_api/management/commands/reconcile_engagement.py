@@ -127,7 +127,7 @@ class Command(BaseCommand):
         (rule, event_reference), so an already-awarded completion is a no-op."""
         from learner_api.models import LearnerProgressEntry
 
-        from .hooks import award_for_progress
+        from engagement_api.hooks import award_for_progress
 
         entries = (
             LearnerProgressEntry.objects.filter(attempt=1)
@@ -149,7 +149,7 @@ class Command(BaseCommand):
                 "componentId": entry.component_ref,
                 "componentType": entry.component_type,
             }
-            award_for_progress(learner.enrolment_id, learner.username, record)
+            award_for_progress(learner.enrolment_id, learner.username, record, progress_id=entry.pk)
             awarded += 1
         self.stdout.write(self.style.SUCCESS(
             f"Repair: replayed {awarded} progress row(s) through award_for_progress "

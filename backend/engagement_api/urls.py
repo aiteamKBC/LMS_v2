@@ -1,6 +1,6 @@
 from django.urls import path
 
-from . import event_checkin, event_emails, event_feedback_views, event_rsvp_views, feedback, views
+from . import event_checkin, event_emails, event_feedback_views, event_rsvp_views, feedback, shared_reward_views, views
 
 urlpatterns = [
     # Reusable feedback-form engine. Staff management and learner-owned routes
@@ -42,6 +42,7 @@ urlpatterns = [
     path('feedback/public-rsvp/uploads/<uuid:upload_id>/', event_rsvp_views.public_photo_content, name='event-rsvp-photo-content'),
     path('event-check-in/csrf/', event_checkin.public_csrf, name='event-check-in-csrf'),
     path('event-check-in/', event_checkin.event_check_in, name='event-check-in'),
+    path('shared-rewards/bonus-verifications/', shared_reward_views.verify_bonus),
     path('rewards/', views.rewards_collection, name='rewards-collection'),
     path('rewards/<int:pk>/', views.reward_detail, name='reward-detail'),
     path('voucher-claims/', views.voucher_claims_collection, name='voucher-claims-collection'),

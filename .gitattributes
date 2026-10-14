@@ -1,0 +1,2 @@
+# This frozen migration fixture is verified byte-for-byte on Windows and Linux.
+backend/mobile_integration_tests/schema.sql text eol=lf

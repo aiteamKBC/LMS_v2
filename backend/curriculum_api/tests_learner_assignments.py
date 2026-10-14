@@ -202,7 +202,7 @@ class AssignmentEndpointTests(SimpleTestCase):
 class ModuleRosterTests(SimpleTestCase):
     def test_direct_assignment_is_visible_without_changing_other_scope_membership(self):
         profile = SimpleNamespace(
-            pk=2, full_name='Direct learner', email='direct@example.com',
+            pk=2, enrolment_id=91, full_name='Direct learner', email='direct@example.com',
             programme='Other programme', programme_status='Active', cohort='Other cohort',
             cohort_id='COHORT-OTHER', group_name='Other group', group_id='GROUP-OTHER',
             lifecycle_status='active', coach_name='', coach_email='', progress_variance=None, otjh_status='',
@@ -212,6 +212,7 @@ class ModuleRosterTests(SimpleTestCase):
             model.objects.filter.return_value = [profile]
             roster = assignments.module_assignment_roster('MOD-1', [])
         self.assertEqual([row['id'] for row in roster], [2])
+        self.assertEqual(roster[0]['enrolmentId'], 91)
         self.assertEqual(roster[0]['programme'], 'Other programme')
         self.assertEqual(roster[0]['cohortId'], 'COHORT-OTHER')
         from .views import learner_authored_plan

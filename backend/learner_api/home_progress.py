@@ -14,7 +14,7 @@ from .active_users import completed_hours_value_from_progress
 from .apprenticeship_agreement import _group_dates
 from .attendance_lectures import lecture_register
 from .subject_dates import as_date
-from .training_plan_dashboard import rows
+from .training_plan_dashboard import plan_planned_hours, rows
 from .otjh_totals import completed_otjh
 from . import canonical_learning
 
@@ -179,5 +179,13 @@ def read_home_progress(
     metrics = canonical_metrics if canonical_metrics is not None else canonical_learning.metrics(source.pk)
     result = apply_canonical_home_metrics(home, metrics)
     planned = (metrics.get('otjh') or {}).get('planned') if metrics else None
+    if result['otjh'].get('planned') is None:
+        # No SSOT programme plan yet (e.g. a new cohort awaiting the target
+        # sync): use the learning-plan total the Overview tab also uses.
+        planned = plan_planned_hours(source, getattr(source, '_canonical_profile', None)
+                                     or canonical_learning.profile(source.pk))
+        actual = result['otjh']['actual']
+        result['otjh'].update(planned=planned, percent=round(actual / planned * 100, 2)
+                              if actual is not None and planned else None)
     result['otjh']['missingPlannedActivities'] = 0 if planned is not None else None
     return result
