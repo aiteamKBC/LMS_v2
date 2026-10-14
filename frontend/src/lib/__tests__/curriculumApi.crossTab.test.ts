@@ -441,6 +441,33 @@ describe('curriculum cache invalidation across tabs and machines', () => {
     stop();
   });
 
+  it('slows down while nobody uses the tab and catches up on the next input', async () => {
+    const api = await loadApi();
+    const heard: string[] = [];
+    const stop = api.subscribeCurriculumRemoteWrites(path => heard.push(path));
+    await vi.advanceTimersByTimeAsync(0);
+
+    // Past the idle threshold with no input: at most one read per idle interval.
+    await vi.advanceTimersByTimeAsync(api.EPOCH_IDLE_AFTER_MS);
+    const settled = callsTo(EPOCH_URL);
+    await vi.advanceTimersByTimeAsync(api.EPOCH_IDLE_POLL_INTERVAL_MS * 3);
+    const idleReads = callsTo(EPOCH_URL) - settled;
+    expect(idleReads).toBeGreaterThanOrEqual(2);
+    expect(idleReads).toBeLessThanOrEqual(3);
+
+    // A change made while idle is still reported, and input brings back the
+    // co-editing interval: every tick reads again.
+    serverEpoch += 1;
+    await vi.advanceTimersByTimeAsync(api.EPOCH_POLL_INTERVAL_MS);
+    window.dispatchEvent(new Event('pointerdown'));
+    const resumed = callsTo(EPOCH_URL);
+    await oneTick(api);
+    await oneTick(api);
+    expect(callsTo(EPOCH_URL) - resumed).toBeGreaterThanOrEqual(2);
+    expect(heard).toEqual([api.UNKNOWN_WRITE_PATH]);
+    stop();
+  });
+
   it('keeps polling across a server restart and reports the write after it', async () => {
     // A dropped connection is the server coming back, not the endpoint being
     // absent. A tab left open across a deploy has to still be live afterwards.

@@ -171,7 +171,7 @@ describe('weekly live session attendance', () => {
       .toHaveAttribute('aria-valuenow', '50');
   });
 
-  it('adds KSB and expected OTJH cards for the selected week', () => {
+  it('adds KSB and actual versus expected OTJH cards for the selected week', () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-09-07T10:01:00Z'));
     learnerDetail.real.components = [
@@ -179,8 +179,9 @@ describe('weekly live session attendance', () => {
       { componentId: 'C2', moduleId: 'M1', weekId: 'W1', component: 'Second reading', type: 'reading', durationMinutes: 30, ksbCodes: ['S2', 'B1'] },
     ] as unknown as typeof learnerDetail.real.components;
     learnerDetail.real.componentProgress = [{ componentId: 'C1' }];
+    const schedule = { ...sessionSchedule(true), moduleActivityHours: { M1: { components: { C1: 1 }, quizzes: {} } } };
     render(<MemoryRouter><WeeklyLearningPlan kind="commercial" learnerId="125"
-      schedule={sessionSchedule(true)} scheduleLoading={false} /></MemoryRouter>);
+      schedule={schedule} scheduleLoading={false} /></MemoryRouter>);
 
     const ksbCard = screen.getByText('KSBs this week').closest('div')!.parentElement!;
     expect(ksbCard).toHaveTextContent('66.67%');
@@ -188,6 +189,37 @@ describe('weekly live session attendance', () => {
     const otjhCard = screen.getByText('OTJH this week').closest('div')!.parentElement!;
     expect(otjhCard).toHaveTextContent('66.67%');
     expect(otjhCard).toHaveTextContent('1h of 1h 30m hours');
+  });
+
+  it.each(['commercial', 'apprenticeship'] as const)('shows one recorded hour for a completed two-hour assignment for %s', kind => {
+    learnerDetail.real.components = [
+      { componentId: 'C1', moduleId: 'M1', weekId: 'W1', component: 'Assignment', type: 'assignment', durationMinutes: 120 },
+      { componentId: 'C2', moduleId: 'M1', weekId: 'W2', component: 'Other week', type: 'assignment', durationMinutes: 120 },
+    ] as unknown as typeof learnerDetail.real.components;
+    learnerDetail.real.componentProgress = [{ componentId: 'C1' }];
+    const schedule = { ...sessionSchedule(null), moduleActivityHours: {
+      M1: { components: { C1: 1, C2: 5 }, quizzes: {} }, M2: { components: { C1: 8 }, quizzes: {} },
+    } };
+    const view = render(<MemoryRouter><WeeklyLearningPlan kind={kind} learnerId="125"
+      schedule={schedule} scheduleLoading={false} /></MemoryRouter>);
+    const hours = () => screen.getByText('OTJH this week').closest('div')!.parentElement!;
+    expect(hours()).toHaveTextContent('50%');
+    expect(hours()).toHaveTextContent('1h of 2h hours');
+    expect(screen.getByText('Week progress').closest('div')!.parentElement!).toHaveTextContent('100%');
+    expect(within(screen.getByRole('table')).getByText('Completed')).toBeVisible();
+    const table = () => within(screen.getByRole('table'));
+    expect(table().getByRole('columnheader', { name: 'Actual time' })).toBeVisible();
+    expect(table().getByRole('cell', { name: '2h' })).toBeVisible();
+    expect(table().getByRole('cell', { name: '1h' })).toBeVisible();
+    view.rerender(<MemoryRouter><WeeklyLearningPlan kind={kind} learnerId="125"
+      schedule={{ ...schedule, moduleActivityHours: null }} scheduleLoading={false} /></MemoryRouter>);
+    expect(hours()).toHaveTextContent('Recorded hours unavailable');
+    expect(hours()).not.toHaveTextContent('100%');
+    expect(table().getByTitle('Recorded hours unavailable')).toHaveTextContent('—');
+    view.rerender(<MemoryRouter><WeeklyLearningPlan kind={kind} learnerId="125"
+      schedule={{ ...schedule, moduleActivityHours: { M1: { components: {}, quizzes: {} } } }} scheduleLoading={false} /></MemoryRouter>);
+    expect(table().getByRole('cell', { name: '0h' })).toBeVisible();
+    expect(table().getByRole('cell', { name: '2h' })).toBeVisible();
   });
 });
 

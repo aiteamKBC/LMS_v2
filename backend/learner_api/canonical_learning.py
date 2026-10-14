@@ -8,8 +8,10 @@ from html import escape
 from zoneinfo import ZoneInfo
 import re
 
+from old_otjh import repository
 from old_otjh.repository import query
 from old_otjh.service import ServiceError
+from .ksb_exclusions import not_excluded_sql
 from .monthly_log_sources import decoded, number, row
 from .current_learning import (
     current_records, current_records_bulk, is_unsynchronised_direct_save, source_payload_metadata,
@@ -17,6 +19,11 @@ from .current_learning import (
 from coach_api.migrated_otjh import add_to_metrics as add_review_hours, review_rows_bulk
 
 UK = ZoneInfo('Europe/London')
+
+
+def _ksb_not_excluded(alias='k'):
+    """Skip KSB rows the standards migration registered as not counting."""
+    return not_excluded_sql(alias, repository._query_alias.get() or repository.DB)
 
 
 def is_legacy_record(record):
@@ -134,7 +141,11 @@ def entries(learner_id):
     return entries_for(owner)
 
 
-def entries_for(owner, *, overview_only=False):
+def entries_for(owner, *, overview_only=False, entry_ids=None):
+    # Optional caller-owned selection is applied before the evidence/lineage
+    # joins. The learner predicate always remains mandatory.
+    selection = '' if entry_ids is None else ' AND progress.id=ANY(%s)'
+    params = [owner['id']] if entry_ids is None else [owner['id'], list(entry_ids)]
     columns = 'progress.*'
     if overview_only:
         # Completion projection needs saved timing/attempt facts, never raw
@@ -150,11 +161,12 @@ def entries_for(owner, *, overview_only=False):
     records = query(f'''WITH canonical AS (
         SELECT {columns}
         FROM "Learner".learner_progress_entries progress
-        WHERE progress.learner_id=%s AND progress.deleted_at IS NULL
+        WHERE progress.learner_id=%s AND progress.deleted_at IS NULL{selection}
     ), progress_ksbs AS (
         SELECT k.progress_id,jsonb_agg(k.ksb_code ORDER BY k.position) AS payload
         FROM "Learner".learner_progress_ksbs k
         JOIN canonical p ON p.id=k.progress_id
+        WHERE {_ksb_not_excluded()}
         GROUP BY k.progress_id
     ), reporting_segments AS (
         SELECT s.progress_id,jsonb_agg(to_jsonb(s) ORDER BY s.segment_order,s.id) AS payload
@@ -210,7 +222,7 @@ def entries_for(owner, *, overview_only=False):
         LEFT JOIN journal_routes j ON j.progress_id=p.id
         LEFT JOIN historical_components h ON h.progress_id=p.id
         ORDER BY p.reporting_month,p.reporting_started_at NULLS LAST,p.id''',
-        [owner['id']])
+        params)
     from learner_api import journal_sources
     journal_enabled = journal_sources.enabled()
     loaded = []
@@ -947,6 +959,7 @@ def read_ksb_point_counts(learner_id):
         FROM "Learner".learner_progress_entries p
         JOIN "Learner".learner_progress_ksbs k ON k.progress_id=p.id
         WHERE p.learner_id=%s AND p.deleted_at IS NULL AND k.ksb_code IS NOT NULL
+          AND ''' + _ksb_not_excluded() + '''
         ORDER BY k.ksb_code,p.id,k.position
     ) SELECT code,(array_agg(description ORDER BY id,position))[1] AS description,
         count(*) AS "evidenceCount",count(*) FILTER (WHERE achieved) AS completed,
@@ -1153,7 +1166,8 @@ def metrics_bulk(learner_ids, *, learner_workspace=False, include_ksb_points=Fal
         for item in query(f'''SELECT k.progress_id,k.ksb_code{definition_columns}
             FROM "Learner".learner_progress_ksbs k
             {definition_join}
-            WHERE k.progress_id=ANY(%s) ORDER BY k.progress_id,k.position''', [progress_ids]):
+            WHERE k.progress_id=ANY(%s) AND {_ksb_not_excluded()}
+            ORDER BY k.progress_id,k.position''', [progress_ids]):
             record = records_by_progress.get(int(item['progress_id']))
             if record is not None:
                 record['ksbs'].append(item['ksb_code'])

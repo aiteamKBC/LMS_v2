@@ -106,25 +106,53 @@ def facts(records, override=None):
     }
 
 
-def load_records(learner_ids, component_ids):
-    if not learner_ids or not component_ids:
+def load_records(learner_ids, component_ids, module_id=None):
+    # With module_id the same read also returns rows tagged with the module but
+    # linked to no current component (an earlier version of its activities).
+    if not learner_ids or not (component_ids or module_id):
         return []
     learner_slots = ','.join(['%s'] * len(learner_ids))
     component_slots = ','.join(['%s'] * len(component_ids))
+    matches = [f'coalesce(curriculum_component_ref,component_ref) IN ({component_slots})'] if component_ids else []
+    if module_id:
+        matches.append('module_ref=%s')
     return query(f'''SELECT * FROM {table('learner_progress_entries')}
-        WHERE learner_id IN ({learner_slots}) AND coalesce(curriculum_component_ref,component_ref) IN ({component_slots})
-          AND deleted_at IS NULL ORDER BY id''', [*learner_ids, *component_ids])
+        WHERE learner_id IN ({learner_slots}) AND ({' OR '.join(matches)})
+          AND deleted_at IS NULL ORDER BY id''', [*learner_ids, *component_ids, *([module_id] if module_id else [])])
+
+
+def earlier_progress(rows, linked_keys):
+    """Module-tagged rows for components the module no longer has.
+
+    A row whose canonical activity is already recorded against a current
+    component is the same work and is not counted twice.
+    """
+    rows = [row for row in rows if not (row.get('canonical_activity_key') and row['canonical_activity_key'] in linked_keys)]
+    accepted = [row for row in rows if row.get('accepted') is True]
+    return {
+        'earlierRecords': len(rows),
+        'earlierCompleted': sum(1 for row in rows if counts_as_completed(row)),
+        'earlierOtjh': None if any(row.get('actual_seconds') is None for row in accepted)
+        else sum((row.get('actual_seconds') or 0) / 3600 for row in accepted),
+    }
 
 
 def enrich(payload, account):
     """Bounded bulk reads; no per-activity identity/permission queries."""
     schema_gate.require_tables(*TABLES)
     plan = payload['learnerActivityPlan']
-    learner_ids = sorted({int(row['learnerId']) for row in plan})
+    otjh_learners = payload.get('otjhAchievement', {}).get('learners', [])
+    learner_ids = sorted({int(row['learnerId']) for row in plan}
+                         | {int(row['learnerId']) for row in otjh_learners if str(row.get('learnerId')).isdigit()})
     component_ids = sorted({row['componentId'] for row in plan})
+    current_components = set(component_ids)
     records = defaultdict(list)
-    for row in load_records(learner_ids, component_ids):
-        records[(str(row['learner_id']), component_reference(row))].append(row)
+    earlier_rows = defaultdict(list)
+    for row in load_records(learner_ids, component_ids, payload['identifier']):
+        if component_reference(row) in current_components:
+            records[(str(row['learner_id']), component_reference(row))].append(row)
+        else:
+            earlier_rows[str(row['learner_id'])].append(row)
     overrides = {}
     if learner_ids:
         slots = ','.join(['%s'] * len(learner_ids))
@@ -160,14 +188,41 @@ def enrich(payload, account):
             row['lectureDate'] = lecture.get('date') or state.get('lectureDate')
             if lecture.get('unresolved'):
                 row['canChangeStatus'] = False
-    payload['moduleProgressHoursSource'] = 'Activity Log · accepted learner_progress_entries.actual_seconds'
+    payload['moduleProgressHoursSource'] = 'Activity Log · accepted learner_progress_entries.actual_seconds (current components and module_ref)'
     totals = defaultdict(float)
     unknown = set()
+    completion = defaultdict(lambda: {'totalActivities': 0, 'completedActivities': 0, 'inProgressActivities': 0})
+    linked_keys = defaultdict(set)
+    for (learner, _component), rows in records.items():
+        linked_keys[learner].update(row['canonical_activity_key'] for row in rows if row.get('canonical_activity_key'))
     for row in plan:
+        learner = str(row['learnerId'])
         if row['logState']['acceptedOtjh'] is None:
-            unknown.add(str(row['learnerId']))
+            unknown.add(learner)
         else:
-            totals[str(row['learnerId'])] += row['logState']['acceptedOtjh']
+            totals[learner] += row['logState']['acceptedOtjh']
+        counts = completion[learner]
+        counts['totalActivities'] += 1
+        if row['displayStatus'] == 'completed':
+            counts['completedActivities'] += 1
+        elif row['displayStatus'] == 'in_progress':
+            counts['inProgressActivities'] += 1
+    progress_rows = []
+    for learner_id in learner_ids:
+        learner = str(learner_id)
+        earlier = earlier_progress(earlier_rows.get(learner, []), linked_keys[learner])
+        if earlier['earlierOtjh'] is None:
+            unknown.add(learner)
+        else:
+            totals[learner] += earlier['earlierOtjh']
+        progress_rows.append({'learnerId': learner_id, **completion[learner], **earlier})
+    payload['activityLogProgress'] = {
+        'learners': progress_rows,
+        'completedActivities': sum(row['completedActivities'] for row in progress_rows),
+        'totalActivities': sum(row['totalActivities'] for row in progress_rows),
+        'earlierRecords': sum(row['earlierRecords'] for row in progress_rows),
+        'source': 'learner_progress_entries',
+    }
     hours_rows = [{
         'learnerId': row['learnerId'], 'plannedOtjh': row['plannedOtjh'],
         'achievedOtjh': None if str(row['learnerId']) in unknown else totals[str(row['learnerId'])],

@@ -565,17 +565,10 @@ export function EvidenceBody({
             <h1>Evidence Library</h1>
             <p>Your assignments and evidence, organised by month and component.</p>
           </div>
-          {showReadOnlyNotice ? (
+          {showReadOnlyNotice && (
             <span className="inline-flex items-center gap-2 rounded-full border border-foreground-200 bg-background-100 px-4 py-2 text-xs font-semibold text-foreground-500">
               <AppIcon className="ri-eye-line"></AppIcon> Read only — the learner uploads their own evidence
             </span>
-          ) : (
-            <button
-              onClick={() => setShowUploadModal(true)}
-              className={styles.uploadButton}
-            >
-              <AppIcon className="ri-add-line"></AppIcon> Upload Evidence
-            </button>
           )}
         </header>
 

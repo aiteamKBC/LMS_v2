@@ -382,6 +382,38 @@ describe('Dashboard training plan controls', () => {
     expect(screen.getByRole('combobox', { name: 'Focus module' })).toHaveValue('current:NEW');
   });
 
+  it('shows achieved KSBs without curriculum mappings and changes them with the selected module', () => {
+    const data = fixture();
+    data.moduleProgress = {
+      M10: { attendance: { attended: 0, total: 0 }, hours: { actual: 1 },
+        ksb: { completed: 3, total: 4, achievedCodes: ['K1', 'S2'] } },
+      NEW: { attendance: { attended: 0, total: 0 }, hours: { actual: 0 },
+        ksb: { completed: 0, total: 1, achievedCodes: [] } },
+    };
+    renderBoard(data, summarySubjects.map(subject => ({ ...subject, ksbCodes: [] })));
+    const panel = within(screen.getByRole('region', { name: 'Module overview' }));
+    const achieved = within(panel.getByRole('group', { name: 'Achieved KSBs' }));
+    expect(achieved.getByText('K1')).toBeVisible();
+    expect(achieved.getByText('S2')).toBeVisible();
+    expect(achieved.getByRole('heading', { name: 'Achieved KSBs (2)' })).toBeVisible();
+    expect(panel.queryByText('No KSBs mapped yet.')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'New module' }));
+    expect(panel.getByText('No KSBs achieved yet.')).toBeVisible();
+    expect(panel.queryByRole('group', { name: 'Achieved KSBs' })).not.toBeInTheDocument();
+    expect(panel.queryByText('K1')).not.toBeInTheDocument();
+  });
+
+  it('does not treat mapped or completed activity KSBs as accepted evidence when achievement is unavailable', () => {
+    renderBoard(fixture(), summarySubjects);
+    const panel = within(screen.getByRole('region', { name: 'Module overview' }));
+    expect(panel.getByText('Achieved KSBs are not available yet.')).toBeVisible();
+    expect(panel.queryByText('No KSBs achieved yet.')).not.toBeInTheDocument();
+    expect(panel.queryByRole('group', { name: 'Achieved KSBs' })).not.toBeInTheDocument();
+    fireEvent.click(panel.getByText('View 2 mapped KSBs'));
+    expect(panel.getByText('K1')).toBeVisible();
+    expect(panel.getByText('S4')).toBeVisible();
+  });
+
   it('restores module plan facts and mapped KSBs from compact summaries', () => {
     const data = fixture();
     data.modules[0] = { ...data.modules[0], programme_name: 'Marketing Level 4', cohort_name: 'October 2026', group_name: 'G1',

@@ -39,6 +39,10 @@ def adapter(query):
                  review_rows_bulk=lambda owners: {},
                  add_review_hours=lambda metrics, rows: metrics,
                  datetime=datetime, escape=escape, UK=ZoneInfo('Europe/London'), ServiceError=ServiceError,
+                 # KSB exclusion registry: absent here, as on a database the
+                 # standards migration has not touched (no filter applied).
+                 not_excluded_sql=lambda alias='k', using='default': '1 = 1',
+                 repository=SimpleNamespace(_query_alias=SimpleNamespace(get=lambda: None), DB='enrolment'),
                  current_records=lambda owner, records: records,
                  current_records_bulk=lambda owners, records: {
                      owner['enrolment_id']: records.get(owner['id'], []) for owner in owners
