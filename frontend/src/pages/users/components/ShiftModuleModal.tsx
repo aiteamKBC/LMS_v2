@@ -31,9 +31,8 @@ import { RowsSkeleton } from '@/components/feature/Skeletons';
 // Step 2 — the progress. A learner part-way through a module has work recorded
 // against its components, and that work has to land somewhere in the module they
 // are joining. Weeks pair by position — week 1 with week 1 — because that is
-// what makes them equivalent, but which component matches which is a judgement,
-// so it is asked rather than guessed. The server suggests the obvious pairing
-// and anything left unmatched stays where it is.
+// what makes them equivalent. Components match by shared id first, otherwise by
+// one exact cleaned title + type match. Ambiguous rows stay unmatched.
 //
 // The write has its own endpoint, which re-runs the cohort walk and moves plan
 // and progress in one transaction — see module_shift.py.
@@ -74,6 +73,16 @@ function reviewLabel(component: ShiftComponent): string {
   const who = review.reviewedBy ? ` by ${review.reviewedBy}` : '';
   const note = review.feedback ? ' · with feedback' : '';
   return `${marked.charAt(0).toUpperCase()}${marked.slice(1)}${who}${note}`;
+}
+
+/** Mirror the server's conservative visible-title cleanup for picker options. */
+function componentTitleKey(value: string): string {
+  return value
+    .normalize('NFKC')
+    .replace(/\u00a0/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLocaleLowerCase('en');
 }
 
 /** One module in either list of step 1: title, then where it sits and when. */
@@ -149,9 +158,15 @@ function WeekPair({
 }) {
   const progressed = pair.from.components.filter((c) => c.progress);
   const targets = pair.to?.components || [];
-  /** The components this one may be matched to: the same type, nothing else. */
-  const sameType = (component: ShiftComponent) =>
-    targets.filter((t) => t.type === component.type);
+  /** Same id first; cloned components need the same cleaned title and type. */
+  const matchingTargets = (component: ShiftComponent) =>
+    targets.filter((target) =>
+      target.componentId === component.componentId || (
+        target.type === component.type &&
+        Boolean(componentTitleKey(component.title)) &&
+        componentTitleKey(target.title) === componentTitleKey(component.title)
+      ),
+    );
   // Which target each progressed component was mapped onto, so the right-hand
   // column can show what is about to land on it.
   const landing = new Map<string, ShiftComponent>();
@@ -200,7 +215,7 @@ function WeekPair({
                 >
                   <p className="text-[12px] text-foreground-900">{component.title}</p>
                   <p className="text-[11px] text-foreground-400">
-                    {component.type}
+                    {component.type} · ID {component.componentId}
                     {summary && ` · ${summary}`}
                   </p>
                   {/* The marking state moves with the work, so it is shown
@@ -220,17 +235,14 @@ function WeekPair({
                         className={selectClass}
                         value={mapping[component.componentId] || ''}
                         onChange={(e) => onMap(component.componentId, e.target.value)}
-                        disabled={sameType(component).length === 0}
+                        disabled={matchingTargets(component).length === 0}
                       >
                         <option value="">
-                          {sameType(component).length === 0
-                            ? `No ${component.type || 'matching'} to move this to`
+                          {matchingTargets(component).length === 0
+                            ? 'No matching component ID or title and type'
                             : 'Leave this progress where it is'}
                         </option>
-                        {/* Like for like only: a watched video is evidence of
-                            watching a video, so only the week's videos are
-                            offered. The server refuses a crossed type too. */}
-                        {sameType(component).map((target) => (
+                        {matchingTargets(component).map((target) => (
                           <option
                             key={target.componentId}
                             value={target.componentId}
@@ -241,7 +253,7 @@ function WeekPair({
                                 landing.get(target.componentId)?.componentId !== component.componentId)
                             }
                           >
-                            {target.title} ({target.type})
+                            {target.title} ({target.type} · ID {target.componentId})
                           </option>
                         ))}
                       </select>
@@ -277,7 +289,9 @@ function WeekPair({
                     }`}
                   >
                     <p className="text-[12px] text-foreground-900">{target.title}</p>
-                    <p className="text-[11px] text-foreground-400">{target.type}</p>
+                    <p className="text-[11px] text-foreground-400">
+                      {target.type} · ID {target.componentId}
+                    </p>
                     {incoming && (
                       <p className="text-[11px] font-medium text-emerald-700">
                         <i className="ri-arrow-left-line mr-1" />
@@ -388,8 +402,8 @@ export function ShiftModuleModal({ learnerId, learnerName, onClose, onSaved }: P
     try {
       const res = await fetchModuleShiftProgress(learnerId, from, to);
       setProgress(res);
-      // Start from the server's suggestion — same position, or the only
-      // component of that type — and let it be overridden per component.
+      // Start from the server's safe suggestion: same component id, otherwise
+      // one exact cleaned-title + type match. Ambiguous rows stay unmatched.
       setMapping(
         Object.fromEntries(res.suggested.map((s) => [s.fromComponentId, s.toComponentId])),
       );
@@ -611,8 +625,8 @@ export function ShiftModuleModal({ learnerId, learnerName, onClose, onSaved }: P
             <p className="text-[12px] text-foreground-500">
               Each week the learner has worked in, beside the week in the same position of{' '}
               <strong className="text-foreground-800">{toModule?.moduleTitle}</strong>. Open a week
-              to match its completed components — like for like, so a video only matches a video.
-              Anything left unmatched stays where it is.
+              to review its completed components. Automatic matches use the same component ID,
+              or one exact title and type match. Ambiguous or unmatched progress stays where it is.
             </p>
             {progress.weeks.map((pair) => (
               <WeekPair
