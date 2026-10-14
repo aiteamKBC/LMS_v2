@@ -443,6 +443,27 @@ class RegisterTests(unittest.TestCase):
         self.assertEqual([row['attendance_status'] for row in rows], ['present', 'absent'])
 
 
+class SharedSessionRosterQueryTests(unittest.TestCase):
+    def test_shared_module_without_occurrences_uses_its_plan_roster(self):
+        read = Mock(side_effect=[[], [{
+            'source_occurrence_id': 'SOURCE-O', 'learner_profile_id': 33,
+            'learner_email': 'destination@example.invalid',
+        }]])
+        namespace = {'read': read}
+        functions(ROOT / 'session_results.py', {'replaced_module_register_rows'}, namespace)
+        replaced = types.ModuleType('learner_api.replaced_teams_attendance')
+        replaced.REPLACED_ATTENDANCE_LATERAL_SQL = 'LEFT JOIN LATERAL (SELECT NULL) replaced_attendance ON true'
+
+        with patch.dict(sys.modules, {'learner_api.replaced_teams_attendance': replaced}):
+            rows = namespace['replaced_module_register_rows']('DEST', ['SOURCE-O'])
+
+        self.assertEqual(rows[0]['learner_profile_id'], 33)
+        query, params = read.call_args_list[1].args
+        self.assertIn('teams_shared_source_module_id', query)
+        self.assertIn('learner_training_plan_modules', query)
+        self.assertEqual(params, ['DEST', ['SOURCE-O']])
+
+
 class EndpointTests(unittest.TestCase):
     def setUp(self):
         self.network = patch('socket.socket', side_effect=AssertionError('Network forbidden'))
