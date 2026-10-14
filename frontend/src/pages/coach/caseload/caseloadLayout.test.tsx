@@ -12,7 +12,7 @@ const counts: CaseloadCounts = {
 };
 
 const learner = {
-  id: '42', name: 'Emma Carter', initials: 'EC', learnerType: 'commercial', employer: '--', cohortId: 'c1', cohortName: 'Business Admin L3', programmeName: 'Customer Service Practitioner L2', group: 'G1',
+  id: '42', name: 'Emma Carter', initials: 'EC', learnerType: 'commercial', enrolmentId: '1002', employer: '--', cohortId: 'c1', cohortName: 'Business Admin L3', programmeName: 'Customer Service Practitioner L2', group: 'G1',
   status: 'on-track', enrollmentStatus: 'active', riskFlags: [], otjhStatus: 'on-track', overallProgress: 78, overallProgressAvailable: true,
   attendanceRate: 80, attendanceRateAvailable: true, attendanceSessions: 10, attendancePresent: 9, attendanceAbsent: 1, componentsCompleted: 8, componentsPlanned: 10,
   otjhCompleted: 70, otjhTarget: 90, ksbProgress: 65, ksbProgressAvailable: true, ksbCompleted: 13, ksbTarget: 20,
@@ -165,6 +165,14 @@ describe('My Learners table design', () => {
     expect(onOpenProfile).toHaveBeenCalledWith(learner);
     fireEvent.click(within(row).getByRole('button', { name: 'View' }));
     expect(onOpenLearnerPage).toHaveBeenCalledWith(learner);
+  });
+
+  it('hides the learner-page View button when the learner has no enrolment record', () => {
+    render(<LearnerTable learners={[{ ...learner, enrolmentId: null }]} insights={insights} selectionMode={false} selectedLearnerIds={new Set()}
+      sortKey="risk" sortDirection="desc" onSort={vi.fn()} onToggleSelect={vi.fn()} onOpenProfile={vi.fn()} onOpenLearnerPage={vi.fn()} />);
+    const row = screen.getByText('Emma Carter').closest('tr')!;
+    expect(within(row).queryByRole('button', { name: 'View' })).not.toBeInTheDocument();
+    expect(within(row).getByRole('button', { name: 'View Profile' })).toBeInTheDocument();
   });
 
   it('colours overdue activity, progress reviews and MCMs only after their thresholds', () => {

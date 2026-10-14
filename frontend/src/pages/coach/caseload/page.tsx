@@ -481,11 +481,11 @@ export function CoachCaseloadContent({ embedded = false, embeddedLearners, dashb
 
   const handleOpenProfile = useCallback((learner: Learner) => openProfile(learner), [openProfile]);
 
-  // Opens the same admin learner-workspace view the Enrolment Users directory
-  // links to, rather than the coach case-file route `openProfile` uses.
+  // Opens the same learner workspace the Enrolment Users directory links to.
+  // That route resolves the enrolment record id, not the LearnerProfile `id`.
   const openLearnerPage = useCallback((learner: Learner) => {
-    if (!learner.learnerType) return;
-    navigate(`/workspace/learner/${learner.learnerType}/${learner.id}`);
+    if (!learner.learnerType || !learner.enrolmentId) return;
+    navigate(`/workspace/learner/${learner.learnerType}/${learner.enrolmentId}`);
   }, [navigate]);
 
   const runExport = useCallback((rows: Learner[]) => {

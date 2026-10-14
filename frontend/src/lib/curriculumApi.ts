@@ -3530,6 +3530,7 @@ export function fetchCurriculumScopeLearnerRoster(
   identifier: string,
   params: { cohort?: string; group?: string; learnerStatus?: string } = {},
   signal?: AbortSignal,
+  options: { timeoutMs?: number } = {},
 ): Promise<CurriculumScopeLearnerRosterResponse> {
   const query = new URLSearchParams();
   if (params.cohort) query.set('cohort', params.cohort);
@@ -3537,7 +3538,7 @@ export function fetchCurriculumScopeLearnerRoster(
   if (params.learnerStatus) query.set('learnerStatus', params.learnerStatus);
   return fetchJson<CurriculumScopeLearnerRosterResponse>(
     scopePath(SCOPE_ROSTER_PATHS, '/curriculum/learner-roster/', scope, identifier, query),
-    { signal, timeoutMs: 60000 },
+    { signal, timeoutMs: options.timeoutMs ?? 60000 },
   );
 }
 

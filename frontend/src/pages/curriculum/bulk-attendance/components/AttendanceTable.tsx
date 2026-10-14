@@ -1,5 +1,6 @@
 import type { AttendanceStatus, Learner } from "@/types/bulkAttendance";
 import { avatarClass, formatShortDate, getInitials } from "@/utils/bulkAttendance";
+import LearnerStatusBadge from "./LearnerStatusBadge";
 
 export interface AttendanceRow {
   learner: Learner;
@@ -7,11 +8,21 @@ export interface AttendanceRow {
   cohortName: string;
 }
 
+/** A saved attendance record that can be switched between present and absent. */
+export interface EditableRecord {
+  source: "kbc" | "live";
+  recordKey: string;
+  /** The saved status, before any unsaved change. */
+  attendance: AttendanceStatus;
+}
+
 export interface RecentLecture {
   id: string;
   name: string;
   sessionDate: string;
+  /** Shown status, including an unsaved change. */
   status: AttendanceStatus;
+  editable?: EditableRecord;
 }
 
 export interface LectureInfo {
@@ -29,6 +40,7 @@ interface AttendanceTableProps {
   onToggleSelect: (learnerId: string) => void;
   onToggleSelectAll: () => void;
   onOpenHistory: (row: AttendanceRow) => void;
+  onToggleRecord?: (record: EditableRecord) => void;
 }
 
 function formatBadgeDate(iso: string): string {
@@ -66,6 +78,7 @@ export default function AttendanceTable({
   onToggleSelect,
   onToggleSelectAll,
   onOpenHistory,
+  onToggleRecord,
 }: AttendanceTableProps) {
   const allSelected =
     rows.length > 0 && rows.every((row) => selectedIds.includes(row.learner.id));
@@ -89,8 +102,8 @@ export default function AttendanceTable({
         <span className="flex-1 font-label text-xs uppercase tracking-wide text-foreground-500">
           Learner
         </span>
-        <span className="w-44 whitespace-nowrap font-label text-xs uppercase tracking-wide text-foreground-500">
-          Lecture
+        <span className="w-36 whitespace-nowrap font-label text-xs uppercase tracking-wide text-foreground-500">
+          Status
         </span>
         <span className="w-56 whitespace-nowrap font-label text-xs uppercase tracking-wide text-foreground-500">
           Last 4 lectures
@@ -117,7 +130,7 @@ export default function AttendanceTable({
             No learners found
           </p>
           <p className="mt-1 max-w-sm text-sm text-foreground-500">
-            Try a different programme, cohort, group, module, or search term.
+            Try a different programme, cohort, module, or search term.
           </p>
         </div>
       ) : (
@@ -168,20 +181,11 @@ export default function AttendanceTable({
                 </div>
               </div>
 
-              <div className="flex items-center gap-2 md:block md:w-44">
+              <div className="flex items-center gap-2 md:block md:w-36">
                 <span className="font-label text-xs uppercase tracking-wide text-foreground-500 md:hidden">
-                  Lecture
+                  Status
                 </span>
-                <span className="min-w-0">
-                  <span className="block truncate text-sm text-foreground-800">
-                    {info?.name ?? "—"}
-                  </span>
-                  {info?.date && (
-                    <span className="hidden text-xs text-foreground-500 md:block">
-                      {formatShortDate(info.date)}
-                    </span>
-                  )}
-                </span>
+                <LearnerStatusBadge status={learner.status} />
               </div>
 
               <div className="flex items-start gap-2 md:w-56">
@@ -210,19 +214,33 @@ export default function AttendanceTable({
                         : isAbsent
                         ? "Absent"
                         : "Unmarked";
+                      const title = `${lecture.name} • ${formatShortDate(
+                        lecture.sessionDate
+                      )} • ${badgeLabel}`;
+                      const changed = Boolean(lecture.editable && lecture.status !== lecture.editable.attendance);
+                      const badge = `flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-xs ${badgeClass} ${
+                        changed ? "ring-2 ring-primary-400" : ""
+                      }`;
                       return (
                         <span
                           key={lecture.id}
                           className="flex w-10 flex-col items-center gap-1"
                         >
-                          <span
-                            title={`${lecture.name} • ${formatShortDate(
-                              lecture.sessionDate
-                            )} • ${badgeLabel}`}
-                            className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-xs ${badgeClass}`}
-                          >
-                            <i className={badgeIcon} />
-                          </span>
+                          {lecture.editable && onToggleRecord ? (
+                            <button
+                              type="button"
+                              title={title}
+                              aria-label={`${title}. Click to mark ${isPresent ? "absent" : "present"}`}
+                              onClick={() => onToggleRecord(lecture.editable!)}
+                              className={`${badge} cursor-pointer transition-shadow hover:ring-2 hover:ring-primary-200`}
+                            >
+                              <i className={badgeIcon} />
+                            </button>
+                          ) : (
+                            <span title={title} className={badge}>
+                              <i className={badgeIcon} />
+                            </span>
+                          )}
                           <span className="whitespace-nowrap text-[10px] leading-none text-foreground-500">
                             {formatBadgeDate(lecture.sessionDate)}
                           </span>
@@ -269,4 +287,3 @@ export default function AttendanceTable({
     </div>
   );
 }
-

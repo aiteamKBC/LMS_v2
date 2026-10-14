@@ -170,7 +170,7 @@ export function LearnerTable({ learners, insights, sortKey, sortDirection, onSor
           <td><DateMetric value={learner.lastProgressReview} emptyLabel="No PR yet" detail="Latest completed" metric="progress-review" tone={progressReviewTone} /></td>
           <td><DateMetric value={learner.lastReview} emptyLabel="No MCM yet" detail="Latest completed" metric="monthly-coaching" tone={monthlyCoachingTone} /></td>
           <td><div className={styles.actions}>
-            {learner.learnerType
+            {learner.learnerType && learner.enrolmentId
               ? <button
                   type="button"
                   className={styles.viewButton}

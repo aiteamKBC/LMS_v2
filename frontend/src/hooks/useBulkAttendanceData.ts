@@ -197,6 +197,7 @@ function toBulkData(
       cohortId,
       groupId: placement?.groupId || group?.id || "",
       endDate: placement?.endDate || cohortById.get(cohortId)?.endDate || learner.endDate,
+      status: learner.status || learner.kbcStatus || "",
     };
   });
 
@@ -234,7 +235,7 @@ export function useBulkAttendanceData(archiveIds: string[] = []): BulkAttendance
       .then(async ([overviewResult, directoryResult, sessionsResult]) => {
         const nextOverview = overviewResult.status === "fulfilled" ? overviewResult.value : null;
         const nextDirectory = directoryResult.status === "fulfilled"
-          ? directoryResult.value
+          ? directoryResult.value.learners
           : [];
         if (controller.signal.aborted) return;
         setOverview(nextOverview);
@@ -258,6 +259,8 @@ export function useBulkAttendanceData(archiveIds: string[] = []): BulkAttendance
           loadErrors.unshift(directoryResult.reason instanceof Error
             ? directoryResult.reason.message
             : "Unable to load the learner directory.");
+        } else {
+          loadErrors.push(...directoryResult.value.warnings);
         }
         setError(loadErrors.length > 0 ? loadErrors.join(" ") : null);
         // With a healthy KBC directory, render as soon as the filter requests

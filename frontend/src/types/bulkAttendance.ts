@@ -49,5 +49,7 @@ export interface Learner {
   cohortId: string;
   groupId: string;
   endDate: string;
+  /** LMS enrolment status, or the KBC status for learners not enrolled. */
+  status?: string;
 }
 

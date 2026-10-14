@@ -7,44 +7,48 @@ export interface BulkAttendanceDirectoryLearner {
   programme: string;
   group: string;
   endDate: string;
+  kbcStatus?: string;
+  /** LMS enrolment status when the learner is enrolled, otherwise kbcStatus. */
+  status?: string;
+  statusSource?: 'enrolment' | 'kbc';
 }
 
-export interface BulkAttendanceRecord {
+export interface BulkAttendanceKbcHistoryRecord {
+  recordKey: string;
   learnerId: string;
-  attendance: 'present' | 'absent' | null;
-}
-
-export interface BulkAttendanceKbcHistoryRecord extends BulkAttendanceRecord {
-  recordKey?: string;
   sessionDate: string;
   moduleName: string;
   lectureName: string;
   sessionNumber: number | null;
-}
-
-export interface BulkAttendanceLiveRecord {
-  learnerProfileId: string;
   attendance: 'present' | 'absent' | null;
+  /** 'kbc' = kbc_attendance; 'live' = LMS live-session register. */
+  source: 'kbc' | 'live';
 }
 
-export interface BulkAttendanceLiveHistoryRecord extends BulkAttendanceLiveRecord {
-  attendanceId: string;
-  learnerEmail: string;
-  occurrenceId: string;
-  liveSessionId: string;
-  sessionNumber: number;
-  sessionDate: string;
-  moduleCatalogueId: string;
-  moduleTitle: string;
-  programmeId: string;
-  programmeName: string;
-  cohortId: string;
-  cohortName: string;
-  groupId: string;
-  groupName: string;
+export interface BulkAttendanceRecentResult {
+  recent: Record<string, BulkAttendanceKbcHistoryRecord[]>;
+  /** Set when one source could not be read and the result is partial. */
+  warnings: string[];
 }
 
-export async function fetchBulkAttendanceLearners(signal?: AbortSignal): Promise<BulkAttendanceDirectoryLearner[]> {
+export interface BulkAttendanceHistoryResult {
+  records: BulkAttendanceKbcHistoryRecord[];
+  warnings: string[];
+}
+
+function warningsFrom(payload: { warnings?: unknown }): string[] {
+  return Array.isArray(payload.warnings)
+    ? payload.warnings.filter((warning): warning is string => typeof warning === 'string')
+    : [];
+}
+
+export interface BulkAttendanceDirectoryResult {
+  learners: BulkAttendanceDirectoryLearner[];
+  /** Set when enrolment statuses could not be read and KBC statuses are shown. */
+  warnings: string[];
+}
+
+export async function fetchBulkAttendanceLearners(signal?: AbortSignal): Promise<BulkAttendanceDirectoryResult> {
   const response = await coachFetch('/curriculum_api/curriculum/bulk-attendance/learners/', { signal });
   const payload = await response.json();
   if (!response.ok) {
@@ -53,47 +57,65 @@ export async function fetchBulkAttendanceLearners(signal?: AbortSignal): Promise
   if (!Array.isArray(payload.learners)) {
     throw new Error('The learner directory returned an invalid response.');
   }
-  return payload.learners;
+  return { learners: payload.learners, warnings: warningsFrom(payload) };
 }
 
-export async function fetchBulkAttendanceRecords(options: {
-  date: string;
-  moduleNames: string[];
-  lectureName: string;
-  learnerIds: string[];
-  includeUnlabelledLecture?: boolean;
-}, signal?: AbortSignal): Promise<BulkAttendanceRecord[]> {
-  if (options.learnerIds.length === 0) return [];
-  const query = new URLSearchParams();
-  query.set('date', options.date);
-  options.moduleNames.filter(Boolean).forEach((moduleName) => query.append('module_names', moduleName));
-  query.set('lecture_name', options.lectureName);
-  query.set('learner_ids', options.learnerIds.join(','));
-  if (options.includeUnlabelledLecture) query.set('include_unlabelled', 'true');
-  const response = await coachFetch(`/curriculum_api/curriculum/bulk-attendance/records/?${query}`, { signal });
+export interface BulkAttendanceChange {
+  source: 'kbc' | 'live';
+  recordKey: string;
+  attendance: 'present' | 'absent';
+}
+
+/** Thrown when a save failed; `saved` lists record keys that were saved before it failed. */
+export class BulkAttendanceSaveError extends Error {
+  readonly saved: string[];
+
+  constructor(message: string, saved: string[] = []) {
+    super(message);
+    this.name = 'BulkAttendanceSaveError';
+    this.saved = saved;
+  }
+}
+
+/** Save present/absent corrections to KBC history and live-register records. */
+export async function saveBulkAttendanceChanges(changes: BulkAttendanceChange[]): Promise<string[]> {
+  const response = await coachFetch('/curriculum_api/curriculum/bulk-attendance/attendance/', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ changes }),
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new BulkAttendanceSaveError(
+      payload.error || 'Attendance could not be saved. Please try again.',
+      Array.isArray(payload.updated) ? payload.updated : [],
+    );
+  }
+  if (!Array.isArray(payload.updated)) {
+    throw new BulkAttendanceSaveError('Saving attendance returned an invalid response.');
+  }
+  return payload.updated;
+}
+
+/** Each learner's last four marked lectures (KBC + live register), oldest first, keyed by KBC id. */
+export async function fetchBulkAttendanceKbcRecent(signal?: AbortSignal): Promise<BulkAttendanceRecentResult> {
+  const response = await coachFetch('/curriculum_api/curriculum/bulk-attendance/kbc-recent/', { signal });
   const payload = await response.json();
   if (!response.ok) {
-    throw new Error(payload.error || 'Unable to load attendance records for this lecture.');
+    throw new Error(payload.error || 'Unable to load recent KBC attendance.');
   }
-  if (!Array.isArray(payload.records)) {
-    throw new Error('The attendance lookup returned an invalid response.');
+  if (!payload.recent || typeof payload.recent !== 'object' || Array.isArray(payload.recent)) {
+    throw new Error('Recent KBC attendance returned an invalid response.');
   }
-  return payload.records;
+  return { recent: payload.recent, warnings: warningsFrom(payload) };
 }
 
-export async function fetchBulkAttendanceKbcHistory(options: {
-  date?: string;
-  learnerIds: string[];
-  moduleNames: string[];
-  allHistory?: boolean;
-}, signal?: AbortSignal): Promise<BulkAttendanceKbcHistoryRecord[]> {
-  if (options.learnerIds.length === 0) return [];
-  const query = new URLSearchParams({
-    learner_ids: options.learnerIds.join(','),
-  });
-  if (options.date) query.set('date', options.date);
-  if (options.allHistory) query.set('all_history', 'true');
-  options.moduleNames.filter(Boolean).forEach((moduleName) => query.append('module_names', moduleName));
+export async function fetchBulkAttendanceKbcHistory(
+  learnerId: string,
+  signal?: AbortSignal,
+): Promise<BulkAttendanceHistoryResult> {
+  if (!learnerId) return { records: [], warnings: [] };
+  const query = new URLSearchParams({ learner_id: learnerId });
   const response = await coachFetch(`/curriculum_api/curriculum/bulk-attendance/kbc-history/?${query}`, { signal });
   const payload = await response.json();
   if (!response.ok) {
@@ -102,85 +124,5 @@ export async function fetchBulkAttendanceKbcHistory(options: {
   if (!Array.isArray(payload.records)) {
     throw new Error('The KBC attendance history returned an invalid response.');
   }
-  return payload.records;
-}
-
-export async function fetchBulkAttendanceLiveRecords(options: {
-  date: string;
-  moduleCatalogueId: string;
-}, signal?: AbortSignal): Promise<BulkAttendanceLiveRecord[]> {
-  if (!options.moduleCatalogueId) return [];
-  const query = new URLSearchParams({
-    date: options.date,
-    module_catalogue_id: options.moduleCatalogueId,
-  });
-  const response = await coachFetch(`/curriculum_api/curriculum/bulk-attendance/live-records/?${query}`, { signal });
-  const payload = await response.json();
-  if (!response.ok) {
-    throw new Error(payload.error || 'Unable to load live-session attendance for this lecture.');
-  }
-  if (!Array.isArray(payload.records)) {
-    throw new Error('The live-session attendance lookup returned an invalid response.');
-  }
-  return payload.records;
-}
-
-export async function fetchBulkAttendanceLiveHistory(options: {
-  learnerProfileIds?: string[];
-  learnerEmail?: string;
-}, signal?: AbortSignal): Promise<BulkAttendanceLiveHistoryRecord[]> {
-  const query = new URLSearchParams();
-  const learnerProfileIds = [...new Set(options.learnerProfileIds?.filter(Boolean) ?? [])];
-  if (learnerProfileIds.length > 0) query.set('learner_profile_ids', learnerProfileIds.join(','));
-  if (options.learnerEmail?.trim()) query.set('learner_email', options.learnerEmail.trim());
-  if (![...query.keys()].length) return [];
-  const response = await coachFetch(`/curriculum_api/curriculum/bulk-attendance/live-history/?${query}`, { signal });
-  const payload = await response.json();
-  if (!response.ok) {
-    throw new Error(payload.error || 'Unable to load live-session attendance history.');
-  }
-  if (!Array.isArray(payload.records)) {
-    throw new Error('The live-session history lookup returned an invalid response.');
-  }
-  return payload.records;
-}
-
-async function patchAttendanceRecord(
-  path: string,
-  body: Record<string, string>,
-): Promise<{ attendance: 'present' | 'absent' }> {
-  const response = await coachFetch(path, {
-    method: 'PATCH',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
-  const payload = await response.json();
-  if (!response.ok) {
-    throw new Error(payload.error || 'Unable to save the attendance update.');
-  }
-  if (!payload.record || (payload.record.attendance !== 'present' && payload.record.attendance !== 'absent')) {
-    throw new Error('The attendance update returned an invalid response.');
-  }
-  return payload.record;
-}
-
-export function updateBulkAttendanceKbcRecord(options: {
-  recordKey: string;
-  attendance: 'present' | 'absent';
-}): Promise<{ attendance: 'present' | 'absent' }> {
-  return patchAttendanceRecord(
-    '/curriculum_api/curriculum/bulk-attendance/kbc-record-status/',
-    options,
-  );
-}
-
-export function updateBulkAttendanceLiveRecord(options: {
-  occurrenceId: string;
-  learnerProfileId: string;
-  attendance: 'present' | 'absent';
-}): Promise<{ attendance: 'present' | 'absent' }> {
-  return patchAttendanceRecord(
-    '/curriculum_api/curriculum/bulk-attendance/live-record-status/',
-    options,
-  );
+  return { records: payload.records, warnings: warningsFrom(payload) };
 }

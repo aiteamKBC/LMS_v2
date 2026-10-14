@@ -1,23 +1,15 @@
 import { useMemo, useState } from "react";
 import type { AttendanceRow } from "./AttendanceTable";
+import LearnerStatusBadge from "./LearnerStatusBadge";
 import SearchBar from "./SearchBar";
-import { avatarClass, formatShortDate, getInitials } from "@/utils/bulkAttendance";
+import { avatarClass, getInitials } from "@/utils/bulkAttendance";
 
 interface ArchiveViewProps {
   rows: AttendanceRow[];
-  archivableCount: number;
-  onArchive: () => void;
-  onRestore: (learnerId: string) => void;
-  onRestoreAll: () => void;
+  onOpenHistory: (row: AttendanceRow) => void;
 }
 
-export default function ArchiveView({
-  rows,
-  archivableCount,
-  onArchive,
-  onRestore,
-  onRestoreAll,
-}: ArchiveViewProps) {
+export default function ArchiveView({ rows, onOpenHistory }: ArchiveViewProps) {
   const [search, setSearch] = useState("");
 
   const visibleRows = useMemo(() => {
@@ -33,42 +25,14 @@ export default function ArchiveView({
   return (
     <div className="overflow-hidden rounded-lg border border-background-300 bg-background-50">
       <div className="flex flex-col gap-3 border-b border-background-200 bg-background-100 px-5 py-3">
-        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-          <div className="flex flex-wrap items-center gap-2 text-sm text-foreground-700">
-            <i className="ri-archive-2-line text-base text-secondary-700" />
-            <span className="font-medium text-foreground-950">
-              {rows.length} {rows.length === 1 ? "learner" : "learners"}
-            </span>
-            <span className="hidden text-foreground-500 sm:inline">
-              — restore anyone to bring them back, or archive more below.
-            </span>
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <button
-              type="button"
-              onClick={onArchive}
-              disabled={archivableCount === 0}
-              className="flex cursor-pointer items-center gap-1.5 whitespace-nowrap rounded-md border border-background-300 bg-background-50 px-3 py-2 text-sm font-medium text-foreground-800 transition-colors hover:bg-background-200 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              <i className="ri-archive-line" />
-              Archive learners
-              {archivableCount > 0 && (
-                <span className="flex h-5 min-w-5 items-center justify-center rounded-full bg-warning-100 px-1.5 font-label text-xs text-warning-800">
-                  {archivableCount}
-                </span>
-              )}
-            </button>
-            {rows.length > 0 && (
-              <button
-                type="button"
-                onClick={onRestoreAll}
-                className="flex cursor-pointer items-center gap-1.5 whitespace-nowrap rounded-md border border-background-300 bg-background-50 px-3 py-2 text-sm font-medium text-foreground-800 transition-colors hover:bg-background-200"
-              >
-                <i className="ri-arrow-go-back-line" />
-                Restore all
-              </button>
-            )}
-          </div>
+        <div className="flex flex-wrap items-center gap-2 text-sm text-foreground-700">
+          <i className="ri-archive-2-line text-base text-secondary-700" />
+          <span className="font-medium text-foreground-950">
+            {rows.length} {rows.length === 1 ? "learner" : "learners"}
+          </span>
+          <span className="hidden text-foreground-500 sm:inline">
+            — Completed, EnteredEpa and Withdrawn learners are archived automatically.
+          </span>
         </div>
         <SearchBar
           value={search}
@@ -77,17 +41,23 @@ export default function ArchiveView({
         />
       </div>
 
+      <div className="hidden items-center gap-4 border-b border-background-200 bg-background-100 px-5 py-3 md:flex">
+        <span className="flex-1 font-label text-xs uppercase tracking-wide text-foreground-500">Learner</span>
+        <span className="w-36 font-label text-xs uppercase tracking-wide text-foreground-500">Status</span>
+        <span className="w-28 font-label text-xs uppercase tracking-wide text-foreground-500">Cohort</span>
+        <span className="w-32 text-right font-label text-xs uppercase tracking-wide text-foreground-500">Details</span>
+      </div>
+
       {rows.length === 0 ? (
         <div className="flex flex-col items-center justify-center px-6 py-16 text-center">
           <span className="mb-3 flex h-14 w-14 items-center justify-center rounded-full bg-background-200 text-foreground-500">
             <i className="ri-archive-line text-2xl" />
           </span>
           <p className="text-sm font-medium text-foreground-950">
-            Nothing archived yet
+            Nothing archived
           </p>
           <p className="mt-1 max-w-sm text-sm text-foreground-500">
-            Learners past their end date are archived automatically and show up
-            here. You can also archive anyone early with the button above.
+            Learners whose status is Completed, EnteredEpa or Withdrawn show up here.
           </p>
         </div>
       ) : visibleRows.length === 0 ? (
@@ -103,68 +73,58 @@ export default function ArchiveView({
           </p>
         </div>
       ) : (
-        visibleRows.map(({ learner, index, groupName, cohortName }) => (
-          <div
-            key={learner.id}
-            className="flex flex-col gap-3 border-b border-background-200 px-5 py-4 transition-colors last:border-b-0 hover:bg-background-100 md:flex-row md:items-center md:gap-4"
-          >
-            <div className="flex min-w-0 flex-1 items-center gap-3">
-              <span
-                className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-sm font-semibold ${avatarClass(
-                  index
-                )}`}
-              >
-                {getInitials(learner.name)}
-              </span>
-              <div className="min-w-0">
-                <p className="truncate text-sm font-medium text-foreground-950">
-                  {learner.name}
-                </p>
-                <p className="truncate text-xs text-foreground-500">
-                  {learner.email}
-                </p>
+        visibleRows.map((row) => {
+          const { learner, index, cohortName } = row;
+          return (
+            <div
+              key={learner.id}
+              className="flex flex-col gap-3 border-b border-background-200 px-5 py-4 transition-colors last:border-b-0 hover:bg-background-100 md:flex-row md:items-center md:gap-4"
+            >
+              <div className="flex min-w-0 flex-1 items-center gap-3">
+                <span
+                  className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-sm font-semibold ${avatarClass(
+                    index
+                  )}`}
+                >
+                  {getInitials(learner.name)}
+                </span>
+                <div className="min-w-0">
+                  <button
+                    type="button"
+                    onClick={() => onOpenHistory(row)}
+                    className="block cursor-pointer truncate text-left text-sm font-medium text-foreground-950 transition-colors hover:text-primary-700"
+                  >
+                    {learner.name}
+                  </button>
+                  <p className="truncate text-xs text-foreground-500">
+                    {learner.email}
+                  </p>
+                </div>
+              </div>
+
+              <div className="md:w-36">
+                <LearnerStatusBadge status={learner.status} />
+              </div>
+
+              <div className="md:w-28">
+                <span className="truncate text-sm text-foreground-500">{cohortName}</span>
+              </div>
+
+              <div className="md:w-32 md:text-right">
+                <button
+                  type="button"
+                  onClick={() => onOpenHistory(row)}
+                  aria-label={`View details for ${learner.name}`}
+                  className="inline-flex cursor-pointer items-center gap-1.5 whitespace-nowrap rounded-full border border-primary-200 bg-primary-50 px-3 py-1.5 text-xs font-medium text-primary-700 transition-colors hover:border-primary-300 hover:bg-primary-100"
+                >
+                  <i className="ri-eye-line" />
+                  View details
+                </button>
               </div>
             </div>
-
-            <div className="flex items-center gap-2 md:w-32">
-              <span className="rounded-full bg-secondary-100 px-2.5 py-1 font-label text-xs text-secondary-900 md:hidden">
-                {groupName}
-              </span>
-              <span className="hidden truncate text-sm text-foreground-700 md:block">
-                {groupName}
-              </span>
-            </div>
-
-            <div className="md:w-28">
-              <span className="hidden truncate text-sm text-foreground-500 md:block">
-                {cohortName}
-              </span>
-              <span className="rounded-full bg-background-200 px-2.5 py-1 font-label text-xs text-foreground-700 md:hidden">
-                {cohortName}
-              </span>
-            </div>
-
-            <div className="md:w-36">
-              <span className="inline-flex items-center gap-1.5 rounded-full bg-warning-100 px-2.5 py-1 font-label text-xs text-warning-800">
-                <i className="ri-calendar-line" />
-                {formatShortDate(learner.endDate)}
-              </span>
-            </div>
-
-            <div className="md:text-right">
-              <button
-                type="button"
-                onClick={() => onRestore(learner.id)}
-                className="flex cursor-pointer items-center gap-1.5 whitespace-nowrap rounded-md border border-primary-300 bg-primary-100 px-3 py-1.5 text-xs font-medium text-primary-800 transition-colors hover:bg-primary-200"
-              >
-                <i className="ri-arrow-go-back-line" />
-                Restore
-              </button>
-            </div>
-          </div>
-        ))
+          );
+        })
       )}
     </div>
   );
 }
-

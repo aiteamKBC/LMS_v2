@@ -26,14 +26,16 @@ def learner_directory_dsn():
 
 def read_learners(dsn):
     # One small directory read, not the attendance/evidence JSON on each row.
-    with psycopg.connect(dsn, row_factory=dict_row, connect_timeout=10,
-                          options='-c statement_timeout=10000') as connection:
+    # The KBC source sits behind Neon's pooler, which rejects startup `options`,
+    # so the timeout is set per transaction instead.
+    with psycopg.connect(dsn, row_factory=dict_row, connect_timeout=10) as connection:
         connection.read_only = True
+        connection.execute("SET LOCAL statement_timeout = '10s'")
         with connection.cursor() as cursor:
             cursor.execute('''
                 SELECT "ID"::text AS id, "FullName" AS name, "Email" AS email,
                        "Program Name" AS programme, "Group" AS "group",
-                       "End-Date"::text AS "endDate"
+                       "End-Date"::text AS "endDate", "Program-Status" AS "kbcStatus"
                 FROM public.kbc_users_data
                 WHERE "ID" IS NOT NULL
                 ORDER BY lower(coalesce("FullName", '')), "ID"
@@ -42,6 +44,32 @@ def read_learners(dsn):
                 {key: str(value or '').strip() for key, value in row.items()}
                 for row in cursor.fetchall()
             ]
+
+
+ENROLMENT_STATUS_WARNING = 'Enrolment statuses could not be read; showing KBC statuses.'
+
+
+def _enrolment_statuses():
+    """{Aptem id: LMS enrolment programme status}; KBC ids are Aptem ids."""
+    from learner_api.models import EnrolmentUser
+    from .bulk_attendance_live_policy import enrolment_status_by_aptem
+
+    return enrolment_status_by_aptem(
+        EnrolmentUser.all_learners.values_list('aptem_id', 'programme_status')
+    )
+
+
+def with_statuses(learners, enrolment_statuses):
+    """The LMS enrolment status wins; learners not enrolled keep their KBC status."""
+    result = []
+    for learner in learners:
+        enrolment = enrolment_statuses.get(learner['id'])
+        result.append({
+            **learner,
+            'status': enrolment or learner.get('kbcStatus', ''),
+            'statusSource': 'enrolment' if enrolment else 'kbc',
+        })
+    return result
 
 
 @require_GET
@@ -54,6 +82,15 @@ def bulk_attendance_learners(request):
     except psycopg.Error:
         # Driver errors can contain connection details; do not expose them.
         return JsonResponse({'error': 'Unable to load the learner directory. Please try again.'}, status=503)
-    response = JsonResponse({'learners': learners})
+
+    from django.db import DatabaseError
+
+    warnings = []
+    try:
+        enrolment_statuses = _enrolment_statuses()
+    except DatabaseError:
+        enrolment_statuses = {}
+        warnings.append(ENROLMENT_STATUS_WARNING)
+    response = JsonResponse({'learners': with_statuses(learners, enrolment_statuses), 'warnings': warnings})
     response['Cache-Control'] = 'private, no-store'
     return response

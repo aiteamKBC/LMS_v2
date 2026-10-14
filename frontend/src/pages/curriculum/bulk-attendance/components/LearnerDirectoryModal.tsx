@@ -6,12 +6,14 @@ interface LearnerDirectoryModalProps {
   learners: Learner[];
   loading: boolean;
   onClose: () => void;
+  onOpenLearner: (learner: Learner) => void;
 }
 
 export default function LearnerDirectoryModal({
   learners,
   loading,
   onClose,
+  onOpenLearner,
 }: LearnerDirectoryModalProps) {
   const [query, setQuery] = useState("");
 
@@ -85,16 +87,26 @@ export default function LearnerDirectoryModal({
           ) : (
             <ul className="space-y-1.5" aria-label="Learner names">
               {visibleLearners.map((learner) => (
-                <li
-                  key={learner.id}
-                  className="flex items-center gap-3 rounded-md border border-background-200 bg-background-100 px-3 py-2.5"
-                >
-                  <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-secondary-100 text-xs font-semibold text-secondary-900">
-                    {getInitials(learner.name)}
-                  </span>
-                  <span className="min-w-0 truncate text-sm font-medium text-foreground-900">
-                    {learner.name}
-                  </span>
+                <li key={learner.id}>
+                  <button
+                    type="button"
+                    onClick={() => onOpenLearner(learner)}
+                    aria-label={`Open attendance details for ${learner.name}`}
+                    className="flex w-full cursor-pointer items-center gap-3 rounded-md border border-background-200 bg-background-100 px-3 py-2.5 text-left transition-colors hover:border-primary-300 hover:bg-primary-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-400"
+                  >
+                    <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-secondary-100 text-xs font-semibold text-secondary-900">
+                      {getInitials(learner.name)}
+                    </span>
+                    <span className="min-w-0 flex-1 truncate text-sm font-medium text-foreground-900">
+                      {learner.name}
+                    </span>
+                    {learner.status && (
+                      <span className="shrink-0 rounded-full bg-background-200 px-2 py-0.5 font-label text-xs text-foreground-700">
+                        {learner.status}
+                      </span>
+                    )}
+                    <i className="ri-arrow-right-s-line shrink-0 text-foreground-400" />
+                  </button>
                 </li>
               ))}
             </ul>

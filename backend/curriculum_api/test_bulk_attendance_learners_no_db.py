@@ -34,6 +34,7 @@ class LearnerDirectoryTests(SimpleTestCase):
         self.path = '/curriculum_api/curriculum/bulk-attendance/learners/'
         self.addCleanup(patch.stopall)
         patch.dict(os.environ, {'API_REQUIRE_AUTH': '1'}, clear=True).start()
+        self.statuses = patch.object(directory, '_enrolment_statuses', return_value={}).start()
 
     def test_missing_source_is_reported(self):
         with patch.object(directory.psycopg, 'connect') as connect:
@@ -75,6 +76,15 @@ class LearnerDirectoryTests(SimpleTestCase):
         self.assertNotIn('SELECT *', sql)
         self.assertNotIn('"Attendance"', sql)
 
+    def test_timeout_is_set_per_transaction_not_as_a_pooler_rejected_startup_option(self):
+        connection = MagicMock()
+        connection.__enter__.return_value = connection
+        connection.cursor.return_value.__enter__.return_value.fetchall.return_value = []
+        with patch.object(directory.psycopg, 'connect', return_value=connection) as connect:
+            directory.read_learners('synthetic')
+        self.assertNotIn('options', connect.call_args.kwargs)
+        connection.execute.assert_called_once_with("SET LOCAL statement_timeout = '10s'")
+
     def test_source_failure_does_not_leak_driver_details(self):
         with patch.object(directory, 'learner_directory_dsn', return_value='synthetic'), \
              patch.object(directory, 'read_learners', side_effect=directory.psycopg.OperationalError('private-host')):
@@ -86,9 +96,43 @@ class LearnerDirectoryTests(SimpleTestCase):
         with patch.object(directory, 'learner_directory_dsn', return_value='synthetic'), \
              patch.object(directory, 'read_learners', return_value=[]) as read:
             response = directory.bulk_attendance_learners(self.factory.get(self.path))
-        self.assertEqual(json.loads(response.content), {'learners': []})
+        self.assertEqual(json.loads(response.content), {'learners': [], 'warnings': []})
         self.assertEqual(response['Cache-Control'], 'private, no-store')
         read.assert_called_once()
+
+    def test_enrolment_status_wins_and_unenrolled_learners_keep_kbc_status(self):
+        self.statuses.return_value = {'301': 'Completed'}
+        learners = [
+            {'id': '301', 'name': 'A', 'email': '', 'programme': '', 'group': '', 'endDate': '', 'kbcStatus': 'Active'},
+            {'id': '302', 'name': 'B', 'email': '', 'programme': '', 'group': '', 'endDate': '', 'kbcStatus': 'EnteredEpa'},
+        ]
+        with patch.object(directory, 'learner_directory_dsn', return_value='synthetic'), \
+             patch.object(directory, 'read_learners', return_value=learners):
+            payload = json.loads(directory.bulk_attendance_learners(self.factory.get(self.path)).content)
+        self.assertEqual([(l['status'], l['statusSource']) for l in payload['learners']],
+                         [('Completed', 'enrolment'), ('EnteredEpa', 'kbc')])
+        self.assertEqual(payload['warnings'], [])
+
+    def test_unreadable_enrolment_statuses_fall_back_with_a_warning(self):
+        from django.db import DatabaseError
+        self.statuses.side_effect = DatabaseError('private-host')
+        learners = [{'id': '301', 'name': 'A', 'email': '', 'programme': '', 'group': '', 'endDate': '', 'kbcStatus': 'Active'}]
+        with patch.object(directory, 'learner_directory_dsn', return_value='synthetic'), \
+             patch.object(directory, 'read_learners', return_value=learners):
+            response = directory.bulk_attendance_learners(self.factory.get(self.path))
+        payload = json.loads(response.content)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(payload['learners'][0]['status'], 'Active')
+        self.assertEqual(payload['warnings'], [directory.ENROLMENT_STATUS_WARNING])
+        self.assertNotIn('private-host', response.content.decode())
+
+    def test_enrolment_status_ignores_merged_duplicates_and_conflicts(self):
+        from curriculum_api.bulk_attendance_live_policy import enrolment_status_by_aptem
+        self.assertEqual(enrolment_status_by_aptem([
+            ('301', 'Completed'), ('301', 'Duplicate - merged'),
+            ('302', 'Active'), ('302', 'Withdrawn'),
+            (None, 'Active'), ('303', ''),
+        ]), {'301': 'Completed'})
 
     def test_endpoint_rejects_writes(self):
         with patch.object(directory, 'read_learners') as read:
