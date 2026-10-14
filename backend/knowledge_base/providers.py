@@ -80,3 +80,15 @@ def get_embedding_provider():
     if config.providers() == "openai":
         return OpenAIEmbeddingProvider()
     return FakeEmbeddingProvider()
+
+
+def identity(provider):
+    """(provider, model, dims): the embedding space this provider's vectors belong to."""
+    return (provider.provider, provider.model, int(provider.dims))
+
+
+def matches_space(provider, space_provider, space_model, space_dims):
+    """True only when ``provider`` produces vectors of this embedding space.
+    Vectors of another model are meaningless there: they are never stored in it
+    or compared with it."""
+    return provider is not None and identity(provider) == (space_provider, space_model, int(space_dims))

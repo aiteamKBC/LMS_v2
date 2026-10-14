@@ -101,7 +101,7 @@ function bestActivity(learner: Learner) {
   return EMPTY_VALUE;
 }
 
-export function LearnerTable({ learners, insights, sortKey, sortDirection, onSort, selectionMode, selectedLearnerIds, onToggleSelect, onOpenProfile, today = startOfToday() }: {
+export function LearnerTable({ learners, insights, sortKey, sortDirection, onSort, selectionMode, selectedLearnerIds, onToggleSelect, onOpenProfile, onOpenLearnerPage, today = startOfToday() }: {
   learners: Learner[];
   insights: InsightMap;
   sortKey: SortKey;
@@ -111,6 +111,7 @@ export function LearnerTable({ learners, insights, sortKey, sortDirection, onSor
   selectedLearnerIds: Set<string>;
   onToggleSelect: (learnerId: string) => void;
   onOpenProfile: (learner: Learner) => void;
+  onOpenLearnerPage: (learner: Learner) => void;
   today?: Date;
 }) {
   const sortHeader = (label: string, key: SortKey) => {
@@ -168,7 +169,19 @@ export function LearnerTable({ learners, insights, sortKey, sortDirection, onSor
           <td><DateMetric value={activity} emptyLabel="No activity yet" detail={insight?.lastActivityDaysAgo !== null && insight?.lastActivityDaysAgo !== undefined ? `${insight.lastActivityDaysAgo} days ago` : displayValue(learner.lastActivityLabel) !== EMPTY_VALUE ? displayValue(learner.lastActivityLabel) : 'Latest activity'} metric="activity" tone={activityTone} /></td>
           <td><DateMetric value={learner.lastProgressReview} emptyLabel="No PR yet" detail="Latest completed" metric="progress-review" tone={progressReviewTone} /></td>
           <td><DateMetric value={learner.lastReview} emptyLabel="No MCM yet" detail="Latest completed" metric="monthly-coaching" tone={monthlyCoachingTone} /></td>
-          <td><div className={styles.actions}><button type="button" className={styles.profileButton} onClick={() => onOpenProfile(learner)}>View Profile</button></div></td>
+          <td><div className={styles.actions}>
+            {learner.learnerType && learner.enrolmentId
+              ? <button
+                  type="button"
+                  className={styles.viewButton}
+                  title={`Open ${learner.name}'s learner page`}
+                  onClick={() => onOpenLearnerPage(learner)}
+                >
+                  <AppIcon name="ri-external-link-line" aria-hidden="true" />View
+                </button>
+              : null}
+            <button type="button" className={styles.profileButton} onClick={() => onOpenProfile(learner)}>View Profile</button>
+          </div></td>
         </tr>;
       })}</tbody>
     </table>

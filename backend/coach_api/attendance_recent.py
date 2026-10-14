@@ -59,7 +59,8 @@ def recent_candidates(profiles, assignments, limit, state):
             'lower(btrim(a.email))=%s', 'lower(btrim(a.email))=eligible.email').replace(
             'WHERE s.module_catalogue_id=ANY(%s)',
             '''JOIN eligible ON eligible.module_catalogue_id=s.module_catalogue_id
-            WHERE ((o.scheduled_end<=%s AND (coalesce(o.attendance_report_id,'')<>''
+            WHERE ((o.scheduled_end<=%s AND (coalesce(CASE WHEN replaced_attendance.occurrence_id IS NOT NULL
+                  THEN replaced_attendance.attendance_report_id ELSE o.attendance_report_id END,'')<>''
               OR o.id=ANY(%s) OR (o.scheduled_start AT TIME ZONE %s)::date=ANY(%s)))
               OR (o.scheduled_start AT TIME ZONE %s)::date=ANY(%s) OR o.id=ANY(%s))''').replace(
             'ORDER BY o.scheduled_start,o.id', '')
@@ -82,6 +83,8 @@ def recent_candidates(profiles, assignments, limit, state):
                 if row['day_rank'] == limit + 1:
                     boundary[source_id].append(timezone.localtime(canonical._aware(row['scheduled_start'])).date())
     wanted = {str(row['session_id']) for rows in scheduled.values() for row in rows}
+    wanted.update(str(row.get('attendance_source_occurrence_id')) for rows in scheduled.values() for row in rows
+                  if row.get('attendance_source_occurrence_id'))
     wanted.update(target for rows in targets.values() for target in rows.values() if target)
     emails = [source.email for source in sources.values() if source.email]
     if wanted and emails:

@@ -59,6 +59,8 @@ from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_POST
 
+from learner_api.ksb_sources import resolve_source
+
 from .auth import authenticated_coach_email, coach_access_required, read_only_view
 
 logger = logging.getLogger(__name__)
@@ -407,7 +409,25 @@ def load_ksb_framework(programme_name, programme_id=None):
     framework was found, rather than quietly asking the model to map KSBs with
     nothing authoritative to map against -- which is when it starts inventing
     codes that look real.
+
+    The source the programme applies wins: a standard is read from
+    curriculum.standard_ksbs, a named profile even once archived. The scan of
+    active profiles below is only discovery for programmes that apply nothing.
     """
+    linked_ids, linked_sources = _programme_links(programme_name)
+    for source in linked_sources:
+        resolved = resolve_source(source, using="default")
+        applied = [
+            f"{item['code']}: {item['description']}"
+            for item in resolved.items if item["code"] and item["description"]
+        ]
+        if applied:
+            heading = (
+                f"Apprenticeship standard: {resolved.label} ({resolved.source_id})"
+                if resolved.kind == "standard" else f"KSB profile: {resolved.label}"
+            )
+            return f"{heading}\n\n" + "\n".join(applied), len(applied)
+
     try:
         with connections["default"].cursor() as cur:
             cur.execute(
@@ -423,7 +443,6 @@ def load_ksb_framework(programme_name, programme_id=None):
         logger.warning("Could not load KSB profiles", exc_info=True)
         return "", 0
 
-    linked_ids, linked_sources = _programme_links(programme_name)
     wanted_ids = {_s(programme_id)} | set(linked_ids)
     wanted_ids.discard("")
     wanted_name = _s(programme_name).lower()
@@ -499,8 +518,13 @@ def _programme_standard(programme_name):
 
     # A programme can instead name its profile outright, and that profile
     # records the standard it came from -- so follow the link rather than
-    # treating the absence of a "standard:" prefix as no standard at all.
-    if not profile_ids and not ids:
+    # treating the absence of a "standard:" prefix as no standard at all. The
+    # profile it names is read even once archived: the programme still applies it.
+    for source in profile_ids:
+        resolved = resolve_source(source, using="default")
+        if resolved.standard_ref:
+            return resolved.standard_ref
+    if not ids:
         return ""
 
     try:
@@ -518,11 +542,8 @@ def _programme_standard(programme_name):
         logger.warning("Could not resolve the standard for %s", programme_name, exc_info=True)
         return ""
 
-    wanted_profiles = {p.lower() for p in profile_ids}
     wanted_ids = {i.lower() for i in ids}
     for profile_id, standard_source, programme_ids in rows:
-        if _s(profile_id).lower() in wanted_profiles:
-            return root(standard_source)
         linked = _decode_json(programme_ids) or []
         linked = {_s(i).lower() for i in linked} if isinstance(linked, list) else set()
         if wanted_ids & linked:

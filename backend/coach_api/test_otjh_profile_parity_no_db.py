@@ -74,6 +74,7 @@ class OtjhParityTests(SimpleTestCase):
 
     def owner(self, enrolment=80, profile=30, aptem=900):
         return dict(id=profile, enrolment_id=enrolment, aptem_id=aptem,
+                    learner_type='commercial',
                     account_record_id=enrolment, email="synthetic@example.test",
                     account_email="synthetic@example.test", account_aptem_id=aptem,
                     programme_id=4, start_date=date(2025, 1, 1), end_date=date(2027, 1, 1))
@@ -87,9 +88,9 @@ class OtjhParityTests(SimpleTestCase):
                            dict(learner_id=30, accepted=True, actual_seconds=-10)]
                 targets = [dict(learner_id=30, report_month="2026-01", target_hours=20)]
                 expected = canonical.metrics_from_records(records, {"2026-01": 20})["otjh"]
-                with patch.object(canonical, "query", side_effect=[[owner], [dict(learner_id=30, actual_seconds=36000)], targets]) as query:
+                with patch.object(canonical, "query", side_effect=[[owner], [dict(learner_id=30, actual_seconds=36000)], [], targets]) as query:
                     facts = canonical.otjh_summary_bulk([80, 80])[80]
-                self.assertEqual(query.call_count, 3)
+                self.assertEqual(query.call_count, 4)
                 self.assertEqual(facts["actual"], expected["actual"])
                 self.assertEqual(facts["planned"], expected["planned"])
                 payload = {"learners": [{"id": "30", "otjhCompleted": 999, "otjhPlanned": None,
@@ -106,7 +107,7 @@ class OtjhParityTests(SimpleTestCase):
                                  {"completed", "targetToDate", "planned", "progress", "ragStatus"})
 
     def test_narrow_queries_exclude_deleted_rows_and_scope_target_selection(self):
-        with patch.object(canonical, "query", side_effect=[[self.owner()], [], []]) as query:
+        with patch.object(canonical, "query", side_effect=[[self.owner()], [], [], []]) as query:
             canonical.otjh_summary_bulk([80])
         sql = [call.args[0] for call in query.call_args_list]
         self.assertIn("deleted_at IS NULL", sql[1])
@@ -116,10 +117,26 @@ class OtjhParityTests(SimpleTestCase):
         self.assertIn("NaN", sql[1])
         self.assertNotIn("source_payload", sql[1])
         self.assertNotIn("SELECT *", sql[1])
-        self.assertIn("DISTINCT ON (t.learner_id,t.report_month)", sql[2])
-        self.assertIn("coalesce(t.programme_profile_id,'')=''", sql[2])
-        self.assertIn("t.enrolment_id IS NOT DISTINCT FROM l.enrolment_id", sql[2])
-        self.assertIn("t.programme_id IS NOT DISTINCT FROM l.programme_id", sql[2])
+        self.assertIn("p.actual_seconds IS NULL", sql[2])
+        self.assertIn("s.learner_id=p.learner_id", sql[2])
+        self.assertIn("DISTINCT ON (t.learner_id,t.report_month)", sql[3])
+        self.assertIn("coalesce(t.programme_profile_id,'')=''", sql[3])
+        self.assertIn("t.enrolment_id IS NOT DISTINCT FROM l.enrolment_id", sql[3])
+        self.assertIn("t.programme_id IS NOT DISTINCT FROM l.programme_id", sql[3])
+
+    def test_dashboard_totals_include_unsynchronised_learner_time(self):
+        owner = self.owner()
+        pending = dict(id=2, learner_id=30, kind='component', component_ref='LIVE',
+                       component_type='live_session', component_link_source='direct', source_system='',
+                       actual_seconds=None, verified_seconds=7500, accepted=True,
+                       submitted_at='2026-10-12T13:00:00+00:00', reporting_month='2026-10')
+        with patch.object(canonical, 'query', side_effect=[
+            [owner], [dict(learner_id=30, actual_seconds=697564)], [pending], [], [],
+        ]) as query:
+            facts = canonical.otjh_summary_bulk([80])[80]
+        self.assertEqual(facts['actual'], 195.8511)
+        self.assertEqual(query.call_count, 5)
+        self.assertIn('l.learner_type', query.call_args_list[0].args[0])
 
     def test_identity_mismatch_and_duplicate_enrolments_fail_closed(self):
         invalid = self.owner(); invalid["account_aptem_id"] = 901
@@ -135,10 +152,10 @@ class OtjhParityTests(SimpleTestCase):
 
     def test_query_count_does_not_grow_with_caseload(self):
         owners = [self.owner(enrolment=80+i, profile=30+i, aptem=900+i) for i in range(25)]
-        with patch.object(canonical, "query", side_effect=[owners, [], []]) as query:
+        with patch.object(canonical, "query", side_effect=[owners, [], [], []]) as query:
             result = canonical.otjh_summary_bulk([o["enrolment_id"] for o in owners])
         self.assertEqual(len(result), 25)
-        self.assertEqual(query.call_count, 3)
+        self.assertEqual(query.call_count, 4)
 
     def test_cached_snapshot_gets_live_hours_and_plan_on_every_request(self):
         stale = {"learners": [{"id": "30", "otjhCompleted": 1, "otjhPlanned": None,

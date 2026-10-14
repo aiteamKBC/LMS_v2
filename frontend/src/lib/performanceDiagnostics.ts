@@ -7,6 +7,9 @@ const QUIET_WINDOW_MS = 500;
 const INITIAL_GRACE_MS = 750;
 const MAX_NAVIGATION_MS = 119_000;
 const MAX_REQUESTS = 100;
+// How long a finished sample may wait for the current page's reads to settle.
+const RECORD_MAX_DEFER_MS = 30_000;
+const RECORD_RETRY_MS = 500;
 
 interface RequestTiming {
   method: 'GET' | 'HEAD';
@@ -40,6 +43,7 @@ let current: NavigationSample | null = null;
 let baseFetch: typeof fetch | null = null;
 let domObserver: MutationObserver | null = null;
 const seenPaths = new Set<string>();
+const queuedRecords = new Set<string>();
 
 function round(value: number): number {
   return Math.round(value * 100) / 100;
@@ -115,17 +119,61 @@ function finish(sample: NavigationSample, force = false): void {
     pageReadyMs: round(performance.now() - sample.startedAt),
     requests: sample.requests.slice(0, MAX_REQUESTS),
   });
+  dispatchRecord(body, performance.now());
+}
+
+/**
+ * Send a finished sample without competing with the page that is loading now.
+ *
+ * A sample usually finishes because the user navigated: the previous page is
+ * closed at the exact moment the next one starts its own API reads. Posting
+ * then put the diagnostic write in the same queue as those reads -- the
+ * browser runs a handful of requests per host at a time, and on a slow page
+ * the record waited behind them for tens of seconds while holding a slot.
+ *
+ * So a record waits while the current page still has API reads in flight (up
+ * to RECORD_MAX_DEFER_MS, after which it goes anyway), is sent at low priority,
+ * and anything still queued when the tab is hidden or closed is flushed then;
+ * `keepalive` lets that last send outlive the page.
+ */
+function dispatchRecord(body: string, queuedAt: number): void {
+  const busy = current !== null && !current.sent && current.pending > 0;
+  if (busy && performance.now() - queuedAt < RECORD_MAX_DEFER_MS) {
+    queuedRecords.add(body);
+    setTimeout(() => {
+      if (!queuedRecords.has(body)) return;
+      queuedRecords.delete(body);
+      dispatchRecord(body, queuedAt);
+    }, RECORD_RETRY_MS);
+    return;
+  }
+  queuedRecords.delete(body);
+  sendRecord(body);
+}
+
+function sendRecord(body: string): void {
+  if (!baseFetch) return;
+  // `priority` is a fetch hint the browser may ignore; it is not in every
+  // TypeScript DOM lib yet, hence the widened type.
+  const init: RequestInit & { priority?: 'high' | 'low' | 'auto' } = {
+    method: 'POST',
+    credentials: 'include',
+    keepalive: true,
+    priority: 'low',
+    headers: { 'Content-Type': 'application/json' },
+    body,
+  };
   try {
-    void baseFetch(RECORD_URL, {
-      method: 'POST',
-      credentials: 'include',
-      keepalive: true,
-      headers: { 'Content-Type': 'application/json' },
-      body,
-    }).catch(() => undefined);
+    void baseFetch(RECORD_URL, init).catch(() => undefined);
   } catch {
     // Diagnostics can never affect navigation.
   }
+}
+
+function flushQueuedRecords(): void {
+  const bodies = [...queuedRecords];
+  queuedRecords.clear();
+  bodies.forEach(sendRecord);
 }
 
 function settle(sample: NavigationSample, detail: RequestTiming): void {
@@ -181,6 +229,11 @@ export function installPerformanceDiagnostics(): () => void {
     }
   };
   globalThis.fetch = wrapped;
+  const flushOnHide = () => {
+    if (typeof document === 'undefined' || document.visibilityState === 'hidden') flushQueuedRecords();
+  };
+  if (typeof window !== 'undefined') window.addEventListener('pagehide', flushQueuedRecords);
+  if (typeof document !== 'undefined') document.addEventListener('visibilitychange', flushOnHide);
   if (typeof MutationObserver !== 'undefined' && typeof document !== 'undefined') {
     domObserver = new MutationObserver(() => {
       if (current && !current.sent) scheduleQuiet(current);
@@ -189,6 +242,8 @@ export function installPerformanceDiagnostics(): () => void {
   }
   return () => {
     if (globalThis.fetch === wrapped) globalThis.fetch = original;
+    if (typeof window !== 'undefined') window.removeEventListener('pagehide', flushQueuedRecords);
+    if (typeof document !== 'undefined') document.removeEventListener('visibilitychange', flushOnHide);
     installed = false;
     baseFetch = null;
     domObserver?.disconnect();
@@ -230,5 +285,6 @@ export function resetPerformanceDiagnostics(): void {
   tokenSequence = 0;
   diagnosticEnabled = false;
   seenPaths.clear();
+  queuedRecords.clear();
 }
 

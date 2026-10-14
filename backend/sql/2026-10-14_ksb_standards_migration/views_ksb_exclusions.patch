@@ -1,0 +1,39 @@
+--- a/backend/curriculum_api/views.py
++++ b/backend/curriculum_api/views.py
+@@ -47,6 +47,7 @@
+                                     dropped_sessions_sentence, sessions_a_rewrite_would_drop,
+                                     unconfirmed_attendee_detail, utc_datetime, verify_calendar)
+ 
++from learner_api.ksb_exclusions import and_not_excluded
+ from learner_api.progress_rules import (
+     progress_achievement_status,
+     progress_counts_as_achieved,
+@@ -27119,7 +27120,7 @@
+                         upper(btrim(k.ksb_code)) as code,
+                         coalesce(k.weight, 0) as weight
+                     from "Learner"."learner_progress_entries" p
+-                    join "Learner"."learner_progress_ksbs" k on k.progress_id = p.id
++                    join "Learner"."learner_progress_ksbs" k on k.progress_id = p.id{and_not_excluded('k', connection)}
+                     where p.learner_id = any(%s)
+                       -- upper(btrim(...)) is ksb_coverage.normalise_code() in
+                       -- SQL, so a stored code that differs only in case or
+@@ -27233,7 +27234,9 @@
+                 from "Learner"."learner_progress_entries" p
+                 -- LEFT, not inner: a completed component with no KSB snapshot is
+                 -- still off-the-job hours the learner did. See the docstring.
+-                left join "Learner"."learner_progress_ksbs" k on k.progress_id = p.id
++                -- Rows the KSB standards migration registered as not counting
++                -- drop out of the join; the activity and its hours stay.
++                left join "Learner"."learner_progress_ksbs" k on k.progress_id = p.id''' + and_not_excluded('k', connection) + '''
+                 left join curriculum.components c on c.id = p.component_ref
+                 left join curriculum.weeks w on w.id = c.week_id
+                 left join curriculum.modules m
+@@ -27411,7 +27414,7 @@
+                        p.component_ref, p.passed, p.submitted_at,
+                        k.ksb_code, coalesce(max(k.weight), 0) as weight
+                 from "Learner"."learner_progress_entries" p
+-                join "Learner"."learner_progress_ksbs" k on k.progress_id = p.id
++                join "Learner"."learner_progress_ksbs" k on k.progress_id = p.id''' + and_not_excluded('k', connection) + '''
+                 where p.learner_id = any(%s)
+                   -- KSB snapshots are normalised to upper-case on every write.
+                   -- Keep the indexed column bare so PostgreSQL can use

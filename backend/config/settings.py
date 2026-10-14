@@ -86,7 +86,7 @@ DB_CONN_MAX_AGE = int(os.environ.get('DB_CONN_MAX_AGE', '300'))
 DB_CONN_HEALTH_CHECKS = os.environ.get('DB_CONN_HEALTH_CHECKS', 'true').lower() != 'false'
 # Seconds to wait for a database connection before giving up. Keeps a stalled DNS
 # resolver or unreachable Neon endpoint from hanging a request indefinitely.
-DB_CONNECT_TIMEOUT = int(os.environ.get('DB_CONNECT_TIMEOUT', '10'))
+DB_CONNECT_TIMEOUT = int(os.environ.get('DB_CONNECT_TIMEOUT', '45'))
 # Milliseconds Postgres itself will run a statement (lock waits included) before
 # cancelling it. connect_timeout only bounds opening a connection; once one is
 # open, a query that stalls on a held lock or a slow-to-wake Neon compute has
@@ -103,7 +103,7 @@ DB_POOL = os.environ.get('DB_POOL', 'true').lower() != 'false'
 # A local runserver can start before Neon has finished opening a connection.
 # Pool checkout needs its own budget: connect_timeout applies per address.
 DB_POOL_TIMEOUT = int(os.environ.get(
-    'DB_POOL_TIMEOUT', '45' if 'runserver' in sys.argv else str(DB_CONNECT_TIMEOUT),
+    'DB_POOL_TIMEOUT', '65' if 'runserver' in sys.argv else str(DB_CONNECT_TIMEOUT),
 ))
 DB_POOL_OPTIONS = {
     'min_size': 1,
@@ -457,6 +457,12 @@ PERFORMANCE_DIAGNOSTIC_ACCOUNT_IDS = frozenset(
     if value.strip()
 )
 PERFORMANCE_SAMPLE_RETENTION_DAYS = int(os.environ.get('PERFORMANCE_SAMPLE_RETENTION_DAYS', '14'))
+
+# Learner-facing feedback is controlled independently from Django's global DEBUG
+# mode. Staff authoring/reporting and token-scoped public event flows are separate.
+LEARNER_FEEDBACK_ENABLED = (
+    os.environ.get("LEARNER_FEEDBACK_ENABLED", "false").lower() == "true"
+)
 
 ROOT_URLCONF = 'config.urls'
 
@@ -942,6 +948,8 @@ FILE_UPLOAD_MAX_MEMORY_SIZE = int(os.environ.get('FILE_UPLOAD_MAX_MEMORY_SIZE', 
 # Azure Blob Storage (learner evidence uploads — see learner_api/evidence_storage.py).
 AZURE_STORAGE_ACCOUNT = os.environ.get("AZURE_STORAGE_ACCOUNT", "")
 AZURE_STORAGE_KEY = os.environ.get("AZURE_STORAGE_KEY", "")
+KNOWLEDGE_BASE_AZURE_CONTAINER = os.environ.get("KNOWLEDGE_BASE_AZURE_CONTAINER", "")
+KNOWLEDGE_BASE_STORAGE = os.environ.get("KNOWLEDGE_BASE_STORAGE", "local")
 AZURE_QUARANTINE_CONTAINER = os.environ.get("AZURE_QUARANTINE_CONTAINER", "evidence-quarantine")
 AZURE_APPROVED_CONTAINER = os.environ.get("AZURE_APPROVED_CONTAINER", "evidence-approved")
 AZURE_REJECTED_CONTAINER = os.environ.get("AZURE_REJECTED_CONTAINER", "evidence-rejected")
