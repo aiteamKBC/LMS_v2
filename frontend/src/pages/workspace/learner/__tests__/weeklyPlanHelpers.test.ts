@@ -3,7 +3,7 @@ import type { LearnerDetail } from '@/api/learnerDetail';
 import type { CurriculumRow } from '@/pages/learner/training-plan-timeline/model';
 import {
   activityActionLabel, activityExpectedTimeLabel, activityHref, activityKsbCodes, activityStatus,
-  activityExpectedMinutes, resolveInitialWeek, weekComponents, weekExpectedHours, weekKey, weekKsbProgress, weekProgress, weekWindow,
+  activityExpectedMinutes, resolveInitialWeek, weekComponents, weekOtjhHours, weekKey, weekKsbProgress, weekProgress, weekWindow,
 } from '../weeklyPlanHelpers';
 
 function session(slotNumber: number, date: string, extra: Partial<Extract<CurriculumRow, { kind: 'session' }>> = {}): CurriculumRow {
@@ -175,8 +175,21 @@ describe('week KSB and OTJH summaries', () => {
   });
 
   it('sums the same expected time the activities table shows and reports untimed activities', () => {
-    expect(weekExpectedHours(components, completed)).toEqual({ plannedHours: 3.5, completedHours: 1.5, untimed: 1, percent: 42.86 });
+    expect(weekOtjhHours(components, { components: { done: 1, untimed: 0.5, otherWeek: 10 }, quizzes: {} }))
+      .toEqual({ plannedHours: 3.5, actualHours: 1.5, untimed: 1, percent: 42.86 });
     expect(activityExpectedMinutes({ title: 'Quiz', isQuiz: true, quizMeta: { duration: 2, timeUnit: 'hours' } } as never)).toBe(120);
     expect(activityExpectedMinutes(untimed as never)).toBeNull();
+  });
+
+  it('keeps missing recorded hours distinct from a verified zero', () => {
+    expect(weekOtjhHours(components, undefined)).toMatchObject({ actualHours: null, percent: null });
+    expect(weekOtjhHours(components, { components: {}, quizzes: {} })).toMatchObject({ actualHours: 0, percent: 0 });
+  });
+
+  it('counts quiz-only ledger hours once alongside component-linked attempts', () => {
+    const quiz = { componentId: 'quiz', title: 'Quiz', expectedOtjh: null, isQuiz: true, quizMeta: { quizId: 42, questions: null, duration: 60, timeUnit: 'mins' } };
+    expect(weekOtjhHours([quiz, quiz], { components: { quiz: 0.25 }, quizzes: { '42': 0.5, '99': 4 } }).actualHours).toBe(0.75);
+    expect(weekOtjhHours([quiz], { components: { quiz: 0.25 }, quizzes: { '42': 0.5 } },
+      [quiz, { ...quiz, componentId: 'other-week' }]).actualHours).toBe(0.25);
   });
 });

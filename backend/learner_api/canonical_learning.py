@@ -11,7 +11,9 @@ import re
 from old_otjh.repository import query
 from old_otjh.service import ServiceError
 from .monthly_log_sources import decoded, number, row
-from .current_learning import current_records, current_records_bulk, source_payload_metadata
+from .current_learning import (
+    current_records, current_records_bulk, is_unsynchronised_direct_save, source_payload_metadata,
+)
 
 UK = ZoneInfo('Europe/London')
 
@@ -235,13 +237,20 @@ def progress_records_with_completion(records, current):
     Counts, acceptance, seconds and reporting months belong to progress entries.
     Newer attempts may still supply completion and scores for those same entries.
     Unpersisted submissions cannot become extra accepted-hour records on a read.
+
+    The exception is a stored direct LMS save that nothing has given seconds
+    yet: its projected time and decision are the only record of that learning,
+    so they fill the empty ledger fields rather than leaving it at zero hours.
     """
     by_id = {str(record['id']): record for record in current}
     result = []
     for record in records:
         latest = by_id.get(str(record['id']), {})
-        result.append({**record, **{key: latest[key] for key in (
-            'completed', 'achieved_score', 'total_score') if key in latest}})
+        fields = ('completed', 'achieved_score', 'total_score')
+        if is_unsynchronised_direct_save(record):
+            fields += ('accepted', 'actual_seconds', 'activity_status', 'reporting_month',
+                       'reporting_started_at', 'reporting_ended_at')
+        result.append({**record, **{key: latest[key] for key in fields if key in latest}})
     return result
 
 
@@ -1007,19 +1016,20 @@ def metrics(learner_id):
 
 
 def otjh_summary_bulk(learner_ids):
-    """Profile OTJH facts in three bounded reads, without content/KSB hydration.
+    """Profile OTJH facts in bounded reads, without content/KSB hydration.
 
     Accepted seconds belong to progress rows, not their source snapshots,
     segments or unpersisted submissions. The plan uses the same scoped monthly
     targets as Monthly Logs and the Coach Profile (not Created_users.Planned_hours).
     Invalid or ambiguous identities remain unavailable, just as in metrics().
     """
+    from .canonical_hours import pending_hour_records
     enrolment_ids = list(dict.fromkeys(int(value) for value in learner_ids if value is not None))
     if not enrolment_ids:
         return {}
     candidates = {}
     for owner in query('''SELECT l.id,l.enrolment_id,l.aptem_id,l.programme_id,
-        l.email,l.start_date,l.end_date,
+        l.email,l.start_date,l.end_date,l.learner_type,
         u.id AS account_record_id,u."Email" AS account_email,u.aptem_id AS account_aptem_id
         FROM "Learner".learners l
         LEFT JOIN enrolment."Created_users" u ON u.id=l.enrolment_id
@@ -1047,6 +1057,8 @@ def otjh_summary_bulk(learner_ids):
         WHERE learner_id=ANY(%s) AND deleted_at IS NULL AND accepted IS TRUE
         GROUP BY learner_id''', [profile_ids]):
         records[int(item['learner_id'])].append({**item, 'accepted': True})
+    for profile_id, pending in pending_hour_records(owners.values()).items():
+        records[profile_id].extend(pending)
     targets = {profile_id: {} for profile_id in profile_ids}
     for item in query('''SELECT DISTINCT ON (t.learner_id,t.report_month)
         t.learner_id,t.report_month,t.target_hours

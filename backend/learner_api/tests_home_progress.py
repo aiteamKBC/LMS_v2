@@ -199,11 +199,29 @@ class HomeProgressTests(SimpleTestCase):
              patch('learner_api.home_progress._group_dates', return_value=(START, END, 'learner')), \
              patch('learner_api.home_progress.rows', return_value=[]), \
              patch('learner_api.home_progress.lecture_register', return_value=[]), \
+             patch('learner_api.home_progress.plan_planned_hours', return_value=None), \
+             patch('learner_api.home_progress.canonical_learning.profile', return_value=None), \
              patch('learner_api.home_progress.canonical_learning.metrics', return_value=canonical) as metrics:
             result = read_home_progress(source, 'commercial', [], [], [], [], END)
         self.assertEqual(result['otjh']['actual'], 12.5)
         self.assertIsNone(result['otjh']['percent'])
         metrics.assert_called_once_with(499)
+
+    def test_home_planned_falls_back_to_the_learning_plan_without_an_ssot_plan(self):
+        connection = MagicMock()
+        source = SimpleNamespace(pk=499, aptem_id=None, _canonical_profile={'id': 7})
+        with patch('learner_api.home_progress.connections', {'enrolment': connection}), \
+             patch('learner_api.home_progress._group_dates', return_value=(START, END, 'learner')), \
+             patch('learner_api.home_progress.rows', return_value=[]), \
+             patch('learner_api.home_progress.lecture_register', return_value=[]), \
+             patch('learner_api.home_progress.plan_planned_hours', return_value=200) as plan, \
+             patch('learner_api.home_progress.canonical_learning.metrics',
+                   return_value={'otjh': {'actual': 12.5, 'planned': None}}):
+            result = read_home_progress(source, 'commercial', [], [], [], [], END)
+        plan.assert_called_once_with(source, {'id': 7})
+        self.assertEqual(result['otjh']['planned'], 200)
+        self.assertEqual(result['otjh']['percent'], 6.25)
+        self.assertEqual(result['otjh']['missingPlannedActivities'], 0)
 
     def test_home_endpoint_keeps_route_enrolment_and_ignores_query_identity(self):
         model = MagicMock()

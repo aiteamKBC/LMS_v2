@@ -15,7 +15,11 @@ class CaseFileOverviewTests(SimpleTestCase):
         context.profile = SimpleNamespace(enrolment_id=201, aptem_id=aptem, start_date=None, end_date=None)
         context.source = SimpleNamespace(start_date='2026-01-01', end_date='2026-01-11')
         context.parallel.side_effect = lambda readers: {name: reader() for name, reader in readers.items()}
-        context.payload.return_value = {'attendance': {'present': 1, 'sessions': 3}}
+        context.payload.side_effect = lambda resource: {
+            'summary': {'attendance': {'present': 1, 'sessions': 3}},
+            'week': {'planSubjects': []},
+            'schedule': {'modules': [], 'sessions': [], 'moduleLinks': {}, 'actual': [], 'actualAvailable': False},
+        }[resource]
         return context
 
     def render(self, *, today=date(2026, 1, 6), actual=12, planned=100, subjects=None, activity=None):
@@ -25,6 +29,7 @@ class CaseFileOverviewTests(SimpleTestCase):
                    'ksb': {'completed': 1, 'total': 4, 'percent': 25, 'historicalCompleted': 1}}
         with patch('coach_api.case_file.read_overview_learning', return_value=(metrics, activity)), \
              patch('learner_api.module_progress.canonical_module_progress', return_value=self.shared_rows(subjects or [], activity)), \
+             patch('coach_api.overview_modules.read_overview_modules', return_value={'learning': {}}), \
              patch('coach_api.views.timezone.localdate', return_value=today):
             result = build_overview(context)
         context.payload.assert_called_once_with('summary')

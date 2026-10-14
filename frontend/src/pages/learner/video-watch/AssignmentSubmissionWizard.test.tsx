@@ -60,16 +60,17 @@ function confirmLearning() {
   for (const name of learningDeclarations) fireEvent.click(screen.getByRole('checkbox', { name }));
 }
 describe('monthly assignment drafts', () => {
-  it('keeps a partially accepted topic locked without repeating its question', async () => {
+  it('keeps a partially accepted topic locked and shows the question it answered', async () => {
     vi.mocked(loadLearningReflectionSubmission).mockResolvedValue({
       status: 'partial', assignmentTopicId: '2', assignmentQuestion: 'The original Topic 2 question.',
       assignmentAnswer: 'The submitted topic answer.',
       monthlyAssignment: emptyMonthlyAssignment([], '2026-10'),
     } as Awaited<ReturnType<typeof loadLearningReflectionSubmission>>);
-    render(<AssignmentSubmissionWizard {...props} assignmentTopicId="2" questionText="A later edited question." />);
+    render(<AssignmentSubmissionWizard {...props} assignmentTopicId="2" questionText="A later edited question." onShowInstructions={vi.fn()} />);
     await screen.findByDisplayValue('The submitted topic answer.');
-    expect(screen.queryByText('Assignment question')).not.toBeInTheDocument();
-    expect(screen.queryByText('The original Topic 2 question.')).not.toBeInTheDocument();
+    expect(within(screen.getByRole('region', { name: 'Assignment question' })).getByText('The original Topic 2 question.')).toBeVisible();
+    expect(screen.queryByText('A later edited question.')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '1 Instructions' })).toBeEnabled();
     expect(screen.getByLabelText(/Your answer \(/)).toBeDisabled();
     expect(screen.queryByRole('button', { name: 'Save draft' })).not.toBeInTheDocument();
     cleanup();
@@ -128,6 +129,33 @@ describe('monthly assignment drafts', () => {
       expect(screen.getByLabelText(/Your answer \(/)).toHaveValue('My unfinished answer stays here.');
       expect(props.onSubmitProgress).not.toHaveBeenCalled();
     });
+  });
+
+  it('keeps the question, instructions and resources in view on later steps and lets a draft reopen the instructions', async () => {
+    const onShowInstructions = vi.fn();
+    render(<AssignmentSubmissionWizard {...props} assignmentTopicId="1" instructionsHtml="<p>Use the <strong>STAR</strong> format.</p>"
+      resourceLinks={[{ label: 'Reading list', url: 'https://example.test/reading' }]} onShowInstructions={onShowInstructions} />);
+    fireEvent.click(await screen.findByRole('button', { name: /Impact & employer benefit/ }));
+    expect(screen.getByText(/Step 6 of 9/)).toBeVisible();
+    const brief = screen.getByText('Assignment brief & instructions').closest('details')!;
+    expect(brief).toHaveAttribute('open');
+    expect(within(within(brief).getByRole('region', { name: 'Assignment question' })).getByText('Describe your work.')).toBeVisible();
+    expect(within(brief).getByRole('region', { name: 'Instructions' })).toHaveTextContent('Use the STAR format.');
+    expect(within(within(brief).getByRole('region', { name: 'Resources' })).getByRole('link', { name: /Reading list/ }))
+      .toHaveAttribute('href', 'https://example.test/reading');
+    const instructions = screen.getByRole('button', { name: '1 Instructions' });
+    expect(instructions).toBeEnabled();
+    fireEvent.click(instructions);
+    expect(onShowInstructions).toHaveBeenCalledTimes(1);
+  });
+
+  it('shows no instructions or resources headings when an assignment has neither', async () => {
+    render(<AssignmentSubmissionWizard {...props} />);
+    await screen.findByText('Step 1 of 8 — Assignment answer');
+    expect(screen.getByRole('region', { name: 'Assignment question' })).toHaveTextContent('Describe your work.');
+    expect(screen.queryByRole('region', { name: 'Instructions' })).toBeNull();
+    expect(screen.queryByRole('region', { name: 'Resources' })).toBeNull();
+    expect(screen.queryByRole('button', { name: '1 Instructions' })).toBeNull();
   });
 
   it('seeds a new submission with its Training Plan month', async () => {

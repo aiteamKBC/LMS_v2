@@ -27,10 +27,10 @@ export default function MonthlySubmissionPage() {
     const months = real ? groupMonthlyAssignments(real, plan.metadata, plan.contract, plan.statuses, plan.submissionCounts) : [];
     for (const activity of extras.activities) {
       if (activity.status !== 'accepted' || !/^\d{4}-\d{2}$/.test(activity.month) || months.some(item => item.month === activity.month)) continue;
-      months.push({ month: activity.month, label: monthName(activity.month), topics: [], assignments: [], submitted: 0 });
+      months.push({ month: activity.month, label: monthName(activity.month), topics: [], planAssignments: [], assignments: [], submitted: 0 });
     }
     if (months.length && !datesUnavailable && !months.some(item => item.month === currentMonth)) {
-      months.push({ month: currentMonth, label: monthName(currentMonth), topics: [], assignments: [], submitted: 0 });
+      months.push({ month: currentMonth, label: monthName(currentMonth), topics: [], planAssignments: [], assignments: [], submitted: 0 });
     }
     return months.sort((a, b) => a.month && b.month ? a.month.localeCompare(b.month) : a.month ? -1 : b.month ? 1 : 0);
   }, [real, plan.metadata, plan.contract, plan.statuses, plan.submissionCounts, extras.activities, currentMonth, datesUnavailable]);
@@ -113,7 +113,10 @@ export default function MonthlySubmissionPage() {
                 <p className={styles.eyebrow}>Monthly submission</p>
                 <h2><CalendarDays size={22} aria-hidden="true" />{monthName(group.month)}</h2>
                 {group.label !== monthName(group.month) && <p>{group.label}</p>}
-                {group.topics.length > 0 && <p>{group.topics.join(' · ')}</p>}
+                {group.topics.some(topic => !group.planAssignments.includes(topic)) && <p>{group.topics.filter(topic => !group.planAssignments.includes(topic)).join(' · ')}</p>}
+                {group.planAssignments.length > 0 && <p className={styles.planAssignment}>
+                  Assignment in your training plan: <strong>{group.planAssignments.join(' · ')}</strong>
+                </p>}
                 <p>{group.assignments.length} assignment{group.assignments.length === 1 ? '' : 's'} · {group.submitted} submitted</p>
               </div>
               <span className={styles.monthArt} aria-hidden="true"><img src="/assets/monthly-submission-calendar.png" alt="" /></span>
@@ -169,7 +172,7 @@ export default function MonthlySubmissionPage() {
                 className={styles.assignment} aria-pressed={row.id === assignment?.id} onClick={() => view === 'overdue' ? selectOverdueAssignment(row.id) : select(sourceGroup.month, row.id)}>
                 <span className={styles.assignmentTop}><span className={styles.assignmentIcon}><FileText size={19} aria-hidden="true" /></span>
                   <span className={styles.status} data-status={row.status}>{statusLabels[row.status] || row.status.replaceAll('_', ' ') || 'Status unavailable'}</span></span>
-                <strong>{row.component}</strong><span className={styles.assignmentTopic}>{[view === 'overdue' ? monthName(sourceGroup.month) : '', row.module, row.week].filter(Boolean).join(' · ')}</span>
+                <strong>{row.title}</strong><span className={styles.assignmentTopic}>{[view === 'overdue' ? monthName(sourceGroup.month) : '', row.module, row.week].filter(Boolean).join(' · ')}</span>
                 {row.submissionCount !== undefined && <span>{row.submissionCount} submission{row.submissionCount === 1 ? '' : 's'}</span>}
                 <span className={styles.assignmentBottom}><span>{row.expectedOtjh != null ? `${row.expectedOtjh} OTJ hours` : 'Hours not specified'}</span>
                   <span>{row.id === assignment?.id ? <><CheckCircle2 size={15} aria-hidden="true" />Selected</> : <>View details<ArrowUpRight size={15} aria-hidden="true" /></>}</span></span>

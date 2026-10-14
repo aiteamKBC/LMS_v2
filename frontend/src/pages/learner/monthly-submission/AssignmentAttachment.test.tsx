@@ -67,7 +67,7 @@ it('keeps the other PDF available when one instruction file fails', async () => 
     <AssignmentAttachment url="/missing.pdf" title="Missing" defaultExpanded pdfTools />
     <AssignmentAttachment url="/guide.pdf" title="Guide" defaultExpanded pdfTools />
   </>);
-  expect(await screen.findByText('File request failed (404)')).toBeVisible();
+  expect(await screen.findByText('This file could not be found on the server. Please let your coach or the curriculum team know.')).toBeVisible();
   expect(await screen.findByText('Page 1 of 3')).toBeVisible();
   expect(screen.getAllByRole('link', { name: 'Download file' })).toHaveLength(2);
 });

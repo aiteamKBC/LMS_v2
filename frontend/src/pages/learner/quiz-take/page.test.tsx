@@ -61,6 +61,7 @@ describe('quiz requirements loading', () => {
     mocks.detail.mockReturnValue(new Promise(done => { resolve = done; }));
     renderPage();
     await act(async () => {});
+    expect(mocks.detail).toHaveBeenCalledWith('commercial', '501', { quizView: true });
     expect(screen.queryByRole('button', { name: 'Start Quiz' })).not.toBeInTheDocument();
     await act(async () => resolve(detail));
     fireEvent.click(await screen.findByRole('button', { name: 'Start Quiz' }));
@@ -73,6 +74,21 @@ describe('quiz requirements loading', () => {
     await act(async () => {});
     expect(mocks.submit).toHaveBeenCalledOnce();
     expect(screen.queryByText('Reflection form')).not.toBeInTheDocument();
+  });
+
+  it('shows the real book image when taking an image matching question', async () => {
+    const imageUrl = 'data:image/webp;base64,UklGRg==';
+    mocks.detail.mockResolvedValue(detail);
+    mocks.quiz.mockResolvedValue({ id: 1, title: 'Book quiz', questions: [{
+      id: 1, text: 'Match each promotion', points: 1, type: 'image_matching',
+      answers: [{ id: 10, text: 'Image A', left: 'Image A', imageUrl }],
+      rightOptions: ['Brand awareness'],
+    }] });
+    renderPage();
+    fireEvent.click(await screen.findByRole('button', { name: 'Start Quiz' }));
+    const image = await screen.findByRole('img', { name: 'Image A' });
+    expect(image).toHaveAttribute('src', imageUrl);
+    expect(image).toHaveClass('object-contain');
   });
   it('offers retry when learner requirements fail instead of guessing the completion flow', async () => {
     mocks.detail.mockRejectedValueOnce(new Error('Requirements unavailable')).mockResolvedValue(detail);

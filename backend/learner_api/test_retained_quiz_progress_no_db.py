@@ -69,6 +69,24 @@ class RetainedQuizProgressTests(unittest.TestCase):
         self.assertIsNone(detail['quizAttempts'][0]['componentId'])
         self.assertEqual(detail['retiredQuizComponents'], [])
 
+    def test_compact_completion_projection_does_not_search_failed_attempt_history(self):
+        failed = attempt(100, passed=False)
+        detail = self.detail(failed)
+        with patch.object(retained, 'read_quiz_slots') as reader:
+            retained.retain_quiz_progress(detail, completed_only=True)
+        reader.assert_not_called()
+        self.assertIn(failed, detail['quizAttempts'])
+        self.assertIsNone(failed['componentId'])
+        self.assertEqual(detail['retiredQuizComponents'], [])
+
+    def test_compact_completion_projection_still_restores_passed_attempts(self):
+        passed = attempt(100, passed=True)
+        detail = self.detail(passed)
+        with patch.object(retained, 'read_quiz_slots', return_value=[slot('COMP-1', 100)]) as reader:
+            retained.retain_quiz_progress(detail, completed_only=True)
+        reader.assert_called_once_with(['MOD-A'], ['100'])
+        self.assertEqual(passed['componentId'], 'COMP-1')
+
 
 if __name__ == '__main__':
     unittest.main()

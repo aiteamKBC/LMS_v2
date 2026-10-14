@@ -2699,6 +2699,13 @@ function AssignmentBody({ component, onChange, setSetting, rulePoints, uploadRes
     <>
       <Section title="Assignment details">
         <Field label="Title"><input value={component.title} onChange={e => onChange({ title: e.target.value })} className={inputClass} /></Field>
+        <Field label="Title shown to learners" className="mt-4"><input value={s('learnerTitle')} onChange={e => setSetting('learnerTitle', e.target.value)} placeholder="Leave blank to show the title above" className={inputClass} /></Field>
+        <p className="mt-1 text-[11px] text-foreground-400">Use the name learners were given, for example the assignment named in their training plan.</p>
+        <label className="mt-4 flex items-start gap-2 text-[12px] text-foreground-700">
+          <input type="checkbox" checked={component.settings.isMonthlyAssignment === true} onChange={e => setSetting('isMonthlyAssignment', e.target.checked)} className="mt-0.5" />
+          <span><span className="font-semibold">Monthly assignment (8-step submission)</span>
+            <span className="block text-[11px] text-foreground-400">Once any assignment in a learner's plan is ticked, only ticked assignments use the 8-step monthly submission and appear under Monthly submission. The others are completed like ordinary activities.</span></span>
+        </label>
         <Field label="Description" className="mt-4"><textarea value={component.description} onChange={e => onChange({ description: e.target.value })} rows={2} placeholder="What this assignment asks the learner to do…" className={`${inputClass} resize-none`} /></Field>
 
         <div className="mt-4">

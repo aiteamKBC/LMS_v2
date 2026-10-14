@@ -1,4 +1,5 @@
 import type { LearnerDetail, LearnerKind } from '@/api/learnerDetail';
+import type { TrainingPlanDashboard } from '@/api/trainingPlanDashboard';
 import { formatHoursMinutes, isComponentComplete, quizAttemptsFor, type JourneyComponent } from '@/utils/learnerJourney';
 import type { CurriculumRow } from '@/pages/learner/training-plan-timeline/model';
 import { nativeHref, type SubjectEntry } from '@/pages/learner/my-learning/SubjectWorkspace';
@@ -146,21 +147,26 @@ export function weekKsbProgress(components: JourneyComponent[], completedIds: Se
   return { achieved: achieved.size, total, codes: [...all].sort(), percent: total ? Math.round((achieved.size / total) * 10000) / 100 : 0 };
 }
 
-/** Expected hours of a week's activities and the share already completed. */
-export function weekExpectedHours(components: JourneyComponent[], completedIds: Set<string>) {
+/** Expected activity time compared with accepted actual hours from Overview. */
+export function weekOtjhHours(components: JourneyComponent[], activityHours: NonNullable<TrainingPlanDashboard['moduleActivityHours']>[string] | undefined,
+  moduleComponents: Pick<JourneyComponent, 'componentId' | 'quizMeta'>[] = components) {
   let plannedMinutes = 0;
-  let completedMinutes = 0;
   let untimed = 0;
   for (const component of components) {
     const minutes = activityExpectedMinutes(component);
     if (minutes == null) { untimed += 1; continue; }
     plannedMinutes += minutes;
-    if (isComponentComplete(component, completedIds)) completedMinutes += minutes;
   }
+  const componentIds = new Set(components.map(component => component.componentId).filter(Boolean));
+  const quizIds = new Set(components.map(component => component.quizMeta?.quizId).filter(id => id != null
+    && new Set(moduleComponents.filter(component => component.quizMeta?.quizId === id).map(component => component.componentId)).size === 1));
+  const actualHours = activityHours == null ? null
+    : [...componentIds].reduce((total, id) => total + (activityHours.components[id!] || 0), 0)
+      + [...quizIds].reduce((total, id) => total + (activityHours.quizzes[String(id)] || 0), 0);
   return {
     plannedHours: plannedMinutes / 60,
-    completedHours: completedMinutes / 60,
+    actualHours,
     untimed,
-    percent: plannedMinutes ? Math.round((completedMinutes / plannedMinutes) * 10000) / 100 : 0,
+    percent: actualHours != null && plannedMinutes ? Math.round((actualHours * 60 / plannedMinutes) * 10000) / 100 : null,
   };
 }

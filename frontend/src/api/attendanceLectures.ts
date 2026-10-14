@@ -64,13 +64,24 @@ export function attendanceWorkspaceForDisplay(data: AttendanceWorkspace): Attend
     return { ...row, status };
   }) };
 }
+// One display object per cached payload. A page peeks on every render until its
+// read settles; a new object each time looked like new data and re-rendered in a loop.
+const displayed = new WeakMap<AttendanceWorkspace, AttendanceWorkspace>();
+function displayWorkspace(data: AttendanceWorkspace): AttendanceWorkspace {
+  let display = displayed.get(data);
+  if (!display) {
+    display = attendanceWorkspaceForDisplay(data);
+    displayed.set(data, display);
+  }
+  return display;
+}
 export const peekAttendanceWorkspace = (kind: LearnerKind, id: string) => {
   const data = peekLearnerJson<AttendanceWorkspace>(url(kind, id));
-  return data ? attendanceWorkspaceForDisplay(data) : data;
+  return data ? displayWorkspace(data) : data;
 };
 export async function fetchAttendanceWorkspace(kind: LearnerKind, id: string, signal?: AbortSignal, fresh = false) {
   const data = await readLearnerJson<AttendanceWorkspace>(url(kind, id), { ttlMs: 30_000, signal, revalidate: fresh });
-  return attendanceWorkspaceForDisplay(data);
+  return displayWorkspace(data);
 }
 export async function confirmAttendance(kind: LearnerKind, id: string, lectureId: string): Promise<{
   lectureId: string; status: 'completed'; creditedMinutes: number; creditedHours: number; alreadyRecorded: boolean;

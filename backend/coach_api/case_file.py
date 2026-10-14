@@ -374,13 +374,15 @@ def read_overview_learning(context):
 
 
 def build_overview(context):
-    """Final Overview numbers; no content, schedules or evidence hydration."""
+    """Programme totals and the same module facts used by the learner rings."""
     from learner_api.module_progress import canonical_module_progress, compact_module_progress
+    from .overview_modules import read_overview_modules
     parts = context.parallel({
         'progress': lambda: canonical_module_progress(context.source, context.profile),
         'learning': lambda: read_overview_learning(context),
         # Read the established attendance projection without catch-up writes.
         'attendance': lambda: context.payload('summary').get('attendance') or {},
+        'moduleOverview': lambda: read_overview_modules(context),
     })
     metrics, _ = parts['learning']
     attendance = parts['attendance']
@@ -400,7 +402,7 @@ def build_overview(context):
         'otjh': {'actual': hours['actual'], 'targetToDate': target, 'planned': hours['planned'],
                  'percent': overview_percent(hours['actual'], target)},
         'ksb': {key: metrics['ksb'][key] for key in ('completed', 'total', 'percent')},
-    }, 'programmeProgress': rows}
+    }, 'programmeProgress': rows, 'moduleOverview': parts['moduleOverview']}
 
 
 def project_attendance(response, *, history=False):

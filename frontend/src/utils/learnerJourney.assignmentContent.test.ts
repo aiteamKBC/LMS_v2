@@ -23,6 +23,8 @@ describe('assignment content from live builder rows', () => {
     const topic = { id: '2', name: 'Planning', question: 'Describe your plan.', instructions: '', resources: [] };
     expect(hasComponentContent({ ...assignment, assignmentTopics: [topic] })).toBe(true);
     expect(hasComponentContent({ ...assignment, assignmentTopics: [{ ...topic, question: '' }] })).toBe(false);
+    // Instructions alone are something to open, as on the server and in the wizard.
+    expect(hasComponentContent({ ...assignment, assignmentTopics: [{ ...topic, question: '', instructions: 'Use the template.' }] })).toBe(true);
   });
   it('keeps standalone reflection activities available', () => {
     expect(hasComponentContent({ ...assignment, type: 'reflection' })).toBe(true);
