@@ -208,6 +208,18 @@ class NativeMediaApkTests(unittest.TestCase):
         with self.assertRaisesRegex(V.VerificationError, "not used"):
             self.verify(self.both(broken="overwrite"))
 
+    def test_audio_cookie_client_must_be_stored_on_this_instance(self):
+        definitions = self.both()
+        definitions[V.TARGETS["audio"]][-3] = 0x605b  # iput-object v0, v6; this is v7
+        with self.assertRaisesRegex(V.VerificationError, "audio:.*not used"):
+            self.verify(definitions)
+
+    def test_video_must_return_the_factory_that_consumed_the_cookie_client(self):
+        definitions = self.both()
+        definitions[V.TARGETS["video"]][-1] = 0x411  # return-object v4 instead of the constructed v3
+        with self.assertRaisesRegex(V.VerificationError, "returned factory"):
+            self.verify(definitions)
+
     def test_unreachable_calls_after_return_do_not_count(self):
         definitions = self.both()
         definitions[V.TARGETS["audio"]] = [0x0e] + definitions[V.TARGETS["audio"]]

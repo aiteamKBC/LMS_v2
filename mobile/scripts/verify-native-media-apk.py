@@ -138,7 +138,10 @@ class Dex:
                         start = code_offset + 16
                         require(start + size * 2 <= len(self.data), "Truncated method body")
                         words = struct.unpack_from("<" + str(size) + "H", self.data, start)
-                        yield method, words
+                        registers_size = self.u16(code_offset)
+                        ins_size = self.u16(code_offset + 2)
+                        require(registers_size >= ins_size, "Invalid method register counts")
+                        yield method, words, registers_size - ins_size
 
 
 WIDTHS = {}
@@ -229,8 +232,12 @@ def reachable_instructions(words):
     return [(pc, opcode, units) for pc, (opcode, units) in decoded.items() if pc in reached]
 
 
-def verify_body(dex, words, label):
+def verify_body(dex, words, label, this_register):
     registers, pending, evidence = {}, None, {}
+    this_object = {"kind": "this"}
+    if label == "audio":
+        registers[this_register] = this_object
+    factory_returns = []
     built, consumed = None, None
     for pc, opcode, units in reachable_instructions(words):
         first = units[0]
@@ -259,7 +266,9 @@ def verify_body(dex, words, label):
                 pending = built = {"kind": "cookie_client"}
                 evidence["build"] = pc
             elif (label == "video" and opcode in (0x70, 0x76) and member == (FACTORY, "<init>", "(Lokhttp3/Call$Factory;)V")
-                  and len(values) == 2 and built is not None and values[1] is built):
+                  and len(values) == 2 and values[0] and values[0].get("type") == FACTORY
+                  and built is not None and values[1] is built):
+                values[0]["kind"] = "cookie_factory"
                 consumed = pc
             continue
         if opcode == 0x0c:
@@ -275,8 +284,11 @@ def verify_body(dex, words, label):
             registers[first >> 8] = {"kind": "allocated", "type": dex.types[units[1]]}
         elif opcode == 0x5b:
             field = dex.fields[units[1]]
-            if label == "audio" and field == (AUDIO, "httpClient", CLIENT) and built is not None and registers.get(first >> 8 & 15) is built:
+            if (label == "audio" and field == (AUDIO, "httpClient", CLIENT) and built is not None
+                    and registers.get(first >> 8 & 15) is built and registers.get(first >> 12) is this_object):
                 consumed = pc
+        elif opcode == 0x11 and label == "video":
+            factory_returns.append((registers.get(first >> 8) or {}).get("kind") == "cookie_factory")
         elif opcode == 0x1f:
             pass  # check-cast preserves the object identity
         else:
@@ -297,8 +309,11 @@ def verify_body(dex, words, label):
                     registers.pop(destination + 1, None)
     require(set(evidence) == set(CALLS) and consumed is not None,
             label + ": native cookie-client chain missing or not used by media consumer")
+    if label == "video":
+        require(factory_returns and all(factory_returns), "video: returned factory does not use the cookie client")
     return {"invokeOffsets": evidence, "mediaConsumerOffset": consumed,
-            "registerFlowVerified": True}
+            "registerFlowVerified": True,
+            "consumerIdentity": "this.httpClient" if label == "audio" else "returned OkHttpDataSource.Factory"}
 
 
 def verify_apk(path):
@@ -309,16 +324,16 @@ def verify_apk(path):
         require(dex_names and len(set(dex_names)) == len(dex_names), "Missing or duplicate APK DEX entries")
         for name in dex_names:
             dex = Dex(archive.read(name))
-            for member, words in dex.definitions():
+            for member, words, this_register in dex.definitions():
                 label = next(label for label, target in TARGETS.items() if member == target)
-                found[label].append((name, dex, words))
+                found[label].append((name, dex, words, this_register))
         results, failures = {}, []
         for label, matches in found.items():
             require(len(matches) == 1, label + ": expected exactly one defined target method")
-            name, dex, words = matches[0]
+            name, dex, words, this_register = matches[0]
             try:
                 results[label] = {"dex": name, "method": "".join(TARGETS[label]),
-                                  **verify_body(dex, words, label)}
+                                  **verify_body(dex, words, label, this_register)}
             except VerificationError as error:
                 failures.append(str(error))
         require(not failures, "; ".join(failures))
