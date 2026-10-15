@@ -2,7 +2,7 @@
   "expo": {
     "name": "KBC Learn LMS Candidate",
     "slug": "kbc-learn-lmscandidate",
-    "version": "0.5.0",
+    "version": "0.5.1",
     "orientation": "default",
     "scheme": "kbclearn-lmscandidate",
     "userInterfaceStyle": "light",
@@ -10,7 +10,13 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.kentbusinesscollege.learn",
+      "buildNumber": "1",
       "infoPlist": {
+        "CFBundleDisplayName": "KBC Learn",
+        "NSAppTransportSecurity": {
+          "NSAllowsArbitraryLoads": false,
+          "NSAllowsLocalNetworking": true
+        },
         "NSMicrophoneUsageDescription": "Use your voice to draft your own answers and practise quizzes.",
         "NSSpeechRecognitionUsageDescription": "Turn your spoken answers into text for you to review.",
         "UIBackgroundModes": [
@@ -21,7 +27,7 @@
     "android": {
       "package": "com.kentbusinesscollege.learn.lmscandidate",
       "predictiveBackGestureEnabled": true,
-      "versionCode": 10
+      "versionCode": 11
     },
     "web": {
       "bundler": "metro",
@@ -33,7 +39,7 @@
         "expo-audio",
         {
           "enableBackgroundPlayback": true,
-          "microphonePermission": false
+          "microphonePermission": "Allow KBC Learn to hear the answers you choose to dictate."
         }
       ],
       [

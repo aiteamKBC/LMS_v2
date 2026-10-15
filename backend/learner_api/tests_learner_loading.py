@@ -6,6 +6,8 @@ import json
 
 from django.test import SimpleTestCase, RequestFactory
 
+from curriculum_api.week_visibility import visible_week_sql
+
 from . import learner_detail as detail
 from .tests import ScriptedConnection, ScriptedCursor
 
@@ -102,8 +104,10 @@ class CompactLearnerLoadingTests(SimpleTestCase):
         sql, params = execute.call_args.args
         self.assertNotIn(selected, sql)
         self.assertIn("c.module_catalogue_id=ANY(%s)", sql)
-        for table in ("c", "m", "w"):
+        for table in ("c", "m"):
             self.assertIn(f"{table}.deleted_at IS NULL OR COALESCE({table}.deleted_via_parent, '') <> ''", sql)
+        # A deleted week shows only as an archived module's own history.
+        self.assertIn(visible_week_sql("w"), sql)
         self.assertEqual(params, [selected, ["M1"]])
         self.assertEqual(result, {"componentId": "C1", "contentHtml": "<p>Selected reading</p>"})
 

@@ -5,9 +5,11 @@ from zoneinfo import ZoneInfo
 
 from django.db import connections
 from learner_api.progress_rules import progress_counts_as_achieved
+from curriculum_api.week_visibility import visible_child_sql, visible_week_sql
 
 BUSINESS_ZONE = ZoneInfo('Europe/London')
-VISIBLE = "(deleted_at IS NULL OR COALESCE(deleted_via_parent, '') <> '')"
+VISIBLE = visible_child_sql('ksb_mappings')
+VISIBLE_WEEK = visible_week_sql('weeks')
 
 
 def derived_session(start, end, status, attended, now):
@@ -135,7 +137,7 @@ def read_weekly_learning(context, selection=None):
             WHERE m.module_catalogue_id=ANY(%s) ORDER BY m.title''', [ids])
         modules = rows(cur)
         cur.execute(f'''SELECT id,module_catalogue_id,week_number,title,holiday_note_enabled,holiday_note
-            FROM curriculum.weeks WHERE module_catalogue_id=ANY(%s) AND {VISIBLE}
+            FROM curriculum.weeks WHERE module_catalogue_id=ANY(%s) AND {VISIBLE_WEEK}
             ORDER BY display_order,week_number,id''', [ids])
         counts, authored = defaultdict(int), {}
         for row in rows(cur):
@@ -180,7 +182,7 @@ def read_weekly_learning(context, selection=None):
               coalesce(btrim(c.live_sessions_link),'') <> '' END AS has_content
             FROM curriculum.components c LEFT JOIN curriculum.quiz_component_links l ON l.component_id=c.id
             JOIN curriculum.modules cm ON cm.module_catalogue_id=c.module_catalogue_id
-            WHERE c.module_catalogue_id=ANY(%s) AND (c.deleted_at IS NULL OR COALESCE(c.deleted_via_parent,'') <> '')
+            WHERE c.module_catalogue_id=ANY(%s) AND {visible_child_sql('c')}
             AND (cm.deleted_at IS NULL OR COALESCE(cm.deleted_via_parent,'') <> '') AND coalesce(btrim(cm.title),'') <> ''
             ORDER BY c.week_id,c.display_order,c.id''', [sorted(content_ids)])
         components = [row for row in rows(cur) if row['has_content'] or row['is_quiz']]

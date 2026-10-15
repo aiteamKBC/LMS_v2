@@ -55,6 +55,7 @@ with connections["default"].cursor() as c:
         raise RuntimeError("Test database must start empty; never overwrite existing tables.")
     c.execute((ROOT/"test-fixtures.sql").read_text(encoding="utf-8"))
     c.execute((ROOT/"schema.sql").read_text(encoding="utf-8"))
+    c.execute(importlib.import_module('engagement_api.migrations.0004_all_course_learning_policy').SQL)
 
 def sql(statement,args=()):
     with connections["default"].cursor() as c:
@@ -65,7 +66,7 @@ class PostgreSQLRewardsTests(unittest.TestCase):
     def setUp(self):
         settings.KBC_SHARED_REWARDS_READY=True
         # Truncate only known synthetic tables in this fresh guarded test DB.
-        sql('''TRUNCATE "Engagement".shared_reward_observations,"Engagement".shared_reward_active_intervals,
+        sql('''TRUNCATE "Engagement".learning_reward_policies,"Engagement".shared_reward_observations,"Engagement".shared_reward_active_intervals,
           "Engagement".shared_reward_acceptances,"Engagement".shared_reward_outbox,"Engagement".shared_reward_sessions,
           "Engagement".shared_reward_saved_progress,
           "Engagement".shared_reward_bonus_verifications,"Engagement".shared_reward_award_links,
@@ -379,6 +380,104 @@ class PostgreSQLRewardsTests(unittest.TestCase):
         sql('UPDATE "Learner".evidence_files SET learner_id=\'501\' WHERE id=%s',[evidence])
         self.assertEqual(r.verify_bonus(**{**kwargs,"learner_id":"501"})["points"],1000)
         self.assertTrue(r.verify_bonus(**{**kwargs,"learner_id":"501"})["duplicate"])
+
+
+    def activate_all(self, **changes):
+        from engagement_api.learning_policy import DEFAULTS
+        config={**DEFAULTS,**changes}
+        return sql('INSERT INTO "Engagement".learning_reward_policies(effective_at,settings,created_by) VALUES(%s,%s::jsonb,%s) RETURNING id',
+                   [self.now-timedelta(days=1),json.dumps(config),"synthetic-staff"])[0][0]
+
+    def test_all_courses_accept_browser_hours_and_preserve_existing_wallet(self):
+        self.credit(123)
+        self.activate_all()
+        other={**self.component,"moduleId":"RISK-M01","type":"reading"}
+        self.component=other
+        t=self.tracking("browser");t["countingMode"]="visible_page"
+        self.whole_hour(t)
+        pid=self.progress(t,verified=3600)
+        r.reconcile_progress(pid);r.reconcile_progress(pid)
+        self.assertEqual(points_summary("501")["balance"],124)
+        self.assertEqual(r.summary(learner_id="501",module_id="RISK-M01")["study"]["acceptedStudySeconds"],3600)
+        self.assertEqual(sql('SELECT count(*) FROM "Engagement".shared_reward_config WHERE module_id=%s',["RISK-M01"])[0][0],1)
+
+    def test_mixed_course_hours_union_and_partial_carry(self):
+        self.activate_all()
+        first=self.tracking("first",started=self.now-timedelta(hours=3))
+        second=self.tracking("second",started=self.now-timedelta(hours=2))
+        third=self.tracking("overlap",started=second["startedAt"])
+        for tracking,module,order in ((first,"RISK",1),(second,"SCHEDULE",2),(third,"OTHER",3)):
+            self.component={**self.component,"moduleId":module,"type":"podcast"}
+            for batch in range(3):
+                self.observe(tracking,[{"startOffsetMs":i*5000,"endOffsetMs":(i+1)*5000} for i in range(batch*120,(batch+1)*120)],seq=batch+1)
+            r.reconcile_progress(self.progress(tracking,verified=1800,order=order))
+        self.assertEqual(points_summary("501")["earned"],1)
+        with connections["default"].cursor() as cursor:
+            self.assertEqual(len(r.configured_hour_awards(cursor,"501")),1)
+
+    def test_four_minute_minimum_and_activity_mapping(self):
+        self.activate_all(hourActivities=["video"])
+        self.component={**self.component,"moduleId":"RISK","type":"reading"}
+        t=self.tracking("excluded");self.whole_hour(t)
+        r.reconcile_progress(self.progress(t,verified=3600))
+        self.assertEqual(points_summary("501")["earned"],0)
+        self.component={**self.component,"moduleId":"SCHEDULE","type":"video"}
+        short=self.tracking("short",kind="video")
+        self.observe(short)
+        r.reconcile_progress(self.progress(short,verified=5,order=2))
+        self.assertEqual(sql('SELECT coalesce(sum(accepted_ms),0) FROM "Engagement".shared_reward_acceptances')[0][0],0)
+
+    def test_rule_revision_uses_event_time_without_repricing_existing_award(self):
+        self.activate_all(pointsPerHour=3)
+        self.component={**self.component,"type":"podcast"}
+        first=self.tracking("first",started=self.now-timedelta(hours=3))
+        self.whole_hour(first);pid=self.progress(first,verified=3600)
+        r.reconcile_progress(pid)
+        from engagement_api.learning_policy import DEFAULTS
+        sql('INSERT INTO "Engagement".learning_reward_policies(effective_at,settings,created_by) VALUES(%s,%s::jsonb,%s)',
+            [self.now-timedelta(hours=1),json.dumps({**DEFAULTS,"pointsPerHour":9}),"synthetic-staff"])
+        r.reconcile_progress(pid)
+        self.assertEqual(points_summary("501")["earned"],3)
+
+    def test_all_course_quiz_formula_first_submission_and_no_legacy_stack(self):
+        self.activate_all()
+        self.component={**self.component,"moduleId":"SCHEDULE","type":"quiz"}
+        t=self.tracking("quiz",kind="quiz",activity="88")
+        self.observe(t)
+        pid=self.progress(t,correct=8,total=10)
+        r.reconcile_progress(pid);r.reconcile_progress(pid)
+        self.assertEqual(points_summary("501")["earned"],8)
+        later=self.tracking("retake",kind="quiz",activity="88")
+        self.observe(later)
+        r.reconcile_progress(self.progress(later,correct=10,total=10,order=2))
+        self.assertEqual(points_summary("501")["earned"],8)
+        self.assertTrue(saved.owns_saved_progress("501",{},pid))
+
+    def test_settings_conflict_validation_and_immutable_history(self):
+        from engagement_api.learning_policy import publish,DEFAULTS
+        from django.db import DatabaseError
+        first=publish(DEFAULTS,"staff:1",None)
+        with self.assertRaisesRegex(RewardError,"policy_changed"):
+            publish(DEFAULTS,"staff:2",None)
+        with self.assertRaises(RewardError):
+            publish({**DEFAULTS,"quizThreshold":101},"staff:1",first["id"])
+        with self.assertRaises(DatabaseError),transaction.atomic():
+            sql('UPDATE "Engagement".learning_reward_policies SET settings=%s::jsonb',[json.dumps(DEFAULTS)])
+        self.assertEqual(sql('SELECT count(*) FROM "Engagement".learning_reward_policies')[0][0],1)
+
+    def test_all_course_cutover_does_not_backfill_old_saved_progress(self):
+        self.activate_all()
+        # This falls inside the earlier PMP cutover but before all-course
+        # activation, so the queue exists and must still decline another course.
+        self.now-=timedelta(hours=36)
+        t=self.tracking('historical',kind='quiz',activity='88')
+        pid=self.progress(t,correct=10,total=10)
+        component={**self.component,'moduleId':'RISK','type':'quiz'}
+        with patch.object(saved,'_resolve_component',return_value=component):
+            result=saved.reconcile_saved_progress(pid)
+        self.assertEqual(result['status'],'not_scoped')
+        self.assertFalse(result['owned'])
+        self.assertEqual(PointsGrant.objects.count(),0)
 
 if __name__=="__main__":
     unittest.main(verbosity=2)

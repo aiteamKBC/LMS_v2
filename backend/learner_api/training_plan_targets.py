@@ -19,6 +19,7 @@ from zoneinfo import ZoneInfo
 from django.db import DatabaseError, connections
 
 from .progress_rules import progress_record_counts_as_achieved
+from curriculum_api.week_visibility import visible_week_sql
 
 
 UK_TIME_ZONE = ZoneInfo("Europe/London")
@@ -120,7 +121,7 @@ def resolve_training_plan_week_starts(detail):
             cursor.execute(
                 "SELECT id, module_catalogue_id FROM curriculum.weeks "
                 f"WHERE module_catalogue_id IN ({placeholders}) "
-                "AND (deleted_at IS NULL OR COALESCE(deleted_via_parent, '') <> '') "
+                f"AND {visible_week_sql('weeks')} "
                 "ORDER BY module_catalogue_id, display_order, week_number, id",
                 module_ids,
             )

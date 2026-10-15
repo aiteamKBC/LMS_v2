@@ -7687,6 +7687,30 @@ def ksb_profile_required_codes(profile):
     ])
 
 
+def applied_standard_required_codes(config, cache):
+    """Required codes of the standard a programme applies, or None.
+
+    A programme whose ksb_profile_source_id names a standard
+    ('standard:st0596-v1-0') is counted against that standard, never against a
+    manual profile matched by its name: the name match kept Marketing Executive
+    and Marketing Manager on their profiles' counts after both moved to
+    standards, and gave 0 to programmes no profile names. None means the
+    programme applies no standard (or it is not in standard_ksbs), so the
+    caller keeps the profile match. ``cache`` is per build, keyed by standard.
+    """
+    source = clean_str((config or {}).get('ksb_profile_source_id'))
+    if not source.lower().startswith('standard:'):
+        return None
+    standard_id = clean_str(source.split(':', 1)[1]).lower()
+    if standard_id not in cache:
+        cache[standard_id] = unique([
+            coverage_normalise_code(definition.get('code'))
+            for definition in standard_required_ksbs(standard_id)
+            if coverage_normalise_code(definition.get('code'))
+        ])
+    return cache[standard_id] or None
+
+
 def ksb_profile_source_id(profile):
     public_id = clean_str((profile or {}).get('id'))
     if public_id.startswith('KSBP-'):
@@ -9503,6 +9527,7 @@ def build_programmes(training_rows, program_configs, ksb_profiles, include_confi
     # tables that own them, so the card cannot disagree with the programme's own
     # page about any of the four.
     structure_counts_by_id, structure_counts_by_name = authoring_programme_structure_counts()
+    standard_codes = {}
 
     display_program_configs = unique_program_configs_for_display(program_configs)
     row_programme_names = set()
@@ -9592,7 +9617,9 @@ def build_programmes(training_rows, program_configs, ksb_profiles, include_confi
             row_group = actual_group_identity(row, row_cohort['id']) if row_cohort else None
             if row_group:
                 group_keys.add(row_group['id'])
-        required_ksb_codes = ksb_profile_required_codes(profile)
+        required_ksb_codes = applied_standard_required_codes(config, standard_codes)
+        if required_ksb_codes is None:
+            required_ksb_codes = ksb_profile_required_codes(profile)
         ksb_total = len(required_ksb_codes)
         profile_source = ksb_profile_source_id(profile) if profile else ''
         config_archived = is_archived_program_config(config)
@@ -14127,6 +14154,13 @@ def find_existing_authoring_catalogue_id_for_payload(payload):
         for row in rows:
             if normalise(row.get('title')) != normalise(title):
                 continue
+            # An archived module is not "the same module" a create is asking
+            # for. Adopting it handed a fresh copy the archived row's id, the
+            # next save cleared the archive on the module row alone, and the
+            # weeks archived with it stayed stamped with that id -- so the
+            # module then ran with two sets of weeks.
+            if module_withdrawn_on_its_own(row):
+                continue
             if not identity_values_match_context([row.get('programme_id'), row.get('programme_name')], programme_values):
                 continue
             if not identity_values_match_context([row.get('cohort_id'), row.get('cohort_name')], cohort_values):
@@ -17133,9 +17167,39 @@ def sort_rows_by_updated_at_desc(rows):
     )
 
 
-def component_builder_rows(module_catalogue_ids=None):
-    ensure_module_authoring_tables()
+def component_builder_rows(module_catalogue_ids=None, omit_content=False):
+    """The component builder rows, whole; or with ``omit_content``, exactly as
+    component_rows_without_content() would project them, with the long text
+    stripped in the database where it can be (live_component_rows_without_content).
+    """
     catalogue_ids = [clean_str(value) for value in (module_catalogue_ids or []) if clean_str(value)]
+    stripped_rows = live_component_rows_without_content(catalogue_ids) if omit_content else None
+    if stripped_rows is None:
+        rows = _component_builder_rows(catalogue_ids)
+        return component_rows_without_content(rows) if omit_content else rows
+    db_omitted_by_id = {
+        str(row.get('id')): list(row.pop(COMPONENT_DB_OMITTED_KEYS_COLUMN, None) or [])
+        for row in stripped_rows
+    }
+    projected = []
+    for row in _component_builder_rows(catalogue_ids, stripped_rows):
+        db_omitted = db_omitted_by_id.get(str(row.get('id'))) or []
+        # Anything the database could not strip (a settings document stored
+        # as a JSON string) is still taken out here, so the result never
+        # depends on which path removed the text.
+        row = component_rows_without_content([row])[0]
+        omitted = [
+            key for key in COMPONENT_CONTENT_SETTING_KEYS
+            if key in db_omitted or key in (row.get(COMPONENT_SETTINGS_OMITTED_FLAG) or [])
+        ]
+        if omitted:
+            row = {**row, COMPONENT_SETTINGS_OMITTED_FLAG: omitted}
+        projected.append(row)
+    return projected
+
+
+def _component_builder_rows(catalogue_ids, component_rows=None):
+    ensure_module_authoring_tables()
     where_sql = ''
     params = []
     if catalogue_ids:
@@ -17148,7 +17212,9 @@ def component_builder_rows(module_catalogue_ids=None):
     # list is this reader's own concern, not the database's.
     # Paged and live-only on the database side; see live_component_rows_paged.
     # Same arguments as the structure reader, so a detail build shares the read.
-    component_rows = active_component_rows(live_component_rows_paged(catalogue_ids or None, 'display_order, id'))
+    if component_rows is None:
+        component_rows = live_component_rows_paged(catalogue_ids or None, 'display_order, id')
+    component_rows = active_component_rows(component_rows)
     component_rows = sort_rows_by_updated_at_desc(component_rows)
     module_rows = authoring_fetch_all(AUTHORING_MODULES_TABLE, where_sql, params) if catalogue_ids else authoring_fetch_all(AUTHORING_MODULES_TABLE)
     week_rows = active_week_rows(authoring_fetch_all(AUTHORING_WEEKS_TABLE, where_sql, params) if catalogue_ids else authoring_fetch_all(AUTHORING_WEEKS_TABLE))
@@ -20209,6 +20275,82 @@ def _live_component_rows_paged(module_ids, order_sql):
         offset += COMPONENT_FULL_READ_PAGE_ROWS
 
 
+# Carries, per row, which content keys the database stripped from settings_json.
+COMPONENT_DB_OMITTED_KEYS_COLUMN = 'settings_content_omitted__'
+
+
+def live_component_rows_without_content(module_ids):
+    """``live_component_rows_paged(module_ids)`` with the authored long text
+    (COMPONENT_CONTENT_SETTING_KEYS) stripped from ``settings_json`` by Postgres.
+
+    ``omit=content`` used to drop that text in Python, after the database had
+    already shipped it: ~24 MB of the components table's 39 MB is settings_json,
+    nearly all of it these keys, and the largest programme holds ~17k of the
+    table's ~18k rows. Stripping in the query keeps it on the database side.
+
+    Each row also carries COMPONENT_DB_OMITTED_KEYS_COLUMN: the stripped keys
+    whose value was not empty, in COMPONENT_CONTENT_SETTING_KEYS order -- what
+    component_rows_without_content() would have named.
+
+    Returns None where this read does not apply (not Postgres, no module ids,
+    no settings_json column); the caller then takes the full read.
+    """
+    ids = tuple(sorted({clean_str(value) for value in (module_ids or []) if clean_str(value)}))
+    if not ids or connection.vendor != 'postgresql':
+        return None
+    ensure_module_authoring_tables()
+    columns = column_names(AUTHORING_COMPONENTS_TABLE)
+    if 'settings_json' not in columns:
+        return None
+    keys = list(COMPONENT_CONTENT_SETTING_KEYS)
+    settings = f'component.{quote_ident("settings_json")}::jsonb'
+    omitted = f'omitted.{quote_ident(COMPONENT_DB_OMITTED_KEYS_COLUMN)}'
+    select_list = ', '.join(f'component.{quote_ident(column)}' for column in sorted(columns - {'settings_json'}))
+    # Only non-empty values go, as in component_rows_without_content(): an
+    # empty one stays in settings and is not named as omitted.
+    select_list += (
+        f", case when jsonb_typeof({settings}) = 'object' then {settings} - {omitted} else {settings} end"
+        f' as {quote_ident("settings_json")}, {omitted}'
+    )
+    omitted_keys = (
+        f"select case when jsonb_typeof({settings}) = 'object' then array("
+        f'select entry.key from jsonb_each({settings}) as entry'
+        f' where entry.key = any(%s::text[])'
+        f""" and entry.value not in ('null'::jsonb, '""'::jsonb, '[]'::jsonb, '{{}}'::jsonb)"""
+        f' order by array_position(%s::text[], entry.key)'
+        f') else array[]::text[] end as {quote_ident(COMPONENT_DB_OMITTED_KEYS_COLUMN)}'
+    )
+    # Same filter as _live_component_rows_paged: live rows of these modules only.
+    clauses = [f'component.module_catalogue_id in ({", ".join(["%s"] * len(ids))})']
+    if 'deleted_at' in columns:
+        clauses.append(f'component.{quote_ident("deleted_at")} is null')
+    if 'is_programme_deleted' in columns:
+        clauses.append(f'component.{quote_ident("is_programme_deleted")} is not true')
+    where = ' and '.join(f'({clause})' for clause in clauses)
+    table = f'{authoring_table_name(AUTHORING_COMPONENTS_TABLE)} as component'
+    # The order first, from the ids alone, then the rows in id batches. Paging
+    # the row query with LIMIT/OFFSET made Postgres sort -- and so strip --
+    # every row ahead of the offset again on each page: ~21 s for the largest
+    # programme against ~10 s for the same rows read once each.
+    with connection.cursor() as cursor:
+        cursor.execute(f'select component.id from {table} where {where} order by component.display_order, component.id', list(ids))
+        ordered_ids = [row[0] for row in cursor.fetchall()]
+    rows_by_id = {}
+    for start in range(0, len(ordered_ids), COMPONENT_FULL_READ_PAGE_ROWS):
+        batch = ordered_ids[start:start + COMPONENT_FULL_READ_PAGE_ROWS]
+        with connection.cursor() as cursor:
+            cursor.execute(
+                f'select {select_list} from {table} cross join lateral ({omitted_keys}) as omitted'
+                f' where ({where}) and component.id in ({", ".join(["%s"] * len(batch))})',
+                [keys, keys, *ids, *batch],
+            )
+            for row in rows_as_dicts(cursor):
+                rows_by_id[row.get('id')] = row
+    # A row archived between the two reads is simply absent; one added is not
+    # in the order and waits for the next read, as it would on a later page.
+    return [rows_by_id[row_id] for row_id in ordered_ids if row_id in rows_by_id]
+
+
 def get_authoring_structure_payloads(
     module_catalogue_ids,
     include_staff=True,
@@ -21799,6 +21941,11 @@ def merge_partial_module_structure(stored, payload):
     return {**module_fields, 'weekStructure': weeks}
 
 
+MODULE_ARCHIVED_SAVE_REFUSED = (
+    'This module is archived, so this save was not applied. Restore it from View archive to edit it again.'
+)
+
+
 def save_module_authoring_structure(module_catalogue_id, payload, *, repair_links=True, write_changed_only=False):
     """Persist one module's structure.
 
@@ -21820,6 +21967,18 @@ def save_module_authoring_structure(module_catalogue_id, payload, *, repair_link
     module_catalogue_id = unique_module_catalogue_id(module_catalogue_id or payload.get('catalogueId') or payload.get('moduleCatalogueId'))
     existing_module_rows = authoring_fetch_all(AUTHORING_MODULES_TABLE, 'module_catalogue_id = %s', [module_catalogue_id]) if module_catalogue_id else []
     existing_module_row = existing_module_rows[0] if existing_module_rows else {}
+    # An editor that still believes an archived module is live sends
+    # `isProgrammeDeleted: false` (the Builder derives it from the copy it
+    # loaded). Honouring that cleared the archive on the module row alone: the
+    # weeks and components archived with it kept their stamp, and the save wrote
+    # a second set beside them. Restore is the only way back out of the archive.
+    if (module_withdrawn_on_its_own(existing_module_row)
+            and ('isProgrammeDeleted' in payload or 'is_programme_deleted' in payload)
+            and not truthy(payload.get('isProgrammeDeleted') or payload.get('is_programme_deleted'))):
+        raise ModuleAuthoringValidationError([{
+            'path': 'isProgrammeDeleted',
+            'message': MODULE_ARCHIVED_SAVE_REFUSED,
+        }])
     # Validation above has already rejected a non-list weekStructure/weeks, so the
     # list form is the only thing that can reach here.
     has_explicit_weeks = 'weekStructure' in payload or 'weeks' in payload
@@ -24555,6 +24714,11 @@ def curriculum_module_collection(request):
     if is_authoring_request:
         requested_catalogue_id = first_clean_payload_value(payload, 'catalogueId', 'moduleCatalogueId', 'module_catalogue_id')
         module_catalogue_id = find_existing_authoring_catalogue_id_for_payload(payload) or unique_module_catalogue_id(requested_catalogue_id)
+        if module_withdrawn_on_its_own(authoring_module_exists(module_catalogue_id)):
+            # A create never lands on an archived module; see
+            # find_existing_authoring_catalogue_id_for_payload. Restoring one
+            # is the archive's Restore, which brings its weeks back with it.
+            module_catalogue_id = unique_module_catalogue_id()
         module_payload = {
             'catalogueId': module_catalogue_id,
             'programmeId': payload.get('programmeId') or payload.get('programme') or payload.get('programmeName'),
@@ -25713,7 +25877,7 @@ def curriculum_component_collection(request):
             project = component_rows_without_content if omit_content else (lambda rows: rows)
             if module_catalogue_ids:
                 if query_value(request, 'page') or query_value(request, 'pageSize'):
-                    return curriculum_results_response(project(component_builder_rows(module_catalogue_ids)), request=request)
+                    return curriculum_results_response(component_builder_rows(module_catalogue_ids, omit_content=omit_content), request=request)
                 # The programme page reads every component of the programme
                 # here on each open -- ~17k rows with their settings for the
                 # largest programme -- and nothing cached it. The rows are
@@ -25729,7 +25893,7 @@ def curriculum_component_collection(request):
                 entry = cached_curriculum_value(
                     f'components-response:{"nocontent" if omit_content else "full"}:{len(ids)}:{digest}',
                     lambda: encode_json_bytes(
-                        curriculum_results_response(project(component_builder_rows(module_catalogue_ids))).content,
+                        curriculum_results_response(component_builder_rows(module_catalogue_ids, omit_content=omit_content)).content,
                     ),
                     ttl=60,
                 )
@@ -26737,7 +26901,14 @@ def coverage_entry(request, scope='', identifier=''):
     key = f'ksb-coverage-response:{scope or "all"}:{clean_str(identifier)}:{source_type}:{source_id}:{actual}'
 
     def build():
-        response = _coverage_response_uncached(request, scope, identifier)
+        # One targeted read scope per build. Without it every helper below
+        # re-read its parent table in full -- curriculum.modules, the training
+        # rows, the programme configs, the KSB profiles -- once per caller, a
+        # remote round trip each. Child reads stay on the targeted
+        # ``module_catalogue_id in (...)`` query exactly as they were outside a
+        # scope, so the rows are the same; only the repeats go.
+        with curriculum_read_scope(targeted_child_reads=True):
+            response = _coverage_response_uncached(request, scope, identifier)
         return encode_json_bytes(response.content, status=response.status_code)
 
     return cached_curriculum_value(key, build, ttl=60)

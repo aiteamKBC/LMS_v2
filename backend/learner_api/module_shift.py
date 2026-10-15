@@ -46,6 +46,7 @@ from django.http import JsonResponse
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 
+from curriculum_api.week_visibility import visible_child_sql, visible_week_sql
 from login.permissions import learner_self_or_staff
 
 from .active_users import (
@@ -283,7 +284,9 @@ def _weeks_with_components(module_id):
                c.expected_otjh
         FROM curriculum.weeks w
         LEFT JOIN curriculum.components c ON c.week_id = w.id
+          AND """ + visible_child_sql("c") + """
         WHERE w.module_catalogue_id = %s
+          AND """ + visible_week_sql("w") + """
         ORDER BY w.week_number, w.display_order, c.display_order, c.title
         """,
         [module_id],
@@ -322,6 +325,7 @@ def _quiz_component_slots(profile, component_ids):
         FROM curriculum.components c
         WHERE c.type = 'quiz'
           AND nullif(c.settings_json->>'linkedQuizId', '') IS NOT NULL
+          AND """ + visible_child_sql("c") + """
           AND c.module_catalogue_id IN (
               SELECT module_ref FROM "Learner".learner_training_plan_modules
               WHERE learner_id = %s
