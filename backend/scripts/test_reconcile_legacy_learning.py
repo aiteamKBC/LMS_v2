@@ -143,8 +143,30 @@ class MembershipTests(unittest.TestCase):
         self.assertEqual(plan['add'], [])
         self.assertEqual(len(plan['blocked']), 1)
 
+    def test_owner_excluded_test_course_is_not_restored_from_old_account(self):
+        self.catalogue[0].update(deleted_at='owner-retired', source_payload={
+            'owner_exclusion': {'exclude_from_learning': True}})
+        plan = repair.membership_plan(self.owner, {'10': {'accounts': [12]}, '30': {'accounts': [12]}},
+                                      self.catalogue, self.members)
+        self.assertEqual([item['course_ref'] for item in plan['add']], ['30'])
+        self.assertIn(10, plan['archive'])
+        self.assertEqual(plan['blocked'], [])
+
 
 class CatalogueAndCompletionTests(unittest.TestCase):
+    def test_explicit_test_course_exclusion_survives_catalogue_and_completion_recovery(self):
+        self.courses[0].update(deleted_at='owner-retired', source_payload={
+            'owner_exclusion': {'exclude_from_learning': True}})
+        before = deepcopy((self.verified, self.courses, self.definition, self.state))
+        catalogue = repair.catalogue_plan({9: self.verified}, self.courses, [self.definition])
+        self.assertFalse(any(catalogue.values()))
+        completion = repair.completion_plan(self.state, self.verified, self.courses,
+                                             [self.definition], repair.projection_scope())
+        self.assertEqual(completion['add'], [])
+        self.assertEqual(completion['update'], [])
+        self.assertEqual(completion['blocked'], [])
+        self.assertEqual((self.verified, self.courses, self.definition, self.state), before)
+
     def setUp(self):
         self.courses = [{'id': 1, 'source_course_ref': '21', 'source_course_title': 'Synthetic',
                          'curriculum_module_ref': 'native-module', 'deleted_at': None}]

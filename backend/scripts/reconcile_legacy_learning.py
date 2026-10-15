@@ -279,7 +279,15 @@ def merged_courses(owner, directory, target):
     return courses
 
 
+def excluded_course_refs(courses):
+    """An explicit owner exclusion survives later source catalogue recovery."""
+    return {str(course['source_course_ref']) for course in courses
+            if (course.get('source_payload') or {}).get('owner_exclusion', {}).get('exclude_from_learning') is True}
+
+
 def membership_plan(owner, courses, catalogue, memberships):
+    excluded = excluded_course_refs(catalogue)
+    courses = {cid: source for cid, source in courses.items() if cid not in excluded}
     active = [m for m in memberships if m['deleted_at'] is None]
     by_id = {c['id']: c for c in catalogue}
     by_ref = {c['source_course_ref']: c for c in catalogue if c['deleted_at'] is None}
@@ -457,8 +465,11 @@ def catalogue_plan(verified, courses, definitions):
     inventory = defaultdict(dict)
     all_refs = defaultdict(set)
     titles = {}
+    excluded = excluded_course_refs(courses)
     for source in verified.values():
         for cid, course in source.items():
+            if cid in excluded:
+                continue
             titles[cid] = course['title']
             for ref, fact in course['facts'].items():
                 all_refs[cid].add(ref)
@@ -491,6 +502,8 @@ def catalogue_plan(verified, courses, definitions):
                     'source_position': fact.get('component_order'),
                     'mapping_method': 'verified-legacy-course-inventory'})
     for (cid, ref), definition in active_defs.items():
+        if cid in excluded:
+            continue
         other = ('quiz:' if ref.startswith('material:') else 'material:') + ref.partition(':')[2]
         fact = inventory[cid].get(other)
         if (ref not in all_refs[cid] and fact and not definition['curriculum_component_ref']
@@ -577,6 +590,8 @@ def catalogue_run(args):
 
 
 def completion_plan(state, verified, courses, definitions, scope, *, course_scoped=False):
+    excluded = excluded_course_refs(courses)
+    verified = {cid: source for cid, source in verified.items() if cid not in excluded}
     by_ref = {c['source_course_ref']: c for c in courses if c['deleted_at'] is None}
     defs = {(d['source_course_id'], d['source_activity_id']): d for d in definitions if d['deleted_at'] is None}
     def_by_id = {d['id']: d for d in definitions if d['deleted_at'] is None}
