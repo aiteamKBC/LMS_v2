@@ -7,7 +7,7 @@ import { SessionSyncStatus } from './SessionSyncStatus';
 import { formatSystemTimestamp } from '@/lib/format';
 import {
   linkAttendanceAlias, loadSessionResult, requestSessionSync, sessionAttendanceUrl, sessionFileUrl, setRecordingVisibility,
-  type SessionLearner, type SessionPerson, type SessionFile,
+  type SessionLearner, type SessionPerson, type SessionFile, type AttendanceIdentityLink,
 } from '@/api/sessionResults';
 import { useSavedSessionData } from '@/hooks/useSavedSessionData';
 
@@ -38,6 +38,7 @@ export function SessionResults({ seriesId, sessionNumber, moduleId, learner, att
 }) {
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
+  const [noticeKind, setNoticeKind] = useState<'sync' | 'identity'>('sync');
   const [syncing, setSyncing] = useState(false);
   const [visibilityBusy, setVisibilityBusy] = useState('');
   const [tab, setTab] = useState<'recordings' | 'attendance' | 'transcripts'>('recordings');
@@ -46,6 +47,8 @@ export function SessionResults({ seriesId, sessionNumber, moduleId, learner, att
   const [unmatchedOpen, setUnmatchedOpen] = useState(false);
   const [aliasChoices, setAliasChoices] = useState<Record<string, string>>({});
   const [aliasBusy, setAliasBusy] = useState('');
+  const [editingLink, setEditingLink] = useState<AttendanceIdentityLink>();
+  const [correctionLearner, setCorrectionLearner] = useState('');
   const [recordingWatchSeconds, setRecordingWatchSeconds] = useState<Record<string, number>>({});
   const [currentTime, setCurrentTime] = useState(() => Date.now());
   const kind = learner?.kind, learnerId = learner?.id;
@@ -66,6 +69,7 @@ export function SessionResults({ seriesId, sessionNumber, moduleId, learner, att
   useEffect(() => {
     setError(''); setPage(0); setNotice(''); setTab('recordings');
     setUnmatchedOpen(false); setAliasChoices({}); setAliasBusy('');
+    setEditingLink(undefined); setCorrectionLearner('');
   }, [seriesId, sessionNumber, moduleId, kind, learnerId]);
   const files = session?.artifacts?.filter(file => (!learner && !preview) || !file.hiddenFromLearners) || [];
   const recordings = files.filter(file => file.type === 'recording');
@@ -79,7 +83,7 @@ export function SessionResults({ seriesId, sessionNumber, moduleId, learner, att
   const ownRawStatus = own ? rawStatusOf(own) : undefined;
   const ownFinalOutcome = own ? finalOutcomeOf(own) : undefined;
   const sync = async () => {
-    setSyncing(true); setError(''); setNotice('');
+    setSyncing(true); setError(''); setNotice(''); setNoticeKind('sync');
     try { setNotice((await requestSessionSync(seriesId)).message); saved.refresh(); }
     catch (reason) { setError(reason instanceof Error ? reason.message : 'Could not request synchronization.'); }
     finally { setSyncing(false); }
@@ -101,13 +105,30 @@ export function SessionResults({ seriesId, sessionNumber, moduleId, learner, att
     const key = identityKey(person);
     const learnerProfileId = Number(selectedLearnerId(person) || 0);
     if (!learnerProfileId) return;
-    setAliasBusy(key); setError(''); setNotice('');
+    setAliasBusy(key); setError(''); setNotice(''); setNoticeKind('identity');
     try {
       const linked = await linkAttendanceAlias(seriesId, sessionNumber, person.email, learnerProfileId, person.sourceRecordIds || [], moduleId);
-      setNotice(`${linked.aliasEmail || person.name} is now matched to ${linked.learnerName}. Saved attendance was recalculated.`);
-      await saved.refresh();
+      setNotice(`${linked.aliasEmail || person.name} is now matched to ${linked.learnerName}. ${linked.scope === 'session' ? 'This review applies to this session only. Future appearances of this duplicate name need review.' : 'This match applies across this module.'}`);
+      if (linked.recalculation === 'failed') setError('The identity link was saved, but attendance reporting could not be refreshed. Retry the link to recalculate reporting.');
+      if (linked.recalculation === 'pending') setError('The identity link was saved. This view uses the saved Teams evidence, but no attendance reporting rows were available to update.');
+      saved.refresh();
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'Could not link the reported email.');
+    } finally { setAliasBusy(''); }
+  };
+  const correctLink = async (action: 'change' | 'unlink') => {
+    if (!editingLink || (action === 'change' && !correctionLearner)) return;
+    setAliasBusy('correction'); setError(''); setNotice(''); setNoticeKind('identity');
+    try {
+      const result = await linkAttendanceAlias(seriesId, sessionNumber, editingLink.aliasEmail,
+        action === 'change' ? Number(correctionLearner) : 0, editingLink.sourceRecordIds, moduleId,
+        { action, link: editingLink });
+      setNotice(action === 'unlink' ? 'Identity unlinked. Attendance is now based on the remaining Teams evidence.' : `Identity is now matched to ${result.learnerName}.`);
+      if (result.recalculation === 'failed') setError('The correction was saved, but attendance reporting could not be refreshed. Contact an administrator to retry reporting.');
+      if (result.recalculation === 'pending') setError('The correction was saved. This view uses the saved Teams evidence, but no attendance reporting rows were available to update.');
+      setEditingLink(undefined); saved.refresh();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'Could not correct the identity link.');
     } finally { setAliasBusy(''); }
   };
   return <section className="overflow-hidden rounded-2xl border border-primary-100 bg-white shadow-sm" aria-label={`Session ${sessionNumber} results`}>
@@ -125,7 +146,7 @@ export function SessionResults({ seriesId, sessionNumber, moduleId, learner, att
     </header>
     {upcoming && <p role="status" className="m-4 rounded-lg border border-sky-200 bg-sky-50 p-4 text-sm text-sky-900">This session has not taken place yet. Attendance and any recordings or transcripts will appear here after the session ends and Teams makes them available.</p>}
     {(error || saved.error) && <p role="alert" className="m-4 rounded-lg bg-red-50 p-3 text-sm text-red-800">{error || saved.error}</p>}
-    {notice && !saved.data?.job && <p role="status" className="m-4 rounded-lg bg-primary-50 p-3 text-sm">{notice}</p>}
+    {notice && (noticeKind === 'identity' || !saved.data?.job) && <p role="status" className="m-4 rounded-lg bg-primary-50 p-3 text-sm">{notice}</p>}
     {!learner && !preview && saved.data?.job && (saved.data.job.state === 'failed' && savedSessionReady
       ? <div className="m-4 rounded-lg border border-background-200 bg-background-50 p-4 text-sm text-foreground-700">
         <p>The recording and attendance for this session are saved.</p>
@@ -175,8 +196,10 @@ export function SessionResults({ seriesId, sessionNumber, moduleId, learner, att
             </button>
             {unmatchedOpen && <div className="space-y-3 border-t border-amber-200 p-4">
               <p className="text-sm text-amber-900">These Teams identities are not assigned to a learner in this module. Link only an identity you have verified.</p>
+              <p className="text-sm text-amber-900">Your choice is remembered across this module, including future sessions. Guest names are matched exactly; duplicate names need individual review.</p>
               {session.unmatchedAttendance.map(person => { const key = identityKey(person); return <div key={key} className="grid gap-3 rounded-lg border bg-white p-3 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] md:items-center">
-                <div><p className="font-semibold">{person.name}</p><p className="text-xs text-foreground-500">{person.email || 'Unverified Teams identity'}</p><p className="mt-1 text-xs">{Math.floor(person.seconds / 60)}m {person.seconds % 60}s in Teams</p></div>
+                <div><p className="font-semibold">{person.name}</p><p className="text-xs text-foreground-500">{person.email || 'Unverified Teams identity'}</p><p className="mt-1 text-xs">{Math.floor(person.seconds / 60)}m {person.seconds % 60}s in Teams</p>
+                  {person.identityAmbiguous && <p className="mt-2 text-xs font-semibold text-amber-900">Several participants used this name. Review this participant separately; this link applies to this session only.</p>}</div>
                 <label className="text-xs font-semibold text-foreground-600">Match to module learner
                   <select aria-label={`Match ${person.email || person.name} to learner`} value={selectedLearnerId(person)}
                     onChange={event => setAliasChoices(value => ({ ...value, [key]: event.target.value }))}
@@ -186,12 +209,38 @@ export function SessionResults({ seriesId, sessionNumber, moduleId, learner, att
                   </select>
                   {person.suggestedLearnerProfileId && !Object.prototype.hasOwnProperty.call(aliasChoices, key) && <span className="mt-1 block font-normal text-primary-700">Suggested from the Teams name — confirm before linking.</span>}
                 </label>
-                <button type="button" disabled={aliasBusy === key || !selectedLearnerId(person)}
+                <button type="button" disabled={Boolean(aliasBusy) || !selectedLearnerId(person)}
                   onClick={() => void linkAlias(person)} className="rounded-lg bg-primary-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">
                   {aliasBusy === key ? 'Linking…' : 'Link identity'}
                 </button>
               </div>})}
             </div>}
+          </div>}
+          {!!session.linkedIdentities?.length && <details className="rounded-xl border border-primary-200 bg-primary-50/40 p-4">
+            <summary className="cursor-pointer font-semibold">Linked identities ({session.linkedIdentities.length})</summary>
+            <div className="mt-3 space-y-3">{session.linkedIdentities.map(link => <div key={`${link.identityKind}:${link.identityValue}`} className="flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-white p-3">
+              <div><p className="font-semibold">{link.name}</p><p className="text-sm">Linked to {link.learnerName}</p>
+                <p className="text-xs text-foreground-500">{link.scope === 'module' ? 'Current and future sessions in this module' : 'This session only'}</p></div>
+              <button type="button" disabled={Boolean(aliasBusy)} onClick={() => { setEditingLink(link); setCorrectionLearner(String(link.learnerProfileId)); }}
+                className="rounded-lg border px-3 py-2 text-sm font-semibold disabled:opacity-50" aria-label={`Correct link for ${link.name}`}>Change or unlink</button>
+            </div>)}</div>
+          </details>}
+          {editingLink && <div role="region" aria-label="Correct identity link" className="space-y-3 rounded-xl border border-primary-200 bg-white p-4">
+            <p className="font-semibold">Correct {editingLink.name}</p>
+            <p className="text-sm">Currently linked to {editingLink.learnerName}. {editingLink.scope === 'module'
+              ? 'Changing or unlinking updates this identity across the module. Both learners’ attendance will be recalculated from Teams evidence.'
+              : 'This correction affects this session only.'}</p>
+            <label className="block text-sm font-semibold">Correct learner
+              <select value={correctionLearner} onChange={event => setCorrectionLearner(event.target.value)} disabled={Boolean(aliasBusy)} className="mt-1 w-full rounded-lg border bg-white px-3 py-2 font-normal">
+                <option value="">Choose learner…</option>
+                {(session.attendanceCandidates || []).map(candidate => <option key={candidate.learnerProfileId} value={candidate.learnerProfileId}>{candidate.name} · {candidate.email}</option>)}
+              </select>
+            </label>
+            <div className="flex flex-wrap gap-2">
+              <button type="button" disabled={Boolean(aliasBusy) || !correctionLearner} onClick={() => void correctLink('change')} className="rounded-lg bg-primary-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">Save corrected link</button>
+              <button type="button" disabled={Boolean(aliasBusy)} onClick={() => void correctLink('unlink')} className="rounded-lg border border-red-200 px-4 py-2 text-sm font-semibold text-red-700 disabled:opacity-50">Confirm unlink</button>
+              <button type="button" disabled={Boolean(aliasBusy)} onClick={() => setEditingLink(undefined)} className="rounded-lg border px-4 py-2 text-sm">Cancel</button>
+            </div>
           </div>}
           {session.identityCheck && <SessionAccountCheck check={session.identityCheck} />}
           <div className="overflow-x-auto"><table className="w-full text-left text-sm"><thead><tr className="border-b text-foreground-500"><th className="p-3">Learner</th><th>Duration</th><th>Attendance</th><th>Recovery</th></tr></thead><tbody>

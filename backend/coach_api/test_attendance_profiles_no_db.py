@@ -171,6 +171,12 @@ class AttendanceProfilesTests(unittest.TestCase):
         self.namespace["evidence_seconds"] = policy_namespace["evidence_seconds"]
         self.namespace["attendance_display_name"] = policy_namespace["attendance_display_name"]
         self.namespace["attendance_name_key"] = policy_namespace["attendance_name_key"]
+        policy_namespace['defaultdict'] = defaultdict
+        load_functions(BACKEND / "curriculum_api/session_results_policy.py", {"attendance_identity"}, policy_namespace)
+        load_functions(BACKEND / "curriculum_api/attendance_link_policy.py",
+                       {"identity_key", "record_key", "ambiguous_guest_names", "apply_reviewed_identities"}, policy_namespace)
+        self.namespace["apply_reviewed_identities"] = policy_namespace["apply_reviewed_identities"]
+        self.namespace["identity_rules"] = lambda *_args: []
         self.bind_rows()
         load_functions(BACKEND / "learner_api/teams_attendance.py",
                        {"_email", "_canonical_attendance_email", "_unique_exact_name_email",
@@ -196,7 +202,7 @@ class AttendanceProfilesTests(unittest.TestCase):
                                attendance_report_id=f"report-{identifier}", artifacts_synced_at=start, updated_at=start)
 
     def record(self, occurrence_id, email, intervals):
-        return SimpleNamespace(id=f"row-{occurrence_id}-{len(intervals)}", occurrence_id=occurrence_id,
+        return SimpleNamespace(id=f"row-{occurrence_id}-{email}-{intervals}", occurrence_id=occurrence_id,
                                email=email, graph_record_id="record", role="attendee", raw_data={},
                                display_name="Synthetic Participant", total_attendance_seconds=300,
                                intervals=[{"joinDateTime": (self.start + timedelta(minutes=start)).isoformat(),
