@@ -1,144 +1,213 @@
-import { Briefcase, GraduationCap, House, UserRound, type LucideIcon } from 'lucide-react';
+import type { LucideIcon } from 'lucide-react';
 import {
-  EMPLOYMENT_STATUSES,
-  PROGRAMMES,
-  RESIDENCY_STATUSES,
+  isUkPostcode,
   type ApplicationField,
+  type ApplicationSubmission,
   type ApprenticeshipApplication,
+  type CustomAnswer,
 } from '@/api/apprenticeshipApplication';
 import { SYSTEM_TIME_ZONE } from '@/lib/format';
+import { APPLICATION_FIELDS, BUILTIN_ITEMS, CUSTOM_SECTION_ICON, builtinSection, isBuiltinQuestion, textFor } from './layout/registry';
+import { builtinOptions, isLocked, sectionDescription } from './layout/resolve';
+import type { EligibilityCondition, EligibilityItem, EligibilityLayout } from './layout/types';
 
-/** What the form holds while it is being filled in: dates stay '' until chosen. */
-export type Answers = Omit<ApprenticeshipApplication, 'fundedTrainingCompletedOn'> & { fundedTrainingCompletedOn: string };
-export type Errors = Partial<Record<ApplicationField, string>>;
+export type AnswerValue = string | boolean | null;
+/** What the form holds while it is being filled in, by question key: dates stay '' until chosen, yes/no stays null. */
+export type Answers = Record<string, AnswerValue>;
+export type Errors = Record<string, string>;
 
-type Base = { label: string; hint?: string; required: boolean; shown?: (answers: Answers) => boolean };
+type Base = {
+  key: string;
+  label: string;
+  hint?: string;
+  required: boolean;
+  /** Added in the builder: its answer travels under `custom`. */
+  custom?: boolean;
+  shown?: (answers: Answers, depth: number) => boolean;
+};
 export type Question =
-  | (Base & { kind: 'text' | 'email' | 'tel'; key: ApplicationField; maxLength: number; autoComplete?: string })
-  | (Base & { kind: 'date'; key: ApplicationField; autoComplete?: string })
-  | (Base & { kind: 'choice'; key: ApplicationField; options: readonly string[] })
-  | (Base & { kind: 'select'; key: ApplicationField; options: readonly string[] })
-  | (Base & { kind: 'yesno'; key: ApplicationField });
-export type Note = { kind: 'note'; text: string };
+  | (Base & { kind: 'text' | 'email' | 'tel'; maxLength: number; autoComplete?: string; postcode?: boolean })
+  | (Base & { kind: 'number' })
+  | (Base & { kind: 'date'; autoComplete?: string; allowFuture?: boolean })
+  | (Base & { kind: 'choice' | 'select'; options: readonly string[] })
+  | (Base & { kind: 'yesno' });
+export type Note = { kind: 'note'; key: string; text: string };
 
 export interface Section {
+  slug: string;
   title: string;
   description: string;
   icon: LucideIcon;
   items: (Question | Note)[];
 }
 
-export const emptyAnswers = (): Answers => ({
-  firstName: '', surname: '', workEmail: '', phoneNumber: '', fullAddress: '', postcode: '', dateOfBirth: '',
-  employmentStatus: '', majorityHoursInEngland: null, employerName: '', employerAddress: '', employerPostcode: '',
-  representativeName: '', representativeEmail: '',
-  livesInUk: null, residenceNotForEducation: null, residencyStatus: '',
-  programme: '', attendedFundedTraining: null, fundedTrainingCompletedOn: '', notPreviouslyCompletedProgramme: null,
-});
+export interface FormPage {
+  eyebrow: string;
+  title: string;
+  intro: string;
+}
 
-// Wording and limits match the backend (enrolment_api/eligibility_form.py).
-export const SECTIONS: Section[] = [
-  {
-    title: 'Personal Details',
-    description: 'Please provide your personal information.',
-    icon: UserRound,
-    items: [
-      { kind: 'text', key: 'firstName', label: 'First Name', hint: 'Please enter your legal first name', required: true, maxLength: 100, autoComplete: 'given-name' },
-      { kind: 'text', key: 'surname', label: 'Surname', hint: 'Please enter your legal surname', required: true, maxLength: 100, autoComplete: 'family-name' },
-      { kind: 'email', key: 'workEmail', label: 'Work Email Address', hint: 'Please enter your email address within your organisation domain', required: true, maxLength: 254, autoComplete: 'work email' },
-      { kind: 'tel', key: 'phoneNumber', label: 'Phone Number', hint: 'Enter your contact phone number.', required: false, maxLength: 40, autoComplete: 'tel' },
-      { kind: 'text', key: 'fullAddress', label: 'Full Address', hint: 'Enter your full address', required: true, maxLength: 500, autoComplete: 'street-address' },
-      { kind: 'text', key: 'postcode', label: 'Postcode', hint: 'Enter your postcode', required: true, maxLength: 12, autoComplete: 'postal-code' },
-      { kind: 'date', key: 'dateOfBirth', label: 'Date of Birth', hint: 'Please enter your date of birth (You must be 16 or over to be eligible)', required: true, autoComplete: 'bday' },
-    ],
-  },
-  {
-    title: 'Employment',
-    description: 'Tell us about your current employment situation.',
-    icon: Briefcase,
-    items: [
-      { kind: 'choice', key: 'employmentStatus', label: 'Your Employment Status:', hint: 'Choose your employment status', required: true, options: EMPLOYMENT_STATUSES },
-      {
-        kind: 'yesno',
-        key: 'majorityHoursInEngland',
-        label: 'Could you confirm whether you expect to spend more than 50% of your working hours in England? (The measure of 50% should exclude any time expected to be spent outside of England in remote and/or hybrid working)',
-        hint: 'Choose your answer',
-        required: true,
-      },
-      { kind: 'text', key: 'employerName', label: 'Employer', hint: 'Please enter your current company name', required: true, maxLength: 200, autoComplete: 'organization' },
-      { kind: 'text', key: 'employerAddress', label: 'Employer Full Address', hint: "Please enter your company's address", required: true, maxLength: 500 },
-      { kind: 'text', key: 'employerPostcode', label: 'Employer Postcode', hint: "Please enter your company's postcode", required: true, maxLength: 12 },
-      {
-        kind: 'note',
-        text: 'Please provide the details of a representative who will support you with your application. This could be your Head of Apprenticeships, HR representative, Finance contact, or Manager.',
-      },
-      { kind: 'text', key: 'representativeName', label: 'Employer Representative Name', required: true, maxLength: 200 },
-      { kind: 'email', key: 'representativeEmail', label: 'Employer Representative Email', required: true, maxLength: 254 },
-    ],
-  },
-  {
-    title: 'Residency',
-    description: 'Help us assess your residency status for apprenticeship funding.',
-    icon: House,
-    items: [
-      { kind: 'yesno', key: 'livesInUk', label: 'Do you currently live in United Kingdom?', hint: 'You must be living in England to be eligible for funding.', required: true },
-      {
-        kind: 'yesno',
-        key: 'residenceNotForEducation',
-        label: 'Please confirm that your ordinary residence in the UK for the last 3 years has not been mainly or wholly for the purpose of full-time education.',
-        required: true,
-      },
-      { kind: 'select', key: 'residencyStatus', label: 'Please provide your residency status?', hint: 'Select the option that best describes your residency status.', required: true, options: RESIDENCY_STATUSES },
-    ],
-  },
-  {
-    title: 'Programme Suitability',
-    description: 'Please briefly explain how the programme aligns with your role, experience, and career goals.',
-    icon: GraduationCap,
-    items: [
-      { kind: 'select', key: 'programme', label: 'Choose Your Applying Programme', hint: 'You must confirm before submitting your application.', required: true, options: PROGRAMMES },
-      { kind: 'yesno', key: 'attendedFundedTraining', label: 'Have you attended any other government funded training programmes in the last 12 months?', required: true },
-      { kind: 'date', key: 'fundedTrainingCompletedOn', label: 'When was it completed?', required: true, shown: answers => answers.attendedFundedTraining === true },
-      { kind: 'yesno', key: 'notPreviouslyCompletedProgramme', label: 'Please confirm that you have not previously completed this programme as part of a funded apprenticeship.', required: true },
-    ],
-  },
-];
+// Limits and messages match the backend (enrolment_api/eligibility_form.py, postcode_lookup.py).
+const MAX_CUSTOM_TEXT = 500;
+const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const NUMBER = /^[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?$/;
+export const REQUIRED = 'This field is required.';
+export const INVALID_POSTCODE = 'Enter a valid UK postcode, for example CT1 1AA.';
+export const UNKNOWN_POSTCODE = 'We could not find this postcode. Check it and try again.';
+
+export const isQuestion = (item: Question | Note): item is Question => item.kind !== 'note';
+export const isShown = (question: Question, answers: Answers, depth = 0) => !question.shown || question.shown(answers, depth);
+export const emptyAnswer = (question: Question): AnswerValue => (question.kind === 'yesno' ? null : '');
+export const answerFor = (answers: Answers, question: Question): AnswerValue => answers[question.key] ?? emptyAnswer(question);
+export const isPostcodeQuestion = (question: Question) => 'postcode' in question && Boolean(question.postcode);
+
+/** How a condition names an answer: Yes/No for a yes/no question. */
+const answerLabel = (value: AnswerValue | undefined) => (typeof value === 'boolean' ? (value ? 'Yes' : 'No') : value ?? '');
+
+export function formPage(layout: EligibilityLayout): FormPage {
+  return {
+    eyebrow: textFor(layout.texts, 'page.eyebrow'),
+    title: textFor(layout.texts, 'page.title'),
+    intro: textFor(layout.texts, 'page.intro'),
+  };
+}
+
+/** Shown while `condition`'s question is itself shown and answered with one of its values. */
+function conditionShown(condition: EligibilityCondition, questions: Map<string, Question>) {
+  return (answers: Answers, depth: number) => {
+    const trigger = questions.get(condition.field);
+    if (!trigger || depth > 10 || !isShown(trigger, answers, depth + 1)) return false;
+    return condition.values.includes(answerLabel(answers[condition.field]));
+  };
+}
+
+function toItem(item: EligibilityItem, layout: EligibilityLayout, questions: Map<string, Question>): Question | Note | null {
+  if (!item.builtin) {
+    const base = {
+      key: item.key,
+      label: item.label ?? '',
+      hint: item.helpText || undefined,
+      required: Boolean(item.required),
+      custom: true,
+      shown: item.condition ? conditionShown(item.condition, questions) : undefined,
+    };
+    switch (item.type) {
+      case 'number': return { ...base, kind: 'number' };
+      // A custom date may be a future one, such as a planned start.
+      case 'date': return { ...base, kind: 'date', allowFuture: true };
+      case 'yesno': return { ...base, kind: 'yesno' };
+      case 'dropdown': return { ...base, kind: 'select', options: item.options ?? [] };
+      default: return { ...base, kind: 'text', maxLength: MAX_CUSTOM_TEXT };
+    }
+  }
+
+  const def = BUILTIN_ITEMS[item.key];
+  if (!def) return null;
+  if (def.kind === 'note') return { kind: 'note', key: def.key, text: textFor(layout.texts, `${def.key}.text`) };
+  if (!isBuiltinQuestion(def)) return null;
+  const followUp = def.followUpOf;
+  const base = {
+    key: def.key,
+    label: textFor(layout.texts, `${def.key}.label`),
+    hint: textFor(layout.texts, `${def.key}.hint`) || undefined,
+    required: def.locked ? true : item.required ?? def.required,
+    shown: followUp ? conditionShown({ field: followUp.key, values: [followUp.value ? 'Yes' : 'No'] }, questions) : undefined,
+  };
+  switch (def.kind) {
+    case 'choice':
+    case 'select':
+      return { ...base, kind: def.kind, options: builtinOptions(item) ?? [] };
+    case 'date':
+      return { ...base, kind: 'date', autoComplete: def.autoComplete };
+    case 'yesno':
+      return { ...base, kind: 'yesno' };
+    default:
+      return { ...base, kind: def.kind, maxLength: def.maxLength ?? MAX_CUSTOM_TEXT, autoComplete: def.autoComplete, postcode: def.postcode };
+  }
+}
+
+/**
+ * The sections an applicant goes through, in order: hidden sections, removed
+ * questions and sections left with nothing to ask are skipped.
+ */
+export function formSections(layout: EligibilityLayout): Section[] {
+  // Every question asked, by key, for conditions to look their answers up.
+  const questions = new Map<string, Question>();
+  const sections: Section[] = [];
+  for (const section of layout.sections) {
+    if (section.hidden) continue;
+    const items: (Question | Note)[] = [];
+    for (const item of section.items) {
+      if (item.hidden && !isLocked(item)) continue;
+      const built = toItem(item, layout, questions);
+      if (!built) continue;
+      if (isQuestion(built)) questions.set(built.key, built);
+      items.push(built);
+    }
+    if (!items.some(isQuestion)) continue;
+    sections.push({
+      slug: section.slug,
+      title: section.title,
+      description: sectionDescription(section),
+      icon: builtinSection(section.slug)?.icon ?? CUSTOM_SECTION_ICON,
+      items,
+    });
+  }
+  return sections;
+}
 
 /** Today in the business time zone, as the YYYY-MM-DD a date input expects. */
 export const businessToday = () =>
   new Intl.DateTimeFormat('en-CA', { timeZone: SYSTEM_TIME_ZONE, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
 
-const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-export const REQUIRED = 'This field is required.';
-
-export const isQuestion = (item: Question | Note): item is Question => item.kind !== 'note';
-export const isShown = (question: Question, answers: Answers) => !question.shown || question.shown(answers);
-
 export function validateSection(section: Section, answers: Answers, today = businessToday()): Errors {
   const errors: Errors = {};
   for (const question of section.items.filter(isQuestion)) {
     if (!isShown(question, answers)) continue;
-    const value = answers[question.key];
+    const value = answers[question.key] ?? null;
     const empty = value === null || (typeof value === 'string' && !value.trim());
     if (empty) {
       if (question.required) errors[question.key] = REQUIRED;
       continue;
     }
-    if (question.kind === 'email' && !EMAIL.test(String(value).trim())) {
+    const text = String(value).trim();
+    if (question.kind === 'email' && !EMAIL.test(text)) {
       errors[question.key] = 'Enter a valid email address.';
     } else if (question.kind === 'date') {
-      const date = String(value);
-      if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || date < '1900-01-01') errors[question.key] = 'Enter a valid date.';
-      else if (date > today) errors[question.key] = 'The date cannot be in the future.';
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(text) || text < '1900-01-01') errors[question.key] = 'Enter a valid date.';
+      else if (!question.allowFuture && text > today) errors[question.key] = 'The date cannot be in the future.';
+    } else if (question.kind === 'number' && !NUMBER.test(text)) {
+      errors[question.key] = 'Enter a number.';
+    } else if (isPostcodeQuestion(question) && !isUkPostcode(text)) {
+      errors[question.key] = INVALID_POSTCODE;
     }
   }
   return errors;
 }
 
-/** The body the backend expects. A hidden completion date is never sent. */
-export function toPayload(answers: Answers): ApprenticeshipApplication {
+/**
+ * The body the backend expects: every built-in answer, the custom answers, and
+ * the form version. An answer to a question not shown is never sent.
+ */
+export function toPayload(answers: Answers, sections: Section[], layoutVersion: number | null): ApplicationSubmission {
+  const asked = new Map(sections.flatMap((section) => section.items.filter(isQuestion)).map((q) => [q.key, q]));
+  const shown = (key: string) => {
+    const question = asked.get(key);
+    return Boolean(question) && isShown(question!, answers);
+  };
+  const builtin = {} as Record<ApplicationField, AnswerValue>;
+  for (const key of APPLICATION_FIELDS) {
+    const def = BUILTIN_ITEMS[key];
+    builtin[key] = answers[key] ?? (isBuiltinQuestion(def) && def.kind === 'yesno' ? null : '');
+  }
+  const custom: Record<string, CustomAnswer> = {};
+  for (const question of asked.values()) {
+    if (question.custom) custom[question.key] = shown(question.key) ? answers[question.key] ?? null : null;
+  }
   return {
-    ...answers,
-    fundedTrainingCompletedOn: answers.attendedFundedTraining === true ? answers.fundedTrainingCompletedOn || null : null,
+    ...(builtin as unknown as ApprenticeshipApplication),
+    fundedTrainingCompletedOn: shown('fundedTrainingCompletedOn') ? String(answers.fundedTrainingCompletedOn ?? '') || null : null,
+    custom,
+    layoutVersion,
   };
 }
