@@ -128,6 +128,20 @@ class LearnerDetailPrefetchTests(SimpleTestCase):
         profile._prefetched_objects_cache = {"progress_entries": []}
         self.assertEqual(profile.training_plan_progress, [])
 
+    def test_soft_archived_progress_is_not_in_the_active_projection(self):
+        from django.utils import timezone
+        from .models import LearnerProgressEntry
+
+        profile = LearnerProfile(id=19)
+        archived = LearnerProgressEntry(
+            id=1, learner=profile, kind="component", component_ref="old-component",
+            deleted_at=timezone.now(),
+        )
+        archived._prefetched_objects_cache = {"ksb_links": [], "quiz_answers": []}
+        profile._prefetched_objects_cache = {"progress_entries": [archived]}
+
+        self.assertEqual(profile.training_plan_progress, [])
+
     @patch("learner_api.learner_detail.prefetch_related_objects")
     @patch("learner_api.learner_detail.learner_profile_for_source")
     def test_prefetches_the_complete_progress_graph(self, resolve_profile, prefetch):

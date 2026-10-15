@@ -112,6 +112,34 @@ describe('programme-wide module shift', () => {
     });
   });
 
+  it('explains and reports archiving when progress has no matching target', async () => {
+    const unmatched = {
+      ...progress,
+      suggested: [],
+      weeks: [{
+        ...progress.weeks[0],
+        to: { ...progress.weeks[0].to, components: [] },
+      }],
+    };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(response(options))
+      .mockResolvedValueOnce(response(unmatched))
+      .mockResolvedValueOnce(response({ progressMoved: 0, progressArchived: 1 }));
+    vi.stubGlobal('fetch', fetchMock);
+    const user = userEvent.setup();
+    render(<ShiftModuleModal learnerId="62" learnerName="Example learner" onClose={vi.fn()} />);
+
+    await user.click(await screen.findByRole('button', { name: /Another cohort module/ }));
+    await user.click(screen.getByRole('button', { name: 'Next: match progress' }));
+
+    expect(await screen.findByText(/unmatched progress is archived/i)).toBeVisible();
+    await user.click(screen.getByRole('button', { name: 'Shift module' }));
+    await waitFor(() => expect(mocks.success).toHaveBeenCalledWith(
+      'Learner shifted',
+      expect.stringContaining('1 progress entry archived'),
+    ));
+  });
+
   it('keeps a module already assigned in another cohort disabled', async () => {
     mocks.fetchLearningPlan.mockResolvedValue({ plan: [source, target] });
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response(options)));

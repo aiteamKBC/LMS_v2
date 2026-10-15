@@ -249,7 +249,7 @@ function WeekPair({
                         <option value="">
                           {matchingTargets(component).length === 0
                             ? 'No matching component ID or title and type'
-                            : 'Leave this progress where it is'}
+                            : 'Archive this progress'}
                         </option>
                         {matchingTargets(component).map((target) => (
                           <option
@@ -281,7 +281,7 @@ function WeekPair({
             {!pair.to ? (
               <p className="text-[12px] text-foreground-400">
                 The module being joined has no week {pair.order}, so this week&rsquo;s progress
-                cannot be moved. It stays where it is.
+                cannot be moved and will be archived.
               </p>
             ) : targets.length === 0 ? (
               <p className="text-[12px] text-foreground-400">
@@ -330,7 +330,7 @@ export function ShiftModuleModal({ learnerId, learnerName, onClose, onSaved }: P
   const [loadingOptions, setLoadingOptions] = useState(false);
   const [progress, setProgress] = useState<ModuleShiftProgress | null>(null);
   const [loadingProgress, setLoadingProgress] = useState(false);
-  // fromComponentId -> toComponentId. Missing or '' means "leave it alone".
+  // fromComponentId -> toComponentId. Missing or '' means "archive it".
   const [mapping, setMapping] = useState<Record<string, string>>({});
   const [openWeeks, setOpenWeeks] = useState<number[]>([]);
   const [saving, setSaving] = useState(false);
@@ -446,11 +446,15 @@ export function ShiftModuleModal({ learnerId, learnerName, onClose, onSaved }: P
     try {
       const res = await shiftModule(learnerId, from, to, mappings);
       const moved = res.progressMoved || 0;
+      const archived = res.progressArchived || 0;
       const reviews = res.reviewsMoved || 0;
       const kept = res.reviewsKept || 0;
       const detail = [
         `${fromModule?.moduleTitle || 'Module'} → ${toModule?.moduleTitle || 'module'}`,
         moved ? `${moved} progress ${moved === 1 ? 'entry' : 'entries'} moved` : '',
+        archived
+          ? `${archived} progress ${archived === 1 ? 'entry' : 'entries'} archived`
+          : '',
         reviews ? `${reviews} ${reviews === 1 ? 'review' : 'reviews'} moved` : '',
         // Named rather than silent: a review that stayed behind is one the
         // component joined already had, and someone may need to reconcile them.
@@ -682,7 +686,8 @@ export function ShiftModuleModal({ learnerId, learnerName, onClose, onSaved }: P
               Each week the learner has worked in, beside the week in the same position of{' '}
               <strong className="text-foreground-800">{toModule?.moduleTitle}</strong>. Open a week
               to review its completed components. Automatic matches use the same component ID,
-              or one exact title and type match. Ambiguous or unmatched progress stays where it is.
+              or one exact title and type match. Ambiguous or unmatched progress is archived and
+              removed from active completion, achieved hours and KSB totals.
             </p>
             {progress.weeks.map((pair) => (
               <WeekPair

@@ -743,7 +743,7 @@ class LearnerProfile(models.Model):
         prefetched = getattr(self, "_prefetched_objects_cache", {})
         entries = prefetched.get("progress_entries")
         if entries is None:
-            entries = self.progress_entries.prefetch_related(
+            entries = self.progress_entries.filter(deleted_at__isnull=True).prefetch_related(
                 "ksb_links",
                 "quiz_answers__chosen_answers",
                 "quiz_answers__correct_answers",
@@ -759,7 +759,7 @@ class LearnerProfile(models.Model):
                 "quiz_answers__correct_answers",
             )
         for entry in entries:
-            if entry.kind == "activity_event":
+            if entry.kind == "activity_event" or entry.deleted_at is not None:
                 continue
             record = {
                 "kind": entry.kind,
@@ -1104,6 +1104,9 @@ class LearnerProgressEntry(models.Model):
     component_link_status = models.TextField(blank=True, default='')
     legacy_component_ref = models.TextField(null=True, blank=True)
     component_link_source = models.TextField(blank=True, default='')
+    # Soft-deleted progress remains as historical evidence but is excluded from
+    # active learner progress, hours and KSB projections.
+    deleted_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         managed = False

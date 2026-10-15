@@ -33,7 +33,8 @@ def read_native_progress(source, profile):
         modules, weeks, components, assigned_modules=assigned, compact=True)
     components = _apply_programme_assignment_template(components, getattr(source, 'programme', ''))
     weeks, components = _append_week_quizzes(weeks, components, assigned_modules=assigned)
-    progress = list(profile.progress_entries.using('enrolment').exclude(kind='activity_event')
+    progress = list(profile.progress_entries.using('enrolment').filter(deleted_at__isnull=True)
+                    .exclude(kind='activity_event')
                     .values('kind', 'passed', 'component_ref', 'quiz_ref', 'submitted_at'))
     detail = {'components': components, 'quizAttempts': [
         {'quizId': row['quiz_ref'], 'componentId': row['component_ref'], 'passed': row['passed']}

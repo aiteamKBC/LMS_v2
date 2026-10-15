@@ -81,6 +81,7 @@ export function buildPlanModules(subjects: (Subject | PlanSubjectSummary)[], dat
       : historicalHours;
     const recordedHours = entryProgress?.hours.actual ?? summaryHours;
     return { ...subject, activities, activityCount, activityCounts, ksbCodes,
+      monthlyActivities: summary?.monthlyActivities,
       achievedKsbCodes: entryProgress?.ksb.achievedCodes ?? null,
       ksbMappingMissing: summary ? summary.ksbMappingMissing : activities.some(activity => !activity.native?.ksbMappings),
       moduleId, detail, sessions, dates, start, end,
