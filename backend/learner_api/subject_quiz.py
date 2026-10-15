@@ -4,7 +4,7 @@ import json
 from .subject_content import as_list, quiz_definition
 
 
-def imported_quiz(cursor, group_id, quiz_id):
+def imported_quiz(cursor, group_id, quiz_id, *, for_review=False):
     cursor.execute('''WITH export AS (
         SELECT CASE WHEN jsonb_typeof(curriculum)='string'
           THEN (curriculum #>> '{}')::jsonb ELSE curriculum END AS payload
@@ -40,7 +40,8 @@ def imported_quiz(cursor, group_id, quiz_id):
                 'question_type': raw.get('question_type'), 'options': raw.get('answer_options')})
             quiz['solutions'].append({'question_id': raw.get('question_id'),
                                       'correct_answer': raw.get('correct_answers')})
-        if not quiz_definition(quiz)['ready']:
+        # Reviewing saved learning does not require automatic marking keys.
+        if not quiz['questions'] or (not for_review and not quiz_definition(quiz)['ready']):
             return None
         if quiz not in candidates:
             candidates.append(quiz)
