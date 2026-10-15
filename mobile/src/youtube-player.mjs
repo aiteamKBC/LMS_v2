@@ -45,8 +45,9 @@ export function isAllowedPlayerNavigation(raw, ownOrigin, isTopFrame = false) {
   } catch { return false; }
 }
 
-// This function is serialized into both the native HTML and the static web runtime.
-export function youtubePlayerRuntime(initialConfig) {
+// Keep one literal source for both players: Hermes release functions stringify
+// as bytecode placeholders, so Function.toString() cannot generate WebView JS.
+export const YOUTUBE_PLAYER_RUNTIME = String.raw`function youtubePlayerRuntime(initialConfig) {
   'use strict';
   const CHANNEL = 'kbc-youtube-player-v1';
   let config = initialConfig;
@@ -127,15 +128,15 @@ export function youtubePlayerRuntime(initialConfig) {
   tag.onerror = function() { fail('YouTube could not load. Check your connection or open the official video.'); };
   document.head.appendChild(tag);
   send();
-}
+}`;
 const styles = 'html,body{margin:0;width:100%;height:100%;background:#10271f;color:#fff;font:16px system-ui}#player{width:100%;height:100%;min-height:200px}#notice{position:absolute;left:0;right:0;top:0;box-sizing:border-box;margin:0;padding:16px;background:#10271f;pointer-events:none}#notice[hidden]{display:none}';
 export function createNativePlayerHTML(config) {
   if (!validPlayerConfig(config)) throw new TypeError('Invalid video player configuration');
   const json = JSON.stringify({ ...config, native: true }).replace(/</g, '\\u003c');
   const csp = `default-src 'none'; script-src 'nonce-${config.nonce}' https://www.youtube.com https://s.ytimg.com; frame-src https://www.youtube.com https://www.youtube-nocookie.com; style-src 'unsafe-inline'; img-src https://i.ytimg.com data:; connect-src https://www.youtube.com; base-uri 'none'; form-action 'none'; object-src 'none'`;
-  return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="referrer" content="strict-origin-when-cross-origin"><meta http-equiv="Content-Security-Policy" content="${csp}"><title>KBC video player</title><style>${styles}</style></head><body><div id="player"></div><p id="notice" role="status">Loading the official YouTube player…</p><script nonce="${config.nonce}">(${youtubePlayerRuntime.toString()})(${json});</script></body></html>`;
+  return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="referrer" content="strict-origin-when-cross-origin"><meta http-equiv="Content-Security-Policy" content="${csp}"><title>KBC video player</title><style>${styles}</style></head><body><div id="player"></div><p id="notice" role="status">Loading the official YouTube player…</p><script nonce="${config.nonce}">(${YOUTUBE_PLAYER_RUNTIME})(${json});</script></body></html>`;
 }
 export function createWebPlayerHTML() {
   return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="referrer" content="strict-origin-when-cross-origin"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' https://www.youtube.com https://s.ytimg.com; frame-src https://www.youtube.com https://www.youtube-nocookie.com; style-src 'unsafe-inline'; img-src https://i.ytimg.com data:; connect-src https://www.youtube.com; base-uri 'none'; form-action 'none'; object-src 'none'"><title>KBC video player</title><style>${styles}</style></head><body><div id="player"></div><p id="notice" role="status">Loading the official YouTube player…</p><script src="./player-runtime.js"></script></body></html>`;
 }
-export function createWebPlayerScript() { return `(${youtubePlayerRuntime.toString()})(null);\n`; }
+export function createWebPlayerScript() { return `(${YOUTUBE_PLAYER_RUNTIME})(null);\n`; }

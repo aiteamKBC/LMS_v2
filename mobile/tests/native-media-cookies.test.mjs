@@ -32,6 +32,7 @@ function fixture(t, { crlf = false, sharedVideo = false } = {}) {
   });
   const project = path.join(temporary, 'project');
   fs.mkdirSync(project);
+  fs.writeFileSync(path.join(project, 'package.json'), JSON.stringify({expo:{autolinking:{android:{buildFromSource:['expo-audio','expo-video']}}}}));
   const packageRoot = name => sharedVideo && name === 'expo-video'
     ? path.join(temporary, 'shared-expo-video') : path.join(project, 'node_modules', name);
   const files = PATCHES.map(patch => ({ patch, source: originalSource(patch), filename: path.join(packageRoot(patch.package), patch.file) }));
@@ -50,6 +51,15 @@ function fixture(t, { crlf = false, sharedVideo = false } = {}) {
   if (sharedVideo) fs.symlinkSync(packageRoot('expo-video'), path.join(project, 'node_modules/expo-video'), process.platform === 'win32' ? 'junction' : 'dir');
   return { project, temporary, files };
 }
+
+test('Android precompiled media modules are refused before patching because they omit authentication fixes', t => {
+  const {project,files}=fixture(t);
+  fs.writeFileSync(path.join(project,'package.json'), JSON.stringify({expo:{autolinking:{android:{buildFromSource:['expo-audio']}}}}));
+  assert.throws(()=>applyPatches(project),/precompiled modules omit/);
+  for (const {filename,source} of files) assert.equal(fs.readFileSync(filename,'utf8'),source);
+  const real=JSON.parse(fs.readFileSync(path.join(mobileRoot,'package.json'),'utf8'));
+  assert.ok(['expo-audio','expo-video'].every(name=>real.expo.autolinking.android.buildFromSource.includes(name)));
+});
 
 test('native media clients explicitly use the same per-URL platform-cookie handler as React Native', t => {
   const { project, files } = fixture(t);

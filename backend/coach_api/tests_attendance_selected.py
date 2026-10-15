@@ -163,7 +163,7 @@ class EvidenceFixture:
         self.stack.enter_context(patch('socket.socket.connect', side_effect=AssertionError('No network allowed')))
         self.graph = self.stack.enter_context(patch('coach_api.views.microsoft_graph_request', side_effect=AssertionError('No Graph allowed')))
         self.stack.enter_context(patch.object(canonical.timezone, 'now', return_value=self.now))
-        for module in (canonical, selected, attendance_confirmation, session_results):
+        for module in (canonical, selected, teams_attendance, attendance_confirmation, session_results):
             self.stack.enter_context(patch.object(module, 'connections', {'enrolment': self.connection, 'default': self.connection}))
         models = {
             teams_attendance.LearnerProfile: self.profiles,
@@ -247,7 +247,10 @@ class SelectedAttendanceTests(SimpleTestCase):
                 self.assertEqual(fixture.queries.count('CoachAttendanceSourceAdjustment'), 1)
                 self.assertEqual(fixture.queries.count('sql:native'), 1)
                 self.assertEqual(fixture.queries.count('sql:confirmation'), 1)
-                self.assertEqual(sum('o.id=ANY(%s)' in sql for sql, _ in fixture.sql), 1)
+                self.assertEqual(sum('o.id=ANY(%s)' in sql and 'AS attended' in sql
+                                     for sql, _ in fixture.sql), 1)
+                self.assertEqual(sum('SELECT o.id, replaced_attendance.occurrence_id' in sql
+                                     for sql, _ in fixture.sql), 1)
                 self.assertEqual(next(params[-1] for sql, params in fixture.sql if 'AS attended' in sql), ['occ'])
                 print('ATTENDANCE_AUDIT', json.dumps({'learners': count, 'mock_queries_before': before,
                     'mock_queries_after': after, 'old_stage_ms': {key: round(value['duration_ms'], 3)

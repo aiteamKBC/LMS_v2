@@ -953,6 +953,17 @@ def _preset_ids_for(learner, cache):
     return cache[key]
 
 
+def request_preset_cache(learner):
+    """The group-preset cache a reader shares across one request, else a fresh one.
+
+    A Dashboard tab resolves the effective plan in several shared helpers; each
+    passing ``{}`` re-reads the same (programme, group) preset. ``read_tab``
+    installs one dict on its request-scoped source so the preset is read once.
+    """
+    cache = getattr(learner, '_plan_preset_cache', None)
+    return cache if cache is not None else {}
+
+
 def _effective_plan_ids(learner, preset_cache):
     """The module ids this learner is currently taught: saved plan, else preset.
 

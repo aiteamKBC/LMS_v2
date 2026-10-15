@@ -1,5 +1,6 @@
 import { createCachedResource } from './cachedRequest';
 import { readLearnerJson, invalidateLearnerReads } from './learnerRead';
+import { invalidateWeeklyLearning } from './weeklyLearning';
 import type { LearnerAccessGate, LearnerLearningAccess } from '@/utils/learnerAccessGate';
 // ============================================================================
 // Learner-detail API client.
@@ -93,6 +94,9 @@ export interface LearnerComponentEntry {
   quizMeta?: { quizId: number; questions: number | null; duration: number | null; timeUnit: string | null };
   /** A passed quiz whose slot an author has since removed from the module. */
   retired?: boolean;
+  /** Compact Weekly Learning rows only: the server's hasComponentContent
+   *  verdict, sent instead of the descriptions and briefs it reads. */
+  contentAvailable?: boolean;
 }
 export interface LearnerKsbItem {
   code: string;
@@ -326,6 +330,7 @@ export function invalidateLearnerDetailCache(kind?: LearnerKind, id?: string): v
   quizDetailResource.invalidate(key);
   componentResource.invalidate();
   summaryResource.invalidate(key);
+  invalidateWeeklyLearning(key);
   invalidateLearnerReads();
 }
 

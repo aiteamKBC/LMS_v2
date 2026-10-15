@@ -95,11 +95,11 @@ TABLES = [
             "Learner_kind"  varchar(32) NOT NULL,
             "Learner_id"    bigint      NOT NULL,
             "Ksb_id"        text        NOT NULL,
-            -- 8-point self-assessment: mastery | expert | proficient |
+            -- 9-point self-assessment: champion | mastery | expert | proficient |
             -- consistently | frequently | occasionally | rarely | never
             -- (plus legacy always | often | sometimes)
             "Level"         text,
-            -- 8..1 for the level above, denormalised so reporting can average
+            -- 9..1 for the level above, denormalised so reporting can average
             -- competence without re-deriving the scale in SQL.
             "Score"         integer,
             "Note"          text,

@@ -514,6 +514,29 @@ class TrainingPlanDashboardTests(SimpleTestCase):
         self.assertEqual(plan_session(row)['status'],'completed')
         self.assertEqual(plan_session(row)['joinUrl'],row['series_join_url'])
 
+    def test_overview_attendance_reads_the_meeting_behind_a_replaced_link(self):
+        source = SimpleNamespace(pk=125, aptem_id=None, email='learner@example.com',
+                                 programme='', cohort='', group='')
+        connection = MagicMock()
+        module = {'id': 'M1', 'title': 'Marketing', 'description': '', 'start_date': None, 'end_date': None,
+                  'weeks_number': 1, 'total_otjh': 0, 'sessions_number': 1, 'session_week_day': 'Monday',
+                  'session_start_time': '10:00', 'session_end_time': '12:00', 'coach_name': '',
+                  'programme_name': '', 'cohort_name': '', 'group_name': ''}
+        with patch('learner_api.training_plan_dashboard.connections', {'enrolment': connection}), \
+             patch('learner_api.training_plan_dashboard.LearnerProfile') as profiles, \
+             patch('learner_api.training_plan_dashboard._builder_subject_metadata', return_value=({}, {})), \
+             patch('learner_api.training_plan_dashboard.rows', side_effect=[[module], [], []]), \
+             patch('learner_api.calendar.coaching_events_for_learner', return_value=[]), \
+             patch('learner_api.training_plan_dashboard.coach_phone', return_value=''):
+            profiles.objects.filter.return_value.only.return_value.first.return_value = None
+            read_dashboard(source, section='overview')
+        sql = ' '.join(str(call.args[0]) for call in connection.cursor.return_value.__enter__.return_value.execute.call_args_list)
+        self.assertIn('WITH RECURSIVE owners', sql)
+        self.assertIn('teams_shared_source_module_id', sql)
+        self.assertIn('delivery.module_id', sql)
+        self.assertIn('liveSessionLinkOverride', sql)
+        self.assertIn('COALESCE(replaced_attendance.occurrence_id,o.id)', sql)
+
     def reviewed_extract(self, **changes):
         return json.dumps({'version':1,'pdf_sha256':sha256(b'reviewed PDF').hexdigest(),'printed_total':10,
             'activities':[{'date':'2026-09-14','title':'Marketing','method':'Assignment','hours':10}],**changes})

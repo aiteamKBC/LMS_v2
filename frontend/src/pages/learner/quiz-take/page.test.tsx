@@ -140,6 +140,47 @@ describe('quiz requirements loading', () => {
     expect(mocks.start).not.toHaveBeenCalled();
   });
 
+  it('shows the quiz attempt moved onto this component, keeping its original answers and revision quiz', async () => {
+    mocks.detail.mockResolvedValue({ ...detail,
+      components: [{ ...detail.components[0], componentId: 'COMP-JOINING' }],
+      quizAttempts: [{ quizId: 99, componentId: 'COMP-JOINING', attempt: 2,
+        grade: 1, achievedScore: 1, totalScore: 1, passed: true, timeTaken: '01:08',
+        questions: [{ questionId: 1, questionText: 'Original shifted question', type: 'single_choice',
+          possible: 2, earned: 2, correct: true, chosenText: 'Original answer', correctText: 'Original answer' }],
+      }],
+    });
+    renderPage();
+    fireEvent.click(await screen.findByRole('button', { name: /View Result Details/ }));
+    expect(await screen.findByText(/Original shifted question/)).toBeVisible();
+    expect(screen.getByText('Original answer')).toBeVisible();
+    expect(screen.queryByText(/Choose an outcome/)).not.toBeInTheDocument();
+    expect(mocks.generateReading).toHaveBeenCalledWith(99, 'commercial', '501', 2);
+    expect(mocks.submit).not.toHaveBeenCalled();
+  });
+
+  it('does not use another component history for the new quiz', async () => {
+    mocks.detail.mockResolvedValue({ ...detail,
+      components: [{ ...detail.components[0], componentId: 'COMP-JOINING' }],
+      quizAttempts: [{ quizId: 99, componentId: 'COMP-OTHER', attempt: 1, grade: 1, passed: true }],
+    });
+    renderPage();
+    expect(await screen.findByRole('button', { name: 'Start Quiz' })).toBeVisible();
+    expect(screen.queryByRole('button', { name: /View Result Details/ })).not.toBeInTheDocument();
+  });
+
+  it('does not borrow current quiz answers for a shifted attempt without a question snapshot', async () => {
+    mocks.detail.mockResolvedValue({ ...detail,
+      components: [{ ...detail.components[0], componentId: 'COMP-JOINING' }],
+      quizAttempts: [{ quizId: 99, componentId: 'COMP-JOINING', attempt: 1, grade: 1, passed: true,
+        questions: [{ questionId: 1, chosenAnswerId: 1, correctAnswerId: 1, correct: true, earned: 1 }],
+      }],
+    });
+    renderPage();
+    fireEvent.click(await screen.findByRole('button', { name: /View Result Details/ }));
+    expect(await screen.findByText(/Question no longer available/)).toBeVisible();
+    expect(screen.queryByText(/Measured outcome/)).not.toBeInTheDocument();
+  });
+
   it('offers the existing reflection page or a no-reflection quiz submission', async () => {
     mocks.detail.mockResolvedValue({
       ...detail,

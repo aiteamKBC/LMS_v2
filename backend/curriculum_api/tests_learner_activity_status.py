@@ -234,13 +234,128 @@ class ActivityStatusTests(SimpleTestCase):
         self.assertEqual([row['id'] for row in result], [2, 3])
         self.assertEqual(native['time_taken'], '10:00')
 
-    def test_missing_duration_is_unknown_and_native_submission_is_not_a_scheduled_interval(self):
+    def test_missing_duration_stays_unrecorded_but_does_not_hide_the_recorded_total(self):
         raw = {'id': 1, 'learner_id': 1, 'component_ref': 'c1', 'component_link_source': 'direct', 'kind':'component',
                'submitted_at': datetime(2026, 1, 2, 10, tzinfo=timezone.utc), 'accepted': True}
         state = status.facts([raw])
         self.assertIsNone(state['actualOtjh'])
-        self.assertIsNone(state['acceptedOtjh'])
+        self.assertEqual(state['acceptedOtjh'], 0)
+        self.assertEqual(state['unallocatedAcceptedRecords'], 1)
         self.assertIsNone(state['startedAt'])
+
+    def test_known_accepted_allocations_survive_missing_time_and_ignore_unaccepted_time(self):
+        records = [
+            {'id': 1, 'accepted': True, 'actual_seconds': 1800},
+            {'id': 2, 'accepted': True, 'actual_seconds': None, 'claimed_seconds': 7200, 'expected_otjh': 4},
+            {'id': 3, 'accepted': True, 'actual_seconds': 900},
+            {'id': 4, 'accepted': False, 'actual_seconds': 36000},
+            {'id': 5, 'accepted': None, 'actual_seconds': None},
+        ]
+        state = status.facts(records)
+        self.assertEqual(state['acceptedOtjh'], 0.75)
+        self.assertEqual(state['unallocatedAcceptedRecords'], 1)
+        self.assertEqual(state['actualOtjh'], 0.5)  # editing still selects a single allocation
+        earlier = status.earlier_progress(records, set())
+        self.assertEqual(earlier['earlierOtjh'], 0.75)
+        self.assertEqual(earlier['unallocatedAcceptedRecords'], 1)
+
+    def native_timer(self, **values):
+        return {'id': 1, 'learner_id': 1, 'component_ref': 'c1', 'kind': 'component',
+                'component_link_source': 'direct', 'accepted': True, 'actual_seconds': None,
+                'verified_seconds': 1800, 'submitted_at': '2026-10-01T10:00:00Z', **values}
+
+    def test_verified_native_time_is_read_from_the_ledger_without_mutating_it(self):
+        row = self.native_timer(claimed_seconds=7200, expected_otjh=10)
+        original = dict(row)
+        state = status.facts([row])
+        self.assertEqual((state['actualOtjh'], state['acceptedOtjh']), (0.5, 0.5))
+        self.assertEqual(state['hoursSource'], 'learner_progress_entries.verified_seconds')
+        self.assertEqual(state['unallocatedAcceptedRecords'], 0)
+        self.assertIsNone(state['startedAt'])
+        self.assertIsNone(state['endedAt'])
+        self.assertEqual(row, original)
+        self.assertEqual(state['snapshotHash'], status.digest([original]))
+
+    def test_stored_zero_and_manual_corrections_override_verified_retry_time(self):
+        for seconds in (0, 900):
+            stored = self.native_timer(actual_seconds=seconds, actual_basis='staff:module-progress')
+            retry = self.native_timer(id=2, verified_seconds=7200)
+            state = status.facts([stored, retry])
+            self.assertEqual(state['acceptedOtjh'], seconds / 3600)
+            self.assertEqual(state['progressId'], 1)
+            self.assertEqual(state['hoursSource'], 'learner_progress_entries.actual_seconds')
+            self.assertEqual(state['unallocatedAcceptedRecords'], 0)
+
+    def test_native_retries_count_once_and_do_not_cross_learner_or_activity_boundaries(self):
+        rows = [self.native_timer(), self.native_timer(id=2, verified_seconds=900),
+                self.native_timer(id=3, component_ref='c2', verified_seconds=600),
+                self.native_timer(id=4, learner_id=2, verified_seconds=3600)]
+        projected = status.recorded_hour_rows(rows)
+        self.assertEqual({row['id'] for row in projected}, {1, 3, 4})
+        self.assertAlmostEqual(status.earlier_progress(rows, set())['earlierOtjh'], 6000 / 3600)
+
+    def test_retained_reference_suppresses_native_time_even_on_another_component(self):
+        native = self.native_timer()
+        retained = self.native_timer(id=2, component_ref='old-c1', source_system='retained',
+                                    actual_seconds=1200, source_payload={'original_source_ref': 'progress:1'})
+        projected = status.recorded_hour_rows([native, retained])
+        self.assertEqual([row['id'] for row in projected], [2])
+        self.assertEqual(status.earlier_progress([native, retained], set())['earlierOtjh'], 1200 / 3600)
+
+    def test_unverified_imported_unsubmitted_and_unaccepted_rows_do_not_acquire_hours(self):
+        for changes in ({'verified_seconds': None}, {'verified_seconds': -1}, {'verified_seconds': float('nan')},
+                        {'verified_seconds': float('inf')}, {'verified_seconds': 'invalid'},
+                        {'source_system': 'import'}, {'submitted_at': None},
+                        {'accepted': False}, {'component_link_source': 'unresolved'}):
+            with self.subTest(changes=changes):
+                state = status.facts([self.native_timer(claimed_seconds=7200, expected_otjh=10, **changes)])
+                self.assertEqual(state['acceptedOtjh'], 0)
+                self.assertIsNone(state['actualOtjh'])
+
+    def test_enrichment_keeps_retained_hours_when_the_original_native_time_is_suppressed(self):
+        rows = [self.native_timer(canonical_activity_key='same-work'),
+                self.native_timer(id=2, component_ref='old-c1', source_system='retained', actual_seconds=900,
+                                  canonical_activity_key='same-work', source_payload={'original_source_ref': 'progress:1'}),
+                self.native_timer(id=3, learner_id=2)]
+        payload = {'identifier': 'MOD-1', 'otjhAchievement': {'learners': [
+            {'learnerId': 1, 'plannedOtjh': 10}, {'learnerId': 2, 'plannedOtjh': 10}]},
+            'learnerActivityPlan': [{'learnerId': learner, 'componentId': 'c1', 'componentType': 'reading'} for learner in (1, 2)]}
+        with patch.object(status, 'load_records', return_value=rows), patch.object(status, 'query', return_value=[]):
+            status.enrich(payload, None)
+        self.assertEqual(payload['activityLogOtjh']['achievedTotal'], 0.75)
+        self.assertEqual([row['achievedOtjh'] for row in payload['activityLogOtjh']['learners']], [0.25, 0.5])
+        self.assertEqual(payload['activityLogOtjh']['unallocatedAcceptedRecords'], 0)
+        self.assertEqual(payload['activityLogProgress']['learners'][0]['earlierOtjh'], 0.25)
+
+    def test_missing_current_and_earlier_allocations_do_not_erase_other_learners_hours(self):
+        self.db.executemany('''INSERT INTO learner_progress_entries
+            (learner_id,component_ref,module_ref,actual_seconds,accepted,deleted_at)
+            VALUES (?,?,?,?,?,?)''', [
+                (1, 'c1', 'MOD-1', 3600, True, None),
+                (1, 'c1', 'MOD-1', None, True, None),
+                (1, 'old-c1', 'MOD-1', 1800, True, None),
+                (1, 'old-c2', 'MOD-1', None, True, None),
+                (1, 'c1', 'MOD-1', 36000, False, None),
+                (1, 'c1', 'MOD-1', 36000, True, '2026-10-01'),
+                (1, 'other', 'MOD-2', 36000, True, None),
+                (2, 'c1', 'MOD-1', 7200, True, None),
+                (3, 'c1', 'MOD-1', 36000, True, None),
+            ])
+        self.db.commit()
+        payload = {'identifier': 'MOD-1', 'otjhAchievement': {'learners': [
+            {'learnerId': 1, 'plannedOtjh': 10}, {'learnerId': 2, 'plannedOtjh': 10}]},
+            'learnerActivityPlan': [{'learnerId': learner, 'componentId': 'c1', 'componentType': 'reading'} for learner in (1, 2)]}
+        read = status.query
+        def scoped_read(sql, params=()):
+            return read(sql, params) if 'learner_progress_entries' in sql else []
+        with patch.object(status, 'query', side_effect=scoped_read):
+            status.enrich(payload, None)
+        summary = payload['activityLogOtjh']
+        self.assertEqual(summary['achievedTotal'], 3.5)
+        self.assertEqual(summary['unallocatedAcceptedRecords'], 2)
+        self.assertEqual([(row['achievedOtjh'], row['unallocatedAcceptedRecords'])
+                          for row in summary['learners']], [(1.5, 2), (2, 0)])
+        self.assertEqual(len(self.query('SELECT * FROM learner_progress_entries')), 9)
 
     def test_enrichment_queries_are_bounded_and_unstarted_rows_and_log_totals_remain_consistent(self):
         payload = {'identifier':'MOD-1', 'otjhAchievement':{'learners':[{'learnerId':1,'plannedOtjh':100}]},
@@ -259,6 +374,30 @@ class ActivityStatusTests(SimpleTestCase):
         self.assertEqual(payload['learnerActivityPlan'][0]['displayStatus'],'not_started')
         self.assertEqual(payload['learnerActivityPlan'][1]['calculatedStatus'],'not_started')
         self.assertEqual(payload['activityLogOtjh']['achievedTotal'],1)
+
+    def test_enrichment_counts_module_ref_rows_once_and_reports_completion(self):
+        payload = {'identifier':'MOD-1', 'otjhAchievement':{'learners':[{'learnerId':1,'plannedOtjh':10}]},
+            'learnerActivityPlan':[{'learnerId':1,'componentId':'c0','componentType':'reading','calculatedStatus':'completed'},
+                                   {'learnerId':1,'componentId':'c1','componentType':'reading'}]}
+        rows = [{'id':1,'learner_id':1,'component_ref':'c0','module_ref':'MOD-1','actual_seconds':3600,'accepted':True,'canonical_activity_key':'k0'},
+                # Same canonical activity under a component the module no longer has: not counted twice.
+                {'id':2,'learner_id':1,'component_ref':'old-c0','module_ref':'MOD-1','actual_seconds':3600,'accepted':True,'canonical_activity_key':'k0'},
+                {'id':3,'learner_id':1,'component_ref':'old-c9','module_ref':'MOD-1','actual_seconds':1800,'accepted':True,'canonical_activity_key':'k9'}]
+        def bulk(sql, params=()):
+            if 'learner_progress_entries' in sql:
+                self.assertIn('module_ref=%s', sql)
+                self.assertEqual(params[-1], 'MOD-1')
+                return rows
+            if 'learners' in sql: return [{'id':1,'coach_email':''}]
+            if 'modules' in sql: return [{'tutor_email':''}]
+            return []
+        with patch.object(status,'query',side_effect=bulk) as read, patch.object(status,'_accesses_of',return_value={'curriculum'}):
+            status.enrich(payload,self.actor)
+        self.assertEqual(read.call_count,4)
+        progress = payload['activityLogProgress']['learners'][0]
+        self.assertEqual((progress['completedActivities'], progress['totalActivities']), (1, 2))
+        self.assertEqual((progress['earlierRecords'], progress['earlierOtjh']), (1, 0.5))
+        self.assertEqual(payload['activityLogOtjh']['achievedTotal'],1.5)
 
     def test_endpoint_denies_unauthenticated_and_unauthorized_roles_and_preserves_csrf(self):
         factory = RequestFactory()

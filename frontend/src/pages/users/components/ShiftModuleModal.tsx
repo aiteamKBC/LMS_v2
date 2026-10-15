@@ -51,6 +51,9 @@ const emptyNote = 'px-3 py-8 text-center text-[12px] text-foreground-400';
 const selectClass =
   'w-full rounded-lg border border-foreground-200 bg-background-50 px-2 py-1 text-[11px] ' +
   'text-foreground-800 focus:border-primary-400 outline-none transition-smooth cursor-pointer';
+const moduleSearchClass =
+  'block w-full rounded-lg border border-foreground-200 bg-background-50 py-2 pl-8 pr-3 text-[12px] ' +
+  'text-foreground-800 placeholder:text-foreground-400 focus:border-primary-400 outline-none transition-smooth';
 
 /** "2 h · 15 pts · 26 Aug 2026" — what a learner has banked on a component. */
 function progressSummary(component: ShiftComponent): string {
@@ -82,6 +85,13 @@ function componentTitleKey(value: string): string {
     .replace(/\s+/g, ' ')
     .trim()
     .toLocaleLowerCase('en');
+}
+
+/** Search the visible module metadata without changing the selected module. */
+function moduleMatchesSearch(module: LearningPlanModule, query: string): boolean {
+  const needle = componentTitleKey(query);
+  if (!needle) return true;
+  return componentTitleKey(`${module.moduleTitle} ${module.groupName || ''}`).includes(needle);
 }
 
 /** One module in either list of step 1: title, then where it sits and when. */
@@ -239,7 +249,7 @@ function WeekPair({
                         <option value="">
                           {matchingTargets(component).length === 0
                             ? 'No matching component ID or title and type'
-                            : 'Leave this progress where it is'}
+                            : 'Archive this progress'}
                         </option>
                         {matchingTargets(component).map((target) => (
                           <option
@@ -271,7 +281,7 @@ function WeekPair({
             {!pair.to ? (
               <p className="text-[12px] text-foreground-400">
                 The module being joined has no week {pair.order}, so this week&rsquo;s progress
-                cannot be moved. It stays where it is.
+                cannot be moved and will be archived.
               </p>
             ) : targets.length === 0 ? (
               <p className="text-[12px] text-foreground-400">
@@ -314,11 +324,13 @@ export function ShiftModuleModal({ learnerId, learnerName, onClose, onSaved }: P
   const [plan, setPlan] = useState<LearningPlanModule[] | null>(null);
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
+  const [assignedSearch, setAssignedSearch] = useState('');
+  const [programmeSearch, setProgrammeSearch] = useState('');
   const [options, setOptions] = useState<ModuleShiftOptions | null>(null);
   const [loadingOptions, setLoadingOptions] = useState(false);
   const [progress, setProgress] = useState<ModuleShiftProgress | null>(null);
   const [loadingProgress, setLoadingProgress] = useState(false);
-  // fromComponentId -> toComponentId. Missing or '' means "leave it alone".
+  // fromComponentId -> toComponentId. Missing or '' means "archive it".
   const [mapping, setMapping] = useState<Record<string, string>>({});
   const [openWeeks, setOpenWeeks] = useState<number[]>([]);
   const [saving, setSaving] = useState(false);
@@ -355,8 +367,11 @@ export function ShiftModuleModal({ learnerId, learnerName, onClose, onSaved }: P
       return;
     }
     let cancelled = false;
+    setError('');
+    setOptions(null);
     setLoadingOptions(true);
     setTo('');
+    setProgrammeSearch('');
     (async () => {
       try {
         const res = await fetchModuleShiftOptions(from);
@@ -381,6 +396,14 @@ export function ShiftModuleModal({ learnerId, learnerName, onClose, onSaved }: P
   const choices = useMemo(
     () => (options?.modules || []).filter((m) => m.moduleId !== from),
     [options, from],
+  );
+  const visiblePlan = useMemo(
+    () => (plan || []).filter((m) => moduleMatchesSearch(m, assignedSearch)),
+    [plan, assignedSearch],
+  );
+  const visibleChoices = useMemo(
+    () => choices.filter((m) => moduleMatchesSearch(m, programmeSearch)),
+    [choices, programmeSearch],
   );
 
   const fromModule = (plan || []).find((m) => m.moduleId === from);
@@ -423,11 +446,15 @@ export function ShiftModuleModal({ learnerId, learnerName, onClose, onSaved }: P
     try {
       const res = await shiftModule(learnerId, from, to, mappings);
       const moved = res.progressMoved || 0;
+      const archived = res.progressArchived || 0;
       const reviews = res.reviewsMoved || 0;
       const kept = res.reviewsKept || 0;
       const detail = [
         `${fromModule?.moduleTitle || 'Module'} → ${toModule?.moduleTitle || 'module'}`,
         moved ? `${moved} progress ${moved === 1 ? 'entry' : 'entries'} moved` : '',
+        archived
+          ? `${archived} progress ${archived === 1 ? 'entry' : 'entries'} archived`
+          : '',
         reviews ? `${reviews} ${reviews === 1 ? 'review' : 'reviews'} moved` : '',
         // Named rather than silent: a review that stayed behind is one the
         // component joined already had, and someone may need to reconcile them.
@@ -538,15 +565,31 @@ export function ShiftModuleModal({ learnerId, learnerName, onClose, onSaved }: P
                 Assigned modules
                 {plan && <span className="ml-1 font-normal text-foreground-400">({plan.length})</span>}
               </p>
+              {plan !== null && plan.length > 0 && (
+                <label className="relative block border-t border-foreground-200/50 p-2">
+                  <span className="sr-only">Search assigned modules</span>
+                  <i className="ri-search-line pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-[13px] text-foreground-400" />
+                  <input
+                    type="search"
+                    className={moduleSearchClass}
+                    value={assignedSearch}
+                    onChange={(event) => setAssignedSearch(event.target.value)}
+                    placeholder="Search module or group…"
+                    aria-label="Search assigned modules"
+                  />
+                </label>
+              )}
               {plan === null ? (
                 <div className="p-3">
                   <RowsSkeleton rows={3} avatar={false} />
                 </div>
               ) : plan.length === 0 ? (
                 <p className={emptyNote}>This learner has no modules to shift from yet.</p>
+              ) : visiblePlan.length === 0 ? (
+                <p className={emptyNote}>No assigned modules match that search.</p>
               ) : (
                 <div className="max-h-72 overflow-y-auto">
-                  {plan.map((m) => (
+                  {visiblePlan.map((m) => (
                     <ModuleRow
                       key={m.moduleId}
                       module={m}
@@ -577,7 +620,9 @@ export function ShiftModuleModal({ learnerId, learnerName, onClose, onSaved }: P
                 <div className="p-3">
                   <RowsSkeleton rows={3} avatar={false} />
                 </div>
-              ) : options?.reason ? (
+              ) : !options ? (
+                <p className={emptyNote}>Module options could not be loaded.</p>
+              ) : options.reason ? (
                 // Says why there is nothing here, rather than looking broken.
                 <p className={emptyNote}>{options.reason}</p>
               ) : choices.length === 0 ? (
@@ -592,23 +637,39 @@ export function ShiftModuleModal({ learnerId, learnerName, onClose, onSaved }: P
                       {options.groups.join(', ')}
                     </p>
                   )}
-                  <div className="max-h-72 overflow-y-auto">
-                    {choices.map((m) => {
-                      // Already on the plan: the plan holds a module once, so
-                      // shifting onto it would drop one rather than swap it.
-                      const already = assigned.has(m.moduleId);
-                      return (
-                        <ModuleRow
-                          key={m.moduleId}
-                          module={m}
-                          selected={m.moduleId === to}
-                          disabled={already}
-                          disabledNote={already ? 'Already assigned to this learner' : undefined}
-                          onSelect={() => setTo(m.moduleId)}
-                        />
-                      );
-                    })}
-                  </div>
+                  <label className="relative block p-2">
+                    <span className="sr-only">Search programme modules</span>
+                    <i className="ri-search-line pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-[13px] text-foreground-400" />
+                    <input
+                      type="search"
+                      className={moduleSearchClass}
+                      value={programmeSearch}
+                      onChange={(event) => setProgrammeSearch(event.target.value)}
+                      placeholder="Search module or group…"
+                      aria-label="Search programme modules"
+                    />
+                  </label>
+                  {visibleChoices.length === 0 ? (
+                    <p className={emptyNote}>No programme modules match that search.</p>
+                  ) : (
+                    <div className="max-h-72 overflow-y-auto">
+                      {visibleChoices.map((m) => {
+                        // Already on the plan: the plan holds a module once, so
+                        // shifting onto it would drop one rather than swap it.
+                        const already = assigned.has(m.moduleId);
+                        return (
+                          <ModuleRow
+                            key={m.moduleId}
+                            module={m}
+                            selected={m.moduleId === to}
+                            disabled={already}
+                            disabledNote={already ? 'Already assigned to this learner' : undefined}
+                            onSelect={() => setTo(m.moduleId)}
+                          />
+                        );
+                      })}
+                    </div>
+                  )}
                 </>
               )}
             </div>
@@ -625,7 +686,8 @@ export function ShiftModuleModal({ learnerId, learnerName, onClose, onSaved }: P
               Each week the learner has worked in, beside the week in the same position of{' '}
               <strong className="text-foreground-800">{toModule?.moduleTitle}</strong>. Open a week
               to review its completed components. Automatic matches use the same component ID,
-              or one exact title and type match. Ambiguous or unmatched progress stays where it is.
+              or one exact title and type match. Ambiguous or unmatched progress is archived and
+              removed from active completion, achieved hours and KSB totals.
             </p>
             {progress.weeks.map((pair) => (
               <WeekPair

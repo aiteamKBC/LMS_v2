@@ -93,10 +93,11 @@ export function learningReflectionStatusKey(activityType: string, activityId: st
 export async function loadLearningReflectionStatuses(input: {
   learnerKind: 'commercial' | 'apprenticeship';
   learnerId: string;
-}): Promise<LearningReflectionStatusMap> {
+}, options: { signal?: AbortSignal; revalidate?: boolean } = {}): Promise<LearningReflectionStatusMap> {
   const params = new URLSearchParams(input);
   const data = await readLearnerJson<{ statuses?: Array<{ activityType: string; activityId: string; status: string }> }>(
     `/learner_api/reflection/submissions/?${params.toString()}`,
+    options,
   );
   return Object.fromEntries(
     (data?.statuses || []).map((row) => [

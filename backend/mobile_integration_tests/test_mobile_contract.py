@@ -24,7 +24,7 @@ from django.http import JsonResponse
 from django.test import RequestFactory, override_settings
 
 ROOT = Path(__file__).resolve().parent
-for name in ("login", "learner_api"):
+for name in ("login", "learner_api", "config"):
     module = types.ModuleType(name)
     module.__path__ = [str(ROOT.parent / name)]
     sys.modules[name] = module
@@ -40,6 +40,7 @@ def fixture_module(name, **members):
     return module
 
 fixture_module("login.api_gate", refusal_for=Mock(return_value=None))
+fixture_module("login.android_download_access", staff_download_allowed=Mock(return_value=False))
 fixture_module("login.permissions", auth_gate_enabled=Mock(return_value=True))
 fixture_module("login.sessions", authenticate_request=Mock(), session_unreadable=Mock(return_value=False))
 
@@ -92,6 +93,8 @@ class MobileFacadeTests(unittest.TestCase):
         mobile.authenticate_request.return_value = self.account
         mobile.session_unreadable.return_value = False
         mobile.auth_gate_enabled.return_value = True
+        mobile.staff_download_allowed.reset_mock()
+        mobile.staff_download_allowed.return_value = False
         mobile.refusal_for.reset_mock()
         mobile.refusal_for.return_value = None
         self.cursor = MagicMock()
@@ -164,6 +167,57 @@ class MobileFacadeTests(unittest.TestCase):
     def test_anonymous_rejected(self):
         mobile.authenticate_request.return_value = None
         self.assertEqual(mobile.session(self.request()).status_code, 401)
+
+    def test_android_download_streams_only_for_entitled_learner_types(self):
+        import io
+        for kind in ("apprenticeship", "commercial"):
+            with self.subTest(kind=kind), patch("builtins.open", return_value=io.BytesIO(b"synthetic-apk")):
+                self.source.learner_type = kind
+                response = mobile.download_android(self.request())
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(b"".join(response.streaming_content), b"synthetic-apk")
+                self.assertIn("attachment", response["Content-Disposition"])
+                self.assertIn("no-store", response["Cache-Control"])
+                response.close()
+
+    def test_android_download_keeps_identity_and_entitlement_refusals(self):
+        with patch("builtins.open") as apk:
+            mobile.authenticate_request.return_value = None
+            self.assertEqual(mobile.download_android(self.request()).status_code, 401)
+            mobile.authenticate_request.return_value = self.account
+            for role in ("staff", "employer"):
+                self.account.role = role
+                self.assertEqual(mobile.download_android(self.request()).status_code, 403)
+            self.account.role = "learner"
+            self.account.is_active = False
+            self.assertEqual(mobile.download_android(self.request()).status_code, 401)
+            self.account.is_active = True
+            self.detail["learningAccess"]["blocked"] = True
+            self.assertEqual(mobile.download_android(self.request()).status_code, 403)
+            self.detail["learningAccess"]["blocked"] = False
+            mobile.effective_training_plan.return_value = []
+            self.assertEqual(mobile.download_android(self.request()).status_code, 403)
+            apk.assert_not_called()
+
+    def test_staff_installer_access_does_not_grant_learner_api_access(self):
+        import io
+        for role in ("admin", "staff"):
+            with self.subTest(role=role):
+                self.account.role = role
+                self.account.subject_type = "staff"
+                mobile.staff_download_allowed.return_value = True
+                with patch("builtins.open", return_value=io.BytesIO(b"synthetic-apk")), patch.object(mobile, "_detail") as detail:
+                    response = mobile.download_android(self.request())
+                    self.assertEqual(response.status_code, 200)
+                    self.assertEqual(b"".join(response.streaming_content), b"synthetic-apk")
+                    response.close()
+                    detail.assert_not_called()
+                self.assertEqual(mobile.session(self.request()).status_code, 403)
+                self.account.is_active = False
+                with patch("builtins.open") as apk:
+                    self.assertEqual(mobile.download_android(self.request()).status_code, 401)
+                    apk.assert_not_called()
+                self.account.is_active = True
 
     def test_auth_outage_is_not_signout(self):
         mobile.authenticate_request.return_value = None

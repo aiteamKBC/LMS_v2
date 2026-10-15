@@ -16,6 +16,7 @@ from learner_api import canonical_learning
 from learner_api.progress_rules import progress_counts_as_achieved
 from learner_api.training_plan_dashboard import rows
 from old_otjh.repository import query
+from curriculum_api.week_visibility import visible_child_sql, visible_week_sql
 
 RULES = json.loads(Path(__file__).with_name('journey_rules.json').read_text())
 
@@ -263,7 +264,7 @@ def read_native_facts(context, assigned):
             WHERE module_catalogue_id=ANY(%s) AND (deleted_at IS NULL OR COALESCE(deleted_via_parent,'')<>'')''', [assigned])
         titles = {row['id']: str(row['title'] or '') for row in rows(cur)}
         cur.execute('''SELECT id,module_catalogue_id AS module_id,title,week_number FROM curriculum.weeks
-            WHERE module_catalogue_id=ANY(%s) AND (deleted_at IS NULL OR COALESCE(deleted_via_parent,'')<>'')
+            WHERE module_catalogue_id=ANY(%s) AND ''' + visible_week_sql('weeks') + '''
             ORDER BY module_catalogue_id,display_order,week_number,id''', [assigned])
         weeks = [{'moduleId': row['module_id'], 'module': titles[row['module_id']], 'weekId': row['id'],
                   'week': str(row['title'] or f"Week {row['week_number']}")}
@@ -276,7 +277,7 @@ def read_native_facts(context, assigned):
             LEFT JOIN curriculum.quiz_component_links l ON l.component_id=c.id
             LEFT JOIN curriculum.quizzes q ON q.id=coalesce(l.quiz_id,
                 CASE WHEN c.settings_json->>'linkedQuizId' ~ '^[0-9]+$' THEN (c.settings_json->>'linkedQuizId')::bigint END)
-            WHERE c.module_catalogue_id=ANY(%s) AND (c.deleted_at IS NULL OR COALESCE(c.deleted_via_parent,'')<>'')
+            WHERE c.module_catalogue_id=ANY(%s) AND {visible_child_sql('c')}
             ORDER BY c.week_id,c.display_order,c.id''', [assigned])
         components = []
         for row in rows(cur):
@@ -377,7 +378,7 @@ def read_timeline(context):
         scheduled = rows(cur)
         cur.execute('''SELECT id,module_catalogue_id,week_number,title,holiday_note_enabled,holiday_note
             FROM curriculum.weeks WHERE module_catalogue_id=ANY(%s)
-            AND (deleted_at IS NULL OR COALESCE(deleted_via_parent,'')<>'') ORDER BY display_order,week_number,id''', [ids])
+            AND ''' + visible_week_sql('weeks') + ''' ORDER BY display_order,week_number,id''', [ids])
         counts, authored = defaultdict(int), {}
         for week in rows(cur):
             counts[week['module_catalogue_id']] += 1

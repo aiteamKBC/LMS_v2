@@ -36,7 +36,8 @@ const progress = {
       progress: { entries: 1, kinds: ['video'], lastAt: '', otjHours: 1, points: 2 },
     }] },
     to: { weekId: 'W2', weekNumber: 1, title: 'Target week', components: [{
-      componentId: 'C2', title: 'Target video', type: 'video', otjHours: 1,
+      // A cloned component keeps its title/type, as required by the current matcher.
+      componentId: 'C2', title: 'Original video', type: 'video', otjHours: 1,
     }] },
   }],
   suggested: [{ fromComponentId: 'C1', toComponentId: 'C2' }],
@@ -52,6 +53,34 @@ describe('programme-wide module shift', () => {
     mocks.fetchLearningPlan.mockResolvedValue({ plan: [source] });
   });
   afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
+
+  it.each([
+    ['missing', undefined],
+    ['null', null],
+  ])('keeps the dialog usable when the server returns %s programme metadata', async (_label, programme) => {
+    // Older deployed responses contain cohort/groups/modules but no programme.
+    mocks.fetchLearningPlan.mockResolvedValue({ plan: [source, { ...source, moduleId: 'SECOND', moduleTitle: 'Second source' }] });
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(response({ ...options, programme }))
+      .mockResolvedValueOnce(response(options));
+    vi.stubGlobal('fetch', fetchMock);
+    const onClose = vi.fn();
+    const user = userEvent.setup();
+    render(<ShiftModuleModal learnerId="62" learnerName="Example learner" onClose={onClose} />);
+
+    await user.click(await screen.findByRole('button', { name: /Original module/ }));
+    expect(await screen.findByText('Programme-wide module options are unavailable. Please contact support.')).toBeVisible();
+    expect(screen.getByRole('dialog')).toBeVisible();
+    expect(screen.queryByRole('button', { name: /Another cohort module/ })).not.toBeInTheDocument();
+    expect(screen.queryByText(/teaches no other modules/)).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Next: match progress' })).toBeDisabled();
+
+    await user.click(screen.getByRole('button', { name: /Second source/ }));
+    await user.click(await screen.findByRole('button', { name: /Another cohort module/ }));
+    expect(screen.queryByText('Programme-wide module options are unavailable. Please contact support.')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Next: match progress' })).toBeEnabled();
+    expect(onClose).not.toHaveBeenCalled();
+  });
 
   it('selects another cohort module and saves the existing progress mapping for this learner', async () => {
     const fetchMock = vi.fn()
@@ -83,6 +112,34 @@ describe('programme-wide module shift', () => {
     });
   });
 
+  it('explains and reports archiving when progress has no matching target', async () => {
+    const unmatched = {
+      ...progress,
+      suggested: [],
+      weeks: [{
+        ...progress.weeks[0],
+        to: { ...progress.weeks[0].to, components: [] },
+      }],
+    };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(response(options))
+      .mockResolvedValueOnce(response(unmatched))
+      .mockResolvedValueOnce(response({ progressMoved: 0, progressArchived: 1 }));
+    vi.stubGlobal('fetch', fetchMock);
+    const user = userEvent.setup();
+    render(<ShiftModuleModal learnerId="62" learnerName="Example learner" onClose={vi.fn()} />);
+
+    await user.click(await screen.findByRole('button', { name: /Another cohort module/ }));
+    await user.click(screen.getByRole('button', { name: 'Next: match progress' }));
+
+    expect(await screen.findByText(/unmatched progress is archived/i)).toBeVisible();
+    await user.click(screen.getByRole('button', { name: 'Shift module' }));
+    await waitFor(() => expect(mocks.success).toHaveBeenCalledWith(
+      'Learner shifted',
+      expect.stringContaining('1 progress entry archived'),
+    ));
+  });
+
   it('keeps a module already assigned in another cohort disabled', async () => {
     mocks.fetchLearningPlan.mockResolvedValue({ plan: [source, target] });
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response(options)));
@@ -91,6 +148,47 @@ describe('programme-wide module shift', () => {
     await user.click(await screen.findByRole('button', { name: /Original module/ }));
     expect(await screen.findByRole('button', { name: /Already assigned to this learner/ })).toBeDisabled();
     expect(screen.getByRole('button', { name: 'Next: match progress' })).toBeDisabled();
+  });
+
+  it('filters assigned and programme modules independently by module or group', async () => {
+    const secondAssigned = {
+      ...source,
+      moduleId: 'SECOND',
+      moduleTitle: 'Finance essentials',
+      groupName: 'Northern Group',
+    };
+    const secondTarget = {
+      ...target,
+      moduleId: 'TARGET-2',
+      moduleTitle: 'Digital strategy',
+      groupName: 'Southern Group',
+    };
+    mocks.fetchLearningPlan.mockResolvedValue({ plan: [source, secondAssigned] });
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response({
+      ...options,
+      groups: [source.groupName, target.groupName, secondTarget.groupName],
+      modules: [source, target, secondTarget],
+    })));
+    const user = userEvent.setup();
+    render(<ShiftModuleModal learnerId="62" learnerName="Example learner" onClose={vi.fn()} />);
+
+    const assignedSearch = await screen.findByRole('searchbox', { name: 'Search assigned modules' });
+    await user.type(assignedSearch, 'northern group');
+    expect(screen.getByRole('button', { name: /Finance essentials/ })).toBeVisible();
+    expect(screen.queryByRole('button', { name: /Original module/ })).not.toBeInTheDocument();
+
+    await user.clear(assignedSearch);
+    await user.click(screen.getByRole('button', { name: /Original module/ }));
+    const programmeSearch = await screen.findByRole('searchbox', { name: 'Search programme modules' });
+    await user.type(programmeSearch, 'second cohort');
+    expect(screen.getByRole('button', { name: /Another cohort module/ })).toBeVisible();
+    expect(screen.queryByRole('button', { name: /Digital strategy/ })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: /Another cohort module/ }));
+    await user.clear(programmeSearch);
+    await user.type(programmeSearch, 'not a module');
+    expect(screen.getByText('No programme modules match that search.')).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Next: match progress' })).toBeEnabled();
   });
 
   it('shows a server programme rejection without reporting success or closing', async () => {

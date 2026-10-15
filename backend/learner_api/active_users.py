@@ -18,6 +18,8 @@ from django.db.models import Max
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 
+from curriculum_api.week_visibility import visible_child_sql, visible_week_sql
+
 from .identity import learner_profile_for_source
 from .mappers import get_training_plan, training_plan_field
 from .models import (
@@ -702,7 +704,9 @@ def hydrate_training_plan(plan, *, strict=False):
                        c.id, c.title, c.type, c.expected_otjh, to_jsonb(m)->'session_overrides'
                 FROM curriculum.modules m
                 LEFT JOIN curriculum.weeks w ON w.module_catalogue_id = m.module_catalogue_id
+                  AND """ + visible_week_sql("w") + """
                 LEFT JOIN curriculum.components c ON c.week_id = w.id
+                  AND """ + visible_child_sql("c") + """
                 WHERE m.module_catalogue_id = ANY(%s) OR m.title = ANY(%s)
                 ORDER BY m.module_catalogue_id, w.display_order, w.week_number,
                          c.display_order, c.id
@@ -1757,11 +1761,14 @@ def _fetch_ksb_items_from_profile_source(profile_source_id):
         return _coerce_ksb_items(standard_required_ksbs(profile_source_id.split(":", 1)[1]))
     try:
         # Savepointed: see the note above _fetch_ksb_items_for_programme.
+        # The programme applies this profile, so it is read even once archived
+        # (is_active = false); only name-based discovery is limited to active
+        # profiles.
         with transaction.atomic(using="enrolment"), connections["enrolment"].cursor() as cursor:
             cursor.execute(
                 "SELECT ksb_items FROM curriculum.ksb_profiles "
-                "WHERE is_active AND (id = %s OR ksb_profile_id = %s) "
-                "ORDER BY updated_at DESC NULLS LAST LIMIT 1",
+                "WHERE (id = %s OR ksb_profile_id = %s) "
+                "ORDER BY COALESCE(is_active, true) DESC, updated_at DESC NULLS LAST LIMIT 1",
                 [profile_source_id, profile_source_id],
             )
             row = cursor.fetchone()

@@ -365,8 +365,10 @@ def google_drive_media(request, file_id):
 
     content_type = upstream.headers.get("Content-Type") or "application/octet-stream"
     response = StreamingHttpResponse(
-        video_chunks(request, _stream_response(upstream)) if content_type.lower().startswith('video/')
-        else _async_stream_response(upstream),
+        # Chosen by server interface, not by content type: Drive and blob storage
+        # often label a video application/octet-stream, and an async iterator
+        # under WSGI is read to the end before the first byte is sent.
+        video_chunks(request, _stream_response(upstream)),
         status=getattr(upstream, "status", 200),
         content_type=content_type,
     )
@@ -413,7 +415,7 @@ def legacy_attachment_media(request, attachment_id):
                 served_type = opened_type or content_type or (
                     file_type if file_type.startswith('video/') else 'application/octet-stream')
                 response = StreamingHttpResponse(
-                    video_chunks(request, stream) if served_type.lower().startswith('video/') else stream,
+                    video_chunks(request, stream),
                     status=206 if match else 200,
                     content_type=served_type,
                 )
@@ -440,8 +442,10 @@ def legacy_attachment_media(request, attachment_id):
         return HttpResponse("Legacy attachment returned an HTML page, not a file.", status=502)
 
     response = StreamingHttpResponse(
-        video_chunks(request, _stream_response(upstream)) if content_type.lower().startswith('video/')
-        else _async_stream_response(upstream),
+        # Chosen by server interface, not by content type: Drive and blob storage
+        # often label a video application/octet-stream, and an async iterator
+        # under WSGI is read to the end before the first byte is sent.
+        video_chunks(request, _stream_response(upstream)),
         status=getattr(upstream, "status", 200),
         content_type=content_type,
     )

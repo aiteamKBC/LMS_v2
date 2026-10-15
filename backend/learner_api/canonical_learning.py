@@ -8,14 +8,21 @@ from html import escape
 from zoneinfo import ZoneInfo
 import re
 
+from old_otjh import repository
 from old_otjh.repository import query
 from old_otjh.service import ServiceError
+from .ksb_exclusions import not_excluded_sql
 from .monthly_log_sources import decoded, number, row
 from .current_learning import (
     current_records, current_records_bulk, is_unsynchronised_direct_save, source_payload_metadata,
 )
 
 UK = ZoneInfo('Europe/London')
+
+
+def _ksb_not_excluded(alias='k'):
+    """Skip KSB rows the standards migration registered as not counting."""
+    return not_excluded_sql(alias, repository._query_alias.get() or repository.DB)
 
 
 def is_legacy_record(record):
@@ -133,9 +140,44 @@ def entries(learner_id):
     return entries_for(owner)
 
 
-def entries_for(owner, *, overview_only=False):
+def entries_for(owner, *, overview_only=False, entry_ids=None, lineage_only=False, dashboard_metadata=False, training_summary=False):
+    """``lineage_only`` keeps every progress column but replaces an object
+    ``source_payload`` (raw evidence) with just its ``original_source_ref``,
+    the only key the completion and hours projection reads.
+
+    ``dashboard_metadata`` also keeps the minimal course placement and
+    provisional-allocation metadata required by Dashboard display rules.
+
+    ``training_summary`` retains completion, timing and lineage facts without
+    evidence bodies or reporting-segment/historical-component payloads. The
+    complete learner fact set preserves cross-module native-save deduplication.
+    """
+    # Optional caller-owned selection is applied before the evidence/lineage
+    # joins. The learner predicate always remains mandatory.
+    selection = '' if entry_ids is None else ' AND progress.id=ANY(%s)'
+    params = [owner['id']] if entry_ids is None else [owner['id'], list(entry_ids)]
     columns = 'progress.*'
-    if overview_only:
+    payload = 'to_jsonb(p)'
+    if lineage_only:
+        payload = '''CASE WHEN jsonb_typeof(p.source_payload)='object'
+            THEN to_jsonb(p)-'source_payload'||jsonb_build_object('source_payload',
+                 jsonb_build_object('original_source_ref',p.source_payload->'original_source_ref'))
+            ELSE to_jsonb(p) END'''
+    if dashboard_metadata or training_summary:
+        # Dashboard summaries need the course's introduction marker and the
+        # provisional-allocation verdict. Extract those object keys in SQL.
+        # Preserve encoded-string/nonobject payloads as legacy lineage does;
+        # source_payload_metadata supports encoded JSON without unsafe SQL casts.
+        payload = '''CASE WHEN jsonb_typeof(p.source_payload)='object'
+            THEN to_jsonb(p)-'source_payload'||jsonb_build_object('source_payload',
+            jsonb_build_object('original_source_ref',p.source_payload->'original_source_ref',
+                'course_display_placement',jsonb_build_object(
+                    'course_id',p.source_payload->'course_display_placement'->'course_id',
+                    'section',p.source_payload->'course_display_placement'->'section'),
+                'reconciliation',jsonb_build_object('reporting_allocation',jsonb_build_object(
+                    'estimated',p.source_payload->'reconciliation'->'reporting_allocation'->'estimated'))))
+            ELSE to_jsonb(p) END'''
+    if overview_only or training_summary:
         # Completion projection needs saved timing/attempt facts, never raw
         # evidence bodies. Keep lineage required by recorded course allocation.
         columns = ','.join('progress.' + field for field in (
@@ -145,18 +187,26 @@ def entries_for(owner, *, overview_only=False):
             'verified_seconds', 'expected_otjh', 'source_system', 'component_link_source',
             'actual_seconds', 'accepted', 'reporting_started_at', 'reporting_ended_at',
             'reporting_month', 'achieved_score', 'total_score', 'activity_status'))
-        columns += ",jsonb_build_object('original_source_ref',progress.source_payload->>'original_source_ref') AS source_payload"
+        if training_summary:
+            columns += ",progress.source_payload,progress.feed_kind,to_jsonb(progress)->'actual_basis' AS actual_basis"
+        else:
+            columns += ",jsonb_build_object('original_source_ref',progress.source_payload->>'original_source_ref') AS source_payload"
+    segment_payload = "jsonb_build_object('id',s.id)" if training_summary else 'to_jsonb(s)'
+    historical_payload = ("jsonb_build_object('source_system',h.source_system,"
+        "'source_course_ref',h.source_course_ref,'source_activity_id',h.source_activity_id)"
+        if training_summary else 'to_jsonb(h)')
     records = query(f'''WITH canonical AS (
         SELECT {columns}
         FROM "Learner".learner_progress_entries progress
-        WHERE progress.learner_id=%s AND progress.deleted_at IS NULL
+        WHERE progress.learner_id=%s AND progress.deleted_at IS NULL{selection}
     ), progress_ksbs AS (
         SELECT k.progress_id,jsonb_agg(k.ksb_code ORDER BY k.position) AS payload
         FROM "Learner".learner_progress_ksbs k
         JOIN canonical p ON p.id=k.progress_id
+        WHERE {_ksb_not_excluded()}
         GROUP BY k.progress_id
     ), reporting_segments AS (
-        SELECT s.progress_id,jsonb_agg(to_jsonb(s) ORDER BY s.segment_order,s.id) AS payload
+        SELECT s.progress_id,jsonb_agg({segment_payload} ORDER BY s.segment_order,s.id) AS payload
         FROM "Learner".learner_activity_reporting_segments s
         JOIN canonical p ON p.id=s.progress_id AND p.learner_id=s.learner_id
         GROUP BY s.progress_id
@@ -188,14 +238,14 @@ def entries_for(owner, *, overview_only=False):
         WHERE j.deleted_at IS NULL
         GROUP BY j.progress_id
     ), historical_components AS (
-        SELECT link.progress_id,jsonb_agg(to_jsonb(h) ORDER BY h.id) AS payload
+        SELECT link.progress_id,jsonb_agg({historical_payload} ORDER BY h.id) AS payload
         FROM "Learner".learner_progress_historical_components link
         JOIN canonical p ON p.id=link.progress_id
         JOIN curriculum.historical_components h ON h.id=link.historical_component_ref
           AND h.deleted_at IS NULL AND h.historical_only=true
         GROUP BY link.progress_id
     )
-        SELECT to_jsonb(p) AS payload,
+        SELECT {payload} AS payload,
           coalesce(k.payload,'[]'::jsonb) AS ksbs,
           coalesce(seg.payload,'[]'::jsonb) AS segments,
           coalesce(src.payload,'[]'::jsonb) AS sources,
@@ -209,7 +259,7 @@ def entries_for(owner, *, overview_only=False):
         LEFT JOIN journal_routes j ON j.progress_id=p.id
         LEFT JOIN historical_components h ON h.progress_id=p.id
         ORDER BY p.reporting_month,p.reporting_started_at NULLS LAST,p.id''',
-        [owner['id']])
+        params)
     from learner_api import journal_sources
     journal_enabled = journal_sources.enabled()
     loaded = []
@@ -676,20 +726,28 @@ def content(item, owner=None, record=None):
         'html': f'<p>{escape(note)}</p>' if note else '<p>No material is directly linked to this activity.</p>'}]}
 
 
-def source_subjects(learner_id, summarize, *, owner=None, records=None, overview_only=False):
+def source_subjects(learner_id, summarize, *, owner=None, records=None, overview_only=False, include_totals=True,
+                    course_ids=None, module_ids=None):
     """Owned course catalogue with progress, or a compact recorded overview."""
     from learner_api.course_catalogue_display import read_export_placements, catalogue_display_context
     owner = owner if owner is not None else profile(learner_id)
     if owner is None:
         raise ServiceError('The consolidated learner identity needs review.', 'identity_review_required', 409)
-    courses = query('''SELECT DISTINCT c.id,c.source_course_ref,c.source_course_title,c.curriculum_module_ref,
+    # Filter membership before loading a selected module's catalogue. Keep the
+    # complete canonical fact set supplied by the caller for lineage/dedupe.
+    scoped = course_ids is not None or module_ids is not None
+    selection = ' AND (c.source_course_ref=ANY(%s) OR c.curriculum_module_ref=ANY(%s))' if scoped else ''
+    params = [owner['id']]
+    if scoped:
+        params.extend([[str(value) for value in (course_ids or [])], list(module_ids or [])])
+    courses = query(f'''SELECT DISTINCT c.id,c.source_course_ref,c.source_course_title,c.curriculum_module_ref,
         CASE WHEN m.source_relationship='historical'
             THEN m.source_payload->'verified_catalogue_scope' END AS verified_catalogue_scope
         FROM "Learner".learner_source_course_memberships m
         JOIN curriculum.source_courses c ON c.id=m.source_course_id AND c.deleted_at IS NULL
         WHERE m.learner_id=%s AND m.deleted_at IS NULL AND c.source_system='old_lms'
-          AND c.source_course_ref ~ '^[0-9]+$'
-        ORDER BY c.source_course_title,c.id''', [owner['id']])
+          AND c.source_course_ref ~ '^[0-9]+$'{selection}
+        ORDER BY c.source_course_title,c.id''', params)
     catalogue_columns = ("a.source_activity_id,c.source_course_ref" if overview_only else
         '''a.id,a.source_course_id,a.source_activity_id,a.source_activity_kind,
         a.source_activity_title,a.source_activity_type,a.source_section_ref,a.source_section_title,a.curriculum_component_ref,
@@ -720,6 +778,9 @@ def source_subjects(learner_id, summarize, *, owner=None, records=None, overview
         'progress_basis': 'catalogue_activities',
         'learner_name': owner['name'], 'aptem_id': owner['aptem_id'],
         'subjects': subjects, **summarize(items)}
+    if not include_totals:
+        result['activity_sources'] = {key: values[0] for key, values in links.items() if len(values) == 1}
+        return result
     total = round(sum(recorded_seconds(r) for r in records if counts_as_actual(r)) / 3600, 4)
     result.update(recorded_otjh_total=total, audit_lms_actual=total,
         audit_ksb_evidenced=len({k for r in records if counts_as_actual(r) for k in r['ksbs']}),
@@ -977,6 +1038,7 @@ def read_ksb_point_counts(learner_id):
         FROM "Learner".learner_progress_entries p
         JOIN "Learner".learner_progress_ksbs k ON k.progress_id=p.id
         WHERE p.learner_id=%s AND p.deleted_at IS NULL AND k.ksb_code IS NOT NULL
+          AND ''' + _ksb_not_excluded() + '''
         ORDER BY k.ksb_code,p.id,k.position
     ) SELECT code,(array_agg(description ORDER BY id,position))[1] AS description,
         count(*) AS "evidenceCount",count(*) FILTER (WHERE achieved) AS completed,
@@ -1034,13 +1096,17 @@ def metrics_from_records(records, monthly_targets, *, include_ksb_points=False):
     return result
 
 
-def metrics(learner_id):
-    """Return verified canonical dashboard metrics for one learner."""
-    owner = require_profile(learner_id)
+def metrics(learner_id, *, owner=None):
+    """Return verified canonical dashboard metrics for one learner.
+
+    ``owner`` is this learner's already-verified ``require_profile`` row.
+    """
+    owner = require_profile(learner_id) if owner is None else owner
     from learner_api import journal_sources
-    result = metrics_from_records(entries_for(owner), targets_for(owner))
+    # Only counts and hours leave here, so raw evidence bodies are not loaded.
+    result = metrics_from_records(entries_for(owner, lineage_only=True), targets_for(owner))
     if journal_sources.enabled():
-        planned = programme_planned_hours(learner_id)
+        planned = programme_planned_hours(learner_id, owner=owner)
         result['otjh']['planned'] = planned
         result['aptem_planned_total'] = planned
     return result
@@ -1181,7 +1247,8 @@ def metrics_bulk(learner_ids, *, learner_workspace=False, include_ksb_points=Fal
         for item in query(f'''SELECT k.progress_id,k.ksb_code{definition_columns}
             FROM "Learner".learner_progress_ksbs k
             {definition_join}
-            WHERE k.progress_id=ANY(%s) ORDER BY k.progress_id,k.position''', [progress_ids]):
+            WHERE k.progress_id=ANY(%s) AND {_ksb_not_excluded()}
+            ORDER BY k.progress_id,k.position''', [progress_ids]):
             record = records_by_progress.get(int(item['progress_id']))
             if record is not None:
                 record['ksbs'].append(item['ksb_code'])

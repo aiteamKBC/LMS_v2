@@ -211,7 +211,8 @@ describe('full historical course catalogue', () => {
     expect(within(card).getByText('1 of 3 completed')).toBeVisible();
     expect(within(card).getByText('33.33%')).toBeVisible();
     expect(within(card).getByText('In progress')).toBeVisible();
-    expect(within(card).getByText(/Accepted time: 18m/)).toBeVisible();
+    expect(within(card).getByText('Completed 18m')).toBeVisible();
+    expect(within(card).queryByText(/Accepted time:/)).not.toBeInTheDocument();
     expect(screen.queryByText(/Recorded activities only/)).not.toBeInTheDocument();
     expect(within(screen.getByRole('button', { name: /Unstarted course.*Open subject/ })).getByText('0 of 1 completed')).toBeVisible();
     fireEvent.click(card);
@@ -251,10 +252,11 @@ describe('recorded historical course progress', () => {
     expect(result.some(s => s.id === 'current:HISTORY')).toBe(false);
   });
 
-  it('shows the catalogue separately from the recorded denominator and accepted time', () => {
+  it('shows the catalogue separately from the recorded denominator without repeating accepted time', () => {
     render(<MemoryRouter><StudentActivityPanel data={data} loading={false} error={null} onRetry={vi.fn()} /></MemoryRouter>);
     expect(screen.getByText(/Recorded activities only.*Full catalogue: 265/)).toBeVisible();
-    expect(screen.getByText(/Accepted time: 18m/)).toBeVisible();
+    expect(screen.getByText('Completed 18m')).toBeVisible();
+    expect(screen.queryByText(/Accepted time:/)).not.toBeInTheDocument();
     expect(screen.getByText('1 of 1 completed')).toBeVisible();
   });
 });

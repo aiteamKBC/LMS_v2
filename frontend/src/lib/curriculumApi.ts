@@ -385,8 +385,18 @@ export interface CurriculumModule {
     title: string;
     displayOrder?: number;
     ksbMappings?: CurriculumComponent['ksbMappings'];
+    /** Absent from an outline (see `weekStructureOutline`): not an empty week. */
     components?: CurriculumComponent[];
+    /** Set on every week of an outline: its `components` were not sent. */
+    componentsOmitted?: boolean;
   }>;
+  /**
+   * Set when `weekStructure` is an outline -- weeks without their components,
+   * from a programme detail read with `omitWeekComponents`. Read the module's
+   * own structure before editing or pushing it; the server refuses a save
+   * that still carries this flag.
+   */
+  weekStructureOutline?: boolean;
   /**
    * The calendar session count — `weeks` x the group's delivery days per week.
    * This is what the session dates, the tutor clash check and the Teams series
@@ -498,6 +508,14 @@ export interface CurriculumComponent {
   deletedAt?: string | null;
   deletedViaParent?: string;
   settings?: Record<string, unknown>;
+  /**
+   * The settings keys a `fetchCurriculumComponents({ omitContent: true })` read
+   * left out of `settings` -- authored long text such as `readingContent` or
+   * `transcript`. Absent means `settings` is complete. A row carrying it is
+   * for display only: load the full component before showing that text or
+   * saving it (the server refuses a save that still carries this).
+   */
+  settingsOmitted?: string[];
 }
 
 /** Where a reusable component currently lives. */
@@ -1247,6 +1265,7 @@ export interface CurriculumActivityLogState {
   statusSource: string;
   actualOtjh: number | null;
   acceptedOtjh: number | null;
+  unallocatedAcceptedRecords?: number;
   hoursSource: string;
   startedAt: string | null;
   endedAt: string | null;
@@ -1312,8 +1331,9 @@ export type CurriculumProgrammeLearnerRosterResponse = CurriculumScopeLearnerRos
 
 export interface CurriculumScopeLearnerKsbImpactResponse {
   activityLogOtjh?: {
-    learners: Array<{ learnerId: number | string; plannedOtjh: number; achievedOtjh: number | null }>;
+    learners: Array<{ learnerId: number | string; plannedOtjh: number; achievedOtjh: number | null; unallocatedAcceptedRecords?: number }>;
     achievedTotal: number | null; plannedTotal: number; source: string;
+    unallocatedAcceptedRecords?: number;
   };
   scope: CurriculumLearnerScope | string;
   identifier: string;
@@ -2393,6 +2413,19 @@ export interface CurriculumProgrammeDetail {
   };
 }
 
+/** The programme with its cohorts and groups -- the detail document up to the modules. */
+export interface CurriculumProgrammeDetailShell {
+  schema: string;
+  programme: CurriculumProgramme;
+  flat: Pick<CurriculumProgrammeDetail['flat'], 'cohorts' | 'groups' | 'groupIds' | 'weekTemplates'>;
+}
+
+/** The programme's modules (each weekStructure an outline) and planned sessions. */
+export interface CurriculumProgrammeDetailModules {
+  schema: string;
+  flat: Pick<CurriculumProgrammeDetail['flat'], 'modules' | 'sessions'>;
+}
+
 export interface CurriculumSessionPlanPreview {
   sessions: Array<{ sessionNumber: number; date: string; day: string; startTime?: string; endTime?: string; durationMinutes?: number; skippedHolidays: string[] }>;
   skippedHolidays: string[];
@@ -2890,8 +2923,21 @@ const EPOCH_POLL_MAX_FAILURES = 3;
 // A hung read would otherwise leave the in-flight guard set for good and stop
 // the tab polling for the rest of its life.
 const EPOCH_READ_TIMEOUT_MS = 10_000;
+// A tab nobody is using does not need the co-editing interval. After
+// EPOCH_IDLE_AFTER_MS without a pointer or keyboard event the tab reads at
+// most every EPOCH_IDLE_POLL_INTERVAL_MS, and the first input after that
+// reads at once -- so a person who comes back to the screen is never more
+// than one request behind, while the dozens of tabs left open across the
+// estate stop costing a request every two seconds each. Visibility already
+// stops polling a hidden tab altogether; this is for the visible, unattended
+// one.
+export const EPOCH_IDLE_AFTER_MS = 60_000;
+export const EPOCH_IDLE_POLL_INTERVAL_MS = 10_000;
 
 let epochPollTimer: ReturnType<typeof setInterval> | null = null;
+let lastEpochReadAt = 0;
+let lastUserActivityAt = Date.now();
+let epochActivityBound = false;
 let epochVisibilityBound = false;
 let lastSeenEpoch: number | null = null;
 let epochFailures = 0;
@@ -3007,6 +3053,7 @@ async function pollEpoch(quiet = false): Promise<void> {
     return;
   }
   epochReadInFlight = true;
+  lastEpochReadAt = Date.now();
   try {
     const read = await readCurriculumEpoch();
     if (read.epoch === null) {
@@ -3060,8 +3107,30 @@ async function pollEpoch(quiet = false): Promise<void> {
   }
 }
 
+/** One timer tick: read, unless the tab is idle and has read recently. */
+function epochTick(): void {
+  const now = Date.now();
+  const idle = now - lastUserActivityAt >= EPOCH_IDLE_AFTER_MS;
+  if (idle && now - lastEpochReadAt < EPOCH_IDLE_POLL_INTERVAL_MS) return;
+  void pollEpoch();
+}
+
+function noteUserActivity(): void {
+  const now = Date.now();
+  const wasIdle = now - lastUserActivityAt >= EPOCH_IDLE_AFTER_MS;
+  lastUserActivityAt = now;
+  // Back from idle: catch up now instead of waiting out the slow interval.
+  if (wasIdle && epochPollTimer && now - lastEpochReadAt >= EPOCH_POLL_INTERVAL_MS) void pollEpoch();
+}
+
 function startEpochPolling(): void {
   if (epochPollingAbandoned || typeof window === 'undefined') return;
+  if (!epochActivityBound) {
+    epochActivityBound = true;
+    for (const type of ['pointerdown', 'keydown', 'wheel', 'touchstart', 'focus']) {
+      window.addEventListener(type, noteUserActivity, { capture: true, passive: true });
+    }
+  }
   if (!epochVisibilityBound && typeof document !== 'undefined') {
     epochVisibilityBound = true;
     document.addEventListener('visibilitychange', () => {
@@ -3073,7 +3142,7 @@ function startEpochPolling(): void {
     });
   }
   if (epochPollTimer) return;
-  epochPollTimer = setInterval(() => { void pollEpoch(); }, EPOCH_POLL_INTERVAL_MS);
+  epochPollTimer = setInterval(epochTick, EPOCH_POLL_INTERVAL_MS);
   // Establish the starting value straight away rather than 25s from now.
   void pollEpoch(true);
 }
@@ -3106,6 +3175,8 @@ export function resetCurriculumEpochPolling(): void {
   stopEpochPolling();
   lastSeenEpoch = null;
   epochFailures = 0;
+  lastEpochReadAt = 0;
+  lastUserActivityAt = Date.now();
   epochPollingAbandoned = false;
   epochReadInFlight = false;
   quietResyncPending = false;
@@ -3417,10 +3488,13 @@ export function fetchCurriculumModules(signal?: AbortSignal, options: {
   return fetchCollection<CurriculumModule>(`/curriculum/modules/${suffix}`, { signal, skipCache: options.skipCache, revalidate: options.revalidate, timeoutMs: 60000 });
 }
 
-export function fetchCurriculumComponents(signal?: AbortSignal, options: { moduleCatalogueIds?: string[]; page?: number; pageSize?: number; skipCache?: boolean; revalidate?: boolean } = {}): Promise<CurriculumComponent[]> {
+// `omitContent` leaves each component's authored long text out of `settings`
+// and names what was left out in `settingsOmitted`; see CurriculumComponent.
+export function fetchCurriculumComponents(signal?: AbortSignal, options: { moduleCatalogueIds?: string[]; page?: number; pageSize?: number; omitContent?: boolean; skipCache?: boolean; revalidate?: boolean } = {}): Promise<CurriculumComponent[]> {
   const query = new URLSearchParams();
   const moduleCatalogueIds = (options.moduleCatalogueIds || []).filter(Boolean);
   if (moduleCatalogueIds.length) query.set('module_catalogue_ids', moduleCatalogueIds.join(','));
+  if (options.omitContent) query.set('omit', 'content');
   if (options.page) query.set('page', String(options.page));
   if (options.pageSize) query.set('page_size', String(options.pageSize));
   const suffix = query.toString() ? `?${query.toString()}` : '';
@@ -3894,12 +3968,48 @@ export function fetchCurriculumOverview(signal?: AbortSignal, options: { compact
   return fetchJson<CurriculumOverview>(`/curriculum/overview/${options.compact ? '?compact=true' : ''}`, { signal, skipCache: options.skipCache, revalidate: options.revalidate, timeoutMs: options.timeoutMs ?? 30000 });
 }
 
-export function fetchCurriculumProgrammeDetail(id: string, signal?: AbortSignal, options: { visibility?: 'all' | 'operational'; deferStats?: boolean; skipCache?: boolean; revalidate?: boolean; timeoutMs?: number } = {}): Promise<CurriculumProgrammeDetail> {
+// `omitComponents` leaves `flat.components` out of the response, for a caller
+// that reads the components through fetchCurriculumComponents anyway.
+// `omitTree` leaves out the nested `cohorts` view, which repeats every module of
+// `flat.modules`; with it the response has no `cohorts` at all, so only a caller
+// that reads `flat` alone may ask for it. On a large programme each of the two
+// is a large share of the document. `omitWeekComponents` sends every module's
+// `weekStructure` as an outline -- weeks without components, flagged
+// `weekStructureOutline` -- for a caller that reads week titles and order only.
+// Parameters are sent in camelCase; the server still accepts the old snake_case
+// spellings.
+export function fetchCurriculumProgrammeDetail(id: string, signal?: AbortSignal, options: { visibility?: 'all' | 'operational'; deferStats?: boolean; omitComponents?: boolean; omitTree?: boolean; omitWeekComponents?: boolean; skipCache?: boolean; revalidate?: boolean; timeoutMs?: number } = {}): Promise<CurriculumProgrammeDetail> {
   const query = new URLSearchParams();
   if (options.visibility === 'all') query.set('visibility', 'all');
-  if (options.deferStats) query.set('defer_stats', '1');
+  if (options.deferStats) query.set('deferStats', '1');
+  const omit = [
+    options.omitComponents ? 'components' : '',
+    options.omitTree ? 'tree' : '',
+    options.omitWeekComponents ? 'weekComponents' : '',
+  ].filter(Boolean);
+  if (omit.length) query.set('omit', omit.join(','));
   const suffix = query.toString() ? `?${query.toString()}` : '';
   return fetchJson<CurriculumProgrammeDetail>(`/curriculum/programmes/${encodeURIComponent(id)}/detail/${suffix}`, { signal, skipCache: options.skipCache, revalidate: options.revalidate, timeoutMs: options.timeoutMs ?? 60000 });
+}
+
+// The detail document in two parts, for a page that draws the programme, its
+// cohorts and groups before the modules -- the slowest part of the build --
+// arrive. Both leave out the KSB stats (see fetchProgrammeKsbStats) and the
+// components; the modules' weekStructure is an outline, as with
+// `omitWeekComponents`.
+type ProgrammeDetailSectionOptions = { visibility?: 'all' | 'operational'; skipCache?: boolean; revalidate?: boolean; timeoutMs?: number };
+
+function programmeDetailSectionPath(id: string, section: 'shell' | 'modules', visibility?: 'all' | 'operational') {
+  const suffix = visibility === 'all' ? '?visibility=all' : '';
+  return `/curriculum/programmes/${encodeURIComponent(id)}/detail/${section}/${suffix}`;
+}
+
+export function fetchCurriculumProgrammeDetailShell(id: string, signal?: AbortSignal, options: ProgrammeDetailSectionOptions = {}): Promise<CurriculumProgrammeDetailShell> {
+  return fetchJson<CurriculumProgrammeDetailShell>(programmeDetailSectionPath(id, 'shell', options.visibility), { signal, skipCache: options.skipCache, revalidate: options.revalidate, timeoutMs: options.timeoutMs ?? 60000 });
+}
+
+export function fetchCurriculumProgrammeDetailModules(id: string, signal?: AbortSignal, options: ProgrammeDetailSectionOptions = {}): Promise<CurriculumProgrammeDetailModules> {
+  return fetchJson<CurriculumProgrammeDetailModules>(programmeDetailSectionPath(id, 'modules', options.visibility), { signal, skipCache: options.skipCache, revalidate: options.revalidate, timeoutMs: options.timeoutMs ?? 60000 });
 }
 
 export { fetchCurriculumOverview as fetchCurriculumOverviewBundle };

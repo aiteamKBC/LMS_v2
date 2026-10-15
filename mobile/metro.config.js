@@ -10,5 +10,9 @@ if (process.env.KBC_DEPENDENCY_ROOT) {
     fs.realpathSync(__dirname),dependencies,process.env.KBC_DEPENDENCY_ROOT])];
   config.resolver.nodeModulesPaths = [path.join(__dirname,'node_modules'),dependencies,
     path.join(process.env.KBC_DEPENDENCY_ROOT,'node_modules')];
+  // Expo supplies this runtime as an absolute alias path. Metro's file map
+  // indexes the junction target when media packages are private source builds.
+  config.transformer.asyncRequireModulePath = fs.realpathSync(
+    require.resolve(config.transformer.asyncRequireModulePath));
 }
 module.exports = config;

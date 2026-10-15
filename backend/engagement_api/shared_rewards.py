@@ -40,10 +40,16 @@ def _active():
 
 
 def policy(cursor, module_id=PILOT_MODULE, require=True):
-    if module_id != PILOT_MODULE:
-        raise RewardError("module_out_of_scope", 404)
+    identifier(module_id)
     cursor.execute('SELECT * FROM "Engagement".shared_reward_config WHERE module_id=%s', [module_id])
     value = _one(cursor)
+    if value is None:
+        from .learning_policy import all_course_start
+        start = all_course_start(cursor)
+        if start:
+            value = {"module_id": module_id, "enabled": True, "starts_at": start,
+                     "programme_start": None, "module_end": None, "semester_end": None,
+                     "masterclass_event_id": None}
     if require and (not value or not value["enabled"] or not value["starts_at"] or value["starts_at"]>timezone.now()):
         raise RewardError("rewards_not_enabled")
     return value
@@ -65,6 +71,26 @@ def _grant(intent, learner_name, module_id):
     return grant
 
 
+def configured_quiz_award(cursor, submitted_at, **kwargs):
+    from .learning_policy import at
+    selected = at(cursor, submitted_at)
+    options = selected['settings'] if selected else {}
+    return quiz_award(**kwargs, threshold=options.get('quizThreshold',70),
+        points_per_correct=options.get('quizPointPerCorrect',1),
+        perfect_points_per_correct=options.get('perfectQuizPointPerCorrect',2))
+
+
+def configured_hour_awards(cursor, learner_id):
+    from bisect import bisect_right
+    cursor.execute('SELECT effective_at,settings FROM "Engagement".learning_reward_policies ORDER BY effective_at')
+    revisions = [(_ms(row[0]), _json(row[1])) for row in cursor.fetchall()]
+    starts = [row[0] for row in revisions]
+    def rate(milliseconds):
+        index = bisect_right(starts,milliseconds)-1
+        return revisions[index][1]['pointsPerHour'] if index>=0 else 1
+    return hour_awards(learner_id=learner_id, intervals=accepted_intervals(cursor,learner_id), rate_at=rate)
+
+
 def record_observations(*, learner_id, profile_id, component, tracking, token,
                         event_id, sequence, observed_intervals):
     """Called only after facade auth/entitlement and signature/mode verification."""
@@ -84,6 +110,8 @@ def record_observations(*, learner_id, profile_id, component, tracking, token,
     fingerprint = digest([session_id, sequence, checked])
     amount = sum(end-start for start, end in checked)
     with transaction.atomic(using=DB), connections[DB].cursor() as cursor:
+        from .learning_policy import ensure_module
+        ensure_module(cursor, module_id)
         cfg = policy(cursor, module_id)
         if started < cfg["starts_at"]:
             raise RewardError("session_precedes_policy")
@@ -221,6 +249,11 @@ def reconcile_progress(progress_id):
                     [progress_id])
                 return {"status":"waiting_review"}
         budget = row["verified_seconds"]*1000
+        from .learning_policy import at, activity_type
+        selected = at(cursor, session['started_at'])
+        if selected and (session['observed_ms'] < 240000 or activity_type(
+                {'type':session['component_type']}, session['activity_kind']) not in selected['settings']['hourActivities']):
+            budget = 0
         cursor.execute('''SELECT event_id,intervals FROM "Engagement".shared_reward_observations
                           WHERE session_id=%s ORDER BY sequence''', [session["session_id"]])
         observed = _all(cursor)
@@ -242,7 +275,7 @@ def reconcile_progress(progress_id):
                (receipt_id,session_id,learner_id,active_start,active_end) VALUES(%s,%s,%s,%s,%s)
                ON CONFLICT DO NOTHING''', [receipt,session["session_id"],session["learner_id"],
                session["started_at"]+timedelta(milliseconds=start),session["started_at"]+timedelta(milliseconds=end)])
-        intents = hour_awards(learner_id=session["learner_id"], intervals=accepted_intervals(cursor,session["learner_id"]))
+        intents = configured_hour_awards(cursor, session["learner_id"])
         if intents:
             cursor.execute('''SELECT g.event_reference FROM "Engagement".points_grants g
                 JOIN "Engagement".points_rules r ON r.id=g.rule_id
@@ -259,7 +292,7 @@ def reconcile_progress(progress_id):
                 correct,total_q = row["achieved_score"],row["total_score"]
                 if correct is None or total_q is None or Decimal(correct)!=int(correct) or Decimal(total_q)!=int(total_q):
                     raise RewardError("invalid_saved_question_counts")
-                intent = quiz_award(learner_id=session["learner_id"],quiz_id=str(row["quiz_ref"]),
+                intent = configured_quiz_award(cursor, row['submitted_at'], learner_id=session["learner_id"],quiz_id=str(row["quiz_ref"]),
                     submission_id=str(row["id"]),submitted_ordinal=1,
                     correct_answers=int(correct),total_questions=int(total_q))
                 if intent:
@@ -327,6 +360,8 @@ def voucher_request(*,learner_id,learner_name,request_id,amount_gbp,module_id=PI
     from .models import Reward,VoucherClaim
     from .services import points_summary
     with transaction.atomic(using=DB),connections[DB].cursor() as cursor:
+        from .learning_policy import ensure_module
+        ensure_module(cursor,module_id)
         policy(cursor,module_id);_wallet_lock(cursor,learner_id)
         cursor.execute('''SELECT r.*,c.points,c.status,c.requested_at FROM "Engagement".shared_reward_voucher_requests r
              JOIN "Engagement".voucher_claims c ON c.id=r.claim_id WHERE request_id=%s''',[request_id])
@@ -385,6 +420,8 @@ def set_leaderboard(*,learner_id,module_id,opted_in,display_name):
     if len(name)>80 or any(ord(c)<32 or ord(c)==127 for c in name) or (opted_in and not name):
         raise RewardError("invalid_display_name",400)
     with transaction.atomic(using=DB),connections[DB].cursor() as cursor:
+        from .learning_policy import ensure_module
+        ensure_module(cursor,module_id)
         policy(cursor,module_id);_wallet_lock(cursor,learner_id)
         cursor.execute('''INSERT INTO "Engagement".shared_reward_leaderboard_optins
              (learner_id,module_id,display_name,opted_in) VALUES(%s,%s,%s,%s)
@@ -401,6 +438,9 @@ def summary(*,learner_id,module_id=PILOT_MODULE):
     today=timezone.now().astimezone(ZoneInfo("Europe/London")).date()
     with connections[DB].cursor() as cursor:
         cfg=policy(cursor,module_id,require=False)
+        from .learning_policy import at, DEFAULTS
+        current_policy = at(cursor)
+        formula = current_policy['settings'] if current_policy else DEFAULTS
         enabled=bool(getattr(settings,"KBC_SHARED_REWARDS_READY",False) is True and cfg and cfg["enabled"] and cfg["starts_at"] and cfg["starts_at"]<=timezone.now())
         accepted=accepted_intervals(cursor,learner_id,module_id)
         accepted_ms=merged_milliseconds([(r["active_start_ms"],r["active_end_ms"]) for r in accepted])
@@ -413,7 +453,7 @@ def summary(*,learner_id,module_id=PILOT_MODULE):
            [learner_id,module_id])
         verified={r["opportunity"]:r for r in _all(cursor)}
         opportunities=[]
-        for key,amount in BONUS_POINTS.items():
+        for key,amount in formula.get('bonusPoints',BONUS_POINTS).items():
             start=end=None
             status="available"
             if key=="module-feedback":
@@ -468,7 +508,8 @@ def summary(*,learner_id,module_id=PILOT_MODULE):
                 entries.append({"rank":rank,"displayName":row["display_name"],"points":row["points"]})
     return {"source":"lms","moduleId":module_id,"learnerId":learner_id,
       "policy":{"enabled":enabled,"version":POLICY_VERSION,
-                "startsAt":cfg["starts_at"].isoformat() if cfg and cfg["starts_at"] else None,"pointsPerGbp":100},
+                "startsAt":cfg["starts_at"].isoformat() if cfg and cfg["starts_at"] else None,"pointsPerGbp":100,
+                "formula":formula,"minimumStudySeconds":240 if current_policy else 0},
       "points":points_summary(learner_id),
       "study":{"acceptedStudySeconds":accepted_ms//1000,"basis":"reward_accepted_active_intervals",
                "formalOtj":False,"pendingSessionCount":pending},
@@ -488,6 +529,8 @@ def verify_bonus(*,learner_id,learner_name,module_id,opportunity,verification_id
         raise RewardError("unknown_opportunity",400)
     today=timezone.now().astimezone(ZoneInfo("Europe/London")).date()
     with transaction.atomic(using=DB),connections[DB].cursor() as cursor:
+        from .learning_policy import ensure_module
+        ensure_module(cursor,module_id)
         cfg=policy(cursor,module_id);_wallet_lock(cursor,learner_id)
         if not hasattr(completion_date,"isoformat") or completion_date>today or completion_date<cfg["starts_at"].astimezone(ZoneInfo("Europe/London")).date():
             raise RewardError("completion_outside_policy",400)
@@ -525,6 +568,8 @@ def verify_bonus(*,learner_id,learner_name,module_id,opportunity,verification_id
             module_end=cfg.get("module_end"),programme_start=cfg.get("programme_start"),
             semester_end=cfg.get("semester_end"),confirmed_winner=confirmed_winner,
             masterclass_booking_verified=booked)
+        from .learning_policy import at
+        from dataclasses import replace
         scope=intent.event_reference
         cursor.execute('''SELECT * FROM "Engagement".shared_reward_bonus_verifications
              WHERE id=%s OR (learner_id=%s AND scope_key=%s)''',[verification_id,learner_id,scope])
@@ -540,6 +585,12 @@ def verify_bonus(*,learner_id,learner_name,module_id,opportunity,verification_id
             # Different verification IDs for the same once-only opportunity still
             # return the original grant, never another reward.
             return {"verified":True,"duplicate":True,"verificationId":prior["id"],"grantId":str(prior["grant_id"]),"points":prior["points"]}
+        selected = at(cursor)
+        if selected:
+            amount = selected['settings']['bonusPoints'][opportunity]
+            if not amount:
+                raise RewardError('bonus_disabled')
+            intent = replace(intent,points=amount)
         cursor.execute('''INSERT INTO "Engagement".shared_reward_bonus_verifications
           (id,learner_id,module_id,opportunity,scope_key,evidence_reference,completion_date,verified_by,points)
           VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s)''',

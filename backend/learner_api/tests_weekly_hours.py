@@ -27,7 +27,8 @@ class WeeklyHoursTests(SimpleTestCase):
              patch('learner_api.training_plan_dashboard.coach_phone', return_value=None), \
              patch('learner_api.calendar.coaching_events_for_learner', return_value=[]):
             result = read_dashboard(source, section='overview')
-        entries.assert_called_once_with(owner)
+        # One canonical read; lineage only, since no consumer reads raw evidence.
+        entries.assert_called_once_with(owner, lineage_only=True)
         self.assertEqual(result['moduleActivityHours']['M1']['components'], {'A': 1})
         self.assertEqual(result['moduleProgress']['M1']['hours']['actual'], 1)
 

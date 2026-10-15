@@ -63,6 +63,7 @@ export default function LearnerRewardsPage() {
   const [grants, setGrants] = useState<Grant[]>([]);
   const [available, setAvailable] = useState(0);
   const [earned, setEarned] = useState(0);
+  const [formula, setFormula] = useState<Awaited<ReturnType<typeof fetchMyPoints>>['learningFormula']>();
   const [tab, setTab] = useState<Tab>('shop');
   const [query, setQuery] = useState('');
   const [category, setCategory] = useState('all');
@@ -85,6 +86,7 @@ export default function LearnerRewardsPage() {
       setLearner(detail); setRewards(rewardRows); setClaims(claimRows); setRecognitions(recognitionRows); setGrants(grantRows);
       setAvailable(Math.max(summary.balance, 0));
       setEarned(Math.max(summary.earned, 0));
+      setFormula(summary.learningFormula);
       setError('');
     }).catch((reason: unknown) => {
       if (!cancelled) setError(reason instanceof Error ? reason.message : 'Could not load rewards.');
@@ -118,6 +120,7 @@ export default function LearnerRewardsPage() {
       userName={learner?.name || 'Learner'} userRole={learner?.programme ? `${learner.programme} Apprentice` : 'Apprentice'}
     >
       <main className="page-container min-w-0 w-full space-y-3 p-3 md:space-y-4 md:p-6">
+        {!loading&&formula&&<details className="rounded-xl border p-4"><summary className="font-semibold">How learning points work across your courses</summary><p className="mt-2">{formula.pointsPerHour} point(s) per whole accepted study hour. Partial hours carry forward; overlapping activity counts once. Study visits need at least four accepted minutes.</p><p className="mt-2">First quiz submission: at least {formula.quizThreshold}% earns {formula.quizPointPerCorrect} point(s) per correct answer. A perfect score earns {formula.perfectQuizPointPerCorrect} instead. Retakes do not earn additional quiz points.</p><p className="mt-2">Existing awards remain yours. New activity follows the college's current rules. Manual time entries do not create measured-hour rewards.</p></details>}
         <section className="learner-super-admin-hero relative overflow-hidden rounded-2xl p-4 text-primary-800 sm:rounded-3xl sm:p-6 md:p-6 workspace-page-hero">
           <div className="pointer-events-none absolute -right-20 -top-32 h-80 w-80 rounded-full bg-amber-300/15 blur-3xl hidden"></div>
           <div className="relative flex flex-col gap-4 sm:gap-5 lg:flex-row lg:items-end lg:justify-between"><div><span className="inline-flex items-center gap-2 rounded-full border border-primary-200/60 bg-primary-100/60 px-3 py-1 text-[10px] font-bold uppercase tracking-[0.14em] text-primary-600"><AppIcon className="ri-award-line text-amber-300"></AppIcon>Recognition & rewards</span><h1 className="mt-3 text-[22px] font-bold leading-tight text-primary-800 sm:text-2xl md:text-3xl">Turn your progress into rewards</h1><p className="mt-2 max-w-2xl text-sm leading-6 text-foreground-500">See every point earned, celebrate recognition and claim available rewards.</p></div><div className="learner-hero-balance rounded-xl border border-primary-200/60 bg-primary-100/60 px-4 py-3 backdrop-blur sm:rounded-2xl sm:px-5"><p className="text-[10px] uppercase tracking-wider text-foreground-500">Available balance</p><p className="mt-1 text-2xl font-bold text-primary-800 sm:text-3xl">{loading ? '–' : available.toLocaleString()} <span className="text-xs font-medium text-amber-300">pts</span></p></div></div>

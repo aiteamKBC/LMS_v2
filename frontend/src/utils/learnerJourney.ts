@@ -44,6 +44,8 @@ export interface JourneyComponent {
   quizMeta?: { quizId: number; questions: number | null; duration: number | null; timeUnit: string | null };
   quizAttempts?: LearnerQuizAttempt[];
   retired?: boolean;
+  /** See LearnerComponentEntry.contentAvailable. */
+  contentAvailable?: boolean;
 }
 
 /** The attempts that belong to a quiz component: those on the quiz it links
@@ -381,6 +383,8 @@ export function componentNoun(type: string | null | undefined): string {
 /** Does this activity contain something the learner can actually consume?
  * An id/title alone is not content and must never lead to an empty runner. */
 export function hasComponentContent(c: JourneyComponent): boolean {
+  // Compact rows carry the server's verdict of the rule below (same fixture).
+  if (typeof c.contentAvailable === 'boolean') return c.contentAvailable;
   const hasText = (value?: string | null) => Boolean(value?.replace(/<[^>]*>/g, '').replace(/&nbsp;|\s/g, '').trim());
   const hasUrl = (value?: string | null) => Boolean(value?.trim());
   if (c.isQuiz) return c.quizMeta?.quizId != null && (c.quizMeta.questions ?? 0) > 0;
@@ -646,7 +650,10 @@ export function quizAggregateStats(real: LearnerDetail | null): QuizAggregateSta
 }
 
 /** Group a learner's flat week/components arrays into module -> week -> components. */
-export function buildLearnerJourney(real: LearnerDetail | null): JourneyModule[] {
+/** The plan fields a journey is built from; the compact Weekly read carries them too. */
+export type LearnerJourneySource = Pick<LearnerDetail, 'modules' | 'week' | 'components' | 'quizAttempts'>;
+
+export function buildLearnerJourney(real: LearnerJourneySource | null): JourneyModule[] {
   if (!real) return [];
   const groups = [...new Set(real.modules)].flatMap((moduleTitle) => {
     const weeks = real.week.filter((week) => week.module === moduleTitle);

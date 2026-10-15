@@ -139,7 +139,8 @@ class PermissionCheckTests(unittest.TestCase):
                 'client_secret': 'never-shown'}
     OID = '737679b4-8eac-4fe9-a491-76d8cdf65f6d'
 
-    def run_check(self, responses, *, roles=('OnlineMeetings.ReadWrite.All',), series=None):
+    def run_check(self, responses, *, roles=('OnlineMeetings.ReadWrite.All', 'OnlineMeetingArtifact.Read.All',
+                                              'OnlineMeetingRecording.Read.All', 'OnlineMeetingTranscript.Read.All'), series=None):
         self.calls = []
 
         def graph(method, path, **kwargs):
@@ -178,6 +179,17 @@ class PermissionCheckTests(unittest.TestCase):
         report = self.run_check({'users/tutor': {'id': self.OID}}, roles=['Calendars.ReadWrite'])
         self.assertEqual(self.by_key(report)['app_permission']['status'], 'fail')
         self.assertTrue(any('admin consent' in action for action in report['actions']))
+
+    def test_meeting_access_alone_does_not_prove_recording_access(self):
+        report = self.run_check({'users/tutor': {'id': self.OID}, f'users/{self.OID}/onlineMeetings/': {
+            'participants': {'organizer': {'identity': {'user': {'id': self.OID}}}}}},
+            roles=['OnlineMeetings.ReadWrite.All'])
+        checks = self.by_key(report)
+        self.assertEqual(checks['meeting_access']['status'], 'pass')
+        self.assertEqual(checks['session_results_permissions']['status'], 'fail')
+        self.assertIn('OnlineMeetingRecording.Read.All', checks['session_results_permissions']['summary'])
+        self.assertEqual(report['verdict'], 'fail')
+        self.assertTrue(any('grant admin consent' in action for action in report['actions']))
 
     def test_meeting_read_refused_points_at_the_access_policy(self):
         report = self.run_check({'users/tutor': {'id': self.OID}, f'users/{self.OID}/onlineMeetings/': RuntimeError(
