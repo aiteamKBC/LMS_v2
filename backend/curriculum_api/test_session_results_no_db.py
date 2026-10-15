@@ -22,6 +22,7 @@ package.__path__ = [str(ROOT)]
 sys.modules['curriculum_api'] = package
 from curriculum_api.session_results_policy import (attendance_display_name, attendance_name_key, attendance_seconds, evidence_seconds, session_roster,
     attendance_csv, archive_prefix, transcript_text, instant, session_runs)
+from curriculum_api.attendance_link_policy import apply_reviewed_identities, identity_key, link_specs, record_key, unmatched_roster
 from curriculum_api.session_graph import collection
 from curriculum_api.session_transfer_progress import byte_count
 from curriculum_api.session_media_policy import (hidden_artifact_ids, recordings_for_transcript,
@@ -384,7 +385,9 @@ class RegisterTests(unittest.TestCase):
             'defaultdict': defaultdict, 'evidence_seconds': evidence_seconds, 'datetime': datetime,
             'datetime_timezone': timezone, 'parse_datetime': instant, 'Q': self.Q,
             '_attendance_alias_rows': lambda *_args: [],
+            'identity_rules': lambda *_args: [], 'apply_reviewed_identities': apply_reviewed_identities,
             '_attendance_identity_link_rows': lambda *_args: [], 'attendance_name_key': attendance_name_key,
+            '_replaced_attendance_sources': lambda *_args: {},
             'attendance_display_name': attendance_display_name,
             'timezone': types.SimpleNamespace(is_aware=lambda value: value.tzinfo is not None, is_naive=lambda value: value.tzinfo is None,
                 localtime=lambda value: value, now=lambda: end), 'router': types.SimpleNamespace(db_for_read=lambda model: 'default'),
@@ -467,6 +470,9 @@ class EndpointTests(unittest.TestCase):
             'instant': instant, 'session_roster': session_roster, 'attendance_csv': attendance_csv,
             'session_runs': session_runs, 'evidence_seconds': evidence_seconds, 'attendance_name_key': attendance_name_key,
             'attendance_display_name': attendance_display_name,
+            'apply_reviewed_identities': apply_reviewed_identities, 'identity_key': identity_key,
+            'record_key': record_key, 'link_specs': link_specs, 'unmatched_roster': unmatched_roster,
+            'identity_rules': Mock(return_value=[]),
             'hidden_artifact_ids': hidden_artifact_ids, 'recording_transcript_links': recording_transcript_links,
             'transcript_timing_ready': transcript_timing_ready, 'artifact_metadata': artifact_metadata,
             'timezone': types.SimpleNamespace(now=lambda: datetime(2026, 9, 16, 12, tzinfo=timezone.utc))}
@@ -475,6 +481,7 @@ class EndpointTests(unittest.TestCase):
             'module_results', 'stored_content', 'queue_sync', 'learner_join', 'apply_recovery', 'unavailable', 'archive_schema_missing',
             'attendance_alias_rows', 'attendance_identity_link_rows', 'learner_series', 'join_url_for', 'learner_join_failure',
             'recording_visibility', 'export_attendance', 'link_attendance_alias'}, self.ns)
+        functions(ROOT / 'attendance_link_store.py', {'save_rule'}, self.ns)
         self.real_attendance_identity_link_rows = self.ns['attendance_identity_link_rows']
         self.ns['attendance_identity_link_rows'] = Mock(return_value=[])
         self.ns['replaced_module_register_rows'] = Mock(return_value=[])
@@ -487,7 +494,7 @@ class EndpointTests(unittest.TestCase):
         callbacks = []
 
         @contextmanager
-        def atomic():
+        def atomic(**_kwargs):
             try:
                 yield
             except Exception:
@@ -542,8 +549,8 @@ class EndpointTests(unittest.TestCase):
         req.body = b'{"aliasEmail":"Other@Example.invalid","learnerProfileId":7}'
         self.ns['read'].side_effect = [
             [{'id': 'O', 'module_catalogue_id': 'M'}],
-            [{'exists': 1}],
             [{'learner_profile_id': 7, 'learner_email': 'learner@example.invalid', 'learner_name': 'Learner A'}],
+            [{'id': 'ROW-1', 'occurrence_id': 'O', 'email': 'other@example.invalid'}],
             [],
         ]
         attendance = types.ModuleType('learner_api.teams_attendance')
@@ -553,18 +560,17 @@ class EndpointTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response['aliasEmail'], 'other@example.invalid')
-        sql, params = self.cursor.execute.call_args.args
-        self.assertIn('live_session_attendance_aliases', sql)
-        self.assertEqual(params[:4], ['M', 'other@example.invalid', 7, 'learner@example.invalid'])
+        sql, params = next(call.args for call in self.cursor.execute.call_args_list if 'INSERT INTO curriculum.live_session_attendance_identity_rules' in call.args[0])
+        self.assertEqual(params[:5], ['M', 'email', 'other@example.invalid', 7, 'learner@example.invalid'])
         attendance.sync_verified_teams_attendance_reporting.assert_called_once_with(module_refs=['M'])
 
-    def test_email_less_identity_link_is_occurrence_scoped_and_recalculates_saved_module(self):
+    def test_email_less_identity_link_is_module_scoped_and_recalculates_saved_module(self):
         req = self.req('staff', method='POST')
         req.body = b'{"aliasEmail":"","sourceRecordIds":["ROW-1","ROW-2"],"learnerProfileId":7}'
         self.ns['read'].side_effect = [
             [{'id': 'O', 'module_catalogue_id': 'M'}],
-            [{'id': 'ROW-1', 'display_name': 'Shaz Yousaf'}, {'id': 'ROW-2', 'display_name': 'Shaz Yousaf'}],
             [{'learner_profile_id': 7, 'learner_email': 'learner@example.invalid', 'learner_name': 'Shezreah Yousaf'}],
+            [{'id': key, 'occurrence_id': 'O', 'display_name': 'Shaz Yousaf', 'raw_data': {'identity': {'id': 'same-guest'}}} for key in ['ROW-1', 'ROW-2']],
             [],
         ]
         attendance = types.ModuleType('learner_api.teams_attendance')
@@ -574,9 +580,10 @@ class EndpointTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response['sourceRecordIds'], ['ROW-1', 'ROW-2'])
-        insert_calls = [call.args for call in self.cursor.execute.call_args_list if 'identity_links' in call.args[0]]
-        self.assertEqual(len(insert_calls), 2)
-        self.assertTrue(all(args[1][0] == 'O' for args in insert_calls))
+        insert_calls = [call.args for call in self.cursor.execute.call_args_list if 'INSERT INTO curriculum.live_session_attendance_identity_rules' in call.args[0]]
+        self.assertEqual(len(insert_calls), 1)
+        self.assertEqual(insert_calls[0][1][:3], ['M', 'guest_name', 'shaz yousaf'])
+        self.assertEqual(response['scope'], 'module')
         attendance.sync_verified_teams_attendance_reporting.assert_called_once_with(module_refs=['M'])
 
     def test_missing_optional_alias_table_does_not_hide_saved_results(self):
@@ -622,6 +629,7 @@ class EndpointTests(unittest.TestCase):
                 self.assertEqual(response.status_code, 404)
 
     def test_hidden_media_is_removed_from_learner_result_payload(self):
+        self.ns['attendance_alias_rows'] = Mock(return_value=[])
         self.ns['apply_recovery'] = lambda rows: None
         self.ns['read'].side_effect = [[{'id': 'O', 'session_number': 1, 'status': 'completed',
             'scheduled_start': '2026-09-16T09:00Z', 'scheduled_end': '2026-09-16T10:00Z'}], [], [], [
@@ -647,6 +655,7 @@ class EndpointTests(unittest.TestCase):
         self.ns['result_rows'].assert_called_with({'id': 'S'}, session_number=2, email='a@example.invalid')
 
     def test_result_rows_never_returns_other_students_or_graph_urls(self):
+        self.ns['attendance_alias_rows'] = Mock(return_value=[])
         self.ns['apply_recovery'] = lambda rows: None
         self.ns['read'].side_effect = [[{'id': 'O', 'session_number': 1, 'status': 'completed', 'attendance_report_id': 'R',
             'actual_end': '2026-09-16T10:00Z', 'scheduled_start': '2026-09-16T09:00Z', 'scheduled_end': '2026-09-16T10:00Z'}],
@@ -722,7 +731,7 @@ class EndpointTests(unittest.TestCase):
         }]
         self.ns['read'].side_effect = [
             [{'id': 'O', 'module_catalogue_id': 'SOURCE'}],
-            [{'id': 'A', 'display_name': 'Guest'}],
+            [{'id': 'A', 'occurrence_id': 'O', 'display_name': 'Guest', 'email': 'guest@example.invalid'}],
             [],
         ]
         attendance = types.ModuleType('learner_api.teams_attendance')
@@ -731,9 +740,8 @@ class EndpointTests(unittest.TestCase):
             response = self.ns['link_attendance_alias'](req, 'S', 1)
 
         self.assertEqual(response.status_code, 200)
-        sql, params = self.cursor.execute.call_args.args
-        self.assertIn('live_session_attendance_aliases', sql)
-        self.assertEqual(params[:4], ['DEST', 'guest@example.invalid', 33, 'destination@example.invalid'])
+        sql, params = next(call.args for call in self.cursor.execute.call_args_list if 'INSERT INTO curriculum.live_session_attendance_identity_rules' in call.args[0])
+        self.assertEqual(params[:5], ['DEST', 'email', 'guest@example.invalid', 33, 'destination@example.invalid'])
         attendance.sync_verified_teams_attendance_reporting.assert_called_once_with(module_refs=['DEST'])
 
     def account_check_rows(self, identity):
@@ -784,6 +792,7 @@ class EndpointTests(unittest.TestCase):
         self.assertNotIn('raw_data', json.dumps(checked, default=str))
 
     def test_learner_results_never_carry_the_account_check(self):
+        self.ns['attendance_alias_rows'] = Mock(return_value=[])
         rows = self.account_check_rows(True)
         self.ns['read'].side_effect = None
         self.assertIn('identityCheck', rows[0])

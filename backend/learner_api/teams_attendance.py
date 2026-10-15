@@ -16,6 +16,8 @@ from curriculum_api.models import (
     ModuleAuthoringModule,
 )
 from curriculum_api.live_session_register import upsert_live_session_register
+from curriculum_api.attendance_link_policy import apply_reviewed_identities
+from curriculum_api.attendance_link_store import identity_rules
 
 from .models import LearnerProfile, LearnerTrainingPlanModule
 from .replaced_teams_attendance import REPLACED_ATTENDANCE_LATERAL_SQL
@@ -408,7 +410,7 @@ def fetch_verified_teams_attendance_rows(
         target_occurrences_by_source[
             attendance_source_by_occurrence[str(occurrence.id)]
         ].append(occurrence.id)
-    attendance_records = (
+    attendance_records = list(
         LiveSessionAttendance.objects.using(database)
         .filter(occurrence_id__in=source_occurrence_ids)
         .only(
@@ -423,6 +425,19 @@ def fetch_verified_teams_attendance_rows(
             "intervals",
         )
     )
+    rules_by_module = defaultdict(list)
+    for rule in identity_rules(list(assigned_by_module), database):
+        rules_by_module[rule['module_catalogue_id']].append(rule)
+    raw_by_source = defaultdict(list)
+    for record in attendance_records:
+        raw_by_source[str(record.occurrence_id)].append({
+            'id': str(record.id), 'occurrence_id': str(record.occurrence_id),
+            'email': record.email, 'display_name': record.display_name,
+            'raw_data': record.raw_data, 'role': record.role,
+        })
+    resolved_by_context = {}
+    legacy_links = [{'occurrence_id': occurrence, 'attendance_row_id': source,
+                     'canonical_email': email} for (occurrence, source), email in reviewed_identity_links.items()]
     for record in attendance_records:
         raw_email = _email(record.email)
         source_row_id = str(record.id or '').strip()
@@ -435,11 +450,18 @@ def fetch_verified_teams_attendance_rows(
             occurrence = occurrences_by_id.get(target_occurrence_id)
             session = sessions_by_id.get(occurrence.live_session_id) if occurrence else None
             module_ref = str(session.module_catalogue_id or '').strip() if session else ''
-            email_key = _canonical_attendance_email(module_ref, raw_email, aliases_by_module)
-            if not email_key:
-                email_key = reviewed_email
+            context_key = (module_ref, str(record.occurrence_id))
+            if context_key not in resolved_by_context:
+                module_aliases = [{'alias_email': key, 'canonical_email': value}
+                                  for key, value in aliases_by_module.get(module_ref, {}).items()]
+                resolved_by_context[context_key] = {str(row['id']): row for row in apply_reviewed_identities(
+                    raw_by_source[str(record.occurrence_id)], module_aliases, legacy_links,
+                    rules_by_module.get(module_ref, []))}
+            resolved = resolved_by_context[context_key][source_row_id]
+            blocked_identity = resolved.get('identityReviewRequired')
+            email_key = '' if blocked_identity else _email(resolved.get('email'))
             if (
-                not email_key
+                not email_key and not blocked_identity
                 and str(record.role or '').strip().casefold() in {'', 'attendee'}
             ):
                 email_key = _unique_exact_name_email(
@@ -452,6 +474,7 @@ def fetch_verified_teams_attendance_rows(
                 )
             email_keys = {email_key} if email_key else set()
             if (independent_learner_scope and not raw_email and not reviewed_email
+                    and not blocked_identity and not resolved.get('identityRule')
                     and str(record.role or '').strip().casefold() in {'', 'attendee'}):
                 # The coach detail formerly invoked this reader for one email at a
                 # time. Preserve that exact name-matching scope during bulk reads;
