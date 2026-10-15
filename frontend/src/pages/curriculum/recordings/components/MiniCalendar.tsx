@@ -7,6 +7,7 @@ import {
 } from "@/pages/curriculum/recordings/utils";
 
 interface MiniCalendarProps {
+  compact?: boolean;
   selectedDate: string;
   viewYear: number;
   viewMonth: number;
@@ -20,6 +21,7 @@ interface MiniCalendarProps {
 }
 
 export default function MiniCalendar({
+  compact = false,
   selectedDate,
   viewYear,
   viewMonth,
@@ -35,7 +37,7 @@ export default function MiniCalendar({
 
   return (
     <div className="rounded-lg border border-background-200 bg-background-50 p-4">
-      <div className="flex items-center gap-2">
+      {!compact && <div className="flex items-center gap-2">
         <button
           type="button"
           onClick={onPrevDay}
@@ -59,9 +61,9 @@ export default function MiniCalendar({
         >
           <i className="ri-arrow-right-s-line text-lg" aria-hidden="true"></i>
         </button>
-      </div>
+      </div>}
 
-      <div className="mt-5 flex items-center justify-between">
+      <div className={`${compact ? '' : 'mt-5'} flex items-center justify-between`}>
         <p className="font-heading text-sm font-bold text-foreground-950">
           {formatMonthLabel(viewYear, viewMonth)}
         </p>
@@ -72,7 +74,7 @@ export default function MiniCalendar({
             aria-label="Previous month"
             className="flex h-7 w-7 items-center justify-center rounded-md text-foreground-600 transition-colors hover:bg-background-100 hover:text-primary-700"
           >
-            <i className="ri-arrow-up-s-line" aria-hidden="true"></i>
+            <span aria-hidden="true">&lsaquo;</span>
           </button>
           <button
             type="button"
@@ -80,7 +82,7 @@ export default function MiniCalendar({
             aria-label="Next month"
             className="flex h-7 w-7 items-center justify-center rounded-md text-foreground-600 transition-colors hover:bg-background-100 hover:text-primary-700"
           >
-            <i className="ri-arrow-down-s-line" aria-hidden="true"></i>
+            <span aria-hidden="true">&rsaquo;</span>
           </button>
         </div>
       </div>
