@@ -7,6 +7,7 @@ from django.db import connections
 from django.utils import timezone
 from learner_api import canonical_learning as canonical
 from learner_api.canonical_hours import pending_hour_records
+from curriculum_api.week_visibility import visible_child_sql, visible_week_sql
 
 log = logging.getLogger(__name__)
 
@@ -49,8 +50,8 @@ def read_chart_plan(context):
             JOIN curriculum.modules m ON m.module_catalogue_id=c.module_catalogue_id
             LEFT JOIN curriculum.weeks w ON w.id=c.week_id AND w.module_catalogue_id=c.module_catalogue_id
             WHERE c.module_catalogue_id=ANY(%s)
-              AND (c.deleted_at IS NULL OR COALESCE(c.deleted_via_parent, '') <> '')
-              AND (w.id IS NULL OR w.deleted_at IS NULL OR COALESCE(w.deleted_via_parent, '') <> '')''', [module_ids])
+              AND ''' + visible_child_sql('c') + '''
+              AND (w.id IS NULL OR ''' + visible_week_sql('w') + ''')''', [module_ids])
         native = rows(cursor)
         dates = read_builder_activity_dates(cursor, module_ids)
         for row in native:
