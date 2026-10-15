@@ -2,6 +2,7 @@ import { formatCompactDate } from "@/pages/curriculum/recordings/utils";
 
 interface SummaryChipsProps {
   dayIso: string;
+  periodLabel?: string;
   isToday: boolean;
   lecturesToday: number;
   readyCount: number;
@@ -10,6 +11,7 @@ interface SummaryChipsProps {
 
 export default function SummaryChips({
   dayIso,
+  periodLabel,
   isToday,
   lecturesToday,
   readyCount,
@@ -21,7 +23,7 @@ export default function SummaryChips({
         <i className="ri-calendar-event-line text-primary-600" aria-hidden="true"></i>
         <span className="font-heading font-bold text-foreground-950">{lecturesToday}</span>
         <span className="text-foreground-600">
-          {isToday ? "Lectures today" : `Lectures on ${formatCompactDate(dayIso)}`}
+          {periodLabel || (isToday ? "Lectures today" : `Lectures on ${formatCompactDate(dayIso)}`)}
         </span>
       </span>
 
