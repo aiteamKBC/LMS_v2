@@ -226,7 +226,13 @@ def rule_for(path):
     # The public apprenticeship application (/apprenticeship_application) is
     # filled in by people with no account yet. Exact path only: the view accepts
     # a POST that inserts one new row and returns nothing that is stored.
-    if path == '/enrolment_api/public/apprenticeship-application/':
+    # The same page reads the questions it asks (the published layout, which
+    # holds no answers and no names) and checks postcodes as they are typed.
+    if path in (
+        '/enrolment_api/public/apprenticeship-application/',
+        '/enrolment_api/public/eligibility-form-layout/',
+        '/enrolment_api/public/postcode-lookup/',
+    ):
         return None
     # Fetched by Microsoft's Office Online servers, which carry no session. The
     # view authenticates on a signed, 15-minute token naming one upload.

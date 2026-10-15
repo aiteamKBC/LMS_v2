@@ -1,5 +1,6 @@
 import { readLearnerJson, invalidateLearnerReads } from './learnerRead';
 import type { LearnerKind } from '@/api/learnerDetail';
+import { formatSystemTimestamp } from '@/lib/format';
 
 const BASE = '/learner_api/reviews';
 
@@ -273,4 +274,53 @@ export function saveReviewForm(
     method: 'PATCH',
     body: JSON.stringify(body),
   });
+}
+
+// ── the four onboarding reviews, issued by the enrolment team ────────────────
+
+export type OnboardingReviewType = 'eligibility-review' | 'workspace' | 'training-plan' | 'uln-privacy';
+
+/**
+ * One onboarding review and how far it has got. The enrolment team issues each
+ * one from the learner's board (no booking, no meeting); until then only
+ * `type`, `label` and `issued: false` are present.
+ */
+export interface OnboardingReviewSlot {
+  type: OnboardingReviewType;
+  label: string;
+  issued: boolean;
+  eventKey?: string;
+  issuedAt?: string | null;
+  started?: boolean;
+  completed?: boolean;
+  completedAt?: string | null;
+  sectionsDone?: number;
+  sectionsTotal?: number;
+  reviewedBy?: string;
+  signatures?: ReviewSignatures;
+}
+
+export interface OnboardingReviewSlotsResponse {
+  programme: string;
+  reviews: OnboardingReviewSlot[];
+  allIssued: boolean;
+  allCompleted: boolean;
+}
+
+/** The learner's four onboarding reviews (none for a commercial learner). */
+export function fetchOnboardingReviewSlots(kind: LearnerKind, id: string): Promise<OnboardingReviewSlotsResponse> {
+  return call<OnboardingReviewSlotsResponse>(`${BASE}/${kind}/${id}/onboarding/`);
+}
+
+/** Issue one onboarding review to the learner. Staff only; each is issued once. */
+export function issueOnboardingReview(kind: LearnerKind, id: string, type: OnboardingReviewType): Promise<OnboardingReviewSlotsResponse> {
+  return call<OnboardingReviewSlotsResponse>(`${BASE}/${kind}/${id}/issue/`, {
+    method: 'POST',
+    body: JSON.stringify({ type }),
+  });
+}
+
+/** When a review was issued or completed, in the business time zone: "15 Oct 2026, 14:32". */
+export function issuedLabel(iso?: string | null): string {
+  return iso ? formatSystemTimestamp(iso, { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false }) : '';
 }
