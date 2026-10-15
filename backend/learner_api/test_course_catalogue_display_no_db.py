@@ -134,14 +134,75 @@ class CourseDisplayTests(unittest.TestCase):
                              self.placement(10, 'April 2026', kind='unknown')])[0]
         self.assertEqual(item['month'], 'undated')
 
-    def test_existing_reporting_dates_progress_scores_and_hours_are_preserved(self):
+    def test_course_month_overrides_display_without_rewriting_reporting_dates_scores_or_hours(self):
         record = fixtures.CourseCatalogueTests.record(reporting_month='2026-06',
             reporting_started_at='2026-06-03T10:00:00Z', achieved_score=8, total_score=10)
         before = copy.deepcopy(record)
         item = self.project([self.placement(10, 'March 2026')], [record])[0]
-        self.assertEqual((item['month'], item['date']), ('2026-06', '2026-06-03'))
+        self.assertEqual((item['month'], item['date']), ('2026-03', None))
         self.assertEqual((item['actual'], item['quiz_score'], item['completed']), (1, 8, True))
         self.assertEqual(record, before)
+
+    def test_completed_and_unstarted_activities_keep_the_same_lecture_date(self):
+        exports = [self.placement(10, 'Lecture 26/03/2026')]
+        record = fixtures.CourseCatalogueTests.record(reporting_month='2026-10',
+            reporting_started_at='2026-10-06T08:00:56Z')
+        pending = self.project(exports)[0]
+        completed = self.project(exports, [record])[0]
+        for key in ('month', 'date', 'week_start', 'week_end'):
+            self.assertEqual(completed[key], pending[key])
+        self.assertEqual((completed['date'], completed['month']), ('2026-03-26', '2026-03'))
+        self.assertTrue(completed['completed'])
+        self.assertFalse(pending['completed'])
+
+    def test_undated_section_uses_exact_original_upload_in_london_time(self):
+        self.definitions[0]['source_payload'] = {'created_at': '2026-03-31T23:30:00Z'}
+        record = fixtures.CourseCatalogueTests.record(reporting_month='2026-10',
+            reporting_started_at='2026-10-06T08:00:56Z')
+        item = self.project([], [record])[0]
+        self.assertEqual((item['month'], item['date']), ('2026-04', '2026-04-01'))
+        self.assertEqual(item['date_source'], 'original_created_at')
+        self.assertEqual(record['reporting_month'], '2026-10')
+
+    def test_export_upload_is_scoped_by_course_and_typed_activity(self):
+        exports = [{**self.placement(10, 'Risk management'), 'original_created_at': '2026-08-07T08:46:56Z'},
+                   {**self.placement(10, 'Risk management', course=99), 'original_created_at': '2026-09-01T00:00:00Z'}]
+        items = self.project(exports)
+        self.assertEqual(items[0]['month'], '2026-08')
+        self.assertEqual(items[1]['month'], 'undated')  # quiz:10 has its own identity
+
+    def test_upload_does_not_override_lecture_or_resolve_conflicting_sections(self):
+        self.definitions[0]['source_payload'] = {'created_at': '2026-08-23 08:22:49'}
+        item = self.project([self.placement(10, 'Lecture 12/8/26')])[0]
+        self.assertEqual(item['date'], '2026-08-12')
+        item = self.project([self.placement(10, 'March 2026', 1), self.placement(10, 'April 2026', 2)])[0]
+        self.assertEqual(item['month'], 'undated')
+        self.assertTrue(item['date_needs_review'])
+
+    def test_verified_quiz_parent_schedule_precedes_its_upload_and_report_months(self):
+        self.definitions[0]['source_payload'] = {'quiz_id': 10}
+        self.definitions[1]['source_payload'] = {'activity_id': 10, 'created_at': '2026-08-23 08:22:49'}
+        record = fixtures.CourseCatalogueTests.record(reporting_month='2026-10',
+            sources=[{'source_system': 'old_lms', 'source_course_ref': '50', 'source_activity_id': 'quiz:10'}])
+        item = self.project([self.placement(10, 'Lecture 12/8/26')], [record])[1]
+        self.assertEqual(item['date'], '2026-08-12')
+        self.assertTrue(item['completed'])
+
+    def test_missing_invalid_or_conflicting_source_dates_do_not_use_reporting_or_import_dates(self):
+        record = fixtures.CourseCatalogueTests.record(reporting_month='2026-10',
+            reporting_started_at='2026-10-06T08:00:56Z')
+        self.definitions[0]['first_seen_at'] = '2026-10-01T00:00:00Z'
+        for value in (None, 'not-a-date', '0000-00-00 00:00:00', '2026-02-30'):
+            with self.subTest(value=value):
+                self.definitions[0]['source_payload'] = {'created_at': value}
+                item = self.project([], [record])[0]
+                self.assertEqual(item['month'], 'undated')
+                self.assertIsNone(item['date'])
+                self.assertTrue(item['completed'])
+        self.definitions[0]['source_payload'] = {'created_at': '2026-08-08'}
+        item = self.project([{**self.placement(10, 'Resources'), 'original_created_at': '2026-08-07T00:00:00Z'}], [record])[0]
+        self.assertEqual(item['date_source'], 'source_date_needs_review')
+        self.assertEqual(item['month'], 'undated')
 
     def test_intro_display_does_not_rewrite_historical_record(self):
         record = fixtures.CourseCatalogueTests.record(reporting_month='2026-06',
@@ -178,6 +239,21 @@ class CourseDisplayTests(unittest.TestCase):
         self.assertIn('course_id=ANY(%s)', sql)
         self.assertNotIn('content_html', sql)
         self.assertNotIn('quiz_definition', sql)
+
+    def test_same_numeric_activity_keeps_its_own_course_month_and_progress(self):
+        courses = [{'source_course_ref': str(i), 'source_course_title': f'Course {i}'} for i in (50, 60)]
+        definitions = [fixtures.CourseCatalogueTests.definition(str(i), 'material:10') for i in (50, 60)]
+        exports = [self.placement(10, 'Lecture 26/3/26', course=50),
+                   self.placement(10, 'Lecture 19/8/26', course=60)]
+        records = [fixtures.CourseCatalogueTests.record(ident=i, course=str(i), reporting_month='2026-10')
+                   for i in (50, 60)]
+        before = copy.deepcopy(records)
+        items, subjects, _ = self.scope['recorded_course_items'](courses,
+            catalogue_display_context(definitions, exports), records, include_catalogue=True)
+        self.assertEqual([(i['group_id'], i['month'], i['completed']) for i in items],
+                         [(50, '2026-03', True), (60, '2026-08', True)])
+        self.assertEqual([s['accepted_hours'] for s in subjects], [1, 1])
+        self.assertEqual(records, before)
 
 
 if __name__ == '__main__':

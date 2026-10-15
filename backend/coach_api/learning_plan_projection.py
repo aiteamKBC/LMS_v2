@@ -225,7 +225,9 @@ def read_history(source, owner):
     from learner_api.student_activity_access import student_activity_available
     if not student_activity_available(source.aptem_id):
         return None
-    courses = query('''SELECT DISTINCT c.id,c.source_course_ref,c.source_course_title,c.curriculum_module_ref
+    courses = query('''SELECT DISTINCT c.id,c.source_course_ref,c.source_course_title,c.curriculum_module_ref,
+        CASE WHEN m.source_relationship='historical'
+            THEN m.source_payload->'verified_catalogue_scope' END AS verified_catalogue_scope
         FROM "Learner".learner_source_course_memberships m
         JOIN curriculum.source_courses c ON c.id=m.source_course_id AND c.deleted_at IS NULL
         WHERE m.learner_id=%s AND m.deleted_at IS NULL AND c.source_system='old_lms'
