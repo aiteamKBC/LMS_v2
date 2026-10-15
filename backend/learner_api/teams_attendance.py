@@ -16,6 +16,8 @@ from curriculum_api.models import (
     ModuleAuthoringModule,
 )
 from curriculum_api.live_session_register import upsert_live_session_register
+from curriculum_api.attendance_link_policy import apply_reviewed_identities
+from curriculum_api.attendance_link_store import identity_rules
 
 from .models import LearnerProfile, LearnerTrainingPlanModule
 from .replaced_teams_attendance import REPLACED_ATTENDANCE_LATERAL_SQL
@@ -195,7 +197,7 @@ def fetch_verified_teams_attendance_rows(
 
     # Retained for API compatibility with coach callers. Report participants
     # are now always narrowed to the authoritative module learner roster.
-    del include_reported_participants
+    del include_reported_participants, independent_learner_scope
 
     ids = sorted({int(value) for value in (learner_ids or []) if value})
     emails = sorted({_email(value) for value in (learner_emails or []) if _email(value)})
@@ -269,16 +271,11 @@ def fetch_verified_teams_attendance_rows(
     # not become module/group members and are never added to the recurring
     # Teams series attendee snapshot.
     from .alternative_recovery import approved_alternative_guests
-    scoped_enrolment_emails = (
-        {
-            learner.enrolment_id: email
-            for email, learner in identity_learners_by_email.items()
-            if learner.enrolment_id is not None
-        }
-        if identity_learners_by_email is not None else None
-    )
-    approved_guests = approved_alternative_guests(database, scoped_enrolment_emails,
+    # Include all approved guests in the ambiguity check; narrow returned
+    # attendance below, after deciding whether a full name is unique.
+    approved_guests = approved_alternative_guests(database, None,
         **({'occurrence_ids': occurrence_ids} if occurrence_ids is not None else {}))
+    occurrence_series = {}
     if approved_guests:
         occurrence_series = dict(
             LiveSessionOccurrence.objects.using(database)
@@ -306,17 +303,22 @@ def fetch_verified_teams_attendance_rows(
         session.id: session for session in sessions if session.id in expected_emails_by_session
     }
 
-    if identity_learners_by_email is not None:
-        learners_by_email = {
-            email: identity_learners_by_email[email] for email in all_expected_emails
-        }
-    else:
-        learners_by_email = {
-            _email(learner.email): learner
-            for learner in LearnerProfile.objects.using(database).filter(
-                email_normalized__in=all_expected_emails,
-            ).only('id', 'enrolment_id', 'full_name', 'email', 'coach_name')
-        }
+    # Check name uniqueness against the entire module roster before narrowing
+    # the output to the requested learner(s). A one-learner query must not turn
+    # two identical names into a unique match or credit both coach profiles.
+    matching_emails = set(all_expected_emails)
+    for session in sessions_by_id.values():
+        matching_emails.update(assigned_by_module.get(str(session.module_catalogue_id or '').strip(), set()))
+    for occurrence_id, session_id in occurrence_series.items():
+        if session_id in sessions_by_id:
+            matching_emails.update(approved_guests[occurrence_id])
+    matching_learners = {
+        _email(learner.email): learner
+        for learner in LearnerProfile.objects.using(database).filter(
+            email_normalized__in=matching_emails,
+        ).only('id', 'enrolment_id', 'full_name', 'email', 'coach_name')
+    }
+    learners_by_email = {email: learner for email, learner in matching_learners.items() if email in all_expected_emails}
     if not learners_by_email:
         return []
 
@@ -408,7 +410,7 @@ def fetch_verified_teams_attendance_rows(
         target_occurrences_by_source[
             attendance_source_by_occurrence[str(occurrence.id)]
         ].append(occurrence.id)
-    attendance_records = (
+    attendance_records = list(
         LiveSessionAttendance.objects.using(database)
         .filter(occurrence_id__in=source_occurrence_ids)
         .only(
@@ -423,44 +425,42 @@ def fetch_verified_teams_attendance_rows(
             "intervals",
         )
     )
+    rules_by_module = defaultdict(list)
+    for rule in identity_rules(list(assigned_by_module), database):
+        rules_by_module[rule['module_catalogue_id']].append(rule)
+    raw_by_source = defaultdict(list)
     for record in attendance_records:
-        raw_email = _email(record.email)
+        raw_by_source[str(record.occurrence_id)].append({
+            'id': str(record.id), 'occurrence_id': str(record.occurrence_id),
+            'email': record.email, 'display_name': record.display_name,
+            'raw_data': record.raw_data, 'role': record.role,
+        })
+    resolved_by_context = {}
+    legacy_links = [{'occurrence_id': occurrence, 'attendance_row_id': source,
+                     'canonical_email': email} for (occurrence, source), email in reviewed_identity_links.items()]
+    for record in attendance_records:
         source_row_id = str(record.id or '').strip()
-        reviewed_email = reviewed_identity_links.get(
-            (str(record.occurrence_id), source_row_id), ''
-        )
         for target_occurrence_id in target_occurrences_by_source.get(
             str(record.occurrence_id), []
         ):
             occurrence = occurrences_by_id.get(target_occurrence_id)
             session = sessions_by_id.get(occurrence.live_session_id) if occurrence else None
             module_ref = str(session.module_catalogue_id or '').strip() if session else ''
-            email_key = _canonical_attendance_email(module_ref, raw_email, aliases_by_module)
-            if not email_key:
-                email_key = reviewed_email
-            if (
-                not email_key
-                and str(record.role or '').strip().casefold() in {'', 'attendee'}
-            ):
-                email_key = _unique_exact_name_email(
-                    attendance_display_name({
-                        'display_name': record.display_name,
-                        'raw_data': record.raw_data,
-                    }),
-                    expected_emails_by_occurrence.get(target_occurrence_id, set()),
-                    learners_by_email,
-                )
+            context_key = (module_ref, str(target_occurrence_id))
+            if context_key not in resolved_by_context:
+                module_aliases = [{'alias_email': key, 'canonical_email': value}
+                                  for key, value in aliases_by_module.get(module_ref, {}).items()]
+                resolved_by_context[context_key] = {str(row['id']): row for row in apply_reviewed_identities(
+                    raw_by_source[str(record.occurrence_id)], module_aliases, legacy_links,
+                    rules_by_module.get(module_ref, []),
+                    learners={email: {'name': learner.full_name, 'learnerProfileId': learner.id}
+                              for email, learner in matching_learners.items()
+                              if email in (assigned_by_module.get(module_ref, set())
+                                           | set(approved_guests.get(target_occurrence_id, set())))})}
+            resolved = resolved_by_context[context_key][source_row_id]
+            blocked_identity = resolved.get('identityReviewRequired')
+            email_key = '' if blocked_identity else _email(resolved.get('email'))
             email_keys = {email_key} if email_key else set()
-            if (independent_learner_scope and not raw_email and not reviewed_email
-                    and str(record.role or '').strip().casefold() in {'', 'attendee'}):
-                # The coach detail formerly invoked this reader for one email at a
-                # time. Preserve that exact name-matching scope during bulk reads;
-                # other callers retain the existing whole-roster ambiguity rule.
-                name = attendance_display_name({'display_name': record.display_name, 'raw_data': record.raw_data})
-                email_keys = {
-                    email for email in expected_emails_by_occurrence.get(target_occurrence_id, set())
-                    if _unique_exact_name_email(name, {email}, learners_by_email)
-                }
             for email_key in email_keys & expected_emails_by_occurrence.get(target_occurrence_id, set()):
                 first_join, last_leave = _attendance_interval_bounds(record.intervals)
                 existing = attendance_by_occurrence[target_occurrence_id].get(email_key)
