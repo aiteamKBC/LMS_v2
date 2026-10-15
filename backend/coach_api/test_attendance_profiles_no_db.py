@@ -171,6 +171,12 @@ class AttendanceProfilesTests(unittest.TestCase):
         self.namespace["evidence_seconds"] = policy_namespace["evidence_seconds"]
         self.namespace["attendance_display_name"] = policy_namespace["attendance_display_name"]
         self.namespace["attendance_name_key"] = policy_namespace["attendance_name_key"]
+        policy_namespace['defaultdict'] = defaultdict
+        load_functions(BACKEND / "curriculum_api/session_results_policy.py", {"attendance_identity"}, policy_namespace)
+        load_functions(BACKEND / "curriculum_api/attendance_link_policy.py",
+                       {"identity_key", "record_key", "ambiguous_guest_names", "apply_reviewed_identities"}, policy_namespace)
+        self.namespace["apply_reviewed_identities"] = policy_namespace["apply_reviewed_identities"]
+        self.namespace["identity_rules"] = lambda *_args: []
         self.bind_rows()
         load_functions(BACKEND / "learner_api/teams_attendance.py",
                        {"_email", "_canonical_attendance_email", "_unique_exact_name_email",
@@ -196,7 +202,7 @@ class AttendanceProfilesTests(unittest.TestCase):
                                attendance_report_id=f"report-{identifier}", artifacts_synced_at=start, updated_at=start)
 
     def record(self, occurrence_id, email, intervals):
-        return SimpleNamespace(id=f"row-{occurrence_id}-{len(intervals)}", occurrence_id=occurrence_id,
+        return SimpleNamespace(id=f"row-{occurrence_id}-{email}-{intervals}", occurrence_id=occurrence_id,
                                email=email, graph_record_id="record", role="attendee", raw_data={},
                                display_name="Synthetic Participant", total_attendance_seconds=300,
                                intervals=[{"joinDateTime": (self.start + timedelta(minutes=start)).isoformat(),
@@ -337,6 +343,57 @@ class AttendanceProfilesTests(unittest.TestCase):
             [(row["learner_id"], row["occurrence_id"]) for row in recovered],
             [(1, "O1"), (1, "O2")],
         )
+
+    def test_first_guest_visit_uses_full_module_name_match_for_both_learner_types(self):
+        for learner_id, occurrence, name in [(1, 'O1', 'Learner One'), (2, 'B1', 'Learner Two')]:
+            guest = self.record(occurrence, '', [(0, 5)])
+            guest.display_name = name
+            self.records = [guest]
+            self.assertEqual(self.fetch(learner_id)[0]['attendance_status'], 'present')
+
+    def test_one_learner_filter_does_not_hide_same_name_elsewhere_in_module(self):
+        self.profiles[1].full_name = self.profiles[0].full_name
+        self.plan_modules.append(SimpleNamespace(module_ref='M1', learner=self.profiles[1]))
+        guest = self.record('O1', '', [(0, 5)])
+        guest.display_name = self.profiles[0].full_name
+        self.records = [guest]
+        self.assertTrue(all(row['attendance_status'] == 'absent' for row in self.fetch(1)))
+        rows = self.fetch(None, module_refs=['M1'], independent_learner_scope=True)
+        self.assertEqual({row['learner_id'] for row in rows}, {1, 2})
+        self.assertTrue(all(row['attendance_status'] == 'absent' for row in rows))
+
+    def test_same_name_in_another_module_does_not_block_or_receive_the_match(self):
+        self.profiles[1].full_name = self.profiles[0].full_name
+        guest = self.record('O1', '', [(0, 5)])
+        guest.display_name = self.profiles[0].full_name
+        self.records = [guest]
+        self.assertEqual(self.fetch(1)[0]['attendance_status'], 'present')
+        self.assertEqual(self.fetch(2)[0]['attendance_status'], 'absent')
+
+    def test_two_different_guest_identities_require_review_in_reporting(self):
+        first = self.record('O1', '', [(0, 5)])
+        second = self.record('O1', '', [(6, 10)])
+        for index, guest in enumerate([first, second]):
+            guest.display_name = 'Learner One'
+            guest.raw_data = {'identity': {'id': f'guest-{index}'}}
+        self.records = [first, second]
+        self.assertEqual(self.fetch(1)[0]['attendance_status'], 'absent')
+
+    def test_approved_recovery_guest_name_matching_keeps_ambiguity_and_occurrence_scope(self):
+        self.plan_modules = [row for row in self.plan_modules if row.learner.id != 1]
+        for occurrence in self.occurrences:
+            occurrence.pk = occurrence.id
+        guest = self.record('O1', '', [(0, 5)])
+        guest.display_name = 'Learner One'
+        self.records = [guest]
+        recovery_module = sys.modules['learner_api.alternative_recovery']
+        recovery_module.approved_alternative_guests = lambda *_args, **_kwargs: defaultdict(set, {'O1': {'one@example.invalid'}})
+        rows = self.fetch(1)
+        self.assertEqual([(row['session_id'], row['attendance_status']) for row in rows], [('O1', 'present')])
+        self.profiles[1].full_name = 'Learner One'
+        recovery_module.approved_alternative_guests = lambda *_args, **_kwargs: defaultdict(set, {'O1': {'one@example.invalid', 'two@example.invalid'}})
+        rows = self.fetch(1)
+        self.assertEqual([(row['learner_id'], row['attendance_status']) for row in rows], [(1, 'absent')])
 
 
 class CoachAttendanceContractTests(unittest.TestCase):
