@@ -306,6 +306,9 @@ urlpatterns = [
     # Declared before the <path:event_key> route below, which would otherwise
     # never be reached for the bare list URL.
     path("reviews/<str:kind>/<int:pk>/", review_form.enrolment_review_documents, name="enrolment-review-documents"),
+    # The four onboarding reviews, issued by the enrolment team (before the event-key routes below).
+    path("reviews/<str:kind>/<int:pk>/onboarding/", review_form.onboarding_reviews, name="enrolment-onboarding-reviews"),
+    path("reviews/<str:kind>/<int:pk>/issue/", review_form.issue_onboarding_review, name="enrolment-review-issue"),
     # Before the <path:event_key> route below, which is greedy and would
     # otherwise absorb the trailing "sign" into the event key.
     path("reviews/<str:kind>/<int:pk>/<str:event_key>/sign/", review_form.enrolment_review_sign, name="enrolment-review-sign"),
