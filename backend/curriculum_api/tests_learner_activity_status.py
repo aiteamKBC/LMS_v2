@@ -259,6 +259,74 @@ class ActivityStatusTests(SimpleTestCase):
         self.assertEqual(earlier['earlierOtjh'], 0.75)
         self.assertEqual(earlier['unallocatedAcceptedRecords'], 1)
 
+    def native_timer(self, **values):
+        return {'id': 1, 'learner_id': 1, 'component_ref': 'c1', 'kind': 'component',
+                'component_link_source': 'direct', 'accepted': True, 'actual_seconds': None,
+                'verified_seconds': 1800, 'submitted_at': '2026-10-01T10:00:00Z', **values}
+
+    def test_verified_native_time_is_read_from_the_ledger_without_mutating_it(self):
+        row = self.native_timer(claimed_seconds=7200, expected_otjh=10)
+        original = dict(row)
+        state = status.facts([row])
+        self.assertEqual((state['actualOtjh'], state['acceptedOtjh']), (0.5, 0.5))
+        self.assertEqual(state['hoursSource'], 'learner_progress_entries.verified_seconds')
+        self.assertEqual(state['unallocatedAcceptedRecords'], 0)
+        self.assertIsNone(state['startedAt'])
+        self.assertIsNone(state['endedAt'])
+        self.assertEqual(row, original)
+        self.assertEqual(state['snapshotHash'], status.digest([original]))
+
+    def test_stored_zero_and_manual_corrections_override_verified_retry_time(self):
+        for seconds in (0, 900):
+            stored = self.native_timer(actual_seconds=seconds, actual_basis='staff:module-progress')
+            retry = self.native_timer(id=2, verified_seconds=7200)
+            state = status.facts([stored, retry])
+            self.assertEqual(state['acceptedOtjh'], seconds / 3600)
+            self.assertEqual(state['progressId'], 1)
+            self.assertEqual(state['hoursSource'], 'learner_progress_entries.actual_seconds')
+            self.assertEqual(state['unallocatedAcceptedRecords'], 0)
+
+    def test_native_retries_count_once_and_do_not_cross_learner_or_activity_boundaries(self):
+        rows = [self.native_timer(), self.native_timer(id=2, verified_seconds=900),
+                self.native_timer(id=3, component_ref='c2', verified_seconds=600),
+                self.native_timer(id=4, learner_id=2, verified_seconds=3600)]
+        projected = status.recorded_hour_rows(rows)
+        self.assertEqual({row['id'] for row in projected}, {1, 3, 4})
+        self.assertAlmostEqual(status.earlier_progress(rows, set())['earlierOtjh'], 6000 / 3600)
+
+    def test_retained_reference_suppresses_native_time_even_on_another_component(self):
+        native = self.native_timer()
+        retained = self.native_timer(id=2, component_ref='old-c1', source_system='retained',
+                                    actual_seconds=1200, source_payload={'original_source_ref': 'progress:1'})
+        projected = status.recorded_hour_rows([native, retained])
+        self.assertEqual([row['id'] for row in projected], [2])
+        self.assertEqual(status.earlier_progress([native, retained], set())['earlierOtjh'], 1200 / 3600)
+
+    def test_unverified_imported_unsubmitted_and_unaccepted_rows_do_not_acquire_hours(self):
+        for changes in ({'verified_seconds': None}, {'verified_seconds': -1}, {'verified_seconds': float('nan')},
+                        {'verified_seconds': float('inf')}, {'verified_seconds': 'invalid'},
+                        {'source_system': 'import'}, {'submitted_at': None},
+                        {'accepted': False}, {'component_link_source': 'unresolved'}):
+            with self.subTest(changes=changes):
+                state = status.facts([self.native_timer(claimed_seconds=7200, expected_otjh=10, **changes)])
+                self.assertEqual(state['acceptedOtjh'], 0)
+                self.assertIsNone(state['actualOtjh'])
+
+    def test_enrichment_keeps_retained_hours_when_the_original_native_time_is_suppressed(self):
+        rows = [self.native_timer(canonical_activity_key='same-work'),
+                self.native_timer(id=2, component_ref='old-c1', source_system='retained', actual_seconds=900,
+                                  canonical_activity_key='same-work', source_payload={'original_source_ref': 'progress:1'}),
+                self.native_timer(id=3, learner_id=2)]
+        payload = {'identifier': 'MOD-1', 'otjhAchievement': {'learners': [
+            {'learnerId': 1, 'plannedOtjh': 10}, {'learnerId': 2, 'plannedOtjh': 10}]},
+            'learnerActivityPlan': [{'learnerId': learner, 'componentId': 'c1', 'componentType': 'reading'} for learner in (1, 2)]}
+        with patch.object(status, 'load_records', return_value=rows), patch.object(status, 'query', return_value=[]):
+            status.enrich(payload, None)
+        self.assertEqual(payload['activityLogOtjh']['achievedTotal'], 0.75)
+        self.assertEqual([row['achievedOtjh'] for row in payload['activityLogOtjh']['learners']], [0.25, 0.5])
+        self.assertEqual(payload['activityLogOtjh']['unallocatedAcceptedRecords'], 0)
+        self.assertEqual(payload['activityLogProgress']['learners'][0]['earlierOtjh'], 0.25)
+
     def test_missing_current_and_earlier_allocations_do_not_erase_other_learners_hours(self):
         self.db.executemany('''INSERT INTO learner_progress_entries
             (learner_id,component_ref,module_ref,actual_seconds,accepted,deleted_at)
