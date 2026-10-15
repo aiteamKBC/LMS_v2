@@ -91,30 +91,40 @@ def directory(request):
             coach = {"id":str(target.subject_id), "name":target.name}
         except identity.AccessError:
             pass
-    return JsonResponse({"people":identity.peer_directory(p), "coach":coach})
+    return JsonResponse({"people":identity.peer_directory(p), "coach":coach,
+                         "groups":identity.cohort_directory(p)})
 
 def thread_title(thread, viewer):
     members = identity.participants(thread, viewer)
     if thread.kind == "cohort":
-        return "My cohort"
+        return identity.cohort_name(members)
     return next(person.name for person in members if person.account_id != viewer.account_id)
 
 def thread_data(thread, viewer):
     cursor = ReadCursor.objects.filter(thread=thread, account_id=viewer.account_id).first()
     unread = thread.messages.filter(id__gt=cursor.message_id if cursor else 0).exclude(account_id=viewer.account_id).count()
     return {"id":str(thread.pk), "kind":thread.kind, "name":thread_title(thread,viewer),
-            "unread":unread, "updatedAt":thread.updated_at.isoformat()}
+            "unread":unread, "updatedAt":thread.updated_at.isoformat(),
+            **({"cohortId":thread.cohort_id} if thread.kind == "cohort" else {})}
 
 @endpoint({"GET", "POST"})
 def threads(request):
     p = request.comms_user
     if request.method == "POST":
-        data = body(request, {"kind", "recipientId"})
+        data = body(request, {"kind", "recipientId", "cohortId"})
         kind = data["kind"]
         values = {"kind":kind}
-        if kind == "cohort" and p.kind == "learner" and p.cohort_id:
-            key = "cohort:" + p.cohort_id
-            values["cohort_id"] = p.cohort_id
+        if kind != "cohort" and "cohortId" in data:
+            raise ValueError()
+        if kind == "cohort":
+            if "recipientId" in data:
+                raise ValueError()
+            cohort_id = data.get("cohortId", p.cohort_id if p.kind == "learner" else "")
+            members = identity.cohort_members(cohort_id)
+            if p.account_id not in {person.account_id for person in members}:
+                raise identity.AccessError()
+            key = "cohort:" + cohort_id
+            values["cohort_id"] = cohort_id
         elif kind == "peer" and p.kind == "learner":
             other = identity.active_learner(int(data["recipientId"]))
             if not p.cohort_id or p.cohort_id != other.cohort_id or other.subject_id == p.subject_id:
@@ -133,7 +143,8 @@ def threads(request):
             raise identity.AccessError()
         thread,_ = Thread.objects.get_or_create(key=key, defaults=values)
         return JsonResponse(thread_data(thread,p))
-    query = Q(coach_id=p.subject_id) if p.kind=="coach" else (
+    query = (Q(kind="coach",coach_id=p.subject_id) | Q(kind="cohort",cohort_id__in=[
+        group["id"] for group in identity.cohort_directory(p)])) if p.kind=="coach" else (
         Q(learner_a=p.subject_id)|Q(learner_b=p.subject_id)|
         (Q(kind="cohort",cohort_id=p.cohort_id) if p.cohort_id else Q(pk__isnull=True)))
     result = []
@@ -167,7 +178,7 @@ def messages(request, thread_id):
                 return error("Please wait a minute before sending another message.",429)
             # Serialise sends for a conversation and recheck rights inside the transaction.
             thread=Thread.objects.select_for_update().get(pk=thread.pk)
-            identity.participants(thread,p)
+            members = identity.participants(thread,p)
             saved,created=Message.objects.get_or_create(account_id=p.account_id,client_id=nonce,
                 defaults={"thread":thread,"body":text.strip(),"sender_name":p.name})
             if saved.thread_id!=thread.pk or saved.body!=text.strip():
@@ -175,14 +186,7 @@ def messages(request, thread_id):
             if created:
                 thread.updated_at=saved.created_at
                 thread.save(update_fields=["updated_at"])
-                if thread.kind=="cohort":
-                    recipient_ids=[int(x["id"]) for x in identity.peer_directory(p)]
-                    recipients=[]
-                    for source_id in recipient_ids:
-                        try:recipients.append(identity.active_learner(source_id))
-                        except identity.AccessError:continue
-                else:
-                    recipients=[x for x in identity.participants(thread,p) if x.account_id!=p.account_id]
+                recipients=[person for person in members if person.account_id!=p.account_id]
                 for recipient in recipients:
                     Notification.objects.get_or_create(account_id=recipient.account_id,key=f"message:{saved.pk}",
                         defaults={"category":"cohort_messages" if thread.kind=="cohort" else "private_messages",

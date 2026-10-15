@@ -70,3 +70,37 @@ it('keeps the Android journey when a first sign-in requires password setup', asy
   open(); signIn();
   expect(await screen.findByText('/set-password?token=synthetic&download=android')).toBeInTheDocument();
 });
+
+it.each([
+  { role: 'admin', subjectType: 'staff' },
+  { role: 'staff', subjectType: 'staff', access: 'coach' },
+  { role: 'staff', subjectType: 'staff', access: 'tutor', accesses: ['tutor', 'coach'] },
+])('offers the installer to an existing authorised staff session: %j', account => {
+  session.auth.account = account as AuthUser;
+  open();
+  expect(screen.getByRole('link', { name: 'Download Android app' }))
+    .toHaveAttribute('href', '/learner_api/mobile/download/android/');
+  expect(screen.getByRole('button', { name: 'Go to my workspace' })).toBeInTheDocument();
+});
+
+it.each([
+  { role: 'admin', subjectType: 'staff' },
+  { role: 'staff', subjectType: 'staff', accesses: ['coach'] },
+])('keeps a newly signed-in authorised staff account on the download page: %j', async account => {
+  session.login.mockImplementation(async () => {
+    session.auth.account = account as AuthUser;
+    return session.auth.account;
+  });
+  open(); signIn();
+  expect(await screen.findByRole('link', { name: 'Download Android app' })).toBeInTheDocument();
+});
+
+it.each([
+  { role: 'staff', subjectType: 'staff', access: 'tutor' },
+  { role: 'staff', subjectType: 'learner', access: 'coach' },
+  { role: 'employer', subjectType: 'employer', accesses: ['coach'] },
+])('does not offer installer access based on an unrelated or mismatched grant: %j', account => {
+  session.auth.account = account as AuthUser;
+  open();
+  expect(screen.queryByRole('link', { name: 'Download Android app' })).not.toBeInTheDocument();
+});

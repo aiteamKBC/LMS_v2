@@ -6,6 +6,10 @@ The learning catalogue contains published audio, video and supported choice quiz
 
 ## Develop and check
 
+The learner home screen has two primary actions. **Song of the week** opens an eligible song from the exact selected module and week, using authored song metadata or established legacy labels/IDs. It never falls back to another course/week. **Authorised absence** offers the next reportable lecture, monthly coaching meeting, or progress review from the learner's canonical absence register. Dates are UK time and a request requires explicit confirmation.
+
+The authenticated `mobile/absence-reports/` facade delegates to the maintained absence handler: meeting requests remain pending coach approval; lecture recording/alternative recovery follows existing LMS policy. The native form supports recording plans and eligible alternative sessions. Evidence uploads and coach catch-up booking use the full LMS form. Saved approval does not credit attendance or hours. Recent reports are shown after refreshing, including when an earlier submission response timed out. No absence is submitted by merely opening the screen.
+
 Use a Node version supported by the lockfile's React Native engine range (`^20.19.4 || ^22.13.0 || ^24.3.0 || >=25.0.0`). From this directory:
 
 ```text
@@ -40,5 +44,16 @@ For a Windows checkout using a short drive alias or shared dependency junction, 
 `npm ci` runs `scripts/patch-native-media-cookies.cjs` automatically. The reviewed patch is pinned to `expo-audio`/`expo-video` 57.0.5 and React Native 0.86.3, and checks the complete source hashes before changing the Android media clients. They use `JavaNetCookieJar(ForwardingCookieHandler())`, the same per-URL Android cookie store used by React Native networking, so protected LMS media can reuse the learner's native session. Session values are never exposed to JavaScript or copied into a global `Cookie` header. A copy of the global OkHttp provider alone is insufficient because this React Native version initializes a separate networking client.
 
 The script also supplies Expo Audio's explicit React Android dependency. It fails on unexpected versions/source or on shared package junctions, validates all target files before writing, and is safe to rerun. If sharing the rest of `node_modules`, keep private copies of `expo-audio` and `expo-video` inside this checkout first. Run `npm run patch:native-media` after preparing those copies, then `npm run check:native-media` before the native build. The Node contract tests exercise the exact patch, idempotence, source/version drift and refusal to modify shared dependencies; they do not replace authenticated playback checks on an Android device.
+
+Expo SDK 57 normally uses bundled Android AARs for these packages, which bypass patched local source. `package.json` therefore explicitly includes both `expo-audio` and `expo-video` in `expo.autolinking.android.buildFromSource`. The patch/check command rejects missing or incomplete configuration, and Gradle's `preBuild` runs that check even if the npm install lifecycle was skipped. Dependency versions remain pinned. See [Expo's prebuilt module guidance](https://docs.expo.dev/guides/prebuilt-expo-modules/).
+
+After building, verify the actual APK before distributing it, from this directory:
+
+```text
+python scripts/verify-native-media-apk.py android/app/build/outputs/apk/release/app-release.apk --report native-media-apk-receipt.json
+python -m unittest discover -s tests -p test_native_media_apk.py
+```
+
+The APK check inspects the compiled audio and video client methods for the cookie-handler construction and attachment. Source tests, a successful build, or unrelated cookie classes elsewhere in the APK cannot establish that the media clients use the patched code. Keep generated receipts outside source control. This static check establishes the packaged transport; physical Android sign-in, protected audio/video playback and logout/account switching still require device acceptance.
 
 The LMS facade must be deployed and enabled for learner sign-in and course access. Physical device installation, learner sign-in, media playback, saved-progress readback and account switching remain separate acceptance checks from compilation and automated tests.

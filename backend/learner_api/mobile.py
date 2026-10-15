@@ -17,16 +17,18 @@ import re
 
 from django.conf import settings
 from django.db import DatabaseError, connections
-from django.http import JsonResponse, FileResponse
+from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 
 from login.api_gate import refusal_for
+from login.android_download_access import staff_download_allowed
 from login.permissions import auth_gate_enabled
 from login.sessions import authenticate_request, session_unreadable
 from .models import EnrolmentUser, LearnerProfile
 from .learner_detail import build_learner_detail
 from .learning_plan import effective_training_plan
 from .mobile_progress import measured_time, project_progress
+from .android_download import installer_response
 
 BASE = "/learner_api/mobile/"
 ANDROID_APK_PATH = "/var/lib/kbc-mobile-release/20261013/KBC-Learn-LMS-internal-candidate.apk"
@@ -121,7 +123,16 @@ def _context(request):
     return account, source, kind, profiles[0] if profiles else None
 
 
-def endpoint(method):
+def _download_context(request):
+    account = authenticate_request(request)
+    if account is not None and not getattr(account, "is_active", False):
+        raise MobileError("Please sign in.", 401, "unauthenticated")
+    if staff_download_allowed(account):
+        return account, None, None, None
+    return _context(request)
+
+
+def endpoint(method, *, context=None):
     def decorate(view):
         @csrf_exempt
         @functools.wraps(view)
@@ -137,9 +148,9 @@ def endpoint(method):
                     return _error("The mobile connection is not available.", 503, "auth_gate_disabled")
                 if method != "GET" and request.headers.get("X-Requested-With") != "XMLHttpRequest":
                     return _error("Missing request security header.", 403, "csrf")
-                request.mobile_context = _context(request)
+                request.mobile_context = (context or _context)(request)
                 response = view(request, *args, **kwargs)
-                response["Cache-Control"] = "private, no-store"
+                response.setdefault("Cache-Control", "private, no-store")
                 return response
             except MobileError as exc:
                 return _error(exc.message, exc.status, exc.code)
@@ -485,24 +496,21 @@ def _completion_payload(request, component, activity_kind, activity_id):
     return payload
 
 
-@endpoint("GET")
+@endpoint("GET", context=_download_context)
 def download_android(request):
-    """Deliver the internal Android build only to an entitled learner account."""
-    _require_active_profile(request)
-    detail = _detail(request)
-    if _learning_blocked(detail):
-        raise MobileError("Your LMS learning access is not open yet.", 403, "learning_access_blocked")
-    if not _assigned_courses(request):
-        raise MobileError("No courses are assigned to your account.", 403, "module_not_assigned")
+    """Deliver the installer to entitled learners, active admins and coaches."""
+    if request.mobile_context[0].role == "learner":
+        _require_active_profile(request)
+        detail = _detail(request)
+        if _learning_blocked(detail):
+            raise MobileError("Your LMS learning access is not open yet.", 403, "learning_access_blocked")
+        if not _assigned_courses(request):
+            raise MobileError("No courses are assigned to your account.", 403, "module_not_assigned")
     try:
         apk = open(ANDROID_APK_PATH, "rb")
     except OSError:
         raise MobileError("The Android download is not available yet.", 503, "download_unavailable") from None
-    response = FileResponse(apk, as_attachment=True,
-                            filename="KBC-Learn-Android-test.apk",
-                            content_type="application/vnd.android.package-archive")
-    response["X-Content-Type-Options"] = "nosniff"
-    return response
+    return installer_response(request, apk)
 
 
 @endpoint("GET")
