@@ -19504,8 +19504,9 @@ STRUCTURE_REVISION_SOURCES = (
 def module_structure_revision(module_catalogue_id):
     """Fingerprint of everything a structure PATCH would replace.
 
-    Six indexed single-module reads. A module that is not stored fingerprints as
-    the empty structure, so a first save of a fresh draft is never a conflict.
+    Six indexed single-module reads, shared with the payload reader when inside
+    a curriculum read scope. A module that is not stored fingerprints as the
+    empty structure, so a first save of a fresh draft is never a conflict.
 
     Rows are sorted by their own key rather than trusted in database order: a
     fingerprint that depended on which order Postgres happened to return the
@@ -19516,13 +19517,21 @@ def module_structure_revision(module_catalogue_id):
         return ''
     ensure_module_authoring_tables()
     material = []
+    # Match the payload reader's queries, including ordering, so its read scope
+    # reuses these rows. Excluding timestamps in SQL gave the revision a separate
+    # memo key and downloaded all component content twice on every fresh open.
+    payload_order = {
+        'weeks': 'display_order, week_number, id',
+        'components': 'display_order, id',
+        'mappings': 'created_at, id',
+    }
     for label, table, keep, sort_column in STRUCTURE_REVISION_SOURCES:
         try:
             rows = authoring_fetch_all(
                 table,
                 'module_catalogue_id = %s',
                 [catalogue_id],
-                exclude_columns=STRUCTURE_REVISION_VOLATILE_COLUMNS,
+                order_sql=payload_order.get(label, ''),
             )
         except Exception:
             # A table that cannot be read must not fail the request it was asked
@@ -19534,6 +19543,14 @@ def module_structure_revision(module_catalogue_id):
             return ''
         if keep:
             rows = keep(rows)
+        # Copy rather than mutate: the payload still needs the complete rows.
+        # The fingerprint's material remains identical to the previous SQL
+        # projection, including columns introduced by future migrations.
+        rows = [
+            {key: value for key, value in row.items()
+             if key not in STRUCTURE_REVISION_VOLATILE_COLUMNS}
+            for row in rows
+        ]
         material.append([
             label,
             sorted(rows, key=lambda row: clean_str(row.get(sort_column))),
