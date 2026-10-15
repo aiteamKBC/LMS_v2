@@ -2411,6 +2411,19 @@ export interface CurriculumProgrammeDetail {
   };
 }
 
+/** The programme with its cohorts and groups -- the detail document up to the modules. */
+export interface CurriculumProgrammeDetailShell {
+  schema: string;
+  programme: CurriculumProgramme;
+  flat: Pick<CurriculumProgrammeDetail['flat'], 'cohorts' | 'groups' | 'groupIds' | 'weekTemplates'>;
+}
+
+/** The programme's modules (each weekStructure an outline) and planned sessions. */
+export interface CurriculumProgrammeDetailModules {
+  schema: string;
+  flat: Pick<CurriculumProgrammeDetail['flat'], 'modules' | 'sessions'>;
+}
+
 export interface CurriculumSessionPlanPreview {
   sessions: Array<{ sessionNumber: number; date: string; day: string; startTime?: string; endTime?: string; durationMinutes?: number; skippedHolidays: string[] }>;
   skippedHolidays: string[];
@@ -3975,6 +3988,26 @@ export function fetchCurriculumProgrammeDetail(id: string, signal?: AbortSignal,
   if (omit.length) query.set('omit', omit.join(','));
   const suffix = query.toString() ? `?${query.toString()}` : '';
   return fetchJson<CurriculumProgrammeDetail>(`/curriculum/programmes/${encodeURIComponent(id)}/detail/${suffix}`, { signal, skipCache: options.skipCache, revalidate: options.revalidate, timeoutMs: options.timeoutMs ?? 60000 });
+}
+
+// The detail document in two parts, for a page that draws the programme, its
+// cohorts and groups before the modules -- the slowest part of the build --
+// arrive. Both leave out the KSB stats (see fetchProgrammeKsbStats) and the
+// components; the modules' weekStructure is an outline, as with
+// `omitWeekComponents`.
+type ProgrammeDetailSectionOptions = { visibility?: 'all' | 'operational'; skipCache?: boolean; revalidate?: boolean; timeoutMs?: number };
+
+function programmeDetailSectionPath(id: string, section: 'shell' | 'modules', visibility?: 'all' | 'operational') {
+  const suffix = visibility === 'all' ? '?visibility=all' : '';
+  return `/curriculum/programmes/${encodeURIComponent(id)}/detail/${section}/${suffix}`;
+}
+
+export function fetchCurriculumProgrammeDetailShell(id: string, signal?: AbortSignal, options: ProgrammeDetailSectionOptions = {}): Promise<CurriculumProgrammeDetailShell> {
+  return fetchJson<CurriculumProgrammeDetailShell>(programmeDetailSectionPath(id, 'shell', options.visibility), { signal, skipCache: options.skipCache, revalidate: options.revalidate, timeoutMs: options.timeoutMs ?? 60000 });
+}
+
+export function fetchCurriculumProgrammeDetailModules(id: string, signal?: AbortSignal, options: ProgrammeDetailSectionOptions = {}): Promise<CurriculumProgrammeDetailModules> {
+  return fetchJson<CurriculumProgrammeDetailModules>(programmeDetailSectionPath(id, 'modules', options.visibility), { signal, skipCache: options.skipCache, revalidate: options.revalidate, timeoutMs: options.timeoutMs ?? 60000 });
 }
 
 export { fetchCurriculumOverview as fetchCurriculumOverviewBundle };
