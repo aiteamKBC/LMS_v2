@@ -517,10 +517,11 @@ def download_android(request):
 def session(request):
     from .mobile_rewards import enabled as rewards_enabled
     account, source, kind, profile = request.mobile_context
-    shared_rewards_enabled=rewards_enabled(request)
+    reward_ids = [] if _learning_blocked(_detail(request)) else [c['moduleId'] for c in _assigned_courses(request) if rewards_enabled(module_id=c['moduleId'])]
+    shared_rewards_enabled=bool(reward_ids)
     return JsonResponse({
         "authenticated": True,
-        "rewardModuleIds": [PILOT_MODULE_ID] if shared_rewards_enabled else [],
+        "rewardModuleIds": reward_ids,
         "user": {"id": str(source.pk), "accountId": str(account.pk),
                  "displayName": account.display_name, "learnerKind": kind,
                  "learnerProfileId": str(profile.pk) if profile else None},
@@ -540,6 +541,8 @@ def catalogue(request):
     blocked = _learning_blocked(detail)
     scoped = _eligible_components(request)
     presentation = _presentation_metadata(scoped)
+    from .mobile_rewards import enabled as rewards_enabled
+    reward_modules = {cid:rewards_enabled(module_id=cid) for cid in course_ids}
     components = []
     for row in ([] if blocked else scoped):
         item = {key: value for key, value in row.items() if key in COMPONENT_FIELDS}
@@ -556,9 +559,7 @@ def catalogue(request):
             if item["mobileMode"] != mode:
                 item.pop(field, None)
         item["mechanicalNarrationAllowed"] = False
-        # Reward observations require a real curriculum component. A standalone
-        # quiz's facade ID must never become a persisted reward component ID.
-        item["rewardObservationsSupported"] = row["moduleId"] == PILOT_MODULE_ID and not row["_standaloneQuiz"]
+        item["rewardObservationsSupported"] = reward_modules[row['moduleId']]
         components.append(item)
     return JsonResponse({
         "schemaVersion": 2, "source": "lms", "catalogueScope": "assigned",

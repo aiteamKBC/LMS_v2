@@ -33,7 +33,7 @@ def verify_bonus(request):
         if len(request.body)>8192:
             raise RewardError("request_too_large",413)
         data=json.loads(request.body)
-        fields={"learnerId","opportunity","verificationId","evidenceReference","completionDate","confirmedWinner"}
+        fields={"learnerId","opportunity","verificationId","evidenceReference","completionDate","confirmedWinner","moduleId"}
         if not isinstance(data,dict) or set(data)-fields:
             raise RewardError("invalid_request",400)
         if type(data.get("confirmedWinner",False)) is not bool:
@@ -52,10 +52,11 @@ def verify_bonus(request):
         if any(isinstance(detail.get(k),dict) and detail[k].get("blocked") is True
                for k in ("learningAccess","accessGate")):
             raise RewardError("learning_access_blocked",403)
-        if not any(c.get("moduleId")==PILOT_MODULE for c in detail.get("components",[])):
+        module_id = data.get('moduleId',PILOT_MODULE)
+        if not isinstance(module_id,str) or not any(c.get("moduleId")==module_id for c in detail.get("components",[])):
             raise RewardError("module_not_assigned",404)
         result=service(learner_id=str(source.pk),learner_name=str(getattr(source,"username","") or ""),
-            module_id=PILOT_MODULE,opportunity=data.get("opportunity"),verification_id=data.get("verificationId"),
+            module_id=module_id,opportunity=data.get("opportunity"),verification_id=data.get("verificationId"),
             evidence_reference=data.get("evidenceReference"),completion_date=date.fromisoformat(data.get("completionDate","")),
             staff_id=str(account.pk),confirmed_winner=data.get("confirmedWinner",False),
             learner_kind=str(source.learner_type or "").lower())
