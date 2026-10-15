@@ -88,8 +88,8 @@ function Hint({ text, children }: { text: string; children: ReactNode }) {
 function otjhHint(achieved: number | null, planned: number, progress: number | null, whose: 'learner' | 'module') {
   if (achieved == null) {
     return whose === 'learner'
-      ? 'N/A: some of this learner’s accepted activity records in this module have no hours allocated in the Activity Log yet, so their total cannot be calculated. Time the timer recorded counts here once it is allocated.'
-      : 'N/A: at least one assigned learner has accepted activity records with no hours allocated in the Activity Log yet, so the module total cannot be calculated.';
+      ? 'N/A: accepted Activity Log hours are unavailable for this learner. Reload to retrieve the recorded total.'
+      : 'N/A: accepted Activity Log hours are unavailable for this module. Reload to retrieve the recorded total.';
   }
   if (planned <= 0) {
     return whose === 'learner'
@@ -211,6 +211,7 @@ export function ModuleLearnerProgressDialog({ moduleName, moduleId, impact, assi
             <p className="mt-1 text-lg font-black text-foreground-900"><Hint text={otjhHint(totalHours ?? null, plannedHours, totalPercent, 'module')}>{totalHours == null ? 'N/A' : formatHoursMinutes(totalHours)}</Hint> <span className="text-[11px] font-bold text-foreground-400">/ {formatHoursMinutes(plannedHours)}</span></p>
             <ProgressBar value={totalPercent || 0} tone="primary" />
             <p className="mt-1 text-[10px] font-semibold text-foreground-500"><Hint text={otjhHint(totalHours ?? null, plannedHours, totalPercent, 'module')}>{`${totalPercent == null ? 'N/A' : `${percentage(totalPercent)}%`} of assigned planned hours${log ? ' · Activity Log accepted hours' : ''}`}</Hint></p>
+            {Boolean(log?.unallocatedAcceptedRecords) && <p className="mt-1 text-[10px] text-foreground-500">{plural(log!.unallocatedAcceptedRecords!, 'accepted record')} without allocated time; recorded hours are included.</p>}
           </div>
           <div className="rounded-xl border border-background-200 bg-background-50 p-3">
             <p className="text-[10px] font-bold uppercase tracking-wider text-foreground-400">KSB weights achieved</p>
@@ -307,6 +308,7 @@ export function ModuleLearnerProgressDialog({ moduleName, moduleId, impact, assi
                         </div>
                         <ProgressBar value={otjhProgress || 0} tone="primary" />
                         <p className="mt-1 text-[10px] font-semibold text-foreground-400"><Hint text={otjhHint(achieved, planned, otjhProgress, 'learner')}>{`${otjhProgress == null ? 'N/A' : `${percentage(otjhProgress)}%`} complete`}</Hint></p>
+                        {Boolean(logHours?.unallocatedAcceptedRecords) && <p className="mt-1 text-[10px] text-foreground-500">{plural(logHours!.unallocatedAcceptedRecords!, 'accepted record')} without allocated time.</p>}
                       </div>
                       <div>
                         <div className="flex items-baseline justify-between text-[10px] font-bold text-foreground-600">

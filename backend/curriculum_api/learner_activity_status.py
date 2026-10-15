@@ -90,8 +90,10 @@ def facts(records, override=None):
         'displayStatus': override.get('display_status'),
         'statusSource': 'manual' if override else 'calculated',
         'actualOtjh': selected['actual_seconds'] / 3600 if selected and selected.get('actual_seconds') is not None else (0 if not records else None),
-        'acceptedOtjh': None if any(row.get('actual_seconds') is None for row in eligible)
-        else sum((row.get('actual_seconds') or 0) / 3600 for row in eligible),
+        # Missing allocations do not erase hours already persisted in the ledger.
+        # Keep their count separate; never infer time from timers or planned hours.
+        'acceptedOtjh': sum((row.get('actual_seconds') or 0) / 3600 for row in eligible),
+        'unallocatedAcceptedRecords': sum(row.get('actual_seconds') is None for row in eligible),
         'hoursSource': 'learner_progress_entries.actual_seconds',
         'startedAt': original.get('reporting_started_at') if mode == 'timestamp' else None,
         'endedAt': original.get('reporting_ended_at') if mode == 'timestamp' else None,
@@ -132,8 +134,8 @@ def earlier_progress(rows, linked_keys):
     return {
         'earlierRecords': len(rows),
         'earlierCompleted': sum(1 for row in rows if counts_as_completed(row)),
-        'earlierOtjh': None if any(row.get('actual_seconds') is None for row in accepted)
-        else sum((row.get('actual_seconds') or 0) / 3600 for row in accepted),
+        'earlierOtjh': sum((row.get('actual_seconds') or 0) / 3600 for row in accepted),
+        'unallocatedAcceptedRecords': sum(row.get('actual_seconds') is None for row in accepted),
     }
 
 
@@ -190,17 +192,15 @@ def enrich(payload, account):
                 row['canChangeStatus'] = False
     payload['moduleProgressHoursSource'] = 'Activity Log · accepted learner_progress_entries.actual_seconds (current components and module_ref)'
     totals = defaultdict(float)
-    unknown = set()
+    unallocated = defaultdict(int)
     completion = defaultdict(lambda: {'totalActivities': 0, 'completedActivities': 0, 'inProgressActivities': 0})
     linked_keys = defaultdict(set)
     for (learner, _component), rows in records.items():
         linked_keys[learner].update(row['canonical_activity_key'] for row in rows if row.get('canonical_activity_key'))
     for row in plan:
         learner = str(row['learnerId'])
-        if row['logState']['acceptedOtjh'] is None:
-            unknown.add(learner)
-        else:
-            totals[learner] += row['logState']['acceptedOtjh']
+        totals[learner] += row['logState']['acceptedOtjh']
+        unallocated[learner] += row['logState']['unallocatedAcceptedRecords']
         counts = completion[learner]
         counts['totalActivities'] += 1
         if row['displayStatus'] == 'completed':
@@ -211,10 +211,8 @@ def enrich(payload, account):
     for learner_id in learner_ids:
         learner = str(learner_id)
         earlier = earlier_progress(earlier_rows.get(learner, []), linked_keys[learner])
-        if earlier['earlierOtjh'] is None:
-            unknown.add(learner)
-        else:
-            totals[learner] += earlier['earlierOtjh']
+        totals[learner] += earlier['earlierOtjh']
+        unallocated[learner] += earlier['unallocatedAcceptedRecords']
         progress_rows.append({'learnerId': learner_id, **completion[learner], **earlier})
     payload['activityLogProgress'] = {
         'learners': progress_rows,
@@ -225,11 +223,13 @@ def enrich(payload, account):
     }
     hours_rows = [{
         'learnerId': row['learnerId'], 'plannedOtjh': row['plannedOtjh'],
-        'achievedOtjh': None if str(row['learnerId']) in unknown else totals[str(row['learnerId'])],
+        'achievedOtjh': totals[str(row['learnerId'])],
+        'unallocatedAcceptedRecords': unallocated[str(row['learnerId'])],
     } for row in payload.get('otjhAchievement', {}).get('learners', [])]
     payload['activityLogOtjh'] = {
         'learners': hours_rows,
-        'achievedTotal': None if unknown else sum(row['achievedOtjh'] for row in hours_rows),
+        'achievedTotal': sum(row['achievedOtjh'] for row in hours_rows),
+        'unallocatedAcceptedRecords': sum(row['unallocatedAcceptedRecords'] for row in hours_rows),
         'plannedTotal': sum(row['plannedOtjh'] for row in hours_rows),
         'source': payload['moduleProgressHoursSource'],
     }

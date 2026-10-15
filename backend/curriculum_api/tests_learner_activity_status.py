@@ -234,13 +234,60 @@ class ActivityStatusTests(SimpleTestCase):
         self.assertEqual([row['id'] for row in result], [2, 3])
         self.assertEqual(native['time_taken'], '10:00')
 
-    def test_missing_duration_is_unknown_and_native_submission_is_not_a_scheduled_interval(self):
+    def test_missing_duration_stays_unrecorded_but_does_not_hide_the_recorded_total(self):
         raw = {'id': 1, 'learner_id': 1, 'component_ref': 'c1', 'component_link_source': 'direct', 'kind':'component',
                'submitted_at': datetime(2026, 1, 2, 10, tzinfo=timezone.utc), 'accepted': True}
         state = status.facts([raw])
         self.assertIsNone(state['actualOtjh'])
-        self.assertIsNone(state['acceptedOtjh'])
+        self.assertEqual(state['acceptedOtjh'], 0)
+        self.assertEqual(state['unallocatedAcceptedRecords'], 1)
         self.assertIsNone(state['startedAt'])
+
+    def test_known_accepted_allocations_survive_missing_time_and_ignore_unaccepted_time(self):
+        records = [
+            {'id': 1, 'accepted': True, 'actual_seconds': 1800},
+            {'id': 2, 'accepted': True, 'actual_seconds': None, 'claimed_seconds': 7200, 'expected_otjh': 4},
+            {'id': 3, 'accepted': True, 'actual_seconds': 900},
+            {'id': 4, 'accepted': False, 'actual_seconds': 36000},
+            {'id': 5, 'accepted': None, 'actual_seconds': None},
+        ]
+        state = status.facts(records)
+        self.assertEqual(state['acceptedOtjh'], 0.75)
+        self.assertEqual(state['unallocatedAcceptedRecords'], 1)
+        self.assertEqual(state['actualOtjh'], 0.5)  # editing still selects a single allocation
+        earlier = status.earlier_progress(records, set())
+        self.assertEqual(earlier['earlierOtjh'], 0.75)
+        self.assertEqual(earlier['unallocatedAcceptedRecords'], 1)
+
+    def test_missing_current_and_earlier_allocations_do_not_erase_other_learners_hours(self):
+        self.db.executemany('''INSERT INTO learner_progress_entries
+            (learner_id,component_ref,module_ref,actual_seconds,accepted,deleted_at)
+            VALUES (?,?,?,?,?,?)''', [
+                (1, 'c1', 'MOD-1', 3600, True, None),
+                (1, 'c1', 'MOD-1', None, True, None),
+                (1, 'old-c1', 'MOD-1', 1800, True, None),
+                (1, 'old-c2', 'MOD-1', None, True, None),
+                (1, 'c1', 'MOD-1', 36000, False, None),
+                (1, 'c1', 'MOD-1', 36000, True, '2026-10-01'),
+                (1, 'other', 'MOD-2', 36000, True, None),
+                (2, 'c1', 'MOD-1', 7200, True, None),
+                (3, 'c1', 'MOD-1', 36000, True, None),
+            ])
+        self.db.commit()
+        payload = {'identifier': 'MOD-1', 'otjhAchievement': {'learners': [
+            {'learnerId': 1, 'plannedOtjh': 10}, {'learnerId': 2, 'plannedOtjh': 10}]},
+            'learnerActivityPlan': [{'learnerId': learner, 'componentId': 'c1', 'componentType': 'reading'} for learner in (1, 2)]}
+        read = status.query
+        def scoped_read(sql, params=()):
+            return read(sql, params) if 'learner_progress_entries' in sql else []
+        with patch.object(status, 'query', side_effect=scoped_read):
+            status.enrich(payload, None)
+        summary = payload['activityLogOtjh']
+        self.assertEqual(summary['achievedTotal'], 3.5)
+        self.assertEqual(summary['unallocatedAcceptedRecords'], 2)
+        self.assertEqual([(row['achievedOtjh'], row['unallocatedAcceptedRecords'])
+                          for row in summary['learners']], [(1.5, 2), (2, 0)])
+        self.assertEqual(len(self.query('SELECT * FROM learner_progress_entries')), 9)
 
     def test_enrichment_queries_are_bounded_and_unstarted_rows_and_log_totals_remain_consistent(self):
         payload = {'identifier':'MOD-1', 'otjhAchievement':{'learners':[{'learnerId':1,'plannedOtjh':100}]},
