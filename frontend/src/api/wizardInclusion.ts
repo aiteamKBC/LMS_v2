@@ -16,9 +16,13 @@ export interface InclusionStatus {
   respondedAt: string | null;
 }
 
-/** Where the learner takes the assessment. The site signs them in through the LMS. */
+/**
+ * Where the learner takes the assessment; the site signs them in through the
+ * LMS. The live site in every environment, local development included —
+ * VITE_SAFEGUARDING_URL can point a deployment elsewhere.
+ */
 export const SAFEGUARDING_URL: string =
-  import.meta.env.VITE_SAFEGUARDING_URL || (import.meta.env.DEV ? 'http://127.0.0.1:5173/' : 'https://safeguarding.kentbusinesscollege.net/');
+  import.meta.env.VITE_SAFEGUARDING_URL || 'https://safeguarding.kentbusinesscollege.net/';
 
 export async function fetchInclusionStatus(kind: LearnerKind, learnerId: string): Promise<InclusionStatus> {
   let res: Response;
