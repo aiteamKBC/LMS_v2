@@ -67,28 +67,29 @@ class RewardsFacadeTests(unittest.TestCase):
         self.assertEqual(response.status_code,200)
         self.assertEqual(service.record_observations.call_args.kwargs["tracking"]["activityId"],"77")
 
-    def test_other_assigned_course_study_does_not_expand_pmp_rewards(self):
+    def test_other_assigned_course_uses_canonical_reward_scope(self):
         self.scoped()
         self.plan.append({"moduleId":"RISK-M01","moduleTitle":"Risk"})
         self.detail["components"].append({**self.audio,"moduleId":"RISK-M01","componentId":"RISK-AUDIO"})
         response=views.observations(self.request("POST",self.observation(componentId="RISK-AUDIO")))
+        self.assertEqual(response.status_code,200)
+        self.assertEqual(service.record_observations.call_args.kwargs['component']['moduleId'],'RISK-M01')
+        service.record_observations.reset_mock()
+        response=views.observations(self.request('POST',self.observation(componentId='UNASSIGNED')))
         self.assertEqual(response.status_code,404)
-        self.assertEqual(json.loads(response.content)["code"],"module_not_assigned")
         service.record_observations.assert_not_called()
-        base.timer.verify_tracking_session.assert_not_called()
 
-    def test_standalone_quiz_never_persists_a_synthetic_reward_component(self):
+    def test_standalone_quiz_rewards_bind_to_canonical_quiz_id(self):
         self.scoped();self.mode="active_quiz"
         self.quiz_component["componentId"]=None
         catalogue=json.loads(base.mobile.catalogue(self.request()).content)
         quiz=next(item for item in catalogue["components"] if item["mobileMode"]=="quiz")
         audio=next(item for item in catalogue["components"] if item["mobileMode"]=="audio")
-        self.assertFalse(quiz["rewardObservationsSupported"])
+        self.assertTrue(quiz["rewardObservationsSupported"])
         self.assertTrue(audio["rewardObservationsSupported"])
         response=views.observations(self.request("POST",self.observation(componentId=quiz["componentId"],mode="quiz")))
-        self.assertEqual(response.status_code,404)
-        service.record_observations.assert_not_called()
-        base.timer.verify_tracking_session.assert_not_called()
+        self.assertEqual(response.status_code,200)
+        self.assertEqual(service.record_observations.call_args.kwargs['tracking']['activityId'],'77')
         response=base.mobile.submit_quiz(self.request("POST",{
             "trackingToken":"server-token","timeTakenSeconds":0,"answers":{"10":[12]}}),quiz["componentId"])
         self.assertEqual(response.status_code,200)
@@ -102,7 +103,7 @@ class RewardsFacadeTests(unittest.TestCase):
                           (views.observations,self.observation())):
             response=view(self.request("GET" if body is None else "POST",body))
             self.assertEqual(response.status_code,403)
-        self.detail["learningAccess"]={"blocked":False};self.detail["components"]=[]
+        self.detail["learningAccess"]={"blocked":False};self.detail["components"]=[];self.plan.clear()
         self.assertEqual(views.summary(self.request()).status_code,404)
 
     def test_voucher_and_alias_save_exact_response_and_no_override(self):

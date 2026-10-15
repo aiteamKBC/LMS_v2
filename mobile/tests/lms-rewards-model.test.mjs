@@ -3,6 +3,13 @@ import assert from 'node:assert/strict';
 import {normaliseLmsRewards,confirmLmsVoucherResponse,readLmsVoucherDraft} from '../src/lms-rewards-model.mjs';
 const summary=()=>({source:'lms',moduleId:'MOD-KBC-PMP-M01-SMR',learnerId:'42',policy:{enabled:true,version:'rewards-v1',startsAt:'2026-10-05T12:00:00Z',pointsPerGbp:100},points:{learnerId:'42',earned:1700,committed:1000,balance:700},study:{acceptedStudySeconds:3700,basis:'reward_accepted_active_intervals',formalOtj:false,pendingSessionCount:1},opportunities:[{id:'career',title:'Career planner',points:100,status:'available',opensOn:null,closesOn:null,verifiedAt:null,actionable:false,actionUrl:null}],voucherOptions:[{rewardId:'R1',amountGbp:5,points:500,remaining:3},{rewardId:'R2',amountGbp:10,points:1000,remaining:5}],voucherRequests:[],leaderboard:{optedIn:false,displayName:'',entries:[]}});
 const claim=()=>({requestId:'request-1',claimId:'claim-1',amountGbp:5,points:500,status:'pending',requestedAt:'2026-10-05T14:00:00Z'});
+
+test('every assigned course uses its selected scope and current server formula',()=>{
+ const data=summary();data.moduleId='RISK-M01';data.policy.formula={pointsPerHour:3,quizThreshold:75,quizPointPerCorrect:2,perfectQuizPointPerCorrect:4,hourActivities:['reading','video']};
+ assert.equal(normaliseLmsRewards(data,'42','RISK-M01').policy.formula.pointsPerHour,3);
+ assert.throws(()=>normaliseLmsRewards(data,'42','SCHEDULE-M01'));
+ data.policy.formula.quizThreshold=101;assert.throws(()=>normaliseLmsRewards(data,'42','RISK-M01'));
+});
 test('shared rewards use canonical wallet, explicit policy and reserved balance',()=>{
  const result=normaliseLmsRewards(summary(),'42');assert.equal(result.balance,700);assert.equal(result.policyConfirmed,true);assert.equal(result.voucherOptions[0].enoughPoints,true);assert.equal(result.voucherOptions[1].enoughPoints,false);assert.equal(result.study.formalOtj,false);
 });

@@ -8,10 +8,14 @@ N.setNotificationHandler({handleNotification:async notification=>{
  return {shouldShowBanner:show,shouldShowList:show,shouldPlaySound:false,shouldSetBadge:false};
 }});
 export function useMobilePush(client:any,accountId:string|null,onOpen:()=>void){
+ const canConnectPhoneAlerts=Platform.OS==='android';
+ const unavailableMessage=Platform.OS==='ios'
+  ? 'Phone alerts on iPhone need KBC’s Apple notification setup. In-app reminders are still available.'
+  : 'Connect phone alerts in the installed Android app. In-app reminders are still available here.';
  const current=useRef({accountId,onOpen});current.current={accountId,onOpen};
  const token=useRef<string|null>(null),[status,setStatus]=useState(''),[busy,setBusy]=useState(false);
  const register=async(prompt=false)=>{
-  const owner=current.current.accountId;if(!owner||Platform.OS!=='android')return;
+  const owner=current.current.accountId;if(!owner||!canConnectPhoneAlerts)return;
   for(const [key,label] of notificationCategories)await N.setNotificationChannelAsync('kbc-'+key+'-v1',{
    name:label,importance:N.AndroidImportance.DEFAULT,lockscreenVisibility:N.AndroidNotificationVisibility.PRIVATE,
    showBadge:false,sound:null,enableVibrate:false,
@@ -28,7 +32,7 @@ export function useMobilePush(client:any,accountId:string|null,onOpen:()=>void){
  };
  useEffect(()=>{
   activeAccount=accountId;token.current=null;setStatus('');
-  if(!accountId||Platform.OS!=='android')return;
+  if(!accountId||!canConnectPhoneAlerts)return()=>{activeAccount=null;};
   let alive=true;
   // Cancel the older on-device schedules; the LMS now owns reminder timing.
   void N.getAllScheduledNotificationsAsync().then(rows=>Promise.all(rows.filter(x=>x.identifier.startsWith('kbc:meetings:v1:')).map(x=>N.cancelScheduledNotificationAsync(x.identifier)))).catch(()=>{});
@@ -45,6 +49,6 @@ export function useMobilePush(client:any,accountId:string|null,onOpen:()=>void){
   const foreground=AppState.addEventListener('change',state=>{if(state==='active')safeRegister();});
   return()=>{alive=false;activeAccount=null;response.remove();refresh.remove();foreground.remove();void N.dismissAllNotificationsAsync().catch(()=>{});};
  },[accountId,client]);
- return {status,busy,connect:async()=>{setBusy(true);try{await register(true);}catch{setStatus('Could not connect phone alerts. Check your connection and try again.');}finally{setBusy(false);}},
+ return {status:canConnectPhoneAlerts?status:unavailableMessage,busy,canConnectPhoneAlerts,connect:async()=>{if(!canConnectPhoneAlerts){setStatus(unavailableMessage);return;}setBusy(true);try{await register(true);}catch{setStatus('Could not connect phone alerts. Check your connection and try again.');}finally{setBusy(false);}},
   disconnect:async()=>{const value=token.current;token.current=null;activeAccount=null;if(value)await client.comms('device/','DELETE',{token:value});}};
 }

@@ -52,6 +52,10 @@ if migration.SCHEMA_SHA256 != hashlib.sha256((ROOT/"schema.sql").read_bytes()).h
 with connections["default"].schema_editor() as editor:
     for operation in migration.Migration.operations:
         operation.database_forwards("engagement_api",editor,ProjectState(),ProjectState())
+all_course_migration=load('all_course_migration',source/'engagement_api/migrations/0004_all_course_learning_policy.py')
+with connections['default'].schema_editor() as editor:
+    for operation in all_course_migration.Migration.operations:
+        operation.database_forwards('engagement_api',editor,ProjectState(),ProjectState())
 commands=source/"engagement_api"/"management"/"commands"
 prepare=load("install_prepare",commands/"prepare_shared_rewards.py")
 voucher=load("install_voucher",commands/"configure_shared_reward_voucher.py")
@@ -60,7 +64,7 @@ from engagement_api.shared_reward_setup import PILOT_MODULE,require_same_databas
 class InstallCommandTests(unittest.TestCase):
     def setUp(self):
         settings.KBC_SHARED_REWARDS_READY=False
-        sql('TRUNCATE "Engagement".shared_reward_config,"Engagement".points_rules,"Engagement".rewards RESTART IDENTITY CASCADE')
+        sql('TRUNCATE "Engagement".learning_reward_policies,"Engagement".shared_reward_config,"Engagement".points_rules,"Engagement".rewards RESTART IDENTITY CASCADE')
 
     def prepare(self,**overrides):
         options=dict(operator="synthetic:operator",programme_start=None,module_end=None,semester_end=None,
@@ -122,6 +126,22 @@ class InstallCommandTests(unittest.TestCase):
             conn.settings_dict["NAME"]="unrelated"
             with self.assertRaises(CommandError):require_same_database()
         finally:conn.settings_dict["NAME"]=original
+
+    def test_all_course_activation_preserves_cutover_and_existing_grants(self):
+        self.prepare();settings.KBC_SHARED_REWARDS_READY=True;self.prepare(activate_now=True)
+        from engagement_api.management.commands.activate_all_course_rewards import Command
+        from engagement_api.services import grant_points
+        from engagement_api.reward_policy import BONUS_RULE
+        grant=grant_points(BONUS_RULE,'synthetic','Synthetic',points=123,event_reference='before-global')
+        before=list(PointsGrant.objects.values())
+        Command(stdout=io.StringIO()).handle(operator='synthetic:operator')
+        first=sql('SELECT id,effective_at,settings FROM "Engagement".learning_reward_policies')
+        Command(stdout=io.StringIO()).handle(operator='synthetic:operator')
+        self.assertEqual(sql('SELECT id,effective_at,settings FROM "Engagement".learning_reward_policies'),first)
+        self.assertEqual(list(PointsGrant.objects.values()),before)
+        configured=json.loads(first[0][2]) if isinstance(first[0][2],str) else first[0][2]
+        self.assertEqual(configured['pointsPerHour'],1)
+        self.assertEqual(configured['quizThreshold'],70)
 
 if __name__=="__main__":
     unittest.main(verbosity=2)

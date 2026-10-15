@@ -4,11 +4,11 @@ import fs from 'node:fs';
 import ts from 'typescript';
 import * as model from '../src/comms-model.mjs';
 const compile=name=>ts.transpileModule(fs.readFileSync(new URL('../src/'+name,import.meta.url),'utf8'),{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.CommonJS,jsx:ts.JsxEmit.React,esModuleInterop:true}}).outputText;
-function harness({role='learner',failSend=false,initialPage='messages',groups,initialRecipientId,overrides={}}={}){
+function harness({role='learner',failSend=false,initialPage='messages',groups,initialRecipientId,overrides={},platform='android',pushState={}}={}){
  let cursor=0,dirty=false,tree,fail=failSend;const slots=[],effects=[],calls=[],sent=[];
  const hooks={useState(value){const i=cursor++;if(!(i in slots))slots[i]=value;return [slots[i],value=>{const next=typeof value==='function'?value(slots[i]):value;if(!Object.is(next,slots[i])){slots[i]=next;dirty=true;}}];},useRef(value){return slots[cursor++]??={current:value};},useEffect(fn,deps){const i=cursor++,old=effects[i];if(!old||deps.some((x,j)=>x!==old.deps[j])){old?.cleanup?.();effects[i]={fn,deps,run:true};}}};
  const React={...hooks,createElement:(type,props,...children)=>({type,props:{...props,children}}),Fragment:'Fragment'};
- const native={Platform:{OS:'android'},AppState:{currentState:'active'},...Object.fromEntries(['View','Text','Pressable','TextInput','Switch','KeyboardAvoidingView','ActivityIndicator'].map(x=>[x,x]))};
+ const native={Platform:{OS:platform},AppState:{currentState:'active'},...Object.fromEntries(['View','Text','Pressable','TextInput','Switch','KeyboardAvoidingView','ActivityIndicator'].map(x=>[x,x]))};
  const prefs=Object.fromEntries(model.notificationCategories.map(([key])=>[key,{inApp:true,push:false}]));
  const client={async comms(path,method='GET',body){calls.push({path,method,body});
   if(overrides[method+':'+path])return overrides[method+':'+path](body);
@@ -25,7 +25,7 @@ function harness({role='learner',failSend=false,initialPage='messages',groups,in
  const modules={'react':React,'react-native':native,'./styles':{s:{},base:{green:'#143F37'}},'@expo/vector-icons':{Ionicons:'Ionicons'},'./comms-model.mjs':model};
  const ui={};new Function('require','exports',compile('StandaloneUI.tsx'))(n=>modules[n],ui);modules['./StandaloneUI']=ui;
  const mod={};new Function('require','exports',compile('LmsCommunications.tsx'))(n=>modules[n],mod);
- const props={client,session:{communications:{role,cohortId:'c1'}},push:{busy:false,status:'',connect(){calls.push({connect:true});}},initialPage,initialRecipientId,onMeeting(){calls.push({meeting:true});},onWork(){calls.push({work:true});}};
+ const props={client,session:{communications:{role,cohortId:'c1'}},push:{busy:false,status:'',canConnectPhoneAlerts:true,connect(){calls.push({connect:true});},...pushState},initialPage,initialRecipientId,onMeeting(){calls.push({meeting:true});},onWork(){calls.push({work:true});}};
  const render=()=>{let loops=0;do{assert(++loops<40);dirty=false;cursor=0;tree=mod.LmsCommunications(props);for(const e of effects)if(e?.run){e.run=false;e.cleanup=e.fn();}}while(dirty);};
  const settle=async()=>{for(let i=0;i<30;i++){await Promise.resolve();if(dirty)render();}};
  const nodes=()=>{const out=[];const walk=n=>{if(Array.isArray(n))n.forEach(walk);else if(n&&typeof n==='object'){out.push(n);walk(typeof n.type==='function'?n.type(n.props):n.props?.children);}};walk(tree);return out;};
@@ -72,4 +72,14 @@ test('403 and 404 membership revocation clear loaded conversation, draft and sta
 });
 test('a send refused after assignment removal clears old messages and never retries the send',async()=>{
  const h=harness({role:'coach',overrides:{'GET:threads/one/messages/':()=>({messages:[{id:10,body:'Private history',isMine:false,createdAt:'2026-10-14T10:00:00Z'}],before:null}),'POST:threads/one/messages/':()=>{throw Object.assign(new Error('Assignment removed.'),{status:403});}}});try{await h.settle();await h.press('Synthetic peer');await h.type('Private draft');await h.press('Send message');assert(!visibleText(h).includes('Private history'));assert(!h.button('Send message'));assert.equal(h.calls.filter(x=>x.path==='threads/one/messages/'&&x.method==='POST').length,1);}finally{h.unmount();}
+});
+test('iPhone notification choices explain setup, hide Connect and preserve account preferences and in-app reminders',async()=>{
+ const h=harness({platform:'ios',initialPage:'preferences',pushState:{canConnectPhoneAlerts:false,status:'Phone alerts on iPhone need KBC’s Apple notification setup. In-app reminders are still available.'}});try{
+  await h.settle();assert(!h.button('Connect phone alerts'));assert.match(visibleText(h),/Apple notification setup/);assert.match(visibleText(h),/account on connected devices/);
+  const switches=h.nodes().filter(x=>x.type==='Switch');assert.equal(switches.length,12);assert(switches.every(x=>!x.props.disabled));await switches[1].props.onValueChange(true);await h.settle();assert.deepEqual(h.calls.find(x=>x.path==='preferences/'&&x.method==='POST').body.categories.cohort_messages,{inApp:true,push:true});
+  await h.press('Reminders');assert(h.button('Your meeting is tomorrow.'));assert(!h.calls.some(x=>x.connect||x.path==='device/'));
+ }finally{h.unmount();}
+});
+test('Android notification choices retain the explicit phone connection action',async()=>{
+ const h=harness({platform:'android',initialPage:'preferences'});try{await h.settle();await h.press('Connect phone alerts');assert.equal(h.calls.filter(x=>x.connect).length,1);}finally{h.unmount();}
 });
