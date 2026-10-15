@@ -322,7 +322,9 @@ export function SubjectCard({ subject, cover, tone = 'purple', onOpen, template,
   const startDate = planModule?.start_date ? learningDate(planModule.start_date) : 'Not scheduled';
   const endDate = planModule?.end_date ? learningDate(planModule.end_date) : 'Not scheduled';
   const sessionCount = planModule?.educational_session_count;
-  const completedHours = moduleProgress?.hours.actual ?? subject.acceptedHours ?? null;
+  const completedHours = subject.source === 'legacy'
+    ? subject.acceptedHours ?? null
+    : moduleProgress?.hours.actual ?? subject.acceptedHours ?? null;
   const plannedHours = planModule?.total_otjh ?? null;
   return <article className={`group ${styles.card} ${styles.subjectTheme} ${styles.moduleCard}`} data-tone={tone} data-source={subject.source}>
     <button type="button" onClick={onOpen} className={styles.cardButton}>
@@ -349,8 +351,7 @@ export function SubjectCard({ subject, cover, tone = 'purple', onOpen, template,
         <p className={styles.cardDescription}>Explore your learning materials and activities.</p>
         <div className={styles.cardProgress}><Progress done={completed} total={total} compact label={`${subject.title} activities progress`} />
           <HoursProgress completed={completedHours} planned={plannedHours} label={`${subject.title} hours progress`} />
-          {subject.recordedHistory && <p className="mt-2 text-xs text-foreground-500">Recorded activities only · Full catalogue: {subject.catalogueCount ?? 0}<br />Accepted time: {formatRecordedHours(subject.acceptedHours ?? 0)}</p>}
-          {subject.catalogueProgress && <p className="mt-2 text-xs text-foreground-500">Accepted time: {formatRecordedHours(subject.acceptedHours ?? 0)}</p>}
+          {subject.recordedHistory && <p className="mt-2 text-xs text-foreground-500">Recorded activities only · Full catalogue: {subject.catalogueCount ?? 0}</p>}
         </div>
         <span className={styles.nextActivity}>{isComplete ? <CheckCircle2 size={20} /> : <BookOpen size={20} />}<span><small>{isComplete ? 'Well done' : 'Next up'}</small><strong>{isComplete ? subject.recordedHistory ? 'All recorded activities complete' : 'All activities complete' : next?.title || 'Explore this subject'}</strong></span><ChevronRight size={16} /></span>
         <span className={styles.cardAction}>Open subject<ArrowRight size={16} aria-hidden="true" /></span>
