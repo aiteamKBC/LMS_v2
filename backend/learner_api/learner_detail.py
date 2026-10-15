@@ -40,6 +40,7 @@ from .mappers import _s, get_training_plan, to_learner_detail
 from .models import EnrolmentUser, LearnerProfile
 from .retained_quiz_progress import retain_quiz_progress
 from .student_activity_access import student_activity_available
+from curriculum_api.week_visibility import visible_child_sql, visible_week_sql
 
 logger = logging.getLogger(__name__)
 
@@ -376,6 +377,7 @@ def _otjh_by_legacy_title(components):
             cur.execute(
                 "SELECT id, module_catalogue_id, title, week_number FROM curriculum.weeks "
                 "WHERE module_catalogue_id = ANY(%s) "
+                f"AND {visible_week_sql('weeks')} "
                 "ORDER BY module_catalogue_id, week_number, display_order",
                 [list(module_ids.values())],
             )
@@ -470,7 +472,8 @@ def _resolve_week_ids(weeks):
 
             cur.execute(
                 "SELECT id, module_catalogue_id, title FROM curriculum.weeks "
-                "WHERE module_catalogue_id = ANY(%s)",
+                "WHERE module_catalogue_id = ANY(%s) "
+                f"AND {visible_week_sql('weeks')}",
                 [list(module_ids.values())],
             )
             week_ids_by_cat = {(cat_id, title): week_id for week_id, cat_id, title in cur.fetchall()}
@@ -1435,7 +1438,7 @@ def _resolve_from_master(modules, weeks, components, assigned_modules=None, *, c
             cur.execute(
                 "SELECT id, module_catalogue_id, title, week_number, display_order "
                 "FROM curriculum.weeks WHERE module_catalogue_id = ANY(%s) "
-                "AND (deleted_at IS NULL OR COALESCE(deleted_via_parent, '') <> '') "
+                f"AND {visible_week_sql('weeks')} "
                 "ORDER BY module_catalogue_id, display_order, week_number, id",
                 [module_ids],
             )
@@ -1461,7 +1464,7 @@ def _resolve_from_master(modules, weeks, components, assigned_modules=None, *, c
                 "live_sessions_link, display_order, ksb_mappings, reflection_required, \"Reflection_Question\", "
                 "tutor_validation_required "
                 "FROM curriculum.components WHERE module_catalogue_id = ANY(%s) "
-                "AND (deleted_at IS NULL OR COALESCE(deleted_via_parent, '') <> '') "
+                f"AND {visible_child_sql('components')} "
                 "ORDER BY week_id, display_order, id",
                 [module_ids],
             )
@@ -1505,8 +1508,7 @@ def _resolve_from_master(modules, weeks, components, assigned_modules=None, *, c
                     "JOIN curriculum.components component ON component.id = link.component_id "
                     "WHERE component.module_catalogue_id = ANY(%s) "
                     "AND component.type = 'quiz' "
-                    "AND (component.deleted_at IS NULL "
-                    "OR COALESCE(component.deleted_via_parent, '') <> '')",
+                    f"AND {visible_child_sql('component')}",
                     [module_ids],
                 )
                 for component_id, quiz_id in cur.fetchall():
@@ -1550,10 +1552,8 @@ def _resolve_from_master(modules, weeks, components, assigned_modules=None, *, c
                     "FROM curriculum.ksb_mappings mapping "
                     "JOIN curriculum.components component ON component.id = mapping.component_id "
                     "WHERE component.module_catalogue_id = ANY(%s) "
-                    "AND (component.deleted_at IS NULL "
-                    "OR COALESCE(component.deleted_via_parent, '') <> '') "
-                    "AND (mapping.deleted_at IS NULL "
-                    "OR COALESCE(mapping.deleted_via_parent, '') <> '') "
+                    f"AND {visible_child_sql('component')} "
+                    f"AND {visible_child_sql('mapping')} "
                     "ORDER BY mapping.component_id, mapping.ksb_code",
                     [module_ids],
                 )
@@ -1966,9 +1966,9 @@ def _reading_content(source, component_id):
             JOIN curriculum.modules m ON m.module_catalogue_id=c.module_catalogue_id
             JOIN curriculum.weeks w ON w.id=c.week_id AND w.module_catalogue_id=m.module_catalogue_id
             WHERE c.id=%s AND c.module_catalogue_id=ANY(%s)
-              AND (c.deleted_at IS NULL OR COALESCE(c.deleted_via_parent, '') <> '')
+              AND ''' + visible_child_sql('c') + '''
               AND (m.deleted_at IS NULL OR COALESCE(m.deleted_via_parent, '') <> '')
-              AND (w.deleted_at IS NULL OR COALESCE(w.deleted_via_parent, '') <> '')''', [component_id, module_ids])
+              AND ''' + visible_week_sql('w'), [component_id, module_ids])
         row = cursor.fetchone()
     return {"componentId": row[0], "contentHtml": _s(row[1]) or None} if row else None
 

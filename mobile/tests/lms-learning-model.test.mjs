@@ -69,13 +69,15 @@ test('course-specific normalization never imports another course or reading, doc
  assert.equal(model.activities[1].url,'https://lms.kentbusinesscollege.org/media/lesson.mp4');
 });
 
-test('shared PMP reward capabilities do not extend to a different selected course',()=>{
+test('reward capabilities apply only to courses explicitly enabled by the LMS',()=>{
  const session={authenticated:true,capabilities:{customPointsPolicy:true,timeObservations:true},rewardModuleIds:[PMP_ID]};
  assert.equal(lmsCourseSession(session,PMP_ID).capabilities.customPointsPolicy,true);
  const other=lmsCourseSession(session,'MOD-RISK');
  assert.equal(other.capabilities.customPointsPolicy,false);assert.equal(other.capabilities.timeObservations,false);
  assert.equal(session.capabilities.customPointsPolicy,true,'The authenticated session is unchanged');
  assert.equal(lmsCourseSession({...session,rewardModuleIds:[]},PMP_ID).capabilities.customPointsPolicy,false);
+ const risk=lmsCourseSession({...session,rewardModuleIds:[PMP_ID,'MOD-RISK']},'MOD-RISK');
+ assert.equal(risk.capabilities.customPointsPolicy,true);assert.equal(risk.rewardModuleId,'MOD-RISK');
 });
 
 test('server observation support flag remains distinct from canonical quiz completion availability',()=>{

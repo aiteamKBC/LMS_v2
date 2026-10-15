@@ -69,7 +69,7 @@ def _direct_progress_records(enrolment_id, *, profile=None):
         return []
     entries = (
         profile.progress_entries.using('enrolment')
-        .filter(component_link_source__in=('direct', 'quiz_ref'))
+        .filter(component_link_source__in=('direct', 'quiz_ref'), deleted_at__isnull=True)
         .exclude(kind='activity_event')
         .values(
             'id', 'kind', 'component_ref', 'quiz_ref', 'component_title', 'component_type',
@@ -136,6 +136,7 @@ def load_direct_progress_records_bulk(enrolment_ids):
     entries = LearnerProgressEntry.objects.using('enrolment').filter(
         learner_id__in=[profile.id for profile in profiles],
         component_link_source__in=('direct', 'quiz_ref'),
+        deleted_at__isnull=True,
     ).exclude(kind='activity_event').values(
         'id', 'learner_id', 'kind', 'component_ref', 'quiz_ref', 'component_title', 'component_type',
         'module_title', 'week_title', 'reported_time', 'claimed_seconds', 'verified_seconds',

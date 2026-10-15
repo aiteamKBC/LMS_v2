@@ -19,7 +19,7 @@ def _resolve_component(row):
         return None
     candidates=[]
     for component in detail.get("components",[]):
-        if component.get("moduleId")!=r.PILOT_MODULE:
+        if not component.get("moduleId") or (row.get('module_ref') and component.get('moduleId') != row['module_ref']):
             continue
         if row["kind"]=="quiz":
             matches=str((component.get("quizMeta") or {}).get("quizId"))==str(row["quiz_ref"])
@@ -31,7 +31,9 @@ def _resolve_component(row):
         raise RewardError("ambiguous_canonical_activity")
     if not candidates:
         return None
-    return {**candidates[0],"learnerKind":str(source.learner_type or "").lower()}
+    selected = candidates[0]
+    return {**selected, "componentId": selected.get('componentId') or 'quiz-'+str(row['quiz_ref']),
+            "learnerKind":str(source.learner_type or "").lower()}
 
 
 def _reconcile_saved_progress(progress_id,expected_learner=None):
@@ -47,26 +49,32 @@ def _reconcile_saved_progress(progress_id,expected_learner=None):
             return {"status":"not_scoped","owned":False}
         if expected_learner is not None and str(row["enrolment_id"])!=str(expected_learner):
             raise RewardError("progress_identity_mismatch")
-        cfg=r.policy(cursor)
-        if not row["submitted_at"] or row["submitted_at"]<cfg["starts_at"]:
-            raise RewardError("progress_precedes_policy")
+        from .learning_policy import all_course_start
+        global_start = all_course_start(cursor)
+        all_scoped = bool(global_start and row['submitted_at'] and row['submitted_at'] >= global_start)
         cursor.execute('SELECT state FROM "Engagement".shared_reward_saved_progress WHERE progress_id=%s',[progress_id])
         state=cursor.fetchone()[0]
         if state in ("done","not_scoped"):
-            return {"status":state,"owned":state=="done","duplicate":True}
+            return {"status":state,"owned":state=="done" or all_scoped,"duplicate":True}
     component=_resolve_component(row)
     with transaction.atomic(using=r.DB),connections[r.DB].cursor() as cursor:
         r._wallet_lock(cursor,str(row["enrolment_id"]))
         cursor.execute('SELECT state FROM "Engagement".shared_reward_saved_progress WHERE progress_id=%s FOR UPDATE',[progress_id])
         state=cursor.fetchone()[0]
         if state in ("done","not_scoped"):
-            return {"status":state,"owned":state=="done","duplicate":True}
+            return {"status":state,"owned":state=="done" or all_scoped,"duplicate":True}
+        if component is not None:
+            cfg = r.policy(cursor, component['moduleId'], require=False)
+            if not cfg or not cfg['enabled'] or not row['submitted_at'] or row['submitted_at'] < cfg['starts_at']:
+                component = None
         if component is None:
             cursor.execute('''UPDATE "Engagement".shared_reward_saved_progress SET state='not_scoped',
                checked_at=now(),attempts=attempts+1 WHERE progress_id=%s''',[progress_id])
-            return {"status":"not_scoped","owned":False}
+            return {"status":"not_scoped","owned":all_scoped}
+        from .learning_policy import ensure_module
+        ensure_module(cursor, component['moduleId'])
         cursor.execute('''UPDATE "Engagement".shared_reward_saved_progress SET module_id=%s,component_id=%s
-             WHERE progress_id=%s''',[r.PILOT_MODULE,component["componentId"],progress_id])
+             WHERE progress_id=%s''',[component['moduleId'],component["componentId"],progress_id])
         # Browser study without observed segments never earns invented hour points.
         # Quiz points still use the exact persisted first submission and score.
         if component.get("tutorValidationRequired"):
@@ -88,10 +96,10 @@ def _reconcile_saved_progress(progress_id,expected_learner=None):
                 correct,total=row["achieved_score"],row["total_score"]
                 if correct is None or total is None or correct!=int(correct) or total!=int(total):
                     raise RewardError("invalid_saved_question_counts")
-                intent=r.quiz_award(learner_id=str(row["enrolment_id"]),quiz_id=str(row["quiz_ref"]),
+                intent=r.configured_quiz_award(cursor, row['submitted_at'], learner_id=str(row["enrolment_id"]),quiz_id=str(row["quiz_ref"]),
                     submission_id=str(progress_id),submitted_ordinal=1,correct_answers=int(correct),total_questions=int(total))
                 if intent:
-                    r._grant(intent,row["full_name"] or "",r.PILOT_MODULE)
+                    r._grant(intent,row["full_name"] or "",component['moduleId'])
         cursor.execute('''UPDATE "Engagement".shared_reward_saved_progress SET state='done',reason='',
             checked_at=now(),attempts=attempts+1 WHERE progress_id=%s''',[progress_id])
         return {"status":"done","owned":True}

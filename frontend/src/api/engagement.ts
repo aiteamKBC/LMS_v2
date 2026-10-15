@@ -683,6 +683,7 @@ export interface EngagementPointsGrant {
 // balance display should read from, rather than re-deriving it from grants
 // and claims client-side.
 export interface EngagementPointsSummary {
+  learningFormula?: {pointsPerHour:number;quizThreshold:number;quizPointPerCorrect:number;perfectQuizPointPerCorrect:number};
   learnerId: string;
   earned: number;
   committed: number;

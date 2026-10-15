@@ -82,8 +82,8 @@ export function LmsCommunications({client,session,push,initialPage='messages',in
    {!alerts.length&&<Txt>You’re up to date. New reminders will appear here.</Txt>}
    {alerts.map(item=><Row key={item.id} title={item.body} subtitle={item.read?'Read':'New'} onPress={()=>chooseAlert(item)}/>)}
   </>:<>
-   <Txt>Choose in-app reminders and Android phone alerts separately. You can change them at any time.</Txt>
-   <Btn title="Connect phone alerts" disabled={push.busy} onPress={push.connect}/>{!!push.status&&<Notice>{push.status}</Notice>}
+   <Txt>Choose in-app reminders and phone alerts separately. Phone alert choices apply to your account on connected devices.</Txt>
+   {push.canConnectPhoneAlerts===true&&<Btn title="Connect phone alerts" disabled={push.busy} onPress={push.connect}/>} {!!push.status&&<Notice>{push.status}</Notice>}
    <Txt small>Meetings: the day before, 15 minutes before, and 15 minutes after if attendance is unconfirmed. Unfinished assignments and tasks: two days and one day before their due date.</Txt>
    {prefs?notificationCategories.map(([key,label])=><Card key={key}><Text style={s.sectionTitle}>{label}</Text>{[['inApp','In the app'],['push','Phone alerts']].map(([channel,title])=><View key={channel} style={{flexDirection:'row',alignItems:'center',justifyContent:'space-between',minHeight:52,gap:12}}><Txt>{title}</Txt><Switch accessibilityLabel={label+' — '+title} disabled={busy} value={prefs[key][channel]} trackColor={{true:base.green,false:'#888'}} onValueChange={value=>perform(async()=>{const categories={...prefs,[key]:{...prefs[key],[channel]:value}};const result=await client.comms('preferences/','POST',{categories});if(alive.current)setPrefs(result.categories);})}/></View>)}</Card>):<Busy/>}
   </>}

@@ -887,7 +887,9 @@ export function ReviewFormModal({ programmeId, review, defaultStartDate, onClose
     if (applicability.scope === 'programme') return;
     const controller = new AbortController();
     setPlacementError('');
-    fetchCurriculumProgrammeDetail(programmeId, controller.signal)
+    // Only flat.cohorts and flat.groups are read, so the stats, components,
+    // nested tree and week components are left out of the response.
+    fetchCurriculumProgrammeDetail(programmeId, controller.signal, { deferStats: true, omitComponents: true, omitTree: true, omitWeekComponents: true })
       .then(value => { if (!controller.signal.aborted) setPlacement(value); })
       .catch(error => { if (!controller.signal.aborted) setPlacementError(error instanceof Error ? error.message : 'Could not load cohorts and groups.'); });
     return () => controller.abort();

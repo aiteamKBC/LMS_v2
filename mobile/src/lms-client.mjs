@@ -98,10 +98,10 @@ export function createLmsClient({fetchImpl = globalThis.fetch, timeoutMs = 30000
     coachQuiz:(id,activityId) => mobile('coach/learners/'+coachProfileId(id)+'/quizzes/'+componentId(activityId)+'/'),
     coachTranscript:(id,activityId) => mobile('coach/learners/'+coachProfileId(id)+'/components/'+componentId(activityId)+'/transcript/'),
     points:() => mobile('points/'),
-    rewardsSummary:() => mobile('rewards/summary/'),
+    rewardsSummary:moduleId => mobile('rewards/summary/'+(moduleId?'?moduleId='+componentId(moduleId):'')),
     recordObservations:body => mobile('rewards/observations/','POST',ownPayload(body)),
-    requestVoucher:body => mobile('rewards/voucher-requests/','POST',ownPayload(body)),
-    setLeaderboard:body => mobile('rewards/leaderboard/','POST',ownPayload(body)),
+    requestVoucher:(body,moduleId) => mobile('rewards/voucher-requests/'+(moduleId?'?moduleId='+componentId(moduleId):''),'POST',ownPayload(body)),
+    setLeaderboard:(body,moduleId) => mobile('rewards/leaderboard/'+(moduleId?'?moduleId='+componentId(moduleId):''),'POST',ownPayload(body)),
     meetings:() => mobile('meetings/'),
     absenceReports:scope => {
       if(!['lectures','meetings'].includes(scope))throw new LmsServiceError('Choose a session or meeting.',400);
