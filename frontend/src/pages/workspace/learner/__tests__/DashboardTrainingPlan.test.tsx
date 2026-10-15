@@ -28,10 +28,13 @@ const schedule = (): TrainingPlanDashboard => ({
     targetDate: '2026-09-25', scheduledDate: null, scheduledTime: null, durationMinutes: 60, status: 'not-scheduled', coachName: 'Assigned Coach', invited: false }],
   coach: { name: 'Assigned Coach', bookingUrl: null }, contractStatus: 'ready', generatedAt: '',
 });
-function setup(calendar = schedule(), failed = '', overview = week(), recorded?: StudentActivityResponse, learningSubjects?: Subject[]) {
+function setup(calendar = schedule(), failed = '', overview = week(), recorded?: StudentActivityResponse, learningSubjects?: Subject[], monthlyOnly = false,
+  assignmentStatuses: Array<{ activityType: string; activityId: string; status: string }> = []) {
   const fetch = vi.fn(async (input: Parameters<typeof globalThis.fetch>[0]) => {
     const url = String(input);
     if (failed && url.includes(failed)) return new Response(JSON.stringify({ error: 'Offline' }), { status: 503 });
+    if (url.includes('/reflection/submissions/')) return new Response(JSON.stringify({ statuses: assignmentStatuses }));
+    if (url.includes('/attendance/') && url.includes('/lectures/')) return new Response(JSON.stringify({ lectures: [] }));
     if (url.includes('rewards-summary')) return new Response(JSON.stringify({ points: { learnerId: '125', earned: 350, committed: 100, balance: 250 }, rewards: [] }));
     if (url.includes('/monthly-logs/125/')) return new Response(JSON.stringify({
       learner: { id: 125, aptem_id: null, name: 'Learner', programme: 'Programme', coach_name: '' }, months: [],
@@ -43,7 +46,8 @@ function setup(calendar = schedule(), failed = '', overview = week(), recorded?:
   function Subject() {
     const plan = useDashboardPlan('commercial', '125');
     return <DashboardTrainingPlan kind="commercial" learnerId="125" plan={plan}
-      learningActivity={recorded} learnerDetail={{ studentActivityAvailable: true } as LearnerDetail} learningSubjects={learningSubjects} />;
+      learningActivity={recorded} learnerDetail={{ studentActivityAvailable: true } as LearnerDetail}
+      learningSubjects={learningSubjects} monthlyOnly={monthlyOnly} />;
   }
   render(<MemoryRouter><Subject /></MemoryRouter>);
   return fetch;
@@ -101,6 +105,58 @@ describe('dashboard learning layout', () => {
     for (const [label, value] of [['Required hours', '5'], ['Achieved hours', '2'], ['Difference', '-3']]) {
       expect(within(panel).getByText(label).nextElementSibling).toHaveTextContent(`${value} hrs`);
     }
+  });
+
+  it('keeps authored monthly assignments and continues a saved draft when My Learning supplies the module list', async () => {
+    const overview = week();
+    overview.planSubjects![0].monthlyActivities = [
+      { id: 'native:september', componentId: 'SEPTEMBER', title: 'September assignment', type: 'assignment',
+        date: '2026-09-18', weekTitle: 'Week 2', expectedHours: 4, completed: false, ksbCodes: [] },
+      { id: 'native:accepted', componentId: 'ACCEPTED', title: 'Accepted assignment', type: 'assignment',
+        date: '2026-09-20', weekTitle: 'Week 3', expectedHours: 2, completed: false, ksbCodes: [] },
+      { id: 'native:october', componentId: 'OCTOBER', title: 'October assignment', type: 'assignment',
+        date: '2026-10-02', weekTitle: 'Week 4', expectedHours: 6, completed: false, ksbCodes: [] },
+    ];
+    setup(schedule(), '', overview, undefined, [
+      { id: 'current:M1', title: 'Marketing', source: 'current', activities: [] },
+    ], true, [
+      { activityType: 'assignment', activityId: 'SEPTEMBER', status: 'draft' },
+      { activityType: 'assignment', activityId: 'ACCEPTED', status: 'accepted' },
+    ]);
+
+    const assignments = within(await screen.findByRole('region', { name: 'Assignments this month' }));
+    expect(assignments.getByText('September assignment')).toBeVisible();
+    expect(assignments.queryByText('October assignment')).not.toBeInTheDocument();
+    expect(await assignments.findByRole('link', { name: 'Continue' })).toHaveAttribute(
+      'href',
+      '/learner/monthly-submission/commercial/125?month=2026-09&assignment=SEPTEMBER',
+    );
+    const accepted = assignments.getByText('Accepted assignment').closest('article')!;
+    expect(within(accepted).getByText('Achieved hours').nextElementSibling).toHaveTextContent('2 hrs');
+    expect(within(accepted).getByLabelText('100% complete')).toBeVisible();
+    expect(within(accepted).getByRole('link', { name: 'View' })).toHaveAttribute(
+      'href',
+      '/learner/monthly-submission/commercial/125?month=2026-09&assignment=ACCEPTED',
+    );
+  });
+
+  it('opens a submitted monthly assignment for viewing while it awaits review', async () => {
+    const overview = week();
+    overview.planSubjects![0].monthlyActivities = [
+      { id: 'native:submitted', componentId: 'SUBMITTED', title: 'Submitted assignment', type: 'assignment',
+        date: '2026-09-12', weekTitle: 'Week 2', expectedHours: 2, completed: false, ksbCodes: [] },
+    ];
+    setup(schedule(), '', overview, undefined, [
+      { id: 'current:M1', title: 'Marketing', source: 'current', activities: [] },
+    ], true, [{ activityType: 'assignment', activityId: 'SUBMITTED', status: 'submitted_for_tutor_review' }]);
+
+    const submitted = within((await screen.findByText('Submitted assignment')).closest('article')!);
+    expect(await submitted.findByRole('link', { name: 'View' })).toHaveAttribute(
+      'href',
+      '/learner/monthly-submission/commercial/125?month=2026-09&assignment=SUBMITTED',
+    );
+    expect(submitted.getByText('Achieved hours').nextElementSibling).toHaveTextContent('0 hrs');
+    expect(submitted.getByLabelText('0% complete')).toBeVisible();
   });
 
   it('places monthly focus next to weekly learning and keeps the timeline beside its overview', async () => {
