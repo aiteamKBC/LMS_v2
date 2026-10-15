@@ -90,7 +90,9 @@ end
 $fix$;
 commit;
 
--- Rollback of PART B:
+-- Rollback of PART B: use 04b_pin_remediation_rollback.sql, which restores a pin
+-- only while it still holds the version PART B set. The unconditional form
+-- below is kept for reference only; it would overwrite later pin changes:
 --   update "Learner".learner_ksb_assignments a
 --      set profile_version_id = b.profile_version_id, updated_at = b.updated_at
 --     from ksb_migration_archive.pin_fix_before b where a.learner_id = b.learner_id;

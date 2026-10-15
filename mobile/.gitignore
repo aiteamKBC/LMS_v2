@@ -2,6 +2,16 @@ node_modules/
 .expo/
 dist/
 dist-native/
+dist-ios/
+# iOS is generated from app.json by Expo on macOS / EAS Build.
+ios/
+credentials.json
+*.p12
+*.p8
+*.mobileprovision
+*.ipa
+*.xcarchive/
+*.dSYM/
 .private/
 artifacts/
 android/.gradle/

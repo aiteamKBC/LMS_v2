@@ -56,7 +56,7 @@ def _intent(rule, learner, scope, points, source):
 
 
 def quiz_award(*, learner_id, quiz_id, submission_id, submitted_ordinal,
-               correct_answers, total_questions):
+               correct_answers, total_questions, threshold=70, points_per_correct=1, perfect_points_per_correct=2):
     """Use the persisted first submission order, not a start/abandoned attempt.
 
     A multiple-answer question counts once, and only when its answer set is
@@ -68,9 +68,12 @@ def quiz_award(*, learner_id, quiz_id, submission_id, submitted_ordinal,
     _integer(submitted_ordinal, 1); _integer(correct_answers); _integer(total_questions, 1)
     if correct_answers > total_questions:
         raise ValueError("Correct answers exceed total questions.")
-    if submitted_ordinal != 1 or correct_answers * 100 < total_questions * 70:
+    _integer(threshold, 1); _integer(points_per_correct); _integer(perfect_points_per_correct)
+    if submitted_ordinal != 1 or correct_answers * 100 < total_questions * threshold:
         return None
-    amount = correct_answers * (2 if correct_answers == total_questions else 1)
+    amount = correct_answers * (perfect_points_per_correct if correct_answers == total_questions else points_per_correct)
+    if not amount:
+        return None
     return _intent(QUIZ_RULE, learner_id, ["quiz", quiz_id], amount, submission_id)
 
 
@@ -110,7 +113,7 @@ def accepted_seconds(intervals):
     return total // 1000
 
 
-def hour_awards(*, learner_id, intervals):
+def hour_awards(*, learner_id, intervals, rate_at=None):
     """One stable intent per cumulative whole accepted hour, across modules.
 
     Repeat/reordered/offline reconciliation returns the same references. The
@@ -118,9 +121,28 @@ def hour_awards(*, learner_id, intervals):
     grant for a partial hour. Never use authored expected hours as intervals.
     """
     _id(learner_id)
-    count = accepted_seconds(intervals) // 3600
-    return [_intent(HOUR_RULE, learner_id, ["hour", ordinal], 1, "accepted-hour:" + str(ordinal))
-            for ordinal in range(1, count + 1)]
+    # Preserve stable hour ordinals across policy edits. The rate at the actual
+    # end of each whole hour applies; partial hours carry across changes.
+    intervals = list(intervals)
+    accepted_seconds(intervals)  # Validate immutable receipts before unioning.
+    merged = []
+    for row in sorted(intervals, key=lambda r: (r['active_start_ms'], r['active_end_ms'])):
+        start, end = row['active_start_ms'], row['active_end_ms']
+        if merged and start <= merged[-1][1]:
+            merged[-1][1] = max(merged[-1][1], end)
+        else:
+            merged.append([start, end])
+    result, elapsed, ordinal = [], 0, 1
+    for start, end in merged:
+        while ordinal * 3600000 <= elapsed + end - start:
+            completed_at = start + ordinal * 3600000 - elapsed
+            rate = rate_at(completed_at) if rate_at else 1
+            _integer(rate)
+            if rate:
+                result.append(_intent(HOUR_RULE, learner_id, ["hour", ordinal], rate, "accepted-hour:" + str(ordinal)))
+            ordinal += 1
+        elapsed += end - start
+    return result
 
 
 def _month_shift(value, months):

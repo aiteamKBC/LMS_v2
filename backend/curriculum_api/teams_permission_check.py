@@ -34,6 +34,11 @@ logger = logging.getLogger(__name__)
 
 READ_WRITE = 'OnlineMeetings.ReadWrite.All'
 USER_READ = 'User.Read.All'
+SESSION_RESULT_ROLES = (
+    'OnlineMeetingArtifact.Read.All',
+    'OnlineMeetingRecording.Read.All',
+    'OnlineMeetingTranscript.Read.All',
+)
 
 
 def _text(value):
@@ -118,10 +123,23 @@ def permission_report(series, *, graph_request, graph_settings, token, owner_id,
           (f'The app token carries {READ_WRITE}.' if has_read_write else
            f'The app token does not carry {READ_WRITE}.' if claims['readable'] else
            'The app token could not be read, so its permissions are unknown.'),
-          roles=[role for role in claims['roles'] if role.startswith(('OnlineMeetings', 'Calendars', 'User.'))])
+          roles=[role for role in claims['roles'] if role.startswith(('OnlineMeeting', 'Calendars', 'User.'))])
     if claims['readable'] and not has_read_write:
         actions.append(f'In Entra ID > App registrations > {client_id} > API permissions, add the application permission '
                        f'{READ_WRITE} and grant admin consent. The LMS never grants tenant permissions itself.')
+    missing_results_roles = [role for role in SESSION_RESULT_ROLES if role not in claims['roles']]
+    results_status = 'unknown' if not claims['readable'] else 'fail' if missing_results_roles else 'pass'
+    results_summary = (
+        'The app token could not be read, so session result permissions are unknown.' if not claims['readable'] else
+        'The app token is missing session result permissions: ' + ', '.join(missing_results_roles) + '.' if missing_results_roles else
+        'The app token carries the attendance, recording and transcript permissions.'
+    )
+    check('session_results_permissions', results_status, results_summary,
+          roles=[role for role in claims['roles'] if role in SESSION_RESULT_ROLES])
+    if missing_results_roles and claims['readable']:
+        actions.append(f'In Entra ID > App registrations > {client_id} > API permissions, add the application permissions '
+                       f'{", ".join(missing_results_roles)} and grant admin consent. Restart the LMS worker after '
+                       'updating its Microsoft Graph app settings.')
 
     # 2. Who the organiser is, by email in the directory and by the ID the LMS writes under.
     directory_id = ''

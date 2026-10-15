@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
-import { PLAYER_CHANNEL, parseYouTubeVideoId, parsePlayerMessage, isTrustedFrameMessage, isAllowedPlayerNavigation, createNativePlayerHTML, createWebPlayerHTML, createWebPlayerScript, youtubePlayerRuntime } from '../src/youtube-player.mjs';
+import { PLAYER_CHANNEL, parseYouTubeVideoId, parsePlayerMessage, isTrustedFrameMessage, isAllowedPlayerNavigation, createNativePlayerHTML, createWebPlayerHTML, createWebPlayerScript, YOUTUBE_PLAYER_RUNTIME } from '../src/youtube-player.mjs';
 import { initialState, recordInterval } from '../src/domain.mjs';
 const id = 'M7lc1UVf-VE', nonce = 'test_nonce_01234567890123456789', origin = 'https://kentbusinesscollege.com';
 const message = (overrides = {}) => ({ channel: PLAYER_CHANNEL, type: 'state', nonce, playing: true, buffering: false, position: 6, duration: 600, playbackRate: 1.5, ...overrides });
@@ -34,21 +34,51 @@ test('native document has strict content policy and static web artifacts match t
   assert.throws(() => createNativePlayerHTML({ videoId: '<script>', nonce, origin }), /Invalid/);
   assert.throws(() => createNativePlayerHTML({ videoId: id, nonce: 'x" onclick="evil', origin }), /Invalid/);
   assert.equal(fs.readFileSync(new URL('../public/player.html', import.meta.url), 'utf8'), createWebPlayerHTML());
-  assert.equal(fs.readFileSync(new URL('../public/player-runtime.js', import.meta.url), 'utf8'), createWebPlayerScript());
+  assert.equal(fs.readFileSync(new URL('../public/player-runtime.js', import.meta.url), 'utf8').replace(/\r\n/g, '\n'), createWebPlayerScript());
 });
-function runtime() {
-  const sent = [], events = {}, documentEvents = {}, timers = [], intervals = [], notice = { textContent: '', hidden: false };
+function runtime({ script, native = false } = {}) {
+  const sent = [], events = {}, documentEvents = {}, timers = [], intervals = [], scripts = [], notice = { textContent: '', hidden: false };
   const parent = { postMessage: (data, target) => sent.push({ data, target }) };
   const state = { code: -1, position: 0, duration: 600, rate: 1, pauses: 0, destroyed: false };
   let options;
   const player = { getPlayerState: () => state.code, getCurrentTime: () => state.position, getDuration: () => state.duration, getPlaybackRate: () => state.rate, pauseVideo: () => { state.pauses++; state.code = 2; }, destroy: () => { state.destroyed = true; } };
   const window = { parent, location: { origin, hash: '' }, addEventListener: (name, handler) => events[name] = handler, YT: { Player: function(_element, opts) { options = opts; return player; } } };
-  const document = { hidden: false, getElementById: () => notice, addEventListener: (name, handler) => documentEvents[name] = handler, createElement: () => ({}), head: { appendChild: () => {} } };
-  vm.runInNewContext(`(${youtubePlayerRuntime.toString()})(${JSON.stringify({ videoId: id, nonce, origin, paused: false })})`, { window, document, URLSearchParams, setInterval: fn => { intervals.push(fn); return intervals.length; }, clearInterval: () => {}, setTimeout: fn => { timers.push(fn); return timers.length; }, clearTimeout: () => {} });
+  if (native) window.ReactNativeWebView = { postMessage: raw => sent.push({ data: JSON.parse(raw), target: 'native' }) };
+  const document = { hidden: false, getElementById: () => notice, addEventListener: (name, handler) => documentEvents[name] = handler, createElement: () => ({}), head: { appendChild: tag => scripts.push(tag) } };
+  vm.runInNewContext(script ?? `(${YOUTUBE_PLAYER_RUNTIME})(${JSON.stringify({ videoId: id, nonce, origin, paused: false })})`, { window, document, URLSearchParams, setInterval: fn => { intervals.push(fn); return intervals.length; }, clearInterval: () => {}, setTimeout: fn => { timers.push(fn); return timers.length; }, clearTimeout: () => {} });
   const ready = () => { window.onYouTubeIframeAPIReady(); options.events.onReady(); };
   const update = (code, position = state.position) => { state.code = code; state.position = position; options.events.onStateChange({ data: code }); };
-  return { sent, events, documentEvents, document, state, parent, ready, update, intervals, timers, options: () => options, latest: () => sent.at(-1).data };
+  return { sent, events, documentEvents, document, window, scripts, state, parent, ready, update, intervals, timers, options: () => options, latest: () => sent.at(-1).data };
 }
+
+test('native HTML runs its real bridge when the release engine cannot stringify function source', () => {
+  const config = { videoId: id, nonce, origin: 'https://com.kentbusinesscollege.learn.lmscandidate', paused: false };
+  const source = fs.readFileSync(new URL('../src/youtube-player.mjs', import.meta.url), 'utf8').replace(/^export /gm, '');
+  // Hermes releases retain bytecode rather than JavaScript function source.
+  // Poison only this isolated VM, then execute the actual inline HTML script.
+  const generated = vm.runInNewContext(`Function.prototype.toString = function () { return 'function youtubePlayerRuntime() { [bytecode] }'; };\n${source}\n({ html: createNativePlayerHTML(config), web: createWebPlayerScript() });`, { URL, config });
+  const scripts = [...generated.html.matchAll(/<script nonce="[^"]+">([\s\S]*?)<\/script>/g)];
+  assert.equal(scripts.length, 1);
+  const h = runtime({ script: scripts[0][1], native: true });
+  assert.equal(h.scripts.length, 1);
+  assert.equal(h.scripts[0].src, 'https://www.youtube.com/iframe_api');
+  assert.equal(typeof h.window.onYouTubeIframeAPIReady, 'function');
+  assert.equal(typeof h.window.kbcPlayerPause, 'function');
+  assert.equal(parsePlayerMessage(h.latest(), nonce).playing, false);
+  h.ready(); h.update(1, 5);
+  assert.equal(h.options().playerVars.origin, config.origin);
+  assert.equal(h.options().playerVars.autoplay, 0);
+  assert.equal(parsePlayerMessage(h.latest(), nonce).playing, true);
+  assert.equal(parsePlayerMessage(h.latest(), 'wrong'), null);
+  assert.ok(h.sent.every(message => message.target === 'native'));
+  h.window.kbcPlayerPause('wrong', true);
+  assert.equal(h.latest().playing, true);
+  h.window.kbcPlayerPause(nonce, true);
+  assert.equal(h.latest().playing, false);
+  h.window.kbcPlayerPause(nonce, false);
+  assert.equal(h.latest().playing, false, 'releasing host pause must not autoplay');
+  assert.equal(generated.web, createWebPlayerScript());
+});
 test('official API states alone govern playback: cue is idle, play confirmed, buffering and end do not count', () => {
   const h = runtime(); h.ready();
   assert.equal(h.options().playerVars.autoplay, 0); assert.equal(h.state.pauses, 0); assert.equal(h.latest().playing, false);

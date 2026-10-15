@@ -40,6 +40,7 @@ from .weekly_schedule import module_weekly_schedule, merged_weekly_schedule
 from .teams_weekly_calendar import calendar_groups, save_weekday_calendar, stored_calendar_series, graph_event_utc
 from .teams_options_retry import microsoft_update_summary
 from .session_overrides import apply_session_overrides, override_clock, session_overrides
+from .session_artifact_placement import recording_matches_occurrence
 from .attendance_identity import keep_directory_lookup, resolve_directory_accounts
 from .teams_calendar_checks import (CalendarMismatch, attendee_differences, attendees_already_match, calendar_targets, event_organizer_address,
                                     graph_calendar_time, local_calendar_recurrence, publish_attendees, remove_attendees_silently,
@@ -4964,10 +4965,9 @@ def curriculum_teams_meeting_artifacts(request, live_session_id):
             try:
                 response = {'value': collection(microsoft_graph_request, f'{base}/{endpoint}', get_graph_settings()['base_url'])}
                 for artifact in response.get('value') or []:
-                    timestamp = (
-                        parse_graph_datetime(artifact.get('endDateTime'))
-                        or parse_graph_datetime(artifact.get('createdDateTime'))
-                    )
+                    primary_time = 'createdDateTime' if artifact_type == 'recording' else 'endDateTime'
+                    fallback_time = 'endDateTime' if artifact_type == 'recording' else 'createdDateTime'
+                    timestamp = parse_graph_datetime(artifact.get(primary_time)) or parse_graph_datetime(artifact.get(fallback_time))
                     existing_artifacts = authoring_fetch_all(LIVE_SESSION_ARTIFACTS_TABLE,
                         'artifact_type = %s AND graph_artifact_id = %s', [artifact_type, clean_str(artifact.get('id'))])
                     existing_ids = {row['occurrence_id'] for row in existing_artifacts}
@@ -4981,6 +4981,9 @@ def curriculum_teams_meeting_artifacts(request, live_session_id):
                         same_ids = {row['occurrence_id'] for row in same}
                         stored = next((row for row in group if row['id'] in same_ids), None)
                     occurrence, launch = (stored, None) if stored else launch_linked_live_occurrence(group, timestamp, launches)
+                    if (artifact_type == 'recording' and occurrence and not stored
+                            and not recording_matches_occurrence(artifact, occurrence, linked_by_launch=bool(launch))):
+                        continue
                     if occurrence and not stored and launch is None and run_not_delivery(
                             occurrence, parse_graph_datetime(artifact.get('createdDateTime')) or timestamp, timestamp):
                         # Matched only as the nearest scheduled session, yet recorded
@@ -7684,6 +7687,30 @@ def ksb_profile_required_codes(profile):
     ])
 
 
+def applied_standard_required_codes(config, cache):
+    """Required codes of the standard a programme applies, or None.
+
+    A programme whose ksb_profile_source_id names a standard
+    ('standard:st0596-v1-0') is counted against that standard, never against a
+    manual profile matched by its name: the name match kept Marketing Executive
+    and Marketing Manager on their profiles' counts after both moved to
+    standards, and gave 0 to programmes no profile names. None means the
+    programme applies no standard (or it is not in standard_ksbs), so the
+    caller keeps the profile match. ``cache`` is per build, keyed by standard.
+    """
+    source = clean_str((config or {}).get('ksb_profile_source_id'))
+    if not source.lower().startswith('standard:'):
+        return None
+    standard_id = clean_str(source.split(':', 1)[1]).lower()
+    if standard_id not in cache:
+        cache[standard_id] = unique([
+            coverage_normalise_code(definition.get('code'))
+            for definition in standard_required_ksbs(standard_id)
+            if coverage_normalise_code(definition.get('code'))
+        ])
+    return cache[standard_id] or None
+
+
 def ksb_profile_source_id(profile):
     public_id = clean_str((profile or {}).get('id'))
     if public_id.startswith('KSBP-'):
@@ -9500,6 +9527,7 @@ def build_programmes(training_rows, program_configs, ksb_profiles, include_confi
     # tables that own them, so the card cannot disagree with the programme's own
     # page about any of the four.
     structure_counts_by_id, structure_counts_by_name = authoring_programme_structure_counts()
+    standard_codes = {}
 
     display_program_configs = unique_program_configs_for_display(program_configs)
     row_programme_names = set()
@@ -9589,7 +9617,9 @@ def build_programmes(training_rows, program_configs, ksb_profiles, include_confi
             row_group = actual_group_identity(row, row_cohort['id']) if row_cohort else None
             if row_group:
                 group_keys.add(row_group['id'])
-        required_ksb_codes = ksb_profile_required_codes(profile)
+        required_ksb_codes = applied_standard_required_codes(config, standard_codes)
+        if required_ksb_codes is None:
+            required_ksb_codes = ksb_profile_required_codes(profile)
         ksb_total = len(required_ksb_codes)
         profile_source = ksb_profile_source_id(profile) if profile else ''
         config_archived = is_archived_program_config(config)
@@ -17130,9 +17160,39 @@ def sort_rows_by_updated_at_desc(rows):
     )
 
 
-def component_builder_rows(module_catalogue_ids=None):
-    ensure_module_authoring_tables()
+def component_builder_rows(module_catalogue_ids=None, omit_content=False):
+    """The component builder rows, whole; or with ``omit_content``, exactly as
+    component_rows_without_content() would project them, with the long text
+    stripped in the database where it can be (live_component_rows_without_content).
+    """
     catalogue_ids = [clean_str(value) for value in (module_catalogue_ids or []) if clean_str(value)]
+    stripped_rows = live_component_rows_without_content(catalogue_ids) if omit_content else None
+    if stripped_rows is None:
+        rows = _component_builder_rows(catalogue_ids)
+        return component_rows_without_content(rows) if omit_content else rows
+    db_omitted_by_id = {
+        str(row.get('id')): list(row.pop(COMPONENT_DB_OMITTED_KEYS_COLUMN, None) or [])
+        for row in stripped_rows
+    }
+    projected = []
+    for row in _component_builder_rows(catalogue_ids, stripped_rows):
+        db_omitted = db_omitted_by_id.get(str(row.get('id'))) or []
+        # Anything the database could not strip (a settings document stored
+        # as a JSON string) is still taken out here, so the result never
+        # depends on which path removed the text.
+        row = component_rows_without_content([row])[0]
+        omitted = [
+            key for key in COMPONENT_CONTENT_SETTING_KEYS
+            if key in db_omitted or key in (row.get(COMPONENT_SETTINGS_OMITTED_FLAG) or [])
+        ]
+        if omitted:
+            row = {**row, COMPONENT_SETTINGS_OMITTED_FLAG: omitted}
+        projected.append(row)
+    return projected
+
+
+def _component_builder_rows(catalogue_ids, component_rows=None):
+    ensure_module_authoring_tables()
     where_sql = ''
     params = []
     if catalogue_ids:
@@ -17145,7 +17205,9 @@ def component_builder_rows(module_catalogue_ids=None):
     # list is this reader's own concern, not the database's.
     # Paged and live-only on the database side; see live_component_rows_paged.
     # Same arguments as the structure reader, so a detail build shares the read.
-    component_rows = active_component_rows(live_component_rows_paged(catalogue_ids or None, 'display_order, id'))
+    if component_rows is None:
+        component_rows = live_component_rows_paged(catalogue_ids or None, 'display_order, id')
+    component_rows = active_component_rows(component_rows)
     component_rows = sort_rows_by_updated_at_desc(component_rows)
     module_rows = authoring_fetch_all(AUTHORING_MODULES_TABLE, where_sql, params) if catalogue_ids else authoring_fetch_all(AUTHORING_MODULES_TABLE)
     week_rows = active_week_rows(authoring_fetch_all(AUTHORING_WEEKS_TABLE, where_sql, params) if catalogue_ids else authoring_fetch_all(AUTHORING_WEEKS_TABLE))
@@ -20204,6 +20266,82 @@ def _live_component_rows_paged(module_ids, order_sql):
         if len(page) < COMPONENT_FULL_READ_PAGE_ROWS:
             return rows
         offset += COMPONENT_FULL_READ_PAGE_ROWS
+
+
+# Carries, per row, which content keys the database stripped from settings_json.
+COMPONENT_DB_OMITTED_KEYS_COLUMN = 'settings_content_omitted__'
+
+
+def live_component_rows_without_content(module_ids):
+    """``live_component_rows_paged(module_ids)`` with the authored long text
+    (COMPONENT_CONTENT_SETTING_KEYS) stripped from ``settings_json`` by Postgres.
+
+    ``omit=content`` used to drop that text in Python, after the database had
+    already shipped it: ~24 MB of the components table's 39 MB is settings_json,
+    nearly all of it these keys, and the largest programme holds ~17k of the
+    table's ~18k rows. Stripping in the query keeps it on the database side.
+
+    Each row also carries COMPONENT_DB_OMITTED_KEYS_COLUMN: the stripped keys
+    whose value was not empty, in COMPONENT_CONTENT_SETTING_KEYS order -- what
+    component_rows_without_content() would have named.
+
+    Returns None where this read does not apply (not Postgres, no module ids,
+    no settings_json column); the caller then takes the full read.
+    """
+    ids = tuple(sorted({clean_str(value) for value in (module_ids or []) if clean_str(value)}))
+    if not ids or connection.vendor != 'postgresql':
+        return None
+    ensure_module_authoring_tables()
+    columns = column_names(AUTHORING_COMPONENTS_TABLE)
+    if 'settings_json' not in columns:
+        return None
+    keys = list(COMPONENT_CONTENT_SETTING_KEYS)
+    settings = f'component.{quote_ident("settings_json")}::jsonb'
+    omitted = f'omitted.{quote_ident(COMPONENT_DB_OMITTED_KEYS_COLUMN)}'
+    select_list = ', '.join(f'component.{quote_ident(column)}' for column in sorted(columns - {'settings_json'}))
+    # Only non-empty values go, as in component_rows_without_content(): an
+    # empty one stays in settings and is not named as omitted.
+    select_list += (
+        f", case when jsonb_typeof({settings}) = 'object' then {settings} - {omitted} else {settings} end"
+        f' as {quote_ident("settings_json")}, {omitted}'
+    )
+    omitted_keys = (
+        f"select case when jsonb_typeof({settings}) = 'object' then array("
+        f'select entry.key from jsonb_each({settings}) as entry'
+        f' where entry.key = any(%s::text[])'
+        f""" and entry.value not in ('null'::jsonb, '""'::jsonb, '[]'::jsonb, '{{}}'::jsonb)"""
+        f' order by array_position(%s::text[], entry.key)'
+        f') else array[]::text[] end as {quote_ident(COMPONENT_DB_OMITTED_KEYS_COLUMN)}'
+    )
+    # Same filter as _live_component_rows_paged: live rows of these modules only.
+    clauses = [f'component.module_catalogue_id in ({", ".join(["%s"] * len(ids))})']
+    if 'deleted_at' in columns:
+        clauses.append(f'component.{quote_ident("deleted_at")} is null')
+    if 'is_programme_deleted' in columns:
+        clauses.append(f'component.{quote_ident("is_programme_deleted")} is not true')
+    where = ' and '.join(f'({clause})' for clause in clauses)
+    table = f'{authoring_table_name(AUTHORING_COMPONENTS_TABLE)} as component'
+    # The order first, from the ids alone, then the rows in id batches. Paging
+    # the row query with LIMIT/OFFSET made Postgres sort -- and so strip --
+    # every row ahead of the offset again on each page: ~21 s for the largest
+    # programme against ~10 s for the same rows read once each.
+    with connection.cursor() as cursor:
+        cursor.execute(f'select component.id from {table} where {where} order by component.display_order, component.id', list(ids))
+        ordered_ids = [row[0] for row in cursor.fetchall()]
+    rows_by_id = {}
+    for start in range(0, len(ordered_ids), COMPONENT_FULL_READ_PAGE_ROWS):
+        batch = ordered_ids[start:start + COMPONENT_FULL_READ_PAGE_ROWS]
+        with connection.cursor() as cursor:
+            cursor.execute(
+                f'select {select_list} from {table} cross join lateral ({omitted_keys}) as omitted'
+                f' where ({where}) and component.id in ({", ".join(["%s"] * len(batch))})',
+                [keys, keys, *ids, *batch],
+            )
+            for row in rows_as_dicts(cursor):
+                rows_by_id[row.get('id')] = row
+    # A row archived between the two reads is simply absent; one added is not
+    # in the order and waits for the next read, as it would on a later page.
+    return [rows_by_id[row_id] for row_id in ordered_ids if row_id in rows_by_id]
 
 
 def get_authoring_structure_payloads(
@@ -25710,7 +25848,7 @@ def curriculum_component_collection(request):
             project = component_rows_without_content if omit_content else (lambda rows: rows)
             if module_catalogue_ids:
                 if query_value(request, 'page') or query_value(request, 'pageSize'):
-                    return curriculum_results_response(project(component_builder_rows(module_catalogue_ids)), request=request)
+                    return curriculum_results_response(component_builder_rows(module_catalogue_ids, omit_content=omit_content), request=request)
                 # The programme page reads every component of the programme
                 # here on each open -- ~17k rows with their settings for the
                 # largest programme -- and nothing cached it. The rows are
@@ -25726,7 +25864,7 @@ def curriculum_component_collection(request):
                 entry = cached_curriculum_value(
                     f'components-response:{"nocontent" if omit_content else "full"}:{len(ids)}:{digest}',
                     lambda: encode_json_bytes(
-                        curriculum_results_response(project(component_builder_rows(module_catalogue_ids))).content,
+                        curriculum_results_response(component_builder_rows(module_catalogue_ids, omit_content=omit_content)).content,
                     ),
                     ttl=60,
                 )
@@ -26734,7 +26872,14 @@ def coverage_entry(request, scope='', identifier=''):
     key = f'ksb-coverage-response:{scope or "all"}:{clean_str(identifier)}:{source_type}:{source_id}:{actual}'
 
     def build():
-        response = _coverage_response_uncached(request, scope, identifier)
+        # One targeted read scope per build. Without it every helper below
+        # re-read its parent table in full -- curriculum.modules, the training
+        # rows, the programme configs, the KSB profiles -- once per caller, a
+        # remote round trip each. Child reads stay on the targeted
+        # ``module_catalogue_id in (...)`` query exactly as they were outside a
+        # scope, so the rows are the same; only the repeats go.
+        with curriculum_read_scope(targeted_child_reads=True):
+            response = _coverage_response_uncached(request, scope, identifier)
         return encode_json_bytes(response.content, status=response.status_code)
 
     return cached_curriculum_value(key, build, ttl=60)

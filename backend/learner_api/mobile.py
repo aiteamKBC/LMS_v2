@@ -17,16 +17,18 @@ import re
 
 from django.conf import settings
 from django.db import DatabaseError, connections
-from django.http import JsonResponse, FileResponse
+from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 
 from login.api_gate import refusal_for
+from login.android_download_access import staff_download_allowed
 from login.permissions import auth_gate_enabled
 from login.sessions import authenticate_request, session_unreadable
 from .models import EnrolmentUser, LearnerProfile
 from .learner_detail import build_learner_detail
 from .learning_plan import effective_training_plan
 from .mobile_progress import measured_time, project_progress
+from .android_download import installer_response
 
 BASE = "/learner_api/mobile/"
 ANDROID_APK_PATH = "/var/lib/kbc-mobile-release/20261013/KBC-Learn-LMS-internal-candidate.apk"
@@ -121,7 +123,16 @@ def _context(request):
     return account, source, kind, profiles[0] if profiles else None
 
 
-def endpoint(method):
+def _download_context(request):
+    account = authenticate_request(request)
+    if account is not None and not getattr(account, "is_active", False):
+        raise MobileError("Please sign in.", 401, "unauthenticated")
+    if staff_download_allowed(account):
+        return account, None, None, None
+    return _context(request)
+
+
+def endpoint(method, *, context=None):
     def decorate(view):
         @csrf_exempt
         @functools.wraps(view)
@@ -137,9 +148,9 @@ def endpoint(method):
                     return _error("The mobile connection is not available.", 503, "auth_gate_disabled")
                 if method != "GET" and request.headers.get("X-Requested-With") != "XMLHttpRequest":
                     return _error("Missing request security header.", 403, "csrf")
-                request.mobile_context = _context(request)
+                request.mobile_context = (context or _context)(request)
                 response = view(request, *args, **kwargs)
-                response["Cache-Control"] = "private, no-store"
+                response.setdefault("Cache-Control", "private, no-store")
                 return response
             except MobileError as exc:
                 return _error(exc.message, exc.status, exc.code)
@@ -485,34 +496,32 @@ def _completion_payload(request, component, activity_kind, activity_id):
     return payload
 
 
-@endpoint("GET")
+@endpoint("GET", context=_download_context)
 def download_android(request):
-    """Deliver the internal Android build only to an entitled learner account."""
-    _require_active_profile(request)
-    detail = _detail(request)
-    if _learning_blocked(detail):
-        raise MobileError("Your LMS learning access is not open yet.", 403, "learning_access_blocked")
-    if not _assigned_courses(request):
-        raise MobileError("No courses are assigned to your account.", 403, "module_not_assigned")
+    """Deliver the installer to entitled learners, active admins and coaches."""
+    if request.mobile_context[0].role == "learner":
+        _require_active_profile(request)
+        detail = _detail(request)
+        if _learning_blocked(detail):
+            raise MobileError("Your LMS learning access is not open yet.", 403, "learning_access_blocked")
+        if not _assigned_courses(request):
+            raise MobileError("No courses are assigned to your account.", 403, "module_not_assigned")
     try:
         apk = open(ANDROID_APK_PATH, "rb")
     except OSError:
         raise MobileError("The Android download is not available yet.", 503, "download_unavailable") from None
-    response = FileResponse(apk, as_attachment=True,
-                            filename="KBC-Learn-Android-test.apk",
-                            content_type="application/vnd.android.package-archive")
-    response["X-Content-Type-Options"] = "nosniff"
-    return response
+    return installer_response(request, apk)
 
 
 @endpoint("GET")
 def session(request):
     from .mobile_rewards import enabled as rewards_enabled
     account, source, kind, profile = request.mobile_context
-    shared_rewards_enabled=rewards_enabled(request)
+    reward_ids = [] if _learning_blocked(_detail(request)) else [c['moduleId'] for c in _assigned_courses(request) if rewards_enabled(module_id=c['moduleId'])]
+    shared_rewards_enabled=bool(reward_ids)
     return JsonResponse({
         "authenticated": True,
-        "rewardModuleIds": [PILOT_MODULE_ID] if shared_rewards_enabled else [],
+        "rewardModuleIds": reward_ids,
         "user": {"id": str(source.pk), "accountId": str(account.pk),
                  "displayName": account.display_name, "learnerKind": kind,
                  "learnerProfileId": str(profile.pk) if profile else None},
@@ -532,6 +541,8 @@ def catalogue(request):
     blocked = _learning_blocked(detail)
     scoped = _eligible_components(request)
     presentation = _presentation_metadata(scoped)
+    from .mobile_rewards import enabled as rewards_enabled
+    reward_modules = {cid:rewards_enabled(module_id=cid) for cid in course_ids}
     components = []
     for row in ([] if blocked else scoped):
         item = {key: value for key, value in row.items() if key in COMPONENT_FIELDS}
@@ -548,9 +559,7 @@ def catalogue(request):
             if item["mobileMode"] != mode:
                 item.pop(field, None)
         item["mechanicalNarrationAllowed"] = False
-        # Reward observations require a real curriculum component. A standalone
-        # quiz's facade ID must never become a persisted reward component ID.
-        item["rewardObservationsSupported"] = row["moduleId"] == PILOT_MODULE_ID and not row["_standaloneQuiz"]
+        item["rewardObservationsSupported"] = reward_modules[row['moduleId']]
         components.append(item)
     return JsonResponse({
         "schemaVersion": 2, "source": "lms", "catalogueScope": "assigned",

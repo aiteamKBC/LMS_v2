@@ -20,7 +20,7 @@ function harness({initialSession=account(),content=catalogue(),progress={complet
  const storage={async getItem(key){calls.push({kind:'get',key});if(placeGate&&key.startsWith('kbc:lms:place:'))return placeGate.promise;return stored.get(key)||null;},async setItem(key,value){calls.push({kind:'set',key,value});if(signOutStorageFails&&key==='kbc:lms:requires-signin')throw new Error('Phone storage unavailable');stored.set(key,value);},async removeItem(key){stored.delete(key);calls.push({kind:'remove',key});}};
  const baseModules={'react':React,'react-native':native,'./styles':{s:{},base:{green:'#123'}},'@expo/vector-icons':{Ionicons:'Ionicons'}};
  const ui={exports:{}};new Function('require','exports',uiCode)(name=>baseModules[name],ui.exports);
- const modules={...baseModules,'./LmsCommunications':{LmsCommunications:'LmsCommunications'},'./mobile-push':{useMobilePush:()=>({disconnect:async()=>{},status:'',busy:false,connect:async()=>{}})},'react-native-safe-area-context':{SafeAreaProvider:'SafeAreaProvider',SafeAreaView:'SafeAreaView'},'@react-native-async-storage/async-storage':storage,'expo-status-bar':{StatusBar:'StatusBar'},'./lms-client.mjs':{LMS_ORIGIN:'https://lms.kentbusinesscollege.org',createLmsClient:options=>{expiryCallback=options.onSessionExpired;return client;}},'./lms-learning-model.mjs':learning,'./data/pmp-lms-narration-index.json':{},'./data/pmp-lms-presentation-index.json':{},'./StandaloneUI':ui.exports,'./LmsPoints':{LmsPointsScreen:'LmsPointsScreen'},'./LmsMeetings':{LmsMeetings:'LmsMeetings',useLmsMeetings:()=>({data:null})},'./LmsHours':{LmsHours:'LmsHours'},'./LmsActivity':{__esModule:true,default:'LmsActivity'}};
+ const modules={...baseModules,'./LmsCoach':{LmsCoach:'LmsCoach'},'./LmsCommunications':{LmsCommunications:'LmsCommunications'},'./mobile-push':{useMobilePush:()=>({disconnect:async()=>{},status:'',busy:false,connect:async()=>{}})},'react-native-safe-area-context':{SafeAreaProvider:'SafeAreaProvider',SafeAreaView:'SafeAreaView'},'@react-native-async-storage/async-storage':storage,'expo-status-bar':{StatusBar:'StatusBar'},'./lms-client.mjs':{LMS_ORIGIN:'https://lms.kentbusinesscollege.org',createLmsClient:options=>{expiryCallback=options.onSessionExpired;return client;}},'./lms-learning-model.mjs':learning,'./data/pmp-lms-narration-index.json':{},'./data/pmp-lms-presentation-index.json':{},'./StandaloneUI':ui.exports,'./LmsPoints':{LmsPointsScreen:'LmsPointsScreen'},'./LmsMeetings':{LmsMeetings:'LmsMeetings',useLmsMeetings:()=>({data:null,refresh:async()=>{calls.push({kind:'refresh-meetings'});}})},'./LmsAbsence':{LmsAbsence:'LmsAbsence'},'./LmsHours':{LmsHours:'LmsHours'},'./LmsActivity':{__esModule:true,default:'LmsActivity'}};
  const mod={exports:{}};new Function('require','exports',appCode)(name=>name.endsWith('.png')?{}:modules[name]||(()=>{throw new Error('Unexpected import '+name);})(),mod.exports);
  const render=()=>{let loop=0;do{assert(++loop<60,'Shell settles after state changes');dirty=false;cursor=0;tree=mod.exports.LmsShell();for(const item of effects)if(item?.run){item.run=false;item.cleanup=item.effect();}}while(dirty);};
  const settle=async()=>{for(let i=0;i<45;i++){await Promise.resolve();if(dirty)render();}};
@@ -29,6 +29,17 @@ function harness({initialSession=account(),content=catalogue(),progress={complet
  const findButton=label=>all().find(n=>n.type==='Pressable'&&n.props.accessibilityLabel===label);
  render();return {calls,stored,all,texts,settle,findButton,get activity(){return all().find(n=>n.type==='LmsActivity');},get fields(){return all().filter(n=>n.type==='TextInput');},async press(label){const node=findButton(label);assert(node,'Accessible action exists: '+label);assert(!node.props.disabled);await node.props.onPress();await settle();},async setField(label,value){const field=all().find(n=>n.type==='TextInput'&&n.props.accessibilityLabel===label);assert(field);field.props.onChangeText(value);await settle();},async expire(){expiryCallback();await settle();},async foreground(){for(const event of [...events.values()])if(event.name==='change')event.fn('active');await settle();},async refreshActivity(){assert(this.activity);await this.activity.props.onSaved({synthetic:true});await settle();},setAccount(value,newContent=content){nextSession=value;nextContent=newContent;},setProgress(value){nextProgress=value;},setContentGate(value){contentGate=value;},setContent(value){nextContent=value;},async unmount(){for(const e of effects)e?.cleanup?.();await settle();}};
 }
+
+test('coach sign-in opens five themed coach tabs without loading or mounting learner writers',async()=>{
+ const coach={authenticated:true,user:{id:'7',accountId:'7',learnerKind:'coach'},communications:{accountId:'7',role:'coach'}};
+ const h=harness({initialSession:coach});try{await h.settle();assert(h.texts().includes('Coach workspace'));assert.deepEqual(h.all().filter(n=>n.type==='Pressable'&&n.props.accessibilityRole==='tab').map(n=>n.props.accessibilityLabel),['Home','Learners','Materials','Points','Chat']);
+  for(const tab of ['Home','Learners','Materials','Points']){await h.press(tab);assert(h.all().some(n=>n.type==='LmsCoach'));assert(!h.activity);assert(!h.all().some(n=>n.type==='LmsPointsScreen'));}
+  const workspace=h.all().find(n=>n.type==='LmsCoach');workspace.props.onMessage('112');await h.settle();assert.equal(h.all().find(n=>n.type==='LmsCommunications').props.initialRecipientId,'112');
+  await h.press('Home');await h.press('Chat');assert.equal(h.all().find(n=>n.type==='LmsCommunications').props.initialRecipientId,undefined);
+  await h.press('Settings');assert(h.findButton('Notification choices'));await h.press('Sign out');assert(h.findButton('Sign in'));assert(!h.all().some(n=>n.type==='LmsCoach'));
+  assert.equal(h.calls.filter(x=>['catalogue','progress'].includes(x.kind)).length,0);
+ }finally{await h.unmount();}
+});
 
 test('root shell exposes only the canonical assigned course and an accessible week-point-activity path',async()=>{
  const h=harness();await h.settle();assert(h.texts().includes('Stakeholder Management and Reporting'));await h.press('Choose a week');assert(!h.texts().includes('Another learner course copy'));
@@ -165,4 +176,36 @@ test('changing learner kind does not restore the previous profile course selecti
  await h.expire();const commercial=account();commercial.user.learnerKind='commercial';h.setAccount(commercial,assignedCatalogue());
  await h.setField('LMS email','commercial@example.test');await h.setField('LMS password','fixture');await h.press('Sign in');
  assert(h.texts().includes(learning.PMP_TITLE));assert.equal(stored.get('kbc:lms:course:7:apprenticeship:42'),'MOD-RISK-DELIVERY');assert.equal(stored.get('kbc:lms:course:7:commercial:42'),learning.PMP_ID);await h.unmount();
+});
+
+test('home has two primary actions and plays only the selected course and week song',async()=>{
+ const content=assignedCatalogue();content.components.push(
+  component('PMP-W01-SONG',1,{component:'First course weekly song'}),
+  component('RISK-SONG-GENERIC',2,{moduleId:'MOD-RISK-DELIVERY',weekId:'RISK-W02',week:'Risk week two',sourceContentType:'song',component:'Risk weekly song'}));
+ const stored=new Map([['kbc:lms:place:7:apprenticeship:42:'+learning.PMP_ID,JSON.stringify({weekId:'PMP-W01'})]]);
+ const h=harness({content,stored,progress:moduleId=>({moduleId})});await h.settle();
+ const primary=h.all().filter(node=>typeof node.type==='function'&&node.type.name==='Btn'&&!node.props.secondary);
+ assert.deepEqual(primary.map(node=>node.props.title),['Song of the week','Authorised absence']);
+ assert(h.texts().includes('Week 1 learning'));assert(h.findButton('Continue learning'));assert(h.findButton('Chat'));
+ await h.press('Song of the week');assert.equal(h.activity.props.activity.id,'PMP-W01-SONG');
+ await h.activity.props.onBack();await h.settle();await h.press('Settings');await h.press('Choose a course');await h.press('Risk Management');
+ await h.press('Song of the week');assert.equal(h.activity.props.activity.id,'RISK-SONG-GENERIC');assert.equal(h.activity.props.activity.moduleId,'MOD-RISK-DELIVERY');await h.unmount();
+});
+
+test('missing or unplayable selected-week songs never fall back to another week or course',async()=>{
+ const content=assignedCatalogue();content.components.push(component('PMP-W01-SONG',1),component('RISK-W02-SONG',2,{moduleId:'MOD-RISK-DELIVERY',weekId:'RISK-W02',week:'Risk week two',audioUrl:'https://unsupported.invalid/song.mp3'}));
+ const h=harness({content,progress:moduleId=>({moduleId})});await h.settle();
+ await h.press('Song of the week');assert(!h.activity);assert(h.texts().includes('No song is currently published for this course and week.'));assert(h.findButton('Choose a week'));
+ await h.press('Choose a course');await h.press('Risk Management');await h.press('Song of the week');
+ assert(!h.activity);assert(h.texts().includes('not currently playable'));assert(h.findButton('Choose a week'));await h.unmount();
+});
+
+test('authorised absence is reachable for an assigned course without materials and refreshes only after save',async()=>{
+ const h=harness({content:assignedCatalogue(),progress:moduleId=>({moduleId})});await h.settle();
+ await h.press('Authorised absence');let absence=h.all().find(node=>node.type==='LmsAbsence');assert(absence);assert.equal(absence.props.moduleId,learning.PMP_ID);assert.equal(absence.props.session.user.id,'42');
+ assert.equal(h.calls.filter(call=>call.kind==='refresh-meetings').length,0);await absence.props.onSaved();assert.equal(h.calls.filter(call=>call.kind==='refresh-meetings').length,1);
+ await h.press('Learn');await h.press('Choose a course');await h.press('Course awaiting materials');assert(h.findButton('Song of the week'));await h.press('Authorised absence');
+ const empty=h.all().find(node=>node.type==='LmsAbsence');assert(empty);assert.equal(empty.props.moduleId,'MOD-EMPTY');assert.notEqual(empty.props.key,absence.props.key);
+ await h.press('Chat');assert(h.all().some(node=>node.type==='LmsCommunications'),'Existing chat remains accessible');
+ await h.expire();assert(!h.all().some(node=>node.type==='LmsAbsence'));assert(h.findButton('Sign in'));await h.unmount();
 });

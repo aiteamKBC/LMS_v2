@@ -1,4 +1,5 @@
 from . import working_hours_holidays
+from . import reward_tracking
 from .coach_availability import coach_available_slots, case_owner_available_slots
 from . import presentation_design
 from . import personal_learning
@@ -25,12 +26,14 @@ from .first_login_details import first_login_details
 
 from . import certificates, monthly_assignment, legacy_assignments, quiz_reading, review_history
 from . import historical_evidence
+from . import mobile_absence
 from . import module_progress, extra_activities, absence_reports, apprenticeship_agreement, attendance, calendar, components, curriculum, calendar_connections, employer_portal, employers, evidence, free_courses_view, ilr_document, monthly_assignment, monthly_reports, training_plan_document, written_agreement, learner_detail, learning_plan, lms_schema, media_proxy, module_shift, quizzes, reflection_ai, reflection_submissions, review_form, student_activity, time_tracking, training_plan_view, training_plan_dashboard, videos, views
 
 from curriculum_api import session_results
 from .session_recovery import link_catchup
 
 urlpatterns = [
+    path("mobile/absence-reports/", mobile_absence.absence_reports, name="mobile-absence-reports"),
     path("mobile/", include("learner_api.mobile_urls")),
     path('migrated-reviews/csrf', migrated_review_party_csrf, name='migrated-review-party-csrf'),
     path('migrated-reviews/<str:review_id>/party', migrated_review_party_detail, name='migrated-review-party-detail'),
@@ -252,6 +255,7 @@ urlpatterns = [
     path("curriculum/legacy-otjh/", curriculum.legacy_otjh, name="curriculum-legacy-otjh"),
     # Signed start time shared by quizzes and learning components.
     path("time-tracking/start/", time_tracking.start_time_tracking, name="time-tracking-start"),
+    path("time-tracking/observations/", reward_tracking.observations, name="reward-time-observations"),
     path("working-hours/holidays/", working_hours_holidays.working_hours_holidays, name="working-hours-holidays"),
     # quiz-taking
     path("quizzes/<int:quiz_id>/", quizzes.quiz_detail, name="quiz-detail"),
