@@ -263,7 +263,7 @@ class ModuleShiftWriteTests(SimpleTestCase):
     def setUp(self):
         self.enterContext(patch('login.permissions.authenticate_request', return_value=SimpleNamespace(role='admin')))
 
-    def _shift(self, learner, body, preset=()):
+    def _shift(self, learner, body, preset=(), profile=None, archived=0):
         request = RequestFactory().patch(
             "/learner_api/module-shift/62/",
             data=json.dumps(body),
@@ -274,16 +274,20 @@ class ModuleShiftWriteTests(SimpleTestCase):
         with (
             patch("learner_api.module_shift._rows", side_effect=_fake_rows),
             patch("learner_api.module_shift.EnrolmentUser") as model,
+            patch("learner_api.module_shift.LearnerProfile"),
             patch("learner_api.module_shift.transaction.atomic",
                   side_effect=lambda **kwargs: nullcontext()),
             patch("learner_api.module_shift.hydrate_training_plan",
                   side_effect=lambda plan, **_kwargs: plan),
-            patch("learner_api.module_shift.learner_profile_for_source", return_value=None),
+            patch("learner_api.module_shift.learner_profile_for_source", return_value=profile),
             patch("learner_api.module_shift._replace_json_plan_module", return_value=False),
+            patch("learner_api.module_shift._replace_mirrored_module", return_value=True),
             patch("learner_api.module_shift._sync_legacy_titles_from_json"),
+            patch("learner_api.module_shift._archive_unmatched_progress", return_value=archived) as archive,
             patch("learner_api.module_shift.advance_learner") as advance,
             patch("learner_api.module_shift.sync_active_user") as sync,
-            patch("learner_api.module_shift.recompute_completed_hours"),
+            patch("learner_api.module_shift.refresh_learner_ksb_snapshot"),
+            patch("learner_api.module_shift.recompute_completed_hours") as recompute,
             patch("learner_api.module_shift._programme_modules",
                   return_value=[module_shift._module_payload(m) for m in MODULES.values()]),
             patch("learner_api.module_shift._group_module_ids", return_value=list(preset)),
@@ -293,6 +297,8 @@ class ModuleShiftWriteTests(SimpleTestCase):
             model.all_learners.get.assert_called_once_with(pk=62)
             self.sync = sync
             self.advance = advance
+            self.archive = archive
+            self.recompute = recompute
         return response, json.loads(response.content)
 
     def test_the_chosen_entry_is_replaced_and_the_rest_kept_verbatim(self):
@@ -402,6 +408,23 @@ class ModuleShiftWriteTests(SimpleTestCase):
 
         self.sync.assert_called_once_with(learner)
         self.advance.assert_not_called()
+
+    def test_unmatched_progress_is_archived_and_completed_hours_are_recomputed(self):
+        learner = _learner([{"moduleId": "MOD-1"}])
+        profile = SimpleNamespace(id=211, pk=211, learning_plan=None)
+
+        response, body = self._shift(
+            learner,
+            {"fromModuleId": "MOD-1", "toModuleId": "MOD-LISTED"},
+            profile=profile,
+            archived=2,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(body["progressMoved"], 0)
+        self.assertEqual(body["progressArchived"], 2)
+        self.archive.assert_called_once_with(profile, "MOD-1", set(), set(), [])
+        self.recompute.assert_called_once_with(profile.id)
 
     def test_a_pre_delivery_learner_still_gets_the_progression_check(self):
         learner = _learner([{"moduleId": "MOD-1"}])

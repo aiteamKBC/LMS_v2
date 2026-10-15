@@ -123,7 +123,8 @@ export async function fetchModuleShiftProgress(
  * Move the learner off `fromModuleId` and onto `toModuleId`, carrying the
  * progress named in `progressMappings` — and with it each component's
  * reflection and the tutor or coach decision on it. Progress left out of the
- * mapping stays on the module they are leaving.
+ * mapping is archived: it remains historical evidence but no longer counts in
+ * the learner's active progress or achieved hours.
  */
 export async function shiftModule(
   learnerId: string | number,
@@ -132,6 +133,7 @@ export async function shiftModule(
   progressMappings: ProgressMapping[] = [],
 ): Promise<{
   progressMoved?: number;
+  progressArchived?: number;
   reviewsMoved?: number;
   /** Left behind because the component joined already had a review of its own. */
   reviewsKept?: number;

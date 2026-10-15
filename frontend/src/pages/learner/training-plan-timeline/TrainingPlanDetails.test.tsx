@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 import type { TrainingPlanDashboard, PlanReview } from '@/api/trainingPlanDashboard';
 import { fetchAttendanceWorkspace, peekAttendanceWorkspace, type AttendanceLecture, type AttendanceWorkspace } from '@/api/attendanceLectures';
+import { loadLearningReflectionStatuses } from '@/api/reflectionSubmission';
 import type { LearnerCalendarEvent } from '@/api/learnerCalendar';
 import { coachFetch } from '@/lib/coachFetch';
 import type { PlanSubjectSummary } from '@/api/learnerOverview';
@@ -14,6 +15,10 @@ vi.mock('../reviews/MeetingBookingDialog', () => ({
   default: ({ title }: { title: string }) => <div role="dialog" aria-label="Calendar booking">{title}</div>,
 }));
 vi.mock('@/api/attendanceLectures', () => ({ fetchAttendanceWorkspace: vi.fn(), peekAttendanceWorkspace: vi.fn() }));
+vi.mock('@/api/reflectionSubmission', async original => ({
+  ...await original<typeof import('@/api/reflectionSubmission')>(),
+  loadLearningReflectionStatuses: vi.fn(),
+}));
 vi.mock('@/lib/coachFetch', () => ({ coachFetch: vi.fn() }));
 vi.mock('../attendance/components/AbsenceReportDialog', () => ({
   default: ({ children, onClose, title = 'Report Absence' }: { children: React.ReactNode; onClose: () => void; title?: string }) =>
@@ -98,6 +103,7 @@ beforeEach(() => {
   vi.setSystemTime(new Date('2026-09-10T08:00:00Z'));
   vi.mocked(fetchAttendanceWorkspace).mockResolvedValue({ lectures: [] } as unknown as AttendanceWorkspace);
   vi.mocked(peekAttendanceWorkspace).mockReturnValue(undefined);
+  vi.mocked(loadLearningReflectionStatuses).mockResolvedValue({});
   vi.mocked(coachFetch).mockReset();
 });
 afterEach(() => {
@@ -738,7 +744,7 @@ describe('dashboard Monthly Plan tab layout', () => {
     <Route path="*" element={<Destination />} />
   </Routes></MemoryRouter>);
 
-  it('shows the monthly metrics strip, reviews, assignments and lectures from the same data', () => {
+  it('shows the monthly metrics strip, reviews, assignments and lectures from the same data', async () => {
     renderMonthly(fixture(), summarySubjects);
     const monthly = within(screen.getByRole('region', { name: 'Monthly study plan' }));
     expect(monthly.getByRole('heading', { name: 'September 2026' })).toBeVisible();
@@ -752,7 +758,8 @@ describe('dashboard Monthly Plan tab layout', () => {
     const essay = monthly.getByText('Professional Practice Essay').closest('article')!;
     expect(within(essay).getByText('Required hours').parentElement).toHaveTextContent('10 hrs');
     expect(within(essay).getByLabelText('0% complete')).toBeVisible();
-    expect(within(essay).getByRole('link', { name: 'Start' })).toHaveAttribute('href', '/learner/component/commercial/125/essay?week=Assignment%201');
+    await waitFor(() => expect(within(essay).getByRole('link', { name: 'Start' })).toHaveAttribute(
+      'href', '/learner/monthly-submission/commercial/125?month=2026-09&assignment=essay'));
     const lectures = within(monthly.getByRole('region', { name: 'Lectures this month' }));
     expect(lectures.getAllByRole('columnheader').map(cell => cell.textContent)).toEqual(['Date', 'Time', 'Session', 'Tutor', 'Duration', 'Join']);
     expect(lectures.getByText('Attended session')).toBeVisible();
