@@ -740,7 +740,9 @@ def source_subjects(learner_id, summarize, *, owner=None, records=None, overview
     params = [owner['id']]
     if scoped:
         params.extend([[str(value) for value in (course_ids or [])], list(module_ids or [])])
-    courses = query(f'''SELECT DISTINCT c.id,c.source_course_ref,c.source_course_title,c.curriculum_module_ref
+    courses = query(f'''SELECT DISTINCT c.id,c.source_course_ref,c.source_course_title,c.curriculum_module_ref,
+        CASE WHEN m.source_relationship='historical'
+            THEN m.source_payload->'verified_catalogue_scope' END AS verified_catalogue_scope
         FROM "Learner".learner_source_course_memberships m
         JOIN curriculum.source_courses c ON c.id=m.source_course_id AND c.deleted_at IS NULL
         WHERE m.learner_id=%s AND m.deleted_at IS NULL AND c.source_system='old_lms'
@@ -752,7 +754,8 @@ def source_subjects(learner_id, summarize, *, owner=None, records=None, overview
         c.source_course_ref,c.source_course_title,c.curriculum_module_ref,a.source_position AS position,
         jsonb_build_object('quiz_id',a.source_payload->'quiz_id',
             'activity_id',a.source_payload->'activity_id','parent_activity_id',a.source_payload->'parent_activity_id',
-            'section_title',a.source_payload->'section_title') AS source_payload,
+            'section_title',a.source_payload->'section_title',
+            'created_at',a.source_payload->'created_at','created_at_utc',a.source_payload->'created_at_utc') AS source_payload,
         EXISTS (SELECT 1 FROM curriculum.source_materials m
             WHERE m.material_id=a.source_material_id AND m.source_system=a.source_system
               AND m.deleted_at IS NULL) AS material_available''')
@@ -818,12 +821,40 @@ def recorded_activity_schedule(record, course):
         'date_source': 'introduction' if introduction else 'consolidated_record'}
 
 
+def learner_course_catalogue(courses, catalogue):
+    """Keep restored legacy components within their verified learner/course scope.
+
+    Explicit exclusions are stored on the owned historical membership. This is
+    not a snapshot whitelist: later assignments remain visible by default.
+    """
+    excluded = set()
+    for course in courses:
+        scope = course.get('verified_catalogue_scope')
+        if scope is None:
+            continue
+        # Raw SQL returns JSON text under the application's PostgreSQL loaders.
+        scope = decoded(scope)
+        course_ref = str(course['source_course_ref'])
+        if (not isinstance(scope, dict) or scope.get('version') != 1
+                or scope.get('basis') != 'verified-legacy-account-inventory'
+                or scope.get('course_ref') != course_ref
+                or not isinstance(scope.get('excluded_activity_refs'), list)
+                or any(not isinstance(ref, str) or not re.fullmatch(r'(?:material|quiz):[1-9]\d*', ref)
+                       for ref in scope['excluded_activity_refs'])):
+            raise ServiceError('The verified learner course scope needs review.',
+                               'catalogue_scope_review_required', 409)
+        excluded.update((course_ref, ref) for ref in scope['excluded_activity_refs'])
+    return [item for item in catalogue
+            if (str(item['source_course_ref']), item['source_activity_id']) not in excluded]
+
+
 def recorded_course_items(courses, catalogue, records, *, overview_only=False, include_catalogue=False):
     """Allocate a final record once per course, using exact catalogue lineage.
 
     Historical/component guesses do not substitute for learner source links.
     A quiz and material sharing a numeric ID remain distinct activities.
     """
+    catalogue = learner_course_catalogue(courses, catalogue)
     by_course = {str(c['source_course_ref']): [] for c in courses}
     definitions = {(str(d['source_course_ref']), d['source_activity_id']): d for d in catalogue
                    if str(d['source_course_ref']) in by_course}
