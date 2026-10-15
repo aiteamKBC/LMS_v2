@@ -66,6 +66,10 @@ declare
     n_targets integer;
     n_backed  integer;
 begin
+    -- Checked first, so a second run says why it stops.
+    if exists (select 1 from week_ghost_remediation.weeks_before) then
+        raise exception 'Already applied: week_ghost_remediation.weeks_before already holds a before-image. Nothing changed.';
+    end if;
     select count(*) into n_targets from ghost_targets;
     if n_targets <> 34 then
         raise exception 'Expected 34 ghost weeks, found %. Nothing changed; re-run 01_preflight_preview.sql.', n_targets;

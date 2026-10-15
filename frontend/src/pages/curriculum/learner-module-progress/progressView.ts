@@ -95,8 +95,7 @@ export function ratioPercent(value: number, total: number): number | null {
 
 export function recordedHours(rows: ProgressRow[]): number | null {
   if (rows.every(row => 'logState' in row.activity && row.activity.logState)) {
-    return rows.some(row => 'logState' in row.activity && row.activity.logState?.actualOtjh == null) ? null
-      : rows.reduce((sum, row) => sum + ('logState' in row.activity ? row.activity.logState?.actualOtjh || 0 : 0), 0);
+    return rows.reduce((sum, row) => sum + ('logState' in row.activity ? row.activity.logState?.acceptedOtjh || 0 : 0), 0);
   }
   const recorded = rows.filter(row => row.history);
   if (!recorded.length) return 0;
