@@ -215,6 +215,24 @@ class AuthoringIdentityTests(unittest.TestCase):
 
 
 class EvidenceTests(unittest.TestCase):
+    def test_duration_only_presence_survives_a_short_interval_record(self):
+        detailed = {'email': ' A@EXAMPLE.INVALID ', 'intervals': [visit('00:00', '01:00')]}
+        duration_only = {'email': 'a@example.invalid', 'total_attendance_seconds': 240}
+        for records in ([detailed, duration_only], [duration_only, detailed]):
+            with self.subTest(records=records):
+                rows = session_roster(['a@example.invalid'], records, complete=True)
+                self.assertEqual(len(rows), 1)
+                self.assertEqual((rows[0]['attendance'], rows[0]['seconds']), (1, 240))
+
+    def test_mixed_evidence_does_not_sum_unknown_overlaps_or_replace_valid_intervals(self):
+        detailed = {'intervals': [visit('00:00', '02:00')], 'total_attendance_seconds': 999}
+        self.assertEqual(evidence_seconds([detailed, {'total_attendance_seconds': 120}]), 120)
+        self.assertEqual(evidence_seconds([detailed, {'total_attendance_seconds': 240}]), 240)
+        self.assertEqual(evidence_seconds([detailed, {
+            'intervals': [{'joinDateTime': 'invalid', 'leaveDateTime': 'invalid'}],
+            'total_attendance_seconds': 240,
+        }]), 240)
+
     def test_threshold(self):
         for seconds, expected in [(0, 0), (179, 0), (180, 0), (181, 1), (10000, 1)]:
             with self.subTest(seconds=seconds):
@@ -509,7 +527,7 @@ class EndpointTests(unittest.TestCase):
             'transcript_timing_ready': transcript_timing_ready, 'artifact_metadata': artifact_metadata,
             'timezone': types.SimpleNamespace(now=lambda: datetime(2026, 9, 16, 12, tzinfo=timezone.utc))}
         functions(ROOT.parent / 'login/permissions.py', {'require_role', '_learner_progress_gate', 'learner_self_or_staff'}, self.ns)
-        functions(ROOT / 'session_results.py', {'json_value', 'replaced_module_register_rows', 'result_rows', 'admin_session', 'learner_results', 'learner_content',
+        functions(ROOT / 'session_results.py', {'json_value', 'merge_session_register_rows', 'replaced_module_register_rows', 'result_rows', 'admin_session', 'learner_results', 'learner_content',
             'module_results', 'stored_content', 'queue_sync', 'learner_join', 'apply_recovery', 'unavailable', 'archive_schema_missing',
             'attendance_alias_rows', 'attendance_identity_link_rows', 'learner_series', 'join_url_for', 'learner_join_failure',
             'recording_visibility', 'export_attendance', 'link_attendance_alias'}, self.ns)
@@ -722,6 +740,54 @@ class EndpointTests(unittest.TestCase):
         self.assertEqual([person['email'] for person in rows[0]['attendance']], ['learner@example.invalid'])
         self.assertEqual(rows[0]['attendance'][0]['name'], 'Module Learner')
         self.assertNotIn('tutor@example.invalid', json.dumps(rows, default=str))
+
+    def test_direct_presence_wins_over_saved_absence_only_in_its_own_session(self):
+        self.ns['apply_recovery'] = lambda rows: None
+        occurrences = [{
+            'id': key, 'session_number': number, 'status': 'completed',
+            'attendance_report_id': 'REPORT-' + key, 'actual_end': '2026-09-16T10:00Z',
+            'scheduled_start': '2026-09-16T09:00Z', 'scheduled_end': '2026-09-16T10:00Z',
+        } for number, key in enumerate(('O1', 'O2'), 1)]
+        register = [{
+            'occurrence_id': key, 'learner_profile_id': learner_id,
+            'learner_email': email, 'learner_name': name,
+            'attendance_status': 'absent', 'attended_seconds': 0,
+        } for key in ('O1', 'O2') for learner_id, email, name in (
+            (7, 'a@example.invalid', 'Learner A'), (8, 'b@example.invalid', 'Learner B'))]
+        records = [
+            {'id': 'A1', 'occurrence_id': 'O1', 'email': ' A@EXAMPLE.INVALID ', 'total_attendance_seconds': 240},
+            {'id': 'A2', 'occurrence_id': 'O1', 'email': 'a@example.invalid', 'total_attendance_seconds': 0},
+            {'id': 'UNKNOWN', 'occurrence_id': 'O1', 'email': 'outsider@example.invalid', 'total_attendance_seconds': 600},
+        ]
+        self.ns['read'].side_effect = [occurrences, records, register, [], []]
+        result = self.ns['result_rows']({'id': 'S', 'module_catalogue_id': 'M'})
+        self.assertEqual([(row['email'], row['attendance']) for row in result[0]['attendance']],
+                         [('a@example.invalid', 1), ('b@example.invalid', 0)])
+        self.assertTrue(all(row['attendance'] == 0 for row in result[1]['attendance']))
+        self.assertEqual([row['email'] for row in result[0]['unmatchedAttendance']], ['outsider@example.invalid'])
+
+    def test_duplicate_saved_email_keeps_presence_and_fills_missing_identity(self):
+        self.ns['apply_recovery'] = lambda rows: None
+        present = {'occurrence_id': 'O', 'learner_profile_id': 7, 'learner_email': ' A@EXAMPLE.INVALID ',
+                   'learner_name': 'Learner', 'attendance_status': 'present', 'attended_seconds': 240}
+        absent = {'occurrence_id': 'O', 'learner_profile_id': None, 'learner_email': 'a@example.invalid',
+                  'learner_name': 'Learner Example', 'attendance_status': 'absent', 'attended_seconds': 0}
+        for register in ([present, absent], [absent, present]):
+            with self.subTest(register=register):
+                self.ns['read'].side_effect = [[{
+                    'id': 'O', 'session_number': 1, 'status': 'completed',
+                    'attendance_report_id': 'R', 'actual_end': '2026-09-16T10:00Z',
+                    'scheduled_start': '2026-09-16T09:00Z', 'scheduled_end': '2026-09-16T10:00Z',
+                }], [], register, [], []]
+                session = self.ns['result_rows']({'id': 'S', 'module_catalogue_id': 'M'})[0]
+                self.assertEqual(len(session['attendance']), 1)
+                row = session['attendance'][0]
+                self.assertEqual((row['attendance'], row['seconds'], row['name']), (1, 240, 'Learner Example'))
+                self.assertEqual(session['attendanceCandidates'], [{
+                    'learnerProfileId': 7, 'email': 'a@example.invalid', 'name': 'Learner Example',
+                }])
+        self.assertEqual(absent['attendance_status'], 'absent')
+        self.assertIsNone(absent['learner_profile_id'])
 
     def test_replaced_session_uses_destination_module_roster(self):
         self.ns['apply_recovery'] = lambda rows: None
