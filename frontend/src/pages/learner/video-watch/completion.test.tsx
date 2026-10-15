@@ -47,8 +47,11 @@ vi.mock('./AssignmentSubmissionWizard', () => ({ AssignmentSubmissionWizard: ({ 
   questionFiles?: { url: string; fileName: string }[];
 }) => <div>{questionFiles?.map(file => <span key={file.url} data-testid="assignment-instruction" data-url={file.url}>{file.fileName}</span>)}</div> }));
 vi.mock('@/components/feature/SessionResults', () => ({
-  SessionResults: ({ onRecordingWatchTimeChange }: { onRecordingWatchTimeChange?: (seconds: number) => void }) => (
-    <button type="button" onClick={() => onRecordingWatchTimeChange?.(37)}>Simulate recording watch</button>
+  SessionResults: ({ onRecordingWatchTimeChange, recordingDate, recordingsOnly }: {
+    onRecordingWatchTimeChange?: (seconds: number) => void; recordingDate?: string; recordingsOnly?: boolean;
+  }) => (
+    <button type="button" data-recording-date={recordingDate} data-recordings-only={recordingsOnly}
+      onClick={() => onRecordingWatchTimeChange?.(37)}>Simulate recording watch</button>
   ),
 }));
 
@@ -222,6 +225,17 @@ it('lays out recording watch time, evidence, manual input, and Finish in one liv
   expect(actionPanel).toContainElement(screen.getByRole('button', { name: 'Finish' }));
   fireEvent.click(screen.getByRole('button', { name: 'Simulate recording watch' }));
   expect(screen.getByRole('timer')).toHaveAccessibleName('Time on this activity: 00 hours, 00 minutes, 37 seconds');
+});
+
+it('opens a dated recorded event without a placeholder video URL', async () => {
+  const event = { ...empty, componentId: 'EVENT', component: 'Recorded Event',
+    recordingSeriesId: 'LIVE-1', recordingSessionNumber: 3, recordingDate: '2026-10-02' };
+  vi.mocked(fetchLearnerDetail).mockResolvedValue({ ...detail(), components: [event] } as LearnerDetail);
+  mount('EVENT');
+  const recording = await screen.findByRole('button', { name: 'Simulate recording watch' });
+  expect(recording).toHaveAttribute('data-recording-date', '2026-10-02');
+  expect(recording).toHaveAttribute('data-recordings-only', 'true');
+  expect(screen.queryByText('This video has no playable URL yet.')).not.toBeInTheDocument();
 });
 
 it.each(['commercial', 'apprenticeship'])('opens live session Finish before entering time for %s learners', async kind => {
