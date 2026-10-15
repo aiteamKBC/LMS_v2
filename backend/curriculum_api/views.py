@@ -14154,6 +14154,13 @@ def find_existing_authoring_catalogue_id_for_payload(payload):
         for row in rows:
             if normalise(row.get('title')) != normalise(title):
                 continue
+            # An archived module is not "the same module" a create is asking
+            # for. Adopting it handed a fresh copy the archived row's id, the
+            # next save cleared the archive on the module row alone, and the
+            # weeks archived with it stayed stamped with that id -- so the
+            # module then ran with two sets of weeks.
+            if module_withdrawn_on_its_own(row):
+                continue
             if not identity_values_match_context([row.get('programme_id'), row.get('programme_name')], programme_values):
                 continue
             if not identity_values_match_context([row.get('cohort_id'), row.get('cohort_name')], cohort_values):
@@ -21934,6 +21941,11 @@ def merge_partial_module_structure(stored, payload):
     return {**module_fields, 'weekStructure': weeks}
 
 
+MODULE_ARCHIVED_SAVE_REFUSED = (
+    'This module is archived, so this save was not applied. Restore it from View archive to edit it again.'
+)
+
+
 def save_module_authoring_structure(module_catalogue_id, payload, *, repair_links=True, write_changed_only=False):
     """Persist one module's structure.
 
@@ -21955,6 +21967,18 @@ def save_module_authoring_structure(module_catalogue_id, payload, *, repair_link
     module_catalogue_id = unique_module_catalogue_id(module_catalogue_id or payload.get('catalogueId') or payload.get('moduleCatalogueId'))
     existing_module_rows = authoring_fetch_all(AUTHORING_MODULES_TABLE, 'module_catalogue_id = %s', [module_catalogue_id]) if module_catalogue_id else []
     existing_module_row = existing_module_rows[0] if existing_module_rows else {}
+    # An editor that still believes an archived module is live sends
+    # `isProgrammeDeleted: false` (the Builder derives it from the copy it
+    # loaded). Honouring that cleared the archive on the module row alone: the
+    # weeks and components archived with it kept their stamp, and the save wrote
+    # a second set beside them. Restore is the only way back out of the archive.
+    if (module_withdrawn_on_its_own(existing_module_row)
+            and ('isProgrammeDeleted' in payload or 'is_programme_deleted' in payload)
+            and not truthy(payload.get('isProgrammeDeleted') or payload.get('is_programme_deleted'))):
+        raise ModuleAuthoringValidationError([{
+            'path': 'isProgrammeDeleted',
+            'message': MODULE_ARCHIVED_SAVE_REFUSED,
+        }])
     # Validation above has already rejected a non-list weekStructure/weeks, so the
     # list form is the only thing that can reach here.
     has_explicit_weeks = 'weekStructure' in payload or 'weeks' in payload
@@ -24690,6 +24714,11 @@ def curriculum_module_collection(request):
     if is_authoring_request:
         requested_catalogue_id = first_clean_payload_value(payload, 'catalogueId', 'moduleCatalogueId', 'module_catalogue_id')
         module_catalogue_id = find_existing_authoring_catalogue_id_for_payload(payload) or unique_module_catalogue_id(requested_catalogue_id)
+        if module_withdrawn_on_its_own(authoring_module_exists(module_catalogue_id)):
+            # A create never lands on an archived module; see
+            # find_existing_authoring_catalogue_id_for_payload. Restoring one
+            # is the archive's Restore, which brings its weeks back with it.
+            module_catalogue_id = unique_module_catalogue_id()
         module_payload = {
             'catalogueId': module_catalogue_id,
             'programmeId': payload.get('programmeId') or payload.get('programme') or payload.get('programmeName'),
