@@ -399,13 +399,14 @@ export interface IlrLearnerDetails {
 
 export type CompetenceKind = 'Knowledge' | 'Skill' | 'Behaviour';
 /**
- * Self-assessment scale for the Skills Radar questionnaire (8 points, scored 8
+ * Self-assessment scale for the Skills Radar questionnaire (9 points, scored 9
  * down to 1 — see COMPETENCE_LEVELS).
  *
  * The five original RAG values are kept in the union so assessments saved before
  * the scale was widened still load and display instead of coming back as null.
  */
 export type RagLevel =
+  | 'champion'
   | 'mastery'
   | 'expert'
   | 'proficient'

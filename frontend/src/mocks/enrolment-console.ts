@@ -23,18 +23,21 @@ export interface RagLevelMeta {
 }
 
 /**
- * The learner-facing self-assessment scale: 8 options scored 8 (Mastery) down to
- * 1 (Never), highest first, as presented in the questionnaire.
+ * The learner-facing self-assessment scale: 9 options scored 9 (Champion) down to
+ * 1 (Never), highest first, as presented in the questionnaire. Champion was added
+ * above Mastery in October 2026; every other option kept its score, so ratings
+ * saved before then mean what they always did.
  *
  * RAG_LEVELS below is the older 5-point scale, kept only so assessments saved
  * against it still render (see the legacy values on the RagLevel union).
  */
 export interface CompetenceLevelMeta extends RagLevelMeta {
-  /** 8..1 — shown as the pill beside each option and used for scoring. */
+  /** 9..1 — shown as the pill beside each option and used for scoring. */
   score: number;
 }
 
 export const COMPETENCE_LEVELS: CompetenceLevelMeta[] = [
+  { level: 'champion', score: 9, label: 'Champion', help: 'I set the standard in this area: I am recognised as a role model, train others and lead improvements across the organisation.', cellFill: 'bg-emerald-700', dot: 'bg-emerald-700', tintBg: 'bg-emerald-50', tintBorder: 'border-emerald-400', tintText: 'text-emerald-800' },
   { level: 'mastery', score: 8, label: 'Mastery', help: 'I do not need any training as I am fully competent and can evidence my abilities.', cellFill: 'bg-emerald-600', dot: 'bg-emerald-600', tintBg: 'bg-emerald-50', tintBorder: 'border-emerald-300', tintText: 'text-emerald-700' },
   { level: 'expert', score: 7, label: 'Expert', help: 'I coach others, solve complex problems, and drive improvements with minimal oversight.', cellFill: 'bg-emerald-500', dot: 'bg-emerald-500', tintBg: 'bg-emerald-50', tintBorder: 'border-emerald-300', tintText: 'text-emerald-700' },
   { level: 'proficient', score: 6, label: 'Proficient', help: 'I work independently on typical tasks; targeted training would enhance advanced competence.', cellFill: 'bg-teal-500', dot: 'bg-teal-500', tintBg: 'bg-teal-50', tintBorder: 'border-teal-300', tintText: 'text-teal-700' },
@@ -44,6 +47,9 @@ export const COMPETENCE_LEVELS: CompetenceLevelMeta[] = [
   { level: 'rarely', score: 2, label: 'Rarely', help: 'I have some basic experience but still need training.', cellFill: 'bg-rose-500', dot: 'bg-rose-500', tintBg: 'bg-rose-50', tintBorder: 'border-rose-300', tintText: 'text-rose-700' },
   { level: 'never', score: 1, label: 'Never', help: 'I have no experience and need training.', cellFill: 'bg-red-500', dot: 'bg-red-500', tintBg: 'bg-red-50', tintBorder: 'border-red-300', tintText: 'text-red-700' },
 ];
+
+/** The top of the scale, for anything drawn in proportion to it. */
+export const MAX_COMPETENCE_SCORE = Math.max(...COMPETENCE_LEVELS.map((l) => l.score));
 
 /** Score for a stored level, mapping legacy 5-point values onto the new scale. */
 const LEGACY_SCORES: Record<string, number> = { always: 8, often: 5, sometimes: 3 };
