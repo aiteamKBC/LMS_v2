@@ -1462,7 +1462,8 @@ def _resolve_from_master(modules, weeks, components, assigned_modules=None, *, c
                 # Dashboard rails need identities and quiz links only. Preserve
                 # the removed-video rule without transferring lesson bodies.
                 video_keys = tuple(dict.fromkeys((*_RESOURCE_URL_KEYS, 'videoUrl', 'embedCode', 'podcastUrl',
-                    'audioUrl', 'uploadedFileUrl', 'liveSessionUrl', 'teamsMeetingUrl')))
+                    'audioUrl', 'uploadedFileUrl', 'liveSessionUrl', 'teamsMeetingUrl',
+                    'recordingSeriesId', 'recordingSessionNumber', 'recordingDate')))
                 video_sql = ','.join(f"'{key}',settings_json->'{key}'" for key in video_keys)
                 settings_sql = "jsonb_build_object('linkedQuizId',settings_json->'linkedQuizId') || " + (
                     "CASE WHEN lower(replace(btrim(type),'-','_'))='video' THEN "
@@ -1488,7 +1489,8 @@ def _resolve_from_master(modules, weeks, components, assigned_modules=None, *, c
                     "'<[^>]*>','','g'),'" + noise + "','','g')<>'' THEN 'content' ELSE '' END")
                 keys = tuple(dict.fromkeys((*_RESOURCE_URL_KEYS, 'linkedQuizId', 'videoUrl', 'embedCode',
                     'podcastUrl', 'audioUrl', 'liveSessionUrl', 'teamsMeetingUrl', 'teamsLiveSessionId',
-                    'teamsSessionNumber', 'sessionDate', 'sessionTime', 'sessionDateTimeUtc', 'durationMinutes',
+                    'teamsSessionNumber', 'recordingSeriesId', 'recordingSessionNumber', 'recordingDate',
+                    'sessionDate', 'sessionTime', 'sessionDateTimeUtc', 'durationMinutes',
                     'learnerTitle', 'isMonthlyAssignment', 'assignmentTopics', 'assignmentBrief',
                     'assignmentContent', 'submissionInstructions', 'assignmentFileUrl', 'assignmentFileName',
                     'uploadedFileName', 'reflectionPrompt', 'podcastReflectionQuestion', 'readingReflectionPrompts',
@@ -1594,7 +1596,9 @@ def _resolve_from_master(modules, weeks, components, assigned_modules=None, *, c
                     if _s(ctype).strip().lower().replace('-', '_') == 'video' and not (
                         _video_url_from_settings(settings) or quiz or _s(settings.get('readingContent'))
                         or _component_resource_url(settings) or component_audio_url(settings, ctype)
-                        or _s(link) or _s(settings.get('liveSessionUrl')) or _s(settings.get('teamsMeetingUrl'))):
+                        or _s(link) or _s(settings.get('liveSessionUrl')) or _s(settings.get('teamsMeetingUrl'))
+                        or (_s(settings.get('recordingSeriesId')) and settings.get('recordingSessionNumber')
+                            and _s(settings.get('recordingDate')))):
                         continue
                     week = week_lookup[(mid, wid)]
                     out_components.append({**week, 'componentId': cid, 'isQuiz': bool(quiz),
@@ -1787,8 +1791,12 @@ def _resolve_from_master(modules, weeks, components, assigned_modules=None, *, c
         # Guarded on the other content a video component can carry, so removing
         # the video from one that also has, say, a linked quiz or a reading body
         # hides the player without hiding the remaining work.
+        recording_series_id = _s(settings.get("recordingSeriesId"))
+        recording_session_number = settings.get("recordingSessionNumber")
+        recording_date = _s(settings.get("recordingDate"))
+        has_recording_source = bool(recording_series_id and recording_session_number and recording_date)
         if normalised_type == "video" and not video_url and not (
-            linked_quiz or content_html or resource_url or audio_url or live_session_url
+            linked_quiz or content_html or resource_url or audio_url or live_session_url or has_recording_source
         ):
             continue
         from .assignment_topics import topics_from_settings
@@ -1830,6 +1838,9 @@ def _resolve_from_master(modules, weeks, components, assigned_modules=None, *, c
             "liveSessionUrl": live_session_url,
             "teamsLiveSessionId": teams_live_session_id,
             "teamsSessionNumber": teams_session_number,
+            "recordingSeriesId": recording_series_id or None,
+            "recordingSessionNumber": recording_session_number if has_recording_source else None,
+            "recordingDate": recording_date or None,
             "sessionDate": _s(settings.get("sessionDate")) or None,
             "sessionTime": _s(settings.get("sessionTime")) or None,
             "sessionDateTimeUtc": _s(settings.get("sessionDateTimeUtc")) or None,
@@ -1898,6 +1909,9 @@ def _resolve_from_master(modules, weeks, components, assigned_modules=None, *, c
                     "liveSessionUrl": comp["liveSessionUrl"],
                     "teamsLiveSessionId": comp["teamsLiveSessionId"],
                     "teamsSessionNumber": comp["teamsSessionNumber"],
+                    "recordingSeriesId": comp["recordingSeriesId"],
+                    "recordingSessionNumber": comp["recordingSessionNumber"],
+                    "recordingDate": comp["recordingDate"],
                     "sessionDate": comp["sessionDate"],
                     "sessionTime": comp["sessionTime"],
                     "sessionDateTimeUtc": comp["sessionDateTimeUtc"],

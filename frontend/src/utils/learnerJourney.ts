@@ -36,6 +36,9 @@ export interface JourneyComponent {
   liveSessionUrl?: string | null;
   teamsLiveSessionId?: string | null;
   teamsSessionNumber?: number | null;
+  recordingSeriesId?: string | null;
+  recordingSessionNumber?: number | null;
+  recordingDate?: string | null;
   sessionDate?: string | null;
   sessionTime?: string | null;
   sessionDateTimeUtc?: string | null;
@@ -392,7 +395,7 @@ export function hasComponentContent(c: JourneyComponent): boolean {
   const type = (c.type || '').trim().toLowerCase().replace(/[\s-]+/g, '_');
   if (type === 'quiz') return false; // Unlinked builder placeholders have no quiz to attempt.
   const hasDescription = hasText(c.description);
-  if (type === 'video') return hasUrl(c.videoUrl);
+  if (type === 'video') return hasUrl(c.videoUrl) || Boolean(c.recordingSeriesId && c.recordingSessionNumber && c.recordingDate);
   if (type === 'podcast' || type === 'audio') return hasUrl(c.audioUrl) || hasUrl(c.resourceUrl) || hasDescription;
   if (type === 'reading') return c.hasReadingContent === true || hasText(c.contentHtml) || hasUrl(c.resourceUrl) || hasUrl(c.audioUrl) || hasDescription;
   if (type === 'powerpoint' || type === 'presentation' || type === 'slides') return hasUrl(c.resourceUrl) || hasDescription;
@@ -686,6 +689,9 @@ export function buildLearnerJourney(real: LearnerJourneySource | null): JourneyM
             liveSessionUrl: c.liveSessionUrl, sessionDate: c.sessionDate, sessionTime: c.sessionTime,
             teamsLiveSessionId: c.teamsLiveSessionId,
             teamsSessionNumber: c.teamsSessionNumber,
+            recordingSeriesId: c.recordingSeriesId,
+            recordingSessionNumber: c.recordingSessionNumber,
+            recordingDate: c.recordingDate,
             sessionDateTimeUtc: c.sessionDateTimeUtc,
             quizAttempts: c.isQuiz && c.quizMeta
               // Normalised progress rows store quiz_ref as text, while the
