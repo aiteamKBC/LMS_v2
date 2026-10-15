@@ -77,7 +77,8 @@ def component_content_available(c):
         return False
     has_description = _has_text(c.get("description"))
     if ctype == "video":
-        return _has_url(c.get("videoUrl"))
+        return (_has_url(c.get("videoUrl")) or bool(c.get("recordingSeriesId")
+                and c.get("recordingSessionNumber") and c.get("recordingDate")))
     if ctype in {"podcast", "audio"}:
         return _has_url(c.get("audioUrl")) or _has_url(c.get("resourceUrl")) or has_description
     if ctype == "reading":

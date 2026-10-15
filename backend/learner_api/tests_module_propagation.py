@@ -89,7 +89,7 @@ class ModuleAssignmentTests(SimpleTestCase):
 
 
 class LiveAssignedModuleTests(SimpleTestCase):
-    def resolve(self, rows, modules=None, weeks=None, components=None, assigned=None):
+    def resolve(self, rows, modules=None, weeks=None, components=None, assigned=None, **options):
         connection = MagicMock()
         cursor = connection.cursor.return_value.__enter__.return_value
         supplied = iter(rows)
@@ -100,7 +100,7 @@ class LiveAssignedModuleTests(SimpleTestCase):
             else next(supplied)
         )
         with patch('learner_api.learner_detail.connections', {'enrolment': connection}):
-            result = _resolve_from_master(modules or [], weeks or [], components or [], assigned_modules=assigned)
+            result = _resolve_from_master(modules or [], weeks or [], components or [], assigned_modules=assigned, **options)
         return result, cursor
 
     def test_new_assignment_is_visible_before_it_has_weeks(self):
@@ -139,6 +139,24 @@ class LiveAssignedModuleTests(SimpleTestCase):
         self.assertEqual(result[0], ['New module'])
         self.assertEqual([w['weekId'] for w in result[1]], ['W-NEW'])
         self.assertEqual(result[2], [])
+
+    def test_dated_archived_recording_opens_its_existing_event_component(self):
+        rows = [
+            [('MOD-NEW', 'New module')],
+            [('W-NEW', 'MOD-NEW', 'Event week', 1, 0)],
+            [('C-EVENT', 'W-NEW', 'MOD-NEW', 'video', 'Recorded Event', '',
+              {'videoUrl': '', 'recordingSeriesId': 'LIVE-1',
+               'recordingSessionNumber': 3, 'recordingDate': '2026-10-02'},
+              '', 0, [], False, None, False)],
+            [],
+        ]
+        result, _ = self.resolve(rows, assigned=[MODULE])
+        event = result[2][0]
+        self.assertEqual((event['weekId'], event['recordingSeriesId'], event['recordingSessionNumber'],
+                          event['recordingDate']), ('W-NEW', 'LIVE-1', 3, '2026-10-02'))
+        self.assertIsNone(event['videoUrl'])
+        identity, _ = self.resolve(rows, assigned=[MODULE], identities_only=True)
+        self.assertEqual([component['componentId'] for component in identity[2]], ['C-EVENT'])
 
     def test_video_authored_as_an_embed_is_not_mistaken_for_a_removed_one(self):
         result, _ = self.resolve([
