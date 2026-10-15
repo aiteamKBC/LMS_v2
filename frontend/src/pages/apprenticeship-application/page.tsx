@@ -1,46 +1,109 @@
-import { useEffect, useRef, useState, type FormEvent } from 'react';
-import { ArrowLeft, ArrowRight, CheckCircle2, ClipboardCheck, ClipboardList } from 'lucide-react';
-import { ApplicationSubmitError, submitApprenticeshipApplication, type ApplicationField } from '@/api/apprenticeshipApplication';
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react';
+import { ArrowLeft, ArrowRight, CheckCircle2, ClipboardCheck, ClipboardList, Loader2, MapPin, RotateCcw, XCircle } from 'lucide-react';
 import {
-  SECTIONS,
+  ApplicationSubmitError,
+  compactPostcode,
+  fetchEligibilityForm,
+  isUkPostcode,
+  lookupPostcode,
+  submitApprenticeshipApplication,
+  type ApplicationOutcome,
+  type PostcodeCheck,
+} from '@/api/apprenticeshipApplication';
+import {
+  answerFor,
   businessToday,
-  emptyAnswers,
+  formPage,
+  formSections,
+  isPostcodeQuestion,
   isQuestion,
   isShown,
   toPayload,
   validateSection,
+  type AnswerValue,
   type Answers,
   type Errors,
   type Question,
 } from './form';
+import { BUILTIN_ITEMS, isBuiltinQuestion } from './layout/registry';
+import { resolveLayout } from './layout/resolve';
+import type { EligibilityLayout } from './layout/types';
 // The LMS public-page frame (logo bar, banner, footer), shared with the coach
 // booking and LMS introduction pages; application.module.css styles the form
 // and the dark-theme version of that frame.
 import frame from '../coach-booking/booking.module.css';
 import styles from './application.module.css';
 
+/** A postcode check as the page tracks it, by compact postcode. */
+type Check = PostcodeCheck | { status: 'checking' };
+
+interface LoadedForm {
+  layout: EligibilityLayout;
+  /** The published version it was built from; null for the standard form. */
+  version: number | null;
+}
+
+/** The questions whose answer is looked up as a UK postcode. */
+const POSTCODE_KEYS = Object.values(BUILTIN_ITEMS).filter((item) => isBuiltinQuestion(item) && item.postcode).map((item) => item.key);
+
 /**
  * The public apprenticeship eligibility form at /apprenticeship_application.
  *
- * No sign-in: the applicant has no account. Four sections, each checked before
- * moving on; nothing reaches the server until "Submit application", which saves
- * one row to enrolment.eligibility_form. The form collects answers only -- staff
- * assess eligibility, so no funding rule is applied here.
+ * No sign-in: the applicant has no account. The questions are the layout
+ * published from the "Edit eligibility form" builder (the standard form until
+ * one is), in sections each checked before moving on; nothing reaches the
+ * server until "Submit application", which saves one row to
+ * enrolment.eligibility_form. The form collects answers only -- staff assess
+ * eligibility, so no funding rule is applied here.
+ *
+ * Postcodes are looked up as they are typed, to show where one in England is.
+ * Nothing under the question says a postcode is wrong and nothing stops the
+ * applicant: the server saves the application either way, and when a postcode
+ * is not a UK postcode, cannot be found or is outside England the applicant is
+ * told they are not eligible instead of "Application submitted".
  */
 export default function ApprenticeshipApplicationPage() {
-  const [answers, setAnswers] = useState<Answers>(emptyAnswers);
+  const [form, setForm] = useState<LoadedForm | null>(null);
+  const [loadError, setLoadError] = useState('');
+  const [loadToken, setLoadToken] = useState(0);
+  const [answers, setAnswers] = useState<Answers>({});
   const [step, setStep] = useState(0);
   const [errors, setErrors] = useState<Errors>({});
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState('');
-  const [submitted, setSubmitted] = useState(false);
+  const [outcome, setOutcome] = useState<ApplicationOutcome | null>(null);
+  const submitted = outcome !== null;
   const [dirty, setDirty] = useState(false);
   const [focusErrors, setFocusErrors] = useState(0);
+  const [checks, setChecks] = useState<Record<string, Check>>({});
+  const inFlight = useRef(new Map<string, Promise<PostcodeCheck>>());
+  const answersRef = useRef(answers);
+  answersRef.current = answers;
+  const checksRef = useRef(checks);
+  checksRef.current = checks;
   const formRef = useRef<HTMLFormElement>(null);
   const headingRef = useRef<HTMLHeadingElement>(null);
   const successRef = useRef<HTMLHeadingElement>(null);
   const moved = useRef(false);
   const today = businessToday();
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoadError('');
+    fetchEligibilityForm()
+      .then((res) => {
+        if (!cancelled) setForm({ layout: resolveLayout(res.layout), version: res.version });
+      })
+      .catch((reason: Error) => {
+        if (!cancelled) setLoadError(reason.message);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [loadToken]);
+
+  const sections = useMemo(() => (form ? formSections(form.layout) : []), [form]);
+  const page = useMemo(() => (form ? formPage(form.layout) : null), [form]);
 
   // Nothing is saved before Submit, so leaving part-way would lose the answers.
   useEffect(() => {
@@ -59,7 +122,7 @@ export default function ApprenticeshipApplicationPage() {
     moved.current = false;
     formRef.current?.scrollIntoView?.({ block: 'start', behavior: 'smooth' });
     headingRef.current?.focus({ preventScroll: true });
-  }, [step]);
+  }, [step, form]);
 
   useEffect(() => {
     if (!focusErrors) return;
@@ -72,21 +135,36 @@ export default function ApprenticeshipApplicationPage() {
     if (submitted) successRef.current?.focus();
   }, [submitted]);
 
-  const section = SECTIONS[step];
-  const last = step === SECTIONS.length - 1;
-  const percent = Math.round(((step + 1) / SECTIONS.length) * 100);
-  const SectionIcon = section.icon;
+  /**
+   * Look a postcode up once; checks of the same postcode share the answer. A
+   * check that could not be made is tried again next time.
+   */
+  const checkPostcode = useCallback((value: string): Promise<PostcodeCheck> | null => {
+    if (!isUkPostcode(value)) return null;
+    const code = compactPostcode(value);
+    const known = checksRef.current[code];
+    if (known && known.status !== 'checking' && known.status !== 'unavailable') return Promise.resolve(known);
+    let pending = inFlight.current.get(code);
+    if (!pending) {
+      setChecks((current) => ({ ...current, [code]: { status: 'checking' } }));
+      pending = lookupPostcode(value).then((result) => {
+        inFlight.current.delete(code);
+        setChecks((current) => ({ ...current, [code]: result }));
+        return result;
+      });
+      inFlight.current.set(code, pending);
+    }
+    return pending;
+  }, []);
 
-  const setAnswer = (key: ApplicationField, value: string | boolean) => {
-    setAnswers(current => ({ ...current, [key]: value }));
-    setDirty(true);
-    setErrors(current => {
-      if (!current[key]) return current;
-      const next = { ...current };
-      delete next[key];
-      return next;
-    });
-  };
+  // Check a postcode once the applicant pauses typing it.
+  const postcodeValues = POSTCODE_KEYS.map((key) => String(answers[key] ?? '')).join('\n');
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      for (const value of postcodeValues.split('\n')) void checkPostcode(value);
+    }, 600);
+    return () => window.clearTimeout(timer);
+  }, [postcodeValues, checkPostcode]);
 
   const goTo = (index: number) => {
     moved.current = true;
@@ -94,21 +172,72 @@ export default function ApprenticeshipApplicationPage() {
     setStep(index);
   };
 
+  const setAnswer = (key: string, value: AnswerValue) => {
+    setAnswers((current) => ({ ...current, [key]: value }));
+    setDirty(true);
+    setErrors((current) => {
+      if (!current[key]) return current;
+      const next = { ...current };
+      delete next[key];
+      return next;
+    });
+  };
+
+  if (!form || !page || sections.length === 0) {
+    return (
+      <Frame>
+        <section className={styles.card} aria-live="polite">
+          {loadError || (form && sections.length === 0) ? (
+            <div className={styles.loading}>
+              <p className={styles.alert} role="alert">{loadError || 'The application form is not available just now.'}</p>
+              <button type="button" className={styles.secondary} onClick={() => setLoadToken((n) => n + 1)}>
+                <RotateCcw aria-hidden="true" /> Try again
+              </button>
+            </div>
+          ) : (
+            <p className={styles.loading}><Loader2 className={styles.spin} aria-hidden="true" /> Loading the application form…</p>
+          )}
+        </section>
+      </Frame>
+    );
+  }
+
+  const index = Math.min(step, sections.length - 1);
+  const section = sections[index];
+  const last = index === sections.length - 1;
+  const percent = Math.round(((index + 1) / sections.length) * 100);
+  const SectionIcon = section.icon;
+
   const submit = async () => {
     setSubmitting(true);
     setSubmitError('');
     try {
-      await submitApprenticeshipApplication(toPayload(answers));
-      setSubmitted(true);
+      setOutcome(await submitApprenticeshipApplication(toPayload(answersRef.current, sections, form.version)));
     } catch (reason) {
       const failure = reason instanceof ApplicationSubmitError
         ? reason
         : new ApplicationSubmitError('We could not submit your application. Please try again.', 0);
+      if (failure.formChanged) {
+        // Republished while the applicant was filling it in: show the form in
+        // force from the start. Answers are kept by question, so nothing
+        // already answered has to be typed again.
+        let message = failure.message;
+        try {
+          const fresh = await fetchEligibilityForm();
+          setForm({ layout: resolveLayout(fresh.layout), version: fresh.version });
+        } catch {
+          message = `${failure.message} We could not load the updated form just now: check your connection, then submit again.`;
+        }
+        setErrors({});
+        goTo(0);
+        setSubmitError(message);
+        return;
+      }
       // The server refused specific answers: show them where they were asked.
-      const refused = SECTIONS.findIndex(candidate => candidate.items.some(item => isQuestion(item) && failure.fields[item.key]));
+      const refused = sections.findIndex(candidate => candidate.items.some(item => isQuestion(item) && failure.fields[item.key]));
       if (refused >= 0) {
         setErrors(failure.fields);
-        if (refused !== step) goTo(refused);
+        if (refused !== index) goTo(refused);
         else setFocusErrors(count => count + 1);
       }
       setSubmitError(failure.message);
@@ -127,11 +256,113 @@ export default function ApprenticeshipApplicationPage() {
       return;
     }
     if (last) void submit();
-    else goTo(step + 1);
+    else goTo(index + 1);
   };
 
   let number = 0;
+  const programme = typeof answers.programme === 'string' ? answers.programme : '';
 
+  return (
+    <Frame hero={page}>
+      {outcome?.eligible === false ? (
+        <section className={styles.card} aria-labelledby="application-submitted">
+          <div className={styles.success}>
+            <span className={`${styles.successIcon} ${styles.notEligibleIcon}`} aria-hidden="true"><XCircle /></span>
+            <h2 id="application-submitted" ref={successRef} tabIndex={-1}>You are not eligible</h2>
+            <p>
+              Thank you, {String(answers.firstName ?? '').trim()}. We have received your application
+              {programme ? <> for <strong>{programme}</strong></> : null}, but you are not eligible for an
+              apprenticeship with us: apprenticeship funding is only available in England.
+            </p>
+            {outcome.reasons.length > 0 && (
+              <ul className={styles.reasons}>
+                {outcome.reasons.map(reason => <li key={reason}>{reason}</li>)}
+              </ul>
+            )}
+            <p>If you think this is a mistake, please get in touch with our team. You can now close this page.</p>
+          </div>
+        </section>
+      ) : submitted ? (
+        <section className={styles.card} aria-labelledby="application-submitted">
+          <div className={styles.success}>
+            <span className={styles.successIcon} aria-hidden="true"><CheckCircle2 /></span>
+            <h2 id="application-submitted" ref={successRef} tabIndex={-1}>Application submitted</h2>
+            <p>
+              Thank you, {String(answers.firstName ?? '').trim()}. We have received your application
+              {programme ? <> for <strong>{programme}</strong></> : null}.
+            </p>
+            <p>You can now close this page.</p>
+          </div>
+        </section>
+      ) : (
+        <form ref={formRef} className={styles.card} onSubmit={handleContinue} noValidate aria-labelledby="application-section-title">
+          <div className={styles.progressRow}>
+            <span className={styles.sectionCount}>Section {index + 1} of {sections.length}</span>
+            <div
+              className={styles.track}
+              role="progressbar"
+              aria-label="Application progress"
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-valuenow={percent}
+            >
+              <span style={{ width: `${percent}%` }} />
+            </div>
+            <span className={styles.percent}>{percent}% complete</span>
+          </div>
+
+          <div className={styles.sectionHead}>
+            <span className={styles.sectionIcon} aria-hidden="true"><SectionIcon /></span>
+            <div>
+              <h2 id="application-section-title" ref={headingRef} tabIndex={-1}>{section.title}</h2>
+              {section.description && <p>{section.description}</p>}
+            </div>
+          </div>
+
+          <div className={styles.questions}>
+            {section.items.map(item => {
+              if (!isQuestion(item)) return <p key={item.key} className={styles.note}>{item.text}</p>;
+              if (!isShown(item, answers)) return null;
+              number += 1;
+              const value = answerFor(answers, item);
+              const postcode = isPostcodeQuestion(item);
+              return (
+                <QuestionRow
+                  key={item.key}
+                  question={item}
+                  number={number}
+                  value={value}
+                  error={errors[item.key]}
+                  today={today}
+                  onChange={next => setAnswer(item.key, next)}
+                  onBlur={postcode ? () => void checkPostcode(String(value ?? '')) : undefined}
+                  check={postcode && isUkPostcode(String(value ?? '')) ? checks[compactPostcode(String(value))] : undefined}
+                />
+              );
+            })}
+          </div>
+
+          {submitError && <p className={styles.alert} role="alert">{submitError}</p>}
+
+          <div className={styles.actions}>
+            {index > 0 && (
+              <button type="button" className={styles.secondary} onClick={() => goTo(index - 1)} disabled={submitting}>
+                <ArrowLeft aria-hidden="true" /> Previous
+              </button>
+            )}
+            <button type="submit" className={styles.primary} disabled={submitting}>
+              {last ? (submitting ? 'Submitting…' : 'Submit application') : 'Continue'}
+              <ArrowRight aria-hidden="true" />
+            </button>
+          </div>
+        </form>
+      )}
+    </Frame>
+  );
+}
+
+/** The public-page frame: logo bar, the purple banner (once the form's wording is known) and footer. */
+function Frame({ hero, children }: { hero?: { eyebrow: string; title: string; intro: string }; children: ReactNode }) {
   return (
     <main className={`${frame.page} ${styles.page}`}>
       <div className={frame.container}>
@@ -139,87 +370,18 @@ export default function ApprenticeshipApplicationPage() {
           <img src="/assets/kbc-logo.png" alt="Kent Business College" width="175" height="80" />
           <span><ClipboardList size={17} aria-hidden="true" />Apprenticeship application</span>
         </div>
-        <header className={frame.hero}>
-          <div className={frame.heroCopy}>
-            <p className={frame.eyebrow}>APPRENTICESHIP FUNDING ELIGIBILITY</p>
-            <h1>Eligibility Form</h1>
-            <p>Assess learner eligibility against the England apprenticeship funding rules. All fields marked with * are required.</p>
-            <span className={frame.accessNote}><CheckCircle2 size={16} aria-hidden="true" />No LMS account needed to apply</span>
-          </div>
-          <div className={frame.heroIcon} aria-hidden="true"><ClipboardCheck strokeWidth={1.3} /></div>
-        </header>
-
-        {submitted ? (
-          <section className={styles.card} aria-labelledby="application-submitted">
-            <div className={styles.success}>
-              <span className={styles.successIcon} aria-hidden="true"><CheckCircle2 /></span>
-              <h2 id="application-submitted" ref={successRef} tabIndex={-1}>Application submitted</h2>
-              <p>
-                Thank you, {answers.firstName.trim()}. We have received your application for{' '}
-                <strong>{answers.programme}</strong>.
-              </p>
-              <p>You can now close this page.</p>
+        {hero && (
+          <header className={frame.hero}>
+            <div className={frame.heroCopy}>
+              <p className={frame.eyebrow}>{hero.eyebrow}</p>
+              <h1>{hero.title}</h1>
+              <p>{hero.intro}</p>
+              <span className={frame.accessNote}><CheckCircle2 size={16} aria-hidden="true" />No LMS account needed to apply</span>
             </div>
-          </section>
-        ) : (
-          <form ref={formRef} className={styles.card} onSubmit={handleContinue} noValidate aria-labelledby="application-section-title">
-            <div className={styles.progressRow}>
-              <span className={styles.sectionCount}>Section {step + 1} of {SECTIONS.length}</span>
-              <div
-                className={styles.track}
-                role="progressbar"
-                aria-label="Application progress"
-                aria-valuemin={0}
-                aria-valuemax={100}
-                aria-valuenow={percent}
-              >
-                <span style={{ width: `${percent}%` }} />
-              </div>
-              <span className={styles.percent}>{percent}% complete</span>
-            </div>
-
-            <div className={styles.sectionHead}>
-              <span className={styles.sectionIcon} aria-hidden="true"><SectionIcon /></span>
-              <div>
-                <h2 id="application-section-title" ref={headingRef} tabIndex={-1}>{section.title}</h2>
-                <p>{section.description}</p>
-              </div>
-            </div>
-
-            <div className={styles.questions}>
-              {section.items.map(item => {
-                if (!isQuestion(item)) return <p key={item.text} className={styles.note}>{item.text}</p>;
-                if (!isShown(item, answers)) return null;
-                number += 1;
-                return (
-                  <QuestionRow
-                    key={item.key}
-                    question={item}
-                    number={number}
-                    value={answers[item.key]}
-                    error={errors[item.key]}
-                    today={today}
-                    onChange={value => setAnswer(item.key, value)}
-                  />
-                );
-              })}
-            </div>
-
-            {submitError && <p className={styles.alert} role="alert">{submitError}</p>}
-
-            <div className={styles.actions}>
-              {step > 0 && (
-                <button type="button" className={styles.secondary} onClick={() => goTo(step - 1)} disabled={submitting}>
-                  <ArrowLeft aria-hidden="true" /> Previous
-                </button>
-              )}
-              <button type="submit" className={styles.primary} disabled={submitting}>
-                {last ? (submitting ? 'Submitting…' : 'Submit application') : 'Continue'}
-                <ArrowRight aria-hidden="true" />
-              </button>
-            </div>
-          </form>
+            <div className={frame.heroIcon} aria-hidden="true"><ClipboardCheck strokeWidth={1.3} /></div>
+          </header>
         )}
+        {children}
         <footer className={`${frame.footer} ${styles.footer}`}>
           <span>Kent Business College</span>
           <span>Learning support, one conversation at a time.</span>
@@ -232,18 +394,22 @@ export default function ApprenticeshipApplicationPage() {
 interface QuestionRowProps {
   question: Question;
   number: number;
-  value: Answers[ApplicationField];
+  value: AnswerValue;
   error?: string;
   today: string;
   onChange: (value: string | boolean) => void;
+  onBlur?: () => void;
+  /** Postcode questions: the lookup of the current answer. */
+  check?: Check;
 }
 
-function QuestionRow({ question, number, value, error, today, onChange }: QuestionRowProps) {
+function QuestionRow({ question, number, value, error, today, onChange, onBlur, check }: QuestionRowProps) {
   const id = `application-${question.key}`;
   const labelId = `${id}-label`;
   const hintId = question.hint ? `${id}-hint` : undefined;
   const errorId = error ? `${id}-error` : undefined;
-  const describedBy = [hintId, errorId].filter(Boolean).join(' ') || undefined;
+  const locationId = isPostcodeQuestion(question) ? `${id}-location` : undefined;
+  const describedBy = [hintId, errorId, locationId].filter(Boolean).join(' ') || undefined;
   const invalid = Boolean(error);
 
   const prompt = (
@@ -322,14 +488,37 @@ function QuestionRow({ question, number, value, error, today, onChange }: Questi
             type={question.kind}
             value={String(value ?? '')}
             onChange={event => onChange(event.target.value)}
-            maxLength={question.kind === 'date' ? undefined : question.maxLength}
-            max={question.kind === 'date' ? today : undefined}
+            onBlur={onBlur}
+            maxLength={'maxLength' in question ? question.maxLength : undefined}
+            max={question.kind === 'date' && !question.allowFuture ? today : undefined}
             min={question.kind === 'date' ? '1900-01-01' : undefined}
-            autoComplete={question.autoComplete}
+            step={question.kind === 'number' ? 'any' : undefined}
+            inputMode={question.kind === 'number' ? 'decimal' : undefined}
+            autoComplete={'autoComplete' in question ? question.autoComplete : undefined}
           />
         )}
         {message}
+        {locationId && (
+          <div id={locationId} aria-live="polite">
+            <PostcodeLocation check={check} />
+          </div>
+        )}
       </div>
     </div>
   );
+}
+
+/**
+ * Where the postcode is, under the postcode question -- shown only for one
+ * found in England. Nothing is said about any other postcode here: whether it
+ * makes the applicant ineligible is decided, and told, on submit.
+ */
+function PostcodeLocation({ check }: { check?: Check }) {
+  if (!check) return null;
+  if (check.status === 'checking') {
+    return <p className={styles.location}><Loader2 className={styles.spin} aria-hidden="true" /> Checking postcode…</p>;
+  }
+  if (check.status !== 'found' || !check.inEngland) return null;
+  const place = [check.district, check.region, check.country].filter(Boolean).join(', ');
+  return <p className={`${styles.location} ${styles.locationFound}`}><MapPin aria-hidden="true" /> {place}</p>;
 }

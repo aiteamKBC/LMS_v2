@@ -160,7 +160,7 @@ class WizardSkillsRadar(_LearnerScoped):
 class WizardKsbAssessment(_LearnerScoped):
     ksb_id = models.TextField(db_column="Ksb_id")
     level = models.TextField(db_column="Level", null=True, blank=True)
-    # 8..1 for `level`, denormalised for reporting (see LEVEL_SCORES).
+    # 9..1 for `level`, denormalised for reporting (see LEVEL_SCORES).
     score = models.IntegerField(db_column="Score", null=True, blank=True)
     note = models.TextField(db_column="Note", null=True, blank=True)
     action_text = models.TextField(db_column="Action_text", null=True, blank=True)

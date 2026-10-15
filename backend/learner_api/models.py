@@ -1359,11 +1359,15 @@ class EnrolmentReview(models.Model):
     """
 
     STATUS_BOOKED = "booked"
+    # Issued by the enrolment team from the learner's board: a review with no
+    # calendar booking behind it (see review_form.issue_onboarding_review).
+    STATUS_ISSUED = "issued"
     STATUS_CANCELLED = "cancelled"
     STATUS_COMPLETED = "completed"
 
     STATUS_CHOICES = [
         (STATUS_BOOKED, "Booked"),
+        (STATUS_ISSUED, "Issued"),
         (STATUS_CANCELLED, "Cancelled"),
         (STATUS_COMPLETED, "Completed"),
     ]

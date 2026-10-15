@@ -1,6 +1,6 @@
 /**
  * The fourth enrolment review — ULN Privacy Notice & Learner Acknowledgement:
- * listed and booked like the other three, and filled in by reading the notice
+ * listed and issued like the other three, and filled in by reading the notice
  * and confirming the acknowledgement.
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -8,22 +8,13 @@ import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import type { ReactNode } from 'react';
-import type { OnboardingReview } from '@/api/learnerCalendar';
-import type { ReviewFormResponse } from '@/api/reviewForm';
+import type { OnboardingReviewSlot, ReviewFormResponse } from '@/api/reviewForm';
 
 vi.mock('@/components/feature/WorkspaceShell', () => ({ WorkspaceShell: ({ children }: { children: ReactNode }) => <>{children}</> }));
 vi.mock('@/hooks/useMyLearner', () => ({ useMyLearner: () => ({ kind: 'apprenticeship', id: '670' }) }));
 vi.mock('@/hooks/useLearnerNavGate', () => ({ useEnrolmentSubmitted: () => true }));
-const calendar = vi.hoisted(() => ({ fetchOnboardingReviews: vi.fn() }));
-vi.mock('@/api/learnerCalendar', () => ({
-  ...calendar,
-  bookLearnerCalendarSession: vi.fn(),
-  cancelLearnerCalendarSession: vi.fn(),
-  fetchFirstSessionSlots: vi.fn(async () => ({ slots: [] })),
-  ukOffsetForDate: () => '+01:00',
-}));
-const form = vi.hoisted(() => ({ fetchReviewForm: vi.fn(), saveReviewForm: vi.fn(), signReviewForm: vi.fn() }));
-vi.mock('@/api/reviewForm', () => form);
+const form = vi.hoisted(() => ({ fetchReviewForm: vi.fn(), saveReviewForm: vi.fn(), signReviewForm: vi.fn(), fetchOnboardingReviewSlots: vi.fn() }));
+vi.mock('@/api/reviewForm', async (original) => ({ ...(await original<typeof import('@/api/reviewForm')>()), ...form }));
 vi.mock('../reviews/reviewDocument', () => ({ downloadReviewPdf: vi.fn() }));
 
 import OnboardingReviewsPage from '../reviews/page';
@@ -60,12 +51,12 @@ beforeEach(() => {
 });
 
 describe('ULN Privacy Notice & Learner Acknowledgement review', () => {
-  it('is listed as the fourth review to book', async () => {
-    const review = (type: OnboardingReview['type'], label: string) =>
-      ({ type, label, booked: false, hasForm: true, event: null }) as OnboardingReview;
-    calendar.fetchOnboardingReviews.mockResolvedValue({
-      caseOwner: { name: 'Case Owner', email: '' },
-      allBooked: false,
+  it('is listed as the fourth review, waiting for the enrolment team to issue it', async () => {
+    const review = (type: OnboardingReviewSlot['type'], label: string): OnboardingReviewSlot => ({ type, label, issued: false });
+    form.fetchOnboardingReviewSlots.mockResolvedValue({
+      programme: '',
+      allIssued: false,
+      allCompleted: false,
       reviews: [
         review('eligibility-review', 'Eligibility Review & FS Discussion'),
         review('workspace', 'RPL And Experience'),
@@ -76,8 +67,10 @@ describe('ULN Privacy Notice & Learner Acknowledgement review', () => {
     render(<MemoryRouter><OnboardingReviewsPage /></MemoryRouter>);
 
     expect(await screen.findByRole('heading', { name: LABEL })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: `Book ${LABEL}` })).toBeInTheDocument();
-    expect(screen.getByText(/please book all four reviews/)).toBeInTheDocument();
+    expect(screen.getAllByText('Not issued yet')).toHaveLength(4);
+    expect(screen.getByText(/Your enrolment officer issues each of the four reviews/)).toBeInTheDocument();
+    // Booking is gone: nothing to book, no time slots.
+    expect(screen.queryByRole('button', { name: /Book/ })).not.toBeInTheDocument();
   });
 
   it('shows the notice and records that the learner read it and confirms the acknowledgement', async () => {
