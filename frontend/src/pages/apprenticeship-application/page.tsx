@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react';
-import { AlertTriangle, ArrowLeft, ArrowRight, CheckCircle2, ClipboardCheck, ClipboardList, Loader2, MapPin, RotateCcw } from 'lucide-react';
+import { ArrowLeft, ArrowRight, CheckCircle2, ClipboardCheck, ClipboardList, Loader2, MapPin, RotateCcw, XCircle } from 'lucide-react';
 import {
   ApplicationSubmitError,
   compactPostcode,
@@ -7,10 +7,10 @@ import {
   isUkPostcode,
   lookupPostcode,
   submitApprenticeshipApplication,
+  type ApplicationOutcome,
   type PostcodeCheck,
 } from '@/api/apprenticeshipApplication';
 import {
-  UNKNOWN_POSTCODE,
   answerFor,
   businessToday,
   formPage,
@@ -56,9 +56,11 @@ const POSTCODE_KEYS = Object.values(BUILTIN_ITEMS).filter((item) => isBuiltinQue
  * enrolment.eligibility_form. The form collects answers only -- staff assess
  * eligibility, so no funding rule is applied here.
  *
- * Postcodes are looked up as they are typed and again on Continue: an unknown
- * one stops the applicant, one outside England is shown with a warning but
- * accepted, and if the lookup service is down the applicant carries on.
+ * Postcodes are looked up as they are typed, to show where one in England is.
+ * Nothing under the question says a postcode is wrong and nothing stops the
+ * applicant: the server saves the application either way, and when a postcode
+ * is not a UK postcode, cannot be found or is outside England the applicant is
+ * told they are not eligible instead of "Application submitted".
  */
 export default function ApprenticeshipApplicationPage() {
   const [form, setForm] = useState<LoadedForm | null>(null);
@@ -68,9 +70,9 @@ export default function ApprenticeshipApplicationPage() {
   const [step, setStep] = useState(0);
   const [errors, setErrors] = useState<Errors>({});
   const [submitting, setSubmitting] = useState(false);
-  const [checking, setChecking] = useState(false);
   const [submitError, setSubmitError] = useState('');
-  const [submitted, setSubmitted] = useState(false);
+  const [outcome, setOutcome] = useState<ApplicationOutcome | null>(null);
+  const submitted = outcome !== null;
   const [dirty, setDirty] = useState(false);
   const [focusErrors, setFocusErrors] = useState(0);
   const [checks, setChecks] = useState<Record<string, Check>>({});
@@ -134,9 +136,8 @@ export default function ApprenticeshipApplicationPage() {
   }, [submitted]);
 
   /**
-   * Look a postcode up once; checks of the same postcode share the answer. An
-   * unknown postcode becomes the error of each question holding it. A check
-   * that could not be made is tried again next time.
+   * Look a postcode up once; checks of the same postcode share the answer. A
+   * check that could not be made is tried again next time.
    */
   const checkPostcode = useCallback((value: string): Promise<PostcodeCheck> | null => {
     if (!isUkPostcode(value)) return null;
@@ -149,15 +150,6 @@ export default function ApprenticeshipApplicationPage() {
       pending = lookupPostcode(value).then((result) => {
         inFlight.current.delete(code);
         setChecks((current) => ({ ...current, [code]: result }));
-        if (result.status === 'notFound') {
-          setErrors((current) => {
-            const next = { ...current };
-            for (const key of POSTCODE_KEYS) {
-              if (compactPostcode(String(answersRef.current[key] ?? '')) === code) next[key] = UNKNOWN_POSTCODE;
-            }
-            return next;
-          });
-        }
         return result;
       });
       inFlight.current.set(code, pending);
@@ -220,8 +212,7 @@ export default function ApprenticeshipApplicationPage() {
     setSubmitting(true);
     setSubmitError('');
     try {
-      await submitApprenticeshipApplication(toPayload(answersRef.current, sections, form.version));
-      setSubmitted(true);
+      setOutcome(await submitApprenticeshipApplication(toPayload(answersRef.current, sections, form.version)));
     } catch (reason) {
       const failure = reason instanceof ApplicationSubmitError
         ? reason
@@ -257,34 +248,15 @@ export default function ApprenticeshipApplicationPage() {
 
   const handleContinue = (event: FormEvent) => {
     event.preventDefault();
-    if (submitting || checking) return;
+    if (submitting) return;
     const found = validateSection(section, answers, today);
-    // Well-formed postcodes on this section still have to exist.
-    const toCheck = section.items
-      .filter(isQuestion)
-      .filter(question => isPostcodeQuestion(question) && isShown(question, answers) && !found[question.key] && String(answers[question.key] ?? '').trim());
-    const finish = (results: (PostcodeCheck | null)[]) => {
-      results.forEach((result, i) => {
-        if (result?.status === 'notFound') found[toCheck[i].key] = UNKNOWN_POSTCODE;
-      });
-      setErrors(found);
-      if (Object.keys(found).length) {
-        setFocusErrors(count => count + 1);
-        return;
-      }
-      if (last) void submit();
-      else goTo(index + 1);
-    };
-    const known = toCheck.map(question => checks[compactPostcode(String(answers[question.key]))]);
-    if (known.every(check => check && check.status !== 'checking' && check.status !== 'unavailable')) {
-      finish(known as PostcodeCheck[]);
+    setErrors(found);
+    if (Object.keys(found).length) {
+      setFocusErrors(count => count + 1);
       return;
     }
-    setChecking(true);
-    void Promise.all(toCheck.map(question => checkPostcode(String(answers[question.key])))).then((results) => {
-      setChecking(false);
-      finish(results);
-    });
+    if (last) void submit();
+    else goTo(index + 1);
   };
 
   let number = 0;
@@ -292,7 +264,25 @@ export default function ApprenticeshipApplicationPage() {
 
   return (
     <Frame hero={page}>
-      {submitted ? (
+      {outcome?.eligible === false ? (
+        <section className={styles.card} aria-labelledby="application-submitted">
+          <div className={styles.success}>
+            <span className={`${styles.successIcon} ${styles.notEligibleIcon}`} aria-hidden="true"><XCircle /></span>
+            <h2 id="application-submitted" ref={successRef} tabIndex={-1}>You are not eligible</h2>
+            <p>
+              Thank you, {String(answers.firstName ?? '').trim()}. We have received your application
+              {programme ? <> for <strong>{programme}</strong></> : null}, but you are not eligible for an
+              apprenticeship with us: apprenticeship funding is only available in England.
+            </p>
+            {outcome.reasons.length > 0 && (
+              <ul className={styles.reasons}>
+                {outcome.reasons.map(reason => <li key={reason}>{reason}</li>)}
+              </ul>
+            )}
+            <p>If you think this is a mistake, please get in touch with our team. You can now close this page.</p>
+          </div>
+        </section>
+      ) : submitted ? (
         <section className={styles.card} aria-labelledby="application-submitted">
           <div className={styles.success}>
             <span className={styles.successIcon} aria-hidden="true"><CheckCircle2 /></span>
@@ -356,12 +346,12 @@ export default function ApprenticeshipApplicationPage() {
 
           <div className={styles.actions}>
             {index > 0 && (
-              <button type="button" className={styles.secondary} onClick={() => goTo(index - 1)} disabled={submitting || checking}>
+              <button type="button" className={styles.secondary} onClick={() => goTo(index - 1)} disabled={submitting}>
                 <ArrowLeft aria-hidden="true" /> Previous
               </button>
             )}
-            <button type="submit" className={styles.primary} disabled={submitting || checking}>
-              {checking ? 'Checking postcode…' : last ? (submitting ? 'Submitting…' : 'Submit application') : 'Continue'}
+            <button type="submit" className={styles.primary} disabled={submitting}>
+              {last ? (submitting ? 'Submitting…' : 'Submit application') : 'Continue'}
               <ArrowRight aria-hidden="true" />
             </button>
           </div>
@@ -510,7 +500,7 @@ function QuestionRow({ question, number, value, error, today, onChange, onBlur, 
         {message}
         {locationId && (
           <div id={locationId} aria-live="polite">
-            <PostcodeLocation check={check} employer={question.key === 'employerPostcode'} />
+            <PostcodeLocation check={check} />
           </div>
         )}
       </div>
@@ -518,28 +508,17 @@ function QuestionRow({ question, number, value, error, today, onChange, onBlur, 
   );
 }
 
-/** Where the postcode is, under the postcode question. An unknown postcode shows as the question's error instead. */
-function PostcodeLocation({ check, employer }: { check?: Check; employer: boolean }) {
-  if (!check || check.status === 'notFound') return null;
+/**
+ * Where the postcode is, under the postcode question -- shown only for one
+ * found in England. Nothing is said about any other postcode here: whether it
+ * makes the applicant ineligible is decided, and told, on submit.
+ */
+function PostcodeLocation({ check }: { check?: Check }) {
+  if (!check) return null;
   if (check.status === 'checking') {
     return <p className={styles.location}><Loader2 className={styles.spin} aria-hidden="true" /> Checking postcode…</p>;
   }
-  if (check.status === 'unavailable') {
-    return <p className={styles.location}>We could not check this postcode just now. You can still continue.</p>;
-  }
+  if (check.status !== 'found' || !check.inEngland) return null;
   const place = [check.district, check.region, check.country].filter(Boolean).join(', ');
-  if (check.inEngland) {
-    return <p className={`${styles.location} ${styles.locationFound}`}><MapPin aria-hidden="true" /> {place}</p>;
-  }
-  return (
-    <p className={`${styles.location} ${styles.locationWarning}`}>
-      <AlertTriangle aria-hidden="true" />
-      <span>
-        <strong>{place}</strong> is outside England.{' '}
-        {employer
-          ? 'Funding depends on you spending more than half of your working hours in England, so our team will check this when they review your application.'
-          : 'You must be living in England to be eligible for apprenticeship funding. You can still submit your application and our team will review it.'}
-      </span>
-    </p>
-  );
+  return <p className={`${styles.location} ${styles.locationFound}`}><MapPin aria-hidden="true" /> {place}</p>;
 }

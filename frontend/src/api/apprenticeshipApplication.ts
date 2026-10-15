@@ -82,7 +82,18 @@ export class ApplicationSubmitError extends Error {
 const HEADERS = { 'X-Requested-With': 'XMLHttpRequest' };
 const url = '/enrolment_api/public/apprenticeship-application/';
 
-export async function submitApprenticeshipApplication(body: ApplicationSubmission): Promise<void> {
+/**
+ * What the server decided from the postcodes. The application is saved either
+ * way; `eligible` is false when a postcode is not a UK postcode, cannot be
+ * found or is outside England (`reasons` says which), and null when the
+ * postcodes could not be checked.
+ */
+export interface ApplicationOutcome {
+  eligible: boolean | null;
+  reasons: string[];
+}
+
+export async function submitApprenticeshipApplication(body: ApplicationSubmission): Promise<ApplicationOutcome> {
   let response: Response;
   try {
     response = await fetch(url, {
@@ -103,6 +114,10 @@ export async function submitApprenticeshipApplication(body: ApplicationSubmissio
       response.status === 409 && data?.formChanged === true,
     );
   }
+  return {
+    eligible: typeof data.eligible === 'boolean' ? data.eligible : null,
+    reasons: Array.isArray(data.reasons) ? data.reasons.filter((reason: unknown): reason is string => typeof reason === 'string') : [],
+  };
 }
 
 /** The form in force: the layout published from the eligibility form builder, or null for the standard form. */

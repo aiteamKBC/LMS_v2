@@ -1,6 +1,5 @@
 import type { LucideIcon } from 'lucide-react';
 import {
-  isUkPostcode,
   type ApplicationField,
   type ApplicationSubmission,
   type ApprenticeshipApplication,
@@ -47,13 +46,11 @@ export interface FormPage {
   intro: string;
 }
 
-// Limits and messages match the backend (enrolment_api/eligibility_form.py, postcode_lookup.py).
+// Limits and messages match the backend (enrolment_api/eligibility_form.py).
 const MAX_CUSTOM_TEXT = 500;
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const NUMBER = /^[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?$/;
 export const REQUIRED = 'This field is required.';
-export const INVALID_POSTCODE = 'Enter a valid UK postcode, for example CT1 1AA.';
-export const UNKNOWN_POSTCODE = 'We could not find this postcode. Check it and try again.';
 
 export const isQuestion = (item: Question | Note): item is Question => item.kind !== 'note';
 export const isShown = (question: Question, answers: Answers, depth = 0) => !question.shown || question.shown(answers, depth);
@@ -178,9 +175,8 @@ export function validateSection(section: Section, answers: Answers, today = busi
       else if (!question.allowFuture && text > today) errors[question.key] = 'The date cannot be in the future.';
     } else if (question.kind === 'number' && !NUMBER.test(text)) {
       errors[question.key] = 'Enter a number.';
-    } else if (isPostcodeQuestion(question) && !isUkPostcode(text)) {
-      errors[question.key] = INVALID_POSTCODE;
     }
+    // A postcode is never a form error: the server decides eligibility from it on submit.
   }
   return errors;
 }

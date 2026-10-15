@@ -173,9 +173,11 @@ class CleanApplicationTests(SimpleTestCase):
         self.assertEqual(row["first_name"], "Sam")
         self.assertEqual(row["postcode"], "EX1 2MP")
 
-    def test_postcodes_must_look_like_uk_postcodes(self):
-        _row, errors = ef.clean_application(application(postcode="12345", employerPostcode="EX3 4MP"), today=TODAY)
-        self.assertEqual(errors, {"postcode": postcode_lookup.INVALID_POSTCODE})
+    def test_a_malformed_postcode_is_not_a_form_error(self):
+        # It makes the applicant not eligible on submit instead (see SubmitApplicationTests).
+        row, errors = ef.clean_application(application(postcode="ss", employerPostcode="EX3 4MP"), today=TODAY)
+        self.assertEqual(errors, {})
+        self.assertEqual(row["postcode"], "ss")
 
 
 class PublishedLayoutTests(SimpleTestCase):
@@ -296,7 +298,7 @@ class SubmitApplicationTests(SimpleTestCase):
     def test_inserts_one_row_and_echoes_nothing_stored(self):
         response, cursor = self.post(application(id=7, submitted_at="2000-01-01", Password="x", postcode="ex12mp"))
         self.assertEqual(response.status_code, 201)
-        self.assertEqual(json.loads(response.content), {"submitted": True})
+        self.assertEqual(json.loads(response.content), {"submitted": True, "eligible": True, "reasons": []})
         self.assertEqual(len(cursor.executed), 1)
         sql, params = cursor.executed[0]
         self.assertTrue(sql.startswith("INSERT INTO enrolment.eligibility_form ("))
@@ -311,18 +313,44 @@ class SubmitApplicationTests(SimpleTestCase):
                          ("England", "South West", "Exeter"))
         self.assertEqual(stored["employer_postcode_district"], "East Devon")
         self.assertIsNone(stored["layout_version"])
+        self.assertEqual((stored["eligible"], stored["ineligible_reason"]), (True, None))
 
-    def test_an_unknown_postcode_is_refused_on_its_question(self):
-        response, cursor = self.post(application(employerPostcode="ZZ9 9ZZ"))
-        self.assertEqual(response.status_code, 400)
-        self.assertEqual(json.loads(response.content)["fields"], {"employerPostcode": postcode_lookup.UNKNOWN_POSTCODE})
-        self.assertEqual(cursor.executed, [])
-
-    def test_a_postcode_outside_england_is_accepted_with_its_country(self):
-        response, cursor = self.post(application(postcode="EH1 1YZ"))
+    def submitted(self, body):
+        response, cursor = self.post(body)
         self.assertEqual(response.status_code, 201)
-        stored = dict(zip(ef.INSERT_COLUMNS, cursor.executed[0][1]))
+        return json.loads(response.content), dict(zip(ef.INSERT_COLUMNS, cursor.executed[0][1]))
+
+    def test_a_malformed_postcode_is_saved_and_makes_the_applicant_not_eligible(self):
+        data, stored = self.submitted(application(postcode="ss"))
+        self.assertIs(data["eligible"], False)
+        self.assertEqual(data["reasons"], ["Your postcode (ss) is not a valid UK postcode."])
+        self.assertEqual(stored["postcode"], "ss")
+        self.assertIsNone(stored["postcode_country"])
+        self.assertIs(stored["eligible"], False)
+        self.assertEqual(stored["ineligible_reason"], "Your postcode (ss) is not a valid UK postcode.")
+
+    def test_an_unknown_postcode_is_saved_and_makes_the_applicant_not_eligible(self):
+        data, stored = self.submitted(application(employerPostcode="zz99zz"))
+        self.assertIs(data["eligible"], False)
+        self.assertEqual(data["reasons"], ["Your employer's postcode (ZZ9 9ZZ) could not be found."])
+        self.assertEqual(stored["ineligible_reason"], data["reasons"][0])
+        # The other postcode is still located.
+        self.assertEqual(stored["postcode_district"], "Exeter")
+
+    def test_a_postcode_outside_england_is_saved_with_its_country_and_not_eligible(self):
+        data, stored = self.submitted(application(postcode="EH1 1YZ"))
         self.assertEqual((stored["postcode_country"], stored["postcode_region"]), ("Scotland", None))
+        self.assertIs(data["eligible"], False)
+        self.assertEqual(data["reasons"], ["Your postcode (EH1 1YZ) is outside England (Scotland)."])
+        self.assertIs(stored["eligible"], False)
+
+    def test_an_employer_outside_england_also_rules_the_applicant_out(self):
+        data, _stored = self.submitted(application(postcode="ss", employerPostcode="EH1 1YZ"))
+        self.assertIs(data["eligible"], False)
+        self.assertEqual(data["reasons"], [
+            "Your postcode (ss) is not a valid UK postcode.",
+            "Your employer's postcode (EH1 1YZ) is outside England (Scotland).",
+        ])
 
     def test_without_the_lookup_service_the_application_is_saved_unlocated(self):
         def down(_postcode):
@@ -335,6 +363,9 @@ class SubmitApplicationTests(SimpleTestCase):
         stored = dict(zip(ef.INSERT_COLUMNS, cursor.executed[0][1]))
         self.assertEqual(stored["postcode"], "EX1 2MP")
         self.assertTrue(all(stored[column] is None for column in ef.LOCATION_COLUMNS))
+        # Not checked is not "eligible": staff see it was never decided.
+        self.assertIsNone(stored["eligible"])
+        self.assertIsNone(json.loads(response.content)["eligible"])
 
     def test_custom_answers_are_inserted_into_their_columns(self):
         layout = layout_with(extra=[question("cf_years", "number", required=True)])

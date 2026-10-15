@@ -40,11 +40,14 @@ keeps their answers. The version is stored with the row.
 
 Postcodes
 ---------
-Both postcodes must be real UK postcodes. Each is looked up
-(postcode_lookup.py) and saved as written there, with its country, region and
-district alongside. A postcode outside England is accepted: staff decide
-eligibility. If the lookup service is down the application is still saved and
-the location is left NULL, so "not checked" never looks like "checked".
+Both postcodes are looked up (postcode_lookup.py) and saved as written there,
+with their country, region and district alongside. A postcode is never a
+reason to refuse the form: the application is always saved. But one that is not
+a UK postcode, cannot be found, or is outside England makes the applicant not
+eligible -- saved as eligible = false with the reason in ineligible_reason, and
+the applicant is told so instead of "Application submitted". If the lookup
+service is down, the location is left NULL and eligible stays NULL (not
+checked), so "not checked" never looks like "checked".
 """
 import json
 import logging
@@ -142,10 +145,17 @@ POSTCODES = {
 LOCATION_COLUMNS = tuple(column for _postcode, *location in POSTCODES.values() for column in location)
 
 #: Columns added since the table was first created (see upgrade_table).
-ADDED_COLUMNS = tuple((column, "text") for column in LOCATION_COLUMNS) + (("layout_version", "bigint"),)
+ADDED_COLUMNS = tuple((column, "text") for column in LOCATION_COLUMNS) + (
+    ("layout_version", "bigint"),
+    ("eligible", "boolean"),
+    ("ineligible_reason", "text"),
+)
 
 #: What every insert writes, before the custom questions' columns.
-INSERT_COLUMNS = COLUMNS + LOCATION_COLUMNS + ("layout_version",)
+INSERT_COLUMNS = COLUMNS + LOCATION_COLUMNS + ("layout_version", "eligible", "ineligible_reason")
+
+#: How each looked-up postcode is named in an ineligibility reason.
+POSTCODE_NAMES = {"postcode": "Your postcode", "employerPostcode": "Your employer's postcode"}
 
 #: Custom questions added in the builder: their SQL type, by question type.
 CUSTOM_SQL_TYPES = {"text": "text", "number": "numeric", "date": "date", "yesno": "boolean", "dropdown": "text"}
@@ -197,6 +207,8 @@ def ensure_table(cursor):
             funded_training_completed_on      date,
             not_previously_completed_programme boolean,
             layout_version                    bigint,
+            eligible                          boolean,
+            ineligible_reason                 text,
             submitted_at                      timestamptz NOT NULL DEFAULT now()
         )"""
     )
@@ -382,8 +394,6 @@ def clean_application(payload, today=None, layout=None):
             continue
         if value is None and question["required"]:
             errors[key] = REQUIRED
-        elif value is not None and key in POSTCODES and not postcode_lookup.is_valid(value):
-            errors[key] = postcode_lookup.INVALID_POSTCODE
         row[column] = value
 
     answers = payload.get("custom")
@@ -428,29 +438,44 @@ def clean_application(payload, today=None, layout=None):
     return row, errors
 
 
-def locate_postcodes(row, errors):
-    """Look up the postcodes in `row`: save each as written, with its location.
+def locate_postcodes(row):
+    """Look up the postcodes in `row`; returns (eligible, reasons).
 
-    An unknown postcode is reported in `errors`; one that could not be checked
-    is kept as given with no location.
+    Each postcode found is saved as written, with its location. A postcode that
+    is not a UK postcode, cannot be found or is outside England is a reason the
+    applicant is not eligible. eligible is True when every postcode given was
+    found in England, False when there is a reason, and None when one could not
+    be checked (and nothing else ruled the applicant out).
     """
+    reasons, unchecked = [], False
     for key, (column, country, region, district) in POSTCODES.items():
         row[country] = row[region] = row[district] = None
         value = row.get(column)
-        if not value or key in errors:
+        if not value:
+            continue
+        name = POSTCODE_NAMES[key]
+        if not postcode_lookup.is_valid(value):
+            reasons.append(f"{name} ({value}) is not a valid UK postcode.")
             continue
         try:
             found = postcode_lookup.lookup(value)
         except postcode_lookup.PostcodeLookupUnavailable as exc:
             logger.warning("Could not check a postcode on an eligibility application: %s", exc)
+            unchecked = True
             continue
         if found is None:
-            errors[key] = postcode_lookup.UNKNOWN_POSTCODE
+            reasons.append(f"{name} ({postcode_lookup.formatted(value)}) could not be found.")
             continue
         row[column] = found["postcode"]
         row[country] = found["country"] or None
         row[region] = found["region"] or None
         row[district] = found["district"] or None
+        if found["country"] != "England":
+            where = f" ({found['country']})" if found["country"] else ""
+            reasons.append(f"{name} ({found['postcode']}) is outside England{where}.")
+    if reasons:
+        return False, reasons
+    return (None if unchecked else True), []
 
 
 def _published_layout():
@@ -496,10 +521,12 @@ def submit_application(request):
         return _error(FORM_CHANGED, 409, formChanged=True)
 
     row, errors = clean_application(payload, layout=layout)
-    locate_postcodes(row, errors)
     if errors:
         return _error("Please correct the highlighted answers.", 400, fields=errors)
+    eligible, reasons = locate_postcodes(row)
     row["layout_version"] = version
+    row["eligible"] = eligible
+    row["ineligible_reason"] = " ".join(reasons) or None
 
     custom_columns = [column for column in row if CUSTOM_COLUMN_RE.match(column)]
     names = list(INSERT_COLUMNS) + [f'"{column}"' for column in custom_columns]
@@ -518,4 +545,5 @@ def submit_application(request):
         return _error(UNAVAILABLE, 503)
 
     logger.info("Apprenticeship eligibility application %s received", application_id)
-    return JsonResponse({"submitted": True}, status=201)
+    # Saved either way; the applicant is told whether the postcodes ruled them out.
+    return JsonResponse({"submitted": True, "eligible": eligible, "reasons": reasons}, status=201)

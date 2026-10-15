@@ -22,6 +22,7 @@ vi.mock('@/api/apprenticeshipApplication', async original => ({
 
 const EXETER: PostcodeCheck = { status: 'found', postcode: 'EX1 2MP', country: 'England', region: 'South West', district: 'Exeter', inEngland: true };
 const EDINBURGH: PostcodeCheck = { status: 'found', postcode: 'EH1 1YZ', country: 'Scotland', region: '', district: 'City of Edinburgh', inEngland: false };
+const ELIGIBLE = { eligible: true, reasons: [] };
 
 beforeEach(() => {
   vi.useFakeTimers({ toFake: ['Date'] });
@@ -76,7 +77,7 @@ async function reachProgramme() {
 }
 
 it('walks the four sections and submits one complete application', async () => {
-  vi.mocked(submitApprenticeshipApplication).mockResolvedValue();
+  vi.mocked(submitApprenticeshipApplication).mockResolvedValue(ELIGIBLE);
   await open();
 
   expect(screen.getByRole('heading', { name: 'Eligibility Form' })).toBeInTheDocument();
@@ -138,22 +139,25 @@ it('keeps the applicant on a section until its required answers are valid', asyn
   next();
   expect(await screen.findByText('Enter a valid email address.')).toBeInTheDocument();
   expect(screen.getByText('The date cannot be in the future.')).toBeInTheDocument();
-  expect(screen.getByText('Enter a valid UK postcode, for example CT1 1AA.')).toBeInTheDocument();
   expect(screen.getByText('Section 1 of 4')).toBeInTheDocument();
-  // A malformed postcode is never looked up.
+  // A malformed postcode is not a form error (it is decided on submit) and is never looked up.
+  expect(screen.getByLabelText(/^6\. Postcode/)).toHaveAttribute('aria-invalid', 'false');
+  expect(screen.queryByText(/valid UK postcode/)).not.toBeInTheDocument();
   expect(lookupPostcode).not.toHaveBeenCalled();
 });
 
-it('shows where a postcode is, and warns without blocking when it is outside England', async () => {
+it('shows where a postcode in England is, and says nothing under any other postcode', async () => {
   vi.mocked(lookupPostcode).mockImplementation(async (postcode: string) => (postcode.toUpperCase().startsWith('EH') ? EDINBURGH : EXETER));
   await open();
   fillPersonalDetails();
   type(/^6\. Postcode/, 'eh1 1yz');
   fireEvent.blur(screen.getByLabelText(/^6\. Postcode/));
 
-  expect(await screen.findByText('City of Edinburgh, Scotland')).toBeInTheDocument();
-  expect(screen.getByText(/is outside England\. You must be living in England/)).toBeInTheDocument();
-  expect(lookupPostcode).toHaveBeenCalledWith('eh1 1yz');
+  await vi.waitFor(() => expect(lookupPostcode).toHaveBeenCalledWith('eh1 1yz'));
+  await vi.waitFor(() => expect(screen.queryByText(/Checking postcode/)).not.toBeInTheDocument());
+  expect(screen.queryByText(/Edinburgh/)).not.toBeInTheDocument();
+  expect(screen.queryByText(/outside England/)).not.toBeInTheDocument();
+  expect(screen.getByLabelText(/^6\. Postcode/)).toHaveAttribute('aria-invalid', 'false');
   next();
   expect(await heading('Employment')).toBeInTheDocument();
 
@@ -162,28 +166,45 @@ it('shows where a postcode is, and warns without blocking when it is outside Eng
   expect(await screen.findByText('Exeter, South West, England')).toBeInTheDocument();
 });
 
-it('stops on a postcode that does not exist', async () => {
-  vi.mocked(lookupPostcode).mockResolvedValue({ status: 'notFound' });
+it('carries on past a postcode that does not exist or cannot be checked, with no error', async () => {
+  vi.mocked(lookupPostcode).mockResolvedValueOnce({ status: 'notFound' }).mockResolvedValue({ status: 'unavailable' });
   await open();
   fillPersonalDetails();
-  next();
-
-  expect(await screen.findByText('We could not find this postcode. Check it and try again.')).toBeInTheDocument();
-  expect(screen.getByLabelText(/^6\. Postcode/)).toHaveAttribute('aria-invalid', 'true');
-  expect(screen.getByText('Section 1 of 4')).toBeInTheDocument();
-  // Correcting the postcode clears its error.
-  type(/^6\. Postcode/, 'EX1 2MQ');
-  expect(screen.getByLabelText(/^6\. Postcode/)).toHaveAttribute('aria-invalid', 'false');
-});
-
-it('lets the applicant carry on when a postcode cannot be checked', async () => {
-  vi.mocked(lookupPostcode).mockResolvedValue({ status: 'unavailable' });
-  await open();
-  fillPersonalDetails();
+  fireEvent.blur(screen.getByLabelText(/^6\. Postcode/));
+  await vi.waitFor(() => expect(lookupPostcode).toHaveBeenCalled());
   next();
   expect(await heading('Employment')).toBeInTheDocument();
   fireEvent.click(screen.getByRole('button', { name: /Previous/ }));
-  expect(await screen.findByText('We could not check this postcode just now. You can still continue.')).toBeInTheDocument();
+  await heading('Personal Details');
+  expect(screen.getByLabelText(/^6\. Postcode/)).toHaveAttribute('aria-invalid', 'false');
+  expect(screen.queryByText(/could not (find|check) this postcode/)).not.toBeInTheDocument();
+});
+
+it('tells the applicant they are not eligible when the server rules them out by postcode', async () => {
+  const reasons = ['Your postcode (EH1 1YZ) is outside England (Scotland).'];
+  vi.mocked(submitApprenticeshipApplication).mockResolvedValue({ eligible: false, reasons });
+  await open();
+  await reachProgramme();
+  fireEvent.change(screen.getByLabelText(/Choose Your Applying Programme/), { target: { value: 'Marketing Manager Level 6' } });
+  choose(/government funded training programmes/, 'No');
+  choose(/not previously completed this programme/, 'Yes');
+  fireEvent.click(screen.getByRole('button', { name: /Submit application/ }));
+
+  expect(await heading('You are not eligible')).toHaveFocus();
+  expect(screen.getByText(reasons[0])).toBeInTheDocument();
+  expect(screen.queryByRole('heading', { name: 'Application submitted' })).not.toBeInTheDocument();
+  expect(submitApprenticeshipApplication).toHaveBeenCalledTimes(1);
+});
+
+it('treats postcodes that could not be checked as a normal submission', async () => {
+  vi.mocked(submitApprenticeshipApplication).mockResolvedValue({ eligible: null, reasons: [] });
+  await open();
+  await reachProgramme();
+  fireEvent.change(screen.getByLabelText(/Choose Your Applying Programme/), { target: { value: 'Marketing Manager Level 6' } });
+  choose(/government funded training programmes/, 'No');
+  choose(/not previously completed this programme/, 'Yes');
+  fireEvent.click(screen.getByRole('button', { name: /Submit application/ }));
+  expect(await heading('Application submitted')).toBeInTheDocument();
 });
 
 it('returns to earlier sections with the answers kept', async () => {
@@ -197,7 +218,7 @@ it('returns to earlier sections with the answers kept', async () => {
 });
 
 it('does not send a completion date once the answer is changed to No', async () => {
-  vi.mocked(submitApprenticeshipApplication).mockResolvedValue();
+  vi.mocked(submitApprenticeshipApplication).mockResolvedValue(ELIGIBLE);
   await open();
   await reachProgramme();
   fireEvent.change(screen.getByLabelText(/Choose Your Applying Programme/), { target: { value: 'Marketing Manager Level 6' } });
@@ -250,7 +271,7 @@ function publishedLayout(): EligibilityLayout {
 }
 
 it('asks the questions of the published form', async () => {
-  vi.mocked(submitApprenticeshipApplication).mockResolvedValue();
+  vi.mocked(submitApprenticeshipApplication).mockResolvedValue(ELIGIBLE);
   vi.mocked(fetchEligibilityForm).mockResolvedValue({ layout: publishedLayout(), version: 3 });
   await open();
 

@@ -190,8 +190,8 @@
 .location { display: flex; align-items: flex-start; gap: 8px; margin: 0; color: var(--app-text-secondary); font-size: 12.5px; line-height: 1.55; }
 .location svg { flex: none; width: 16px; height: 16px; margin-top: 1px; }
 .locationFound { color: var(--app-success); }
-.locationWarning { padding: 10px 12px; border: 1px solid var(--app-warning-border); border-radius: 12px; background: var(--app-warning-soft); color: var(--app-warning); }
-.locationWarning strong { font-weight: 700; }
+.notEligibleIcon { background: var(--app-warning-soft); color: var(--app-warning); }
+.reasons { margin: 0; padding: 10px 14px 10px 30px; max-width: 560px; border: 1px solid var(--app-warning-border); border-radius: 12px; background: var(--app-warning-soft); color: var(--app-warning); font-size: 13.5px; line-height: 1.6; text-align: left; }
 
 .loading { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 12px; margin: 0; padding: 32px 16px; color: var(--app-text-secondary); font-size: 14px; }
 .loading .alert { margin: 0; flex-basis: 100%; text-align: center; }
