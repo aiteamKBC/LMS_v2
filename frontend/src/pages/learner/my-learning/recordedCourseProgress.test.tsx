@@ -9,8 +9,8 @@ import type { StudentActivityItem, StudentActivityResponse } from '@/api/student
 import { buildUnifiedLearningSummary, StudentActivityPanel, subjectsFrom } from './SubjectWorkspace';
 
 vi.mock('./DeferredStudentMaterial', () => ({
-  DeferredStudentMaterial: ({ groupId, activityId }: { groupId: number; activityId: number }) =>
-    <div>Source material {groupId}/{activityId}</div>,
+  DeferredStudentMaterial: ({ groupId, activityId, reviewQuiz, readOnly }: { groupId: number; activityId: number; reviewQuiz?: boolean; readOnly?: boolean }) =>
+    <div>{reviewQuiz && readOnly ? 'Saved quiz review' : 'Source material'} {groupId}/{activityId}</div>,
 }));
 
 const activity = (course: number, kind: string, id: number): StudentActivityItem => ({
@@ -47,6 +47,22 @@ const catalogueData: StudentActivityResponse = {
 
 describe('full historical course catalogue', () => {
   afterEach(() => vi.restoreAllMocks());
+
+  it.each(['commercial', 'apprenticeship'])('opens completed standalone quizzes for read-only review (%s)', async kind => {
+    vi.spyOn(api, 'subjectRequest').mockResolvedValue({ covers: {} });
+    render(<MemoryRouter initialEntries={['/?activity=catalogue:1:quiz:10']}><StudentActivityPanel data={catalogueData}
+      kind={kind} learnerId="77" loading={false} error={null} onRetry={vi.fn()} /></MemoryRouter>);
+    const row = within(await screen.findByRole('group', { name: 'quiz 1 activity' }));
+    expect(row.getByText('Complete')).toBeVisible();
+    expect(row.getByText('Saved quiz review 1/10')).toBeVisible();
+    expect(row.queryByText('Content not available yet')).not.toBeInTheDocument();
+    fireEvent.click(row.getByRole('button', { name: 'Close quiz' }));
+    expect(row.queryByText('Saved quiz review 1/10')).not.toBeInTheDocument();
+    fireEvent.click(row.getByRole('button', { name: 'View quiz' }));
+    expect(row.getByText('Saved quiz review 1/10')).toBeVisible();
+    expect(row.getByText('Complete')).toBeVisible();
+    expect(row.getByText(/OTJH: 18m/)).toBeVisible();
+  });
 
   it('keeps month-only source placements distinct and chronological on the learning map', () => {
     const recovered = { ...catalogueData, activities: [

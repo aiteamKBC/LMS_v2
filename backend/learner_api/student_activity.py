@@ -261,6 +261,26 @@ def student_activity(request, kind, pk):
     if not student_activity_available(aptem_id):
         return _error("This learner is not linked to Aptem.", 404)
 
+    if request.GET.get('catalogue_kind') == 'quiz':
+        from . import canonical_learning
+        from .legacy_quiz_review import read_review
+        try:
+            group_id = int(request.GET.get('group_id', ''))
+            quiz_id = int(request.GET.get('activity_id', ''))
+            if not all(0 < value <= 9223372036854775807 for value in (group_id, quiz_id)):
+                raise ValueError()
+        except (ValueError, TypeError):
+            return _error('Invalid quiz reference.', 400)
+        try:
+            owner = canonical_learning.require_profile(pk)
+            if owner['aptem_id'] != aptem_id or not _emails_match(owner['email'], source.email):
+                return _error('The consolidated learner identity needs review.', 409)
+            return _private(read_review(owner, group_id, quiz_id))
+        except canonical_learning.ServiceError as error:
+            return _error(str(error), error.status)
+        except DatabaseError:
+            return _error('Could not load the saved quiz. Please retry.', 503)
+
     # Never forward client filters or Aptem ids into the historical reader.
     try:
         with _connection().cursor() as cursor:
