@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
 from .subject_dates import activity_schedule, as_date
+from curriculum_api.week_visibility import visible_child_sql, visible_week_sql
 
 
 def _dated_schedule(day, source):
@@ -57,7 +58,7 @@ def read_builder_activity_dates(cursor, module_ids):
     ids = list(modules)
     cursor.execute('''SELECT id,module_catalogue_id,title FROM curriculum.weeks
         WHERE module_catalogue_id=ANY(%s)
-          AND (deleted_at IS NULL OR COALESCE(deleted_via_parent, '') <> '')
+          AND ''' + visible_week_sql('weeks') + '''
         ORDER BY module_catalogue_id,display_order,week_number,id''', [ids])
     weeks = {(str(module_id), str(week_id)): {'id': str(week_id), 'title': title, 'components': []}
              for week_id, module_id, title in cursor.fetchall()}
@@ -71,7 +72,7 @@ def read_builder_activity_dates(cursor, module_ids):
             'dueTiming',c.settings_json->>'dueTiming')
         FROM curriculum.components c
         WHERE c.module_catalogue_id=ANY(%s)
-          AND (c.deleted_at IS NULL OR COALESCE(c.deleted_via_parent, '') <> '')
+          AND ''' + visible_child_sql('c') + '''
         ORDER BY c.module_catalogue_id,c.display_order,c.id''', [ids])
     dates = {}
     for component_id, module_id, week_id, title, component_type, settings in cursor.fetchall():

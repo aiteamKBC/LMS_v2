@@ -15,6 +15,8 @@ import logging
 
 from django.db import DatabaseError, connections
 
+from curriculum_api.week_visibility import visible_child_sql
+
 logger = logging.getLogger(__name__)
 
 
@@ -59,7 +61,7 @@ def monthly_assignment_required(component_id, source):
             cur.execute(
                 "SELECT 1 FROM curriculum.components "
                 "WHERE module_catalogue_id = ANY(%s) AND type = 'assignment' "
-                "AND (deleted_at IS NULL OR COALESCE(deleted_via_parent, '') <> '') "
+                f"AND {visible_child_sql('components')} "
                 "AND settings_json::jsonb ->> 'isMonthlyAssignment' = 'true' LIMIT 1",
                 [module_ids],
             )

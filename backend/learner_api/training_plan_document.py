@@ -26,6 +26,7 @@ from django.http import JsonResponse
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 
+from curriculum_api.week_visibility import visible_child_sql, visible_week_sql
 from enrolment_api.auth import employer_signing_party_error, enrolment_login_required
 
 from .apprenticeship_agreement import (
@@ -124,7 +125,9 @@ def _module_breakdown(module_ids):
                        c.id, c.type, c.title, c.expected_otjh, c.display_order
                 FROM curriculum.weeks w
                 LEFT JOIN curriculum.components c ON c.week_id = w.id
+                  AND """ + visible_child_sql("c") + """
                 WHERE w.module_catalogue_id = ANY(%s)
+                  AND """ + visible_week_sql("w") + """
                 ORDER BY w.module_catalogue_id, w.week_number, w.display_order,
                          c.display_order, c.title
                 """,
