@@ -14,6 +14,7 @@ export function LmsPointsScreen(props:Props){
  return <LmsPointsBody key={String(user?.accountId)+':'+String(user?.learnerKind)+':'+String(user?.id)} {...props}/>;
 }
 function LmsPointsBody({client,session,refreshVersion=0}:Props){
+ const moduleId=session?.rewardModuleId||'MOD-KBC-PMP-M01-SMR';
  const learnerId=String(session?.user?.id||''),owner=String(session?.user?.accountId||'')+':'+String(session?.user?.learnerKind||'')+':'+learnerId;
  const shared=session?.capabilities?.customPointsPolicy===true;
  const [saved,setSaved]=useState<any>(null),[loading,setLoading]=useState(false),[error,setError]=useState(''),[expanded,setExpanded]=useState(false);
@@ -22,7 +23,7 @@ function LmsPointsBody({client,session,refreshVersion=0}:Props){
  const reload=useCallback(async()=>{
   const request=++requestId.current;setLoading(true);setError('');
   try{
-   const model=shared?normaliseLmsRewards(await client.rewardsSummary(),learnerId):normaliseLmsPoints(await client.points(),learnerId);
+   const model=shared?normaliseLmsRewards(await client.rewardsSummary(moduleId),learnerId,moduleId):normaliseLmsPoints(await client.points(),learnerId);
    if(alive.current&&currentOwner.current===owner&&request===requestId.current)setSaved({owner,model});
   }catch(problem:any){
    if(alive.current&&currentOwner.current===owner&&request===requestId.current){
@@ -30,7 +31,7 @@ function LmsPointsBody({client,session,refreshVersion=0}:Props){
     setError(problem?.message||'Your LMS points could not be loaded. Please try again.');
    }
   }finally{if(alive.current&&currentOwner.current===owner&&request===requestId.current)setLoading(false);}
- },[client,learnerId,owner,shared]);
+ },[client,learnerId,owner,shared,moduleId]);
  useEffect(()=>{
   alive.current=true;let stopped=false;setSaved(null);setExpanded(false);setPending(null);setSelection(null);setMessage('');setAlias('');setDraftLoaded(false);void reload();
   void AsyncStorage.getItem(voucherDraftKey(owner)).then(raw=>{if(stopped||currentOwner.current!==owner)return;setPending(readLmsVoucherDraft(raw,owner));setDraftLoaded(true);}).catch((e:any)=>{if(!stopped&&currentOwner.current===owner)setError(e.message||'This phone could not check earlier voucher requests.');});
@@ -48,8 +49,8 @@ function LmsPointsBody({client,session,refreshVersion=0}:Props){
   try{
    // Persist before sending: a timeout must retry this same reservation.
    await AsyncStorage.setItem(voucherDraftKey(owner),JSON.stringify(entry));if(!stillHere())return;setPending(entry);
-   const response=await client.requestVoucher({requestId:entry.requestId,amountGbp:entry.amountGbp});
-   const result=confirmLmsVoucherResponse(response,learnerId,entry);if(!stillHere())return;
+   const response=await client.requestVoucher({requestId:entry.requestId,amountGbp:entry.amountGbp},moduleId);
+   const result=confirmLmsVoucherResponse(response,learnerId,entry,moduleId);if(!stillHere())return;
    await AsyncStorage.removeItem(voucherDraftKey(owner));if(!stillHere())return;
    setPending(null);setSelection(null);setMessage('Your £'+result.amountGbp+' voucher request is recorded ('+result.status+'). The college team will confirm fulfilment.');await reload();
   }catch(problem:any){if(stillHere())setError((problem.message||'The LMS could not confirm this request.')+' Any saved request will retry with the same reference.');}
@@ -59,8 +60,8 @@ function LmsPointsBody({client,session,refreshVersion=0}:Props){
   if(mutating.current||!data?.policyConfirmed)return;mutating.current=true;setActionBusy(true);setError('');
   try{
    const displayName=optedIn?alias.trim():'';
-   const result=await client.setLeaderboard({optedIn,displayName});
-   if(result?.source!=='lms'||result.moduleId!=='MOD-KBC-PMP-M01-SMR'||String(result.learnerId)!==learnerId||result.optedIn!==optedIn||result.displayName!==displayName)throw new Error('The LMS did not confirm your leaderboard preference. Refresh before trying again.');
+   const result=await client.setLeaderboard({optedIn,displayName},moduleId);
+   if(result?.source!=='lms'||result.moduleId!==moduleId||String(result.learnerId)!==learnerId||result.optedIn!==optedIn||result.displayName!==displayName)throw new Error('The LMS did not confirm your leaderboard preference. Refresh before trying again.');
    if(!stillHere())return;setMessage(optedIn?'You have joined the optional module leaderboard.':'You have left the module leaderboard.');await reload();
   }catch(problem:any){if(stillHere())setError(problem.message||'Your preference could not be saved.');}
   finally{mutating.current=false;if(stillHere())setActionBusy(false);}
@@ -88,8 +89,9 @@ function LmsPointsBody({client,session,refreshVersion=0}:Props){
   </>}
   <Card><Btn title={expanded?'Hide reward information':'How rewards work'} secondary onPress={()=>setExpanded(value=>!value)}/>{expanded&&<>
    {!data?.policyConfirmed&&<Notice>The updated rules are awaiting activation on the LMS. Your confirmed balance stays unchanged.</Notice>}
-   <Txt>1 point per complete hour of accepted study. Part-hours carry forward.</Txt>
-   <Txt>First submitted quiz only: at least 70% earns 1 point per correct answer; 100% earns 2 per correct answer instead. Retakes earn no extra points.</Txt>
+   <Txt>{data?.policy?.formula?.pointsPerHour??1} point(s) per complete hour of accepted study. Part-hours carry forward across courses.</Txt>
+   <Txt>First submitted quiz only: at least {data?.policy?.formula?.quizThreshold??70}% earns {data?.policy?.formula?.quizPointPerCorrect??1} point(s) per correct answer; 100% earns {data?.policy?.formula?.perfectQuizPointPerCorrect??2} instead. Retakes earn no extra points.</Txt>
+   {!!data?.policy?.minimumStudySeconds&&<Txt small>Study visits need at least {data.policy.minimumStudySeconds/60} accepted minutes to count towards hour rewards.</Txt>}
    <Txt>100 points represents £1 Amazon voucher value.</Txt>
    {data?.study&&<Txt small>{(data.study.acceptedStudySeconds/3600).toFixed(1)} hours accepted for study rewards · {data.study.pendingSessionCount} sessions awaiting confirmation. Your formal programme OTJ record is shown separately in Progress.</Txt>}
    {data?.opportunities?.map((item:any)=><View key={item.id} style={s.recordRow}><Text style={s.rowTitle}>{item.title} · {count(item.points)} points</Text><Txt small>{item.status==='completed'?'Verified':item.status==='needs_dates'?'Awaiting college dates':item.status==='scheduled'?'Opens '+item.opensOn:item.status==='closed'?'Window closed':'College verification required'}</Txt></View>)}

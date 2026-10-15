@@ -11,9 +11,13 @@ export function normaliseLmsVoucherRequest(item){
  if(!item||!text(item.requestId)||!item.requestId||!recordId(item.claimId)||!integer(item.amountGbp)||!item.amountGbp||!integer(item.points)||item.points!==item.amountGbp*100||!statuses.includes(item.status)||!day(item.requestedAt)||!item.requestedAt)fail();
  return {requestId:item.requestId,claimId:String(item.claimId),amountGbp:item.amountGbp,points:item.points,status:item.status,requestedAt:item.requestedAt};
 }
-export function normaliseLmsRewards(payload,learnerId){
- if(payload?.source!=='lms'||payload.moduleId!==moduleId||String(payload.learnerId)!==String(learnerId))fail();
+export function normaliseLmsRewards(payload,learnerId,expectedModuleId=moduleId){
+ if(payload?.source!=='lms'||payload.moduleId!==expectedModuleId||String(payload.learnerId)!==String(learnerId))fail();
  const wallet=normaliseLmsPoints({points:payload.points,rewards:[]},learnerId),p=payload.policy,study=payload.study;
+ if(p?.formula){
+  const f=p.formula;
+  if(!['pointsPerHour','quizPointPerCorrect','perfectQuizPointPerCorrect'].every(k=>integer(f[k])&&f[k]<=1000)||!integer(f.quizThreshold)||f.quizThreshold<1||f.quizThreshold>100||!Array.isArray(f.hourActivities)||f.hourActivities.some(k=>!['reading','powerpoint','podcast','video','quiz'].includes(k)))fail();
+ }
  if(!p||typeof p.enabled!=='boolean'||!text(p.version,100)||!day(p.startsAt)||p.pointsPerGbp!==100||!study||!Number.isFinite(study.acceptedStudySeconds)||study.acceptedStudySeconds<0||study.basis!=='reward_accepted_active_intervals'||study.formalOtj!==false||!integer(study.pendingSessionCount))fail();
  if(!list(payload.opportunities)||!list(payload.voucherOptions)||!list(payload.voucherRequests)||!payload.leaderboard||typeof payload.leaderboard.optedIn!=='boolean'||!text(payload.leaderboard.displayName,100)||!list(payload.leaderboard.entries))fail();
  const opportunities=payload.opportunities.map(item=>{
@@ -28,8 +32,8 @@ export function normaliseLmsRewards(payload,learnerId){
  if(!payload.leaderboard.optedIn&&entries.length)fail();
  return {...wallet,policyConfirmed:p.enabled,policy:p,study,opportunities,voucherOptions,voucherRequests:payload.voucherRequests.map(normaliseLmsVoucherRequest),leaderboard:{...payload.leaderboard,entries}};
 }
-export function confirmLmsVoucherResponse(payload,learnerId,pending){
- if(payload?.source!=='lms'||payload.moduleId!==moduleId||String(payload.learnerId)!==String(learnerId)||typeof payload.duplicate!=='boolean')fail();
+export function confirmLmsVoucherResponse(payload,learnerId,pending,expectedModuleId=moduleId){
+ if(payload?.source!=='lms'||payload.moduleId!==expectedModuleId||String(payload.learnerId)!==String(learnerId)||typeof payload.duplicate!=='boolean')fail();
  const result=normaliseLmsVoucherRequest(payload.request);
  if(result.requestId!==pending.requestId||result.amountGbp!==pending.amountGbp)fail();
  return result;

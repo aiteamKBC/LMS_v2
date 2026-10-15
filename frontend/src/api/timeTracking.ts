@@ -3,6 +3,7 @@ export type TrackingActivityKind = 'quiz' | 'video' | 'component';
 export type TrackingCountingMode = 'active_quiz' | 'active_playback' | 'visible_page';
 
 export interface TimeTrackingSession {
+  rewardTracking?: boolean;
   trackingToken: string;
   startedAt: string;
   sessionId: string;

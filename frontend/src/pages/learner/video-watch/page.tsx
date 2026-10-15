@@ -1,4 +1,5 @@
 import { startActivityClock } from '@/lib/activityClock';
+import { observeRewardInterval, flushRewardObservations, clearRewardObservations } from '@/lib/rewardTracking';
 import { SessionResults } from '@/components/feature/SessionResults';
 import { narrationFromHtml, narrationFromPdf, useReadingNarration } from './readingNarration';
 import { parsePersonalLearning } from '@/lib/personalLearning';
@@ -571,6 +572,10 @@ export default function ComponentViewPage() {
     if (contentKind === 'reading' && (loading || loadError || !openable || readyReading !== readingReadyKey)) return;
     if (activeMedia ? !playerPlaying : (!unsupported && !playerPlaying)) return;
     const clock = startActivityClock({
+      onInterval: (start,end) => {
+        try { observeRewardInterval(trackingSessionRef.current,start,end); }
+        catch { setSubmitError('Your measured-time draft could not be saved. Keep this page open and retry saving.'); }
+      },
       countInBackground: activeMedia,
       pauseOnUnload: contentKind === 'reading',
       remainder: timerRemainder.current,
@@ -641,6 +646,7 @@ export default function ComponentViewPage() {
     setRefreshError(null);
     try {
       const tracking = trackingSessionRef.current || await trackingPromiseRef.current;
+      if (tracking?.rewardTracking && timeSource === 'timer') await flushRewardObservations(tracking,isVideo?'video':'component',componentId);
       if (!tracking) throw new Error('Activity timing did not start. Reopen the activity and try again.');
       if (isVideo) {
         const res = await submitVideoProgress(componentId, kind as 'commercial' | 'apprenticeship', id, {
@@ -667,6 +673,7 @@ export default function ComponentViewPage() {
         });
         setRecord({ activityKey: timerStorageKey, componentId, timeTaken: res.record.timeTaken });
       }
+      clearRewardObservations(tracking);
       clearActivityTimer(timerStorageKey);
       setWallElapsed(0);
       timerRemainder.current.milliseconds = 0;
