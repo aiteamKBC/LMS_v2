@@ -531,6 +531,9 @@ class TrainingPlanDashboardTests(SimpleTestCase):
             profiles.objects.filter.return_value.only.return_value.first.return_value = None
             read_dashboard(source, section='overview')
         sql = ' '.join(str(call.args[0]) for call in connection.cursor.return_value.__enter__.return_value.execute.call_args_list)
+        self.assertIn('WITH RECURSIVE owners', sql)
+        self.assertIn('teams_shared_source_module_id', sql)
+        self.assertIn('delivery.module_id', sql)
         self.assertIn('liveSessionLinkOverride', sql)
         self.assertIn('COALESCE(replaced_attendance.occurrence_id,o.id)', sql)
 
