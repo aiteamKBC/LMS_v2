@@ -106,6 +106,20 @@ class SharedModuleProgressTests(SimpleTestCase):
         after = self.compare(None, detail, [{'id': 'M1', 'title': 'Same'}, {'id': 'M2', 'title': 'Same'}], progress)
         self.assertEqual([(r['completed'], r['total'], r['percent']) for r in after], [(4, 6, 66.67), (0, 1, 0)])
 
+    def test_repointed_quiz_attempt_credits_only_its_explicit_component(self):
+        detail = {'components': [
+            {'moduleId': 'M1', 'module': 'Shifted', 'componentId': 'TARGET-1',
+             'isQuiz': True, 'quizMeta': {'quizId': 21}},
+            {'moduleId': 'M1', 'module': 'Shifted', 'componentId': 'TARGET-2',
+             'isQuiz': True, 'quizMeta': {'quizId': 21}},
+        ], 'quizAttempts': [
+            {'quizId': 21, 'componentId': 'TARGET-1', 'passed': True},
+        ]}
+
+        after = self.compare(None, detail, [{'id': 'M1', 'title': 'Shifted'}], [])
+
+        self.assertEqual([(row['completed'], row['total']) for row in after], [(1, 2)])
+
     def test_same_titles_and_foreign_lineage_never_link_modules(self):
         activity = {'progress_basis': 'catalogue_activities',
                     'subjects': [{'id': 1, 'name': 'Same', 'module_id': 'OLD'}],
