@@ -1539,8 +1539,8 @@ def _resolve_from_master(modules, weeks, components, assigned_modules=None, *, c
                     _s(ctype).strip().lower().replace("-", "_") == "live_session"
                     and _s(settings.get("sessionDate"))
                     and not (
-                        _s(settings.get("teamsLiveSessionId"))
-                        and settings.get("teamsSessionNumber")
+                        (_s(settings.get("extraTeamsMeetingUrl")) and _s(settings.get("extraTeamsLiveSessionId")))
+                        or (_s(settings.get("teamsLiveSessionId")) and settings.get("teamsSessionNumber"))
                     )
                 ):
                     fallback_module_ids.add(_s(mid))
@@ -1689,7 +1689,16 @@ def _resolve_from_master(modules, weeks, components, assigned_modules=None, *, c
             if normalised_type == "live_session" else None
         )
         stored_series_id = _s(settings.get("teamsLiveSessionId"))
-        if fallback and (not stored_series_id or stored_series_id == fallback["teamsLiveSessionId"]):
+        extra_series_id = (
+            _s(settings.get("extraTeamsLiveSessionId"))
+            if normalised_type == "live_session" and _s(settings.get("extraTeamsMeetingUrl")) else ""
+        )
+        if extra_series_id:
+            # An additional week meeting owns its own one-off series. The
+            # inherited module series must not supply this card's results.
+            teams_live_session_id = extra_series_id
+            teams_session_number = 1
+        elif fallback and (not stored_series_id or stored_series_id == fallback["teamsLiveSessionId"]):
             teams_live_session_id = stored_series_id or fallback["teamsLiveSessionId"]
             teams_session_number = settings.get("teamsSessionNumber") or fallback["teamsSessionNumber"]
         else:
