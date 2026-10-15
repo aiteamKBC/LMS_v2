@@ -52,6 +52,12 @@ export function DashboardTrainingPlan({ kind, learnerId, plan, canOpenActivities
     }
     return summaries ? dashboardPlanSubjects(summaries, data) : [];
   }, [data, summaries, learningActivity, learnerDetail, learningSubjects]);
+  // My Learning owns the module list, while overview-week owns the compact
+  // authored-date projection used by the learner's Monthly Plan. Preserve both
+  // on this screen so assignments are not dropped when the richer module list wins.
+  const monthlyData = useMemo(() => data && monthlyOnly && canOpenActivities && summaries
+    ? { ...data, planSubjects: summaries }
+    : data, [data, monthlyOnly, canOpenActivities, summaries]);
   // Once one plan dependency has failed and no complete snapshot exists, the
   // error banner is the terminal state. Do not leave a sibling weekly-plan
   // skeleton spinning indefinitely while its own retry settles.
@@ -69,7 +75,7 @@ export function DashboardTrainingPlan({ kind, learnerId, plan, canOpenActivities
   return <div ref={anchor} className={`${styles.root} ${activityOverviewOnly || timelineOnly ? styles.embeddedLearnerTheme : ''}`}>
     {error && <div role="alert" className={styles.error}><span>Your monthly learning could not refresh. {error}</span><button onClick={refresh}>Retry monthly learning</button></div>}
     {!error && learningSubjectsError && <div role="alert" className={styles.error}><span>Your learning modules could not refresh. {learningSubjectsError}</span>{onRetryLearningSubjects && <button onClick={onRetryLearningSubjects}>Retry learning modules</button>}</div>}
-    {hasSnapshot && data ? <TrainingPlanDetails key={destination} data={data} subjects={subjects} kind={kind} learnerId={learnerId}
+    {hasSnapshot && monthlyData ? <TrainingPlanDetails key={destination} data={monthlyData} subjects={subjects} kind={kind} learnerId={learnerId}
       weeklyFocus={weeklyFocus} programmeStartDate={programmeStartDate} programmeEndDate={programmeEndDate} canOpenActivities={canOpenActivities} onRefresh={refresh} refreshing={loading} onRetryContract={retryContract} initialSubjectId={initialSubjectId} initialMonth={initialMonth} activityOverviewOnly={activityOverviewOnly} timelineOnly={timelineOnly} cardsOnly={cardsOnly} canOpenCalendar={canOpenCalendar} simpleModuleOverview={simpleModuleOverview} monthlyOnly={monthlyOnly} trainingOnly={trainingOnly} overviewOnly={overviewOnly} showOtjChart={showOtjChart} wholeProgrammeRings={wholeProgrammeRings} programmeSnapshot={programmeSnapshot} programmeProgress={programmeProgress} targetAsOfToday={targetAsOfToday} attendanceWorkspace={attendanceWorkspace} />
       : <>
         <div className={`${styles.topRow} ${weeklyFocus && !timelineOnly ? styles.withWeeklyFocus : ''}`}>

@@ -20,6 +20,13 @@ export interface SessionPerson {
   intervals?: { joinedAt: string; leftAt: string }[];
   sourceRecordIds?: string[];
   suggestedLearnerProfileId?: number | null;
+  identityAmbiguous?: boolean;
+}
+export interface AttendanceIdentityLink {
+  identityKind: 'email' | 'guest_name' | 'record'; identityValue: string; revision: number;
+  name: string; aliasEmail: string; sourceRecordIds: string[];
+  learnerProfileId: number; learnerName: string; scope: 'module' | 'session';
+  automatic?: boolean;
 }
 export type AccountCheckStatus = 'matched' | 'different-account' | 'unverified-guest' | 'unknown' | 'unmatched';
 /** One Microsoft account seen in the Teams report. Emails are only those Microsoft vouches for. */
@@ -62,6 +69,7 @@ export interface SessionResult {
   runs?: { startsAt: string; endsAt: string }[];
   state: string; reportReady: boolean; syncedAt?: string; fileCount?: number; archiveReady?: boolean;
   attendance?: SessionPerson[]; unmatchedAttendance?: SessionPerson[];
+  linkedIdentities?: AttendanceIdentityLink[];
   attendanceCandidates?: AttendanceCandidate[]; artifacts?: SessionFile[];
   identityCheck?: SessionAccountCheck;
 }
@@ -133,14 +141,19 @@ export async function requestSessionSync(seriesId: string) {
   return result as { state: 'queued'; message: string };
 }
 
-export async function linkAttendanceAlias(seriesId: string, sessionNumber: number, aliasEmail: string, learnerProfileId: number, sourceRecordIds: string[] = [], moduleId?: string) {
+export async function linkAttendanceAlias(seriesId: string, sessionNumber: number, aliasEmail: string, learnerProfileId: number, sourceRecordIds: string[] = [], moduleId?: string,
+  correction?: { action: 'change' | 'unlink'; link: AttendanceIdentityLink }) {
   const response = await coachFetch(`${adminBase}/${encodeURIComponent(seriesId)}/sessions/${sessionNumber}/attendance-alias/`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ aliasEmail, learnerProfileId, sourceRecordIds, ...(moduleId ? { moduleId } : {}) }),
+    body: JSON.stringify({ aliasEmail, learnerProfileId, sourceRecordIds, ...(moduleId ? { moduleId } : {}),
+      ...(correction ? { action: correction.action, expectedRevision: correction.link.revision,
+        expectedLearnerProfileId: correction.link.learnerProfileId,
+        identityKind: correction.link.identityKind, identityValue: correction.link.identityValue } : {}) }),
   });
   const result = await response.json();
   if (!response.ok) throw new Error(result.error || 'Could not link the reported email.');
-  return result as { aliasEmail: string; sourceRecordIds: string[]; learnerProfileId: number; learnerEmail: string; learnerName: string };
+  return result as { aliasEmail: string; sourceRecordIds: string[]; learnerProfileId: number; learnerEmail: string; learnerName: string;
+    action?: 'link' | 'change' | 'unlink'; scope?: 'module' | 'session'; recalculation?: 'complete' | 'failed' | 'pending' };
 }
 
 export async function setRecordingVisibility(seriesId: string, artifactId: string, hidden: boolean) {

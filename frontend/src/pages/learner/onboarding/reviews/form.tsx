@@ -15,7 +15,7 @@ import {
   type SkillsRadarItem,
   type SkillsRadarSummary,
 } from '@/api/reviewForm';
-import { competenceMeta } from '@/mocks/enrolment-console';
+import { MAX_COMPETENCE_SCORE, competenceMeta } from '@/mocks/enrolment-console';
 import { btnPrimary, btnSecondary, inputClass } from '@/pages/users/components/ui';
 import SignReviewModal from './SignReviewModal';
 import { downloadReviewPdf } from './reviewDocument';
@@ -315,11 +315,11 @@ function SkillsRadarReview({ radar }: { radar?: SkillsRadarSummary }) {
                         <span className="text-[10px] text-foreground-400 italic shrink-0">Not answered</span>
                       )}
                     </div>
-                    {/* Level as a proportion of the 8-point scale. */}
+                    {/* Level as a proportion of the self-assessment scale (9 points). */}
                     {typeof item.score === 'number' && (
                       <div className="mt-1.5 h-1.5 rounded-full bg-background-200 overflow-hidden">
                         <div className={`h-full rounded-full ${meta?.cellFill ?? 'bg-primary-500'}`}
-                          style={{ width: `${(item.score / 8) * 100}%` }} />
+                          style={{ width: `${(item.score / MAX_COMPETENCE_SCORE) * 100}%` }} />
                       </div>
                     )}
                     {item.note && <p className="text-[11px] text-foreground-500 mt-1 italic">{item.note}</p>}

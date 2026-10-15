@@ -60,6 +60,7 @@ from .subject_dates import activity_schedule, as_date
 from .subject_content import clean_text
 from .training_plan_dashboard import number, rows
 from .projection_performance import measure_projection
+from curriculum_api.week_visibility import visible_child_sql, visible_week_sql
 
 log = logging.getLogger(__name__)
 UK = ZoneInfo('Europe/London')
@@ -292,8 +293,8 @@ UPCOMING_ASSIGNMENTS_SQL = f'''SELECT c.id,c.module_catalogue_id AS module_id,c.
               WHERE q.component_id=c.id ORDER BY q.id LIMIT 1),c.settings_json->>'linkedQuizId') AS quiz_id) quiz
     WHERE c.module_catalogue_id IN (SELECT home.module_id FROM ({HOME_SUBJECTS_SQL}) home(module_id,title,current_plan)
                                     WHERE home.current_plan)
-      AND c.type='assignment' AND (c.deleted_at IS NULL OR COALESCE(c.deleted_via_parent, '') <> '')
-      AND (w.id IS NULL OR w.deleted_at IS NULL OR COALESCE(w.deleted_via_parent, '') <> '')'''
+      AND c.type='assignment' AND {visible_child_sql('c')}
+      AND (w.id IS NULL OR {visible_week_sql('w')})'''
 
 
 def upcoming_assignment_deadlines(source, profile, today, until=None):
@@ -385,7 +386,7 @@ def read_overview_subjects(source, profile):
     progress = [{'kind': row['kind'], 'passed': row['passed'],
                  'componentId': row['component_ref'], 'quizId': row['quiz_ref']}
                 for row in profile.progress_entries.using('enrolment')
-                .filter(component_link_source__in=('direct', 'quiz_ref'))
+                .filter(component_link_source__in=('direct', 'quiz_ref'), deleted_at__isnull=True)
                 .exclude(kind='activity_event')
                 .values('kind', 'passed', 'component_ref', 'quiz_ref')]
     with connections['enrolment'].cursor() as cur:
@@ -399,8 +400,8 @@ def read_overview_subjects(source, profile):
             JOIN curriculum.modules m ON m.module_catalogue_id=c.module_catalogue_id
             LEFT JOIN curriculum.weeks w ON w.id=c.week_id AND w.module_catalogue_id=c.module_catalogue_id
             WHERE c.module_catalogue_id=ANY(%s)
-              AND (c.deleted_at IS NULL OR COALESCE(c.deleted_via_parent, '') <> '')
-              AND (w.id IS NULL OR w.deleted_at IS NULL OR COALESCE(w.deleted_via_parent, '') <> '')''',
+              AND ''' + visible_child_sql('c') + '''
+              AND (w.id IS NULL OR ''' + visible_week_sql('w') + ''')''',
                     [[module_id for module_id, _title in assigned]])
         native = rows(cur)
     subjects = {}
@@ -433,8 +434,8 @@ def component_sql(ksb_mappings, *, builder_columns=False):
                       WHERE q.component_id=c.id ORDER BY q.id LIMIT 1),c.settings_json->>'linkedQuizId') AS quiz_id{extra}
             FROM curriculum.components c JOIN curriculum.modules m ON m.module_catalogue_id=c.module_catalogue_id
             LEFT JOIN curriculum.weeks w ON w.id=c.week_id AND w.module_catalogue_id=c.module_catalogue_id
-            WHERE c.module_catalogue_id=ANY(%s) AND (c.deleted_at IS NULL OR COALESCE(c.deleted_via_parent, '') <> '')
-              AND (w.id IS NULL OR w.deleted_at IS NULL OR COALESCE(w.deleted_via_parent, '') <> '')'''
+            WHERE c.module_catalogue_id=ANY(%s) AND {visible_child_sql('c')}
+              AND (w.id IS NULL OR {visible_week_sql('w')})'''
 
 
 def builder_components(native):
@@ -483,7 +484,7 @@ def read_week(source, now=None, *, home_kind=None, dashboard_kind=None, home_sum
         # The compact home projection returns no KSB codes, so skip the per-component lookup.
         ksb_mappings = "'[]'::jsonb" if home_summary or monthly_hours_only else '''coalesce(nullif(c.ksb_mappings,'[]'::jsonb),
                 (SELECT jsonb_agg(jsonb_build_object('code',k.ksb_code)) FROM curriculum.ksb_mappings k
-                 WHERE k.component_id=c.id AND (k.deleted_at IS NULL OR COALESCE(k.deleted_via_parent, '') <> '')), '[]'::jsonb)'''
+                 WHERE k.component_id=c.id AND ''' + visible_child_sql('k') + '''), '[]'::jsonb)'''
         cur.execute(component_sql(ksb_mappings, builder_columns=home_summary), [module_ids])
         native = rows(cur)
         # Match My Learning's delivery calendar, including undated lesson titles,

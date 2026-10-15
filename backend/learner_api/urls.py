@@ -1,4 +1,5 @@
 from . import working_hours_holidays
+from . import reward_tracking
 from .coach_availability import coach_available_slots, case_owner_available_slots
 from . import presentation_design
 from . import personal_learning
@@ -265,6 +266,7 @@ urlpatterns = [
     path("curriculum/legacy-otjh/", curriculum.legacy_otjh, name="curriculum-legacy-otjh"),
     # Signed start time shared by quizzes and learning components.
     path("time-tracking/start/", time_tracking.start_time_tracking, name="time-tracking-start"),
+    path("time-tracking/observations/", reward_tracking.observations, name="reward-time-observations"),
     path("working-hours/holidays/", working_hours_holidays.working_hours_holidays, name="working-hours-holidays"),
     # quiz-taking
     path("quizzes/<int:quiz_id>/", quizzes.quiz_detail, name="quiz-detail"),
@@ -315,6 +317,9 @@ urlpatterns = [
     # Declared before the <path:event_key> route below, which would otherwise
     # never be reached for the bare list URL.
     path("reviews/<str:kind>/<int:pk>/", review_form.enrolment_review_documents, name="enrolment-review-documents"),
+    # The four onboarding reviews, issued by the enrolment team (before the event-key routes below).
+    path("reviews/<str:kind>/<int:pk>/onboarding/", review_form.onboarding_reviews, name="enrolment-onboarding-reviews"),
+    path("reviews/<str:kind>/<int:pk>/issue/", review_form.issue_onboarding_review, name="enrolment-review-issue"),
     # Before the <path:event_key> route below, which is greedy and would
     # otherwise absorb the trailing "sign" into the event key.
     path("reviews/<str:kind>/<int:pk>/<str:event_key>/sign/", review_form.enrolment_review_sign, name="enrolment-review-sign"),

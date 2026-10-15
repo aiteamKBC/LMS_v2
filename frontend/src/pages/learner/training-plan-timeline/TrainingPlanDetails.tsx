@@ -8,6 +8,7 @@ import type { TrainingPlanDashboard, PlanReview } from '@/api/trainingPlanDashbo
 import type { LearnerCalendarEvent } from '@/api/learnerCalendar';
 import { fetchAttendanceWorkspace, peekAttendanceWorkspace, type AttendanceLecture, type AttendanceWorkspace } from '@/api/attendanceLectures';
 import { invalidateLearnerReads } from '@/api/learnerRead';
+import { learningReflectionStatusKey, loadLearningReflectionStatuses, type LearningReflectionStatusMap } from '@/api/reflectionSubmission';
 import { useLiveLearnerRead } from '@/hooks/useLiveLearnerRead';
 import { coachFetch } from '@/lib/coachFetch';
 import type { Subject } from '../my-learning/SubjectWorkspace';
@@ -57,6 +58,10 @@ type TimelineModuleMonthData = TimelineModule & {
   monthlyActivities?: PlanActivitySummary[];
   ksbCodesByMonth?: Record<string, string[]>;
 };
+
+const readAssignmentStatuses = (kind: LearnerKind, learnerId: string, signal?: AbortSignal, fresh = false) =>
+  loadLearningReflectionStatuses({ learnerKind: kind, learnerId }, { signal, revalidate: fresh });
+const peekAssignmentStatuses = (): LearningReflectionStatusMap | undefined => undefined;
 
 function bookingEvent(review: PlanReview): LearnerCalendarEvent {
   return {
@@ -135,6 +140,8 @@ export function TrainingPlanDetails({ data: baseData, subjects, kind, learnerId,
   const attendanceRead = useLiveLearnerRead(kind, learnerId, monthlyOnly && canOpenActivities && attendanceWorkspace === undefined, fetchAttendanceWorkspace, peekAttendanceWorkspace);
   const attendance = attendanceWorkspace === undefined ? attendanceRead
     : { data: attendanceWorkspace, loading: refreshing, error: '', refresh: onRefresh };
+  const assignmentStatuses = useLiveLearnerRead(kind, learnerId, monthlyOnly && canOpenActivities,
+    readAssignmentStatuses, peekAssignmentStatuses);
   const monthData = (module: TimelineModule) => module as TimelineModuleMonthData;
   useEffect(() => {
     setSelectedMonth(current => {
@@ -188,6 +195,26 @@ export function TrainingPlanDetails({ data: baseData, subjects, kind, learnerId,
   const assignmentHref = (moduleId: string, componentId?: string | null, weekTitle?: string | null) => componentId
     ? `/learner/component/${kind}/${learnerId}/${encodeURIComponent(componentId)}?week=${encodeURIComponent(weekTitle || '')}`
     : subjectHref(moduleId);
+  const monthlySubmissionHref = (activity: PlanActivitySummary) => {
+    const params = new URLSearchParams();
+    if (/^\d{4}-\d{2}/.test(activity.date)) params.set('month', activity.date.slice(0, 7));
+    if (activity.componentId) params.set('assignment', activity.componentId);
+    const query = params.toString();
+    return `/learner/monthly-submission/${kind}/${encodeURIComponent(learnerId)}${query ? `?${query}` : ''}`;
+  };
+  const assignmentStatus = (activity: PlanActivitySummary) => activity.componentId
+      ? assignmentStatuses.data?.[learningReflectionStatusKey('assignment', activity.componentId)]
+      : undefined;
+  const assignmentCompleted = (activity: PlanActivitySummary) =>
+    activity.completed || ['accepted', 'completed'].includes(assignmentStatus(activity) || '');
+  const assignmentAction = (activity: PlanActivitySummary) => {
+    if (assignmentCompleted(activity)) return 'View';
+    const status = assignmentStatus(activity);
+    if (status === 'draft') return 'Continue';
+    if (['submitted_for_tutor_review', 'submitted', 'pending_review', 'partial'].includes(status || '')) return 'View';
+    if (['referred', 'returned', 'rejected'].includes(status || '')) return 'Revise';
+    return 'Start';
+  };
   const selectMonth = (key: string) => { if (!key) return; setSelectedMonth(clampMonth(key)); setSelectedId(''); };
   const shiftMonth = (step: number) => { const date = new Date(`${selectedMonth}-01T12:00:00Z`); date.setUTCMonth(date.getUTCMonth() + step); selectMonth(date.toISOString().slice(0, 7)); };
   const canGoPrevious = !minMonth || selectedMonth > minMonth;
@@ -266,15 +293,17 @@ export function TrainingPlanDetails({ data: baseData, subjects, kind, learnerId,
       </section>
       <section className={board.card} aria-label="Assignments this month">
         <h3 className={board.cardTitle}>Assignments</h3>
+        {assignmentStatuses.error && <p role="alert" className={board.hint}>Assignment progress could not refresh. <button type="button" className={board.retry} onClick={assignmentStatuses.refresh}>Retry assignment progress</button></p>}
         <div className={board.assignments}>{monthAssignments.length ? monthAssignments.slice(0, 2).map(({ module, activity }) => {
-          const assignmentPercent = activity.completed ? 100 : 0;
+          const completed = assignmentCompleted(activity);
+          const assignmentPercent = completed ? 100 : 0;
           return <article key={`${module.id}:${activity.id}`} className={board.assignment}>
             <div className={board.assignmentHead}><span className={board.assignmentIcon}><FileText size={18} /></span><div><strong>{activity.title}</strong><small>{activity.weekTitle || module.title}</small></div></div>
             <div className={board.assignmentStats}>
               <div><span>Required hours</span><b>{hours(activity.expectedHours)} hrs</b></div>
-              <div><span>Achieved hours</span><b>{activity.completed ? hours(activity.expectedHours) : '0'} hrs</b></div>
+              <div><span>Achieved hours</span><b>{completed ? hours(activity.expectedHours) : '0'} hrs</b></div>
               <div className={board.assignmentProgress}><span>Progress</span><i role="img" aria-label={`${assignmentPercent}% complete`} style={{ '--assignment-progress': `${assignmentPercent}%` } as CSSProperties}><b>{assignmentPercent}%</b></i></div>
-              {canOpenActivities ? <Link className={board.primaryAction} to={assignmentHref(module.id, activity.componentId, activity.weekTitle)}>{activity.completed ? 'View' : 'Start'}<ArrowRight size={15} aria-hidden="true" /></Link> : <State value={activity.completed ? 'Completed' : 'Not started'} />}
+              {canOpenActivities ? <Link className={board.primaryAction} to={monthlySubmissionHref(activity)}>{assignmentAction(activity)}<ArrowRight size={15} aria-hidden="true" /></Link> : <State value={completed ? 'Completed' : 'Not started'} />}
             </div>
           </article>;
         }) : <p className={board.empty}>No assignments found for this month.</p>}</div>

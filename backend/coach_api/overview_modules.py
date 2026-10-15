@@ -5,6 +5,7 @@ from learner_api import canonical_learning
 from learner_api.journal_sources import learner_journal_reads
 from old_otjh.service import ServiceError
 from old_otjh.repository import query
+from curriculum_api.week_visibility import visible_child_sql, visible_week_sql
 
 
 def overview_owner(context):
@@ -112,9 +113,9 @@ def read_overview_module(context, subject_id):
                 FROM curriculum.weeks w LEFT JOIN curriculum.components c ON c.week_id=w.id
                   AND c.module_catalogue_id=w.module_catalogue_id
                   AND lower(replace(coalesce(c.type,''),'-','_'))='live_session'
-                  AND (c.deleted_at IS NULL OR COALESCE(c.deleted_via_parent,'')<>'')
+                  AND ''' + visible_child_sql('c') + '''
                 WHERE w.module_catalogue_id=%s
-                  AND (w.deleted_at IS NULL OR COALESCE(w.deleted_via_parent,'')<>'')
+                  AND ''' + visible_week_sql('w') + '''
                 GROUP BY w.id,w.title''', [mid])
             selected['educational_session_count'] = sum(row['live_session_count'] for row in rows(cur)
                 if is_educational_live_session_week(row['title']))

@@ -51,7 +51,8 @@ class SkillsRadarScoreTests(SimpleTestCase):
         ])
 
         self.assertEqual(result[0]["skill_score"], 5)
-        self.assertEqual(result[0]["maximum"], 8)
+        # Out of 9 since Champion was added above Mastery; the score itself is unchanged.
+        self.assertEqual(result[0]["maximum"], 9)
 
 
 class EmployerLevyStatusTests(SimpleTestCase):

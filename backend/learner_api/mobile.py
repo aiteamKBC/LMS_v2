@@ -29,6 +29,7 @@ from .learner_detail import build_learner_detail
 from .learning_plan import effective_training_plan
 from .mobile_progress import measured_time, project_progress
 from .android_download import installer_response
+from curriculum_api.week_visibility import visible_child_sql, visible_week_sql
 
 BASE = "/learner_api/mobile/"
 ANDROID_APK_PATH = "/var/lib/kbc-mobile-release/20261013/KBC-Learn-LMS-internal-candidate.apk"
@@ -358,8 +359,8 @@ def _presentation_metadata(components):
             JOIN curriculum.weeks w ON w.id=c.week_id AND w.module_catalogue_id=c.module_catalogue_id
             JOIN curriculum.modules m ON m.module_catalogue_id=c.module_catalogue_id
             WHERE c.module_catalogue_id=ANY(%s) AND c.id=ANY(%s)
-              AND (c.deleted_at IS NULL OR COALESCE(c.deleted_via_parent, '') <> '')
-              AND (w.deleted_at IS NULL OR COALESCE(w.deleted_via_parent, '') <> '')
+              AND """ + visible_child_sql("c") + """
+              AND """ + visible_week_sql("w") + """
               AND (m.deleted_at IS NULL OR COALESCE(m.deleted_via_parent, '') <> '')""",
             [list(dict.fromkeys(row["moduleId"] for row in eligible.values())), list(eligible)])
         rows = cursor.fetchall()
@@ -517,10 +518,11 @@ def download_android(request):
 def session(request):
     from .mobile_rewards import enabled as rewards_enabled
     account, source, kind, profile = request.mobile_context
-    shared_rewards_enabled=rewards_enabled(request)
+    reward_ids = [] if _learning_blocked(_detail(request)) else [c['moduleId'] for c in _assigned_courses(request) if rewards_enabled(module_id=c['moduleId'])]
+    shared_rewards_enabled=bool(reward_ids)
     return JsonResponse({
         "authenticated": True,
-        "rewardModuleIds": [PILOT_MODULE_ID] if shared_rewards_enabled else [],
+        "rewardModuleIds": reward_ids,
         "user": {"id": str(source.pk), "accountId": str(account.pk),
                  "displayName": account.display_name, "learnerKind": kind,
                  "learnerProfileId": str(profile.pk) if profile else None},
@@ -540,6 +542,8 @@ def catalogue(request):
     blocked = _learning_blocked(detail)
     scoped = _eligible_components(request)
     presentation = _presentation_metadata(scoped)
+    from .mobile_rewards import enabled as rewards_enabled
+    reward_modules = {cid:rewards_enabled(module_id=cid) for cid in course_ids}
     components = []
     for row in ([] if blocked else scoped):
         item = {key: value for key, value in row.items() if key in COMPONENT_FIELDS}
@@ -556,9 +560,7 @@ def catalogue(request):
             if item["mobileMode"] != mode:
                 item.pop(field, None)
         item["mechanicalNarrationAllowed"] = False
-        # Reward observations require a real curriculum component. A standalone
-        # quiz's facade ID must never become a persisted reward component ID.
-        item["rewardObservationsSupported"] = row["moduleId"] == PILOT_MODULE_ID and not row["_standaloneQuiz"]
+        item["rewardObservationsSupported"] = reward_modules[row['moduleId']]
         components.append(item)
     return JsonResponse({
         "schemaVersion": 2, "source": "lms", "catalogueScope": "assigned",
@@ -591,8 +593,8 @@ def transcript(request, component_id):
             JOIN curriculum.modules m ON m.module_catalogue_id=c.module_catalogue_id
             WHERE c.id=%s AND c.module_catalogue_id=%s AND c.week_id=%s
               AND jsonb_typeof(c.settings_json->'transcript')='string'
-              AND (c.deleted_at IS NULL OR COALESCE(c.deleted_via_parent, '') <> '')
-              AND (w.deleted_at IS NULL OR COALESCE(w.deleted_via_parent, '') <> '')
+              AND """ + visible_child_sql("c") + """
+              AND """ + visible_week_sql("w") + """
               AND (m.deleted_at IS NULL OR COALESCE(m.deleted_via_parent, '') <> '')""",
             [component_id, component["moduleId"], component.get("weekId")])
         row = cursor.fetchone()

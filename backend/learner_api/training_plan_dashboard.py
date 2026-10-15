@@ -25,6 +25,7 @@ from .training_plan_contract import read_contract, contract_extract_metadata, se
 from .projection_performance import measure_projection
 from . import canonical_learning
 from .replaced_teams_attendance import REPLACED_ATTENDANCE_LATERAL_SQL
+from curriculum_api.week_visibility import visible_child_sql, visible_week_sql
 
 log = logging.getLogger(__name__)
 
@@ -638,13 +639,13 @@ def read_dashboard(source, section=None, *, records=None, targets=None, dashboar
             live_sessions = '0 AS live_session_count' if compact_monthly else '''(SELECT count(*) FROM curriculum.components c
                  WHERE c.week_id=w.id AND c.module_catalogue_id=w.module_catalogue_id
                    AND lower(replace(coalesce(c.type, ''), '-', '_'))='live_session'
-                   AND (c.deleted_at IS NULL OR COALESCE(c.deleted_via_parent, '') <> '')
+                   AND ''' + visible_child_sql('c') + '''
                 ) AS live_session_count'''
             cur.execute(f'''SELECT w.id,w.module_catalogue_id,w.week_number,w.title,{outcomes_column},
                 w.holiday_note_enabled,w.holiday_note,{live_sessions}
                 FROM curriculum.weeks w
                 WHERE w.module_catalogue_id=ANY(%s)
-                  AND (w.deleted_at IS NULL OR COALESCE(w.deleted_via_parent, '') <> '')
+                  AND ''' + visible_week_sql('w') + '''
                 ORDER BY w.display_order,w.week_number,w.id''', [ids])
             for row in rows(cur):
                 week_counts[row['module_catalogue_id']] += 1

@@ -20,6 +20,11 @@ vi.mock('@/api/extendedIlr', () => ({
   peekExtendedIlr: () => undefined,
 }));
 vi.mock('@/api/enrolmentDocuments', () => ({ uploadEnrolmentDocument: vi.fn() }));
+// The Inclusion step's status comes from the Safeguarding database; not answered yet.
+vi.mock('@/api/wizardInclusion', () => ({
+  fetchInclusionStatus: vi.fn(async () => ({ applicable: true, completed: false, respondedAt: null })),
+  SAFEGUARDING_URL: 'https://safeguarding.example/',
+}));
 const fetchKsbProfile = vi.fn();
 vi.mock('@/api/curriculum', () => ({
   fetchKsbProfile: (...args: unknown[]) => fetchKsbProfile(...args),
@@ -148,8 +153,9 @@ describe('Next Steps in the step rail', () => {
     expect(tab.querySelector('.ri-check-line')).toBeNull();
     // Only the Introduction, Before You Begin, the Personal Learning Record
     // (nothing required) and the Skills Radar (no competencies on this
-    // programme) count so far — Next Steps would make it 5.
-    expect(screen.getByText('4 of 10 steps complete')).toBeInTheDocument();
+    // programme) count so far — Next Steps would make it 5. The Inclusion
+    // assessment is not answered.
+    expect(screen.getByText('4 of 11 steps complete')).toBeInTheDocument();
   });
 
   it('shows its number rather than a tick for staff, who are not gated', async () => {
@@ -157,12 +163,12 @@ describe('Next Steps in the step rail', () => {
     const tab = await screen.findByRole('tab', { name: 'What Happens Now?' });
 
     await waitFor(() => expect(within(tab).getByText('Not started')).toBeInTheDocument());
-    expect(within(tab).getByText('10')).toBeInTheDocument();
+    expect(within(tab).getByText('11')).toBeInTheDocument();
     expect(tab.querySelector('.ri-check-line')).toBeNull();
   });
 
   it('does not count as complete just by being opened while earlier steps are unfinished', async () => {
-    renderWizard(board(), { mode: 'staff', currentIndex: 9 });
+    renderWizard(board(), { mode: 'staff', currentIndex: 10 });
     const tab = await screen.findByRole('tab', { name: 'What Happens Now?' });
 
     await waitFor(() => expect(within(tab).getByText('In progress')).toBeInTheDocument());

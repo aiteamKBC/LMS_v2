@@ -56,6 +56,36 @@ function withLogStates() {
 }
 
 describe('Activity status and Overall Progress', () => {
+  it('keeps known accepted hours in overview and weekly totals when another activity has no time', async () => {
+    const data = withLogStates();
+    data.learnerActivityPlan![1].logState = { ...data.learnerActivityPlan![1].logState!,
+      actualOtjh: null, acceptedOtjh: 0, accepted: true, unallocatedAcceptedRecords: 1 };
+    // Multiple persisted allocations: the edit selection is not the accepted total.
+    data.learnerActivityPlan![0].logState!.acceptedOtjh = 1.5;
+    fetchImpact.mockResolvedValue(data); open(); await screen.findByText('Test reading c1');
+    const overview = screen.getByRole('article', { name: 'OTH Progress' });
+    expect(overview).toHaveTextContent('2h 30m / 6h');
+    expect(overview).toHaveTextContent('1 accepted record(s) without allocated time');
+    expect(screen.getByRole('region', { name: 'Week 1 | Introduction' })).toHaveTextContent('OTH: 2h 30m');
+    expect(screen.getByText('Test quiz c2').closest('tr')).toHaveTextContent('—');
+    fireEvent.click(screen.getByRole('button', { name: 'Not Started' }));
+    expect(overview).toHaveTextContent('2h 30m / 6h');
+  });
+
+  it('retains earlier module hours and other learners totals when a saved status cannot refresh', async () => {
+    const data = withLogStates();
+    data.activityLogOtjh = { learners: [
+      { learnerId: 'profile-1', plannedOtjh: 6, achievedOtjh: 3.5, unallocatedAcceptedRecords: 1 },
+      { learnerId: 'another-profile', plannedOtjh: 6, achievedOtjh: 8 },
+    ], achievedTotal: 11.5, plannedTotal: 12, source: 'Activity Log', unallocatedAcceptedRecords: 1 };
+    fetchImpact.mockResolvedValueOnce(data).mockRejectedValueOnce(new Error('Unavailable'));
+    saveStatus.mockResolvedValue({ state: { ...data.learnerActivityPlan![0].logState!, revision: 1, displayStatus: 'not_started' } });
+    open(); await screen.findByText('Test reading c1');
+    fireEvent.click(screen.getByRole('button', { name: 'Change status for Test reading c1' }));
+    await screen.findByText(/Status saved. Could not refresh summaries/);
+    expect(screen.getByRole('article', { name: 'OTH Progress' })).toHaveTextContent('3h 30m / 6h');
+    expect(screen.getByRole('article', { name: 'OTH Progress' })).toHaveTextContent('1 accepted record(s) without allocated time');
+  });
   it('averages the three card percentages and keeps the average unchanged by filters', async () => {
     fetchImpact.mockResolvedValue(withLogStates()); open(); await screen.findByText('Test reading c1');
     expect(screen.getByRole('progressbar', { name: 'Overall module progress' })).toHaveAttribute('aria-valuenow', '39');
