@@ -1,6 +1,7 @@
 """Full owned course catalogues with learner progress; no Django or network."""
 import ast
 import copy
+import json
 from pathlib import Path
 from types import SimpleNamespace
 import unittest
@@ -137,8 +138,40 @@ class CourseCatalogueTests(unittest.TestCase):
             self.courses, self.catalogue, [self.record()], overview_only=True)
         self.assertEqual(items, [])
 
+    def test_json_text_scope_matches_decoded_scope_without_changing_progress_or_hours(self):
+        scope = self.verified_scope('material:20')
+        self.courses[0]['verified_catalogue_scope'] = scope
+        records = [self.record(), self.record(2, actual_seconds=1800, sources=[{
+            'source_system': 'old_lms', 'source_course_ref': '50', 'source_activity_id': 'quiz:10'}])]
+        expected = self.project(records)
+        self.courses[0]['verified_catalogue_scope'] = json.dumps(scope)
+        before = copy.deepcopy((self.courses, self.catalogue, records))
+        self.assertEqual(self.project(records), expected)
+        self.assertEqual((self.courses, self.catalogue, records), before)
+        self.assertEqual(expected[1][0]['catalogue_count'], 2)
+        self.assertEqual(expected[1][0]['accepted_hours'], 1.5)
+
+    def test_subject_reader_accepts_database_json_text_in_catalogue_and_overview(self):
+        course = {**self.courses[0], 'id': 1,
+                  'verified_catalogue_scope': json.dumps(self.verified_scope('material:20'))}
+        records = [self.record(), self.record(2, sources=[{
+            'source_system': 'old_lms', 'source_course_ref': '50', 'source_activity_id': 'quiz:10'}])]
+        owner = {'id': 7, 'name': 'Synthetic learner', 'aptem_id': 70}
+        self.scope['targets_for'] = Mock(return_value={})
+        for overview in (False, True):
+            with self.subTest(overview=overview):
+                self.scope['query'] = Mock(side_effect=[[course], self.catalogue[:3], []])
+                result = self.scope['source_subjects'](17, lambda items: {'activities': items},
+                    owner=owner, records=records, overview_only=overview)
+                self.assertEqual(len(result['activities']), 2)
+                self.assertTrue(all(item['completed'] for item in result['activities']))
+                self.assertEqual(self.scope['query'].call_args_list[0].args[1], [7])
+
     def test_malformed_or_foreign_scope_is_reported_instead_of_hiding_work(self):
-        for invalid in [[], {}, self.verified_scope('material:10', course='60'),
+        for invalid in ['{invalid-json', 'null', '[]', 'true', json.dumps('not-an-object'),
+                        json.dumps(self.verified_scope('material:10', course='60')),
+                        json.dumps(self.verified_scope('10')),
+                        [], {}, self.verified_scope('material:10', course='60'),
                         self.verified_scope('10'), self.verified_scope(10),
                         {**self.verified_scope('material:10'), 'version': 2},
                         {**self.verified_scope('material:10'), 'excluded_activity_refs': 'material:10'}]:
@@ -157,7 +190,7 @@ class CourseCatalogueTests(unittest.TestCase):
         node = next(node for node in ast.parse(path.read_text(encoding='utf-8')).body
                     if isinstance(node, ast.FunctionDef) and node.name == 'read_history')
         course = {**self.courses[0], 'id': 1,
-                  'verified_catalogue_scope': self.verified_scope('material:20')}
+                  'verified_catalogue_scope': json.dumps(self.verified_scope('material:20'))}
         query = Mock(side_effect=[[course], self.catalogue[:3]])
         scope = {'query': query, 'canonical_learning': SimpleNamespace(
             entries_for=Mock(return_value=[self.record()]),

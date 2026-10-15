@@ -782,6 +782,8 @@ def learner_course_catalogue(courses, catalogue):
         scope = course.get('verified_catalogue_scope')
         if scope is None:
             continue
+        # Raw SQL returns JSON text under the application's PostgreSQL loaders.
+        scope = decoded(scope)
         course_ref = str(course['source_course_ref'])
         if (not isinstance(scope, dict) or scope.get('version') != 1
                 or scope.get('basis') != 'verified-legacy-account-inventory'
