@@ -336,6 +336,15 @@ class AttendanceProfilesTests(unittest.TestCase):
                 self.records = [row]
                 self.assertEqual(self.fetch(include_reported_participants=True)[0]["attendance_status"], status)
 
+    def test_mixed_duration_rows_keep_presence_without_leaking_to_another_session(self):
+        detailed = self.record('O1', ' ONE@EXAMPLE.INVALID ', [(0, 1)])
+        duration_only = self.record('O1', 'one@example.invalid', [])
+        duration_only.total_attendance_seconds = 240
+        self.records = [detailed, duration_only]
+        rows = self.fetch(include_reported_participants=True)
+        self.assertEqual([(row['occurrence_id'], row['attendance_status'], row['attended_seconds']) for row in rows],
+                         [('O1', 'present', 240), ('O2', 'absent', 0)])
+
     def test_recovery_still_receives_the_exact_occurrence_and_learner(self):
         self.fetch(include_reported_participants=True)
         recovered = self.recovery.call_args.args[0]
