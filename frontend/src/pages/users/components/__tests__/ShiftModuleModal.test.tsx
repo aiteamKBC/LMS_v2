@@ -122,6 +122,47 @@ describe('programme-wide module shift', () => {
     expect(screen.getByRole('button', { name: 'Next: match progress' })).toBeDisabled();
   });
 
+  it('filters assigned and programme modules independently by module or group', async () => {
+    const secondAssigned = {
+      ...source,
+      moduleId: 'SECOND',
+      moduleTitle: 'Finance essentials',
+      groupName: 'Northern Group',
+    };
+    const secondTarget = {
+      ...target,
+      moduleId: 'TARGET-2',
+      moduleTitle: 'Digital strategy',
+      groupName: 'Southern Group',
+    };
+    mocks.fetchLearningPlan.mockResolvedValue({ plan: [source, secondAssigned] });
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response({
+      ...options,
+      groups: [source.groupName, target.groupName, secondTarget.groupName],
+      modules: [source, target, secondTarget],
+    })));
+    const user = userEvent.setup();
+    render(<ShiftModuleModal learnerId="62" learnerName="Example learner" onClose={vi.fn()} />);
+
+    const assignedSearch = await screen.findByRole('searchbox', { name: 'Search assigned modules' });
+    await user.type(assignedSearch, 'northern group');
+    expect(screen.getByRole('button', { name: /Finance essentials/ })).toBeVisible();
+    expect(screen.queryByRole('button', { name: /Original module/ })).not.toBeInTheDocument();
+
+    await user.clear(assignedSearch);
+    await user.click(screen.getByRole('button', { name: /Original module/ }));
+    const programmeSearch = await screen.findByRole('searchbox', { name: 'Search programme modules' });
+    await user.type(programmeSearch, 'second cohort');
+    expect(screen.getByRole('button', { name: /Another cohort module/ })).toBeVisible();
+    expect(screen.queryByRole('button', { name: /Digital strategy/ })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: /Another cohort module/ }));
+    await user.clear(programmeSearch);
+    await user.type(programmeSearch, 'not a module');
+    expect(screen.getByText('No programme modules match that search.')).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Next: match progress' })).toBeEnabled();
+  });
+
   it('shows a server programme rejection without reporting success or closing', async () => {
     vi.stubGlobal('fetch', vi.fn()
       .mockResolvedValueOnce(response(options))
