@@ -6,7 +6,7 @@ from .review_history import _review_rows, _sections_by_review, _serialize_review
 
 
 def imported_events_for_learner(source, profile, aptem_id, records, *, month=None, include_sections=True,
-                                dates_only=False):
+                                dates_only=False, compact_bookings=False):
     """``include_sections=False`` leaves ``importedReview`` without section text.
 
     ``dates_only`` returns the same occurrences with their identity, title,
@@ -62,12 +62,13 @@ def imported_events_for_learner(source, profile, aptem_id, records, *, month=Non
                 str(row["id"]): _serialize_review(row, sections, historical_presentation=True)
                 for row in rows
             }
-    bookings, overlays = load_imported_links(events, records=records)
+    compact_options = {'compact': True} if compact_bookings else {}
+    bookings, overlays = load_imported_links(events, records=records, **compact_options)
     result = []
     for event in events:
         if event["reviewId"] not in history:
             continue
-        item = overlay_calendar_record(event, bookings[event["eventKey"]], overlays[event["eventKey"]])
+        item = overlay_calendar_record(event, bookings[event["eventKey"]], overlays[event["eventKey"]], **compact_options)
         if dates_only:
             result.append(item)
             continue

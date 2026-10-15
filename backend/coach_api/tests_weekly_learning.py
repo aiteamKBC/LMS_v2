@@ -96,7 +96,7 @@ class WeeklyLearningTests(SimpleTestCase):
         self.assertEqual(report['newTopLevel'], ['weeks', 'selectedWeek'])
         self.assertGreater(report['reductionPercent'], 90)
 
-    def projection(self, selection='M1:1', kind='commercial', future_report=False, records=None, duration='60'):
+    def projection(self, selection='M1:1', kind='commercial', future_report=False, records=None, duration='60', reader_options=None, session_only=False):
         context = MagicMock()
         context.source = SimpleNamespace(pk=201, email='learner@example.test', learner_type=kind)
         context.profile.progress_entries.filter.return_value.values.return_value = [
@@ -117,6 +117,13 @@ class WeeklyLearningTests(SimpleTestCase):
             [{'session_id': 'S1', 'module_id': 'M1', 'module_title': 'Synthetic session', 'start_datetime': datetime(2026,10,5 if selected == 1 else 12,8),
               'duration_minutes': 120, 'series_join_url': 'https://example.test/teams', 'series_status': 'scheduled',
               'occurrence_id': f'O{selected}', 'scheduled_start': None, 'scheduled_end': None, 'join_url': None, 'status': None, 'attended': True}]]
+        if session_only:
+            slots[0].pop('weekId')
+            start = datetime(2026, 10, 5, 8)
+            datasets[2] = [datasets[2][1]]
+            datasets[3] = [{'module_catalogue_id': 'M1', 'day': date(2026, 10, 5),
+                'start': start, 'finish': start + timedelta(hours=2), 'status': 'scheduled', 'attended': True}]
+            datasets[4] = []
         if future_report:
             start = datetime(2026, 10, 9, 8)
             slots[0]['date'] = '2026-10-09'
@@ -134,8 +141,31 @@ class WeeklyLearningTests(SimpleTestCase):
              patch('learner_api.training_plan_dashboard.attach_curriculum_slots', side_effect=spine), \
              patch('learner_api.training_plan_dashboard.rows', side_effect=datasets):
             connections.__getitem__.return_value.cursor.return_value.__enter__.return_value = cursor
-            payload = read_weekly_learning(context, selection)
+            payload = read_weekly_learning(context, selection, **(reader_options or {}))
         return payload, cursor, context
+
+    def test_session_only_generated_slot_survives_scoped_detail_read(self):
+        expected, _, _ = self.projection(session_only=True)
+        actual, _, _ = self.projection(session_only=True,
+            reader_options={'module_id': 'M1', 'include_weeks': False})
+        self.assertEqual(actual['selectedWeek'], expected['selectedWeek'])
+        self.assertIsNotNone(actual['selectedWeek']['liveSession'])
+        self.assertEqual(actual['selectedWeek']['activities'], [])
+
+    def test_student_scoped_reader_preserves_canonical_week_one_and_two_for_both_kinds(self):
+        for kind in ('commercial', 'apprenticeship'):
+            for selection in ('M1:1', 'M1:2'):
+                expected, _, _ = self.projection(selection=selection, kind=kind)
+                actual, cursor, _ = self.projection(selection=selection, kind=kind,
+                    reader_options={'module_id': 'M1', 'include_weeks': False})
+                self.assertEqual(actual['selectedWeek'], expected['selectedWeek'])
+                queries = cursor.execute.call_args_list
+                marker = next(call for call in queries if 'WITH markers' in call.args[0])
+                self.assertIn('::date=%s::date', marker.args[0])
+                self.assertEqual(marker.args[1][1], ['M1'])
+                self.assertEqual(marker.args[1][2], actual['selectedWeek']['startDate'])
+                detail = next(call for call in queries if 'SELECT c.id,c.title' in call.args[0])
+                self.assertEqual(detail.args[1], [[actual['selectedWeek']['activities'][0]['id']]])
 
     def test_completed_two_hour_assignment_uses_one_accepted_hour_only(self):
         records = [

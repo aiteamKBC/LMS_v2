@@ -6,7 +6,7 @@ import { ArrowRight, CalendarDays, ChevronLeft, ChevronRight, Clock3, Equal, Fil
 import type { LearnerKind } from '@/api/learnerDetail';
 import type { TrainingPlanDashboard, PlanReview } from '@/api/trainingPlanDashboard';
 import type { LearnerCalendarEvent } from '@/api/learnerCalendar';
-import { fetchAttendanceWorkspace, peekAttendanceWorkspace, type AttendanceLecture } from '@/api/attendanceLectures';
+import { fetchAttendanceWorkspace, peekAttendanceWorkspace, type AttendanceLecture, type AttendanceWorkspace } from '@/api/attendanceLectures';
 import { invalidateLearnerReads } from '@/api/learnerRead';
 import { useLiveLearnerRead } from '@/hooks/useLiveLearnerRead';
 import { coachFetch } from '@/lib/coachFetch';
@@ -48,6 +48,8 @@ type Props = {
   programmeProgress?: CanonicalModuleProgress[];
   programmeSnapshot?: ProgrammeProgressSnapshot;
   targetAsOfToday?: number | null;
+  /** Supplied by the dedicated Dashboard Monthly response; other callers retain their own read. */
+  attendanceWorkspace?: AttendanceWorkspace;
 };
 
 type TimelineModule = ReturnType<typeof buildPlanModules>[number];
@@ -85,7 +87,7 @@ export function TrainingPlanDetails({ data: baseData, subjects, kind, learnerId,
   onRetryContract, initialSubjectId = '', initialMonth = '', canOpenActivities = true, weeklyFocus, programmeStartDate, programmeEndDate,
   activityOverviewOnly = false, timelineOnly = false, cardsOnly = false, canOpenCalendar = true, simpleModuleOverview = false,
   monthlyOnly = false, trainingOnly = false, overviewOnly = false,
-  showOtjChart = true, wholeProgrammeRings = false, programmeSnapshot, programmeProgress, targetAsOfToday }: Props) {
+  showOtjChart = true, wholeProgrammeRings = false, programmeSnapshot, programmeProgress, targetAsOfToday, attendanceWorkspace }: Props) {
   const baseModules = useMemo(() => buildPlanModules(subjects, baseData), [subjects, baseData]);
   const [now, setNow] = useState(Date.now);
   useEffect(() => {
@@ -130,7 +132,9 @@ export function TrainingPlanDetails({ data: baseData, subjects, kind, learnerId,
   const [catchupBooking, setCatchupBooking] = useState<LearnerCalendarEvent | null>(null);
   const [catchupBusy, setCatchupBusy] = useState(false);
   const [catchupError, setCatchupError] = useState('');
-  const attendance = useLiveLearnerRead(kind, learnerId, monthlyOnly && canOpenActivities, fetchAttendanceWorkspace, peekAttendanceWorkspace);
+  const attendanceRead = useLiveLearnerRead(kind, learnerId, monthlyOnly && canOpenActivities && attendanceWorkspace === undefined, fetchAttendanceWorkspace, peekAttendanceWorkspace);
+  const attendance = attendanceWorkspace === undefined ? attendanceRead
+    : { data: attendanceWorkspace, loading: refreshing, error: '', refresh: onRefresh };
   const monthData = (module: TimelineModule) => module as TimelineModuleMonthData;
   useEffect(() => {
     setSelectedMonth(current => {

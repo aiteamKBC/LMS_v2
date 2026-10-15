@@ -445,7 +445,7 @@ def builder_components(native):
     return [component for _, component in found]
 
 
-def read_week(source, now=None, *, home_kind=None, dashboard_kind=None, home_summary=False):
+def read_week(source, now=None, *, home_kind=None, dashboard_kind=None, home_summary=False, plan_only=False, monthly_hours_only=False):
     """``home_summary`` is Student Home's compact projection of the ``home`` section.
 
     It reads the same sources with the same rules, but fails fast on missing SSOT
@@ -481,15 +481,23 @@ def read_week(source, now=None, *, home_kind=None, dashboard_kind=None, home_sum
             assigned = subject_rows
         module_ids = [row[0] for row in assigned]
         # The compact home projection returns no KSB codes, so skip the per-component lookup.
-        ksb_mappings = "'[]'::jsonb" if home_summary else '''coalesce(nullif(c.ksb_mappings,'[]'::jsonb),
+        ksb_mappings = "'[]'::jsonb" if home_summary or monthly_hours_only else '''coalesce(nullif(c.ksb_mappings,'[]'::jsonb),
                 (SELECT jsonb_agg(jsonb_build_object('code',k.ksb_code)) FROM curriculum.ksb_mappings k
                  WHERE k.component_id=c.id AND (k.deleted_at IS NULL OR COALESCE(k.deleted_via_parent, '') <> '')), '[]'::jsonb)'''
         cur.execute(component_sql(ksb_mappings, builder_columns=home_summary), [module_ids])
         native = rows(cur)
         # Match My Learning's delivery calendar, including undated lesson titles,
         # empty teaching weeks and cohort holidays.
-        dates = read_builder_activity_dates(
-            cur, module_ids, **({'components': builder_components(native)} if home_summary else {}))
+        cached_dates = getattr(source, '_dashboard_activity_dates', None) \
+            if (plan_only or monthly_hours_only) and not home_summary else None
+        if cached_dates is not None and cached_dates[0] == set(module_ids):
+            # The Dashboard's learning projection already read this module set.
+            dates = cached_dates[1]
+        else:
+            dates = read_builder_activity_dates(
+                cur, module_ids, **({'components': builder_components(native)} if home_summary else {}))
+            if plan_only or monthly_hours_only:
+                source._dashboard_activity_dates = (set(module_ids), dates)
         for row in native:
             row.update(dates.get(str(row['id'])) or activity_schedule(row['title'], section_title=row['section_title']))
     # merged_activities copies its rows and nothing below mutates them, so one
@@ -508,6 +516,12 @@ def read_week(source, now=None, *, home_kind=None, dashboard_kind=None, home_sum
                 # Assignment deadlines are Upcoming's (training-plan-dashboard section=upcoming).
                 'modules': [{key: module[key] for key in ('id', 'title', 'weekLabels')} for module in week['modules']],
                 'homeProgress': progress_card}
+    if monthly_hours_only:
+        return monthly_otjh_summary(plan_activities, progress)
+    if plan_only:
+        return {'planSubjects': summarise_plan(plan_activities, assigned,
+                    direct_hours_by_subject(native, progress, links)),
+                'monthlyOtjh': monthly_otjh_summary(plan_activities, progress)}
     weekly_progress = [row for row in progress if (day := completion_day(row)) and start <= day <= end]
     new_hours = _direct_progress_otjh(weekly_progress)
     result = {'weekStart': start.isoformat(), 'weekEnd': end.isoformat(), 'timezone': 'Europe/London',

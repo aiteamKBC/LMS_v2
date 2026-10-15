@@ -107,7 +107,7 @@ def week_rows(modules, today):
     return result
 
 
-def read_weekly_learning(context, selection=None):
+def read_weekly_learning(context, selection=None, *, module_id=None, include_weeks=True, include_navigation=False):
     from learner_api.weekly_hours import module_activity_hours, selected_activity_hours
     from learner_api.learning_plan import _effective_plan_ids
     from learner_api import canonical_learning
@@ -118,11 +118,18 @@ def read_weekly_learning(context, selection=None):
     source = context.source
     if source is None:
         raise LookupError('Learner enrolment is unavailable.')
-    owner = canonical_learning.require_profile(source.pk)
+    owner = getattr(source, '_canonical_profile', None) or canonical_learning.require_profile(source.pk)
     assigned_ids = _effective_plan_ids(source, {})
     ids = list(dict.fromkeys([*assigned_ids, *canonical_learning.curriculum_module_ids_for(owner)]))
+    if module_id is not None and str(module_id) not in set(map(str, ids)):
+        raise LookupError('Module not found in this learner plan.')
+    if module_id is not None:
+        module_id = next(value for value in ids if str(value) == str(module_id))
+    # Detail reads plan only the requested module. Keep all module titles for
+    # canonical title-only ledger attribution (duplicate titles stay ambiguous).
+    schedule_ids = [module_id] if module_id is not None and not include_weeks else ids
     # Content assignment and schedule assignment retain their distinct existing rules.
-    content_ids = set(assigned_ids)
+    content_ids = set(assigned_ids) if include_weeks else set(assigned_ids).intersection(schedule_ids)
     now = datetime.now(timezone.utc)
     today = now.astimezone(BUSINESS_ZONE).date().isoformat()
     with connections['enrolment'].cursor() as cur:
@@ -136,7 +143,7 @@ def read_weekly_learning(context, selection=None):
         modules = rows(cur)
         cur.execute(f'''SELECT id,module_catalogue_id,week_number,title,holiday_note_enabled,holiday_note
             FROM curriculum.weeks WHERE module_catalogue_id=ANY(%s) AND {VISIBLE}
-            ORDER BY display_order,week_number,id''', [ids])
+            ORDER BY display_order,week_number,id''', [schedule_ids])
         counts, authored = defaultdict(int), {}
         for row in rows(cur):
             mid = row['module_catalogue_id']
@@ -145,7 +152,7 @@ def read_weekly_learning(context, selection=None):
                 'id': row['id'], 'title': clean_text(row['title']), 'learningOutcomes': [],
                 'holidayNote': clean_text(row['holiday_note']) if row['holiday_note_enabled'] else ''})
         spine = {row['id']: {'id': row['id'], 'title': clean_text(row['title'])} for row in modules}
-        attach_curriculum_slots(modules, spine, counts, authored)
+        attach_curriculum_slots([row for row in modules if row['id'] in schedule_ids], spine, counts, authored)
         # Match learnerHeaderPlan's default module ordering/window selection.
         candidates = sorted([row for row in modules if spine[row['id']].get('curriculumSlots')],
                             key=lambda row: (str(row['start_date'] or '9999'), row['title'], row['id']))
@@ -154,7 +161,7 @@ def read_weekly_learning(context, selection=None):
         future = [row for row in candidates if row['start_date'] and str(row['start_date'])[:10] > today]
         past = sorted([row for row in candidates if row['end_date'] and str(row['end_date'])[:10] < today],
                       key=lambda row: (str(row['end_date']), row['id']), reverse=True)
-        default_module = (active or future or past or candidates or [{}])[0].get('id')
+        default_module = module_id or (active or future or past or candidates or [{}])[0].get('id')
         weeks = week_rows([spine[row['id']] for row in modules], today)
         default_weeks = [week for week in weeks if week['moduleId'] == default_module]
         selected = next((week for week in weeks if week['id'] == selection), None) if selection else (
@@ -198,7 +205,8 @@ def read_weekly_learning(context, selection=None):
             week['progress'] = round(week['completedActivities'] / len(items) * 100, 2) if items else 0
         # Only compact attendance markers are read across the navigator; the
         # selected occurrence's URL/title/timestamps are loaded separately below.
-        cur.execute('''WITH markers AS (
+        marker_date_filter = '' if include_weeks else " AND (coalesce(o.scheduled_start,s.start_datetime) AT TIME ZONE 'UTC' AT TIME ZONE 'Europe/London')::date=%s::date"
+        cur.execute(f'''WITH markers AS (
             SELECT s.module_catalogue_id,coalesce(o.status,s.status) AS status,coalesce(o.scheduled_start,s.start_datetime) AS start,
               coalesce(o.scheduled_end,coalesce(o.scheduled_start,s.start_datetime) + s.duration_minutes * interval '1 minute') AS finish,
               CASE WHEN coalesce(o.attendance_report_id,'')='' THEN NULL ELSE EXISTS(
@@ -207,23 +215,32 @@ def read_weekly_learning(context, selection=None):
               FROM curriculum.live_sessions s LEFT JOIN curriculum.live_session_occurrences o ON o.live_session_id=s.id
               WHERE s.module_catalogue_id=ANY(%s) AND lower(s.status) NOT IN ('cancelled','deleted','failed','superseded')
               AND (o.id IS NULL AND coalesce(s.repeat_pattern,'') IN ('','none') OR o.id IS NOT NULL
-                   AND lower(o.status) NOT IN ('cancelled','deleted','failed','superseded'))
+                   AND lower(o.status) NOT IN ('cancelled','deleted','failed','superseded')){marker_date_filter}
             ), dated AS (
               SELECT *, (start AT TIME ZONE 'UTC' AT TIME ZONE 'Europe/London')::date AS day FROM markers WHERE start IS NOT NULL
             ) SELECT DISTINCT ON (module_catalogue_id,day) module_catalogue_id,day,attended,start,finish,status
               FROM dated ORDER BY module_catalogue_id,day,start''',
-              [str(source.email or '').strip().lower(), ids])
+              [str(source.email or '').strip().lower(), schedule_ids] + ([] if include_weeks else [selected['startDate']]))
+        marker_rows = rows(cur)
         markers = {}
-        for row in rows(cur):
+        navigation = {}
+        for row in marker_rows:
+            if include_navigation:
+                start, finish = row['start'], row['finish']
+                navigation[(row['module_catalogue_id'], row['day'].isoformat())] = {
+                    'sessionStart': (start.replace(tzinfo=timezone.utc) if start.tzinfo is None else start).isoformat(),
+                    'sessionDurationMinutes': (finish - start).total_seconds() / 60 if finish else None}
             markers[(row['module_catalogue_id'], row['day'].isoformat())] = derived_session(
                 row['start'], row['finish'], row['status'], row['attended'], now)
         for week in weeks:
             marker = markers.get((week['moduleId'], week['startDate'])) if week['kind'] != 'reading-week' else None
             week['attended'] = marker['attended'] if marker else None
             week['sessionState'] = marker['state'] if marker else 'unscheduled'
+            if include_navigation:
+                week.update(navigation.get((week['moduleId'], week['startDate']), {}))
         weeks = visible_week_rows(weeks, markers)
         retained_modules = {week['moduleId'] for week in weeks}
-        default_module = next((row['id'] for row in active + future + past + candidates
+        default_module = module_id or next((row['id'] for row in active + future + past + candidates
                                if row['id'] in retained_modules), None)
         default_weeks = [week for week in weeks if week['moduleId'] == default_module]
         selected = next((week for week in weeks if week['id'] == selection), None) if selection else (
@@ -267,6 +284,10 @@ def read_weekly_learning(context, selection=None):
                                'expectedHours': minutes / 60 if minutes is not None else None,
                                'durationMinutes': duration, 'quizDuration': quiz_duration, 'quizTimeUnit': row['quiz_time_unit'],
                                'ksbCodes': sorted({str(item['code']).strip().upper() for item in mappings.get(row['id'], []) if item.get('code')})})
+        if include_navigation:
+            for activity in activities:
+                if activity['isQuiz']:
+                    activity['quizId'] = selected_by_id[activity['id']]['quiz_id']
         live = None
         if selected['kind'] != 'reading-week':
             cur.execute('''SELECT s.id AS session_id,s.module_catalogue_id AS module_id,s.module_title,

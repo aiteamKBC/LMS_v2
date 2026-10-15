@@ -663,26 +663,26 @@ def read_legacy_metadata(source, register):
     return metadata, activities
 
 
-def read_native_components(source, module_refs=None):
+def read_native_components(source, module_refs=None, *, monthly=False):
     # Only modules represented by a Teams lecture need activity bundles. Keep
     # direct progress for Recent Activity even on a historical-only register.
     if module_refs is not None and not module_refs:
-        return [], _direct_progress_records(source.id)
+        return [], [] if monthly else _direct_progress_records(source.id)
     with connections['enrolment'].cursor() as cur:
         cur.execute(ATTENDANCE_SUBJECTS_SQL, [source.id])
         modules = [row[0] for row in cur.fetchall() if module_refs is None or row[0] in module_refs]
-        cur.execute('''SELECT c.id,c.module_catalogue_id,c.week_id,c.type,c.title,c.description,
+        description = "''::text" if monthly else 'c.description'
+        cur.execute(f'''SELECT c.id,c.module_catalogue_id,c.week_id,c.type,c.title,{description} AS description,
             jsonb_build_object(
                 'teamsOccurrenceId',c.settings_json->'teamsOccurrenceId',
                 'teamsLiveSessionId',c.settings_json->'teamsLiveSessionId',
                 'sessionDate',c.settings_json->'sessionDate',
                 'sessionPurpose',c.settings_json->'sessionPurpose',
                 'legacySettings',CASE WHEN jsonb_typeof(c.settings_json->'legacySettings')='object'
-                    THEN jsonb_build_object('teamsOccurrenceId',c.settings_json #> '{legacySettings,teamsOccurrenceId}')
+                    THEN jsonb_build_object('teamsOccurrenceId',c.settings_json #> '{{legacySettings,teamsOccurrenceId}}')
                     ELSE c.settings_json->'legacySettings' END
-            ) AS settings_json,c.expected_otjh,c.ksb_mappings,
-            (SELECT jsonb_agg(k.ksb_code ORDER BY k.ksb_code)
-             FROM curriculum.ksb_mappings k WHERE k.component_id=c.id AND k.deleted_at IS NULL) AS mapped_ksbs
+            ) AS settings_json,c.expected_otjh,{"'[]'::jsonb" if monthly else 'c.ksb_mappings'} AS ksb_mappings,
+            {"NULL::jsonb" if monthly else '(SELECT jsonb_agg(k.ksb_code ORDER BY k.ksb_code) FROM curriculum.ksb_mappings k WHERE k.component_id=c.id AND k.deleted_at IS NULL)'} AS mapped_ksbs
             FROM curriculum.components c
             LEFT JOIN curriculum.weeks w ON w.id=c.week_id AND w.module_catalogue_id=c.module_catalogue_id
             WHERE c.module_catalogue_id=ANY(%s) AND c.deleted_at IS NULL
@@ -690,7 +690,7 @@ def read_native_components(source, module_refs=None):
                 (w.deleted_at IS NULL AND NOT w.is_programme_deleted))
             ORDER BY c.display_order,c.id''', [modules])
         components = dict_rows(cur)
-    progress = _direct_progress_records(source.id)
+    progress = [] if monthly else _direct_progress_records(source.id)
     completed = {str(row.get('componentId')) for row in progress if progress_counts_as_achieved(row)}
     for component in components:
         settings = as_json(component['settings_json'], {})
@@ -982,13 +982,36 @@ def _mark_missed_catchups(lectures, reported):
                 lecture['catchupStatus'] = 'missed'
 
 
-def read_workspace(source, kind):
+def read_workspace(source, kind, *, monthly=None):
     from .attendance_mode import read_mode
     register = lecture_register(source)
-    metadata, activities = read_legacy_metadata(source, register)
+    if monthly is not None:
+        register = [row for row in register if row.get('source') == 'microsoft-teams' and row['session_date'].isoformat().startswith(monthly)]
+    metadata, activities = ({}, []) if monthly is not None else read_legacy_metadata(source, register)
     native_modules = {row['module_catalogue_id'] for row in register if row.get('source') == 'microsoft-teams'}
-    components, progress = read_native_components(source, native_modules)
+    components, progress = read_native_components(source, native_modules, monthly=True) if monthly is not None else read_native_components(source, native_modules)
     lectures = build_lectures(register, metadata, activities, components, kind, source.id)
+    if monthly is not None:
+        # Register normalization precedes clipping: replacement/catch-up outcomes
+        # can depend on occurrences outside the displayed month.
+        lectures = [lecture for lecture in lectures if lecture['date'].startswith(monthly)]
+        with connections['enrolment'].cursor() as cur:
+            ids = list(dict.fromkeys(lecture['reportId'] for lecture in lectures))
+            if ids:
+                cur.execute('''SELECT id,attendance_id,status,recovery_method,catchup_event_key
+                    FROM "Coach".coach_absence_report
+                    WHERE learner_id=%s AND attendance_id=ANY(%s) ORDER BY created_at DESC''', [source.id, ids])
+                reports = dict_rows(cur)
+            else:
+                reports = []
+        reported = {str(report['attendance_id']): report for report in reversed(reports)}
+        for lecture in lectures:
+            report = reported.get(lecture['reportId'])
+            lecture['absenceReport'] = {'id': report['id'], 'status': report['status']} if report else None
+            lecture['canReportAbsence'] = can_report_absence_status(lecture['status'], lecture['date']) and not report
+        _attach_recovery(lectures, reported)
+        _mark_missed_catchups(lectures, reported)
+        return {'lectures': lectures}
     # Include every current assignment, even when it has no attendance row yet.
     # Historical/source-only modules remain available through the lecture list.
     assigned_modules = read_assigned_modules(source)

@@ -141,4 +141,8 @@ export function useDashboardPlan(kind?: LearnerKind | null, id?: string | null, 
   };
 }
 
-export type DashboardPlanState = ReturnType<typeof useDashboardPlan>;
+export type DashboardPlanState = Omit<ReturnType<typeof useDashboardPlan>, 'week'> & {
+  week: Omit<ReturnType<typeof useDashboardPlan>['week'], 'data'> & {
+    data: Pick<OverviewWeek, 'planSubjects' | 'monthlyOtjh' | 'metrics'> | null;
+  };
+};

@@ -423,7 +423,7 @@ def review_type_rows_by_template(template_ids):
     return {row['id']: types[row['review_type_id']] for row in rows if row.get('review_type_id') in types}
 
 
-def _serialize_event(record, *, review_types_by_template=None, templates_by_id=None, compact=False):
+def _serialize_event(record, *, review_types_by_template=None, templates_by_id=None, compact=False, include_meeting_link=False):
     """Shape one coach_calendar_event row for the learner calendar page.
 
     Mirrors the field names the coach timetable JSON uses (scheduledDate,
@@ -451,7 +451,8 @@ def _serialize_event(record, *, review_types_by_template=None, templates_by_id=N
                 'targetDate': record.target_date.isoformat() if record.target_date else None,
                 'scheduledDate': record.scheduled_date.isoformat() if record.scheduled_date else None,
                 'scheduledTime': record.scheduled_time.strftime('%H:%M') if record.scheduled_time else None,
-                'durationMinutes': record.duration_minutes or 60}
+                  'durationMinutes': record.duration_minutes or 60,
+                  **({'meetingLink': _s(record.meeting_link) or _s(record.graph_web_link)} if include_meeting_link else {})}
     meeting_link = _s(record.meeting_link) or _s(record.graph_web_link)
     from coach_api.views import public_graph_sync_warning
     sync_warning = public_graph_sync_warning(_s(record.last_graph_sync_error))
@@ -602,7 +603,7 @@ def _assignment_imported_mcm_month(profile_id, review_id):
     return (review["plannedDate"] or "")[:7] or None, None
 
 
-def coaching_events_for_learner(learner, mirror, *, month=None, only_sources=None, dates_only=False):
+def coaching_events_for_learner(learner, mirror, *, month=None, only_sources=None, dates_only=False, header_only=False):
     """One source for the calendar and Training Plan coaching dates/statuses.
 
     ``only_sources`` is for a caller that keeps only those event sources. It
@@ -626,6 +627,8 @@ def coaching_events_for_learner(learner, mirror, *, month=None, only_sources=Non
         return []
     records = []
     query = CoachCalendarEvent.objects.filter(match)
+    if header_only:
+        query = query.defer('review_responses', 'notes')
     if month:
         from calendar import monthrange
         first = date.fromisoformat(month + '-01')
@@ -652,8 +655,9 @@ def coaching_events_for_learner(learner, mirror, *, month=None, only_sources=Non
             imported = imported_events_for_learner(learner, mirror, review_source.aptem_id, records, month=month)
         elif only_sources is not None:
             # Section text only feeds ``importedReview``; the narrowed caller drops it.
+            options = {'compact_bookings': True} if header_only else {}
             imported = imported_events_for_learner(learner, mirror, review_source.aptem_id, records,
-                                                   include_sections=False, dates_only=dates_only)
+                include_sections=False, dates_only=dates_only or header_only, **options)
         else:
             imported = imported_events_for_learner(learner, mirror, review_source.aptem_id, records)
 
@@ -664,7 +668,7 @@ def coaching_events_for_learner(learner, mirror, *, month=None, only_sources=Non
                     or (_s(record.event_type) or "mcr") in only_sources)
 
         # Persisted native rows must not become a second occurrence or fallback.
-        other = [] if month else [_serialize_event(record) for record in records
+        other = [] if month else [_serialize_event(record, compact=header_only, include_meeting_link=header_only) for record in records
                  if record.event_type not in {"mcr", "progress-review", "review"} and may_match(record)]
         mcm_records = [record for record in records
                        if record.event_type == "mcr" and not record.event_key.startswith("imported-review:")]
@@ -675,11 +679,13 @@ def coaching_events_for_learner(learner, mirror, *, month=None, only_sources=Non
             return [*imported, *other]
         if not _curriculum_mcm_fallback(learner, mirror):
             return [*imported, *other]
-        return [*imported, *_curriculum_cycle_events(learner, mirror, mcm_records, mcm_only=True, month=month), *other]
-    return _curriculum_cycle_events(learner, mirror, records, month=month)
+        options = {'compact': True} if header_only else {}
+        return [*imported, *_curriculum_cycle_events(learner, mirror, mcm_records, mcm_only=True, month=month, **options), *other]
+    options = {'compact': True} if header_only else {}
+    return _curriculum_cycle_events(learner, mirror, records, month=month, **options)
 
 
-def _curriculum_cycle_events(learner, mirror, records, *, mcm_only=False, month=None):
+def _curriculum_cycle_events(learner, mirror, records, *, mcm_only=False, month=None, compact=False):
     """Generated Curriculum occurrences reconciled with their saved bookings."""
     from curriculum_api import reviews, review_instances
     generated = (_generated_cycle_events(learner, mirror, set(), mcm_only=mcm_only, month=month)
@@ -716,7 +722,7 @@ def _curriculum_cycle_events(learner, mirror, records, *, mcm_only=False, month=
     for event in generated:
         record = matched.get(event['eventKey'])
         if record:
-            stored = _serialize_event(record, review_types_by_template=types, templates_by_id=templates, compact=bool(month))
+            stored = _serialize_event(record, review_types_by_template=types, templates_by_id=templates, compact=bool(month) or compact, include_meeting_link=compact)
             for field in ('title', 'source', 'type', 'reviewTemplateId', 'occurrenceNumber', 'reviewTypeId', 'reviewTypeCode', 'reviewTypeName', 'reviewTypeIsSystem'):
                 # Legacy cycles have no Curriculum review metadata. Preserve
                 # the serialized booking fields when the generator omits them.
@@ -734,7 +740,7 @@ def _curriculum_cycle_events(learner, mirror, records, *, mcm_only=False, month=
         )
         if is_review_placeholder and record.status == CoachCalendarEvent.STATUS_NOT_SCHEDULED:
             continue
-        events.append(_serialize_event(record, review_types_by_template=types, templates_by_id=templates, compact=bool(month)))
+        events.append(_serialize_event(record, review_types_by_template=types, templates_by_id=templates, compact=bool(month) or compact, include_meeting_link=compact))
     return events
 
 

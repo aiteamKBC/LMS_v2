@@ -1,5 +1,5 @@
 import type { OverviewWeek, UpcomingSchedule } from '@/api/learnerOverview';
-import type { TrainingPlanDashboard } from '@/api/trainingPlanDashboard';
+import type { PlanSession, PlanReview } from '@/api/trainingPlanDashboard';
 import { learnerHref, type LearnerRoutePage } from '@/lib/learnerRoutes';
 
 // The learner pages Student Home links to.
@@ -44,7 +44,10 @@ export type ReviewOrMcmEvent = HomeEvent & {
 };
 
 /** One nearest event per category, in lecture / assignment / review order. */
-export function upcomingEvents(schedule?: Pick<TrainingPlanDashboard, 'sessions' | 'reviews'> | null,
+export function upcomingEvents(schedule?: {
+  sessions: Pick<PlanSession, 'id' | 'moduleId' | 'title' | 'start' | 'status'>[];
+  reviews: Pick<PlanReview, 'id' | 'source' | 'status' | 'title' | 'scheduledDate' | 'scheduledTime' | 'targetDate' | 'date'>[];
+} | null,
   week?: Pick<OverviewWeek, 'deadlines'> | null, now = new Date()): HomeEvent[] {
   const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/London' }).format(now);
   const time = new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/London', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(now);
@@ -104,7 +107,7 @@ export function homeUpcomingEvents(schedule?: UpcomingSchedule | null, now = new
 }
 
 /** Return the next scheduled or due MCM/progress review for dashboard actions. */
-export function upcomingReviewOrMcm(schedule?: TrainingPlanDashboard | null, now = new Date()): ReviewOrMcmEvent | null {
+export function upcomingReviewOrMcm(schedule?: { reviews: Pick<PlanReview, 'id' | 'eventKey' | 'title' | 'source' | 'status' | 'date' | 'targetDate' | 'scheduledDate' | 'scheduledTime' | 'meetingLink'>[] } | null, now = new Date()): ReviewOrMcmEvent | null {
   const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/London' }).format(now);
   const time = new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/London', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(now);
   const candidates = (schedule?.reviews ?? [])
