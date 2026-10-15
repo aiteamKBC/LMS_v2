@@ -27,7 +27,7 @@ from django.views.decorators.http import require_http_methods
 
 from .models import QuizAnswer, QuizPackage, QuizQuestion
 from .question_images import validate_question_image
-from .answer_keys import choice_key_error, choice_label
+from .answer_keys import choice_key_error, choice_label, quiz_publication_error
 from learner_api.models import LearnerProfile
 
 logger = logging.getLogger(__name__)
@@ -3366,19 +3366,17 @@ def quizzes(request):
             valid = False
             message = message or "File uploaded, but no questions were detected. Use columns like Question Title, Option 1-5, and Answer."
         default_question_type = _default_question_type_from_questions(parsed_questions, request.POST.get("questionType") or "single_choice")
-        key_errors = []
-        for index, question in enumerate(parsed_questions, 1):
-            error = choice_key_error(question.get("question_type"), [
+        publication_error = quiz_publication_error([
+            {"type": question.get("question_type"), "answers": [
                 {"text": answer["text"], "isCorrect": answer["is_correct"]}
                 for answer in question.get("answers", [])
-            ], strict_duplicates=True)
-            if error:
-                key_errors.append(f"Question {index}: {error}")
-        if key_errors:
+            ]} for question in parsed_questions
+        ]) if parsed_questions or package_type != "scorm" else None
+        if publication_error:
             valid = False
-            message = " ".join(key_errors)
-            if _clean_quiz_status(request.POST.get("status"), "draft") == "published":
-                return JsonResponse({"error": message}, status=400)
+            message = publication_error
+        if _clean_quiz_status(request.POST.get("status"), "draft") == "published" and not valid:
+            return JsonResponse({"error": message or "Fix the uploaded quiz before publishing."}, status=400)
         try:
             duration = int(request.POST.get("duration") or 60)
         except (TypeError, ValueError):
@@ -3417,6 +3415,10 @@ def quizzes(request):
         payload = json.loads(request.body or "{}")
     except json.JSONDecodeError:
         return JsonResponse({"error": "Invalid JSON body"}, status=400)
+
+    # Manual creation does not save questions; it must start unpublished.
+    if _clean_quiz_status(payload.get("status"), "draft") == "published":
+        return JsonResponse({"error": quiz_publication_error([])}, status=400)
 
     manual_title = payload.get("title", "Untitled Quiz")
     manual_programme = payload.get("programme", "")
@@ -3626,9 +3628,14 @@ def quiz_students(request, pk):
 @csrf_exempt
 @require_http_methods(["PATCH", "DELETE"])
 def quiz_detail(request, pk):
+    with transaction.atomic():
+        return _quiz_detail_locked(request, pk)
+
+
+def _quiz_detail_locked(request, pk):
     _ensure_quiz_assessment_type_column()
     try:
-        quiz = QuizPackage.objects.get(pk=pk)
+        quiz = QuizPackage.objects.select_for_update().get(pk=pk)
     except QuizPackage.DoesNotExist:
         raise Http404
 
@@ -3646,13 +3653,12 @@ def quiz_detail(request, pk):
         if not status:
             return JsonResponse({"error": "Unsupported quiz status"}, status=400)
         if status == "published":
-            for index, question in enumerate(QuizQuestion.objects.filter(quiz_id=quiz.id, is_archived=False).prefetch_related("answers"), 1):
-                error = choice_key_error(question.question_type, [
-                    {"text": answer.answer_text, "isCorrect": answer.is_correct}
-                    for answer in question.answers.all()
-                ], strict_duplicates=True)
-                if error:
-                    return JsonResponse({"error": f"Question {index}: {error}"}, status=400)
+            questions = QuizQuestion.objects.filter(quiz_id=quiz.id, is_archived=False).prefetch_related("answers")
+            prepared = [_question_key_payload(question) for question in questions]
+            # Standalone SCORM content keeps its existing launch workflow.
+            error = quiz_publication_error(prepared) if prepared or quiz.package_type != "scorm" else None
+            if error:
+                return JsonResponse({"error": error}, status=400)
         quiz.status = status
 
     for field in ["title", "module", "programme", "version", "author"]:
@@ -4356,6 +4362,15 @@ def question_bank(request):
     })
 
 
+def _question_key_payload(question):
+    return {
+        "type": question.question_type,
+        "isArchived": question.is_archived,
+        "answers": [{"text": answer.answer_text, "isCorrect": answer.is_correct}
+                    for answer in question.answers.all()],
+    }
+
+
 @csrf_exempt
 @require_http_methods(["POST"])
 def add_question_to_quiz(request, question_id):
@@ -4379,6 +4394,14 @@ def add_question_to_quiz(request, question_id):
             target_quiz = QuizPackage.objects.select_for_update().get(pk=target_quiz_id)
         except QuizPackage.DoesNotExist:
             return JsonResponse({"error": "Target quiz not found"}, status=404)
+
+        if target_quiz.status == "published":
+            existing = QuizQuestion.objects.filter(quiz_id=target_quiz.id, is_archived=False).prefetch_related("answers")
+            candidate = _question_key_payload(source_question)
+            candidate["isArchived"] = False
+            error = quiz_publication_error([*(_question_key_payload(q) for q in existing), candidate])
+            if error:
+                return JsonResponse({"error": error}, status=400)
 
         next_sort_order = (
             QuizQuestion.objects
@@ -4423,12 +4446,20 @@ def add_question_to_quiz(request, question_id):
 
 @csrf_exempt
 def quiz_questions(request, pk):
+    if request.method == "GET":
+        return _quiz_questions_locked(request, pk)
+    with transaction.atomic():
+        return _quiz_questions_locked(request, pk)
+
+
+def _quiz_questions_locked(request, pk):
     _ensure_quiz_assessment_type_column()
     if request.method not in {"GET", "POST", "PATCH"}:
         return JsonResponse({"error": "Method not allowed"}, status=405)
 
     try:
-        quiz = QuizPackage.objects.get(pk=pk)
+        quiz_manager = QuizPackage.objects if request.method == "GET" else QuizPackage.objects.select_for_update()
+        quiz = quiz_manager.get(pk=pk)
     except QuizPackage.DoesNotExist:
         raise Http404
 
@@ -4479,6 +4510,23 @@ def quiz_questions(request, pk):
         return JsonResponse({
             "error": "Refusing to replace a multi-question quiz with one question. Reload the editor and try again.",
         }, status=409)
+
+    if quiz.status == "published":
+        effective = {qid: _question_key_payload(q) for qid, q in existing_questions.items()}
+        submitted = []
+        for question in questions:
+            candidate = dict(effective.get(question.get("id"), {"type": quiz.default_question_type, "answers": []}))
+            if "questionType" in question:
+                candidate["type"] = question["questionType"] or quiz.default_question_type
+            if "answers" in question and question["answers"] is not None:
+                candidate["answers"] = [a for a in question["answers"] if str(a.get("text") or "").strip()]
+            if "isArchived" in question:
+                candidate["isArchived"] = bool(question["isArchived"])
+            effective.pop(question.get("id"), None)
+            submitted.append(candidate)
+        error = quiz_publication_error(submitted + ([] if remove_missing else list(effective.values())))
+        if error:
+            return JsonResponse({"error": error}, status=400)
 
     seen_question_ids = set()
     with transaction.atomic():
