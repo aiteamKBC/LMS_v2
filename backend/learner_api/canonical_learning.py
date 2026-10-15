@@ -499,7 +499,7 @@ def material_parts(item, owner, record=None):
                and r.get('source_course_ref') and r.get('source_activity_id')]
     if sources:
         # Preserve the activity namespace: quiz:10 must never open material:10.
-        keys = {(str(r['source_course_ref']), r['source_activity_id']) for r in sources}
+        keys = {recorded_source_key(r) for r in sources}
     else:
         component_ids = {r.get('curriculum_component_ref') or r.get('component_ref')
                          for r in [record, *(record.get('sources') or [])]}
@@ -769,6 +769,23 @@ def recorded_activity_schedule(record, course):
         'date_source': 'introduction' if introduction else 'consolidated_record'}
 
 
+def recorded_source_key(source):
+    """Resolve a course-qualified legacy identity only inside its stored route.
+
+    Older imports used one global material/quiz key per learner. A component
+    reused by two courses needs distinct source rows, while catalogue IDs and
+    learner-facing material links retain the original typed component ID.
+    """
+    course = str(source.get('source_course_ref') or '')
+    reference = str(source.get('source_activity_id') or '')
+    if reference.startswith('course:'):
+        match = re.fullmatch(r'course:([1-9]\d*):((?:material|quiz):[1-9]\d*)', reference)
+        if not match or source.get('source_system') != 'old_lms' or match[1] != course:
+            return None
+        reference = match[2]
+    return course, reference
+
+
 def recorded_course_items(courses, catalogue, records, *, overview_only=False, include_catalogue=False):
     """Allocate a final record once per course, using exact catalogue lineage.
 
@@ -782,7 +799,7 @@ def recorded_course_items(courses, catalogue, records, *, overview_only=False, i
     for record in records:
         placements = {}
         for source in record.get('sources') or []:
-            key = (str(source.get('source_course_ref')), source.get('source_activity_id'))
+            key = recorded_source_key(source)
             if source.get('source_system') == 'old_lms' and key in definitions:
                 placements.setdefault(key if include_catalogue else key[0], definitions[key])
         # Imported journal rows and new attempts retain a typed course/material
