@@ -11,7 +11,7 @@ const count=(value:number)=>value.toLocaleString('en-GB');
 const requestKey=()=> 'voucher:'+Date.now().toString(36)+':'+Math.random().toString(36).slice(2)+Math.random().toString(36).slice(2);
 export function LmsPointsScreen(props:Props){
  const user=props.session?.user;
- return <LmsPointsBody key={String(user?.accountId)+':'+String(user?.learnerKind)+':'+String(user?.id)} {...props}/>;
+ return <LmsPointsBody key={String(user?.accountId)+':'+String(user?.learnerKind)+':'+String(user?.id)+':'+String(props.session?.rewardModuleId)} {...props}/>;
 }
 function LmsPointsBody({client,session,refreshVersion=0}:Props){
  const moduleId=session?.rewardModuleId||'MOD-KBC-PMP-M01-SMR';
