@@ -266,7 +266,10 @@ def lecture_register(source, *, module_ids=None, records=None, learner_profile_i
             if schedule['scheduled_end'] > now:
                 row = schedule
             else:
+                # The saved report can retain an old meeting title. Use the
+                # assigned module's current title before legacy mirror matching.
                 row = {**schedule, **row, 'session_id': occurrence_id,
+                       'module_title': schedule['module_title'],
                        'scheduled_start': schedule['scheduled_start'],
                        'scheduled_end': schedule['scheduled_end'], 'session_date': schedule['session_date'],
                        'session_start_time': schedule['session_start_time'], 'session_end_time': schedule['session_end_time']}

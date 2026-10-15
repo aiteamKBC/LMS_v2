@@ -297,6 +297,40 @@ class AttendanceLectureTests(SimpleTestCase):
         self.assertIsNone(_component_for(row, [first]))
         self.assertIsNone(_component_for(row, [second, dict(second)]))
 
+    def test_stale_meeting_title_does_not_hide_a_distinct_historical_course(self):
+        now = timezone.now()
+        day = timezone.localdate() - timedelta(days=7)
+        scheduled = register_row(source='microsoft-teams', session_id='occ-current',
+            occurrence_id='occ-current', module_catalogue_id='current-module',
+            module_title='Current programme', session_date=day, attendance_status='pending',
+            scheduled_start=now-timedelta(days=7, hours=2), scheduled_end=now-timedelta(days=7))
+        evidence = {**scheduled, 'module_title': 'Historical programme',
+                    'attendance_status': 'present', 'attended_seconds': 600,
+                    'attendance_report_id': 'saved-report'}
+        historical = register_row(session_id='historic-1', module_title='Historical programme',
+                                  session_date=day, attendance_status='absent')
+        mirror = register_row(session_id='current-mirror', module_title='Current programme',
+                              session_date=day, attendance_status='present')
+        records = [evidence, historical, mirror]
+        before = [dict(row) for row in records]
+        register = lecture_register(SimpleNamespace(id=12), records=records,
+                                    scheduled=[scheduled], apply_adjustments=False)
+        self.assertEqual({row['session_id'] for row in register}, {'occ-current', 'historic-1'})
+        current = next(row for row in register if row['session_id'] == 'occ-current')
+        self.assertEqual(current['module_title'], 'Current programme')
+        self.assertEqual(current['attendance_status'], 'present')
+        self.assertEqual(current['attended_seconds'], 600)
+        self.assertEqual(current['attendance_report_id'], 'saved-report')
+        self.assertEqual(records, before)
+        for kind in ('commercial', 'apprenticeship'):
+            with self.subTest(kind=kind):
+                lectures = build_lectures(register, {}, [], [], kind, 12)
+                by_id = {row['moduleId']: row for row in lectures}
+                self.assertEqual(set(by_id), {'native:current-module', 'legacy:historical programme'})
+                self.assertEqual(by_id['native:current-module']['monthlyLog']['sourceRef'], 'attendance:occ-current')
+                self.assertEqual(by_id['legacy:historical programme']['monthlyLog']['sourceRef'], 'att:historic-1')
+                self.assertEqual(by_id['legacy:historical programme']['status'], 'absent')
+
     @patch('learner_api.attendance_lectures.read_native_occurrences')
     @patch('learner_api.attendance_lectures.combined_attendance_rows')
     def test_native_schedule_deduplicates_reports_and_excludes_cancelled(self, combined, scheduled):

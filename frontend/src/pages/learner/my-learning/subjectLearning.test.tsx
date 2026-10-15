@@ -485,7 +485,7 @@ describe('map and My Learning navigation', () => {
     expect(screen.getByRole('button', { name: /Open subject/ })).toBeVisible();
   });
 
-  it('uses the authoritative activity total everywhere and opens deadline components', async () => {
+  it('uses the displayed activity total despite different programme metrics and opens deadline components', async () => {
     vi.spyOn(api, 'subjectRequest').mockResolvedValue({ ...metadata, activity_dates: {
       'ASSIGNMENT-1': { date: '2050-10-04', month: '2050-10', week_start: '2050-10-04', week_end: '2050-10-10', due_timing: 'end of week' },
       'CHECKPOINT-1': { date: '2050-10-04', month: '2050-10', week_start: '2050-10-04', week_end: '2050-10-10', due_timing: 'end of week' },
@@ -502,7 +502,8 @@ describe('map and My Learning navigation', () => {
     </MemoryRouter>);
 
     await screen.findByRole('button', { name: /Open subject/ });
-    expect(screen.getByText('1 subjects · 304 activities')).toBeVisible();
+    expect(screen.getByText('1 subjects · 4 activities')).toBeVisible();
+    expect(screen.getByText('0 of 4 activities completed')).toBeVisible();
     expect(screen.getByRole('heading', { name: 'Upcoming' })).toBeVisible();
     expect(screen.getByRole('link', { name: /Due assignment/ })).toHaveAttribute('href', '/learner/component/commercial/132/ASSIGNMENT-1');
     expect(screen.getByRole('link', { name: /Due checkpoint/ })).toHaveAttribute('href', '/learner/component/commercial/132/CHECKPOINT-1');
