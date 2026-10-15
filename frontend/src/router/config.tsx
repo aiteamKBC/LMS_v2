@@ -306,6 +306,7 @@ const WeekDetailPage = lazyRoute(() => import("../pages/learner/week-detail/page
 const WhatsAppLogsPage = lazyRoute(() => import("../pages/engagement/whatsapp-logs/page"));
 const WizardPage = lazyRoute(() => import("../pages/users/wizard/WizardPage"));
 const WizardBuilderPage = lazyRoute(() => import("../pages/users/wizard-builder/page"));
+const EligibilityBuilderPage = lazyRoute(() => import("../pages/users/eligibility-builder/page"));
 
 const routes: RouteObject[] = [
   { path: '/old-otjh', element: <OldOtjhPage /> },
@@ -504,6 +505,11 @@ const routes: RouteObject[] = [
   {
     path: "/users/wizard-builder",
     element: <WizardBuilderPage />,
+  },
+  // The builder of the public eligibility form (/apprenticeship_application). Static too.
+  {
+    path: "/users/eligibility-builder",
+    element: <EligibilityBuilderPage />,
   },
   {
     path: "/users/:userId",

@@ -653,6 +653,9 @@ export default function UsersListPage() {
               <button type="button" className={btnSecondary} onClick={() => navigate('/users/wizard-builder')}>
                 <AppIcon className="ri-magic-line" />Edit apprenticeship wizard
               </button>
+              <button type="button" className={btnSecondary} onClick={() => navigate('/users/eligibility-builder')}>
+                <AppIcon className="ri-task-line" />Edit eligibility form
+              </button>
               <DownloadLearnerTemplateButton />
               <button type="button" className={btnSecondary} onClick={() => setImportModalOpen(true)}>
                 <AppIcon className="ri-upload-2-line" />Upload learners
