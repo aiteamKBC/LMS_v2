@@ -293,7 +293,8 @@ class SkillsRadarClassificationTests(SimpleTestCase):
         ])
 
         self.assertEqual(result[0]["knowledge"], 6)
-        self.assertEqual(result[0]["maximum"], 8)
+        # Out of 9 since Champion was added above Mastery; the score itself is unchanged.
+        self.assertEqual(result[0]["maximum"], 9)
         self.assertEqual(result[1]["behaviour"], 4)
 
 

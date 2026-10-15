@@ -21,7 +21,7 @@ as every other wizard answer:
     CV/Job Description -> enrolment."Wizard_Cv_Job"
     PLR                -> enrolment."Wizard_Plr"
     Skills Radar       -> enrolment."Wizard_Skills_Radar"
-    Welcome, Before You Begin, Policies, What Happens Now? -> a one-row-per-learner
+    Welcome, Before You Begin, Inclusion, Policies, What Happens Now? -> a one-row-per-learner
         enrolment."Wizard_<Step>" table, created with the step's first custom field
     a step added in the builder -> its own enrolment."Wizard_Custom_<name>" table
 
@@ -77,6 +77,7 @@ BUILTIN_STEP_TABLES = {
     "skills-radar": ("Wizard_Skills_Radar", "wizard_skills_radar_learner_uniq", False),
     "introduction": ("Wizard_Introduction", "wizard_introduction_learner_uniq", True),
     "before-you-begin": ("Wizard_Before_You_Begin", "wizard_before_you_begin_learner_uniq", True),
+    "inclusion": ("Wizard_Inclusion", "wizard_inclusion_learner_uniq", True),
     "policies": ("Wizard_Policies", "wizard_policies_learner_uniq", True),
     "next-steps": ("Wizard_Next_Steps", "wizard_next_steps_learner_uniq", True),
 }
@@ -90,6 +91,7 @@ BUILTIN_STEP_LABELS = {
     "cv-job": "CV/Job Description",
     "plr": "Personal Learning Record",
     "skills-radar": "Skills Radar",
+    "inclusion": "Inclusion",
     "policies": "Policies",
     "next-steps": "What Happens Now?",
 }

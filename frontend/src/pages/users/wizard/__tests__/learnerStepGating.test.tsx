@@ -8,7 +8,7 @@
  * stop the enrolment team correcting a single field on a half-filled record.
  */
 import { describe, it, expect, beforeAll, beforeEach, vi } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { ReactNode } from 'react';
 
@@ -24,6 +24,11 @@ vi.mock('@/api/extendedIlr', () => ({
   peekExtendedIlr: () => undefined,
 }));
 vi.mock('@/api/enrolmentDocuments', () => ({ uploadEnrolmentDocument: vi.fn() }));
+// The Inclusion step's status comes from the Safeguarding database; not answered yet.
+vi.mock('@/api/wizardInclusion', () => ({
+  fetchInclusionStatus: vi.fn(async () => ({ applicable: true, completed: false, respondedAt: null })),
+  SAFEGUARDING_URL: 'https://safeguarding.example/',
+}));
 
 // The wizard seeds an unrated row per programme competency, so the Skills Radar
 // counts as outstanding even on a step the learner has never opened.
@@ -36,6 +41,7 @@ vi.mock('@/api/curriculum', () => ({
 }));
 
 import { ToastProvider } from '@/hooks/useToast';
+import { fetchInclusionStatus } from '@/api/wizardInclusion';
 import { WizardProvider } from '../WizardContext';
 import { WizardShell } from '../WizardShell';
 import type { EnrolmentBoard, IlrForm, IlrLearnerDetails, PersonalDetails } from '../../types';
@@ -283,6 +289,58 @@ describe('learner step gating', () => {
     expect(onNavigateStep).not.toHaveBeenCalled();
   });
 
+  it('holds the Policies until the inclusion assessment has been answered', async () => {
+    const everythingBefore = {
+      answers: COMPLETE_EXTENDED_ILR,
+      draft: {
+        personalDetails: COMPLETE_PERSONAL_DETAILS,
+        ilrDetails: COMPLETE_ILR_DETAILS,
+        cvJob: {
+          pmQualifications: '', experienceText: 'N/A', functionalSkillsEnrol: 'No, I would prefer to opt out',
+          highestQualification: 'BA (Hons)', highestQualificationField: 'Business', hasFieldQualification: false,
+          highestFieldQualification: '', gcseEnglish: true, gcseMaths: true,
+        },
+        plr: { uln: '1234567890', records: [] },
+      },
+      meta: { updatedAt: '2026-08-01T00:00:00Z' },
+    };
+    fetchExtendedIlr.mockResolvedValue(everythingBefore);
+    const onNavigateStep = renderShell('learner');
+
+    // Every step up to the Skills Radar is done (no competencies to rate), so
+    // the Inclusion step opens — and, unanswered, holds the Policies back.
+    // (Waited on the lock: nothing is gated until the status check has settled.)
+    await waitFor(() => expect(screen.getByRole('tab', { name: 'Policies' })).toHaveAttribute('aria-disabled', 'true'));
+    expect(screen.getByRole('tab', { name: 'Inclusion' })).not.toHaveAttribute('aria-disabled');
+    await userEvent.click(screen.getByRole('tab', { name: 'Policies' }));
+    expect(onNavigateStep).not.toHaveBeenCalled();
+  });
+
+  it('opens the Policies once the inclusion assessment has been answered', async () => {
+    vi.mocked(fetchInclusionStatus).mockResolvedValueOnce({ applicable: true, completed: true, respondedAt: '2026-10-15T09:30:00Z' });
+    fetchExtendedIlr.mockResolvedValue({
+      answers: COMPLETE_EXTENDED_ILR,
+      draft: {
+        personalDetails: COMPLETE_PERSONAL_DETAILS,
+        ilrDetails: COMPLETE_ILR_DETAILS,
+        cvJob: {
+          pmQualifications: '', experienceText: 'N/A', functionalSkillsEnrol: 'No, I would prefer to opt out',
+          highestQualification: 'BA (Hons)', highestQualificationField: 'Business', hasFieldQualification: false,
+          highestFieldQualification: '', gcseEnglish: true, gcseMaths: true,
+        },
+        plr: { uln: '1234567890', records: [] },
+      },
+      meta: { updatedAt: '2026-08-01T00:00:00Z' },
+    });
+    const onNavigateStep = renderShell('learner');
+
+    // Settled first: before the check comes back nothing is gated at all.
+    await waitFor(() => expect(within(screen.getByRole('tab', { name: 'Inclusion' })).getByText('Complete')).toBeInTheDocument());
+    expect(screen.getByRole('tab', { name: 'Policies' })).not.toHaveAttribute('aria-disabled');
+    await userEvent.click(screen.getByRole('tab', { name: 'Policies' }));
+    await waitFor(() => expect(onNavigateStep).toHaveBeenCalledWith(9));
+  });
+
   it('claims no progress until the saved answers have loaded', async () => {
     // The draft starts as a blank seeded form, so measuring completeness before
     // hydration reported a returning learner's finished steps as "Not started"
@@ -315,9 +373,10 @@ describe('learner step gating', () => {
     // Learning Record (nothing required since the ULN was dropped) and the
     // Skills Radar, which this programme seeds no competencies for. ILR Learner
     // Details is still unanswered. Next Steps is not counted: it only counts
-    // once the learner has reached it with every earlier step done.
-    await waitFor(() => expect(screen.getByText(/5 of 10 steps complete/i)).toBeInTheDocument());
-    expect(screen.getByText('50%')).toBeInTheDocument();
+    // once the learner has reached it with every earlier step done, and the
+    // Inclusion assessment has not been answered.
+    await waitFor(() => expect(screen.getByText(/5 of 11 steps complete/i)).toBeInTheDocument());
+    expect(screen.getByText('45%')).toBeInTheDocument();
   });
 
   it('claims no progress until the programme competencies have seeded either', async () => {
@@ -354,8 +413,8 @@ describe('learner step gating', () => {
 
     // Now measurable — and the Skills Radar is correctly outstanding, so the
     // count settles at 4 (the PLR has nothing required), never having shown 5.
-    await waitFor(() => expect(screen.getByText(/4 of 10 steps complete/i)).toBeInTheDocument());
-    expect(screen.queryByText(/5 of 10 steps complete/i)).not.toBeInTheDocument();
+    await waitFor(() => expect(screen.getByText(/4 of 11 steps complete/i)).toBeInTheDocument());
+    expect(screen.queryByText(/5 of 11 steps complete/i)).not.toBeInTheDocument();
   });
 
   it('does not gate the staff wizard, and keeps its Save progress button', async () => {
@@ -365,6 +424,7 @@ describe('learner step gating', () => {
     expect(screen.getByRole('button', { name: /Save progress/i })).toBeInTheDocument();
 
     await userEvent.click(screen.getByRole('tab', { name: 'Policies' }));
-    await waitFor(() => expect(onNavigateStep).toHaveBeenCalledWith(8));
+    // Policies sits after the Inclusion step.
+    await waitFor(() => expect(onNavigateStep).toHaveBeenCalledWith(9));
   });
 });

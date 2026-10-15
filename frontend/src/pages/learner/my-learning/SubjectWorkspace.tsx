@@ -1,6 +1,6 @@
 import { useEffect, useId, useMemo, useRef, useState, type MouseEvent, type ReactNode } from 'react';
 import { Link, Navigate, useLocation, useNavigate } from 'react-router-dom';
-import { ArrowRight, Award, BookOpen, CalendarDays, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight, Layers3, Loader2, Map as MapIcon, Search } from 'lucide-react';
+import { ArrowRight, Award, BookOpen, CalendarDays, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight, GraduationCap, Layers3, Loader2, Map as MapIcon, Search } from 'lucide-react';
 import type { LearnerDetail, LearnerKind } from '@/api/learnerDetail';
 import type { LearnerMetrics } from '@/api/learnerMetrics';
 import { fetchStudentActivity, peekStudentActivity, subjectRequest, type StudentActivityItem, type StudentActivityResponse, type SubjectAttemptResult } from '@/api/studentActivity';
@@ -16,7 +16,7 @@ import { HolidayNoteHint } from '@/components/feature/HolidayNoteHint';
 import { weekHolidayNotes } from '@/pages/learner/training-plan-timeline/model';
 import { certificateEligible, learningDate, learningDeadlines, learningPlanSelection, learningHref, nextLearningWeek, continuingLearningWeek, currentLearningWeek, recommendedLearningSubject, resolveLearningSubject, subjectMapWeeks, subjectOpeningActivity, subjectLearningStatus } from './subjectLearning';
 import type { LearningSchedule } from '@/api/learnerOverview';
-import type { PlanModule, PlanSession } from '@/api/trainingPlanDashboard';
+import type { PlanModule, PlanModuleProgress, PlanSession } from '@/api/trainingPlanDashboard';
 import { buildUnifiedLearningSummary, subjectRefs, type Schedule, type SubjectEntry, type Subject, type CoverMetadata } from './learningSummary';
 export { buildUnifiedLearningSummary, subjectsFrom } from './learningSummary';
 export type { SubjectEntry, Subject, CoverMetadata, UnifiedLearningSummary } from './learningSummary';
@@ -144,6 +144,25 @@ function Progress({ done, total, label = 'Subject progress', showFormula = false
   return <div className="space-y-2"><div className="flex items-center justify-between gap-2 text-xs"><span className={compact ? 'text-slate-500' : 'text-foreground-500'}>{done} of {total} completed</span><strong className={`shrink-0 tabular-nums ${compact && percent === 100 ? 'text-emerald-700' : 'text-primary-700'}`}>{percent}%</strong></div>
     <div role="progressbar" aria-label={label} aria-valuemin={0} aria-valuemax={100} aria-valuenow={percent} className={`h-1.5 overflow-hidden rounded-full ${compact ? 'bg-slate-100' : 'bg-foreground-100'}`}><div className={`h-full rounded-full motion-safe:transition-[width] ${compact ? percent === 100 ? 'bg-emerald-500' : 'bg-gradient-to-r from-primary-500 to-violet-400' : 'bg-primary-500'}`} style={{ width: `${percent}%` }} /></div>
     {showFormula && <p className="text-xs text-foreground-500">Progress = completed activities ÷ total activities × 100{total > 0 ? ` = ${done} ÷ ${total} × 100 = ${percent}%` : '. No activities yet'}. Quizzes count as complete after passing.</p>}
+  </div>;
+}
+
+function HoursProgress({ completed, planned, label }: {
+  completed: number | null; planned: number | null; label: string;
+}) {
+  const available = completed != null && Number.isFinite(completed) && planned != null && Number.isFinite(planned) && planned > 0;
+  const percent = available ? Math.min(100, Math.round(completed / planned * 10000) / 100) : 0;
+  const completedLabel = completed != null && Number.isFinite(completed) ? formatRecordedHours(completed) : 'Unavailable';
+  const plannedLabel = planned != null && Number.isFinite(planned) ? formatRecordedHours(planned) : 'Unavailable';
+  return <div className={styles.hoursProgress}>
+    <div className="flex items-center justify-between gap-2 text-xs"><span className="text-slate-500">Hours progress</span><strong className="shrink-0 tabular-nums text-emerald-700">{available ? `${percent}%` : '—'}</strong></div>
+    <div role="progressbar" aria-label={label} aria-valuemin={0} aria-valuemax={100}
+      aria-valuenow={available ? percent : undefined}
+      aria-valuetext={available ? `${completedLabel} completed of ${plannedLabel} planned (${percent}%)` : 'Hours progress unavailable'}
+      className={styles.hoursProgressTrack} data-available={available || undefined}>
+      <span style={{ width: `${percent}%` }} />
+    </div>
+    <div className={styles.hoursProgressLabel}><span>Completed {completedLabel}</span><span>Planned {plannedLabel}</span></div>
   </div>;
 }
 
@@ -280,7 +299,7 @@ function SubjectCertificateAction({
   </div>;
 }
 
-export function SubjectCard({ subject, cover, tone = 'purple', onOpen, template, csrfToken, kind, learnerId, planModule }: {
+export function SubjectCard({ subject, cover, tone = 'purple', onOpen, template, csrfToken, kind, learnerId, planModule, moduleProgress }: {
   subject: Subject;
   cover?: string;
   tone?: SubjectCardTone;
@@ -290,6 +309,7 @@ export function SubjectCard({ subject, cover, tone = 'purple', onOpen, template,
   kind?: string;
   learnerId?: string;
   planModule?: PlanModule;
+  moduleProgress?: PlanModuleProgress;
 }) {
   const total = subject.activities.length;
   const completed = subject.activities.filter((activity) => activity.completed).length;
@@ -302,11 +322,17 @@ export function SubjectCard({ subject, cover, tone = 'purple', onOpen, template,
   const startDate = planModule?.start_date ? learningDate(planModule.start_date) : 'Not scheduled';
   const endDate = planModule?.end_date ? learningDate(planModule.end_date) : 'Not scheduled';
   const sessionCount = planModule?.educational_session_count;
-  return <article className={`group ${styles.card} ${styles.subjectTheme} ${styles.moduleCard}`} data-tone={tone}>
+  const completedHours = moduleProgress?.hours.actual ?? subject.acceptedHours ?? null;
+  const plannedHours = planModule?.total_otjh ?? null;
+  return <article className={`group ${styles.card} ${styles.subjectTheme} ${styles.moduleCard}`} data-tone={tone} data-source={subject.source}>
     <button type="button" onClick={onOpen} className={styles.cardButton}>
       <div className="relative w-full"><Cover title={subject.title} url={cover} fallbackUrl={DEFAULT_MODULE_COVER} /></div>
       <div className={styles.cardBody}>
         <div className={styles.cardMetaRow}>
+          <span className={styles.sourceBadge} data-source={subject.source}>
+            {subject.source === 'legacy' ? <BookOpen size={13} aria-hidden="true" /> : <GraduationCap size={13} aria-hidden="true" />}
+            {subject.source === 'legacy' ? 'Old LMS' : 'New LMS'}
+          </span>
           <span className={styles.status} data-state={isComplete ? 'complete' : status === 'In progress' ? 'started' : 'new'}>
             <span aria-hidden="true" className={styles.statusDot} />{status}
           </span>
@@ -321,7 +347,8 @@ export function SubjectCard({ subject, cover, tone = 'purple', onOpen, template,
           <div><dt>Sessions</dt><dd>{sessionCount == null ? 'Not set' : `${sessionCount} ${sessionCount === 1 ? 'session' : 'sessions'}`}</dd></div>
         </dl>
         <p className={styles.cardDescription}>Explore your learning materials and activities.</p>
-        <div className={styles.cardProgress}><Progress done={completed} total={total} compact label={`${subject.title} progress`} />
+        <div className={styles.cardProgress}><Progress done={completed} total={total} compact label={`${subject.title} activities progress`} />
+          <HoursProgress completed={completedHours} planned={plannedHours} label={`${subject.title} hours progress`} />
           {subject.recordedHistory && <p className="mt-2 text-xs text-foreground-500">Recorded activities only · Full catalogue: {subject.catalogueCount ?? 0}<br />Accepted time: {formatRecordedHours(subject.acceptedHours ?? 0)}</p>}
           {subject.catalogueProgress && <p className="mt-2 text-xs text-foreground-500">Accepted time: {formatRecordedHours(subject.acceptedHours ?? 0)}</p>}
         </div>
@@ -383,11 +410,12 @@ function ActivityRow({ entry, kind, learnerId, onProgress, defaultOpen = false }
   </div>;
 }
 
-export function StudentActivityPanel({ data: incomingData, loading, error, onRetry, kind, learnerId, real: incomingReal = null, onProgress, metrics, view = 'catalogue', schedule, scheduleLoading = false, upcomingSessions }: {
+export function StudentActivityPanel({ data: incomingData, loading, error, onRetry, kind, learnerId, real: incomingReal = null, onProgress, metrics, view = 'catalogue', schedule, scheduleLoading = false, upcomingSessions, moduleProgress }: {
   kind?: string; learnerId?: string; real?: LearnerDetail | null; data: StudentActivityResponse | null;
   loading: boolean; error: string | null; onRetry: () => void; onProgress?: () => void;
   metrics?: LearnerMetrics | null;
   view?: 'catalogue' | 'map'; schedule?: LearningSchedule | null; scheduleLoading?: boolean; upcomingSessions?: PlanSession[];
+  moduleProgress?: Record<string, PlanModuleProgress>;
 }) {
   const [search, setSearch] = useState('');
   const location = useLocation();
@@ -546,7 +574,10 @@ export function StudentActivityPanel({ data: incomingData, loading, error, onRet
         moduleStartDate={subject => planModulesBySubject.get(subject.id)?.start_date}
         onContinue={subject => { setSearch(''); select(subject.id, 'current'); }}
         covers={covers} upcomingSessions={upcomingSessions}
-        renderCard={subject => <SubjectCard key={subject.id} subject={subject} cover={covers[subject.id]} tone={subjectTones.get(subject.id)} onOpen={() => select(subject.id)} template={certificateConfig.template} csrfToken={certificateConfig.csrfToken} kind={kind} learnerId={learnerId} planModule={planModulesBySubject.get(subject.id)} />} />
+        renderCard={subject => {
+          const planModule = planModulesBySubject.get(subject.id);
+          return <SubjectCard key={subject.id} subject={subject} cover={covers[subject.id]} tone={subjectTones.get(subject.id)} onOpen={() => select(subject.id)} template={certificateConfig.template} csrfToken={certificateConfig.csrfToken} kind={kind} learnerId={learnerId} planModule={planModule} moduleProgress={planModule ? moduleProgress?.[planModule.id] : undefined} />;
+        }} />
       {(data || metrics) && <><div className="flex flex-wrap gap-6 rounded-xl bg-background-100 px-4 py-3 text-xs"><div><span className="block text-foreground-500">Recorded OTJH</span><strong>{recordedOtjh == null ? 'Unavailable' : formatHoursMinutes(recordedOtjh)}</strong></div><div><span className="block text-foreground-500">Planned OTJH</span><strong>{plannedOtjh == null ? 'Unavailable' : formatHoursMinutes(plannedOtjh)}</strong></div></div>{hasProgrammeOtjh && <p className="text-[12px] text-foreground-500">Programme totals include accepted historical hours and new recorded learning. Planned hours come from your training plan.</p>}</>}
     </> : <>
       <div className="flex flex-wrap items-center justify-between gap-3"><button onClick={() => select()} className="flex items-center gap-1.5 text-sm font-semibold text-primary-700"><ChevronLeft size={17} />All subjects</button><Link to={learningHref('map', kind, learnerId, active.id)} className={styles.textLink}><MapIcon size={17} />View learning map<ArrowRight size={16} /></Link></div>

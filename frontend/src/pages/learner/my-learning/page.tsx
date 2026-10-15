@@ -202,6 +202,7 @@ export function ModulesTab({ real, loading, loadError, kind, id, showReadOnlyNot
       <SubjectCardsPanel
         metrics={metrics.data}
         view={view} schedule={schedule.data} scheduleLoading={schedule.loading} upcomingSessions={upcomingSchedule.data?.sessions}
+        moduleProgress={upcomingSchedule.data?.moduleProgress}
         kind={kind} learnerId={id} real={real}
         data={activityData ?? null}
         loading={loading || (activityAvailable && activity.loading)}

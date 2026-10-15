@@ -315,7 +315,7 @@ def read_overview_subjects(source, profile):
     progress = [{'kind': row['kind'], 'passed': row['passed'],
                  'componentId': row['component_ref'], 'quizId': row['quiz_ref']}
                 for row in profile.progress_entries.using('enrolment')
-                .filter(component_link_source__in=('direct', 'quiz_ref'))
+                .filter(component_link_source__in=('direct', 'quiz_ref'), deleted_at__isnull=True)
                 .exclude(kind='activity_event')
                 .values('kind', 'passed', 'component_ref', 'quiz_ref')]
     with connections['enrolment'].cursor() as cur:
