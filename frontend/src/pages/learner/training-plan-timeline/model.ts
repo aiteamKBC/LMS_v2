@@ -91,6 +91,14 @@ export function buildPlanModules(subjects: (Subject | PlanSubjectSummary)[], dat
 }
 export type TimelineModule = ReturnType<typeof buildPlanModules>[number];
 
+/** The fields rendered by the timeline and module cards; activity bodies stay in My Learning. */
+export type DisplayTimelineModule = Pick<TimelineModule,
+  'id' | 'title' | 'moduleId' | 'start' | 'end' | 'progress' | 'done' | 'activityCount' |
+  'activityCounts' | 'ksbCodes' | 'achievedKsbCodes' | 'ksbMappingMissing' | 'weeks' | 'actual' | 'detail' | 'sessions'> & {
+  activities: Array<{ id: string; title: string; completed: boolean }>;
+  weekAnchor?: string;
+};
+
 /**
  * The last date a module's bar has to cover: the delivery that actually happens.
  *

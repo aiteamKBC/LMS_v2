@@ -168,6 +168,8 @@
 .upcoming li:nth-child(2) a::before { background: #7133a9; }
 .upcoming li strong { display: block; font-weight: 500; font-size: clamp(13px, .95vw, 18px); overflow-wrap: anywhere; }
 .upcoming li a>span { display: block; font-size: clamp(11px, .8vw, 16px); color: #796783; }
+/* The desktop card sits under the location panel: show three rows and scroll the rest of next week. */
+@media (min-width: 1151px) { .upcoming ul { max-height: calc(3 * (25px + 1.5 * (clamp(13px, .95vw, 18px) + clamp(11px, .8vw, 16px)))); overflow-y: auto; overscroll-behavior: contain; } }
 .empty { margin: 20px 0; font-size: 14px; line-height: 1.5; color: #796783; }
 .kent { position: absolute; right: 4.5%; top: 5.5%; font-family: 'KBC Script', cursive; transform: rotate(-7deg); text-align: center; }
 .kent>span { font-size: clamp(32px, 3vw, 58px); }

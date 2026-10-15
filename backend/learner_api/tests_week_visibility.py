@@ -25,7 +25,7 @@ BACKEND = Path(__file__).resolve().parent.parent
 # the number of week queries it runs through the shared rule.
 READER_PATHS = {
     'learner_api/training_plan_dashboard.py': 1,
-    'learner_api/overview_week.py': 2,
+    'learner_api/overview_week.py': 3,
     'learner_api/mobile.py': 2,
     'learner_api/learner_detail.py': 4,
     'learner_api/builder_activity_dates.py': 1,
@@ -45,7 +45,7 @@ READER_PATHS = {
 # deleted rows, with the number of predicates it builds from the shared rule.
 CHILD_READER_PATHS = {
     'learner_api/training_plan_dashboard.py': 1,
-    'learner_api/overview_week.py': 3,
+    'learner_api/overview_week.py': 4,
     'learner_api/mobile.py': 2,
     'learner_api/learner_detail.py': 5,
     'learner_api/builder_activity_dates.py': 1,
