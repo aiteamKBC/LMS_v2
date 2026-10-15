@@ -276,22 +276,14 @@ def result_rows(series, *, session_number=None, email=None, identity=False, modu
             for name_key, candidate_emails in candidate_emails_by_name.items()
             if len(candidate_emails) == 1
         }
-        def saved_exact_name_match(row):
-            if str(row.get('email') or '').strip():
-                return False
-            matched_email = unique_email_by_name.get(attendance_name_key(row.get('display_name')))
-            saved = learner_by_email.get(matched_email) if matched_email else None
-            return bool(
-                saved
-                and saved.get('attendance_status') == 'present'
-                and int(saved.get('attended_seconds') or 0) > 0
-            )
-        reviewed_records = apply_reviewed_identities(attendance_by_id[item['id']], aliases, identity_links, rules)
-        for row in reviewed_records:
-            if not row.get('email') and not row.get('identityReviewRequired') and not row.get('identityAmbiguous'):
-                matched = unique_email_by_name.get(attendance_name_key(row.get('display_name')))
-                if matched and saved_exact_name_match(row):
-                    row['email'] = matched
+        reviewed_records = apply_reviewed_identities(
+            attendance_by_id[item['id']], aliases, identity_links, rules,
+            learners={key: {'name': row.get('learner_name'), 'learnerProfileId': row.get('learner_profile_id')}
+                      for key, row in learner_by_email.items()},
+        )
+        # Do not let a stale saved absence hide a new match, or let a stale
+        # positive name guess survive a duplicate that now requires review.
+        name_decisions = any(row.get('identityRule') or row.get('identityReviewRequired') for row in reviewed_records)
         learner_records = [row for row in reviewed_records
                            if str(row.get('email') or '').strip().casefold() in expected
                            and not row.get('identityReviewRequired')]
@@ -315,6 +307,7 @@ def result_rows(series, *, session_number=None, email=None, identity=False, modu
                     'learnerProfileId': rule['learner_profile_id'],
                     'learnerName': (learner_by_email.get(rule['canonical_email']) or {}).get('learner_name') or rule['canonical_email'],
                     'scope': 'session' if kind == 'record' else 'module',
+                    'automatic': bool(rule.get('automatic')),
                 })
         roster = session_roster(expected, learner_records, complete=complete)
         for person in roster:
@@ -328,7 +321,7 @@ def result_rows(series, *, session_number=None, email=None, identity=False, modu
             # absence until the background reporting refresh runs.  Preserve
             # a saved positive match (aliases/name review), but never let that
             # stale absence erase direct source evidence for this learner.
-            if not (rules or aliases or identity_links) and (not replaced_roster or person.get('status') != 'present'):
+            if not (rules or aliases or identity_links or name_decisions) and (not replaced_roster or person.get('status') != 'present'):
                 person.update(
                     seconds=max(0, int(saved.get('attended_seconds') or 0)),
                     status=status,
@@ -373,7 +366,8 @@ def result_rows(series, *, session_number=None, email=None, identity=False, modu
                          for source, mapped in zip(attendance_by_id[item['id']], reviewed_records)
                          if source.get('email') and mapped.get('identityRule') and not mapped.get('identityReviewRequired')},
                 reviewed_links={str(row['id']): str(row.get('email') or '').strip().casefold()
-                                for row in reviewed_records if row.get('identityRule') and not row.get('identityReviewRequired')},
+                                for row in reviewed_records if row.get('identityRule') and not row['identityRule'].get('automatic')
+                                and not row.get('identityReviewRequired')},
                 name_match=lambda row: next((str(mapped.get('email') or '') for mapped in reviewed_records
                                             if str(mapped.get('id')) == str(row.get('id')) and not mapped.get('identityReviewRequired')), '') or None,
                 staff=staff,
@@ -530,7 +524,7 @@ def link_attendance_alias(request, series_id, session_number):
             return JsonResponse({'error': 'That identity is not present in this Teams attendance report.'}, status=404)
         if any(str(row.get('role') or '').casefold() in {'organizer', 'presenter', 'coorganizer', 'co-organizer'} for row in selected):
             return JsonResponse({'error': 'Staff meeting identities cannot be linked to a learner.'}, status=400)
-        actor = getattr(request, 'account', None)
+        actor = getattr(request, 'login_account', None)
         actor_label = str(getattr(actor, 'email', '') or getattr(actor, 'subject_id', '') or '')[:320]
         with transaction.atomic(using='default'):
             with connections['default'].cursor() as cursor:
@@ -541,7 +535,13 @@ def link_attendance_alias(request, series_id, session_number):
                 rules = identity_rules([module_id])
                 aliases = attendance_alias_rows(module_id)
                 legacy = attendance_identity_link_rows([occurrence['id']])
-                effective = apply_reviewed_identities(selected, aliases, legacy, rules)
+                selected_ids = {str(row['id']) for row in selected}
+                effective = [row for row in apply_reviewed_identities(
+                    records, aliases, legacy, rules,
+                    learners={str(row.get('learner_email') or '').strip().casefold(): {
+                        'name': row.get('learner_name'), 'learnerProfileId': row.get('learner_profile_id')}
+                        for row in roster if row.get('learner_email')},
+                ) if str(row['id']) in selected_ids]
                 by_key = {(row['identity_kind'], row['identity_value']): row for row in rules}
                 for row in aliases:
                     by_key.setdefault(('email', row['alias_email']), {**row, 'active': True, 'revision': 0,

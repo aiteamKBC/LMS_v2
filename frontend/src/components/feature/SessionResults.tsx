@@ -178,10 +178,10 @@ export function SessionResults({ seriesId, sessionNumber, moduleId, learner, att
             </button>
             {unmatchedOpen && <div className="space-y-3 border-t border-amber-200 p-4">
               <p className="text-sm text-amber-900">These Teams identities are not assigned to a learner in this module. Link only an identity you have verified.</p>
-              <p className="text-sm text-amber-900">Your choice is remembered across this module, including future sessions. Guest names are matched exactly; duplicate names need individual review.</p>
+              <p className="text-sm text-amber-900">A guest's full name is matched automatically when it identifies one learner in this module without a conflict. Your reviewed choices are remembered; similar or duplicate names need review.</p>
               {session.unmatchedAttendance.map(person => { const key = identityKey(person); return <div key={key} className="grid gap-3 rounded-lg border bg-white p-3 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] md:items-center">
                 <div><p className="font-semibold">{person.name}</p><p className="text-xs text-foreground-500">{person.email || 'Unverified Teams identity'}</p><p className="mt-1 text-xs">{Math.floor(person.seconds / 60)}m {person.seconds % 60}s in Teams</p>
-                  {person.identityAmbiguous && <p className="mt-2 text-xs font-semibold text-amber-900">Several participants used this name. Review this participant separately; this link applies to this session only.</p>}</div>
+                  {person.identityAmbiguous && <p className="mt-2 text-xs font-semibold text-amber-900">This name identifies more than one participant or learner. Review the correct person before linking.</p>}</div>
                 <label className="text-xs font-semibold text-foreground-600">Match to module learner
                   <select aria-label={`Match ${person.email || person.name} to learner`} value={selectedLearnerId(person)}
                     onChange={event => setAliasChoices(value => ({ ...value, [key]: event.target.value }))}
@@ -202,6 +202,7 @@ export function SessionResults({ seriesId, sessionNumber, moduleId, learner, att
             <summary className="cursor-pointer font-semibold">Linked identities ({session.linkedIdentities.length})</summary>
             <div className="mt-3 space-y-3">{session.linkedIdentities.map(link => <div key={`${link.identityKind}:${link.identityValue}`} className="flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-white p-3">
               <div><p className="font-semibold">{link.name}</p><p className="text-sm">Linked to {link.learnerName}</p>
+                {link.automatic && <p className="text-xs text-primary-700">Automatically matched by exact full name. You can correct or unlink this match.</p>}
                 <p className="text-xs text-foreground-500">{link.scope === 'module' ? 'Current and future sessions in this module' : 'This session only'}</p></div>
               <button type="button" disabled={Boolean(aliasBusy)} onClick={() => { setEditingLink(link); setCorrectionLearner(String(link.learnerProfileId)); }}
                 className="rounded-lg border px-3 py-2 text-sm font-semibold disabled:opacity-50" aria-label={`Correct link for ${link.name}`}>Change or unlink</button>

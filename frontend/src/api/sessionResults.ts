@@ -26,6 +26,7 @@ export interface AttendanceIdentityLink {
   identityKind: 'email' | 'guest_name' | 'record'; identityValue: string; revision: number;
   name: string; aliasEmail: string; sourceRecordIds: string[];
   learnerProfileId: number; learnerName: string; scope: 'module' | 'session';
+  automatic?: boolean;
 }
 export type AccountCheckStatus = 'matched' | 'different-account' | 'unverified-guest' | 'unknown' | 'unmatched';
 /** One Microsoft account seen in the Teams report. Emails are only those Microsoft vouches for. */

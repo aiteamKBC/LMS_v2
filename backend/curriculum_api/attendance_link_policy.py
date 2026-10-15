@@ -1,4 +1,4 @@
-"""Staff-reviewed attendance matching. Pure functions; raw evidence is never edited."""
+"""Reviewed and exact-name attendance matching; raw evidence is never edited."""
 from collections import defaultdict
 
 from .session_results_policy import attendance_display_name, attendance_identity, attendance_name_key, session_roster
@@ -28,16 +28,23 @@ def ambiguous_guest_names(records):
     return {name for name, values in identities.items() if len(values) > 1}
 
 
-def apply_reviewed_identities(records, aliases=(), legacy_links=(), rules=()):
+def apply_reviewed_identities(records, aliases=(), legacy_links=(), rules=(), *, learners=None):
     """Resolve staff decisions consistently for the register and reporting.
 
     A revoked rule blocks older links and automatic name matching. A duplicate
     guest name blocks the module rule, but an explicit per-record review wins.
+    Optional learners is the full authorized roster, never a search-filtered
+    subset. Automatic decisions are derived on read and remain correctable.
     """
     aliases = {str(row['alias_email']).strip().casefold(): row for row in aliases}
     legacy = {(str(row['occurrence_id']), str(row['attendance_row_id'])): row for row in legacy_links}
     rules = {(row['identity_kind'], row['identity_value']): row for row in rules}
     ambiguous = ambiguous_guest_names(records)
+    candidates = defaultdict(dict)
+    for email, learner in (learners or {}).items():
+        name_key = attendance_name_key(learner.get('name'))
+        if name_key and email:
+            candidates[name_key][email] = learner
     result = []
     for source in records:
         row = dict(source)
@@ -62,6 +69,20 @@ def apply_reviewed_identities(records, aliases=(), legacy_links=(), rules=()):
                 row['email'] = old['canonical_email']
                 row['identityRule'] = {**old, 'active': True, 'revision': 0,
                                        'identity_kind': key[0], 'identity_value': key[1]}
+            elif key[0] == 'guest_name' and str(row.get('role') or '').strip().casefold() in {'', 'attendee'}:
+                matches = candidates.get(key[1], {})
+                if len(matches) == 1:
+                    email, learner = next(iter(matches.items()))
+                    row['email'] = email
+                    row['identityRule'] = {
+                        'active': True, 'revision': 0, 'automatic': True,
+                        'identity_kind': 'guest_name', 'identity_value': key[1],
+                        'learner_profile_id': learner.get('learnerProfileId'),
+                        'canonical_email': email, 'display_name': attendance_display_name(source),
+                    }
+                elif len(matches) > 1:
+                    row['identityReviewRequired'] = True
+                    row['identityAmbiguous'] = True
         result.append(row)
     return result
 

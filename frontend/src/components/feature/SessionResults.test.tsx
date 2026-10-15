@@ -489,4 +489,20 @@ describe('Module session index', () => {
     expect(screen.getByText('Identity is now matched to Learner Two.')).toBeInTheDocument();
   });
 
+  it('explains automatic full-name matches and allows staff to unlink them', async () => {
+    fetchMock.mockImplementation(() => ok({ sessions: [{ ...linkedSession,
+      linkedIdentities: [{ ...linkedGuest, revision: 0, automatic: true }] }] }));
+    vi.mocked(coachFetch).mockResolvedValue({ ok: true, json: async () => ({ recalculation: 'complete' }) } as Response);
+    render(<MemoryRouter><SessionResults seriesId="S1" sessionNumber={1} moduleId="M" /></MemoryRouter>);
+    fireEvent.click(await screen.findByRole('tab', { name: 'attendance' }));
+    fireEvent.click(screen.getByText('Linked identities (1)'));
+    expect(screen.getByText(/Automatically matched by exact full name/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Correct link for Example Guest' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm unlink' }));
+    await waitFor(() => expect(coachFetch).toHaveBeenCalled());
+    expect(JSON.parse(vi.mocked(coachFetch).mock.calls[0][1]!.body as string)).toMatchObject({
+      action: 'unlink', expectedRevision: 0, expectedLearnerProfileId: 7, moduleId: 'M',
+    });
+  });
+
 });
