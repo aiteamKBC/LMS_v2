@@ -12,6 +12,34 @@ sys.path.insert(0, str(Path(__file__).parent))
 import reconcile_legacy_learning as repair
 
 
+class LearnerPartitionTests(unittest.TestCase):
+    def test_partitions_cover_each_learner_once_without_changing_evidence(self):
+        sources = {ident: {'courses': [ident + 100]} for ident in range(1, 388)}
+        before = deepcopy(sources)
+        collected, names = {}, set()
+        for index in range(8):
+            selected, name = repair.learner_partition(sources, 'learners', index, 8)
+            self.assertFalse(collected.keys() & selected.keys())
+            collected.update(selected)
+            names.add(name)
+        self.assertEqual(collected, sources)
+        self.assertEqual(sources, before)
+        self.assertEqual(len(names), 8)
+        self.assertNotIn('learners', names)
+
+    def test_partition_selection_is_stable_when_other_learners_change(self):
+        sources = {1: 'a', 5: 'b', 9: 'c'}
+        selected, _ = repair.learner_partition(sources, 'learners', 1, 4)
+        reordered, _ = repair.learner_partition({9: 'c', 2: 'new', 1: 'a', 5: 'b'}, 'learners', 1, 4)
+        self.assertEqual(selected, reordered)
+        self.assertEqual(repair.learner_partition(sources, 'learners', 0, 1), (sources, 'learners'))
+
+    def test_invalid_partition_cannot_silently_skip_learners(self):
+        for index, count in [(-1, 4), (4, 4), (0, 0), (0, 9)]:
+            with self.subTest(index=index, count=count), self.assertRaises(ValueError):
+                repair.learner_partition({}, 'learners', index, count)
+
+
 class SourceVerificationTests(unittest.TestCase):
     def setUp(self):
         self.account = {'id': 12, 'identity_id': 7, 'identity_fingerprint': 'saved',

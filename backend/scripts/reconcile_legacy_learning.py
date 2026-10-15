@@ -787,6 +787,10 @@ def learners_run(args):
     if args.apply and (expected['fingerprint'] != args.expected_fingerprint or expected['target'] != target
                        or expected.get('course_scoped', False) != args.course_scoped):
         raise ValueError('Preview manifest differs from requested apply.')
+    verified, output_name = learner_partition(verified, manifest_name, args.partition, args.partitions)
+    if args.partitions > 1:
+        emit({'stage': 'partition_started', 'partition': args.partition,
+              'partitions': args.partitions, 'learners': len(verified)})
     reports, summary = {}, Counter(identity_review=invalid, unverified_learners=len(unavailable))
     writer = None
     if args.apply:
@@ -868,13 +872,27 @@ def learners_run(args):
         # Persist committed per-learner results; a later failure remains resumable.
         output = {'target': target, 'course_scoped': args.course_scoped, 'summary': dict(summary), 'learners': reports}
         output['fingerprint'] = digest(output)
-        path = directory / (manifest_name + ('-applied.json' if args.apply else '-preview.json'))
+        path = directory / (output_name + ('-applied.json' if args.apply else '-preview.json'))
         path.write_text(json.dumps(output, default=str), encoding='utf-8')
         if len(reports) % 10 == 0:
             emit({'stage': 'apply' if args.apply else 'preview', **summary})
     if writer is not None:
         writer.close()
     emit({'stage': 'learners_complete', 'target': target, 'fingerprint': output['fingerprint'], **summary})
+
+
+def learner_partition(verified, manifest_name, index, count):
+    """Disjoint learner transactions; all partitions use the same approved manifest.
+
+    Partition by stable learner ID, not query order, and keep output files separate.
+    This changes execution selection only; evidence fingerprints, locks, writes,
+    post-write invariants and per-learner commits remain identical.
+    """
+    if not 1 <= count <= 8 or not 0 <= index < count:
+        raise ValueError('Invalid learner partition; count must be 1..8 and index 0..count-1.')
+    selected = {ident: source for ident, source in verified.items() if ident % count == index}
+    name = manifest_name if count == 1 else f'{manifest_name}-partition-{index}-of-{count}'
+    return selected, name
 
 
 def archive_duplicates(args):
@@ -944,11 +962,19 @@ def main():
     parser.add_argument('--expected-target')
     parser.add_argument('--expected-fingerprint')
     parser.add_argument('--limit', type=int)
+    parser.add_argument('--partitions', type=int, default=1,
+        help='Split learner IDs into up to 8 disjoint groups using one reviewed manifest.')
+    parser.add_argument('--partition', type=int, default=0,
+        help='Zero-based learner group to execute; each group writes a separate result file.')
     parser.add_argument('--course-scoped', action='store_true',
         help='Requires the reviewed course-qualified canonical reader to be deployed before apply.')
     args = parser.parse_args()
     if args.apply and (not args.expected_target or not args.expected_fingerprint):
         parser.error('Apply requires the preview target and fingerprint.')
+    if args.partitions != 1 or args.partition != 0:
+        if args.phase != 'learners':
+            parser.error('Partitions are supported only for learner reconciliation.')
+        learner_partition({}, '', args.partition, args.partitions)
     {'fetch': fetch_all, 'inspect': inspect_all, 'catalogue': catalogue_run,
      'learners': learners_run, 'archive-duplicates': archive_duplicates}[args.phase](args)
 
