@@ -138,7 +138,13 @@ select t.tbl, t.module_catalogue_id, count(*) as restore_would_revive
  group by t.tbl, t.module_catalogue_id
  order by t.module_catalogue_id, t.tbl;
 
--- 8. Not yet applied. EXPECT 0 and 0 (or "relation does not exist" on a first
---    run -- run each line on its own if so).
-select count(*) as weeks_already_backed_up from week_ghost_remediation.weeks_before;
-select count(*) as components_already_backed_up from week_ghost_remediation.components_before;
+-- 8. Not yet applied. EXPECT 0 and 0. (A before-image table that does not
+--    exist yet reads as 0; query_to_xml only runs when it does.)
+select case when to_regclass('week_ghost_remediation.weeks_before') is null then 0
+            else (xpath('/row/n/text()', query_to_xml(
+                  'select count(*) as n from week_ghost_remediation.weeks_before', false, true, '')))[1]::text::int
+       end as weeks_already_backed_up,
+       case when to_regclass('week_ghost_remediation.components_before') is null then 0
+            else (xpath('/row/n/text()', query_to_xml(
+                  'select count(*) as n from week_ghost_remediation.components_before', false, true, '')))[1]::text::int
+       end as components_already_backed_up;
