@@ -585,6 +585,20 @@ export interface WizardDraft {
    * into each field's own column (see enrolment_api/wizard_layout.py).
    */
   custom?: Record<string, CustomAnswer>;
+  /**
+   * The Inclusion step's status, read from the Safeguarding database each time
+   * the wizard opens (see enrolment_api/wizard_inclusion.py). Never saved with
+   * the draft: absent until the check comes back.
+   */
+  inclusion?: InclusionState;
+}
+
+/** Whether the learner has answered the inclusion assessment on the Safeguarding site. */
+export interface InclusionState {
+  /** False for commercial learners, who do not take the step. */
+  applicable: boolean;
+  completed: boolean;
+  respondedAt: string | null;
 }
 
 export interface WizardStepDef {
@@ -603,6 +617,7 @@ export const WIZARD_STEPS: WizardStepDef[] = [
   { slug: 'cv-job', label: 'CV/Job Description' },
   { slug: 'plr', label: 'Personal Learning Record' },
   { slug: 'skills-radar', label: 'Skills Radar' },
+  { slug: 'inclusion', label: 'Inclusion' },
   { slug: 'policies', label: 'Policies' },
   { slug: 'next-steps', label: 'What Happens Now?' },
 ];

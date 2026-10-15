@@ -1,6 +1,6 @@
 from django.urls import path
 
-from . import cv_job_documents, documents, eligibility_form, extended_ilr, ilr_eligibility_evidence, ilr_employer_details, ilr_learner_record, plr_evidence, policy_documents, views, wizard_bootstrap, wizard_custom_uploads, wizard_layout
+from . import cv_job_documents, documents, eligibility_form, extended_ilr, ilr_eligibility_evidence, ilr_employer_details, ilr_learner_record, plr_evidence, policy_documents, views, wizard_bootstrap, wizard_custom_uploads, wizard_inclusion, wizard_layout
 
 urlpatterns = [
     path('health/', views.health, name='enrolment-health'),
@@ -22,6 +22,8 @@ urlpatterns = [
     path('wizard/<str:kind>/<int:learner_id>/plr-evidence/<uuid:file_id>/', plr_evidence.delete_plr_evidence, name='wizard-plr-evidence-delete'),
     path('wizard/<str:kind>/<int:learner_id>/plr-evidence/<uuid:file_id>/download/', plr_evidence.download_plr_evidence, name='wizard-plr-evidence-download'),
     # The wizard builder: the published layout (read by every wizard) and its publish (enrolment staff)
+    # The Inclusion step: whether the learner has answered the assessment on the Safeguarding site
+    path('wizard/<str:kind>/<int:learner_id>/inclusion/', wizard_inclusion.wizard_inclusion, name='wizard-inclusion'),
     path('wizard-layout/', wizard_layout.wizard_layout, name='wizard-layout'),
     path('wizard-layout/publish/', wizard_layout.publish_wizard_layout, name='wizard-layout-publish'),
     # Files on the builder's custom upload fields (Azure-backed, path in the field's own column)

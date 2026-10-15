@@ -385,6 +385,27 @@ const STEPS: { slug: string; label: string; sectionStyle?: 'fieldset' | 'section
     }],
   },
   {
+    slug: 'inclusion',
+    label: 'Inclusion',
+    items: [{
+      key: 'block.inclusion',
+      kind: 'block',
+      label: 'Inclusion assessment (Safeguarding site)',
+      requirable: true,
+      defaultRequired: true,
+      /**
+       * Done once the Safeguarding database holds a response for one of the
+       * learner's emails (draft.inclusion, read when the wizard opens). Until
+       * that check has come back the answer is unknown, and unknown is not
+       * done. Commercial learners never take it.
+       */
+      missing: (d, r) => {
+        if (!r || d.inclusion?.applicable === false || d.inclusion?.completed) return [];
+        return ['Inclusion assessment not yet completed'];
+      },
+    }],
+  },
+  {
     slug: 'policies',
     label: 'Policies',
     items: [{
