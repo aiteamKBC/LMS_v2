@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { ArrowLeft, ArrowRight, CheckCircle2, ClipboardCheck, ClipboardList, Loader2, MapPin, RotateCcw, XCircle } from 'lucide-react';
+import { Link } from 'react-router-dom';
 import {
   ApplicationSubmitError,
   compactPostcode,
@@ -43,6 +44,9 @@ interface LoadedForm {
   version: number | null;
 }
 
+const RETRY_LATER = 'We could not check your postcodes just now, so we could not confirm your eligibility. '
+  + 'Your answers have been kept: please try again in a few minutes.';
+
 /** The questions whose answer is looked up as a UK postcode. */
 const POSTCODE_KEYS = Object.values(BUILTIN_ITEMS).filter((item) => isBuiltinQuestion(item) && item.postcode).map((item) => item.key);
 
@@ -60,7 +64,10 @@ const POSTCODE_KEYS = Object.values(BUILTIN_ITEMS).filter((item) => isBuiltinQue
  * Nothing under the question says a postcode is wrong and nothing stops the
  * applicant: the server saves the application either way, and when a postcode
  * is not a UK postcode, cannot be found or is outside England the applicant is
- * told they are not eligible instead of "Application submitted".
+ * told they are not eligible, with the reasons. An eligible applicant is
+ * emailed a link to create their password (or told to sign in when the address
+ * already has an account); when the postcodes could not be checked the form
+ * stays open so they can submit again.
  */
 export default function ApprenticeshipApplicationPage() {
   const [form, setForm] = useState<LoadedForm | null>(null);
@@ -212,7 +219,11 @@ export default function ApprenticeshipApplicationPage() {
     setSubmitting(true);
     setSubmitError('');
     try {
-      setOutcome(await submitApprenticeshipApplication(toPayload(answersRef.current, sections, form.version)));
+      const result = await submitApprenticeshipApplication(toPayload(answersRef.current, sections, form.version));
+      // The postcodes could not be checked, so eligibility was not decided:
+      // keep the form and its answers so the applicant can submit again.
+      if (result.outcome === 'retryLater') setSubmitError(RETRY_LATER);
+      else setOutcome(result);
     } catch (reason) {
       const failure = reason instanceof ApplicationSubmitError
         ? reason
@@ -261,6 +272,7 @@ export default function ApprenticeshipApplicationPage() {
 
   let number = 0;
   const programme = typeof answers.programme === 'string' ? answers.programme : '';
+  const email = String(answers.workEmail ?? '').trim();
 
   return (
     <Frame hero={page}>
@@ -280,6 +292,46 @@ export default function ApprenticeshipApplicationPage() {
               </ul>
             )}
             <p>If you think this is a mistake, please get in touch with our team. You can now close this page.</p>
+          </div>
+        </section>
+      ) : outcome?.outcome === 'existingAccount' ? (
+        <section className={styles.card} aria-labelledby="application-submitted">
+          <div className={styles.success}>
+            <span className={styles.successIcon} aria-hidden="true"><CheckCircle2 /></span>
+            <h2 id="application-submitted" ref={successRef} tabIndex={-1}>You already have an account</h2>
+            <p>
+              Thank you, {String(answers.firstName ?? '').trim()}. We have received your application
+              {programme ? <> for <strong>{programme}</strong></> : null}. An account already exists
+              for <strong>{email}</strong>.
+            </p>
+            <p>
+              Please <Link to="/login">sign in</Link>. If you have not set a password yet, or have forgotten it,
+              use <Link to="/forgot-password">Forgot password</Link> and we will email you a link.
+            </p>
+          </div>
+        </section>
+      ) : outcome?.outcome === 'invited' || outcome?.outcome === 'invitePending' ? (
+        <section className={styles.card} aria-labelledby="application-submitted">
+          <div className={styles.success}>
+            <span className={styles.successIcon} aria-hidden="true"><CheckCircle2 /></span>
+            <h2 id="application-submitted" ref={successRef} tabIndex={-1}>You are eligible</h2>
+            <p>
+              Thank you, {String(answers.firstName ?? '').trim()}. We have received your application
+              {programme ? <> for <strong>{programme}</strong></> : null}, and you are eligible for an
+              apprenticeship with us.
+            </p>
+            {outcome.outcome === 'invited' ? (
+              <p>
+                We have sent an email to <strong>{email}</strong> with a link to create your password. The link
+                expires in 7 days. If you cannot find the email, check your junk or spam folder.
+              </p>
+            ) : (
+              <p>
+                We could not send your invitation email just now. Our team will send you a link to create your
+                password at <strong>{email}</strong>.
+              </p>
+            )}
+            <p>You can now close this page.</p>
           </div>
         </section>
       ) : submitted ? (

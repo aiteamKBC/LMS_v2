@@ -48,6 +48,16 @@ eligible -- saved as eligible = false with the reason in ineligible_reason, and
 the applicant is told so instead of "Application submitted". If the lookup
 service is down, the location is left NULL and eligible stays NULL (not
 checked), so "not checked" never looks like "checked".
+
+Invitation
+----------
+An applicant whose postcodes are all in England is created as an
+apprenticeship learner and emailed the set-password invitation
+(eligibility_invitation.py). The response's ``outcome`` tells the page what
+happened: "invited", "invitePending" (created, but the email could not be sent;
+staff can re-send it), "existingAccount" (the address already has an account:
+sign in or use Forgot password), "notEligible", or "retryLater" (the postcodes
+could not be checked, so nobody was invited).
 """
 import json
 import logging
@@ -62,7 +72,9 @@ from django.http import JsonResponse
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 
-from . import postcode_lookup
+from login.security import client_ip, user_agent
+
+from . import eligibility_invitation, postcode_lookup
 
 logger = logging.getLogger(__name__)
 
@@ -545,5 +557,16 @@ def submit_application(request):
         return _error(UNAVAILABLE, 503)
 
     logger.info("Apprenticeship eligibility application %s received", application_id)
-    # Saved either way; the applicant is told whether the postcodes ruled them out.
-    return JsonResponse({"submitted": True, "eligible": eligible, "reasons": reasons}, status=201)
+    # Saved either way; the applicant is told whether the postcodes ruled them
+    # out, and an eligible one is invited to set their password.
+    if eligible is True:
+        outcome = eligibility_invitation.invite_applicant(
+            row, ip=client_ip(request), user_agent=user_agent(request),
+        )
+    elif eligible is False:
+        outcome = "notEligible"
+    else:
+        outcome = eligibility_invitation.RETRY_LATER
+    return JsonResponse(
+        {"submitted": True, "eligible": eligible, "reasons": reasons, "outcome": outcome}, status=201,
+    )

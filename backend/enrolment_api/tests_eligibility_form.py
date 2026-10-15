@@ -285,6 +285,10 @@ class SubmitApplicationTests(SimpleTestCase):
         p = patch.object(ef, "_published_layout", return_value=(None, None))
         self.addCleanup(p.stop)
         self.published = p.start()
+        # Inviting an eligible applicant is covered in tests_eligibility_invitation.
+        p = patch.object(ef.eligibility_invitation, "invite_applicant", return_value="invited")
+        self.addCleanup(p.stop)
+        p.start()
 
     def post(self, body, cursor=None, **headers):
         headers.setdefault("HTTP_X_REQUESTED_WITH", "XMLHttpRequest")
@@ -298,7 +302,8 @@ class SubmitApplicationTests(SimpleTestCase):
     def test_inserts_one_row_and_echoes_nothing_stored(self):
         response, cursor = self.post(application(id=7, submitted_at="2000-01-01", Password="x", postcode="ex12mp"))
         self.assertEqual(response.status_code, 201)
-        self.assertEqual(json.loads(response.content), {"submitted": True, "eligible": True, "reasons": []})
+        self.assertEqual(json.loads(response.content),
+                         {"submitted": True, "eligible": True, "reasons": [], "outcome": "invited"})
         self.assertEqual(len(cursor.executed), 1)
         sql, params = cursor.executed[0]
         self.assertTrue(sql.startswith("INSERT INTO enrolment.eligibility_form ("))
@@ -462,6 +467,9 @@ class TableTests(SimpleTestCase):
 class GateTests(SimpleTestCase):
     def setUp(self):
         stub_lookup(self)
+        p = patch.object(ef.eligibility_invitation, "invite_applicant", return_value="invited")
+        self.addCleanup(p.stop)
+        p.start()
 
     def test_only_the_exact_public_paths_are_open(self):
         for path in (URL, "/enrolment_api/public/eligibility-form-layout/", "/enrolment_api/public/postcode-lookup/"):
