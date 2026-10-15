@@ -379,7 +379,13 @@ const STEPS: { slug: string; label: string; sectionStyle?: 'fieldset' | 'section
        */
       missing: (d, r) => {
         if (!r) return [];
-        const unrated = Object.values(d.skillsRadar.assessments ?? {}).filter((a) => a.level == null).length;
+        const assessments = d.skillsRadar.assessments ?? {};
+        const asked = d.skillsRadar.programmeKsbIds;
+        // Only the programme's own KSBs count. Before the profile has loaded,
+        // fall back to every row the draft holds.
+        const unrated = asked
+          ? asked.filter((id) => assessments[id]?.level == null).length
+          : Object.values(assessments).filter((a) => a.level == null).length;
         return unrated > 0 ? [`${unrated} ${unrated === 1 ? 'competency' : 'competencies'} not yet rated`] : [];
       },
     }],

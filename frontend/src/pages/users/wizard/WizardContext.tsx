@@ -162,6 +162,8 @@ function mergeSaved(prev: WizardDraft, res: ExtendedIlrResponse): WizardDraft {
   // The Inclusion status comes from the Safeguarding database on every open,
   // never from a saved draft, which the learner could have written themselves.
   next.inclusion = prev.inclusion;
+  // Likewise the programme's KSB list: read from the curriculum, never saved.
+  if (next.skillsRadar) next.skillsRadar = { ...next.skillsRadar, programmeKsbIds: prev.skillsRadar?.programmeKsbIds };
   return next;
 }
 
@@ -392,17 +394,20 @@ export function WizardProvider({
     fetchKsbProfile(programmeName)
       .then((res) => {
         const ksbs = res.results as Ksb[];
-        if (cancelled || ksbs.length === 0) return;
+        if (cancelled) return;
         setDraft((prev) => {
           const assessments = { ...prev.skillsRadar.assessments };
-          let seeded = false;
           for (const k of ksbs) {
             if (assessments[k.id]) continue;
             assessments[k.id] = { ksbId: k.id, level: null, evidenceFiles: [], actionPlan: null };
-            seeded = true;
           }
-          if (!seeded) return prev;
-          const next = { ...prev, skillsRadar: { ...prev.skillsRadar, assessments } };
+          // What the step asks, so rows for KSBs no longer on the programme —
+          // which the learner never sees — cannot hold the step back. They are
+          // kept, not deleted: they may be answers given under an earlier profile.
+          const next = {
+            ...prev,
+            skillsRadar: { ...prev.skillsRadar, assessments, programmeKsbIds: ksbs.map((k) => k.id) },
+          };
           // Seeding is not an answer: these rows are unrated placeholders that
           // are regenerated from the programme on every load, so they are not
           // worth a write of their own. Counting them as dirty would make the
@@ -501,6 +506,12 @@ export function WizardProvider({
           const { ilr, ...rest } = saving;
           // Read from the Safeguarding database on every open; never stored.
           delete rest.inclusion;
+          // Read from the curriculum on every open; never stored.
+          if (rest.skillsRadar) {
+            const skillsRadar = { ...rest.skillsRadar };
+            delete skillsRadar.programmeKsbIds;
+            rest.skillsRadar = skillsRadar;
+          }
           const res = await saveExtendedIlr(kind, userId, ilr, rest);
           lastSavedDraft.current = saving;
           setIlrSavedAt(res.meta.updatedAt);

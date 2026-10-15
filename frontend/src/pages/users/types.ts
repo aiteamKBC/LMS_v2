@@ -442,6 +442,14 @@ export interface KsbAssessment {
 export interface SkillsRadarState {
   standardId: string;
   assessments: Record<string, KsbAssessment>;
+  /**
+   * The KSBs of the learner's programme profile — the questions the step asks —
+   * read when the wizard opens. Completeness is measured against these alone:
+   * saved answers can hold rows for KSBs no longer on the programme (a changed
+   * programme or a re-authored profile), which the learner is never shown and
+   * so could never rate. Never saved; undefined until the profile has loaded.
+   */
+  programmeKsbIds?: string[];
 }
 
 /**
