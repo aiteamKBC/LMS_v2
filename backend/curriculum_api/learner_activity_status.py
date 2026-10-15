@@ -7,6 +7,7 @@ import hashlib
 import json
 from collections import defaultdict
 from datetime import date, datetime, timedelta, timezone
+from math import isfinite
 from zoneinfo import ZoneInfo
 
 from django.core.serializers.json import DjangoJSONEncoder
@@ -65,11 +66,50 @@ def allowed(account, owner, module, grants=None):
     ))
 
 
-def facts(records, override=None):
-    # Exactly the persisted Activity Log allocations. Timer/marking projections
-    # can supply completion evidence elsewhere, but cannot manufacture ledger
-    # hours on this read. Multiple durable allocations require manual review.
-    current = records
+def recorded_hour_rows(records):
+    """Read stored allocations or verified native time from the same ledger.
+
+    Stored seconds, including zero, take priority. A native retry cannot add
+    hours to a retained allocation or staff correction for the same activity.
+    Keep the original rows untouched for optimistic locking and audit snapshots.
+    """
+    def activity_key(row):
+        return (row.get('learner_id'), component_reference(row)
+                or (f"quiz:{row['quiz_ref']}" if row.get('quiz_ref') else f"entry:{row['id']}"))
+
+    allocated = {activity_key(row) for row in records if row.get('actual_seconds') is not None
+                 and (row.get('accepted') is True or row.get('actual_basis') == 'staff:module-progress')}
+    retained = {(row.get('learner_id'), source_payload_metadata(row.get('source_payload')).get('original_source_ref'))
+                for row in records if row.get('source_system')}
+    result, pending = [], {}
+    for row in records:
+        if (row.get('actual_seconds') is not None or row.get('source_system')
+                or row.get('component_link_source') not in {'direct', 'quiz_ref'}
+                or row.get('accepted') is not True or row.get('kind') == 'activity_event'
+                or not row.get('submitted_at')):
+            result.append(row)
+            continue
+        key = activity_key(row)
+        if key in allocated or (row.get('learner_id'), f"progress:{row['id']}") in retained:
+            continue
+        projected = dict(row)
+        try:
+            seconds = float(row.get('verified_seconds'))
+        except (TypeError, ValueError, OverflowError):
+            seconds = None
+        if seconds is not None and isfinite(seconds) and seconds >= 0:
+            projected.update(actual_seconds=seconds, _hours_source='learner_progress_entries.verified_seconds')
+        previous = pending.get(key)
+        if previous is None or (projected.get('actual_seconds') is not None, projected.get('actual_seconds') or 0) > (
+                previous.get('actual_seconds') is not None, previous.get('actual_seconds') or 0):
+            pending[key] = projected
+    return result + list(pending.values())
+
+
+def facts(records, override=None, *, hour_rows=None):
+    # Hours come only from persisted fields in learner_progress_entries.
+    # Multiple durable allocations still require manual review before editing.
+    current = recorded_hour_rows(records) if hour_rows is None else hour_rows
     original_by_id = {row['id']: row for row in records}
     eligible = [row for row in current if row.get('accepted') is True]
     selected = max(eligible or current, key=lambda row: (
@@ -90,9 +130,11 @@ def facts(records, override=None):
         'displayStatus': override.get('display_status'),
         'statusSource': 'manual' if override else 'calculated',
         'actualOtjh': selected['actual_seconds'] / 3600 if selected and selected.get('actual_seconds') is not None else (0 if not records else None),
-        'acceptedOtjh': None if any(row.get('actual_seconds') is None for row in eligible)
-        else sum((row.get('actual_seconds') or 0) / 3600 for row in eligible),
-        'hoursSource': 'learner_progress_entries.actual_seconds',
+        # Missing allocations do not erase hours already persisted in the ledger.
+        # Keep their count separate; never substitute claimed or planned time.
+        'acceptedOtjh': sum((row.get('actual_seconds') or 0) / 3600 for row in eligible),
+        'unallocatedAcceptedRecords': sum(row.get('actual_seconds') is None for row in eligible),
+        'hoursSource': selected.get('_hours_source', 'learner_progress_entries.actual_seconds') if selected else 'learner_progress_entries.actual_seconds',
         'startedAt': original.get('reporting_started_at') if mode == 'timestamp' else None,
         'endedAt': original.get('reporting_ended_at') if mode == 'timestamp' else None,
         'timeEntryMode': mode, 'activityDate': activity_date,
@@ -101,7 +143,7 @@ def facts(records, override=None):
         'progressId': selected['id'] if selected else None,
         'accepted': selected.get('accepted') if selected else None,
         'multipleRecordedAllocations': sum(row.get('actual_seconds') is not None for row in records) > 1,
-        'calculatedStatus': 'completed' if any(counts_as_completed(row) for row in current)
+        'calculatedStatus': 'completed' if any(counts_as_completed(row) for row in records)
         else 'in_progress' if records else 'not_started',
     }
 
@@ -121,19 +163,21 @@ def load_records(learner_ids, component_ids, module_id=None):
           AND deleted_at IS NULL ORDER BY id''', [*learner_ids, *component_ids, *([module_id] if module_id else [])])
 
 
-def earlier_progress(rows, linked_keys):
+def earlier_progress(rows, linked_keys, *, hour_rows=None):
     """Module-tagged rows for components the module no longer has.
 
     A row whose canonical activity is already recorded against a current
     component is the same work and is not counted twice.
     """
     rows = [row for row in rows if not (row.get('canonical_activity_key') and row['canonical_activity_key'] in linked_keys)]
-    accepted = [row for row in rows if row.get('accepted') is True]
+    kept_ids = {row['id'] for row in rows}
+    projected = recorded_hour_rows(rows) if hour_rows is None else hour_rows
+    accepted = [row for row in projected if row['id'] in kept_ids and row.get('accepted') is True]
     return {
         'earlierRecords': len(rows),
         'earlierCompleted': sum(1 for row in rows if counts_as_completed(row)),
-        'earlierOtjh': None if any(row.get('actual_seconds') is None for row in accepted)
-        else sum((row.get('actual_seconds') or 0) / 3600 for row in accepted),
+        'earlierOtjh': sum((row.get('actual_seconds') or 0) / 3600 for row in accepted),
+        'unallocatedAcceptedRecords': sum(row.get('actual_seconds') is None for row in accepted),
     }
 
 
@@ -148,11 +192,21 @@ def enrich(payload, account):
     current_components = set(component_ids)
     records = defaultdict(list)
     earlier_rows = defaultdict(list)
-    for row in load_records(learner_ids, component_ids, payload['identifier']):
+    loaded_records = load_records(learner_ids, component_ids, payload['identifier'])
+    for row in loaded_records:
         if component_reference(row) in current_components:
             records[(str(row['learner_id']), component_reference(row))].append(row)
         else:
             earlier_rows[str(row['learner_id'])].append(row)
+    hour_rows = defaultdict(list)
+    earlier_hour_rows = defaultdict(list)
+    # Project once across the module so retained references can suppress a
+    # native original even when its imported copy has another component ID.
+    for row in recorded_hour_rows(loaded_records):
+        if component_reference(row) in current_components:
+            hour_rows[(str(row['learner_id']), component_reference(row))].append(row)
+        else:
+            earlier_hour_rows[str(row['learner_id'])].append(row)
     overrides = {}
     if learner_ids:
         slots = ','.join(['%s'] * len(learner_ids))
@@ -176,7 +230,7 @@ def enrich(payload, account):
     grants = _accesses_of(account) if account else frozenset()
     for row in plan:
         key = (str(row['learnerId']), row['componentId'])
-        state = facts(records[key], overrides.get(key))
+        state = facts(records[key], overrides.get(key), hour_rows=hour_rows[key])
         state['calculatedStatus'] = row.get('calculatedStatus') or state['calculatedStatus']
         row['logState'] = state
         row['calculatedStatus'] = state['calculatedStatus']
@@ -188,19 +242,19 @@ def enrich(payload, account):
             row['lectureDate'] = lecture.get('date') or state.get('lectureDate')
             if lecture.get('unresolved'):
                 row['canChangeStatus'] = False
-    payload['moduleProgressHoursSource'] = 'Activity Log · accepted learner_progress_entries.actual_seconds (current components and module_ref)'
+    payload['moduleProgressHoursSource'] = 'Activity Log · accepted learner_progress_entries.actual_seconds, otherwise verified_seconds for native saves (current components and module_ref)'
     totals = defaultdict(float)
-    unknown = set()
+    unallocated = defaultdict(int)
     completion = defaultdict(lambda: {'totalActivities': 0, 'completedActivities': 0, 'inProgressActivities': 0})
     linked_keys = defaultdict(set)
-    for (learner, _component), rows in records.items():
-        linked_keys[learner].update(row['canonical_activity_key'] for row in rows if row.get('canonical_activity_key'))
+    for (learner, _component), rows in hour_rows.items():
+        linked_keys[learner].update(row['canonical_activity_key'] for row in rows
+                                   if row.get('canonical_activity_key') and row.get('accepted') is True
+                                   and row.get('actual_seconds') is not None)
     for row in plan:
         learner = str(row['learnerId'])
-        if row['logState']['acceptedOtjh'] is None:
-            unknown.add(learner)
-        else:
-            totals[learner] += row['logState']['acceptedOtjh']
+        totals[learner] += row['logState']['acceptedOtjh']
+        unallocated[learner] += row['logState']['unallocatedAcceptedRecords']
         counts = completion[learner]
         counts['totalActivities'] += 1
         if row['displayStatus'] == 'completed':
@@ -210,11 +264,9 @@ def enrich(payload, account):
     progress_rows = []
     for learner_id in learner_ids:
         learner = str(learner_id)
-        earlier = earlier_progress(earlier_rows.get(learner, []), linked_keys[learner])
-        if earlier['earlierOtjh'] is None:
-            unknown.add(learner)
-        else:
-            totals[learner] += earlier['earlierOtjh']
+        earlier = earlier_progress(earlier_rows.get(learner, []), linked_keys[learner], hour_rows=earlier_hour_rows[learner])
+        totals[learner] += earlier['earlierOtjh']
+        unallocated[learner] += earlier['unallocatedAcceptedRecords']
         progress_rows.append({'learnerId': learner_id, **completion[learner], **earlier})
     payload['activityLogProgress'] = {
         'learners': progress_rows,
@@ -225,11 +277,13 @@ def enrich(payload, account):
     }
     hours_rows = [{
         'learnerId': row['learnerId'], 'plannedOtjh': row['plannedOtjh'],
-        'achievedOtjh': None if str(row['learnerId']) in unknown else totals[str(row['learnerId'])],
+        'achievedOtjh': totals[str(row['learnerId'])],
+        'unallocatedAcceptedRecords': unallocated[str(row['learnerId'])],
     } for row in payload.get('otjhAchievement', {}).get('learners', [])]
     payload['activityLogOtjh'] = {
         'learners': hours_rows,
-        'achievedTotal': None if unknown else sum(row['achievedOtjh'] for row in hours_rows),
+        'achievedTotal': sum(row['achievedOtjh'] for row in hours_rows),
+        'unallocatedAcceptedRecords': sum(row['unallocatedAcceptedRecords'] for row in hours_rows),
         'plannedTotal': sum(row['plannedOtjh'] for row in hours_rows),
         'source': payload['moduleProgressHoursSource'],
     }

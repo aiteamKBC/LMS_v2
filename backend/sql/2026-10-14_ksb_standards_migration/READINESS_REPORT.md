@@ -2,11 +2,11 @@
 
 **Date:** 14 Oct 2026
 
-**Status:** prepared and validated on isolated Neon branches only. **Production has not been migrated, and no profile has been archived or deleted.**
+**Status (updated 15 Oct 2026):** on 14 Oct `02_apply.sql` was applied to Production at 13:53:45 UTC and rolled back by `03_rollback.sql` at 13:54:24 UTC (run log `rolled_back`, attempt 1, 0 conflicts). **Production is on its pre-migration values today; no profile has been archived or deleted.** See section 10 for the 15 Oct verification.
 
 **Production touch so far:** you ran `01_plan.sql` yourself. It only created the planning schema `ksb_mig`, which nothing in the application reads. I checked afterwards: all application data was unchanged.
 
-**Branch:** `New-Modifications`. Nothing has been committed, pushed or deployed. The files another session is editing in the same tree were not touched; `backend/curriculum_api/views.py` is one of them, so its change is delivered as a patch.
+**Code:** merged to `main` in PR #386 (merge `f2463b5d`, commit `967f53cc`), `views.py` patch included. *(Original 14 Oct note:* nothing had been committed, pushed or deployed. The files another session is editing in the same tree were not touched; `backend/curriculum_api/views.py` is one of them, so its change is delivered as a patch.)
 
 ## Isolated test environment
 
@@ -29,6 +29,9 @@ All in `backend/sql/2026-10-14_ksb_standards_migration/` unless shown otherwise.
 | `04_pin_remediation_plan.sql` | **Separate** remediation for mislabelled learner pins. Part A is read-only. Part B runs only with `SET ksb_pin_fix.confirm = 'yes'`. Includes its own rollback. |
 | `05_reconcile.sql` | Read-only checksums, per-table before/after counts, and the per-learner before/after display table. |
 | `06_unresolved_review.sql` | Read-only report for manual review: heading mappings, coverage classes, registered learner rows. |
+| `04b_pin_remediation_rollback.sql` | **Added 15 Oct.** Conflict-safe rollback of `04` PART B (runs only with `SET ksb_pin_fix.rollback = 'yes'`). Replaces the unconditional rollback shown as a comment in `04`. |
+| `07_orphan_recovery.sql` | **Added 15 Oct.** The orphan recovery path of section 3(c). PART A read-only; PART B only with `SET ksb_orphan_fix.confirm = 'yes'`, after `04` PART B. |
+| `07b_orphan_recovery_rollback.sql` | **Added 15 Oct.** Rollback of `07` PART B (`SET ksb_orphan_fix.rollback = 'yes'`). |
 | `views_ksb_exclusions.patch` | The `curriculum_api/views.py` change (39 lines). It applies cleanly to the current working copy, checked with `git apply --check` only. Apply it after the other session's work on that file has landed. |
 | `DRY_RUN_REPORT.md` | The earlier dry-run report. Superseded where this report differs. |
 
@@ -238,3 +241,83 @@ The only lasting difference is the audit trail: +591 apply revisions and +591 ro
    - "Marketing Manager Level 6" is already on ST0612, and its imported rows carry MM heading descriptions under ST0612 codes. The same lookup artefact as ME, live today.
    - `programme_component_ksb_mapping_count` still falls back from K1.1 to K1 by code; harmless after the migration.
 7. **Environment:** the C: drive on this machine is full (94 MB free).
+
+## 10. Verification of 15 Oct 2026
+
+### Production state (read-only queries, `READ ONLY` transaction)
+- `ksb_migration_archive.run_log`: `ksb-standards-2026-10-14`, status `rolled_back`, attempt 1. Applied 14 Oct 13:53:45 UTC, rolled back 13:54:24 UTC, 0 conflicts. Apply counts: 1,488 mappings, 1,300 learner KSB rows, 222 pins, 99 exclusions, 593 revisions; the rollback restored each of them and wrote 593 revisions.
+- **Every archived value is restored:** 222 / 222 pins (version and `updated_at`), 1,300 / 1,300 learner KSB rows, 850 / 850 components, the programme source and 54 module sources.
+- **14 differences, all later user edits:** 12 mappings, the programme's `updated_at` and 3 modules' `updated_at`. Each one is a `module-save` made between 14:02 and 14:59 UTC, after the rollback. None is a rollback defect; the rollback did not overwrite them.
+- **No leftovers:** no learner is pinned to a standard version the run created, there are no orphan definitions, and the exclusion registry exists but holds 0 rows. The readers' predicate therefore matches nothing.
+- **`04` PART B never ran:** there is no `pin_fix_before` table. `01`, `05` and `06` leave no execution record beyond the `ksb_mig` schema, so their execution cannot be proved from the database.
+
+### Full cycle on a copy of Production as it is today
+Branch `ksb-standards-migration-verify-20261015` (`br-flat-grass-abss9p7s`), created 15 Oct 06:39 UTC.
+
+**Scope:** this cycle ran the **committed** `01_plan.sql`, at 09:40 local time. At 10:05 another session changed its row classification (`valid_code_lookup_text` / `valid_code_no_text`, decision of 15 Oct). Its figures (about 19 rows registered, not 99) are covered by `VALIDATION_REPORT.md`, not by this cycle.
+
+**Plan (`01`):**
+- 1,488 mapping repoints, 130 heading reviews.
+- **1,328** learner KSB repoints (up from 1,294 on 14 Oct: data moved).
+- 222 repins.
+- 911 identical reconciliations, 0 DIFFERENT, 0 collisions.
+
+**Checks and results:**
+
+| Check | Result |
+|---|---|
+| Apply with the `before_commit` failure hook | Aborted; data byte-identical; run log unchanged |
+| Apply (**attempt 2**, the path Production takes next) | Pass. Previous archives kept as `*_a1`; the 12 user-edited mappings re-archived with their current values |
+| Apply rerun | No-op (all counts 0, checksums identical) |
+| `04` PART B | 55 repinned; rerun 0 |
+| `03` while PART B is in place | Refused, as designed |
+| `07` orphan recovery (new) | 4 rows translated and released; rerun 0 |
+| `04b` / `03` while `07` is in place | Refused (new guards) |
+| `07b`, then `04b` | Each restored byte-for-byte; reruns 0 |
+| `07` PART B while pins are uncorrected | 0 rows (held) |
+| `03` | **All tables byte-identical to before the apply**: full `ksb_mappings`, component JSON, `learner_progress_ksbs`, pins, programme/module sources (all with `updated_at`), definitions, registry. Only the audit trail grew. |
+| Re-apply (attempt 3) + 2 simulated user edits + `03` | Default run aborted on the 2 conflicts; skip mode restored everything else and kept both edits |
+
+The branch now holds synthetic test edits. **Delete it** once this report is accepted.
+
+### New orphan
+**Progress 910642 (learner 411, K4.3, written 14 Oct)**, with the same cause as 903190: learner 411 is on the mislabelled version 14. Rows like this keep appearing while learners stay on version 14, so `04` PART B ends the source and `07` recovers the existing rows.
+
+**Translations, by description through the ME profile:**
+- K1.2 → K2
+- K2.2 → K5
+- K4.2 → K10
+- K4.3 → K11
+
+### Order for Production
+**Follow `RUNBOOK.md`.** Under the 15 Oct decisions it records, the orphan rows are left as they are, so `07` is **not part of this release**. `07` and `07b` are ready and tested for when the recovery is approved, and then run after `04` PART B.
+
+<details><summary>Order used in the test cycle above (reference only)</summary>
+
+1. Neon snapshot.
+2. `01`, then compare its counts with this section.
+3. `05` (a).
+4. `02`.
+5. `05`.
+6. Restart `lms-*.service`.
+7. `04` PART B.
+8. `07` PART A, then review.
+9. `07` PART B.
+10. Verify.
+
+**Undo order:** `07b`, then `04b`, then `03`.
+
+</details>
+
+### Defect found in the new guards (fixed)
+My first `03` / `04b` guard read `to_regclass(...) is not null and exists (select ... orphan_fix_before ...)`. PL/pgSQL prepares that whole condition at once, so on any database where `07` never ran (Production included) it fails with "relation does not exist".
+
+- **Reproduced** on the verify branch.
+- **Fixed** with a nested `if`: the other session fixed `03` and `04b` at 10:17, and I fixed the same pattern in `07`.
+- **Not caught by the cycle above**, because the table already existed by the time those guards ran.
+
+### Approvals still needed
+- Repinning the 222 learners, against the "never repin" rule.
+- `04` PART B (55 learners).
+- `07` PART B (4 rows; credit for K2/K5/K10/K11 appears for learners 571 and 411). It is **deferred** under the 15 Oct decision; this approval is needed only to reverse that.
+- `pin_label_fix.patch` (untracked, applies cleanly; not applied).

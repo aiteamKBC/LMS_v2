@@ -69,7 +69,7 @@ def _direct_progress_records(enrolment_id, *, profile=None):
         return []
     entries = (
         profile.progress_entries.using('enrolment')
-        .filter(component_link_source__in=('direct', 'quiz_ref'))
+        .filter(component_link_source__in=('direct', 'quiz_ref'), deleted_at__isnull=True)
         .exclude(kind='activity_event')
         .values(
             'id', 'kind', 'component_ref', 'quiz_ref', 'component_title', 'component_type',
@@ -136,6 +136,7 @@ def load_direct_progress_records_bulk(enrolment_ids):
     entries = LearnerProgressEntry.objects.using('enrolment').filter(
         learner_id__in=[profile.id for profile in profiles],
         component_link_source__in=('direct', 'quiz_ref'),
+        deleted_at__isnull=True,
     ).exclude(kind='activity_event').values(
         'id', 'learner_id', 'kind', 'component_ref', 'quiz_ref', 'component_title', 'component_type',
         'module_title', 'week_title', 'reported_time', 'claimed_seconds', 'verified_seconds',
@@ -615,6 +616,26 @@ def _builder_subject_metadata(cursor, refs):
             covers[ref] = row['cover']
             links[ref] = {'id': row['id'], 'title': row['title']}
     return covers, links
+
+
+def builder_subject_links(cursor, source, refs, read=None):
+    """``_builder_subject_metadata`` links, reading only refs this request has not resolved.
+
+    Each ref resolves independently, so a Dashboard tab that resolves the plan's
+    modules and then its components' modules reads each module once. Without the
+    cache ``read_tab`` installs on its request-scoped source, this is one read.
+    ``read`` lets a caller keep its own module-level reader binding.
+    """
+    read = read or _builder_subject_metadata
+    cache = getattr(source, '_builder_link_cache', None)
+    if cache is None:
+        return read(cursor, refs)[1]
+    wanted = list(dict.fromkeys(refs))
+    missing = [ref for ref in wanted if ref not in cache]
+    if missing:
+        _, found = read(cursor, missing)
+        cache.update({ref: found.get(ref) for ref in missing})
+    return {ref: dict(cache[ref]) for ref in wanted if cache[ref] is not None}
 
 
 def _effective_current_subjects(cursor, learner_id):

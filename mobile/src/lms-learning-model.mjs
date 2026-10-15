@@ -14,8 +14,8 @@ export function normaliseLmsCourses(raw){
  });
 }
 export function lmsCourseSession(session,moduleId){
- const enabled=moduleId===PMP_ID&&(Array.isArray(session?.rewardModuleIds)?session.rewardModuleIds.includes(moduleId):session?.capabilities?.customPointsPolicy===true);
- return {...session,capabilities:{...session?.capabilities,customPointsPolicy:enabled&&session?.capabilities?.customPointsPolicy===true,timeObservations:enabled&&session?.capabilities?.timeObservations===true}};
+ const enabled=Array.isArray(session?.rewardModuleIds)?session.rewardModuleIds.includes(moduleId):moduleId===PMP_ID&&session?.capabilities?.customPointsPolicy===true;
+ return {...session,rewardModuleId:moduleId,capabilities:{...session?.capabilities,customPointsPolicy:enabled&&session?.capabilities?.customPointsPolicy===true,timeObservations:enabled&&session?.capabilities?.timeObservations===true}};
 }
 function googleDriveMediaUrl(url){
  const path=url.pathname.match(/^\/file\/d\/([A-Za-z0-9_-]{10,200})(?:\/(?:view|preview))?\/?$/);

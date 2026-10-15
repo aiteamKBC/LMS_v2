@@ -138,7 +138,11 @@ def _group_dates(learner):
 
     Imported learners can have a complete placement without copied date fields.
     An explicit learner date always wins (it may differ from the cohort date).
+    A read-only request may stash its result as ``_resolved_group_dates``.
     """
+    resolved = getattr(learner, "__dict__", {}).get("_resolved_group_dates")
+    if resolved is not None:
+        return resolved
     start = _to_date(getattr(learner, "start_date", None))
     end = _to_date(getattr(learner, "end_date", None))
     programme = _s(getattr(learner, "programme", ""))

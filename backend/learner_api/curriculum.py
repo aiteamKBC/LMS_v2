@@ -27,6 +27,8 @@ from django.db import DatabaseError, connections
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 
+from curriculum_api.week_visibility import visible_child_sql, visible_week_sql
+
 from .ksb_sources import PROFILE, STANDARD, parse_source, resolve_source
 
 
@@ -135,6 +137,7 @@ def weeks(request):
         for r in _rows(
             "SELECT id, week_number, title FROM curriculum.weeks "
             "WHERE module_catalogue_id = %s "
+            f"AND {visible_week_sql('weeks')} "
             "ORDER BY week_number, display_order",
             [module],
         )
@@ -157,6 +160,7 @@ def components(request):
         for r in _rows(
             "SELECT id, type, title, expected_otjh FROM curriculum.components "
             "WHERE week_id = %s "
+            f"AND {visible_child_sql('components')} "
             "ORDER BY display_order",
             [week],
         )

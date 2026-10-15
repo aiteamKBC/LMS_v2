@@ -166,8 +166,11 @@ def read_home_progress(
             ORDER BY submitted_at NULLS FIRST,id''', [kind, str(source.pk)])
         submissions = rows(cur)
         historical_hours = 0
+    owner = getattr(source, '_canonical_profile', None)
     try:
-        lectures = lecture_register(source, module_ids=attendance_module_ids)
+        # A verified SSOT owner is the enrolment's single learner profile.
+        lectures = lecture_register(source, module_ids=attendance_module_ids,
+                                    **({'learner_profile_id': owner['id']} if owner else {}))
     except (DatabaseError, psycopg.Error):
         log.warning('Home attendance unavailable for enrolment %s', source.pk, exc_info=True)
         lectures = None

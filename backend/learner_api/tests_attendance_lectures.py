@@ -69,7 +69,7 @@ class AttendanceLectureTests(SimpleTestCase):
         source = SimpleNamespace(id=12, username='Learner', email='learner@example.test')
         conn = MagicMock()
         conn.cursor.return_value.__enter__.return_value.fetchall.side_effect = [
-            [('business', 'Business')], [], [('business', 'Business')],
+            [('business', 'Business')],
         ]
         raw = {'scheduled_start': datetime(2026, 9, 1, 23, 30), 'scheduled_end': datetime(2026, 9, 2, 0, 30),
                'updated_at': datetime(2026, 9, 1, 12), 'module_catalogue_id': 'business',
@@ -96,11 +96,10 @@ class AttendanceLectureTests(SimpleTestCase):
         assignment_sql, assignment_params = cur.execute.call_args_list[0].args
         self.assertIn('enrolment."Created_users" WHERE id=%s', assignment_sql)
         self.assertEqual(assignment_params, [12])
-        shared_sql, shared_params = cur.execute.call_args_list[1].args
-        self.assertIn('teams_shared_source_module_id', shared_sql)
-        self.assertEqual(shared_params, [['assigned-module']])
-        schedule_sql, schedule_params = cur.execute.call_args_list[2].args
-        self.assertEqual(schedule_params, ['learner@example.test', ['assigned-module']])
+        schedule_sql, schedule_params = cur.execute.call_args_list[1].args
+        self.assertEqual(len(cur.execute.call_args_list), 2)
+        self.assertIn('teams_shared_source_module_id', schedule_sql)
+        self.assertEqual(schedule_params, [['assigned-module'], 'learner@example.test', ['assigned-module'], ['assigned-module']])
         self.assertIn('s.module_catalogue_id=ANY(%s)', schedule_sql)
         self.assertIn('curriculum.live_session_attendance', schedule_sql)
         self.assertIn('a.total_attendance_seconds>180', schedule_sql)
@@ -109,9 +108,7 @@ class AttendanceLectureTests(SimpleTestCase):
         self.assertIn('m.title AS module_title', schedule_sql)
         self.assertNotIn('jsonb_array_elements_text', schedule_sql)
         self.assertNotIn('live_session_join_launches', schedule_sql)
-        title_sql, title_params = cur.execute.call_args_list[3].args
-        self.assertIn('SELECT module_catalogue_id,title', title_sql)
-        self.assertEqual(title_params, [['assigned-module']])
+        self.assertIn('target_module_title', schedule_sql)
 
     def test_schedule_reuses_already_loaded_home_assignment(self):
         conn = MagicMock()
@@ -126,15 +123,17 @@ class AttendanceLectureTests(SimpleTestCase):
 
         statements = [call.args[0] for call in cur.execute.call_args_list]
         self.assertFalse(any('Created_users' in sql for sql in statements))
-        self.assertEqual(len(statements), 3)
-        schedule_sql, schedule_params = cur.execute.call_args_list[1].args
+        self.assertEqual(len(statements), 1)
+        schedule_sql, schedule_params = cur.execute.call_args_list[0].args
         self.assertIn('s.module_catalogue_id=ANY(%s)', schedule_sql)
-        self.assertEqual(schedule_params, ['learner@example.test', ['assigned-module']])
+        self.assertEqual(schedule_params, [['assigned-module'], 'learner@example.test', ['assigned-module'], ['assigned-module']])
 
-    def test_shared_teams_duplicate_reads_its_source_modules_meeting(self):
+    def test_an_unreadable_combined_read_falls_back_to_the_separate_shared_lookup(self):
+        from django.db import DatabaseError
         # A duplicate sharing another module's meeting has no series of its own.
         conn = MagicMock()
         cur = conn.cursor.return_value.__enter__.return_value
+        cur.execute.side_effect = [None, DatabaseError('combined unavailable'), None, None, None]
         cur.fetchall.side_effect = [
             [('alias-module', 'Alias')],
             [('alias-module', 'source-module')],
@@ -154,9 +153,43 @@ class AttendanceLectureTests(SimpleTestCase):
             result = read_native_occurrences(
                 SimpleNamespace(id=12, username='Learner', email='learner@example.test')
             )
-        schedule_sql, schedule_params = cur.execute.call_args_list[2].args
+        schedule_sql, schedule_params = cur.execute.call_args_list[3].args
         self.assertIn('s.module_catalogue_id=ANY(%s)', schedule_sql)
         self.assertEqual(schedule_params, ['learner@example.test', ['alias-module', 'source-module']])
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]['module_catalogue_id'], 'alias-module')
+        self.assertEqual(result[0]['module_title'], 'Alias')
+        self.assertEqual(result[0]['session_id'], 'source-occ:alias-module')
+        self.assertEqual(result[0]['attendance_source_occurrence_id'], 'source-occ')
+        self.assertEqual(result[0]['attendance_status'], 'present')
+
+    def test_shared_teams_duplicate_reads_its_source_modules_meeting(self):
+        # A duplicate sharing another module's meeting has no series of its own.
+        conn = MagicMock()
+        cur = conn.cursor.return_value.__enter__.return_value
+        cur.fetchall.side_effect = [
+            [('alias-module', 'Alias')],
+            [('alias-module', 'source-module')],
+            [('alias-module', 'Alias')],
+        ]
+        now = timezone.now()
+        raw = {
+            'session_id': 'source-occ', 'occurrence_id': 'source-occ',
+            'attendance_source_occurrence_id': 'source-occ', 'live_session_id': 'source-live',
+            'module_catalogue_id': 'source-module', 'module_title': 'Source',
+            'target_module_id': 'alias-module', 'target_module_title': 'Alias',
+            'scheduled_start': now - timedelta(hours=2),
+            'scheduled_end': now - timedelta(hours=1), 'updated_at': now,
+            'session_number': 1, 'attendance_report_id': 'report-1', 'attended': True,
+        }
+        with patch('learner_api.attendance_lectures.connections', {'enrolment': conn}), \
+             patch('learner_api.attendance_lectures.dict_rows', return_value=[raw]):
+            result = read_native_occurrences(
+                SimpleNamespace(id=12, username='Learner', email='learner@example.test')
+            )
+        schedule_sql, schedule_params = cur.execute.call_args_list[1].args
+        self.assertIn('s.module_catalogue_id=ANY(%s)', schedule_sql)
+        self.assertEqual(schedule_params, [['alias-module'], 'learner@example.test', ['alias-module'], ['alias-module']])
         self.assertEqual(len(result), 1)
         self.assertEqual(result[0]['module_catalogue_id'], 'alias-module')
         self.assertEqual(result[0]['module_title'], 'Alias')
@@ -220,7 +253,7 @@ class AttendanceLectureTests(SimpleTestCase):
         with patch('learner_api.attendance_lectures.connections', {'enrolment': conn}), \
              patch('learner_api.attendance_lectures.dict_rows', return_value=[]):
             read_native_occurrences(SimpleNamespace(id=12, email='learner@example.test'))
-        sql = cur.execute.call_args_list[2].args[0]
+        sql = cur.execute.call_args_list[1].args[0]
         self.assertIn('m.deleted_at IS NULL', sql)
         self.assertIn('NOT coalesce(m.is_programme_deleted,false)', sql)
         for alias in ('s', 'o'):

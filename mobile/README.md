@@ -57,3 +57,42 @@ python -m unittest discover -s tests -p test_native_media_apk.py
 The APK check inspects the compiled audio and video client methods for the cookie-handler construction and attachment. Source tests, a successful build, or unrelated cookie classes elsewhere in the APK cannot establish that the media clients use the patched code. Keep generated receipts outside source control. This static check establishes the packaged transport; physical Android sign-in, protected audio/video playback and logout/account switching still require device acceptance.
 
 The LMS facade must be deployed and enabled for learner sign-in and course access. Physical device installation, learner sign-in, media playback, saved-progress readback and account switching remain separate acceptance checks from compilation and automated tests.
+
+## Prepare the iPhone version
+
+The iPhone build uses the same `App.tsx` entry point, learner and coach screens, colours, and maintained LMS APIs as Android. It does not create a second set of learner records. The current pinned native dependencies require **iOS 16.4 or newer**. Its bundle identifier is `com.kentbusinesscollege.learn`, its home-screen name is **KBC Learn**, and its initial iOS build number is `1`. Confirm that KBC can register this identifier when setting up its Apple account. Android's package, version code and checked-in native project are independent and remain unchanged.
+
+From `mobile/`, these checks work on Windows as well as macOS:
+
+```text
+npm ci
+npm run check:native-media
+npm run typecheck
+npm test
+npm run export:ios
+npx expo config --type introspect --json
+```
+
+An iOS JavaScript/Hermes export and config introspection are preparation checks, **not an Xcode build or an installable iPhone app**. The pinned Expo CLI does not run iOS prebuild on Windows. Native generation, CocoaPods, compilation and simulator/device checks require macOS, locally or through EAS Build. The native `ios/` directory is generated from the reviewed config and excluded from Git and EAS uploads; do not run a clean prebuild across both platforms because Android has maintained native changes. On a Mac use `npx expo prebuild --platform ios`, then `npx expo run:ios` for local simulator testing.
+
+The existing KBC crest remains the source icon and splash image. Expo's pinned iOS icon generator produces the opaque 1024-pixel default icon; no replacement branding is used. Review the generated asset catalogue, final aggregated privacy manifest, microphone/speech permission text and background-audio behaviour in the native archive before submission. Complete Apple's privacy and export-compliance declarations from the actual app and services; no unverified declaration or signing identity is supplied here.
+
+### Build and distribute after account setup
+
+Before distributing the app to iPhones, an authorized KBC representative must [enrol the legal organization with Apple](https://developer.apple.com/help/account/membership/program-enrollment/) and complete its verification, agreements and membership. A KBC-controlled Expo/EAS project is also needed for cloud builds. Do not put Apple passwords, signing keys, service-account files or personal access tokens in this repository.
+
+Once the accounts exist, use the EAS CLI from this `mobile/` directory. Link it to KBC's actual Expo project and commit the returned project identity through review; do not invent an owner, project ID, team ID or App Store Connect app ID. Inspect the build archive before uploading. The repository-root `.easignore` includes mobile source only and excludes runtime data, environment files, credentials, dependencies and build outputs. The maintained Android source is retained; iOS is generated separately by EAS.
+
+```text
+eas build:inspect --platform ios --profile ios-testflight --stage archive --output ../ios-archive-check
+eas build --platform ios --profile ios-simulator
+eas build --platform ios --profile ios-testflight
+```
+
+`ios-simulator` builds a Release simulator app, which cannot be installed on a physical iPhone. `ios-testflight` builds a signed store-distribution candidate after Apple signing is configured. Neither profile submits automatically. Versions are controlled in source: increment `ios.buildNumber` for each subsequent uploaded build and commit it before building. A clean committed checkout is required. Upload only the reviewed, tested iOS build to the matching App Store Connect app, then use [TestFlight](https://developer.apple.com/testflight/) for acceptance before an App Store release. No Apple enrollment, cloud build, submission or tester invitation is performed by adding these files.
+
+### iPhone acceptance and notification boundary
+
+Verify existing LMS login (including session expiry/logout and switching accounts); current learner assignments and coach caseload permissions; protected audio/video and YouTube playback; pause/background timing; MCQ submission with saved LMS progress; measured hours and shared points; coach material previews; and authorized private/class chats using designated test accounts. Confirm safe-area layout, keyboard, dictation permissions and background audio on actual supported iPhones. Synthetic transport tests and browser previews do not establish native playback or live LMS write/readback.
+
+The current server sends phone alerts through Android FCM only. iPhone shows a clear Apple-setup status instead of a non-working Connect button. In-app reminders remain available and account-level notification preferences remain editable for other connected devices. The iPhone client does not request an APNs token or send one to the Android registration endpoint. Apple signing alone will not enable iPhone phone alerts: an authorized APNs/provider integration, matching credentials, scoped registration, logout/revocation handling and real foreground/background delivery tests are required in a later release. No `remote-notification` background mode is added. The notification plugin can add the Apple push entitlement during generation, but that is not evidence of delivery readiness.
