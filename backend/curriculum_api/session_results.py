@@ -169,6 +169,29 @@ def replaced_module_register_rows(module_catalogue_id, source_occurrence_ids):
         ORDER BY learner.full_name,learner.id''', [module_catalogue_id, source_occurrence_ids])
 
 
+def merge_session_register_rows(rows):
+    """Collapse one module/occurrence's register by email without losing presence."""
+    by_email = {}
+    for row in rows:
+        email = str(row.get('learner_email') or '').strip().casefold()
+        if not email:
+            continue
+        if email not in by_email:
+            by_email[email] = {**row, 'learner_email': email}
+            continue
+        current = by_email[email]
+        if row.get('attendance_status') == 'present':
+            current['attendance_status'] = 'present'
+        current['attended_seconds'] = max(
+            0, int(current.get('attended_seconds') or 0), int(row.get('attended_seconds') or 0))
+        if current.get('learner_profile_id') is None and row.get('learner_profile_id') is not None:
+            current['learner_profile_id'] = row['learner_profile_id']
+        name = str(row.get('learner_name') or '').strip()
+        if len(name) > len(str(current.get('learner_name') or '').strip()):
+            current['learner_name'] = name
+    return [by_email[email] for email in sorted(by_email)]
+
+
 def result_rows(series, *, session_number=None, email=None, identity=False, module_catalogue_id=''):
     params = [series['id']]
     where = ''
@@ -259,8 +282,8 @@ def result_rows(series, *, session_number=None, email=None, identity=False, modu
     for item in occurrences:
         complete = bool(item.get('attendance_report_id') and item.get('actual_end'))
         replaced_roster = item['id'] in context_source_ids
-        saved_register = (context_by_source_id[item['id']]
-                          if replaced_roster else register_by_id[item['id']])
+        saved_register = merge_session_register_rows(
+            context_by_source_id[item['id']] if replaced_roster else register_by_id[item['id']])
         learner_by_email = {
             str(row.get('learner_email') or '').strip().casefold(): row
             for row in saved_register if str(row.get('learner_email') or '').strip()
@@ -316,12 +339,10 @@ def result_rows(series, *, session_number=None, email=None, identity=False, modu
                 continue
             status = saved.get('attendance_status')
             person['name'] = saved.get('learner_name') or person['name']
-            # A replaced module compares its own roster directly with the
-            # source report.  Its reporting row may still contain an older
-            # absence until the background reporting refresh runs.  Preserve
-            # a saved positive match (aliases/name review), but never let that
-            # stale absence erase direct source evidence for this learner.
-            if not (rules or aliases or identity_links or name_decisions) and (not replaced_roster or person.get('status') != 'present'):
+            # Reporting rows can lag behind the source report. Preserve saved
+            # matches, but never let saved absence erase current presence.
+            # Reviewed identity decisions still take precedence over old rows.
+            if not (rules or aliases or identity_links or name_decisions) and person.get('status') != 'present':
                 person.update(
                     seconds=max(0, int(saved.get('attended_seconds') or 0)),
                     status=status,

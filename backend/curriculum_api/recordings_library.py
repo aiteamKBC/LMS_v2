@@ -75,7 +75,15 @@ WEEKS_SQL = '''SELECT x.id, x.module_catalogue_id, x.week_number, x.title, x.dis
     WHERE x.module_catalogue_id=ANY(%s) AND COALESCE(x.library_state, '')<>'library' AND ''' + _KEPT_WITH_MODULE + '''
     ORDER BY x.display_order, x.week_number, x.id'''
 
-LIVE_COMPONENTS_SQL = '''SELECT x.week_id, x.module_catalogue_id, x.settings_json
+# Only transfer settings consumed by this read-only library. Full component settings
+# contain meeting payloads that are large and never used here. Keep non-object
+# legacy JSON unchanged so _settings retains its existing decoding semantics.
+LIVE_COMPONENTS_SQL = '''SELECT x.week_id, x.module_catalogue_id, CASE WHEN jsonb_typeof(x.settings_json)='object' THEN jsonb_build_object(
+            'teamsOccurrenceId', x.settings_json -> 'teamsOccurrenceId',
+            'teamsLiveSessionId', x.settings_json -> 'teamsLiveSessionId',
+            'teamsSessionNumber', x.settings_json -> 'teamsSessionNumber',
+            'extraTeamsLiveSessionId', x.settings_json -> 'extraTeamsLiveSessionId'
+        ) ELSE x.settings_json END AS settings_json
     FROM curriculum.components x JOIN curriculum.modules m ON m.module_catalogue_id=x.module_catalogue_id
     WHERE x.module_catalogue_id=ANY(%s) AND COALESCE(x.library_state, '')<>'library'
     AND x.type IN ('live-session','live_session') AND ''' + _KEPT_WITH_MODULE + '''
@@ -83,7 +91,12 @@ LIVE_COMPONENTS_SQL = '''SELECT x.week_id, x.module_catalogue_id, x.settings_jso
 
 # Every live session of every running module, for the sessions that need attention.
 ATTENTION_COMPONENTS_SQL = '''SELECT c.id AS component_id, c.title AS component_title,
-        c.week_id, c.module_catalogue_id, c.settings_json,
+        c.week_id, c.module_catalogue_id, CASE WHEN jsonb_typeof(c.settings_json)='object' THEN jsonb_build_object(
+            'teamsOccurrenceId', c.settings_json -> 'teamsOccurrenceId',
+            'teamsLiveSessionId', c.settings_json -> 'teamsLiveSessionId',
+            'teamsSessionNumber', c.settings_json -> 'teamsSessionNumber',
+            'extraTeamsLiveSessionId', c.settings_json -> 'extraTeamsLiveSessionId'
+        ) ELSE c.settings_json END AS settings_json,
         w.week_number, w.title AS week_title, w.display_order,
         m.title AS module_title, m.programme_name, m.cohort_name, m.group_name, p.status AS programme_status
     FROM curriculum.components c
@@ -99,8 +112,20 @@ ATTENTION_COMPONENTS_SQL = '''SELECT c.id AS component_id, c.title AS component_
 # Author labels also remain useful for archived deliveries. Keep only weeks
 # deleted with their parent module; a separately removed component is not a link.
 CALENDAR_COMPONENTS_SQL = '''SELECT c.id AS component_id, c.title AS component_title,
-        c.live_sessions_link, c.week_id,
-        c.module_catalogue_id, c.settings_json, w.week_number, w.title AS week_title,
+        c.week_id,
+        c.module_catalogue_id, CASE WHEN jsonb_typeof(c.settings_json)='object' THEN jsonb_build_object(
+            'teamsOccurrenceId', c.settings_json -> 'teamsOccurrenceId',
+            'teamsLiveSessionId', c.settings_json -> 'teamsLiveSessionId',
+            'teamsSessionNumber', c.settings_json -> 'teamsSessionNumber',
+            'extraTeamsLiveSessionId', c.settings_json -> 'extraTeamsLiveSessionId',
+            'sessionDateTimeUtc', c.settings_json -> 'sessionDateTimeUtc',
+            'teamsStartDateTimeUtc', c.settings_json -> 'teamsStartDateTimeUtc',
+            'sessionDate', c.settings_json -> 'sessionDate',
+            'sessionTime', c.settings_json -> 'sessionTime',
+            'sessionTimeZone', c.settings_json -> 'sessionTimeZone',
+            'durationMinutes', c.settings_json -> 'durationMinutes',
+            'teamsDurationMinutes', c.settings_json -> 'teamsDurationMinutes'
+        ) ELSE c.settings_json END AS settings_json, w.week_number, w.title AS week_title,
         m.title AS module_title, m.programme_name, m.cohort_name, m.group_name,
         (m.deleted_at IS NOT NULL OR COALESCE(m.is_programme_deleted, false)) AS module_archived,
         p.status AS programme_status

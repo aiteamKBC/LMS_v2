@@ -4,6 +4,7 @@ import {
   formatTimeRange,
   lectureReadyCount,
 } from "@/pages/curriculum/recordings/utils";
+import LectureAttendance from './LectureAttendance';
 import RecordingItem from "@/pages/curriculum/recordings/components/RecordingItem";
 
 interface LectureDetailsPanelProps {
@@ -100,6 +101,8 @@ export default function LectureDetailsPanel({
             ))
           )}
         </div>
+
+        <div className="mt-5"><LectureAttendance key={`${lecture.id}:${timeZone}`} lecture={lecture} timeZone={timeZone} /></div>
 
         <p className="mt-5 flex items-start gap-2 rounded-md bg-secondary-50 px-3 py-2.5 text-[11px] leading-relaxed text-secondary-900">
           <i className="ri-shield-check-line mt-0.5 text-sm" aria-hidden="true"></i>

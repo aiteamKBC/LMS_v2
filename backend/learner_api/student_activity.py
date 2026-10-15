@@ -618,6 +618,26 @@ def _builder_subject_metadata(cursor, refs):
     return covers, links
 
 
+def builder_subject_links(cursor, source, refs, read=None):
+    """``_builder_subject_metadata`` links, reading only refs this request has not resolved.
+
+    Each ref resolves independently, so a Dashboard tab that resolves the plan's
+    modules and then its components' modules reads each module once. Without the
+    cache ``read_tab`` installs on its request-scoped source, this is one read.
+    ``read`` lets a caller keep its own module-level reader binding.
+    """
+    read = read or _builder_subject_metadata
+    cache = getattr(source, '_builder_link_cache', None)
+    if cache is None:
+        return read(cursor, refs)[1]
+    wanted = list(dict.fromkeys(refs))
+    missing = [ref for ref in wanted if ref not in cache]
+    if missing:
+        _, found = read(cursor, missing)
+        cache.update({ref: found.get(ref) for ref in missing})
+    return {ref: dict(cache[ref]) for ref in wanted if cache[ref] is not None}
+
+
 def _effective_current_subjects(cursor, learner_id):
     """Return the same effective module set shown by the enrolment plan.
 
