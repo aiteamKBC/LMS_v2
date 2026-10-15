@@ -53,7 +53,7 @@ order by s.sid, left(s.std_code, 1) desc, length(s.std_code), s.std_code;
 
 -- (3) Learner rows kept unchanged but registered as not counting, by reason.
 select status, source_type, source_system, count(*) as rows_, count(distinct learner_id) as learners
-from ksb_mig.legacy_rows where status not in ('valid_standard_text', 'valid_ssot_code')
+from ksb_mig.legacy_rows where status not in ('valid_standard_text', 'valid_ssot_code', 'valid_code_lookup_text', 'valid_code_no_text')
 group by 1, 2, 3
 union all
 select case action when 'review_group_heading' then 'excluded_group_heading (plan)'

@@ -1,0 +1,126 @@
+diff --git a/backend/learner_api/active_users.py b/backend/learner_api/active_users.py
+index 2dc3eb5..c6ce612 100644
+--- a/backend/learner_api/active_users.py
++++ b/backend/learner_api/active_users.py
+@@ -1774,11 +1774,19 @@ def _fetch_ksb_items_from_profile_source(profile_source_id):
+     return _coerce_ksb_items(row[0]) if row else []
+ 
+ 
+-def _fetch_ksb_items(programme, training_plan=None):
++def _fetch_ksb_items_with_source(programme, training_plan=None):
++    """The learner's KSB items and the source they were actually read from.
++
++    The source is '' when the items came from a fallback (profile found by
++    programme name, or the plan's own mappings): those items do not belong to
++    the programme's applied source, so the version must not carry its label.
++    Labelling them with it is how ST0845 (Project Controls) versions ended up
++    holding the Marketing Executive manual items.
++    """
+     programme = _s(programme)
+     programme_id = _resolve_programme_id(programme, training_plan=training_plan)
+     if not programme and not programme_id:
+-        return []
++        return [], ""
+     profile_source_id = _resolve_ksb_profile_source_id(
+         programme_id=programme_id,
+         programme=programme,
+@@ -1787,18 +1795,22 @@ def _fetch_ksb_items(programme, training_plan=None):
+     if profile_source_id:
+         items = _fetch_ksb_items_from_profile_source(profile_source_id)
+         if items:
+-            return items
++            return items, profile_source_id
+     items = _fetch_ksb_items_for_programme(programme_id, programme)
+     if items:
+-        return items
++        return items, ""
+     items = _fetch_ksb_items_from_plan_mappings(
+         programme_id=programme_id,
+         programme=programme,
+         training_plan=training_plan,
+     )
+     if items:
+-        return items
+-    return []
++        return items, ""
++    return [], ""
++
++
++def _fetch_ksb_items(programme, training_plan=None):
++    return _fetch_ksb_items_with_source(programme, training_plan=training_plan)[0]
+ 
+ 
+ def current_curriculum_ksb_items_for_learner(learner=None, source=None, training_plan=None):
+@@ -1826,14 +1838,11 @@ def current_curriculum_ksb_items_for_learner(learner=None, source=None, training
+ def refresh_learner_ksb_snapshot(learner, source, training_plan=None):
+     plan = training_plan if training_plan is not None else get_training_plan(source)
+     programme = getattr(source, "programme", None)
+-    items = _fetch_ksb_items(programme, training_plan=plan)
++    # The label is the source the items came from -- never re-resolved on its
++    # own, which could name a source whose items were not the ones stored.
++    items, profile_source_id = _fetch_ksb_items_with_source(programme, training_plan=plan)
+     if items:
+         programme_id = _resolve_programme_id(programme, training_plan=plan)
+-        profile_source_id = _resolve_ksb_profile_source_id(
+-            programme_id=programme_id,
+-            programme=_s(programme),
+-            training_plan=plan,
+-        )
+         replace_learner_ksbs(
+             learner,
+             items,
+diff --git b/backend/learner_api/test_ksb_snapshot_label_no_db.py b/backend/learner_api/test_ksb_snapshot_label_no_db.py
+new file mode 100644
+index 0000000..f41a130
+--- /dev/null
++++ b/backend/learner_api/test_ksb_snapshot_label_no_db.py
+@@ -0,0 +1,36 @@
++"""Pin-label fix: a learner KSB version is labelled with the source its items came from."""
++from unittest import mock
++
++from django.test import SimpleTestCase
++
++from learner_api import active_users
++
++ME_ITEMS = [{"code": "K1.1", "description": "Manual point", "type": "Knowledge"}]
++STANDARD_ITEMS = [{"code": "K1", "description": "Standard text", "type": "Knowledge"}]
++
++
++class SnapshotLabelTests(SimpleTestCase):
++    def refresh(self, *, standard_items, name_items):
++        source = mock.Mock(programme="Marketing Executive Level 4")
++        with mock.patch.object(active_users, "_resolve_programme_id", return_value="PROG-ME-L4"), \
++             mock.patch.object(active_users, "_resolve_ksb_profile_source_id", return_value="standard:st0845-v1-1"), \
++             mock.patch.object(active_users, "_fetch_ksb_items_from_profile_source", return_value=standard_items), \
++             mock.patch.object(active_users, "_fetch_ksb_items_for_programme", return_value=name_items), \
++             mock.patch.object(active_users, "_fetch_ksb_items_from_plan_mappings", return_value=[]), \
++             mock.patch.object(active_users, "replace_learner_ksbs") as replace:
++            items = active_users.refresh_learner_ksb_snapshot(mock.Mock(), source, training_plan=object())
++        return items, replace
++
++    def test_fallback_items_never_carry_the_unrelated_standard_label(self):
++        items, replace = self.refresh(standard_items=[], name_items=ME_ITEMS)
++        self.assertEqual(items, ME_ITEMS)
++        self.assertEqual(replace.call_args.kwargs["source_profile_id"], "PROG-ME-L4")
++
++    def test_items_read_from_the_standard_keep_its_label(self):
++        items, replace = self.refresh(standard_items=STANDARD_ITEMS, name_items=ME_ITEMS)
++        self.assertEqual(items, STANDARD_ITEMS)
++        self.assertEqual(replace.call_args.kwargs["source_profile_id"], "standard:st0845-v1-1")
++
++    def test_fetch_ksb_items_still_returns_only_items(self):
++        with mock.patch.object(active_users, "_fetch_ksb_items_with_source", return_value=(ME_ITEMS, "")):
++            self.assertEqual(active_users._fetch_ksb_items("x"), ME_ITEMS)
+diff --git a/backend/learner_api/tests.py b/backend/learner_api/tests.py
+index 245f9b6..303c655 100644
+--- a/backend/learner_api/tests.py
++++ b/backend/learner_api/tests.py
+@@ -1328,7 +1328,7 @@ class LearnerKsbSnapshotTests(SimpleTestCase):
+         self.assertEqual(detail["progressKsbCodes"], ["B3", "K1", "S2"])
+ 
+     @patch("learner_api.active_users.replace_learner_ksbs")
+-    @patch("learner_api.active_users._fetch_ksb_items", return_value=[])
++    @patch("learner_api.active_users._fetch_ksb_items_with_source", return_value=([], ""))
+     def test_refresh_learner_ksb_snapshot_preserves_existing_rows_when_lookup_is_empty(self, fetch_ksbs, replace_ksbs):
+         learner = SimpleNamespace(id=42)
+         source = SimpleNamespace(programme="Programme A", training_plan=[])
