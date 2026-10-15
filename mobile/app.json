@@ -10,7 +10,13 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.kentbusinesscollege.learn",
+      "buildNumber": "1",
       "infoPlist": {
+        "CFBundleDisplayName": "KBC Learn",
+        "NSAppTransportSecurity": {
+          "NSAllowsArbitraryLoads": false,
+          "NSAllowsLocalNetworking": true
+        },
         "NSMicrophoneUsageDescription": "Use your voice to draft your own answers and practise quizzes.",
         "NSSpeechRecognitionUsageDescription": "Turn your spoken answers into text for you to review.",
         "UIBackgroundModes": [
@@ -33,7 +39,7 @@
         "expo-audio",
         {
           "enableBackgroundPlayback": true,
-          "microphonePermission": false
+          "microphonePermission": "Allow KBC Learn to hear the answers you choose to dictate."
         }
       ],
       [
