@@ -27,6 +27,9 @@ export interface JourneyComponent {
   files?: import('@/lib/componentFiles').ComponentFile[];
   downloadAllowed?: boolean;
   reflectionPrompt?: string | null;
+  /** Completion derived from verified Teams attendance; adds no recorded hours. */
+  attendanceCompleted?: boolean;
+  attendanceCompletedAt?: string | null;
   reflectionRequired?: boolean;
   /** The author sent this activity for coach validation, so finishing it hands
    *  it in rather than completing it. */
@@ -319,6 +322,7 @@ export function completedComponentIds(real: {
  * completion source. Non-quiz rows are looked up in `completedIds`, which
  * callers build with `completedComponentIds`. */
 export function isComponentComplete(c: JourneyComponent, completedIds: Set<string>): boolean {
+  if (c.type?.replace(/-/g, '_') === 'live_session' && c.attendanceCompleted === true) return true;
   if (c.isQuiz) return (c.quizAttempts || []).some((a) => a.passed);
   return !!c.componentId && completedIds.has(c.componentId);
 }
@@ -682,6 +686,7 @@ export function buildLearnerJourney(real: LearnerJourneySource | null): JourneyM
             audioUrl: c.audioUrl, contentHtml: c.contentHtml, fileName: c.fileName, files: c.files,
             hasReadingContent: c.hasReadingContent,
             downloadAllowed: c.downloadAllowed, reflectionPrompt: c.reflectionPrompt,
+            attendanceCompleted: c.attendanceCompleted, attendanceCompletedAt: c.attendanceCompletedAt,
             reflectionRequired: c.reflectionRequired,
             tutorValidationRequired: c.tutorValidationRequired,
             reflectionQuestion: c.reflectionQuestion,

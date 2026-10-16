@@ -47,8 +47,8 @@ def native_state(component, detail):
             and (not component.get('tutorValidationRequired') or marking.get('status') == 'accepted')]
     dates = [value for value in [marking.get('reviewedAt'), *(row.get('submittedAt') for row in done)] if value]
     feed = any(str(row.get('componentId') or '') == ident for row in detail.get('activityFeed', []))
-    return {'status': journey_status('native', completed=bool(done), started=bool(records) or feed),
-            'completedAt': max(dates) if done and dates else None}
+    return {'status': journey_status('native', completed=bool(done) or component.get('attendanceCompleted') is True, started=bool(records) or feed),
+            'completedAt': max(dates) if done and dates else component.get('attendanceCompletedAt') if component.get('attendanceCompleted') is True else None}
 
 
 def native_entry(component, detail):
@@ -60,7 +60,7 @@ def native_entry(component, detail):
         row.get('componentId') == cid and progress_counts_as_achieved(row.get('kind'), row.get('passed'))
         for row in [*detail.get('videoProgress', []), *detail.get('componentProgress', [])])
     return {**component, 'title': component.get('component') or '', 'quizAttempts': attempts,
-            '_done': bool(done)}
+            '_done': bool(done) or component.get('attendanceCompleted') is True}
 
 
 def week_key(item):
@@ -290,6 +290,8 @@ def read_native_facts(context, assigned):
                 'tutorValidationRequired': bool(row['tutor_validation_required']), 'isQuiz': bool(row['quiz_id']),
                 'quizMeta': {'quizId': row['quiz_id'], 'questions': row['questions']} if row['quiz_id'] else None,
                 'sessionDate': settings.get('sessionDate')})
+    from learner_api.teams_attendance import annotate_attendance_completion
+    components = annotate_attendance_completion(components, context.profile)
     entries = list(context.profile.progress_entries.exclude(kind='activity_event').values(
         'kind', 'component_ref', 'quiz_ref', 'passed', 'submitted_at', 'grade', 'achieved_score', 'total_score'))
     from learner_api.models import _serialise_quiz_ref

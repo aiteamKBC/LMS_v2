@@ -33,6 +33,8 @@ def read_native_progress(source, profile):
         modules, weeks, components, assigned_modules=assigned, compact=True)
     components = _apply_programme_assignment_template(components, getattr(source, 'programme', ''))
     weeks, components = _append_week_quizzes(weeks, components, assigned_modules=assigned)
+    from .teams_attendance import annotate_attendance_completion
+    components = annotate_attendance_completion(components, profile)
     progress = list(profile.progress_entries.using('enrolment').filter(deleted_at__isnull=True)
                     .exclude(kind='activity_event')
                     .values('kind', 'passed', 'component_ref', 'quiz_ref', 'submitted_at'))
@@ -106,7 +108,7 @@ def aggregate_module_progress(activity, detail, current, progress, titles=None):
                         or (component_id and attempt.get('componentId') == component_id))
                     for attempt in detail['quizAttempts'])
             else:
-                done = bool(component_id) and str(component_id) in completed
+                done = item.get('attendanceCompleted') is True or (bool(component_id) and str(component_id) in completed)
             subject['total'] += 1
             subject['completed'] += bool(done)
     return [{**row, 'percent': min(100, floor(row['completed'] / row['total'] * 10000 + 0.5) / 100)

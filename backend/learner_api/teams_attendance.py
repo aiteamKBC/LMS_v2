@@ -27,6 +27,58 @@ def _email(value) -> str:
     return str(value or "").strip().casefold()
 
 
+def annotate_attendance_completion(components, learner_profile):
+    """Read-only completion evidence, never an extra progress/hour ledger row.
+
+    Authoring requirements and the final learner register are authoritative.
+    Match stored occurrence identity, not titles, dates or client declarations.
+    """
+    clean = [{key: value for key, value in item.items()
+              if key not in {'attendanceCompleted', 'attendanceCompletedAt'}} for item in components]
+    profile_id = getattr(learner_profile, 'pk', None)
+    candidates = [item for item in clean if
+                  str(item.get('type') or '').strip().lower().replace('-', '_') == 'live_session'
+                  and item.get('componentId') and item.get('moduleId')]
+    if not profile_id or not candidates:
+        return clean
+    with connections['enrolment'].cursor() as cursor:
+        cursor.execute(f'''
+            SELECT c.id,c.module_catalogue_id,r.last_leave_at
+            FROM curriculum.components c
+            JOIN curriculum.live_session_occurrences o
+              ON o.id=coalesce(c.settings_json->>'teamsOccurrenceId',
+                              c.settings_json #>> '{{legacySettings,teamsOccurrenceId}}')
+            JOIN curriculum.live_sessions s ON s.id=o.live_session_id
+              AND s.module_catalogue_id=c.module_catalogue_id
+            JOIN curriculum.live_session_learner_attendance r
+              ON r.occurrence_id=o.id AND r.live_session_id=s.id
+              AND r.module_catalogue_id=c.module_catalogue_id
+              AND r.learner_profile_id=%s
+            {REPLACED_ATTENDANCE_LATERAL_SQL}
+            WHERE c.id=ANY(%s) AND c.deleted_at IS NULL
+              AND NOT coalesce(c.is_programme_deleted,false)
+              AND lower(replace(c.type,'-','_'))='live_session'
+              AND c.reflection_required IS FALSE
+              AND c.tutor_validation_required IS FALSE
+              AND NOT coalesce(c.workplace_evidence_required,false)
+              AND r.attendance_status='present' AND r.attended_seconds>180
+              AND coalesce(r.attendance_report_id,'')<>''
+              AND r.attendance_report_id=CASE WHEN replaced_attendance.occurrence_id IS NOT NULL
+                  THEN replaced_attendance.attendance_report_id ELSE o.attendance_report_id END
+              AND o.scheduled_end<=CURRENT_TIMESTAMP
+              AND lower(btrim(o.status)) NOT IN ('cancelled','canceled','deleted','failed','superseded')
+              AND lower(btrim(s.status)) NOT IN ('cancelled','canceled','deleted','failed','superseded')
+        ''', [profile_id, list({item['componentId'] for item in candidates})])
+        verified = {(str(cid), str(mid)): ended for cid, mid, ended in cursor.fetchall()}
+    for item in candidates:
+        key = (str(item.get('componentId') or ''), str(item.get('moduleId') or ''))
+        if key in verified:
+            item['attendanceCompleted'] = True
+            ended = verified[key]
+            item['attendanceCompletedAt'] = ended.isoformat() if ended else None
+    return clean
+
+
 def _canonical_attendance_email(module_ref, value, aliases_by_module) -> str:
     """Resolve a reviewed module-scoped alias without guessing by display name."""
 
