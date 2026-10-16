@@ -58,10 +58,16 @@ def _state(cur, learner_id, lock=False):
 
 
 def _payload(state, *, available=True, manager_available=False):
-    # Lazy Mode is disabled globally, including previously approved/pending rows.
-    return {'available': available, 'mode': 'live', 'requestedMode': None,
-            'status': 'active', 'emailSent': False, 'managerAvailable': False,
-            'remindersEnabled': True, 'updatedAt': None}
+    state = state or {}
+    expired = (state.get('status') == 'pending' and state.get('updated_at') is not None
+               and (timezone.now() - state['updated_at']).total_seconds() > MAX_AGE)
+    return {'available': available, 'mode': state.get('mode', 'live'),
+            'requestedMode': None if expired else state.get('requested_mode'),
+            'status': 'expired' if expired else state.get('status', 'active'),
+            'emailSent': state.get('email_sent', False),
+            'managerAvailable': manager_available,
+            'remindersEnabled': state.get('mode', 'live') == 'live' and (expired or state.get('requested_mode') != 'lazy'),
+            'updatedAt': state['updated_at'].isoformat() if state.get('updated_at') else None}
 
 
 def read_mode(source, kind):
@@ -70,7 +76,7 @@ def read_mode(source, kind):
         if not _ready(cur):
             return _payload(None, available=False)
         state = _state(cur, source.id)
-    return _payload(state)
+    return _payload(state, manager_available=bool(_manager(source)))
 
 
 def _send_request(source, kind, state):
@@ -113,8 +119,6 @@ def attendance_mode(request, kind, learner_id):
     direct = isinstance(body, dict) and body.get('direct') is True
     if direct and getattr(getattr(request, 'login_account', None), 'role', None) != 'admin':
         return JsonResponse({'error': 'Only an administrator can set the attendance mode directly.'}, status=403)
-    if mode == 'lazy':
-        return JsonResponse({'error': 'Lazy Mode is disabled for all users. Live Sessions is active.'}, status=403)
     approval = mode == 'lazy' and not direct
     manager = _manager(source) if approval else ''
     if approval and not manager:
@@ -171,10 +175,39 @@ def attendance_modes(request):
 @csrf_protect
 @require_http_methods(['GET', 'POST'])
 def review_attendance_mode(request):
-    response = render(request, 'learner_api/attendance_mode_review.html', {
-        'token': None, 'error': 'Lazy Mode is disabled for all users. Live Sessions is active.',
-        'done': False,
-    }, status=403)
+    token = request.POST.get('token') if request.method == 'POST' else request.GET.get('token')
+    context = {'token': token, 'error': '', 'done': False}
+    status = 200
+    try:
+        data = signing.loads(token or '', salt=SALT, max_age=MAX_AGE)
+        model = SOURCE_MODELS.get(data['kind'])
+        source = model.all_learners.filter(pk=data['learner']).first() if model else None
+        if source is None:
+            raise ValueError('Unknown learner')
+        # GET only previews. Link scanners cannot approve a request.
+        with transaction.atomic(using='enrolment'), connections['enrolment'].cursor() as cur:
+            state = _state(cur, source.id, lock=request.method == 'POST')
+            if (not state or state['status'] != 'pending' or str(state['request_id']) != data['request']
+                    or state['manager_email'].casefold() != _manager(source).casefold()):
+                raise ValueError('Request is no longer active')
+            context['learner_name'] = source.username or 'Learner'
+            if request.method == 'POST':
+                decision = request.POST.get('decision')
+                if decision not in {'approve', 'decline'}:
+                    raise ValueError('Choose a decision')
+                approved = decision == 'approve'
+                cur.execute(f'''UPDATE {TABLE} SET mode=%s,requested_mode=NULL,status=%s,
+                    request_id=NULL,updated_at=now() WHERE learner_id=%s''',
+                            ['lazy' if approved else 'live', 'approved' if approved else 'declined', source.id])
+                context.update(done=True, approved=approved)
+    except (signing.BadSignature, ValueError, KeyError, TypeError):
+        context['error'] = 'This request has expired, was already reviewed, or is no longer available.'
+        status = 400
+    except Exception:
+        log.exception('Attendance mode approval failed')
+        context['error'] = 'Could not load the request. Please try again.'
+        status = 502
+    response = render(request, 'learner_api/attendance_mode_review.html', context, status=status)
     response['Cache-Control'] = 'private, no-store'
     response['Referrer-Policy'] = 'no-referrer'
     response['X-Frame-Options'] = 'DENY'
