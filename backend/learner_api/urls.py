@@ -267,6 +267,7 @@ urlpatterns = [
     # Signed start time shared by quizzes and learning components.
     path("time-tracking/start/", time_tracking.start_time_tracking, name="time-tracking-start"),
     path("time-tracking/observations/", reward_tracking.observations, name="reward-time-observations"),
+    path("time-tracking/clock/", reward_tracking.clock, name="reward-time-clock"),
     path("working-hours/holidays/", working_hours_holidays.working_hours_holidays, name="working-hours-holidays"),
     # quiz-taking
     path("quizzes/<int:quiz_id>/", quizzes.quiz_detail, name="quiz-detail"),

@@ -1,4 +1,5 @@
 import type { TimeTrackingSession,TrackingActivityKind } from '@/api/timeTracking';
+import { trackingOffsets, clearTrackingClock } from './trackingClock';
 import {newLmsObservations,readLmsObservations,appendLmsObservation,prepareLmsObservationEvent,confirmLmsObservationEvent} from './rewardObservations.mjs';
 const memory=new Map<string,any>();
 const key=(session:TimeTrackingSession)=>'kbc-reward-intervals:v1:'+session.sessionId;
@@ -16,9 +17,9 @@ function save(session:TimeTrackingSession,value:any){
 /** Called only by the activity clock while the page/player is actually active. */
 export function observeRewardInterval(session:TimeTrackingSession|null,start:number,end:number){
  if(!session?.rewardTracking)return;
- const origin=Date.parse(session.startedAt);
- if(!Number.isFinite(origin)||!Number.isFinite(start)||!Number.isFinite(end))return;
- let from=Math.max(0,Math.floor(start-origin)),to=Math.floor(end-origin);
+ if(!Number.isFinite(start)||!Number.isFinite(end))return;
+ const offsets=trackingOffsets(session,start,end);
+ let from=offsets.start,to=offsets.end;
  if(to<=from||to>86400000)return;
  let value=read(session);from=Math.max(from,value.lastEndOffsetMs);
  while(from<to){const next=Math.min(from+5000,to);value=appendLmsObservation(value,{startOffsetMs:from,endOffsetMs:next});from=next;}
@@ -39,5 +40,6 @@ export async function flushRewardObservations(session:TimeTrackingSession,activi
 }
 export function clearRewardObservations(session:TimeTrackingSession|null){
  if(!session)return;memory.delete(key(session));
+ clearTrackingClock(session);
  try{localStorage.removeItem(key(session));}catch{/* Already saved to LMS; do not suggest resubmitting. */}
 }
