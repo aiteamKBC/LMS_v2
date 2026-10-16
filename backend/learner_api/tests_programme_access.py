@@ -9,6 +9,7 @@ from django.test import RequestFactory, SimpleTestCase
 
 from login.api_gate import ApiSessionGateMiddleware, refusal_for
 from .programme_access import DRAFTING_PATHS, learning_access, refusal, submission_refusal
+from .models import EnrolmentUser
 
 
 class ProgrammeAccessTests(SimpleTestCase):
@@ -28,6 +29,30 @@ class ProgrammeAccessTests(SimpleTestCase):
     def test_cohort_date_wins_over_an_earlier_individual_date(self):
         self.assertEqual(learning_access(self.source), {'blocked': True, 'startDate': '2026-10-01'})
         self.assertEqual(self.cursor.execute.call_args.args[1], ['Marketing', 'October 2026'])
+
+    def test_canonical_cohort_id_survives_a_changed_display_name(self):
+        self.source.cohort_id = 'COH-1'
+        self.source.cohort = 'Old display name'
+        self.assertEqual(learning_access(self.source)['startDate'], '2026-10-01')
+        self.assertEqual(self.cursor.execute.call_args.args[1], ['COH-1'])
+        self.assertNotIn('cohort_name =', self.cursor.execute.call_args.args[0])
+
+    def test_missing_canonical_cohort_cannot_borrow_a_namesakes_date(self):
+        self.source.cohort_id = 'DELETED-COHORT'
+        self.cursor.fetchone.return_value = None
+        self.assertEqual(learning_access(self.source), {'blocked': True, 'startDate': ''})
+        self.assertEqual(self.cursor.execute.call_count, 1)
+
+    def test_enrolment_uses_only_its_linked_matching_profile_id(self):
+        source = EnrolmentUser(
+            id=499, programme='Marketing', cohort='October 2026', start_date=date(2025, 1, 1))
+        with patch('learner_api.programme_access.LearnerProfile.objects') as manager:
+            query = manager.using.return_value.filter.return_value.exclude.return_value.exclude.return_value
+            query.values_list.return_value.distinct.return_value.__getitem__.return_value = ['COH-1']
+            self.assertEqual(learning_access(source)['startDate'], '2026-10-01')
+            manager.using.return_value.filter.assert_called_once_with(
+                enrolment_id=499, programme='Marketing', cohort='October 2026')
+            self.assertEqual(self.cursor.execute.call_args.args[1], ['COH-1'])
 
     def test_all_learning_opens_on_the_cohort_start_day_in_uk_time(self):
         # UK midnight, still the previous UTC day. No per-module date gate.
