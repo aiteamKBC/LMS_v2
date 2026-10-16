@@ -12,6 +12,9 @@ it('starts the observation timeline at receipt independent of the device wall cl
   vi.spyOn(performance, 'now').mockReturnValue(7000);
   vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, text: async () => JSON.stringify(session) }));
   const started = await startTimeTracking('component', 'slides', 'commercial', '1', 'visible_page');
+  expect(vi.mocked(fetch).mock.calls[0][1]).toMatchObject({ method: 'POST', headers: {
+    'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest',
+  } });
   expect(trackingOffsets(started, 7000, 10000)).toEqual({ start: 0, end: 3000 });
 });
 
@@ -19,6 +22,9 @@ it('restores a signed session with server elapsed time and never replaces its to
   vi.spyOn(performance, 'now').mockReturnValue(100);
   vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => ({ sessionId: session.sessionId, elapsedMilliseconds: 50000 }) }));
   expect(await resumeTimeTracking(session, 'component', 'slides')).toBe(session);
+  expect(vi.mocked(fetch).mock.calls[0][1]).toMatchObject({ method: 'POST', headers: {
+    'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest',
+  } });
   expect(trackingOffsets(session, 100, 1100)).toEqual({ start: 50000, end: 51000 });
   expect(JSON.parse(vi.mocked(fetch).mock.calls[0][1]!.body as string)).toEqual({ trackingToken: session.trackingToken, activityKind: 'component', activityId: 'slides' });
 });
