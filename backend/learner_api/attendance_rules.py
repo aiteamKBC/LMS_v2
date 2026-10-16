@@ -10,7 +10,7 @@ def canonical_status(value):
         return 'present'
     if value in {'absent', 'missed'}:
         return 'absent'
-    return value if value in {'upcoming', 'in_progress'} else 'unmarked'
+    return value if value in {'upcoming', 'in_progress', 'awaiting_recording'} else 'unmarked'
 
 def attendance_outcome(row, now=None):
     """Return canonical status and counted flag; unmarked never implies absence."""

@@ -41,6 +41,9 @@ def register_row(**overrides):
 
 class AttendanceLectureTests(SimpleTestCase):
     def setUp(self):
+        delivery = patch('learner_api.recorded_attendance.saved_delivery_mode', return_value='live')
+        delivery.start()
+        self.addCleanup(delivery.stop)
         profiles = patch('learner_api.models.LearnerProfile.objects')
         manager = profiles.start()
         manager.filter.return_value.values_list.return_value = []

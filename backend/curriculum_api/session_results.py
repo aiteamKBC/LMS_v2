@@ -763,6 +763,23 @@ def learner_results(request, kind, learner_id, series_id, session_number):
         if not series:
             return JsonResponse({'error': 'Session not found.'}, status=404)
         sessions = result_rows(series, session_number=session_number, email=str(learner.email or '').strip().casefold())
+        from learner_api.recorded_attendance import saved_delivery_mode, apply_recorded_attendance
+        from learner_api.attendance_rules import attendance_outcome
+        mode = saved_delivery_mode(learner_id) if sessions else 'live'
+        for session in sessions:
+            session['attendanceMode'] = mode
+            if mode != 'lazy':
+                continue
+            person = next(iter(session.get('attendance') or []), {})
+            row = {'source': 'microsoft-teams', 'session_id': session['id'],
+                   'attendance_status': person.get('rawStatus') or person.get('status') or 'pending',
+                   'effective_attendance_status': person.get('finalOutcome'),
+                   'effective_attendance': person.get('effectiveAttendance'),
+                   'scheduled_start': instant(session.get('startsAt')),
+                   'scheduled_end': instant(session.get('endsAt')),
+                   'session_status': session.get('state')}
+            projected = apply_recorded_attendance([row], learner, mode=mode, kind=kind)[0]
+            session['learningOutcome'] = projected.get('attendance_basis') or attendance_outcome(projected)[0]
         return JsonResponse({'sessions': sessions})
     except DatabaseError:
         return unavailable()

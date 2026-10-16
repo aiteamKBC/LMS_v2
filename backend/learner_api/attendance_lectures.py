@@ -26,7 +26,7 @@ from .training_plan_dashboard import rows as dict_rows
 from .replaced_teams_attendance import REPLACED_ATTENDANCE_LATERAL_SQL
 
 log = logging.getLogger(__name__)
-ATTENDANCE_SOURCE_FIELDS = ('id', 'username', 'email', 'aptem_id', 'employer_id')
+ATTENDANCE_SOURCE_FIELDS = ('id', 'username', 'email', 'aptem_id', 'employer_id', 'learner_type')
 
 # Attendance must use both persisted representations of the current learning
 # plan.  An empty JSON array is common while the normalized learner-plan mirror
@@ -362,6 +362,8 @@ def lecture_register(source, *, module_ids=None, records=None, learner_profile_i
     result = _apply_completed_catchups(result, source.id, **({} if preloaded is None else {'completed': preloaded['completed']}))
     from .attendance_confirmation import apply_confirmations, read_confirmations
     merged = _merge_register_duplicates(apply_confirmations(result, (read_confirmations(source.id) if preloaded is None else preloaded['confirmations'])))
+    from .recorded_attendance import apply_recorded_attendance
+    merged = apply_recorded_attendance(merged, source)
     if not apply_adjustments:
         return merged
     if learner_profile_id is None:
@@ -477,6 +479,7 @@ def _apply_coach_source_adjustments(rows, learner_profile_id, *, adjustments=Non
             updated['session_title'] = adjustment.session_title
             updated['title_adjusted'] = True
         if adjustment.status:
+            updated.pop('attendance_basis', None)
             updated['attendance_status'] = adjustment.status
             updated['effective_attendance'] = 1 if adjustment.status == 'present' else 0
             updated['effective_attendance_status'] = adjustment.status
@@ -779,6 +782,7 @@ def build_lectures(register, legacy_meta, legacy_activities, components, kind, l
                                    (1 if row['attendance_status'] in {'present', 'late'} else
                                     0 if row['attendance_status'] == 'absent' else None),
             'finalOutcome': row.get('final_outcome') or row['attendance_status'],
+            'attendanceBasis': row.get('attendance_basis'),
             'excused': bool(row.get('excused')), 'catchupStatus': 'completed' if row.get('catchup_completed') else None, 'updatedAt': row['updated_at'].isoformat() if row.get('updated_at') else None,
         }
         if source == 'kbc-attendance':
