@@ -45,6 +45,7 @@ class CompletionRecoveryTests(unittest.TestCase):
         plan = make_plan(self.state, self.sources, [50], [])
         self.assertEqual(len(plan['progress']), 1)
         self.assertFalse(plan['progress'][0]['row']['accepted'])
+        self.assertIs(plan['progress'][0]['row']['passed'], True)
         self.assertIsNone(plan['progress'][0]['row']['actual_seconds'])
         self.assertIsNone(plan['progress'][0]['row']['submitted_at'])
         self.assertEqual(completed_refs(plan['after'][50]), {'material:10', 'quiz:20'})
@@ -63,6 +64,18 @@ class CompletionRecoveryTests(unittest.TestCase):
         self.assertEqual([s['row']['source_activity_id'] for s in plan['sources']], ['material:10'])
         self.assertEqual(completed_refs(plan['after'][50]), {'material:10', 'material:20'})
         self.assertEqual(plan['after'][50]['accepted_hours'], 0.5)
+
+    def test_recovery_preserves_explicit_source_quiz_result_without_inventing_scores(self):
+        for passed in (True, False, None):
+            with self.subTest(passed=passed):
+                state, sources = fixture()
+                sources[50]['facts']['quiz:20'] = {**fact(20, 'quiz'), 'completed': True, 'passed': passed}
+                row = make_plan(state, sources, [50], [])['progress'][0]['row']
+                self.assertIs(row['passed'], passed)
+                self.assertNotIn('grade', row)
+                self.assertNotIn('achieved_score', row)
+                self.assertNotIn('total_score', row)
+                self.assertIsNone(row['actual_seconds'])
 
     def test_false_membership_is_removed_only_after_all_links_are_rehomed(self):
         wrong = {**self.state['courses'][0], 'id': 60, 'source_course_ref': '60'}
