@@ -99,20 +99,28 @@ export function LearningCatalogue({ summary, search, onSearch, current, renderCa
       type: 'session', online: Boolean(item.joinUrl),
     })),
   ].sort((a, b) => a.sortDate - b.sortDate);
+  const currentSubjects = summary.subjects.filter(subject => subject.source === 'current');
+  const previous = summary.previousLearning;
+  const listedTotal = summary.subjects.reduce((sum, subject) => sum + subject.activities.length, 0);
+  const learningSubjects = currentSubjects.length ? currentSubjects : summary.subjects;
   const hasRemainingActivity = (subject: Subject) => subject.activities.some(activity => !activity.completed);
-  const continueSubject = current && hasRemainingActivity(current)
+  const continueSubject = current && learningSubjects.includes(current) && hasRemainingActivity(current)
     ? current
-    : summary.subjects.find(hasRemainingActivity);
+    : learningSubjects.find(hasRemainingActivity);
 
   return <div className={styles.catalogueLayout}>
     <div className={styles.catalogueMain}>
       <div className={styles.stats}>
-        {[{ label: 'Total subjects', value: summary.subjectCount, caption: 'Across your programme', icon: BookOpen, tone: 'purple' },
+        {[{ label: 'Current subjects', value: currentSubjects.length, caption: 'Current learning plan', icon: BookOpen, tone: 'purple' },
           { label: 'Learning activities', value: total, caption: 'Activities and resources', icon: ClipboardList, tone: 'purple' },
           { label: 'Completed activities', value: done, caption: 'Keep going!', icon: CheckCircle2, tone: 'green' }].map(({ label, value, caption, icon: Icon, tone }) =>
           <div className={styles.stat} key={label}><span className={styles.statIcon} data-tone={tone}><Icon size={22} strokeWidth={1.9} /></span><div><strong>{value}</strong><p>{label}</p><small>{caption}</small></div></div>)}
-        <div className={styles.stat}><div key={percent ?? 0} className={`${styles.progressRing} kbc-animated-conic-ring`} role="progressbar" aria-label="Overall learning progress" aria-valuemin={0} aria-valuemax={100} aria-valuenow={percent ?? undefined} aria-valuetext={percent == null ? 'Unavailable' : `${percent}%`} style={{ '--kbc-ring-target': `${percent ?? 0}%` } as CSSProperties}><span /></div><div><strong>{percent == null ? '—' : `${percent}%`}</strong><p>Overall progress</p><small>{done} of {total} activities completed</small></div></div>
+        <div className={styles.stat}><div key={percent ?? 0} className={`${styles.progressRing} kbc-animated-conic-ring`} role="progressbar" aria-label="Current learning plan progress" aria-valuemin={0} aria-valuemax={100} aria-valuenow={percent ?? undefined} aria-valuetext={percent == null ? 'Unavailable' : `${percent}%`} style={{ '--kbc-ring-target': `${percent ?? 0}%` } as CSSProperties}><span /></div><div><strong>{percent == null ? '—' : `${percent}%`}</strong><p>Current learning plan progress</p><small>{done} of {total} activities completed</small></div></div>
       </div>
+      {previous && previous.activityCount > 0 && <section aria-label="Previous learning progress" className="rounded-xl border bg-white p-4 text-sm">
+        <strong>Previous learning: {previous.percent}%</strong>
+        <p>{previous.completedActivityCount} of {previous.activityCount} previous activities completed. Recorded learning is kept separately from your current plan.</p>
+      </section>}
       <div className={styles.toolbar}>
         <div className={styles.sourceTabs} role="tablist" aria-label="Module source">
           <button type="button" role="tab" aria-selected={sourceFilter === 'all'} onClick={() => setSourceFilter('all')}>All modules</button>
@@ -124,7 +132,7 @@ export function LearningCatalogue({ summary, search, onSearch, current, renderCa
         <label className={styles.selectLabel}>Sort by<select value={sort} onChange={e => setSort(e.target.value)}><option value="start">Module start date</option><option value="name">Subject name</option><option value="progress">Highest progress</option></select></label>
         <div className={styles.viewToggle} role="group" aria-label="Subject layout"><button type="button" aria-pressed={layout === 'list'} onClick={() => setLayout('list')}><List size={16} />List</button><button type="button" aria-pressed={layout === 'grid'} onClick={() => setLayout('grid')}><LayoutGrid size={16} />Grid</button></div>
       </div>
-      <div className={styles.subjectHeading}><h2>Your subjects</h2><span>{summary.subjectCount} subjects · {total} activities{visible.length !== summary.subjectCount ? ` · ${visible.length} shown` : ''}</span></div>
+      <div className={styles.subjectHeading}><h2>Your subjects</h2><span>{summary.subjectCount} subjects · {listedTotal} activities{visible.length !== summary.subjectCount ? ` · ${visible.length} shown` : ''}</span></div>
       {visible.length ? <div className={layout === 'grid' ? styles.grid : styles.list}>{visible.map(renderCard)}</div>
         : <div className={styles.empty}><BookOpen size={30} /><p>{summary.subjectCount ? 'No subjects or activities match your filters.' : 'Your subjects will appear here when they are assigned.'}</p>{summary.subjectCount > 0 && <button onClick={() => { onSearch(''); setSourceFilter('all'); setFilter('all'); }}>Clear filters</button>}</div>}
     </div>

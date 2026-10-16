@@ -86,7 +86,6 @@ def project_journey(detail, activity, metadata, has_history, module_id=None, wee
     with the original Coach adapter through journey_rules.json.
     """
     subjects = {}
-    historical_modules = {row.get('module_id') for row in (activity or {}).get('subjects', []) if row.get('module_id')}
     if has_history:
         for row in activity.get('subjects', []):
             key = f"legacy:{row['id']}"
@@ -108,14 +107,10 @@ def project_journey(detail, activity, metadata, has_history, module_id=None, wee
                 'status': journey_status('native', completed=bool(row['completed']), started=started), 'completedAt': None,
                 '_identity': ('legacy', row['group_id'], row.get('catalogue_kind') or 'material', row['activity_id']) if row.get('source_activity_id') is not None else None})
     for row in metadata.get('current_subjects', []):
-        if has_history and row['id'] in historical_modules:
-            continue
         subjects.setdefault(f"current:{row['id']}", {'id': f"current:{row['id']}", 'moduleId': row['id'], 'title': row['title'], 'items': []})
     seen_components = set()
     for index, component in enumerate(detail.get('components', [])):
         mid = component.get('moduleId')
-        if has_history and mid in historical_modules:
-            continue
         if not mid:
             raise LookupError('Journey requires a verified module identity.')
         key = f'current:{mid}'

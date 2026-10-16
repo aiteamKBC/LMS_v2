@@ -43,6 +43,9 @@ export type ProgrammeProgressSnapshot = {
 };
 const colors = ['#6c50a5', '#315c85', '#398171', '#a97824', '#9b5981', '#5e6f91'];
 const ringColors = ['#ff5c60', '#7543d3', '#4d9cf5', '#4fb38b'];
+const progressTitle = (module: { id: string; title: string }) => module.id.startsWith('legacy:')
+  ? `${module.title} (Previous learning)` : module.id.startsWith('current:')
+    ? `${module.title} (Current plan)` : module.title;
 const percentage = (value: number | null) => value == null ? 'N/A' : `${value}%`;
 const hourNumber = new Intl.NumberFormat('en-GB', { maximumFractionDigits: 1 });
 // Compact dashboard captions: the "X / Y" part of each measure's existing
@@ -95,9 +98,9 @@ export function ProgressCharts({ modules = [], selected, data, onModuleSelect, p
   // table. Module summaries describe a different population of curriculum slots.
   const hasActivitySnapshot = programmeSnapshot?.activitiesTotal !== undefined;
   const activityDone = hasActivitySnapshot ? programmeSnapshot?.activitiesCompleted ?? null
-    : modules.reduce((sum, module) => sum + module.done, 0);
+    : modules.filter(module => !module.id.startsWith('legacy:')).reduce((sum, module) => sum + module.done, 0);
   const activityTotal = hasActivitySnapshot ? programmeSnapshot?.activitiesTotal ?? null
-    : modules.reduce((sum, module) => sum + module.activityCount, 0);
+    : modules.filter(module => !module.id.startsWith('legacy:')).reduce((sum, module) => sum + module.activityCount, 0);
   const wholeProgrammeProgress = programmeSnapshot ? {
     value: programmeSnapshot.overall,
     available: 5,
@@ -159,7 +162,7 @@ export function ProgressCharts({ modules = [], selected, data, onModuleSelect, p
           if (next) onModuleSelect?.(next);
         }} disabled={!pickerRows.length}>
           {!pickerRows.length && <option value="">No modules</option>}
-          {pickerRows.map(module => <option key={module.id} value={module.id}>{module.title}</option>)}
+          {pickerRows.map(module => <option key={module.id} value={module.id}>{progressTitle(module)}</option>)}
         </select></label>
       </header>
       {moduleStatus || (displaySelected || selected ? <ProgressMeasureRings measures={selectedMeasures} label={`${displaySelected?.title || selected?.title} progress measures`} />
@@ -171,8 +174,8 @@ export function ProgressCharts({ modules = [], selected, data, onModuleSelect, p
       <div className={styles.programmeRows}>{rows.length ? visibleRows.map(module => {
         const progress = { value: module.value, available: module.available };
         return <button type="button" key={module.id} className={styles.module} aria-pressed={(displaySelected?.id || selected?.id) === module.id}
-          onClick={() => { if (displayModules) { if (displayModules.some(row => row.id === module.id)) onDisplaySelect?.(module.id); return; } const selectedModule = modules.find(item => item.id === module.id); if (selectedModule) onModuleSelect?.(selectedModule); }} aria-label={`${module.title}: ${percentage(progress.value)} overall progress`}>
-          <span className={styles.rowHeading}><strong>{module.title}</strong><b>{percentage(progress.value)}</b></span>
+          onClick={() => { if (displayModules) { if (displayModules.some(row => row.id === module.id)) onDisplaySelect?.(module.id); return; } const selectedModule = modules.find(item => item.id === module.id); if (selectedModule) onModuleSelect?.(selectedModule); }} aria-label={`${progressTitle(module)}: ${percentage(progress.value)} overall progress`}>
+          <span className={styles.rowHeading}><strong>{progressTitle(module)}</strong><b>{percentage(progress.value)}</b></span>
           <span className={styles.moduleTrack}><span style={{ width: `${progress.value || 0}%` }} /></span>
           {module.measureCount !== undefined && <span className={styles.coverage}>{progress.available} of {module.measureCount} measures available</span>}
         </button>;

@@ -52,14 +52,11 @@ def aggregate_module_progress(activity, detail, current, progress, titles=None):
     """Roll up Student's catalogue/native cards using verified identities only."""
     activity = activity or {}
     titles = titles or {}
-    historical_modules = {row['module_id'] for row in activity.get('subjects', [])
-                          if row.get('module_id')}
     historical = {f"legacy:{row['id']}": {'id': f"legacy:{row['id']}",
                   'title': row['name'], 'total': 0, 'completed': 0}
                   for row in activity.get('subjects', [])}
     subjects = {f"current:{row['id']}": {'id': f"current:{row['id']}",
-                'title': row['title'], 'total': 0, 'completed': 0} for row in current
-                if row['id'] not in historical_modules}
+                'title': row['title'], 'total': 0, 'completed': 0} for row in current}
     subjects.update(historical)
     seen_history = set()
     for item in activity.get('activities', []):
@@ -80,8 +77,6 @@ def aggregate_module_progress(activity, detail, current, progress, titles=None):
     cards = {}
     for index, item in enumerate([*detail['components'], *detail.get('retiredQuizComponents', [])]):
         module_id = item.get('moduleId')
-        if module_id in historical_modules:
-            continue
         if not module_id:
             raise ServiceError('Module progress requires a verified module identity.',
                                'module_identity_review_required', 409)

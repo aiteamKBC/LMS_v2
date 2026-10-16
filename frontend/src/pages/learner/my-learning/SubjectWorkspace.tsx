@@ -333,7 +333,7 @@ export function SubjectCard({ subject, cover, tone = 'purple', onOpen, template,
         <div className={styles.cardMetaRow}>
           <span className={styles.sourceBadge} data-source={subject.source}>
             {subject.source === 'legacy' ? <BookOpen size={13} aria-hidden="true" /> : <GraduationCap size={13} aria-hidden="true" />}
-            {subject.source === 'legacy' ? 'Old LMS' : 'New LMS'}
+            {subject.source === 'legacy' ? 'Previous learning' : 'Current learning plan'}
           </span>
           <span className={styles.status} data-state={isComplete ? 'complete' : status === 'In progress' ? 'started' : 'new'}>
             <span aria-hidden="true" className={styles.statusDot} />{status}
@@ -349,7 +349,7 @@ export function SubjectCard({ subject, cover, tone = 'purple', onOpen, template,
           <div><dt>Sessions</dt><dd>{sessionCount == null ? 'Not set' : `${sessionCount} ${sessionCount === 1 ? 'session' : 'sessions'}`}</dd></div>
         </dl>
         <p className={styles.cardDescription}>Explore your learning materials and activities.</p>
-        <div className={styles.cardProgress}><Progress done={completed} total={total} compact label={`${subject.title} activities progress`} />
+        <div className={styles.cardProgress}><Progress done={completed} total={total} compact label={`${subject.title} ${subject.source === 'legacy' ? 'previous learning' : 'current plan'} activities progress`} />
           <HoursProgress completed={completedHours} planned={plannedHours} label={`${subject.title} hours progress`} />
           {subject.recordedHistory && <p className="mt-2 text-xs text-foreground-500">Recorded activities only · Full catalogue: {subject.catalogueCount ?? 0}</p>}
         </div>

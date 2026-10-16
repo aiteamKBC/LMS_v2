@@ -43,7 +43,7 @@ it('renders learner module rings and counts while preserving the programme row p
   }
   for (const count of ['0 / 12', '20 / 57', '4.9 / 83', '15 / 15']) expect(chart.getByText(count)).toBeInTheDocument();
   expect(screen.queryByRole('region', { name: 'Whole programme progress' })).not.toBeInTheDocument();
-  expect(screen.getByRole('button', { name: 'Synthetic module: 76.54% overall progress' })).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Synthetic module (Current plan): 76.54% overall progress' })).toBeInTheDocument();
   expect(screen.queryByText('999 / 1,000 hours')).not.toBeInTheDocument();
 });
 
@@ -55,7 +55,7 @@ it('switches all four measures by module id, including modules absent from the p
   }
   expect(screen.getByText('3.5 / 10')).toBeInTheDocument();
   expect(screen.queryByText('4.9 / 83')).not.toBeInTheDocument();
-  fireEvent.click(screen.getByRole('button', { name: 'Synthetic module: 76.54% overall progress' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Synthetic module (Current plan): 76.54% overall progress' }));
   expect(screen.getByRole('combobox')).toHaveValue('current:M1');
   expect(screen.getByText('4.9 / 83')).toBeInTheDocument();
 });
@@ -108,7 +108,7 @@ it('matches the learner picker and every ring for historical, current and empty 
     .map(option => ({ value: (option as HTMLOptionElement).value, title: option.textContent }));
   const learnerOptions = options();
   expect(learnerOptions.map(option => option.title)).toEqual([
-    'Synthetic module', 'Second module', 'Empty assigned module', 'Historical planning', 'Historical safeguarding',
+    'Synthetic module (Current plan)', 'Second module (Current plan)', 'Empty assigned module (Current plan)', 'Historical planning (Previous learning)', 'Historical safeguarding (Previous learning)',
   ]);
   const rings = () => within(screen.getByRole('region', { name: 'Module progress' })).getAllByRole('img')
     .map(img => ({ name: img.getAttribute('aria-label'), text: img.parentElement?.textContent }));

@@ -14,6 +14,7 @@ export type UnifiedLearningSummary = {
   activityCount: number;
   completedActivityCount: number;
   percent: number;
+  previousLearning?: { activityCount: number; completedActivityCount: number; percent: number };
 };
 export type LearningSummaryDetail = Pick<LearnerDetail,
   'modules' | 'components' | 'retiredQuizComponents' | 'quizAttempts' | 'videoProgress' | 'componentProgress'>;
@@ -53,11 +54,8 @@ function nativeActivitySchedule(schedule: Schedule | undefined, sessionDate?: st
 
 export function subjectsFrom(data: LearningSummaryActivity | null, real: LearningSummaryDetail | null, metadata?: CoverMetadata | null): Subject[] {
   const { activity_dates: dates = {}, current_subjects: currentSubjects = [], builder_subjects: builderSubjects = {} } = metadata || {};
-  const activitySources = data?.activity_sources ?? metadata?.activity_sources ?? {};
   const recordedHistory = data?.progress_basis === 'recorded_activities';
   const catalogueProgress = data?.progress_basis === 'catalogue_activities';
-  const canonicalCourses = recordedHistory || catalogueProgress;
-  const historicalModules = new Set(canonicalCourses ? (data?.subjects || []).flatMap(s => s.module_id ? [s.module_id] : []) : []);
   const subjects = new Map<string, Subject>();
   for (const subject of data?.subjects || []) subjects.set(`legacy:${subject.id}`, { id: `legacy:${subject.id}`, title: subject.name, source: 'legacy', moduleId: subject.module_id, activities: [], recordedHistory, catalogueProgress, catalogueCount: subject.catalogue_count, acceptedHours: subject.accepted_hours });
   for (const item of data?.activities || []) {
@@ -66,34 +64,20 @@ export function subjectsFrom(data: LearningSummaryActivity | null, real: Learnin
     if (!subject.activities.some((entry) => entry.id === item.activity_id)) subject.activities.push({ id: item.activity_id, title: item.activity, category: item.category, completed: item.completed, position: item.position || 0, schedule: item.month ? item : scheduleForDate(item.date), legacy: item });
     subjects.set(key, subject);
   }
-  const legacyByBuilder = new Map<string, string[]>();
-  for (const subject of subjects.values()) {
-    const builder = builderSubjects[subject.id];
-    if (builder) legacyByBuilder.set(builder.id, [...(legacyByBuilder.get(builder.id) || []), subject.id]);
-  }
-  for (const source of Object.values(activitySources)) {
-    const key = `legacy:${source.group_id}`;
-    if (!subjects.has(key)) continue;
-    legacyByBuilder.set(source.module_id, [...new Set([...(legacyByBuilder.get(source.module_id) || []), key])]);
-  }
-  const currentKey = (moduleId: string) => {
-    if (canonicalCourses) return `current:${moduleId}`;
-    const matches = legacyByBuilder.get(moduleId);
-    if (matches?.length === 1) return matches[0];
-    return `current:${moduleId}`;
-  };
   const completed = completedComponentIds(real);
   for (const subject of currentSubjects) {
-    if (historicalModules.has(subject.id)) continue;
-    const key = currentKey(subject.id);
+    // While current-plan detail is unavailable, keep the existing historical
+    // browser rather than publishing an empty duplicate of a linked course.
+    if (!real && [...subjects.values()].some(previous => previous.source === 'legacy'
+      && (previous.moduleId === subject.id || builderSubjects[previous.id]?.id === subject.id))) continue;
+    const key = `current:${subject.id}`;
     if (!subjects.has(key)) subjects.set(key, { id: key, title: subject.title, source: 'current', activities: [] });
   }
   // Removed quizzes the learner passed follow the live plan, so they keep their
   // module and count as completed work there.
   const planEntries = [...(real?.components || []), ...(real?.retiredQuizComponents || [])];
   for (const [index, item] of planEntries.entries()) {
-    if (item.moduleId && historicalModules.has(item.moduleId)) continue;
-    const key = item.moduleId ? currentKey(item.moduleId) : `unlinked:${item.module}`;
+    const key = item.moduleId ? `current:${item.moduleId}` : `unlinked:${item.module}`;
     const subject = subjects.get(key) || { id: key, title: item.module || 'Unnamed subject', source: 'current' as const, activities: [] };
     const component: JourneyComponent = { ...item, title: item.component,
       quizAttempts: item.isQuiz && item.quizMeta ? quizAttemptsFor(item, real?.quizAttempts) : undefined };
@@ -101,23 +85,6 @@ export function subjectsFrom(data: LearningSummaryActivity | null, real: Learnin
     const isComplete = isComponentComplete(component, completed);
     const scores = (component.quizAttempts || []).map((attempt) => attempt.grade * 100).filter(Number.isFinite);
     const bestScorePercent = scores.length ? Math.max(...scores) : null;
-    const source = activitySources[id];
-    const previous = source && source.module_id === item.moduleId && key === `legacy:${source.group_id}`
-      ? subject.activities.find((entry) => entry.legacy?.source_activity_id === source.activity_id) : undefined;
-    if (previous) {
-      // One original activity can have results in both systems. Preserve its
-      // original player/history and any later achievement without counting twice.
-      previous.completed ||= isComplete;
-      const legacy = previous.legacy!;
-      const historicalScore = legacy.best_score_percent ?? (legacy.quiz_score != null && legacy.quiz_maximum_score ? legacy.quiz_score / legacy.quiz_maximum_score * 100 : null);
-      const knownScores = [previous.bestScorePercent, historicalScore, bestScorePercent].filter((score): score is number => score != null);
-      previous.bestScorePercent = knownScores.length ? Math.max(...knownScores) : null;
-      previous.native = component;
-      previous.week = item.week || undefined;
-      const currentSchedule = nativeActivitySchedule(dates[id], component.sessionDate);
-      if (currentSchedule.date && !currentSchedule.date_needs_review) previous.schedule = currentSchedule;
-      continue;
-    }
     if (!subject.activities.some((entry) => entry.id === id)) subject.activities.push({
       id, title: component.title, category: component.type || 'activity', completed: isComplete, bestScorePercent, position: index,
       schedule: nativeActivitySchedule(dates[id], component.sessionDate), week: item.week || undefined, native: component,
@@ -132,7 +99,7 @@ export function subjectsFrom(data: LearningSummaryActivity | null, real: Learnin
     .sort((a, b) => a.title.localeCompare(b.title) || a.id.localeCompare(b.id));
 }
 
-/** One roll-up for imported history and all later current-platform progress. */
+/** Current-plan progress and imported previous learning have separate totals. */
 export function buildUnifiedLearningSummary(
   data: LearningSummaryActivity | null,
   real: LearningSummaryDetail | null,
@@ -154,13 +121,19 @@ export function buildUnifiedLearningSummary(
       return true;
     });
   }
-  const activityCount = subjects.reduce((sum, subject) => sum + subject.activities.length, 0);
-  const completedActivityCount = subjects.reduce(
+  const currentSubjects = subjects.filter(subject => subject.source === 'current');
+  const previousSubjects = subjects.filter(subject => subject.source === 'legacy');
+  const previousTotal = previousSubjects.reduce((sum, subject) => sum + subject.activities.length, 0);
+  const previousDone = previousSubjects.reduce((sum, subject) => sum + subject.activities.filter(entry => entry.completed).length, 0);
+  const activityCount = currentSubjects.reduce((sum, subject) => sum + subject.activities.length, 0);
+  const completedActivityCount = currentSubjects.reduce(
     (sum, subject) => sum + subject.activities.filter((entry) => entry.completed).length,
     0,
   );
   return {
     subjects,
+    previousLearning: { activityCount: previousTotal, completedActivityCount: previousDone,
+      percent: previousTotal ? Math.round(previousDone / previousTotal * 10000) / 100 : 0 },
     subjectCount: subjects.length,
     activityCount,
     completedActivityCount,

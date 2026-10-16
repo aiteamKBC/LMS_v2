@@ -475,7 +475,7 @@ describe('map and My Learning navigation', () => {
     await screen.findByRole('button', { name: /Open subject/ });
     fireEvent.change(screen.getByRole('combobox', { name: 'Status' }), { target: { value: 'complete' } });
     expect(screen.queryByRole('button', { name: /Open subject/ })).not.toBeInTheDocument();
-    expect(within(screen.getByText('Learning activities').parentElement!).getByText('2')).toBeVisible();
+    expect(within(screen.getByText('Learning activities').parentElement!).getByText('0')).toBeVisible();
     fireEvent.click(screen.getByRole('button', { name: 'Clear filters' }));
     expect(screen.getByRole('button', { name: 'List' })).toHaveAttribute('aria-pressed', 'true');
     fireEvent.click(screen.getByRole('button', { name: 'Grid' }));
@@ -501,9 +501,9 @@ describe('map and My Learning navigation', () => {
         otjh: { historical: 0, new: 0, actual: 0, planned: 0 } }} />
     </MemoryRouter>);
 
-    await screen.findByRole('button', { name: /Open subject/ });
-    expect(screen.getByText('1 subjects · 4 activities')).toBeVisible();
-    expect(screen.getByText('0 of 4 activities completed')).toBeVisible();
+    await screen.findByRole('button', { name: /Current learning plan.*Open subject/ });
+    expect(screen.getByText('2 subjects · 4 activities')).toBeVisible();
+    expect(screen.getByText('0 of 2 activities completed')).toBeVisible();
     expect(screen.getByRole('heading', { name: 'Upcoming' })).toBeVisible();
     expect(screen.getByRole('link', { name: /Due assignment/ })).toHaveAttribute('href', '/learner/component/commercial/132/ASSIGNMENT-1');
     expect(screen.getByRole('link', { name: /Due checkpoint/ })).toHaveAttribute('href', '/learner/component/commercial/132/CHECKPOINT-1');
