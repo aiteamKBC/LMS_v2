@@ -221,7 +221,7 @@ describe('Dashboard training plan controls', () => {
       }} /></MemoryRouter>);
     const chart = within(screen.getByRole('region', { name: 'Whole programme progress' }));
     expect(chart.getByText('0 / 4 sessions attended')).toBeVisible();
-    expect(chart.getByText('3 / 7 completed across all modules')).toBeVisible();
+    expect(chart.getByText('No activities assigned')).toBeVisible();
     expect(chart.getByText('22.5 / 80.4 hours')).toBeVisible();
     expect(chart.queryByText('Reviews')).not.toBeInTheDocument();
     expect(chart.getByRole('img')).not.toHaveAccessibleDescription(/reviews/i);
@@ -267,10 +267,10 @@ describe('Dashboard training plan controls', () => {
   it('renders programme modules as selectable cards with a visible progress track', () => {
     renderBoard(fixture(), summarySubjects, vi.fn(), undefined, undefined, true);
     const programme = within(screen.getByRole('region', { name: 'Programme module progress' }));
-    const marketing = programme.getByRole('button', { name: 'Marketing: 42.86% overall progress' });
+    const marketing = programme.getByRole('button', { name: 'Marketing (Previous learning): 42.86% overall progress' });
     const directSpans = marketing.querySelectorAll(':scope > span');
     expect(directSpans).toHaveLength(3);
-    expect(directSpans[0]).toHaveTextContent('Marketing42.86%');
+    expect(directSpans[0]).toHaveTextContent('Marketing (Previous learning)42.86%');
     expect(directSpans[1].firstElementChild).toHaveStyle({ width: '42.86%' });
     expect(directSpans[2]).toHaveTextContent('2 of 4 measures available');
     expect(marketing).toHaveAttribute('aria-pressed', 'true');

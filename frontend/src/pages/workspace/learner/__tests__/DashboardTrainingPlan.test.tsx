@@ -64,7 +64,7 @@ describe('dashboard learning layout', () => {
         activity: 'Recorded lesson', category: 'reading', completed: true, position: 1 }],
     } as unknown as StudentActivityResponse);
 
-    expect(await screen.findByRole('button', { name: 'Marketing: 100% overall progress' })).toBeVisible();
+    expect(await screen.findByRole('button', { name: 'Marketing (Previous learning): 100% overall progress' })).toBeVisible();
   });
 
   it('shows every module from the learner My Learning source in programme progress', async () => {
@@ -73,8 +73,8 @@ describe('dashboard learning layout', () => {
       { id: 'current:M2', title: 'Marketing Executive L4', source: 'current', activities: [] },
     ]);
 
-    expect(await screen.findByRole('button', { name: 'Marketing: N/A overall progress' })).toBeVisible();
-    expect(screen.getByRole('button', { name: 'Marketing Executive L4: N/A overall progress' })).toBeVisible();
+    expect(await screen.findByRole('button', { name: 'Marketing (Current plan): N/A overall progress' })).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Marketing Executive L4 (Current plan): N/A overall progress' })).toBeVisible();
   });
 
   it('keeps the learning skeleton visible instead of rendering overview fallback subjects', async () => {

@@ -2,7 +2,8 @@ import type { LearnerDetail, LearnerKind } from '@/api/learnerDetail';
 import type { TrainingPlanDashboard } from '@/api/trainingPlanDashboard';
 import { formatHoursMinutes, isComponentComplete, quizAttemptsFor, type JourneyComponent } from '@/utils/learnerJourney';
 import type { CurriculumRow } from '@/pages/learner/training-plan-timeline/model';
-import { nativeHref, type SubjectEntry } from '@/pages/learner/my-learning/SubjectWorkspace';
+import { type SubjectEntry } from '@/pages/learner/my-learning/SubjectWorkspace';
+import { nativeHref } from '@/pages/learner/my-learning/subjectLearning';
 
 type CanonicalActivity = { weeklyCompleted?: boolean; weeklyStatus?: ActivityStatus };
 const complete = (component: JourneyComponent, completedIds: Set<string>) =>

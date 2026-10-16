@@ -53,7 +53,7 @@ it('loads the compact index once, requests only the selected module, and caches 
   expect(await screen.findByRole('img', { name: 'Hours: 35%' })).toBeInTheDocument();
   expect(screen.getByRole('img', { name: 'Activities: 25%' })).toBeInTheDocument();
   expect(screen.getByRole('region', { name: 'Programme module progress' })).toBeInTheDocument();
-  fireEvent.click(screen.getByRole('button', { name: 'Synthetic module: 35.09% overall progress' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Synthetic module (Current plan): 35.09% overall progress' }));
   expect(await screen.findByRole('img', { name: 'Hours: 5.9%' })).toBeInTheDocument();
   expect(transport.mock.calls.map(([url]) => moduleFrom(url))).toEqual([null, 'current:M1', 'current:M2']);
 });
@@ -78,7 +78,7 @@ it('retries only the failed module while the programme and picker remain availab
   renderPage();
   expect(await screen.findByRole('alert')).toHaveTextContent('Module temporarily unavailable');
   expect(screen.getByRole('combobox')).not.toBeDisabled();
-  expect(screen.getByRole('button', { name: 'Second module: 25% overall progress' })).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Second module (Current plan): 25% overall progress' })).toBeInTheDocument();
   expect(screen.queryByRole('img', { name: /^Hours:/ })).not.toBeInTheDocument();
   transport.mockImplementation(async (url: string) => new Response(JSON.stringify(measures(moduleFrom(url)!))));
   fireEvent.click(screen.getByRole('button', { name: 'Retry module' }));

@@ -20,6 +20,20 @@ const nativeDetail = (overrides: Partial<LearnerDetail> = {}) => ({
 } as LearnerDetail);
 
 describe('case-file activity state', () => {
+  it('shows verified live attendance as complete without inventing progress or hours', () => {
+    const detail = nativeDetail();
+    const attended: JourneyModule[] = [{ module: 'Current', weeks: [{ week: 'Week 1', otjh: 0, components: [
+      { componentId: 'live', title: 'Lecture', expectedOtjh: null, type: 'live_session',
+        attendanceCompleted: true, attendanceCompletedAt: '2026-10-14T12:00:00Z' },
+      { componentId: 'absent', title: 'Lecture', expectedOtjh: null, type: 'live_session' },
+    ] }] }];
+    const states = buildCaseFileActivityStates(attended, detail, null);
+    expect(states.live).toMatchObject({ status: 'completed', completedAt: '2026-10-14T12:00:00Z' });
+    expect(states.absent.status).toBe('not-started');
+    expect(moduleActivitySummary(attended[0], states)).toMatchObject({ completed: 1, total: 2, percent: 50 });
+    expect(detail.componentProgress).toEqual([]);
+  });
+
   it('classifies completed, started incomplete, and absent native activity by component id', () => {
     const states = buildCaseFileActivityStates(modules, nativeDetail({
       componentProgress: [{ kind: 'component', componentType: 'reading', componentId: 'component-a',
