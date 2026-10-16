@@ -13,7 +13,7 @@ from django.views.decorators.http import require_GET, require_POST
 
 from audit_api.last_audit_ledger_views import _connection, _is_completed
 from audit_api.learner_exclusions import is_excluded_learner
-from login.permissions import learner_self_or_staff, learner_self_or_admin, staff_only
+from login.permissions import coach_owns_learner, learner_self_or_staff, learner_self_or_admin, staff_only
 from login.sessions import authenticate_request
 
 from .learner_detail import SOURCE_MODELS
@@ -469,6 +469,7 @@ def _material_response(request, pk, aptem_id, stored, *, kind=None, group_id=Non
                'can_attempt': bool(account and saved['ready'] and (
                    account.role == 'admin'
                    or (account.role == 'learner' and int(account.subject_id) == pk)
+                   or coach_owns_learner(account, pk)
                )),
                'csrf_token': get_token(request)}
     return _private(payload)

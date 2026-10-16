@@ -2,6 +2,7 @@ import { useRef, useState } from 'react';
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useAuth } from '@/hooks/useAuth';
+import { useLearnerWorkspaceAccess } from '@/hooks/useLearnerWorkspaceAccess';
 import { useResolvedLearner } from '@/hooks/useMyLearner';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { PageContainer } from '@/components/ui/PageContainer';
@@ -114,7 +115,9 @@ export function MonthlyLog({ id, month, summary, base, perspective, workflow, em
   const navigate = useNavigate();
   const client = useQueryClient();
   const student = auth.account?.role === 'learner';
-  const canActAsStudent = !observer && (student || (perspective === 'learner' && auth.account?.role === 'admin'));
+  // The learner's own coach acts here like an administrator does.
+  const { canProgress: ownCoachOrAdmin } = useLearnerWorkspaceAccess(perspective === 'learner' ? id : null);
+  const canActAsStudent = !observer && (student || (perspective === 'learner' && (auth.account?.role === 'admin' || ownCoachOrAdmin)));
   const futureMonth = month > currentMonthKey() && !mcmWorkflow;
   const key = ['monthly-logs', auth.account?.id, perspective, perspective === 'coach' ? coachViewAs()?.email : null, id, month, ...(reader ? [reader.cacheScope] : [])];
   const loadMonth = (selected: string, signal?: AbortSignal) => reader ? reader.month(selected, signal)

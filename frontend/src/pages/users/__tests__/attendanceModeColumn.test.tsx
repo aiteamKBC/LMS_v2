@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { cleanup, render, screen, within } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { AppIcon } from '@/components/feature/AppIcon';
@@ -57,6 +57,34 @@ it('shows each learner’s saved attendance mode, with no mode for staff', async
   expect(await within(await cellFor('Recorded learner')).findByText('Recorded')).toBeInTheDocument();
   expect(within(await cellFor('Live learner')).getByText('Live Sessions')).toBeInTheDocument();
   expect(await cellFor('Staff member')).toHaveTextContent('—');
+});
+
+const applyAttendanceFilter = (value: 'live' | 'lazy') => {
+  const select = screen.getByText('Attendance mode', { selector: 'label' }).nextElementSibling as HTMLSelectElement;
+  fireEvent.change(select, { target: { value } });
+  fireEvent.click(screen.getByRole('button', { name: 'Apply filters' }));
+};
+
+it.each([
+  ['lazy', 'Recorded learner', 'Live learner'],
+  ['live', 'Live learner', 'Recorded learner'],
+] as const)('filters the directory to %s learners only', async (mode, shown, hidden) => {
+  vi.mocked(fetchAttendanceModes).mockResolvedValue({ available: true, modes: { 11: { mode: 'lazy', requestedMode: null } } });
+  view();
+  await within(await cellFor('Recorded learner')).findByText('Recorded');
+  applyAttendanceFilter(mode);
+  expect(await screen.findByText(shown)).toBeInTheDocument();
+  expect(screen.queryByText(hidden)).not.toBeInTheDocument();
+  expect(screen.queryByText('Staff member')).not.toBeInTheDocument();
+});
+
+it('says why nothing is listed when the filter is set but the modes cannot load', async () => {
+  vi.mocked(fetchAttendanceModes).mockRejectedValue(new Error('Forbidden'));
+  view();
+  await screen.findByText('Live learner');
+  applyAttendanceFilter('live');
+  expect(await screen.findByText(/Attendance modes could not be loaded/)).toBeInTheDocument();
+  expect(screen.queryByText('Live learner')).not.toBeInTheDocument();
 });
 
 it('shows a dash rather than guessing a mode when the modes cannot load', async () => {
