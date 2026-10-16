@@ -54,6 +54,15 @@ begin
       raise exception 'roll back 04_pin_remediation_plan.sql PART B first: % learners it repinned still use this run''s standard version', v_n;
     end if;
   end if;
+  -- 07_orphan_recovery.sql translates rows this run registered; this rollback
+  -- would delete their registry entries and leave the translated rows behind.
+  -- Nested: PL/pgSQL parses the whole condition, so the table must exist
+  -- before the query that reads it is even prepared (07 may never have run).
+  if to_regclass('ksb_migration_archive.orphan_fix_before') is not null then
+    if exists (select 1 from ksb_migration_archive.orphan_fix_before where rolled_back_at is null) then
+      raise exception 'roll back 07_orphan_recovery.sql first (07b_orphan_recovery_rollback.sql)';
+    end if;
+  end if;
 
   -- ------------------------------------------------------------- conflicts
   create table if not exists ksb_migration_archive.rollback_conflicts (

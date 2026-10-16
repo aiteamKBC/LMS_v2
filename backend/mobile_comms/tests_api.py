@@ -58,11 +58,12 @@ class MessagingTests(TestCase):
         m=Message.objects.create(thread=other,account_id=13,sender_name="C",body="x",client_id=uuid.uuid4())
         with patch.object(identity,"active_learner",side_effect=self.resolve):
             self.assertEqual(self.call(views.read_thread,data={"messageId":m.pk},thread_id=t.pk).status_code,400)
-    def test_cohort_access_requires_exact_stable_id(self):
+    def test_cohort_access_requires_current_roster_membership(self):
         t=Thread.objects.create(key="cohort",kind="cohort",cohort_id="cohort-1")
-        self.assertEqual(self.call(views.messages,thread_id=t.pk).status_code,200)
-        self.assertEqual(self.call(views.messages,user=self.other,thread_id=t.pk).status_code,403)
-        self.assertEqual(self.call(views.messages,user=self.coach,thread_id=t.pk).status_code,403)
+        with patch.object(identity,"cohort_members",return_value=[self.a,self.b]):
+            self.assertEqual(self.call(views.messages,thread_id=t.pk).status_code,200)
+            self.assertEqual(self.call(views.messages,user=self.other,thread_id=t.pk).status_code,403)
+            self.assertEqual(self.call(views.messages,user=self.coach,thread_id=t.pk).status_code,403)
     def test_assignment_change_revokes_previous_coach(self):
         t=Thread.objects.create(key="coach",kind="coach",learner_a=101,coach_id=201)
         reassigned=Principal(22,202,"coach","New coach",email="other@example.test")

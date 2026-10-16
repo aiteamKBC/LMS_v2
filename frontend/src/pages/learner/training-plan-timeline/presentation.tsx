@@ -11,5 +11,5 @@ export function Meter({ value, label }: { value: number | null; label: string })
 export function State({ value }: { value: string }) {
   return <span className={`${styles.state} ${['Completed', 'Attended'].includes(value) ? styles.positive : ['Not attended', 'Overdue'].includes(value) ? styles.warning : ''}`}>{value}</span>;
 }
-export function moduleStatus(module: TimelineModule) { return module.activityCount && module.done === module.activityCount ? 'Completed' : module.done ? 'In progress' : 'Not started'; }
+export function moduleStatus(module: Pick<TimelineModule, 'activityCount' | 'done'>) { return module.activityCount && module.done === module.activityCount ? 'Completed' : module.done ? 'In progress' : 'Not started'; }
 

@@ -89,7 +89,7 @@ def catalogue_plan(definitions, export, removals, *, preserve_unmatched=False, p
     return expected, sorted(archive), replacements
 
 
-def read_state(cur, course_id, aptem_id, *, catalogue_only=False):
+def read_state(cur, course_id, aptem_id, *, catalogue_only=False, verified_export=None):
     courses = cur.execute('''SELECT * FROM curriculum.source_courses
         WHERE source_system='old_lms' AND source_course_ref=%s AND deleted_at IS NULL''',
         [str(course_id)]).fetchall()
@@ -111,7 +111,7 @@ def read_state(cur, course_id, aptem_id, *, catalogue_only=False):
             or owner['email'].strip().casefold() != str(owner['account_email']).strip().casefold()
             or str(owner['account_aptem_id']) != str(owner['aptem_id'])):
         raise ValueError('Selected enrolment identity is not verified.')
-    export = cur.execute('SELECT * FROM "MBA".course_curriculum WHERE course_id=%s', [course_id]).fetchone()
+    export = verified_export or cur.execute('SELECT * FROM "MBA".course_curriculum WHERE course_id=%s', [course_id]).fetchone()
     if not export:
         raise ValueError('No retained curriculum export.')
     state = dict(course=course, memberships=memberships, owners=owners, owner=owner, export=export)
@@ -160,6 +160,10 @@ def read_state(cur, course_id, aptem_id, *, catalogue_only=False):
         raise ValueError('Selected learner needs one verified source identity.')
     identity = identities[0]
     state['identity'] = identity
+    if verified_export and (not catalogue_only
+            or str(verified_export['source_user_id']) != str(identity['source_learner_id'])
+            or verified_export['course_id'] != course_id):
+        raise ValueError('Live curriculum must match the selected source account/course.')
     state['snapshot'] = cur.execute('''SELECT p.*,s.email AS source_email
         FROM "MBA".student_progress p JOIN "MBA".students s ON s.user_id=p.user_id
         WHERE p.user_id=%s AND p.course_id=%s''', [int(identity['source_learner_id']), course_id]).fetchone()
@@ -170,7 +174,7 @@ def read_state(cur, course_id, aptem_id, *, catalogue_only=False):
     return state
 
 
-def projections(state):
+def projections(state, *, include_placements=True):
     # Run the existing pure catalogue reader through its established no-startup
     # adapter. Hydrate its source/journal/segment inputs without a Django server.
     sys.path.insert(0, str(ROOT))
@@ -211,7 +215,7 @@ def projections(state):
     for owner in state['owners']:
         items, subjects, _ = scope['recorded_course_items']([course], catalogue, by_owner[owner['id']], include_catalogue=True)
         placements = {}
-        for record in by_owner[owner['id']]:
+        for record in (by_owner[owner['id']] if include_placements else []):
             ref = str(course['source_course_ref'])
             if not (any(str(s.get('source_course_ref')) == ref for s in record['sources'])
                     or any(str(j.get('group_id')) == ref for j in record['journal_routes'])

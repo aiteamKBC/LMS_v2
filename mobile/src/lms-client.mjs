@@ -10,6 +10,10 @@ const componentId = value => {
   return encodeURIComponent(value);
 };
 const validIdentity = value => (typeof value === 'number' && Number.isSafeInteger(value) && value > 0) || (typeof value === 'string' && /^[1-9][0-9]*$/.test(value));
+const coachProfileId = value => {
+  if(!validIdentity(value)||String(value).length>19)throw new LmsServiceError('Choose an assigned learner with a valid LMS profile.',400,'INVALID_PROFILE');
+  return String(value);
+};
 function checkedMobileSession(result, expectedAccountId) {
   if (result?.authenticated !== true || !result.user || !validIdentity(result.user.id) || !validIdentity(result.user.accountId)) {
     throw new LmsServiceError('The LMS did not confirm a valid learner session.', 502, 'INVALID_SESSION_RESPONSE');
@@ -29,7 +33,7 @@ export function createLmsClient({fetchImpl = globalThis.fetch, timeoutMs = 30000
   if (typeof fetchImpl !== 'function') throw new TypeError('A native HTTPS fetch implementation is required.');
   let generation = 0;
   async function request(path, method = 'GET', body, {mobile = true, sessionSensitive = true} = {}) {
-    if (typeof path !== 'string' || !/^\/[A-Za-z0-9_\-/%.:]+(?:\?(?:moduleId=[A-Za-z0-9_%.:-]+|before=[0-9]+))?$/.test(path) || path.includes('..') || path.includes('//')) throw new LmsServiceError('The LMS request address is not valid.', 400);
+    if (typeof path !== 'string' || !/^\/[A-Za-z0-9_\-/%.:]+(?:\?(?:moduleId=[A-Za-z0-9_%.:-]+|before=[0-9]+|scope=(?:lectures|meetings)))?$/.test(path) || path.includes('..') || path.includes('//')) throw new LmsServiceError('The LMS request address is not valid.', 400);
     const url = new URL(path, LMS_ORIGIN);
     if (url.origin !== LMS_ORIGIN || (!url.pathname.startsWith(LMS_MOBILE_BASE) && !url.pathname.startsWith('/learner_api/communications/') && !['/login_api/login/','/login_api/logout/','/login_api/me/'].includes(url.pathname))) throw new LmsServiceError('This destination is not an LMS service.', 400);
     const requestGeneration = generation, controller = new AbortController(), timeout = setTimeout(() => controller.abort(), timeoutMs);
@@ -87,12 +91,23 @@ export function createLmsClient({fetchImpl = globalThis.fetch, timeoutMs = 30000
     catalogue:() => mobile('catalogue/'),
     progress:moduleId => mobile('progress/'+(moduleId===undefined?'':'?moduleId='+componentId(moduleId))),
     hours:moduleId => mobile('hours/'+(moduleId===undefined?'':'?moduleId='+componentId(moduleId))),
+    coachLearners:before => mobile('coach/learners/'+(before===undefined?'':'?before='+coachProfileId(before))),
+    coachLearner:id => mobile('coach/learners/'+coachProfileId(id)+'/'),
+    coachCatalogue:id => mobile('coach/learners/'+coachProfileId(id)+'/catalogue/'),
+    coachProgress:(id,moduleId) => mobile('coach/learners/'+coachProfileId(id)+'/progress/?moduleId='+componentId(moduleId)),
+    coachQuiz:(id,activityId) => mobile('coach/learners/'+coachProfileId(id)+'/quizzes/'+componentId(activityId)+'/'),
+    coachTranscript:(id,activityId) => mobile('coach/learners/'+coachProfileId(id)+'/components/'+componentId(activityId)+'/transcript/'),
     points:() => mobile('points/'),
-    rewardsSummary:() => mobile('rewards/summary/'),
+    rewardsSummary:moduleId => mobile('rewards/summary/'+(moduleId?'?moduleId='+componentId(moduleId):'')),
     recordObservations:body => mobile('rewards/observations/','POST',ownPayload(body)),
-    requestVoucher:body => mobile('rewards/voucher-requests/','POST',ownPayload(body)),
-    setLeaderboard:body => mobile('rewards/leaderboard/','POST',ownPayload(body)),
+    requestVoucher:(body,moduleId) => mobile('rewards/voucher-requests/'+(moduleId?'?moduleId='+componentId(moduleId):''),'POST',ownPayload(body)),
+    setLeaderboard:(body,moduleId) => mobile('rewards/leaderboard/'+(moduleId?'?moduleId='+componentId(moduleId):''),'POST',ownPayload(body)),
     meetings:() => mobile('meetings/'),
+    absenceReports:scope => {
+      if(!['lectures','meetings'].includes(scope))throw new LmsServiceError('Choose a session or meeting.',400);
+      return mobile('absence-reports/?scope='+scope);
+    },
+    reportAbsence:body => mobile('absence-reports/','POST',ownPayload(body)),
     quiz:id => mobile('quizzes/'+componentId(id)+'/'),
     transcript:id => mobile('components/'+componentId(id)+'/transcript/'),
     startLearning(id,mode) {

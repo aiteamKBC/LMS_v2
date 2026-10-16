@@ -2,8 +2,16 @@
 from django.urls import path
 from . import mobile
 from . import mobile_rewards
+from . import mobile_coach
 
 urlpatterns = [
+    path("coach/learners/", mobile_coach.learners),
+    path("coach/learners/<int:profile_id>/", mobile_coach.learner),
+    path("coach/learners/<int:profile_id>/catalogue/", mobile_coach.catalogue),
+    path("coach/learners/<int:profile_id>/progress/", mobile_coach.progress),
+    path("coach/learners/<int:profile_id>/quizzes/<str:component_id>/", mobile_coach.quiz),
+    path("coach/learners/<int:profile_id>/components/<str:component_id>/transcript/", mobile_coach.transcript),
+    path("coach/learners/<int:profile_id>/components/<str:component_id>/media/", mobile_coach.media),
     path("download/android/", mobile.download_android),
     path("rewards/summary/", mobile_rewards.summary),
     path("rewards/observations/", mobile_rewards.observations),

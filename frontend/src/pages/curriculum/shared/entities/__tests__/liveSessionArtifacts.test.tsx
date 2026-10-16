@@ -65,19 +65,19 @@ describe('component editor saved session results', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
-  it('queues synchronization without rereading stale files and refreshes saved results on request', async () => {
+  it('queues synchronization and refreshes saved status without hiding the existing recording', async () => {
     vi.mocked(coachFetch).mockImplementation(() => ok({ state: 'queued', message: 'Synchronization queued. Check saved results shortly.' }));
     render(<LiveSessionArtifactsPanel session={session} sessionNumber={6} />);
     await screen.findByLabelText('Session recording 1');
     fireEvent.click(screen.getByRole('button', { name: 'Sync attendance & files' }));
     expect(await screen.findByText('Synchronization queued. Check saved results shortly.')).toBeInTheDocument();
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
     expect(coachFetch).toHaveBeenCalledExactlyOnceWith('/curriculum_api/curriculum/session-results/S1/sync/', { method: 'POST' });
     expect(screen.getByLabelText('Session recording 1')).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: 'Refresh saved results' }));
     await screen.findByLabelText('Session recording 1');
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
     expect(fetchMock).toHaveBeenLastCalledWith(resultUrl, expect.objectContaining({ credentials: 'include' }));
     expect(coachFetch).toHaveBeenCalledTimes(1);
     expect(fetchArtifacts).not.toHaveBeenCalled();
@@ -86,7 +86,9 @@ describe('component editor saved session results', () => {
   it('shows pending processing and attendance rather than claiming Teams has no files', async () => {
     fetchMock.mockImplementation(() => ok({ sessions: [{ ...saved, reportReady: false,
       artifacts: [{ id: 'R6', type: 'recording', state: 'pending' }],
-      attendance: [{ ...saved.attendance[0], attendance: null, status: 'pending', seconds: 0 }],
+      attendance: [{ ...saved.attendance[0], attendance: null, rawAttendance: null,
+        effectiveAttendance: null, status: 'pending', rawStatus: 'pending',
+        effectiveStatus: 'pending', finalOutcome: 'pending', seconds: 0 }],
     }] }));
     render(<LiveSessionArtifactsPanel session={session} sessionNumber={6} />);
     expect(await screen.findByText(/Recording found. Saving a copy/)).toBeInTheDocument();
@@ -228,7 +230,7 @@ describe('component editor saved session results', () => {
   it('plays the module’s saved session on this date when the component holds no series of its own', async () => {
     const moduleUrl = '/curriculum_api/curriculum/modules/M1/session-results/';
     const day = { ...saved, id: 'O1', sessionNumber: 1, startsAt: '2026-10-06T08:30:00Z' };
-    const firstUrl = '/curriculum_api/curriculum/session-results/S1/sessions/1/';
+    const firstUrl = '/curriculum_api/curriculum/session-results/S1/sessions/1/?moduleId=M1';
     fetchMock.mockImplementation((url: string) => {
       if (url === moduleUrl) return ok({ series: [{ id: 'S1', title: 'Module', sessions: [day,
         { ...day, id: 'O2', sessionNumber: 2, startsAt: '2026-10-13T08:30:00Z' }] }], jobs: [] });

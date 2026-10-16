@@ -112,8 +112,8 @@ def _google_drive_warning_download_url(page_html):
     return f"{action}?{query}"
 
 
-def _open_google_drive_file(file_id, range_header=None):
-    """Open a Google Drive file stream, following the large-file warning page."""
+def _open_google_drive_file_once(file_id, range_header=None):
+    """Open one stream, rejecting HTML even after the download confirmation."""
     cookie_jar = http.cookiejar.CookieJar()
     opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(cookie_jar))
     headers = {"User-Agent": "Mozilla/5.0"}
@@ -123,14 +123,39 @@ def _open_google_drive_file(file_id, range_header=None):
     url = f"https://drive.google.com/uc?export=download&id={file_id}"
     upstream = opener.open(urllib.request.Request(url, headers=headers), timeout=30)
     content_type = upstream.headers.get("Content-Type") or "application/octet-stream"
-    if "text/html" not in content_type.lower():
+    if not any(kind in content_type.lower() for kind in ("text/html", "application/xhtml+xml")):
         return upstream
 
-    page = upstream.read().decode("utf-8", "replace")
+    try:
+        page = upstream.read().decode("utf-8", "replace")
+    finally:
+        upstream.close()
     download_url = _google_drive_warning_download_url(page)
     if not download_url:
         return None
-    return opener.open(urllib.request.Request(download_url, headers=headers), timeout=30)
+    upstream = opener.open(urllib.request.Request(download_url, headers=headers), timeout=30)
+    content_type = (upstream.headers.get("Content-Type") or "").lower()
+    if "text/html" in content_type or "application/xhtml+xml" in content_type:
+        upstream.close()
+        return None
+    return upstream
+
+
+def _open_google_drive_file(file_id, range_header=None):
+    """Retry a transient Drive failure once; never retry denied/missing files."""
+    for attempt in range(2):
+        try:
+            upstream = _open_google_drive_file_once(file_id, range_header)
+            if upstream is not None:
+                return upstream
+        except urllib.error.HTTPError as exc:
+            if attempt or exc.code not in (429, 500, 502, 503, 504):
+                raise
+            exc.close()
+        except (urllib.error.URLError, TimeoutError) as exc:
+            if attempt:
+                raise urllib.error.URLError("Google Drive media request failed") from exc
+    return None
 
 
 def _office_viewer_source(url):
@@ -365,8 +390,10 @@ def google_drive_media(request, file_id):
 
     content_type = upstream.headers.get("Content-Type") or "application/octet-stream"
     response = StreamingHttpResponse(
-        video_chunks(request, _stream_response(upstream)) if content_type.lower().startswith('video/')
-        else _async_stream_response(upstream),
+        # Chosen by server interface, not by content type: Drive and blob storage
+        # often label a video application/octet-stream, and an async iterator
+        # under WSGI is read to the end before the first byte is sent.
+        video_chunks(request, _stream_response(upstream)),
         status=getattr(upstream, "status", 200),
         content_type=content_type,
     )
@@ -413,7 +440,7 @@ def legacy_attachment_media(request, attachment_id):
                 served_type = opened_type or content_type or (
                     file_type if file_type.startswith('video/') else 'application/octet-stream')
                 response = StreamingHttpResponse(
-                    video_chunks(request, stream) if served_type.lower().startswith('video/') else stream,
+                    video_chunks(request, stream),
                     status=206 if match else 200,
                     content_type=served_type,
                 )
@@ -440,8 +467,10 @@ def legacy_attachment_media(request, attachment_id):
         return HttpResponse("Legacy attachment returned an HTML page, not a file.", status=502)
 
     response = StreamingHttpResponse(
-        video_chunks(request, _stream_response(upstream)) if content_type.lower().startswith('video/')
-        else _async_stream_response(upstream),
+        # Chosen by server interface, not by content type: Drive and blob storage
+        # often label a video application/octet-stream, and an async iterator
+        # under WSGI is read to the end before the first byte is sent.
+        video_chunks(request, _stream_response(upstream)),
         status=getattr(upstream, "status", 200),
         content_type=content_type,
     )

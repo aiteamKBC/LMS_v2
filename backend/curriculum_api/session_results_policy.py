@@ -102,11 +102,22 @@ def attendance_seconds(intervals):
 
 
 def evidence_seconds(records):
-    intervals = [visit for record in records for visit in (record.get('intervals') or []) if isinstance(visit, dict)]
-    if intervals:
-        return attendance_seconds(intervals)
-    # Without visit boundaries overlapping devices cannot safely be summed.
-    return max([max(0, int(record.get('total_attendance_seconds') or 0)) for record in records] or [0])
+    intervals, duration_only = [], 0
+    for record in records:
+        visits = []
+        for visit in record.get('intervals') or []:
+            if not isinstance(visit, dict):
+                continue
+            start, end = instant(visit.get('joinDateTime')), instant(visit.get('leaveDateTime'))
+            if start and end and end >= start:
+                visits.append(visit)
+        if visits:
+            intervals.extend(visits)
+        else:
+            duration_only = max(duration_only, int(record.get('total_attendance_seconds') or 0))
+    # A duration-only record can prove presence even when another device has
+    # short visits. Unknown overlaps cannot safely be added to those visits.
+    return max(attendance_seconds(intervals), duration_only)
 
 
 def session_roster(expected, records, *, complete):

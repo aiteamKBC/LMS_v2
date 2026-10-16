@@ -304,7 +304,11 @@ left join ksb_mig.item_match im on im.profile_id = r.profile_id and im.manual_co
 -- and the readers skip them. Statuses:
 --   valid_standard_text      description is the standard's own text: counts
 --   valid_ssot_code          imported SSOT row, code trusted as the standard's: counts
---   excluded_group_heading   a manual group heading, by text or (no text) by code
+--   valid_code_lookup_text   non-SSOT import whose description is only the manual
+--                            text looked up for the same code: counts (15 Oct)
+--   valid_code_no_text       no description, code equals a manual heading code,
+--                            no evidence it meant the heading: counts (15 Oct)
+--   excluded_group_heading   description is a manual heading's text for another code
 --   excluded_other_standard  carries another standard's source (e.g. PCP rows)
 --   excluded_unresolved      some other description: meaning unknown
 --   pending_verification     no description, code only exists in the standard's
@@ -340,12 +344,25 @@ select r.*,
             -- code as the standard's, leave the row unchanged.
             when r.source_type = 'activity-ssot'
               then 'valid_ssot_code'
-            when r.nd <> '' and exists (select 1 from headings h where h.nd = r.nd)
-              then 'excluded_group_heading'
-            when r.nd = '' and exists (select 1 from headings h where h.profile_id = r.profile_id and h.manual_code = r.ksb_code)
-              then 'excluded_group_heading'
+            -- An explicit other standard is evidence: never counted.
             when r.source_type = 'standard'
               then 'excluded_other_standard'
+            -- The same lookup artefact on non-SSOT imports: the description is
+            -- the manual profile's own text for this very code (100% of such
+            -- rows on 15 Oct 2026), so it says nothing about what the activity
+            -- covered. Decision 15 Oct 2026: same as SSOT rows -- the row is left
+            -- unchanged and keeps counting, as it does today.
+            when r.nd <> '' and exists (select 1 from ksb_mig.item_match i
+                                         where i.profile_id = r.profile_id and i.manual_code = r.ksb_code
+                                           and regexp_replace(lower(coalesce(i.manual_desc, '')), '[^a-z0-9]+', '', 'g') = r.nd)
+              then 'valid_code_lookup_text'
+            when r.nd <> '' and exists (select 1 from headings h where h.nd = r.nd)
+              then 'excluded_group_heading'
+            -- No description and no source: nothing shows the code was the
+            -- manual heading rather than the standard's code (no component
+            -- mapping records it either). Decision 15 Oct 2026: keeps counting.
+            when r.nd = '' and exists (select 1 from headings h where h.profile_id = r.profile_id and h.manual_code = r.ksb_code)
+              then 'valid_code_no_text'
             when r.nd <> ''
               then 'excluded_unresolved'
             else 'pending_verification' end as status
@@ -373,7 +390,7 @@ with learners as (
   join "Learner".learner_progress_entries e on e.id = k.progress_id
   where e.learner_id in (select learner_id from learners)
     and not exists (select 1 from ksb_mig.legacy_rows l
-                    where l.progress_id = k.progress_id and l.position = k.position and l.status not in ('valid_standard_text', 'valid_ssot_code'))
+                    where l.progress_id = k.progress_id and l.position = k.position and l.status not in ('valid_standard_text', 'valid_ssot_code', 'valid_code_lookup_text', 'valid_code_no_text'))
 ), before_rows as (
   select a.*, case when pp.action = 'repoint' then pp.std_code
                    when pp.action in ('review_group_heading', 'review_unresolved', 'review_no_profile') then 'REVIEW:' || a.code
@@ -455,7 +472,7 @@ with target as (
          array_agg(distinct code) filter (where code in (select manual_code from ksb_mig.item_match i where i.profile_id = r.profile_id)) as before_codes,
          array_agg(distinct coalesce(case when plan_action = 'repoint' then plan_code end, code))
            filter (where coalesce(plan_action, '') not in ('review_group_heading', 'review_unresolved', 'review_no_profile')
-                     and coalesce(legacy_status, 'valid_standard_text') in ('valid_standard_text', 'valid_ssot_code')
+                     and coalesce(legacy_status, 'valid_standard_text') in ('valid_standard_text', 'valid_ssot_code', 'valid_code_lookup_text', 'valid_code_no_text')
                      and coalesce(case when plan_action = 'repoint' then plan_code end, code)
                          in (select std_code from ksb_mig.std s where s.sid = r.std_sid)) as after_codes,
          count(*) filter (where legacy_status in ('excluded_group_heading', 'excluded_other_standard', 'excluded_unresolved')) as excluded_rows,

@@ -4,6 +4,10 @@ import { formatHoursMinutes, isComponentComplete, quizAttemptsFor, type JourneyC
 import type { CurriculumRow } from '@/pages/learner/training-plan-timeline/model';
 import { nativeHref, type SubjectEntry } from '@/pages/learner/my-learning/SubjectWorkspace';
 
+type CanonicalActivity = { weeklyCompleted?: boolean; weeklyStatus?: ActivityStatus };
+const complete = (component: JourneyComponent, completedIds: Set<string>) =>
+  (component as JourneyComponent & CanonicalActivity).weeklyCompleted ?? isComponentComplete(component, completedIds);
+
 /** A week's own window: up to the next slot, or seven days for the final week. */
 export function weekWindow(weeks: CurriculumRow[], index: number): { start: string; end: string | null } {
   const next = weeks[index + 1];
@@ -29,7 +33,7 @@ export function weekKey(week: Pick<CurriculumRow, 'slotNumber'>): string {
 }
 
 /** This week's activities, from the components a native curriculum week actually authored. */
-export function weekComponents(real: LearnerDetail | null, moduleId: string | undefined, weekId: string | undefined, weekNumber?: number): JourneyComponent[] {
+export function weekComponents(real: Pick<LearnerDetail, 'components' | 'quizAttempts'> | null, moduleId: string | undefined, weekId: string | undefined, weekNumber?: number): JourneyComponent[] {
   if (!real || !moduleId || (!weekId && weekNumber == null)) return [];
   return real.components
     .filter(component => String(component.moduleId) === String(moduleId)
@@ -46,14 +50,16 @@ export function weekComponents(real: LearnerDetail | null, moduleId: string | un
 
 export function weekProgress(components: JourneyComponent[], completedIds: Set<string>): { completed: number; total: number; percent: number } {
   const total = components.length;
-  const completed = components.filter(component => isComponentComplete(component, completedIds)).length;
+  const completed = components.filter(component => complete(component, completedIds)).length;
   return { completed, total, percent: total ? Math.round((completed / total) * 10000) / 100 : 0 };
 }
 
 export type ActivityStatus = 'completed' | 'in-progress' | 'not-started';
 
 export function activityStatus(component: JourneyComponent, completedIds: Set<string>): ActivityStatus {
-  if (isComponentComplete(component, completedIds)) return 'completed';
+  const canonical = (component as JourneyComponent & CanonicalActivity).weeklyStatus;
+  if (canonical) return canonical;
+  if (complete(component, completedIds)) return 'completed';
   if (component.isQuiz && (component.quizAttempts?.length ?? 0) > 0) return 'in-progress';
   return 'not-started';
 }
@@ -141,7 +147,7 @@ export function weekKsbProgress(components: JourneyComponent[], completedIds: Se
   for (const component of components) {
     const codes = activityKsbCodes(component);
     codes.forEach(code => all.add(code));
-    if (isComponentComplete(component, completedIds)) codes.forEach(code => achieved.add(code));
+    if (complete(component, completedIds)) codes.forEach(code => achieved.add(code));
   }
   const total = all.size;
   return { achieved: achieved.size, total, codes: [...all].sort(), percent: total ? Math.round((achieved.size / total) * 10000) / 100 : 0 };

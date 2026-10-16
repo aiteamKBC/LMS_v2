@@ -26,7 +26,7 @@ def learner(**changes):
         'id': 101, 'pk': 101, 'username': 'Learner', 'email': 'learner@example.test',
         'programme': 'Programme', 'group': 'Group', 'cohort': 'Cohort',
         'programme_status': 'Delivery', 'learner_type': 'commercial',
-        'learning_plan': None, 'training_plan': None, 'save': Mock(), **changes,
+        'learning_plan': None, 'training_plan': None, 'free_courses': [], 'save': Mock(), **changes,
     })
 
 
@@ -89,12 +89,18 @@ class ModuleAssignmentTests(SimpleTestCase):
 
 
 class LiveAssignedModuleTests(SimpleTestCase):
-    def resolve(self, rows, modules=None, weeks=None, components=None, assigned=None):
+    def resolve(self, rows, modules=None, weeks=None, components=None, assigned=None, **options):
         connection = MagicMock()
         cursor = connection.cursor.return_value.__enter__.return_value
-        cursor.fetchall.side_effect = rows
+        supplied = iter(rows)
+        # These cases author KSBs on the component itself; the separate mapping
+        # table is empty. Keep that read from consuming a fixture for another query.
+        cursor.fetchall.side_effect = lambda: (
+            [] if 'FROM curriculum.ksb_mappings' in cursor.execute.call_args.args[0]
+            else next(supplied)
+        )
         with patch('learner_api.learner_detail.connections', {'enrolment': connection}):
-            result = _resolve_from_master(modules or [], weeks or [], components or [], assigned_modules=assigned)
+            result = _resolve_from_master(modules or [], weeks or [], components or [], assigned_modules=assigned, **options)
         return result, cursor
 
     def test_new_assignment_is_visible_before_it_has_weeks(self):
@@ -117,7 +123,7 @@ class LiveAssignedModuleTests(SimpleTestCase):
         for table in ('curriculum.quiz_component_links', 'curriculum.ksb_mappings'):
             query = next(call for call in cursor.execute.call_args_list if table in call.args[0])
             self.assertIn('JOIN curriculum.components', query.args[0])
-            self.assertEqual(query.args[1], [['MOD-NEW']])
+            self.assertEqual(query.args[1], [['MOD-NEW'], ['C-NEW']])
 
     def test_removing_the_video_removes_the_component_from_the_learner(self):
         """A coach clearing videoUrl in Module Builder is a content removal: the
@@ -133,6 +139,24 @@ class LiveAssignedModuleTests(SimpleTestCase):
         self.assertEqual(result[0], ['New module'])
         self.assertEqual([w['weekId'] for w in result[1]], ['W-NEW'])
         self.assertEqual(result[2], [])
+
+    def test_dated_archived_recording_opens_its_existing_event_component(self):
+        rows = [
+            [('MOD-NEW', 'New module')],
+            [('W-NEW', 'MOD-NEW', 'Event week', 1, 0)],
+            [('C-EVENT', 'W-NEW', 'MOD-NEW', 'video', 'Recorded Event', '',
+              {'videoUrl': '', 'recordingSeriesId': 'LIVE-1',
+               'recordingSessionNumber': 3, 'recordingDate': '2026-10-02'},
+              '', 0, [], False, None, False)],
+            [],
+        ]
+        result, _ = self.resolve(rows, assigned=[MODULE])
+        event = result[2][0]
+        self.assertEqual((event['weekId'], event['recordingSeriesId'], event['recordingSessionNumber'],
+                          event['recordingDate']), ('W-NEW', 'LIVE-1', 3, '2026-10-02'))
+        self.assertIsNone(event['videoUrl'])
+        identity, _ = self.resolve(rows, assigned=[MODULE], identities_only=True)
+        self.assertEqual([component['componentId'] for component in identity[2]], ['C-EVENT'])
 
     def test_video_authored_as_an_embed_is_not_mistaken_for_a_removed_one(self):
         result, _ = self.resolve([
@@ -188,6 +212,36 @@ class LiveAssignedModuleTests(SimpleTestCase):
         live = result[2][0]
         self.assertEqual((live['teamsLiveSessionId'], live['teamsSessionNumber']), ('LIVE-SAVED', 7))
         self.assertFalse(any('curriculum.live_session_occurrences' in call.args[0] for call in cursor.execute.call_args_list))
+
+    def test_additional_week_meeting_uses_its_own_results(self):
+        result, cursor = self.resolve([
+            [('MOD-NEW', 'New module')],
+            [('W-NEW', 'MOD-NEW', 'Week 1', 1, 0)],
+            [('C-LIVE', 'W-NEW', 'MOD-NEW', 'live_session', 'Extra lesson', '',
+              {'sessionDate': '2026-10-06', 'teamsLiveSessionId': 'LIVE-MAIN',
+               'teamsSessionNumber': 7, 'extraTeamsMeetingUrl': 'https://teams.example/extra',
+               'extraTeamsLiveSessionId': 'LIVE-EXTRA'}, '', 0,
+              [{'code': 'K1', 'weight': 1}], False, None, False)],
+            [],
+        ], assigned=[MODULE])
+
+        live = result[2][0]
+        self.assertEqual((live['teamsLiveSessionId'], live['teamsSessionNumber']), ('LIVE-EXTRA', 1))
+        self.assertFalse(any('curriculum.live_session_occurrences' in call.args[0] for call in cursor.execute.call_args_list))
+
+    def test_unbooked_additional_id_does_not_replace_the_main_meeting(self):
+        result, _ = self.resolve([
+            [('MOD-NEW', 'New module')],
+            [('W-NEW', 'MOD-NEW', 'Week 1', 1, 0)],
+            [('C-LIVE', 'W-NEW', 'MOD-NEW', 'live_session', 'Main lesson', '',
+              {'teamsLiveSessionId': 'LIVE-MAIN', 'teamsSessionNumber': 7,
+               'extraTeamsLiveSessionId': 'LIVE-STALE'}, '', 0,
+              [{'code': 'K1', 'weight': 1}], False, None, False)],
+            [],
+        ], assigned=[MODULE])
+
+        live = result[2][0]
+        self.assertEqual((live['teamsLiveSessionId'], live['teamsSessionNumber']), ('LIVE-MAIN', 7))
 
     def test_ambiguous_live_session_date_is_not_attached_to_either_occurrence(self):
         rows = [

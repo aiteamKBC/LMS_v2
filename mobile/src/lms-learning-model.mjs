@@ -14,8 +14,8 @@ export function normaliseLmsCourses(raw){
  });
 }
 export function lmsCourseSession(session,moduleId){
- const enabled=moduleId===PMP_ID&&(Array.isArray(session?.rewardModuleIds)?session.rewardModuleIds.includes(moduleId):session?.capabilities?.customPointsPolicy===true);
- return {...session,capabilities:{...session?.capabilities,customPointsPolicy:enabled&&session?.capabilities?.customPointsPolicy===true,timeObservations:enabled&&session?.capabilities?.timeObservations===true}};
+ const enabled=Array.isArray(session?.rewardModuleIds)?session.rewardModuleIds.includes(moduleId):moduleId===PMP_ID&&session?.capabilities?.customPointsPolicy===true;
+ return {...session,rewardModuleId:moduleId,capabilities:{...session?.capabilities,customPointsPolicy:enabled&&session?.capabilities?.customPointsPolicy===true,timeObservations:enabled&&session?.capabilities?.timeObservations===true}};
 }
 function googleDriveMediaUrl(url){
  const path=url.pathname.match(/^\/file\/d\/([A-Za-z0-9_-]{10,200})(?:\/(?:view|preview))?\/?$/);
@@ -34,6 +34,21 @@ export function learningMediaUrl(value,mode){
  const azure=/^[a-z0-9]{3,24}\.blob\.core\.windows\.net$/.test(url.hostname);
  return college||azure?url.href:null;
  }catch{return null;}
+}
+function isWeeklySong(row,mode,stage){
+ if(!['audio','video'].includes(mode))return false;
+ if(row.sourceContentType==='song'||stage==='song'||/-SONG(?:-AUDIO|-VIDEO)?$/i.test(row.componentId))return true;
+ // Older authored songs have generic component IDs and no content-type metadata.
+ // Match their explicit song labels, never a general mention of music in a lesson.
+ const title=typeof row.component==='string'?row.component.trim():'';
+ return /\bwarm[\s-]*up song\b|\bsong of the week\b|\bweek\s+\d+\s+song\b/i.test(title)
+  || /\|\s*[^|]+\bsong\s*\|\s*W\d{1,2}\s*$/i.test(title);
+}
+/** Stay within the selected course and week, preferring playable audio when both formats exist. */
+export function findLmsWeekSong(model,weekId){
+ if(!validId(model?.moduleId)||!validId(weekId)||!Array.isArray(model.activities))return null;
+ const songs=model.activities.filter(item=>item.moduleId===model.moduleId&&item.weekId===weekId&&item.kind==='song'&&['audio','video'].includes(item.mode)).sort((a,b)=>a.order-b.order);
+ return songs.find(item=>item.available&&item.mode==='audio')||songs.find(item=>item.available)||songs[0]||null;
 }
 /** Only assigned server components can become activities. The static index annotates; it cannot grant access. */
 export function normaliseLmsLearning(raw,narrationIndex={},presentationIndex={},course={moduleId:PMP_ID,title:PMP_TITLE}){
@@ -59,7 +74,7 @@ export function normaliseLmsLearning(raw,narrationIndex={},presentationIndex={},
   const stage=typeof row.stage==='string'?row.stage:presentation.stage||'unknown';
   const route=row.learningRoute;
   const requirement=route?.required===true?'required':route?.optional===true?'optional':route&&('required' in route||'optional' in route)?'unknown':presentation.requirement||'unknown';
-  const song=/-SONG$/.test(row.componentId),narration=mode==='audio'&&(!!row.bookNarrationAssetId||!!annotation||/-AUDIOBOOK$/.test(row.componentId));
+  const song=isWeeklySong(row,mode,stage),narration=mode==='audio'&&(!!row.bookNarrationAssetId||!!annotation||/-AUDIOBOOK$/.test(row.componentId));
   activities.push({id:row.componentId,moduleId,weekId:row.weekId,weekNumber,weekTitle:row.week||'Learning week',
    pointNumber,title:row.component||'Learning activity',mode,kind:song?'song':narration?'narration':mode,stage,requirement,
    recommended:!song&&!['assignment','practice'].includes(stage)&&(mode!=='quiz'||requirement!=='optional'),

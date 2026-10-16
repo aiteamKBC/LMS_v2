@@ -180,6 +180,21 @@ def merge_submissions(records, submissions):
     return result
 
 
+def attempts_relation_exists():
+    """Whether the Aptem attempts table exists; a found table is remembered.
+
+    Schema does not change under a running process. An absent answer is
+    asked again, so a table provisioned later is still picked up.
+    """
+    if getattr(attempts_relation_exists, 'present', False):
+        return True
+    present = bool(query('SELECT to_regclass(%s) AS name',
+                         ['"Learner".subject_activity_attempts'])[0]['name'])
+    if present:
+        attempts_relation_exists.present = True
+    return present
+
+
 def current_records(owner, records):
     submissions = query('''SELECT id,component_ref,progress_entry_id,status,actual_time_hours,
         submitted_at,activity_type,activity_title,module_title,ksb_codes,
@@ -189,8 +204,7 @@ def current_records(owner, records):
         ORDER BY submitted_at NULLS FIRST,id''', [str(owner['enrolment_id']), owner.get('learner_type')])
     markings = {str(s['component_ref']): s for s in submissions if s.get('component_ref')}
     projected = merge_submissions(project_current(records, markings), submissions)
-    if not owner.get('aptem_id') or not query('SELECT to_regclass(%s) AS name',
-            ['"Learner".subject_activity_attempts'])[0]['name']:
+    if not owner.get('aptem_id') or not attempts_relation_exists():
         return projected
     attempts = query('''SELECT group_id,activity_id,bool_or(completed) AS completed,
         max(score_percent) AS best_percent,max(submitted_at) AS submitted_at,

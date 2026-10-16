@@ -46,3 +46,20 @@ def quiz_submission_error(quiz, submitted):
             if any(isinstance(item, (dict, list, bool)) or str(item) not in valid_ids for item in values):
                 return "This quiz has changed or contains an invalid answer selection. Reload it before submitting a new attempt."
     return None
+
+
+def quiz_publication_error(questions):
+    """Validate a complete native quiz before making it available to learners."""
+    active = [question for question in questions if not question.get("isArchived")]
+    if not active:
+        return "Add at least one active question before publishing this quiz."
+    for index, question in enumerate(active, 1):
+        if question.get("type") not in CHOICE_TYPES | {"matching", "image_matching", "ordering", "keywords", "fill_gap"}:
+            return f"Question {index}: Choose a supported question type before publishing."
+        answers = question.get("answers", [])
+        if not answers:
+            return f"Question {index}: Add answer options before publishing this quiz."
+        error = choice_key_error(question.get("type"), answers, strict_duplicates=True)
+        if error:
+            return f"Question {index}: {error}"
+    return None

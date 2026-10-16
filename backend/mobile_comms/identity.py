@@ -1,6 +1,6 @@
 """Use the established LMS login, stable enrolment bridge, and current assignments."""
 from dataclasses import dataclass
-from django.db.models import Q
+from django.db.models.functions import Lower, Trim
 from learner_api.models import LearnerProfile, StaffUser, EnrolmentUser
 from login.models import LoginAccount
 from login.identity import accesses_for_staff
@@ -19,6 +19,7 @@ class Principal:
     cohort_id: str = ""
     coach_email: str = ""
     email: str = ""
+    cohort_name: str = ""
 
 def active_learner(source_id):
     account = LoginAccount.objects.filter(subject_type="learner", subject_id=source_id,
@@ -30,7 +31,8 @@ def active_learner(source_id):
         raise AccessError()
     profile = profiles[0]
     return Principal(account.pk, source_id, "learner", str(profile.full_name or "Learner")[:200],
-                     str(profile.cohort_id or "").strip(), str(profile.coach_email or "").strip().lower())
+                     str(profile.cohort_id or "").strip(), str(profile.coach_email or "").strip().lower(),
+                     cohort_name=str(profile.cohort or "").strip()[:200])
 
 def principal_for_account(account):
     if not account or not account.is_active:
@@ -42,7 +44,7 @@ def principal_for_account(account):
         return principal
     if account.subject_type == "staff":
         staff = StaffUser.objects.filter(pk=account.subject_id).first()
-        if staff and "coach" in accesses_for_staff(staff):
+        if staff and "coach" in accesses_for_staff(staff) and str(staff.email or "").strip():
             return Principal(account.pk, staff.pk, "coach", str(account.display_name or "Coach")[:200],
                              email=str(staff.email or "").strip().lower())
     raise AccessError()
@@ -58,7 +60,7 @@ def coach_for(learner):
         raise AccessError("Your coach assignment needs to be confirmed.", 409)
     # Reject ambiguous directory matches instead of assigning an arbitrary account.
     result = []
-    for staff in StaffUser.objects.filter(email__iexact=learner.coach_email):
+    for staff in StaffUser.objects.annotate(email_key=Lower(Trim("email"))).filter(email_key=learner.coach_email):
         if "coach" not in accesses_for_staff(staff):
             continue
         account = LoginAccount.objects.filter(subject_type="staff", subject_id=staff.pk, is_active=True).first()
@@ -68,12 +70,88 @@ def coach_for(learner):
         raise AccessError("Your coach account needs to be confirmed.", 409)
     return result[0]
 
+def eligible_learners(profiles):
+    """Resolve the same live, unique enrolment bridge for every chat directory."""
+    seen = set()
+    for profile in profiles.order_by("full_name", "id"):
+        if profile.enrolment_id in seen:
+            continue
+        seen.add(profile.enrolment_id)
+        try:
+            yield active_learner(profile.enrolment_id)
+        except AccessError:
+            continue
+
+def active_profiles():
+    return LearnerProfile.objects.filter(lifecycle_status="active").exclude(enrolment_id=None)
+
+def _coach_once(learner, resolved):
+    # This cache lives only while one roster is built. A later request or the
+    # send-transaction recheck starts fresh, including previously denied grants.
+    key = learner.coach_email.strip().lower()
+    if key not in resolved:
+        try:
+            resolved[key] = coach_for(learner)
+        except AccessError:
+            resolved[key] = None
+    return resolved[key]
+
+def assigned_learners(viewer):
+    if viewer.kind != "coach" or not viewer.email:
+        return []
+    profiles = active_profiles().annotate(coach_key=Lower(Trim("coach_email"))).filter(coach_key=viewer.email)
+    result, coaches = [], {}
+    for learner in eligible_learners(profiles):
+        coach = _coach_once(learner, coaches)
+        if coach is not None and coach.account_id == viewer.account_id:
+            result.append(learner)
+    return result
+
+def cohort_members(cohort_id):
+    """Current class learners and coaches, using exact cohort IDs throughout.
+
+    One assigned eligible learner grants a coach access to the whole class.
+    This same roster controls reads, sends, notifications and later delivery.
+    """
+    if not isinstance(cohort_id, str) or not cohort_id or len(cohort_id) > 64 or cohort_id != cohort_id.strip():
+        raise AccessError()
+    profiles = active_profiles().annotate(cohort_key=Trim("cohort_id")).filter(cohort_key=cohort_id)
+    members, coaches = {}, {}
+    for learner in eligible_learners(profiles):
+        # Resolve again after the candidate query; a concurrent move is not a grant.
+        if learner.cohort_id != cohort_id:
+            continue
+        members[learner.account_id] = learner
+        coach = _coach_once(learner, coaches)
+        if coach is not None:
+            members[coach.account_id] = coach
+    return list(members.values())
+
+def cohort_directory(viewer):
+    if viewer.kind == "coach":
+        learners = assigned_learners(viewer)
+    elif viewer.kind == "learner":
+        learner = active_learner(viewer.subject_id)
+        learners = [learner] if learner.account_id == viewer.account_id else []
+    else:
+        return []
+    groups = {}
+    for learner in learners:
+        if learner.cohort_id:
+            groups.setdefault(learner.cohort_id, {"id":learner.cohort_id,
+                "name":learner.cohort_name or "Class chat"})
+    return sorted(groups.values(), key=lambda group: (group["name"].casefold(), group["id"]))
+
+def cohort_name(members):
+    return next((person.cohort_name for person in members if person.kind == "learner" and person.cohort_name), "Class chat")
+
 def participants(thread, viewer):
     """Recheck live membership for EVERY read, send and background delivery."""
     if thread.kind == "cohort":
-        if viewer.kind != "learner" or not viewer.cohort_id or viewer.cohort_id != thread.cohort_id:
+        members = cohort_members(thread.cohort_id)
+        if viewer.account_id not in {person.account_id for person in members}:
             raise AccessError()
-        return [viewer]
+        return members
     a = active_learner(thread.learner_a)
     if thread.kind == "peer":
         b = active_learner(thread.learner_b)
@@ -90,20 +168,14 @@ def participants(thread, viewer):
     return [a, b]
 
 def peer_directory(viewer):
-    profiles = LearnerProfile.objects.filter(lifecycle_status="active").exclude(enrolment_id=None)
+    profiles = active_profiles()
     if viewer.kind == "learner":
         if not viewer.cohort_id:
             return []
-        profiles = profiles.filter(cohort_id=viewer.cohort_id).exclude(enrolment_id=viewer.subject_id)
+        profiles = profiles.annotate(cohort_key=Trim("cohort_id")).filter(cohort_key=viewer.cohort_id).exclude(enrolment_id=viewer.subject_id)
+        people = [person for person in eligible_learners(profiles) if person.cohort_id == viewer.cohort_id]
     else:
-        profiles = profiles.filter(coach_email__iexact=viewer.email)
-    entries = []
+        people = assigned_learners(viewer)
     # Neon transaction pooling cannot retain a named server cursor between
     # fetches. A cohort/caseload is bounded by the current assignment query.
-    for profile in profiles.order_by("full_name", "id"):
-        try:
-            person = active_learner(profile.enrolment_id)
-        except AccessError:
-            continue
-        entries.append({"id": str(person.subject_id), "name": person.name})
-    return entries
+    return [{"id":str(person.subject_id), "name":person.name} for person in people]

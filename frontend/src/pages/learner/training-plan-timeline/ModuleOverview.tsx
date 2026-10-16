@@ -2,13 +2,13 @@ import { Link } from 'react-router-dom';
 import { useCaseFileModuleDetail } from '@/features/coach/case-file/hooks/useCaseFileModuleDetail';
 import type { ReactNode } from 'react';
 import { ArrowRight, CalendarDays, Clock3, GraduationCap, Layers3, Target, Users, type LucideIcon } from 'lucide-react';
-import { percent, type TimelineModule } from './model';
+import { percent, type DisplayTimelineModule } from './model';
 import { CurriculumTimeline } from './CurriculumTimeline';
 import { dateLabel, hours, Meter, moduleStatus, State } from './presentation';
 import styles from './trainingPlan.module.css';
 import layout from './TrainingPlanDetails.module.css';
 
-type Props = { module?: TimelineModule; hasModules: boolean; coachName: string; href: string; canOpenActivities: boolean; showSchedule?: boolean;
+type Props = { module?: DisplayTimelineModule; hasModules: boolean; coachName: string; href: string; canOpenActivities: boolean; showSchedule?: boolean;
   /** Dates, staff, hours and progress only: for viewers outside the learner's own workspace. */
   simple?: boolean };
 const activityLabels: Record<string, string> = {

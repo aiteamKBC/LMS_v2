@@ -14,16 +14,16 @@ export function formatProgrammeStartDate(value?: string | null): string {
 }
 
 /** Resolve `current` when opening learning, after activity delivery dates have loaded. */
-export function learnerModuleHref(kind?: string, learnerId?: string, moduleId?: string, links: TrainingPlanDashboard['moduleLinks'] = {}) {
+export function learnerModuleHref(kind?: string, learnerId?: string, moduleId?: string, links: TrainingPlanDashboard['moduleLinks'] = {}, subjectId?: string) {
   const base = kind && learnerId ? `/learner/my-learning/${encodeURIComponent(kind)}/${encodeURIComponent(learnerId)}` : '/learner/my-learning';
   if (!moduleId) return `${base}?week=current`;
   const imported = Object.entries(links).filter(([subject, module]) => subject.startsWith('legacy:') && module.id === moduleId);
-  const subject = imported.length === 1 ? imported[0][0] : `current:${moduleId}`;
+  const subject = subjectId || (imported.length === 1 ? imported[0][0] : `current:${moduleId}`);
   return `${base}?subject=${encodeURIComponent(subject)}&week=current`;
 }
 
 /** The header follows the learner's current placement and teaching dates, not creation order. */
-export function learnerHeaderPlan(modules: PlanModule[], placement: Placement, today: string) {
+export function learnerHeaderPlan<T extends Pick<PlanModule, 'id' | 'title' | 'start_date' | 'end_date' | 'programme_name' | 'cohort_name' | 'group_name'>>(modules: T[], placement: Placement, today: string) {
   const fields = [['programme_name', placement.programme], ['cohort_name', placement.cohort], ['group_name', placement.group]] as const;
   const compatible = modules.filter(module => fields.every(([key, expected]) =>
     !normalise(expected) || !normalise(module[key]) || normalise(module[key]) === normalise(expected)));

@@ -9,8 +9,9 @@ import {
 import { uploadEnrolmentDocument } from '@/api/enrolmentDocuments';
 import { fetchKsbProfile } from '@/api/curriculum';
 import { fetchWizardLayout, peekWizardLayout } from '@/api/wizardLayout';
+import { fetchInclusionStatus } from '@/api/wizardInclusion';
 import { ilrDocumentBlob, ilrDocumentFilename } from './steps/ilrDocument';
-import { resolveLayout, visibleSteps } from './layout/resolve';
+import { layoutForLearner, resolveLayout, visibleSteps } from './layout/resolve';
 import { WizardTextsContext } from './layout/textsContext';
 import type { CustomAnswer, LayoutStep, WizardLayout } from './layout/types';
 import { WIZARD_STEPS, type EnrolmentBoard, type IlrForm, type Ksb, type WizardDraft } from '../types';
@@ -158,6 +159,11 @@ function mergeSaved(prev: WizardDraft, res: ExtendedIlrResponse): WizardDraft {
   if (next.personalDetails?.dob) {
     next.personalDetails = { ...next.personalDetails, age: ageFromDob(next.personalDetails.dob) };
   }
+  // The Inclusion status comes from the Safeguarding database on every open,
+  // never from a saved draft, which the learner could have written themselves.
+  next.inclusion = prev.inclusion;
+  // Likewise the programme's KSB list: read from the curriculum, never saved.
+  if (next.skillsRadar) next.skillsRadar = { ...next.skillsRadar, programmeKsbIds: prev.skillsRadar?.programmeKsbIds };
   return next;
 }
 
@@ -222,6 +228,12 @@ interface WizardContextValue {
    */
   fileIlrDocument: () => Promise<void>;
   ilrFiling: boolean;
+  /**
+   * The Inclusion step's check against the Safeguarding database. Its result
+   * is draft.inclusion; this is the check itself, so the step can show that it
+   * is running or failed and ask again (the learner answers in another tab).
+   */
+  inclusionCheck: { checking: boolean; error: string | null; refresh: () => void };
 }
 
 const WizardContext = createContext<WizardContextValue | null>(null);
@@ -297,7 +309,10 @@ export function WizardProvider({
       .finally(() => { if (!cancelled) setLayoutSettled(true); });
     return () => { cancelled = true; };
   }, [layoutOverride]);
-  const layout = useMemo(() => resolveLayout(layoutOverride ?? publishedLayout), [layoutOverride, publishedLayout]);
+  const layout = useMemo(
+    () => layoutForLearner(resolveLayout(layoutOverride ?? publishedLayout), isCommercial),
+    [layoutOverride, publishedLayout, isCommercial]
+  );
   const steps = useMemo(() => visibleSteps(layout), [layout]);
 
   /**
@@ -379,17 +394,20 @@ export function WizardProvider({
     fetchKsbProfile(programmeName)
       .then((res) => {
         const ksbs = res.results as Ksb[];
-        if (cancelled || ksbs.length === 0) return;
+        if (cancelled) return;
         setDraft((prev) => {
           const assessments = { ...prev.skillsRadar.assessments };
-          let seeded = false;
           for (const k of ksbs) {
             if (assessments[k.id]) continue;
             assessments[k.id] = { ksbId: k.id, level: null, evidenceFiles: [], actionPlan: null };
-            seeded = true;
           }
-          if (!seeded) return prev;
-          const next = { ...prev, skillsRadar: { ...prev.skillsRadar, assessments } };
+          // What the step asks, so rows for KSBs no longer on the programme —
+          // which the learner never sees — cannot hold the step back. They are
+          // kept, not deleted: they may be answers given under an earlier profile.
+          const next = {
+            ...prev,
+            skillsRadar: { ...prev.skillsRadar, assessments, programmeKsbIds: ksbs.map((k) => k.id) },
+          };
           // Seeding is not an answer: these rows are unrated placeholders that
           // are regenerated from the programme on every load, so they are not
           // worth a write of their own. Counting them as dirty would make the
@@ -413,6 +431,52 @@ export function WizardProvider({
       cancelled = true;
     };
   }, [readOnlyLearnerSteps, hydrated, programmeName]);
+
+  /**
+   * Whether the learner has answered the inclusion assessment, read from the
+   * Safeguarding database by email (enrolment_api/wizard_inclusion.py) into
+   * draft.inclusion. Read after hydration, like the competencies above, and
+   * again on request. Like the seeding it is not an answer, so it never makes
+   * the draft dirty; saveIlr leaves it out of what is written.
+   */
+  const [inclusionSettled, setInclusionSettled] = useState(false);
+  const [inclusionChecking, setInclusionChecking] = useState(false);
+  const [inclusionError, setInclusionError] = useState<string | null>(null);
+  const [inclusionToken, setInclusionToken] = useState(0);
+  useEffect(() => {
+    if (!hydrated) return;
+    let cancelled = false;
+    setInclusionChecking(true);
+    setInclusionError(null);
+    fetchInclusionStatus(kind, userId)
+      .then((status) => {
+        if (cancelled) return;
+        setDraft((prev) => {
+          const next = { ...prev, inclusion: status };
+          if (lastSavedDraft.current === prev) lastSavedDraft.current = next;
+          return next;
+        });
+      })
+      .catch((e: Error) => {
+        // The step shows the failure and offers to check again; until a check
+        // succeeds the assessment is not counted as done.
+        if (!cancelled) setInclusionError(e.message);
+      })
+      // Settled in .finally for the same reason `hydrated` is.
+      .finally(() => {
+        if (!cancelled) {
+          setInclusionChecking(false);
+          setInclusionSettled(true);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [hydrated, kind, userId, inclusionToken]);
+  const inclusionCheck = useMemo(
+    () => ({ checking: inclusionChecking, error: inclusionError, refresh: () => setInclusionToken((n) => n + 1) }),
+    [inclusionChecking, inclusionError]
+  );
 
   const value = useMemo<WizardContextValue>(
     () => ({
@@ -440,6 +504,14 @@ export function WizardProvider({
           // Save every step, not just the ILR — the other steps have no storage
           // of their own, so without this they would be lost on close.
           const { ilr, ...rest } = saving;
+          // Read from the Safeguarding database on every open; never stored.
+          delete rest.inclusion;
+          // Read from the curriculum on every open; never stored.
+          if (rest.skillsRadar) {
+            const skillsRadar = { ...rest.skillsRadar };
+            delete skillsRadar.programmeKsbIds;
+            rest.skillsRadar = skillsRadar;
+          }
           const res = await saveExtendedIlr(kind, userId, ilr, rest);
           lastSavedDraft.current = saving;
           setIlrSavedAt(res.meta.updatedAt);
@@ -450,7 +522,7 @@ export function WizardProvider({
       ilrSaving,
       ilrSavedAt,
       hydrated,
-      ready: hydrated && ksbsSettled && layoutSettled,
+      ready: hydrated && ksbsSettled && layoutSettled && inclusionSettled,
       fileIlrDocument: async () => {
         setIlrFiling(true);
         try {
@@ -472,8 +544,9 @@ export function WizardProvider({
         }
       },
       ilrFiling,
+      inclusionCheck,
     }),
-    [userId, isCommercial, board, readOnlyLearnerSteps, draft, layout, steps, completed, kind, ilrSaving, ilrSavedAt, hydrated, ksbsSettled, layoutSettled, ilrFiling]
+    [userId, isCommercial, board, readOnlyLearnerSteps, draft, layout, steps, completed, kind, ilrSaving, ilrSavedAt, hydrated, ksbsSettled, layoutSettled, ilrFiling, inclusionSettled, inclusionCheck]
   );
 
   return (

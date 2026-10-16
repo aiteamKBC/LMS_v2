@@ -174,3 +174,28 @@ it('rechecks YouTube mute and volume without requiring a playback state change',
     vi.useRealTimers();
   }
 });
+
+
+it('retries the native Drive stream without fabricating progress or completion', () => {
+  const onEnded = vi.fn(), onProgress = vi.fn(), onPlayingChange = vi.fn();
+  const parsed = parseVideoUrl('https://drive.google.com/file/d/1234567890/view');
+  const { container, rerender } = render(<VideoPlayer parsed={parsed} title="Retry lesson"
+    onEnded={onEnded} onProgress={onProgress} onPlayingChange={onPlayingChange} />);
+  const firstVideo = container.querySelector('video')!;
+  fireEvent.error(firstVideo);
+  expect(screen.getByRole('status')).toHaveTextContent('Video streaming could not load');
+  expect(container.querySelector('iframe')).not.toBeNull();
+  fireEvent.click(screen.getByRole('button', { name: 'Retry video' }));
+  const retriedVideo = container.querySelector('video')!;
+  expect(retriedVideo).not.toBe(firstVideo);
+  expect(retriedVideo).toHaveAttribute('src', parsed.src);
+  expect(container.querySelector('iframe')).toBeNull();
+  expect(screen.queryByRole('status')).toBeNull();
+  expect(onPlayingChange).toHaveBeenLastCalledWith(false);
+  expect(onProgress).not.toHaveBeenCalled();
+  expect(onEnded).not.toHaveBeenCalled();
+  fireEvent.error(retriedVideo);
+  rerender(<VideoPlayer parsed={parseVideoUrl('https://drive.google.com/file/d/0987654321/view')} title="Other lesson" />);
+  expect(screen.queryByRole('button', { name: 'Retry video' })).toBeNull();
+  expect(container.querySelector('video')).toHaveAttribute('src', '/learner_api/media/google-drive/0987654321/');
+});

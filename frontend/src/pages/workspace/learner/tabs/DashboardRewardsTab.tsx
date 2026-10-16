@@ -6,7 +6,7 @@ import styles from './DashboardRewardsTab.module.css';
 export default function DashboardRewardsTab({ kind, learnerId, canOpenRewards }: Pick<DashboardTabsProps, 'kind' | 'learnerId' | 'canOpenRewards'>) {
   return <div className={styles.preview}>
     <div className={styles.previewContent} aria-hidden="true" inert>
-      <DashboardRewards kind={kind} learnerId={learnerId} canOpenRewards={canOpenRewards} />
+      <DashboardRewards kind={kind} learnerId={learnerId} canOpenRewards={canOpenRewards} enabled={false} />
     </div>
     <div className={styles.veil} role="status">
       <div className={styles.message}>

@@ -10,13 +10,13 @@ afterEach(() => {
 async function learnerFeedbackRoutes(enabled: boolean) {
   vi.stubEnv('DEV', enabled);
   const { default: routes } = await import('../config');
-  const protectedLayout = routes.find(route => !route.path && route.children);
+  const protectedLayout = routes.find(route => 'children' in route && !('path' in route && route.path));
   const feedbackPaths = new Set([
     '/learner/feedback',
     '/learner/feedback/:formId',
     '/learner/feedback/delivery/:deliveryId',
   ]);
-  return (protectedLayout?.children || []).filter(route => feedbackPaths.has(route.path || ''));
+  return (protectedLayout?.children || []).filter(route => 'path' in route && feedbackPaths.has(route.path || ''));
 }
 
 describe('learner feedback routes', () => {

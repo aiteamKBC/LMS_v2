@@ -125,6 +125,27 @@ class BuilderActivityDatesTests(SimpleTestCase):
         self.assertNotIn('REMOVED', dates)
         self.assertEqual(dates['MODULE-LIVE']['date'], '2026-12-04')
 
+    def test_preloaded_components_give_the_same_dates_without_a_component_read(self):
+        weeks = [('W1', 'Week 1'), ('W2', 'Week 2')]
+        components = [('LIVE-1', 'W1', 'First session', 'live_session', {}),
+                      ('READING', 'W2', 'Reading', 'reading', {}),
+                      ('REMOVED', 'DELETED-WEEK', 'Removed reading', 'reading', {})]
+        expected = self.read(weeks, components)
+        cursor = MagicMock()
+        cursor.fetchall.side_effect = [
+            [('MOD-1', '2026-10-05', 2, 'Monday', '10:00', '11:00', 'COHORT-1')],
+            [(week_id, 'MOD-1', title) for week_id, title in weeks],
+        ]
+        preloaded = [(component_id, 'MOD-1', week_id, title, kind, settings)
+                     for component_id, week_id, title, kind, settings in components]
+        # A component of a module the Builder does not list (e.g. deleted) is ignored.
+        preloaded.append(('OTHER', 'MOD-DELETED', 'W1', 'Other', 'reading', {}))
+        with patch('curriculum_api.views.cohort_selected_holidays_by_cohort', return_value={'COHORT-1': []}):
+            result = read_builder_activity_dates(cursor, ['MOD-1'], components=preloaded)
+        self.assertEqual(result, expected)
+        self.assertEqual(cursor.execute.call_count, 2)
+        self.assertFalse(any('curriculum.components' in call.args[0] for call in cursor.execute.call_args_list))
+
     def test_no_assigned_modules_does_not_read_curriculum(self):
         cursor = MagicMock()
         self.assertEqual(read_builder_activity_dates(cursor, []), {})

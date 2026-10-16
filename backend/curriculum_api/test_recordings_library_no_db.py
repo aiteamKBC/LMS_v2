@@ -16,6 +16,7 @@ package.__path__ = [str(ROOT)]
 sys.modules['curriculum_api'] = package
 from curriculum_api.session_media_policy import artifact_metadata
 from curriculum_api.session_results_policy import instant
+from curriculum_api.session_component_identity import TIMEZONE_ALIASES
 
 
 def functions(path, names, namespace):
@@ -49,12 +50,16 @@ def component(week_id, **settings):
 
 LIBRARY_FUNCTIONS = {'_settings', '_text', '_iso', 'week_owners', 'recording_week', 'programme_active',
                      'recording_status', 'same_recording_key', 'session_attention', 'attention_by_module',
-                     '_delivery', 'build_library', 'recordings_library'}
+                     '_component_start', 'module_index', 'calendar_sessions', 'placement_review_ids',
+                     '_delivery', 'build_library',
+                     'recordings_library'}
 
 
 def library_namespace():
     ns = {'json': json, 'instant': instant, 'artifact_metadata': artifact_metadata,
           'datetime': datetime, 'timezone': timezone, 'timedelta': timedelta,
+          'ZoneInfo': ZoneInfo, 'ZoneInfoNotFoundError': __import__('zoneinfo').ZoneInfoNotFoundError,
+          'TIMEZONE_ALIASES': TIMEZONE_ALIASES,
           'RECORDING_PROCESSING': timedelta(hours=2), 'DEFAULT_SESSION_LENGTH': timedelta(hours=2),
           'RUN_DATE_TOLERANCE': timedelta(hours=12)}
     functions(ROOT / 'recordings_library.py', LIBRARY_FUNCTIONS, ns)
@@ -87,6 +92,18 @@ class RecordingsLibraryTests(unittest.TestCase):
         payload = self.ns['build_library']([recording(series_id='EXTRA', occurrence_id='OX')], WEEKS,
                                            [component('W3', extraTeamsLiveSessionId='EXTRA')])
         self.assertEqual(self.weeks_of(payload)[0]['title'], 'Guest')
+
+    def test_explicit_recorded_day_places_shared_session_files_in_their_actual_weeks(self):
+        rows = [recording(artifact_id='EVENT', created_datetime=datetime(2026, 10, 2, 10, 35, tzinfo=timezone.utc)),
+                recording(artifact_id='LECTURE', created_datetime=datetime(2026, 10, 9, 8, tzinfo=timezone.utc))]
+        components = [component('W2', recordingSeriesId='S1', recordingDate='2026-10-02'),
+                      component('W3', teamsOccurrenceId='O1', teamsLiveSessionId='S1',
+                                teamsSessionNumber=1, recordingDate='2026-10-09')]
+        payload = self.ns['build_library'](rows, WEEKS, components, placement_reviews={'EVENT'})
+        self.assertEqual([(week['weekId'], [item['id'] for item in week['recordings']])
+                          for week in self.weeks_of(payload)],
+                         [('W2', ['EVENT']), ('W3', ['LECTURE'])])
+        self.assertFalse(self.weeks_of(payload)[0]['recordings'][0]['placementReview'])
 
     def test_unclaimed_recording_is_listed_last_not_dropped(self):
         payload = self.ns['build_library'](
@@ -123,6 +140,29 @@ class RecordingsLibraryTests(unittest.TestCase):
         self.assertTrue(item['hiddenFromLearners'])
         self.assertEqual(item['startsAt'], '2026-09-07T09:00:00Z')
 
+    def test_recording_from_another_day_is_kept_but_requires_placement_review(self):
+        scheduled = datetime(2026, 10, 14, 8, tzinfo=timezone.utc)
+        rows = [recording(artifact_id='EARLY', scheduled_start=scheduled,
+                          created_datetime=datetime(2026, 10, 12, 9, tzinfo=timezone.utc)),
+                recording(artifact_id='LECTURE', scheduled_start=scheduled,
+                          created_datetime=datetime(2026, 10, 14, 7, 55, tzinfo=timezone.utc))]
+        runs = [occurrence(scheduled_start=scheduled, series_timezone='Europe/London')]
+        review = self.ns['placement_review_ids'](rows, runs)
+        self.assertEqual(review, {'EARLY'})
+        payload = self.ns['build_library'](rows, WEEKS, [component('W1', teamsOccurrenceId='O1')],
+                                           placement_reviews=review)
+        items = self.weeks_of(payload)[0]['recordings']
+        self.assertEqual({item['id']: item['placementReview'] for item in items},
+                         {'EARLY': True, 'LECTURE': False})
+
+    def test_a_rescheduled_run_on_its_own_calendar_day_is_not_flagged(self):
+        rows = [recording(artifact_id='RUN', occurrence_id='O2',
+                          scheduled_start=datetime(2026, 10, 14, 8, tzinfo=timezone.utc),
+                          created_datetime=datetime(2026, 10, 14, 22, tzinfo=timezone.utc))]
+        runs = [occurrence(id='O2', scheduled_start=datetime(2026, 10, 14, 8, tzinfo=timezone.utc),
+                           series_timezone='Europe/London')]
+        self.assertEqual(self.ns['placement_review_ids'](rows, runs), set())
+
     def test_endpoint_reads_only_and_is_staff_gated(self):
         tree = ast.parse((ROOT / 'recordings_library.py').read_text(encoding='utf-8'))
         view = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == 'recordings_library')
@@ -141,23 +181,126 @@ class RecordingsLibraryTests(unittest.TestCase):
         self.ns['read'] = Mock(return_value=[])
         self.ns['JsonResponse'] = lambda data: {'data': data}
         self.ns['DatabaseError'] = type('DatabaseError', (Exception,), {})
-        self.ns.update(RECORDINGS_SQL='R', WEEKS_SQL='W', LIVE_COMPONENTS_SQL='C',
-                       ATTENTION_COMPONENTS_SQL='AC', PAST_OCCURRENCES_SQL='PO')
+        self.ns.update(MODULES_SQL='M', RECORDINGS_SQL='R', WEEKS_SQL='W', LIVE_COMPONENTS_SQL='C',
+                       ATTENTION_COMPONENTS_SQL='AC', CALENDAR_COMPONENTS_SQL='CC', OCCURRENCES_SQL='O')
         response = self.ns['recordings_library'](types.SimpleNamespace())
-        self.assertEqual(response['data'], {'deliveries': [], 'recordingCount': 0, 'attentionChecked': True})
-        self.assertEqual([call.args[0] for call in self.ns['read'].call_args_list], ['R', 'AC', 'PO'])
+        self.assertEqual(response['data'], {'deliveries': [], 'recordingCount': 0,
+                                          'attentionChecked': True, 'sessions': [], 'modules': [],
+                                          'calendarAvailable': True})
+        self.assertEqual([call.args[0] for call in self.ns['read'].call_args_list], ['M', 'R', 'AC', 'CC', 'O'])
 
     def test_recordings_still_list_when_the_session_checks_cannot_be_read(self):
         error = type('DatabaseError', (Exception,), {})
         self.ns['DatabaseError'] = error
         self.ns['JsonResponse'] = lambda data: {'data': data}
-        self.ns.update(RECORDINGS_SQL='R', WEEKS_SQL='W', LIVE_COMPONENTS_SQL='C',
-                       ATTENTION_COMPONENTS_SQL='AC', PAST_OCCURRENCES_SQL='PO')
+        self.ns.update(MODULES_SQL='M', RECORDINGS_SQL='R', WEEKS_SQL='W', LIVE_COMPONENTS_SQL='C',
+                       ATTENTION_COMPONENTS_SQL='AC', CALENDAR_COMPONENTS_SQL='CC', OCCURRENCES_SQL='O')
         self.ns['read'] = Mock(side_effect=lambda sql, *args: (_ for _ in ()).throw(error()) if sql == 'AC'
                                else ([recording()] if sql == 'R' else []))
         data = self.ns['recordings_library'](types.SimpleNamespace())['data']
         self.assertEqual(data['recordingCount'], 1)
         self.assertFalse(data['attentionChecked'])
+        self.assertFalse(data['calendarAvailable'])
+
+    def test_calendar_uses_authored_lecture_title_and_owning_occurrence(self):
+        components = [
+            {'component_title': 'Intro to analysis', 'week_id': 'W1', 'week_number': 1,
+             'week_title': 'Week 1', 'module_catalogue_id': 'M-A', 'module_title': 'Data Analysis',
+             'programme_name': 'Level 4', 'cohort_name': 'Sep 26', 'group_name': 'A',
+             'programme_status': 'active', 'settings_json': json.dumps({'teamsOccurrenceId': 'O1'})},
+            {'component_title': 'Different lecture', 'week_id': 'W2', 'week_number': 2,
+             'week_title': 'Week 2', 'module_catalogue_id': 'M-A', 'module_title': 'Data Analysis',
+             'programme_name': 'Level 4', 'cohort_name': 'Sep 26', 'group_name': 'A',
+             'programme_status': 'active', 'settings_json': json.dumps({'teamsOccurrenceId': 'O3'})},
+        ]
+        sessions = self.ns['calendar_sessions'](components, [occurrence(id='O1'), occurrence(id='O3', session_number=3)])
+        self.assertEqual([(item['title'], item['weekNumber'], item['occurrenceId']) for item in sessions],
+                         [('Intro to analysis', 1, 'O1'), ('Different lecture', 2, 'O3')])
+        self.assertEqual(sessions[0]['startsAt'], '2026-10-08T08:00:00Z')
+        self.assertEqual(sessions[0]['joinUrl'], 'https://teams.microsoft.com/l/meetup-join/example')
+
+    def test_calendar_includes_an_extra_week_meeting_and_labels_cancelled_runs(self):
+        component = {'component_title': 'Guest lecture', 'week_id': 'W3', 'week_number': 3,
+                     'week_title': 'Guest', 'module_catalogue_id': 'M-A', 'module_title': 'Data Analysis',
+                     'programme_name': 'Level 4', 'cohort_name': 'Sep 26', 'group_name': 'A',
+                     'programme_status': 'active',
+                     'settings_json': json.dumps({'teamsOccurrenceId': 'O1', 'extraTeamsLiveSessionId': 'EX'})}
+        sessions = self.ns['calendar_sessions']([component], [occurrence(),
+            occurrence(id='OX', live_session_id='EX'),
+            occurrence(id='OC', live_session_id='EX', status='cancelled')])
+        self.assertEqual({item['occurrenceId'] for item in sessions}, {'O1', 'OX', 'OC'})
+        cancelled = next(item for item in sessions if item['occurrenceId'] == 'OC')
+        self.assertEqual(cancelled['status'], 'cancelled')
+        self.assertEqual(cancelled['joinUrl'], '')
+
+    def test_calendar_lists_unlinked_lms_occurrences_with_saved_module_title(self):
+        rows = [occurrence(id='O1'), occurrence(id='O2', session_number=2,
+                 scheduled_start=datetime(2026, 10, 14, 8, tzinfo=timezone.utc)),
+                occurrence(id='O3', module_catalogue_id=None, live_session_id='S2',
+                 series_module_title='Guest Teams lecture')]
+        sessions = self.ns['calendar_sessions']([], rows, NOW)
+        self.assertEqual(len(sessions), 3)
+        by_id = {item['occurrenceId']: item for item in sessions}
+        self.assertEqual([by_id[key]['title'] for key in ('O1', 'O2', 'O3')],
+                         ['Data Analysis', 'Data Analysis', 'Guest Teams lecture'])
+        self.assertEqual([item['weekNumber'] for item in sessions], [None, None, None])
+        self.assertEqual(by_id['O1']['attentionStatus'], 'notRecorded')
+        self.assertEqual(by_id['O3']['moduleId'], 'live-session:S2')
+
+    def test_calendar_matches_a_component_only_within_its_module(self):
+        owner = {'component_title': 'Own lecture', 'week_id': 'W1', 'week_number': 1,
+                 'week_title': 'Introduction', 'module_catalogue_id': 'M-A',
+                 'settings_json': json.dumps({'teamsOccurrenceId': 'O1'})}
+        other = occurrence(id='O1', module_catalogue_id='M-B', module_title='Other module',
+                           series_module_title='Other module')
+        session = self.ns['calendar_sessions']([owner], [other])[0]
+        self.assertEqual(session['title'], 'Other module')
+        self.assertIsNone(session['weekId'])
+
+    def test_all_modules_are_indexed_even_without_a_meeting(self):
+        rows = [{'module_catalogue_id': 'M-A', 'title': 'Data Analysis', 'programme_name': 'Level 4',
+                 'cohort_name': 'Sep 26', 'group_name': 'Group A', 'programme_status': 'active'},
+                {'module_catalogue_id': 'M-B', 'title': 'Unscheduled Module', 'programme_name': 'Draft',
+                 'cohort_name': '', 'group_name': '', 'programme_status': 'draft'}]
+        modules = self.ns['module_index'](rows)
+        self.assertEqual([item['moduleId'] for item in modules], ['M-A', 'M-B'])
+        self.assertFalse(modules[1]['programmeActive'])
+
+    def test_authored_session_without_a_booked_occurrence_is_planned_not_recorded(self):
+        component = {'component_id': 'C1', 'component_title': 'Lecture plan', 'week_id': 'W1',
+                     'week_number': 1, 'week_title': 'Intro', 'module_catalogue_id': 'M-A',
+                     'module_title': 'Data Analysis', 'programme_name': 'Level 4',
+                     'cohort_name': 'Sep 26', 'group_name': 'A', 'programme_status': 'active',
+                     'settings_json': {'sessionDate': '2026-10-08', 'sessionTime': '09:00',
+                                       'durationMinutes': 90, 'liveSessionUrl': 'https://teams.microsoft.com/inherited'}}
+        sessions = self.ns['calendar_sessions']([component], [])
+        self.assertEqual(len(sessions), 1)
+        self.assertEqual(sessions[0]['source'], 'authored')
+        self.assertEqual(sessions[0]['status'], 'planned')
+        self.assertEqual(sessions[0]['joinUrl'], '')
+        self.assertEqual(sessions[0]['endsAt'], '2026-10-08T09:30:00Z')
+
+    def test_authored_clock_uses_its_named_zone_and_daylight_saving_rules(self):
+        start = self.ns['_component_start']
+        cairo = {'sessionDate': '2026-10-14', 'sessionTime': '11:00', 'sessionTimeZone': 'Africa/Cairo'}
+        london = {**cairo, 'sessionTimeZone': 'Europe/London'}
+        self.assertEqual(start(cairo), datetime(2026, 10, 14, 8, tzinfo=timezone.utc))
+        self.assertEqual(start(london), datetime(2026, 10, 14, 10, tzinfo=timezone.utc))
+        # Britain has moved to summer time before Egypt has, so the offset is
+        # one hour on this date rather than a fixed two-hour adjustment.
+        self.assertEqual(start({**cairo, 'sessionDate': '2026-04-01'}),
+                         datetime(2026, 4, 1, 9, tzinfo=timezone.utc))
+        self.assertEqual(start({**london, 'sessionDate': '2026-04-01'}),
+                         datetime(2026, 4, 1, 10, tzinfo=timezone.utc))
+
+    def test_unique_authored_time_enriches_an_occurrence_instead_of_duplicating_it(self):
+        component = {'component_id': 'C1', 'component_title': 'Real lecture title', 'week_id': 'W1',
+                     'week_number': 1, 'week_title': 'Intro', 'module_catalogue_id': 'M-A',
+                     'settings_json': {'sessionDateTimeUtc': '2026-10-08T08:00:00Z'}}
+        sessions = self.ns['calendar_sessions']([component], [occurrence()])
+        self.assertEqual(len(sessions), 1)
+        self.assertEqual(sessions[0]['source'], 'occurrence')
+        self.assertEqual(sessions[0]['title'], 'Real lecture title')
 
     def test_processing_constants_match_the_module(self):
         source = (ROOT / 'recordings_library.py').read_text(encoding='utf-8')
@@ -171,6 +314,10 @@ NOW = datetime(2026, 10, 9, 12, tzinfo=timezone.utc)
 
 def occurrence(**values):
     row = {'id': 'O1', 'live_session_id': 'S1', 'session_number': 1,
+           'module_catalogue_id': 'M-A', 'module_title': 'Data Analysis',
+           'series_module_title': 'Data Analysis', 'programme_name': 'Level 4',
+           'cohort_name': 'Sep 26', 'group_name': 'A', 'programme_status': 'active',
+           'module_archived': False, 'join_url': 'https://teams.microsoft.com/l/meetup-join/example',
            'scheduled_start': datetime(2026, 10, 8, 8, tzinfo=timezone.utc),
            'scheduled_end': datetime(2026, 10, 8, 10, tzinfo=timezone.utc),
            'status': 'completed', 'actual_start': datetime(2026, 10, 8, 7, 58, tzinfo=timezone.utc),
