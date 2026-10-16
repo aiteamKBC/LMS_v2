@@ -236,6 +236,38 @@ describe('learner subject cards', () => {
 });
 
 describe('quiz recovery', () => {
+  function quizLearner(attempts: unknown[]): LearnerDetail {
+    return { components: [{ isQuiz: true, component: 'Synthetic quiz', componentId: 'Q1',
+      module: 'Synthetic module', week: null, quizMeta: { quizId: 7, questions: 10 } }],
+      quizAttempts: attempts } as LearnerDetail;
+  }
+
+  it('retains a source-confirmed pass with an unknown score', () => {
+    render(<QuizzesTab real={quizLearner([{ quizId: 7, passed: true, grade: null }])} loading={false} loadError={null} canTake={false} navigate={vi.fn()} />);
+    const row = within(screen.getByRole('row', { name: /Synthetic quiz/ }));
+    expect(row.getByText('Completed')).toBeVisible();
+    expect(row.queryByText('0%')).not.toBeInTheDocument();
+  });
+
+  it('does not label an unresolved imported result as failed', () => {
+    render(<QuizzesTab real={quizLearner([{ quizId: 7, passed: null, grade: null }])} loading={false} loadError={null} canTake={false} navigate={vi.fn()} />);
+    const row = within(screen.getByRole('row', { name: /Synthetic quiz/ }));
+    expect(row.getByText('Result unavailable')).toBeVisible();
+    expect(row.queryByText('Failed')).not.toBeInTheDocument();
+  });
+
+  it('displays a recorded zero score instead of replacing it with an absent score', () => {
+    render(<QuizzesTab real={quizLearner([{ quizId: 7, passed: null, grade: null }, { quizId: 7, passed: false, grade: 0 }])} loading={false} loadError={null} canTake={false} navigate={vi.fn()} />);
+    const row = within(screen.getByRole('row', { name: /Synthetic quiz/ }));
+    expect(row.getByText('0%')).toBeVisible();
+    expect(row.getByText('Failed')).toBeVisible();
+  });
+
+  it('preserves a previous pass when a higher-scoring later attempt failed', () => {
+    render(<QuizzesTab real={quizLearner([{ quizId: 7, passed: false, grade: .9 }, { quizId: 7, passed: true, grade: .8 }])} loading={false} loadError={null} canTake={false} navigate={vi.fn()} />);
+    expect(within(screen.getByRole('row', { name: /Synthetic quiz/ })).getByText('Completed')).toBeVisible();
+  });
+
   it('offers retry when the learner detail request fails', () => {
     const retry = vi.fn();
     render(<QuizzesTab real={null} loading={false} loadError="Could not load quizzes" kind="commercial" id="132" canTake navigate={vi.fn()} onRetry={retry} />);
