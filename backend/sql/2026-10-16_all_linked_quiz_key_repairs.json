@@ -1,0 +1,1993 @@
+{
+  "version": 1,
+  "scope": "Repair all 44 active linked quizzes blocked by answer keys regardless of draft/publication status; no regrading or historical progress changes. Reference matching tolerates only the old importer removing a leading A article.",
+  "quizIds": [
+    4844,
+    4862,
+    4866,
+    4869,
+    4871,
+    4872,
+    4875,
+    4876,
+    4888,
+    4895,
+    4908,
+    4916,
+    4923,
+    4924,
+    4928,
+    4931,
+    4978,
+    4983,
+    5127,
+    5130,
+    5132,
+    5144,
+    5146,
+    5149,
+    5151,
+    5163,
+    5165,
+    5172,
+    5173,
+    5220,
+    5224,
+    5226,
+    5355,
+    5356,
+    5358,
+    5360,
+    5434,
+    5438,
+    5440,
+    5447,
+    5448,
+    5573,
+    5594,
+    5630
+  ],
+  "repairs": [
+    {
+      "quizId": 4844,
+      "questionId": 82813,
+      "beforeSha256": "c1efe8b343b0a72eee055197b51ac6373ceadd2cf35c868266ba25de84f943cb",
+      "flags": {
+        "312778": false,
+        "312779": true,
+        "312780": false,
+        "312781": false
+      },
+      "evidence": [
+        "Published quiz 4324, question 74293: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4325, question 74349: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4326, question 74405: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4327, question 74461: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4330, question 74535: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees."
+      ],
+      "rationale": "Restore the existing published key; the old importer incorrectly consumed leading A as an option marker and marked distractors correct. Preserve every original ID, text, type, point, order and learner record."
+    },
+    {
+      "quizId": 4844,
+      "questionId": 82814,
+      "beforeSha256": "fcc071eafdbb3c9c19e74b31a32659d91078fd74d687ce388f4b0399ab9c8c35",
+      "flags": {
+        "312782": false,
+        "312783": true,
+        "312784": false,
+        "312785": false
+      },
+      "evidence": [
+        "Published quiz 4324, question 74294: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4325, question 74350: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4326, question 74406: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4327, question 74462: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4330, question 74536: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees."
+      ],
+      "rationale": "Restore the existing published key; the old importer incorrectly consumed leading A as an option marker and marked distractors correct. Preserve every original ID, text, type, point, order and learner record."
+    },
+    {
+      "quizId": 4844,
+      "questionId": 82815,
+      "beforeSha256": "f542cf7060ad5a4ff2058ca9ee0fd9f943fc5dd99d9d52a04e7e7b367719c91e",
+      "flags": {
+        "312786": true,
+        "312787": false,
+        "312788": false,
+        "312789": false
+      },
+      "evidence": [
+        "Published quiz 4324, question 74295: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4325, question 74351: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4326, question 74407: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4327, question 74463: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4330, question 74537: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees."
+      ],
+      "rationale": "Restore the existing published key; the old importer incorrectly consumed leading A as an option marker and marked distractors correct. Preserve every original ID, text, type, point, order and learner record."
+    },
+    {
+      "quizId": 4844,
+      "questionId": 82816,
+      "beforeSha256": "e741ba5250dea8e90b17040798f1aa894c394e042e15162465187bfb6304bf09",
+      "flags": {
+        "312790": false,
+        "312791": true,
+        "312792": false,
+        "312793": false
+      },
+      "evidence": [
+        "Published quiz 4324, question 74296: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4325, question 74352: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4326, question 74408: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4327, question 74464: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4330, question 74538: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees."
+      ],
+      "rationale": "Restore the existing published key; the old importer incorrectly consumed leading A as an option marker and marked distractors correct. Preserve every original ID, text, type, point, order and learner record."
+    },
+    {
+      "quizId": 4844,
+      "questionId": 82817,
+      "beforeSha256": "dae4e59567c0900ecff9fbc2027b948fd59e357bc63c1908ea7544ae77308263",
+      "flags": {
+        "312794": false,
+        "312795": true,
+        "312796": false,
+        "312797": false
+      },
+      "evidence": [
+        "Published quiz 4324, question 74297: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4325, question 74353: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4326, question 74409: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4327, question 74465: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4330, question 74539: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees."
+      ],
+      "rationale": "Restore the existing published key; the old importer incorrectly consumed leading A as an option marker and marked distractors correct. Preserve every original ID, text, type, point, order and learner record."
+    },
+    {
+      "quizId": 4844,
+      "questionId": 82818,
+      "beforeSha256": "269b6c3f43a9f79e25b2da105a70c67bd7b70894ebfd4cb36fa60c57b24683a4",
+      "flags": {
+        "312798": false,
+        "312799": true,
+        "312800": false,
+        "312801": false
+      },
+      "evidence": [
+        "Published quiz 4324, question 74298: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4325, question 74354: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4326, question 74410: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4327, question 74466: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4330, question 74540: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees."
+      ],
+      "rationale": "Restore the existing published key; the old importer incorrectly consumed leading A as an option marker and marked distractors correct. Preserve every original ID, text, type, point, order and learner record."
+    },
+    {
+      "quizId": 4844,
+      "questionId": 82819,
+      "beforeSha256": "200ea4ecbe6e427a8daaedc7d0164913b1e559ecc769a63b382dc5a5b516c106",
+      "flags": {
+        "312802": false,
+        "312803": false,
+        "312804": true,
+        "312805": false
+      },
+      "evidence": [
+        "Published quiz 4324, question 74299: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4325, question 74355: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4326, question 74411: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4327, question 74467: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4330, question 74541: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees."
+      ],
+      "rationale": "Restore the existing published key; the old importer incorrectly consumed leading A as an option marker and marked distractors correct. Preserve every original ID, text, type, point, order and learner record."
+    },
+    {
+      "quizId": 4844,
+      "questionId": 82820,
+      "beforeSha256": "676a2421aa207e577214c89bce84700ce9c8921534d1d20d7a62ed5666a170e2",
+      "flags": {
+        "312806": false,
+        "312807": true,
+        "312808": false,
+        "312809": false
+      },
+      "evidence": [
+        "Published quiz 4324, question 74300: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4325, question 74356: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4326, question 74412: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4327, question 74468: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4330, question 74542: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees."
+      ],
+      "rationale": "Restore the existing published key; the old importer incorrectly consumed leading A as an option marker and marked distractors correct. Preserve every original ID, text, type, point, order and learner record."
+    },
+    {
+      "quizId": 4844,
+      "questionId": 82821,
+      "beforeSha256": "a52917264e6d8f91184e5fc4fb93e22fb89edc1aebe62bf418bc7b2c6907a3b2",
+      "flags": {
+        "312810": false,
+        "312811": true,
+        "312812": false,
+        "312813": false
+      },
+      "evidence": [
+        "Published quiz 4324, question 74301: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4325, question 74357: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4326, question 74413: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4327, question 74469: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4330, question 74543: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees."
+      ],
+      "rationale": "Restore the existing published key; the old importer incorrectly consumed leading A as an option marker and marked distractors correct. Preserve every original ID, text, type, point, order and learner record."
+    },
+    {
+      "quizId": 4844,
+      "questionId": 82822,
+      "beforeSha256": "72a47eafcc49c35f9024320af4fc3c2f00088f0c1a5850ed45e13141493f0fba",
+      "flags": {
+        "312814": false,
+        "312815": false,
+        "312816": true,
+        "312817": false
+      },
+      "evidence": [
+        "Published quiz 4324, question 74302: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4325, question 74358: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4326, question 74414: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4327, question 74470: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4330, question 74544: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees."
+      ],
+      "rationale": "Restore the existing published key; the old importer incorrectly consumed leading A as an option marker and marked distractors correct. Preserve every original ID, text, type, point, order and learner record."
+    },
+    {
+      "quizId": 4844,
+      "questionId": 82823,
+      "beforeSha256": "f2317958e6c6f302e02e8c745ba6cf15d457e728eadc0131c4fac6e8b2680b5c",
+      "flags": {
+        "312818": false,
+        "312819": false,
+        "312820": true,
+        "312821": false
+      },
+      "evidence": [
+        "Published quiz 4324, question 74303: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4325, question 74359: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4326, question 74415: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4327, question 74471: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4330, question 74545: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees."
+      ],
+      "rationale": "Restore the existing published key; the old importer incorrectly consumed leading A as an option marker and marked distractors correct. Preserve every original ID, text, type, point, order and learner record."
+    },
+    {
+      "quizId": 4844,
+      "questionId": 82824,
+      "beforeSha256": "391b5ae808419cdf22470bec0d049938105c54d71e1c369fdbe6623453c1ad98",
+      "flags": {
+        "312822": false,
+        "312823": true,
+        "312824": false,
+        "312825": false
+      },
+      "evidence": [
+        "Published quiz 4324, question 74304: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4325, question 74360: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4326, question 74416: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4327, question 74472: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4330, question 74546: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees."
+      ],
+      "rationale": "Restore the existing published key; the old importer incorrectly consumed leading A as an option marker and marked distractors correct. Preserve every original ID, text, type, point, order and learner record."
+    },
+    {
+      "quizId": 4844,
+      "questionId": 82825,
+      "beforeSha256": "a70bbd793ee6cf1742c94178b4316e04d92b71e8a9f5400f826aa15cdec20347",
+      "flags": {
+        "312826": false,
+        "312827": true,
+        "312828": false,
+        "312829": false
+      },
+      "evidence": [
+        "Published quiz 4324, question 74305: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4325, question 74361: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4326, question 74417: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4327, question 74473: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4330, question 74547: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees."
+      ],
+      "rationale": "Restore the existing published key; the old importer incorrectly consumed leading A as an option marker and marked distractors correct. Preserve every original ID, text, type, point, order and learner record."
+    },
+    {
+      "quizId": 4844,
+      "questionId": 82826,
+      "beforeSha256": "d0fd3aa4fd9e68d296f8a42b29f39c8743de8d822ceb00b66ae26b8a500feaff",
+      "flags": {
+        "312830": false,
+        "312831": true,
+        "312832": false,
+        "312833": false
+      },
+      "evidence": [
+        "Published quiz 4324, question 74306: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4325, question 74362: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4326, question 74418: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4327, question 74474: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4330, question 74548: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees."
+      ],
+      "rationale": "Restore the existing published key; the old importer incorrectly consumed leading A as an option marker and marked distractors correct. Preserve every original ID, text, type, point, order and learner record."
+    },
+    {
+      "quizId": 4844,
+      "questionId": 82827,
+      "beforeSha256": "b10aff896bd2f669ddb669b2d51b4c72bc4afddcedd08932b78f50047b12a93d",
+      "flags": {
+        "312834": false,
+        "312835": true,
+        "312836": false,
+        "312837": false
+      },
+      "evidence": [
+        "Published quiz 4324, question 74307: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4325, question 74363: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4326, question 74419: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4327, question 74475: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4330, question 74549: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees."
+      ],
+      "rationale": "Restore the existing published key; the old importer incorrectly consumed leading A as an option marker and marked distractors correct. Preserve every original ID, text, type, point, order and learner record."
+    },
+    {
+      "quizId": 4844,
+      "questionId": 82828,
+      "beforeSha256": "60015a95e49d4ffa2f257fffe80aae0834ad2231782d1e9f1ed9f4db9924f1f1",
+      "flags": {
+        "312838": false,
+        "312839": true,
+        "312840": false,
+        "312841": false
+      },
+      "evidence": [
+        "Published quiz 4324, question 74308: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4325, question 74364: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4326, question 74420: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4327, question 74476: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4330, question 74550: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees."
+      ],
+      "rationale": "Restore the existing published key; the old importer incorrectly consumed leading A as an option marker and marked distractors correct. Preserve every original ID, text, type, point, order and learner record."
+    },
+    {
+      "quizId": 4844,
+      "questionId": 82829,
+      "beforeSha256": "7c1a4ee07d113284763eb4617e8ecd4497b6a029f813ad18924934f737eeb4e2",
+      "flags": {
+        "312842": false,
+        "312843": false,
+        "312844": true,
+        "312845": false
+      },
+      "evidence": [
+        "Published quiz 4324, question 74309: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4325, question 74365: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4326, question 74421: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4327, question 74477: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4330, question 74551: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees."
+      ],
+      "rationale": "Restore the existing published key; the old importer incorrectly consumed leading A as an option marker and marked distractors correct. Preserve every original ID, text, type, point, order and learner record."
+    },
+    {
+      "quizId": 4844,
+      "questionId": 82830,
+      "beforeSha256": "2536ed01d27f57920b65d15e3d4320c9125ddba7ed00ae68c62b0407dd63245a",
+      "flags": {
+        "312846": false,
+        "312847": true,
+        "312848": false,
+        "312849": false
+      },
+      "evidence": [
+        "Published quiz 4324, question 74310: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4325, question 74366: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4326, question 74422: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4327, question 74478: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4330, question 74552: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees."
+      ],
+      "rationale": "Restore the existing published key; the old importer incorrectly consumed leading A as an option marker and marked distractors correct. Preserve every original ID, text, type, point, order and learner record."
+    },
+    {
+      "quizId": 4844,
+      "questionId": 82831,
+      "beforeSha256": "2ca8920767ea80a84460c4f468c9eabb3d1327540ab55dfccd7c3574709f236c",
+      "flags": {
+        "312850": false,
+        "312851": false,
+        "312852": true,
+        "312853": false
+      },
+      "evidence": [
+        "Published quiz 4324, question 74311: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4325, question 74367: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4326, question 74423: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4327, question 74479: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4330, question 74553: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees."
+      ],
+      "rationale": "Restore the existing published key; the old importer incorrectly consumed leading A as an option marker and marked distractors correct. Preserve every original ID, text, type, point, order and learner record."
+    },
+    {
+      "quizId": 4844,
+      "questionId": 82832,
+      "beforeSha256": "f2230101f130ea1d6241ac07eb1e0e41d23abaa9731a597a83d72f560727334b",
+      "flags": {
+        "312854": false,
+        "312855": false,
+        "312856": true,
+        "312857": false
+      },
+      "evidence": [
+        "Published quiz 4324, question 74312: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4325, question 74368: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4326, question 74424: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4327, question 74480: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4330, question 74554: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees."
+      ],
+      "rationale": "Restore the existing published key; the old importer incorrectly consumed leading A as an option marker and marked distractors correct. Preserve every original ID, text, type, point, order and learner record."
+    },
+    {
+      "quizId": 4844,
+      "questionId": 82833,
+      "beforeSha256": "bc43a007482ac9a4e6c20b4e6ea2c5a514eaac0be7e49ebae51f2f4c451a63c7",
+      "flags": {
+        "312858": false,
+        "312859": false,
+        "312860": false,
+        "312861": true
+      },
+      "evidence": [
+        "Published quiz 4324, question 74313: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4325, question 74369: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4326, question 74425: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4327, question 74481: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4330, question 74555: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees."
+      ],
+      "rationale": "Restore the existing published key; the old importer incorrectly consumed leading A as an option marker and marked distractors correct. Preserve every original ID, text, type, point, order and learner record."
+    },
+    {
+      "quizId": 4844,
+      "questionId": 82834,
+      "beforeSha256": "a42a172f31c27a4abd6f4b3e94b8f4dcaf5a0281fd48526adb872f40baa47f8b",
+      "flags": {
+        "312862": false,
+        "312863": true,
+        "312864": false,
+        "312865": false
+      },
+      "evidence": [
+        "Published quiz 4324, question 74314: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4325, question 74370: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4326, question 74426: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4327, question 74482: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4330, question 74556: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees."
+      ],
+      "rationale": "Restore the existing published key; the old importer incorrectly consumed leading A as an option marker and marked distractors correct. Preserve every original ID, text, type, point, order and learner record."
+    },
+    {
+      "quizId": 4844,
+      "questionId": 82835,
+      "beforeSha256": "8452ba60b83bb1a8842fded8352820a2b0e6ef6ded4c7145848c2cb4cec877aa",
+      "flags": {
+        "312866": false,
+        "312867": true,
+        "312868": false,
+        "312869": false
+      },
+      "evidence": [
+        "Published quiz 4324, question 74315: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4325, question 74371: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4326, question 74427: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4327, question 74483: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4330, question 74557: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees."
+      ],
+      "rationale": "Restore the existing published key; the old importer incorrectly consumed leading A as an option marker and marked distractors correct. Preserve every original ID, text, type, point, order and learner record."
+    },
+    {
+      "quizId": 4844,
+      "questionId": 82836,
+      "beforeSha256": "15167bd894984bd251df8beca1a349e21c257aee8c0e690c5f5c585da9d1a0e1",
+      "flags": {
+        "312870": false,
+        "312871": true,
+        "312872": false,
+        "312873": false
+      },
+      "evidence": [
+        "Published quiz 4324, question 74316: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4325, question 74372: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4326, question 74428: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4327, question 74484: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4330, question 74558: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees."
+      ],
+      "rationale": "Restore the existing published key; the old importer incorrectly consumed leading A as an option marker and marked distractors correct. Preserve every original ID, text, type, point, order and learner record."
+    },
+    {
+      "quizId": 4844,
+      "questionId": 82837,
+      "beforeSha256": "ed376c30bcfc954148de7e3dd077b73b093eac2d10e866d6f2e4c467758241cb",
+      "flags": {
+        "312874": false,
+        "312875": true,
+        "312876": false,
+        "312877": false
+      },
+      "evidence": [
+        "Published quiz 4324, question 74317: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4325, question 74373: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4326, question 74429: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4327, question 74485: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4330, question 74559: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees."
+      ],
+      "rationale": "Restore the existing published key; the old importer incorrectly consumed leading A as an option marker and marked distractors correct. Preserve every original ID, text, type, point, order and learner record."
+    },
+    {
+      "quizId": 4844,
+      "questionId": 82838,
+      "beforeSha256": "4b7ca120d66e1815dcc444555125541f624e78108df8a6b3657fb4a0e8cfdf61",
+      "flags": {
+        "312878": false,
+        "312879": false,
+        "312880": true,
+        "312881": false
+      },
+      "evidence": [
+        "Published quiz 4324, question 74318: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4325, question 74374: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4326, question 74430: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4327, question 74486: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4330, question 74560: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees."
+      ],
+      "rationale": "Restore the existing published key; the old importer incorrectly consumed leading A as an option marker and marked distractors correct. Preserve every original ID, text, type, point, order and learner record."
+    },
+    {
+      "quizId": 4844,
+      "questionId": 82839,
+      "beforeSha256": "224913e1c62ef466e1d59720b4d67c886b6f022e279e7d5e889b809591b4d58e",
+      "flags": {
+        "312882": false,
+        "312883": false,
+        "312884": false,
+        "312885": true
+      },
+      "evidence": [
+        "Published quiz 4324, question 74319: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4325, question 74375: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4326, question 74431: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4327, question 74487: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4330, question 74561: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees."
+      ],
+      "rationale": "Restore the existing published key; the old importer incorrectly consumed leading A as an option marker and marked distractors correct. Preserve every original ID, text, type, point, order and learner record."
+    },
+    {
+      "quizId": 4844,
+      "questionId": 82840,
+      "beforeSha256": "545b5eae730c263d028846ed444b20e7e73d272971997f7da5202d98410867ad",
+      "flags": {
+        "312886": true,
+        "312887": false,
+        "312888": false,
+        "312889": false
+      },
+      "evidence": [
+        "Published quiz 4324, question 74320: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4325, question 74376: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4326, question 74432: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4327, question 74488: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4330, question 74562: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees."
+      ],
+      "rationale": "Restore the existing published key; the old importer incorrectly consumed leading A as an option marker and marked distractors correct. Preserve every original ID, text, type, point, order and learner record."
+    },
+    {
+      "quizId": 4844,
+      "questionId": 82841,
+      "beforeSha256": "f324a16f689634c7c14a0af97ded5691b7ea8c00dbf5455a19259ee8a83385f5",
+      "flags": {
+        "312890": true,
+        "312891": false,
+        "312892": false,
+        "312893": false
+      },
+      "evidence": [
+        "Published quiz 4324, question 74321: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4325, question 74377: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4326, question 74433: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4327, question 74489: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4330, question 74563: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees."
+      ],
+      "rationale": "Restore the existing published key; the old importer incorrectly consumed leading A as an option marker and marked distractors correct. Preserve every original ID, text, type, point, order and learner record."
+    },
+    {
+      "quizId": 4844,
+      "questionId": 82842,
+      "beforeSha256": "3a940157ed757a8e7a7aabef991c288bbe24012af3df91bfc726d06b0bfd2971",
+      "flags": {
+        "312894": true,
+        "312895": false,
+        "312896": false,
+        "312897": false
+      },
+      "evidence": [
+        "Published quiz 4324, question 74322: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4325, question 74378: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4326, question 74434: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4327, question 74490: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4330, question 74564: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees."
+      ],
+      "rationale": "Restore the existing published key; the old importer incorrectly consumed leading A as an option marker and marked distractors correct. Preserve every original ID, text, type, point, order and learner record."
+    },
+    {
+      "quizId": 4844,
+      "questionId": 82843,
+      "beforeSha256": "a6b58e9661e0d24547a7665fa0f39b3b0a012e3f8d2c43f9a8cd5714796a715e",
+      "flags": {
+        "312898": true,
+        "312899": false,
+        "312900": false,
+        "312901": false
+      },
+      "evidence": [
+        "Published quiz 4324, question 74323: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4325, question 74379: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4326, question 74435: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4327, question 74491: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4330, question 74565: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees."
+      ],
+      "rationale": "Restore the existing published key; the old importer incorrectly consumed leading A as an option marker and marked distractors correct. Preserve every original ID, text, type, point, order and learner record."
+    },
+    {
+      "quizId": 4844,
+      "questionId": 82844,
+      "beforeSha256": "64a151b3a69d4aaa72836ae12286c107533b0e35b4019bef6b520ec8779a8d8a",
+      "flags": {
+        "312902": true,
+        "312903": false,
+        "312904": false,
+        "312905": false
+      },
+      "evidence": [
+        "Published quiz 4324, question 74324: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4325, question 74380: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4326, question 74436: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4327, question 74492: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4330, question 74566: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees."
+      ],
+      "rationale": "Restore the existing published key; the old importer incorrectly consumed leading A as an option marker and marked distractors correct. Preserve every original ID, text, type, point, order and learner record."
+    },
+    {
+      "quizId": 4844,
+      "questionId": 82845,
+      "beforeSha256": "43309adc5791b608b6e3ee59e2189eaed2dd2f8644a60697e358601ebfc969de",
+      "flags": {
+        "312906": false,
+        "312907": false,
+        "312908": true,
+        "312909": false
+      },
+      "evidence": [
+        "Published quiz 4324, question 74325: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4325, question 74381: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4326, question 74437: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4327, question 74493: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4330, question 74567: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees."
+      ],
+      "rationale": "Restore the existing published key; the old importer incorrectly consumed leading A as an option marker and marked distractors correct. Preserve every original ID, text, type, point, order and learner record."
+    },
+    {
+      "quizId": 4844,
+      "questionId": 82846,
+      "beforeSha256": "3bf092fa21141bc7a377daa7f1ed062b26bf03e3ba3fbbab5d8e9b61b555d31d",
+      "flags": {
+        "312910": false,
+        "312911": false,
+        "312912": false,
+        "312913": true
+      },
+      "evidence": [
+        "Published quiz 4324, question 74326: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4325, question 74382: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4326, question 74438: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4327, question 74494: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4330, question 74568: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees."
+      ],
+      "rationale": "Restore the existing published key; the old importer incorrectly consumed leading A as an option marker and marked distractors correct. Preserve every original ID, text, type, point, order and learner record."
+    },
+    {
+      "quizId": 4844,
+      "questionId": 82847,
+      "beforeSha256": "ecd1855b296765c7c1ce4e2d207316a98d67f9a90fbce1627906c5e9415fc703",
+      "flags": {
+        "312914": false,
+        "312915": false,
+        "312916": true,
+        "312917": false
+      },
+      "evidence": [
+        "Published quiz 4324, question 74327: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4325, question 74383: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4326, question 74439: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4327, question 74495: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4330, question 74569: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees."
+      ],
+      "rationale": "Restore the existing published key; the old importer incorrectly consumed leading A as an option marker and marked distractors correct. Preserve every original ID, text, type, point, order and learner record."
+    },
+    {
+      "quizId": 4844,
+      "questionId": 82848,
+      "beforeSha256": "2bf096cf58f68cb250b3736d368f1c803c23dbc7207f36370183635b33ac2d0e",
+      "flags": {
+        "312918": false,
+        "312919": false,
+        "312920": true,
+        "312921": false
+      },
+      "evidence": [
+        "Published quiz 4324, question 74328: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4325, question 74384: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4326, question 74440: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4327, question 74496: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4330, question 74570: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees."
+      ],
+      "rationale": "Restore the existing published key; the old importer incorrectly consumed leading A as an option marker and marked distractors correct. Preserve every original ID, text, type, point, order and learner record."
+    },
+    {
+      "quizId": 4844,
+      "questionId": 82849,
+      "beforeSha256": "48eb4668c2aa0489c3ff15d3a35db083139bbd9e72f3abd59564877cd62afe39",
+      "flags": {
+        "312922": false,
+        "312923": false,
+        "312924": true,
+        "312925": false
+      },
+      "evidence": [
+        "Published quiz 4324, question 74329: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4325, question 74385: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4326, question 74441: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4327, question 74497: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4330, question 74571: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees."
+      ],
+      "rationale": "Restore the existing published key; the old importer incorrectly consumed leading A as an option marker and marked distractors correct. Preserve every original ID, text, type, point, order and learner record."
+    },
+    {
+      "quizId": 4844,
+      "questionId": 82850,
+      "beforeSha256": "1e01541cb19120733d0c47edab41516b8f4cf56c0b9b847551ad0877646908ce",
+      "flags": {
+        "312926": false,
+        "312927": false,
+        "312928": true,
+        "312929": false
+      },
+      "evidence": [
+        "Published quiz 4324, question 74330: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4325, question 74386: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4326, question 74442: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4327, question 74498: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4330, question 74572: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees."
+      ],
+      "rationale": "Restore the existing published key; the old importer incorrectly consumed leading A as an option marker and marked distractors correct. Preserve every original ID, text, type, point, order and learner record."
+    },
+    {
+      "quizId": 4844,
+      "questionId": 82851,
+      "beforeSha256": "af1fd8f6153122a37ba24f8f0a8efef454395d6d727111509cf7819a4093e871",
+      "flags": {
+        "312930": false,
+        "312931": false,
+        "312932": false,
+        "312933": true
+      },
+      "evidence": [
+        "Published quiz 4324, question 74331: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4325, question 74387: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4326, question 74443: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4327, question 74499: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4330, question 74573: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees."
+      ],
+      "rationale": "Restore the existing published key; the old importer incorrectly consumed leading A as an option marker and marked distractors correct. Preserve every original ID, text, type, point, order and learner record."
+    },
+    {
+      "quizId": 4844,
+      "questionId": 82852,
+      "beforeSha256": "0e85ce63a12ab0a7a67325e8051dd10483237af01ad8a1d054e8ab1299940998",
+      "flags": {
+        "312934": false,
+        "312935": true,
+        "312936": false,
+        "312937": false
+      },
+      "evidence": [
+        "Published quiz 4324, question 74332: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4325, question 74388: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4326, question 74444: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4327, question 74500: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4330, question 74574: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees."
+      ],
+      "rationale": "Restore the existing published key; the old importer incorrectly consumed leading A as an option marker and marked distractors correct. Preserve every original ID, text, type, point, order and learner record."
+    },
+    {
+      "quizId": 4844,
+      "questionId": 82853,
+      "beforeSha256": "fba97a4eab62d3c07c03d6bdb63f3c0a766c078180955aac279fd2535ea19860",
+      "flags": {
+        "312938": false,
+        "312939": true,
+        "312940": false,
+        "312941": false
+      },
+      "evidence": [
+        "Published quiz 4324, question 74333: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4325, question 74389: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4326, question 74445: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4327, question 74501: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4330, question 74575: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees."
+      ],
+      "rationale": "Restore the existing published key; the old importer incorrectly consumed leading A as an option marker and marked distractors correct. Preserve every original ID, text, type, point, order and learner record."
+    },
+    {
+      "quizId": 4844,
+      "questionId": 82854,
+      "beforeSha256": "9f07f6287f82eaef16049f925dcf0ecdad4f81f85364ebac1cc42dd2b477026b",
+      "flags": {
+        "312942": true,
+        "312943": false,
+        "312944": false,
+        "312945": false
+      },
+      "evidence": [
+        "Published quiz 4324, question 74334: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4325, question 74390: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4326, question 74446: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4327, question 74502: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4330, question 74576: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees."
+      ],
+      "rationale": "Restore the existing published key; the old importer incorrectly consumed leading A as an option marker and marked distractors correct. Preserve every original ID, text, type, point, order and learner record."
+    },
+    {
+      "quizId": 4844,
+      "questionId": 82855,
+      "beforeSha256": "508967dffc8cf351f3b5940103e122e6c34af286a4be7a5ffe2389f06e018efb",
+      "flags": {
+        "312946": false,
+        "312947": false,
+        "312948": true,
+        "312949": false
+      },
+      "evidence": [
+        "Published quiz 4324, question 74335: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4325, question 74391: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4326, question 74447: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4327, question 74503: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4330, question 74577: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees."
+      ],
+      "rationale": "Restore the existing published key; the old importer incorrectly consumed leading A as an option marker and marked distractors correct. Preserve every original ID, text, type, point, order and learner record."
+    },
+    {
+      "quizId": 4844,
+      "questionId": 82856,
+      "beforeSha256": "3b074d13b9b0dc7d25bc9556bb26aaa355c17e04da004388c40164cda4ebe9e9",
+      "flags": {
+        "312950": true,
+        "312951": false,
+        "312952": false,
+        "312953": false
+      },
+      "evidence": [
+        "Published quiz 4324, question 74336: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4325, question 74392: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4326, question 74448: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4327, question 74504: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4330, question 74578: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees."
+      ],
+      "rationale": "Restore the existing published key; the old importer incorrectly consumed leading A as an option marker and marked distractors correct. Preserve every original ID, text, type, point, order and learner record."
+    },
+    {
+      "quizId": 4844,
+      "questionId": 82857,
+      "beforeSha256": "e9536c99424dca58a6dc6ab1ffa65b8f7bf53ab2d96b8a5671c1248571e21263",
+      "flags": {
+        "312954": false,
+        "312955": false,
+        "312956": true,
+        "312957": false
+      },
+      "evidence": [
+        "Published quiz 4324, question 74337: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4325, question 74393: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4326, question 74449: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4327, question 74505: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4330, question 74579: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees."
+      ],
+      "rationale": "Restore the existing published key; the old importer incorrectly consumed leading A as an option marker and marked distractors correct. Preserve every original ID, text, type, point, order and learner record."
+    },
+    {
+      "quizId": 4844,
+      "questionId": 82858,
+      "beforeSha256": "2c5b26a392939bbc5f6e781d7eb73934935536e3bd099b05acee7512244427e0",
+      "flags": {
+        "312958": true,
+        "312959": false,
+        "312960": false,
+        "312961": false
+      },
+      "evidence": [
+        "Published quiz 4324, question 74338: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4325, question 74394: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4326, question 74450: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4327, question 74506: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4330, question 74580: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees."
+      ],
+      "rationale": "Restore the existing published key; the old importer incorrectly consumed leading A as an option marker and marked distractors correct. Preserve every original ID, text, type, point, order and learner record."
+    },
+    {
+      "quizId": 4844,
+      "questionId": 82859,
+      "beforeSha256": "7569332da7e98deee866fea5a451310a3f4769435c69e2da6a705c55164d2907",
+      "flags": {
+        "312962": false,
+        "312963": false,
+        "312964": false,
+        "312965": true
+      },
+      "evidence": [
+        "Published quiz 4324, question 74339: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4325, question 74395: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4326, question 74451: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4327, question 74507: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4330, question 74581: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees."
+      ],
+      "rationale": "Restore the existing published key; the old importer incorrectly consumed leading A as an option marker and marked distractors correct. Preserve every original ID, text, type, point, order and learner record."
+    },
+    {
+      "quizId": 4844,
+      "questionId": 82860,
+      "beforeSha256": "a441777b15e47f719c199a2d45bf4beed53d4591928be9d8ce3834d58c846909",
+      "flags": {
+        "312966": false,
+        "312967": true,
+        "312968": false,
+        "312969": false
+      },
+      "evidence": [
+        "Published quiz 4324, question 74340: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4325, question 74396: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4326, question 74452: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4327, question 74508: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4330, question 74582: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees."
+      ],
+      "rationale": "Restore the existing published key; the old importer incorrectly consumed leading A as an option marker and marked distractors correct. Preserve every original ID, text, type, point, order and learner record."
+    },
+    {
+      "quizId": 4844,
+      "questionId": 82861,
+      "beforeSha256": "37e26bfbf10b66c5abe3a29ff732488e38a8cd322f5282f0130cdfa6f397df67",
+      "flags": {
+        "312970": false,
+        "312971": true,
+        "312972": false,
+        "312973": false
+      },
+      "evidence": [
+        "Published quiz 4324, question 74341: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4325, question 74397: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4326, question 74453: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4327, question 74509: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4330, question 74583: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees."
+      ],
+      "rationale": "Restore the existing published key; the old importer incorrectly consumed leading A as an option marker and marked distractors correct. Preserve every original ID, text, type, point, order and learner record."
+    },
+    {
+      "quizId": 4844,
+      "questionId": 82862,
+      "beforeSha256": "721f07f1579db2cdc2b30df2d13180971ca2ca75e3e4834d8ad26c5615cf89e0",
+      "flags": {
+        "312974": false,
+        "312975": false,
+        "312976": true,
+        "312977": false
+      },
+      "evidence": [
+        "Published quiz 4324, question 74342: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4325, question 74398: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4326, question 74454: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4327, question 74510: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4330, question 74584: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees."
+      ],
+      "rationale": "Restore the existing published key; the old importer incorrectly consumed leading A as an option marker and marked distractors correct. Preserve every original ID, text, type, point, order and learner record."
+    },
+    {
+      "quizId": 4844,
+      "questionId": 82863,
+      "beforeSha256": "22792452f70fc7ce1e98b09decd258332155ff7ba23c336fadfda0e450e25adc",
+      "flags": {
+        "312978": true,
+        "312979": false,
+        "312980": false,
+        "312981": false
+      },
+      "evidence": [
+        "Published quiz 4324, question 74343: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4325, question 74399: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4326, question 74455: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4327, question 74511: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4330, question 74585: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees."
+      ],
+      "rationale": "Restore the existing published key; the old importer incorrectly consumed leading A as an option marker and marked distractors correct. Preserve every original ID, text, type, point, order and learner record."
+    },
+    {
+      "quizId": 4844,
+      "questionId": 82864,
+      "beforeSha256": "703884583b522a99f76d69189be9a906c4ffa12160c18afc7b56b9f7349039b7",
+      "flags": {
+        "312982": false,
+        "312983": true,
+        "312984": false,
+        "312985": false
+      },
+      "evidence": [
+        "Published quiz 4324, question 74344: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4325, question 74400: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4326, question 74456: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4327, question 74512: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4330, question 74586: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees."
+      ],
+      "rationale": "Restore the existing published key; the old importer incorrectly consumed leading A as an option marker and marked distractors correct. Preserve every original ID, text, type, point, order and learner record."
+    },
+    {
+      "quizId": 4844,
+      "questionId": 82865,
+      "beforeSha256": "d52d76c986244fd436ed51292ac8917c8ebe1cab3645996e4b270e055e3f645d",
+      "flags": {
+        "312986": false,
+        "312987": true,
+        "312988": false,
+        "312989": false
+      },
+      "evidence": [
+        "Published quiz 4324, question 74345: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4325, question 74401: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4326, question 74457: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4327, question 74513: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4330, question 74587: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees."
+      ],
+      "rationale": "Restore the existing published key; the old importer incorrectly consumed leading A as an option marker and marked distractors correct. Preserve every original ID, text, type, point, order and learner record."
+    },
+    {
+      "quizId": 4844,
+      "questionId": 82866,
+      "beforeSha256": "7fa70a69ce6593b0a62f0d53a2894689ffc8ed5a8f9d451b22121cd4de80fe00",
+      "flags": {
+        "312990": false,
+        "312991": true,
+        "312992": false,
+        "312993": false
+      },
+      "evidence": [
+        "Published quiz 4324, question 74346: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4325, question 74402: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4326, question 74458: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4327, question 74514: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4330, question 74588: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees."
+      ],
+      "rationale": "Restore the existing published key; the old importer incorrectly consumed leading A as an option marker and marked distractors correct. Preserve every original ID, text, type, point, order and learner record."
+    },
+    {
+      "quizId": 4844,
+      "questionId": 82867,
+      "beforeSha256": "c0e7a3b5830e74614db414525df1423a1a06ee9b57ab1285d6300db6c8c15aa8",
+      "flags": {
+        "312994": true,
+        "312995": false,
+        "312996": false,
+        "312997": false
+      },
+      "evidence": [
+        "Published quiz 4324, question 74347: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4325, question 74403: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4326, question 74459: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4327, question 74515: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4330, question 74589: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees."
+      ],
+      "rationale": "Restore the existing published key; the old importer incorrectly consumed leading A as an option marker and marked distractors correct. Preserve every original ID, text, type, point, order and learner record."
+    },
+    {
+      "quizId": 4844,
+      "questionId": 82868,
+      "beforeSha256": "ad7e9654fbc831372cfbfad71f23f02e8add00e843d79a23b86b2fd84fb278c9",
+      "flags": {
+        "312998": true,
+        "312999": false,
+        "313000": false,
+        "313001": false
+      },
+      "evidence": [
+        "Published quiz 4324, question 74348: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4325, question 74404: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4326, question 74460: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4327, question 74516: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4330, question 74590: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees."
+      ],
+      "rationale": "Restore the existing published key; the old importer incorrectly consumed leading A as an option marker and marked distractors correct. Preserve every original ID, text, type, point, order and learner record."
+    },
+    {
+      "quizId": 4862,
+      "questionId": 83201,
+      "beforeSha256": "edcba31cebfa12b38e0b314aef4e002aa4ac589933f268f1490b4f25e17b77e8",
+      "flags": {
+        "314325": true,
+        "314326": false,
+        "314327": false,
+        "314328": false
+      },
+      "evidence": [
+        "Published quiz 2441, question 43421: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees."
+      ],
+      "rationale": "Restore the existing published key; the old importer incorrectly consumed leading A as an option marker and marked distractors correct. Preserve every original ID, text, type, point, order and learner record."
+    },
+    {
+      "quizId": 4866,
+      "questionId": 83271,
+      "beforeSha256": "187e6035f8dd7c45d3c4bc09b147c506aa47c7f2574fc7c6a91854217de9bd83",
+      "flags": {
+        "314605": true,
+        "314606": false,
+        "314607": false,
+        "314608": false
+      },
+      "evidence": [
+        "Published quiz 2442, question 43431: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 3533, question 59247: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees."
+      ],
+      "rationale": "Restore the existing published key; the old importer incorrectly consumed leading A as an option marker and marked distractors correct. Preserve every original ID, text, type, point, order and learner record."
+    },
+    {
+      "quizId": 4869,
+      "questionId": 83317,
+      "beforeSha256": "2142270a141f8de746da26e5cbd85abbe47c19b26b223391850587b434a44cc8",
+      "flags": {
+        "314789": true,
+        "314790": false,
+        "314791": false,
+        "314792": false
+      },
+      "evidence": [
+        "Published quiz 4041, question 69572: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4076, question 70272: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4204, question 72483: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees."
+      ],
+      "rationale": "Restore the existing published key; the old importer incorrectly consumed leading A as an option marker and marked distractors correct. Preserve every original ID, text, type, point, order and learner record."
+    },
+    {
+      "quizId": 4871,
+      "questionId": 83355,
+      "beforeSha256": "dbdd880ff5df0e830563b6f1b088e1ce02b2d822866c0eb8208f2d6df9fea393",
+      "flags": {
+        "314941": true,
+        "314942": false,
+        "314943": false,
+        "314944": false
+      },
+      "evidence": [
+        "Published quiz 2445, question 43475: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 3536, question 59291: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees."
+      ],
+      "rationale": "Restore the existing published key; the old importer incorrectly consumed leading A as an option marker and marked distractors correct. Preserve every original ID, text, type, point, order and learner record."
+    },
+    {
+      "quizId": 4872,
+      "questionId": 83365,
+      "beforeSha256": "2017b1820816c43145d7f08cd7d4b892c1cf140fd0fd895941e370662ebefc58",
+      "flags": {
+        "314981": true,
+        "314982": false,
+        "314983": false,
+        "314984": false
+      },
+      "evidence": [
+        "Published quiz 2446, question 43485: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 3537, question 59301: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees."
+      ],
+      "rationale": "Restore the existing published key; the old importer incorrectly consumed leading A as an option marker and marked distractors correct. Preserve every original ID, text, type, point, order and learner record."
+    },
+    {
+      "quizId": 4872,
+      "questionId": 83369,
+      "beforeSha256": "4bd8e0bc6ab1b7612b5123953d00976fef228ddd563073964795d67c5d5493d2",
+      "flags": {
+        "314997": true,
+        "314998": false,
+        "314999": false,
+        "315000": false
+      },
+      "evidence": [
+        "Published quiz 2446, question 43489: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 3537, question 59305: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees."
+      ],
+      "rationale": "Restore the existing published key; the old importer incorrectly consumed leading A as an option marker and marked distractors correct. Preserve every original ID, text, type, point, order and learner record."
+    },
+    {
+      "quizId": 4872,
+      "questionId": 83380,
+      "beforeSha256": "21c1ba3ba1458428223b9911f835f4b69ac932cb5b8c1597a7230ab777e9051b",
+      "flags": {
+        "315041": true,
+        "315042": false,
+        "315043": false,
+        "315044": false
+      },
+      "evidence": [
+        "Published quiz 2446, question 43500: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 3537, question 59316: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees."
+      ],
+      "rationale": "Restore the existing published key; the old importer incorrectly consumed leading A as an option marker and marked distractors correct. Preserve every original ID, text, type, point, order and learner record."
+    },
+    {
+      "quizId": 4872,
+      "questionId": 83381,
+      "beforeSha256": "3f176e9ee25a86825f726d271ece48bc2f79e9b0215bbb1f6a928a9adf298103",
+      "flags": {
+        "315045": true,
+        "315046": false,
+        "315047": false,
+        "315048": false
+      },
+      "evidence": [
+        "Published quiz 2446, question 43501: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 3537, question 59317: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees."
+      ],
+      "rationale": "Restore the existing published key; the old importer incorrectly consumed leading A as an option marker and marked distractors correct. Preserve every original ID, text, type, point, order and learner record."
+    },
+    {
+      "quizId": 4875,
+      "questionId": 83421,
+      "beforeSha256": "6abcecb3332f1e31ab8b6add149323c258199e6aa7fb563b85ffd71a959faba6",
+      "flags": {
+        "315205": true,
+        "315206": false,
+        "315207": false,
+        "315208": false
+      },
+      "evidence": [
+        "Published quiz 2448, question 43521: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 3539, question 59337: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees."
+      ],
+      "rationale": "Restore the existing published key; the old importer incorrectly consumed leading A as an option marker and marked distractors correct. Preserve every original ID, text, type, point, order and learner record."
+    },
+    {
+      "quizId": 4876,
+      "questionId": 83450,
+      "beforeSha256": "4c18f23f630f8750abd7c6658b4f8f1991c045f81637165690e3aabd992c83c6",
+      "flags": {
+        "315321": true,
+        "315322": false,
+        "315323": false,
+        "315324": false
+      },
+      "evidence": [
+        "Published quiz 2449, question 43550: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 3540, question 59366: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees."
+      ],
+      "rationale": "Restore the existing published key; the old importer incorrectly consumed leading A as an option marker and marked distractors correct. Preserve every original ID, text, type, point, order and learner record."
+    },
+    {
+      "quizId": 4888,
+      "questionId": 83654,
+      "beforeSha256": "6c467a41271a3fd401e5cc1359945eab30aa53172467482df9b147a774043e79",
+      "flags": {
+        "316137": true,
+        "316138": false,
+        "316139": false,
+        "316140": false
+      },
+      "evidence": [
+        "Published quiz 2456, question 43654: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 3547, question 59470: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees."
+      ],
+      "rationale": "Restore the existing published key; the old importer incorrectly consumed leading A as an option marker and marked distractors correct. Preserve every original ID, text, type, point, order and learner record."
+    },
+    {
+      "quizId": 4895,
+      "questionId": 83792,
+      "beforeSha256": "0c40ece693a8015108bc03a1f3fc908897337d777d13dc0119878215ee74997f",
+      "flags": {
+        "316689": true,
+        "316690": false,
+        "316691": false,
+        "316692": false
+      },
+      "evidence": [
+        "Published quiz 4049, question 69737: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4084, question 70437: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4212, question 72648: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees."
+      ],
+      "rationale": "Restore the existing published key; the old importer incorrectly consumed leading A as an option marker and marked distractors correct. Preserve every original ID, text, type, point, order and learner record."
+    },
+    {
+      "quizId": 4908,
+      "questionId": 84017,
+      "beforeSha256": "9db01d08af9a49819fcb4430153491a2b55214a7ffb1a6c051f936a42bb723e4",
+      "flags": {
+        "317589": true,
+        "317590": false,
+        "317591": false,
+        "317592": false
+      },
+      "evidence": [
+        "Published quiz 4053, question 69807: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4088, question 70507: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4216, question 72718: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees."
+      ],
+      "rationale": "Restore the existing published key; the old importer incorrectly consumed leading A as an option marker and marked distractors correct. Preserve every original ID, text, type, point, order and learner record."
+    },
+    {
+      "quizId": 4916,
+      "questionId": 84172,
+      "beforeSha256": "b8a2e0cab13431d2d1d7f1556934fe269127175db95bb4f5094dc8faebfc14ef",
+      "flags": {
+        "318209": true,
+        "318210": false,
+        "318211": false,
+        "318212": false
+      },
+      "evidence": [
+        "Published quiz 4057, question 69892: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4092, question 70592: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4220, question 72803: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees."
+      ],
+      "rationale": "Restore the existing published key; the old importer incorrectly consumed leading A as an option marker and marked distractors correct. Preserve every original ID, text, type, point, order and learner record."
+    },
+    {
+      "quizId": 4923,
+      "questionId": 84310,
+      "beforeSha256": "23964b41633fbda7fe41c90ce84b558ca5601c0806da59b4549b09c92a607ab8",
+      "flags": {
+        "318761": true,
+        "318762": false,
+        "318763": false,
+        "318764": false
+      },
+      "evidence": [
+        "Published quiz 4065, question 70050: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4100, question 70750: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4228, question 72961: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees."
+      ],
+      "rationale": "Restore the existing published key; the old importer incorrectly consumed leading A as an option marker and marked distractors correct. Preserve every original ID, text, type, point, order and learner record."
+    },
+    {
+      "quizId": 4924,
+      "questionId": 84335,
+      "beforeSha256": "2adea68e9e39488e4e0dedec248e2e17b6a6b0a72565503b50ff60c1043a5cce",
+      "flags": {
+        "318861": true,
+        "318862": false,
+        "318863": false,
+        "318864": false
+      },
+      "evidence": [
+        "Published quiz 4066, question 70075: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4101, question 70775: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4229, question 72986: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees."
+      ],
+      "rationale": "Restore the existing published key; the old importer incorrectly consumed leading A as an option marker and marked distractors correct. Preserve every original ID, text, type, point, order and learner record."
+    },
+    {
+      "quizId": 4928,
+      "questionId": 84412,
+      "beforeSha256": "fe8b11145e0d66c214b4da361d6cbbf77a7e2f71fab107301e4ce733aea2c16e",
+      "flags": {
+        "319169": true,
+        "319170": false,
+        "319171": false,
+        "319172": false
+      },
+      "evidence": [
+        "Published quiz 4070, question 70152: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4105, question 70852: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4233, question 73063: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees."
+      ],
+      "rationale": "Restore the existing published key; the old importer incorrectly consumed leading A as an option marker and marked distractors correct. Preserve every original ID, text, type, point, order and learner record."
+    },
+    {
+      "quizId": 4928,
+      "questionId": 84417,
+      "beforeSha256": "46768345a058e4f8dfc7bc79e0e5f812c47c3d14aca23c7089deb17bced6c6f1",
+      "flags": {
+        "319189": true,
+        "319190": false,
+        "319191": false,
+        "319192": false
+      },
+      "evidence": [
+        "Published quiz 4070, question 70157: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4105, question 70857: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4233, question 73068: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees."
+      ],
+      "rationale": "Restore the existing published key; the old importer incorrectly consumed leading A as an option marker and marked distractors correct. Preserve every original ID, text, type, point, order and learner record."
+    },
+    {
+      "quizId": 4931,
+      "questionId": 84480,
+      "beforeSha256": "45ac9c874cafd485fbfd130dc92c48ef3cc9bc860fcf9cb11d8f3b8afff5a5ed",
+      "flags": {
+        "319441": true,
+        "319442": false,
+        "319443": false,
+        "319444": false
+      },
+      "evidence": [
+        "Original uploaded file quiz_packages/Q2_Design_select_and_govern_a_purposeful_MarTech_stack.csv, SHA256 56c0172c98495d01aada0c623355a6dfefa4da2a153c1715576ed73c031b2302, CSV data row 19, explicit correct answer letter(s)=A; labelled answer text also checked when present. Question/options match after only apostrophe encoding and the old importer's lost leading A article."
+      ],
+      "rationale": "Restore the answer explicitly declared in the authored CSV instead of the old importer marking extra A-prefixed distractors correct. Preserve all stored question/answer identities and text and learner history."
+    },
+    {
+      "quizId": 4978,
+      "questionId": 85418,
+      "beforeSha256": "45084732a89b29908a7d544a4931d98ed4a22b73f7e64fdd3648959c5ef741b9",
+      "flags": {
+        "323185": true,
+        "323186": false,
+        "323187": false,
+        "323188": false
+      },
+      "evidence": [
+        "Published quiz 2609, question 46393: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 2994, question 50787: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 3299, question 55064: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 3338, question 56019: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 3584, question 60169: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees."
+      ],
+      "rationale": "Restore the existing published key; the old importer incorrectly consumed leading A as an option marker and marked distractors correct. Preserve every original ID, text, type, point, order and learner record."
+    },
+    {
+      "quizId": 4978,
+      "questionId": 85420,
+      "beforeSha256": "bce028a023af29b909d1664ac6a51313568c501c89c73d7529df6942a14be33e",
+      "flags": {
+        "323193": true,
+        "323194": false,
+        "323195": false,
+        "323196": false
+      },
+      "evidence": [
+        "Published quiz 2609, question 46395: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 2994, question 50789: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 3299, question 55066: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 3338, question 56021: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 3584, question 60171: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees."
+      ],
+      "rationale": "Restore the existing published key; the old importer incorrectly consumed leading A as an option marker and marked distractors correct. Preserve every original ID, text, type, point, order and learner record."
+    },
+    {
+      "quizId": 4983,
+      "questionId": 85502,
+      "beforeSha256": "552797da03bafb5b11a415e93de11892bac0ee4cbb51cd63a1d3049ce729fd43",
+      "flags": {
+        "323521": true,
+        "323522": false,
+        "323523": false,
+        "323524": false
+      },
+      "evidence": [
+        "Original uploaded file quiz_packages/Q3_Getting_More_From_Your_MarTech_converted.csv, SHA256 732bfc4bebce37b0be4507a4847463505fa6fcc9a27cde7d0147833d14aaf793, CSV data row 6, explicit correct answer letter(s)=A; labelled answer text also checked when present. Question/options match after only apostrophe encoding and the old importer's lost leading A article."
+      ],
+      "rationale": "Restore the answer explicitly declared in the authored CSV instead of the old importer marking extra A-prefixed distractors correct. Preserve all stored question/answer identities and text and learner history."
+    },
+    {
+      "quizId": 5127,
+      "questionId": 87607,
+      "beforeSha256": "d1d92e9c1960ab1e7af750b00568647cf7c39c5ae7121424345d6e6557ccb1bc",
+      "flags": {
+        "331941": true,
+        "331942": false,
+        "331943": false,
+        "331944": false
+      },
+      "evidence": [
+        "Original uploaded file quiz_packages/Q2_Data_quality_before_AI_quality_converted.csv, SHA256 11dc962b7e29471275105124d7fbbdb59135f2c31f29d764eb5a7efdfbc75426, CSV data row 16, explicit correct answer letter(s)=A; labelled answer text also checked when present. Question/options match after only apostrophe encoding and the old importer's lost leading A article."
+      ],
+      "rationale": "Restore the answer explicitly declared in the authored CSV instead of the old importer marking extra A-prefixed distractors correct. Preserve all stored question/answer identities and text and learner history."
+    },
+    {
+      "quizId": 5130,
+      "questionId": 87669,
+      "beforeSha256": "888f1f29f38de2320fb182ba69e9735a0124604cbff1bb551beadc51f8a0bbc2",
+      "flags": {
+        "332189": true,
+        "332190": false,
+        "332191": false,
+        "332192": false
+      },
+      "evidence": [
+        "Original uploaded file quiz_packages/Q2_Training_Validation_and_Testing_converted.csv, SHA256 b164afd99ddf545600a4e19b3b85d7dd91be44384adf92fcac67aab599f8ef6e, CSV data row 18, explicit correct answer letter(s)=A; labelled answer text also checked when present. Question/options match after only apostrophe encoding and the old importer's lost leading A article."
+      ],
+      "rationale": "Restore the answer explicitly declared in the authored CSV instead of the old importer marking extra A-prefixed distractors correct. Preserve all stored question/answer identities and text and learner history."
+    },
+    {
+      "quizId": 5132,
+      "questionId": 87704,
+      "beforeSha256": "21c52c627bb4267924619ec9467c09a861a4bca51e5947152b119bbdafd5e967",
+      "flags": {
+        "332329": true,
+        "332330": false,
+        "332331": false,
+        "332332": false
+      },
+      "evidence": [
+        "Original uploaded file quiz_packages/Part_1_Automation_Accuracy_and_Resource_Capability_converted.csv, SHA256 3bedf4d176b76324e196219a69fa694e1e1c16d389178932bd0e63fad8d2b576, CSV data row 13, explicit correct answer letter(s)=A; labelled answer text also checked when present. Question/options match after only apostrophe encoding and the old importer's lost leading A article."
+      ],
+      "rationale": "Restore the answer explicitly declared in the authored CSV instead of the old importer marking extra A-prefixed distractors correct. Preserve all stored question/answer identities and text and learner history."
+    },
+    {
+      "quizId": 5144,
+      "questionId": 87942,
+      "beforeSha256": "5481fe706819e87e4a3bb80bf731726e16939728894f6acb3077bc16bb86acc4",
+      "flags": {
+        "333281": true,
+        "333282": false,
+        "333283": false,
+        "333284": false
+      },
+      "evidence": [
+        "Original uploaded file quiz_packages/Q1_Communication_Collaboration_and_Change_Readiness_converted.csv, SHA256 e218f90d0746ff393fc5ab08a30063caca27d8445db88b5fc949cbf64f751ee6, CSV data row 11, explicit correct answer letter(s)=A; labelled answer text also checked when present. Question/options match after only apostrophe encoding and the old importer's lost leading A article."
+      ],
+      "rationale": "Restore the answer explicitly declared in the authored CSV instead of the old importer marking extra A-prefixed distractors correct. Preserve all stored question/answer identities and text and learner history."
+    },
+    {
+      "quizId": 5146,
+      "questionId": 87976,
+      "beforeSha256": "fad50fc0aac02d963a79466933244af14554bd6d25a5572cc122d6e316874bee",
+      "flags": {
+        "333417": true,
+        "333418": false,
+        "333419": false,
+        "333420": false
+      },
+      "evidence": [
+        "Original uploaded file quiz_packages/Q3_Communication_Collaboration_Change_and_Data_Ready_AI_Planning_converted.csv, SHA256 e2e57a4b16765bfbf43bde06df74a6e8aba2fa6d872df77d0fc31c9de4f04e4d, CSV data row 5, explicit correct answer letter(s)=A; labelled answer text also checked when present. Question/options match after only apostrophe encoding and the old importer's lost leading A article."
+      ],
+      "rationale": "Restore the answer explicitly declared in the authored CSV instead of the old importer marking extra A-prefixed distractors correct. Preserve all stored question/answer identities and text and learner history."
+    },
+    {
+      "quizId": 5149,
+      "questionId": 88041,
+      "beforeSha256": "4d6764ad5aaa1d65dfe88e2705b2e3063e3a88e2fc1365c45c359d7d84622460",
+      "flags": {
+        "333677": true,
+        "333678": false,
+        "333679": false,
+        "333680": false
+      },
+      "evidence": [
+        "Original uploaded file quiz_packages/Q2_Real_Time_Data_Streaming_Data_and_Cloud_Computing_converted.csv, SHA256 0347b367e1685fc2c4a2e4cae033a5c2ef05427dbf5e285ffadcc92e10175b83, CSV data row 10, explicit correct answer letter(s)=A; labelled answer text also checked when present. Question/options match after only apostrophe encoding and the old importer's lost leading A article."
+      ],
+      "rationale": "Restore the answer explicitly declared in the authored CSV instead of the old importer marking extra A-prefixed distractors correct. Preserve all stored question/answer identities and text and learner history."
+    },
+    {
+      "quizId": 5149,
+      "questionId": 88044,
+      "beforeSha256": "c65c652685e3e2b39ee66b255b5a7dff728aae0378645412df6ad8e820d0df2c",
+      "flags": {
+        "333689": true,
+        "333690": false,
+        "333691": false,
+        "333692": false
+      },
+      "evidence": [
+        "Original uploaded file quiz_packages/Q2_Real_Time_Data_Streaming_Data_and_Cloud_Computing_converted.csv, SHA256 0347b367e1685fc2c4a2e4cae033a5c2ef05427dbf5e285ffadcc92e10175b83, CSV data row 13, explicit correct answer letter(s)=A; labelled answer text also checked when present. Question/options match after only apostrophe encoding and the old importer's lost leading A article."
+      ],
+      "rationale": "Restore the answer explicitly declared in the authored CSV instead of the old importer marking extra A-prefixed distractors correct. Preserve all stored question/answer identities and text and learner history."
+    },
+    {
+      "quizId": 5151,
+      "questionId": 88073,
+      "beforeSha256": "3918adfb259ef5b255b0bd0d0c48563a3ffed7c6732aca169e54e4e1510d0116",
+      "flags": {
+        "333805": true,
+        "333806": false,
+        "333807": false,
+        "333808": false
+      },
+      "evidence": [
+        "Original uploaded file quiz_packages/Q1_AI_Tool_Categories_and_MarTech_Stack_converted.csv, SHA256 1412d914e13ba2c7395fb28305659767c24f3747409f7a5b1713db4d57330a1a, CSV data row 2, explicit correct answer letter(s)=A; labelled answer text also checked when present. Question/options match after only apostrophe encoding and the old importer's lost leading A article."
+      ],
+      "rationale": "Restore the answer explicitly declared in the authored CSV instead of the old importer marking extra A-prefixed distractors correct. Preserve all stored question/answer identities and text and learner history."
+    },
+    {
+      "quizId": 5151,
+      "questionId": 88087,
+      "beforeSha256": "461f6dd4e74dd867c44cf73f27ea4c6701dd453d6f0008efbec5faadf3e2cca6",
+      "flags": {
+        "333861": true,
+        "333862": false,
+        "333863": false,
+        "333864": false
+      },
+      "evidence": [
+        "Original uploaded file quiz_packages/Q1_AI_Tool_Categories_and_MarTech_Stack_converted.csv, SHA256 1412d914e13ba2c7395fb28305659767c24f3747409f7a5b1713db4d57330a1a, CSV data row 16, explicit correct answer letter(s)=A; labelled answer text also checked when present. Question/options match after only apostrophe encoding and the old importer's lost leading A article."
+      ],
+      "rationale": "Restore the answer explicitly declared in the authored CSV instead of the old importer marking extra A-prefixed distractors correct. Preserve all stored question/answer identities and text and learner history."
+    },
+    {
+      "quizId": 5163,
+      "questionId": 88320,
+      "beforeSha256": "428cc729ac3dcd17e3fb836737d5f1c902cdd7a436bce730b5d90d0c7a79b382",
+      "flags": {
+        "334793": true,
+        "334794": false,
+        "334795": false,
+        "334796": false
+      },
+      "evidence": [
+        "Original uploaded file quiz_packages/AI-Assisted201-20Risk20-20converted.csv, SHA256 55314153a671ef6e30e66ff478c005ad0a665ca36a54ad49a9ce160464f2ca96, CSV data row 9, explicit correct answer letter(s)=A; labelled answer text also checked when present. Question/options match after only apostrophe encoding and the old importer's lost leading A article."
+      ],
+      "rationale": "Restore the answer explicitly declared in the authored CSV instead of the old importer marking extra A-prefixed distractors correct. Preserve all stored question/answer identities and text and learner history."
+    },
+    {
+      "quizId": 5165,
+      "questionId": 88350,
+      "beforeSha256": "6d762a0ead441a8f5c73b867bfa0e160e70d39c63a8a48daec7fbe1db5106136",
+      "flags": {
+        "334913": true,
+        "334914": false,
+        "334915": false,
+        "334916": false
+      },
+      "evidence": [
+        "Original uploaded file quiz_packages/AI-Assisted20320VUCA20Conclusion20converted.csv, SHA256 de7f31d9d31712bd5eebce54e72f97bf81ed5a068b01a03fea2d88b04b32697f, CSV data row 9, explicit correct answer letter(s)=A; labelled answer text also checked when present. Question/options match after only apostrophe encoding and the old importer's lost leading A article."
+      ],
+      "rationale": "Restore the answer explicitly declared in the authored CSV instead of the old importer marking extra A-prefixed distractors correct. Preserve all stored question/answer identities and text and learner history."
+    },
+    {
+      "quizId": 5172,
+      "questionId": 88500,
+      "beforeSha256": "2fc800162544b27016f4342884606f3e9284f00184edd1493c8b09b921d21ec3",
+      "flags": {
+        "335513": true,
+        "335514": false,
+        "335515": false,
+        "335516": false
+      },
+      "evidence": [
+        "Original uploaded file quiz_packages/Q3_Stakeholders_Job_Impacts_and_Future_Readiness_converted.csv, SHA256 9715cd060c1b5cb54bbefa36deedfc16b59559a9ed1e94b82c67dc04b160baf4, CSV data row 4, explicit correct answer letter(s)=A; labelled answer text also checked when present. Question/options match after only apostrophe encoding and the old importer's lost leading A article."
+      ],
+      "rationale": "Restore the answer explicitly declared in the authored CSV instead of the old importer marking extra A-prefixed distractors correct. Preserve all stored question/answer identities and text and learner history."
+    },
+    {
+      "quizId": 5172,
+      "questionId": 88507,
+      "beforeSha256": "bafbe5acccd97d2dff7d363c19a372dd8a98de8e47795969cdb36bf80f42bf65",
+      "flags": {
+        "335541": true,
+        "335542": false,
+        "335543": false,
+        "335544": false
+      },
+      "evidence": [
+        "Original uploaded file quiz_packages/Q3_Stakeholders_Job_Impacts_and_Future_Readiness_converted.csv, SHA256 9715cd060c1b5cb54bbefa36deedfc16b59559a9ed1e94b82c67dc04b160baf4, CSV data row 11, explicit correct answer letter(s)=A; labelled answer text also checked when present. Question/options match after only apostrophe encoding and the old importer's lost leading A article."
+      ],
+      "rationale": "Restore the answer explicitly declared in the authored CSV instead of the old importer marking extra A-prefixed distractors correct. Preserve all stored question/answer identities and text and learner history."
+    },
+    {
+      "quizId": 5173,
+      "questionId": 88521,
+      "beforeSha256": "0be130d2d8c5d734c0bde5cdd47f175641427ef881b98c631877df52249f1467",
+      "flags": {
+        "335597": true,
+        "335598": false,
+        "335599": false,
+        "335600": false
+      },
+      "evidence": [
+        "Original uploaded file quiz_packages/Lecture_14_Quiz_converted.csv, SHA256 95e764316f581b396289a0c505349daf46b87034a1fc473c7e1bce1f4012e08f, CSV data row 5, explicit correct answer letter(s)=A; labelled answer text also checked when present. Question/options match after only apostrophe encoding and the old importer's lost leading A article."
+      ],
+      "rationale": "Restore the answer explicitly declared in the authored CSV instead of the old importer marking extra A-prefixed distractors correct. Preserve all stored question/answer identities and text and learner history."
+    },
+    {
+      "quizId": 5220,
+      "questionId": 89150,
+      "beforeSha256": "b4cf062cbce35786faa7f6677b2879519adbb33af732b9eaa9ad14e72af2f667",
+      "flags": {
+        "338113": true,
+        "338114": false,
+        "338115": false,
+        "338116": false
+      },
+      "evidence": [
+        "Original uploaded file quiz_packages/AI_Assisted_Learning_Part_3__Benefits_Eligibility_Validation_Realization_Planning_and_Reporting_-_Template_Format.csv, SHA256 82a2c87959ab3d6f95000ad107590e8621c6027e408f679c4bbc261aa944c563, CSV data row 14, explicit correct answer letter(s)=A; labelled answer text also checked when present. Question/options match after only apostrophe encoding and the old importer's lost leading A article."
+      ],
+      "rationale": "Restore the answer explicitly declared in the authored CSV instead of the old importer marking extra A-prefixed distractors correct. Preserve all stored question/answer identities and text and learner history."
+    },
+    {
+      "quizId": 5224,
+      "questionId": 89211,
+      "beforeSha256": "8131a151594f2e7e16ce0f7d06efd1eb8b86ca1ff795240fc3d2b516b8bd0116",
+      "flags": {
+        "338357": true,
+        "338358": false,
+        "338359": false,
+        "338360": false
+      },
+      "evidence": [
+        "Original uploaded file quiz_packages/AI_Assisted_Learning_-_Part_1_-_Portfolio_Delivery_Review__Governance_Fundamentals_-_Template_Format.csv, SHA256 c18fac8047b57bab6b028b290bc86ff5dcb57295d8b31b7c7fcd600e538f76fc, CSV data row 15, explicit correct answer letter(s)=A; labelled answer text also checked when present. Question/options match after only apostrophe encoding and the old importer's lost leading A article."
+      ],
+      "rationale": "Restore the answer explicitly declared in the authored CSV instead of the old importer marking extra A-prefixed distractors correct. Preserve all stored question/answer identities and text and learner history."
+    },
+    {
+      "quizId": 5226,
+      "questionId": 89231,
+      "beforeSha256": "c231d1b35edb3ff92169bd8d09bff7608254d831fe02fd5db83675ece0f4ba48",
+      "flags": {
+        "338437": true,
+        "338438": false,
+        "338439": false,
+        "338440": false
+      },
+      "evidence": [
+        "Original uploaded file quiz_packages/AI_Assisted_Learning_-_Part_3_-_The_Evolving_PfMO__Governance_Application_-_Template_Format.csv, SHA256 0cf2d9c49ada84b39bb81385ea483e4ac1654bf65c13561d797a569471603fae, CSV data row 5, explicit correct answer letter(s)=A; labelled answer text also checked when present. Question/options match after only apostrophe encoding and the old importer's lost leading A article."
+      ],
+      "rationale": "Restore the answer explicitly declared in the authored CSV instead of the old importer marking extra A-prefixed distractors correct. Preserve all stored question/answer identities and text and learner history."
+    },
+    {
+      "quizId": 5355,
+      "questionId": 91464,
+      "beforeSha256": "3b48f99d0688285ed9b3e5b899b886c723d0af3b93049d67d38707a8e26ec33b",
+      "flags": {
+        "351969": true,
+        "351970": false,
+        "351971": false,
+        "351972": false
+      },
+      "evidence": [
+        "Published quiz 4281, question 73570: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4282, question 73580: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees."
+      ],
+      "rationale": "Restore the existing published key; the old importer incorrectly consumed leading A as an option marker and marked distractors correct. Preserve every original ID, text, type, point, order and learner record."
+    },
+    {
+      "quizId": 5355,
+      "questionId": 91469,
+      "beforeSha256": "bcf5e428da97c959be578e89a4bacd472f2087f6d1310886527a03062118e124",
+      "flags": {
+        "351989": true,
+        "351990": false,
+        "351991": false,
+        "351992": false
+      },
+      "evidence": [
+        "Published quiz 4281, question 73575: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4282, question 73585: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees."
+      ],
+      "rationale": "Restore the existing published key; the old importer incorrectly consumed leading A as an option marker and marked distractors correct. Preserve every original ID, text, type, point, order and learner record."
+    },
+    {
+      "quizId": 5356,
+      "questionId": 91474,
+      "beforeSha256": "3ae830568d16001f2304432f1829ac1d36d661b4cf9267b0f74430e96b1c2271",
+      "flags": {
+        "352009": true,
+        "352010": false,
+        "352011": false,
+        "352012": false
+      },
+      "evidence": [
+        "Published quiz 4281, question 73570: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4282, question 73580: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees."
+      ],
+      "rationale": "Restore the existing published key; the old importer incorrectly consumed leading A as an option marker and marked distractors correct. Preserve every original ID, text, type, point, order and learner record."
+    },
+    {
+      "quizId": 5356,
+      "questionId": 91479,
+      "beforeSha256": "50cddef4a82e808c6b9f79fa3971fd7a55d73f64b37081f130497fac67d43d17",
+      "flags": {
+        "352029": true,
+        "352030": false,
+        "352031": false,
+        "352032": false
+      },
+      "evidence": [
+        "Published quiz 4281, question 73575: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees.",
+        "Published quiz 4282, question 73585: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees."
+      ],
+      "rationale": "Restore the existing published key; the old importer incorrectly consumed leading A as an option marker and marked distractors correct. Preserve every original ID, text, type, point, order and learner record."
+    },
+    {
+      "quizId": 5358,
+      "questionId": 91502,
+      "beforeSha256": "f06ea9f001be22af843d6cf7ecf169f1d4b349d4e79d18cc779a4f19a16f2814",
+      "flags": {
+        "352121": true,
+        "352122": false,
+        "352123": false,
+        "352124": false
+      },
+      "evidence": [
+        "Published quiz 4284, question 73608: exact question/type/image; options match after whitespace/case normalization and ignoring only a leading 'A ' article lost by the old importer; every matching published key agrees."
+      ],
+      "rationale": "Restore the existing published key; the old importer incorrectly consumed leading A as an option marker and marked distractors correct. Preserve every original ID, text, type, point, order and learner record."
+    },
+    {
+      "quizId": 5360,
+      "questionId": 91533,
+      "beforeSha256": "37c95d5c02c632111caa0f1867c30b6392bd2a35274656bb1c20e88438014bc2",
+      "flags": {
+        "352245": true,
+        "352246": false,
+        "352247": false,
+        "352248": false
+      },
+      "evidence": [
+        "Original uploaded file quiz_packages/AI-Assisted_learning_2_Theory_of_Constraints_Critical_Chain_and_Portfolio_Flow_TEMPLATE.csv, SHA256 536974eaecccf57063f80557c01acbe8d539a8ca78c322ba0a2b88ce6e3f82f4, CSV data row 7, explicit correct answer letter(s)=A; labelled answer text also checked when present. Question/options match after only apostrophe encoding and the old importer's lost leading A article."
+      ],
+      "rationale": "Restore the answer explicitly declared in the authored CSV instead of the old importer marking extra A-prefixed distractors correct. Preserve all stored question/answer identities and text and learner history."
+    },
+    {
+      "quizId": 5434,
+      "questionId": 92475,
+      "beforeSha256": "60b6510ecff2fc83ca061364b863566704f417fcf0ab2c41d4e14728ba74ec8d",
+      "flags": {
+        "356013": true,
+        "356014": false,
+        "356015": false,
+        "356016": false
+      },
+      "evidence": [
+        "Original uploaded file quiz_packages/AI_Assisted_Learning_Part_3_Benefits_Eligibility_Validation_Realization_Planning_and_Reporting_TEMPLATE.csv, SHA256 6568bd1474cc0ae1eb315550edab7f25156ed818a80c5126c8c01d59485be5d0, CSV data row 14, explicit correct answer letter(s)=A; labelled answer text also checked when present. Question/options match after only apostrophe encoding and the old importer's lost leading A article."
+      ],
+      "rationale": "Restore the answer explicitly declared in the authored CSV instead of the old importer marking extra A-prefixed distractors correct. Preserve all stored question/answer identities and text and learner history."
+    },
+    {
+      "quizId": 5438,
+      "questionId": 92536,
+      "beforeSha256": "8c8b3ad423907f652c7f503cc0ee5e4775eafcb7e24113a4a3baacbbaea97fb3",
+      "flags": {
+        "356257": true,
+        "356258": false,
+        "356259": false,
+        "356260": false
+      },
+      "evidence": [
+        "Original uploaded file quiz_packages/AI_Assisted_Learning_Part_1_Portfolio_Delivery_Review_and_Governance_Fundamentals_TEMPLATE_1.csv, SHA256 c18fac8047b57bab6b028b290bc86ff5dcb57295d8b31b7c7fcd600e538f76fc, CSV data row 15, explicit correct answer letter(s)=A; labelled answer text also checked when present. Question/options match after only apostrophe encoding and the old importer's lost leading A article."
+      ],
+      "rationale": "Restore the answer explicitly declared in the authored CSV instead of the old importer marking extra A-prefixed distractors correct. Preserve all stored question/answer identities and text and learner history."
+    },
+    {
+      "quizId": 5440,
+      "questionId": 92556,
+      "beforeSha256": "1f147919e7f16860b760bb2badbf30cd63aae1e80fb80666a8f1992959dfab7a",
+      "flags": {
+        "356337": true,
+        "356338": false,
+        "356339": false,
+        "356340": false
+      },
+      "evidence": [
+        "Original uploaded file quiz_packages/AI_Assisted_Learning_Part_3_The_Evolving_PfMO_and_Governance_Application_TEMPLATE_1.csv, SHA256 0cf2d9c49ada84b39bb81385ea483e4ac1654bf65c13561d797a569471603fae, CSV data row 5, explicit correct answer letter(s)=A; labelled answer text also checked when present. Question/options match after only apostrophe encoding and the old importer's lost leading A article."
+      ],
+      "rationale": "Restore the answer explicitly declared in the authored CSV instead of the old importer marking extra A-prefixed distractors correct. Preserve all stored question/answer identities and text and learner history."
+    },
+    {
+      "quizId": 5447,
+      "questionId": 92629,
+      "beforeSha256": "42ba24d244e92b35718ae543322d0d26259d2b23bd33a8aa97447e00236a5856",
+      "flags": {
+        "356629": true,
+        "356630": false,
+        "356631": false,
+        "356632": false
+      },
+      "evidence": [
+        "Original uploaded file quiz_packages/AI_Assisted_Learning_Part_1_Quiz_Template.csv, SHA256 f28956516c3d211f5f764bf2ce545645b2f9f5a3fee40349d5423b798cd9fbe8, CSV data row 3, explicit correct answer letter(s)=A; labelled answer text also checked when present. Question/options match after only apostrophe encoding and the old importer's lost leading A article."
+      ],
+      "rationale": "Restore the answer explicitly declared in the authored CSV instead of the old importer marking extra A-prefixed distractors correct. Preserve all stored question/answer identities and text and learner history."
+    },
+    {
+      "quizId": 5447,
+      "questionId": 92640,
+      "beforeSha256": "b36537e22e391f18ce1bfad7e4d0b9b5bda0ad84eac1ec399ce5830ba55e4594",
+      "flags": {
+        "356673": true,
+        "356674": false,
+        "356675": false,
+        "356676": false
+      },
+      "evidence": [
+        "Original uploaded file quiz_packages/AI_Assisted_Learning_Part_1_Quiz_Template.csv, SHA256 f28956516c3d211f5f764bf2ce545645b2f9f5a3fee40349d5423b798cd9fbe8, CSV data row 14, explicit correct answer letter(s)=A; labelled answer text also checked when present. Question/options match after only apostrophe encoding and the old importer's lost leading A article."
+      ],
+      "rationale": "Restore the answer explicitly declared in the authored CSV instead of the old importer marking extra A-prefixed distractors correct. Preserve all stored question/answer identities and text and learner history."
+    },
+    {
+      "quizId": 5448,
+      "questionId": 92657,
+      "beforeSha256": "8ab63c0497ee91d183b8b300034f0847d5fe100d3fd6f7ad604085e09bf6def4",
+      "flags": {
+        "356741": true,
+        "356742": false,
+        "356743": false,
+        "356744": false
+      },
+      "evidence": [
+        "Original uploaded file quiz_packages/AI_Assisted_Learning_Part_2_Quiz_Template.csv, SHA256 20c5e75e2395655ea917c8a7a7090d21863dcdac942cea7c9d79ded8b74c03e6, CSV data row 11, explicit correct answer letter(s)=A; labelled answer text also checked when present. Question/options match after only apostrophe encoding and the old importer's lost leading A article."
+      ],
+      "rationale": "Restore the answer explicitly declared in the authored CSV instead of the old importer marking extra A-prefixed distractors correct. Preserve all stored question/answer identities and text and learner history."
+    },
+    {
+      "quizId": 5573,
+      "questionId": 96002,
+      "beforeSha256": "ccfdb9b80fa011bc85b10eab58dd50cc9b6bcdf9de10e1c917e9a42197a3bc8a",
+      "flags": {
+        "370424": true,
+        "370425": false,
+        "370426": false,
+        "370427": false
+      },
+      "evidence": [
+        "Original uploaded file quiz_packages/NEW_Q1_-_Why_is_CRM_Important.csv, SHA256 83f4b05f35fbf38e6b6cb3833018e149a301282579dc2830603c76661b0433ec, CSV data row 2, explicit correct answer letter(s)=A; labelled answer text also checked when present. Question/options match after only apostrophe encoding and the old importer's lost leading A article."
+      ],
+      "rationale": "Restore the answer explicitly declared in the authored CSV instead of the old importer marking extra A-prefixed distractors correct. Preserve all stored question/answer identities and text and learner history."
+    },
+    {
+      "quizId": 5594,
+      "questionId": 96213,
+      "beforeSha256": "b0f2533490787b7887cf40feed517ffc38765809db99cd20dffb99d13f68df06",
+      "flags": {
+        "371268": true,
+        "371269": false,
+        "371270": false,
+        "371271": false
+      },
+      "evidence": [
+        "Original uploaded file quiz_packages/AI_Assisted_Learning_Part_3_Quiz_Template.csv, SHA256 5d8970de0cfd76a6abb6eeea470996c5eb5d7b9f350a695a0923ecca5d27bc6e, CSV data row 3, explicit correct answer letter(s)=A; labelled answer text also checked when present. Question/options match after only apostrophe encoding and the old importer's lost leading A article."
+      ],
+      "rationale": "Restore the answer explicitly declared in the authored CSV instead of the old importer marking extra A-prefixed distractors correct. Preserve all stored question/answer identities and text and learner history."
+    },
+    {
+      "quizId": 5594,
+      "questionId": 96215,
+      "beforeSha256": "ec57168a6778db1c6f3503d6c4c40d8cfe0562c128beea0592652a753edcb54f",
+      "flags": {
+        "371276": true,
+        "371277": false,
+        "371278": false,
+        "371279": false
+      },
+      "evidence": [
+        "Original uploaded file quiz_packages/AI_Assisted_Learning_Part_3_Quiz_Template.csv, SHA256 5d8970de0cfd76a6abb6eeea470996c5eb5d7b9f350a695a0923ecca5d27bc6e, CSV data row 5, explicit correct answer letter(s)=A; labelled answer text also checked when present. Question/options match after only apostrophe encoding and the old importer's lost leading A article."
+      ],
+      "rationale": "Restore the answer explicitly declared in the authored CSV instead of the old importer marking extra A-prefixed distractors correct. Preserve all stored question/answer identities and text and learner history."
+    },
+    {
+      "quizId": 5594,
+      "questionId": 96223,
+      "beforeSha256": "9d6570892dcba38cf1722c3087a6566795419c9ab0726955ab278c5a6dc3af7e",
+      "flags": {
+        "371308": true,
+        "371309": false,
+        "371310": false,
+        "371311": false
+      },
+      "evidence": [
+        "Original uploaded file quiz_packages/AI_Assisted_Learning_Part_3_Quiz_Template.csv, SHA256 5d8970de0cfd76a6abb6eeea470996c5eb5d7b9f350a695a0923ecca5d27bc6e, CSV data row 13, explicit correct answer letter(s)=A; labelled answer text also checked when present. Question/options match after only apostrophe encoding and the old importer's lost leading A article."
+      ],
+      "rationale": "Restore the answer explicitly declared in the authored CSV instead of the old importer marking extra A-prefixed distractors correct. Preserve all stored question/answer identities and text and learner history."
+    },
+    {
+      "quizId": 5630,
+      "questionId": 96621,
+      "beforeSha256": "359ffc54ae006d778863863928a7cfabba878b32bc2031d45769a23134514731",
+      "flags": {
+        "375204": true,
+        "375205": false,
+        "375206": false,
+        "375207": false
+      },
+      "evidence": [
+        "Original uploaded file quiz_packages/AI-Assisted_Learning_-_Part_2_Chaos_to_Clarity_Marketing_Planning_Explained_.csv, SHA256 4650cff3123b1ce84cc7baa3b720e5cdc104ae732aaccc62918f1e6e7a60396f, CSV data row 10, explicit correct answer letter(s)=A; labelled answer text also checked when present. Question/options match after only apostrophe encoding and the old importer's lost leading A article."
+      ],
+      "rationale": "Restore the answer explicitly declared in the authored CSV instead of the old importer marking extra A-prefixed distractors correct. Preserve all stored question/answer identities and text and learner history."
+    }
+  ]
+}
