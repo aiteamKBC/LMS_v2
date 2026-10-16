@@ -47,7 +47,8 @@ export function buildPlanModules(subjects: (Subject | PlanSubjectSummary)[], dat
     // only used them for legacy subjects, dropping direct recorded hours and
     // canonical activity/KSB values for selected current modules.
     const summary = initialSummary || data.planSubjects?.find(item =>
-      item.id === subject.id || (moduleId != null && item.moduleIds.includes(moduleId)));
+      item.id === subject.id || (moduleId != null && item.moduleIds.includes(moduleId)
+        && item.id.startsWith('legacy:') === subject.id.startsWith('legacy:')));
     const detail = data.modules.find(module => module.id === moduleId);
     const sessions = data.sessions.filter(session => session.moduleId === moduleId).map(session => {
       const matches = activities.filter(activity => Date.parse(activity.native?.sessionDateTimeUtc || '') === Date.parse(session.start)

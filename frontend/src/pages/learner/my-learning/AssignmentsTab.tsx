@@ -1,3 +1,4 @@
+import { assignmentMonth } from './assignmentMonth';
 import { readLearnerJson } from '@/api/learnerRead';
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
@@ -9,7 +10,7 @@ import { PageTabs } from '@/components/ui/PageTabs';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import type { LearnerDetail } from '@/api/learnerDetail';
 import { completedComponentIds, hasComponentContent, isMonthlyAssignment } from '@/utils/learnerJourney';
-import { useSubjectMetadata } from './SubjectWorkspace';
+import { useSubjectMetadata } from './useSubjectLearningData';
 
 type Assignment = {
   id: string; activityId: string; title: string; moduleTitle: string; status: string;
@@ -17,13 +18,6 @@ type Assignment = {
   submissionOrigin?: string;
 };
 
-export function assignmentMonth(row: Pick<Assignment, 'month' | 'dateCompleted' | 'submittedAt'>): string {
-  for (const date of [row.month, row.dateCompleted, row.submittedAt]) {
-    const match = /^(\d{4}-(?:0[1-9]|1[0-2]))(?:$|-|T)/.exec(date || '');
-    if (match) return match[1];
-  }
-  return '';
-}
 
 const statusLabels: Record<string, string> = {
   todo: 'To do', draft: 'Draft', submitted_for_tutor_review: 'Submitted for review',

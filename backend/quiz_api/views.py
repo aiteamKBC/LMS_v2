@@ -28,6 +28,7 @@ from django.views.decorators.http import require_http_methods
 from .models import QuizAnswer, QuizPackage, QuizQuestion
 from .question_images import validate_question_image
 from .answer_keys import choice_key_error, choice_label, quiz_publication_error
+from .key_readiness import quiz_requires_valid_key
 from learner_api.models import LearnerProfile
 
 logger = logging.getLogger(__name__)
@@ -3815,6 +3816,12 @@ def quiz_course_links(request, pk):
                 return JsonResponse({"error": f"Select a delivery week for {module_name} before saving."}, status=400)
 
         with transaction.atomic():
+            quiz = QuizPackage.objects.select_for_update().get(pk=pk)
+            if selected_ids and quiz.package_type != "scorm":
+                active = QuizQuestion.objects.filter(quiz_id=quiz.id, is_archived=False).prefetch_related("answers")
+                error = quiz_publication_error([_question_key_payload(question) for question in active])
+                if error:
+                    return JsonResponse({"error": error}, status=400)
             with connection.cursor() as cursor:
                 cursor.execute("delete from curriculum.quiz_course_links where quiz_id = %s", [quiz.id])
                 for assignment in selected_assignments:
@@ -4395,7 +4402,7 @@ def add_question_to_quiz(request, question_id):
         except QuizPackage.DoesNotExist:
             return JsonResponse({"error": "Target quiz not found"}, status=404)
 
-        if target_quiz.status == "published":
+        if quiz_requires_valid_key(target_quiz):
             existing = QuizQuestion.objects.filter(quiz_id=target_quiz.id, is_archived=False).prefetch_related("answers")
             candidate = _question_key_payload(source_question)
             candidate["isArchived"] = False
@@ -4485,6 +4492,7 @@ def _quiz_questions_locked(request, pk):
             except ValueError as exc:
                 return JsonResponse({"error": f"Question {index}: {exc}"}, status=400)
 
+    requires_key = quiz_requires_valid_key(quiz)
     existing_questions = {
         question.id: question
         for question in QuizQuestion.objects.filter(quiz_id=quiz.id).prefetch_related("answers")
@@ -4501,7 +4509,7 @@ def _quiz_questions_locked(request, pk):
         error = choice_key_error(
             question.get("questionType") or (existing.question_type if existing else quiz.default_question_type),
             [answer for answer in answers if str(answer.get("text") or "").strip()],
-            strict_duplicates=True, require_key=quiz.status == "published" and not question.get("isArchived", getattr(existing, "is_archived", False)),
+            strict_duplicates=True, require_key=requires_key and not question.get("isArchived", getattr(existing, "is_archived", False)),
         )
         if error:
             return JsonResponse({"error": f"Question {index}: {error}"}, status=400)
@@ -4511,7 +4519,7 @@ def _quiz_questions_locked(request, pk):
             "error": "Refusing to replace a multi-question quiz with one question. Reload the editor and try again.",
         }, status=409)
 
-    if quiz.status == "published":
+    if requires_key:
         effective = {qid: _question_key_payload(q) for qid, q in existing_questions.items()}
         submitted = []
         for question in questions:

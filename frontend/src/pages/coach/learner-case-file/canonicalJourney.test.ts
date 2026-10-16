@@ -29,8 +29,8 @@ describe('canonical Coach Programme Journey', () => {
     expect(coach).toHaveLength(4);
     expect(coach.find(m => m.id === 'legacy:10')!.weeks).toHaveLength(2);
     const states = buildCaseFileActivityStates(coach, detail, data);
-    expect(coach.reduce((sum, m) => sum + moduleActivitySummary(m, states).total, 0)).toBe(learner.activityCount);
-    expect(coach.reduce((sum, m) => sum + moduleActivitySummary(m, states).completed, 0)).toBe(learner.completedActivityCount);
+    expect(coach.filter(m => m.id?.startsWith('current:')).reduce((sum, m) => sum + moduleActivitySummary(m, states).total, 0)).toBe(learner.activityCount);
+    expect(coach.filter(m => m.id?.startsWith('current:')).reduce((sum, m) => sum + moduleActivitySummary(m, states).completed, 0)).toBe(learner.completedActivityCount);
   });
 
   it('deduplicates subject and activity IDs at the shared source before counts and OTJH', () => {

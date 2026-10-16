@@ -2036,6 +2036,11 @@ def build_learner_detail(source, pk, *, compact=False, read_only=False, quiz_vie
     # potentially huge curriculum-revision scan cannot change their outcome.
     retain_quiz_progress(detail, completed_only=compact)
 
+    # Attendance affects activity completion only; the hours snapshot above
+    # and every stored progress record remain unchanged.
+    from .teams_attendance import annotate_attendance_completion
+    detail['components'] = annotate_attendance_completion(detail['components'], learner_profile)
+
     if compact:
         # Nullable optional fields dominate the JSON for large plans. Omission
         # has the same meaning to consumers; keep false, zero and empty strings.
