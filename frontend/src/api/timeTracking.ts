@@ -43,6 +43,12 @@ export async function startTimeTracking(
 /** Re-anchor a restored signed session without recreating it or its observations. */
 export async function resumeTimeTracking(session: TimeTrackingSession, activityKind: TrackingActivityKind, activityId: string) {
   if (!session.rewardTracking) return session;
+  await synchronizeTimeTrackingClock(session, activityKind, activityId);
+  return session;
+}
+
+/** Confirm the signed session's current server offset without replacing it. */
+export async function synchronizeTimeTrackingClock(session: TimeTrackingSession, activityKind: TrackingActivityKind, activityId: string): Promise<number> {
   const response = await learningFetch('/learner_api/time-tracking/clock/', {
     method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
     body: JSON.stringify({ trackingToken: session.trackingToken, activityKind, activityId }),
@@ -53,5 +59,5 @@ export async function resumeTimeTracking(session: TimeTrackingSession, activityK
     throw new Error('The LMS did not confirm the timing session. Your draft is kept.');
   }
   synchronizeTrackingClock(session, data.elapsedMilliseconds);
-  return session;
+  return data.elapsedMilliseconds;
 }
