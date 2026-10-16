@@ -234,7 +234,9 @@ export function QuizzesTab({ real, loading, loadError, kind, id, canTake, naviga
 
   const rows = useMemo(() => quizzes.map((q) => {
     const attempts = q.attempts;
-    const best = attempts.length ? attempts.reduce((b, a) => (gradePercent(a.grade) > gradePercent(b.grade) ? a : b)) : null;
+    const best = attempts.length ? attempts.reduce((b, a) => (
+      (a.grade != null && b.grade == null) || gradePercent(a.grade) > gradePercent(b.grade) ? a : b
+    )) : null;
     const status: QuizFilter = !best ? 'todo'
       : attempts.some((attempt) => attempt.passed === true) ? 'completed'
       : attempts.some((attempt) => attempt.passed === false) ? 'failed' : 'unavailable';
