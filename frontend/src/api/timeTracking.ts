@@ -22,7 +22,7 @@ export async function startTimeTracking(
     `/learner_api/time-tracking/start/?kind=${kind}&learnerId=${encodeURIComponent(learnerId)}`,
     {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
       body: JSON.stringify({ activityKind, activityId: String(activityId), countingMode }),
     },
   );
@@ -44,7 +44,7 @@ export async function startTimeTracking(
 export async function resumeTimeTracking(session: TimeTrackingSession, activityKind: TrackingActivityKind, activityId: string) {
   if (!session.rewardTracking) return session;
   const response = await learningFetch('/learner_api/time-tracking/clock/', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
     body: JSON.stringify({ trackingToken: session.trackingToken, activityKind, activityId }),
   });
   const data = await response.json();
