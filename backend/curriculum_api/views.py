@@ -31054,15 +31054,22 @@ def curriculum_cohort_detail(request, identifier):
     # what it was -- silently, because nothing here compared the two.
     expected_revision = requested_expected_revision(request, payload)
     # One transaction around the check and the write; see lock_record_row.
-    with transaction.atomic():
-        if expected_revision:
-            lock_record_row(COHORT_AUTHORING_DETAILS_TABLE, 'cohort_id = %s', [cohort_id])
-            current_revision = cohort_record_revision(cohort_id)
-            if current_revision != expected_revision:
-                return record_conflict_response(
-                    expected_revision, current_revision, cohort=cohort_conflict_record(cohort_id),
-                )
-        update_cohort_fields(cohort_id, updates, allow_null_columns=tuple(nullable))
+    from .cohort_rename import CohortRenameConflict, propagate_cohort_name
+    try:
+        with transaction.atomic():
+            if expected_revision or 'cohort_name' in updates:
+                lock_record_row(COHORT_AUTHORING_DETAILS_TABLE, 'cohort_id = %s', [cohort_id])
+            if expected_revision:
+                current_revision = cohort_record_revision(cohort_id)
+                if current_revision != expected_revision:
+                    return record_conflict_response(
+                        expected_revision, current_revision, cohort=cohort_conflict_record(cohort_id),
+                    )
+            if 'cohort_name' in updates:
+                propagate_cohort_name(fetch_cohort_row(cohort_id), updates['cohort_name'])
+            update_cohort_fields(cohort_id, updates, allow_null_columns=tuple(nullable))
+    except CohortRenameConflict as exc:
+        return json_error(str(exc), status=409)
     invalidate_curriculum_cache()
     # Read after the commit, so the token handed back is the one a reader would
     # fingerprint now rather than one a rollback could take away.
