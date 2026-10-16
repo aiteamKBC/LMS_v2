@@ -502,6 +502,32 @@ class AttendanceLectureTests(SimpleTestCase):
         summary = _summarize_attendance(rows)
         self.assertEqual((summary['sessions'], summary['present']), (1, 1))
 
+    def test_recorded_learner_live_attendance_needs_no_recording_and_counts_once(self):
+        for kind in ('commercial', 'apprenticeship'):
+            for watched in (False, True):
+                with self.subTest(kind=kind, watched=watched):
+                    row = register_row(source='microsoft-teams', session_id='occ-1',
+                        module_catalogue_id='mod-1', attendance_status='present',
+                        raw_attendance_status='present', effective_attendance=1)
+                    source = SimpleNamespace(id=12, email='learner@example.test', attendance_type='Recorded')
+                    progress = [{'componentId': 'recording-1', 'status': 'completed'}] if watched else []
+                    with patch('learner_api.attendance_lectures.lecture_register', return_value=[row]), \
+                         patch('learner_api.attendance_lectures.read_legacy_metadata', return_value=({}, [])), \
+                         patch('learner_api.attendance_lectures.read_native_components', return_value=([], progress)), \
+                         patch('learner_api.attendance_lectures.read_assigned_modules', return_value=[]), \
+                         patch('learner_api.attendance_mode.read_mode', return_value={
+                             'mode': 'lazy', 'requestedMode': None, 'updatedAt': None}), \
+                         patch('learner_api.attendance_lectures.connections', {'enrolment': MagicMock()}), \
+                         patch('learner_api.attendance_lectures.dict_rows', return_value=[]):
+                        result = read_workspace(source, kind)
+                    self.assertEqual(result['mode']['mode'], 'lazy')
+                    self.assertEqual((result['totals']['total'], result['totals']['attended'], result['totals']['absent']), (1, 1, 0))
+                    lecture = result['lectures'][0]
+                    self.assertEqual(lecture['status'], 'present')
+                    self.assertIsNone(lecture['catchupStatus'])
+                    self.assertIsNone(lecture['recovery'])
+                    self.assertFalse(lecture['canReportAbsence'])
+
     def test_completed_teams_catchup_is_shown_as_covered(self):
         row = register_row(source='microsoft-teams', session_id='occ-1', module_catalogue_id='mod-1',
                            attendance_status='absent', catchup_completed=True, effective_attendance=1)

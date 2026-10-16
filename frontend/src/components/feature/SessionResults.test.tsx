@@ -186,11 +186,28 @@ describe('Saved session results', () => {
     expect(screen.getByLabelText('Session recording 1')).toHaveAttribute('src', '/learner_api/session-results/commercial/7/S1/artifacts/recording-1/');
   });
 
-  it('hides the Teams attendance card for a Recorded learner', async () => {
+  it.each(['commercial', 'apprenticeship'] as const)('credits live attendance for a Recorded %s learner without requiring playback', async kind => {
+    render(<MemoryRouter><SessionResults seriesId="S1" sessionNumber={1}
+      learner={{ kind, id: '7' }} attendanceType="Recorded" /></MemoryRouter>);
+    expect(await screen.findByText('Your original attendance: Present')).toBeInTheDocument();
+    expect(screen.getByText('Your live attendance counts for this session. Watching the recording is optional.')).toBeInTheDocument();
+    expect(screen.queryByText('Open attendance and report absence')).not.toBeInTheDocument();
+    expect(screen.queryByRole('tab', { name: 'attendance' })).not.toBeInTheDocument();
+    expect(screen.getByLabelText('Session recording 1')).toBeInTheDocument();
+    expect(fetchMock.mock.calls.every(([, options]) => !options?.method || options.method === 'GET')).toBe(true);
+  });
+
+  it.each(['absent', 'pending', 'review', 'made_up'])('does not claim live attendance for a Recorded learner with %s outcome', async outcome => {
+    const raw = outcome === 'made_up' ? 'absent' : outcome;
+    fetchMock.mockImplementation(() => ok({ sessions: [{ ...session, attendance: [{ ...session.attendance[0],
+      status: raw, rawStatus: raw, attendance: outcome === 'made_up' ? 1 : 0,
+      rawAttendance: 0, effectiveAttendance: outcome === 'made_up' ? 1 : 0, finalOutcome: outcome,
+    }] }] }));
     render(<MemoryRouter><SessionResults seriesId="S1" sessionNumber={1}
       learner={{ kind: 'commercial', id: '7' }} attendanceType="Recorded" /></MemoryRouter>);
     await screen.findByLabelText('Session recording 1');
     expect(screen.queryByText(/Your original attendance:/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Watching the recording is optional/)).not.toBeInTheDocument();
     expect(screen.getByRole('tab', { name: 'recordings' })).toBeInTheDocument();
   });
 
