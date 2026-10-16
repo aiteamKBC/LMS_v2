@@ -501,6 +501,7 @@ class SubjectBuilderCoverTests(SimpleTestCase):
              patch('learner_api.student_activity._effective_current_subjects', return_value=[
                  {'id': 'MOD-1', 'title': 'Renamed subject'},
              ]), \
+             patch('learner_api.previous_learning_groups.read_previous_learning_groups', return_value={}), \
              patch('learner_api.student_activity._cover_url', return_value='https://example.com/old.webp'):
             connections.__getitem__.return_value.cursor.return_value.__enter__.return_value = cursor
             response = subject_covers(RequestFactory().get('/?refs=legacy:42'), pk=132)

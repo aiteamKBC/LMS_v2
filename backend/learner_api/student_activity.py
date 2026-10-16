@@ -706,8 +706,10 @@ def subject_covers(request, pk):
             )
             covers.update(builder_covers)
             dates = read_builder_activity_dates(cur, [subject['id'] for subject in current_subjects])
+            from .previous_learning_groups import read_previous_learning_groups
+            previous_groups = read_previous_learning_groups(cur, pk, current_subjects)
         return _private({'covers': covers, 'activity_dates': dates, 'current_subjects': current_subjects,
-                         'builder_subjects': builder_subjects})
+                         'builder_subjects': builder_subjects, 'previous_learning_groups': previous_groups})
     except DatabaseError:
         return _error('Could not load subject images.', 503)
 

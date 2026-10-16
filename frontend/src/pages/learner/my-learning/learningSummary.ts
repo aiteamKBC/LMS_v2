@@ -4,10 +4,10 @@ import { completedComponentIds, isComponentComplete, quizAttemptsFor, type Journ
 
 export type Schedule = Pick<StudentActivityItem, 'date' | 'month' | 'week_start' | 'week_end' | 'date_needs_review' | 'date_source'> & { due_timing?: string };
 export type SubjectEntry = { id: string; title: string; category: string; completed: boolean; position: number; schedule: Schedule; week?: string; legacy?: StudentActivityItem; native?: JourneyComponent; bestScorePercent?: number | null };
-export type Subject = { id: string; title: string; source: 'legacy' | 'current'; moduleId?: string | null; activities: SubjectEntry[]; recordedHistory?: boolean; catalogueProgress?: boolean; catalogueCount?: number; acceptedHours?: number };
+export type Subject = { id: string; title: string; source: 'legacy' | 'current'; moduleId?: string | null; activities: SubjectEntry[]; recordedHistory?: boolean; catalogueProgress?: boolean; catalogueCount?: number; acceptedHours?: number; previousLearningFor?: string };
 type BuilderSubject = { id: string; title: string };
 type ActivitySource = { module_id: string; group_id: number; activity_id: number };
-export type CoverMetadata = { covers: Record<string, string>; activity_dates?: Record<string, Schedule>; current_subjects?: BuilderSubject[]; builder_subjects?: Record<string, BuilderSubject>; activity_sources?: Record<string, ActivitySource> };
+export type CoverMetadata = { covers: Record<string, string>; activity_dates?: Record<string, Schedule>; current_subjects?: BuilderSubject[]; builder_subjects?: Record<string, BuilderSubject>; activity_sources?: Record<string, ActivitySource>; previous_learning_groups?: Record<string, string> };
 export type UnifiedLearningSummary = {
   subjects: Subject[];
   subjectCount: number;
@@ -69,7 +69,8 @@ export function subjectsFrom(data: LearningSummaryActivity | null, real: Learnin
     // While current-plan detail is unavailable, keep the existing historical
     // browser rather than publishing an empty duplicate of a linked course.
     if (!real && [...subjects.values()].some(previous => previous.source === 'legacy'
-      && (previous.moduleId === subject.id || builderSubjects[previous.id]?.id === subject.id))) continue;
+      && (previous.moduleId === subject.id || builderSubjects[previous.id]?.id === subject.id
+        || metadata?.previous_learning_groups?.[previous.id] === `current:${subject.id}`))) continue;
     const key = `current:${subject.id}`;
     if (!subjects.has(key)) subjects.set(key, { id: key, title: subject.title, source: 'current', activities: [] });
   }
@@ -95,7 +96,9 @@ export function subjectsFrom(data: LearningSummaryActivity | null, real: Learnin
     if ([...subjects.values()].some(subject => subject.title.trim().toLowerCase() === title.trim().toLowerCase())) continue;
     subjects.set(`unlinked:${title}`, { id: `unlinked:${title}`, title, source: 'current', activities: [] });
   }
-  return [...subjects.values()].map((subject) => ({ ...subject, title: builderSubjects[subject.id]?.title || subject.title }))
+  return [...subjects.values()].map((subject) => ({ ...subject, title: builderSubjects[subject.id]?.title || subject.title,
+    previousLearningFor: subject.source === 'legacy' && subjects.get(metadata?.previous_learning_groups?.[subject.id] || '')?.source === 'current'
+      ? metadata?.previous_learning_groups?.[subject.id] : undefined }))
     .sort((a, b) => a.title.localeCompare(b.title) || a.id.localeCompare(b.id));
 }
 
@@ -134,7 +137,7 @@ export function buildUnifiedLearningSummary(
     subjects,
     previousLearning: { activityCount: previousTotal, completedActivityCount: previousDone,
       percent: previousTotal ? Math.round(previousDone / previousTotal * 10000) / 100 : 0 },
-    subjectCount: subjects.length,
+    subjectCount: subjects.filter(subject => !subject.previousLearningFor).length,
     activityCount,
     completedActivityCount,
     percent: activityCount ? Math.round(completedActivityCount / activityCount * 10000) / 100 : 0,

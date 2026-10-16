@@ -235,6 +235,46 @@ describe('learner subject cards', () => {
   });
 });
 
+describe('explicit previous learning display groups', () => {
+  afterEach(() => vi.restoreAllMocks());
+  const metadata = { covers: {}, current_subjects: [{ id: 'M-CURRENT', title: 'Current scheduling' }],
+    previous_learning_groups: { 'legacy:1': 'current:M-CURRENT' } };
+  const real = { modules: ['Current scheduling'], components: [{ moduleId: 'M-CURRENT', module: 'Current scheduling',
+    componentId: 'CURRENT-1', component: 'Current lesson', type: 'reading', week: 'Week 1' }],
+    componentProgress: [], quizAttempts: [] } as unknown as LearnerDetail;
+
+  it('shows one course with separate current and previous progress and preserves source filters', async () => {
+    vi.spyOn(api, 'subjectRequest').mockResolvedValue(metadata);
+    render(<StudentActivityPanel data={data} real={real} kind="commercial" learnerId="132" loading={false} error={null} onRetry={vi.fn()} />);
+    const grouped = within(await screen.findByRole('region', { name: 'Current scheduling learning record' }));
+    expect(grouped.getByRole('heading', { name: 'Current learning plan' })).toBeVisible();
+    expect(grouped.getByRole('heading', { name: 'Previous learning' })).toBeVisible();
+    expect(grouped.getByRole('progressbar', { name: 'Current scheduling current plan activities progress' })).toHaveAttribute('aria-valuenow', '0');
+    expect(grouped.getByRole('progressbar', { name: 'Leadership previous learning activities progress' })).toHaveAttribute('aria-valuenow', '50');
+    expect(screen.getByText('1 subjects · 3 activities')).toBeVisible();
+    fireEvent.click(screen.getByRole('tab', { name: 'Old LMS' }));
+    expect(screen.getByRole('heading', { name: 'Leadership' })).toBeVisible();
+    expect(screen.queryByRole('heading', { name: 'Current scheduling' })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('tab', { name: 'New LMS' }));
+    expect(screen.getByRole('heading', { name: 'Current scheduling' })).toBeVisible();
+    expect(screen.queryByRole('heading', { name: 'Leadership' })).not.toBeInTheDocument();
+  });
+
+  it('keeps previous learning standalone when the current detail is unavailable', () => {
+    const summary = buildUnifiedLearningSummary(data, null, metadata);
+    expect(summary.subjectCount).toBe(1);
+    expect(summary.subjects[0].source).toBe('legacy');
+    expect(summary.subjects[0].previousLearningFor).toBeUndefined();
+    expect(summary.previousLearning?.completedActivityCount).toBe(1);
+  });
+
+  it('does not group lookalike titles without an explicit owned mapping', () => {
+    const summary = buildUnifiedLearningSummary(data, real, { covers: {} });
+    expect(summary.subjectCount).toBe(2);
+    expect(summary.subjects.every(subject => !subject.previousLearningFor)).toBe(true);
+  });
+});
+
 describe('quiz recovery', () => {
   function quizLearner(attempts: unknown[]): LearnerDetail {
     return { components: [{ isQuiz: true, component: 'Synthetic quiz', componentId: 'Q1',
