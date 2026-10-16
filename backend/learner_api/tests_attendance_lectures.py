@@ -916,7 +916,7 @@ class AttendanceModeTests(SimpleTestCase):
         send.assert_not_called()
 
 
-    def test_bulk_mode_read_is_admin_only_and_returns_saved_modes(self):
+    def test_bulk_mode_read_is_staff_or_admin_and_returns_saved_modes(self):
         from .attendance_mode import attendance_modes
         conn = MagicMock()
         saved = [{'learner_id': 12, 'mode': 'lazy', 'requested_mode': None, 'status': 'active'},
@@ -926,6 +926,8 @@ class AttendanceModeTests(SimpleTestCase):
             with patch('login.permissions.authenticate_request', return_value=SimpleNamespace(role='learner')):
                 self.assertEqual(attendance_modes(RequestFactory().get('/')).status_code, 403)
             conn.cursor.assert_not_called()
+            with patch('login.permissions.authenticate_request', return_value=SimpleNamespace(role='staff')):
+                self.assertEqual(attendance_modes(RequestFactory().get('/')).status_code, 200)
             with patch('login.permissions.authenticate_request', return_value=SimpleNamespace(role='admin')):
                 response = attendance_modes(RequestFactory().get('/'))
         self.assertEqual(response.status_code, 200)

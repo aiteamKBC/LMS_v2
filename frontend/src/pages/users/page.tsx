@@ -12,6 +12,7 @@ import { fetchEnrolmentUsers, STATUS_OPTIONS, TYPE_OPTIONS, PROGRAMME_STATUS_OPT
 import { fetchStaffUsers, type StaffUserRow } from '@/api/staffUsers';
 import { fetchProgrammes, fetchCohorts, fetchGroups } from '@/api/curriculum';
 import { listEmployers, type EmployerRow } from '@/api/employers';
+import { fetchAttendanceModes, type SavedAttendanceMode } from '@/api/attendanceLectures';
 import type { UserListRow, UsersFilter } from './types';
 import { StatusBadge, Pagination, inputClass, btnPrimary, btnSecondary } from './components/ui';
 import { SendInvitationButton } from './components/SendInvitationButton';
@@ -369,6 +370,9 @@ export default function UsersListPage() {
   const [menuPos, setMenuPos] = useState<{ top: number; right: number } | null>(null);
 
   const [rows, setRows] = useState<DirectoryRow[]>([]);
+  // Saved attendance modes keyed by learner id; a learner with no entry is on
+  // Live Sessions. null while loading; 'failed' shows a dash, not a guess.
+  const [attendanceModes, setAttendanceModes] = useState<Record<string, SavedAttendanceMode> | 'failed' | null>(null);
   const summaryFilter = String(query.summary) as SummaryFilter;
   // The curriculum lookups behind the programme -> cohort -> group filters. They
   // come from curriculum.cohort_authoring_details, the same source the create
@@ -428,6 +432,15 @@ export default function UsersListPage() {
   const refreshInPlace = () => fetchRows(false);
 
   useEffect(load, []);
+
+  // Fetched beside the directory, not inside it: a failure only blanks this
+  // column. Reloaded after the bulk window so its changes show at once.
+  const loadAttendanceModes = () => {
+    fetchAttendanceModes()
+      .then((result) => setAttendanceModes(result.available ? result.modes : 'failed'))
+      .catch(() => setAttendanceModes('failed'));
+  };
+  useEffect(loadAttendanceModes, []);
 
   useEffect(() => setDraft(applied), [applied]);
 
@@ -799,7 +812,7 @@ export default function UsersListPage() {
             <table id="users-directory-table" className="w-full text-[13px]">
               <thead>
                 <tr className="border-b border-foreground-200/70 bg-background-100/50">
-                  {['User', 'Type', 'Email', 'Group', 'Programme', 'Cohort', 'Subscription status', 'Learning plan', 'Programme status', 'Actions'].map((h) => (
+                  {['User', 'Type', 'Email', 'Group', 'Programme', 'Cohort', 'Subscription status', 'Learning plan', 'Programme status', 'Attendance mode', 'Actions'].map((h) => (
                     <th key={h} className="text-left py-3 px-3 text-[11px] font-semibold text-foreground-500 uppercase tracking-wider whitespace-nowrap">{h}</th>
                   ))}
                 </tr>
@@ -808,9 +821,9 @@ export default function UsersListPage() {
                 {/* Skeleton rows, not a spinner in a merged cell: the table keeps
                     its column widths and height, so the header stops jumping when
                     the first page of users lands. */}
-                {loading && <TableBodySkeleton rows={6} columns={10} />}
+                {loading && <TableBodySkeleton rows={6} columns={11} />}
                 {!loading && error && (
-                  <tr><td colSpan={10} className="py-10 text-center text-[13px]">
+                  <tr><td colSpan={11} className="py-10 text-center text-[13px]">
                     <p className="text-red-600 mb-2"><AppIcon className="ri-error-warning-line mr-1.5" />{error}</p>
                     <button className={btnSecondary} onClick={load}><AppIcon className="ri-refresh-line" />Retry</button>
                   </td></tr>
@@ -926,6 +939,15 @@ export default function UsersListPage() {
                       </span>
                     </td>
                     <td className="py-2.5 px-3">{isLearner && row.programmeStatus ? <StatusBadge status={row.programmeStatus} /> : null}</td>
+                    <td className="py-2.5 px-3 whitespace-nowrap">
+                      {!isLearner || attendanceModes === 'failed'
+                        ? <span className="text-foreground-300">—</span>
+                        : attendanceModes === null
+                          ? <span className="text-foreground-300">…</span>
+                          : attendanceModes[row.id]?.mode === 'lazy'
+                            ? <span className="rounded-full border border-primary-200 bg-primary-50 px-2 py-0.5 text-[11px] font-semibold text-primary-700">Recorded</span>
+                            : <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold text-emerald-700">Live Sessions</span>}
+                    </td>
                     <td className="py-2.5 px-3 text-center">
                       {openInPlace ? (
                         <span className="flex items-center justify-center gap-2">
@@ -978,7 +1000,7 @@ export default function UsersListPage() {
                   </tr>
                   );
                 })}
-                {!loading && !error && pageRows.length === 0 && <tr><td colSpan={10} className="py-10 text-center text-[13px] text-foreground-400">{rows.length === 0 ? 'No users yet. Use “Create” to add the first learner.' : 'No users match your filters.'}</td></tr>}
+                {!loading && !error && pageRows.length === 0 && <tr><td colSpan={11} className="py-10 text-center text-[13px] text-foreground-400">{rows.length === 0 ? 'No users yet. Use “Create” to add the first learner.' : 'No users match your filters.'}</td></tr>}
               </tbody>
             </table>
           </div>
@@ -997,7 +1019,7 @@ export default function UsersListPage() {
 
       {createModalOpen && <CreateUserModal onClose={() => setCreateModalOpen(false)} onCreated={load} />}
       {importModalOpen && <ImportLearnersModal onClose={() => setImportModalOpen(false)} onImported={applyLearnerImport} />}
-      {bulkOpen && <BulkAttendanceModeModal rows={rows} onClose={() => setBulkOpen(false)} />}
+      {bulkOpen && <BulkAttendanceModeModal rows={rows} onClose={() => { setBulkOpen(false); loadAttendanceModes(); }} />}
       {createAdminOpen && <CreateStaffModal variant="admin" onClose={() => setCreateAdminOpen(false)} onCreated={load} />}
       {createTutorOpen && <CreateStaffModal variant="tutor" onClose={() => setCreateTutorOpen(false)} onCreated={load} />}
       {editStaff && <EditStaffModal row={editStaff} onClose={() => setEditStaff(null)} onSaved={applyStaffUpdate} />}

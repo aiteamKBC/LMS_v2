@@ -149,9 +149,11 @@ def attendance_mode(request, kind, learner_id):
 
 
 @require_http_methods(['GET'])
-@require_role('admin')
+@require_role('admin', 'staff')
 def attendance_modes(request):
-    """Every saved attendance mode, for the User Management bulk window.
+    """Every saved attendance mode, for the User Management directory column
+    and bulk window. Read-only, so it is open to the same staff and admin roles
+    as the directory; setting a mode directly stays admin-only.
 
     A learner with no saved row is on Live Sessions, so only saved rows are
     returned, keyed by learner id.
