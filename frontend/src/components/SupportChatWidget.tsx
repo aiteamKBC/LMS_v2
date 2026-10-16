@@ -11,7 +11,9 @@
  * site's origin in its CORS_ALLOWED_ORIGINS, or the browser blocks the call.
  */
 import { useEffect, useRef, useState } from 'react';
+import { Lottie } from 'lottie-react';
 import { useAuth } from '@/hooks/useAuth';
+import robotAnimation from '@/assets/support-robot.lottie.json';
 
 const SUPPORT_PORTAL_DEFAULT = 'https://technicalsupport.kentbusinesscollege.net';
 const SUPPORT_API_BASE = import.meta.env.VITE_SUPPORT_API_BASE || SUPPORT_PORTAL_DEFAULT;
@@ -59,6 +61,39 @@ const CHOICE_ECHO: Record<EscalationChoice, string> = {
   live_chat: "I'd like a live agent, please.",
   book_meeting: "I'd like to book a session, please.",
 };
+
+/**
+ * The launcher mascot: a waving support robot, animated with Lottie.
+ *
+ * The artwork is a licensed LottieFiles asset and is raster underneath — eight
+ * PNG layers moved by the animation rather than vector shapes — so its colours
+ * cannot be themed from here. It is used in its original palette by design; see
+ * SupportChatWidget.md for the source and licence.
+ *
+ * It floats free rather than sitting in a brand-coloured disc: the character
+ * fills a square frame with its own soft glow, and boxing it would crop it.
+ */
+function RobotMascot({ size }: { size: number }) {
+  // Honour the system's reduced-motion setting. Paused, the robot still renders
+  // — Lottie holds the first frame — so the launcher never comes up empty.
+  const [still, setStill] = useState(false);
+  useEffect(() => {
+    const query = window.matchMedia('(prefers-reduced-motion: reduce)');
+    const sync = () => setStill(query.matches);
+    sync();
+    query.addEventListener('change', sync);
+    return () => query.removeEventListener('change', sync);
+  }, []);
+  return (
+    <Lottie
+      src={robotAnimation}
+      loop={!still}
+      autoplay={!still}
+      style={{ width: size, height: size, pointerEvents: 'none' }}
+      aria-hidden="true"
+    />
+  );
+}
 
 /**
  * Friendly robot mascot. Cream face on the purple launcher, with a gold antenna
@@ -544,16 +579,14 @@ export function SupportChatWidget() {
           aria-label="Open support chat"
           className="kbc-bot-launcher"
           style={{
-            width: 62, height: 62,
-            borderRadius: '50%', border: '2px solid rgba(232,200,122,.55)',
-            background: 'linear-gradient(145deg,#4A1A72 0%,#3C1361 60%,#2E0F4D 100%)',
-            color: '#FFFDF8', cursor: 'pointer', zIndex: 2147483000,
-            boxShadow: '0 10px 30px rgba(60,19,97,.45), inset 0 1px 0 rgba(255,255,255,.14)',
+            width: 104, height: 104,
+            border: 'none', background: 'transparent',
+            cursor: 'pointer', zIndex: 2147483000,
             display: 'flex', alignItems: 'center', justifyContent: 'center',
             padding: 0, lineHeight: 1,
           }}
         >
-          <RobotFace size={34} />
+          <RobotMascot size={104} />
         </button>
       )}
 
@@ -575,22 +608,24 @@ export function SupportChatWidget() {
            pins to the right edge: its container sits at top:41% and the tab stacks
            12px above that. The tab measures 84px tall in practice, not the 52px
            minimum the stylesheet declares, so this clears 96px of tab, a 28px
-           gap and the launcher's own 62px. Measured across 1200-1920px wide. */
+           gap and the launcher's own 104px box. The mascot is drawn inset within
+           that box, so the gap reads a little wider than the arithmetic implies
+           and the offset is pulled back accordingly. Measured across 1200-1920px
+           wide, and the right edge is likewise tightened for the same inset. */
         .kbc-bot-launcher{
           position:fixed;
-          right:24px;
-          top:calc(41% - 190px);
-          transition:transform .25s cubic-bezier(.34,1.56,.64,1), box-shadow .25s ease;
+          right:12px;
+          top:calc(41% - 210px);
+          transition:transform .25s cubic-bezier(.34,1.56,.64,1);
         }
         /* Under 1150px the page drops that tab into normal flow, so the anchor is
            gone — fall back to the ordinary bottom-right corner. */
         @media (max-width:1150px){
           .kbc-bot-launcher{top:auto;bottom:24px}
         }
-        .kbc-bot-launcher:hover{
-          transform:translateY(-3px) scale(1.06);
-          box-shadow:0 14px 34px rgba(60,19,97,.52), inset 0 1px 0 rgba(255,255,255,.18);
-        }
+        /* No shadow on hover: the button is transparent, so a shadow would draw
+           a square behind a character that has none. Scale alone reads as lift. */
+        .kbc-bot-launcher:hover{transform:translateY(-3px) scale(1.06)}
         .kbc-bot-launcher:active{transform:translateY(-1px) scale(.98)}
 
         @media (prefers-reduced-motion:reduce){

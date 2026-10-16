@@ -14,9 +14,44 @@ learner is.
 | File | What it does |
 | --- | --- |
 | `frontend/src/components/SupportChatWidget.tsx` | The widget: launcher, chat panel, and the calls to the support API |
+| `frontend/src/assets/support-robot.lottie.json` | The launcher mascot's animation (see **The mascot** below) |
 | `frontend/src/pages/learner/home/page.tsx` | Mounts the widget (two lines) |
 | `backend/login/support_sso.py` | Issues a short-lived signed token identifying the signed-in learner |
 | `backend/login/urls.py` | Routes `login_api/support/authorize/` to that endpoint |
+
+## The mascot
+
+The launcher is a waving support robot, played with Lottie.
+
+| | |
+| --- | --- |
+| Source | LottieFiles public animation `7cd2dc17-51bb-40a1-9efb-b4870cabc98c`, "chatbot waving" |
+| Licence | Lottie Simple License — commercial use permitted, no attribution required |
+| Dependency | `lottie-react` ^3.1.2 (MIT) |
+| File | 235 KB JSON, 800×800, 194 frames at 30fps |
+
+**Its colours cannot be themed.** The artwork is raster, not vector: eight PNG
+layers (eyes, mouth, both arms, head, body, thruster glow) that the animation
+moves around. There are no shape fills in the JSON to recolour, so the robot
+keeps its original blue-and-white palette rather than the college purple. Giving
+it KBC colours would mean either repainting the eight PNGs or commissioning a
+vector mascot — a design job, not a code change.
+
+The licence covers use, not ownership. A mascot that belongs to the college
+outright still needs an original commissioned design.
+
+Two consequences worth knowing:
+
+- **The launcher is a transparent button, not a purple disc.** The character
+  fills a 104px square with its own glow; boxing it in a circle would crop it.
+  That is also why hover drops the drop-shadow and scales instead.
+- **The animation uses Lottie expressions**, which the engine evaluates with
+  `eval`. The app shell sets no `Content-Security-Policy`, so this is fine
+  today — but a future page-level CSP would need `'unsafe-eval'`, or the robot
+  would render frozen.
+
+The small SVG face in the chat panel's header is unchanged. It is a flat avatar
+in the brand colours and reads better at 24px than the full character would.
 
 ## Settings
 
