@@ -49,6 +49,7 @@ class QuestionImageTests(SimpleTestCase):
         request = RequestFactory().post("/quiz_api/quizzes/7/questions/", json.dumps({"questions": payload}), content_type="application/json")
         with patch.object(views, "_ensure_quiz_assessment_type_column"), \
              patch.object(QuizPackage.objects, "get", return_value=quiz), \
+             patch.object(QuizPackage.objects, "select_for_update", return_value=QuizPackage.objects), \
              patch.object(QuizPackage, "save"), patch.object(QuizPackage, "refresh_from_db"), \
              patch.object(views.QuizQuestion, "objects", question_manager), \
              patch.object(views.QuizAnswer.objects, "create") as answer_create, \

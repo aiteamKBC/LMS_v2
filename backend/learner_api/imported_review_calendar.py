@@ -5,7 +5,14 @@ from coach_api.review_sources import load_imported_links
 from .review_history import _review_rows, _sections_by_review, _serialize_review
 
 
-def imported_events_for_learner(source, profile, aptem_id, records, *, month=None):
+def imported_events_for_learner(source, profile, aptem_id, records, *, month=None, include_sections=True,
+                                dates_only=False, compact_bookings=False):
+    """``include_sections=False`` leaves ``importedReview`` without section text.
+
+    ``dates_only`` returns the same occurrences with their identity, title,
+    status and dates, but without the review history fields (``importedReview``,
+    review type and reviewer), so only each review row's id is read.
+    """
     from coach_api.views import fetch_aptem_review_events, overlay_calendar_record
 
     if profile is None:
@@ -41,21 +48,31 @@ def imported_events_for_learner(source, profile, aptem_id, records, *, month=Non
         event["enrolmentId"] = str(source.pk)
         event["learnerType"] = getattr(source, "learner_type", "") or getattr(profile, "learner_type", "")
     with connection.cursor() as cursor:
-        rows = _review_rows(cursor, profile.id, types)
-        sections = _sections_by_review(cursor, [row["id"] for row in rows])
-    # Match the Coach/history presentation. The shared helper enriches only
-    # source-completed reviews; local overlay completion does not opt them in.
-    history = {
-        str(row["id"]): _serialize_review(row, sections, historical_presentation=True)
-        for row in rows
-    }
-    bookings, overlays = load_imported_links(events, records=records)
+        if dates_only:
+            # The same rows as ``_review_rows``, without their review bodies.
+            cursor.execute('SELECT id FROM "Learner".reviews WHERE learner_id = %s AND review_type = ANY(%s)',
+                           [profile.id, list(types)])
+            history = {str(row[0]): None for row in cursor.fetchall()}
+        else:
+            rows = _review_rows(cursor, profile.id, types)
+            sections = _sections_by_review(cursor, [row["id"] for row in rows]) if include_sections else {}
+            # Match the Coach/history presentation. The shared helper enriches only
+            # source-completed reviews; local overlay completion does not opt them in.
+            history = {
+                str(row["id"]): _serialize_review(row, sections, historical_presentation=True)
+                for row in rows
+            }
+    compact_options = {'compact': True} if compact_bookings else {}
+    bookings, overlays = load_imported_links(events, records=records, **compact_options)
     result = []
     for event in events:
-        review = history.get(event["reviewId"])
-        if review is None:
+        if event["reviewId"] not in history:
             continue
-        item = overlay_calendar_record(event, bookings[event["eventKey"]], overlays[event["eventKey"]])
+        item = overlay_calendar_record(event, bookings[event["eventKey"]], overlays[event["eventKey"]], **compact_options)
+        if dates_only:
+            result.append(item)
+            continue
+        review = history[event["reviewId"]]
         item.update({
             "importedReview": review,
             "reviewTypeCode": "mcm" if event["source"] == "mcr" else "progress_review",

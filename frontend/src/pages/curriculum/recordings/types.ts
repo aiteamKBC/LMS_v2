@@ -18,6 +18,12 @@ export interface Recording {
 export interface Lecture {
   id: string;
   moduleId: string;
+  seriesId?: string;
+  occurrenceId?: string;
+  sessionNumber?: number | null;
+  startsAt?: string | null;
+  endsAt?: string | null;
+  cancelled?: boolean;
   title: string;
   /** ISO calendar date in the viewing browser's time zone. */
   date: string;

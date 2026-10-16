@@ -341,6 +341,46 @@ class CanonicalLearningTests(unittest.TestCase):
                       'account_record_id': 271, 'email': 'learner@example.test',
                       'account_email': 'learner@example.test', 'account_aptem_id': '3582'}
 
+    def test_training_facts_keep_authoritative_hours_completion_and_lineage(self):
+        entry = {'id': 1, 'learner_id': 510, 'actual_basis': 'staff:module-progress',
+                 'actual_seconds': 1800, 'accepted': True, 'module_ref': 'M1',
+                 'feed_kind': 'attendance_confirmation', 'source_payload': {
+                     'original_source_ref': 'la:20:30',
+                     'course_display_placement': {'course_id': 20, 'section': 'introduction'}}}
+        self.query.return_value = [{'payload': entry, 'ksbs': ['K1'],
+                                    'segments': [{'id': 2}], 'sources': [],
+                                    'historical_components': []}]
+        compact = self.scope['entries_for'](self.owner, training_summary=True)
+        compact_sql, params = self.query.call_args.args
+        self.assertEqual(params, [self.owner['id']])
+        self.assertEqual(compact[0]['actual_seconds'], 1800)
+        self.assertEqual(compact[0]['actual_basis'], 'staff:module-progress')
+        self.assertTrue(self.scope['counts_as_completed'](compact[0]))
+        self.assertEqual(compact[0]['ksbs'], ['K1'])
+        self.assertEqual(compact[0]['source_payload'], entry['source_payload'])
+        self.assertNotIn('SELECT progress.*', compact_sql)
+        self.assertNotIn('to_jsonb(s) ORDER BY s.segment_order', compact_sql)
+        self.assertNotIn('to_jsonb(h) ORDER BY h.id', compact_sql)
+        self.assertIn('course_display_placement', compact_sql)
+        self.assertIn('progress.feed_kind', compact_sql)
+        legacy = self.scope['entries_for'](self.owner)
+        legacy_sql, _ = self.query.call_args.args
+        self.assertIn('SELECT progress.*', legacy_sql)
+        self.assertIn('to_jsonb(h) ORDER BY h.id', legacy_sql)
+        self.assertEqual(compact, legacy)
+
+    def test_selected_catalogue_filters_owned_courses_before_activity_read(self):
+        self.query.return_value = []
+        self.scope['source_subjects'](271, lambda items: {'activities': items},
+            owner=self.owner, records=[], include_totals=False,
+            course_ids=[20], module_ids=['M1'])
+        sql, params = self.query.call_args.args
+        self.assertEqual(params, [510, ['20'], ['M1']])
+        self.assertIn('m.learner_id=%s', sql)
+        self.assertIn('c.source_course_ref=ANY(%s)', sql)
+        self.assertIn('c.curriculum_module_ref=ANY(%s)', sql)
+        self.assertEqual(self.query.call_count, 1)
+
 
     def test_current_completion_cannot_replace_ledger_hours_or_add_submissions(self):
         stored = [

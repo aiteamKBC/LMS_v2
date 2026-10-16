@@ -63,7 +63,7 @@ function teamsJoinUrl(value: string | undefined) {
   } catch { return undefined; }
 }
 
-export function buildCalendarLectures(library: RecordingsLibrary, timeZone = TIME_ZONE_LABEL): { lectures: Lecture[]; undated: { recording: LibraryRecording; archived: boolean; programmeActive: boolean }[] } {
+export function buildCalendarLectures(library: RecordingsLibrary, timeZone = TIME_ZONE_LABEL, now = Date.now()): { lectures: Lecture[]; undated: { recording: LibraryRecording; archived: boolean; programmeActive: boolean }[] } {
   const lectures = new Map<string, Lecture>();
   const undated: { recording: LibraryRecording; archived: boolean; programmeActive: boolean }[] = [];
   const deliveries = new Map(library.deliveries.map(item => [item.moduleId, item]));
@@ -73,7 +73,6 @@ export function buildCalendarLectures(library: RecordingsLibrary, timeZone = TIM
     if (!start) continue;
     const end = dateTime(session.endsAt, timeZone);
     const delivery = deliveries.get(session.moduleId);
-    const now = Date.now();
     const starts = session.startsAt ? Date.parse(session.startsAt) : 0;
     const ends = session.endsAt ? Date.parse(session.endsAt) : starts;
     const status: RecordingStatus = session.source === 'authored' || session.status === 'planned' ? 'planned'
@@ -86,6 +85,8 @@ export function buildCalendarLectures(library: RecordingsLibrary, timeZone = TIM
     lectures.set(`${session.moduleId}:${session.occurrenceId}`, {
       id: `${session.moduleId}:${session.occurrenceId}`, moduleId: session.moduleId,
       title: session.title || session.moduleTitle,
+      seriesId: session.seriesId, occurrenceId: session.occurrenceId, sessionNumber: session.sessionNumber,
+      startsAt: session.startsAt, endsAt: session.endsAt, cancelled: session.status === 'cancelled',
       date: start.date, startTime: start.time, endTime: end?.time ?? start.time,
       programme: session.programme, cohort: session.cohort, group: session.group,
       module: session.moduleTitle, week: session.weekNumber, weekTitle: session.weekTitle,
@@ -99,7 +100,9 @@ export function buildCalendarLectures(library: RecordingsLibrary, timeZone = TIM
   for (const delivery of library.deliveries) {
     for (const week of delivery.weeks) {
       for (const recording of week.recordings) {
-        if (recording.placementReview) {
+        const recordedDate = dateTime(recording.recordedAt, timeZone);
+        const scheduledDate = dateTime(recording.startsAt, timeZone);
+        if (recording.placementReview || (recordedDate && scheduledDate && recordedDate.date !== scheduledDate.date)) {
           const actual = dateTime(recording.recordedAt, timeZone);
           if (!actual) { undated.push({ recording, archived: delivery.archived, programmeActive: delivery.programmeActive }); continue; }
           const key = `recording-review:${delivery.moduleId}:${actual.date}`;
@@ -130,6 +133,8 @@ export function buildCalendarLectures(library: RecordingsLibrary, timeZone = TIM
           lecture = {
             id: key, moduleId: delivery.moduleId,
             title: fallbackTitle(delivery),
+            seriesId: recording.seriesId, occurrenceId: recording.occurrenceId || undefined, sessionNumber: recording.sessionNumber,
+            startsAt: recording.startsAt, endsAt: recording.endsAt,
             date: start.date, startTime: start.time,
             endTime: dateTime(recording.endsAt, timeZone)?.time ?? start.time,
             programme: delivery.programme, cohort: delivery.cohort, group: delivery.group,
@@ -139,6 +144,9 @@ export function buildCalendarLectures(library: RecordingsLibrary, timeZone = TIM
           };
           lectures.set(key, lecture);
         }
+        // Fill missing saved identity without replacing the calendar occurrence.
+        lecture.seriesId ||= recording.seriesId;
+        lecture.sessionNumber ??= recording.sessionNumber;
         lecture.recordings.push(fileItem(recording, lecture.recordings.length, 1));
         lecture.status = lecture.recordings.every(item => item.status === 'ready') ? 'ready'
           : lecture.recordings.some(item => item.status === 'archiveFailed') ? 'archiveFailed' : 'pending';

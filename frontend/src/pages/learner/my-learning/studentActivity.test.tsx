@@ -69,23 +69,23 @@ describe('learner subject cards', () => {
     expect(screen.getByRole('heading', { name: 'Leadership' })).toBeVisible();
   });
 
-  it('shows completed hours against planned hours on each linked module card', async () => {
+  it('uses the old LMS course accepted hours instead of the linked module total', async () => {
     vi.spyOn(api, 'subjectRequest').mockResolvedValue({ covers: {} });
     const schedule: LearningSchedule = {
       modules: [{ id: 'M1', title: 'Leadership', description: '', start_date: null, end_date: null,
-        tutor_name: '', coach_name: '', total_otjh: 10 }],
+        tutor_name: '', coach_name: '', total_otjh: 7.41 }],
       moduleLinks: {}, generatedAt: '2026-10-15T00:00:00Z',
     };
     render(<StudentActivityPanel data={{ ...data, subjects: [
-      { id: 1, name: 'Leadership', module_id: 'M1', accepted_hours: 2.5 },
+      { id: 1, name: 'Leadership', module_id: 'M1', accepted_hours: 1 + 2 / 60 },
     ] }} schedule={schedule} moduleProgress={{
-      M1: { attendance: { attended: 0, total: 0 }, hours: { actual: 2.5 }, ksb: { completed: 0, total: 0 } },
+      M1: { attendance: { attended: 0, total: 0 }, hours: { actual: 22.8 }, ksb: { completed: 0, total: 0 } },
     }} loading={false} error={null} onRetry={vi.fn()} />);
 
     const card = within(await screen.findByRole('button', { name: /Leadership.*Open subject/ }));
-    expect(card.getByText('Completed 2h 30m')).toBeVisible();
-    expect(card.getByText('Planned 10h')).toBeVisible();
-    expect(card.getByRole('progressbar', { name: 'Leadership hours progress' })).toHaveAttribute('aria-valuenow', '25');
+    expect(card.getByText('Completed 1h 2m')).toBeVisible();
+    expect(card.getByText('Planned 7h 24m 36s')).toBeVisible();
+    expect(card.getByRole('progressbar', { name: 'Leadership hours progress' })).toHaveAttribute('aria-valuenow', '13.95');
   });
 
   it('keeps unstarted enrolled courses visible with an Upcoming badge', async () => {
