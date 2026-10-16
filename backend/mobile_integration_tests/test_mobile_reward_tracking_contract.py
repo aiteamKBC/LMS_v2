@@ -1,6 +1,7 @@
 """Browser timing and staff policy boundaries; synthetic identities only."""
 import json
 import unittest
+from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import patch
 import test_mobile_rewards_contract as rewards
@@ -44,6 +45,27 @@ class BrowserTrackingTests(rewards.RewardsFacadeTests):
         with patch.object(reward_tracking,"record_observations") as record:
             self.assertEqual(reward_tracking.observations(self.request("POST",self.body())).status_code,403)
             record.assert_not_called()
+
+    def test_restored_clock_is_server_based_read_only_and_owner_scoped(self):
+        self.scoped()
+        body = {"trackingToken": "server-token", "activityKind": "component", "activityId": "PMP-AUDIO-1"}
+        with patch.object(reward_tracking.timezone, 'now', return_value=datetime(2026, 10, 5, 0, 10, tzinfo=timezone.utc)), \
+                patch.object(reward_tracking, 'record_observations') as record:
+            response = reward_tracking.clock(self.request('POST', body))
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(json.loads(response.content), {"sessionId": "signed-1", "elapsedMilliseconds": 600000})
+        self.assertEqual(response['Cache-Control'], 'private, no-store')
+        self.assertEqual(base.timer.verify_tracking_session.call_args.kwargs['learner_id'], 501)
+        record.assert_not_called()
+
+    def test_clock_rejects_wrong_token_extra_identity_unassigned_and_staff(self):
+        self.scoped()
+        body = {"trackingToken": "server-token", "activityKind": "component", "activityId": "PMP-AUDIO-1"}
+        for updates in ({"trackingToken": "wrong"}, {"learnerId": "502"}, {"activityId": "unknown"}):
+            with self.subTest(updates=updates):
+                self.assertGreaterEqual(reward_tracking.clock(self.request('POST', {**body, **updates})).status_code, 400)
+        self.account.role = 'staff'
+        self.assertEqual(reward_tracking.clock(self.request('POST', body)).status_code, 403)
 
 class PolicyPermissionTests(unittest.TestCase):
     def request(self, headers=True, body=None):

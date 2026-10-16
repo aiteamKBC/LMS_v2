@@ -2,6 +2,7 @@
 from django.conf import settings
 from django.db import connections
 from django.http import JsonResponse
+from django.utils import timezone
 from . import mobile
 from .time_tracking import verify_tracking_session, TrackingSessionError
 from engagement_api.segment_rules import RewardError
@@ -64,3 +65,24 @@ def observations(request):
         raise mobile.MobileError("The timing session does not match this activity.",400,"invalid_tracking_session") from None
     except RewardError as exc:
         raise mobile.MobileError("Study time could not be confirmed. "+exc.code.replace("_"," ")+".",exc.status,exc.code) from None
+
+
+@mobile.endpoint("POST")
+def clock(request):
+    """Read-only calibration of a restored own-learner signed timing session."""
+    body = mobile._only(mobile._body(request), {"trackingToken", "activityKind", "activityId"})
+    _, source, learner_kind, _ = request.mobile_context
+    kind, activity_id = body.get("activityKind"), body.get("activityId")
+    if kind not in {"component", "video", "quiz"} or not isinstance(activity_id, str):
+        raise mobile.MobileError("Invalid activity.", 400, "invalid_activity")
+    resolve(request, kind, activity_id)
+    try:
+        tracking = verify_tracking_session(body.get("trackingToken"), activity_kind=kind,
+            activity_id=activity_id, learner_kind=learner_kind, learner_id=source.pk, claimed_seconds=0)
+    except TrackingSessionError:
+        raise mobile.MobileError("The timing session does not match this activity. Your draft is kept.",
+                                 400, "invalid_tracking_session") from None
+    elapsed = max(0, int((timezone.now() - tracking["startedAt"]).total_seconds() * 1000))
+    response = JsonResponse({"sessionId": tracking["sessionId"], "elapsedMilliseconds": elapsed})
+    response['Cache-Control'] = 'private, no-store'
+    return response

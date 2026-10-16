@@ -16,6 +16,18 @@ describe('activity elapsed time', () => {
   const hide = () => { visible = 'hidden'; document.dispatchEvent(new Event('visibilitychange')); };
   const show = () => { visible = 'visible'; document.dispatchEvent(new Event('visibilitychange')); };
 
+  it('reports monotonic intervals even when the device wall clock jumps', () => {
+    const intervals = vi.fn();
+    const wall = vi.spyOn(Date, 'now').mockReturnValue(9999999999999);
+    clock = startActivityClock({ countInBackground: false, onElapsed: vi.fn(), remainder, onInterval: intervals });
+    now = 1000;
+    vi.advanceTimersByTime(1000);
+    wall.mockReturnValue(0);
+    now = 2000;
+    clock.stop();
+    expect(intervals.mock.calls).toEqual([[0, 1000], [1000, 2000]]);
+  });
+
   it('flushes five minutes of background playback even if the interval never fires', () => {
     const elapsed = vi.fn();
     clock = startActivityClock({ countInBackground: true, onElapsed: elapsed, remainder });

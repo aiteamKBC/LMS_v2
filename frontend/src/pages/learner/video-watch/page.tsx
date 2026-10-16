@@ -16,7 +16,7 @@ import { fetchLearnerDetail, type LearnerDetail, type LearnerKind, type LearnerK
 import { markingVerdict } from '@/lib/markingVerdict';
 import { submitVideoProgress } from '@/api/videos';
 import { submitComponentProgress } from '@/api/components';
-import { startTimeTracking, type TimeTrackingSession, type TrackingCountingMode } from '@/api/timeTracking';
+import { startTimeTracking, resumeTimeTracking, type TimeTrackingSession, type TrackingCountingMode } from '@/api/timeTracking';
 import { EvidenceFilesButton, EvidencePreviewModal, type EvidencePreview } from '@/components/feature/EvidenceFilesButton';
 import { AssignmentEvidence } from '@/components/feature/AssignmentEvidence';
 import {
@@ -534,8 +534,15 @@ export default function ComponentViewPage() {
     if (canResumeActivityTimer(savedTimer, trackingMode)
         || (isAudio && canResumeActivityTimer(savedTimer, 'visible_page'))) {
       const savedSession = savedTimer!.session!;
-      trackingSessionRef.current = savedSession;
-      trackingPromiseRef.current = Promise.resolve(savedSession);
+      if (savedSession.rewardTracking) {
+        const resumed = resumeTimeTracking(savedSession, activityKind, componentId);
+        trackingPromiseRef.current = resumed;
+        resumed.then(session => { if (!cancelled) trackingSessionRef.current = session; })
+          .catch(error => { if (!cancelled) setSubmitError(error instanceof Error ? error.message : 'Study timing could not synchronize. Your draft is kept.'); });
+      } else {
+        trackingSessionRef.current = savedSession;
+        trackingPromiseRef.current = Promise.resolve(savedSession);
+      }
       setWallElapsed(savedTimer!.elapsedSeconds);
       return () => { cancelled = true; };
     }
