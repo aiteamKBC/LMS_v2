@@ -90,7 +90,7 @@ def course_detail(context, account, state=None):
     # Preserve all authored fields except participation in a live meeting.
     components = [dict(component, liveSessionUrl=None) for component in components]
     from .programme_access import learning_access
-    access = learning_access(SimpleNamespace(programme=module.get('programme_name'), cohort=module.get('cohort_name'), start_date=module.get('start_date')))
+    access = learning_access(SimpleNamespace(programme=module.get('programme_name'), cohort=module.get('cohort_name'), cohort_id=module.get('cohort_id'), start_date=module.get('start_date')))
     start = access['startDate']
     blocked = context['mode'] != 'all' and access['blocked']
     mappings = {item['code']: item for component in components for item in component.get('ksbMappings', []) if item.get('code')}

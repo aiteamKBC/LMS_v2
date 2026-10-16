@@ -7,7 +7,7 @@ from django.http import JsonResponse
 from django.utils import timezone
 
 from .apprenticeship_agreement import _to_date
-from .models import EnrolmentUser
+from .models import EnrolmentUser, LearnerProfile
 
 
 def _month_cohort_key(value):
@@ -27,21 +27,36 @@ def _month_cohort_key(value):
 def learning_access(source):
     programme = str(getattr(source, 'programme', '') or '').strip()
     cohort = str(getattr(source, 'cohort', '') or '').strip()
-    if programme and cohort:
+    cohort_id = str(getattr(source, 'cohort_id', '') or '').strip()
+    if not cohort_id and isinstance(source, EnrolmentUser) and source.pk:
+        # The enrolment and active profile have different primary keys. Use the
+        # explicit bridge, and never borrow an ID from a stale placement mirror.
+        ids = list(LearnerProfile.objects.using('default').filter(
+            enrolment_id=source.pk, programme=programme, cohort=cohort,
+        ).exclude(cohort_id__isnull=True).exclude(cohort_id='').values_list('cohort_id', flat=True).distinct()[:2])
+        if len(ids) == 1:
+            cohort_id = ids[0]
+    if cohort_id or (programme and cohort):
         # A copied individual date must not open teaching before the cohort.
         with connections['default'].cursor() as cursor:
-            cursor.execute(
-                '''SELECT start_date FROM curriculum.cohorts
-                   WHERE programme_name = %s AND cohort_name = %s AND deleted_at IS NULL
-                   ORDER BY updated_at DESC NULLS LAST LIMIT 1''',
-                [programme, cohort],
-            )
+            if cohort_id:
+                cursor.execute(
+                    '''SELECT start_date FROM curriculum.cohorts
+                       WHERE cohort_id = %s AND deleted_at IS NULL''', [cohort_id],
+                )
+            else:
+                cursor.execute(
+                    '''SELECT start_date FROM curriculum.cohorts
+                       WHERE programme_name = %s AND cohort_name = %s AND deleted_at IS NULL
+                       ORDER BY updated_at DESC NULLS LAST LIMIT 1''',
+                    [programme, cohort],
+                )
             row = cursor.fetchone()
             # Imported enrolments use full month names while authoring may use
             # abbreviations. Resolve only a unique active cohort in this exact
             # programme; a missing date or ambiguous alias must remain blocked.
             key = _month_cohort_key(cohort)
-            if row is None and key is not None:
+            if not cohort_id and row is None and key is not None:
                 cursor.execute(
                     '''SELECT cohort_name, start_date FROM curriculum.cohorts
                        WHERE programme_name = %s AND deleted_at IS NULL''',
