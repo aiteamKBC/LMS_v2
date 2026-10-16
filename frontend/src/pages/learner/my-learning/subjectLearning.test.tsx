@@ -5,7 +5,8 @@ import type { LearnerDetail } from '@/api/learnerDetail';
 import type { PlanModule, TrainingPlanDashboard } from '@/api/trainingPlanDashboard';
 import type { StudentActivityResponse, SubjectMaterial } from '@/api/studentActivity';
 import * as api from '@/api/studentActivity';
-import { StudentActivityPanel, subjectsFrom, type Subject, type SubjectEntry } from './SubjectWorkspace';
+import { StudentActivityPanel, type Subject, type SubjectEntry } from './SubjectWorkspace';
+import { subjectsFrom } from './learningSummary';
 import { certificateEligible, currentLearningSubject, currentLearningWeek, continuingLearningWeek, learningDeadlines, learningPlanSelection, learningToday, learningHref, nextLearningWeek, recommendedLearningSubject, resolveLearningSubject, subjectMapWeeks, subjectWeeks, subjectOpeningActivity } from './subjectLearning';
 
 const entry = (id: string, date: string, completed = false): SubjectEntry => ({ id, title: `Activity ${id}`, category: 'reading', completed, position: 0,

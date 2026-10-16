@@ -3,10 +3,11 @@ import { MemoryRouter } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import * as api from '@/api/studentActivity';
 import { currentLearningWeek, subjectWeeks } from './subjectLearning';
-import { groupSubjectActivities } from './SubjectWorkspace';
+import { groupSubjectActivities } from './subjectLearning';
 import type { LearnerDetail } from '@/api/learnerDetail';
 import type { StudentActivityItem, StudentActivityResponse } from '@/api/studentActivity';
-import { buildUnifiedLearningSummary, StudentActivityPanel, subjectsFrom } from './SubjectWorkspace';
+import { StudentActivityPanel } from './SubjectWorkspace';
+import { buildUnifiedLearningSummary, subjectsFrom } from './learningSummary';
 
 vi.mock('./DeferredStudentMaterial', () => ({
   DeferredStudentMaterial: ({ groupId, activityId, reviewQuiz, readOnly }: { groupId: number; activityId: number; reviewQuiz?: boolean; readOnly?: boolean }) =>

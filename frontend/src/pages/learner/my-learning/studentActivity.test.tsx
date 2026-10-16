@@ -9,7 +9,8 @@ import * as api from '@/api/studentActivity';
 import * as reads from '@/api/learnerRead';
 import { ModulesTab, QuizzesTab, StudentActivityPanel } from './page';
 import { StudentMaterial } from './StudentMaterial';
-import { buildUnifiedLearningSummary, subjectsFrom, useSubjectMetadata } from './SubjectWorkspace';
+import { buildUnifiedLearningSummary, subjectsFrom } from './learningSummary';
+import { useSubjectMetadata } from './useSubjectLearningData';
 
 // AppIcon is normally supplied by the app build's auto-import plugin.
 vi.stubGlobal('AppIcon', () => <span />);

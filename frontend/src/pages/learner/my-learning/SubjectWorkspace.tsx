@@ -1,50 +1,25 @@
-import { useEffect, useId, useMemo, useRef, useState, type MouseEvent, type ReactNode } from 'react';
+import { useEffect, useId, useMemo, useState, type MouseEvent, type ReactNode } from 'react';
 import { Link, Navigate, useLocation, useNavigate } from 'react-router-dom';
 import { ArrowRight, Award, BookOpen, CalendarDays, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight, GraduationCap, Layers3, Loader2, Map as MapIcon, Search } from 'lucide-react';
-import type { LearnerDetail, LearnerKind } from '@/api/learnerDetail';
+import type { LearnerDetail } from '@/api/learnerDetail';
 import type { LearnerMetrics } from '@/api/learnerMetrics';
-import { fetchStudentActivity, peekStudentActivity, subjectRequest, type StudentActivityItem, type StudentActivityResponse, type SubjectAttemptResult } from '@/api/studentActivity';
-import { peekLearnerJson } from '@/api/learnerRead';
+import { type StudentActivityItem, type StudentActivityResponse, type SubjectAttemptResult } from '@/api/studentActivity';
 import { fetchLearnerCertificateTemplate, issueLearnerModuleCertificate, type CertificateTemplateSummary } from '@/api/learnerCertificates';
-import { hasComponentContent, formatHoursMinutes, type JourneyComponent } from '@/utils/learnerJourney';
+import { formatHoursMinutes, type JourneyComponent } from '@/utils/learnerJourney';
 import { DeferredStudentMaterial as StudentMaterial } from './DeferredStudentMaterial';
 import styles from './SubjectWorkspace.module.css';
+import { useSubjectMetadata } from './useSubjectLearningData';
 import { LearningCatalogue } from './LearningCatalogue';
 import { DEFAULT_MODULE_COVER } from './moduleCover';
 import { LearningMapHero, SubjectTimeline } from './SubjectTimeline';
 import { HolidayNoteHint } from '@/components/feature/HolidayNoteHint';
 import { weekHolidayNotes } from '@/pages/learner/training-plan-timeline/model';
-import { certificateEligible, learningDate, learningDeadlines, learningPlanSelection, learningHref, nextLearningWeek, continuingLearningWeek, currentLearningWeek, recommendedLearningSubject, resolveLearningSubject, subjectMapWeeks, subjectOpeningActivity, subjectLearningStatus } from './subjectLearning';
+import { groupSubjectActivities, nativeHref, certificateEligible, learningDate, learningDeadlines, learningPlanSelection, learningHref, nextLearningWeek, continuingLearningWeek, currentLearningWeek, recommendedLearningSubject, resolveLearningSubject, subjectMapWeeks, subjectOpeningActivity, subjectLearningStatus } from './subjectLearning';
 import type { LearningSchedule } from '@/api/learnerOverview';
 import type { PlanModule, PlanModuleProgress, PlanSession } from '@/api/trainingPlanDashboard';
-import { buildUnifiedLearningSummary, subjectRefs, type Schedule, type SubjectEntry, type Subject, type CoverMetadata } from './learningSummary';
-export { buildUnifiedLearningSummary, subjectsFrom } from './learningSummary';
+import { buildUnifiedLearningSummary, type SubjectEntry, type Subject, type CoverMetadata } from './learningSummary';
 export type { SubjectEntry, Subject, CoverMetadata, UnifiedLearningSummary } from './learningSummary';
 
-export function useSubjectMetadata(data: StudentActivityResponse | null, real: LearnerDetail | null, kind?: string, learnerId?: string, enabled = true, assignedOnly = false) {
-  // Raw, sorted IDs are independent of Builder renames and the merged cards.
-  // The endpoint always resolves assigned Builder modules, titles and dates
-  // from the learner ID. Their metadata can load alongside the plan/history;
-  // historical covers already travel with the student-activity response.
-  const refs = assignedOnly ? '' : subjectRefs(data, real);
-  const key = `${kind}:${learnerId}:${refs}`;
-  const url = `/learner_api/subject-covers/${encodeURIComponent(learnerId || '')}/?refs=${encodeURIComponent(refs)}`;
-  const [state, setState] = useState<{ key: string; real: LearnerDetail | null; data: CoverMetadata | null; error: string } | null>(null);
-  const [retry, setRetry] = useState(0);
-  const previousRequest = useRef<{ key: string; real: LearnerDetail | null } | null>(null);
-  useEffect(() => {
-    if (!enabled || !learnerId) return;
-    const controller = new AbortController();
-    const revalidate = retry > 0 || (previousRequest.current?.key === key && previousRequest.current.real !== real);
-    previousRequest.current = { key, real };
-    void subjectRequest<CoverMetadata>(`/learner_api/subject-covers/${encodeURIComponent(learnerId)}/?refs=${encodeURIComponent(refs)}`, { signal: controller.signal, revalidate })
-      .then((result) => { if (!controller.signal.aborted) setState({ key, real, data: result, error: '' }); })
-      .catch(() => { if (!controller.signal.aborted) setState({ key, real, data: null, error: 'Could not load your subject details. Please try again.' }); });
-    return () => controller.abort();
-  }, [enabled, learnerId, refs, key, retry, real]);
-  const current = state?.key === key && state.real === real ? state : null;
-  return { metadata: current?.data ?? (enabled && learnerId ? peekLearnerJson<CoverMetadata>(url) : undefined), error: current?.error || '', retry: () => { setState(null); setRetry((value) => value + 1); } };
-}
 
 function formatRecordedHours(hours: number) {
   const seconds = Math.max(0, Math.round(hours * 3600));
@@ -53,89 +28,7 @@ function formatRecordedHours(hours: number) {
     seconds % 60 ? `${seconds % 60}s` : ''].filter(Boolean).join(' ') || '0m';
 }
 
-export function groupSubjectActivities(activities: SubjectEntry[]) {
-  const months = new Map<string, Map<string, SubjectEntry[]>>();
-  for (const activity of activities) {
-    const introduction = activity.schedule.date_source === 'introduction';
-    const extra = activity.schedule.date_source === 'extra_activity';
-    const month = introduction ? 'introduction' : extra ? 'extra' : activity.schedule.month || activity.schedule.date?.slice(0, 7) || 'undated';
-    const week = extra ? activity.legacy?.section_title || activity.week || 'Additional activities' : activity.schedule.week_start || activity.week || 'undated';
-    if (!months.has(month)) months.set(month, new Map());
-    const weeks = months.get(month)!;
-    if (!weeks.has(week)) weeks.set(week, []);
-    weeks.get(week)!.push(activity);
-  }
-  const rank = (month: string) => month === 'introduction' ? -1 : month === 'extra' ? 2 : month === 'undated' ? 1 : 0;
-  return [...months].sort(([a], [b]) => rank(a) - rank(b) || a.localeCompare(b)).map(([month, weeks]) => ({
-    month, weeks: [...weeks].sort(([a], [b]) => a.localeCompare(b, undefined, { numeric: true })).map(([week, items]) => ({
-      week, activities: [...items].sort((a, b) => (a.schedule.date || '').localeCompare(b.schedule.date || '') || a.position - b.position || a.title.localeCompare(b.title)),
-    })),
-  }));
-}
 
-export function useUnifiedLearningSummary(
-  real: LearnerDetail | null,
-  kind?: LearnerKind,
-  learnerId?: string,
-  enabled = true,
-) {
-  const identity = `${kind}:${learnerId}`;
-  const needsHistory = !!real?.studentActivityAvailable;
-  const [state, setState] = useState<{
-    identity: string;
-    retry: number;
-    data: StudentActivityResponse | null;
-    error: string;
-  } | null>(null);
-  const [retry, setRetry] = useState(0);
-
-  useEffect(() => {
-    if (!enabled || !kind || !learnerId || !needsHistory) return;
-    const controller = new AbortController();
-    setState(null);
-    void fetchStudentActivity(kind, learnerId, controller.signal)
-      .then((data) => {
-        if (!controller.signal.aborted) setState({ identity, retry, data, error: '' });
-      })
-      .catch((failure) => {
-        if (!controller.signal.aborted) setState({
-          identity,
-          retry,
-          data: null,
-          error: failure instanceof Error ? failure.message : 'Could not load progress.',
-        });
-      });
-    return () => controller.abort();
-  }, [enabled, kind, learnerId, needsHistory, identity, retry]);
-
-  const current = state?.identity === identity && state.retry === retry ? state : null;
-  const data = needsHistory ? current?.data || (kind && learnerId ? peekStudentActivity(kind, learnerId) : null) || null : null;
-  const metadataEnabled = enabled && !!learnerId && (!needsHistory || !!data);
-  const { metadata, error: metadataError, retry: retryMetadata } = useSubjectMetadata(
-    data,
-    real,
-    kind,
-    learnerId,
-    metadataEnabled,
-  );
-  const loading = enabled && !!learnerId && (
-    (needsHistory && !current && !data) || (!current?.error && metadataEnabled && !metadata)
-  );
-  const summary = !enabled || loading || current?.error || metadataError
-    ? null
-    : buildUnifiedLearningSummary(data, real, metadata);
-  return {
-    data,
-    metadata,
-    summary,
-    loading,
-    error: current?.error || metadataError,
-    retry: () => {
-      setRetry((value) => value + 1);
-      retryMetadata();
-    },
-  };
-}
 
 function Progress({ done, total, label = 'Subject progress', showFormula = false, compact = false }: {
   done: number; total: number; label?: string; showFormula?: boolean; compact?: boolean;
@@ -373,14 +266,6 @@ function SubjectCardsSkeleton() {
   </div>;
 }
 
-export function nativeHref(entry: SubjectEntry, kind?: string, learnerId?: string) {
-  const component = entry.native;
-  if (!component || !kind || !learnerId || !hasComponentContent(component)) return null;
-  const path = component.isQuiz && component.quizMeta ? `quiz/${kind}/${learnerId}/${component.quizMeta.quizId}`
-    : component.type === 'video' && component.videoUrl && component.componentId ? `video/${kind}/${learnerId}/${component.componentId}`
-      : component.componentId ? `component/${kind}/${learnerId}/${component.componentId}` : null;
-  return path ? `/learner/${path}?week=${encodeURIComponent(entry.week || '')}` : null;
-}
 
 function ActivityRow({ entry, kind, learnerId, onProgress, defaultOpen = false }: { defaultOpen?: boolean; entry: SubjectEntry; kind?: string; learnerId?: string; onProgress?: (result: SubjectAttemptResult) => void }) {
   const [open, setOpen] = useState(defaultOpen);

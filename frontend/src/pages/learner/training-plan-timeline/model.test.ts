@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { barPosition, buildPlanModules, monthMetrics, nextSession, percent, reviewToBook, sessionDay, timelineYears, uniquePlanSessions } from './model';
 import type { TrainingPlanDashboard, PlanSession } from '@/api/trainingPlanDashboard';
-import { subjectsFrom, type Subject } from '../my-learning/SubjectWorkspace';
+import { type Subject } from '../my-learning/SubjectWorkspace';
+import { subjectsFrom } from '../my-learning/learningSummary';
 import type { LearnerDetail } from '@/api/learnerDetail';
 import { moduleMeasures } from './progress';
 
