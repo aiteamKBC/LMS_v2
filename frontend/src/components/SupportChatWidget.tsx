@@ -10,7 +10,11 @@
  * backend during development, for instance. The portal must also list this
  * site's origin in its CORS_ALLOWED_ORIGINS, or the browser blocks the call.
  */
-import { useEffect, useRef, useState } from 'react';
+import {
+  useEffect, useRef, useState,
+  type CSSProperties, type MouseEvent as ReactMouseEvent,
+  type PointerEvent as ReactPointerEvent,
+} from 'react';
 import { Lottie } from 'lottie-react';
 import { useAuth } from '@/hooks/useAuth';
 import robotAnimation from '@/assets/support-robot.lottie.json';
@@ -73,7 +77,16 @@ const CHOICE_ECHO: Record<EscalationChoice, string> = {
  * It floats free rather than sitting in a brand-coloured disc: the character
  * fills a square frame with its own soft glow, and boxing it would crop it.
  */
-function RobotMascot({ size }: { size: number }) {
+/**
+ * The artwork is raster, so its colours cannot be edited in the file. This
+ * swings its blues towards the college purple at the rendering stage instead.
+ * Kept deliberately gentle: the robot's body is almost white, which carries no
+ * hue to rotate, so a stronger angle only stains the glow and the shadows
+ * without making the character read as purple.
+ */
+const ROBOT_TINT = 'hue-rotate(30deg) saturate(1.04)';
+
+function RobotMascot({ size, style }: { size: number; style?: CSSProperties }) {
   // Honour the system's reduced-motion setting. Paused, the robot still renders
   // — Lottie holds the first frame — so the launcher never comes up empty.
   const [still, setStill] = useState(false);
@@ -89,61 +102,51 @@ function RobotMascot({ size }: { size: number }) {
       src={robotAnimation}
       loop={!still}
       autoplay={!still}
-      style={{ width: size, height: size, pointerEvents: 'none' }}
+      style={{
+        width: size, height: size, pointerEvents: 'none',
+        filter: ROBOT_TINT, ...style,
+      }}
       aria-hidden="true"
     />
   );
 }
 
 /**
- * Friendly robot mascot. Cream face on the purple launcher, with a gold antenna
- * picking up the college's second brand colour. It blinks every few seconds so
- * the closed launcher still feels alive.
+ * Where the robot's head sits inside the 800x800 animation frame, measured from
+ * the head layer's own artwork. The avatar below crops to it.
  */
-const RobotFace = ({ size = 32, idle = true }: { size?: number; idle?: boolean }) => (
-  <svg width={size} height={size} viewBox="0 0 48 48" fill="none" aria-hidden="true">
-    {/* antenna */}
-    <path d="M24 13V8" stroke="#E8C87A" strokeWidth="2.4" strokeLinecap="round" />
-    <circle cx="24" cy="5.4" r="2.9" fill="#E8C87A">
-      {idle && (
-        <animate
-          attributeName="opacity"
-          values="1;0.45;1"
-          dur="2.4s"
-          repeatCount="indefinite"
-        />
-      )}
-    </circle>
+const ROBOT_HEAD = { cx: 392, cy: 283, height: 230 };
 
-    {/* ears */}
-    <rect x="3.5" y="23" width="5" height="10" rx="2.5" fill="#E8C87A" />
-    <rect x="39.5" y="23" width="5" height="10" rx="2.5" fill="#E8C87A" />
-
-    {/* head */}
-    <rect x="8.5" y="13" width="31" height="27" rx="9.5" fill="#FFFDF8" />
-
-    {/* cheeks */}
-    <circle cx="14.6" cy="31.6" r="2.1" fill="#E8C87A" opacity=".5" />
-    <circle cx="33.4" cy="31.6" r="2.1" fill="#E8C87A" opacity=".5" />
-
-    {/* eyes — the blink is a vertical squash, so it reads as a wink not a fade */}
-    <g className={idle ? 'kbc-bot-eyes' : undefined}>
-      <circle cx="18.4" cy="24.4" r="3.2" fill="#3C1361" />
-      <circle cx="29.6" cy="24.4" r="3.2" fill="#3C1361" />
-      <circle cx="19.5" cy="23.3" r="1.05" fill="#FFFDF8" />
-      <circle cx="30.7" cy="23.3" r="1.05" fill="#FFFDF8" />
-    </g>
-
-    {/* smile */}
-    <path
-      d="M18 30.4c1.9 2.6 4 3.9 6 3.9s4.1-1.3 6-3.9"
-      stroke="#3C1361"
-      strokeWidth="2.4"
-      strokeLinecap="round"
-      fill="none"
-    />
-  </svg>
-);
+/**
+ * The same robot as a round avatar, for the chat panel's header.
+ *
+ * At avatar size the whole character would be an unreadable speck, so this
+ * shows the head alone: the animation is played several times larger than the
+ * disc and positioned so the head lands in the middle, with the disc clipping
+ * the rest. The head is given room to bob without touching the edges, which
+ * leaves a little of the body showing at the bottom — it reads as shoulders.
+ *
+ * The disc is only a crop, not a frame: no fill and no border, so the head sits
+ * straight on the header's own gradient.
+ */
+function RobotAvatar({ size }: { size: number }) {
+  const scale = (size * 0.82) / ROBOT_HEAD.height;
+  return (
+    <div style={{
+      width: size, height: size, borderRadius: '50%', overflow: 'hidden',
+      position: 'relative', flexShrink: 0,
+    }}>
+      <RobotMascot
+        size={800 * scale}
+        style={{
+          position: 'absolute',
+          left: size / 2 - ROBOT_HEAD.cx * scale,
+          top: size / 2 - ROBOT_HEAD.cy * scale,
+        }}
+      />
+    </div>
+  );
+}
 
 const now = () => new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 const mkMsg = (sender: Sender, text: string): Msg => ({
@@ -204,9 +207,149 @@ function saveStoredChat(email: string, state: StoredChatState) {
   }
 }
 
+const LAUNCHER_SIZE = 156;
+const LAUNCHER_MARGIN = 8;
+
+function launcherPosKey(email: string) {
+  return `kbc_support_launcher_pos:${email || 'anon'}`;
+}
+
+/**
+ * A dragged position is held as a distance from the bottom-right corner, not
+ * from the top-left.
+ *
+ * Browser zoom changes the viewport's size in CSS pixels, so a position fixed
+ * to the top-left drifts across the page every time the learner zooms in or
+ * out. Measured from the corner the launcher already sits in, it stays put.
+ */
+interface LauncherOffset {
+  right: number;
+  bottom: number;
+}
+
+/** Keeps the launcher reachable when the window is too small to honour a drag. */
+function clampOffset(offset: LauncherOffset): LauncherOffset {
+  const maxRight = Math.max(LAUNCHER_MARGIN, window.innerWidth - LAUNCHER_SIZE - LAUNCHER_MARGIN);
+  const maxBottom = Math.max(LAUNCHER_MARGIN, window.innerHeight - LAUNCHER_SIZE - LAUNCHER_MARGIN);
+  return {
+    right: Math.min(Math.max(offset.right, LAUNCHER_MARGIN), maxRight),
+    bottom: Math.min(Math.max(offset.bottom, LAUNCHER_MARGIN), maxBottom),
+  };
+}
+
+/**
+ * Lets the learner drag the launcher somewhere that suits them.
+ *
+ * Until they do, it stays where the stylesheet parks it — the position is only
+ * taken over once it has actually been moved, so the default corner still holds
+ * for everyone who leaves it alone.
+ *
+ * Where they put it is remembered per learner, which is what makes it survive
+ * leaving Home and coming back. The widget is mounted on Home alone, so this
+ * moves the robot around that page rather than following them across the LMS.
+ *
+ * A drag must not also count as a click, or letting go would open the chat
+ * every time. Travel past a few pixels marks the gesture as a drag, and the
+ * click that the browser fires afterwards is swallowed once.
+ */
+function useDraggableLauncher(email: string) {
+  const [offset, setOffset] = useState<LauncherOffset | null>(null);
+  const [dragging, setDragging] = useState(false);
+  const grab = useRef<{ dx: number; dy: number; startX: number; startY: number } | null>(null);
+  const moved = useRef(false);
+
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(launcherPosKey(email));
+      if (!raw) return;
+      const parsed = JSON.parse(raw) as Partial<LauncherOffset>;
+      if (typeof parsed.right === 'number' && typeof parsed.bottom === 'number') {
+        setOffset(clampOffset({ right: parsed.right, bottom: parsed.bottom }));
+      }
+    } catch {
+      // Unreadable or disabled storage: fall back to the default corner.
+    }
+  }, [email]);
+
+  // Only ever pulls the launcher back into a viewport too small to hold it
+  // where it was put. Zoom does not move it: the offsets are corner-relative.
+  useEffect(() => {
+    if (!offset) return;
+    const onResize = () => setOffset(current => (current ? clampOffset(current) : current));
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, [offset]);
+
+  const onPointerDown = (event: ReactPointerEvent<HTMLButtonElement>) => {
+    if (event.button !== 0) return;
+    const box = event.currentTarget.getBoundingClientRect();
+    grab.current = {
+      dx: event.clientX - box.left,
+      dy: event.clientY - box.top,
+      startX: event.clientX,
+      startY: event.clientY,
+    };
+    moved.current = false;
+    event.currentTarget.setPointerCapture(event.pointerId);
+  };
+
+  const onPointerMove = (event: ReactPointerEvent<HTMLButtonElement>) => {
+    const held = grab.current;
+    if (!held) return;
+    // A few pixels of travel is a shaky click, not a drag.
+    if (!moved.current) {
+      if (Math.hypot(event.clientX - held.startX, event.clientY - held.startY) < 4) return;
+      moved.current = true;
+      setDragging(true);
+    }
+    setOffset(clampOffset({
+      right: window.innerWidth - (event.clientX - held.dx) - LAUNCHER_SIZE,
+      bottom: window.innerHeight - (event.clientY - held.dy) - LAUNCHER_SIZE,
+    }));
+  };
+
+  const onPointerUp = (event: ReactPointerEvent<HTMLButtonElement>) => {
+    if (!grab.current) return;
+    grab.current = null;
+    event.currentTarget.releasePointerCapture(event.pointerId);
+    if (!moved.current) return;
+    setDragging(false);
+    setOffset(current => {
+      if (current) {
+        try {
+          localStorage.setItem(launcherPosKey(email), JSON.stringify(current));
+        } catch {
+          // Not remembered across navigation, but the drag itself still held.
+        }
+      }
+      return current;
+    });
+  };
+
+  // Runs before onClick, so the click that ends a drag never opens the chat.
+  const onClickCapture = (event: ReactMouseEvent) => {
+    if (!moved.current) return;
+    moved.current = false;
+    event.preventDefault();
+    event.stopPropagation();
+  };
+
+  const style: CSSProperties = offset
+    ? { right: offset.right, bottom: offset.bottom, top: 'auto', left: 'auto' }
+    : {};
+
+  return {
+    dragging,
+    style,
+    handlers: { onPointerDown, onPointerMove, onPointerUp, onClickCapture },
+  };
+}
+
 export function SupportChatWidget() {
   const { auth } = useAuth();
   const email = auth?.account?.email || '';
+
+  const launcher = useDraggableLauncher(email);
 
   const [open, setOpen] = useState(false);
   const [booted, setBooted] = useState(false);
@@ -383,15 +526,7 @@ export function SupportChatWidget() {
             color: '#fff', padding: '14px 16px', display: 'flex',
             alignItems: 'center', gap: '10px',
           }}>
-            <div style={{
-              width: 34, height: 34, borderRadius: '50%',
-              background: 'rgba(255,255,255,.14)',
-              border: '1px solid rgba(232,200,122,.4)',
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-              flexShrink: 0,
-            }}>
-              <RobotFace size={24} idle={!busy} />
-            </div>
+            <RobotAvatar size={38} />
             <div style={{ lineHeight: 1.25, flex: 1, minWidth: 0 }}>
               <div style={{ fontWeight: 600, fontSize: 14 }}>Kent Support</div>
               <div style={{ fontSize: 11, opacity: .75 }}>
@@ -571,65 +706,58 @@ export function SupportChatWidget() {
       )}
 
       {/* Launcher. Hidden while the panel is open — the panel has its own close
-          button, and the launcher's anchor would otherwise sit over the panel on
-          shorter screens. */}
+          button, and the launcher would otherwise sit over it. */}
       {!open && (
         <button
           onClick={() => setOpen(true)}
           aria-label="Open support chat"
-          className="kbc-bot-launcher"
+          title="Open support chat — drag to move"
+          className={`kbc-bot-launcher${launcher.dragging ? ' kbc-bot-launcher--dragging' : ''}`}
+          {...launcher.handlers}
           style={{
-            width: 104, height: 104,
+            width: LAUNCHER_SIZE, height: LAUNCHER_SIZE,
             border: 'none', background: 'transparent',
-            cursor: 'pointer', zIndex: 2147483000,
+            cursor: launcher.dragging ? 'grabbing' : 'pointer',
+            zIndex: 2147483000,
             display: 'flex', alignItems: 'center', justifyContent: 'center',
             padding: 0, lineHeight: 1,
+            touchAction: 'none',
+            ...launcher.style,
           }}
         >
-          <RobotMascot size={104} />
+          <RobotMascot size={LAUNCHER_SIZE} />
         </button>
       )}
 
       <style>{`
         @keyframes kbcPulse{0%,100%{opacity:.3}50%{opacity:1}}
 
-        /* Blink: a quick vertical squash, with a long pause between blinks. */
-        @keyframes kbcBlink{
-          0%,94%,100%{transform:scaleY(1)}
-          96.5%{transform:scaleY(.12)}
-        }
-        .kbc-bot-eyes{
-          transform-box:fill-box;
-          transform-origin:center;
-          animation:kbcBlink 5.5s infinite;
-        }
-
-        /* Parked above the "Inclusion & Safeguarding" tab, which the learner home
-           pins to the right edge: its container sits at top:41% and the tab stacks
-           12px above that. The tab measures 84px tall in practice, not the 52px
-           minimum the stylesheet declares, so this clears 96px of tab, a 28px
-           gap and the launcher's own 104px box. The mascot is drawn inset within
-           that box, so the gap reads a little wider than the arithmetic implies
-           and the offset is pulled back accordingly. Measured across 1200-1920px
-           wide, and the right edge is likewise tightened for the same inset. */
+        /* Parked in the bottom-right corner, clear of the home page's own
+           "A Brighter Kent" sign-off: that sits 3% from the bottom and stands
+           about 60px tall, so 84px keeps the robot above it. The mascot is drawn
+           inset within its box, which reads as a little more clearance again.
+           Measured in the corner the drag offsets are relative to, so zooming
+           leaves it where it is. */
         .kbc-bot-launcher{
           position:fixed;
-          right:12px;
-          top:calc(41% - 210px);
+          right:16px;
+          bottom:84px;
           transition:transform .25s cubic-bezier(.34,1.56,.64,1);
-        }
-        /* Under 1150px the page drops that tab into normal flow, so the anchor is
-           gone — fall back to the ordinary bottom-right corner. */
-        @media (max-width:1150px){
-          .kbc-bot-launcher{top:auto;bottom:24px}
         }
         /* No shadow on hover: the button is transparent, so a shadow would draw
            a square behind a character that has none. Scale alone reads as lift. */
         .kbc-bot-launcher:hover{transform:translateY(-3px) scale(1.06)}
+
+        /* Mid-drag the robot must track the pointer exactly: the easing would
+           make it trail behind, and the hover lift would fight the position. */
+        .kbc-bot-launcher--dragging,
+        .kbc-bot-launcher--dragging:hover{
+          transform:scale(1.04);
+          transition:none;
+        }
         .kbc-bot-launcher:active{transform:translateY(-1px) scale(.98)}
 
         @media (prefers-reduced-motion:reduce){
-          .kbc-bot-eyes{animation:none}
           .kbc-bot-launcher{transition:none}
           .kbc-bot-launcher:hover{transform:none}
         }

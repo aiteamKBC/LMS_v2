@@ -84,10 +84,10 @@ verified".
 from origins listed in its own `CORS_ALLOWED_ORIGINS`. `lms.kentbusinesscollege.org`
 is already there; a new environment on a different hostname needs adding.
 
-**The widget is deliberately only on Home.** Its launcher is positioned against
-the Inclusion & Safeguarding tab, which exists on that page alone, and Home is
-the one learner page that does not render the shared workspace shell. Mounting
-it elsewhere would put the launcher somewhere arbitrary.
+**The widget is deliberately only on Home.** Home is the one learner page that
+does not render the shared workspace shell, so the launcher has the corner to
+itself there. Mounting it elsewhere would drop it on top of that shell's own
+furniture.
 
 That last point also matters for what the bot says: a learner chatting from Home
 cannot see the sidebar, so the assistant is told to explain how to reach a page
@@ -100,6 +100,12 @@ portal's knowledge base, not here.
   `localStorage`, keyed per learner, capped at the last 60 messages. A **Clear**
   button in its header wipes the thread and the saved copy. Clearing only makes
   the widget forget a ticket — the ticket itself stays open in the support system.
+- **The launcher can be dragged.** It starts in the bottom-right corner, above
+  the page's sign-off. Wherever the learner drops it is kept in `localStorage`
+  under their own key, so it survives leaving Home and coming back. The position
+  is held as a distance from the bottom-right corner rather than the top-left,
+  because browser zoom changes the viewport's size in CSS pixels and a
+  top-left-anchored launcher wanders across the page every time someone zooms.
 - **The learner decides when to escalate.** The assistant offers; it does not
   open a ticket on its own.
 - **Pressing an option is an instruction, not a question.** The support portal
