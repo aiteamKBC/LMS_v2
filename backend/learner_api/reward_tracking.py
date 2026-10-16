@@ -1,4 +1,5 @@
 """Own-learner measured-time adapter shared by browser and mobile rewards."""
+import logging
 from django.conf import settings
 from django.db import connections
 from django.http import JsonResponse
@@ -8,6 +9,8 @@ from .time_tracking import verify_tracking_session, TrackingSessionError
 from engagement_api.segment_rules import RewardError
 from engagement_api.shared_rewards import policy, record_observations
 from engagement_api.learning_policy import activity_type
+
+logger = logging.getLogger(__name__)
 
 def resolve(request, kind, activity_id):
     mobile._require_active_profile(request)
@@ -79,9 +82,19 @@ def clock(request):
     try:
         tracking = verify_tracking_session(body.get("trackingToken"), activity_kind=kind,
             activity_id=activity_id, learner_kind=learner_kind, learner_id=source.pk, claimed_seconds=0)
-    except TrackingSessionError:
-        raise mobile.MobileError("The timing session does not match this activity. Your draft is kept.",
-                                 400, "invalid_tracking_session") from None
+    except TrackingSessionError as exc:
+        # Fixed reason codes only: never log signed tokens, learner IDs or bodies.
+        messages = {
+            'expired_tracking_session': 'The activity timing session has expired. Your answers and timing draft are kept.',
+            'invalid_tracking_signature': 'The saved timing session could not be verified. Your answers and timing draft are kept.',
+            'tracking_identity_mismatch': 'The timing session does not match this learner or activity. Your draft is kept.',
+        }
+        code = getattr(exc, 'code', 'invalid_tracking_session')
+        if code not in messages:
+            code = 'invalid_tracking_session'
+        logger.warning('study_clock_rejected reason=%s', code)
+        raise mobile.MobileError(messages.get(code, 'The timing session could not be verified. Your draft is kept.'),
+                                 400, code) from None
     elapsed = max(0, int((timezone.now() - tracking["startedAt"]).total_seconds() * 1000))
     response = JsonResponse({"sessionId": tracking["sessionId"], "elapsedMilliseconds": elapsed})
     response['Cache-Control'] = 'private, no-store'

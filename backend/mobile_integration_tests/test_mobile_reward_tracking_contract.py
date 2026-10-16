@@ -67,6 +67,24 @@ class BrowserTrackingTests(rewards.RewardsFacadeTests):
         self.account.role = 'staff'
         self.assertEqual(reward_tracking.clock(self.request('POST', body)).status_code, 403)
 
+    def test_clock_reports_the_verified_rejection_reason_without_recording_or_logging_tokens(self):
+        self.scoped()
+        body = {'trackingToken': 'private-synthetic-token', 'activityKind': 'component', 'activityId': 'PMP-AUDIO-1'}
+        for code in ('expired_tracking_session', 'invalid_tracking_signature', 'tracking_identity_mismatch'):
+            failure = base.TrackingSessionError('private-synthetic-token')
+            failure.code = code
+            with self.subTest(code=code), patch.object(reward_tracking, 'verify_tracking_session', side_effect=failure), \
+                 patch.object(reward_tracking, 'record_observations') as record, \
+                 patch.object(reward_tracking.logger, 'warning') as log:
+                response = reward_tracking.clock(self.request('POST', body))
+                payload = json.loads(response.content)
+                self.assertEqual(response.status_code, 400)
+                self.assertEqual(payload['code'], code)
+                self.assertIn('draft', payload['error'])
+                self.assertNotIn('private-synthetic-token', payload['error'])
+                log.assert_called_once_with('study_clock_rejected reason=%s', code)
+                record.assert_not_called()
+
 class PolicyPermissionTests(unittest.TestCase):
     def request(self, headers=True, body=None):
         from django.test import RequestFactory
