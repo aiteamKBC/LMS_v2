@@ -39,6 +39,50 @@ class ProgrammeAccessTests(SimpleTestCase):
         self.cursor.fetchone.return_value = (None,)
         self.assertEqual(learning_access(self.source), {'blocked': True, 'startDate': ''})
 
+    def test_imported_full_month_resolves_unique_active_abbreviation(self):
+        self.cursor.fetchone.return_value = None
+        self.cursor.fetchall.return_value = [('Oct 2026', date(2026, 9, 15))]
+        self.now.return_value = datetime(2026, 10, 16, tzinfo=timezone.utc)
+        self.assertEqual(learning_access(self.source), {'blocked': False, 'startDate': '2026-09-15'})
+        self.assertEqual(self.cursor.execute.call_args.args[1], ['Marketing'])
+        self.assertIn('deleted_at IS NULL', self.cursor.execute.call_args.args[0])
+
+    def test_alias_preserves_future_start_gate(self):
+        self.cursor.fetchone.return_value = None
+        self.cursor.fetchall.return_value = [('Oct 2026', date(2026, 10, 1))]
+        self.assertEqual(learning_access(self.source), {'blocked': True, 'startDate': '2026-10-01'})
+
+    def test_ambiguous_alias_is_blocked_even_with_matching_dates(self):
+        self.cursor.fetchone.return_value = None
+        self.cursor.fetchall.return_value = [('Oct 2026', date(2026, 9, 1))] * 2
+        self.assertEqual(learning_access(self.source), {'blocked': True, 'startDate': ''})
+
+    def test_alias_missing_date_or_different_year_stays_blocked(self):
+        self.cursor.fetchone.return_value = None
+        for rows in [[('Oct 2026', None)], [('Oct 2025', date(2025, 10, 1))], []]:
+            with self.subTest(rows=rows):
+                self.cursor.fetchall.return_value = rows
+                self.assertEqual(learning_access(self.source), {'blocked': True, 'startDate': ''})
+
+    def test_named_cohort_is_not_fuzzy_matched(self):
+        self.source.cohort = 'October intake 2026'
+        self.cursor.fetchone.return_value = None
+        self.assertEqual(learning_access(self.source), {'blocked': True, 'startDate': ''})
+        self.cursor.fetchall.assert_not_called()
+
+    def test_resolved_alias_opens_quiz_video_podcast_and_submission_gate(self):
+        self.cursor.fetchone.return_value = None
+        self.cursor.fetchall.return_value = [('Oct 2026', date(2026, 9, 15))]
+        self.now.return_value = datetime(2026, 10, 16, tzinfo=timezone.utc)
+        with patch('learner_api.programme_access.EnrolmentUser.all_learners') as manager:
+            manager.only.return_value.get.return_value = self.source
+            for path in ['/learner_api/quizzes/1/submit/',
+                         '/learner_api/videos/video-1/complete/',
+                         '/learner_api/components/podcast-1/complete/']:
+                with self.subTest(path=path):
+                    self.assertIsNone(refusal(path, self.account, 'POST'))
+            self.assertIsNone(submission_refusal(self.account))
+
     def test_direct_and_batch_activity_reads_cannot_bypass_the_start_date(self):
         with patch('login.api_gate._enabled', return_value=True), \
                 patch('old_otjh.gate.refusal', return_value=None), \

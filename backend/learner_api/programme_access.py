@@ -10,6 +10,20 @@ from .apprenticeship_agreement import _to_date
 from .models import EnrolmentUser
 
 
+def _month_cohort_key(value):
+    """Recognize month/year labels only; never fuzzy-match named cohorts."""
+    match = re.fullmatch(r'([a-z]+)\s+(\d{4})', str(value or '').strip().lower())
+    if not match:
+        return None
+    months = ('january', 'february', 'march', 'april', 'may', 'june',
+              'july', 'august', 'september', 'october', 'november', 'december')
+    month, year = match.groups()
+    for index, name in enumerate(months, 1):
+        if month in {name, name[:3]}:
+            return index, year
+    return None
+
+
 def learning_access(source):
     programme = str(getattr(source, 'programme', '') or '').strip()
     cohort = str(getattr(source, 'cohort', '') or '').strip()
@@ -23,6 +37,20 @@ def learning_access(source):
                 [programme, cohort],
             )
             row = cursor.fetchone()
+            # Imported enrolments use full month names while authoring may use
+            # abbreviations. Resolve only a unique active cohort in this exact
+            # programme; a missing date or ambiguous alias must remain blocked.
+            key = _month_cohort_key(cohort)
+            if row is None and key is not None:
+                cursor.execute(
+                    '''SELECT cohort_name, start_date FROM curriculum.cohorts
+                       WHERE programme_name = %s AND deleted_at IS NULL''',
+                    [programme],
+                )
+                matches = [candidate for candidate in cursor.fetchall()
+                           if _month_cohort_key(candidate[0]) == key]
+                if len(matches) == 1:
+                    row = (matches[0][1],)
         start = _to_date(row[0]) if row else None
     else:
         start = _to_date(getattr(source, 'start_date', None))
