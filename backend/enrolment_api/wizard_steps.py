@@ -26,10 +26,11 @@ from .models import (
 
 logger = logging.getLogger(__name__)
 
-# The 8-point self-assessment scale (see COMPETENCE_LEVELS in the frontend), plus
+# The 9-point self-assessment scale (see COMPETENCE_LEVELS in the frontend), plus
 # the three legacy 5-point values so assessments saved before the scale was
 # widened still round-trip instead of being silently dropped.
 RAG_LEVELS = {
+    "champion",
     "mastery",
     "expert",
     "proficient",
@@ -47,7 +48,7 @@ RAG_LEVELS = {
 # Numeric score per level, so the DB can be queried/reported on without the
 # client having to send it. Legacy values map onto the nearest new score.
 LEVEL_SCORES = {
-    "mastery": 8, "expert": 7, "proficient": 6, "consistently": 5,
+    "champion": 9, "mastery": 8, "expert": 7, "proficient": 6, "consistently": 5,
     "frequently": 4, "occasionally": 3, "rarely": 2, "never": 1,
     "always": 8, "often": 5, "sometimes": 3,
 }

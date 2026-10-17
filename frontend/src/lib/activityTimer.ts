@@ -84,6 +84,9 @@ export function canResumeActivityTimer(
   if (!timer?.session || timer.session.countingMode !== countingMode) return false;
   const startedAt = Date.parse(timer.session.startedAt);
   if (!Number.isFinite(startedAt)) return false;
+  // Reward sessions are revalidated/re-anchored by the server on restore.
+  // A device's wall clock cannot decide the lifetime of a signed server token.
+  if (timer.session.rewardTracking) return true;
   const age = now - startedAt;
   return age >= 0 && age < SESSION_MAX_AGE_MS;
 }

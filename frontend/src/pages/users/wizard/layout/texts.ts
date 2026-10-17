@@ -151,6 +151,12 @@ const SLOTS: Record<string, Def[]> = {
     ['block.skillsRadar.note', 'Note label', 'line', 'Add a note'],
     ['block.skillsRadar.upload', 'Evidence label', 'line', 'Upload evidence:'],
   ],
+  'block.inclusion': [
+    ['block.inclusion.title', 'Heading', 'line', 'Inclusion'],
+    ['block.inclusion.body', 'Instructions', 'paragraph', 'Before you read our policies, please complete the inclusion assessment. It helps us understand any support you may need during your apprenticeship. It opens on our Safeguarding site in a new tab; when you have finished, come back to this tab to continue.'],
+    ['block.inclusion.start', 'Button', 'line', 'Start inclusion assessment'],
+    ['block.inclusion.done', 'Shown once completed', 'line', 'Thank you, we have received your inclusion assessment.'],
+  ],
   'block.policies': [
     ['block.policies.title', 'Heading', 'line', 'Documents'],
     ['block.policies.group', 'Group heading', 'line', 'Kent Business College'],

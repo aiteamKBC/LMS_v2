@@ -1,0 +1,265 @@
+{
+  "scope": "Student Dashboard Training Plan tab only",
+  "legacy_endpoints": "Unchanged; compact contract applies only to dashboard/{kind}/{id}/training/",
+  "synthetic_contract_examples": {
+    "note": "Illustrative synthetic data; not learner 265 measurements.",
+    "initial": {
+      "timeline": {
+        "start": "2026-10",
+        "end": "2027-09",
+        "programmeStartDate": "2026-10-01",
+        "modules": [
+          {
+            "id": "current:M1",
+            "title": "Synthetic module",
+            "moduleId": "M1",
+            "start": "2026-10-01",
+            "end": "2026-12-31",
+            "progress": 50,
+            "done": 1,
+            "activityCount": 2,
+            "weekAnchor": "2026-10-01",
+            "detail": {
+              "session_week_day": "Thursday",
+              "curriculumSlots": []
+            }
+          }
+        ],
+        "reviews": [],
+        "months": {},
+        "coachName": "Synthetic coach"
+      },
+      "selectedModuleId": "current:M1",
+      "selectedModule": {
+        "id": "current:M1",
+        "title": "Synthetic module",
+        "moduleId": "M1",
+        "start": "2026-10-01",
+        "end": "2026-12-31",
+        "progress": 50,
+        "done": 1,
+        "activityCount": 2,
+        "activityCounts": {
+          "reading": 2
+        },
+        "weeks": 8,
+        "actual": 2,
+        "ksbCodes": [
+          "K1"
+        ],
+        "achievedKsbCodes": [],
+        "ksbMappingMissing": false,
+        "detail": {
+          "id": "M1",
+          "title": "Synthetic module",
+          "description": "Visible module description",
+          "start_date": "2026-10-01",
+          "end_date": "2026-12-31",
+          "tutor_name": "Synthetic tutor",
+          "coach_name": "Synthetic coach",
+          "programme_name": "Synthetic programme",
+          "cohort_name": "Synthetic cohort",
+          "group_name": "Synthetic group",
+          "total_otjh": 4,
+          "weeks_number": 8,
+          "sessions_number": 8,
+          "educational_session_count": 8,
+          "session_week_day": "Thursday",
+          "session_start_time": "09:00",
+          "session_end_time": "10:00",
+          "learning_outcomes": [
+            "Visible learning outcome"
+          ],
+          "curriculumSlots": [],
+          "effectiveEndDate": "",
+          "originalEndDate": ""
+        },
+        "sessions": [],
+        "activities": [
+          {
+            "id": "C1",
+            "title": "Visible activity preview",
+            "completed": true
+          }
+        ]
+      }
+    },
+    "module_detail": {
+      "id": "current:M1",
+      "title": "Synthetic module",
+      "moduleId": "M1",
+      "start": "2026-10-01",
+      "end": "2026-12-31",
+      "progress": 50,
+      "done": 1,
+      "activityCount": 2,
+      "activityCounts": {
+        "reading": 2
+      },
+      "weeks": 8,
+      "actual": 2,
+      "ksbCodes": [
+        "K1"
+      ],
+      "achievedKsbCodes": [],
+      "ksbMappingMissing": false,
+      "detail": {
+        "id": "M1",
+        "title": "Synthetic module",
+        "description": "Visible module description",
+        "start_date": "2026-10-01",
+        "end_date": "2026-12-31",
+        "tutor_name": "Synthetic tutor",
+        "coach_name": "Synthetic coach",
+        "programme_name": "Synthetic programme",
+        "cohort_name": "Synthetic cohort",
+        "group_name": "Synthetic group",
+        "total_otjh": 4,
+        "weeks_number": 8,
+        "sessions_number": 8,
+        "educational_session_count": 8,
+        "session_week_day": "Thursday",
+        "session_start_time": "09:00",
+        "session_end_time": "10:00",
+        "learning_outcomes": [
+          "Visible learning outcome"
+        ],
+        "curriculumSlots": [],
+        "effectiveEndDate": "",
+        "originalEndDate": ""
+      },
+      "sessions": [],
+      "activities": [
+        {
+          "id": "C1",
+          "title": "Visible activity preview",
+          "completed": true
+        }
+      ]
+    }
+  },
+  "routes": {
+    "initial": "/learner_api/dashboard/{kind}/{id}/training/",
+    "selected_module": "/learner_api/dashboard/{kind}/{id}/training/modules/{subjectId}/",
+    "subject_identity": "Use the timeline id, such as current:M1 or legacy:99, URL encoded"
+  },
+  "field_to_consumer": {
+    "ModuleTimeline": [
+      "timeline.start/end/programmeStartDate/months keys and topics",
+      "module.id/title/moduleId/start/end/progress/done/activityCount/weekAnchor",
+      "module.detail.effectiveEndDate/session_week_day",
+      "first curriculum slot and slots with published holidayNote: slotNumber/type/date/sessionNumber/weekTitle/holidays/holidayNote",
+      "reviews.source/status/date/targetDate/scheduledDate/title/invited/eventKey"
+    ],
+    "ModuleOverview": [
+      "id/title/moduleId/start/end/progress/done/activityCount/activityCounts/weeks/actual",
+      "detail.programme_name/cohort_name/group_name/description",
+      "detail.effectiveEndDate/weeks_number/session_week_day/session_start_time/session_end_time",
+      "detail.coach_name/tutor_name/total_otjh/learning_outcomes",
+      "ksbCodes/achievedKsbCodes/ksbMappingMissing"
+    ],
+    "TimelineInspector_fullscreen": [
+      "selected module identity/progress/counts/start/end/weeks/actual",
+      "detail.description/coach_name/tutor_name/curriculumSlots",
+      "sessions required by CurriculumTimeline and fallback live-session list",
+      "first five activities: id/title/completed"
+    ]
+  },
+  "omitted_from_training_response": [
+    "learning.activity full-programme activity records",
+    "learning.detail components, quiz attempts, video progress and component progress",
+    "week.planSubjects and week.monthlyOtjh",
+    "monthlyLog all-month values and totals",
+    "moduleActivityHours and raw moduleProgress histories",
+    "unselected module descriptions, outcomes, staff, KSB detail and session lists",
+    "evidence bodies, quiz questions, video content and reflection bodies"
+  ],
+  "cleanup": {
+    "removed": [
+      "obsolete dashboardTabs.dashboardTraining legacy-response adapter",
+      "useDashboardTabsData Training snapshot and unified-learning transformation path"
+    ],
+    "retained_shared_consumers": {
+      "moduleActivityHours": "WeeklyLearningPlan and weekOtjhHours",
+      "buildPlanModules": "TrainingPlanDetails and other shared consumers",
+      "learningSummary": "Overview, Monthly and My Learning",
+      "legacy serialization": "Legacy APIs and non-Training screens"
+    }
+  },
+  "sql_changes": [
+    "Training dispatch bypasses legacy read_dashboard/read_week/monthly_hours/learning_projection",
+    "Initial native projection requests identity-only facts",
+    "Selected module validates learner membership then scopes native and legacy catalogue reads",
+    "Canonical training_summary opts into narrow progress columns, metadata-only source payload, segment identities and historical lineage",
+    "Existing canonical query and calculation defaults remain unchanged"
+  ],
+  "validation_commands": {
+    "frontend": "npm --prefix frontend run test -- src/pages/workspace/learner/__tests__/DashboardCompactTraining.test.tsx src/pages/workspace/learner/__tests__/DashboardTabs.test.tsx src/pages/workspace/learner/__tests__/dashboardRequestGraph.test.tsx src/pages/workspace/learner/__tests__/DashboardTrainingPlan.test.tsx src/pages/learner/training-plan-timeline --maxWorkers=2",
+    "backend": "backend/.venv/Scripts/python.exe backend/manage.py test learner_api.test_dashboard_training_no_db learner_api.test_dashboard_tabs_no_db learner_api.test_dashboard_header_no_db learner_api.tests_weekly_learning --settings=config.settings_sqlite_test --testrunner=django.test.runner.DiscoverRunner --noinput",
+    "canonical": "backend/.venv/Scripts/python.exe -I -B backend/learner_api/test_canonical_learning_no_db.py",
+    "typescript": "npm --prefix frontend run type-check",
+    "repository_lint": "npm --prefix frontend run lint",
+    "diff": "git diff --check"
+  },
+  "live_measurements": {
+    "before_raw_bytes": null,
+    "after_raw_bytes": null,
+    "before_gzip_bytes": null,
+    "after_gzip_bytes": null,
+    "before_sql_queries": null,
+    "after_sql_queries": null,
+    "database_wait_ms": null,
+    "django_view_ms": null,
+    "browser_ttfb_ms": null,
+    "typical_interaction_sql_work": null,
+    "reason": "No verified live database target; no production benchmark or real learner comparison performed"
+  },
+  "mocked_request_assertions": {
+    "initial": 1,
+    "uncached_module_switch": 1,
+    "cached_module_revisit_within_30_seconds": 0,
+    "stale_response_overwrites_selection": false
+  },
+  "changed_files_for_this_task": [
+    "backend/learner_api/dashboard_training.py",
+    "backend/learner_api/dashboard_tabs.py",
+    "backend/learner_api/urls.py",
+    "backend/learner_api/canonical_learning.py",
+    "backend/learner_api/test_dashboard_training_no_db.py",
+    "backend/learner_api/test_dashboard_tabs_no_db.py",
+    "backend/learner_api/test_canonical_learning_no_db.py",
+    "backend/reports/dashboard_training_field_consumers.json",
+    "frontend/src/api/dashboardTraining.ts",
+    "frontend/src/api/dashboardTabs.ts",
+    "frontend/src/hooks/useDashboardTabsData.ts",
+    "frontend/src/pages/workspace/learner/DashboardTabs.tsx",
+    "frontend/src/pages/workspace/learner/tabs/DashboardTrainingTab.tsx",
+    "frontend/src/pages/workspace/learner/__tests__/DashboardCompactTraining.test.tsx",
+    "frontend/src/pages/workspace/learner/__tests__/dashboardRequestGraph.test.tsx",
+    "frontend/src/pages/learner/training-plan-timeline/model.ts",
+    "frontend/src/pages/learner/training-plan-timeline/presentation.tsx",
+    "frontend/src/pages/learner/training-plan-timeline/ModuleTimeline.tsx",
+    "frontend/src/pages/learner/training-plan-timeline/ModuleOverview.tsx",
+    "frontend/src/pages/learner/training-plan-timeline/TimelineInspector.tsx"
+  ],
+  "remaining_limitations": [
+    "Exact timeline progress still reconciles programme-wide catalogue and completion facts in Python",
+    "Module requests retain learner-wide narrow canonical facts for cross-module lineage, manual corrections and title ambiguity",
+    "Encoded non-object legacy source_payload values remain intact for existing decoding semantics",
+    "No verified live database target: real learner 265 and apprenticeship parity, raw/gzip bytes, SQL counts, database wait, view timing and browser TTFB are not measured",
+    "Mocked tests are not evidence of live performance gains"
+  ],
+  "validation_results": {
+    "frontend_focused": "PASS: 190 tests in 14 files",
+    "backend_focused": "PASS: 59 tests, SimpleTestCase with database access forbidden",
+    "canonical": "PASS: 49 isolated tests",
+    "typescript": "FAIL: pre-existing engagement/events/page.tsx:18 TS2307 qrcode.react; same result before and after",
+    "repository_lint_baseline": "FAIL: 32 errors and 146 warnings before task edits",
+    "changed_file_lint": "FAIL under max-warnings 0: zero errors, five existing presentation.tsx export warnings",
+    "diff": "PASS",
+    "teams_baseline": "NOT REQUIRED: no protected file or existing Teams consumer behavior changed",
+    "expanded_teams": "NOT REQUIRED",
+    "live_teams": "NOT RUN"
+  },
+  "independent_review": "Completed after retained-quiz ambiguity fix; no remaining high-confidence defect found. Read-only review, no live parity or performance endorsement."
+}

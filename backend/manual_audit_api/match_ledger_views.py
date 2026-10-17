@@ -1084,7 +1084,8 @@ def _skill_radar_snapshot_entries(rows):
             "knowledge": score if field == "knowledge" else None,
             "skill_score": score if field == "skill_score" else None,
             "behaviour": score if field == "behaviour" else None,
-            "maximum": 8,
+            # The top of the self-assessment scale (9, Champion).
+            "maximum": 9,
         })
     return entries
 
@@ -1092,7 +1093,7 @@ def _skill_radar_snapshot_entries(rows):
 def _skill_radar_level_score(value):
     text = str(value or "").strip().lower()
     for label, score in (
-        ("mastery", 8), ("expert", 7), ("proficient", 6),
+        ("champion", 9), ("mastery", 8), ("expert", 7), ("proficient", 6),
         ("consistently", 5), ("frequently", 4), ("occasionally", 3),
         ("rarely", 2), ("never", 1),
     ):

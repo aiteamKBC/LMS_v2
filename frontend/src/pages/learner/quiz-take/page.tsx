@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { observeRewardInterval, flushRewardObservations, clearRewardObservations } from '@/lib/rewardTracking';
 import { createPortal } from 'react-dom';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { AppIcon } from '@/components/feature/AppIcon';
@@ -232,8 +233,15 @@ export default function QuizTakePage() {
 
   useEffect(() => {
     if (phase !== 'quiz' || reflectionChoiceOpen || !componentAccess.open) return;
+    let last = performance.now();
     timerRef.current = setInterval(() => {
-      if (document.visibilityState === 'visible') setElapsedSeconds((s) => s + 1);
+      const now = performance.now();
+      if (document.visibilityState === 'visible') {
+        setElapsedSeconds((s) => s + 1);
+        try { observeRewardInterval(trackingSessionRef.current,Math.max(last,now-1000),now); }
+        catch { setSubmitError('Your measured-time draft could not be saved. Keep this page open and retry.'); }
+      }
+      last = now;
     }, 1000);
     return () => { if (timerRef.current) clearInterval(timerRef.current); };
   }, [phase, reflectionChoiceOpen, componentAccess.open]);
@@ -344,6 +352,7 @@ export default function QuizTakePage() {
     try {
       const tracking = trackingSessionRef.current || await trackingPromiseRef.current;
       if (!tracking) throw new Error('Quiz timing did not start. Reopen the quiz and try again.');
+      if (tracking.rewardTracking) await flushRewardObservations(tracking,'quiz',String(quiz.id));
       const res = await submitQuizAttempt(quiz.id, kind as 'commercial' | 'apprenticeship', id, {
         answers,
         timeTakenSeconds: elapsedSeconds,
@@ -359,6 +368,7 @@ export default function QuizTakePage() {
       });
       setReflectionChoiceOpen(false);
       setResult(res);
+      clearRewardObservations(tracking);
       setPhase('results');
       setCorrection(null);
       setCorrectionError('');

@@ -1,50 +1,25 @@
-import { useEffect, useId, useMemo, useRef, useState, type MouseEvent, type ReactNode } from 'react';
+import { useEffect, useId, useMemo, useState, type MouseEvent, type ReactNode } from 'react';
 import { Link, Navigate, useLocation, useNavigate } from 'react-router-dom';
-import { ArrowRight, Award, BookOpen, CalendarDays, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight, Layers3, Loader2, Map as MapIcon, Search } from 'lucide-react';
-import type { LearnerDetail, LearnerKind } from '@/api/learnerDetail';
+import { ArrowRight, Award, BookOpen, CalendarDays, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight, GraduationCap, Layers3, Loader2, Map as MapIcon, Search } from 'lucide-react';
+import type { LearnerDetail } from '@/api/learnerDetail';
 import type { LearnerMetrics } from '@/api/learnerMetrics';
-import { fetchStudentActivity, peekStudentActivity, subjectRequest, type StudentActivityItem, type StudentActivityResponse, type SubjectAttemptResult } from '@/api/studentActivity';
-import { peekLearnerJson } from '@/api/learnerRead';
+import { type StudentActivityItem, type StudentActivityResponse, type SubjectAttemptResult } from '@/api/studentActivity';
 import { fetchLearnerCertificateTemplate, issueLearnerModuleCertificate, type CertificateTemplateSummary } from '@/api/learnerCertificates';
-import { hasComponentContent, formatHoursMinutes, type JourneyComponent } from '@/utils/learnerJourney';
+import { formatHoursMinutes, type JourneyComponent } from '@/utils/learnerJourney';
 import { DeferredStudentMaterial as StudentMaterial } from './DeferredStudentMaterial';
 import styles from './SubjectWorkspace.module.css';
+import { useSubjectMetadata } from './useSubjectLearningData';
 import { LearningCatalogue } from './LearningCatalogue';
 import { DEFAULT_MODULE_COVER } from './moduleCover';
 import { LearningMapHero, SubjectTimeline } from './SubjectTimeline';
 import { HolidayNoteHint } from '@/components/feature/HolidayNoteHint';
 import { weekHolidayNotes } from '@/pages/learner/training-plan-timeline/model';
-import { certificateEligible, learningDate, learningDeadlines, learningPlanSelection, learningHref, nextLearningWeek, continuingLearningWeek, currentLearningWeek, recommendedLearningSubject, resolveLearningSubject, subjectMapWeeks, subjectOpeningActivity, subjectLearningStatus } from './subjectLearning';
+import { groupSubjectActivities, nativeHref, certificateEligible, learningDate, learningDeadlines, learningPlanSelection, learningHref, nextLearningWeek, continuingLearningWeek, currentLearningWeek, recommendedLearningSubject, resolveLearningSubject, subjectMapWeeks, subjectOpeningActivity, subjectLearningStatus } from './subjectLearning';
 import type { LearningSchedule } from '@/api/learnerOverview';
-import type { PlanModule, PlanSession } from '@/api/trainingPlanDashboard';
-import { buildUnifiedLearningSummary, subjectRefs, type Schedule, type SubjectEntry, type Subject, type CoverMetadata } from './learningSummary';
-export { buildUnifiedLearningSummary, subjectsFrom } from './learningSummary';
+import type { PlanModule, PlanModuleProgress, PlanSession } from '@/api/trainingPlanDashboard';
+import { buildUnifiedLearningSummary, type SubjectEntry, type Subject, type CoverMetadata } from './learningSummary';
 export type { SubjectEntry, Subject, CoverMetadata, UnifiedLearningSummary } from './learningSummary';
 
-export function useSubjectMetadata(data: StudentActivityResponse | null, real: LearnerDetail | null, kind?: string, learnerId?: string, enabled = true, assignedOnly = false) {
-  // Raw, sorted IDs are independent of Builder renames and the merged cards.
-  // The endpoint always resolves assigned Builder modules, titles and dates
-  // from the learner ID. Their metadata can load alongside the plan/history;
-  // historical covers already travel with the student-activity response.
-  const refs = assignedOnly ? '' : subjectRefs(data, real);
-  const key = `${kind}:${learnerId}:${refs}`;
-  const url = `/learner_api/subject-covers/${encodeURIComponent(learnerId || '')}/?refs=${encodeURIComponent(refs)}`;
-  const [state, setState] = useState<{ key: string; real: LearnerDetail | null; data: CoverMetadata | null; error: string } | null>(null);
-  const [retry, setRetry] = useState(0);
-  const previousRequest = useRef<{ key: string; real: LearnerDetail | null } | null>(null);
-  useEffect(() => {
-    if (!enabled || !learnerId) return;
-    const controller = new AbortController();
-    const revalidate = retry > 0 || (previousRequest.current?.key === key && previousRequest.current.real !== real);
-    previousRequest.current = { key, real };
-    void subjectRequest<CoverMetadata>(`/learner_api/subject-covers/${encodeURIComponent(learnerId)}/?refs=${encodeURIComponent(refs)}`, { signal: controller.signal, revalidate })
-      .then((result) => { if (!controller.signal.aborted) setState({ key, real, data: result, error: '' }); })
-      .catch(() => { if (!controller.signal.aborted) setState({ key, real, data: null, error: 'Could not load your subject details. Please try again.' }); });
-    return () => controller.abort();
-  }, [enabled, learnerId, refs, key, retry, real]);
-  const current = state?.key === key && state.real === real ? state : null;
-  return { metadata: current?.data ?? (enabled && learnerId ? peekLearnerJson<CoverMetadata>(url) : undefined), error: current?.error || '', retry: () => { setState(null); setRetry((value) => value + 1); } };
-}
 
 function formatRecordedHours(hours: number) {
   const seconds = Math.max(0, Math.round(hours * 3600));
@@ -53,89 +28,7 @@ function formatRecordedHours(hours: number) {
     seconds % 60 ? `${seconds % 60}s` : ''].filter(Boolean).join(' ') || '0m';
 }
 
-export function groupSubjectActivities(activities: SubjectEntry[]) {
-  const months = new Map<string, Map<string, SubjectEntry[]>>();
-  for (const activity of activities) {
-    const introduction = activity.schedule.date_source === 'introduction';
-    const extra = activity.schedule.date_source === 'extra_activity';
-    const month = introduction ? 'introduction' : extra ? 'extra' : activity.schedule.month || activity.schedule.date?.slice(0, 7) || 'undated';
-    const week = extra ? activity.legacy?.section_title || activity.week || 'Additional activities' : activity.schedule.week_start || activity.week || 'undated';
-    if (!months.has(month)) months.set(month, new Map());
-    const weeks = months.get(month)!;
-    if (!weeks.has(week)) weeks.set(week, []);
-    weeks.get(week)!.push(activity);
-  }
-  const rank = (month: string) => month === 'introduction' ? -1 : month === 'extra' ? 2 : month === 'undated' ? 1 : 0;
-  return [...months].sort(([a], [b]) => rank(a) - rank(b) || a.localeCompare(b)).map(([month, weeks]) => ({
-    month, weeks: [...weeks].sort(([a], [b]) => a.localeCompare(b, undefined, { numeric: true })).map(([week, items]) => ({
-      week, activities: [...items].sort((a, b) => (a.schedule.date || '').localeCompare(b.schedule.date || '') || a.position - b.position || a.title.localeCompare(b.title)),
-    })),
-  }));
-}
 
-export function useUnifiedLearningSummary(
-  real: LearnerDetail | null,
-  kind?: LearnerKind,
-  learnerId?: string,
-  enabled = true,
-) {
-  const identity = `${kind}:${learnerId}`;
-  const needsHistory = !!real?.studentActivityAvailable;
-  const [state, setState] = useState<{
-    identity: string;
-    retry: number;
-    data: StudentActivityResponse | null;
-    error: string;
-  } | null>(null);
-  const [retry, setRetry] = useState(0);
-
-  useEffect(() => {
-    if (!enabled || !kind || !learnerId || !needsHistory) return;
-    const controller = new AbortController();
-    setState(null);
-    void fetchStudentActivity(kind, learnerId, controller.signal)
-      .then((data) => {
-        if (!controller.signal.aborted) setState({ identity, retry, data, error: '' });
-      })
-      .catch((failure) => {
-        if (!controller.signal.aborted) setState({
-          identity,
-          retry,
-          data: null,
-          error: failure instanceof Error ? failure.message : 'Could not load progress.',
-        });
-      });
-    return () => controller.abort();
-  }, [enabled, kind, learnerId, needsHistory, identity, retry]);
-
-  const current = state?.identity === identity && state.retry === retry ? state : null;
-  const data = needsHistory ? current?.data || (kind && learnerId ? peekStudentActivity(kind, learnerId) : null) || null : null;
-  const metadataEnabled = enabled && !!learnerId && (!needsHistory || !!data);
-  const { metadata, error: metadataError, retry: retryMetadata } = useSubjectMetadata(
-    data,
-    real,
-    kind,
-    learnerId,
-    metadataEnabled,
-  );
-  const loading = enabled && !!learnerId && (
-    (needsHistory && !current && !data) || (!current?.error && metadataEnabled && !metadata)
-  );
-  const summary = !enabled || loading || current?.error || metadataError
-    ? null
-    : buildUnifiedLearningSummary(data, real, metadata);
-  return {
-    data,
-    metadata,
-    summary,
-    loading,
-    error: current?.error || metadataError,
-    retry: () => {
-      setRetry((value) => value + 1);
-      retryMetadata();
-    },
-  };
-}
 
 function Progress({ done, total, label = 'Subject progress', showFormula = false, compact = false }: {
   done: number; total: number; label?: string; showFormula?: boolean; compact?: boolean;
@@ -144,6 +37,25 @@ function Progress({ done, total, label = 'Subject progress', showFormula = false
   return <div className="space-y-2"><div className="flex items-center justify-between gap-2 text-xs"><span className={compact ? 'text-slate-500' : 'text-foreground-500'}>{done} of {total} completed</span><strong className={`shrink-0 tabular-nums ${compact && percent === 100 ? 'text-emerald-700' : 'text-primary-700'}`}>{percent}%</strong></div>
     <div role="progressbar" aria-label={label} aria-valuemin={0} aria-valuemax={100} aria-valuenow={percent} className={`h-1.5 overflow-hidden rounded-full ${compact ? 'bg-slate-100' : 'bg-foreground-100'}`}><div className={`h-full rounded-full motion-safe:transition-[width] ${compact ? percent === 100 ? 'bg-emerald-500' : 'bg-gradient-to-r from-primary-500 to-violet-400' : 'bg-primary-500'}`} style={{ width: `${percent}%` }} /></div>
     {showFormula && <p className="text-xs text-foreground-500">Progress = completed activities ÷ total activities × 100{total > 0 ? ` = ${done} ÷ ${total} × 100 = ${percent}%` : '. No activities yet'}. Quizzes count as complete after passing.</p>}
+  </div>;
+}
+
+function HoursProgress({ completed, planned, label }: {
+  completed: number | null; planned: number | null; label: string;
+}) {
+  const available = completed != null && Number.isFinite(completed) && planned != null && Number.isFinite(planned) && planned > 0;
+  const percent = available ? Math.min(100, Math.round(completed / planned * 10000) / 100) : 0;
+  const completedLabel = completed != null && Number.isFinite(completed) ? formatRecordedHours(completed) : 'Unavailable';
+  const plannedLabel = planned != null && Number.isFinite(planned) ? formatRecordedHours(planned) : 'Unavailable';
+  return <div className={styles.hoursProgress}>
+    <div className="flex items-center justify-between gap-2 text-xs"><span className="text-slate-500">Hours progress</span><strong className="shrink-0 tabular-nums text-emerald-700">{available ? `${percent}%` : '—'}</strong></div>
+    <div role="progressbar" aria-label={label} aria-valuemin={0} aria-valuemax={100}
+      aria-valuenow={available ? percent : undefined}
+      aria-valuetext={available ? `${completedLabel} completed of ${plannedLabel} planned (${percent}%)` : 'Hours progress unavailable'}
+      className={styles.hoursProgressTrack} data-available={available || undefined}>
+      <span style={{ width: `${percent}%` }} />
+    </div>
+    <div className={styles.hoursProgressLabel}><span>Completed {completedLabel}</span><span>Planned {plannedLabel}</span></div>
   </div>;
 }
 
@@ -280,7 +192,7 @@ function SubjectCertificateAction({
   </div>;
 }
 
-export function SubjectCard({ subject, cover, tone = 'purple', onOpen, template, csrfToken, kind, learnerId, planModule }: {
+export function SubjectCard({ subject, cover, tone = 'purple', onOpen, template, csrfToken, kind, learnerId, planModule, moduleProgress }: {
   subject: Subject;
   cover?: string;
   tone?: SubjectCardTone;
@@ -290,6 +202,7 @@ export function SubjectCard({ subject, cover, tone = 'purple', onOpen, template,
   kind?: string;
   learnerId?: string;
   planModule?: PlanModule;
+  moduleProgress?: PlanModuleProgress;
 }) {
   const total = subject.activities.length;
   const completed = subject.activities.filter((activity) => activity.completed).length;
@@ -302,11 +215,19 @@ export function SubjectCard({ subject, cover, tone = 'purple', onOpen, template,
   const startDate = planModule?.start_date ? learningDate(planModule.start_date) : 'Not scheduled';
   const endDate = planModule?.end_date ? learningDate(planModule.end_date) : 'Not scheduled';
   const sessionCount = planModule?.educational_session_count;
-  return <article className={`group ${styles.card} ${styles.subjectTheme} ${styles.moduleCard}`} data-tone={tone}>
+  const completedHours = subject.source === 'legacy'
+    ? subject.acceptedHours ?? null
+    : moduleProgress?.hours.actual ?? subject.acceptedHours ?? null;
+  const plannedHours = planModule?.total_otjh ?? null;
+  return <article className={`group ${styles.card} ${styles.subjectTheme} ${styles.moduleCard}`} data-tone={tone} data-source={subject.source}>
     <button type="button" onClick={onOpen} className={styles.cardButton}>
       <div className="relative w-full"><Cover title={subject.title} url={cover} fallbackUrl={DEFAULT_MODULE_COVER} /></div>
       <div className={styles.cardBody}>
         <div className={styles.cardMetaRow}>
+          <span className={styles.sourceBadge} data-source={subject.source}>
+            {subject.source === 'legacy' ? <BookOpen size={13} aria-hidden="true" /> : <GraduationCap size={13} aria-hidden="true" />}
+            {subject.source === 'legacy' ? 'Previous learning' : 'Current learning plan'}
+          </span>
           <span className={styles.status} data-state={isComplete ? 'complete' : status === 'In progress' ? 'started' : 'new'}>
             <span aria-hidden="true" className={styles.statusDot} />{status}
           </span>
@@ -321,9 +242,9 @@ export function SubjectCard({ subject, cover, tone = 'purple', onOpen, template,
           <div><dt>Sessions</dt><dd>{sessionCount == null ? 'Not set' : `${sessionCount} ${sessionCount === 1 ? 'session' : 'sessions'}`}</dd></div>
         </dl>
         <p className={styles.cardDescription}>Explore your learning materials and activities.</p>
-        <div className={styles.cardProgress}><Progress done={completed} total={total} compact label={`${subject.title} progress`} />
-          {subject.recordedHistory && <p className="mt-2 text-xs text-foreground-500">Recorded activities only · Full catalogue: {subject.catalogueCount ?? 0}<br />Accepted time: {formatRecordedHours(subject.acceptedHours ?? 0)}</p>}
-          {subject.catalogueProgress && <p className="mt-2 text-xs text-foreground-500">Accepted time: {formatRecordedHours(subject.acceptedHours ?? 0)}</p>}
+        <div className={styles.cardProgress}><Progress done={completed} total={total} compact label={`${subject.title} ${subject.source === 'legacy' ? 'previous learning' : 'current plan'} activities progress`} />
+          <HoursProgress completed={completedHours} planned={plannedHours} label={`${subject.title} hours progress`} />
+          {subject.recordedHistory && <p className="mt-2 text-xs text-foreground-500">Recorded activities only · Full catalogue: {subject.catalogueCount ?? 0}</p>}
         </div>
         <span className={styles.nextActivity}>{isComplete ? <CheckCircle2 size={20} /> : <BookOpen size={20} />}<span><small>{isComplete ? 'Well done' : 'Next up'}</small><strong>{isComplete ? subject.recordedHistory ? 'All recorded activities complete' : 'All activities complete' : next?.title || 'Explore this subject'}</strong></span><ChevronRight size={16} /></span>
         <span className={styles.cardAction}>Open subject<ArrowRight size={16} aria-hidden="true" /></span>
@@ -345,14 +266,6 @@ function SubjectCardsSkeleton() {
   </div>;
 }
 
-export function nativeHref(entry: SubjectEntry, kind?: string, learnerId?: string) {
-  const component = entry.native;
-  if (!component || !kind || !learnerId || !hasComponentContent(component)) return null;
-  const path = component.isQuiz && component.quizMeta ? `quiz/${kind}/${learnerId}/${component.quizMeta.quizId}`
-    : component.type === 'video' && component.videoUrl && component.componentId ? `video/${kind}/${learnerId}/${component.componentId}`
-      : component.componentId ? `component/${kind}/${learnerId}/${component.componentId}` : null;
-  return path ? `/learner/${path}?week=${encodeURIComponent(entry.week || '')}` : null;
-}
 
 function ActivityRow({ entry, kind, learnerId, onProgress, defaultOpen = false }: { defaultOpen?: boolean; entry: SubjectEntry; kind?: string; learnerId?: string; onProgress?: (result: SubjectAttemptResult) => void }) {
   const [open, setOpen] = useState(defaultOpen);
@@ -361,33 +274,36 @@ function ActivityRow({ entry, kind, learnerId, onProgress, defaultOpen = false }
   const href = nativeHref(entry, kind, learnerId);
   const legacy = entry.legacy;
   const canOpenMaterial = legacy?.can_open_material !== false;
+  const canReviewQuiz = legacy?.catalogue_kind === 'quiz' && entry.completed;
+  const canOpen = canOpenMaterial || canReviewQuiz;
   const sourceHref = legacy?.source_material_activity_id && kind && learnerId
     ? `${learningHref('catalogue', kind, learnerId, `legacy:${legacy.group_id}`)}&activity=${encodeURIComponent(legacy.source_material_activity_id)}` : null;
   const score = entry.bestScorePercent ?? legacy?.best_score_percent ?? (legacy?.quiz_score != null && legacy.quiz_maximum_score ? legacy.quiz_score / legacy.quiz_maximum_score * 100 : null);
   return <div role="group" aria-label={`${entry.title} activity`} className="border-t border-foreground-100 first:border-t-0"><div className="grid grid-cols-[2rem_minmax(0,1fr)] items-start gap-3 p-4 sm:flex sm:flex-wrap sm:items-center">
     <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full ${entry.completed ? 'bg-emerald-50 text-emerald-600' : 'bg-background-100 text-foreground-400'}`}>{entry.completed ? <CheckCircle2 size={18} /> : <BookOpen size={16} />}</span>
     <div className="min-w-0 flex-1"><h5 className="text-sm font-semibold text-foreground-900">
-      {legacy && canOpenMaterial && kind && learnerId ? <button type="button" onClick={() => setOpen((value) => !value)} aria-expanded={open} aria-controls={contentId} className="text-left text-primary-700 underline-offset-4 hover:underline focus-visible:underline">{entry.title}</button>
+      {legacy && canOpen && kind && learnerId ? <button type="button" onClick={() => setOpen((value) => !value)} aria-expanded={open} aria-controls={contentId} className="text-left text-primary-700 underline-offset-4 hover:underline focus-visible:underline">{entry.title}</button>
         : href ? <Link to={href} className="text-primary-700 underline-offset-4 hover:underline focus-visible:underline">{entry.title}</Link> : entry.title}
     </h5><p className="mt-1 text-xs text-foreground-500">{[entry.category, entry.schedule.date, score != null ? `Best score ${Math.round(score)}%` : ''].filter(Boolean).join(' · ')}</p>
       {legacy?.section_title && <p className="mt-1 text-xs text-foreground-500">Lecture: {legacy.section_title}</p>}
     </div>
     <div className="col-start-2 flex flex-wrap items-center gap-2 sm:ml-auto"><span className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${entry.completed ? 'bg-emerald-50 text-emerald-700' : 'bg-background-100 text-foreground-600'}`}>{entry.completed ? 'Complete' : 'Not complete'}</span>
-    {legacy && canOpenMaterial && kind && learnerId && <button onClick={() => setOpen((value) => !value)} aria-expanded={open} aria-controls={contentId} className="rounded-lg border border-foreground-200 px-3 py-2 text-xs font-semibold text-primary-700">{open ? 'Close activity' : 'Open activity'}</button>}
+    {legacy && canOpen && kind && learnerId && <button onClick={() => setOpen((value) => !value)} aria-expanded={open} aria-controls={contentId} className="rounded-lg border border-foreground-200 px-3 py-2 text-xs font-semibold text-primary-700">{canReviewQuiz ? open ? 'Close quiz' : 'View quiz' : open ? 'Close activity' : 'Open activity'}</button>}
     {!legacy && href && <Link to={href} className="rounded-lg border border-foreground-200 px-3 py-2 text-xs font-semibold text-primary-700">Open activity</Link>}
     {sourceHref && <Link to={sourceHref} className="rounded-lg border border-foreground-200 px-3 py-2 text-xs font-semibold text-primary-700">View source material</Link>}
-    {((legacy && !canOpenMaterial && !sourceHref) || (!legacy && !href)) && <span className="text-xs text-foreground-500">{entry.native?.retired ? 'No longer in this module' : 'Content not available yet'}</span>}</div>
+    {((legacy && !canOpen && !sourceHref) || (!legacy && !href)) && <span className="text-xs text-foreground-500">{entry.native?.retired ? 'No longer in this module' : 'Content not available yet'}</span>}</div>
   </div>
     {legacy && <p className="px-4 pb-3 text-[11px] text-foreground-400">OTJH: {legacy.hours_mapped ? formatHoursMinutes(legacy.actual) : 'Unavailable'} · Planned: {legacy.planned_hours_mapped ? formatHoursMinutes(legacy.planned) : 'Unavailable'}</p>}
-    <div id={contentId}>{open && legacy && canOpenMaterial && kind && learnerId && <div role="region" aria-label={`${entry.title} content`} className="p-3 pt-0"><StudentMaterial kind={kind} learnerId={learnerId} groupId={legacy.group_id} activityId={legacy.source_activity_id} completed={entry.completed} onProgress={onProgress} /></div>}</div>
+    <div id={contentId}>{open && legacy && canOpen && kind && learnerId && <div role="region" aria-label={`${entry.title} content`} className="p-3 pt-0"><StudentMaterial kind={kind} learnerId={learnerId} groupId={legacy.group_id} activityId={legacy.source_activity_id} completed={entry.completed} readOnly={canReviewQuiz} reviewQuiz={canReviewQuiz} onProgress={canReviewQuiz ? undefined : onProgress} /></div>}</div>
   </div>;
 }
 
-export function StudentActivityPanel({ data: incomingData, loading, error, onRetry, kind, learnerId, real: incomingReal = null, onProgress, metrics, view = 'catalogue', schedule, scheduleLoading = false, upcomingSessions }: {
+export function StudentActivityPanel({ data: incomingData, loading, error, onRetry, kind, learnerId, real: incomingReal = null, onProgress, metrics, view = 'catalogue', schedule, scheduleLoading = false, upcomingSessions, moduleProgress }: {
   kind?: string; learnerId?: string; real?: LearnerDetail | null; data: StudentActivityResponse | null;
   loading: boolean; error: string | null; onRetry: () => void; onProgress?: () => void;
   metrics?: LearnerMetrics | null;
   view?: 'catalogue' | 'map'; schedule?: LearningSchedule | null; scheduleLoading?: boolean; upcomingSessions?: PlanSession[];
+  moduleProgress?: Record<string, PlanModuleProgress>;
 }) {
   const [search, setSearch] = useState('');
   const location = useLocation();
@@ -504,9 +420,11 @@ export function StudentActivityPanel({ data: incomingData, loading, error, onRet
   const visibleActivities = active ? active.activities.filter((entry) => !term || active.title.toLocaleLowerCase().includes(term) || entry.title.toLocaleLowerCase().includes(term)) : [];
   const visibleActivityIds = new Set(visibleActivities.map((entry) => entry.id));
   const groups = groupSubjectActivities(active?.activities || []).filter(({ weeks }) => weeks.some(({ activities }) => activities.some((entry) => visibleActivityIds.has(entry.id))));
-  const total = metrics !== undefined ? metrics?.programme.total ?? '—' : summary.activityCount;
-  const done = metrics !== undefined ? metrics?.programme.completed ?? '—' : summary.completedActivityCount;
-  const percent = metrics !== undefined ? metrics?.programme.percent ?? null : summary.percent;
+  // The header and course cards describe the same complete catalogue. Programme
+  // metrics count ledger records, which can omit activities not yet started.
+  const total = summary.activityCount;
+  const done = summary.completedActivityCount;
+  const percent = summary.percent;
   if (!displayed && (error || imageError)) return <div role="alert" className="rounded-2xl border bg-white p-6"><p className="font-semibold">Could not load your subjects</p><p className="mt-2 text-sm text-foreground-500">{error || imageError}</p><button onClick={error ? onRetry : retryMetadata} className="mt-4 rounded-lg border px-4 py-2 text-sm font-semibold">Try again</button></div>;
   if (!displayed) return <SubjectCardsSkeleton />;
   if (requestedActivity && !activityTarget) return <div role="alert" className={styles.empty}><p>{activityMatches.length > 1 ? 'This evidence matches more than one learning activity. Choose the correct module to review it.' : 'This evidence activity is not available in My Learning.'}</p><button onClick={() => select()}>View modules</button></div>;
@@ -546,7 +464,10 @@ export function StudentActivityPanel({ data: incomingData, loading, error, onRet
         moduleStartDate={subject => planModulesBySubject.get(subject.id)?.start_date}
         onContinue={subject => { setSearch(''); select(subject.id, 'current'); }}
         covers={covers} upcomingSessions={upcomingSessions}
-        renderCard={subject => <SubjectCard key={subject.id} subject={subject} cover={covers[subject.id]} tone={subjectTones.get(subject.id)} onOpen={() => select(subject.id)} template={certificateConfig.template} csrfToken={certificateConfig.csrfToken} kind={kind} learnerId={learnerId} planModule={planModulesBySubject.get(subject.id)} />} />
+        renderCard={subject => {
+          const planModule = planModulesBySubject.get(subject.id);
+          return <SubjectCard key={subject.id} subject={subject} cover={covers[subject.id]} tone={subjectTones.get(subject.id)} onOpen={() => select(subject.id)} template={certificateConfig.template} csrfToken={certificateConfig.csrfToken} kind={kind} learnerId={learnerId} planModule={planModule} moduleProgress={planModule ? moduleProgress?.[planModule.id] : undefined} />;
+        }} />
       {(data || metrics) && <><div className="flex flex-wrap gap-6 rounded-xl bg-background-100 px-4 py-3 text-xs"><div><span className="block text-foreground-500">Recorded OTJH</span><strong>{recordedOtjh == null ? 'Unavailable' : formatHoursMinutes(recordedOtjh)}</strong></div><div><span className="block text-foreground-500">Planned OTJH</span><strong>{plannedOtjh == null ? 'Unavailable' : formatHoursMinutes(plannedOtjh)}</strong></div></div>{hasProgrammeOtjh && <p className="text-[12px] text-foreground-500">Programme totals include accepted historical hours and new recorded learning. Planned hours come from your training plan.</p>}</>}
     </> : <>
       <div className="flex flex-wrap items-center justify-between gap-3"><button onClick={() => select()} className="flex items-center gap-1.5 text-sm font-semibold text-primary-700"><ChevronLeft size={17} />All subjects</button><Link to={learningHref('map', kind, learnerId, active.id)} className={styles.textLink}><MapIcon size={17} />View learning map<ArrowRight size={16} /></Link></div>

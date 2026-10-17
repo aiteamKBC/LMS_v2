@@ -18,6 +18,8 @@ import { type QuizGeneralSettings, useQuizGeneralSettings } from '@/lib/quizGene
 import { convertAnswerTextForQuestionType, isPairAnswerComplete, parseQuizPairAnswer, serializeQuizPairAnswer } from '@/lib/quizPairAnswers';
 import { showCurriculumConfirm } from '@/components/feature/CurriculumSweetAlert';
 
+import { createQuizWithQuestions } from './createQuizWithQuestions';
+
 const curriculumNav = roleNavMap.curriculum;
 
 type QuizStatus = 'published' | 'pending' | 'draft' | 'trash' | 'private' | 'validating';
@@ -1394,40 +1396,26 @@ export default function QuizXmlWorkspacePage() {
     setError('');
     setSavingManualQuiz(true);
     try {
-      const createResponse = await fetch('/quiz_api/quizzes/', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          title: form.title,
-          module: form.module,
-          programme: form.programme,
-          programmeId: form.programmeId,
-          week: form.week,
-          weekId: form.weekId,
-          version: form.version,
-          questions: manualQuestions.length,
-          questionType: manualQuestions[0]?.questionType || 'single_choice',
-          status: form.status,
-          author: form.author,
-          linkedCourses: Number(form.linkedCourses || 0),
-          packageType: 'xml',
-          schemaValid: true,
-        }),
+      const created = await createQuizWithQuestions<QuizPackage>({
+        title: form.title,
+        module: form.module,
+        programme: form.programme,
+        programmeId: form.programmeId,
+        week: form.week,
+        weekId: form.weekId,
+        version: form.version,
+        questions: manualQuestions.length,
+        questionType: manualQuestions[0]?.questionType || 'single_choice',
+        status: form.status,
+        author: form.author,
+        linkedCourses: Number(form.linkedCourses || 0),
+        packageType: 'xml',
+        schemaValid: true,
+        initialQuestions: manualQuestions,
       });
-      const created = await createResponse.json().catch(() => null);
-      if (!createResponse.ok) throw new Error(created?.error || 'Could not create manual quiz');
-
-      const saveResponse = await fetch(`/quiz_api/quizzes/${created.id}/questions/`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ questions: manualQuestions, removeMissing: true }),
-      });
-      const saved = await saveResponse.json().catch(() => null);
-      if (!saveResponse.ok) throw new Error(saved?.error || 'Could not save manual questions');
-
-      setQuizzes(prev => [saved.quiz, ...prev.filter(quiz => quiz.id !== saved.quiz.id)]);
+      setQuizzes(prev => [created, ...prev.filter(quiz => quiz.id !== created.id)]);
       resetManualModal();
-      success('Quiz created', 'Manual questions were saved as a quiz draft.');
+      success('Quiz created', created.status === 'published' ? 'Questions were saved and the quiz was published.' : 'Manual questions were saved as a quiz draft.');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not save manual quiz');
     } finally {
@@ -1515,38 +1503,25 @@ export default function QuizXmlWorkspacePage() {
     setSavingGeneratedQuiz(true);
     setError('');
     try {
-      const createResponse = await fetch('/quiz_api/quizzes/', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          title: generatorForm.title || generatorForm.topic || 'AI Generated Quiz',
-          module: generatorForm.module,
-          programme: generatorForm.programme,
-          programmeId: generatorForm.programmeId,
-          week: generatorForm.week,
-          weekId: generatorForm.weekId,
-          version: 'v1.0',
-          questions: generatedQuestions.length,
-          questionType: generatedQuestions[0]?.questionType || 'single_choice',
-          status: 'draft',
-          author: generatorForm.author,
-          linkedCourses: 0,
-          packageType: 'xml',
-          schemaValid: true,
-        }),
+      const created = await createQuizWithQuestions<QuizPackage>({
+        title: generatorForm.title || generatorForm.topic || 'AI Generated Quiz',
+        module: generatorForm.module,
+        programme: generatorForm.programme,
+        programmeId: generatorForm.programmeId,
+        week: generatorForm.week,
+        weekId: generatorForm.weekId,
+        version: 'v1.0',
+        questions: generatedQuestions.length,
+        questionType: generatedQuestions[0]?.questionType || 'single_choice',
+        status: 'draft',
+        author: generatorForm.author,
+        linkedCourses: 0,
+        packageType: 'xml',
+        schemaValid: true,
+        initialQuestions: generatedQuestions,
       });
-      const created = await createResponse.json().catch(() => null);
-      if (!createResponse.ok) throw new Error(created?.error || 'Could not create quiz');
 
-      const saveResponse = await fetch(`/quiz_api/quizzes/${created.id}/questions/`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ questions: generatedQuestions, removeMissing: true }),
-      });
-      const saved = await saveResponse.json().catch(() => null);
-      if (!saveResponse.ok) throw new Error(saved?.error || 'Could not save generated questions');
-
-      setQuizzes(prev => [saved.quiz, ...prev.filter(quiz => quiz.id !== saved.quiz.id)]);
+      setQuizzes(prev => [created, ...prev.filter(quiz => quiz.id !== created.id)]);
       resetGenerator();
       success('Quiz saved', 'Generated questions were saved as a draft quiz.');
     } catch (err) {

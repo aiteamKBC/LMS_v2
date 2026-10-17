@@ -61,6 +61,18 @@ const impact = {
 } as unknown as CurriculumScopeLearnerKsbImpactResponse;
 
 describe('ModuleLearnerProgressDialog', () => {
+  it('shows recorded hours and missing allocations without hiding the learner or module total', () => {
+    const enriched = { ...impact, activityLogOtjh: {
+      learners: [{ learnerId: 'learner-1', plannedOtjh: 4, achievedOtjh: 1.25, unallocatedAcceptedRecords: 2 }],
+      achievedTotal: 1.25, plannedTotal: 4, source: 'Activity Log', unallocatedAcceptedRecords: 2,
+    } };
+    render(<ModuleLearnerProgressDialog moduleName="Digital Leadership" impact={enriched} onClose={vi.fn()} onAssignMore={vi.fn()} onRemoveLearner={vi.fn()} />);
+    expect(screen.getByText('1h 15m / 4h')).toBeInTheDocument();
+    expect(screen.getByText('1h 15m')).toBeInTheDocument();
+    expect(screen.getByText('2 accepted records without allocated time.')).toBeInTheDocument();
+    expect(screen.getByText(/2 accepted records without allocated time; recorded hours are included/)).toBeInTheDocument();
+    expect(screen.queryByText('N/A')).not.toBeInTheDocument();
+  });
   it('uses the same accepted Activity Log hours as the learner page when available', () => {
     const enriched = { ...impact, activityLogOtjh:{ learners:[{ learnerId:'learner-1',plannedOtjh:4,achievedOtjh:1.25 }],achievedTotal:1.25,plannedTotal:4,source:'Activity Log' } };
     render(<ModuleLearnerProgressDialog moduleName="Digital Leadership" impact={enriched} onClose={vi.fn()} onAssignMore={vi.fn()} onRemoveLearner={vi.fn()} />);

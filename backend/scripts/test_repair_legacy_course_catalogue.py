@@ -3,7 +3,45 @@ from copy import deepcopy
 import unittest
 from unittest.mock import patch
 
-from repair_legacy_course_catalogue import catalogue_plan, plan_repair, projections, verify
+from repair_legacy_course_catalogue import catalogue_plan, course_source_identity, plan_repair, projections, verify
+
+
+class CourseSourceIdentityTests(unittest.TestCase):
+    def setUp(self):
+        self.first = dict(learner_id=1, source_system='old_lms', deleted_at=None, source_learner_id='10')
+        self.second = {**self.first, 'source_learner_id': '20'}
+        self.member = dict(learner_id=1, source_learner_id='20', deleted_at=None)
+
+    def test_course_binding_selects_the_owned_alias_without_mutating_history(self):
+        identities = [self.first, self.second]
+        memberships = [self.member]
+        before = deepcopy((identities, memberships))
+        self.assertIs(course_source_identity(identities, memberships, 1), self.second)
+        self.assertEqual((identities, memberships), before)
+
+    def test_single_legacy_identity_remains_supported_without_a_course_binding(self):
+        self.assertIs(course_source_identity([self.first], [], 1), self.first)
+
+    def test_unbound_multiple_identities_require_review(self):
+        with self.assertRaisesRegex(ValueError, 'one verified'):
+            course_source_identity([self.first, self.second], [], 1)
+
+    def test_conflicting_course_bindings_require_review(self):
+        with self.assertRaisesRegex(ValueError, 'conflicting'):
+            course_source_identity([self.first, self.second],
+                                   [self.member, {**self.member, 'source_learner_id': '10'}], 1)
+
+    def test_binding_never_falls_back_to_a_different_or_deleted_or_foreign_identity(self):
+        for identities in ([self.first], [{**self.second, 'deleted_at': '2026-01-01'}],
+                           [{**self.second, 'learner_id': 2}]):
+            with self.subTest(identities=identities), self.assertRaises(ValueError):
+                course_source_identity(identities, [self.member], 1)
+
+    def test_other_learner_and_deleted_memberships_cannot_select_an_alias(self):
+        for member in ({**self.member, 'learner_id': 2},
+                       {**self.member, 'deleted_at': '2026-01-01'}):
+            with self.subTest(member=member), self.assertRaises(ValueError):
+                course_source_identity([self.first, self.second], [member], 1)
 
 
 def component(ident, kind, completed=False):

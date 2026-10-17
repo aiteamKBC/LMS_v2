@@ -7,6 +7,7 @@ from types import SimpleNamespace
 import psycopg
 from . import journal_sources
 from django.db import DatabaseError, connections
+from curriculum_api.week_visibility import visible_child_sql
 from django.http import JsonResponse
 from django.views.decorators.http import require_GET
 from .projection_performance import measure_projection
@@ -29,10 +30,11 @@ log = logging.getLogger(__name__)
 _MISSING = object()
 
 
-def coach_otjh_target_to_date(source, otjh):
+def coach_otjh_target_to_date(source, otjh, *, owner=None):
     from coach_api.selectors.otjh import learner_programme_window
     from coach_api.views import apply_otjh_to_date_metrics
-    profile = canonical_learning.require_profile(source.pk)
+    # Projection callers may reuse this source's already-verified SSOT owner.
+    profile = canonical_learning.require_profile(source.pk) if owner is None else owner
     start, end = learner_programme_window(SimpleNamespace(**profile), source)
     data = {'otjhCompleted': otjh.get('actual'), 'otjhPlanned': otjh.get('planned')}
     data.update(otjhProgrammeStartDate=start, plannedEndDate=end)
@@ -363,13 +365,13 @@ def _read_legacy_metrics(source, kind, preloaded=None):
             cursor.execute('''SELECT c.id,c.type,c.expected_otjh AS expected_hours,coalesce(nullif(c.ksb_mappings,'[]'::jsonb),
                 (SELECT jsonb_agg(jsonb_build_object('code',k.ksb_code))
                  FROM curriculum.ksb_mappings k WHERE k.component_id=c.id
-                   AND (k.deleted_at IS NULL OR COALESCE(k.deleted_via_parent, '') <> '')), '[]'::jsonb) AS ksb_mappings,
+                   AND ''' + visible_child_sql('k') + '''), '[]'::jsonb) AS ksb_mappings,
                 coalesce((SELECT q.quiz_id::text FROM curriculum.quiz_component_links q
                           WHERE q.component_id=c.id ORDER BY q.id LIMIT 1),
                          c.settings_json->>'linkedQuizId') AS quiz_id
                 FROM curriculum.components c
                 WHERE c.module_catalogue_id=ANY(%s)
-                  AND (c.deleted_at IS NULL OR COALESCE(c.deleted_via_parent, '') <> '')''', [module_ids])
+                  AND ''' + visible_child_sql('c'), [module_ids])
             native = rows(cursor)
         if preloaded is not None and 'native_progress' in preloaded:
             progress = preloaded['native_progress']
@@ -741,13 +743,13 @@ def load_native_components_bulk(module_ids):
                 coalesce(nullif(c.ksb_mappings,'[]'::jsonb),
                 (SELECT jsonb_agg(jsonb_build_object('code',k.ksb_code))
                  FROM curriculum.ksb_mappings k WHERE k.component_id=c.id
-                   AND (k.deleted_at IS NULL OR COALESCE(k.deleted_via_parent, '') <> '')), '[]'::jsonb) AS ksb_mappings,
+                   AND ''' + visible_child_sql('k') + '''), '[]'::jsonb) AS ksb_mappings,
                 coalesce((SELECT q.quiz_id::text FROM curriculum.quiz_component_links q
                           WHERE q.component_id=c.id ORDER BY q.id LIMIT 1),
                          c.settings_json->>'linkedQuizId') AS quiz_id
             FROM curriculum.components c
             WHERE c.module_catalogue_id=ANY(%s)
-              AND (c.deleted_at IS NULL OR COALESCE(c.deleted_via_parent, '') <> '')''', [ids])
+              AND ''' + visible_child_sql('c'), [ids])
         for item in rows(cursor):
             result.setdefault(str(item.pop('module_catalogue_id')), []).append(item)
     return result

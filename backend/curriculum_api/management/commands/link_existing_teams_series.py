@@ -6,8 +6,10 @@ The Teams onlineMeeting ID, resolved from the real organizer and join URL, is
 the identity used by the recording and attendance workers.
 """
 
+import hashlib
+import re
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from urllib.parse import quote, urlencode
 
 from django.core.management.base import BaseCommand, CommandError
@@ -25,17 +27,41 @@ def _utc_instant(item, field):
     return parsed.astimezone(timezone.utc).replace(tzinfo=None)
 
 
-def _matching_instance_dates(instances, module):
-    """Require one real Teams event for each dated delivery slot."""
+def _matching_instance_dates(instances, module, session_plan):
+    """Require one Teams event on each date in the LMS's authoritative plan."""
     first = module.get('start_date')
     last = module.get('end_date')
     count = int(module.get('sessions_number') or 0)
     if not first or not last or not 1 <= count <= 52:
         raise CommandError('The module needs a dated session plan before linking Teams.')
-    expected = [first + timedelta(days=7 * index) for index in range(count)]
+    try:
+        expected = [date.fromisoformat(str(item['date'])) for item in session_plan]
+    except (KeyError, TypeError, ValueError):
+        raise CommandError('The module has an invalid dated session plan.') from None
     actual = [item['start'].date() for item in instances]
-    if expected != actual or expected[-1] != last:
+    if len(expected) != count or expected[0] != first or expected[-1] > last or expected != actual:
         raise CommandError('Teams dates differ from this module delivery plan; review the module before linking.')
+
+
+def _select_recurring_event(matches, join_url_sha256=''):
+    """Keep ambiguous same-title meetings separate without exposing join URLs."""
+    digest = str(join_url_sha256 or '').strip().lower()
+    if digest and not re.fullmatch(r'[0-9a-f]{64}', digest):
+        raise CommandError('--join-url-sha256 must be the full SHA-256 of a Teams join URL.')
+    by_join = {}
+    for mailbox, item in matches:
+        join_url = str((item.get('onlineMeeting') or {}).get('joinUrl') or '').strip()
+        if join_url and (not digest or hashlib.sha256(join_url.encode()).hexdigest() == digest):
+            by_join.setdefault(join_url, []).append((mailbox, item))
+    if len(by_join) != 1:
+        raise CommandError('Expected one distinct recurring Teams meeting; discovery was empty or ambiguous.')
+    return next(iter(by_join.values()))[0]
+
+
+def _conflicting_manual_overrides(rows, join_url):
+    """Only explicit, different join links need replacement before attaching."""
+    return [(component_id, override) for component_id, override in rows
+            if override and override.strip() != join_url]
 
 
 class Command(BaseCommand):
@@ -45,6 +71,9 @@ class Command(BaseCommand):
         parser.add_argument('--module-id', required=True)
         parser.add_argument('--subject', help='Exact Teams event subject; defaults to the module group name.')
         parser.add_argument('--calendar-mailbox', help='Mailbox holding an attendee copy, if it is not an LMS organizer.')
+        parser.add_argument('--join-url-sha256', help='Select one same-title Teams meeting by the SHA-256 of its join URL.')
+        parser.add_argument('--replace-manual-link-overrides', action='store_true',
+                            help='Replace differing manual join links on this module after verifying the Teams series.')
         parser.add_argument('--apply', action='store_true', help='Save the verified link and queue its recording sync.')
 
     def handle(self, *args, **options):
@@ -68,10 +97,12 @@ class Command(BaseCommand):
         subject = (options.get('subject') or module.get('group_name') or '').strip()
         if not subject:
             raise CommandError('The Teams subject is required.')
-        mailboxes = [options.get('calendar_mailbox'), v.teams_meeting_default_organizer()]
-        with connection.cursor() as cursor:
-            cursor.execute("SELECT DISTINCT organizer_email FROM curriculum.live_sessions WHERE status='active' AND organizer_email<>''")
-            mailboxes.extend(row[0] for row in cursor.fetchall())
+        mailboxes = [options.get('calendar_mailbox')]
+        if not mailboxes[0]:
+            mailboxes.append(v.teams_meeting_default_organizer())
+            with connection.cursor() as cursor:
+                cursor.execute("SELECT DISTINCT organizer_email FROM curriculum.live_sessions WHERE status='active' AND organizer_email<>''")
+                mailboxes.extend(row[0] for row in cursor.fetchall())
         mailboxes = list(dict.fromkeys(mailbox for mailbox in mailboxes if mailbox))
         if not mailboxes:
             raise CommandError('No accessible LMS calendar mailbox is available for discovery.')
@@ -92,10 +123,7 @@ class Command(BaseCommand):
             matches.extend((candidate, item) for item in day_events
                 if (item.get('subject') or '').strip().casefold() == subject.casefold()
                 and not item.get('isCancelled') and item.get('seriesMasterId'))
-        joins = {((item.get('onlineMeeting') or {}).get('joinUrl') or '').strip() for _mailbox, item in matches}
-        if not matches or len(joins) != 1 or not next(iter(joins)):
-            raise CommandError('Expected one distinct recurring Teams meeting; discovery was empty or ambiguous.')
-        mailbox, first_event = matches[0]
+        mailbox, first_event = _select_recurring_event(matches, options.get('join_url_sha256'))
         mailbox_key = quote(mailbox, safe='')
         master_id = first_event['seriesMasterId']
         try:
@@ -111,6 +139,9 @@ class Command(BaseCommand):
         join_url = ((master.get('onlineMeeting') or {}).get('joinUrl') or '').strip()
         if not organizer or not join_url:
             raise CommandError('The Teams organizer or join link is unavailable.')
+        selected_join_url = ((first_event.get('onlineMeeting') or {}).get('joinUrl') or '').strip()
+        if join_url != selected_join_url:
+            raise CommandError('The selected occurrence and its recurring meeting have different Teams links.')
 
         instance_query = urlencode({
             'startDateTime': f'{first.isoformat()}T00:00:00Z',
@@ -137,7 +168,7 @@ class Command(BaseCommand):
         instances.sort(key=lambda item: item['start'])
         if len({item['start'] for item in instances}) != len(instances):
             raise CommandError('Teams returned duplicate session times.')
-        _matching_instance_dates(instances, module)
+        _matching_instance_dates(instances, module, v.module_week_session_plan(module))
 
         try:
             meeting = v.teams_online_meeting_from_join_url(organizer, join_url)
@@ -160,6 +191,15 @@ class Command(BaseCommand):
         reused = v.authoring_fetch_all(v.LIVE_SESSIONS_TABLE, 'online_meeting_id = %s', [meeting_id])
         if reused:
             raise CommandError('This online meeting is already linked to an LMS module.')
+        with connection.cursor() as cursor:
+            cursor.execute('''SELECT id, settings_json->>'liveSessionLinkOverride'
+                FROM curriculum.components WHERE module_catalogue_id=%s
+                  AND type IN ('live-session','live_session') AND deleted_at IS NULL
+                  AND coalesce(settings_json->>'liveSessionLinkOverride','')<>'' ''', [module_id])
+            manual_links = _conflicting_manual_overrides(cursor.fetchall(), join_url)
+        if manual_links and not options.get('replace_manual_link_overrides'):
+            raise CommandError('This module has different manual Teams links; review them and pass '
+                               '--replace-manual-link-overrides to replace them.')
 
         series_id = f'LIVE-{uuid.uuid4().hex.upper()}'
         now = datetime.utcnow()
@@ -192,14 +232,16 @@ class Command(BaseCommand):
             'join_url': join_url, 'online_meeting_id': meeting_id,
             'status': 'scheduled', 'created_at': now, 'updated_at': now,
         } for index, item in enumerate(instances, 1)]
-        _updated, expected_components = v.attach_teams_meeting_to_module_weeks(
+        expected_updates, expected_components = v.attach_teams_meeting_to_module_weeks(
             module_id, series, v.live_session_row_to_component_settings(series), occurrences,
             create_missing=True, dry_run=True)
-        if expected_components != len(occurrences):
+        if expected_updates + expected_components != len(occurrences):
             raise CommandError('The module week structure cannot hold every Teams session exactly once.')
         if not options['apply']:
             self.stdout.write(f'PREVIEW module={module_id} Teams sessions={len(occurrences)} '
-                              f'new live components={expected_components}; Graph recordings readable; no changes made.')
+                              f'existing live components={expected_updates} new live components={expected_components}; '
+                              f'manual links to replace={len(manual_links)}; '
+                              'Graph recordings readable; no changes made.')
             return
 
         with transaction.atomic():
@@ -211,27 +253,44 @@ class Command(BaseCommand):
                                [module_id, meeting_id])
                 if cursor.fetchone()[0]:
                     raise CommandError('A Teams series was linked concurrently; no changes made.')
+                cursor.execute('''SELECT id, settings_json->>'liveSessionLinkOverride'
+                    FROM curriculum.components WHERE module_catalogue_id=%s
+                      AND type IN ('live-session','live_session') AND deleted_at IS NULL
+                      AND coalesce(settings_json->>'liveSessionLinkOverride','')<>'' FOR UPDATE''', [module_id])
+                if sorted(_conflicting_manual_overrides(cursor.fetchall(), join_url)) != sorted(manual_links):
+                    raise CommandError('Manual Teams links changed during import; no changes made.')
+                if manual_links:
+                    cursor.execute('''UPDATE curriculum.components
+                        SET settings_json=settings_json-'liveSessionLinkOverride', updated_at=%s
+                        WHERE module_catalogue_id=%s AND id=ANY(%s)''',
+                        [now, module_id, [component_id for component_id, _override in manual_links]])
+                    if cursor.rowcount != len(manual_links):
+                        raise CommandError('Manual Teams links changed during import; transaction rolled back.')
             v.authoring_upsert(v.LIVE_SESSIONS_TABLE, ['id'], series)
             for occurrence in occurrences:
                 v.authoring_upsert(v.LIVE_SESSION_OCCURRENCES_TABLE, ['id'], occurrence)
-            _updated, created = v.attach_teams_meeting_to_module_weeks(
+            updated, created = v.attach_teams_meeting_to_module_weeks(
                 module_id, series, v.live_session_row_to_component_settings(series), occurrences,
                 create_missing=True)
-            if created != len(occurrences):
+            if updated + created != len(occurrences):
                 raise CommandError('The week links changed during import; transaction rolled back.')
             with connection.cursor() as cursor:
                 cursor.execute('INSERT INTO curriculum.session_result_jobs(live_session_id) VALUES (%s) '
                                'ON CONFLICT(live_session_id) DO NOTHING', [series_id])
-
-        with connection.cursor() as cursor:
-            cursor.execute('''SELECT count(*) FROM curriculum.live_session_occurrences
-                WHERE live_session_id=%s AND join_url<>'' AND online_meeting_id<>'' ''', [series_id])
-            saved_count = cursor.fetchone()[0]
-            cursor.execute('''SELECT count(*) FROM curriculum.components
-                WHERE module_catalogue_id=%s AND type IN ('live-session','live_session')
-                  AND deleted_at IS NULL AND settings_json->>'teamsLiveSessionId'=%s''', [module_id, series_id])
-            linked_count = cursor.fetchone()[0]
-        if saved_count != len(occurrences) or linked_count != len(occurrences):
-            raise CommandError('The link was saved but post-write verification failed; inspect this module.')
+                cursor.execute('''SELECT count(*) FROM curriculum.live_session_occurrences
+                    WHERE live_session_id=%s AND join_url<>'' AND online_meeting_id<>'' ''', [series_id])
+                saved_count = cursor.fetchone()[0]
+                cursor.execute('''SELECT settings_json->>'teamsOccurrenceId',
+                                      settings_json->>'liveSessionUrl', live_sessions_link
+                    FROM curriculum.components
+                    WHERE module_catalogue_id=%s AND type IN ('live-session','live_session')
+                      AND deleted_at IS NULL AND settings_json->>'teamsLiveSessionId'=%s''', [module_id, series_id])
+                linked_rows = cursor.fetchall()
+            linked_ids = [row[0] for row in linked_rows]
+            if (saved_count != len(occurrences)
+                    or sorted(linked_ids) != sorted(row['id'] for row in occurrences)
+                    or any(row[1] != join_url or row[2] != join_url for row in linked_rows)):
+                raise CommandError('The week links failed verification; transaction rolled back.')
+        linked_count = len(linked_ids)
         self.stdout.write(f'LINKED module={module_id} series={series_id} '
                           f'sessions={saved_count} week links={linked_count}; recording sync queued.')
