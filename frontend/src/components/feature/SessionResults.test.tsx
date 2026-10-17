@@ -21,6 +21,34 @@ beforeEach(() => { vi.clearAllMocks(); vi.stubGlobal('fetch', fetchMock); fetchM
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
 describe('Saved session results', () => {
+  it('shows the two event recordings on 2 October and the two lecture recordings on 9 October', async () => {
+    const dated = { ...session, startsAt: '2026-10-09T08:00:00Z',
+      artifacts: [
+        { id: 'event-1', type: 'recording', state: 'ready', createdAt: '2026-10-02T08:05:00Z' },
+        { id: 'event-2', type: 'recording', state: 'ready', createdAt: '2026-10-02T10:35:00Z' },
+        { id: 'lecture-1', type: 'recording', state: 'ready', createdAt: '2026-10-09T06:43:00Z' },
+        { id: 'lecture-2', type: 'recording', state: 'ready', createdAt: '2026-10-09T10:43:00Z' },
+      ] };
+    fetchMock.mockImplementation(() => ok({ sessions: [dated] }));
+    const { unmount } = render(<MemoryRouter><SessionResults seriesId="S1" sessionNumber={3}
+      recordingDate="2026-10-02" recordingsOnly learner={{ kind: 'commercial', id: '7' }} /></MemoryRouter>);
+    await screen.findByLabelText('Session recording 1');
+    expect(document.querySelectorAll('video')).toHaveLength(2);
+    expect([...document.querySelectorAll('video')].map(video => video.getAttribute('src')))
+      .toEqual([expect.stringContaining('event-1'), expect.stringContaining('event-2')]);
+    expect(screen.getByText('Recorded on 2026-10-02 (UK date)')).toBeInTheDocument();
+    expect(screen.queryByText(/Scheduled:/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Your original attendance:/)).not.toBeInTheDocument();
+    expect(screen.queryByRole('tab', { name: 'transcripts' })).not.toBeInTheDocument();
+    unmount();
+    render(<MemoryRouter><SessionResults seriesId="S1" sessionNumber={3}
+      recordingDate="2026-10-09" learner={{ kind: 'commercial', id: '7' }} /></MemoryRouter>);
+    await screen.findByLabelText('Session recording 1');
+    expect(document.querySelectorAll('video')).toHaveLength(2);
+    expect([...document.querySelectorAll('video')].map(video => video.getAttribute('src')))
+      .toEqual([expect.stringContaining('lecture-1'), expect.stringContaining('lecture-2')]);
+    expect(screen.getByText(/Scheduled:/)).toBeInTheDocument();
+  });
   it('shows the read-only account check beside the register without changing attendance', async () => {
     const account = (overrides: Record<string, unknown>) => ({ sourceRecordIds: ['R1'], displayName: '', teamsRole: 'Attendee',
       verification: 'verified', tenant: 'home', accountType: 'Microsoft work or school account', email: '', emailSource: 'teams',

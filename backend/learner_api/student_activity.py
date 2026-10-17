@@ -13,7 +13,7 @@ from django.views.decorators.http import require_GET, require_POST
 
 from audit_api.last_audit_ledger_views import _connection, _is_completed
 from audit_api.learner_exclusions import is_excluded_learner
-from login.permissions import learner_self_or_staff, learner_self_or_admin, staff_only
+from login.permissions import coach_owns_learner, learner_self_or_staff, learner_self_or_admin, staff_only
 from login.sessions import authenticate_request
 
 from .learner_detail import SOURCE_MODELS
@@ -69,7 +69,7 @@ def _direct_progress_records(enrolment_id, *, profile=None):
         return []
     entries = (
         profile.progress_entries.using('enrolment')
-        .filter(component_link_source__in=('direct', 'quiz_ref'))
+        .filter(component_link_source__in=('direct', 'quiz_ref'), deleted_at__isnull=True)
         .exclude(kind='activity_event')
         .values(
             'id', 'kind', 'component_ref', 'quiz_ref', 'component_title', 'component_type',
@@ -136,6 +136,7 @@ def load_direct_progress_records_bulk(enrolment_ids):
     entries = LearnerProgressEntry.objects.using('enrolment').filter(
         learner_id__in=[profile.id for profile in profiles],
         component_link_source__in=('direct', 'quiz_ref'),
+        deleted_at__isnull=True,
     ).exclude(kind='activity_event').values(
         'id', 'learner_id', 'kind', 'component_ref', 'quiz_ref', 'component_title', 'component_type',
         'module_title', 'week_title', 'reported_time', 'claimed_seconds', 'verified_seconds',
@@ -468,6 +469,7 @@ def _material_response(request, pk, aptem_id, stored, *, kind=None, group_id=Non
                'can_attempt': bool(account and saved['ready'] and (
                    account.role == 'admin'
                    or (account.role == 'learner' and int(account.subject_id) == pk)
+                   or coach_owns_learner(account, pk)
                )),
                'csrf_token': get_token(request)}
     return _private(payload)
@@ -637,6 +639,26 @@ def _builder_subject_metadata(cursor, refs):
     return covers, links
 
 
+def builder_subject_links(cursor, source, refs, read=None):
+    """``_builder_subject_metadata`` links, reading only refs this request has not resolved.
+
+    Each ref resolves independently, so a Dashboard tab that resolves the plan's
+    modules and then its components' modules reads each module once. Without the
+    cache ``read_tab`` installs on its request-scoped source, this is one read.
+    ``read`` lets a caller keep its own module-level reader binding.
+    """
+    read = read or _builder_subject_metadata
+    cache = getattr(source, '_builder_link_cache', None)
+    if cache is None:
+        return read(cursor, refs)[1]
+    wanted = list(dict.fromkeys(refs))
+    missing = [ref for ref in wanted if ref not in cache]
+    if missing:
+        _, found = read(cursor, missing)
+        cache.update({ref: found.get(ref) for ref in missing})
+    return {ref: dict(cache[ref]) for ref in wanted if cache[ref] is not None}
+
+
 def _effective_current_subjects(cursor, learner_id):
     """Return the same effective module set shown by the enrolment plan.
 
@@ -684,8 +706,10 @@ def subject_covers(request, pk):
             )
             covers.update(builder_covers)
             dates = read_builder_activity_dates(cur, [subject['id'] for subject in current_subjects])
+            from .previous_learning_groups import read_previous_learning_groups
+            previous_groups = read_previous_learning_groups(cur, pk, current_subjects)
         return _private({'covers': covers, 'activity_dates': dates, 'current_subjects': current_subjects,
-                         'builder_subjects': builder_subjects})
+                         'builder_subjects': builder_subjects, 'previous_learning_groups': previous_groups})
     except DatabaseError:
         return _error('Could not load subject images.', 503)
 

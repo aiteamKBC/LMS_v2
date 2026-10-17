@@ -465,9 +465,9 @@ class OfficePreviewTests(SimpleTestCase):
         self.url = '/curriculum_api/curriculum/uploads/_legacy_files/42/deck.pptx?preview=1'
 
     @patch('curriculum_api.views.upload_storage.signed_read_url')
-    @patch('curriculum_api.views.upload_storage.exists', return_value=True)
+    @patch('curriculum_api.views.upload_storage.open_stream', return_value=(iter([b'x']), 1, ''))
     def test_preview_wraps_a_short_lived_azure_url_in_office_online(
-        self, _exists, signed_read_url,
+        self, open_stream, signed_read_url,
     ):
         signed_read_url.return_value = (
             'https://kbcdocs.blob.core.windows.net/curriculum-uploads/'
@@ -481,8 +481,9 @@ class OfficePreviewTests(SimpleTestCase):
         self.assertEqual(response['X-Frame-Options'], 'SAMEORIGIN')
         self.assertIn('https://view.officeapps.live.com/op/embed.aspx?src=', response.content.decode())
         self.assertIn('sig%3Dshort-lived', response.content.decode())
+        open_stream.assert_called_once_with('curriculum_component_uploads/_legacy_files/42/deck.pptx', offset=0, length=1)
 
-    @patch('curriculum_api.views.upload_storage.exists', return_value=False)
-    def test_a_missing_office_upload_is_a_404(self, _exists):
+    @patch('curriculum_api.views.upload_storage.open_stream', return_value=None)
+    def test_a_missing_office_upload_is_a_404(self, _open_stream):
         response = self.client.get(self.url)
         self.assertEqual(response.status_code, 404)

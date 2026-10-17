@@ -3,11 +3,28 @@
 These dates belong to My Learning, never to the reporting ledger or meetings.
 """
 from collections import defaultdict
+from datetime import datetime
 from html import unescape
 import json
 import re
+from zoneinfo import ZoneInfo
 
 from .subject_dates import MONTH, MONTHS, activity_schedule, apply_section_placement
+
+
+def original_upload_day(value):
+    """Use source upload metadata only; never an import or reporting timestamp."""
+    if not value:
+        return None
+    try:
+        at = datetime.fromisoformat(str(value).replace('Z', '+00:00'))
+    except (TypeError, ValueError):
+        return None
+    if not 2020 <= at.year <= 2035:
+        return None
+    if at.tzinfo:
+        at = at.astimezone(ZoneInfo('Europe/London'))
+    return at.date().isoformat()
 
 
 def metadata(value):
@@ -40,7 +57,8 @@ def read_export_placements(query, courses):
         SELECT course_id,section->>'source_section_id' AS section_id,
             section->>'section_order' AS section_order,section->>'section_title' AS section_title,
             material->>'source_component_id' AS component_id,
-            material->>'component_kind' AS component_kind,material->>'post_type' AS post_type
+            material->>'component_kind' AS component_kind,material->>'post_type' AS post_type,
+            material->>'created_at_utc' AS original_created_at
         FROM exports CROSS JOIN LATERAL jsonb_array_elements(
             CASE WHEN jsonb_typeof(payload->'sections')='array'
                 THEN payload->'sections' ELSE '[]'::jsonb END) section
@@ -54,6 +72,7 @@ def catalogue_display_context(definitions, exports):
     """Use typed source IDs inside the owned course, never title matching."""
     owned = {str(item['source_course_ref']) for item in definitions}
     sections, placements, section_refs = defaultdict(dict), defaultdict(list), defaultdict(list)
+    uploaded = defaultdict(set)
     for row in exports:
         course = str(row['course_id'])
         if course not in owned:
@@ -70,6 +89,9 @@ def catalogue_display_context(definitions, exports):
         if kind and ident.isdigit():
             if section not in placements[(course, f'{kind}:{ident}')]:
                 placements[(course, f'{kind}:{ident}')].append(section)
+            day = original_upload_day(row.get('original_created_at'))
+            if day:
+                uploaded[(course, f'{kind}:{ident}')].add(day)
 
     introductions = set()
     for course, values in sections.items():
@@ -112,6 +134,15 @@ def catalogue_display_context(definitions, exports):
         if schedule['date_source'] == 'undated':
             schedule['date_needs_review'] = True
         item['_display_schedule'] = schedule
+        days = set(uploaded.get((course, ref), ()))
+        # These values came from the original LMS post, not source_activities'
+        # first_seen_at or a learner's submitted/reporting dates.
+        for field in ('created_at_utc', 'created_at'):
+            day = original_upload_day(payload.get(field))
+            if day:
+                days.add(day)
+                break
+        item['_original_upload_days'] = days
         item['source_section_title'] = title
         enriched.append(item)
 
@@ -135,6 +166,15 @@ def catalogue_display_context(definitions, exports):
                     item['source_section_title'] = item['source_section_title'] or parent['source_section_title']
                 if parent.get('material_available'):
                     item['source_material_activity_id'] = f'catalogue:{course}:material:{parent_id}'
+    # Resolve companion quizzes before upload fallback, so a parent's authored
+    # lecture date takes precedence over the quiz's original upload date.
+    for item in enriched:
+        days = item.pop('_original_upload_days')
+        if item['_display_schedule']['date_source'] == 'undated':
+            if len(days) == 1:
+                item['_display_schedule'] = activity_schedule('', original_created_at=next(iter(days)))
+            elif len(days) > 1:
+                item['_display_schedule'].update(date_source='source_date_needs_review', date_needs_review=True)
     return enriched
 
 
@@ -143,8 +183,9 @@ def apply_catalogue_display(items, definitions):
     for item in items:
         definition = by_id[item['activity_id']]
         schedule = definition.get('_display_schedule')
-        if schedule and (not item.get('month') or item.get('month') == 'undated'
-                         or schedule['date_source'] in {'introduction', 'extra_activity'}):
+        # My Learning follows the course's schedule for every learner, including
+        # completed activities. Reporting months remain solely in the ledger.
+        if schedule:
             item.update(schedule)
         if definition.get('source_material_activity_id'):
             item['source_material_activity_id'] = definition['source_material_activity_id']

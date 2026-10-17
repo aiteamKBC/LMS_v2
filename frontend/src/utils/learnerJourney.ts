@@ -27,6 +27,9 @@ export interface JourneyComponent {
   files?: import('@/lib/componentFiles').ComponentFile[];
   downloadAllowed?: boolean;
   reflectionPrompt?: string | null;
+  /** Completion derived from verified Teams attendance; adds no recorded hours. */
+  attendanceCompleted?: boolean;
+  attendanceCompletedAt?: string | null;
   reflectionRequired?: boolean;
   /** The author sent this activity for coach validation, so finishing it hands
    *  it in rather than completing it. */
@@ -36,6 +39,9 @@ export interface JourneyComponent {
   liveSessionUrl?: string | null;
   teamsLiveSessionId?: string | null;
   teamsSessionNumber?: number | null;
+  recordingSeriesId?: string | null;
+  recordingSessionNumber?: number | null;
+  recordingDate?: string | null;
   sessionDate?: string | null;
   sessionTime?: string | null;
   sessionDateTimeUtc?: string | null;
@@ -44,6 +50,8 @@ export interface JourneyComponent {
   quizMeta?: { quizId: number; questions: number | null; duration: number | null; timeUnit: string | null };
   quizAttempts?: LearnerQuizAttempt[];
   retired?: boolean;
+  /** See LearnerComponentEntry.contentAvailable. */
+  contentAvailable?: boolean;
 }
 
 /** The attempts that belong to a quiz component: those on the quiz it links
@@ -314,6 +322,7 @@ export function completedComponentIds(real: {
  * completion source. Non-quiz rows are looked up in `completedIds`, which
  * callers build with `completedComponentIds`. */
 export function isComponentComplete(c: JourneyComponent, completedIds: Set<string>): boolean {
+  if (c.type?.replace(/-/g, '_') === 'live_session' && c.attendanceCompleted === true) return true;
   if (c.isQuiz) return (c.quizAttempts || []).some((a) => a.passed);
   return !!c.componentId && completedIds.has(c.componentId);
 }
@@ -381,6 +390,8 @@ export function componentNoun(type: string | null | undefined): string {
 /** Does this activity contain something the learner can actually consume?
  * An id/title alone is not content and must never lead to an empty runner. */
 export function hasComponentContent(c: JourneyComponent): boolean {
+  // Compact rows carry the server's verdict of the rule below (same fixture).
+  if (typeof c.contentAvailable === 'boolean') return c.contentAvailable;
   const hasText = (value?: string | null) => Boolean(value?.replace(/<[^>]*>/g, '').replace(/&nbsp;|\s/g, '').trim());
   const hasUrl = (value?: string | null) => Boolean(value?.trim());
   if (c.isQuiz) return c.quizMeta?.quizId != null && (c.quizMeta.questions ?? 0) > 0;
@@ -388,7 +399,7 @@ export function hasComponentContent(c: JourneyComponent): boolean {
   const type = (c.type || '').trim().toLowerCase().replace(/[\s-]+/g, '_');
   if (type === 'quiz') return false; // Unlinked builder placeholders have no quiz to attempt.
   const hasDescription = hasText(c.description);
-  if (type === 'video') return hasUrl(c.videoUrl);
+  if (type === 'video') return hasUrl(c.videoUrl) || Boolean(c.recordingSeriesId && c.recordingSessionNumber && c.recordingDate);
   if (type === 'podcast' || type === 'audio') return hasUrl(c.audioUrl) || hasUrl(c.resourceUrl) || hasDescription;
   if (type === 'reading') return c.hasReadingContent === true || hasText(c.contentHtml) || hasUrl(c.resourceUrl) || hasUrl(c.audioUrl) || hasDescription;
   if (type === 'powerpoint' || type === 'presentation' || type === 'slides') return hasUrl(c.resourceUrl) || hasDescription;
@@ -646,7 +657,10 @@ export function quizAggregateStats(real: LearnerDetail | null): QuizAggregateSta
 }
 
 /** Group a learner's flat week/components arrays into module -> week -> components. */
-export function buildLearnerJourney(real: LearnerDetail | null): JourneyModule[] {
+/** The plan fields a journey is built from; the compact Weekly read carries them too. */
+export type LearnerJourneySource = Pick<LearnerDetail, 'modules' | 'week' | 'components' | 'quizAttempts'>;
+
+export function buildLearnerJourney(real: LearnerJourneySource | null): JourneyModule[] {
   if (!real) return [];
   const groups = [...new Set(real.modules)].flatMap((moduleTitle) => {
     const weeks = real.week.filter((week) => week.module === moduleTitle);
@@ -672,6 +686,7 @@ export function buildLearnerJourney(real: LearnerDetail | null): JourneyModule[]
             audioUrl: c.audioUrl, contentHtml: c.contentHtml, fileName: c.fileName, files: c.files,
             hasReadingContent: c.hasReadingContent,
             downloadAllowed: c.downloadAllowed, reflectionPrompt: c.reflectionPrompt,
+            attendanceCompleted: c.attendanceCompleted, attendanceCompletedAt: c.attendanceCompletedAt,
             reflectionRequired: c.reflectionRequired,
             tutorValidationRequired: c.tutorValidationRequired,
             reflectionQuestion: c.reflectionQuestion,
@@ -679,6 +694,9 @@ export function buildLearnerJourney(real: LearnerDetail | null): JourneyModule[]
             liveSessionUrl: c.liveSessionUrl, sessionDate: c.sessionDate, sessionTime: c.sessionTime,
             teamsLiveSessionId: c.teamsLiveSessionId,
             teamsSessionNumber: c.teamsSessionNumber,
+            recordingSeriesId: c.recordingSeriesId,
+            recordingSessionNumber: c.recordingSessionNumber,
+            recordingDate: c.recordingDate,
             sessionDateTimeUtc: c.sessionDateTimeUtc,
             quizAttempts: c.isQuiz && c.quizMeta
               // Normalised progress rows store quiz_ref as text, while the

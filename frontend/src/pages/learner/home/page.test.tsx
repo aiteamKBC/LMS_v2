@@ -5,27 +5,22 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import StudentHome from './page';
 import { useLearnerSummaryParam } from '@/hooks/useLearnerSummaryParam';
 import { studentWorkspaceRoutes } from '@/router/studentWorkspaceRoutes';
-import { overviewHome, type OverviewWeek } from '@/api/learnerOverview';
+import { homeSummary, upcomingSchedule, type OverviewWeek, type UpcomingEvent } from '@/api/learnerOverview';
 import { useLiveLearnerRead } from '@/hooks/useLiveLearnerRead';
 import { rememberSignedInLearner } from '@/hooks/useMyLearner';
 import { resetFirstLoginDetailsRedirect } from '@/hooks/useFirstLoginDetailsRedirect';
 
-const state = vi.hoisted(() => ({ profileError: '', name: 'Alex Morgan', role: 'learner', learnerType: 'apprenticeship', firstLoginRequired: false, programmeStatus: 'Active', upcoming: false, scheduleError: '', refresh: vi.fn(), modules: [] as OverviewWeek['modules'] }));
+const state = vi.hoisted(() => ({ profileError: '', name: 'Alex Morgan', role: 'learner', learnerType: 'apprenticeship', firstLoginRequired: false, programmeStatus: 'Active', events: [] as UpcomingEvent[], scheduleError: '', refresh: vi.fn(), modules: [] as OverviewWeek['modules'] }));
 vi.mock('@/hooks/useAuth', () => ({ useAuth: () => ({ auth: { account: { id: 3, subjectId: 71, learnerType: state.learnerType, role: state.role, displayName: state.name } }, logout: vi.fn(), retryInitialization: vi.fn() }) }));
 vi.mock('@/api/firstLoginDetails', () => ({ fetchFirstLoginDetails: vi.fn(async () => ({ required: state.firstLoginRequired })) }));
 vi.mock('@/hooks/useLearnerSummaryParam', () => ({ useLearnerSummaryParam: vi.fn(() => ({ real: { id: 71, name: state.name, programmeStatus: state.programmeStatus }, loadError: state.profileError, loading: false, refresh: state.refresh })) }));
 vi.mock('@/hooks/useLiveLearnerRead', () => ({ useLiveLearnerRead: vi.fn((_kind, _id, _enabled, read) => ({ data: { weekStart: '2026-09-07', weekEnd: '2026-09-13', modules: state.modules,
-  deadlines: state.upcoming ? [{ id: 'a', title: 'My assignment', date: '2050-10-10', type: 'assignment' }] : [],
-  sessions: state.upcoming ? [
-    { id: 's1', title: 'First lecture', start: '2050-10-15T09:00:00Z', status: 'scheduled' },
-    { id: 's2', title: 'Second lecture', start: '2050-10-16T09:00:00Z', status: 'scheduled' },
-  ] : [],
-  reviews: state.upcoming ? [{ id: 'r', title: 'My progress review', source: 'progress-review', scheduledDate: '2050-11-20', status: 'scheduled' }] : [], homeProgress: {
-  period: { start: '2026-01-01', end: '2026-09-13', timezone: 'Europe/London' },
+  events: state.events, homeProgress: {
+  period: { start: '2026-01-01', end: '2026-09-13' },
   otjh: { actual: 42, submitted: 10, planned: 100, percent: 42, missingPlannedActivities: 0 },
   activities: { completed: 21, total: 50 }, assignments: { completed: 3, total: 6 },
   lectures: { completed: 8, total: 10 }, modules: { completed: 1, total: 5 }, undatedActivities: 0,
-} }, loading: false, error: read === overviewHome.read ? '' : state.scheduleError, refresh: vi.fn() })) }));
+} }, loading: false, error: read === homeSummary.read ? '' : state.scheduleError, refresh: vi.fn() })) }));
 vi.mock('@/pages/workspace/learner/page', () => ({ default: function MockDashboard() {
   const { kind, id } = useParams();
   return <><aside aria-label="Learner sidebar"><Link to={kind && id ? `/workspace/learner/${kind}/${id}` : '/workspace/learner'}>Return home</Link></aside><h1>Dashboard console</h1></>;
@@ -34,50 +29,75 @@ function Location() { const location = useLocation(); return <output data-testid
 function page() { return render(<MemoryRouter initialEntries={['/learner/home?kind=commercial&id=999']}><StudentHome/><Location/></MemoryRouter>); }
 function WorkspaceRoutes() { return useRoutes(studentWorkspaceRoutes); }
 function workspace(path: string) { return render(<MemoryRouter initialEntries={[path]}><Suspense fallback={<p>Loading</p>}><WorkspaceRoutes/></Suspense><Location/></MemoryRouter>); }
-beforeEach(() => { resetFirstLoginDetailsRedirect(); state.learnerType = 'apprenticeship'; state.firstLoginRequired = false; state.profileError = ''; state.role = 'learner'; state.programmeStatus = 'Active'; state.upcoming = false; state.scheduleError = ''; state.modules = []; rememberSignedInLearner(undefined, undefined); localStorage.clear(); });
+beforeEach(() => { resetFirstLoginDetailsRedirect(); state.learnerType = 'apprenticeship'; state.firstLoginRequired = false; state.profileError = ''; state.role = 'learner'; state.programmeStatus = 'Active'; state.events = []; state.scheduleError = ''; state.modules = []; rememberSignedInLearner(undefined, undefined); localStorage.clear(); });
 afterEach(() => { cleanup(); vi.useRealTimers(); vi.clearAllMocks(); localStorage.clear(); });
 describe('connected student home', () => {
   it('uses only the authenticated identity, with real progress and empty events', () => {
     localStorage.setItem('my_learner', JSON.stringify({ kind: 'commercial', id: 999 }));
     page();
     expect(useLearnerSummaryParam).toHaveBeenCalledWith('apprenticeship', '71');
-    expect(useLiveLearnerRead).toHaveBeenCalledWith('apprenticeship', '71', true, overviewHome.read, overviewHome.peek);
+    expect(useLiveLearnerRead).toHaveBeenCalledWith('apprenticeship', '71', true, homeSummary.read, homeSummary.peek);
+    expect(useLiveLearnerRead).toHaveBeenCalledWith('apprenticeship', '71', true, upcomingSchedule.read, upcomingSchedule.peek);
     expect(screen.getByRole('heading', { name: 'Alex' })).toBeInTheDocument();
     expect(screen.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '42');
     expect(screen.getByRole('link', { name: /8 of 10 Lectures attended/ })).toBeInTheDocument();
     expect(screen.getByRole('link', { name: /21 of 50 Activities completed/ })).toBeInTheDocument();
     expect(screen.getByRole('link', { name: /21 of 50 Activities completed/ })).toHaveAttribute('href', '/learner/my-learning');
     const upcoming = within(screen.getByRole('complementary', { name: 'Upcoming' }));
-    expect(upcoming.getAllByRole('listitem')).toHaveLength(3);
-    expect(upcoming.getByText('No upcoming lecture scheduled')).toBeInTheDocument();
-    expect(upcoming.getByText('No upcoming assignment due')).toBeInTheDocument();
-    expect(upcoming.getByText('No upcoming review scheduled')).toBeInTheDocument();
+    expect(upcoming.queryAllByRole('listitem')).toHaveLength(0);
+    expect(upcoming.getByText('No sessions, assignments or reviews next week.')).toBeInTheDocument();
+    expect(upcoming.getByRole('link', { name: 'View all upcoming events' })).toHaveAttribute('href', '/learner/calendar');
     expect(screen.queryByText(/Jamie|68%|Marketing Principles/)).not.toBeInTheDocument();
     localStorage.removeItem('my_learner');
   });
-  it('renders the closest lecture, assignment and review in fixed order, with working destinations', () => {
-    state.upcoming = true;
+  it('renders every next-week event the server returned in its chronological order, with working destinations', () => {
+    // Wednesday 14 October 2026; next week is Monday 19 to Friday 23 October.
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-10-14T09:00:00Z'));
+    state.events = [
+      { id: 'native:a', type: 'assignment', title: 'My assignment', date: '2026-10-19' },
+      { id: 's1', type: 'session', title: 'First lecture', date: '2026-10-20T08:00:00+00:00' },
+      { id: 'r', type: 'review', title: 'My progress review', date: '2026-10-21T10:00:00+01:00', booked: true },
+      { id: 's2', type: 'session', title: 'Second lecture', date: '2026-10-22T08:00:00+00:00' },
+      { id: 's3', type: 'session', title: 'Friday lecture', date: '2026-10-23T13:00:00+00:00' },
+    ];
     page();
     const upcoming = within(screen.getByRole('complementary', { name: 'Upcoming' }));
     const rows = upcoming.getAllByRole('listitem');
-    expect(rows.map(row => row.getAttribute('aria-label'))).toEqual(['Next lecture', 'Next assignment', 'Next review']);
-    expect(within(rows[0]).getByRole('link')).toHaveAttribute('href', '/learner/attendance');
-    expect(within(rows[1]).getByRole('link')).toHaveAttribute('href', '/learner/monthly-submission');
-    expect(within(rows[2]).getByRole('link')).toHaveTextContent('My progress review');
+    expect(rows.map(row => row.getAttribute('aria-label'))).toEqual(
+      ['Upcoming assignment', 'Upcoming lecture', 'Upcoming review', 'Upcoming lecture', 'Upcoming lecture']);
+    expect(within(rows[0]).getByRole('link')).toHaveAttribute('href', '/learner/monthly-submission');
+    expect(within(rows[0]).getByRole('link')).toHaveTextContent('Assignment due');
+    expect(within(rows[1]).getByRole('link')).toHaveAttribute('href', '/learner/attendance');
+    expect(within(rows[1]).getByRole('link')).toHaveTextContent('Learning session');
+    expect(within(rows[2]).getByRole('link')).toHaveTextContent('My progress reviewProgress review');
     expect(within(rows[2]).getByRole('link')).toHaveAttribute('href', '/learner/calendar');
+    expect(within(rows[1]).getByText('20 Oct')).toBeInTheDocument();
+    expect(within(rows[4]).getByText('Fri')).toBeInTheDocument();
+    expect(within(rows[4]).getByRole('link')).toHaveTextContent('Friday lecture');
     expect(upcoming.getByRole('link', { name: 'View all upcoming events' })).toHaveAttribute('href', '/learner/calendar');
-    expect(upcoming.queryByText('Second lecture')).not.toBeInTheDocument();
     fireEvent.click(within(rows[2]).getByRole('link'));
     expect(screen.getByTestId('destination')).toHaveTextContent('/learner/calendar');
   });
-  it('keeps the assignment visible if the lecture/review source fails, without reporting false empty slots', () => {
-    state.upcoming = true;
+  it.each([1, 2])('shows only the %i events the server returned, without placeholder rows', count => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-10-14T09:00:00Z'));
+    state.events = [
+      { id: 'r', type: 'review', title: 'Review to book', date: '2026-10-19', booked: false },
+      { id: 's1', type: 'session', title: 'First lecture', date: '2026-10-20T09:00:00+00:00' },
+    ].slice(0, count) as UpcomingEvent[];
+    page();
+    const upcoming = within(screen.getByRole('complementary', { name: 'Upcoming' }));
+    expect(upcoming.getAllByRole('listitem')).toHaveLength(count);
+    expect(upcoming.getByText('Review to be booked')).toBeInTheDocument();
+    expect(upcoming.queryByText('No sessions, assignments or reviews next week.')).not.toBeInTheDocument();
+  });
+  it('reports a failed upcoming read with a retry instead of an empty card', () => {
     state.scheduleError = 'Unavailable';
     page();
     const upcoming = within(screen.getByRole('complementary', { name: 'Upcoming' }));
-    expect(upcoming.getByText('My assignment')).toBeInTheDocument();
-    expect(upcoming.getAllByText('Upcoming activity unavailable')).toHaveLength(2);
-    expect(upcoming.queryByText('No upcoming lecture scheduled')).not.toBeInTheDocument();
+    expect(upcoming.getByRole('alert')).toHaveTextContent('Some upcoming activity could not be loaded.');
+    expect(upcoming.queryByText('No sessions, assignments or reviews next week.')).not.toBeInTheDocument();
     expect(upcoming.getByRole('button', { name: 'Try again' })).toBeInTheDocument();
   });
   it.each([

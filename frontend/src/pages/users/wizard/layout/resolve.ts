@@ -30,6 +30,28 @@ export const DEFAULT_LAYOUT: WizardLayout = defaultLayout();
 
 const isCustomItem = (item: LayoutItem) => !item.builtin;
 
+/** Steps, and blocks wherever they sit, that only apprenticeship learners take. */
+const APPRENTICESHIP_ONLY_STEPS = new Set(['inclusion']);
+const APPRENTICESHIP_ONLY_ITEMS = new Set(['block.inclusion']);
+
+/**
+ * The layout as one learner walks it: a commercial learner skips the
+ * apprenticeship-only parts (the Inclusion assessment). Applied to the layout
+ * itself rather than to the step list, so every step index the wizard uses for
+ * gating and validation still lines up.
+ */
+export function layoutForLearner(layout: WizardLayout, commercial: boolean): WizardLayout {
+  if (!commercial) return layout;
+  return {
+    ...layout,
+    steps: layout.steps.map((s) => ({
+      ...s,
+      hidden: s.hidden || (s.builtin && APPRENTICESHIP_ONLY_STEPS.has(s.slug)),
+      items: s.items.map((it) => (it.builtin && APPRENTICESHIP_ONLY_ITEMS.has(it.key) ? { ...it, hidden: true } : it)),
+    })),
+  };
+}
+
 /** The published layout, made whole against the registry. */
 export function resolveLayout(saved: WizardLayout | null | undefined): WizardLayout {
   if (!saved || !Array.isArray(saved.steps) || saved.steps.length === 0) return defaultLayout();

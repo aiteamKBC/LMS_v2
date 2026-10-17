@@ -4,6 +4,7 @@ import { AppIcon } from './AppIcon';
 import { SessionAccountCheck } from './SessionAccountCheck';
 import { SessionRecordingPlayer } from './SessionRecordingPlayer';
 import { SessionSyncStatus } from './SessionSyncStatus';
+import { recordingDay } from './recordingDay';
 import { formatSystemTimestamp } from '@/lib/format';
 import {
   linkAttendanceAlias, loadSessionResult, requestSessionSync, sessionAttendanceUrl, sessionFileUrl, setRecordingVisibility,
@@ -31,10 +32,13 @@ const recoveryLabel = (person: SessionPerson) => {
   if (person.recoveryStatus === 'requested') return 'Recovery requested';
   return 'Not requested';
 };
-export function SessionResults({ seriesId, sessionNumber, moduleId, learner, attendanceType, preview = false, onRecordingWatchTimeChange }: {
+export function SessionResults({ seriesId, sessionNumber, moduleId, learner, attendanceType, preview = false, recordingDate, recordingsOnly = false, onRecordingWatchTimeChange, onRecordingPlayingChange }: {
   seriesId: string; sessionNumber: number; learner?: SessionLearner; attendanceType?: string | null; preview?: boolean;
   moduleId?: string;
+  recordingDate?: string | null;
+  recordingsOnly?: boolean;
   onRecordingWatchTimeChange?: (seconds: number) => void;
+  onRecordingPlayingChange?: (playing: boolean) => void;
 }) {
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
@@ -71,9 +75,12 @@ export function SessionResults({ seriesId, sessionNumber, moduleId, learner, att
     setUnmatchedOpen(false); setAliasChoices({}); setAliasBusy('');
     setEditingLink(undefined); setCorrectionLearner('');
   }, [seriesId, sessionNumber, moduleId, kind, learnerId]);
-  const files = session?.artifacts?.filter(file => (!learner && !preview) || !file.hiddenFromLearners) || [];
+  const files = session?.artifacts?.filter(file => ((!learner && !preview) || !file.hiddenFromLearners)
+    && (!recordingDate || recordingDay(file.createdAt) === recordingDate)) || [];
   const recordings = files.filter(file => file.type === 'recording');
   const transcripts = files.filter(file => file.type === 'transcript');
+  const playableTranscripts = session?.artifacts?.filter(file => file.type === 'transcript'
+    && ((!learner && !preview) || !file.hiddenFromLearners)) || [];
   const savedSessionReady = !upcoming && session?.reportReady && session.archiveReady !== false
     && recordings.length > 0 && files.every(file => file.state === 'ready');
   const recordingWatchTotal = recordings.reduce((total, file) => total + (recordingWatchSeconds[file.id] || 0), 0);
@@ -131,20 +138,21 @@ export function SessionResults({ seriesId, sessionNumber, moduleId, learner, att
       setError(reason instanceof Error ? reason.message : 'Could not correct the identity link.');
     } finally { setAliasBusy(''); }
   };
-  return <section className="overflow-hidden rounded-2xl border border-primary-100 bg-white shadow-sm" aria-label={`Session ${sessionNumber} results`}>
+  return <section className="overflow-hidden rounded-2xl border border-primary-100 bg-white shadow-sm" aria-label={recordingsOnly ? 'Recorded event' : `Session ${sessionNumber} results`}>
     <header className="flex flex-wrap items-center justify-between gap-3 border-b border-primary-100 bg-primary-50/50 p-5">
-      <div><p className="text-xs font-bold uppercase tracking-wider text-primary-600">Session {sessionNumber}</p>
-        <h2 className="mt-1 text-lg font-bold">Recording & session results</h2>
-        {session?.title && <p className="mt-1 font-semibold">{session.title}</p>}
-        {session?.startsAt && <p className="mt-1 text-xs text-foreground-500">Scheduled: {formatSystemTimestamp(session.startsAt, { dateStyle: 'medium', timeStyle: 'short' })} (UK time)</p>}
-        {session?.actualStartsAt && <p className="mt-1 text-xs text-foreground-500">Recorded meeting: {formatSystemTimestamp(session.actualStartsAt, { dateStyle: 'medium', timeStyle: 'short' })} (UK time)</p>}
+      <div><p className="text-xs font-bold uppercase tracking-wider text-primary-600">{recordingsOnly ? 'Recorded event' : `Session ${sessionNumber}`}</p>
+        <h2 className="mt-1 text-lg font-bold">{recordingsOnly ? 'Event recordings' : 'Recording & session results'}</h2>
+        {!recordingsOnly && session?.title && <p className="mt-1 font-semibold">{session.title}</p>}
+        {recordingsOnly && recordingDate && <p className="mt-1 text-xs text-foreground-500">Recorded on {recordingDate} (UK date)</p>}
+        {!recordingsOnly && session?.startsAt && <p className="mt-1 text-xs text-foreground-500">Scheduled: {formatSystemTimestamp(session.startsAt, { dateStyle: 'medium', timeStyle: 'short' })} (UK time)</p>}
+        {!recordingsOnly && session?.actualStartsAt && <p className="mt-1 text-xs text-foreground-500">Recorded meeting: {formatSystemTimestamp(session.actualStartsAt, { dateStyle: 'medium', timeStyle: 'short' })} (UK time)</p>}
         <p className="mt-1 text-xs text-foreground-500">{session?.syncedAt ? `Last saved ${formatSystemTimestamp(session.syncedAt)}` : upcoming ? 'Results will be available after this session.' : 'No saved results for this session yet.'}</p></div>
       <div className="flex flex-wrap gap-2">
         {!learner && !preview && <button type="button" disabled={loading || syncing || !session || session.archiveReady === false} onClick={() => void sync()} className="rounded-lg bg-primary-600 px-3 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50">{syncing ? 'Requesting…' : 'Sync attendance & files'}</button>}
         <button type="button" disabled={loading || saved.refreshing} aria-busy={saved.refreshing} onClick={saved.refresh} className="rounded-lg border px-3 py-2 text-sm font-semibold disabled:opacity-60">{saved.refreshing && !loading ? 'Refreshing…' : 'Refresh saved results'}</button>
       </div>
     </header>
-    {upcoming && <p role="status" className="m-4 rounded-lg border border-sky-200 bg-sky-50 p-4 text-sm text-sky-900">This session has not taken place yet. Attendance and any recordings or transcripts will appear here after the session ends and Teams makes them available.</p>}
+    {upcoming && !recordingsOnly && <p role="status" className="m-4 rounded-lg border border-sky-200 bg-sky-50 p-4 text-sm text-sky-900">This session has not taken place yet. Attendance and any recordings or transcripts will appear here after the session ends and Teams makes them available.</p>}
     {(error || saved.error) && <p role="alert" className="m-4 rounded-lg bg-red-50 p-3 text-sm text-red-800">{error || saved.error}</p>}
     {notice && (noticeKind === 'identity' || !saved.data?.job) && <p role="status" className="m-4 rounded-lg bg-primary-50 p-3 text-sm">{notice}</p>}
     {!learner && !preview && saved.data?.job && (saved.data.job.state === 'failed' && savedSessionReady
@@ -159,14 +167,14 @@ export function SessionResults({ seriesId, sessionNumber, moduleId, learner, att
       ? 'Saved recordings and transcripts are not ready for playback yet. Please contact your tutor.'
       : 'Recording storage needs setup. Saved attendance is available below; synchronization and playback are unavailable until setup is complete.'}</p>}
     {loading ? <p role="status" className="p-5 text-sm">Loading saved session…</p> : !session ? !error && !saved.error && <p className="p-5 text-sm">This session has not been linked yet.</p> : <>
-      {learner && !preview && !recordedSessionsLearner && <div className="m-4 rounded-xl border bg-background-50 p-4 text-sm">
+      {learner && !preview && !recordingsOnly && !recordedSessionsLearner && <div className="m-4 rounded-xl border bg-background-50 p-4 text-sm">
         <strong>Your original attendance: {ownRawStatus ? rawLabels[ownRawStatus] : upcoming ? 'Not available yet' : session.reportReady ? 'Identity needs review' : 'Awaiting report'}</strong>
         {own && <p className="mt-1 text-foreground-500">{Math.floor(own.seconds / 60)}m {own.seconds % 60}s verified in Teams. Presence requires more than 3 minutes.</p>}
         {ownFinalOutcome && ownRawStatus && ownFinalOutcome !== ownRawStatus && <p className="mt-1 font-semibold text-primary-700">Effective outcome: {outcomeLabels[ownFinalOutcome]}</p>}
         {own?.attendance === 0 && !own.catchupCompleted && <Link className="mt-2 inline-block font-semibold text-primary-700 underline" to="/learner/attendance">{own.absenceReported ? 'View recovery plan' : 'Open attendance and report absence'}</Link>}
       </div>}
       <div className="flex gap-2 border-b px-4" role="tablist" aria-label="Session results">
-        {(['recordings', 'attendance', 'transcripts'] as const).filter(value => (!learner && !preview) || value !== 'attendance').map(value =>
+        {(['recordings', 'attendance', 'transcripts'] as const).filter(value => !recordingsOnly && ((!learner && !preview) || value !== 'attendance') || recordingsOnly && value === 'recordings').map(value =>
           <button key={value} role="tab" type="button" aria-selected={tab === value} onClick={() => setTab(value)}
             className={`border-b-2 px-4 py-3 text-sm font-semibold capitalize ${tab === value ? 'border-primary-600 text-primary-700' : 'border-transparent text-foreground-500'}`}>{value}</button>)}
       </div>
@@ -174,7 +182,8 @@ export function SessionResults({ seriesId, sessionNumber, moduleId, learner, att
         {tab === 'recordings' && <div className="space-y-5">{!recordings.length && <p className="text-sm text-foreground-500">{upcoming ? 'Recordings will appear here if this session is recorded.' : 'No recording is saved for this session. Check the session date; other sessions may have recordings. New saved results appear automatically.'}</p>}
           {recordings.map((file, index) => <div key={file.id}><div className="mb-2 flex flex-wrap items-center justify-between gap-2"><h3 className="text-sm font-bold">Recording {index + 1}{file.hiddenFromLearners ? ' · Hidden from learners' : ''}</h3>
             {!learner && !preview && <button type="button" disabled={Boolean(visibilityBusy)} onClick={() => void toggleVisibility(file)} className="rounded-lg border px-3 py-2 text-sm font-semibold disabled:opacity-50">{visibilityBusy === file.id ? 'Updating…' : file.hiddenFromLearners ? 'Show to learners' : 'Hide from learners'}</button>}</div>
-            {file.state === 'ready' ? <SessionRecordingPlayer seriesId={seriesId} file={file} transcripts={transcripts} learner={learner} label={`Session recording ${index + 1}`} trackWatch={Boolean(learner) && !preview}
+            {file.state === 'ready' ? <SessionRecordingPlayer seriesId={seriesId} file={file} transcripts={playableTranscripts} learner={learner} label={`Session recording ${index + 1}`} trackWatch={Boolean(learner) && !preview}
+              onPlayingChange={onRecordingPlayingChange}
               onWatchTimeChange={seconds => setRecordingWatchSeconds(current => current[file.id] === seconds ? current : { ...current, [file.id]: seconds })} />
               : <p role="status" className="rounded-lg bg-amber-50 p-3 text-sm">{session.archiveReady === false ? 'Teams has a recording for this session. A saved playback copy is not available yet.' : file.state === 'failed' ? 'Saving this recording needs retry. An administrator can request synchronization.' : 'Recording found. Saving a copy for playback…'}</p>}</div>)}
         </div>}

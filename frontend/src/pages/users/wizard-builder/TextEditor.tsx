@@ -2,7 +2,7 @@ import { useId, useRef, useState, type KeyboardEvent } from 'react';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { inputClass } from '../components/ui';
 import { RichText } from '../wizard/layout/RichText';
-import { MAX_TEXT_LENGTH, textFor, type TextSlot } from '../wizard/layout/texts';
+import { MAX_TEXT_LENGTH, type TextSlot } from '../wizard/layout/texts';
 import { EMPTY_HISTORY, record, redo, undo, type ChangeKind } from './textHistory';
 
 type Wrap = { before: string; after: string; placeholder: string };
@@ -38,8 +38,9 @@ export function TextEditor({
   const ref = useRef<HTMLTextAreaElement>(null);
   const edited = typeof texts?.[slot.key] === 'string';
   // The raw edit while editing — even when blank, so the box can be cleared and
-  // retyped instead of snapping back to the standard wording.
-  const value = edited ? texts![slot.key] : textFor(texts, slot.key);
+  // retyped instead of snapping back to the standard wording. (The eligibility
+  // form builder uses this editor too, for slots of its own registry.)
+  const value = edited ? texts![slot.key] : slot.default;
   const empty = edited && value.trim() === '';
   const tooLong = value.length > MAX_TEXT_LENGTH;
 

@@ -1,4 +1,4 @@
-import { cleanup, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { DashboardTabs, type DashboardTabsProps } from '../DashboardTabs';
 
@@ -19,5 +19,16 @@ describe('learner dashboard tabs', () => {
     expect(screen.getByRole('tab', { name: 'Weekly Learning' })).toHaveAttribute('aria-selected', 'true');
     expect(await screen.findByText('Weekly panel')).toBeVisible();
     expect(screen.queryByText('Overview panel')).not.toBeInTheDocument();
+  });
+
+  it('reports each opened tab so the page can start the reads for that tab', async () => {
+    const onTabOpen = vi.fn();
+    render(<DashboardTabs {...props} onTabOpen={onTabOpen} />);
+    expect(onTabOpen).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('tab', { name: 'Overview' }));
+    expect(onTabOpen).toHaveBeenLastCalledWith('overview');
+    expect(await screen.findByText('Overview panel')).toBeVisible();
+    fireEvent.keyDown(screen.getByRole('tab', { name: 'Overview' }), { key: 'ArrowRight' });
+    expect(onTabOpen).toHaveBeenLastCalledWith('rewards');
   });
 });

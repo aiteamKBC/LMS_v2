@@ -2,7 +2,7 @@ import { useEffect, useState, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { AppIcon } from '@/components/feature/AppIcon';
 import type { JourneyComponent } from '@/utils/learnerJourney';
-import { componentTypeMeta, gradePercent, hasComponentContent, isComponentComplete } from '@/utils/learnerJourney';
+import { componentTypeMeta, gradePercent, hasComponentContent, isComponentComplete, resourceTypeMeta } from '@/utils/learnerJourney';
 import { overviewSchedule } from '@/api/learnerOverview';
 import { HolidayNoteHint } from '@/components/feature/HolidayNoteHint';
 import { weekHolidayNotes } from '@/pages/learner/training-plan-timeline/model';
@@ -51,6 +51,44 @@ export interface ActivitySidebarProps {
   onAccessBlocked?: () => void;
 }
 
+const ACTIVITY_TONES: Record<string, { background: string; border: string; color: string }> = {
+  reading: { background: '#e8f4ff', border: '#bfdbfe', color: '#0369a1' },
+  video: { background: '#f3e8ff', border: '#ddd6fe', color: '#7e22ce' },
+  podcast: { background: '#fce7f3', border: '#fbcfe8', color: '#be185d' },
+  quiz: { background: '#fff4d6', border: '#f5d98b', color: '#a16207' },
+  assignment: { background: '#ffe9ed', border: '#fecdd3', color: '#be123c' },
+  powerpoint: { background: '#ffeddc', border: '#fed7aa', color: '#c2410c' },
+  reflection: { background: '#e9eaff', border: '#c7d2fe', color: '#4338ca' },
+  'live-session': { background: '#e4f7ee', border: '#bbebd2', color: '#137055' },
+  recording: { background: '#e5f5f7', border: '#bae6eb', color: '#0e7490' },
+  evidence: { background: '#f1eafd', border: '#ddd0f4', color: '#6d28d9' },
+  document: { background: '#f1f5f9', border: '#dbe3ec', color: '#475569' },
+  activity: { background: '#f1f5f9', border: '#dbe3ec', color: '#475569' },
+};
+
+const ACTIVITY_LABELS: Record<string, string> = {
+  reading: 'Reading', video: 'Video', podcast: 'Podcast', quiz: 'Quiz', assignment: 'Assignment',
+  powerpoint: 'PowerPoint', reflection: 'Reflection', 'live-session': 'Live session', recording: 'Recording',
+  evidence: 'Evidence', document: 'Document', activity: 'Activity',
+};
+
+function sidebarActivityMeta(component: JourneyComponent) {
+  const raw = component.isQuiz ? 'quiz' : String(component.type || '').trim().toLowerCase().replace(/[\s_]+/g, '-');
+  const key = raw === 'audio' ? 'podcast'
+    : ['presentation', 'slides', 'ppt'].includes(raw) ? 'powerpoint'
+      : ['live-session', 'live'].includes(raw) ? 'live-session'
+        : ['recording-placeholder'].includes(raw) ? 'recording'
+          : ['workplace-evidence'].includes(raw) ? 'evidence'
+            : ['resource', 'file', 'pdf', 'word'].includes(raw) ? 'document'
+              : ACTIVITY_TONES[raw] ? raw : 'activity';
+  const titleMeta = componentTypeMeta(component.title);
+  const label = ACTIVITY_LABELS[key];
+  const titleIsLabel = titleMeta.label.trim().toLowerCase() === label.toLowerCase();
+  const detail = titleMeta.detail || (!titleIsLabel ? component.title : null);
+  const resource = resourceTypeMeta(key.replace('-', ' '));
+  return { key, label, detail, icon: resource.icon, tone: ACTIVITY_TONES[key] };
+}
+
 export function ActivitySidebar({
   weekComponents,
   weekTitle,
@@ -97,6 +135,11 @@ export function ActivitySidebar({
   const holidayNotes = weekHolidayNotes(plannedModule?.curriculumSlots);
   const currentWeekNote = holidayNotes.get(weeks.find(w => w.active)?.weekId
     || weekComponents.find(c => c.weekId)?.weekId || '');
+  const legendItems = [...new Map([...weekComponents, ...weeks.flatMap(week => week.components)]
+    .map(component => {
+      const meta = sidebarActivityMeta(component);
+      return [meta.key, meta] as const;
+    })).values()];
 
   /** Whether this row is the activity the host page is showing. */
   const isCurrentRow = (c: JourneyComponent) => (
@@ -107,6 +150,16 @@ export function ActivitySidebar({
 
   return (
     <aside aria-label="Module activities" className="min-w-0 space-y-4 lg:sticky lg:top-4">
+      {legendItems.length > 0 && <section aria-label="Activity type key" className="rounded-xl border border-primary-100 bg-white px-4 py-3 shadow-sm">
+        <p className="text-[10px] font-bold uppercase tracking-wider text-primary-900">Activity types</p>
+        <div className="mt-2 flex flex-wrap gap-1.5">
+          {legendItems.map(meta => <span key={meta.key} data-activity-type={meta.key}
+            className="inline-flex items-center gap-1.5 rounded-full border px-2 py-1 text-[10px] font-semibold"
+            style={{ backgroundColor: meta.tone.background, borderColor: meta.tone.border, color: meta.tone.color }}>
+            <AppIcon className={`${meta.icon} text-[11px]`} />{meta.label}
+          </span>)}
+        </div>
+      </section>}
       <div className="overflow-hidden rounded-xl border border-emerald-200 bg-emerald-50/70 shadow-sm">
         <div className="border-b border-emerald-100 px-4 py-3">
           <p className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-primary-600">Current week</p>
@@ -120,7 +173,7 @@ export function ActivitySidebar({
         </div>
         <ul className="divide-y divide-emerald-100">
           {weekComponents.map((c) => {
-            const cm = componentTypeMeta(c.title);
+            const cm = sidebarActivityMeta(c);
             const isCurrent = isCurrentRow(c);
             const contentAvailable = hasComponentContent(c);
             const navigable = contentAvailable && isNavigableComponent(c) && !isCurrent;
@@ -147,11 +200,12 @@ export function ActivitySidebar({
                           : clickable ? 'bg-emerald-50/30 hover:bg-emerald-100/60 cursor-pointer' : 'bg-emerald-50/30 cursor-default'
                   }`}
                 >
-                  <span className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 ${completed ? 'bg-emerald-100' : 'bg-primary-100'}`}>
-                    <AppIcon className={completed ? 'ri-check-line text-[12px] text-emerald-700' : `${cm.icon} text-[12px] text-primary-700`} />
+                  <span data-activity-type={cm.key} className="w-7 h-7 rounded-lg border flex items-center justify-center shrink-0"
+                    style={{ backgroundColor: cm.tone.background, borderColor: cm.tone.border, color: cm.tone.color }}>
+                    <AppIcon className={`${cm.icon} text-[12px]`} />
                   </span>
                   <span className="flex-1 min-w-0">
-                    <span className="block text-[9px] font-semibold uppercase tracking-wider text-foreground-400">{cm.label}</span>
+                    <span className="block text-[9px] font-semibold uppercase tracking-wider" style={{ color: cm.tone.color }}>{cm.label}</span>
                     <span className={`block text-[13px] font-semibold leading-snug truncate ${
                       isCurrent ? 'text-primary-700' : completed ? 'text-emerald-900' : 'text-primary-800'
                     }`}>
@@ -263,7 +317,7 @@ export function ActivitySidebar({
                   {expanded && (
                     <ul className="border-t border-primary-100 bg-primary-50/40 divide-y divide-primary-100">
                       {weekComponentRows(w, completedIds).map((row) => {
-                        const rowMeta = componentTypeMeta(row.component.title);
+                        const rowMeta = sidebarActivityMeta(row.component);
                         const accessBlocked = row.openable && !accessOpen;
                         return (
                           <li key={row.component.componentId || row.component.title}>
@@ -277,11 +331,12 @@ export function ActivitySidebar({
                                 row.openable && accessOpen ? 'hover:bg-primary-50 cursor-pointer' : 'cursor-not-allowed opacity-60'
                               }`}
                             >
-                              <span className="w-6 h-6 rounded-md flex items-center justify-center shrink-0 bg-primary-100">
-                                <AppIcon className={`${rowMeta.icon} text-[11px] text-primary-700`} />
+                              <span data-activity-type={rowMeta.key} className="w-6 h-6 rounded-md border flex items-center justify-center shrink-0"
+                                style={{ backgroundColor: rowMeta.tone.background, borderColor: rowMeta.tone.border, color: rowMeta.tone.color }}>
+                                <AppIcon className={`${rowMeta.icon} text-[11px]`} />
                               </span>
                               <span className="flex-1 min-w-0">
-                                <span className="block text-[9px] font-semibold uppercase tracking-wider text-foreground-400">
+                                <span className="block text-[9px] font-semibold uppercase tracking-wider" style={{ color: rowMeta.tone.color }}>
                                   {rowMeta.label}
                                 </span>
                                 <span className={`block text-[12px] font-medium leading-snug truncate ${

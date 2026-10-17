@@ -144,11 +144,12 @@ export function buildCaseFileActivityStates(
     const completed = records.filter(record => progressCountsAsAchieved(record))
       .filter(() => !component.tutorValidationRequired || marking?.status === 'accepted');
     const feedStarted = (detail?.activityFeed || []).some(entry => String(entry.componentId || '') === id);
+    const attended = component.type?.replace(/-/g, '_') === 'live_session' && component.attendanceCompleted === true;
     states[id] = {
-      status: journeyStatus('native', { completed: completed.length > 0, started: records.length > 0 || feedStarted }),
+      status: journeyStatus('native', { completed: completed.length > 0 || attended, started: records.length > 0 || feedStarted }),
       completedAt: completed.length
         ? latestIso([marking?.reviewedAt, ...completed.map(record => record.submittedAt)])
-        : null,
+        : attended ? component.attendanceCompletedAt || null : null,
       source: 'native',
       sourceRef: records.length ? `component:${id}` : null,
     };

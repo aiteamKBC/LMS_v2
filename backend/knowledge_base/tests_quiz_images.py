@@ -156,6 +156,7 @@ class QuizImageTests(SimpleTestCase):
         self.assertTrue(pair["imageUrl"].startswith("data:image/webp;base64,"))
         self.assertEqual(client.responses.create.call_args.kwargs["input"][1]["content"][2]["type"], "input_image")
 
+    @override_settings(OPENAI_API_KEY="test", OPENAI_MODEL="test")
     def test_text_only_request_excludes_image_type_and_rejects_placeholder_output(self):
         from quiz_api.views import generate_ai_questions
 
@@ -165,5 +166,6 @@ class QuizImageTests(SimpleTestCase):
         with patch("openai.OpenAI", return_value=client):
             response = generate_ai_questions(request)
         self.assertEqual(response.status_code, 502)
+        self.assertIn("image", json.loads(response.content)["error"].lower())
         schema = client.responses.create.call_args.kwargs["text"]["format"]["schema"]
         self.assertNotIn("image_matching", schema["properties"]["questions"]["items"]["properties"]["type"]["enum"])

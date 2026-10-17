@@ -2,8 +2,8 @@
 
 The pairing is by position — week 1 to week 1 — but which *component* a piece of
 progress lands on is a human decision, so these cover the offer (which weeks and
-components are shown, and what is suggested) and the write (what is rewritten,
-and just as importantly what is left alone).
+components are shown, and what is suggested) and the write (what is moved and
+what is archived).
 """
 import json
 from datetime import datetime, timezone as tz
@@ -337,7 +337,7 @@ class MappingValidationTests(SimpleTestCase):
         self.assertEqual(error, "")
         self.assertEqual(pairs, [("C-A2", "C-B2")])
 
-    def test_a_pair_with_no_target_means_leave_that_progress_alone(self):
+    def test_a_pair_with_no_target_is_left_unmatched_for_archiving(self):
         pairs, error = self._validate([{"fromComponentId": "C-A2", "toComponentId": ""}])
 
         self.assertEqual(error, "")
@@ -463,6 +463,69 @@ class RepointTests(SimpleTestCase):
         self.assertEqual(entry.component_ref, "C-A3")
 
 
+class ArchiveProgressTests(SimpleTestCase):
+    def test_unmatched_source_progress_is_soft_archived(self):
+        base = Mock()
+        scoped = Mock()
+        base.filter.return_value = scoped
+        scoped.update.return_value = 2
+        profile = SimpleNamespace(pk=211)
+
+        with patch.object(module_shift, "LearnerProgressEntry") as model, \
+                patch.object(module_shift.timezone, "now", return_value="archived-at"):
+            model.objects.filter.return_value = base
+            archived = module_shift._archive_unmatched_progress(
+                profile, "MOD-A", {"C-A1", "C-A2"},
+            )
+
+        self.assertEqual(archived, 2)
+        model.objects.filter.assert_called_once_with(
+            learner=profile, deleted_at__isnull=True,
+        )
+        scoped.update.assert_called_once_with(deleted_at="archived-at")
+
+    def test_progress_that_was_moved_is_not_archived_even_if_component_ids_are_shared(self):
+        base = Mock()
+        scoped = Mock()
+        unmatched = Mock()
+        base.filter.return_value = scoped
+        scoped.exclude.return_value = unmatched
+        unmatched.update.return_value = 1
+
+        with patch.object(module_shift, "LearnerProgressEntry") as model:
+            model.objects.filter.return_value = base
+            archived = module_shift._archive_unmatched_progress(
+                SimpleNamespace(pk=211), "MOD-A", {"SHARED"}, (), [8],
+            )
+
+        self.assertEqual(archived, 1)
+        scoped.exclude.assert_called_once_with(pk__in=[8])
+
+    def test_a_uniquely_resolved_legacy_quiz_is_in_the_archive_scope(self):
+        base = Mock()
+        scoped = Mock()
+        base.filter.return_value = scoped
+        scoped.update.return_value = 1
+
+        with patch.object(module_shift, "LearnerProgressEntry") as model:
+            model.objects.filter.return_value = base
+            archived = module_shift._archive_unmatched_progress(
+                SimpleNamespace(pk=211), "MOD-A", {"C-AQ"}, [17],
+            )
+
+        self.assertEqual(archived, 1)
+        archive_scope = base.filter.call_args.args[0]
+        self.assertIn(("pk__in", [17]), archive_scope.children)
+
+    def test_a_learner_without_a_delivery_profile_has_nothing_to_archive(self):
+        with patch.object(module_shift, "LearnerProgressEntry") as model:
+            self.assertEqual(
+                module_shift._archive_unmatched_progress(None, "MOD-A", {"C-A1"}),
+                0,
+            )
+        model.objects.filter.assert_not_called()
+
+
 class QuizShiftProgressTests(SimpleTestCase):
     """Quiz submissions have quiz_ref but no component_ref, unlike readings."""
 
@@ -497,7 +560,10 @@ class QuizShiftProgressTests(SimpleTestCase):
             result = resolver(self.profile, ["C-AQ"])
         self.assertEqual(model.objects.filter.call_args_list[0].kwargs["learner"], self.profile)
         call = model.objects.filter.call_args_list[1]
-        self.assertEqual(call.kwargs, {"learner": self.profile, "kind": "quiz", "quiz_ref__in": ["101"]})
+        self.assertEqual(call.kwargs, {
+            "learner": self.profile, "deleted_at__isnull": True,
+            "kind": "quiz", "quiz_ref__in": ["101"],
+        })
         self.assertEqual(call.args[0].connector, "OR")
         self.assertCountEqual(call.args[0].children, [("component_ref__isnull", True), ("component_ref", "")])
         return result
