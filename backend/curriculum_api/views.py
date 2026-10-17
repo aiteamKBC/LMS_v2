@@ -17805,6 +17805,11 @@ def apply_shared_teams_settings_to_weeks(module, weeks):
                     if key in SHARED_TEAMS_DELIVERY_SETTING_KEYS and value not in (None, '')
                 },
             }
+            # A shared card opens the source's meeting. Its displayed clock
+            # must travel with that identity even when reading weeks differ.
+            for key in ('sessionDate', 'sessionTime', 'durationMinutes'):
+                if source.get(key) not in (None, ''):
+                    merged[key] = source[key]
             own_link = clean_str(current.get('liveSessionLinkOverride'))
             if own_link:
                 merged['liveSessionUrl'] = own_link
