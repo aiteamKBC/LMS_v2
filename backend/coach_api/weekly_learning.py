@@ -6,6 +6,8 @@ from zoneinfo import ZoneInfo
 from django.db import connections
 from learner_api.progress_rules import progress_counts_as_achieved
 from curriculum_api.week_visibility import visible_child_sql, visible_week_sql
+from .weekly_live_attendance import (read_weekly_live_evidence, credit_in_week,
+                                     week_live_session, add_live_activity_hours)
 
 BUSINESS_ZONE = ZoneInfo('Europe/London')
 VISIBLE = visible_child_sql('ksb_mappings')
@@ -193,8 +195,15 @@ def read_weekly_learning(context, selection=None, *, module_id=None, include_wee
             AND (cm.deleted_at IS NULL OR COALESCE(cm.deleted_via_parent,'') <> '') AND coalesce(btrim(cm.title),'') <> ''
             ORDER BY c.week_id,c.display_order,c.id''', [sorted(content_ids)])
         components = [row for row in rows(cur) if row['has_content'] or row['is_quiz']]
+        register, live_credits = read_weekly_live_evidence(source, owner, schedule_ids, sorted(content_ids))
+        credits_by_component = {credit['componentId']: credit for credit in live_credits}
         progress = progress_index(context.profile.progress_entries.filter(kind__in=['quiz', 'video', 'component', 'quiz_reading'])
                                   .values('kind', 'component_ref', 'quiz_ref', 'passed', 'submitted_at'))
+        def completion_for_week(component, week):
+            credit = credits_by_component.get(str(component['id']))
+            if credit is not None and credit_in_week(credit, week):
+                return True, 'completed'
+            return activity_completion(component, progress)
         by_week = defaultdict(list)
         for component in components:
             if not component['is_quiz']:
@@ -202,7 +211,7 @@ def read_weekly_learning(context, selection=None, *, module_id=None, include_wee
             by_week[(component['module_catalogue_id'], component['week_id'])].append(component)
         for week in weeks:
             items = by_week[(week['moduleId'], week['weekId'])] if week['kind'] != 'reading-week' else []
-            week['completedActivities'] = sum(activity_completion(item, progress)[0] for item in items)
+            week['completedActivities'] = sum(completion_for_week(item, week)[0] for item in items)
             week['totalActivities'] = len(items)
             week['progress'] = round(week['completedActivities'] / len(items) * 100, 2) if items else 0
         # Only compact attendance markers are read across the navigator; the
@@ -235,6 +244,12 @@ def read_weekly_learning(context, selection=None, *, module_id=None, include_wee
             markers[(row['module_catalogue_id'], row['day'].isoformat())] = derived_session(
                 row['start'], row['finish'], row['status'], row['attended'], now)
         for week in weeks:
+            canonical_session = week_live_session(register, week, now)
+            if canonical_session:
+                key = (week['moduleId'], week['startDate'])
+                markers[key] = {'state': canonical_session['sessionState'], 'attended': canonical_session['attended']}
+                navigation[key] = {'sessionStart': canonical_session['start'],
+                                   'sessionDurationMinutes': canonical_session['durationMinutes']}
             marker = markers.get((week['moduleId'], week['startDate'])) if week['kind'] != 'reading-week' else None
             week['attended'] = marker['attended'] if marker else None
             week['sessionState'] = marker['state'] if marker else 'unscheduled'
@@ -270,7 +285,7 @@ def read_weekly_learning(context, selection=None, *, module_id=None, include_wee
             WHERE component_id=ANY(%s) AND {VISIBLE} ORDER BY component_id,ksb_code''', [missing])
         for cid, code in cur.fetchall():
             mappings.setdefault(cid, []).append({'code': code})
-        completion = {row['id']: activity_completion(row, progress) for row in selected_components}
+        completion = {row['id']: completion_for_week(row, selected) for row in selected_components}
         selected_by_id = {row['id']: row for row in selected_components}
         activities = []
         for row in details:
@@ -320,10 +335,18 @@ def read_weekly_learning(context, selection=None, *, module_id=None, include_wee
                         'startTime': start.strftime('%H:%M'), 'endTime': end.strftime('%H:%M') if end else None,
                         'start': session['start'], 'durationMinutes': session['minutes'], 'status': state['status'],
                         'sessionState': state['state'], 'attended': state['attended'], 'joinUrl': session['joinUrl']}
+        canonical_session = week_live_session(register, selected, now)
+        if canonical_session:
+            live = canonical_session
+            selected['sessionState'], selected['attended'] = live['sessionState'], live['attended']
     codes = {code for item in activities for code in item['ksbCodes']}
     achieved = {code for item in activities if item['completed'] for code in item['ksbCodes']}
     planned = sum(item['expectedHours'] or 0 for item in activities)
-    activity_hours = module_activity_hours(canonical_learning.entries_for(owner), modules)
+    records = canonical_learning.entries_for(owner)
+    activity_hours = module_activity_hours(records, modules)
+    activity_hours = add_live_activity_hours(activity_hours, records,
+        [credit for credit in live_credits if credit_in_week(credit, selected)
+         and credit['componentId'] in selected_by_id])
     module_hours = activity_hours[str(selected['moduleId'])]
     module_components = [component for component in components if component['module_catalogue_id'] == selected['moduleId']]
     completed_hours = selected_activity_hours(module_hours, selected_components, module_components)

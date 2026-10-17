@@ -126,6 +126,14 @@ class LiveSessionProgressTests(SimpleTestCase):
             self.assertEqual(read_live_credits(SimpleNamespace(id=7), components=[component(type='video')]), [])
         register.assert_not_called()
 
+    def test_supplied_register_is_reused_even_when_empty(self):
+        with patch('learner_api.attendance_lectures.lecture_register') as register, \
+             patch('learner_api.live_session_progress.timezone.now', return_value=NOW):
+            self.assertEqual(len(read_live_credits(SimpleNamespace(pk=7), components=[component()],
+                                                  register=[lecture()])), 1)
+            self.assertEqual(read_live_credits(SimpleNamespace(pk=7), components=[component()], register=[]), [])
+        register.assert_not_called()
+
     def test_canonical_module_percentage_includes_verified_live_completion(self):
         from .module_progress import canonical_module_progress
         source = SimpleNamespace(pk=7)
