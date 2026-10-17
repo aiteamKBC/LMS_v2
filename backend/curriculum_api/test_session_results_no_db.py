@@ -820,6 +820,37 @@ class EndpointTests(unittest.TestCase):
         self.assertNotIn('source@example.invalid', json.dumps(rows, default=str))
         self.ns['replaced_module_register_rows'].assert_called_once_with('DEST', ['O'])
 
+    def test_shared_learner_uses_reviewed_destination_identity_without_exposing_other_learners(self):
+        self.ns['replaced_module_register_rows'].return_value = [
+            {'source_occurrence_id': 'O', 'learner_profile_id': 33,
+             'learner_email': 'destination@example.invalid', 'learner_name': 'Destination Learner',
+             'attendance_status': 'absent', 'attended_seconds': 0},
+            {'source_occurrence_id': 'O', 'learner_profile_id': 34,
+             'learner_email': 'other@example.invalid', 'learner_name': 'Other Learner',
+             'attendance_status': 'absent', 'attended_seconds': 0},
+        ]
+        self.ns['attendance_identity_link_rows'].return_value = [
+            {'occurrence_id': 'O', 'attendance_row_id': 'A', 'canonical_email': 'destination@example.invalid'}]
+        self.ns['read'].side_effect = [[{
+            'id': 'O', 'session_number': 1, 'status': 'completed', 'attendance_report_id': 'R',
+            'actual_end': '2026-09-16T10:00Z', 'scheduled_start': '2026-09-16T09:00Z',
+            'scheduled_end': '2026-09-16T10:00Z',
+        }], [{
+            'id': 'A', 'occurrence_id': 'O', 'email': '',
+            'display_name': 'Guest device', 'total_attendance_seconds': 7302,
+        }], [], []]
+        rows = self.ns['result_rows'](
+            {'id': 'S', 'module_catalogue_id': 'SOURCE', 'learner_shared_module_ids': ['DEST']},
+            email='destination@example.invalid', attendance_only=True)
+        person = rows[0]['attendance'][0]
+        self.assertEqual((person['rawStatus'], person['seconds']), ('present', 7302))
+        self.assertEqual(len(rows[0]['attendance']), 1)
+        self.assertEqual(rows[0]['attendanceCandidates'], [])
+        self.assertEqual(rows[0]['unmatchedAttendance'], [])
+        self.assertEqual(rows[0]['artifacts'], [])
+        self.assertNotIn('other@example.invalid', json.dumps(rows, default=str))
+        self.ns['replaced_module_register_rows'].assert_called_once_with('DEST', ['O'])
+
     def test_destination_alias_link_validates_and_recalculates_destination_module(self):
         req = self.req('staff', method='POST')
         req.body = b'{"aliasEmail":"guest@example.invalid","learnerProfileId":33,"moduleId":"DEST"}'

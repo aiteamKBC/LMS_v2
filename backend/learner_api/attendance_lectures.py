@@ -278,6 +278,7 @@ def read_native_occurrences(source, *, module_ids=None):
                      if key not in {'target_module_id', 'target_module_title'}}
         projected.update(module_catalogue_id=target_module_id, module_title=title)
         if target_module_id != row.get('module_catalogue_id'):
+            projected['attendance_source_module_id'] = row.get('module_catalogue_id')
             evidence_id = str(row.get('attendance_source_occurrence_id') or row.get('session_id') or '')
             projected['attendance_source_occurrence_id'] = evidence_id
             projected['session_id'] = f'{evidence_id}:{target_module_id}'
@@ -355,6 +356,8 @@ def lecture_register(source, *, module_ids=None, records=None, learner_profile_i
             row = {**row, 'attendance_status': 'upcoming'}
         result.append({**row, 'updated_at': _aware(row.get('updated_at'))})
     result.extend(by_occurrence.values())
+    from .shared_teams_attendance import apply_shared_attendance
+    result = apply_shared_attendance(result, source)
     # Ended sessions remain unmarked until evidence or a saved correction exists.
     result = [_ended_unmarked_status(row, now) for row in result]
     if attended_alternatives:

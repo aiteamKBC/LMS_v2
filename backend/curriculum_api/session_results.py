@@ -192,7 +192,7 @@ def merge_session_register_rows(rows):
     return [by_email[email] for email in sorted(by_email)]
 
 
-def result_rows(series, *, session_number=None, email=None, identity=False, module_catalogue_id=''):
+def result_rows(series, *, session_number=None, email=None, identity=False, module_catalogue_id='', attendance_only=False):
     params = [series['id']]
     where = ''
     if session_number is not None:
@@ -208,7 +208,10 @@ def result_rows(series, *, session_number=None, email=None, identity=False, modu
         FROM curriculum.live_session_learner_attendance
         WHERE occurrence_id=ANY(%s) ORDER BY learner_name,learner_profile_id''', [ids])
     context_register_rows = []
-    context_requested = (email is None and module_catalogue_id
+    if not module_catalogue_id and email is not None:
+        shared = series.get('learner_shared_module_ids') or []
+        module_catalogue_id = shared[0] if len(shared) == 1 else ''
+    context_requested = (module_catalogue_id
                          and str(module_catalogue_id) != str(series.get('module_catalogue_id') or ''))
     if context_requested:
         context_register_rows = replaced_module_register_rows(module_catalogue_id, ids)
@@ -228,7 +231,7 @@ def result_rows(series, *, session_number=None, email=None, identity=False, modu
     rules = identity_rules([roster_module_id])
     archive_ready = True
     try:
-        artifacts = read('''SELECT a.id,a.occurrence_id,a.artifact_type,a.created_datetime,a.end_datetime,
+        artifacts = [] if attendance_only else read('''SELECT a.id,a.occurrence_id,a.artifact_type,a.created_datetime,a.end_datetime,
             a.call_id,a.content_correlation_id,a.metadata,
             r.status AS archive_status,r.transcript_text,r.updated_at AS archived_at
             FROM curriculum.live_session_artifacts a
@@ -408,7 +411,8 @@ def result_rows(series, *, session_number=None, email=None, identity=False, modu
                         **({'linkedIdentities': linked_identities} if email is None else {}),
                         'artifacts': artifacts_by_id[item['id']],
                         **({'identityCheck': session_identity} if session_identity is not None else {})})
-    apply_recovery(results)
+    if not attendance_only:
+        apply_recovery(results)
     if email is not None:
         for item in results:
             item['attendance'] = [person for person in item['attendance'] if person['email'] == email.casefold()]
