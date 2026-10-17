@@ -4,7 +4,7 @@ import type { PlanModule, PlanReview, PlanSession } from './trainingPlanDashboar
 import { peekLearnerJson, readLearnerJson } from './learnerRead';
 
 /** Persistent dashboard information, independent of the selected tab. */
-export type DashboardHeader = {
+export type LegacyDashboardHeader = {
   learner: Omit<LearnerSummary, 'email' | 'phone' | 'group' | 'employerId' | 'isActive'>;
   schedule: {
     coach: { name: string; email?: string; phone?: string | null };
@@ -18,9 +18,30 @@ export type DashboardHeader = {
   weeklyCandidates?: Pick<PlanModule, 'id' | 'title' | 'start_date' | 'end_date'>[];
 };
 
+export type DashboardHeader = {
+  version: 2;
+  learner: LegacyDashboardHeader['learner'];
+  coach: LegacyDashboardHeader['schedule']['coach'];
+  modules: LegacyDashboardHeader['schedule']['modules'];
+  weeklyCandidates: NonNullable<LegacyDashboardHeader['weeklyCandidates']>;
+  nextReview: {
+    sessionId: string; eventKey: string; source: 'mcr' | 'progress-review';
+    title: string; date: string; scheduledDate?: string; scheduledTime?: string; meetingLink?: string;
+  } | null;
+  nextLiveSession: { id: string; moduleId: string; title: string; date: string; href: string | null } | null;
+  nextDeadline: { id: string; title: string; date: string; href: string } | null;
+};
+
 const path = (kind: LearnerKind, id: string) => `/learner_api/dashboard/${kind}/${encodeURIComponent(id)}/header/`;
+const headers = { 'X-LMS-Header-Version': '2' };
 export const dashboardHeader = {
-  read: (kind: LearnerKind, id: string, signal?: AbortSignal, fresh = false) =>
-    readLearnerJson<DashboardHeader>(path(kind, id), { signal, revalidate: fresh, ttlMs: 30_000 }),
-  peek: (kind: LearnerKind, id: string) => peekLearnerJson<DashboardHeader>(path(kind, id)),
+  read: async (kind: LearnerKind, id: string, signal?: AbortSignal, fresh = false) => {
+    const response = await readLearnerJson<DashboardHeader>(path(kind, id), { headers, signal, revalidate: fresh, ttlMs: 30_000 });
+    if (response?.version !== 2) throw new Error('Dashboard Header V2 response required.');
+    return response;
+  },
+  peek: (kind: LearnerKind, id: string) => {
+    const response = peekLearnerJson<DashboardHeader>(path(kind, id), { headers });
+    return response?.version === 2 ? response : undefined;
+  },
 };

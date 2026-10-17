@@ -50,6 +50,10 @@ function showWorkspace(role: string, initialPath?: string, navItems = roleNavMap
   };
 }
 
+function usesFullHeightSidebar(role: string) {
+  return role === 'learner' || role === 'curriculum' || role === 'advanced-admin';
+}
+
 beforeEach(() => {
   denied.clear();
   viewer.isAdmin = false;
@@ -250,7 +254,6 @@ it.each([
   ['apprentice', '/users'],
   ['engagement', '/workspace/engagement'],
   ['tutor', '/workspace/tutor'],
-  ['curriculum', '/workspace/curriculum'],
   ['auditor', '/workspace/auditor'],
 ])('uses the original %s menu for an administrator with the new open/close behaviour', (role, path) => {
   viewer.isAdmin = true;
@@ -292,7 +295,7 @@ describe.each(Object.keys(roleNavMap))('%s shared workspace sidebar', role => {
       expect(shell.style.getPropertyValue('--kbc-sidebar-width')).toBe('240px');
       return;
     }
-    if (role === 'learner' || role === 'advanced-admin') {
+    if (usesFullHeightSidebar(role)) {
       expect(sidebar.style.width).toBe('240px');
       expect(shell.style.getPropertyValue('--kbc-sidebar-width')).toBe('240px');
       expect(panel).toBeNull();
@@ -327,13 +330,13 @@ describe.each(Object.keys(roleNavMap))('%s shared workspace sidebar', role => {
       expect(screen.getByTestId('route')).toHaveTextContent(destination.href!);
       return;
     }
-    if (role !== 'learner' && role !== 'advanced-admin') fireEvent.click(within(sidebar).getByRole('button', { name: 'Expand navigation' }));
+    if (!usesFullHeightSidebar(role)) fireEvent.click(within(sidebar).getByRole('button', { name: 'Expand navigation' }));
     if (role === 'learner' && item.children?.length) {
       await act(async () => { fireEvent.click(within(rail).getByRole('button', { name: item.label })); });
     }
-    const link = within(role === 'learner' || role === 'advanced-admin' ? rail : panel).getAllByRole('link').find(link => link.getAttribute('href') === destination.href)!;
+    const link = within(usesFullHeightSidebar(role) ? rail : panel).getAllByRole('link').find(link => link.getAttribute('href') === destination.href)!;
     expect(link).toHaveAttribute('aria-current', 'page');
-    expect(within(rail).getAllByRole(role !== 'learner' && role !== 'advanced-admin' && item.children?.length ? 'button' : 'link')
+    expect(within(rail).getAllByRole(!usesFullHeightSidebar(role) && item.children?.length ? 'button' : 'link')
       .some(item => item.hasAttribute('aria-current'))).toBe(true);
     fireEvent.click(link);
     expect(screen.getByTestId('route')).toHaveTextContent(destination.href!);
@@ -348,7 +351,7 @@ describe.each(Object.keys(roleNavMap))('%s shared workspace sidebar', role => {
     fireEvent.click(within(drawer).getAllByRole('link')[0]);
     expect(drawer).toHaveAttribute('inert');
     expect(shell.style.getPropertyValue('--kbc-sidebar-width')).toBe(
-      role === 'coach' || role === 'learner' || role === 'advanced-admin' ? '240px' : '112px',
+      role === 'coach' || usesFullHeightSidebar(role) ? '240px' : '112px',
     );
   });
 });
@@ -430,20 +433,26 @@ it('opens the separate Review list from the coach Meetings menu', () => {
   expect(within(rail).getByRole('link', { name: 'Progress Reviews' })).toBeVisible();
 });
 
-it('shows Quality without an availability tag in either sidebar mode', () => {
-  const { sidebar, rail, panel } = showWorkspace('curriculum', '/curriculum/quality');
+it('uses the learner-style collapsible navigation for Curriculum and keeps Quality available', () => {
+  const { sidebar, shell, rail, panel } = showWorkspace('curriculum', '/curriculum/quality');
   const qualityLink = within(rail).getByRole('link', { name: 'Quality' });
 
+  expect(sidebar).toHaveClass('kbc-learner-sidebar');
+  expect(sidebar.style.width).toBe('240px');
+  expect(shell.style.getPropertyValue('--kbc-sidebar-width')).toBe('240px');
+  expect(panel).toBeNull();
+  expect(screen.getByRole('button', { name: 'Open mobile navigation' })).toHaveAttribute('data-sidebar-signout', 'true');
+  expect(screen.getByRole('navigation', { name: 'Breadcrumb' })).toHaveClass('learner-step-breadcrumb');
   expect(within(qualityLink).queryByText('Under review')).toBeNull();
   expect(within(qualityLink).queryByText(/coming soon/i)).toBeNull();
   expect(qualityLink.querySelector('.bg-amber-400')).toBeNull();
   expect(qualityLink).toHaveAttribute('href', '/curriculum/quality');
 
-  fireEvent.click(within(sidebar).getByRole('button', { name: 'Expand navigation' }));
-  const expandedQualityLink = within(panel).getByRole('link', { name: 'Quality' });
-  expect(expandedQualityLink).toBeVisible();
-  expect(expandedQualityLink).toHaveAttribute('href', '/curriculum/quality');
-  expect(within(expandedQualityLink).queryByText(/under review|coming soon/i)).toBeNull();
+  fireEvent.click(within(sidebar).getByRole('button', { name: 'Collapse Curriculum Designer navigation' }));
+  expect(sidebar.style.width).toBe('64px');
+  expect(shell.style.getPropertyValue('--kbc-sidebar-width')).toBe('64px');
+  expect(localStorage.getItem('kbc_curriculum_sidebar_collapsed')).toBe('true');
+  expect(localStorage.getItem('kbc_learner_sidebar_collapsed')).toBeNull();
 });
 
 it('closes the subsidebar when clicking the standalone page that is already active', () => {

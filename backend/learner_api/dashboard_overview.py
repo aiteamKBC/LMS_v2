@@ -97,7 +97,7 @@ def read_overview(source, kind, owner, profile, request):
     # Populate the existing request-scoped Builder dates cache before learning
     # membership reads it, preserving the old read order without planSubjects.
     weekly = read_week(source, monthly_hours_only=True)
-    learning = learning_projection(source, owner, records)
+    learning = learning_projection(source, owner, records, compact_content=True)
     native = learning['detail']
     subjects = overview_subjects(learning)
     displayed = display_modules(subjects, modules, links, {r['module_id']: r for r in bounds})

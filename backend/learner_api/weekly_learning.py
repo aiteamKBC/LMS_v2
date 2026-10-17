@@ -164,7 +164,7 @@ def _progress(profile):
     return quizzes, list(videos.values()), list(components.values())
 
 
-def build_weekly_learning(source, pk, *, learning_summary=False, assigned_modules=None, strict=False, week_ids=None, identities_only=False, progress=None):
+def build_weekly_learning(source, pk, *, learning_summary=False, assigned_modules=None, strict=False, week_ids=None, identities_only=False, progress=None, compact_content=False):
     # Same readers as build_learner_detail, without its write-on-read repairs.
     from .learner_detail import (_annotate_otjh, _append_week_quizzes,
                                  _apply_programme_assignment_template, _resolve_from_master)
@@ -176,6 +176,8 @@ def build_weekly_learning(source, pk, *, learning_summary=False, assigned_module
     # rest (legacy and snapshot-only entries) need _annotate_otjh's lookups.
     strict_options = {'strict': True} if strict else {}
     projection_options = {"week_ids": week_ids, "identities_only": identities_only} if identities_only or week_ids is not None else {}
+    if compact_content:
+        projection_options['compact_content'] = True
     modules, weeks, components = _resolve_from_master(
         modules, weeks, components, assigned_modules=assigned, compact=True,
         live_session_ids=False, expected_otjh=not identities_only, **projection_options, **strict_options)

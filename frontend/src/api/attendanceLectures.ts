@@ -1,6 +1,7 @@
 import type { LearnerKind } from './learnerDetail';
 import type { LearnerAttendance } from './learnerAttendance';
-import { invalidateLearnerReads, peekLearnerJson, readLearnerJson } from './learnerRead';
+import { peekLearnerJson, readLearnerJson } from './learnerRead';
+import { invalidateWeeklyProgress } from './weeklyLearning';
 
 export type LectureStatus = 'completed' | 'late' | 'absent' | 'upcoming' | 'in_progress' | 'pending' | 'unmarked' | 'awaiting_recording';
 export interface LectureActivity {
@@ -101,7 +102,7 @@ export async function confirmAttendance(kind: LearnerKind, id: string, lectureId
       !Number.isFinite(result?.creditedMinutes) || result.creditedMinutes <= 0 || !Number.isFinite(result?.creditedHours)) {
     throw new Error('Attendance could not be confirmed. Please refresh the page and try again.');
   }
-  invalidateLearnerReads();
+  invalidateWeeklyProgress(kind, id);
   return result;
 }
 export type SavedAttendanceMode = Pick<AttendanceMode, 'mode' | 'requestedMode'>;
@@ -121,6 +122,6 @@ export async function updateAttendanceMode(kind: LearnerKind, id: string, mode: 
   });
   const result = await response.json();
   if (!response.ok) throw new Error(result.error || 'Could not update attendance mode.');
-  invalidateLearnerReads();
+  invalidateWeeklyProgress(kind, id);
   return result;
 }

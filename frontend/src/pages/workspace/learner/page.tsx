@@ -25,7 +25,7 @@ import { DashboardTabs } from './DashboardTabs';
 import { initialDashboardTab, type DashboardTabId } from './initialDashboardTab';
 import { learnerHeaderPlan, learnerModuleHref } from './learnerHeaderPlan';
 import { useDashboardTabsData } from '@/hooks/useDashboardTabsData';
-import { upcomingEvents, upcomingReviewOrMcm } from '@/pages/learner/home/homeData';
+import { headerItems } from './headerItems';
 import type { SeasonCardProps } from '@/components/lightswind/seasonal-hover-cards';
 import type { LearnerCalendarEvent } from '@/api/learnerCalendar';
 import MeetingBookingDialog from '@/pages/learner/reviews/MeetingBookingDialog';
@@ -98,7 +98,7 @@ export default function LearnerOverview() {
   const metrics = { data: tabData.overview.payload?.metrics ?? null,
     loading: tabData.overview.loading, error: tabData.overview.error, refresh: tabData.overview.refresh };
   const metricsLoading = metrics.loading || (dashboardDataEnabled && !overviewOpened);
-  const scheduleRead = { data: headerRead.data?.schedule ?? null, loading: headerRead.loading, error: headerRead.error, refresh: headerRead.refresh };
+  const scheduleRead = { data: headerRead.data, loading: headerRead.loading, error: headerRead.error, refresh: headerRead.refresh };
   const [now, setNow] = useState(Date.now);
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 30_000);
@@ -164,10 +164,10 @@ export default function LearnerOverview() {
   const recordedDates = learnerRecordedDates(real);
   const startDateDisplay = formatProgrammeStartDate(recordedDates.start) || (loading ? 'Loading…' : EMPTY_VALUE);
   const plannedEndDisplay = formatProgrammeStartDate(recordedDates.end) || (loading ? 'Loading…' : EMPTY_VALUE);
-  const plan = learnerHeaderPlan(scheduleRead.data?.modules || [], {},
-    new Date(now).toLocaleDateString('en-CA', { timeZone: 'Europe/London' }));
-  const initialWeeklyModuleId = learnerHeaderPlan(headerRead.data?.weeklyCandidates || [], {},
-    new Date(now).toLocaleDateString('en-CA', { timeZone: 'Europe/London' })).modules[0]?.id;
+  const today = new Date(now).toLocaleDateString('en-CA', { timeZone: 'Europe/London' });
+  const plan = useMemo(() => learnerHeaderPlan(headerRead.data?.modules || [], {}, today), [headerRead.data?.modules, today]);
+  const initialWeeklyModuleId = useMemo(() => learnerHeaderPlan(headerRead.data?.weeklyCandidates || [], {}, today)
+    .modules[0]?.id, [headerRead.data?.weeklyCandidates, today]);
   const planPlaceholder = scheduleRead.loading ? 'Loading...' : scheduleRead.error ? 'Unavailable' : EMPTY_VALUE;
   const coachDisplayName = scheduleRead.data?.coach.name || (scheduleRead.data ? 'Not yet assigned' : planPlaceholder);
   const moduleHref = (moduleId?: string) => learnerModuleHref(kind, id, moduleId, undefined,
@@ -177,22 +177,19 @@ export default function LearnerOverview() {
   // "Your next action" reuses the training-plan module already resolved above; the
   // other two cards share the same nearest-lecture/nearest-assignment selection
   // Student Home uses, so all three destinations and empty-state copy stay in sync.
-  const weekRead = { data: headerRead.data?.week ?? null, loading: headerRead.loading };
-  const events = useMemo(() => upcomingEvents(scheduleRead.data, weekRead.data, new Date(now)),
-    [scheduleRead.data, weekRead.data, now]);
-  const [nextLecture, nextAssignment] = events;
-  const nextReviewOrMcm = useMemo(() => upcomingReviewOrMcm(scheduleRead.data, new Date(now)),
-    [scheduleRead.data, now]);
+  const weekRead = { loading: headerRead.loading };
+  const { lecture: nextLecture, assignment: nextAssignment, review: nextReviewOrMcm } = useMemo(
+    () => headerItems(headerRead.data, now), [headerRead.data, now]);
   const { data: headerData, refresh: refreshHeader } = headerRead;
   const expiredHeaderSelection = useRef<string | null>(null);
   useEffect(() => {
     const data = headerData;
     if (!data) return;
-    const sessionExpired = data.schedule.sessions.length > 0 && !nextLecture.date;
-    const reviewExpired = data.schedule.reviews.length > 0 && !nextReviewOrMcm;
-    const assignmentExpired = data.week.deadlines.length > 0 && !nextAssignment.date;
+    const sessionExpired = !!data.nextLiveSession && !nextLecture.date;
+    const reviewExpired = !!data.nextReview && !nextReviewOrMcm;
+    const assignmentExpired = !!data.nextDeadline && !nextAssignment.date;
     if (!sessionExpired && !reviewExpired && !assignmentExpired) return;
-    const selection = JSON.stringify([kind, id, data.schedule.sessions[0], data.schedule.reviews[0], data.week.deadlines[0]]);
+    const selection = JSON.stringify([kind, id, data.nextLiveSession, data.nextReview, data.nextDeadline]);
     if (expiredHeaderSelection.current === selection) return;
     expiredHeaderSelection.current = selection;
     // The compact Header holds one candidate per card. When its time passes,
@@ -200,7 +197,7 @@ export default function LearnerOverview() {
     refreshHeader();
   }, [headerData, refreshHeader, id, kind, nextLecture.date, nextReviewOrMcm, nextAssignment.date]);
   const [bookingSession, setBookingSession] = useState<LearnerCalendarEvent | null>(null);
-  const nextLectureActivityHref = headerRead.data?.lectureHref
+  const nextLectureActivityHref = nextLecture.href
     || (nextLecture.moduleId
       ? moduleHref(nextLecture.moduleId)
       : continueLearningHref);

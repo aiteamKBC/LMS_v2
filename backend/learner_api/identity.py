@@ -7,7 +7,7 @@ from .models import EnrolmentUser, LearnerProfile
 logger = logging.getLogger(__name__)
 
 
-def learner_profile_for_source(source, source_pk=None, *, active_only=False, heal=True):
+def learner_profile_for_source(source, source_pk=None, *, active_only=False, heal=True, fields=None):
     """Return the profile belonging to a Created_users row.
 
     ``enrolment_id`` is the real link and is tried first: it is the learner's id
@@ -28,18 +28,19 @@ def learner_profile_for_source(source, source_pk=None, *, active_only=False, hea
     that must never write.
     """
     filters = {"lifecycle_status": "active"} if active_only else {}
+    profiles = LearnerProfile.objects.only(*fields) if fields else LearnerProfile.objects
 
     if source_pk is None:
         source_pk = getattr(source, "pk", None) or getattr(source, "id", None)
 
     if source_pk is not None:
-        profile = LearnerProfile.objects.filter(enrolment_id=source_pk, **filters).first()
+        profile = profiles.filter(enrolment_id=source_pk, **filters).first()
         if profile is not None:
             return profile
 
     email = str(getattr(source, "email", "") or "").strip()
     if email:
-        profile = LearnerProfile.objects.filter(email__iexact=email, enrolment_id__isnull=True, **filters).first()
+        profile = profiles.filter(email__iexact=email, enrolment_id__isnull=True, **filters).first()
         if profile is not None:
             # A shared address cannot identify which enrolment owns legacy work.
             twins = list(
@@ -73,4 +74,4 @@ def learner_profile_for_source(source, source_pk=None, *, active_only=False, hea
 
     if source_pk is None:
         return None
-    return LearnerProfile.objects.filter(pk=source_pk, enrolment_id__isnull=True, **filters).first()
+    return profiles.filter(pk=source_pk, enrolment_id__isnull=True, **filters).first()

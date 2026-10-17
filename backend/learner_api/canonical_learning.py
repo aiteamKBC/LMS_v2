@@ -281,6 +281,44 @@ def entries_for(owner, *, overview_only=False, entry_ids=None, lineage_only=Fals
     return result
 
 
+def weekly_hour_records(owner):
+    """Hours-only projection; retain learner-wide facts needed by native dedupe.
+
+    Attempts/source completion cannot change accepted ledger seconds. Only
+    unsynchronised direct saves need current assignment markings. Reporting
+    segments are a presence gate here, never additional hour allocations.
+    """
+    from .current_learning import project_current
+    fields = ('id', 'learner_id', 'kind', 'module_ref', 'module_title', 'component_ref',
+              'component_type', 'quiz_ref', 'passed', 'reported_time', 'submitted_at',
+              'started_at', 'time_tracking_source', 'claimed_seconds', 'verified_seconds',
+              'source_system', 'component_link_source', 'actual_seconds', 'accepted')
+    records = query('''SELECT ''' + ','.join('progress.' + field for field in fields) + ''',
+        to_jsonb(progress)->>'actual_basis' AS actual_basis,
+        CASE WHEN jsonb_typeof(progress.source_payload)='object' THEN
+          jsonb_build_object('original_source_ref',progress.source_payload->'original_source_ref')
+          ELSE progress.source_payload END AS source_payload,
+        CASE WHEN EXISTS(SELECT 1 FROM "Learner".learner_activity_reporting_segments s
+            WHERE s.progress_id=progress.id AND s.learner_id=progress.learner_id AND s.learner_id=%s)
+          THEN '[{}]'::jsonb ELSE '[]'::jsonb END AS segments
+        FROM "Learner".learner_progress_entries progress
+        WHERE progress.learner_id=%s AND progress.deleted_at IS NULL
+          ORDER BY progress.reporting_month,progress.reporting_started_at NULLS LAST,progress.id''', [owner['id'], owner['id']])
+    records = [{**record, 'segments': decoded(record.get('segments'), [])} for record in records]
+    pending = sorted({str(record['component_ref']) for record in records
+                      if record.get('component_ref') and record.get('component_type') == 'assignment'
+                      and is_unsynchronised_direct_save(record)})
+    markings = {}
+    if pending:
+        submissions = query('''SELECT component_ref,status,actual_time_hours
+            FROM "Learner".learning_reflection_submissions
+            WHERE learner_id=%s AND learner_kind=%s AND activity_type IN ('assignment','extra_activity')
+              AND component_ref=ANY(%s) ORDER BY submitted_at NULLS FIRST,id''',
+            [str(owner['enrolment_id']), owner.get('learner_type'), pending])
+        markings = {str(row['component_ref']): row for row in submissions}
+    return progress_records_with_completion(records, project_current(records, markings))
+
+
 def progress_records_with_completion(records, current):
     """Enrich progress completion without replacing stored hours or adding rows.
 

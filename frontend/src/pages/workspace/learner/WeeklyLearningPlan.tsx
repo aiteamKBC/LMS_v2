@@ -1,10 +1,10 @@
-import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react';
+import { memo, useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react';
 import { AnimatedProgressCircle } from '@/components/ui/AnimatedProgressCircle';
 import { Link } from 'react-router-dom';
 import { BookOpen, CalendarDays, CalendarOff, ChevronLeft, ChevronRight, Clock3, ExternalLink, Search, Users, Video } from 'lucide-react';
 import type { LearnerDetail, LearnerKind } from '@/api/learnerDetail';
 import type { WeeklyLearningDetail } from '@/api/weeklyLearning';
-import type { TrainingPlanDashboard } from '@/api/trainingPlanDashboard';
+import type { PlanModule, TrainingPlanDashboard } from '@/api/trainingPlanDashboard';
 import { useLearnerDetailParam, type LearnerDetailRefreshOnFocus } from '@/hooks/useLearnerDetailParam';
 import { useWeeklyLearning, useWeeklyLearningWeek } from '@/hooks/useWeeklyLearning';
 import { buildCurriculumTimeline, type CurriculumRow } from '@/pages/learner/training-plan-timeline/model';
@@ -25,20 +25,21 @@ import {
   resolveInitialWeek, weekComponents, weekOtjhHours, weekKey, weekKsbProgress, weekProgress, weekWindow, type ActivityStatus,
 } from './weeklyPlanHelpers';
 import planLayout from '@/pages/learner/training-plan-timeline/TrainingPlanDetails.module.css';
+import { canonicalActivityRows, canonicalWeekRow } from './weeklyPlanPresentation';
 
 type SessionRow = Extract<CurriculumRow, { kind: 'session' }>;
 type ReadingWeekRow = Extract<CurriculumRow, { kind: 'reading-week' }>;
 type SessionState = 'attended' | 'missed' | 'upcoming' | 'live' | 'unscheduled' | 'unmarked' | 'cancelled';
 
 function sessionState(week: SessionRow, now: number): SessionState {
-  if (week.attended === true) return 'attended';
-  if (week.attended === false) return 'missed';
   if (!week.start) return 'unscheduled';
   const start = Date.parse(week.start);
   if (!Number.isFinite(start)) return 'unscheduled';
   if (now < start) return 'upcoming';
   const end = week.minutes != null && week.minutes > 0 ? start + week.minutes * 60_000 : null;
-  return end != null && now >= end ? 'missed' : 'live';
+  if (week.attended === true) return 'attended';
+  if (week.attended === false && end != null && now >= end) return 'missed';
+  return end != null && now >= end ? 'unmarked' : 'live';
 }
 
 const STATUS_TONE: Record<ActivityStatus, 'positive' | 'info' | 'neutral'> = {
@@ -76,78 +77,102 @@ function WeeklyLearningPlanView({ kind, learnerId, schedule, scheduleLoading, sc
   read: WeeklyPlanRead;
 }) {
   const { real, loading: detailLoading, loadError: detailError, refresh: refreshDetail } = read;
+  const compact = (real as WeeklyLearningDetail | null)?.wire;
   const [now, setNow] = useState(Date.now);
   useEffect(() => { const timer = window.setInterval(() => setNow(Date.now()), 30_000); return () => window.clearInterval(timer); }, []);
   const today = learningToday();
 
-  const candidateModules = useMemo(() => (schedule?.modules || []).filter(module => (module.curriculumSlots?.length ?? 0) > 0), [schedule]);
-  const plan = useMemo(() => learnerHeaderPlan(candidateModules, real || {}, today), [candidateModules, real, today]);
+  const candidateModules = useMemo<Pick<PlanModule, 'id' | 'title' | 'start_date' | 'end_date' | 'curriculumSlots'>[]>(() => compact
+    ? [...new Map(compact.weeks.map(week => [week.moduleId, { id: week.moduleId, title: week.moduleTitle,
+      start_date: week.startDate, end_date: week.endDate }])).values()]
+    : (schedule?.modules || []).filter(module => (module.curriculumSlots?.length ?? 0) > 0), [compact, schedule]);
+  const plan = useMemo(() => compact ? { modules: candidateModules } : learnerHeaderPlan(candidateModules, real || {}, today), [compact, candidateModules, real, today]);
   const [selectedModuleId, setSelectedModuleId] = useState<string | null>(null);
   const resolvedModuleId = (selectedModuleId && candidateModules.some(module => module.id === selectedModuleId) ? selectedModuleId : null)
     || (read.lazyWeeks ? (real as WeeklyLearningDetail | null)?.selectedModuleId : null)
     || plan.modules[0]?.id || candidateModules[0]?.id || null;
   const module = candidateModules.find(item => item.id === resolvedModuleId);
+  const canonicalNavigation = useMemo(() => compact?.weeks.filter(week => week.moduleId === resolvedModuleId), [compact, resolvedModuleId]);
+  const navigationBySlot = useMemo(() => new Map(canonicalNavigation?.map(week => [week.slotNumber, week])), [canonicalNavigation]);
 
   const weeks = useMemo(() => {
+    if (canonicalNavigation) return canonicalNavigation.map(week => canonicalWeekRow(week,
+      compact?.selectedWeek?.id === week.id ? compact.selectedWeek.liveSession : undefined));
     const sessions = (schedule?.sessions || []).filter(session => session.moduleId === resolvedModuleId);
     return buildCurriculumTimeline(module?.curriculumSlots, sessions);
-  }, [module, schedule?.sessions, resolvedModuleId]);
+  }, [canonicalNavigation, compact, module, schedule?.sessions, resolvedModuleId]);
   const [selection, setSelection] = useState<{ moduleId: string; key: string } | null>(null);
   const initialWeekId = read.lazyWeeks && (real as WeeklyLearningDetail | null)?.selectedModuleId === resolvedModuleId
     ? (real as WeeklyLearningDetail).selectedWeekId : null;
   const initialWeek = weeks.find(week => `${week.kind === 'reading-week' ? 'reading' : 'slot'}:${resolvedModuleId}:${week.slotNumber}` === initialWeekId)
-    || resolveInitialWeek(weeks, today);
+    || (canonicalNavigation ? weeks.find(week => navigationBySlot.get(week.slotNumber)?.status === 'current')
+      || weeks.find(week => navigationBySlot.get(week.slotNumber)?.status === 'upcoming') || weeks.at(-1) : resolveInitialWeek(weeks, today));
   const sidebarWeek = (selection?.moduleId === resolvedModuleId && weeks.find(week => weekKey(week) === selection.key)) || initialWeek;
-  const lazy = read.lazyWeeks && !!(real as WeeklyLearningDetail | null)?.weekSummaries;
+  const lazy = read.lazyWeeks && !!(compact || (real as WeeklyLearningDetail | null)?.weekSummaries);
   const requestedWeekId = sidebarWeek
     ? `${sidebarWeek.kind === 'reading-week' ? 'reading' : 'slot'}:${resolvedModuleId}:${sidebarWeek.slotNumber}` : null;
-  const weekRead = useWeeklyLearningWeek(kind, learnerId, resolvedModuleId, requestedWeekId, !!lazy, real);
-  const weekReal = useMemo(() => lazy ? weekRead.data ? { ...real!, ...weekRead.data,
+  const nextWeek = selection?.moduleId === resolvedModuleId
+    ? weeks[weeks.findIndex(week => weekKey(week) === selection.key) + 1] : undefined;
+  const adjacentWeekId = nextWeek && `${nextWeek.kind === 'reading-week' ? 'reading' : 'slot'}:${resolvedModuleId}:${nextWeek.slotNumber}`;
+  const weekRead = useWeeklyLearningWeek(kind, learnerId, resolvedModuleId, requestedWeekId, !!lazy, real, adjacentWeekId);
+  const weekReal = useMemo(() => compact ? null : lazy ? weekRead.data ? { ...real!, ...weekRead.data,
     components: weekRead.data.components.map(component => ({ ...component, moduleId: resolvedModuleId || undefined,
       weekId: sidebarWeek?.kind === 'session' ? sidebarWeek.weekId : undefined,
       module: module?.title || '', week: sidebarWeek?.kind === 'session' ? sidebarWeek.weekTitle || String(sidebarWeek.slotNumber) : '' })),
-  } : null : real, [lazy, weekRead.data, real, resolvedModuleId, sidebarWeek, module]);
+  } : null : real, [compact, lazy, weekRead.data, real, resolvedModuleId, sidebarWeek, module]);
   const selectedWeek = useMemo(() => {
+    if (compact) return weekRead.data?.selectedWeek ? canonicalWeekRow(weekRead.data.selectedWeek, weekRead.data.selectedWeek.liveSession) : sidebarWeek;
     if (!lazy || !sidebarWeek || !weekRead.data?.schedule?.sessions) return sidebarWeek;
     return buildCurriculumTimeline(module?.curriculumSlots, weekRead.data.schedule.sessions)
       .find(week => weekKey(week) === weekKey(sidebarWeek)) || sidebarWeek;
-  }, [lazy, sidebarWeek, weekRead.data, module]);
+  }, [compact, lazy, sidebarWeek, weekRead.data, module]);
   const selectedIndex = selectedWeek ? weeks.findIndex(week => weekKey(week) === weekKey(selectedWeek)) : -1;
 
   const completedIds = useMemo(() => completedComponentIds(weekReal), [weekReal]);
   const isTeachingWeek = selectedWeek?.kind === 'session';
-  const components = isTeachingWeek ? weekComponents(weekReal, resolvedModuleId || undefined, (selectedWeek as SessionRow).weekId, selectedWeek?.slotNumber) : [];
+  const components = useMemo(() => !isTeachingWeek ? [] : compact
+    ? weekRead.data?.selectedWeek ? canonicalActivityRows(weekRead.data.selectedWeek) : []
+    : weekComponents(weekReal, resolvedModuleId || undefined, (selectedWeek as SessionRow).weekId, selectedWeek?.slotNumber),
+  [isTeachingWeek, compact, weekRead.data, weekReal, resolvedModuleId, selectedWeek]);
   const canonicalWeek = lazy ? weekRead.data?.selectedWeek : undefined;
   const canonical = canonicalWeek?.summary;
   const progress = canonical ? { completed: canonical.completedActivities, total: canonical.totalActivities, percent: canonical.progress }
     : weekProgress(components, completedIds);
-  const ksbProgress = canonical ? { achieved: canonical.achievedKsbCount, total: canonical.ksbCount,
+  const ksbProgress = useMemo(() => canonical ? { achieved: canonical.achievedKsbCount, total: canonical.ksbCount,
     percent: canonical.ksbCount ? Math.round(canonical.achievedKsbCount / canonical.ksbCount * 10000) / 100 : 0,
-    codes: [...new Set(canonicalWeek!.activities.flatMap(activity => activity.ksbCodes))].sort() } : weekKsbProgress(components, completedIds);
+    codes: [...new Set(canonicalWeek!.activities.flatMap(activity => activity.ksbCodes))].sort() } : weekKsbProgress(components, completedIds),
+  [canonical, canonicalWeek, components, completedIds]);
   const moduleHours = (lazy ? weekRead.data?.schedule : schedule)?.moduleActivityHours?.[resolvedModuleId || ''];
-  const moduleComponents = weekReal?.components?.filter(component => String(component.moduleId) === String(resolvedModuleId));
+  const moduleComponents = useMemo(() => weekReal?.components?.filter(component => String(component.moduleId) === String(resolvedModuleId)), [weekReal, resolvedModuleId]);
   const weekHours = canonical ? { plannedHours: canonical.plannedOtjhHours, actualHours: canonical.otjhHours, untimed: canonical.untimedActivities,
     percent: canonical.otjhHours != null && canonical.plannedOtjhHours ? Math.round(canonical.otjhHours / canonical.plannedOtjhHours * 10000) / 100 : null }
     : weekOtjhHours(components, moduleHours, moduleComponents);
-  const actualHours = canonicalWeek ? Object.fromEntries(canonicalWeek.activities.map(activity => [activity.id, activity.actualHours]))
+  const actualHours = useMemo(() => canonicalWeek ? Object.fromEntries(canonicalWeek.activities.map(activity => [activity.id, activity.actualHours]))
     : Object.fromEntries(components.map(component => [component.componentId || '',
-    weekOtjhHours([component], moduleHours, moduleComponents).actualHours]));
+    weekOtjhHours([component], moduleHours, moduleComponents).actualHours])), [canonicalWeek, components, moduleHours, moduleComponents]);
+  const hasSchedule = !!(compact || schedule);
+  const windowForWeek = (index: number) => {
+    const navigation = navigationBySlot.get(weeks[index].slotNumber);
+    return navigation ? { start: navigation.startDate, end: navigation.endDate } : weekWindow(weeks, index);
+  };
+  const summaryBySlot = useMemo(() => new Map((real as WeeklyLearningDetail | null)?.weekSummaries
+    ?.filter(item => item.moduleId === resolvedModuleId).map(item => [item.slotNumber, item])), [real, resolvedModuleId]);
 
   // A missing or failed schedule is different from a successful empty plan.
   // Dashboard owns its schedule read; legacy callers still supply theirs.
-  if (!schedule && !scheduleLoading && scheduleError) return <div role="alert"><Panel>
+  if (!hasSchedule && !scheduleLoading && scheduleError) return <div role="alert"><Panel>
     <EmptyState variant="error" title="Could not load your weekly plan" description={scheduleError}
       action={<button type="button" onClick={refreshDetail}>Try again</button>} />
   </Panel></div>;
-  if (!schedule && !scheduleLoading && real) return <Panel>
+  if (!hasSchedule && !scheduleLoading && real) return <Panel>
     <EmptyState variant="error" title="Could not load your weekly plan" description="The weekly schedule response was incomplete. Please try again."
       action={<button type="button" onClick={refreshDetail}>Try again</button>} />
   </Panel>;
 
   return <section aria-label="Weekly learning plan" className={cn(planLayout.weeklyPlan, 'grid grid-cols-1 gap-3 lg:grid-cols-[240px_minmax(0,1fr)]')}>
-    {schedule && detailError && <div role="alert" className="lg:col-span-2">Your weekly plan could not refresh. {detailError}
+    {hasSchedule && detailError && <div role="alert" className="lg:col-span-2">Your weekly plan could not refresh. {detailError}
       <button type="button" onClick={refreshDetail}>Try again</button></div>}
-    {!schedule ? <WeeklyLearningPlanSkeleton /> : !candidateModules.length ? <Panel className="lg:col-span-2">
+    {!hasSchedule ? <WeeklyLearningPlanSkeleton /> : !candidateModules.length ? <Panel className="lg:col-span-2">
       <EmptyState title="Your weekly plan will appear here" description="Once a module is assigned, its weeks and activities will show up in this space." />
     </Panel> : <>
     <aside className={cn(planLayout.weekRail, 'rounded-2xl border border-foreground-100 bg-background-50 p-3 shadow-sm')}>
@@ -174,17 +199,19 @@ function WeeklyLearningPlanView({ kind, learnerId, schedule, scheduleLoading, sc
       <ol className={cn(planLayout.weekList, 'mt-2.5 space-y-1')}>
         {weeks.map((week, index) => {
           const active = selectedWeek ? weekKey(week) === weekKey(selectedWeek) : false;
-          const { start, end } = weekWindow(weeks, index);
-          const state: 'past' | 'current' | 'upcoming' = start > today ? 'upcoming' : end !== null && end < today ? 'past' : 'current';
+          const { start, end } = windowForWeek(index);
+          const railNavigation = navigationBySlot.get(week.slotNumber);
+          const navigation = canonicalWeek?.id === railNavigation?.id ? canonicalWeek : railNavigation;
+          const state = navigation?.status ?? (start > today ? 'upcoming' : end !== null && end < today ? 'past' : 'current');
           const isReadingWeek = week.kind === 'reading-week';
           const isCompleted = state === 'past';
           const isCurrent = state === 'current';
-          const summary = lazy ? (real as WeeklyLearningDetail).weekSummaries?.find(item => item.moduleId === resolvedModuleId
-            && item.slotNumber === week.slotNumber) : undefined;
-          const weekActivityProgress = summary?.progress ?? (week.kind === 'session'
+          const summary = lazy ? summaryBySlot.get(week.slotNumber) : undefined;
+          const weekActivityProgress = navigation ? { completed: navigation.completedActivities, total: navigation.totalActivities, percent: navigation.progress }
+            : summary?.progress ?? (week.kind === 'session'
             ? weekProgress(weekComponents(real, resolvedModuleId || undefined, week.weekId, week.slotNumber), completedIds)
             : null);
-          const attendance = week.kind === 'session' ? sessionState(week, now) : null;
+          const attendance = week.kind === 'session' ? navigation?.sessionState === 'cancelled' ? 'cancelled' : sessionState(week, now) : null;
           const markerState = isReadingWeek ? 'reading' : isCurrent && attendance !== 'attended' ? 'current' : attendance;
           const label = week.kind === 'reading-week' ? 'Reading week' : week.weekTitle || `Week ${week.sessionNumber}`;
           const subLabel = week.kind === 'reading-week' ? 'Independent study' : '';
@@ -192,7 +219,7 @@ function WeeklyLearningPlanView({ kind, learnerId, schedule, scheduleLoading, sc
           const stateLabel = state === 'past' ? 'Completed' : state === 'current' ? 'Current week' : 'Upcoming';
           return <li key={weekKey(week)} className="relative pl-9">
             {index < weeks.length - 1 && <span aria-hidden="true" className="absolute left-[11px] top-8 bottom-[-0.25rem] w-px bg-foreground-200" />}
-            <span role="img" aria-label={isReadingWeek ? `${label}: independent study` : `${label} session: ${attendance === 'attended' ? 'attended' : attendance === 'missed' ? 'not attended' : attendance === 'live' ? 'in progress' : attendance === 'upcoming' ? 'upcoming' : 'not scheduled'}`}
+            <span role="img" aria-label={isReadingWeek ? `${label}: independent study` : `${label} session: ${attendance === 'attended' ? 'attended' : attendance === 'missed' ? 'not attended' : attendance === 'unmarked' ? 'unmarked' : attendance === 'live' ? 'in progress' : attendance === 'upcoming' ? 'upcoming' : 'not scheduled'}`}
               data-state={markerState}
               className={cn(planLayout.weekSessionStatus, 'absolute left-0 top-2 z-10')}>
               {isReadingWeek ? <BookOpen size={13} aria-hidden="true" />
@@ -250,7 +277,7 @@ function WeeklyLearningPlanView({ kind, learnerId, schedule, scheduleLoading, sc
             {selectedWeek.kind === 'reading-week' ? 'Reading week' : selectedWeek.weekTitle || 'This week'}
           </h2>
           {selectedIndex >= 0 ? <p className="mt-1 text-sm font-medium text-foreground-500">
-            {(() => { const { start, end } = weekWindow(weeks, selectedIndex); return `${dateLabel(start)}${end ? ` – ${dateLabel(end)}` : ''}`; })()}
+            {(() => { const { start, end } = windowForWeek(selectedIndex); return `${dateLabel(start)}${end ? ` – ${dateLabel(end)}` : ''}`; })()}
           </p> : null}
           {selectedWeek.kind === 'session' && <HolidayNoteHint note={selectedWeek.holidayNote} className="learner-dashboard-week-note mt-2.5 min-w-0 max-w-full text-xs" />}
 
@@ -272,7 +299,8 @@ function WeeklyLearningPlanView({ kind, learnerId, schedule, scheduleLoading, sc
           </div>
 
           {isTeachingWeek && (!lazy || weekRead.data) && <section aria-labelledby="weekly-session-heading" className="mt-5">
-            {selectedWeek.start ? <LiveSessionSummary week={selectedWeek} now={now} headingId="weekly-session-heading" canJoinSession={canOpenActivities} />
+            {selectedWeek.start ? <LiveSessionSummary week={selectedWeek} now={now} headingId="weekly-session-heading" canJoinSession={canOpenActivities}
+              derivedState={compact && canonicalWeek?.sessionState === 'cancelled' ? 'cancelled' : undefined} />
               : <p id="weekly-session-heading" className="flex min-h-[136px] items-center rounded-xl border border-foreground-100 bg-background-50 p-5 text-sm text-foreground-500">No live session is scheduled for this week.</p>}
           </section>
           }
@@ -468,7 +496,7 @@ function ActivitiesHeading({ count, controls }: { count: number; controls?: Reac
   </div>;
 }
 
-export function ActivitiesTableModern({ components, completedIds, kind, learnerId, week, canOpenActivities, summaries, actualHours }: {
+export const ActivitiesTableModern = memo(function ActivitiesTableModern({ components, completedIds, kind, learnerId, week, canOpenActivities, summaries, actualHours }: {
   components: JourneyComponent[]; completedIds: Set<string>; kind: LearnerKind; learnerId: string; week?: string;
   canOpenActivities: boolean;
   actualHours?: Record<string, number | null>;
@@ -587,7 +615,7 @@ export function ActivitiesTableModern({ components, completedIds, kind, learnerI
     </div>
     </>}
   </div>;
-}
+});
 
 function activityTypeLabel(component: JourneyComponent): string {
   return (component.type || 'activity').replace(/[_-]/g, ' ').replace(/\b\w/g, letter => letter.toUpperCase());

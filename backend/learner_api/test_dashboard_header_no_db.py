@@ -10,6 +10,26 @@ from . import dashboard_header as header
 
 
 class DashboardHeaderTests(SimpleTestCase):
+    def test_source_projection_keeps_plan_fallback_and_assignment_values_without_snapshots(self):
+        model = MagicMock()
+        query = model.all_learners.only.return_value
+        query.annotate.return_value = query
+        source = SimpleNamespace(_header_training_plan=[{'moduleId': 'M1', 'assignmentMode': 'explicit'}, None],
+                                 _header_learning_plan={'legacy': True})
+        query.get.return_value = source
+        self.assertIs(header.read_header_source(model, 7), source)
+        self.assertEqual(source.training_plan, source._header_training_plan)
+        self.assertEqual(source.learning_plan, {'legacy': True})
+        fields = model.all_learners.only.call_args.args
+        self.assertNotIn('training_plan', fields)
+        self.assertNotIn('learning_plan', fields)
+        for call in query.annotate.call_args_list:
+            expression = next(iter(call.kwargs.values()))
+            self.assertIn("item->'moduleId'", expression.sql)
+            self.assertIn("ELSE 'null'::jsonb", expression.sql)
+            self.assertIn('ORDER BY position', expression.sql)
+            self.assertIn('ELSE "', expression.sql)
+
     def test_imported_header_booking_overlay_does_not_reread_deferred_review_bodies(self):
         from . import imported_review_calendar as imported
         event = {'eventKey': 'review-key', 'reviewId': '8', 'importedReviewType': 'Monthly Coaching Meeting'}
@@ -88,26 +108,74 @@ class DashboardHeaderTests(SimpleTestCase):
         profile.coach_name = 'Coach'
         profile.coach_email = ''
         with patch.object(header, 'header_identity', return_value={'programmeStatus': 'Onboarding'}), \
-             patch.object(header.canonical_learning, 'require_profile', return_value={'id': 17}) as owner, \
-             patch.object(header, 'LearnerProfile') as profiles, \
+             patch.object(header, 'header_profile', return_value=(profile, {'id': 17})) as owner, \
              patch.object(header, 'connections', {'enrolment': MagicMock()}), \
              patch.object(header, '_effective_plan_ids', return_value=[]), \
              patch.object(header.canonical_learning, 'curriculum_module_ids_for', return_value=[]), \
              patch.object(header, 'current_coach', return_value={'coach_name': 'Coach', 'coach_email': ''}), \
              patch.object(header, 'plan_reviews', return_value=[]), \
              patch.object(header, 'upcoming_assignment_deadlines', return_value=[]):
-            profiles.objects.filter.return_value.only.return_value.first.return_value = profile
             result = header.build_dashboard_header(source, 'commercial', 7, include_pending_delivery=True)
         self.assertEqual(result['schedule']['coach']['name'], 'Coach')
-        owner.assert_called_once_with(7)
-        profiles.objects.filter.assert_called_once_with(enrolment_id=7)
+        owner.assert_called_once_with(source, 7)
 
-    def call_endpoint(self, account, kind='commercial', missing=False, error=None):
+    def test_single_profile_read_keeps_canonical_identity_validation(self):
+        source = SimpleNamespace(pk=7, email=' Learner@Example.test ', aptem_id='0009')
+        profile = SimpleNamespace(id=17, email='learner@example.test', aptem_id=9)
+        with patch.object(header, 'LearnerProfile') as model:
+            model.objects.filter.return_value.only.return_value.__getitem__.return_value = [profile]
+            actual, owner = header.header_profile(source, 7)
+        self.assertIs(actual, profile)
+        self.assertEqual(owner['id'], 17)
+        model.objects.filter.assert_called_once_with(enrolment_id=7)
+
+    def test_missing_duplicate_or_conflicting_profiles_fail_closed(self):
+        source = SimpleNamespace(pk=7, email='learner@example.test', aptem_id='9')
+        profile = SimpleNamespace(id=17, email='learner@example.test', aptem_id=9)
+        for profiles in ([], [profile, profile], [SimpleNamespace(id=18, email='other@example.test', aptem_id=9)],
+                         [SimpleNamespace(id=18, email=source.email, aptem_id=10)]):
+            with self.subTest(profiles=profiles), patch.object(header, 'LearnerProfile') as model:
+                model.objects.filter.return_value.only.return_value.__getitem__.return_value = profiles
+                with self.assertRaises(header.ServiceError):
+                    header.header_profile(source, 7)
+
+    def test_v2_preserves_actions_and_omits_unused_event_fields(self):
+        legacy = {'learner': {'id': '7', 'accessGate': {'blocked': True}},
+            'schedule': {'coach': {'name': 'Coach'}, 'modules': [{'id': 'M1', 'title': 'Module'}],
+                'sessions': [{'id': 'O1', 'moduleId': 'M1', 'title': 'Session', 'start': '2026-10-20T09:00:00Z', 'status': 'scheduled'}],
+                'reviews': [{'id': 'R1', 'source': 'progress-review', 'status': 'scheduled',
+                    'scheduledDate': '2026-10-21', 'scheduledTime': '10:00', 'targetDate': '2026-10-01',
+                    'meetingLink': 'https://example.test/meeting'}]},
+            'week': {'deadlines': [{'id': 'A1', 'title': 'Assignment', 'type': 'assignment', 'date': '2026-10-25'}]},
+            'lectureHref': '/learner/component/commercial/7/C1', 'weeklyCandidates': []}
+        compact = header.compact_header(legacy)
+        self.assertIs(compact['learner'], legacy['learner'])
+        self.assertEqual(compact['nextReview']['sessionId'], 'R1')
+        self.assertEqual(compact['nextReview']['eventKey'], 'R1')
+        self.assertEqual(compact['nextReview']['date'], '2026-10-21')
+        self.assertEqual(compact['nextReview']['meetingLink'], 'https://example.test/meeting')
+        self.assertNotIn('targetDate', compact['nextReview'])
+        self.assertNotIn('status', compact['nextLiveSession'])
+        self.assertEqual(compact['nextLiveSession']['href'], legacy['lectureHref'])
+        self.assertEqual(compact['nextDeadline']['href'], '/learner/monthly-submission')
+        self.assertIn('schedule', legacy)
+
+    def test_v2_missing_optional_data_has_null_cards(self):
+        legacy = {'learner': {'id': '7'}, 'schedule': {'coach': {'name': ''}, 'modules': [],
+                  'sessions': [], 'reviews': []}, 'week': {'deadlines': []}, 'lectureHref': None}
+        compact = header.compact_header(legacy)
+        self.assertIsNone(compact['nextReview'])
+        self.assertIsNone(compact['nextLiveSession'])
+        self.assertIsNone(compact['nextDeadline'])
+
+    def call_endpoint(self, account, kind='commercial', missing=False, error=None, version=None):
         model = MagicMock()
         model.DoesNotExist = type('Missing', (Exception,), {})
         query = model.all_learners.only.return_value
+        query.annotate.return_value = query
         query.get.side_effect = model.DoesNotExist() if missing else None
-        request = RequestFactory().get(f'/learner_api/dashboard/{kind}/7/header/')
+        request = RequestFactory().get(f'/learner_api/dashboard/{kind}/7/header/',
+                                       **({'HTTP_X_LMS_HEADER_VERSION': version} if version else {}))
         request.login_account = account
         with patch('login.permissions.authenticate_request', return_value=account), \
              patch.dict(header.SOURCE_MODELS, {'commercial': model, 'apprenticeship': model}), \
@@ -119,13 +187,26 @@ class DashboardHeaderTests(SimpleTestCase):
     def test_endpoint_authorizes_own_learner_and_staff_for_both_kinds(self):
         for kind in ('commercial', 'apprenticeship'):
             for account in (SimpleNamespace(role='learner', subject_id=7),
-                            SimpleNamespace(role='staff', subject_id=1)):
+                            SimpleNamespace(role='staff', subject_id=1), SimpleNamespace(role='admin', subject_id=1)):
                 with self.subTest(kind=kind, role=account.role):
                     response, build, model = self.call_endpoint(account, kind)
                     self.assertEqual(response.status_code, 200)
                     self.assertEqual(response['Cache-Control'], 'private, no-store')
                     build.assert_called_once()
                     model.all_learners.only.return_value.get.assert_called_once_with(pk=7)
+
+    def test_endpoint_contract_version_is_explicit_and_varies_by_cookie(self):
+        account = SimpleNamespace(role='learner', subject_id=7)
+        with patch.object(header, 'compact_header', return_value={'version': 2}) as compact:
+            response, _, _ = self.call_endpoint(account, version='2')
+            self.assertJSONEqual(response.content, {'version': 2})
+            self.assertEqual(response['Vary'], 'X-LMS-Header-Version, Cookie')
+            compact.assert_called_once_with({'learner': {'id': '7'}})
+        for version in (None, '1', 'unknown'):
+            with patch.object(header, 'compact_header') as compact:
+                response, _, _ = self.call_endpoint(account, version=version)
+                self.assertJSONEqual(response.content, {'learner': {'id': '7'}})
+                compact.assert_not_called()
 
     def test_endpoint_rejects_other_learner_employer_and_signed_out_without_reads(self):
         for account, status in ((SimpleNamespace(role='learner', subject_id=8), 404),
@@ -145,7 +226,7 @@ class DashboardHeaderTests(SimpleTestCase):
     def test_redirected_learner_does_not_read_delivery_data(self):
         source = SimpleNamespace(pk=7)
         with patch.object(header, 'header_identity', return_value={'programmeStatus': 'Onboarding'}), \
-             patch.object(header.canonical_learning, 'require_profile') as profile, \
+             patch.object(header, 'header_profile') as profile, \
              patch.object(header, 'connections', {}) :
             result = header.build_dashboard_header(source, 'commercial', 7)
         profile.assert_not_called()
