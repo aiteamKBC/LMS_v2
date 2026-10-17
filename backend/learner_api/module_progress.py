@@ -104,8 +104,10 @@ def aggregate_module_progress(activity, detail, current, progress, titles=None):
             if item.get('isQuiz'):
                 done = bool(item.get('quizMeta')) and any(
                     attempt.get('passed') is True and (
-                        (quiz_id is not None and str(attempt.get('quizId')) == str(quiz_id))
-                        or (component_id and attempt.get('componentId') == component_id))
+                        (bool(attempt.get('componentId')) and bool(component_id)
+                         and str(attempt.get('componentId')) == str(component_id))
+                        or (not attempt.get('componentId') and quiz_id is not None
+                            and str(attempt.get('quizId')) == str(quiz_id)))
                     for attempt in detail['quizAttempts'])
             else:
                 done = item.get('attendanceCompleted') is True or (bool(component_id) and str(component_id) in completed)
