@@ -67,7 +67,7 @@ def project_live_credits(components, register, *, now=None):
     return result
 
 
-def read_live_credits(source, *, components=None, module_ids=None):
+def read_live_credits(source, *, components=None, module_ids=None, register=None):
     from .attendance_lectures import lecture_register
     if components is None:
         module_ids = sorted(set(module_ids or []))
@@ -89,7 +89,8 @@ def read_live_credits(source, *, components=None, module_ids=None):
     live = [c for c in components if _live(c) and c.get('componentId') and c.get('moduleId')]
     if not live:
         return []
-    register = lecture_register(source, module_ids=sorted({c['moduleId'] for c in live}))
+    if register is None:
+        register = lecture_register(source, module_ids=sorted({c['moduleId'] for c in live}))
     return project_live_credits(live, register)
 
 

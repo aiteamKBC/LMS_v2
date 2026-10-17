@@ -181,6 +181,34 @@ def read_home_progress(
     # identity fails closed instead of switching to another data source.
     metrics = canonical_metrics if canonical_metrics is not None else canonical_learning.metrics(source.pk)
     result = apply_canonical_home_metrics(home, metrics)
+    # The activity denominator is the complete assigned catalogue, exactly as
+    # in My Learning, not the number of saved progress entries. Reuse its final
+    # calculation (including retained quizzes and live attendance).
+    if metrics and (metrics.get('programme') or {}).get('status') in {'ready', 'empty'}:
+        from .models import LearnerProfile
+        from .module_progress import canonical_module_progress
+        owner = owner or canonical_learning.require_profile(source.pk)
+        profile = LearnerProfile(id=owner['id'], enrolment_id=source.pk)
+        modules = canonical_module_progress(source, profile)
+        result['activities'] = {'completed': sum(module['completed'] for module in modules),
+                                'total': sum(module['total'] for module in modules)}
+        result['modules'] = counts(modules, lambda module: module['total'] > 0
+                                   and module['completed'] == module['total'])
+    # Use the same verified live credit as My Learning. The register is already
+    # scoped to this learner; reuse it rather than fetching attendance twice.
+    # Top up only time absent from accepted records, preserving staff overrides.
+    from .live_session_progress import read_live_credits, supplement_module_hours
+    credits = read_live_credits(source, module_ids=[module for module, _ in assigned],
+                               register=lectures) if lectures is not None else []
+    if credits and result['otjh']['actual'] is not None:
+        owner = owner or canonical_learning.require_profile(source.pk)
+        records = canonical_learning.entries_for(owner, lineage_only=True)
+        extra = supplement_module_hours(
+            {credit['moduleId']: {'hours': {'actual': 0}} for credit in credits}, records, credits)
+        actual = round(result['otjh']['actual'] + sum(item['hours']['actual'] for item in extra.values()), 4)
+        planned_hours = result['otjh']['planned']
+        result['otjh'].update(actual=actual, percent=round(actual / planned_hours * 100, 2)
+                              if planned_hours else None)
     planned = (metrics.get('otjh') or {}).get('planned') if metrics else None
     if result['otjh'].get('planned') is None:
         # No SSOT programme plan yet (e.g. a new cohort awaiting the target
