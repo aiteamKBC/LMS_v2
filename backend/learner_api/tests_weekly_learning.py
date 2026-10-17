@@ -248,7 +248,11 @@ class FakeCursor:
         self.statements.append(sql)
         # Component visibility contains a nested modules query. Match the
         # primary read first so its fixture is not mistaken for module rows.
-        if 'FROM curriculum.quiz_component_links' in sql or 'FROM curriculum.ksb_mappings' in sql:
+        if sql.startswith('WITH RECURSIVE chain'):
+            self.rows = []  # This fixture is a native module, not a shared alias.
+        elif 'JOIN curriculum.live_sessions s' in sql:
+            self.rows = self.live_rows
+        elif 'FROM curriculum.quiz_component_links' in sql or 'FROM curriculum.ksb_mappings' in sql:
             self.rows = []
         elif 'FROM curriculum.components WHERE' in sql:
             self.rows = [('L1', 'W1', 'M1', 'live_session', 'Lecture', '', '{"sessionDate": "2026-09-14"}',
@@ -279,13 +283,13 @@ class ResolveFromMasterOptionTests(SimpleTestCase):
     def test_defaults_keep_learner_detail_output_and_queries(self):
         (_m, _w, components), statements = self.resolve()
         self.assertNotIn('expectedOtjh', components[0])
-        self.assertTrue(any('FROM curriculum.live_sessions' in sql for sql in statements))
+        self.assertTrue(any('JOIN curriculum.live_sessions s' in sql for sql in statements))
 
     def test_compact_weekly_options_skip_the_series_lookup_and_carry_hours(self):
         (modules, weeks, components), statements = self.resolve(live_session_ids=False, expected_otjh=True)
         _defaults, default_statements = self.resolve()
         self.assertEqual(components[0]['expectedOtjh'], 1.5)
-        self.assertFalse(any('FROM curriculum.live_sessions' in sql for sql in statements))
-        self.assertEqual(len(statements), len(default_statements) - 1)
+        self.assertFalse(any('JOIN curriculum.live_sessions s' in sql for sql in statements))
+        self.assertEqual(len(statements), len(default_statements) - 2)
         self.assertEqual((modules, weeks), (['Marketing'], [{'module': 'Marketing', 'week': 'Week 1', 'moduleId': 'M1', 'weekId': 'W1'}]))
         self.assertEqual(components[0]['sessionDate'], '2026-09-14')

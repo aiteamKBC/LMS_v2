@@ -89,7 +89,7 @@ class ModuleAssignmentTests(SimpleTestCase):
 
 
 class LiveAssignedModuleTests(SimpleTestCase):
-    def resolve(self, rows, modules=None, weeks=None, components=None, assigned=None, **options):
+    def resolve(self, rows, modules=None, weeks=None, components=None, assigned=None, shared_delivery=None, **options):
         connection = MagicMock()
         cursor = connection.cursor.return_value.__enter__.return_value
         supplied = iter(rows)
@@ -99,7 +99,8 @@ class LiveAssignedModuleTests(SimpleTestCase):
             [] if 'FROM curriculum.ksb_mappings' in cursor.execute.call_args.args[0]
             else next(supplied)
         )
-        with patch('learner_api.learner_detail.connections', {'enrolment': connection}):
+        with patch('learner_api.learner_detail.connections', {'enrolment': connection}), \
+                patch('learner_api.shared_live_delivery.read_shared_live_delivery', return_value=shared_delivery or {}):
             result = _resolve_from_master(modules or [], weeks or [], components or [], assigned_modules=assigned, **options)
         return result, cursor
 
@@ -212,6 +213,23 @@ class LiveAssignedModuleTests(SimpleTestCase):
         live = result[2][0]
         self.assertEqual((live['teamsLiveSessionId'], live['teamsSessionNumber']), ('LIVE-SAVED', 7))
         self.assertFalse(any('curriculum.live_session_occurrences' in call.args[0] for call in cursor.execute.call_args_list))
+
+    def test_shared_card_uses_source_occurrence_when_reading_weeks_disagree(self):
+        delivery = {'teamsLiveSessionId': 'LIVE-SOURCE', 'teamsSessionNumber': 11,
+                    'sessionDate': '2026-12-30', 'sessionTime': '12:00',
+                    'sessionDateTimeUtc': '2026-12-30T12:00:00+00:00', 'durationMinutes': 120,
+                    'liveSessionUrl': 'https://teams.microsoft.com/l/meetup-join/source'}
+        result, _ = self.resolve([
+            [('MOD-NEW', 'New module')],
+            [('W-NEW', 'MOD-NEW', 'Week 11', 12, 11)],
+            [('C-LIVE', 'W-NEW', 'MOD-NEW', 'live_session', 'Live lesson', '',
+              {'sessionDate': '2026-12-16', 'sessionTime': '09:00'}, '', 0,
+              [{'code': 'K1', 'weight': 1}], False, None, False)], [], [],
+        ], assigned=[MODULE], shared_delivery={'C-LIVE': delivery})
+        live = result[2][0]
+        for key, value in delivery.items():
+            self.assertEqual(live[key], value, key)
+        self.assertEqual((live['componentId'], live['weekId'], live['moduleId']), ('C-LIVE', 'W-NEW', 'MOD-NEW'))
 
     def test_additional_week_meeting_uses_its_own_results(self):
         result, cursor = self.resolve([

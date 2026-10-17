@@ -1428,6 +1428,7 @@ def _resolve_from_master(modules, weeks, components, assigned_modules=None, *, c
         return modules, weeks, components  # fully legacy plan — nothing to resolve
 
     live_session_fallbacks = {}
+    shared_live_delivery = {}
     try:
         with connections["enrolment"].cursor() as cur:
             if resolved_metadata is not None:
@@ -1695,6 +1696,8 @@ def _resolve_from_master(modules, weeks, components, assigned_modules=None, *, c
             # live_session_ids=False skips the Teams-series lookup for readers
             # that never show teamsLiveSessionId / teamsSessionNumber.
             if fallback_module_ids and live_session_ids:
+                from .shared_live_delivery import read_shared_live_delivery
+                shared_live_delivery = read_shared_live_delivery(fallback_module_ids, component_ids, cursor=cur)
                 from .attendance_lectures import SHARED_TEAMS_SOURCES_SQL
                 shared_cte = SHARED_TEAMS_SOURCES_SQL.rsplit('SELECT DISTINCT module_id,source_id FROM shared', 1)[0]
                 cur.execute(
@@ -1735,9 +1738,16 @@ def _resolve_from_master(modules, weeks, components, assigned_modules=None, *, c
                 settings = {}
         if not isinstance(settings, dict):
             settings = {}
+        delivery = shared_live_delivery.get(comp_id)
+        if delivery:
+            # The builder and join endpoint pair shared live cards by authored
+            # position. Its source's booked identity, not the alias's stale
+            # date, determines which occurrence this card opens.
+            settings = {**settings, **delivery}
         live_session_url = (
-            _s(stored_live_link)
-            or _s(settings.get("liveSessionUrl"))
+            _s(delivery.get('liveSessionUrl')) if delivery else _s(stored_live_link)
+        ) or (
+            _s(settings.get("liveSessionUrl"))
             or _s(settings.get("teamsMeetingUrl"))
             or None
         )
