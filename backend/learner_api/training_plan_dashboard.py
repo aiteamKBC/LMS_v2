@@ -120,7 +120,7 @@ def plan_module(row):
             'learning_outcomes': []}
 
 
-def attach_curriculum_slots(module_rows, by_id, week_counts, weeks_by_number=None, *, strict=False):
+def attach_curriculum_slots(module_rows, by_id, week_counts, weeks_by_number=None, *, strict=False, holiday_loader=None):
     """Give every learner module the curriculum slot spine the Builder shows.
 
     This is a READ of the curriculum scheduler, not a second one. The holidays
@@ -159,7 +159,7 @@ def attach_curriculum_slots(module_rows, by_id, week_counts, weeks_by_number=Non
 
     weeks_by_number = weeks_by_number or {}
     try:
-        holidays = cohort_selected_holidays_by_cohort(
+        holidays = (holiday_loader or cohort_selected_holidays_by_cohort)(
             [row.get('cohort_id') for row in module_rows]
         )
     except Exception:

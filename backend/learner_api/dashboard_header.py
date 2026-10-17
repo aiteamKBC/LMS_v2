@@ -28,6 +28,27 @@ HEADER_SOURCE_FIELDS = tuple(field for field in TRAINING_PLAN_SOURCE_FIELDS
                              if field not in ('modules', 'weeks', 'components')) + IDENTITY_FIELDS
 
 
+def read_header_source(model, pk):
+    """Keep assignment semantics without transferring stored curriculum snapshots."""
+    from django.db.models.expressions import RawSQL
+    from .models import SafeJSONField
+    query = model.all_learners.only(*dict.fromkeys(
+        field for field in HEADER_SOURCE_FIELDS if field not in ('training_plan', 'learning_plan')))
+    for field, column in (('training_plan', 'Training_plan'), ('learning_plan', 'Learning_plan')):
+        query = query.annotate(**{f'_header_{field}': RawSQL(
+            f'''CASE WHEN jsonb_typeof("{column}"::jsonb)='array' THEN
+              (SELECT coalesce(jsonb_agg(CASE WHEN jsonb_typeof(item)='object'
+                THEN jsonb_build_object('moduleId',item->'moduleId',
+                  'assignmentMode',item->'assignmentMode') ELSE 'null'::jsonb END
+                ORDER BY position), '[]'::jsonb)
+               FROM jsonb_array_elements("{column}"::jsonb) WITH ORDINALITY AS entries(item,position))
+              ELSE "{column}"::jsonb END''', [], output_field=SafeJSONField())})
+    source = query.get(pk=pk)
+    source.training_plan = source._header_training_plan
+    source.learning_plan = source._header_learning_plan
+    return source
+
+
 def header_sessions(cur, ids, now):
     """Same shared-series and occurrence rules as plan_sessions; no attendance reads."""
     cur.execute('''WITH RECURSIVE owners(module_id,owner_id,depth) AS (
@@ -170,6 +191,28 @@ def next_review(reviews, now):
     return [min(candidates, key=lambda item: item[:3])[3]] if candidates else []
 
 
+def header_profile(source, pk):
+    """Read the delivery profile once, retaining the canonical identity guard.
+
+    The account side of the canonical join is the enrolment row already read by
+    this request. Read two profiles to preserve the duplicate-bridge rejection;
+    never use a same-number profile or an email fallback.
+    """
+    profiles = list(LearnerProfile.objects.filter(enrolment_id=pk).only(*TRAINING_PLAN_PROFILE_FIELDS)[:2])
+    if not profiles:
+        raise ServiceError('The learner is not linked to the consolidated learning record.',
+                           'ssot_identity_required', 409)
+    if len(profiles) != 1:
+        raise ServiceError('The consolidated learner identity needs review.', 'identity_review_required', 409)
+    profile = profiles[0]
+    owner = canonical_learning._validated_profile({
+        'id': profile.id, 'email': profile.email, 'aptem_id': profile.aptem_id,
+        'account_record_id': source.pk, 'account_email': source.email,
+        'account_aptem_id': source.aptem_id,
+    })
+    return profile, owner
+
+
 def build_dashboard_header(source, kind, pk, now=None, include_pending_delivery=False):
     now = now or datetime.now(timezone.utc)
     learner = header_identity(source)
@@ -178,9 +221,7 @@ def build_dashboard_header(source, kind, pk, now=None, include_pending_delivery=
         return {'learner': learner, 'schedule': {'modules': [],
                 'sessions': [], 'reviews': [], 'coach': {'name': ''}},
                 'week': {'deadlines': []}, 'lectureHref': None, 'weeklyCandidates': []}
-    owner = canonical_learning.require_profile(pk)
-    source._canonical_profile = owner
-    profile = LearnerProfile.objects.filter(enrolment_id=pk).only(*TRAINING_PLAN_PROFILE_FIELDS).first()
+    profile, owner = header_profile(source, pk)
     with connections['enrolment'].cursor() as cur:
         # plan_module_ids' metadata reader selected cover URLs only to recover
         # these same IDs. Header navigation needs only their native identities.
@@ -191,7 +232,7 @@ def build_dashboard_header(source, kind, pk, now=None, include_pending_delivery=
         if ids:
             cur.execute('''SELECT m.module_catalogue_id AS id,m.title,m.start_date,m.end_date,
                 m.programme_name,m.cohort_name,m.group_name,m.sessions_number,
-                (SELECT count(*) FROM curriculum.weeks w WHERE w.module_catalogue_id=m.module_catalogue_id
+                EXISTS (SELECT 1 FROM curriculum.weeks w WHERE w.module_catalogue_id=m.module_catalogue_id
                  AND (w.deleted_at IS NULL OR COALESCE(w.deleted_via_parent,'')<>'')) AS week_count,
                 coalesce(nullif(btrim(g.coach_name),''),m.coach_name) AS coach_name
                 FROM curriculum.modules m LEFT JOIN curriculum.groups g ON g.group_id=m.group_id
@@ -216,7 +257,7 @@ def build_dashboard_header(source, kind, pk, now=None, include_pending_delivery=
                 'date', 'targetDate', 'scheduledDate', 'scheduledTime', 'meetingLink')}
                for row in next_review(plan_reviews(source, profile, ('mcr', 'progress-review'), header_only=True), now)]
     deadlines = [{**row, 'type': 'assignment'} for row in
-                 upcoming_assignment_deadlines(source, profile, now.astimezone(UK).date())[:1]]
+                 upcoming_assignment_deadlines(source, profile, now.astimezone(UK).date(), header_only=True)[:1]]
     # Empty optional event values have no consumer; dates kept only once
     # where the selected review's fallback resolves to the same day.
     reviews = [{key: value for key, value in row.items() if value not in (None, '')
@@ -230,6 +271,33 @@ def build_dashboard_header(source, kind, pk, now=None, include_pending_delivery=
             'week': {'deadlines': deadlines}, 'lectureHref': href, 'weeklyCandidates': weekly_candidates}
 
 
+def compact_header(payload):
+    """Opt-in V2: card-ready values without changing the legacy projection."""
+    schedule = payload['schedule']
+    session = next(iter(schedule['sessions']), None)
+    review = next(iter(schedule['reviews']), None)
+    deadline = next(iter(payload['week']['deadlines']), None)
+    next_review = None
+    if review:
+        source = review['source']
+        next_review = {
+            'sessionId': review['id'],
+            'eventKey': review.get('eventKey') or review['id'], 'source': source,
+            'title': review.get('title') or ('Monthly Coaching Meeting' if source == 'mcr' else 'Progress Review'),
+            'date': review.get('scheduledDate') or review.get('targetDate') or review.get('date'),
+            **{key: review[key] for key in ('scheduledDate', 'scheduledTime', 'meetingLink') if review.get(key)},
+        }
+    return {
+        'version': 2, 'learner': payload['learner'], 'coach': schedule['coach'],
+        'modules': schedule['modules'], 'weeklyCandidates': payload.get('weeklyCandidates', []),
+        'nextReview': next_review,
+        'nextLiveSession': ({'id': session['id'], 'moduleId': session['moduleId'], 'title': session['title'],
+            'date': session['start'], 'href': payload.get('lectureHref') or None} if session else None),
+        'nextDeadline': ({'id': deadline['id'], 'title': deadline['title'], 'date': deadline['date'],
+            'href': '/learner/monthly-submission'} if deadline else None),
+    }
+
+
 @require_GET
 @learner_self_or_staff(kwarg='pk')
 @journal_sources.learner_journal_view
@@ -239,10 +307,12 @@ def dashboard_header(request, kind, pk):
         return JsonResponse({'error': 'Unknown learner kind.'}, status=404)
     try:
         with measure_projection('dashboard-header', kind=kind, learner_id=pk):
-            source = model.all_learners.only(*dict.fromkeys(HEADER_SOURCE_FIELDS)).get(pk=pk)
+            source = read_header_source(model, pk)
             account = getattr(request, 'login_account', None)
             payload = build_dashboard_header(source, kind, pk,
                 include_pending_delivery=bool(account and account.role != 'learner'))
+            if request.headers.get('X-LMS-Header-Version') == '2':
+                payload = compact_header(payload)
     except model.DoesNotExist:
         return JsonResponse({'error': 'Learner not found.'}, status=404)
     except ServiceError as error:
@@ -251,4 +321,5 @@ def dashboard_header(request, kind, pk):
         return JsonResponse({'error': 'Could not load your Dashboard header. Please try again.'}, status=503)
     response = JsonResponse(payload)
     response['Cache-Control'] = 'private, no-store'
+    response['Vary'] = 'X-LMS-Header-Version, Cookie'
     return response

@@ -1,5 +1,6 @@
+import { traceWeeklyLearning } from './weeklyLearningDiagnostics';
 import { createCachedResource } from './cachedRequest';
-import { LearnerReadError, readLearnerJson } from './learnerRead';
+import { LearnerReadError, readLearnerJson, invalidateLearnerReads } from './learnerRead';
 import type { TrainingPlanDashboard } from './trainingPlanDashboard';
 import type {
   LearnerComponentEntry, LearnerComponentProgress, LearnerDetail, LearnerKind, LearnerVideoProgress,
@@ -11,6 +12,8 @@ import type {
  * assigned modules, with activities and completion records for one week only.
  */
 export type WeeklyLearningDetail = Pick<LearnerDetail, 'id' | 'programme' | 'cohort' | 'group' | 'quizAttempts'> & {
+  /** Canonical facts consumed directly by the Dashboard; no legacy schedule. */
+  wire?: WeeklyLearningResponse;
   selectedWeekId?: string | null;
   selectedWeek?: CanonicalSelectedWeek;
   selectedModuleId?: string | null;
@@ -37,6 +40,7 @@ export type WeeklyLearningResponse = {
   selectedWeek: CanonicalSelectedWeek | null;
 };
 export type CanonicalWeek = {
+  attendance?: 'present' | 'absent' | 'upcoming' | 'unmarked';
   id: string; moduleId: string; moduleTitle: string; weekId?: string; weekNumber: number; slotNumber: number;
   kind: 'live-session' | 'reading-week'; title: string; startDate: string; endDate: string;
   status: string; progress: number; completedActivities: number; totalActivities: number;
@@ -56,7 +60,47 @@ export type CanonicalSelectedWeek = CanonicalWeek & {
     sessionDate?: string | null; sessionDateTimeUtc?: string | null; teamsLiveSessionId?: string | null }[];
 };
 
-const studentWeekId = (week: CanonicalWeek) => `${week.kind === 'reading-week' ? 'reading' : 'slot'}:${week.moduleId}:${week.slotNumber}`;
+export const studentWeekId = (week: CanonicalWeek) => `${week.kind === 'reading-week' ? 'reading' : 'slot'}:${week.moduleId}:${week.slotNumber}`;
+
+type Attendance = NonNullable<CanonicalWeek['attendance']>;
+type WireWeek = Omit<CanonicalWeek, 'moduleTitle' | 'attended'> & { attendance: Attendance };
+type WireSelected = {
+  weekId: string;
+  summary: Omit<CanonicalSelectedWeek['summary'], 'completedActivities' | 'totalActivities' | 'progress'>;
+  liveSession: (Omit<NonNullable<CanonicalSelectedWeek['liveSession']>, 'date' | 'endTime' | 'attended'> & { attendance: Attendance }) | null;
+  activities: Omit<CanonicalSelectedWeek['activities'][number], 'completed'>[];
+};
+export type WeeklyLearningV2 = { version: 2; modules?: { id: string; title: string }[]; weeks?: WireWeek[];
+  week?: WireWeek; selectedWeek: WireSelected | null };
+
+/** Resolve references once; no components, progress histories or timeline rebuild. */
+export function decodeWeeklyLearning(response: WeeklyLearningResponse | WeeklyLearningV2): WeeklyLearningResponse {
+  if (!('version' in response)) return response;
+  if (response.version !== 2) throw new LearnerReadError('Unsupported weekly response.', 200, 'invalid_weekly');
+  const invalid = () => { throw new LearnerReadError('The week response was incomplete. Please try again.', 200, 'invalid_week'); };
+  if (response.selectedWeek === undefined || (!Array.isArray(response.weeks) && !response.week)
+    || (response.weeks && !Array.isArray(response.modules))) invalid();
+  const titles = new Map(response.modules?.map(module => [module.id, module.title]));
+  const attendance = (value: Attendance) => value === 'present' ? true : value === 'absent' ? false : null;
+  const week = (row: WireWeek): CanonicalWeek => {
+    if (!row || typeof row.id !== 'string' || typeof row.moduleId !== 'string' || !Number.isInteger(row.slotNumber)
+      || !Array.isArray(row.holidays) || !['present', 'absent', 'upcoming', 'unmarked'].includes(row.attendance)) invalid();
+    return { ...row, moduleTitle: titles.get(row.moduleId) ?? '', attended: attendance(row.attendance) };
+  };
+  const weeks = response.weeks?.map(week) ?? (response.week ? [week(response.week)] : []);
+  const selected = response.selectedWeek;
+  if (!selected) return { weeks, selectedWeek: null };
+  if (!selected.summary || !Array.isArray(selected.activities) || selected.liveSession === undefined) invalid();
+  const navigation = weeks.find(row => row.id === selected.weekId);
+  if (!navigation) throw new LearnerReadError('The week response was incomplete. Please try again.', 200, 'invalid_week');
+  return { weeks, selectedWeek: { ...navigation,
+    summary: { ...selected.summary, completedActivities: navigation.completedActivities,
+      totalActivities: navigation.totalActivities, progress: navigation.progress },
+    liveSession: selected.liveSession ? { ...selected.liveSession, date: navigation.startDate, endTime: null,
+      attended: attendance(selected.liveSession.attendance) } : null,
+    activities: selected.activities.map(activity => ({ ...activity, completed: activity.status === 'completed' })),
+  } };
+}
 
 function validSelectedWeek(value: CanonicalSelectedWeek | null): boolean {
   return value === null || !!(value && typeof value.moduleId === 'string' && typeof value.id === 'string'
@@ -106,7 +150,7 @@ export function adaptWeeklyLearning(data: WeeklyLearningResponse, id: string): W
       weekTitle: week.title, holidays: week.holidays, holidayNote: week.holidayNote });
   }
   const selected = data.selectedWeek ? adaptWeeklyLearningWeek(data.selectedWeek) : null;
-  return { id, programme: '', cohort: '', group: '', components: selected?.components ?? [], quizAttempts: [], videoProgress: [], componentProgress: [],
+  return { id, wire: data, programme: '', cohort: '', group: '', components: selected?.components ?? [], quizAttempts: [], videoProgress: [], componentProgress: [],
     selectedWeek: selected?.selectedWeek, selectedWeekId: selected?.weekId ?? null, selectedModuleId: selected?.moduleId ?? null,
     weekSummaries: data.weeks.map(week => ({ moduleId: week.moduleId, weekId: studentWeekId(week), slotNumber: week.slotNumber,
       progress: { completed: week.completedActivities, total: week.totalActivities, percent: week.progress } })),
@@ -121,16 +165,24 @@ export function adaptWeeklyLearning(data: WeeklyLearningResponse, id: string): W
 }
 
 const weekKeys = new Set<string>();
+let activeWeekRequests = 0;
 const weekResource = createCachedResource<WeeklyLearningWeek>('learner-dashboard-week-detail', async key => {
-  const [kind, id, moduleId, weekId] = JSON.parse(key) as string[];
-  const response = await readLearnerJson<{ selectedWeek: CanonicalSelectedWeek | null }>(`/learner_api/dashboard/${kind}/${encodeURIComponent(id)}/weekly/${encodeURIComponent(weekId)}/?moduleId=${encodeURIComponent(moduleId)}`);
-  if (!response.selectedWeek || !validSelectedWeek(response.selectedWeek)
-    || studentWeekId(response.selectedWeek) !== weekId || response.selectedWeek.moduleId !== moduleId) {
-    throw new LearnerReadError('The week response was incomplete. Please try again.', 200, 'invalid_week');
+  activeWeekRequests += 1;
+  try {
+    const [kind, id, moduleId, weekId] = JSON.parse(key) as string[];
+    const raw = await readLearnerJson<WeeklyLearningResponse | WeeklyLearningV2>(`/learner_api/dashboard/${kind}/${encodeURIComponent(id)}/weekly/${encodeURIComponent(weekId)}/?moduleId=${encodeURIComponent(moduleId)}&version=2`);
+    const response = decodeWeeklyLearning(raw);
+    if (!response.selectedWeek || !validSelectedWeek(response.selectedWeek)
+      || studentWeekId(response.selectedWeek) !== weekId || response.selectedWeek.moduleId !== moduleId) {
+      throw new LearnerReadError('The week response was incomplete. Please try again.', 200, 'invalid_week');
+    }
+    const data = 'version' in raw ? { weekId, moduleId, selectedWeek: response.selectedWeek,
+      components: [], quizAttempts: [], videoProgress: [], componentProgress: [] } : adaptWeeklyLearningWeek(response.selectedWeek);
+    return data;
+  } finally {
+    activeWeekRequests -= 1;
   }
-  const data = adaptWeeklyLearningWeek(response.selectedWeek);
-  return data;
-}, Number.POSITIVE_INFINITY);
+}, 5 * 60_000);
 
 const detailKey = (kind: LearnerKind, id: string, moduleId: string, weekId: string) => JSON.stringify([kind, id, moduleId, weekId]);
 
@@ -140,8 +192,17 @@ export function fetchWeeklyLearningWeek(kind: LearnerKind, id: string, moduleId:
   return weekResource.read(key);
 }
 
-export function peekWeeklyLearningWeek(kind: LearnerKind, id: string, moduleId: string, weekId: string) {
-  return weekResource.peek(detailKey(kind, id, moduleId, weekId));
+export async function prefetchWeeklyLearningWeek(kind: LearnerKind, id: string, moduleId: string, weekId: string) {
+  if (activeWeekRequests || peekWeeklyLearningWeek(kind, id, moduleId, weekId)) return;
+  try {
+    await fetchWeeklyLearningWeek(kind, id, moduleId, weekId);
+  } catch {
+    traceWeeklyLearning('request-error', `${kind}:${id}`, 'Adjacent week prefetch failed; selection will retry.');
+  }
+}
+
+export function peekWeeklyLearningWeek(kind: LearnerKind, id: string, moduleId: string, weekId: string, staleForMs = 0) {
+  return weekResource.peek(detailKey(kind, id, moduleId, weekId), staleForMs);
 }
 
 export function primeWeeklyLearningWeek(kind: LearnerKind, id: string, data: WeeklyLearningDetail) {
@@ -155,21 +216,47 @@ const initialKeys = new Set<string>();
 const initialKey = (kind: LearnerKind, id: string, moduleId?: string | null) => `${kind}:${id}${moduleId ? `|${encodeURIComponent(moduleId)}` : ''}`;
 const weeklyResource = createCachedResource<WeeklyLearningDetail>('learner-dashboard-weekly', async key => {
   const [learner, moduleId] = key.split('|');
-  const response = await readLearnerJson<WeeklyLearningResponse>(`/learner_api/dashboard/${learner.replace(':', '/')}/weekly/${moduleId ? `?moduleId=${moduleId}` : ''}`);
+  traceWeeklyLearning('request-start', key);
+  let raw: WeeklyLearningResponse | WeeklyLearningV2;
+  try {
+    raw = await readLearnerJson<WeeklyLearningResponse | WeeklyLearningV2>(`/learner_api/dashboard/${learner.replace(':', '/')}/weekly/?${moduleId ? `moduleId=${moduleId}&` : ''}version=2`);
+    traceWeeklyLearning('request-success', key);
+  } catch (error) {
+    traceWeeklyLearning('request-error', key);
+    throw error;
+  }
+  const response = decodeWeeklyLearning(raw);
   if (!Array.isArray(response.weeks) || !validSelectedWeek(response.selectedWeek)) {
     throw new LearnerReadError('The weekly schedule response was incomplete. Please try again.', 200, 'invalid_weekly');
   }
-  const data = adaptWeeklyLearning(response, learner.slice(learner.indexOf(':') + 1));
-  // A refreshed spine may contain externally updated progress. Drop the old
-  // detail snapshots before the hook seeds the newly selected server week.
-  invalidateWeekDetails(learner);
+  const selected = response.selectedWeek;
+  const data: WeeklyLearningDetail = { id: learner.slice(learner.indexOf(':') + 1), wire: response,
+    programme: '', cohort: '', group: '', components: [], quizAttempts: [], videoProgress: [], componentProgress: [],
+    selectedWeek: selected ?? undefined, selectedWeekId: selected ? studentWeekId(selected) : null,
+    selectedModuleId: selected?.moduleId ?? null };
   return data;
 });
 
 export function fetchWeeklyLearning(kind: LearnerKind, id: string, options: { revalidate?: boolean; moduleId?: string | null } = {}): Promise<WeeklyLearningDetail> {
   const key = initialKey(kind, id, options.moduleId);
+  traceWeeklyLearning('read', key, `revalidate=${!!options.revalidate}; fresh=${!!weeklyResource.peek(key)}`);
   initialKeys.add(key);
-  return weeklyResource.read(key, { revalidate: options.revalidate });
+  const previous = weeklyResource.peek(key, 5 * 60_000);
+  return weeklyResource.read(key, { revalidate: options.revalidate }).then(data => {
+    // Side effects belong only to the accepted read, never an invalidated one.
+    if (weeklyResource.peek(key) !== data || previous === data) return data;
+    const navigation = new Map(data.wire?.weeks.map(week => [studentWeekId(week), week]));
+    const before = new Map(previous?.wire?.weeks.map(week => [studentWeekId(week), week]));
+    for (const detail of weekKeys) {
+      const [detailKind, detailId, , weekId] = JSON.parse(detail) as string[];
+      if (`${detailKind}:${detailId}` !== `${kind}:${id}`) continue;
+      if (!navigation.has(weekId) || (before.has(weekId) && JSON.stringify(before.get(weekId)) !== JSON.stringify(navigation.get(weekId)))) {
+        weekResource.invalidate(detail);
+        weekKeys.delete(detail);
+      }
+    }
+    return data;
+  });
 }
 
 /** A live entry, or with `staleForMs` a recent one to show while revalidating. */
@@ -178,17 +265,42 @@ export function peekWeeklyLearning(kind: LearnerKind, id: string, staleForMs = 0
 }
 
 /** Called by invalidateLearnerDetailCache: the same saves change this plan. */
-export function invalidateWeeklyLearning(key?: string): void {
+export type WeeklyProgressScope = { activityId?: string; quizId?: number };
+
+export function invalidateWeeklyLearning(key?: string, scope?: WeeklyProgressScope): void {
+  traceWeeklyLearning('invalidate', key ?? 'all');
   weeklyResource.invalidate(key);
   for (const initial of initialKeys) {
     if (!key || initial.split('|')[0] === key) { weeklyResource.invalidate(initial); initialKeys.delete(initial); }
   }
-  invalidateWeekDetails(key);
+  invalidateWeekDetails(key, scope);
 }
 
-function invalidateWeekDetails(key?: string): void {
+/** Mutation boundary: invalidate this learner before notifying mounted reads. */
+export function invalidateWeeklyProgress(kind: LearnerKind, id: string, activityId?: string): void {
+  invalidateWeeklyLearning(`${kind}:${id}`, activityId ? { activityId } : undefined);
+  invalidateLearnerReads();
+}
+
+function invalidateWeekDetails(key?: string, scope?: WeeklyProgressScope): void {
+  const { activityId, quizId } = scope ?? {};
+  const known = activityId || quizId != null ? [...weekKeys].flatMap(detail => {
+    const [kind, id] = JSON.parse(detail) as string[];
+    if (`${kind}:${id}` !== key) return [];
+    return weekResource.peek(detail, Number.POSITIVE_INFINITY)?.selectedWeek?.activities
+      .filter(activity => activity.id === activityId || quizId != null && activity.quizId === quizId) ?? [];
+  }) : [];
+  const quizzes = new Set(known.map(activity => activity.quizId).filter(id => id != null));
   for (const detail of weekKeys) {
     const [kind, id] = JSON.parse(detail) as string[];
-    if (!key || `${kind}:${id}` === key) { weekResource.invalidate(detail); weekKeys.delete(detail); }
+    if (key && `${kind}:${id}` !== key) continue;
+    const cached = weekResource.peek(detail, Number.POSITIVE_INFINITY);
+    // Unknown mappings and in-flight details still invalidate conservatively.
+    // A known activity leaves independent cached weeks valid; shared quiz
+    // placements invalidate together, even across weeks/modules.
+    if (known.length && cached?.selectedWeek && !cached.selectedWeek.activities.some(activity =>
+      activity.id === activityId || activity.quizId != null && quizzes.has(activity.quizId))) continue;
+    weekResource.invalidate(detail);
+    weekKeys.delete(detail);
   }
 }
