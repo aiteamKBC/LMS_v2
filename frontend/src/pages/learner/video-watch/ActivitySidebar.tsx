@@ -47,6 +47,11 @@ export interface ActivitySidebarProps {
   rowExtras?: (component: JourneyComponent, completed: boolean) => ReactNode;
   /** Where each row goes. */
   routeFor: (component: JourneyComponent, week: string) => string;
+  /** Catalogue browsers can select a week without leaving their saved material. */
+  onSelectWeek?: (week: SidebarWeek) => void;
+  /** Source-specific availability; never creates native content or quiz attempts. */
+  canOpen?: (component: JourneyComponent) => boolean;
+  monthHeadingFor?: (week: SidebarWeek, index: number) => string | null;
   accessOpen?: boolean;
   onAccessBlocked?: () => void;
 }
@@ -102,6 +107,9 @@ export function ActivitySidebar({
   completionTimeFor,
   rowExtras,
   routeFor,
+  onSelectWeek,
+  canOpen,
+  monthHeadingFor,
   accessOpen = true,
   onAccessBlocked,
 }: ActivitySidebarProps) {
@@ -129,8 +137,10 @@ export function ActivitySidebar({
   const weekDoneCount = weekComponents.filter((c) => isComponentComplete(c, completedIds)).length;
   const activeWeekIndex = weeks.findIndex((w) => w.active);
   const currentWeekLabel = activeWeekIndex < 0 ? weekTitle : weekDisplayLabel(weeks, activeWeekIndex);
-  const hasUnavailableContent = weekComponents.some((c) => !hasComponentContent(c));
-  const monthHeadings = weekMonthHeadings(weeks, plannedModule?.start_date);
+  const contentAvailableFor = canOpen || hasComponentContent;
+  const openableFor = canOpen || ((c: JourneyComponent) => hasComponentContent(c) && isNavigableComponent(c));
+  const hasUnavailableContent = weekComponents.some((c) => !contentAvailableFor(c));
+  const monthHeadings = monthHeadingFor ? weeks.map(monthHeadingFor) : weekMonthHeadings(weeks, plannedModule?.start_date);
   // Only weeks the curriculum team published a holiday hint for appear here.
   const holidayNotes = weekHolidayNotes(plannedModule?.curriculumSlots);
   const currentWeekNote = holidayNotes.get(weeks.find(w => w.active)?.weekId
@@ -175,8 +185,8 @@ export function ActivitySidebar({
           {weekComponents.map((c) => {
             const cm = sidebarActivityMeta(c);
             const isCurrent = isCurrentRow(c);
-            const contentAvailable = hasComponentContent(c);
-            const navigable = contentAvailable && isNavigableComponent(c) && !isCurrent;
+            const contentAvailable = contentAvailableFor(c);
+            const navigable = openableFor(c) && !isCurrent;
             const accessBlocked = navigable && !accessOpen;
             const clickable = navigable && accessOpen;
             const attempts = c.isQuiz ? (c.quizAttempts || []) : [];
@@ -242,7 +252,7 @@ export function ActivitySidebar({
         </ul>
       </div>
 
-      {weeks.length > 1 && (
+      {(weeks.length > 1 || onSelectWeek) && (
         <div className="rounded-xl border border-primary-100 bg-white overflow-hidden">
           <div className="px-4 py-3 border-b border-primary-100">
             <h2 className="text-sm font-heading font-bold text-primary-900">{moduleTitle || 'Module'}</h2>
@@ -255,8 +265,8 @@ export function ActivitySidebar({
               // A week with nothing in it has nothing to drop down; every other
               // week can be opened, whether or not its activities can be
               // started yet.
-              const viewable = w.count > 0;
-              const expanded = viewable && weekKey === expandedWeek;
+              const viewable = !!onSelectWeek || w.count > 0;
+              const expanded = !onSelectWeek && viewable && weekKey === expandedWeek;
               const weekNote = w.weekId ? holidayNotes.get(w.weekId) : undefined;
               return (
                 <li key={weekKey}>
@@ -264,8 +274,9 @@ export function ActivitySidebar({
                   <button
                     disabled={!viewable}
                     aria-label={`${weekDisplayLabel(weeks, index)}, ${w.count} components${w.active ? ', Current' : weekComplete ? ', Done' : ''}`}
-                    aria-expanded={viewable ? expanded : undefined}
-                    onClick={() => setExpandedWeek(toggleExpandedWeek(expandedWeek, weekKey))}
+                    aria-expanded={!onSelectWeek && viewable ? expanded : undefined}
+                    aria-current={onSelectWeek && w.active ? 'step' : undefined}
+                    onClick={() => onSelectWeek ? onSelectWeek(w) : setExpandedWeek(toggleExpandedWeek(expandedWeek, weekKey))}
                     className={`w-full flex items-center gap-2.5 px-4 py-2.5 text-left transition-colors ${
                       !viewable
                         ? 'cursor-not-allowed bg-primary-50/70 opacity-55'
@@ -301,7 +312,7 @@ export function ActivitySidebar({
                       <AppIcon className="ri-lock-line shrink-0 text-sm text-foreground-400" />
                     ) : (
                       <AppIcon
-                        className={`shrink-0 text-sm text-primary-500 ri-arrow-${expanded ? 'up' : 'down'}-s-line`}
+                        className={`shrink-0 text-sm text-primary-500 ri-arrow-${onSelectWeek ? 'right' : expanded ? 'up' : 'down'}-s-line`}
                       />
                     )}
                   </button>
@@ -318,17 +329,18 @@ export function ActivitySidebar({
                     <ul className="border-t border-primary-100 bg-primary-50/40 divide-y divide-primary-100">
                       {weekComponentRows(w, completedIds).map((row) => {
                         const rowMeta = sidebarActivityMeta(row.component);
-                        const accessBlocked = row.openable && !accessOpen;
+                        const openable = canOpen ? canOpen(row.component) : row.openable;
+                        const accessBlocked = openable && !accessOpen;
                         return (
                           <li key={row.component.componentId || row.component.title}>
                             <button
                               type="button"
-                              disabled={!row.openable && !accessBlocked}
+                              disabled={!openable && !accessBlocked}
                               aria-disabled={accessBlocked || undefined}
-                              title={!row.openable ? 'Learning content is not available yet.' : undefined}
-                              onClick={() => accessBlocked ? onAccessBlocked?.() : row.openable && navigate(routeFor(row.component, w.week))}
+                              title={!openable ? 'Learning content is not available yet.' : undefined}
+                              onClick={() => accessBlocked ? onAccessBlocked?.() : openable && navigate(routeFor(row.component, w.week))}
                               className={`w-full flex items-center gap-2 pl-11 pr-4 py-2 text-left transition-colors ${
-                                row.openable && accessOpen ? 'hover:bg-primary-50 cursor-pointer' : 'cursor-not-allowed opacity-60'
+                                openable && accessOpen ? 'hover:bg-primary-50 cursor-pointer' : 'cursor-not-allowed opacity-60'
                               }`}
                             >
                               <span data-activity-type={rowMeta.key} className="w-6 h-6 rounded-md border flex items-center justify-center shrink-0"
@@ -347,7 +359,7 @@ export function ActivitySidebar({
                               </span>
                               {row.complete ? (
                                 <AppIcon className="ri-checkbox-circle-fill text-emerald-600 text-[13px] shrink-0" />
-                              ) : !row.openable ? (
+                              ) : !openable ? (
                                 <AppIcon className="ri-lock-line text-primary-400 text-[13px] shrink-0" />
                               ) : (
                                 <AppIcon className="ri-arrow-right-s-line text-primary-500 text-[13px] shrink-0" />

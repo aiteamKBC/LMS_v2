@@ -4,6 +4,7 @@ import { VideoPlayer, parseVideoUrl } from '@/components/feature/VideoPlayer';
 import { SlideDeckViewer } from '@/components/feature/SlideDeckViewer';
 import { resolveDocEmbed } from '@/lib/docEmbed';
 import { normalizeReadingHtml } from '@/lib/readingHtml';
+import { previewUrl } from '@/features/old-otjh/previewUrl';
 import { subjectRequest, type SubjectMaterial, type SubjectAttemptResult } from '@/api/studentActivity';
 
 const AttachmentPreview = lazy(() => import('../video-watch/page').then((module) => ({ default: module.InlineAttachmentPreview })));
@@ -63,9 +64,18 @@ export function Media({ value, kind, title, fileName, canEmbed = true, onEnded }
       || /^\/login_api\/advanced-admin\/learners\/\d+\/learning\/material\/\d+\/\d+\/source-file\/$/.test(url.pathname));
   const original = <a href={fileUrl} target="_blank" rel="noopener noreferrer" className="text-sm font-semibold text-primary-700 underline">Open material in a new tab</a>;
   if (!canEmbed) return <div className="rounded-xl border bg-background-100 p-4"><p className="mb-2 text-sm">Open this material in a new tab to view it.</p>{original}</div>;
-  if (kind === 'video') return <section className="space-y-2"><div className="relative aspect-video overflow-hidden rounded-xl bg-black"><VideoPlayer parsed={storedFile ? { kind: 'file', src: fileUrl } : parseVideoUrl(fileUrl)} title={title} onEnded={onEnded} /></div>{original}</section>;
+  // Legacy type labels can describe the lesson rather than its linked media.
+  // Provider pages need their embedded player, even in a reading/audio lesson.
+  const spotify = url.hostname === 'open.spotify.com';
+  const providerVideo = ['youtube.com', 'www.youtube.com', 'm.youtube.com', 'youtu.be',
+    'vimeo.com', 'www.vimeo.com', 'player.vimeo.com'].includes(url.hostname);
+  const providerUrl = spotify || providerVideo ? previewUrl(fileUrl) || fileUrl : fileUrl;
+  const parsedVideo = parseVideoUrl(providerUrl);
+  // Preserve private Vimeo access parameters already handled by previewUrl.
+  if (providerVideo && parsedVideo.kind === 'vimeo') parsedVideo.src = providerUrl;
+  if (!spotify && (kind === 'video' || providerVideo)) return <section className="space-y-2"><div className="relative aspect-video overflow-hidden rounded-xl bg-black"><VideoPlayer parsed={storedFile ? { kind: 'file', src: fileUrl } : parsedVideo} title={title} onEnded={onEnded} /></div>{original}</section>;
   if (kind === 'pdf') return <section className="space-y-2"><Suspense fallback={<p role="status">Loading file preview…</p>}><AttachmentPreview url={fileUrl} title={title} fileName={fileName || 'document.pdf'} /></Suspense>{original}</section>;
-  if (kind === 'audio') {
+  if (kind === 'audio' && !spotify) {
     const drive = url.href.match(/drive\.google\.com\/(?:file\/d\/|(?:open|uc)\?[^#]*id=)([\w-]{10,})/);
     return <section className="space-y-2"><audio controls src={drive ? `/learner_api/media/google-drive/${drive[1]}/` : fileUrl} onEnded={onEnded} className="w-full" />{original}</section>;
   }
@@ -78,7 +88,7 @@ export function Media({ value, kind, title, fileName, canEmbed = true, onEnded }
     return <section className="space-y-2"><Suspense fallback={<p role="status">Loading file preview…</p>}><AttachmentPreview url={fileUrl} title={title} fileName={fileName} /></Suspense>{original}</section>;
   }
   if (url.origin === window.location.origin && /\.(docx|xlsx?|csv|txt|md|rtf|pdf|pptx|ppsx|pptm|ppsm)$/i.test(url.pathname)) return <section className="space-y-2"><Suspense fallback={<p role="status">Loading file preview…</p>}><AttachmentPreview url={url.href} title={title} /></Suspense>{original}</section>;
-  let src = url.href;
+  let src = providerUrl;
   if (url.hostname === 'drive.google.com') src = src.replace(/\/view(?:\?.*)?$/, '/preview');
   else if (/\.(pdf|pptx|ppsx|pptm|docx?|xlsx?)$/i.test(url.pathname) || /docs\.google\.com/.test(url.hostname)) {
     const embed = resolveDocEmbed(url.href);

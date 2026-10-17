@@ -244,8 +244,14 @@ def student_activity(request, kind, pk):
 
     if request.GET.get('activity_id') is None:
         from . import canonical_learning
+        from .replacement_hours import read_replacement_hours
         try:
-            payload = canonical_learning.source_subjects(pk, summarize_activities)
+            owner = canonical_learning.profile(pk)
+            # Share the exact accepted ledger snapshot with the course catalogue;
+            # summing separately loaded old/current aggregates can double count.
+            records = canonical_learning.entries_for(owner) if owner is not None else None
+            payload = canonical_learning.source_subjects(pk, summarize_activities, owner=owner, records=records)
+            payload['replacement_hours'] = read_replacement_hours(pk, source, owner, records, payload)
             saved = subject_store.state(pk, payload['aptem_id']) if payload['aptem_id'] else {'covers': {}}
             allowed = {f"legacy:{item['id']}" for item in payload['subjects']}
             payload['covers'] = {key: _cover_url(value) for key, value in saved['covers'].items() if key in allowed}
@@ -708,8 +714,12 @@ def subject_covers(request, pk):
             dates = read_builder_activity_dates(cur, [subject['id'] for subject in current_subjects])
             from .previous_learning_groups import read_previous_learning_groups
             previous_groups = read_previous_learning_groups(cur, pk, current_subjects)
+            from .subject_origins import read_imported_courses, read_replacement_courses
+            imported_courses = read_imported_courses(cur, current_subjects)
+            replacement_courses = read_replacement_courses(cur, current_subjects, pk)
         return _private({'covers': covers, 'activity_dates': dates, 'current_subjects': current_subjects,
-                         'builder_subjects': builder_subjects, 'previous_learning_groups': previous_groups})
+                         'builder_subjects': builder_subjects, 'previous_learning_groups': previous_groups,
+                         'imported_courses': imported_courses, 'replacement_courses': replacement_courses})
     except DatabaseError:
         return _error('Could not load subject images.', 503)
 

@@ -3,6 +3,7 @@ import { topicHasContent } from '@/lib/assignmentTopics';
 export { formatHoursMinutes } from '@/lib/format';
 
 export interface JourneyComponent {
+  previousLearning?: import('@/api/learnerDetail').PreviousLearningCompletion;
   title: string;
   expectedOtjh: number | null;
   moduleId?: string | null;
@@ -322,6 +323,7 @@ export function completedComponentIds(real: {
  * completion source. Non-quiz rows are looked up in `completedIds`, which
  * callers build with `completedComponentIds`. */
 export function isComponentComplete(c: JourneyComponent, completedIds: Set<string>): boolean {
+  if (c.previousLearning?.completed === true) return true;
   if (c.type?.replace(/-/g, '_') === 'live_session' && c.attendanceCompleted === true) return true;
   if (c.isQuiz) return (c.quizAttempts || []).some((a) => a.passed);
   return !!c.componentId && completedIds.has(c.componentId);
@@ -687,6 +689,7 @@ export function buildLearnerJourney(real: LearnerJourneySource | null): JourneyM
             hasReadingContent: c.hasReadingContent,
             downloadAllowed: c.downloadAllowed, reflectionPrompt: c.reflectionPrompt,
             attendanceCompleted: c.attendanceCompleted, attendanceCompletedAt: c.attendanceCompletedAt,
+            previousLearning: c.previousLearning,
             reflectionRequired: c.reflectionRequired,
             tutorValidationRequired: c.tutorValidationRequired,
             reflectionQuestion: c.reflectionQuestion,
