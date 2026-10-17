@@ -151,8 +151,9 @@ describe('full historical course catalogue', () => {
     ] };
     render(<MemoryRouter initialEntries={['/?subject=legacy%3A1']}><StudentActivityPanel data={recovered}
       kind={kind} learnerId="77" loading={false} error={null} onRetry={vi.fn()} /></MemoryRouter>);
-    fireEvent.click(await screen.findByRole('button', { name: 'Expand March 2026' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Expand March 2026, Activities in this month' }));
+    const sidebar = within(await screen.findByRole('complementary', { name: 'Module activities' }));
+    expect(sidebar.getByRole('heading', { name: 'March 2026' })).toBeVisible();
+    expect(sidebar.getByRole('button', { name: /^March 2026.*1 components/ })).toHaveAttribute('aria-current', 'step');
     expect(screen.getByRole('group', { name: 'Pending lesson 1-10 activity' })).toBeVisible();
     expect(screen.queryByText('Activities awaiting a date')).not.toBeInTheDocument();
     expect(screen.queryByText('Undated activities')).not.toBeInTheDocument();
@@ -220,8 +221,7 @@ describe('full historical course catalogue', () => {
     expect(screen.queryByText(/Recorded activities only/)).not.toBeInTheDocument();
     expect(within(screen.getByRole('button', { name: /Unstarted course.*Open subject/ })).getByText('0 of 1 completed')).toBeVisible();
     fireEvent.click(card);
-    fireEvent.click(screen.getByRole('button', { name: 'Expand Undated activities' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Expand Undated activities, Activities awaiting a date' }));
+    expect(screen.getByRole('complementary', { name: 'Module activities' })).toBeVisible();
     expect(await screen.findByRole('group', { name: 'quiz 1 activity' })).toHaveTextContent('Complete');
     expect(screen.getByRole('group', { name: 'Pending lesson 1-10 activity' })).toHaveTextContent('Not complete');
     expect(screen.getByRole('group', { name: 'Pending lesson 1-20 activity' })).toHaveTextContent('Not complete');

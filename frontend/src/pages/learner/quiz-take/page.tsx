@@ -20,6 +20,7 @@ import {
   type LearnerQuizQuestionResult,
 } from '@/api/learnerDetail';
 import { completedComponentIds } from '@/utils/learnerJourney';
+import { PreviousLearningNotice } from '@/pages/learner/my-learning/PreviousLearningNotice';
 import { placeActivity } from '@/pages/learner/video-watch/weekPreview';
 import { ActivitySidebar } from '@/pages/learner/video-watch/ActivitySidebar';
 import { componentRoute } from '@/pages/learner/video-watch/componentRoute';
@@ -421,6 +422,8 @@ export default function QuizTakePage() {
         ) : !componentAccess.open ? (
           <ComponentAccessNotice onBack={() => navigate(-1)} />
         ) : phase === 'intro' ? (
+          <>
+          <PreviousLearningNotice learning={placement?.weekComponents.find(component => String(component.quizMeta?.quizId) === String(quizId))?.previousLearning} kind={kind} learnerId={id} />
           <IntroScreen
             quiz={quiz}
             totalPoints={totalPoints}
@@ -429,6 +432,7 @@ export default function QuizTakePage() {
             onViewResult={viewLatestResult}
             onBack={() => navigate(-1)}
           />
+          </>
         ) : phase === 'quiz' ? (
           <QuizScreen
             quiz={quiz}

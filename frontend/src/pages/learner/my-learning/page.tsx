@@ -91,6 +91,9 @@ export default function MyLearningPage({ view = 'catalogue' }: { view?: 'catalog
   // learner's assigned free courses. Map view is always the module workspace.
   const requestedMode = new URLSearchParams(location.search).get('mode');
   const mode = view === 'map' ? 'courses' : requestedMode === 'free' ? 'free' : 'courses';
+  const courseParams = new URLSearchParams(location.search);
+  const subjectOpen = view === 'catalogue' && mode === 'courses' && tab === 'modules'
+    && !!(courseParams.get('subject') || courseParams.get('module') || courseParams.get('activity'));
   const setMode = (next: string) => {
     if (next === mode) return;
     const params = new URLSearchParams(location.search);
@@ -123,7 +126,7 @@ export default function MyLearningPage({ view = 'catalogue' }: { view?: 'catalog
       breadcrumbCurrentLabel={view === 'map' ? 'Learner’s Map' : 'My Learning'}
     >
       <PageContainer><div className={learningStyles.learningPage}>
-        {view === 'catalogue' && isRealMode && (
+        {view === 'catalogue' && isRealMode && !subjectOpen && (
           <ModeSwitch
             value={mode}
             onChange={setMode}
@@ -146,8 +149,8 @@ export default function MyLearningPage({ view = 'catalogue' }: { view?: 'catalog
             <FreeCoursesTab kind={kind} id={id} />
           ) : (
             <>
-              {view === 'catalogue' && <LearningHero />}
-              {view === 'catalogue' && <PageTabs className={learningStyles.catalogueTabs} items={tabs} value={tab} onChange={(v) => setTab(v as TabKey)} label="My Learning section" />}
+              {view === 'catalogue' && !subjectOpen && <LearningHero />}
+              {view === 'catalogue' && !subjectOpen && <PageTabs className={learningStyles.catalogueTabs} items={tabs} value={tab} onChange={(v) => setTab(v as TabKey)} label="My Learning section" />}
 
               {tab === 'modules' ? (
                 <ModulesTab key={`${kind}:${id}`} real={real} loading={loading} loadError={loadError} kind={kind} id={id} showReadOnlyNotice={showReadOnlyNotice} view={view} onRefresh={refresh} />

@@ -76,6 +76,23 @@ describe('quiz requirements loading', () => {
     expect(screen.queryByText('Reflection form')).not.toBeInTheDocument();
   });
 
+  it('retains verified previous completion and links the original result without creating an attempt', async () => {
+    mocks.detail.mockResolvedValue({ ...detail, modules: ['Module'],
+      week: [{ moduleId: 'M', module: 'Module', weekId: 'W', week: 'Week 1' }],
+      components: [{ ...detail.components[0], componentId: 'C1', component: 'Campaign quiz', type: 'quiz', isQuiz: true,
+        moduleId: 'M', module: 'Module', weekId: 'W', week: 'Week 1', previousLearning: {
+          courseRef: 'legacy:50', activityId: 'catalogue:50:quiz:7', sourceActivityId: 7, catalogueKind: 'quiz', completed: true,
+        } }],
+    });
+    renderPage();
+    expect(await screen.findByText(/Completed in previous learning/)).toBeVisible();
+    expect(screen.getByRole('link', { name: 'View original record' })).toHaveAttribute('href',
+      '/learner/my-learning/commercial/501?subject=legacy%3A50&activity=catalogue%3A50%3Aquiz%3A7');
+    expect(mocks.start).not.toHaveBeenCalled();
+    expect(mocks.submit).not.toHaveBeenCalled();
+    expect(screen.queryByText('Latest result')).not.toBeInTheDocument();
+  });
+
   it('shows the real book image when taking an image matching question', async () => {
     const imageUrl = 'data:image/webp;base64,UklGRg==';
     mocks.detail.mockResolvedValue(detail);
