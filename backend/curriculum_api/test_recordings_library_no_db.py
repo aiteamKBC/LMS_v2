@@ -93,6 +93,18 @@ class RecordingsLibraryTests(unittest.TestCase):
                                            [component('W3', extraTeamsLiveSessionId='EXTRA')])
         self.assertEqual(self.weeks_of(payload)[0]['title'], 'Guest')
 
+    def test_explicit_recorded_day_places_shared_session_files_in_their_actual_weeks(self):
+        rows = [recording(artifact_id='EVENT', created_datetime=datetime(2026, 10, 2, 10, 35, tzinfo=timezone.utc)),
+                recording(artifact_id='LECTURE', created_datetime=datetime(2026, 10, 9, 8, tzinfo=timezone.utc))]
+        components = [component('W2', recordingSeriesId='S1', recordingDate='2026-10-02'),
+                      component('W3', teamsOccurrenceId='O1', teamsLiveSessionId='S1',
+                                teamsSessionNumber=1, recordingDate='2026-10-09')]
+        payload = self.ns['build_library'](rows, WEEKS, components, placement_reviews={'EVENT'})
+        self.assertEqual([(week['weekId'], [item['id'] for item in week['recordings']])
+                          for week in self.weeks_of(payload)],
+                         [('W2', ['EVENT']), ('W3', ['LECTURE'])])
+        self.assertFalse(self.weeks_of(payload)[0]['recordings'][0]['placementReview'])
+
     def test_unclaimed_recording_is_listed_last_not_dropped(self):
         payload = self.ns['build_library'](
             [recording(artifact_id='LOST', occurrence_id='O7'), recording(artifact_id='A1')],

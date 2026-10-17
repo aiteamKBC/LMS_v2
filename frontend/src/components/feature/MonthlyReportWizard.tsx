@@ -130,7 +130,9 @@ export function MonthlyReportWizard({
   savedSignatureName: string;
 }) {
   const { auth } = useAuth();
-  const isAdmin = auth.account?.role === 'admin';
+  // Staff acting for the learner (an administrator, or their own coach) sign
+  // in their own name, as the server records it.
+  const isAdmin = auth.account?.role === 'admin' || auth.account?.role === 'staff';
   const signerName = isAdmin ? auth.account?.displayName || auth.account?.email || '' : learnerName;
   const savedSignature = isAdmin ? '' : learnerSavedSignature;
   const [step, setStep] = useState<Step>('review');

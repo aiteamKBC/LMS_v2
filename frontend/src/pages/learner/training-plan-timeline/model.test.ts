@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { barPosition, buildPlanModules, monthMetrics, nextSession, percent, reviewToBook, sessionDay, timelineYears, uniquePlanSessions } from './model';
 import type { TrainingPlanDashboard, PlanSession } from '@/api/trainingPlanDashboard';
-import { subjectsFrom, type Subject } from '../my-learning/SubjectWorkspace';
+import { type Subject } from '../my-learning/SubjectWorkspace';
+import { subjectsFrom } from '../my-learning/learningSummary';
 import type { LearnerDetail } from '@/api/learnerDetail';
 import { moduleMeasures } from './progress';
 
@@ -11,6 +12,15 @@ const data: TrainingPlanDashboard = { months: { '2026-09': { label: '', topics: 
 const subject: Subject = { id: 'legacy:1', title: 'Marketing', source: 'legacy', activities: ['2026-09-01','2026-09-08','2026-09-15','2026-09-22'].map((date, i) => ({ id: `${i}`, title: `Activity ${i}`, completed: i < 2, category: 'reading', position: i, schedule: { date } })) };
 
 describe('Training Plan calculations', () => {
+  it('does not replace current completion with a previous-learning summary for the same module', () => {
+    const current: Subject = { ...subject, id: 'current:module-1', source: 'current', activities: subject.activities.slice(0, 1) };
+    const previous = { id: 'legacy:1', title: 'Marketing', source: 'legacy', moduleIds: ['module-1'],
+      total: 564, completed: 54, dates: [], sessionTitles: [] } as NonNullable<TrainingPlanDashboard['planSubjects']>[number];
+    const [result] = buildPlanModules([current], { ...data, planSubjects: [previous] });
+    expect(result).toMatchObject({ id: 'current:module-1', done: 1, activityCount: 1, progress: 100 });
+    expect(previous).toMatchObject({ completed: 54, total: 564 });
+  });
+
   it('keeps the server course link through learning summaries so all module measures can resolve', () => {
     const subjects = subjectsFrom({ progress_basis: 'recorded_activities',
       subjects: [{ id: 10, name: 'Imported course', module_id: 'M10' },

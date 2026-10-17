@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import logging
 
-from django.db import DatabaseError, close_old_connections
+from django.db import DatabaseError, InterfaceError, OperationalError, close_old_connections, connections, router
 
 from .sessions import (
     RENEWED_UNTIL_ATTR,
@@ -26,6 +26,29 @@ from .sessions import (
 )
 
 logger = logging.getLogger("login")
+
+
+def _authenticate_with_file_retry(request):
+    """Retry one failed session read for uploads, before any renewal/write.
+
+    Native viewers, downloads and fetch previews all use this same route. A
+    stale database connection must still pass the full session check after it
+    is reopened; persistent failures retain the normal fail-closed 503.
+    """
+    try:
+        return authenticate_request(request)
+    except (OperationalError, InterfaceError):
+        if (request.method not in {'GET', 'HEAD'}
+                or not request.path_info.startswith('/curriculum_api/curriculum/uploads/')
+                or hasattr(request, 'login_account')):
+            raise
+        from .models import LoginSession
+        connection = connections[router.db_for_read(LoginSession) or 'default']
+        if connection.in_atomic_block:
+            raise
+        connection.close()
+        logger.warning('Retrying upload session read after a database connection failure')
+        return authenticate_request(request)
 
 
 class LoginSessionMiddleware:
@@ -46,7 +69,7 @@ class LoginSessionMiddleware:
 
     def __call__(self, request):
         try:
-            authenticate_request(request)
+            _authenticate_with_file_retry(request)
         except DatabaseError:
             logger.exception("Could not resolve login session")
             request.login_session = None

@@ -33,6 +33,8 @@ def read_native_progress(source, profile):
         modules, weeks, components, assigned_modules=assigned, compact=True)
     components = _apply_programme_assignment_template(components, getattr(source, 'programme', ''))
     weeks, components = _append_week_quizzes(weeks, components, assigned_modules=assigned)
+    from .teams_attendance import annotate_attendance_completion
+    components = annotate_attendance_completion(components, profile)
     progress = list(profile.progress_entries.using('enrolment').filter(deleted_at__isnull=True)
                     .exclude(kind='activity_event')
                     .values('kind', 'passed', 'component_ref', 'quiz_ref', 'submitted_at'))
@@ -52,14 +54,11 @@ def aggregate_module_progress(activity, detail, current, progress, titles=None):
     """Roll up Student's catalogue/native cards using verified identities only."""
     activity = activity or {}
     titles = titles or {}
-    historical_modules = {row['module_id'] for row in activity.get('subjects', [])
-                          if row.get('module_id')}
     historical = {f"legacy:{row['id']}": {'id': f"legacy:{row['id']}",
                   'title': row['name'], 'total': 0, 'completed': 0}
                   for row in activity.get('subjects', [])}
     subjects = {f"current:{row['id']}": {'id': f"current:{row['id']}",
-                'title': row['title'], 'total': 0, 'completed': 0} for row in current
-                if row['id'] not in historical_modules}
+                'title': row['title'], 'total': 0, 'completed': 0} for row in current}
     subjects.update(historical)
     seen_history = set()
     for item in activity.get('activities', []):
@@ -80,8 +79,6 @@ def aggregate_module_progress(activity, detail, current, progress, titles=None):
     cards = {}
     for index, item in enumerate([*detail['components'], *detail.get('retiredQuizComponents', [])]):
         module_id = item.get('moduleId')
-        if module_id in historical_modules:
-            continue
         if not module_id:
             raise ServiceError('Module progress requires a verified module identity.',
                                'module_identity_review_required', 409)
@@ -113,7 +110,7 @@ def aggregate_module_progress(activity, detail, current, progress, titles=None):
                             and str(attempt.get('quizId')) == str(quiz_id)))
                     for attempt in detail['quizAttempts'])
             else:
-                done = bool(component_id) and str(component_id) in completed
+                done = item.get('attendanceCompleted') is True or (bool(component_id) and str(component_id) in completed)
             subject['total'] += 1
             subject['completed'] += bool(done)
     return [{**row, 'percent': min(100, floor(row['completed'] / row['total'] * 10000 + 0.5) / 100)

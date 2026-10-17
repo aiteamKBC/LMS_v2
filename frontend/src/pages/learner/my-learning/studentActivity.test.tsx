@@ -9,7 +9,8 @@ import * as api from '@/api/studentActivity';
 import * as reads from '@/api/learnerRead';
 import { ModulesTab, QuizzesTab, StudentActivityPanel } from './page';
 import { StudentMaterial } from './StudentMaterial';
-import { buildUnifiedLearningSummary, subjectsFrom, useSubjectMetadata } from './SubjectWorkspace';
+import { buildUnifiedLearningSummary, subjectsFrom } from './learningSummary';
+import { useSubjectMetadata } from './useSubjectLearningData';
 
 // AppIcon is normally supplied by the app build's auto-import plugin.
 vi.stubGlobal('AppIcon', () => <span />);
@@ -50,8 +51,8 @@ describe('learner subject cards', () => {
 
     await screen.findByRole('heading', { name: 'New curriculum module' });
     expect(screen.getByRole('heading', { name: 'Leadership' })).toBeVisible();
-    expect(within(screen.getByRole('button', { name: /Leadership.*Open subject/ })).getByText('Old LMS')).toBeVisible();
-    expect(within(screen.getByRole('button', { name: /New curriculum module.*Open subject/ })).getByText('New LMS')).toBeVisible();
+    expect(within(screen.getByRole('button', { name: /Leadership.*Open subject/ })).getByText('Previous learning')).toBeVisible();
+    expect(within(screen.getByRole('button', { name: /New curriculum module.*Open subject/ })).getByText('Current learning plan')).toBeVisible();
     expect(screen.getByRole('tab', { name: 'All modules' })).toHaveAttribute('aria-selected', 'true');
 
     fireEvent.click(screen.getByRole('tab', { name: 'Old LMS' }));
@@ -234,7 +235,79 @@ describe('learner subject cards', () => {
   });
 });
 
+describe('explicit previous learning display groups', () => {
+  afterEach(() => vi.restoreAllMocks());
+  const metadata = { covers: {}, current_subjects: [{ id: 'M-CURRENT', title: 'Current scheduling' }],
+    previous_learning_groups: { 'legacy:1': 'current:M-CURRENT' } };
+  const real = { modules: ['Current scheduling'], components: [{ moduleId: 'M-CURRENT', module: 'Current scheduling',
+    componentId: 'CURRENT-1', component: 'Current lesson', type: 'reading', week: 'Week 1' }],
+    componentProgress: [], quizAttempts: [] } as unknown as LearnerDetail;
+
+  it('shows one course with separate current and previous progress and preserves source filters', async () => {
+    vi.spyOn(api, 'subjectRequest').mockResolvedValue(metadata);
+    render(<StudentActivityPanel data={data} real={real} kind="commercial" learnerId="132" loading={false} error={null} onRetry={vi.fn()} />);
+    const grouped = within(await screen.findByRole('region', { name: 'Current scheduling learning record' }));
+    expect(grouped.getByRole('heading', { name: 'Current learning plan' })).toBeVisible();
+    expect(grouped.getByRole('heading', { name: 'Previous learning' })).toBeVisible();
+    expect(grouped.getByRole('progressbar', { name: 'Current scheduling current plan activities progress' })).toHaveAttribute('aria-valuenow', '0');
+    expect(grouped.getByRole('progressbar', { name: 'Leadership previous learning activities progress' })).toHaveAttribute('aria-valuenow', '50');
+    expect(screen.getByText('1 subjects · 3 activities')).toBeVisible();
+    fireEvent.click(screen.getByRole('tab', { name: 'Old LMS' }));
+    expect(screen.getByRole('heading', { name: 'Leadership' })).toBeVisible();
+    expect(screen.queryByRole('heading', { name: 'Current scheduling' })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('tab', { name: 'New LMS' }));
+    expect(screen.getByRole('heading', { name: 'Current scheduling' })).toBeVisible();
+    expect(screen.queryByRole('heading', { name: 'Leadership' })).not.toBeInTheDocument();
+  });
+
+  it('keeps previous learning standalone when the current detail is unavailable', () => {
+    const summary = buildUnifiedLearningSummary(data, null, metadata);
+    expect(summary.subjectCount).toBe(1);
+    expect(summary.subjects[0].source).toBe('legacy');
+    expect(summary.subjects[0].previousLearningFor).toBeUndefined();
+    expect(summary.previousLearning?.completedActivityCount).toBe(1);
+  });
+
+  it('does not group lookalike titles without an explicit owned mapping', () => {
+    const summary = buildUnifiedLearningSummary(data, real, { covers: {} });
+    expect(summary.subjectCount).toBe(2);
+    expect(summary.subjects.every(subject => !subject.previousLearningFor)).toBe(true);
+  });
+});
+
 describe('quiz recovery', () => {
+  function quizLearner(attempts: unknown[]): LearnerDetail {
+    return { components: [{ isQuiz: true, component: 'Synthetic quiz', componentId: 'Q1',
+      module: 'Synthetic module', week: null, quizMeta: { quizId: 7, questions: 10 } }],
+      quizAttempts: attempts } as LearnerDetail;
+  }
+
+  it('retains a source-confirmed pass with an unknown score', () => {
+    render(<QuizzesTab real={quizLearner([{ quizId: 7, passed: true, grade: null }])} loading={false} loadError={null} canTake={false} navigate={vi.fn()} />);
+    const row = within(screen.getByRole('row', { name: /Synthetic quiz/ }));
+    expect(row.getByText('Completed')).toBeVisible();
+    expect(row.queryByText('0%')).not.toBeInTheDocument();
+  });
+
+  it('does not label an unresolved imported result as failed', () => {
+    render(<QuizzesTab real={quizLearner([{ quizId: 7, passed: null, grade: null }])} loading={false} loadError={null} canTake={false} navigate={vi.fn()} />);
+    const row = within(screen.getByRole('row', { name: /Synthetic quiz/ }));
+    expect(row.getByText('Result unavailable')).toBeVisible();
+    expect(row.queryByText('Failed')).not.toBeInTheDocument();
+  });
+
+  it('displays a recorded zero score instead of replacing it with an absent score', () => {
+    render(<QuizzesTab real={quizLearner([{ quizId: 7, passed: null, grade: null }, { quizId: 7, passed: false, grade: 0 }])} loading={false} loadError={null} canTake={false} navigate={vi.fn()} />);
+    const row = within(screen.getByRole('row', { name: /Synthetic quiz/ }));
+    expect(row.getByText('0%')).toBeVisible();
+    expect(row.getByText('Failed')).toBeVisible();
+  });
+
+  it('preserves a previous pass when a higher-scoring later attempt failed', () => {
+    render(<QuizzesTab real={quizLearner([{ quizId: 7, passed: false, grade: .9 }, { quizId: 7, passed: true, grade: .8 }])} loading={false} loadError={null} canTake={false} navigate={vi.fn()} />);
+    expect(within(screen.getByRole('row', { name: /Synthetic quiz/ })).getByText('Completed')).toBeVisible();
+  });
+
   it('offers retry when the learner detail request fails', () => {
     const retry = vi.fn();
     render(<QuizzesTab real={null} loading={false} loadError="Could not load quizzes" kind="commercial" id="132" canTake navigate={vi.fn()} onRetry={retry} />);
@@ -285,9 +358,9 @@ describe('subjects shared with Module Builder', () => {
   it('uses verified activity lineage from the activity API when the cover response has none', () => {
     const summary = buildUnifiedLearningSummary({ ...data, activity_sources: linkedMetadata.activity_sources }, linkedReal,
       { covers: {}, current_subjects: [{ id: 'MOD-1', title: 'Renamed current module' }] });
-    expect(summary.subjectCount).toBe(1);
+    expect(summary.subjectCount).toBe(2);
     expect(summary.activityCount).toBe(3);
-    expect(summary.completedActivityCount).toBe(2);
+    expect(summary.completedActivityCount).toBe(1);
   });
 
   it('renders cached subjects immediately while activity and metadata revalidate', async () => {
@@ -298,11 +371,11 @@ describe('subjects shared with Module Builder', () => {
     vi.spyOn(api, 'fetchStudentActivity').mockImplementation(() => new Promise(resolve => { finishActivity = resolve; }));
     vi.spyOn(api, 'subjectRequest').mockImplementation(() => new Promise(resolve => { finishMetadata = resolve; }));
     render(<ModulesTab real={linkedReal} loading={false} loadError={null} kind="commercial" id="132" />);
-    expect(screen.getByRole('button', { name: /Leadership/ })).toBeVisible();
-    expect(screen.getByText('2 of 3 completed')).toBeVisible();
+    expect(screen.getByRole('button', { name: /Current learning plan.*Leadership/ })).toBeVisible();
+    expect(screen.getByText('1 of 3 completed')).toBeVisible();
     expect(screen.queryByText('Loading subjects')).not.toBeInTheDocument();
     await act(async () => { finishActivity(data); finishMetadata(linkedMetadata); });
-    expect(screen.getByText('2 of 3 completed')).toBeVisible();
+    expect(screen.getByText('1 of 3 completed')).toBeVisible();
   });
 
   it('opens a native module directly in its activity player without month or week clicks', async () => {
@@ -381,15 +454,15 @@ describe('subjects shared with Module Builder', () => {
     const metadata = vi.spyOn(api, 'subjectRequest').mockImplementation(() => new Promise(resolve => { finishMetadata = resolve; }));
     render(<ModulesTab real={linkedReal} loading={false} loadError={null} kind="commercial" id="132" />);
     expect(screen.getByRole('status')).toHaveTextContent('Loading subjects');
-    expect(screen.queryByRole('button', { name: /Leadership/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Current learning plan.*Leadership/ })).not.toBeInTheDocument();
     expect(metadata).toHaveBeenCalledOnce();
     expect(metadata).toHaveBeenCalledWith('/learner_api/subject-covers/132/?refs=', expect.objectContaining({ signal: expect.any(AbortSignal) }));
     await act(async () => finishActivity(data));
     expect(metadata).toHaveBeenCalledOnce();
     expect(screen.queryByRole('region', { name: 'Your subjects' })).not.toBeInTheDocument();
     await act(async () => finishMetadata(linkedMetadata));
-    expect(screen.getAllByRole('button', { name: /Leadership/ })).toHaveLength(1);
-    expect(screen.getByText('2 of 3 completed')).toBeInTheDocument();
+    expect(screen.getAllByRole('button', { name: /Current learning plan.*Leadership/ })).toHaveLength(1);
+    expect(screen.getByText('1 of 3 completed')).toBeInTheDocument();
     expect(screen.queryByRole('status')).not.toBeInTheDocument();
   });
 
@@ -399,7 +472,7 @@ describe('subjects shared with Module Builder', () => {
     render(<StudentActivityPanel data={source === 'legacy' ? data : null} real={source === 'native' ? linkedReal : null}
       kind="commercial" learnerId="132" loading={false} error={null} onRetry={vi.fn()} />);
     expect(screen.getByRole('status')).toHaveTextContent('Loading subjects');
-    expect(screen.queryByRole('button', { name: /Leadership/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Current learning plan.*Leadership/ })).not.toBeInTheDocument();
     await act(async () => finish(linkedMetadata));
     expect(screen.getByRole('region', { name: 'Your subjects' })).toBeInTheDocument();
   });
@@ -413,21 +486,21 @@ describe('subjects shared with Module Builder', () => {
       .mockImplementationOnce(() => new Promise(resolve => { finishMetadata = resolve; }));
     const props = { kind: 'commercial' as const, id: '132', loadError: null };
     const { rerender } = render(<ModulesTab {...props} real={linkedReal} loading={false} />);
-    const card = await screen.findByRole('button', { name: /Leadership/ });
+    const card = await screen.findByRole('button', { name: /Current learning plan.*Leadership/ });
     fireEvent.change(screen.getByRole('textbox', { name: 'Search modules or activities' }), { target: { value: 'Leadership' } });
     rerender(<ModulesTab {...props} real={linkedReal} loading />);
-    expect(screen.getByRole('button', { name: /Leadership/ })).toBe(card);
+    expect(screen.getByRole('button', { name: /Current learning plan.*Leadership/ })).toBe(card);
     const refreshed = { ...linkedReal, components: linkedReal.components.slice(0, 2) };
     rerender(<ModulesTab {...props} real={refreshed} loading={false} />);
-    expect(screen.getByText('2 of 3 completed')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /Leadership/ })).toBe(card);
+    expect(screen.getByText('1 of 3 completed')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Current learning plan.*Leadership/ })).toBe(card);
     expect(metadata).toHaveBeenCalledTimes(2);
     await act(async () => finishActivity(data));
-    expect(screen.getByText('2 of 3 completed')).toBeInTheDocument();
+    expect(screen.getByText('1 of 3 completed')).toBeInTheDocument();
     expect(metadata).toHaveBeenCalledTimes(2);
     await act(async () => finishMetadata(linkedMetadata));
-    expect(screen.getByText('2 of 2 completed')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /Leadership/ })).toBe(card);
+    expect(within(screen.getByRole('button', { name: /Current learning plan.*Leadership/ })).getByText('1 of 2 completed')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Current learning plan.*Leadership/ })).toBe(card);
     expect(screen.getByRole('textbox', { name: 'Search modules or activities' })).toHaveValue('Leadership');
     expect(activity).toHaveBeenCalledTimes(2);
     expect(screen.queryByText('Loading subjects')).not.toBeInTheDocument();
@@ -446,11 +519,11 @@ describe('subjects shared with Module Builder', () => {
     vi.spyOn(api, 'subjectRequest').mockResolvedValueOnce(linkedMetadata).mockReturnValueOnce(new Promise(() => {}));
     const props = { data, real: linkedReal, kind: 'commercial', error: null, onRetry: vi.fn() };
     const { rerender } = render(<StudentActivityPanel {...props} learnerId="132" loading={false} />);
-    await screen.findByRole('button', { name: /Leadership/ });
+    await screen.findByRole('button', { name: /Current learning plan.*Leadership/ });
     rerender(<StudentActivityPanel {...props} learnerId="133" loading />);
     expect(screen.getByRole('status')).toHaveTextContent('Loading subjects');
     expect(screen.queryByText('Anna Rundell')).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /Leadership/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Current learning plan.*Leadership/ })).not.toBeInTheDocument();
   });
 
   it('refreshes assignment metadata even when a new module has no component ids yet', async () => {
@@ -469,24 +542,25 @@ describe('subjects shared with Module Builder', () => {
     ]);
   });
 
-  it('counts a linked course and original activities once, retaining new activities and both completion sources', () => {
+  it('keeps linked historical and current completions separate without mutating history', () => {
     const subjects = subjectsFrom(data, linkedReal, linkedMetadata);
-    expect(subjects).toHaveLength(1);
-    expect(subjects[0].id).toBe('legacy:1');
-    expect(subjects[0].activities.map((a) => [a.id, a.completed])).toEqual([
-      ['la:1:10', true], ['la:1:11', true], ['NEW-12', false],
-    ]);
-    expect(subjects[0].activities[1].legacy).toBe(data.activities[1]);
+    expect(subjects).toHaveLength(2);
+    const previous = subjects.find(subject => subject.id === 'legacy:1')!;
+    const current = subjects.find(subject => subject.id === 'current:MOD-1')!;
+    expect(previous.activities.map(a => [a.id, a.completed])).toEqual([['la:1:10', true], ['la:1:11', false]]);
+    expect(current.activities.map(a => [a.id, a.completed])).toEqual([['COMP-10', false], ['COMP-11', true], ['NEW-12', false]]);
+    expect(previous.activities[1].legacy).toBe(data.activities[1]);
     expect(data.activities[1].completed).toBe(false);
   });
 
-  it('builds the combined percentage only after linked old and new activities are deduplicated', () => {
+  it('calculates the primary percentage from the current plan only', () => {
     const summary = buildUnifiedLearningSummary(data, linkedReal, linkedMetadata);
     expect(summary).toMatchObject({
-      subjectCount: 1,
+      subjectCount: 2,
       activityCount: 3,
-      completedActivityCount: 2,
-      percent: 66.67,
+      completedActivityCount: 1,
+      percent: 33.33,
+      previousLearning: { activityCount: 2, completedActivityCount: 1, percent: 50 },
     });
   });
 
@@ -510,18 +584,18 @@ describe('subjects shared with Module Builder', () => {
     expect(screen.getByText(/Programme totals include accepted historical hours/)).toBeInTheDocument();
   });
 
-  it('merges a unique legacy/current title while keeping ambiguous same-title courses separate', () => {
+  it('keeps previous and current courses separate even with identical titles', () => {
     const separate = { ...linkedReal, components: [
       ...linkedReal.components,
       { ...linkedReal.components[0], moduleId: 'OTHER', componentId: 'OTHER-10' },
     ] };
     const subjects = subjectsFrom(data, separate, linkedMetadata);
-    expect(subjects).toHaveLength(2);
+    expect(subjects).toHaveLength(3);
     expect(subjects.find((s) => s.id === 'current:OTHER')?.activities).toHaveLength(1);
     const wrongScope = { ...linkedMetadata, activity_sources: { 'COMP-10': { module_id: 'OTHER', group_id: 1, activity_id: 10 } } };
-    expect(subjectsFrom(data, linkedReal, wrongScope)[0].activities).toHaveLength(5);
+    expect(subjectsFrom(data, linkedReal, wrongScope).find(s => s.id === 'legacy:1')?.activities).toHaveLength(2);
     const titleLinked = subjectsFrom(data, linkedReal, { ...linkedMetadata, builder_subjects: {} });
-    expect(titleLinked).toHaveLength(1);
+    expect(titleLinked).toHaveLength(2);
     expect(titleLinked[0].activities).toHaveLength(3);
   });
 
@@ -532,7 +606,8 @@ describe('subjects shared with Module Builder', () => {
     const entry = subjectsFrom(history, quizReal, linkedMetadata)[0].activities[0];
     expect(entry.completed).toBe(true);
     expect(entry.bestScorePercent).toBe(90);
-    expect(entry.legacy).toBe(history.activities[0]);
+    expect(entry.legacy).toBeUndefined();
+    expect(subjectsFrom(history, quizReal, linkedMetadata).find(s => s.source === 'legacy')?.activities[0].legacy).toBe(history.activities[0]);
   });
 
   it('fetches metadata once without flashing duplicate cards or refetching after Builder renames', async () => {
@@ -540,10 +615,10 @@ describe('subjects shared with Module Builder', () => {
     const request = vi.spyOn(api, 'subjectRequest').mockImplementation(() => new Promise((done) => { resolve = done; }));
     render(<StudentActivityPanel data={data} real={linkedReal} kind="commercial" learnerId="132" loading={false} error={null} onRetry={vi.fn()} />);
     expect(screen.getByRole('status')).toHaveTextContent('Loading subjects');
-    expect(screen.queryByRole('button', { name: /Leadership/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Current learning plan.*Leadership/ })).not.toBeInTheDocument();
     await act(async () => resolve({ ...linkedMetadata, builder_subjects: { 'legacy:1': { id: 'MOD-1', title: 'Renamed Leadership' } } }));
     expect(screen.getAllByRole('button', { name: /Renamed Leadership/ })).toHaveLength(1);
-    expect(screen.getByText('2 of 3 completed')).toBeInTheDocument();
+    expect(screen.getByText('1 of 3 completed')).toBeInTheDocument();
     expect(request).toHaveBeenCalledOnce();
   });
 
@@ -559,7 +634,7 @@ describe('subjects shared with Module Builder', () => {
     await act(async () => second(linkedMetadata));
     await act(async () => first({ ...linkedMetadata, builder_subjects: { 'legacy:1': { id: 'MOD-1', title: 'Old learner title' } } }));
     expect(screen.queryByText('Old learner title')).not.toBeInTheDocument();
-    expect(screen.getByText('2 of 3 completed')).toBeInTheDocument();
+    expect(screen.getByText('1 of 3 completed')).toBeInTheDocument();
     expect((request.mock.calls[0][1]?.signal as AbortSignal).aborted).toBe(true);
   });
 });

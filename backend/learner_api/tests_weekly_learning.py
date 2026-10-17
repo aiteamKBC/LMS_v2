@@ -246,13 +246,17 @@ class FakeCursor:
 
     def execute(self, sql, params=None):
         self.statements.append(sql)
-        if 'FROM curriculum.modules' in sql:
-            self.rows = [('M1', 'Marketing')]
-        elif 'FROM curriculum.weeks' in sql:
-            self.rows = [('W1', 'M1', 'Week 1', 1, 1)]
+        # Component visibility contains a nested modules query. Match the
+        # primary read first so its fixture is not mistaken for module rows.
+        if 'FROM curriculum.quiz_component_links' in sql or 'FROM curriculum.ksb_mappings' in sql:
+            self.rows = []
         elif 'FROM curriculum.components WHERE' in sql:
             self.rows = [('L1', 'W1', 'M1', 'live_session', 'Lecture', '', '{"sessionDate": "2026-09-14"}',
                           None, 1, None, False, None, False, 1.5)]
+        elif 'FROM curriculum.weeks' in sql:
+            self.rows = [('W1', 'M1', 'Week 1', 1, 1)]
+        elif 'FROM curriculum.modules' in sql:
+            self.rows = [('M1', 'Marketing')]
         elif 'FROM curriculum.live_sessions' in sql:
             self.rows = self.live_rows
         else:

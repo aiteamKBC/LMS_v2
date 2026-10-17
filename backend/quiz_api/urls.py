@@ -8,6 +8,7 @@ urlpatterns = [
     path("question-bank/", views.question_bank, name="question-bank"),
     path("question-bank/questions/<int:question_id>/add-to-quiz/", views.add_question_to_quiz, name="question-bank-add-to-quiz"),
     path("quizzes/", views.quizzes, name="quizzes"),
+    path("quizzes/create-with-questions/", views.create_quiz_with_questions, name="create-quiz-with-questions"),
     path("quizzes/<int:pk>/", views.quiz_detail, name="quiz-detail"),
     path("quizzes/<int:pk>/course-links/", views.quiz_course_links, name="quiz-course-links"),
     path("quizzes/<int:pk>/download/", views.quiz_download, name="quiz-download"),

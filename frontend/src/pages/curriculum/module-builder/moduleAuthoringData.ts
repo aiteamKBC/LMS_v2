@@ -2167,7 +2167,9 @@ export async function loadModuleStructure(
   try {
     return recalculateModule(await fetchCurriculumJson<ModuleCatalogueItem>(
       `/curriculum/modules/${encodeURIComponent(catalogueId)}/structure/`,
-      { timeoutMs: 30000, skipCache: options.skipCache },
+      // A full structure includes every component's authored content. Give a
+      // cold read the same budget as the module catalogue on remote databases.
+      { timeoutMs: 60000, skipCache: options.skipCache },
     ));
   } catch (err) {
     const status = err instanceof ApiError || err instanceof CurriculumApiError ? err.status : 0;

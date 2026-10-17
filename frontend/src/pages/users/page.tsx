@@ -12,6 +12,7 @@ import { fetchEnrolmentUsers, STATUS_OPTIONS, TYPE_OPTIONS, PROGRAMME_STATUS_OPT
 import { fetchStaffUsers, type StaffUserRow } from '@/api/staffUsers';
 import { fetchProgrammes, fetchCohorts, fetchGroups } from '@/api/curriculum';
 import { listEmployers, type EmployerRow } from '@/api/employers';
+import { fetchAttendanceModes, type SavedAttendanceMode } from '@/api/attendanceLectures';
 import type { UserListRow, UsersFilter } from './types';
 import { StatusBadge, Pagination, inputClass, btnPrimary, btnSecondary } from './components/ui';
 import { SendInvitationButton } from './components/SendInvitationButton';
@@ -188,11 +189,11 @@ function employerToRow(e: EmployerRow): DirectoryRow {
 
 const EMPTY_FILTER: UsersFilter = {
   userName: '', groups: [], email: '', statuses: [], type: 'all', programme: '', cohort: '',
-  programmeStatus: '', niNumber: '', caseOwner: 'any', referenceNumber: '', page: 1, pageSize: PAGE_SIZE,
+  programmeStatus: '', niNumber: '', caseOwner: 'any', referenceNumber: '', attendanceMode: '', page: 1, pageSize: PAGE_SIZE,
 };
 const DIRECTORY_QUERY_DEFAULTS = {
   search: '', summary: 'all', page: 1, name: '', email: '', groups: '', statuses: '',
-  type: 'all', programme: '', cohort: '', programmeStatus: '', caseOwner: 'any', reference: '',
+  type: 'all', programme: '', cohort: '', programmeStatus: '', caseOwner: 'any', reference: '', attendanceMode: '',
 };
 const encodeFilterList = (values?: string[]) => (values || []).join('~');
 const decodeFilterList = (value: string) => value ? value.split('~').filter(Boolean) : [];
@@ -312,6 +313,11 @@ function rowTypes(row: Pick<DirectoryRow, 'type'>): string[] {
   return (row.type || '').split(' · ').map((s) => s.trim()).filter(Boolean);
 }
 
+/** A learner with no saved attendance mode is on Live Sessions. */
+function rowAttendanceMode(modes: Record<string, SavedAttendanceMode>, row: Pick<DirectoryRow, 'id'>): 'live' | 'lazy' {
+  return modes[row.id]?.mode === 'lazy' ? 'lazy' : 'live';
+}
+
 export function matches(row: DirectoryRow, f: UsersFilter): boolean {
   if (f.userName && !row.name.toLowerCase().includes(f.userName.toLowerCase())) return false;
   if (f.email && !row.email.toLowerCase().includes(f.email.toLowerCase())) return false;
@@ -349,7 +355,8 @@ export default function UsersListPage() {
     type: String(query.type) as UsersFilter['type'], programme: String(query.programme),
     cohort: String(query.cohort), programmeStatus: String(query.programmeStatus),
     caseOwner: String(query.caseOwner), referenceNumber: String(query.reference),
-  }), [query.caseOwner, query.cohort, query.email, query.groups, query.name, query.programme, query.programmeStatus, query.reference, query.statuses, query.type]);
+    attendanceMode: String(query.attendanceMode) as UsersFilter['attendanceMode'],
+  }), [query.attendanceMode, query.caseOwner, query.cohort, query.email, query.groups, query.name, query.programme, query.programmeStatus, query.reference, query.statuses, query.type]);
   const [draft, setDraft] = useState<UsersFilter>(applied);
   const quickSearch = String(query.search);
   const searchInputRef = useRef<HTMLInputElement>(null);
@@ -369,6 +376,9 @@ export default function UsersListPage() {
   const [menuPos, setMenuPos] = useState<{ top: number; right: number } | null>(null);
 
   const [rows, setRows] = useState<DirectoryRow[]>([]);
+  // Saved attendance modes keyed by learner id; a learner with no entry is on
+  // Live Sessions. null while loading; 'failed' shows a dash, not a guess.
+  const [attendanceModes, setAttendanceModes] = useState<Record<string, SavedAttendanceMode> | 'failed' | null>(null);
   const summaryFilter = String(query.summary) as SummaryFilter;
   // The curriculum lookups behind the programme -> cohort -> group filters. They
   // come from curriculum.cohort_authoring_details, the same source the create
@@ -428,6 +438,15 @@ export default function UsersListPage() {
   const refreshInPlace = () => fetchRows(false);
 
   useEffect(load, []);
+
+  // Fetched beside the directory, not inside it: a failure only blanks this
+  // column. Reloaded after the bulk window so its changes show at once.
+  const loadAttendanceModes = () => {
+    fetchAttendanceModes()
+      .then((result) => setAttendanceModes(result.available ? result.modes : 'failed'))
+      .catch(() => setAttendanceModes('failed'));
+  };
+  useEffect(loadAttendanceModes, []);
 
   useEffect(() => setDraft(applied), [applied]);
 
@@ -541,12 +560,16 @@ export default function UsersListPage() {
     if (searchTerm && ![r.name, r.email, r.group, r.programme]
       .some((value) => (value ?? '').toLowerCase().includes(searchTerm))) return false;
     if (!matches(r, applied)) return false;
+    // Kept out of matches(): the modes come from their own request. Until they
+    // load, or if they fail, no learner can be shown as matching either mode.
+    if (applied.attendanceMode && (!isLearnerRow(r) || attendanceModes === null || attendanceModes === 'failed'
+      || rowAttendanceMode(attendanceModes, r) !== applied.attendanceMode)) return false;
     if (summaryFilter === 'learners') return isLearnerRow(r);
     if (summaryFilter === 'admins') return r.source === 'staff';
     if (summaryFilter === 'employers') return r.source === 'employer';
     if (summaryFilter === 'active') return r.programmeStatus === 'Active';
     return true;
-  }), [rows, applied, summaryFilter, searchTerm]);
+  }), [rows, applied, summaryFilter, searchTerm, attendanceModes]);
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const pageRows = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
   const showingStart = filtered.length ? (page - 1) * PAGE_SIZE + 1 : 0;
@@ -576,6 +599,7 @@ export default function UsersListPage() {
     statuses: encodeFilterList(draft.statuses), type: draft.type || 'all', programme: draft.programme || '',
     cohort: draft.cohort || '', programmeStatus: draft.programmeStatus || '',
     caseOwner: draft.caseOwner || 'any', reference: draft.referenceNumber || '',
+    attendanceMode: draft.attendanceMode || '',
   }, { resetPage: true });
   const updateQuickSearch = (value: string) => setQueryValues({ search: value }, { resetPage: true });
   const reset = () => { setDraft(EMPTY_FILTER); resetQuery(); };
@@ -752,6 +776,7 @@ export default function UsersListPage() {
             <TextFilter label="NI number" value={draft.niNumber ?? ''} onChange={(v) => set({ niNumber: v })} />
             <SelectFilter label="Case owner" value={draft.caseOwner ?? 'any'} onChange={(v) => set({ caseOwner: v })} options={[{ value: 'any', label: 'Any' }, ...caseOwnerOptions.map((c) => ({ value: c, label: c }))]} />
             <TextFilter label="Reference number" value={draft.referenceNumber ?? ''} onChange={(v) => set({ referenceNumber: v })} />
+            <SelectFilter label="Attendance mode" value={draft.attendanceMode ?? ''} onChange={(v) => set({ attendanceMode: v as UsersFilter['attendanceMode'] })} options={[{ value: '', label: '--All--' }, { value: 'live', label: 'Live Sessions' }, { value: 'lazy', label: 'Recorded' }]} />
           </div>
           <div className="mt-5 flex items-center justify-end gap-4 lg:col-span-4">
             <button type="button" className="text-[12px] font-medium text-foreground-600 transition hover:text-primary-700" onClick={reset}>Clear all</button>
@@ -802,7 +827,7 @@ export default function UsersListPage() {
             <table id="users-directory-table" className="w-full text-[13px]">
               <thead>
                 <tr className="border-b border-foreground-200/70 bg-background-100/50">
-                  {['User', 'Type', 'Email', 'Group', 'Programme', 'Cohort', 'Subscription status', 'Learning plan', 'Programme status', 'Actions'].map((h) => (
+                  {['User', 'Type', 'Email', 'Group', 'Programme', 'Cohort', 'Subscription status', 'Learning plan', 'Programme status', 'Attendance mode', 'Actions'].map((h) => (
                     <th key={h} className="text-left py-3 px-3 text-[11px] font-semibold text-foreground-500 uppercase tracking-wider whitespace-nowrap">{h}</th>
                   ))}
                 </tr>
@@ -811,9 +836,9 @@ export default function UsersListPage() {
                 {/* Skeleton rows, not a spinner in a merged cell: the table keeps
                     its column widths and height, so the header stops jumping when
                     the first page of users lands. */}
-                {loading && <TableBodySkeleton rows={6} columns={10} />}
+                {loading && <TableBodySkeleton rows={6} columns={11} />}
                 {!loading && error && (
-                  <tr><td colSpan={10} className="py-10 text-center text-[13px]">
+                  <tr><td colSpan={11} className="py-10 text-center text-[13px]">
                     <p className="text-red-600 mb-2"><AppIcon className="ri-error-warning-line mr-1.5" />{error}</p>
                     <button className={btnSecondary} onClick={load}><AppIcon className="ri-refresh-line" />Retry</button>
                   </td></tr>
@@ -929,6 +954,15 @@ export default function UsersListPage() {
                       </span>
                     </td>
                     <td className="py-2.5 px-3">{isLearner && row.programmeStatus ? <StatusBadge status={row.programmeStatus} /> : null}</td>
+                    <td className="py-2.5 px-3 whitespace-nowrap">
+                      {!isLearner || attendanceModes === 'failed'
+                        ? <span className="text-foreground-300">—</span>
+                        : attendanceModes === null
+                          ? <span className="text-foreground-300">…</span>
+                          : rowAttendanceMode(attendanceModes, row) === 'lazy'
+                            ? <span className="rounded-full border border-primary-200 bg-primary-50 px-2 py-0.5 text-[11px] font-semibold text-primary-700">Recorded</span>
+                            : <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold text-emerald-700">Live Sessions</span>}
+                    </td>
                     <td className="py-2.5 px-3 text-center">
                       {openInPlace ? (
                         <span className="flex items-center justify-center gap-2">
@@ -981,7 +1015,7 @@ export default function UsersListPage() {
                   </tr>
                   );
                 })}
-                {!loading && !error && pageRows.length === 0 && <tr><td colSpan={10} className="py-10 text-center text-[13px] text-foreground-400">{rows.length === 0 ? 'No users yet. Use “Create” to add the first learner.' : 'No users match your filters.'}</td></tr>}
+                {!loading && !error && pageRows.length === 0 && <tr><td colSpan={11} className="py-10 text-center text-[13px] text-foreground-400">{rows.length === 0 ? 'No users yet. Use “Create” to add the first learner.' : applied.attendanceMode && attendanceModes === 'failed' ? 'Attendance modes could not be loaded, so the attendance mode filter cannot be applied.' : applied.attendanceMode && attendanceModes === null ? 'Loading attendance modes…' : 'No users match your filters.'}</td></tr>}
               </tbody>
             </table>
           </div>
@@ -1000,7 +1034,7 @@ export default function UsersListPage() {
 
       {createModalOpen && <CreateUserModal onClose={() => setCreateModalOpen(false)} onCreated={load} />}
       {importModalOpen && <ImportLearnersModal onClose={() => setImportModalOpen(false)} onImported={applyLearnerImport} />}
-      {bulkOpen && <BulkAttendanceModeModal rows={rows} onClose={() => setBulkOpen(false)} />}
+      {bulkOpen && <BulkAttendanceModeModal rows={rows} onClose={() => { setBulkOpen(false); loadAttendanceModes(); }} />}
       {createAdminOpen && <CreateStaffModal variant="admin" onClose={() => setCreateAdminOpen(false)} onCreated={load} />}
       {createTutorOpen && <CreateStaffModal variant="tutor" onClose={() => setCreateTutorOpen(false)} onCreated={load} />}
       {editStaff && <EditStaffModal row={editStaff} onClose={() => setEditStaff(null)} onSaved={applyStaffUpdate} />}

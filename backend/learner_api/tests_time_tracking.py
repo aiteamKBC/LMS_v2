@@ -75,6 +75,30 @@ class TimeTrackingSessionTests(SimpleTestCase):
             with self.subTest(value=value), self.assertRaisesRegex(TrackingSessionError, "non-negative"):
                 self.verify(claimed_seconds=value)
 
+    def test_rejection_codes_distinguish_expired_invalid_and_wrong_owner(self):
+        from django.core import signing
+        for failure, code in [(signing.SignatureExpired('synthetic'), 'expired_tracking_session'),
+                              (signing.BadSignature('synthetic'), 'invalid_tracking_signature')]:
+            with self.subTest(code=code), patch('learner_api.time_tracking.signing.loads', side_effect=failure):
+                with self.assertRaises(TrackingSessionError) as raised:
+                    self.verify()
+                self.assertEqual(raised.exception.code, code)
+        with self.assertRaises(TrackingSessionError) as raised:
+            self.verify(learner_id='another-owner')
+        self.assertEqual(raised.exception.code, 'tracking_identity_mismatch')
+
+    def test_expiry_is_still_enforced_by_real_signed_token_validation(self):
+        with patch('django.core.signing.time.time', return_value=100):
+            session = issue_tracking_session(activity_kind='video', activity_id='COMP-1',
+                learner_kind='apprenticeship', learner_id='230', counting_mode='active_playback',
+                issued_at=self.started_at)
+        with patch('django.core.signing.time.time', return_value=100 + 86401):
+            with self.assertRaises(TrackingSessionError) as raised:
+                verify_tracking_session(session['trackingToken'], activity_kind='video', activity_id='COMP-1',
+                    learner_kind='apprenticeship', learner_id='230', claimed_seconds=12,
+                    submitted_at=self.started_at + timedelta(seconds=20))
+        self.assertEqual(raised.exception.code, 'expired_tracking_session')
+
     def test_counting_mode_must_match_activity_kind(self):
         with self.assertRaisesRegex(TrackingSessionError, "not valid"):
             issue_tracking_session(

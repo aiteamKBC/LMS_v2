@@ -11,7 +11,8 @@ import { DashboardRewards } from './DashboardRewards';
 import type { ProgrammeProgressSnapshot } from '@/pages/learner/training-plan-timeline/ProgressCharts';
 import type { LearnerDetail } from '@/api/learnerDetail';
 import type { StudentActivityResponse } from '@/api/studentActivity';
-import { subjectsFrom, type Subject } from '@/pages/learner/my-learning/SubjectWorkspace';
+import { type Subject } from '@/pages/learner/my-learning/SubjectWorkspace';
+import { subjectsFrom } from '@/pages/learner/my-learning/learningSummary';
 import styles from '@/pages/learner/training-plan-timeline/TrainingPlanDetails.module.css';
 
 /** Independent loading keeps the existing dashboard visible while plan sources resolve. */

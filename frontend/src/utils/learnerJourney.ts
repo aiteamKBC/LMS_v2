@@ -27,6 +27,9 @@ export interface JourneyComponent {
   files?: import('@/lib/componentFiles').ComponentFile[];
   downloadAllowed?: boolean;
   reflectionPrompt?: string | null;
+  /** Completion derived from verified Teams attendance; adds no recorded hours. */
+  attendanceCompleted?: boolean;
+  attendanceCompletedAt?: string | null;
   reflectionRequired?: boolean;
   /** The author sent this activity for coach validation, so finishing it hands
    *  it in rather than completing it. */
@@ -36,6 +39,9 @@ export interface JourneyComponent {
   liveSessionUrl?: string | null;
   teamsLiveSessionId?: string | null;
   teamsSessionNumber?: number | null;
+  recordingSeriesId?: string | null;
+  recordingSessionNumber?: number | null;
+  recordingDate?: string | null;
   sessionDate?: string | null;
   sessionTime?: string | null;
   sessionDateTimeUtc?: string | null;
@@ -321,6 +327,7 @@ export function completedComponentIds(real: {
  * completion source. Non-quiz rows are looked up in `completedIds`, which
  * callers build with `completedComponentIds`. */
 export function isComponentComplete(c: JourneyComponent, completedIds: Set<string>): boolean {
+  if (c.type?.replace(/-/g, '_') === 'live_session' && c.attendanceCompleted === true) return true;
   if (c.isQuiz) return (c.quizAttempts || []).some((a) => a.passed);
   return !!c.componentId && completedIds.has(c.componentId);
 }
@@ -397,7 +404,7 @@ export function hasComponentContent(c: JourneyComponent): boolean {
   const type = (c.type || '').trim().toLowerCase().replace(/[\s-]+/g, '_');
   if (type === 'quiz') return false; // Unlinked builder placeholders have no quiz to attempt.
   const hasDescription = hasText(c.description);
-  if (type === 'video') return hasUrl(c.videoUrl);
+  if (type === 'video') return hasUrl(c.videoUrl) || Boolean(c.recordingSeriesId && c.recordingSessionNumber && c.recordingDate);
   if (type === 'podcast' || type === 'audio') return hasUrl(c.audioUrl) || hasUrl(c.resourceUrl) || hasDescription;
   if (type === 'reading') return c.hasReadingContent === true || hasText(c.contentHtml) || hasUrl(c.resourceUrl) || hasUrl(c.audioUrl) || hasDescription;
   if (type === 'powerpoint' || type === 'presentation' || type === 'slides') return hasUrl(c.resourceUrl) || hasDescription;
@@ -684,6 +691,7 @@ export function buildLearnerJourney(real: LearnerJourneySource | null): JourneyM
             audioUrl: c.audioUrl, contentHtml: c.contentHtml, fileName: c.fileName, files: c.files,
             hasReadingContent: c.hasReadingContent,
             downloadAllowed: c.downloadAllowed, reflectionPrompt: c.reflectionPrompt,
+            attendanceCompleted: c.attendanceCompleted, attendanceCompletedAt: c.attendanceCompletedAt,
             reflectionRequired: c.reflectionRequired,
             tutorValidationRequired: c.tutorValidationRequired,
             reflectionQuestion: c.reflectionQuestion,
@@ -691,6 +699,9 @@ export function buildLearnerJourney(real: LearnerJourneySource | null): JourneyM
             liveSessionUrl: c.liveSessionUrl, sessionDate: c.sessionDate, sessionTime: c.sessionTime,
             teamsLiveSessionId: c.teamsLiveSessionId,
             teamsSessionNumber: c.teamsSessionNumber,
+            recordingSeriesId: c.recordingSeriesId,
+            recordingSessionNumber: c.recordingSessionNumber,
+            recordingDate: c.recordingDate,
             sessionDateTimeUtc: c.sessionDateTimeUtc,
             quizAttempts: c.isQuiz && c.quizMeta
               // Normalised progress rows store quiz_ref as text, while the

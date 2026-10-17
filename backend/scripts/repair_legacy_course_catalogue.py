@@ -89,6 +89,25 @@ def catalogue_plan(definitions, export, removals, *, preserve_unmatched=False, p
     return expected, sorted(archive), replacements
 
 
+def course_source_identity(identities, memberships, learner_id):
+    """Resolve an owned course's source account, retaining other verified aliases."""
+    candidates = [identity for identity in identities
+                  if identity['learner_id'] == learner_id
+                  and identity['source_system'] == 'old_lms' and identity['deleted_at'] is None]
+    bindings = {str(member.get('source_learner_id') or '').strip()
+                for member in memberships if member['learner_id'] == learner_id
+                and member.get('deleted_at') is None}
+    bindings.discard('')
+    if len(bindings) > 1:
+        raise ValueError('Selected course has conflicting source account bindings.')
+    if bindings:
+        candidates = [identity for identity in candidates
+                      if str(identity['source_learner_id']).strip() in bindings]
+    if len(candidates) != 1:
+        raise ValueError('Selected course needs one verified source identity.')
+    return candidates[0]
+
+
 def read_state(cur, course_id, aptem_id, *, catalogue_only=False, verified_export=None):
     courses = cur.execute('''SELECT * FROM curriculum.source_courses
         WHERE source_system='old_lms' AND source_course_ref=%s AND deleted_at IS NULL''',
@@ -154,11 +173,7 @@ def read_state(cur, course_id, aptem_id, *, catalogue_only=False, verified_expor
         JOIN curriculum.source_courses c ON c.id=a.source_course_id AND c.deleted_at IS NULL
         WHERE a.id=ANY(%s) AND a.deleted_at IS NULL ORDER BY a.id''',
         [sorted({s['source_catalog_activity_id'] for s in state['sources'] if s['source_catalog_activity_id'] is not None})]).fetchall()
-    identities = [i for i in state['identities'] if i['learner_id'] == owner['id']
-                  and i['source_system'] == 'old_lms' and i['deleted_at'] is None]
-    if len(identities) != 1:
-        raise ValueError('Selected learner needs one verified source identity.')
-    identity = identities[0]
+    identity = course_source_identity(state['identities'], memberships, owner['id'])
     state['identity'] = identity
     if verified_export and (not catalogue_only
             or str(verified_export['source_user_id']) != str(identity['source_learner_id'])

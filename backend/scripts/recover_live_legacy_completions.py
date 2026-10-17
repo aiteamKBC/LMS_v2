@@ -178,6 +178,7 @@ def make_plan(state, sources, course_ids, remove_memberships):
                         source_system='old_lms', source_activity_id=ref, kind=activity_kind(ref, fact),
                         component_ref=ref, component_title=fact['title'] or '',
                         activity_status='passed' if ref.startswith('quiz:') else 'completed',
+                        passed=fact.get('passed') if ref.startswith('quiz:') else None,
                         accepted=False, actual_seconds=None, started_at=started, submitted_at=ended,
                         source_payload={'live_completion_recovery': {'course_id': cid, 'component': fact,
                             'source_identity_id': state['identity']['id'], 'actual_time_review_required': True,
