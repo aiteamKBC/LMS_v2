@@ -146,6 +146,8 @@ export interface UsersFilter {
   niNumber?: string;
   caseOwner?: string | 'any';
   referenceNumber?: string;
+  /** '' is unset. Learners only: staff and employers have no attendance mode. */
+  attendanceMode?: '' | 'live' | 'lazy';
   page: number; // 1-based
   pageSize: number;
 }
@@ -399,13 +401,14 @@ export interface IlrLearnerDetails {
 
 export type CompetenceKind = 'Knowledge' | 'Skill' | 'Behaviour';
 /**
- * Self-assessment scale for the Skills Radar questionnaire (8 points, scored 8
+ * Self-assessment scale for the Skills Radar questionnaire (9 points, scored 9
  * down to 1 — see COMPETENCE_LEVELS).
  *
  * The five original RAG values are kept in the union so assessments saved before
  * the scale was widened still load and display instead of coming back as null.
  */
 export type RagLevel =
+  | 'champion'
   | 'mastery'
   | 'expert'
   | 'proficient'
@@ -441,6 +444,14 @@ export interface KsbAssessment {
 export interface SkillsRadarState {
   standardId: string;
   assessments: Record<string, KsbAssessment>;
+  /**
+   * The KSBs of the learner's programme profile — the questions the step asks —
+   * read when the wizard opens. Completeness is measured against these alone:
+   * saved answers can hold rows for KSBs no longer on the programme (a changed
+   * programme or a re-authored profile), which the learner is never shown and
+   * so could never rate. Never saved; undefined until the profile has loaded.
+   */
+  programmeKsbIds?: string[];
 }
 
 /**
@@ -585,6 +596,20 @@ export interface WizardDraft {
    * into each field's own column (see enrolment_api/wizard_layout.py).
    */
   custom?: Record<string, CustomAnswer>;
+  /**
+   * The Inclusion step's status, read from the Safeguarding database each time
+   * the wizard opens (see enrolment_api/wizard_inclusion.py). Never saved with
+   * the draft: absent until the check comes back.
+   */
+  inclusion?: InclusionState;
+}
+
+/** Whether the learner has answered the inclusion assessment on the Safeguarding site. */
+export interface InclusionState {
+  /** False for commercial learners, who do not take the step. */
+  applicable: boolean;
+  completed: boolean;
+  respondedAt: string | null;
 }
 
 export interface WizardStepDef {
@@ -603,6 +628,7 @@ export const WIZARD_STEPS: WizardStepDef[] = [
   { slug: 'cv-job', label: 'CV/Job Description' },
   { slug: 'plr', label: 'Personal Learning Record' },
   { slug: 'skills-radar', label: 'Skills Radar' },
+  { slug: 'inclusion', label: 'Inclusion' },
   { slug: 'policies', label: 'Policies' },
   { slug: 'next-steps', label: 'What Happens Now?' },
 ];

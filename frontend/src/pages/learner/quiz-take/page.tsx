@@ -233,9 +233,9 @@ export default function QuizTakePage() {
 
   useEffect(() => {
     if (phase !== 'quiz' || reflectionChoiceOpen || !componentAccess.open) return;
-    let last = Date.now();
+    let last = performance.now();
     timerRef.current = setInterval(() => {
-      const now = Date.now();
+      const now = performance.now();
       if (document.visibilityState === 'visible') {
         setElapsedSeconds((s) => s + 1);
         try { observeRewardInterval(trackingSessionRef.current,Math.max(last,now-1000),now); }

@@ -250,5 +250,62 @@ class VideoDisconnectTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(closed.is_set())
 
 
+class OctetStreamVideoTests(unittest.TestCase):
+    """Drive and blob storage often label a video application/octet-stream.
+
+    The proxy used to stream only video/* and audio/* incrementally, so under
+    WSGI (production gunicorn) any other label was read to the end before the
+    first byte went out: a long spinner on the learner's player. Django warns
+    whenever it has to buffer an iterator of the wrong kind, so that warning is
+    an error here.
+    """
+    consume_first = VideoStreamingTests.consume_first
+
+    def test_remote_video_labelled_octet_stream_starts_before_the_full_file_is_read(self):
+        for provider in ('drive', 'legacy'):
+            for asgi in (False, True):
+                with self.subTest(provider=provider, asgi=asgi):
+                    request = (AsyncRequestFactory() if asgi else RequestFactory()).get('/', headers={'Range': 'bytes=0-'})
+                    upstream = Mock(status=206, headers={'Content-Type': 'application/octet-stream', 'Content-Length': '6',
+                                                        'Content-Range': 'bytes 0-5/6'})
+                    upstream.read.side_effect = [b'one', b'two', b'']
+                    opener = '_open_google_drive_file' if provider == 'drive' else '_open_legacy_attachment'
+                    with patch.object(media_proxy, opener, return_value=upstream),                             patch.object(media_proxy, '_legacy_attachment_upload_path', return_value=''):
+                        response = (media_proxy.google_drive_media(request, 'example12345') if provider == 'drive'
+                                    else media_proxy.legacy_attachment_media(request, '12'))
+                    try:
+                        with warnings.catch_warnings():
+                            warnings.simplefilter('error', Warning)
+                            self.assertEqual(self.consume_first(response, asgi), b'one')
+                        self.assertEqual(upstream.read.call_count, 1, 'The server buffered the rest before first byte')
+                        self.assertEqual(response.status_code, 206)
+                        self.assertEqual(response['Content-Range'], 'bytes 0-5/6')
+                    finally:
+                        response.close()
+                    upstream.close.assert_called()
+
+    def test_stored_video_labelled_octet_stream_streams_incrementally_on_both_interfaces(self):
+        for asgi in (False, True):
+            with self.subTest(asgi=asgi):
+                consumed = []
+                def chunks():
+                    for chunk in (b'one', b'two'):
+                        consumed.append(chunk)
+                        yield chunk
+                request = (AsyncRequestFactory() if asgi else RequestFactory()).get('/', headers={'Range': 'bytes=0-5'})
+                opened = [(iter([b'o']), 6, 'application/octet-stream'), (chunks(), 6, 'application/octet-stream')]
+                with patch.object(upload_storage, 'open_stream', side_effect=opened),                         patch.object(media_proxy, '_legacy_attachment_upload_path', return_value='lecture.bin'):
+                    response = media_proxy.legacy_attachment_media(request, '12')
+                try:
+                    with warnings.catch_warnings():
+                        warnings.simplefilter('error', Warning)
+                        self.assertEqual(self.consume_first(response, asgi), b'one')
+                    self.assertEqual(consumed, [b'one'])
+                    self.assertEqual(response.status_code, 206)
+                    self.assertEqual(response['Content-Range'], 'bytes 0-5/6')
+                finally:
+                    response.close()
+
+
 if __name__ == '__main__':
     unittest.main()

@@ -612,8 +612,12 @@ class A7AbsenceReportsGuardTests(SimpleTestCase):
         self.assertEqual(resp.status_code, 401)
 
     def test_real_view_rejects_staff(self):
-        resp = self._call_real_view(_Account("staff", 3, subject_type="staff"))
+        # Staff who do not coach this learner. The learner's own coach may act
+        # (see tests_coach_learner_actions); that is a caseload lookup.
+        with mock.patch.object(permissions, "coach_owns_learner", return_value=False) as owns:
+            resp = self._call_real_view(_Account("staff", 3, subject_type="staff"))
         self.assertEqual(resp.status_code, 403)
+        owns.assert_called_once()
 
     def test_guard_allows_the_owning_learner(self):
         calls = []

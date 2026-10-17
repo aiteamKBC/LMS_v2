@@ -90,9 +90,9 @@ export function Media({ value, kind, title, fileName, canEmbed = true, onEnded }
     sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-downloads allow-presentation" allow="autoplay; fullscreen; picture-in-picture" allowFullScreen />{original}</section>;
 }
 
-export function StudentMaterial({ kind, learnerId, groupId, activityId, completed = false, onProgress, readOnly = false, baseUrl }: {
+export function StudentMaterial({ kind, learnerId, groupId, activityId, completed = false, onProgress, readOnly = false, baseUrl, reviewQuiz = false }: {
   kind: string; learnerId: string; groupId: number; activityId: number; completed?: boolean;
-  onProgress?: (result: SubjectAttemptResult) => void; readOnly?: boolean; baseUrl?: string;
+  onProgress?: (result: SubjectAttemptResult) => void; readOnly?: boolean; baseUrl?: string; reviewQuiz?: boolean;
 }) {
   const [data, setData] = useState<SubjectMaterial | null>(null);
   const [error, setError] = useState('');
@@ -106,17 +106,18 @@ export function StudentMaterial({ kind, learnerId, groupId, activityId, complete
   const completionHintId = useId();
   const base = baseUrl || `/learner_api/student-activity/${encodeURIComponent(kind)}/${encodeURIComponent(learnerId)}`;
   const attempts = `${base}/${groupId}/${activityId}/attempts/`;
+  const materialUrl = `${base}/?group_id=${groupId}&activity_id=${activityId}${reviewQuiz ? '&catalogue_kind=quiz' : ''}`;
   useEffect(() => {
     const controller = new AbortController();
     setData(null); setError(''); setAttemptId(null); setAnswers({}); setConfirmed(false); setResult(''); setSavedResult(null);
-    void subjectRequest<SubjectMaterial>(`${base}/?group_id=${groupId}&activity_id=${activityId}`, { signal: controller.signal })
+    void subjectRequest<SubjectMaterial>(materialUrl, { signal: controller.signal })
       .then((payload) => { if (!controller.signal.aborted) setData(payload); })
       .catch((failure: unknown) => { if (!controller.signal.aborted) setError(failure instanceof Error ? failure.message : 'Could not load material.'); });
     return () => controller.abort();
-  }, [base, groupId, activityId, retry]);
+  }, [materialUrl, retry]);
   const post = <T,>(url: string, body: unknown) => subjectRequest<T>(url, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRFToken': data?.csrf_token || '' }, body: JSON.stringify(body) });
   const start = async () => {
-    if (!data || busy || !data.can_attempt || !data.persistence_ready || !data.available || !data.quiz?.ready) return;
+    if (readOnly || reviewQuiz || !data || busy || !data.can_attempt || !data.persistence_ready || !data.available || !data.quiz?.ready) return;
     setBusy(true); setError(''); setResult('');
     try {
       const response = await post<{ attempt_id: string; definition: Partial<SubjectMaterial> }>(attempts, {});
@@ -125,7 +126,7 @@ export function StudentMaterial({ kind, learnerId, groupId, activityId, complete
     finally { setBusy(false); }
   };
   const submit = async () => {
-    if (!data || busy || !data.can_attempt || !data.persistence_ready || !data.available) return;
+    if (readOnly || reviewQuiz || !data || busy || !data.can_attempt || !data.persistence_ready || !data.available) return;
     setBusy(true); setError('');
     try {
       let id = attemptId;
@@ -140,7 +141,7 @@ export function StudentMaterial({ kind, learnerId, groupId, activityId, complete
       setAttemptId(null); setAnswers({});
       onProgress?.(saved);
       try {
-        const latest = await subjectRequest<SubjectMaterial>(`${base}/?group_id=${groupId}&activity_id=${activityId}`);
+        const latest = await subjectRequest<SubjectMaterial>(materialUrl);
         setData(latest);
       } catch {
         setError('Your attempt was saved, but its history could not be refreshed.');
@@ -198,8 +199,10 @@ export function StudentMaterial({ kind, learnerId, groupId, activityId, complete
         </label>)}
       </fieldset>)}
     </section>}
+    {reviewQuiz && data.historical.attempt_number == null && data.historical.score == null && !data.historical.answers.length && <p className="text-sm text-foreground-500">No saved attempt is available for this quiz.</p>}
     {(data.historical.answers.length > 0 || data.historical.score != null || data.history.length > 0) && <section className="space-y-3 border-t pt-4" aria-label="Attempt history">
       <h4 className="font-bold">Your attempt history</h4>
+      {reviewQuiz && <p className="text-sm text-foreground-600">{[data.historical.attempt_number != null ? `Attempt ${data.historical.attempt_number}` : '', data.historical.passed === true ? 'Passed' : data.historical.passed === false ? 'Not passed' : ''].filter(Boolean).join(' · ')}</p>}
       {(data.historical.answers.length > 0 || data.historical.score != null) && <details className="rounded-xl border p-3"><summary className="cursor-pointer text-sm font-semibold">Previous learning{data.historical.score != null ? ` · ${data.historical.score}${data.historical.maximum_score ? ` / ${data.historical.maximum_score}` : ''}` : ''}</summary>
         <div className="mt-3 space-y-4">{data.historical.answers.map((answer, index) => <div key={`${answer.question_id}:${index}`}><Html value={answer.question_body || `Question ${index + 1}`} /><p className="mt-1 text-sm text-foreground-600">Your answer: {Array.isArray(answer.learner_answer) ? answer.learner_answer.map(String).join(', ') : String(answer.learner_answer ?? 'Not recorded')}</p></div>)}</div>
       </details>}

@@ -47,8 +47,8 @@ def native_state(component, detail):
             and (not component.get('tutorValidationRequired') or marking.get('status') == 'accepted')]
     dates = [value for value in [marking.get('reviewedAt'), *(row.get('submittedAt') for row in done)] if value]
     feed = any(str(row.get('componentId') or '') == ident for row in detail.get('activityFeed', []))
-    return {'status': journey_status('native', completed=bool(done), started=bool(records) or feed),
-            'completedAt': max(dates) if done and dates else None}
+    return {'status': journey_status('native', completed=bool(done) or component.get('attendanceCompleted') is True, started=bool(records) or feed),
+            'completedAt': max(dates) if done and dates else component.get('attendanceCompletedAt') if component.get('attendanceCompleted') is True else None}
 
 
 def native_entry(component, detail):
@@ -60,7 +60,7 @@ def native_entry(component, detail):
         row.get('componentId') == cid and progress_counts_as_achieved(row.get('kind'), row.get('passed'))
         for row in [*detail.get('videoProgress', []), *detail.get('componentProgress', [])])
     return {**component, 'title': component.get('component') or '', 'quizAttempts': attempts,
-            '_done': bool(done)}
+            '_done': bool(done) or component.get('attendanceCompleted') is True}
 
 
 def week_key(item):
@@ -86,7 +86,6 @@ def project_journey(detail, activity, metadata, has_history, module_id=None, wee
     with the original Coach adapter through journey_rules.json.
     """
     subjects = {}
-    historical_modules = {row.get('module_id') for row in (activity or {}).get('subjects', []) if row.get('module_id')}
     if has_history:
         for row in activity.get('subjects', []):
             key = f"legacy:{row['id']}"
@@ -108,14 +107,10 @@ def project_journey(detail, activity, metadata, has_history, module_id=None, wee
                 'status': journey_status('native', completed=bool(row['completed']), started=started), 'completedAt': None,
                 '_identity': ('legacy', row['group_id'], row.get('catalogue_kind') or 'material', row['activity_id']) if row.get('source_activity_id') is not None else None})
     for row in metadata.get('current_subjects', []):
-        if has_history and row['id'] in historical_modules:
-            continue
         subjects.setdefault(f"current:{row['id']}", {'id': f"current:{row['id']}", 'moduleId': row['id'], 'title': row['title'], 'items': []})
     seen_components = set()
     for index, component in enumerate(detail.get('components', [])):
         mid = component.get('moduleId')
-        if has_history and mid in historical_modules:
-            continue
         if not mid:
             raise LookupError('Journey requires a verified module identity.')
         key = f'current:{mid}'
@@ -225,7 +220,9 @@ def read_history(source, owner):
     from learner_api.student_activity_access import student_activity_available
     if not student_activity_available(source.aptem_id):
         return None
-    courses = query('''SELECT DISTINCT c.id,c.source_course_ref,c.source_course_title,c.curriculum_module_ref
+    courses = query('''SELECT DISTINCT c.id,c.source_course_ref,c.source_course_title,c.curriculum_module_ref,
+        CASE WHEN m.source_relationship='historical'
+            THEN m.source_payload->'verified_catalogue_scope' END AS verified_catalogue_scope
         FROM "Learner".learner_source_course_memberships m
         JOIN curriculum.source_courses c ON c.id=m.source_course_id AND c.deleted_at IS NULL
         WHERE m.learner_id=%s AND m.deleted_at IS NULL AND c.source_system='old_lms'
@@ -293,6 +290,8 @@ def read_native_facts(context, assigned):
                 'tutorValidationRequired': bool(row['tutor_validation_required']), 'isQuiz': bool(row['quiz_id']),
                 'quizMeta': {'quizId': row['quiz_id'], 'questions': row['questions']} if row['quiz_id'] else None,
                 'sessionDate': settings.get('sessionDate')})
+    from learner_api.teams_attendance import annotate_attendance_completion
+    components = annotate_attendance_completion(components, context.profile)
     entries = list(context.profile.progress_entries.exclude(kind='activity_event').values(
         'kind', 'component_ref', 'quiz_ref', 'passed', 'submitted_at', 'grade', 'achieved_score', 'total_score'))
     from learner_api.models import _serialise_quiz_ref

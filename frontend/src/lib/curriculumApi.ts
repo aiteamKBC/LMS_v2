@@ -1265,6 +1265,7 @@ export interface CurriculumActivityLogState {
   statusSource: string;
   actualOtjh: number | null;
   acceptedOtjh: number | null;
+  unallocatedAcceptedRecords?: number;
   hoursSource: string;
   startedAt: string | null;
   endedAt: string | null;
@@ -1330,8 +1331,9 @@ export type CurriculumProgrammeLearnerRosterResponse = CurriculumScopeLearnerRos
 
 export interface CurriculumScopeLearnerKsbImpactResponse {
   activityLogOtjh?: {
-    learners: Array<{ learnerId: number | string; plannedOtjh: number; achievedOtjh: number | null }>;
+    learners: Array<{ learnerId: number | string; plannedOtjh: number; achievedOtjh: number | null; unallocatedAcceptedRecords?: number }>;
     achievedTotal: number | null; plannedTotal: number; source: string;
+    unallocatedAcceptedRecords?: number;
   };
   scope: CurriculumLearnerScope | string;
   identifier: string;

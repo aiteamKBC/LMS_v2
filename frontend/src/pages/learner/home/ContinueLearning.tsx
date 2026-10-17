@@ -2,14 +2,15 @@ import { useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { ArrowRight, BookOpen } from 'lucide-react';
 import type { LearnerKind } from '@/api/learnerDetail';
-import type { OverviewWeek } from '@/api/learnerOverview';
+import type { HomeSummary } from '@/api/learnerOverview';
 import { Modal } from '@/pages/users/components/Modal';
 import { learningHref, learningToday } from '../my-learning/subjectLearning';
 import { ReferenceIcon } from './ReferenceIcon';
 import styles from './studentHome.module.css';
 
 export function ContinueLearning({ kind, learnerId, enabled, week, loading, error, onRetry, linkIdentity = true }: {
-  kind: LearnerKind; learnerId: string; enabled: boolean; week: OverviewWeek | null;
+  kind: LearnerKind; learnerId: string; enabled: boolean;
+  week: Pick<HomeSummary, 'weekStart' | 'weekEnd' | 'modules'> | null;
   loading: boolean; error: string; onRetry: () => void;
   /** Name the learner in the links (staff preview); false for a learner's own, id-free links. */
   linkIdentity?: boolean;

@@ -75,15 +75,31 @@ WEEKS_SQL = '''SELECT x.id, x.module_catalogue_id, x.week_number, x.title, x.dis
     WHERE x.module_catalogue_id=ANY(%s) AND COALESCE(x.library_state, '')<>'library' AND ''' + _KEPT_WITH_MODULE + '''
     ORDER BY x.display_order, x.week_number, x.id'''
 
-LIVE_COMPONENTS_SQL = '''SELECT x.week_id, x.module_catalogue_id, x.settings_json
+# Only transfer settings consumed by this read-only library. Full component settings
+# contain meeting payloads that are large and never used here. Keep non-object
+# legacy JSON unchanged so _settings retains its existing decoding semantics.
+LIVE_COMPONENTS_SQL = '''SELECT x.week_id, x.module_catalogue_id, CASE WHEN jsonb_typeof(x.settings_json)='object' THEN jsonb_build_object(
+            'teamsOccurrenceId', x.settings_json -> 'teamsOccurrenceId',
+            'teamsLiveSessionId', x.settings_json -> 'teamsLiveSessionId',
+            'teamsSessionNumber', x.settings_json -> 'teamsSessionNumber',
+            'extraTeamsLiveSessionId', x.settings_json -> 'extraTeamsLiveSessionId',
+            'recordingSeriesId', x.settings_json -> 'recordingSeriesId',
+            'recordingDate', x.settings_json -> 'recordingDate'
+        ) ELSE x.settings_json END AS settings_json
     FROM curriculum.components x JOIN curriculum.modules m ON m.module_catalogue_id=x.module_catalogue_id
     WHERE x.module_catalogue_id=ANY(%s) AND COALESCE(x.library_state, '')<>'library'
-    AND x.type IN ('live-session','live_session') AND ''' + _KEPT_WITH_MODULE + '''
+    AND (x.type IN ('live-session','live_session') OR x.settings_json->>'recordingSeriesId' IS NOT NULL)
+    AND ''' + _KEPT_WITH_MODULE + '''
     ORDER BY x.display_order, x.id'''
 
 # Every live session of every running module, for the sessions that need attention.
 ATTENTION_COMPONENTS_SQL = '''SELECT c.id AS component_id, c.title AS component_title,
-        c.week_id, c.module_catalogue_id, c.settings_json,
+        c.week_id, c.module_catalogue_id, CASE WHEN jsonb_typeof(c.settings_json)='object' THEN jsonb_build_object(
+            'teamsOccurrenceId', c.settings_json -> 'teamsOccurrenceId',
+            'teamsLiveSessionId', c.settings_json -> 'teamsLiveSessionId',
+            'teamsSessionNumber', c.settings_json -> 'teamsSessionNumber',
+            'extraTeamsLiveSessionId', c.settings_json -> 'extraTeamsLiveSessionId'
+        ) ELSE c.settings_json END AS settings_json,
         w.week_number, w.title AS week_title, w.display_order,
         m.title AS module_title, m.programme_name, m.cohort_name, m.group_name, p.status AS programme_status
     FROM curriculum.components c
@@ -99,8 +115,20 @@ ATTENTION_COMPONENTS_SQL = '''SELECT c.id AS component_id, c.title AS component_
 # Author labels also remain useful for archived deliveries. Keep only weeks
 # deleted with their parent module; a separately removed component is not a link.
 CALENDAR_COMPONENTS_SQL = '''SELECT c.id AS component_id, c.title AS component_title,
-        c.live_sessions_link, c.week_id,
-        c.module_catalogue_id, c.settings_json, w.week_number, w.title AS week_title,
+        c.week_id,
+        c.module_catalogue_id, CASE WHEN jsonb_typeof(c.settings_json)='object' THEN jsonb_build_object(
+            'teamsOccurrenceId', c.settings_json -> 'teamsOccurrenceId',
+            'teamsLiveSessionId', c.settings_json -> 'teamsLiveSessionId',
+            'teamsSessionNumber', c.settings_json -> 'teamsSessionNumber',
+            'extraTeamsLiveSessionId', c.settings_json -> 'extraTeamsLiveSessionId',
+            'sessionDateTimeUtc', c.settings_json -> 'sessionDateTimeUtc',
+            'teamsStartDateTimeUtc', c.settings_json -> 'teamsStartDateTimeUtc',
+            'sessionDate', c.settings_json -> 'sessionDate',
+            'sessionTime', c.settings_json -> 'sessionTime',
+            'sessionTimeZone', c.settings_json -> 'sessionTimeZone',
+            'durationMinutes', c.settings_json -> 'durationMinutes',
+            'teamsDurationMinutes', c.settings_json -> 'teamsDurationMinutes'
+        ) ELSE c.settings_json END AS settings_json, w.week_number, w.title AS week_title,
         m.title AS module_title, m.programme_name, m.cohort_name, m.group_name,
         (m.deleted_at IS NOT NULL OR COALESCE(m.is_programme_deleted, false)) AS module_archived,
         p.status AS programme_status
@@ -155,8 +183,8 @@ def _text(value):
 
 
 def week_owners(components):
-    """Which week owns each occurrence, series session, and additional meeting series."""
-    by_occurrence, by_session, by_extra_series = {}, {}, {}
+    """Which week owns each occurrence, series session, and dated recording."""
+    by_occurrence, by_session, by_extra_series, by_recording_day = {}, {}, {}, {}
     for row in components:
         settings, week_id = _settings(row.get('settings_json')), row.get('week_id')
         occurrence = _text(settings.get('teamsOccurrenceId'))
@@ -168,12 +196,21 @@ def week_owners(components):
             by_session.setdefault((series, number), week_id)
         if extra:
             by_extra_series.setdefault(extra, week_id)
-    return by_occurrence, by_session, by_extra_series
+        recording_series = _text(settings.get('recordingSeriesId'))
+        recording_day = _text(settings.get('recordingDate'))
+        if recording_series and recording_day:
+            by_recording_day.setdefault((recording_series, recording_day), week_id)
+        elif series and recording_day:
+            by_recording_day.setdefault((series, recording_day), week_id)
+    return by_occurrence, by_session, by_extra_series, by_recording_day
 
 
 def recording_week(row, owners):
-    by_occurrence, by_session, by_extra_series = owners
-    return (by_occurrence.get(_text(row.get('occurrence_id')))
+    by_occurrence, by_session, by_extra_series, by_recording_day = owners
+    recorded = instant(row.get('created_datetime')) if row.get('created_datetime') else None
+    day = recorded.astimezone(ZoneInfo('Europe/London')).date().isoformat() if recorded else ''
+    return (by_recording_day.get((_text(row.get('series_id')), day))
+            or by_occurrence.get(_text(row.get('occurrence_id')))
             or by_session.get((_text(row.get('series_id')), _text(row.get('session_number'))))
             or by_extra_series.get(_text(row.get('series_id'))))
 
@@ -470,6 +507,9 @@ def build_library(recordings, weeks, components, attention=None, placement_revie
             'order': week_order.get(week_key, len(week_order)),
             'recordings': []})
         state = _text(row.get('archive_status')) or 'pending'
+        recorded = instant(row.get('created_datetime')) if row.get('created_datetime') else None
+        recorded_day = recorded.astimezone(ZoneInfo('Europe/London')).date().isoformat() if recorded else ''
+        explicitly_placed = bool(owners[3].get((_text(row.get('series_id')), recorded_day)))
         item = {
             'id': row['artifact_id'], 'seriesId': row['series_id'], 'occurrenceId': row.get('occurrence_id'),
             'sessionNumber': row.get('session_number'),
@@ -477,7 +517,7 @@ def build_library(recordings, weeks, components, attention=None, placement_revie
             'endsAt': _iso(row.get('end_datetime')),
             'state': state if state in ('pending', 'ready', 'failed') else 'pending',
             'status': recording_status(row.get('archive_status')), 'duplicateCount': 0,
-            'placementReview': row['artifact_id'] in placement_reviews,
+            'placementReview': row['artifact_id'] in placement_reviews and not explicitly_placed,
             'hiddenFromLearners': artifact_metadata(row).get('lmsHiddenFromLearners') is True}
         kept[key] = item
         bucket['recordings'].append(item)

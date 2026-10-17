@@ -17,7 +17,9 @@ progress is the reason the shift is not just a swap of ids: it has to land on
 the equivalent components of the module they are moving to. Weeks are shown in
 the same position, but components are matched by stable component id first and,
 for cloned group modules with new ids, by one exact cleaned title and type.
-Ambiguous or unmatched progress stays where it is.
+Ambiguous or unmatched progress is soft-archived when the learner leaves the
+source module. It remains available as historical evidence, but no longer
+contributes to the learner's active progress, hours or KSB totals.
 
 A completed component often carries a reflection awaiting a tutor or coach, or
 one they have already marked with feedback. That review belongs to the work, not
@@ -41,6 +43,7 @@ import unicodedata
 from django.db import DatabaseError, connections, transaction
 from django.db.models import Q
 from django.http import JsonResponse
+from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 
 from curriculum_api.week_visibility import visible_child_sql, visible_week_sql
@@ -348,7 +351,8 @@ def _progress_entries_by_component(profile, component_ids):
     component_ids = set(component_ids)
     grouped = {}
     for entry in LearnerProgressEntry.objects.filter(
-        learner=profile, component_ref__in=list(component_ids),
+        learner=profile, deleted_at__isnull=True,
+        component_ref__in=list(component_ids),
     ).exclude(kind="activity_event"):
         grouped.setdefault(_s(entry.component_ref), []).append(entry)
 
@@ -358,7 +362,8 @@ def _progress_entries_by_component(profile, component_ids):
         return grouped
     attempts = LearnerProgressEntry.objects.filter(
         Q(component_ref__isnull=True) | Q(component_ref=""),
-        learner=profile, kind="quiz", quiz_ref__in=list(quiz_ids),
+        learner=profile, deleted_at__isnull=True,
+        kind="quiz", quiz_ref__in=list(quiz_ids),
     )
     for entry in attempts:
         candidates = {
@@ -599,7 +604,8 @@ def _validate_mappings(mappings, from_id, to_id):
             return None, "Every progress mapping must be an object."
         source_id = _s(item.get("fromComponentId"))
         target_id = _s(item.get("toComponentId"))
-        # A pair with no target is "leave this progress where it is".
+        # A pair with no target is deliberately unmatched. It is archived when
+        # the learner leaves the source module rather than remaining active.
         if not source_id or not target_id:
             continue
         if source_id not in source:
@@ -756,7 +762,7 @@ def _repoint_progress(learner, profile, pairs, entries_by_component=None):
     quiz would be inventing a record. The reflection and its tutor decision move
     with it, for the same reason.
     """
-    counts = {"entries": 0, "reviews": 0, "reviewsKept": 0}
+    counts = {"entries": 0, "entryIds": [], "reviews": 0, "reviewsKept": 0}
     if entries_by_component is None:
         entries_by_component = _progress_entries_by_component(profile, [source for source, _ in pairs])
     for source_id, target_id in pairs:
@@ -791,10 +797,45 @@ def _repoint_progress(learner, profile, pairs, entries_by_component=None):
             entry.save(update_fields=REPOINTED_FIELDS)
             _rewrite_ksbs(entry, context)
             counts["entries"] += 1
+            counts["entryIds"].append(getattr(entry, "pk", getattr(entry, "id", None)))
         moved_reviews, kept_reviews = _move_review(learner, source_id, target_id, context)
         counts["reviews"] += moved_reviews
         counts["reviewsKept"] += kept_reviews
     return counts
+
+
+def _archive_unmatched_progress(
+    profile, from_id, source_component_ids, resolved_legacy_entry_ids=(), moved_entry_ids=(),
+):
+    """Soft-archive active source progress that was not moved to the target.
+
+    ``module_ref`` is authoritative for normal rows. Older rows can lack it, so
+    a component reference is used only when the module reference is blank. The
+    moved ids are excluded because cloned modules can deliberately share a
+    stable component id.
+    """
+    if profile is None:
+        return 0
+
+    source_scope = Q(module_ref=from_id)
+    if source_component_ids:
+        missing_module = Q(module_ref__isnull=True) | Q(module_ref="")
+        source_scope |= missing_module & Q(component_ref__in=list(source_component_ids))
+    if resolved_legacy_entry_ids:
+        # Some old quiz attempts carry only quiz_ref. The pre-shift resolver can
+        # still prove which unique source slot owns them, so archive those ids
+        # explicitly rather than leaving their hours active.
+        source_scope |= Q(pk__in=list(resolved_legacy_entry_ids))
+
+    entries = (
+        LearnerProgressEntry.objects
+        .filter(learner=profile, deleted_at__isnull=True)
+        .filter(source_scope)
+    )
+    moved_entry_ids = [entry_id for entry_id in moved_entry_ids if entry_id is not None]
+    if moved_entry_ids:
+        entries = entries.exclude(pk__in=moved_entry_ids)
+    return entries.update(deleted_at=timezone.now())
 
 
 def _base_plan(learner):
@@ -1075,14 +1116,14 @@ def module_shift(request, pk):
                 400,
             )
 
-        # Which progress moves with the learner, and onto what. Absent or empty
-        # means the plan alone changes: progress then stays on the module they
-        # left, which is the honest default for a shift made before any work.
+        # Which progress moves with the learner, and onto what. Anything not
+        # mapped is archived after the plan changes so it cannot remain in the
+        # learner's active completion, hours or KSB totals.
         pairs, mapping_error = _validate_mappings(payload.get("progressMappings") or [], from_id, to_id)
         if mapping_error:
             return _error(mapping_error, 400)
 
-        profile = learner_profile_for_source(learner) if pairs else None
+        profile = learner_profile_for_source(learner)
         if pairs and profile is None:
             return _error(
                 "This learner has no delivery record, so there is no progress to move.",
@@ -1093,11 +1134,23 @@ def module_shift(request, pk):
         # module with their progress still on the old one, or the reverse, is
         # worse than the shift not happening.
         with transaction.atomic(using="enrolment"):
+            source_component_ids = {
+                component["componentId"]
+                for week in _weeks_with_components(from_id)
+                for component in week["components"]
+            } if profile is not None else set()
             # Resolve against the old plan before its mirror is replaced. The
             # destination's quiz slots must not make an old attempt ambiguous.
             entries_by_component = _progress_entries_by_component(
-                profile, [source for source, _ in pairs],
-            ) if pairs else {}
+                profile, source_component_ids,
+            ) if profile is not None and source_component_ids else {}
+            resolved_legacy_entry_ids = {
+                getattr(entry, "pk", getattr(entry, "id", None))
+                for entries in entries_by_component.values()
+                for entry in entries
+                if not _s(entry.module_ref)
+            }
+            resolved_legacy_entry_ids.discard(None)
             # One entry replaced, the rest kept exactly as stored — including any
             # whose module has left the curriculum, which is not this shift's
             # business to rewrite or drop.
@@ -1109,11 +1162,15 @@ def module_shift(request, pk):
             )
             counts = (
                 _repoint_progress(learner, profile, pairs, entries_by_component) if pairs
-                else {"entries": 0, "reviews": 0, "reviewsKept": 0}
+                else {"entries": 0, "entryIds": [], "reviews": 0, "reviewsKept": 0}
+            )
+            archived = _archive_unmatched_progress(
+                profile, from_id, source_component_ids,
+                resolved_legacy_entry_ids, counts["entryIds"],
             )
 
         moved = counts["entries"]
-        if moved:
+        if moved or archived:
             # The component's hours may differ from the one left behind, and the
             # learner's own workspace reads the materialised plan rather than
             # this list — both are derived, so both are refreshed here.
@@ -1139,6 +1196,7 @@ def module_shift(request, pk):
         # minute after the shift had already succeeded.
         return JsonResponse({
             "progressMoved": moved,
+            "progressArchived": archived,
             "reviewsMoved": counts["reviews"],
             # A review left behind because the target already had one of its own.
             "reviewsKept": counts["reviewsKept"],

@@ -11,6 +11,14 @@ const component = (over: Partial<JourneyComponent>): JourneyComponent => ({
 });
 
 describe('isComponentComplete', () => {
+  it('completes verified live attendance without a progress or hours row', () => {
+    const done = new Set<string>();
+    expect(isComponentComplete(component({ type: 'live_session', attendanceCompleted: true }), done)).toBe(true);
+    expect(isComponentComplete(component({ type: 'live_session' }), done)).toBe(false);
+    expect(isComponentComplete(component({ type: 'reading', attendanceCompleted: true }), done)).toBe(false);
+    expect(done.size).toBe(0);
+  });
+
   it('marks a component the learner has a recorded completion for', () => {
     const done = completedComponentIds({
       videoProgress: [],

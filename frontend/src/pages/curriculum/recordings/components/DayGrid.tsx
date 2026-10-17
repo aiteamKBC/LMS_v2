@@ -1,7 +1,9 @@
+import LectureAttendance from './LectureAttendance';
 import type { Lecture } from '../types';
 import { STATUS_META, formatFullDate, formatTimeRange, lectureOverallStatus, lectureStatusSummary } from '../utils';
 
 interface DayGridProps {
+  timeZone?: string;
   date: string;
   lectures: Lecture[];
   selectedLectureId: string | null;
@@ -12,7 +14,7 @@ interface DayGridProps {
 }
 
 /** A time ordered agenda keeps titles readable even when many meetings overlap. */
-export default function DayGrid({ date, lectures, selectedLectureId, emptyReason, onSelectLecture,
+export default function DayGrid({ timeZone = 'Europe/London', date, lectures, selectedLectureId, emptyReason, onSelectLecture,
   onFindNextLectureDay, onClearFilters }: DayGridProps) {
   if (!lectures.length) {
     const filtered = emptyReason === 'filtered';
@@ -38,7 +40,7 @@ export default function DayGrid({ date, lectures, selectedLectureId, emptyReason
     slots.set(lecture.startTime, slot);
   }
 
-  return <div className="max-h-[70vh] overflow-y-auto rounded-xl border border-background-200 bg-background-50 p-3 scrollbar-slim sm:p-4">
+  return <div className="rounded-xl border border-background-200 bg-background-50 p-3 scrollbar-slim sm:p-4">
     <div className="space-y-5">
       {[...slots].map(([time, events]) => <section key={time} className="grid min-w-0 grid-cols-[3.5rem_minmax(0,1fr)] gap-2 sm:grid-cols-[4.5rem_minmax(0,1fr)] sm:gap-4"
         aria-label={`${time} lectures`}>
@@ -47,18 +49,20 @@ export default function DayGrid({ date, lectures, selectedLectureId, emptyReason
           {events.map(lecture => {
             const status = lectureOverallStatus(lecture);
             const meta = STATUS_META[status];
-            return <button key={lecture.id} type="button" aria-pressed={lecture.id === selectedLectureId}
+            return <article key={lecture.id} className="overflow-hidden rounded-lg border border-background-200"><button type="button" aria-pressed={lecture.id === selectedLectureId}
               onClick={() => onSelectLecture(lecture)}
-              className={`w-full min-w-0 rounded-lg border border-background-200 border-l-4 bg-background-50 p-3 text-left transition-colors hover:bg-primary-50 ${meta.borderLeft} ${lecture.id === selectedLectureId ? 'ring-2 ring-primary-300' : ''}`}>
+              className={`w-full min-w-0 border-l-4 bg-background-50 px-3 py-2 text-left transition-colors hover:bg-primary-50 ${meta.borderLeft} ${lecture.id === selectedLectureId ? 'ring-2 ring-primary-300' : ''}`}>
               <span className="flex min-w-0 flex-wrap items-start justify-between gap-x-3 gap-y-1">
                 <span className="min-w-0 flex-1 break-words font-heading text-sm font-bold leading-snug text-foreground-950">{lecture.title}</span>
                 <span className="shrink-0 text-xs tabular-nums text-foreground-600">{formatTimeRange(lecture.startTime, lecture.endTime)}</span>
               </span>
-              <span className="mt-1 block break-words text-xs text-foreground-600">{lecture.module} · {lecture.group}</span>
-              <span className={`mt-1.5 inline-flex items-center gap-1.5 text-xs font-medium ${meta.textClass}`}>
+              <span className="mt-1 flex flex-wrap items-center justify-between gap-x-3 gap-y-1 text-xs">
+              <span className="min-w-0 break-words text-foreground-600">{lecture.module} · {lecture.group}</span>
+              <span className={`inline-flex items-center gap-1.5 font-medium ${meta.textClass}`}>
                 <span className={`h-2 w-2 shrink-0 rounded-full ${meta.dotClass}`} />{lectureStatusSummary(lecture)}
               </span>
-            </button>;
+              </span>
+            </button><LectureAttendance key={lecture.id} lecture={lecture} timeZone={timeZone} /></article>;
           })}
         </div>
       </section>)}
