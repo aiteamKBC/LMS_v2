@@ -139,6 +139,7 @@ export function VideoPlayer({
   const mountRef = useRef<HTMLDivElement | null>(null);
   const nativePlayingRef = useRef(false);
   const [failedSource, setFailedSource] = useState<string | null>(null);
+  const [retryVersion, setRetryVersion] = useState(0);
   const useProviderPreview = parsed.kind === 'file' && failedSource === parsed.src && !!parsed.fallbackSrc;
   const cbRef = useRef({ onDuration, onProgress, onPlayingChange, onEnded, onUnsupported });
   cbRef.current = { onDuration, onProgress, onPlayingChange, onEnded, onUnsupported };
@@ -225,7 +226,7 @@ export function VideoPlayer({
   if (parsed.kind === 'file' && !useProviderPreview) {
     return (
       <video
-        key={parsed.src}
+        key={`${parsed.src}:${retryVersion}`}
         src={parsed.src}
         controls
         preload="metadata"
@@ -247,10 +248,34 @@ export function VideoPlayer({
     );
   }
 
+  if (useProviderPreview) {
+    return (
+      <div className="absolute inset-0 flex flex-col bg-black">
+        <div className="flex flex-wrap items-center justify-between gap-2 bg-slate-900 px-4 py-3 text-sm text-white">
+          <p role="status">Video streaming could not load. Trying the provider preview.</p>
+          <button
+            type="button"
+            className="rounded-md border border-white/50 px-3 py-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white"
+            onClick={() => { setFailedSource(null); setRetryVersion((version) => version + 1); }}
+          >
+            Retry video
+          </button>
+        </div>
+        <iframe
+          src={parsed.fallbackSrc}
+          title={title}
+          className="min-h-0 w-full flex-1"
+          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+          allowFullScreen
+        />
+      </div>
+    );
+  }
+
   // Vimeo / unknown — plain embed (progress tracked via onUnsupported fallback).
   return (
     <iframe
-      src={useProviderPreview ? parsed.fallbackSrc : parsed.src}
+      src={parsed.src}
       title={title}
       className="absolute inset-0 w-full h-full"
       allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"

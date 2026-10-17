@@ -34,6 +34,7 @@ import { learningToday } from '../my-learning/subjectLearning';
 import { dateKey } from '../training-plan-timeline/model';
 import styles from './attendance.module.css';
 import { lectureCounts } from './lectureCounts';
+import { attendanceLecturesForDisplay, attendanceModuleGroups, isLearningOnlyModule } from './moduleGroups';
 
 const learnerNav = roleNavMap.learner;
 
@@ -76,17 +77,22 @@ export default function AttendancePage() {
   const [attendError, setAttendError] = useState('');
   const [attendNotice, setAttendNotice] = useState('');
   const [confirmations, setConfirmations] = useState<Record<string, number>>({});
-  const allLectures = useMemo(() => (data?.lectures || []).map(row => {
-    const minutes = confirmations[`${learner.kind}:${learner.id}:${row.id}`];
-    return minutes == null ? row : { ...row, status: 'completed' as const, attendanceConfirmed: true,
-      creditedMinutes: minutes, canReportAbsence: false, catchupStatus: null };
-  }), [data, confirmations, learner.kind, learner.id]);
+  const allLectures = useMemo(() => {
+    const modules = [...(data?.modules || []), ...(schedule.data?.modules || []).map(module => ({
+      id: `native:${module.id}`, title: module.title,
+    }))];
+    return attendanceLecturesForDisplay(data?.lectures || [], modules).map(row => {
+      const minutes = confirmations[`${learner.kind}:${learner.id}:${row.id}`];
+      return minutes == null ? row : { ...row, status: 'completed' as const, attendanceConfirmed: true,
+        creditedMinutes: minutes, canReportAbsence: false, catchupStatus: null };
+    });
+  }, [data, schedule.data, confirmations, learner.kind, learner.id]);
   const now = useLectureClock(allLectures);
   const featured = featuredLecture(allLectures, now, data?.timeZone);
   const today = learningToday();
   const currentModule = useMemo(() => {
     if (!schedule.data) return null;
-    const modules = schedule.data.modules.map(module => {
+    const modules = schedule.data.modules.filter(module => !isLearningOnlyModule(module.title)).map(module => {
       const storedEnd = dateKey(module.end_date);
       const deliveryEnd = dateKey(module.effectiveEndDate);
       return deliveryEnd > storedEnd ? { ...module, end_date: deliveryEnd } : module;
@@ -96,15 +102,20 @@ export default function AttendancePage() {
   }, [schedule.data, today]);
   const moduleOptions = useMemo(() => {
     const options = data?.modules || [];
-    if (!currentModule || options.some(module => module.id === `native:${currentModule.id}`)) return options;
-    return [...options, { id: `native:${currentModule.id}`, title: currentModule.title }];
+    const withCurrent = !currentModule || options.some(module => module.id === `native:${currentModule.id}`)
+      ? options : [...options, { id: `native:${currentModule.id}`, title: currentModule.title }];
+    return attendanceModuleGroups(withCurrent);
   }, [data, currentModule]);
   const requestedModule = moduleSelection?.learnerKey === learnerKey ? moduleSelection.moduleId : null;
+  const requestedGroup = moduleOptions.find(module => module.moduleIds.includes(requestedModule || ''));
+  const currentGroup = currentModule && moduleOptions.find(module => module.moduleIds.includes(`native:${currentModule.id}`));
   const selectedModule = requestedModule === 'all' ? 'all'
-    : requestedModule && moduleOptions.some(module => module.id === requestedModule) ? requestedModule
-      : currentModule ? `native:${currentModule.id}` : 'all';
+    : requestedGroup?.id || currentGroup?.id || 'all';
   const setModuleId = (moduleId: string) => setModuleSelection({ learnerKey, moduleId });
-  const lectures = useMemo(() => allLectures.filter(row => selectedModule === 'all' || row.moduleId === selectedModule), [allLectures, selectedModule]);
+  const lectures = useMemo(() => {
+    const moduleIds = moduleOptions.find(module => module.id === selectedModule)?.moduleIds || [];
+    return allLectures.filter(row => selectedModule === 'all' || moduleIds.includes(row.moduleId));
+  }, [allLectures, selectedModule, moduleOptions]);
   const counts = useMemo(() => lectureCounts(lectures), [lectures]);
   const tabs: PageTabItem[] = [
     { value: 'all', label: 'All', count: counts.all },

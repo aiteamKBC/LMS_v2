@@ -11,6 +11,7 @@ interface SearchAndFiltersProps {
   statusFilter: RecordingFilter;
   onStatusFilterChange: (value: RecordingFilter) => void;
   results: Lecture[];
+  searchScope?: string;
   onSelectResult: (lecture: Lecture) => void;
 }
 
@@ -23,6 +24,7 @@ export default function SearchAndFilters({
   statusFilter,
   onStatusFilterChange,
   results,
+  searchScope,
   onSelectResult,
 }: SearchAndFiltersProps) {
   const [focused, setFocused] = useState(false);
@@ -83,6 +85,7 @@ export default function SearchAndFilters({
 
           {showResults ? (
             <div className="absolute left-0 right-0 top-full z-30 mt-2 max-h-80 overflow-y-auto rounded-lg border border-background-200 bg-background-50 p-1.5 animate-pop-in scrollbar-slim">
+              <p className="px-3 py-2 text-xs font-semibold text-foreground-600">{results.length} matching lectures{searchScope ? ` - ${searchScope}` : ''}</p>
               {results.length === 0 ? (
                 <p className="px-3 py-4 text-sm text-foreground-500">
                   No lectures match “{query}”.
@@ -110,7 +113,7 @@ export default function SearchAndFilters({
                         {formatCompactDate(lecture.date)} · {lecture.startTime} · {lecture.programme}
                       </span>
                       <span className="mt-1 block text-xs text-foreground-500">
-                        {lectureStatusSummary(lecture)}
+                        {lecture.module} / {lecture.group}{lecture.week ? ` / Week ${lecture.week}` : ''} / {lectureStatusSummary(lecture)}
                       </span>
                     </span>
                   </button>

@@ -1,8 +1,10 @@
 """Learner-scoped, read-only sources for the Training Plan dashboard."""
 from collections import defaultdict
-from datetime import datetime, timezone
+from datetime import date, datetime, time, timedelta, timezone
 import logging
 import math
+import re
+from zoneinfo import ZoneInfo
 
 from . import journal_sources
 from django.db import DatabaseError, connections
@@ -14,9 +16,9 @@ from old_otjh.coach_booking import booking_url
 from old_otjh.service import ServiceError
 from .learner_detail import SOURCE_MODELS
 from .models import LearnerProfile, StaffUser
-from .learning_plan import _aptem_subject_modules, _effective_plan_ids
+from .learning_plan import _aptem_subject_modules, _effective_plan_ids, request_preset_cache
 from .coach_assignment import current_coach, source_coach
-from .student_activity import _builder_subject_metadata
+from .student_activity import _builder_subject_metadata, builder_subject_links
 from .subject_content import as_list, clean_text, safe_url
 from .subject_dates import is_introduction_section
 from .training_plan_contract import read_contract, contract_extract_metadata, selected_contract
@@ -48,6 +50,8 @@ TRAINING_PLAN_SOURCE_FIELDS = (
     'case_owner', 'coach_name', 'coach_email',
     'start_date', 'end_date', 'learner_start_date',
     'practical_period_end_date', 'apprenticeship_end_date',
+    # Read by the imported Review calendar; deferring it cost a query.
+    'learner_type',
 )
 
 TRAINING_PLAN_PROFILE_FIELDS = (
@@ -55,6 +59,8 @@ TRAINING_PLAN_PROFILE_FIELDS = (
     'programme', 'programme_id', 'programme_status',
     'cohort', 'cohort_id', 'group_name', 'group_id',
     'coach_name', 'coach_email', 'start_date', 'end_date',
+    # Review source and imported Review identity; deferring them cost a query each.
+    'aptem_id', 'enrolment_id', 'learner_type',
 )
 
 
@@ -114,7 +120,7 @@ def plan_module(row):
             'learning_outcomes': []}
 
 
-def attach_curriculum_slots(module_rows, by_id, week_counts, weeks_by_number=None):
+def attach_curriculum_slots(module_rows, by_id, week_counts, weeks_by_number=None, *, strict=False):
     """Give every learner module the curriculum slot spine the Builder shows.
 
     This is a READ of the curriculum scheduler, not a second one. The holidays
@@ -157,6 +163,8 @@ def attach_curriculum_slots(module_rows, by_id, week_counts, weeks_by_number=Non
             [row.get('cohort_id') for row in module_rows]
         )
     except Exception:
+        if strict:
+            raise
         log.warning('Could not resolve cohort holidays for the training plan.', exc_info=True)
         holidays = {}
 
@@ -172,6 +180,8 @@ def attach_curriculum_slots(module_rows, by_id, week_counts, weeks_by_number=Non
                 holidays=holidays.get(str(row.get('cohort_id') or ''), []),
             )
         except Exception:
+            if strict:
+                raise
             log.warning('Could not plan curriculum slots for module %s.', row['id'], exc_info=True)
             plan = {}
         module['curriculumSlots'] = plan.get('slots') or []
@@ -348,7 +358,7 @@ def plan_module_ids(cur, source, owner):
     # Effective current assignments are authoritative for the schedule.
     # Builder metadata enriches those assignments (and supplies legacy
     # links), but a missing builder row must not hide an assigned module.
-    current_module_ids = list(dict.fromkeys(_effective_plan_ids(source, {})))
+    current_module_ids = list(dict.fromkeys(_effective_plan_ids(source, request_preset_cache(source))))
     # Imported learners can have real assigned subjects in the Aptem
     # mirror without those ids ever being written to the native learning
     # plan. Include those subjects in the same dashboard projection unless
@@ -357,22 +367,24 @@ def plan_module_ids(cur, source, owner):
         current_module_ids.extend(canonical_learning.curriculum_module_ids_for(owner))
     current_module_ids = list(dict.fromkeys(current_module_ids))
     refs = [f'current:{module_id}' for module_id in current_module_ids]
-    _, links = _builder_subject_metadata(cur, refs)
+    links = builder_subject_links(cur, source, refs, read=_builder_subject_metadata)
     builder_ids = {
         item['id'] for item in links.values() if item.get('id')
     }
     return sorted(builder_ids | set(current_module_ids)), links
 
 
-def plan_planned_hours(source, owner):
+def plan_planned_hours(source, owner, *, ids=None):
     """Whole-programme planned OTJ hours: the authored total_otjh of the plan's modules.
 
     This is the learning-plan total the Apprenticeship Agreement states, over
     the same modules the dashboard lists. Callers use it only when the SSOT
-    holds no programme plan for the enrolment.
+    holds no programme plan for the enrolment. ``ids`` lets a caller that has
+    already resolved ``plan_module_ids`` for this source skip resolving it again.
     """
     with connections['enrolment'].cursor() as cur:
-        ids, _ = plan_module_ids(cur, source, owner)
+        if ids is None:
+            ids, _ = plan_module_ids(cur, source, owner)
         if not ids:
             return None
         cur.execute('''SELECT sum(total_otjh) FROM curriculum.modules
@@ -382,15 +394,198 @@ def plan_planned_hours(source, owner):
     return round(total, 2) if total else None
 
 
-def read_dashboard(source, section=None):
+def _plan_session_rows(cur, email, ids, since=None, until=None, *, rail_only=False, navigation_only=False):
+    """Session rows on the plan's modules, earliest first, starting in ``[since, until)`` when given."""
+    bounds = [(since, '>='), (until, '<')]
+    window = ''.join(f' AND coalesce(o.scheduled_start,s.start_datetime){op}%s' for bound, op in bounds if bound)
+    statement = f'''WITH RECURSIVE owners(module_id,owner_id,depth) AS (
+        SELECT m.module_catalogue_id,
+               coalesce(nullif(btrim(m.teams_shared_source_module_id),''),m.module_catalogue_id),0
+        FROM curriculum.modules m WHERE m.module_catalogue_id=ANY(%s)
+        UNION ALL
+        SELECT owners.module_id,btrim(m.teams_shared_source_module_id),owners.depth+1
+        FROM owners JOIN curriculum.modules m ON m.module_catalogue_id=owners.owner_id
+        WHERE coalesce(btrim(m.teams_shared_source_module_id),'')<>'' AND owners.depth<5
+    ), delivery AS (
+        SELECT DISTINCT ON (module_id) module_id,owner_id
+        FROM owners ORDER BY module_id,depth DESC
+    )
+        SELECT s.id AS session_id,delivery.module_id,target_module.title AS module_title,
+        s.start_datetime,s.duration_minutes,{"NULL" if rail_only else "s.join_url"} AS series_join_url,s.repeat_pattern,s.status AS series_status,
+        o.id AS occurrence_id,o.scheduled_start,o.scheduled_end,{"NULL" if rail_only else "o.join_url"} AS join_url,o.status,
+        CASE WHEN coalesce(CASE WHEN replaced_attendance.occurrence_id IS NOT NULL
+                                THEN replaced_attendance.attendance_report_id
+                                ELSE o.attendance_report_id END,'')='' THEN NULL
+             ELSE EXISTS(SELECT 1 FROM curriculum.live_session_attendance a
+                 WHERE a.occurrence_id=COALESCE(replaced_attendance.occurrence_id,o.id)
+                   AND lower(btrim(a.email))=%s AND a.total_attendance_seconds>0) END AS attended
+        FROM delivery
+        JOIN curriculum.live_sessions s ON s.module_catalogue_id=delivery.owner_id
+        JOIN curriculum.modules target_module ON target_module.module_catalogue_id=delivery.module_id
+        LEFT JOIN curriculum.live_session_occurrences o ON o.live_session_id=s.id
+        {REPLACED_ATTENDANCE_LATERAL_SQL}
+        WHERE lower(s.status) NOT IN ('cancelled','deleted','failed','superseded')
+          AND (o.id IS NULL OR lower(o.status) NOT IN ('cancelled','deleted','failed','superseded')){window}
+        ORDER BY coalesce(o.scheduled_start,s.start_datetime)'''
+    if navigation_only:
+        statement = f'''SELECT module_id, min(coalesce(scheduled_start,start_datetime)) AS first_start,
+            max(coalesce(scheduled_start,start_datetime)) AS last_start,
+            array_agg(DISTINCT to_char(coalesce(scheduled_start,start_datetime) AT TIME ZONE 'UTC' AT TIME ZONE 'Europe/London','YYYY-MM')) AS session_months
+            FROM ({statement}) monthly_session_bounds
+            WHERE occurrence_id IS NOT NULL OR repeat_pattern IS NULL OR repeat_pattern IN ('none','')
+            GROUP BY module_id'''
+    cur.execute(statement, [ids, email, *(bound.astimezone(timezone.utc).replace(tzinfo=None) for bound, _ in bounds if bound)])
+    return rows(cur)
+
+
+def _plan_session_list(found):
+    sessions = []
+    for row in found:
+        # Recurring dates come from actual occurrences; never manufacture them.
+        if not row['occurrence_id'] and row['repeat_pattern'] not in ('none', '', None):
+            continue
+        start = row['scheduled_start'] or row['start_datetime']
+        if not start:
+            continue
+        sessions.append(plan_session(row))
+    return sessions
+
+
+def plan_sessions(cur, email, ids, since=None):
+    """Live sessions on the plan's modules, optionally only those starting from ``since`` (UTC)."""
+    return _plan_session_list(_plan_session_rows(cur, email, ids, since))
+
+
+REVIEW_EVENT_FIELDS = ('id', 'eventKey', 'title', 'source', 'sequence', 'status', 'date', 'targetDate',
+                       'scheduledDate', 'scheduledTime', 'durationMinutes', 'coachName', 'invited',
+                       'reviewTemplateId', 'reviewInstanceId')
+
+
+def plan_reviews(source, profile, sources, dates_only=False, *, header_only=False):
+    from .calendar import coaching_events_for_learner
+    # Use the same active programme cycle as the calendar booking destination.
+    active_profile = profile if profile and profile.lifecycle_status == 'active' else None
+    options = {'header_only': True} if header_only else {}
+    events = coaching_events_for_learner(source, active_profile, only_sources=frozenset(sources),
+                                         dates_only=dates_only, **options)
+    return [{**{key: event.get(key) for key in REVIEW_EVENT_FIELDS},
+             'meetingLink': safe_url(event.get('meetingLink')) or None} for event in events
+            if event.get('source') in sources]
+
+
+UK = ZoneInfo('Europe/London')
+# Statuses that never make an event upcoming (matched trimmed, case-insensitively).
+INACTIVE_EVENT_STATUSES = frozenset({'cancelled', 'canceled', 'completed', 'deleted', 'failed',
+                                     'superseded', 'awaiting-signature'})
+# Equal instants keep the card's original lecture / assignment / review order.
+UPCOMING_TYPE_ORDER = {'session': 0, 'assignment': 1, 'review': 2}
+DATE_ONLY = re.compile(r'\d{4}-\d{2}-\d{2}')
+
+
+def _active(status):
+    return str(status or '').strip().lower() not in INACTIVE_EVENT_STATUSES
+
+
+def _end_of_uk_day(day):
+    # A dated-only event is due by, or still open until, the end of its UK day.
+    return datetime.combine(day, time(23, 59), tzinfo=UK)
+
+
+def next_week_window(now):
+    """Next week's UK Monday and Friday, and the instants [Monday 00:00, Saturday 00:00) between them."""
+    today = now.astimezone(UK).date()
+    monday = today + timedelta(days=7 - today.weekday())
+    friday = monday + timedelta(days=4)
+    return (monday, friday, datetime.combine(monday, time(), tzinfo=UK),
+            datetime.combine(friday + timedelta(days=1), time(), tzinfo=UK))
+
+
+def _upcoming_review(review, start, end):
+    """A progress review's moment and output date when it falls in ``[start, end)``, else None.
+
+    A review is dated by its booking, else its target date, then its own date.
+    A booked UK date keeps its time; a date without a time is ordered at the
+    end of its UK day.
+    """
+    value = str(review.get('scheduledDate') or review.get('targetDate') or review.get('date') or '')
+    if not DATE_ONLY.fullmatch(value):
+        try:
+            moment = datetime.fromisoformat(value.replace('Z', '+00:00'))
+        except ValueError:
+            return None
+        moment = moment.replace(tzinfo=UK) if moment.tzinfo is None else moment
+        return (moment, moment.isoformat()) if start <= moment < end else None
+    try:
+        day = date.fromisoformat(value)
+    except ValueError:
+        return None
+    if not start.date() <= day < end.date():
+        return None
+    clock = str(review.get('scheduledTime') or '') if review.get('scheduledDate') else ''
+    try:
+        moment = datetime.combine(day, time.fromisoformat(clock[:5]), tzinfo=UK)
+    except ValueError:
+        # No usable time: the date alone, ordered at the end of its day.
+        return _end_of_uk_day(day), value
+    return moment, moment.isoformat()
+
+
+def read_upcoming(source, now=None):
+    """Student Home's events for next week, Monday to Friday (UK): live sessions,
+    assignment deadlines and progress reviews.
+
+    Each source keeps its own scope and eligibility rules (the ``overview``
+    session SQL and review projection, and the ``home-summary`` assignment
+    deadlines), limited to next Monday 00:00 up to Saturday 00:00 UK time.
+    Sessions are bounded in SQL. Every event in the window is returned, ordered
+    by its UK moment, with only the fields the card reads.
+    """
+    from .overview_week import upcoming_assignment_deadlines
+
+    monday, friday, start, end = next_week_window(now or datetime.now(timezone.utc))
+    owner = getattr(source, '_canonical_profile', None)
+    email = str(source.email or '').strip().casefold()
+    profile = getattr(source, '_case_file_profile', None) or (
+        LearnerProfile.objects.filter(enrolment_id=source.pk)
+        .only(*TRAINING_PLAN_PROFILE_FIELDS)
+        .first()
+    )
+    events = []
+    with connections['enrolment'].cursor() as cur:
+        ids, _ = plan_module_ids(cur, source, owner)
+        found = _plan_session_list(_plan_session_rows(cur, email, ids, since=start, until=end)) if ids else []
+    for session in found:
+        if _active(session['status']):
+            events.append((datetime.fromisoformat(session['start']), {
+                'id': str(session['id']), 'type': 'session', 'title': session['title'], 'date': session['start']}))
+    for deadline in upcoming_assignment_deadlines(source, profile, monday, friday):
+        events.append((_end_of_uk_day(date.fromisoformat(deadline['date'])), {
+            'id': deadline['id'], 'type': 'assignment', 'title': deadline['title'], 'date': deadline['date']}))
+    # Only identity, title, status and dates reach the card.
+    for review in plan_reviews(source, profile, ('progress-review',), dates_only=True):
+        dated = _active(review.get('status')) and _upcoming_review(review, start, end)
+        if dated:
+            events.append((dated[0], {'id': str(review.get('id')), 'type': 'review', 'title': review.get('title'),
+                                      'date': dated[1], 'booked': bool(review.get('scheduledDate'))}))
+    events.sort(key=lambda item: (item[0], UPCOMING_TYPE_ORDER[item[1]['type']], item[1]['id']))
+    return {'events': [event for _, event in events]}
+
+
+def read_dashboard(source, section=None, *, records=None, targets=None, dashboard_tab=None, weekly_spine=False, compact_monthly=False):
     from .weekly_hours import module_activity_hours
 
+    if section == 'upcoming':
+        return read_upcoming(source)
+    # Monthly renders its board, Overview its progress cards. Only Training
+    # renders module descriptions and curriculum learning outcomes. Legacy
+    # callers keep their complete projection unless explicitly selecting a tab.
+    rich_modules = dashboard_tab not in ('monthly', 'overview', 'weekly')
     owner = getattr(source, '_canonical_profile', None)
     email = str(source.email or '').strip().casefold()
     actual, modules, sessions = [], [], []
     progress_records = []
     historical = None
-    targets = canonical_learning.targets_for(owner) if owner is not None else {}
+    targets = targets if targets is not None else (canonical_learning.targets_for(owner) if owner is not None and section != 'weekly' else {})
     contract_data = {
         'months': {
             month: {'label': month, 'topics': [], 'planned': hours, 'source': 'ssot'}
@@ -409,15 +604,22 @@ def read_dashboard(source, section=None):
     with connections['enrolment'].cursor() as cur:
         if section == 'contract':
             return contract_data
-        if section != 'learning' and owner is not None:
-            progress_records = canonical_learning.entries_for(owner)
-            actual = _canonical_actual_rows(owner, progress_records)
-        ids, links = plan_module_ids(cur, source, owner)
+        if section != 'learning' and owner is not None and not weekly_spine and not compact_monthly:
+            # Hours and module progress read lineage, never raw evidence bodies
+            # (as the canonical metrics read), so the payload JSON stays in Neon.
+            progress_records = records if records is not None else canonical_learning.entries_for(owner, lineage_only=True)
+            if section != 'weekly':
+                actual = _canonical_actual_rows(owner, progress_records)
+        if section == 'weekly' and hasattr(source, '_dashboard_module_ids'):
+            ids, links = source._dashboard_module_ids, {}
+        else:
+            ids, links = plan_module_ids(cur, source, owner)
         if ids:
             # cohort_id is read so the curriculum scheduler can resolve this
             # module's cohort holidays -- including the ones a delivery team
             # unticked. It is not published to the learner.
-            cur.execute('''SELECT m.module_catalogue_id AS id,m.title,m.description,m.start_date,m.end_date,m.tutor_name,
+            description_column = 'm.description' if rich_modules else "''::text AS description"
+            cur.execute(f'''SELECT m.module_catalogue_id AS id,m.title,{description_column},m.start_date,m.end_date,m.tutor_name,
                 coalesce(nullif(btrim(g.coach_name),''),m.coach_name) AS coach_name,
                 m.programme_name,m.cohort_name,m.group_name,m.total_otjh,m.weeks_number,m.sessions_number,
                 m.cohort_id,
@@ -431,13 +633,16 @@ def read_dashboard(source, section=None):
             by_id = {module['id']: module for module in modules}
             week_counts = defaultdict(int)
             weeks_by_number = {}
-            cur.execute('''SELECT w.id,w.module_catalogue_id,w.week_number,w.title,w.learning_outcomes,
-                w.holiday_note_enabled,w.holiday_note,
-                (SELECT count(*) FROM curriculum.components c
+            outcomes_column = 'w.learning_outcomes' if rich_modules else "'[]'::jsonb AS learning_outcomes"
+            # Only module progress reads the authored live-session count (as its
+            # attendance target); Monthly's compact spine returns no progress.
+            live_sessions = '0 AS live_session_count' if compact_monthly else '''(SELECT count(*) FROM curriculum.components c
                  WHERE c.week_id=w.id AND c.module_catalogue_id=w.module_catalogue_id
                    AND lower(replace(coalesce(c.type, ''), '-', '_'))='live_session'
                    AND ''' + visible_child_sql('c') + '''
-                ) AS live_session_count
+                ) AS live_session_count'''
+            cur.execute(f'''SELECT w.id,w.module_catalogue_id,w.week_number,w.title,{outcomes_column},
+                w.holiday_note_enabled,w.holiday_note,{live_sessions}
                 FROM curriculum.weeks w
                 WHERE w.module_catalogue_id=ANY(%s)
                   AND ''' + visible_week_sql('w') + '''
@@ -462,45 +667,21 @@ def read_dashboard(source, section=None):
                         # Text alone is a draft, and a draft is nobody's to read.
                         'holidayNote': clean_text(row['holiday_note']) if row['holiday_note_enabled'] else '',
                     }
-            attach_curriculum_slots(module_rows, by_id, week_counts, weeks_by_number)
-            if section != 'learning':
-                cur.execute(f'''WITH RECURSIVE owners(module_id,owner_id,depth) AS (
-                    SELECT m.module_catalogue_id,
-                           coalesce(nullif(btrim(m.teams_shared_source_module_id),''),m.module_catalogue_id),0
-                    FROM curriculum.modules m WHERE m.module_catalogue_id=ANY(%s)
-                    UNION ALL
-                    SELECT owners.module_id,btrim(m.teams_shared_source_module_id),owners.depth+1
-                    FROM owners JOIN curriculum.modules m ON m.module_catalogue_id=owners.owner_id
-                    WHERE coalesce(btrim(m.teams_shared_source_module_id),'')<>'' AND owners.depth<5
-                ), delivery AS (
-                    SELECT DISTINCT ON (module_id) module_id,owner_id
-                    FROM owners ORDER BY module_id,depth DESC
-                )
-                    SELECT s.id AS session_id,delivery.module_id,target_module.title AS module_title,
-                    s.start_datetime,s.duration_minutes,s.join_url AS series_join_url,s.repeat_pattern,s.status AS series_status,
-                    o.id AS occurrence_id,o.scheduled_start,o.scheduled_end,o.join_url,o.status,
-                    CASE WHEN coalesce(CASE WHEN replaced_attendance.occurrence_id IS NOT NULL
-                                            THEN replaced_attendance.attendance_report_id
-                                            ELSE o.attendance_report_id END,'')='' THEN NULL
-                         ELSE EXISTS(SELECT 1 FROM curriculum.live_session_attendance a
-                             WHERE a.occurrence_id=COALESCE(replaced_attendance.occurrence_id,o.id)
-                               AND lower(btrim(a.email))=%s AND a.total_attendance_seconds>0) END AS attended
-                    FROM delivery
-                    JOIN curriculum.live_sessions s ON s.module_catalogue_id=delivery.owner_id
-                    JOIN curriculum.modules target_module ON target_module.module_catalogue_id=delivery.module_id
-                    LEFT JOIN curriculum.live_session_occurrences o ON o.live_session_id=s.id
-                    {REPLACED_ATTENDANCE_LATERAL_SQL}
-                    WHERE lower(s.status) NOT IN ('cancelled','deleted','failed','superseded')
-                      AND (o.id IS NULL OR lower(o.status) NOT IN ('cancelled','deleted','failed','superseded'))
-                    ORDER BY coalesce(o.scheduled_start,s.start_datetime)''', [ids, email])
-                for row in rows(cur):
-                    # Recurring dates come from actual occurrences; never manufacture them.
-                    if not row['occurrence_id'] and row['repeat_pattern'] not in ('none', '', None):
-                        continue
-                    start = row['scheduled_start'] or row['start_datetime']
-                    if not start:
-                        continue
-                    sessions.append(plan_session(row))
+            if section == 'weekly':
+                attach_curriculum_slots(module_rows, by_id, week_counts, weeks_by_number, strict=True)
+            else:
+                attach_curriculum_slots(module_rows, by_id, week_counts, weeks_by_number)
+            if not rich_modules:
+                for module in modules:
+                    module.pop('description', None)
+                    module.pop('learning_outcomes', None)
+                    for slot in module.get('curriculumSlots', []):
+                        slot.pop('learningOutcomes', None)
+            if section != 'learning' and not weekly_spine and not compact_monthly:
+                sessions = plan_sessions(cur, email, ids)
+    if section == 'weekly':
+        return {'modules': modules, 'sessions': sessions,
+                'moduleActivityHours': module_activity_hours(progress_records, modules) if owner is not None else None}
     if section == 'learning':
         return {
             'modules': modules,
@@ -513,22 +694,15 @@ def read_dashboard(source, section=None):
     coach_name, coach_email = contact['coach_name'], contact['coach_email']
     if not coach_name and not coach_email and source_coach(source) is None:
         coach_name = assigned_group_coach(source, modules)
-    from .calendar import coaching_events_for_learner
-    # Use the same active programme cycle as the calendar booking destination.
-    active_profile = profile if profile and profile.lifecycle_status == 'active' else None
-    events = coaching_events_for_learner(source, active_profile)
-    event_fields = ('id', 'eventKey', 'title', 'source', 'sequence', 'status', 'date', 'targetDate',
-                    'scheduledDate', 'scheduledTime', 'durationMinutes', 'coachName', 'invited',
-                    'reviewTemplateId', 'reviewInstanceId')
-    reviews = [{**{key: event.get(key) for key in event_fields},
-                'meetingLink': safe_url(event.get('meetingLink')) or None} for event in events
-               if event.get('source') in ('mcr', 'progress-review', 'student-support')]
+    reviews = plan_reviews(source, profile, ('mcr', 'progress-review', 'student-support'))
     coach = {'name': coach_name, 'bookingUrl': booking_url(coach_email)}
     if coach_email:
         coach['email'] = coach_email
-    phone = coach_phone(coach_email)
+    phone = None if compact_monthly else coach_phone(coach_email)
     if phone:
         coach['phone'] = phone
+    if compact_monthly:
+        return {**contract_data, 'modules': modules, 'moduleLinks': links, 'reviews': reviews, 'coach': coach}
     return {**contract_data, 'actual': actual, 'actualAvailable': owner is not None,
             'moduleActivityHours': module_activity_hours(progress_records, modules) if owner is not None else None,
             'moduleProgress': _canonical_module_progress(progress_records, modules) if owner is not None else {},
@@ -556,7 +730,7 @@ def training_plan_dashboard(request, kind, pk):
         # ``learning`` is the detailed weekly dashboard projection.  Keep it
         # on the same read path as overview so clients can request the weekly
         # modules/sessions without being rejected by the section guard.
-            if section not in (None, 'overview', 'learning', 'contract'):
+            if section not in (None, 'overview', 'learning', 'contract', 'upcoming'):
                 return JsonResponse({'error': 'Invalid training plan section.'}, status=400)
             with measurement.stage(section or 'complete'):
                 payload = read_dashboard(source, section=section)

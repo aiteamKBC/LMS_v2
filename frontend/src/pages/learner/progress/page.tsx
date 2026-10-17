@@ -12,7 +12,7 @@ import { PageTabs, type PageTabItem } from '@/components/ui/PageTabs';
 import { OverviewTab, type ProgressTabKey } from './components/OverviewTab';
 import { MockOtjhBody } from './components/MockOtjhBody';
 import { MockKsbBody } from './components/MockKsbBody';
-import { useUnifiedLearningSummary } from '@/pages/learner/my-learning/SubjectWorkspace';
+import { useUnifiedLearningSummary } from '@/pages/learner/my-learning/useSubjectLearningData';
 import { LearnerLoadError } from '@/components/feature/LearnerLoadError';
 import { useLearnerMetrics } from '@/hooks/useLearnerMetrics';
 

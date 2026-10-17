@@ -40,6 +40,7 @@ function ModuleRow({ module, index, selected, onSelect }: { module: JourneyModul
     <button type="button" aria-expanded={selected} onClick={onSelect} className="flex w-full items-center gap-3 px-4 py-3.5 text-left hover:bg-background-100/50 md:px-5">
       <AppIcon className="ri-book-2-line text-primary-600" /><span className="min-w-0 flex-1"><span className="block text-[12px] font-bold uppercase tracking-[0.16em] text-primary-600">Module {String(index + 1).padStart(2, '0')}</span>
         <span className="block truncate text-sm font-bold text-foreground-950">{module.title}</span>
+        {(module.id.startsWith('legacy:') || module.id.startsWith('current:')) && <span className="block text-xs text-foreground-500">{module.id.startsWith('legacy:') ? 'Previous learning' : 'Current learning plan'}</span>}
         <span className="block text-[12px] text-foreground-400">{module.weekCount} {module.weekCount === 1 ? 'week' : 'weeks'} · {module.componentCount} {module.componentCount === 1 ? 'component' : 'components'} · {module.progressPercent}%</span></span>
       <StateBadge status={module.status} />{module.otjh > 0 && <Pill label="OTJH" value={formatHours(module.otjh)} />}
       <Pill label="Completed" value={`${module.completedCount} / ${module.componentCount}`} /><Pill label="Items" value={String(module.componentCount)} />

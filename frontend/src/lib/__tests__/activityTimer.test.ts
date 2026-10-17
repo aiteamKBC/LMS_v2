@@ -44,6 +44,13 @@ describe('activityTimer', () => {
     expect(canResumeActivityTimer(timer, 'visible_page', Date.parse(startedAt) + 24 * 60 * 60 * 1000)).toBe(false);
   });
 
+  it('keeps a reward draft for server validation when the device clock differs', () => {
+    const timer = { elapsedSeconds: 15, session: { ...session, rewardTracking: true } };
+    expect(canResumeActivityTimer(timer, 'visible_page', 0)).toBe(true);
+    expect(canResumeActivityTimer(timer, 'visible_page', Date.parse(startedAt) + 25 * 3600000)).toBe(true);
+    expect(canResumeActivityTimer(timer, 'active_playback', 0)).toBe(false);
+  });
+
   it('clears a completed activity timer', () => {
     const key = activityTimerStorageKey('apprenticeship', '98', 'component-3');
     saveActivityTimerElapsed(key, 20);

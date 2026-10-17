@@ -332,7 +332,8 @@ export default function FreeCoursesPage() {
     let active = true;
     setConvertDetailLoading(true);
     setConvertDetail(null);
-    fetchCurriculumProgrammeDetail(convertProgrammeId, controller.signal, { visibility: 'all' })
+    // Reads the nested cohorts -> groups only: no stats, components or week components.
+    fetchCurriculumProgrammeDetail(convertProgrammeId, controller.signal, { visibility: 'all', deferStats: true, omitComponents: true, omitWeekComponents: true })
       .then(detail => { if (active) setConvertDetail(detail); })
       .catch(() => { if (active) setConvertDetail(null); })
       .finally(() => { if (active) setConvertDetailLoading(false); });
@@ -350,7 +351,9 @@ export default function FreeCoursesPage() {
     let active = true;
     setImportLoading(true);
     setImportDetail(null);
-    fetchCurriculumProgrammeDetail(importProgrammeId, controller.signal, { visibility: 'all', skipCache: true })
+    // The picker lists module-level fields and the import sends only the
+    // module id, so stats, components and week components are left out.
+    fetchCurriculumProgrammeDetail(importProgrammeId, controller.signal, { visibility: 'all', deferStats: true, omitComponents: true, omitWeekComponents: true, skipCache: true })
       .then(detail => { if (active) setImportDetail(detail); })
       .catch(() => { if (active) setImportDetail(null); })
       .finally(() => { if (active) setImportLoading(false); });

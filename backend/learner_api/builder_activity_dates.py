@@ -34,11 +34,27 @@ def _with_due_timing(schedule, settings):
     return {**schedule, 'due_timing': str(settings.get('dueTiming') or '')}
 
 
-def read_builder_activity_dates(cursor, module_ids):
+# Only the scheduling keys of component settings, which also contain large bodies.
+COMPONENT_SCHEDULE_SETTINGS = '''jsonb_build_object(
+            'sessionDate',c.settings_json->>'sessionDate',
+            'sessionDateTimeUtc',c.settings_json->>'sessionDateTimeUtc',
+            'teamsStartDateTimeUtc',c.settings_json->>'teamsStartDateTimeUtc',
+            'teamsLiveSessionId',c.settings_json->>'teamsLiveSessionId',
+            'teamsSessionNumber',c.settings_json->>'teamsSessionNumber',
+            'dueTiming',c.settings_json->>'dueTiming')'''
+# Module Builder's component order.
+COMPONENT_ORDER = 'c.module_catalogue_id,c.display_order,c.id'
+
+
+def read_builder_activity_dates(cursor, module_ids, components=None):
     """Use the same full week plan as Module Builder, never upload timestamps.
 
     Read empty weeks too: they still consume delivery slots. Only select the
     scheduling keys from component settings, which also contain large bodies.
+
+    ``components`` lets a caller that already read these modules' undeleted
+    components pass them as ``(id, module_id, week_id, title, type, settings)``
+    in ``COMPONENT_ORDER``, with settings from ``COMPONENT_SCHEDULE_SETTINGS``.
     """
     if not module_ids:
         return {}
@@ -62,20 +78,18 @@ def read_builder_activity_dates(cursor, module_ids):
         ORDER BY module_catalogue_id,display_order,week_number,id''', [ids])
     weeks = {(str(module_id), str(week_id)): {'id': str(week_id), 'title': title, 'components': []}
              for week_id, module_id, title in cursor.fetchall()}
-    cursor.execute('''SELECT c.id,c.module_catalogue_id,c.week_id,c.title,c.type,
-        jsonb_build_object(
-            'sessionDate',c.settings_json->>'sessionDate',
-            'sessionDateTimeUtc',c.settings_json->>'sessionDateTimeUtc',
-            'teamsStartDateTimeUtc',c.settings_json->>'teamsStartDateTimeUtc',
-            'teamsLiveSessionId',c.settings_json->>'teamsLiveSessionId',
-            'teamsSessionNumber',c.settings_json->>'teamsSessionNumber',
-            'dueTiming',c.settings_json->>'dueTiming')
-        FROM curriculum.components c
-        WHERE c.module_catalogue_id=ANY(%s)
-          AND ''' + visible_child_sql('c') + '''
-        ORDER BY c.module_catalogue_id,c.display_order,c.id''', [ids])
+    if components is None:
+        cursor.execute(f'''SELECT c.id,c.module_catalogue_id,c.week_id,c.title,c.type,
+            {COMPONENT_SCHEDULE_SETTINGS}
+            FROM curriculum.components c
+            WHERE c.module_catalogue_id=ANY(%s)
+              AND {visible_child_sql('c')}
+            ORDER BY {COMPONENT_ORDER}''', [ids])
+        components = cursor.fetchall()
+    else:
+        components = [row for row in components if str(row[1]) in modules]
     dates = {}
-    for component_id, module_id, week_id, title, component_type, settings in cursor.fetchall():
+    for component_id, module_id, week_id, title, component_type, settings in components:
         week = weeks.get((str(module_id), str(week_id)))
         if week_id and week is None:
             continue  # A directly deleted week must not reappear via its children.

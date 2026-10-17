@@ -109,7 +109,7 @@ def attach_quiz_slots(detail, attempts, slots):
     return detail
 
 
-def retain_quiz_progress(detail, *, completed_only=False):
+def retain_quiz_progress(detail, *, completed_only=False, strict=False):
     """Attach historical quiz slots needed by this projection.
 
     Compact learner summaries calculate completion only. Failed attempts remain
@@ -132,6 +132,8 @@ def retain_quiz_progress(detail, *, completed_only=False):
     try:
         slots = read_quiz_slots(module_ids, quiz_ids)
     except DatabaseError as exc:
+        if strict:
+            raise
         # The plan still renders from current links, as it did before.
         logger.warning('Could not resolve earlier quiz placements: %s', exc)
         return detail

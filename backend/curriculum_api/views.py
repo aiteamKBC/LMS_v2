@@ -6851,13 +6851,18 @@ def soft_delete_programme_authoring_structure(identifier, programme=None, config
 RESTORE_NULLABLE_COLUMNS = ('deleted_at', 'deleted_by', 'deleted_via_parent')
 
 
-def restore_rows_via_parent(table, parent_id):
+def restore_rows_via_parent(table, parent_id, bounds=None):
     """Undo one soft-delete cascade, and only that one.
 
     Rows are matched on ``deleted_via_parent``, the marker
     ``soft_delete_programme_authoring_structure`` stamps on everything it takes
     down. A cohort archived on its own carries an empty marker, so restoring the
     programme leaves it archived rather than silently reviving it.
+
+    ``bounds`` -- ``module_archive_event_bounds`` of the parent -- narrows the
+    match to rows stamped in the same moment as the parent's own archive. Rows
+    left stamped by an earlier archive of the same parent (one later undone by a
+    save rather than a restore) are not part of this cascade and stay deleted.
     """
     if not has_column(table, 'deleted_via_parent'):
         return []
@@ -6866,10 +6871,15 @@ def restore_rows_via_parent(table, parent_id):
         payload['is_archived'] = False
     if has_column(table, 'status') and table in {'cohorts'}:
         payload['status'] = 'active'
+    where_sql = f'{quote_ident("deleted_via_parent")} = %s'
+    where_params = [parent_id]
+    if bounds is not None and has_column(table, 'deleted_at'):
+        where_sql += f' and {quote_ident("deleted_at")} between %s and %s'
+        where_params += [bounds[0], bounds[1]]
     rows = update_rows(
         table,
-        f'{quote_ident("deleted_via_parent")} = %s',
-        [parent_id],
+        where_sql,
+        where_params,
         payload,
         allow_null_columns=RESTORE_NULLABLE_COLUMNS,
     )
@@ -19965,7 +19975,38 @@ def module_archive_parent_markers(module_row, module_catalogue_id):
     return {marker for marker in markers if marker}
 
 
-def row_in_module_archive(row, markers):
+# One archive writes all of its rows inside a single request. The same window
+# decides which deleted children learners may see (curriculum_api.week_visibility)
+# and which recordings stay with an archived module (recordings_library).
+MODULE_ARCHIVE_EVENT_WINDOW = timedelta(minutes=5)
+
+
+def stamp_datetime(value):
+    """A stored ``deleted_at`` as a datetime, or None when it is not one."""
+    if isinstance(value, datetime):
+        return value
+    text = clean_str(value)
+    if not text:
+        return None
+    try:
+        return datetime.fromisoformat(text.replace('Z', '+00:00'))
+    except ValueError:
+        return None
+
+
+def module_archive_event_bounds(module_row):
+    """The (earliest, latest) ``deleted_at`` a child of this archive can carry.
+
+    None when the module carries no usable stamp, which leaves the marker as the
+    only test -- exactly the behaviour before the window existed.
+    """
+    archived_at = stamp_datetime((module_row or {}).get('deleted_at'))
+    if archived_at is None:
+        return None
+    return archived_at - MODULE_ARCHIVE_EVENT_WINDOW, archived_at + MODULE_ARCHIVE_EVENT_WINDOW
+
+
+def row_in_module_archive(row, markers, bounds=None):
     """Would restoring this module bring this child row back?
 
     A live row is kept -- the caller is reading an archived module, but a child
@@ -19974,10 +20015,27 @@ def row_in_module_archive(row, markers):
     component deleted by hand before the module was archived stays out: reading
     an archived module must show what a restore returns, not everything the table
     has ever held under that id.
+
+    ``bounds`` (``module_archive_event_bounds``) also requires the row to have
+    been archived in the same moment as the module. A module once archived and
+    then brought back by a save keeps the children of that earlier archive
+    stamped with its id; they belong to no archive the module is in now.
     """
     if not curriculum_row_effectively_deleted(row):
         return True
-    return clean_str(row.get('deleted_via_parent')) in markers
+    if clean_str(row.get('deleted_via_parent')) not in markers:
+        return False
+    if bounds is None:
+        return True
+    deleted_at = stamp_datetime(row.get('deleted_at'))
+    if deleted_at is None:
+        return True
+    try:
+        return bounds[0] <= deleted_at <= bounds[1]
+    except TypeError:
+        # Naive against aware: the two stamps came from different writers.
+        # Fall back to the marker rather than guess an offset.
+        return True
 
 
 def get_authoring_structure_payload(module_catalogue_id, include_archived=False):
@@ -20010,18 +20068,19 @@ def get_authoring_structure_payload(module_catalogue_id, include_archived=False)
         # detached library row are not this module's content either way, and a
         # restore does not make them so.
         markers = module_archive_parent_markers(module, module_catalogue_id)
+        bounds = module_archive_event_bounds(module)
         week_rows = [
             row for row in stored_week_rows
-            if not is_library_row(row) and row_in_module_archive(row, markers)
+            if not is_library_row(row) and row_in_module_archive(row, markers, bounds)
         ]
         component_rows = [
             row for row in stored_component_rows
             if not is_retired_component_type(row.get('type'))
             and not is_library_row(row)
-            and row_in_module_archive(row, markers)
+            and row_in_module_archive(row, markers, bounds)
         ]
         mapping_source_rows = [
-            row for row in stored_mapping_rows if row_in_module_archive(row, markers)
+            row for row in stored_mapping_rows if row_in_module_archive(row, markers, bounds)
         ]
     else:
         week_rows = active_week_rows(stored_week_rows)
@@ -23593,6 +23652,40 @@ def curriculum_programme_tree_detail(request, identifier):
     return conditional_json_response(request, entry)
 
 
+# The programme page reads the detail document in two parts, fetched side by
+# side. ``shell`` is the programme with its cohorts and groups -- enough to
+# draw the header and the Cohorts and Groups tabs -- and stops before the
+# modules, which are the slowest part of the build. ``modules`` is the modules
+# (week outline, no components) and the planned sessions. Neither carries the
+# KSB stats; those come from ksb-stats. The /detail/ document is unchanged for
+# its other callers.
+PROGRAMME_DETAIL_SECTIONS = ('shell', 'modules')
+
+
+@require_GET
+def curriculum_programme_detail_section(request, identifier, section):
+    if section not in PROGRAMME_DETAIL_SECTIONS:
+        return JsonResponse({'error': 'Unknown programme detail section.'}, status=404)
+    visibility = curriculum_visibility(request)
+    programme_id = clean_str(identifier)
+    repair_curriculum_parent_links(programme_id, allow_writes=False)
+
+    def build_section_entry():
+        payload = build_curriculum_programme_tree_detail_payload(
+            identifier, visibility, include_stats=False, include_components=False,
+            include_tree=False, include_week_components=False, section=section,
+        )
+        if not payload:
+            return encode_json_error_entry('Programme not found.', status=404)
+        return encode_json_entry(payload)
+
+    entry = cached_curriculum_value(
+        f'programme-detail-{section}-response:{visibility}:{clean_str(identifier)}',
+        build_section_entry,
+    )
+    return conditional_json_response(request, entry)
+
+
 # Marks what ``omit=weekComponents`` left out, so nothing mistakes an outline
 # for a module's structure. A week without its ``components`` saved back as a
 # structure would withdraw every component on it; validate_module_authoring_
@@ -23629,7 +23722,7 @@ def module_rows_with_week_outline(modules):
     return projected
 
 
-def build_curriculum_programme_tree_detail_payload(identifier, visibility, include_stats=True, include_components=True, include_tree=True, include_week_components=True):
+def build_curriculum_programme_tree_detail_payload(identifier, visibility, include_stats=True, include_components=True, include_tree=True, include_week_components=True, section=None):
     # Same reason build_curriculum_payload() opens a read scope: build_programmes()
     # re-reads authoring modules, programmes, cohorts, groups and ksb_profiles in
     # full once per programme, so without the scope this detail build issued ~250
@@ -23640,10 +23733,10 @@ def build_curriculum_programme_tree_detail_payload(identifier, visibility, inclu
     # for) read that programme's weeks/components/mappings rather than the
     # whole tables -- see authoring_child_rows_for_modules.
     with curriculum_read_scope(targeted_child_reads=True):
-        return _build_curriculum_programme_tree_detail_payload(identifier, visibility, include_stats, include_components, include_tree, include_week_components)
+        return _build_curriculum_programme_tree_detail_payload(identifier, visibility, include_stats, include_components, include_tree, include_week_components, section)
 
 
-def _build_curriculum_programme_tree_detail_payload(identifier, visibility, include_stats=True, include_components=True, include_tree=True, include_week_components=True):
+def _build_curriculum_programme_tree_detail_payload(identifier, visibility, include_stats=True, include_components=True, include_tree=True, include_week_components=True, section=None):
     # The process-wide rows cache the list payloads share (epoch-checked, 60s
     # TTL) rather than a fresh read of every table: opening a programme straight
     # after the programme list no longer reads the same rows a second time.
@@ -23756,6 +23849,17 @@ def _build_curriculum_programme_tree_detail_payload(identifier, visibility, incl
         if group.get('cohortId') in cohort_ids and belongs_to_selected_programme(group)
     ] + config_groups, ['id', 'groupId', 'group_id'])
     group_ids = {group.get('id') for group in groups if group.get('id')}
+    if section == 'shell':
+        return {
+            'schema': CURRICULUM_SCHEMA,
+            'programme': programme,
+            'flat': {
+                'cohorts': cohorts,
+                'groups': groups,
+                'groupIds': sorted(group_ids, key=str),
+                'weekTemplates': config_week_templates,
+            },
+        }
 
     modules = build_modules(
         curriculum_rows['modules'],
@@ -23800,6 +23904,14 @@ def _build_curriculum_programme_tree_detail_payload(identifier, visibility, incl
     # changes what is sent, never what is computed.
     if not include_week_components:
         modules = module_rows_with_week_outline(modules)
+    if section == 'modules':
+        return {
+            'schema': CURRICULUM_SCHEMA,
+            'flat': {
+                'modules': modules,
+                'sessions': sessions,
+            },
+        }
 
     nested_cohorts = []
     for cohort in (cohorts if include_tree else []):
@@ -30942,15 +31054,22 @@ def curriculum_cohort_detail(request, identifier):
     # what it was -- silently, because nothing here compared the two.
     expected_revision = requested_expected_revision(request, payload)
     # One transaction around the check and the write; see lock_record_row.
-    with transaction.atomic():
-        if expected_revision:
-            lock_record_row(COHORT_AUTHORING_DETAILS_TABLE, 'cohort_id = %s', [cohort_id])
-            current_revision = cohort_record_revision(cohort_id)
-            if current_revision != expected_revision:
-                return record_conflict_response(
-                    expected_revision, current_revision, cohort=cohort_conflict_record(cohort_id),
-                )
-        update_cohort_fields(cohort_id, updates, allow_null_columns=tuple(nullable))
+    from .cohort_rename import CohortRenameConflict, propagate_cohort_name
+    try:
+        with transaction.atomic():
+            if expected_revision or 'cohort_name' in updates:
+                lock_record_row(COHORT_AUTHORING_DETAILS_TABLE, 'cohort_id = %s', [cohort_id])
+            if expected_revision:
+                current_revision = cohort_record_revision(cohort_id)
+                if current_revision != expected_revision:
+                    return record_conflict_response(
+                        expected_revision, current_revision, cohort=cohort_conflict_record(cohort_id),
+                    )
+            if 'cohort_name' in updates:
+                propagate_cohort_name(fetch_cohort_row(cohort_id), updates['cohort_name'])
+            update_cohort_fields(cohort_id, updates, allow_null_columns=tuple(nullable))
+    except CohortRenameConflict as exc:
+        return json_error(str(exc), status=409)
     invalidate_curriculum_cache()
     # Read after the commit, so the token handed back is the one a reader would
     # fingerprint now rather than one a rollback could take away.
@@ -32098,8 +32217,12 @@ def curriculum_module_restore(request, identifier):
         # Matched on the marker this module's own archive stamped, so only that
         # cascade comes back: a component deleted by hand beforehand stays
         # deleted rather than being resurrected by an unrelated restore.
+        # ...and only rows that archive stamped: an earlier archive of this
+        # same module, undone by a save, left its children stamped with this
+        # id too, and they are not part of what is being restored.
+        bounds = module_archive_event_bounds(module_row)
         restored = {
-            table: len(restore_rows_via_parent(table, catalogue_id))
+            table: len(restore_rows_via_parent(table, catalogue_id, bounds))
             for table in MODULE_CHILD_AUTHORING_TABLES
         }
         update_rows(

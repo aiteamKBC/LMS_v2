@@ -7,11 +7,11 @@ import { useLiveLearnerRead } from '@/hooks/useLiveLearnerRead';
 import { apprenticeHomeRedirect, isFreshStatus, isOnboardingStatus } from '@/hooks/useOnboardingRedirect';
 import { useFirstLoginDetailsRedirect } from '@/hooks/useFirstLoginDetailsRedirect';
 import { useResolvedLearner } from '@/hooks/useMyLearner';
-import { overviewSchedule, overviewHome } from '@/api/learnerOverview';
+import { upcomingSchedule, homeSummary } from '@/api/learnerOverview';
 import type { LearnerKind } from '@/api/learnerDetail';
 import { LearnerLoadError } from '@/components/feature/LearnerLoadError';
 import { learnerHref } from '@/lib/learnerRoutes';
-import { homeActions, greeting, upcomingEvents, withLearner } from './homeData';
+import { homeActions, greeting, homeUpcomingEvents, withLearner } from './homeData';
 import { ReferenceIcon } from './ReferenceIcon';
 import { SkeletonBlock } from '@/components/feature/Skeletons';
 import { ProgressCard } from './ProgressCard';
@@ -92,8 +92,8 @@ function LearnerHome({ kind, id, preview = false }: { kind?: LearnerKind; id?: s
     kind, id, profile.real?.programmeStatus, ready && !preview && account.role === 'learner',
   );
   const loadCards = ready && !onboarding && !fresh;
-  const schedule = useLiveLearnerRead(kind, id, loadCards, overviewSchedule.read, overviewSchedule.peek);
-  const week = useLiveLearnerRead(kind, id, loadCards, overviewHome.read, overviewHome.peek);
+  const schedule = useLiveLearnerRead(kind, id, loadCards, upcomingSchedule.read, upcomingSchedule.peek);
+  const week = useLiveLearnerRead(kind, id, loadCards, homeSummary.read, homeSummary.peek);
   useEffect(() => { const previous = document.title; document.title = 'Student Home — Kent Business College'; return () => { document.title = previous; }; }, []);
 
   if (!kind || !id) return <LearnerLoadError error="We could not verify your learner profile. Please try again." onRetry={retryInitialization}/>;
@@ -107,13 +107,13 @@ function LearnerHome({ kind, id, preview = false }: { kind?: LearnerKind; id?: s
   if (beforeActive) return <Navigate to={beforeActive} replace />;
   const name = profile.real.name?.trim() || (!preview && account.displayName?.trim()) || 'Learner';
   const firstName = name.split(/\s+/)[0];
-  const events = upcomingEvents(schedule.error ? null : schedule.data, week.error ? null : week.data, now)
+  const events = homeUpcomingEvents(schedule.error ? null : schedule.data, now)
     .map(event => ({ ...event, href: link(event.href) }));
   return <div className={styles.home}>
     <a href="#student-main" className={styles.skip}>Skip to main content</a>
     <StudentHomeHeader key={`${account.id}:${kind}:${id}`} name={name} homeHref={homeHref}
-      identity={`${account.id}:${kind}:${id}`} events={events} loading={schedule.loading || week.loading}
-      error={!!schedule.error || !!week.error} onRetry={() => { schedule.refresh(); week.refresh(); }}
+      identity={`${account.id}:${kind}:${id}`} events={events} loading={schedule.loading}
+      error={!!schedule.error} onRetry={schedule.refresh}
       supportHref={link('/learner/monthly-coaching')}/>
     <main id="student-main" className={styles.scene}>
       <section className={styles.hero} aria-labelledby="welcome-heading"><p>{greeting(now)}</p>
@@ -135,20 +135,18 @@ function LearnerHome({ kind, id, preview = false }: { kind?: LearnerKind; id?: s
       </div>
       <aside className={`${styles.card} ${styles.upcoming}`} aria-labelledby="home-upcoming-heading">
         <div className={styles.cardHeading}><h2 id="home-upcoming-heading"><CalendarCheck2 aria-hidden="true"/>Upcoming</h2><Link to={link('/learner/calendar')} aria-label="View all upcoming events">View all</Link></div>
-        <ul>{events.map(event => {
-          const source = event.kind === 'assignment' ? week : schedule;
-          const detail = !event.date && source.loading ? <SkeletonBlock className="mt-1 h-2.5 w-28"/>
-            : !event.date && source.error ? 'Upcoming activity unavailable' : event.detail;
-          return <li key={event.kind} aria-label={`Next ${event.kind}`}>
-            {event.date ? <time dateTime={event.date}>
-              <span>{new Intl.DateTimeFormat('en-GB', { weekday: 'short', timeZone: 'Europe/London' }).format(new Date(event.date))}</span>
-              {new Intl.DateTimeFormat('en-GB', { day: 'numeric', month: 'short', timeZone: 'Europe/London' }).format(new Date(event.date))}</time>
-              : <span className={styles.eventDate} aria-label="No date available">—</span>}
-            <Link to={event.href}><strong>{event.title}</strong><span>{detail}</span></Link>
-          </li>;
-        })}</ul>
-        {(schedule.loading || week.loading) && <p role="status" className="sr-only">Loading upcoming activity…</p>}
-        {(schedule.error || week.error) && <div className={styles.empty} role="alert">Some upcoming activity could not be loaded. <button onClick={() => { schedule.refresh(); week.refresh(); }}>Try again</button></div>}
+        <ul>{events.length ? events.map(event => <li key={event.id} aria-label={`Upcoming ${event.kind}`}>
+          <time dateTime={event.date!}>
+            <span>{new Intl.DateTimeFormat('en-GB', { weekday: 'short', timeZone: 'Europe/London' }).format(new Date(event.date!))}</span>
+            {new Intl.DateTimeFormat('en-GB', { day: 'numeric', month: 'short', timeZone: 'Europe/London' }).format(new Date(event.date!))}</time>
+          <Link to={event.href}><strong>{event.title}</strong><span>{event.detail}</span></Link>
+        </li>) : schedule.loading && [0, 1, 2].map(slot => <li key={slot} aria-hidden="true">
+          <span className={styles.eventDate}>—</span><Link to={link('/learner/calendar')} tabIndex={-1}>
+            <SkeletonBlock className="h-3 w-32"/><SkeletonBlock className="mt-1 h-2.5 w-28"/></Link>
+        </li>)}</ul>
+        {schedule.loading && <p role="status" className="sr-only">Loading upcoming activity…</p>}
+        {!schedule.loading && !schedule.error && !events.length && <p className={styles.empty}>No sessions, assignments or reviews next week.</p>}
+        {schedule.error && <div className={styles.empty} role="alert">Some upcoming activity could not be loaded. <button onClick={schedule.refresh}>Try again</button></div>}
       </aside>
       <footer className={styles.footer}><span>KENT BUSINESS COLLEGE&nbsp;&nbsp; LEARN&nbsp;&nbsp; BELONG&nbsp;&nbsp; ACHIEVE</span><p>A Brighter Kent<br/>A Bolder You</p></footer>
     </main>
