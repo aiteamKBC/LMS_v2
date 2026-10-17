@@ -94,6 +94,51 @@ class CourseCatalogueTests(unittest.TestCase):
         after, _, _ = self.project([self.record()])
         self.assertEqual([item['activity_id'] for item in before], [item['activity_id'] for item in after])
 
+    def test_shared_component_completion_stays_in_its_qualified_course(self):
+        records = [self.record(1, course='50', accepted=False, actual_seconds=None,
+            activity_status='completed', sources=[{'source_system': 'old_lms',
+                'source_course_ref': '50', 'source_activity_id': 'course:50:material:10'}])]
+        items, subjects, _ = self.project(records)
+        self.assertEqual([i['activity_id'] for i in items if i['completed']], ['catalogue:50:material:10'])
+        self.assertEqual(sum(s['accepted_hours'] for s in subjects), 0)
+        records.append(self.record(2, course='60', accepted=False, actual_seconds=None,
+            activity_status='completed', sources=[{'source_system': 'old_lms',
+                'source_course_ref': '60', 'source_activity_id': 'course:60:material:10'}]))
+        items, _, _ = self.project(records)
+        self.assertEqual({i['activity_id'] for i in items if i['completed']},
+                         {'catalogue:50:material:10', 'catalogue:60:material:10'})
+
+    def test_qualified_quiz_does_not_complete_or_open_same_numbered_material(self):
+        source = {'source_system': 'old_lms', 'source_course_ref': '50',
+                  'source_activity_id': 'course:50:quiz:10'}
+        items, _, _ = self.project([self.record(sources=[source])])
+        completed = [i for i in items if i['completed']]
+        self.assertEqual(len(completed), 1)
+        self.assertEqual(completed[0]['activity_id'], 'catalogue:50:quiz:10')
+        self.assertFalse(completed[0]['can_open_material'])
+
+    def test_qualified_source_cannot_override_its_saved_course_or_fall_back_to_journal(self):
+        for reference in ('course:60:material:10', 'course:50:material:0',
+                          'course:50:quiz:10:extra', 'course:50:10'):
+            record = self.record(sources=[{'source_system': 'old_lms', 'source_course_ref': '50',
+                'source_activity_id': reference}], source_payload={'original_source_ref': 'la:50:10'})
+            self.assertFalse(any(i['completed'] for i in self.project([record])[0]))
+
+
+    def test_verified_scope_preserves_qualified_completion_in_the_other_course(self):
+        self.courses[0]['verified_catalogue_scope'] = self.verified_scope('material:10')
+        records = [self.record(index, course=course, accepted=False, actual_seconds=None,
+            activity_status='completed', sources=[{'source_system': 'old_lms',
+                'source_course_ref': course, 'source_activity_id': f'course:{course}:material:10'}])
+            for index, course in enumerate(('50', '60'), start=1)]
+        original = copy.deepcopy((self.courses, self.catalogue, records))
+        items, subjects, _ = self.project(records)
+        self.assertEqual([item['activity_id'] for item in items if item['completed']],
+                         ['catalogue:60:material:10'])
+        self.assertEqual([subject['catalogue_count'] for subject in subjects], [2, 1])
+        self.assertEqual(sum(subject['accepted_hours'] for subject in subjects), 0)
+        self.assertEqual((self.courses, self.catalogue, records), original)
+
     @staticmethod
     def verified_scope(*refs, course='50'):
         return {'version': 1, 'basis': 'verified-legacy-account-inventory',
