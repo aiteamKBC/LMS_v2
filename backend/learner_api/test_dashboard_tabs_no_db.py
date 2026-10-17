@@ -91,7 +91,9 @@ class DashboardMonthlyHoursTests(SimpleTestCase):
         entries.assert_not_called()
         schedule.assert_not_called()
         training.assert_called_once()
-        profile.assert_called_once_with(source, 5, heal=False)
+        profile.assert_called_once_with(
+            source, 5, heal=False,
+            fields=training_plan_dashboard.TRAINING_PLAN_PROFILE_FIELDS)
         attendance.assert_not_called()
         progress.assert_not_called()
 
