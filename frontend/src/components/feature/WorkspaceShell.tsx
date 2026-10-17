@@ -58,6 +58,7 @@ const ROUTE_HISTORY_KEY = 'lmsRouteHistory';
 const SIDEBAR_PINNED_KEY = 'kbc_sidebar_pinned';
 const COACH_SIDEBAR_COLLAPSED_KEY = 'kbc_coach_sidebar_collapsed';
 const LEARNER_SIDEBAR_COLLAPSED_KEY = 'kbc_learner_sidebar_collapsed';
+const CURRICULUM_SIDEBAR_COLLAPSED_KEY = 'kbc_curriculum_sidebar_collapsed';
 const ADVANCED_ADMIN_SIDEBAR_COLLAPSED_KEY = 'kbc_advanced_admin_sidebar_collapsed';
 const COACH_SIDEBAR_WIDTH = 240;
 const COACH_SIDEBAR_COLLAPSED_WIDTH = LEARNER_SIDEBAR_COLLAPSED_WIDTH;
@@ -87,6 +88,14 @@ function readCoachSidebarCollapsed() {
 function readLearnerSidebarCollapsed() {
   try {
     return localStorage.getItem(LEARNER_SIDEBAR_COLLAPSED_KEY) === 'true';
+  } catch {
+    return false;
+  }
+}
+
+function readCurriculumSidebarCollapsed() {
+  try {
+    return localStorage.getItem(CURRICULUM_SIDEBAR_COLLAPSED_KEY) === 'true';
   } catch {
     return false;
   }
@@ -222,7 +231,7 @@ export function WorkspaceShell({
   // Employer portal pages borrow that chrome, so their reserved content width
   // must follow the same 240px/64px sidebar state as a learner workspace.
   const usesLearnerSidebar = role !== 'coach' && (appearance ?? role) === 'learner';
-  const fullHeightNavigation = usesLearnerSidebar || role === 'advanced-admin';
+  const fullHeightNavigation = usesLearnerSidebar || role === 'advanced-admin' || role === 'curriculum';
   const personalContext = activePersonalLearning(location.pathname);
   const personal = auth.account?.role === 'admin' && personalContext?.accountId === auth.account.id ? personalContext : null;
   // Keep the approved admin page styling in the shared directory, but let the
@@ -286,6 +295,7 @@ export function WorkspaceShell({
   const [sidebarPinned, setSidebarPinned] = useState(readPinnedPreference);
   const [coachSidebarCollapsed, setCoachSidebarCollapsed] = useState(readCoachSidebarCollapsed);
   const [learnerSidebarCollapsed, setLearnerSidebarCollapsed] = useState(readLearnerSidebarCollapsed);
+  const [curriculumSidebarCollapsed, setCurriculumSidebarCollapsed] = useState(readCurriculumSidebarCollapsed);
   const [advancedAdminSidebarCollapsed, setAdvancedAdminSidebarCollapsed] = useState(readAdvancedAdminSidebarCollapsed);
 
   const handlePinChange = (pinned: boolean) => {
@@ -306,6 +316,13 @@ export function WorkspaceShell({
     setLearnerSidebarCollapsed(collapsed);
     try {
       localStorage.setItem(LEARNER_SIDEBAR_COLLAPSED_KEY, String(collapsed));
+    } catch { /* Ignore unavailable browser storage. */ }
+  };
+
+  const handleCurriculumSidebarCollapsedChange = (collapsed: boolean) => {
+    setCurriculumSidebarCollapsed(collapsed);
+    try {
+      localStorage.setItem(CURRICULUM_SIDEBAR_COLLAPSED_KEY, String(collapsed));
     } catch { /* Ignore unavailable browser storage. */ }
   };
 
@@ -466,7 +483,11 @@ export function WorkspaceShell({
       // below that breakpoint the sidebar is an off-canvas drawer and must
       // reserve nothing.
       style={{ '--kbc-sidebar-width': fullHeightNavigation
-        ? `${(role === 'advanced-admin' ? advancedAdminSidebarCollapsed : learnerSidebarCollapsed) ? LEARNER_SIDEBAR_COLLAPSED_WIDTH : LEARNER_SIDEBAR_WIDTH}px`
+        ? `${(role === 'advanced-admin'
+          ? advancedAdminSidebarCollapsed
+          : role === 'curriculum'
+            ? curriculumSidebarCollapsed
+            : learnerSidebarCollapsed) ? LEARNER_SIDEBAR_COLLAPSED_WIDTH : LEARNER_SIDEBAR_WIDTH}px`
         : role === 'coach'
         ? `${coachSidebarCollapsed ? COACH_SIDEBAR_COLLAPSED_WIDTH : COACH_SIDEBAR_WIDTH}px`
         : `${(sidebarPinned ? SIDEBAR_EXPANDED_WIDTH : SIDEBAR_RAIL_WIDTH) + SIDEBAR_CONTENT_GAP}px` } as CSSProperties}
@@ -483,8 +504,16 @@ export function WorkspaceShell({
         userRole={displayRole}
         pinned={sidebarPinned}
         onPinChange={handlePinChange}
-        learnerCollapsed={role === 'advanced-admin' ? advancedAdminSidebarCollapsed : learnerSidebarCollapsed}
-        onLearnerCollapsedChange={role === 'advanced-admin' ? handleAdvancedAdminSidebarCollapsedChange : handleLearnerSidebarCollapsedChange}
+        learnerCollapsed={role === 'advanced-admin'
+          ? advancedAdminSidebarCollapsed
+          : role === 'curriculum'
+            ? curriculumSidebarCollapsed
+            : learnerSidebarCollapsed}
+        onLearnerCollapsedChange={role === 'advanced-admin'
+          ? handleAdvancedAdminSidebarCollapsedChange
+          : role === 'curriculum'
+            ? handleCurriculumSidebarCollapsedChange
+            : handleLearnerSidebarCollapsedChange}
         mobileOpen={mobileSidebarOpen}
         onCloseMobile={() => setMobileSidebarOpen(false)}
       />}
@@ -512,7 +541,7 @@ export function WorkspaceShell({
             appearance={appearance}
             workspaceLabel={personal ? 'Learner' : roleLabel}
             personalLearning={Boolean(personal)}
-            sidebarSignOut={appearance === 'learner'}
+            sidebarSignOut={appearance === 'learner' || role === 'curriculum'}
           />
         )}
 
@@ -524,7 +553,7 @@ export function WorkspaceShell({
               title={!canGoBack ? 'You are on the first page' : previousRoute ? 'Back to the previous page' : 'Back'}>
               <ArrowLeft size={16} aria-hidden="true" /><span>Back</span>
             </button>}
-            {!hideBreadcrumbs && <nav className={`flex min-w-0 items-center gap-1.5 overflow-x-auto text-xs [scrollbar-width:none] [&::-webkit-scrollbar]:hidden ${usesLearnerSidebar || role === 'coach' ? 'learner-step-breadcrumb' : ''}`} aria-label="Breadcrumb">
+            {!hideBreadcrumbs && <nav className={`flex min-w-0 items-center gap-1.5 overflow-x-auto text-xs [scrollbar-width:none] [&::-webkit-scrollbar]:hidden ${usesLearnerSidebar || role === 'coach' || role === 'curriculum' ? 'learner-step-breadcrumb' : ''}`} aria-label="Breadcrumb">
               {roleLabel !== 'Super Admin' && (
                 <>
                   <Link to="/" className="workspace-breadcrumb-home text-foreground-300 hover:text-foreground-500 transition-smooth">

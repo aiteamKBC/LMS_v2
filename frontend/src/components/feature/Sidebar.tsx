@@ -352,7 +352,7 @@ export function Sidebar({
   const [activeDropdown, setActiveDropdown] = useState<string | null>(null);
   const [previewId, setPreviewId] = useState<string | null>(null);
   const [isHovering, setIsHovering] = useState(false);
-  const fullHeightNavigation = look === 'learner' || role === 'advanced-admin';
+  const fullHeightNavigation = look === 'learner' || role === 'advanced-admin' || role === 'curriculum';
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(() => {
     try {
       const stored = localStorage.getItem('kbc_sidebar_expanded');
