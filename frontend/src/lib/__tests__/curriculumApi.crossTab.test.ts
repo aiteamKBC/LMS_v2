@@ -117,7 +117,42 @@ describe('curriculum cache invalidation across tabs and machines', () => {
     setVisibility('visible');
     vi.useRealTimers();
     vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
     vi.restoreAllMocks();
+  });
+
+  it('polls local development every 15 seconds, not every two seconds', async () => {
+    const api = await loadApi();
+    expect(api.EPOCH_POLL_INTERVAL_MS).toBe(15_000);
+    expect(api.EPOCH_IDLE_POLL_INTERVAL_MS).toBe(60_000);
+    const stop = api.subscribeCurriculumRemoteWrites(() => {});
+    await vi.advanceTimersByTimeAsync(14_999);
+    expect(callsTo(EPOCH_URL)).toBe(1);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(callsTo(EPOCH_URL)).toBe(2);
+    stop();
+  });
+
+  it('preserves the deployed collaboration polling interval', async () => {
+    vi.stubEnv('DEV', false);
+    const api = await loadApi();
+    expect(api.EPOCH_POLL_INTERVAL_MS).toBe(2_000);
+    expect(api.EPOCH_IDLE_POLL_INTERVAL_MS).toBe(10_000);
+  });
+
+  it('coalesces a burst of saves into one quiet counter read', async () => {
+    const api = await loadApi();
+    const heard: string[] = [];
+    const stop = api.subscribeCurriculumRemoteWrites(path => heard.push(path));
+    await vi.advanceTimersByTimeAsync(0);
+    for (let write = 0; write < 4; write += 1) {
+      await api.fetchCurriculumJson('/curriculum/programmes/', { method: 'POST', body: '{}' });
+      serverEpoch += 1;
+    }
+    await vi.advanceTimersByTimeAsync(1_500);
+    expect(callsTo(EPOCH_URL)).toBe(2);
+    expect(heard).toEqual([]);
+    stop();
   });
 
   // -- BroadcastChannel: the other tab of this browser ----------------------
@@ -477,7 +512,12 @@ describe('curriculum cache invalidation across tabs and machines', () => {
     await vi.advanceTimersByTimeAsync(0);
 
     epochResponder = () => { throw new TypeError('Failed to fetch'); };
-    for (let tick = 0; tick < 4; tick += 1) await oneTick(api);
+    // Keep this recovery scenario active even when four local ticks span the
+    // idle threshold. Idle throttling has its own regression above.
+    for (let tick = 0; tick < 4; tick += 1) {
+      window.dispatchEvent(new Event('pointerdown'));
+      await oneTick(api);
+    }
     expect(heard).toEqual([]);
 
     epochResponder = null;

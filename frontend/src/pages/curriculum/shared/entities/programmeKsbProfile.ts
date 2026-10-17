@@ -25,11 +25,14 @@ const SHARED_EMPTY_KSB_PROFILE_NOTE = 'Placeholder for programmes that have no K
   + 'Author each programme’s real knowledge, skills and behaviours as its own profile, then apply that instead.';
 
 /** The identity the programme card and the picker match a profile on. */
-function profileSourceId(set: CurriculumKsbSet): string {
+type ProfileMetadata = Pick<CurriculumKsbSet, 'frameworkId' | 'ksbProfileId' | 'profileId' | 'standard' | 'programmeName'>;
+type EnsureProfileResult<T> = { frameworkId: string; sets: T[]; created: boolean };
+
+function profileSourceId(set: ProfileMetadata): string {
   return cleanText(set.frameworkId) || cleanText(set.ksbProfileId) || cleanText(String(set.profileId ?? ''));
 }
 
-function findSharedEmptyProfile(sets: CurriculumKsbSet[]): CurriculumKsbSet | undefined {
+function findSharedEmptyProfile<T extends ProfileMetadata>(sets: T[]): T | undefined {
   const wanted = normaliseKey(SHARED_EMPTY_KSB_PROFILE_NAME);
   return sets.find(set => normaliseKey(set.standard) === wanted || normaliseKey(set.programmeName) === wanted);
 }
@@ -49,9 +52,12 @@ function findSharedEmptyProfile(sets: CurriculumKsbSet[]): CurriculumKsbSet | un
  * when the profile had to be created, so the caller can apply it straight away
  * instead of waiting for its own state to catch up.
  */
+export function ensureSharedEmptyKsbProfile(sets: CurriculumKsbSet[]): Promise<EnsureProfileResult<CurriculumKsbSet>>;
+export function ensureSharedEmptyKsbProfile<T extends ProfileMetadata>(sets: T[], reload: () => Promise<T[]>): Promise<EnsureProfileResult<T>>;
 export async function ensureSharedEmptyKsbProfile(
-  sets: CurriculumKsbSet[],
-): Promise<{ frameworkId: string; sets: CurriculumKsbSet[]; created: boolean }> {
+  sets: ProfileMetadata[],
+  reload: () => Promise<ProfileMetadata[]> = () => fetchCurriculumKsbSets(undefined, { all: true }),
+): Promise<EnsureProfileResult<ProfileMetadata>> {
   const existing = findSharedEmptyProfile(sets);
   if (existing) return { frameworkId: profileSourceId(existing), sets, created: false };
 
@@ -75,7 +81,7 @@ export async function ensureSharedEmptyKsbProfile(
     created = false;
   }
 
-  const nextSets = await fetchCurriculumKsbSets(undefined, { all: true });
+  const nextSets = await reload();
   const profile = findSharedEmptyProfile(nextSets);
   const frameworkId = profile ? profileSourceId(profile) : '';
   if (!frameworkId) throw new Error('The empty KSB profile could not be created.');

@@ -2154,20 +2154,18 @@ export async function deleteModuleStructure(moduleCatalogueId: string) {
  * for one payload, queued behind each other on the server until their timeout
  * aborted them; shared, it is one request and a two-minute answer.
  *
- * `skipCache` is for the callers that are about to WRITE the whole structure
- * back. A save on this endpoint replaces every week and component, so it is only
- * ever safe against the version the server holds right now -- a two-minute-old
- * answer would have the builder write its stale copy over whatever was edited in
- * the meantime, here or by somebody else.
+ * Opening an editor uses `revalidate`: the server cache is invalidated on writes
+ * and carries the revision belonging to its payload. PATCH refuses a superseded
+ * revision. Conflict recovery can still force a rebuild using `skipCache`.
  */
 export async function loadModuleStructure(
   catalogueId: string,
-  options: { skipCache?: boolean } = {},
+  options: { skipCache?: boolean; revalidate?: boolean } = {},
 ): Promise<ModuleCatalogueItem | null> {
   try {
     return recalculateModule(await fetchCurriculumJson<ModuleCatalogueItem>(
       `/curriculum/modules/${encodeURIComponent(catalogueId)}/structure/`,
-      { timeoutMs: 30000, skipCache: options.skipCache },
+      { timeoutMs: 90000, skipCache: options.skipCache, revalidate: options.revalidate },
     ));
   } catch (err) {
     const status = err instanceof ApiError || err instanceof CurriculumApiError ? err.status : 0;

@@ -97,6 +97,7 @@ class HomeBuilderTests(SimpleTestCase):
              patch.object(views, 'build_ksb_data', return_value=([], [])) as library:
             full = views.build_curriculum_payload_from_rows(rows, compact=True)
             self.assertTrue(programmes.call_args.kwargs['include_learner_counts'])
+            self.assertTrue(programmes.call_args.kwargs['include_structure_counts'])
             self.assertTrue(delivery.call_args.kwargs['include_learner_counts'])
             assignments.assert_called_once()
             library.assert_called_once()
@@ -104,10 +105,45 @@ class HomeBuilderTests(SimpleTestCase):
             library.reset_mock()
             light = views.build_curriculum_payload_from_rows(rows, compact=True, home_summary=True)
             self.assertFalse(programmes.call_args.kwargs['include_learner_counts'])
+            self.assertFalse(programmes.call_args.kwargs['include_structure_counts'])
             self.assertFalse(delivery.call_args.kwargs['include_learner_counts'])
             assignments.assert_not_called()
             library.assert_not_called()
         self.assertEqual(home_summary.project_home_summary(full, source['programmes']), home_summary.project_home_summary(light, source['programmes']))
+
+    def test_home_skips_structure_reads_and_preserves_module_only_and_archived_rules(self):
+        source = source_data()
+        modules = source['modules'] + [
+            {'id': 'M4', 'programmeId': 'P4', 'programme': 'Module only', 'weeks': 5},
+            {'id': 'M5', 'programmeId': 'P5', 'programme': 'Archived programme', 'weeks': 4},
+            {'id': 'M6', 'programmeId': 'P6', 'programme': 'Archived module', 'status': 'archived'},
+        ]
+        with patch.object(views, 'authoring_programme_structure_counts', return_value=({'P1': {'modules': 90}}, {})) as counts, \
+             patch.object(views, 'archived_programme_keys', return_value={'p5'}):
+            for include_archived in (False, True):
+                with self.subTest(include_archived=include_archived):
+                    full = views.enrich_programmes_with_module_counts(
+                        source['programmes'], modules, modules_enriched=True, include_archived=include_archived,
+                    )
+                    counts.reset_mock()
+                    light = views.enrich_programmes_with_module_counts(
+                        source['programmes'], modules, modules_enriched=True, include_archived=include_archived,
+                        include_structure_counts=False,
+                    )
+                    counts.assert_not_called()
+                    self.assertEqual(home_summary.project_home_summary(source, full), home_summary.project_home_summary(source, light))
+                    self.assertIn('P4', [item['id'] for item in light])
+                    if not include_archived:
+                        self.assertNotIn('P5', [item['id'] for item in light])
+                        self.assertNotIn('P6', [item['id'] for item in light])
+
+    def test_structure_counts_stay_enabled_by_default_for_other_programme_callers(self):
+        with patch.object(views, 'authoring_programme_structure_counts', return_value=({}, {})) as counts, \
+             patch.object(views, 'active_learner_programme_counts', return_value=({}, {})):
+            views.build_programmes([], [], [], include_structure_counts=False)
+            counts.assert_not_called()
+            views.build_programmes([], [], [])
+            counts.assert_called_once()
 
     def test_learner_queries_are_opt_in_for_home_and_still_default_for_other_callers(self):
         with patch.object(views, 'authoring_programme_structure_counts', return_value=({}, {})), \
@@ -129,14 +165,15 @@ class HomeBuilderTests(SimpleTestCase):
     def test_live_builder_keeps_module_only_programmes_without_reading_component_content(self):
         source = source_data()
         extra = {'id': 'authoring-only', 'name': 'Authoring only'}
-        with patch.object(views, 'get_cached_curriculum_rows', return_value={}) as rows, \
+        supplied_rows = {'authoring_modules': [{'programme_name': 'Authoring only'}], 'program_configs': []}
+        with patch.object(home_summary, 'home_source_rows', return_value=(supplied_rows, {})) as rows, \
              patch.object(views, 'build_curriculum_payload_from_rows', return_value=source) as overview, \
              patch.object(views, 'enrich_modules_with_authoring', return_value=[]) as enrich, \
              patch.object(views, 'enrich_programmes_with_module_counts', return_value=source['programmes'] + [extra]):
             result = home_summary.build_home_summary('all', force=True)
         self.assertEqual(result['stats']['programmes'], 4)
-        rows.assert_called_once_with(compact=True, force=True)
-        overview.assert_called_once_with({}, 'all', compact=True, home_summary=True)
+        rows.assert_called_once_with('all')
+        overview.assert_called_once_with(supplied_rows, 'all', compact=True, home_summary=True, delivery_source={})
         enrich.assert_called_once_with(source['modules'], include_programme_deleted=True, include_content=False)
 
     @override_settings(CURRICULUM_HOME_SHARED_READ_MODEL_ENABLED=True)

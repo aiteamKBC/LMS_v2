@@ -586,6 +586,20 @@ export interface CurriculumKsbSet {
   ksbs: CurriculumKsbEntry[];
 }
 
+/** List metadata; definitions are deliberately absent until a source is opened. */
+export type CurriculumKsbSetSummary = Omit<CurriculumKsbSet, 'ksbs'> & {
+  ksbs?: never;
+  ksbCount: number;
+  knowledgeCount: number;
+  skillCount: number;
+  behaviourCount: number;
+};
+
+export type CurriculumKsbDefinition = Pick<CurriculumKsbEntry,
+  'id' | 'code' | 'rawCode' | 'fullCode' | 'parentCode' | 'parentId' | 'displayOrder' | 'title' | 'description' | 'type'>;
+
+export type CurriculumKsbSourceDefinitions = Omit<CurriculumKsbSet, 'ksbs'> & { ksbs: CurriculumKsbDefinition[] };
+
 export interface CurriculumKsbFramework {
   id: string;
   profileId?: string | number;
@@ -2751,7 +2765,10 @@ const READ_POST_TTL_MS = 30_000;
 const READ_POST_MAX_ENTRIES = 60;
 
 function isReadOnlyPost(method: string, path: string): boolean {
-  return method === 'POST' && path.startsWith('/curriculum/preview/');
+  return method === 'POST' && (
+    path.startsWith('/curriculum/preview/')
+    || path === '/curriculum/migrated-review-templates/preview/'
+  );
 }
 
 export function clearCurriculumGetCache() {
@@ -2891,7 +2908,7 @@ function notifyRemoteWrite(path: string): void {
 // ---------------------------------------------------------------------------
 
 const EPOCH_PATH = '/curriculum/cache-epoch/';
-// 2s. This interval used to be a freshness setting; now that the curriculum
+// Deployed interval: 2s. This used to be a freshness setting; now that the curriculum
 // editors merge a write into an open screen rather than announcing it, it is
 // how long a colleague's typing takes to appear in front of somebody else. A
 // reader waits half the interval on average, so this is ~1s -- the point at
@@ -2915,7 +2932,12 @@ const EPOCH_PATH = '/curriculum/cache-epoch/';
 // Exported so the tests can advance their fake clock by one tick of whatever
 // this is set to, rather than encoding the number and quietly meaning
 // something else the next time it moves.
-export const EPOCH_POLL_INTERVAL_MS = 2_000;
+// Local development often uses a remote database. Poll less frequently there;
+// deployed co-editing retains its existing interval. BroadcastChannel and
+// refresh-on-return still update local readers without waiting for a poll.
+const localDevelopmentPolling = import.meta.env.DEV && typeof location !== 'undefined'
+  && ['localhost', '127.0.0.1', '[::1]', '::1'].includes(location.hostname);
+export const EPOCH_POLL_INTERVAL_MS = localDevelopmentPolling ? 15_000 : 2_000;
 // The endpoint ships with the backend, and the frontend can be deployed ahead of
 // it. Rather than call a missing URL every few seconds for the life of the tab,
 // give up after a few failures and leave the return-to-tab refresh to cover it.
@@ -2932,7 +2954,7 @@ const EPOCH_READ_TIMEOUT_MS = 10_000;
 // stops polling a hidden tab altogether; this is for the visible, unattended
 // one.
 export const EPOCH_IDLE_AFTER_MS = 60_000;
-export const EPOCH_IDLE_POLL_INTERVAL_MS = 10_000;
+export const EPOCH_IDLE_POLL_INTERVAL_MS = localDevelopmentPolling ? 60_000 : 10_000;
 
 let epochPollTimer: ReturnType<typeof setInterval> | null = null;
 let lastEpochReadAt = 0;
@@ -2944,6 +2966,7 @@ let epochFailures = 0;
 let epochPollingAbandoned = false;
 let epochReadInFlight = false;
 let quietResyncPending = false;
+let quietResyncTimer: ReturnType<typeof setTimeout> | null = null;
 
 function isDocumentVisible(): boolean {
   return typeof document === 'undefined'
@@ -3143,7 +3166,7 @@ function startEpochPolling(): void {
   }
   if (epochPollTimer) return;
   epochPollTimer = setInterval(epochTick, EPOCH_POLL_INTERVAL_MS);
-  // Establish the starting value straight away rather than 25s from now.
+  // Establish the starting value straight away rather than waiting one interval.
   void pollEpoch(true);
 }
 
@@ -3167,12 +3190,19 @@ function stopEpochPolling(): void {
 function scheduleQuietEpochResync(): void {
   if (epochPollingAbandoned || typeof window === 'undefined') return;
   if (!remoteWriteListeners.size) return;
-  window.setTimeout(() => { void pollEpoch(true); }, 1_500);
+  // Several writes from one save need one counter read after the burst.
+  if (quietResyncTimer !== null) clearTimeout(quietResyncTimer);
+  quietResyncTimer = setTimeout(() => {
+    quietResyncTimer = null;
+    void pollEpoch(true);
+  }, 1_500);
 }
 
 /** Test seam: forgets the counter and stops the timer. */
 export function resetCurriculumEpochPolling(): void {
   stopEpochPolling();
+  if (quietResyncTimer !== null) clearTimeout(quietResyncTimer);
+  quietResyncTimer = null;
   lastSeenEpoch = null;
   epochFailures = 0;
   lastEpochReadAt = 0;
@@ -3278,11 +3308,11 @@ async function fetchJson<T>(path: string, init?: CurriculumRequestInit): Promise
   const sharedInit = init?.signal ? { ...init, signal: undefined } : init;
   const inFlight = multiTierCache.getInFlight(path) as Promise<T> | undefined;
   const inFlightIsFresh = inFlight !== undefined
-    && (!init?.skipCache || multiTierCache.getInFlightEpoch(path) === mutationEpoch);
+    && multiTierCache.getInFlightEpoch(path) === mutationEpoch;
   const existing = inFlightIsFresh ? inFlight : undefined;
-
+  const askedAt = mutationEpoch;
   const pending = existing || fetchJsonUncached<T>(path, sharedInit).then(value => {
-    if (!init?.skipCache) {
+    if (!init?.skipCache && askedAt === mutationEpoch) {
       // Tag cache entries with entity type for targeted invalidation
       let entityType: string | undefined;
       let entityId: string | undefined;
@@ -3294,7 +3324,8 @@ async function fetchJson<T>(path: string, init?: CurriculumRequestInit): Promise
         entityType = 'programme';
       } else if (path.includes('/cohorts/')) {
         entityType = 'cohort';
-      } else if (path.includes('/groups/')) {
+      } else if (path.includes('/groups/') || path.includes('/delivery-scope/')) {
+        // Scope is a cohort/group list; the same writes must expire it.
         entityType = 'group';
       } else if (path.includes('/modules/')) {
         entityType = 'module';
@@ -3365,7 +3396,21 @@ function retryDelay(attempt: number): Promise<void> {
  * `isRetryableError` decides what counts: 408/429/5xx and network failures yes,
  * every 4xx and any caller abort no.
  */
-async function fetchJsonUncached<T>(path: string, init?: CurriculumRequestInit): Promise<T> {
+// Serialize expensive programme statistics across all consumers in this tab.
+// This runs below GET deduplication, so identical callers share one queued read.
+// The timeout starts only when a request reaches the front of the queue.
+let programmeStatsTail: Promise<unknown> = Promise.resolve();
+
+function fetchJsonUncached<T>(path: string, init?: CurriculumRequestInit): Promise<T> {
+  if ((init?.method || 'GET').toUpperCase() === 'GET' && /\/programmes\/[^/]+\/ksb-stats\//.test(path)) {
+    const pending = programmeStatsTail.then(() => fetchJsonWithRetries<T>(path, init));
+    programmeStatsTail = pending.then(() => undefined, () => undefined);
+    return pending;
+  }
+  return fetchJsonWithRetries<T>(path, init);
+}
+
+async function fetchJsonWithRetries<T>(path: string, init?: CurriculumRequestInit): Promise<T> {
   const method = (init?.method || 'GET').toUpperCase();
   if (!isRetryableRequest(method, path)) return fetchJsonOnce<T>(path, init);
   for (let attempt = 0; ; attempt += 1) {
@@ -3594,10 +3639,9 @@ export function fetchProgrammeKsbStats(id: string, signal?: AbortSignal, options
   const query = new URLSearchParams();
   if (options.visibility === 'all') query.set('visibility', 'all');
   const suffix = query.toString() ? `?${query.toString()}` : '';
-  // 30s like the other curriculum reads: the first caller after a write pays the
-  // programme's authoring-tree read, and a shorter budget aborts a request the
-  // server is still answering.
-  return fetchJson<ProgrammeKsbStats>(`/curriculum/programmes/${encodeURIComponent(id)}/ksb-stats/${suffix}`, { signal, revalidate: options.revalidate, timeoutMs: 30000 });
+  // A cold statistics calculation against the remote database can exceed 30s.
+  // Keep a finite limit, measured from dispatch rather than time in the queue.
+  return fetchJson<ProgrammeKsbStats>(`/curriculum/programmes/${encodeURIComponent(id)}/ksb-stats/${suffix}`, { signal, revalidate: options.revalidate, timeoutMs: 120000 });
 }
 
 export function fetchCurriculumGroups(signal?: AbortSignal): Promise<CurriculumGroup[]> {
@@ -3631,13 +3675,13 @@ export function fetchCurriculumKsbCoverage(params: { sourceType?: string; source
   return fetchJson<CurriculumKsbCoverageResponse>(`/curriculum/ksb-coverage/${suffix}`, { signal, timeoutMs: 60000 });
 }
 
-export function fetchCurriculumProgrammeKsbCoverage(programmeId: string, params: { sourceType?: string; sourceId?: string; actualMappings?: boolean } = {}, signal?: AbortSignal): Promise<CurriculumKsbCoverageResponse> {
+export function fetchCurriculumProgrammeKsbCoverage(programmeId: string, params: { sourceType?: string; sourceId?: string; actualMappings?: boolean; revalidate?: boolean } = {}, signal?: AbortSignal): Promise<CurriculumKsbCoverageResponse> {
   const query = new URLSearchParams();
   if (params.sourceType) query.set('source_type', params.sourceType);
   if (params.sourceId) query.set('source_id', params.sourceId);
   if (params.actualMappings) query.set('actual_mappings', '1');
   const suffix = query.toString() ? `?${query.toString()}` : '';
-  return fetchJson<CurriculumKsbCoverageResponse>(`/curriculum/programmes/${encodeURIComponent(programmeId)}/ksb-coverage/${suffix}`, { signal, timeoutMs: 60000 });
+  return fetchJson<CurriculumKsbCoverageResponse>(`/curriculum/programmes/${encodeURIComponent(programmeId)}/ksb-coverage/${suffix}`, { signal, revalidate: params.revalidate, timeoutMs: 60000 });
 }
 
 // Kept as named entry points because the Programme workspace reads them by
@@ -3695,7 +3739,7 @@ function scopePath(
 export function fetchCurriculumScopeLearnerRoster(
   scope: CurriculumLearnerScope,
   identifier: string,
-  params: { cohort?: string; group?: string; learnerStatus?: string } = {},
+  params: { cohort?: string; group?: string; learnerStatus?: string; revalidate?: boolean } = {},
   signal?: AbortSignal,
 ): Promise<CurriculumScopeLearnerRosterResponse> {
   const query = new URLSearchParams();
@@ -3704,7 +3748,7 @@ export function fetchCurriculumScopeLearnerRoster(
   if (params.learnerStatus) query.set('learnerStatus', params.learnerStatus);
   return fetchJson<CurriculumScopeLearnerRosterResponse>(
     scopePath(SCOPE_ROSTER_PATHS, '/curriculum/learner-roster/', scope, identifier, query),
-    { signal, timeoutMs: 60000 },
+    { signal, revalidate: params.revalidate, timeoutMs: 60000 },
   );
 }
 
@@ -3730,6 +3774,37 @@ export function fetchCurriculumScopeLearnerKsbImpact(
     scopePath(SCOPE_IMPACT_PATHS, '/curriculum/learner-ksb-impact/', scope, identifier, query),
     { signal },
   );
+}
+
+export interface CurriculumKsbCoverageSummaryResponse {
+  scope: string;
+  identifier: string;
+  source?: CurriculumKsbCoverageSource;
+  view: 'summary';
+  items: Array<{
+    code: string; title: string; description?: string; coverage_key: string;
+    source_type: string; source_id: string; source_name?: string; source_label?: string;
+    raw_total_weight: number; occurrence_count: number;
+  }>;
+}
+
+export function fetchCurriculumProgrammeKsbCoverageSummary(programmeId: string, params: { sourceType?: string; sourceId?: string; revalidate?: boolean } = {}, signal?: AbortSignal): Promise<CurriculumKsbCoverageSummaryResponse> {
+  const query = new URLSearchParams({ view: 'summary' });
+  if (params.sourceType) query.set('source_type', params.sourceType);
+  if (params.sourceId) query.set('source_id', params.sourceId);
+  return fetchJson<CurriculumKsbCoverageSummaryResponse>(`/curriculum/programmes/${encodeURIComponent(programmeId)}/ksb-coverage/?${query}`, { signal, revalidate: params.revalidate, timeoutMs: 60000 });
+}
+
+export function fetchCurriculumDeliveryScope(signal?: AbortSignal): Promise<Pick<CurriculumOverview, 'cohorts' | 'groups'>> {
+  return fetchJson<Pick<CurriculumOverview, 'cohorts' | 'groups'>>('/curriculum/delivery-scope/', { signal, timeoutMs: 30000 });
+}
+
+export function fetchCurriculumKsbSetSummaries(signal?: AbortSignal): Promise<CurriculumKsbSetSummary[]> {
+  return fetchCollection<CurriculumKsbSetSummary>('/curriculum/ksb-sets/?view=summary&visibility=all', { signal });
+}
+
+export function fetchCurriculumKsbSourceDefinitions(id: string, signal?: AbortSignal): Promise<CurriculumKsbSourceDefinitions> {
+  return fetchJson<CurriculumKsbSourceDefinitions>(`/curriculum/ksb-sets/${encodeURIComponent(id)}/definitions/?visibility=all`, { signal });
 }
 
 function ksbAchievementQuery(params: CurriculumKsbAchievementFilters = {}) {
@@ -4008,8 +4083,10 @@ export function fetchCurriculumProgrammeDetailShell(id: string, signal?: AbortSi
   return fetchJson<CurriculumProgrammeDetailShell>(programmeDetailSectionPath(id, 'shell', options.visibility), { signal, skipCache: options.skipCache, revalidate: options.revalidate, timeoutMs: options.timeoutMs ?? 60000 });
 }
 
-export function fetchCurriculumProgrammeDetailModules(id: string, signal?: AbortSignal, options: ProgrammeDetailSectionOptions = {}): Promise<CurriculumProgrammeDetailModules> {
-  return fetchJson<CurriculumProgrammeDetailModules>(programmeDetailSectionPath(id, 'modules', options.visibility), { signal, skipCache: options.skipCache, revalidate: options.revalidate, timeoutMs: options.timeoutMs ?? 60000 });
+export function fetchCurriculumProgrammeDetailModules(id: string, signal?: AbortSignal, options: ProgrammeDetailSectionOptions & { view?: 'workspace' } = {}): Promise<CurriculumProgrammeDetailModules> {
+  let path = programmeDetailSectionPath(id, 'modules', options.visibility);
+  if (options.view === 'workspace') path += `${path.includes('?') ? '&' : '?'}view=workspace`;
+  return fetchJson<CurriculumProgrammeDetailModules>(path, { signal, skipCache: options.skipCache, revalidate: options.revalidate, timeoutMs: options.timeoutMs ?? 60000 });
 }
 
 export { fetchCurriculumOverview as fetchCurriculumOverviewBundle };

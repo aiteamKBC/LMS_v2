@@ -69,6 +69,7 @@ from .learning_plan import (
     sync_learning_plan_mirror,
 )
 from .mappers import _s, training_plan_field
+from .placement_links import placement_ids
 from .models import (
     EnrolmentUser,
     LearnerProfile,
@@ -851,9 +852,11 @@ def _base_plan(learner):
     if saved:
         return saved
 
+    # By the ids the learner's placement holds; see placement_links.
+    ids = placement_ids(learner)
     programme = _s(learner.programme)
-    catalogue = {m["moduleId"]: m for m in _programme_modules(programme)}
-    preset_ids = _group_module_ids(programme, _s(learner.group))
+    catalogue = {m["moduleId"]: m for m in _programme_modules(programme, ids["programme_id"])}
+    preset_ids = _group_module_ids(programme, _s(learner.group), group_id=ids["group_id"])
     return [catalogue[i] for i in preset_ids if i in catalogue]
 
 
@@ -863,7 +866,9 @@ def _shifted_plan(learner, plan, target, from_id):
         target if _s(module.get("moduleId")) == from_id else module
         for module in plan
     ]
-    preset_ids = set(_group_module_ids(_s(learner.programme), _s(learner.group)))
+    preset_ids = set(_group_module_ids(
+        _s(learner.programme), _s(learner.group), group_id=placement_ids(learner)["group_id"],
+    ))
     if from_id in preset_ids:
         # The omission is deliberate: without an explicit assignment the
         # effective-plan reader immediately adds the source module back from
