@@ -11,6 +11,11 @@ from . import attendance_group as group
 
 
 class AttendanceGroupBulkTests(SimpleTestCase):
+    def setUp(self):
+        delivery = patch('learner_api.recorded_attendance.saved_delivery_mode', return_value='live')
+        delivery.start()
+        self.addCleanup(delivery.stop)
+
     def load(self, count):
         profiles = [SimpleNamespace(id=i, _caseload_source=SimpleNamespace(
             id=900+i, username='Synthetic learner', email=f'learner{i}@example.test', aptem_id=100+i))

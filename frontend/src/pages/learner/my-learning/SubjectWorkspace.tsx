@@ -226,8 +226,9 @@ export function SubjectCard({ subject, cover, tone = 'purple', onOpen, template,
         <div className={styles.cardMetaRow}>
           <span className={styles.sourceBadge} data-source={subject.source}>
             {subject.source === 'legacy' ? <BookOpen size={13} aria-hidden="true" /> : <GraduationCap size={13} aria-hidden="true" />}
-            {subject.source === 'legacy' ? 'Previous learning' : 'Current learning plan'}
+            {subject.source === 'legacy' ? 'Old LMS' : 'New LMS'}
           </span>
+          {subject.source === 'legacy' && <span className={styles.learningModeBadge} data-source="legacy">Review only</span>}
           <span className={styles.status} data-state={isComplete ? 'complete' : status === 'In progress' ? 'started' : 'new'}>
             <span aria-hidden="true" className={styles.statusDot} />{status}
           </span>

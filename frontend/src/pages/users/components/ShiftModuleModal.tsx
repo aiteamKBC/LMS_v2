@@ -29,9 +29,10 @@ import { RowsSkeleton } from '@/components/feature/Skeletons';
 //
 // Step 2 — the progress. A learner part-way through a module has work recorded
 // against its components, and that work has to land somewhere in the module they
-// are joining. Weeks pair by position — week 1 with week 1 — because that is
-// what makes them equivalent. Components match by shared id first, otherwise by
-// one exact cleaned title + type match. Ambiguous rows stay unmatched.
+// are joining. Weeks match by stable id or one exact lesson title before
+// falling back to delivery position. Components match by shared id first,
+// otherwise by one exact cleaned title + type match. Ambiguous rows stay
+// unmatched.
 //
 // The write has its own endpoint, which re-runs the programme lookup and moves plan
 // and progress in one transaction — see module_shift.py.
@@ -145,9 +146,9 @@ function ModuleRow({
 }
 
 /**
- * One week of the module being left, beside the week in the same position of the
- * module being joined. Collapsed to its heading until opened, since a module can
- * run two dozen weeks and only some hold progress.
+ * One week of the module being left, beside its matched week in the module being
+ * joined. Collapsed to its heading until opened, since a module can run two
+ * dozen weeks and only some hold progress.
  */
 function WeekPair({
   pair,
@@ -683,10 +684,11 @@ export function ShiftModuleModal({ learnerId, learnerName, onClose, onSaved }: P
         ) : progress && progress.weeks.length > 0 ? (
           <div className="space-y-3">
             <p className="text-[12px] text-foreground-500">
-              Each week the learner has worked in, beside the week in the same position of{' '}
-              <strong className="text-foreground-800">{toModule?.moduleTitle}</strong>. Open a week
-              to review its completed components. Automatic matches use the same component ID,
-              or one exact title and type match. Ambiguous or unmatched progress is archived and
+              Each week the learner has worked in, beside its matching lesson in{' '}
+              <strong className="text-foreground-800">{toModule?.moduleTitle}</strong>. Exact lesson
+              titles can match even when cohort calendars use different week numbers. Open a week
+              to review its completed components. Automatic component matches use the same ID, or
+              one exact title and type match. Ambiguous or unmatched progress is archived and
               removed from active completion, achieved hours and KSB totals.
             </p>
             {progress.weeks.map((pair) => (

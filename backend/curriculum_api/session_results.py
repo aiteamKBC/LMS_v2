@@ -192,7 +192,7 @@ def merge_session_register_rows(rows):
     return [by_email[email] for email in sorted(by_email)]
 
 
-def result_rows(series, *, session_number=None, email=None, identity=False, module_catalogue_id=''):
+def result_rows(series, *, session_number=None, email=None, identity=False, module_catalogue_id='', attendance_only=False):
     params = [series['id']]
     where = ''
     if session_number is not None:
@@ -208,7 +208,10 @@ def result_rows(series, *, session_number=None, email=None, identity=False, modu
         FROM curriculum.live_session_learner_attendance
         WHERE occurrence_id=ANY(%s) ORDER BY learner_name,learner_profile_id''', [ids])
     context_register_rows = []
-    context_requested = (email is None and module_catalogue_id
+    if not module_catalogue_id and email is not None:
+        shared = series.get('learner_shared_module_ids') or []
+        module_catalogue_id = shared[0] if len(shared) == 1 else ''
+    context_requested = (module_catalogue_id
                          and str(module_catalogue_id) != str(series.get('module_catalogue_id') or ''))
     if context_requested:
         context_register_rows = replaced_module_register_rows(module_catalogue_id, ids)
@@ -228,7 +231,7 @@ def result_rows(series, *, session_number=None, email=None, identity=False, modu
     rules = identity_rules([roster_module_id])
     archive_ready = True
     try:
-        artifacts = read('''SELECT a.id,a.occurrence_id,a.artifact_type,a.created_datetime,a.end_datetime,
+        artifacts = [] if attendance_only else read('''SELECT a.id,a.occurrence_id,a.artifact_type,a.created_datetime,a.end_datetime,
             a.call_id,a.content_correlation_id,a.metadata,
             r.status AS archive_status,r.transcript_text,r.updated_at AS archived_at
             FROM curriculum.live_session_artifacts a
@@ -408,7 +411,8 @@ def result_rows(series, *, session_number=None, email=None, identity=False, modu
                         **({'linkedIdentities': linked_identities} if email is None else {}),
                         'artifacts': artifacts_by_id[item['id']],
                         **({'identityCheck': session_identity} if session_identity is not None else {})})
-    apply_recovery(results)
+    if not attendance_only:
+        apply_recovery(results)
     if email is not None:
         for item in results:
             item['attendance'] = [person for person in item['attendance'] if person['email'] == email.casefold()]
@@ -763,6 +767,23 @@ def learner_results(request, kind, learner_id, series_id, session_number):
         if not series:
             return JsonResponse({'error': 'Session not found.'}, status=404)
         sessions = result_rows(series, session_number=session_number, email=str(learner.email or '').strip().casefold())
+        from learner_api.recorded_attendance import saved_delivery_mode, apply_recorded_attendance
+        from learner_api.attendance_rules import attendance_outcome
+        mode = saved_delivery_mode(learner_id) if sessions else 'live'
+        for session in sessions:
+            session['attendanceMode'] = mode
+            if mode != 'lazy':
+                continue
+            person = next(iter(session.get('attendance') or []), {})
+            row = {'source': 'microsoft-teams', 'session_id': session['id'],
+                   'attendance_status': person.get('rawStatus') or person.get('status') or 'pending',
+                   'effective_attendance_status': person.get('finalOutcome'),
+                   'effective_attendance': person.get('effectiveAttendance'),
+                   'scheduled_start': instant(session.get('startsAt')),
+                   'scheduled_end': instant(session.get('endsAt')),
+                   'session_status': session.get('state')}
+            projected = apply_recorded_attendance([row], learner, mode=mode, kind=kind)[0]
+            session['learningOutcome'] = projected.get('attendance_basis') or attendance_outcome(projected)[0]
         return JsonResponse({'sessions': sessions})
     except DatabaseError:
         return unavailable()

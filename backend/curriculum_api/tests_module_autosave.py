@@ -13,10 +13,13 @@ on another. Auto-save makes that ordinary rather than exotic: a second tab, or a
 colleague, now saves while a first tab is still holding a copy it read minutes
 ago. The revision check is what refuses that write instead of performing it.
 """
+import hashlib
 import json
 from unittest import mock
 
 from django.core.cache import cache
+from django.db import connection
+from django.test.utils import CaptureQueriesContext
 
 from curriculum_api import views
 from curriculum_api.tests import CurriculumPersistenceHarness
@@ -57,6 +60,40 @@ class ModuleStructureRevisionTests(CurriculumPersistenceHarness):
         )
         self.assertEqual(response.status_code, 200, response.content)
         return response.json()
+
+    def test_revision_and_payload_download_component_content_only_once(self):
+        with CaptureQueriesContext(connection) as queries:
+            module = self.read_structure()
+
+        table = views.authoring_table_name(views.AUTHORING_COMPONENTS_TABLE).lower()
+        reads = [
+            item['sql'] for item in queries.captured_queries
+            if item['sql'].lstrip().lower().startswith('select ')
+            and f' from {table} ' in item['sql'].lower()
+        ]
+        self.assertEqual(len(reads), 1, reads)
+        self.assertEqual(module['weekStructure'][0]['components'][0]['title'], 'Opening reading')
+
+    def test_revision_matches_the_existing_fingerprint_without_mutating_shared_rows(self):
+        material = []
+        for label, table, keep, sort_column in views.STRUCTURE_REVISION_SOURCES:
+            rows = views.authoring_fetch_all(
+                table, 'module_catalogue_id = %s', [self.module_id],
+                exclude_columns=views.STRUCTURE_REVISION_VOLATILE_COLUMNS,
+            )
+            if keep:
+                rows = keep(rows)
+            material.append([label, sorted(rows, key=lambda row: views.clean_str(row.get(sort_column)))])
+        legacy = hashlib.sha256(json.dumps(material, sort_keys=True, default=str).encode()).hexdigest()[:32]
+
+        with views.curriculum_read_scope():
+            self.assertEqual(views.module_structure_revision(self.module_id), legacy)
+            rows = views.authoring_fetch_all(
+                views.AUTHORING_COMPONENTS_TABLE, 'module_catalogue_id = %s', [self.module_id],
+                'display_order, id',
+            )
+            self.assertIn('created_at', rows[0])
+            self.assertIn('updated_at', rows[0])
 
     def save_structure(self, module, **extra):
         return self.client.patch(
