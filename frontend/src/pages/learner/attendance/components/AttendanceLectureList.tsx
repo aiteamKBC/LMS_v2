@@ -15,6 +15,7 @@ const STATUS: Record<AttendanceLecture['status'], { label: string; tone: StatusT
   completed: { label: 'Attended', tone: 'positive' }, late: { label: 'Late', tone: 'caution' },
   absent: { label: 'Missed', tone: 'critical' }, upcoming: { label: 'Upcoming', tone: 'info' },
   unmarked: { label: 'Unmarked', tone: 'neutral' },
+  awaiting_recording: { label: 'Awaiting recording', tone: 'neutral' },
   in_progress: { label: 'In progress', tone: 'info' }, pending: { label: 'Awaiting attendance', tone: 'neutral' },
 };
 const shortDate = (date: string | null | undefined) => date && /^\d{4}-\d{2}-\d{2}$/.test(date)
@@ -249,7 +250,8 @@ function LectureRow({ now, row, onOpen, onReport, onCatchup }: { now: number; ro
     <div className={styles.lectureContent} data-label="Key Content">{row.contentSummary || <span className={styles.unmapped}>Content not recorded</span>}</div>
     <div className={styles.lectureKsbs} data-label="KSBs"><KsbChips row={row} /></div>
     <div className={styles.lectureStatus} data-label="Status">
-      <StatusBadge {...(outcome.madeUp ? { label: 'Made up', tone: 'positive' as StatusTone } : STATUS[row.status])} />
+      <StatusBadge {...(row.attendanceBasis === 'recorded' ? { label: 'Completed by recording', tone: 'positive' as StatusTone }
+        : outcome.madeUp ? { label: 'Made up', tone: 'positive' as StatusTone } : STATUS[row.status])} />
       {outcome.detail && <StatusBadge tone={outcome.detail.tone} label={outcome.detail.label} />}
     </div>
     <div className={styles.lectureAttendanceAction} data-label="Attendance action">

@@ -204,6 +204,7 @@ export function SubjectCard({ subject, cover, tone = 'purple', onOpen, template,
               : subject.replacementCourseRef ? 'Old LMS · Updated content'
               : subject.importedCourseRef ? 'Old LMS · Current learning plan' : 'New LMS · Current learning plan'}
           </span>
+          {subject.source === 'legacy' && <span className={styles.learningModeBadge} data-source="legacy">Review only</span>}
           <span className={styles.status} data-state={isComplete ? 'complete' : status === 'In progress' ? 'started' : 'new'}>
             <span aria-hidden="true" className={styles.statusDot} />{status}
           </span>

@@ -281,6 +281,44 @@ def entries_for(owner, *, overview_only=False, entry_ids=None, lineage_only=Fals
     return result
 
 
+def weekly_hour_records(owner):
+    """Hours-only projection; retain learner-wide facts needed by native dedupe.
+
+    Attempts/source completion cannot change accepted ledger seconds. Only
+    unsynchronised direct saves need current assignment markings. Reporting
+    segments are a presence gate here, never additional hour allocations.
+    """
+    from .current_learning import project_current
+    fields = ('id', 'learner_id', 'kind', 'module_ref', 'module_title', 'component_ref',
+              'component_type', 'quiz_ref', 'passed', 'reported_time', 'submitted_at',
+              'started_at', 'time_tracking_source', 'claimed_seconds', 'verified_seconds',
+              'source_system', 'component_link_source', 'actual_seconds', 'accepted')
+    records = query('''SELECT ''' + ','.join('progress.' + field for field in fields) + ''',
+        to_jsonb(progress)->>'actual_basis' AS actual_basis,
+        CASE WHEN jsonb_typeof(progress.source_payload)='object' THEN
+          jsonb_build_object('original_source_ref',progress.source_payload->'original_source_ref')
+          ELSE progress.source_payload END AS source_payload,
+        CASE WHEN EXISTS(SELECT 1 FROM "Learner".learner_activity_reporting_segments s
+            WHERE s.progress_id=progress.id AND s.learner_id=progress.learner_id AND s.learner_id=%s)
+          THEN '[{}]'::jsonb ELSE '[]'::jsonb END AS segments
+        FROM "Learner".learner_progress_entries progress
+        WHERE progress.learner_id=%s AND progress.deleted_at IS NULL
+          ORDER BY progress.reporting_month,progress.reporting_started_at NULLS LAST,progress.id''', [owner['id'], owner['id']])
+    records = [{**record, 'segments': decoded(record.get('segments'), [])} for record in records]
+    pending = sorted({str(record['component_ref']) for record in records
+                      if record.get('component_ref') and record.get('component_type') == 'assignment'
+                      and is_unsynchronised_direct_save(record)})
+    markings = {}
+    if pending:
+        submissions = query('''SELECT component_ref,status,actual_time_hours
+            FROM "Learner".learning_reflection_submissions
+            WHERE learner_id=%s AND learner_kind=%s AND activity_type IN ('assignment','extra_activity')
+              AND component_ref=ANY(%s) ORDER BY submitted_at NULLS FIRST,id''',
+            [str(owner['enrolment_id']), owner.get('learner_type'), pending])
+        markings = {str(row['component_ref']): row for row in submissions}
+    return progress_records_with_completion(records, project_current(records, markings))
+
+
 def progress_records_with_completion(records, current):
     """Enrich progress completion without replacing stored hours or adding rows.
 
@@ -537,7 +575,7 @@ def material_parts(item, owner, record=None):
                and r.get('source_course_ref') and r.get('source_activity_id')]
     if sources:
         # Preserve the activity namespace: quiz:10 must never open material:10.
-        keys = {(str(r['source_course_ref']), r['source_activity_id']) for r in sources}
+        keys = {recorded_source_key(r) for r in sources}
     else:
         component_ids = {r.get('curriculum_component_ref') or r.get('component_ref')
                          for r in [record, *(record.get('sources') or [])]}
@@ -821,6 +859,23 @@ def recorded_activity_schedule(record, course):
         'date_source': 'introduction' if introduction else 'consolidated_record'}
 
 
+def recorded_source_key(source):
+    """Resolve a course-qualified legacy identity only inside its stored route.
+
+    Older imports used one global material/quiz key per learner. A component
+    reused by two courses needs distinct source rows, while catalogue IDs and
+    learner-facing material links retain the original typed component ID.
+    """
+    course = str(source.get('source_course_ref') or '')
+    reference = str(source.get('source_activity_id') or '')
+    if reference.startswith('course:'):
+        match = re.fullmatch(r'course:([1-9]\d*):((?:material|quiz):[1-9]\d*)', reference)
+        if not match or source.get('source_system') != 'old_lms' or match[1] != course:
+            return None
+        reference = match[2]
+    return course, reference
+
+
 def learner_course_catalogue(courses, catalogue):
     """Keep restored legacy components within their verified learner/course scope.
 
@@ -862,7 +917,7 @@ def recorded_course_items(courses, catalogue, records, *, overview_only=False, i
     for record in records:
         placements = {}
         for source in record.get('sources') or []:
-            key = (str(source.get('source_course_ref')), source.get('source_activity_id'))
+            key = recorded_source_key(source)
             if source.get('source_system') == 'old_lms' and key in definitions:
                 placements.setdefault(key if include_catalogue else key[0], definitions[key])
         # Imported journal rows and new attempts retain a typed course/material

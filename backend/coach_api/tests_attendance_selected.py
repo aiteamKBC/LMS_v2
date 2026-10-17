@@ -160,6 +160,7 @@ class EvidenceFixture:
 
     def __enter__(self):
         self.stack = ExitStack()
+        self.stack.enter_context(patch('learner_api.recorded_attendance.saved_delivery_mode', return_value='live'))
         self.stack.enter_context(patch('socket.socket.connect', side_effect=AssertionError('No network allowed')))
         self.graph = self.stack.enter_context(patch('coach_api.views.microsoft_graph_request', side_effect=AssertionError('No Graph allowed')))
         self.stack.enter_context(patch.object(canonical.timezone, 'now', return_value=self.now))

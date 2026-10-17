@@ -55,8 +55,12 @@ describe('learner subject cards', () => {
 
     await screen.findByRole('heading', { name: 'New curriculum module' });
     expect(screen.getByRole('heading', { name: 'Leadership' })).toBeVisible();
-    expect(within(screen.getByRole('button', { name: /Leadership.*Open subject/ })).getByText('Old LMS · Previous learning')).toBeVisible();
-    expect(within(screen.getByRole('button', { name: /New curriculum module.*Open subject/ })).getByText('New LMS · Current learning plan')).toBeVisible();
+    const oldLmsCard = within(screen.getByRole('button', { name: /Leadership.*Open subject/ }));
+    expect(oldLmsCard.getByText('Old LMS · Previous learning')).toBeVisible();
+    expect(oldLmsCard.getByText('Review only')).toBeVisible();
+    const newLmsCard = within(screen.getByRole('button', { name: /New curriculum module.*Open subject/ }));
+    expect(newLmsCard.getByText('New LMS · Current learning plan')).toBeVisible();
+    expect(newLmsCard.queryByText('Study here & record progress')).not.toBeInTheDocument();
     expect(screen.getByRole('tab', { name: 'All modules' })).toHaveAttribute('aria-selected', 'true');
 
     fireEvent.click(screen.getByRole('tab', { name: 'Old LMS' }));
@@ -375,7 +379,7 @@ describe('subjects shared with Module Builder', () => {
     vi.spyOn(api, 'fetchStudentActivity').mockImplementation(() => new Promise(resolve => { finishActivity = resolve; }));
     vi.spyOn(api, 'subjectRequest').mockImplementation(() => new Promise(resolve => { finishMetadata = resolve; }));
     render(<ModulesTab real={linkedReal} loading={false} loadError={null} kind="commercial" id="132" />);
-    expect(screen.getByRole('button', { name: /Current learning plan.*Leadership/ })).toBeVisible();
+    expect(screen.getByRole('button', { name: /New LMS.*Leadership/ })).toBeVisible();
     expect(screen.getByText('1 of 3 completed')).toBeVisible();
     expect(screen.queryByText('Loading subjects')).not.toBeInTheDocument();
     await act(async () => { finishActivity(data); finishMetadata(linkedMetadata); });
@@ -458,14 +462,14 @@ describe('subjects shared with Module Builder', () => {
     const metadata = vi.spyOn(api, 'subjectRequest').mockImplementation(() => new Promise(resolve => { finishMetadata = resolve; }));
     render(<ModulesTab real={linkedReal} loading={false} loadError={null} kind="commercial" id="132" />);
     expect(screen.getByRole('status')).toHaveTextContent('Loading subjects');
-    expect(screen.queryByRole('button', { name: /Current learning plan.*Leadership/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /New LMS.*Leadership/ })).not.toBeInTheDocument();
     expect(metadata).toHaveBeenCalledOnce();
     expect(metadata).toHaveBeenCalledWith('/learner_api/subject-covers/132/?refs=', expect.objectContaining({ signal: expect.any(AbortSignal) }));
     await act(async () => finishActivity(data));
     expect(metadata).toHaveBeenCalledOnce();
     expect(screen.queryByRole('region', { name: 'Your subjects' })).not.toBeInTheDocument();
     await act(async () => finishMetadata(linkedMetadata));
-    expect(screen.getAllByRole('button', { name: /Current learning plan.*Leadership/ })).toHaveLength(1);
+    expect(screen.getAllByRole('button', { name: /New LMS.*Leadership/ })).toHaveLength(1);
     expect(screen.getByText('1 of 3 completed')).toBeInTheDocument();
     expect(screen.queryByRole('status')).not.toBeInTheDocument();
   });
@@ -476,7 +480,7 @@ describe('subjects shared with Module Builder', () => {
     render(<StudentActivityPanel data={source === 'legacy' ? data : null} real={source === 'native' ? linkedReal : null}
       kind="commercial" learnerId="132" loading={false} error={null} onRetry={vi.fn()} />);
     expect(screen.getByRole('status')).toHaveTextContent('Loading subjects');
-    expect(screen.queryByRole('button', { name: /Current learning plan.*Leadership/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /New LMS.*Leadership/ })).not.toBeInTheDocument();
     await act(async () => finish(linkedMetadata));
     expect(screen.getByRole('region', { name: 'Your subjects' })).toBeInTheDocument();
   });
@@ -490,21 +494,21 @@ describe('subjects shared with Module Builder', () => {
       .mockImplementationOnce(() => new Promise(resolve => { finishMetadata = resolve; }));
     const props = { kind: 'commercial' as const, id: '132', loadError: null };
     const { rerender } = render(<ModulesTab {...props} real={linkedReal} loading={false} />);
-    const card = await screen.findByRole('button', { name: /Current learning plan.*Leadership/ });
+    const card = await screen.findByRole('button', { name: /New LMS.*Leadership/ });
     fireEvent.change(screen.getByRole('textbox', { name: 'Search modules or activities' }), { target: { value: 'Leadership' } });
     rerender(<ModulesTab {...props} real={linkedReal} loading />);
-    expect(screen.getByRole('button', { name: /Current learning plan.*Leadership/ })).toBe(card);
+    expect(screen.getByRole('button', { name: /New LMS.*Leadership/ })).toBe(card);
     const refreshed = { ...linkedReal, components: linkedReal.components.slice(0, 2) };
     rerender(<ModulesTab {...props} real={refreshed} loading={false} />);
     expect(screen.getByText('1 of 3 completed')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /Current learning plan.*Leadership/ })).toBe(card);
+    expect(screen.getByRole('button', { name: /New LMS.*Leadership/ })).toBe(card);
     expect(metadata).toHaveBeenCalledTimes(2);
     await act(async () => finishActivity(data));
     expect(screen.getByText('1 of 3 completed')).toBeInTheDocument();
     expect(metadata).toHaveBeenCalledTimes(2);
     await act(async () => finishMetadata(linkedMetadata));
-    expect(within(screen.getByRole('button', { name: /Current learning plan.*Leadership/ })).getByText('1 of 2 completed')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /Current learning plan.*Leadership/ })).toBe(card);
+    expect(within(screen.getByRole('button', { name: /New LMS.*Leadership/ })).getByText('1 of 2 completed')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /New LMS.*Leadership/ })).toBe(card);
     expect(screen.getByRole('textbox', { name: 'Search modules or activities' })).toHaveValue('Leadership');
     expect(activity).toHaveBeenCalledTimes(2);
     expect(screen.queryByText('Loading subjects')).not.toBeInTheDocument();
@@ -523,11 +527,11 @@ describe('subjects shared with Module Builder', () => {
     vi.spyOn(api, 'subjectRequest').mockResolvedValueOnce(linkedMetadata).mockReturnValueOnce(new Promise(() => {}));
     const props = { data, real: linkedReal, kind: 'commercial', error: null, onRetry: vi.fn() };
     const { rerender } = render(<StudentActivityPanel {...props} learnerId="132" loading={false} />);
-    await screen.findByRole('button', { name: /Current learning plan.*Leadership/ });
+    await screen.findByRole('button', { name: /New LMS.*Leadership/ });
     rerender(<StudentActivityPanel {...props} learnerId="133" loading />);
     expect(screen.getByRole('status')).toHaveTextContent('Loading subjects');
     expect(screen.queryByText('Anna Rundell')).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /Current learning plan.*Leadership/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /New LMS.*Leadership/ })).not.toBeInTheDocument();
   });
 
   it('refreshes assignment metadata even when a new module has no component ids yet', async () => {
@@ -619,7 +623,7 @@ describe('subjects shared with Module Builder', () => {
     const request = vi.spyOn(api, 'subjectRequest').mockImplementation(() => new Promise((done) => { resolve = done; }));
     render(<StudentActivityPanel data={data} real={linkedReal} kind="commercial" learnerId="132" loading={false} error={null} onRetry={vi.fn()} />);
     expect(screen.getByRole('status')).toHaveTextContent('Loading subjects');
-    expect(screen.queryByRole('button', { name: /Current learning plan.*Leadership/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /New LMS.*Leadership/ })).not.toBeInTheDocument();
     await act(async () => resolve({ ...linkedMetadata, builder_subjects: { 'legacy:1': { id: 'MOD-1', title: 'Renamed Leadership' } } }));
     expect(screen.getAllByRole('button', { name: /Renamed Leadership/ })).toHaveLength(1);
     expect(screen.getByText('1 of 3 completed')).toBeInTheDocument();

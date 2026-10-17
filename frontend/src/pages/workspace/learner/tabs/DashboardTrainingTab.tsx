@@ -20,7 +20,8 @@ function TrainingPlanContent({ kind, learnerId, programmeStartDate, programmeEnd
   const displayStart = dateKey(programmeStartDate);
   const displayEnd = dateKey(programmeEndDate);
   const initialReader = useMemo(() => (requestedKind: typeof kind, id: string, signal?: AbortSignal, fresh = false) => dashboardTraining.read(requestedKind, id, signal, fresh, subject, requestedMonth, displayStart, displayEnd), [subject, requestedMonth, displayStart, displayEnd]);
-  const read = useLiveLearnerRead(kind, learnerId, true, initialReader, dashboardTraining.peek);
+  const peekReader = useMemo(() => (requestedKind: typeof kind, id: string) => dashboardTraining.peek(requestedKind, id, subject, requestedMonth, displayStart, displayEnd), [subject, requestedMonth, displayStart, displayEnd]);
+  const read = useLiveLearnerRead(kind, learnerId, true, initialReader, peekReader);
   const payload = read.data;
   const identity = `${kind}:${learnerId}:${subject}:${requestedMonth}`;
   const [now, setNow] = useState(Date.now);
@@ -59,13 +60,16 @@ function TrainingPlanContent({ kind, learnerId, programmeStartDate, programmeEnd
   const detailError = state?.error;
   const detailLoading = !!selectedId && !detail && !detailError;
   const modules = useMemo(() => (payload?.timeline.modules || []).map(module => module.id === detail?.id ? detail : timelineModuleForDisplay(module)), [payload, detail]);
-  const timelineData: TrainingPlanDashboard = {
-    months: Object.fromEntries(Object.entries<{ topics: string[] }>(payload?.timeline.months || {}).map(([key, month]) => [key, { label: '', topics: month.topics, planned: null, source: 'training' }])),
-    actual: [], actualAvailable: false, modules: [], moduleLinks: {}, sessions: [], reviews: payload?.timeline.reviews || [],
-    coach: { name: payload?.timeline.coachName || '', bookingUrl: null }, contractStatus: 'ready', generatedAt: '',
-  };
-  // Range months replace the legacy all-month ledgers used only to choose year controls.
-  for (const month of [minMonth, maxMonth]) if (month && !timelineData.months[month]) timelineData.months[month] = { label: '', topics: [], planned: null, source: 'training' };
+  const timelineData = useMemo<TrainingPlanDashboard>(() => {
+    const data: TrainingPlanDashboard = {
+      months: Object.fromEntries(Object.entries<{ topics: string[] }>(payload?.timeline.months || {}).map(([key, month]) => [key, { label: '', topics: month.topics, planned: null, source: 'training' }])),
+      actual: [], actualAvailable: false, modules: [], moduleLinks: {}, sessions: [], reviews: payload?.timeline.reviews || [],
+      coach: { name: payload?.timeline.coachName || '', bookingUrl: null }, contractStatus: 'ready', generatedAt: '',
+    };
+    // Range months replace the legacy all-month ledgers used only to choose year controls.
+    for (const month of [minMonth, maxMonth]) if (month && !data.months[month]) data.months[month] = { label: '', topics: [], planned: null, source: 'training' };
+    return data;
+  }, [payload, minMonth, maxMonth]);
   const root = useRef<HTMLDivElement>(null);
   const scrolled = useRef('');
   useEffect(() => {

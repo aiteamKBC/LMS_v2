@@ -77,4 +77,13 @@ describe('learner account menu', () => {
     await userEvent.click(button);
     expect(within(screen.getByRole('menu')).queryByRole('menuitem', { name: 'My Profile' })).not.toBeInTheDocument();
   });
+
+  it('uses the shared learner and coach header treatment for curriculum', () => {
+    render(<MemoryRouter>
+      <Header role="curriculum" workspaceLabel="Curriculum Designer" pageTitle="Programmes" onOpenSearch={() => {}} />
+    </MemoryRouter>);
+
+    expect(document.querySelector('.kbc-workspace-topbar')).toHaveClass('kbc-learner-header');
+    expect(document.querySelector('.kbc-learner-header-pattern')).toBeInTheDocument();
+  });
 });

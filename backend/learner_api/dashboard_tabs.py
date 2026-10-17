@@ -48,14 +48,15 @@ def monthly_hours(owner, records, targets, *, signed_months=(), current_month=No
                 'planned_hours': totals['planned']}}
 
 
-def learning_projection(source, owner, records):
+def learning_projection(source, owner, records, *, compact_content=False):
     from .weekly_learning import build_weekly_learning
     from .student_activity_access import student_activity_available
     from .student_activity_data import summarize_activities
     from .builder_activity_dates import read_builder_activity_dates
     from .student_activity import builder_subject_links
 
-    weekly = build_weekly_learning(source, source.pk, learning_summary=True)
+    options = {'compact_content': True} if compact_content else {}
+    weekly = build_weekly_learning(source, source.pk, learning_summary=True, **options)
     detail = {key: weekly.get(key, []) for key in (
         'modules', 'components', 'retiredQuizComponents', 'quizAttempts', 'videoProgress', 'componentProgress')}
     # Catalogue membership is intentional: a recorded-only projection changes
@@ -104,7 +105,11 @@ def read_tab(source, kind, tab, request):
 
     owner = canonical.require_profile(source.pk)
     source._canonical_profile = owner
-    profile = learner_profile_for_source(source, source.pk, heal=False)
+    profile_options = {}
+    if tab in ('training', 'overview'):
+        from .training_plan_dashboard import TRAINING_PLAN_PROFILE_FIELDS
+        profile_options['fields'] = TRAINING_PLAN_PROFILE_FIELDS
+    profile = learner_profile_for_source(source, source.pk, heal=False, **profile_options)
     if profile is None or profile.pk != owner['id'] or profile.enrolment_id != source.pk:
         raise ServiceError('The consolidated learner identity needs review.', 'identity_review_required', 409)
     source._case_file_profile = profile

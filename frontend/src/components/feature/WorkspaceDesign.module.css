@@ -10,9 +10,22 @@
   color: white;
   box-shadow: none;
 }
+:global(.workspace-shell[data-workspace-role="curriculum"]).shell :global(.kbc-workspace-topbar) {
+  margin: 0;
+  height: 80px;
+  padding-inline: 22px;
+  border-radius: 0;
+  border: 0;
+  background: #4f2d7f !important;
+  color: white;
+  box-shadow: none;
+}
 :global(.workspace-shell[data-workspace-role="coach"]).shell :global(.kbc-learner-header-pattern) { background-position: center; background-repeat: no-repeat; background-size: auto 190%; opacity: .12; }
+:global(.workspace-shell[data-workspace-role="curriculum"]).shell :global(.kbc-learner-header-pattern) { background-position: center; background-repeat: no-repeat; background-size: auto 190%; opacity: .12; }
 :global(.workspace-shell[data-workspace-role="coach"]).shell :global(.kbc-workspace-topbar) > :not(:global(.kbc-learner-header-pattern)) { position: relative; z-index: 1; }
+:global(.workspace-shell[data-workspace-role="curriculum"]).shell :global(.kbc-workspace-topbar) > :not(:global(.kbc-learner-header-pattern)) { position: relative; z-index: 1; }
 :global(.workspace-shell[data-workspace-role="coach"]).shell :is(:global(.kbc-topbar-title), :global(.kbc-topbar-subtitle), :global(.kbc-topbar-user-name), :global(.kbc-navigation-menu)) { color: white !important; }
+:global(.workspace-shell[data-workspace-role="curriculum"]).shell :is(:global(.kbc-topbar-title), :global(.kbc-topbar-subtitle), :global(.kbc-topbar-user-name), :global(.kbc-navigation-menu)) { color: white !important; }
 :global(.workspace-shell[data-workspace-role="coach"]).shell :global(.coach-header-search) { display: flex; align-items: center; gap: 8px; min-width: 0; width: min(320px, 24vw); padding: 9px 12px; border: 1px solid rgb(255 255 255 / 40%); border-radius: 8px; background: rgb(255 255 255 / 12%); color: white; font-size: 12px; text-align: left; }
 :global(.coach-header-search) span { flex: 1; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 :global(.coach-header-search) svg { width: 14px; height: 14px; color: #f5c94f; }
@@ -24,6 +37,9 @@
 }
 :global([data-theme="dark"]) :global(.workspace-shell[data-workspace-role="coach"]).shell :global(.kbc-workspace-topbar) { background: #162740 !important; border-bottom: 1px solid #3b526c; }
 :global([data-theme="dark"]) :global(.workspace-shell[data-workspace-role="coach"]).shell :is(:global(.kbc-topbar-title), :global(.kbc-topbar-user-name), :global(.kbc-navigation-menu)) { color: #f6f8fb !important; }
+:global([data-theme="dark"]) :global(.workspace-shell[data-workspace-role="curriculum"]).shell :global(.kbc-workspace-topbar) { background: #162740 !important; border-bottom: 1px solid #3b526c; }
+:global([data-theme="dark"]) :global(.workspace-shell[data-workspace-role="curriculum"]).shell :global(.kbc-learner-sidebar-panel) { background: #111f32 !important; }
+:global([data-theme="dark"]) :global(.workspace-shell[data-workspace-role="curriculum"]).shell :is(:global(.kbc-topbar-title), :global(.kbc-topbar-user-name), :global(.kbc-navigation-menu)) { color: #f6f8fb !important; }
 /* Scrollbars inside the workspace shell are deliberately visible: learners
    need a visible cue that a page or panel holds more content. The thin,
    themed scrollbar style is defined globally in index.css ("Scrollbar"). A
@@ -423,18 +439,18 @@
 
 /* Learner and coach breadcrumbs use connected step segments: the primary colour marks
    completed route levels and the secondary colour marks the current level. */
-:global(.workspace-shell:is([data-workspace-role="learner"], [data-workspace-role="coach"])).shell :global(.workspace-breadcrumbs) {
+:global(.workspace-shell:is([data-workspace-role="learner"], [data-workspace-role="coach"], [data-workspace-role="curriculum"])).shell :global(.workspace-breadcrumbs) {
   min-height: 1.95rem;
   height: 1.95rem;
   margin: 0 .75rem .25rem 0;
   padding: 0 .35rem;
   overflow: visible;
-  border: 0;
+  border: 0 !important;
   border-radius: .85rem;
-  background: transparent;
+  background: transparent !important;
 }
 
-:global(.workspace-shell:is([data-workspace-role="learner"], [data-workspace-role="coach"])).shell :global(.learner-step-breadcrumb) {
+:global(.workspace-shell:is([data-workspace-role="learner"], [data-workspace-role="coach"], [data-workspace-role="curriculum"])).shell :global(.learner-step-breadcrumb) {
   min-height: 0;
   height: 100%;
   gap: 0;
@@ -442,7 +458,7 @@
   overflow-y: visible;
 }
 
-:global(.workspace-shell:is([data-workspace-role="learner"], [data-workspace-role="coach"])).shell :global(.workspace-breadcrumb-home) {
+:global(.workspace-shell:is([data-workspace-role="learner"], [data-workspace-role="coach"], [data-workspace-role="curriculum"])).shell :global(.workspace-breadcrumb-home) {
   display: grid;
   width: 1.45rem;
   height: 1.45rem;
@@ -455,11 +471,11 @@
   color: oklch(var(--primary-700));
 }
 
-:global(.workspace-shell:is([data-workspace-role="learner"], [data-workspace-role="coach"])).shell :global(.workspace-breadcrumb-home-separator) {
+:global(.workspace-shell:is([data-workspace-role="learner"], [data-workspace-role="coach"], [data-workspace-role="curriculum"])).shell :global(.workspace-breadcrumb-home-separator) {
   display: none;
 }
 
-:global(.workspace-shell:is([data-workspace-role="learner"], [data-workspace-role="coach"])).shell :global(.workspace-breadcrumb-step) {
+:global(.workspace-shell:is([data-workspace-role="learner"], [data-workspace-role="coach"], [data-workspace-role="curriculum"])).shell :global(.workspace-breadcrumb-step) {
   position: relative;
   z-index: 1;
   min-width: 9.5rem;
@@ -473,17 +489,17 @@
   white-space: nowrap;
 }
 
-:global(.workspace-shell:is([data-workspace-role="learner"], [data-workspace-role="coach"])).shell :global(.workspace-breadcrumb-step + .workspace-breadcrumb-step) {
+:global(.workspace-shell:is([data-workspace-role="learner"], [data-workspace-role="coach"], [data-workspace-role="curriculum"])).shell :global(.workspace-breadcrumb-step + .workspace-breadcrumb-step) {
   margin-left: -1.15rem;
   padding-left: 2.4rem;
 }
 
-:global(.workspace-shell:is([data-workspace-role="learner"], [data-workspace-role="coach"])).shell :global(.workspace-breadcrumb-step.is-current) {
+:global(.workspace-shell:is([data-workspace-role="learner"], [data-workspace-role="coach"], [data-workspace-role="curriculum"])).shell :global(.workspace-breadcrumb-step.is-current) {
   z-index: 2;
   background: oklch(var(--secondary-500));
 }
 
-:global(.workspace-shell:is([data-workspace-role="learner"], [data-workspace-role="coach"])).shell :global(.workspace-breadcrumb-step)::before {
+:global(.workspace-shell:is([data-workspace-role="learner"], [data-workspace-role="coach"], [data-workspace-role="curriculum"])).shell :global(.workspace-breadcrumb-step)::before {
   display: grid;
   width: 1.05rem;
   height: 1.05rem;
@@ -498,13 +514,13 @@
   font-weight: 800;
 }
 
-:global(.workspace-shell:is([data-workspace-role="learner"], [data-workspace-role="coach"])).shell :global(.workspace-breadcrumb-step.is-current)::before {
+:global(.workspace-shell:is([data-workspace-role="learner"], [data-workspace-role="coach"], [data-workspace-role="curriculum"])).shell :global(.workspace-breadcrumb-step.is-current)::before {
   background: oklch(var(--primary-100));
   color: oklch(var(--secondary-700));
 }
 
-:global(.workspace-shell:is([data-workspace-role="learner"], [data-workspace-role="coach"])).shell :global(.workspace-breadcrumb-step > a),
-:global(.workspace-shell:is([data-workspace-role="learner"], [data-workspace-role="coach"])).shell :global(.workspace-breadcrumb-step > span) {
+:global(.workspace-shell:is([data-workspace-role="learner"], [data-workspace-role="coach"], [data-workspace-role="curriculum"])).shell :global(.workspace-breadcrumb-step > a),
+:global(.workspace-shell:is([data-workspace-role="learner"], [data-workspace-role="coach"], [data-workspace-role="curriculum"])).shell :global(.workspace-breadcrumb-step > span) {
   min-width: 0;
   overflow: hidden;
   color: #fff !important;
@@ -514,17 +530,17 @@
   font-weight: 600;
 }
 
-:global(.workspace-shell:is([data-workspace-role="learner"], [data-workspace-role="coach"])).shell :global(.workspace-breadcrumb-step > .ri-arrow-right-s-line) {
+:global(.workspace-shell:is([data-workspace-role="learner"], [data-workspace-role="coach"], [data-workspace-role="curriculum"])).shell :global(.workspace-breadcrumb-step > .ri-arrow-right-s-line) {
   display: none;
 }
 
 @media (max-width: 640px) {
-  :global(.workspace-shell:is([data-workspace-role="learner"], [data-workspace-role="coach"])).shell :global(.workspace-breadcrumbs) {
+  :global(.workspace-shell:is([data-workspace-role="learner"], [data-workspace-role="coach"], [data-workspace-role="curriculum"])).shell :global(.workspace-breadcrumbs) {
     margin-right: 0;
     padding-inline: 0;
   }
 
-  :global(.workspace-shell:is([data-workspace-role="learner"], [data-workspace-role="coach"])).shell :global(.workspace-breadcrumb-step) {
+  :global(.workspace-shell:is([data-workspace-role="learner"], [data-workspace-role="coach"], [data-workspace-role="curriculum"])).shell :global(.workspace-breadcrumb-step) {
     min-width: 8.5rem;
     font-size: .8rem;
   }

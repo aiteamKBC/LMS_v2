@@ -64,8 +64,13 @@ export function quizAttemptsFor(
   attempts: LearnerQuizAttempt[] | undefined,
 ): LearnerQuizAttempt[] {
   const quizId = component.quizMeta?.quizId;
-  return (attempts || []).filter((attempt) => (quizId != null && String(attempt.quizId) === String(quizId))
-    || (!!component.componentId && attempt.componentId === component.componentId));
+  return (attempts || []).filter((attempt) => {
+    // A shifted attempt keeps the quiz that was actually sat but receives an
+    // explicit destination component. That identity is authoritative: also
+    // falling back to quizId could credit another component reusing the quiz.
+    if (attempt.componentId) return !!component.componentId && attempt.componentId === component.componentId;
+    return quizId != null && String(attempt.quizId) === String(quizId);
+  });
 }
 
 /* ═══════════════════════════════════════════════════════

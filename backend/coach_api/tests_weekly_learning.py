@@ -96,7 +96,7 @@ class WeeklyLearningTests(SimpleTestCase):
         self.assertEqual(report['newTopLevel'], ['weeks', 'selectedWeek'])
         self.assertGreater(report['reductionPercent'], 90)
 
-    def projection(self, selection='M1:1', kind='commercial', future_report=False, records=None, duration='60', reader_options=None, session_only=False):
+    def projection(self, selection='M1:1', kind='commercial', future_report=False, records=None, duration='60', reader_options=None, session_only=False, fallback_ksbs=None, live_evidence=None):
         context = MagicMock()
         context.source = SimpleNamespace(pk=201, email='learner@example.test', learner_type=kind)
         context.profile.progress_entries.filter.return_value.values.return_value = [
@@ -106,7 +106,7 @@ class WeeklyLearningTests(SimpleTestCase):
         module = {'id': 'M1', 'title': 'Synthetic module', 'start_date': date(2026, 10, 5), 'end_date': date(2026, 10, 18)}
         slots = [{'slotNumber': index, 'sessionNumber': index, 'date': day, 'type': 'live-session', 'weekId': f'W{index}', 'weekTitle': f'Week {index}'}
                  for index, day in ((1, '2026-10-05'), (2, '2026-10-12'))]
-        def spine(_modules, by_id, _counts, _authored):
+        def spine(_modules, by_id, _counts, _authored, **kwargs):
             by_id['M1']['curriculumSlots'] = slots
         selected = 2 if selection == 'M1:2' else 1
         datasets = [[module], [], [
@@ -117,6 +117,13 @@ class WeeklyLearningTests(SimpleTestCase):
             [{'session_id': 'S1', 'module_id': 'M1', 'module_title': 'Synthetic session', 'start_datetime': datetime(2026,10,5 if selected == 1 else 12,8),
               'duration_minutes': 120, 'series_join_url': 'https://example.test/teams', 'series_status': 'scheduled',
               'occurrence_id': f'O{selected}', 'scheduled_start': None, 'scheduled_end': None, 'join_url': None, 'status': None, 'attended': True}]]
+        if live_evidence is not None:
+            context.profile.progress_entries.filter.return_value.values.return_value = []
+            for component in datasets[2]:
+                component['type'] = 'live_session'
+            datasets[4][0]['type'] = 'live_session'
+            # Shared modules have no direct Teams rows of their own.
+            datasets[-1] = []
         if session_only:
             slots[0].pop('weekId')
             start = datetime(2026, 10, 5, 8)
@@ -132,17 +139,97 @@ class WeeklyLearningTests(SimpleTestCase):
                             'status': 'completed', 'attended': False}]
             datasets[-1][0].update(start_datetime=start, scheduled_start=start,
                                   scheduled_end=start + timedelta(hours=2), status='completed', attended=False)
+        if (reader_options or {}).get('student_projection'):
+            if fallback_ksbs is not None:
+                datasets[4][0]['ksb_mappings'] = []
+                datasets[4][0]['fallback_ksb_mappings'] = fallback_ksbs
+            sessions = datasets.pop()
+            if sessions:
+                session = sessions[0]
+                start = session['scheduled_start'] or session['start_datetime']
+                datasets[3] = [{**session, 'module_catalogue_id': 'M1', 'day': start.date(),
+                                'start': start, 'finish': session['scheduled_end'] or start + timedelta(minutes=session['duration_minutes'])}]
+            context.profile.progress_entries.filter.return_value.filter.return_value = context.profile.progress_entries.filter.return_value
         with patch('coach_api.weekly_learning.connections') as connections, \
+             patch('coach_api.weekly_learning.read_weekly_live_evidence', return_value=live_evidence or ([], [])), \
              patch('learner_api.learning_plan._effective_plan_ids', return_value=['M1']), \
              patch('learner_api.canonical_learning.require_profile', return_value={}), \
              patch('learner_api.canonical_learning.curriculum_module_ids_for', return_value=[]), \
              patch('learner_api.canonical_learning.entries_for', return_value=records if records is not None else [
+                 {'module_ref': 'M1', 'component_ref': 'C1', 'accepted': True, 'actual_seconds': 3600}]), \
+             patch('learner_api.canonical_learning.weekly_hour_records', return_value=records if records is not None else [
                  {'module_ref': 'M1', 'component_ref': 'C1', 'accepted': True, 'actual_seconds': 3600}]), \
              patch('learner_api.training_plan_dashboard.attach_curriculum_slots', side_effect=spine), \
              patch('learner_api.training_plan_dashboard.rows', side_effect=datasets):
             connections.__getitem__.return_value.cursor.return_value.__enter__.return_value = cursor
             payload = read_weekly_learning(context, selection, **(reader_options or {}))
         return payload, cursor, context
+
+    def test_week_detail_limits_nonquiz_components_but_retains_shared_quiz_placements(self):
+        payload, cursor, _ = self.projection('M1:2', reader_options={
+            'student_projection': True, 'include_weeks': False, 'module_id': 'M1'})
+        call = next(call for call in cursor.execute.call_args_list if 'AS has_content' in call.args[0])
+        self.assertIn('c.week_id=%s OR l.quiz_id IS NOT NULL', call.args[0])
+        self.assertIn("linkedQuizId' ~ '^[0-9]+$'", call.args[0])
+        self.assertEqual(call.args[1], [['M1'], 'W2'])
+        self.assertEqual([activity['id'] for activity in payload['selectedWeek']['activities']], ['C2'])
+        _, coach, _ = self.projection('M1:2')
+        coach_sql = next(call.args[0] for call in coach.execute.call_args_list if 'AS has_content' in call.args[0])
+        self.assertNotIn('c.week_id=%s OR', coach_sql)
+
+    def test_student_inline_fallback_ksbs_keep_achievement_and_codes(self):
+        for value in ([{'code': 'K2'}, {'code': 'K3'}], '[{"code":"K2"},{"code":"K3"}]'):
+            payload, cursor, _ = self.projection(reader_options={'student_projection': True}, fallback_ksbs=value)
+            self.assertEqual(payload['selectedWeek']['activities'][0]['ksbCodes'], ['K2', 'K3'])
+            self.assertEqual(payload['selectedWeek']['summary']['ksbCount'], 2)
+            self.assertEqual(payload['selectedWeek']['summary']['achievedKsbCount'], 2)
+            self.assertFalse(any('SELECT component_id,ksb_code' in call.args[0] for call in cursor.execute.call_args_list))
+
+    def test_student_projection_reuses_attendance_and_preserves_selected_calculations(self):
+        for selection in ('M1:1', 'M1:2'):
+            expected, before, _ = self.projection(selection)
+            actual, after, _ = self.projection(selection, reader_options={'student_projection': True})
+            self.assertEqual(actual['selectedWeek'], expected['selectedWeek'])
+            # Student reads combine both attendance detail and fallback KSBs.
+            self.assertEqual(after.execute.call_count, before.execute.call_count - 2)
+            statements = [call.args[0] for call in after.execute.call_args_list]
+            self.assertEqual(sum('live_session_attendance' in sql for sql in statements), 1)
+            self.assertIn("to_jsonb(m)->'session_holidays'", statements[0])
+            self.assertIn("to_jsonb(m)->'session_overrides'", statements[0])
+
+    def test_shared_live_attendance_reaches_both_weekly_views_without_cross_week_credit(self):
+        from learner_api.live_session_progress import project_live_credits
+        now = datetime(2026, 10, 19, tzinfo=timezone.utc)
+        start = datetime(2026, 10, 5, 8, tzinfo=timezone.utc)
+        row = {'source': 'microsoft-teams', 'session_id': 'O1:M1', 'occurrence_id': 'O1:M1',
+               'attendance_source_occurrence_id': 'O1', 'module_catalogue_id': 'M1',
+               'live_session_id': 'SHARED', 'session_number': 1, 'session_date': start.date(),
+               'scheduled_start': start, 'scheduled_end': start + timedelta(hours=2),
+               'attendance_report_id': 'R1', 'attendance_status': 'present', 'attended_seconds': 181,
+               'join_url': 'https://example.test/shared-meeting'}
+        credits = project_live_credits([{'componentId': 'C1', 'moduleId': 'M1', 'type': 'live_session',
+                                         'sessionDate': '2026-10-05'}], [row], now=now)
+        credits = [{**credit, 'sessionDate': '2026-10-05'} for credit in credits]
+        for kind in ('commercial', 'apprenticeship'):
+            for options in ({}, {'module_id': 'M1', 'include_weeks': False, 'include_navigation': True},
+                            {'student_projection': True},
+                            {'student_projection': True, 'module_id': 'M1', 'include_weeks': False, 'include_navigation': True}):
+                with self.subTest(kind=kind, options=options):
+                    first, _, _ = self.projection(kind=kind, reader_options=options, records=[], duration='120',
+                                                  live_evidence=([row], credits))
+                    second, _, _ = self.projection(selection='M1:2', kind=kind, reader_options=options,
+                                                   records=[], duration='120', live_evidence=([row], credits))
+                    self.assertEqual(first['selectedWeek']['summary']['completedActivities'], 1)
+                    self.assertEqual(first['selectedWeek']['summary']['progress'], 100)
+                    self.assertEqual(first['selectedWeek']['summary']['otjhHours'], 2)
+                    self.assertEqual(first['selectedWeek']['activities'][0]['actualHours'], 2)
+                    self.assertEqual(first['selectedWeek']['summary']['achievedKsbCount'], 1)
+                    self.assertEqual(first['selectedWeek']['liveSession']['joinUrl'], row['join_url'])
+                    self.assertEqual(first['selectedWeek']['liveSession']['sessionState'], 'attended')
+                    self.assertEqual(first['weeks'][0]['sessionState'], 'attended')
+                    self.assertEqual(second['selectedWeek']['summary']['completedActivities'], 0)
+                    self.assertEqual(second['selectedWeek']['summary']['otjhHours'], 0)
+                    self.assertIsNone(second['selectedWeek']['liveSession'])
 
     def test_session_only_generated_slot_survives_scoped_detail_read(self):
         expected, _, _ = self.projection(session_only=True)

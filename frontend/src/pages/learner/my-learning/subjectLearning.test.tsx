@@ -502,7 +502,7 @@ describe('map and My Learning navigation', () => {
         otjh: { historical: 0, new: 0, actual: 0, planned: 0 } }} />
     </MemoryRouter>);
 
-    await screen.findByRole('button', { name: /Current learning plan.*Open subject/ });
+    await screen.findByRole('button', { name: /New LMS.*Open subject/ });
     expect(screen.getByText('2 subjects · 4 activities')).toBeVisible();
     expect(screen.getByText('0 of 2 activities completed')).toBeVisible();
     expect(screen.getByRole('heading', { name: 'Upcoming' })).toBeVisible();

@@ -1,6 +1,6 @@
 import { createCachedResource } from './cachedRequest';
 import { readLearnerJson, invalidateLearnerReads } from './learnerRead';
-import { invalidateWeeklyLearning } from './weeklyLearning';
+import { invalidateWeeklyLearning, type WeeklyProgressScope } from './weeklyLearning';
 import type { LearnerAccessGate, LearnerLearningAccess } from '@/utils/learnerAccessGate';
 // ============================================================================
 // Learner-detail API client.
@@ -340,13 +340,13 @@ export interface LearnerVideoProgress {
 }
 
 /** Remove cached learner data after a progress-changing action. */
-export function invalidateLearnerDetailCache(kind?: LearnerKind, id?: string): void {
+export function invalidateLearnerDetailCache(kind?: LearnerKind, id?: string, scope?: WeeklyProgressScope): void {
   const key = kind && id ? `${kind}:${id}` : undefined;
   detailResource.invalidate(key);
   quizDetailResource.invalidate(key);
   componentResource.invalidate();
   summaryResource.invalidate(key);
-  invalidateWeeklyLearning(key);
+  invalidateWeeklyLearning(key, scope);
   invalidateLearnerReads();
 }
 
