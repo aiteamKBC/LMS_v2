@@ -74,6 +74,10 @@ declare
     n_backed  integer;
     n_refs    integer;
 begin
+    -- Checked first, so a second run says why it stops.
+    if exists (select 1 from week_ghost_remediation.components_before) then
+        raise exception 'Already applied: week_ghost_remediation.components_before already holds a before-image. Nothing changed.';
+    end if;
     select count(*) into n_targets from ghost_component_targets;
     if n_targets <> 594 then
         raise exception 'Expected 594 ghost components, found %. Nothing changed; re-run 01_preflight_preview.sql.', n_targets;

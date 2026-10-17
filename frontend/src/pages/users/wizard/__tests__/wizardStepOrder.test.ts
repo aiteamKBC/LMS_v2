@@ -10,6 +10,7 @@ import Ilr from '../steps/Ilr';
 import CvJob from '../steps/CvJob';
 import Plr from '../steps/Plr';
 import SkillsRadar from '../steps/SkillsRadar';
+import Inclusion from '../steps/Inclusion';
 import Policies from '../steps/Policies';
 import NextSteps from '../steps/NextSteps';
 
@@ -24,6 +25,8 @@ describe('wizard step order', () => {
       ['cv-job', 'CV/Job Description'],
       ['plr', 'Personal Learning Record'],
       ['skills-radar', 'Skills Radar'],
+      // Added 2026-10: the inclusion assessment, before the policies are read.
+      ['inclusion', 'Inclusion'],
       ['policies', 'Policies'],
       ['next-steps', 'What Happens Now?'],
     ]);
@@ -43,6 +46,7 @@ describe('wizard step order', () => {
     expect(bodyFor('cv-job')).toBe(CvJob);
     expect(bodyFor('plr')).toBe(Plr);
     expect(bodyFor('skills-radar')).toBe(SkillsRadar);
+    expect(bodyFor('inclusion')).toBe(Inclusion);
     expect(bodyFor('policies')).toBe(Policies);
     expect(bodyFor('next-steps')).toBe(NextSteps);
   });

@@ -47,7 +47,8 @@ export function buildPlanModules(subjects: (Subject | PlanSubjectSummary)[], dat
     // only used them for legacy subjects, dropping direct recorded hours and
     // canonical activity/KSB values for selected current modules.
     const summary = initialSummary || data.planSubjects?.find(item =>
-      item.id === subject.id || (moduleId != null && item.moduleIds.includes(moduleId)));
+      item.id === subject.id || (moduleId != null && item.moduleIds.includes(moduleId)
+        && item.id.startsWith('legacy:') === subject.id.startsWith('legacy:')));
     const detail = data.modules.find(module => module.id === moduleId);
     const sessions = data.sessions.filter(session => session.moduleId === moduleId).map(session => {
       const matches = activities.filter(activity => Date.parse(activity.native?.sessionDateTimeUtc || '') === Date.parse(session.start)
@@ -81,6 +82,7 @@ export function buildPlanModules(subjects: (Subject | PlanSubjectSummary)[], dat
       : historicalHours;
     const recordedHours = entryProgress?.hours.actual ?? summaryHours;
     return { ...subject, activities, activityCount, activityCounts, ksbCodes,
+      monthlyActivities: summary?.monthlyActivities,
       achievedKsbCodes: entryProgress?.ksb.achievedCodes ?? null,
       ksbMappingMissing: summary ? summary.ksbMappingMissing : activities.some(activity => !activity.native?.ksbMappings),
       moduleId, detail, sessions, dates, start, end,
@@ -89,6 +91,14 @@ export function buildPlanModules(subjects: (Subject | PlanSubjectSummary)[], dat
   });
 }
 export type TimelineModule = ReturnType<typeof buildPlanModules>[number];
+
+/** The fields rendered by the timeline and module cards; activity bodies stay in My Learning. */
+export type DisplayTimelineModule = Pick<TimelineModule,
+  'id' | 'title' | 'moduleId' | 'start' | 'end' | 'progress' | 'done' | 'activityCount' |
+  'activityCounts' | 'ksbCodes' | 'achievedKsbCodes' | 'ksbMappingMissing' | 'weeks' | 'actual' | 'detail' | 'sessions'> & {
+  activities: Array<{ id: string; title: string; completed: boolean }>;
+  weekAnchor?: string;
+};
 
 /**
  * The last date a module's bar has to cover: the delivery that actually happens.

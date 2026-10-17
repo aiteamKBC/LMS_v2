@@ -17,8 +17,7 @@ export function startActivityClock({ countInBackground, pauseOnUnload = false, o
   const flush = () => {
     const now = performance.now();
     if (!stopped && !suspended && (countInBackground || visible)) {
-      const end = Date.now();
-      onInterval?.(end-Math.max(0,now-last),end);
+      onInterval?.(last,now);
       remainder.milliseconds += Math.max(0, now - last);
       const seconds = Math.floor(remainder.milliseconds / 1000);
       remainder.milliseconds -= seconds * 1000;

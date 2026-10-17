@@ -202,6 +202,7 @@ export function ModulesTab({ real, loading, loadError, kind, id, showReadOnlyNot
       <SubjectCardsPanel
         metrics={metrics.data}
         view={view} schedule={schedule.data} scheduleLoading={schedule.loading} upcomingSessions={upcomingSchedule.data?.sessions}
+        moduleProgress={upcomingSchedule.data?.moduleProgress}
         kind={kind} learnerId={id} real={real}
         data={activityData ?? null}
         loading={loading || (activityAvailable && activity.loading)}
@@ -216,7 +217,7 @@ export function ModulesTab({ real, loading, loadError, kind, id, showReadOnlyNot
 /* ═══════════════════════════════════════════════════════
    QUIZZES TAB — compact filterable list, replacing the big cards
    ═══════════════════════════════════════════════════════ */
-type QuizFilter = 'all' | 'todo' | 'completed' | 'failed';
+type QuizFilter = 'all' | 'todo' | 'completed' | 'failed' | 'unavailable';
 
 export function QuizzesTab({ real, loading, loadError, kind, id, canTake, navigate, onRetry }: {
   real: ReturnType<typeof useLearnerDetailParam>['real'];
@@ -233,8 +234,12 @@ export function QuizzesTab({ real, loading, loadError, kind, id, canTake, naviga
 
   const rows = useMemo(() => quizzes.map((q) => {
     const attempts = q.attempts;
-    const best = attempts.length ? attempts.reduce((b, a) => (gradePercent(a.grade) > gradePercent(b.grade) ? a : b)) : null;
-    const status: QuizFilter = !best ? 'todo' : best.passed ? 'completed' : 'failed';
+    const best = attempts.length ? attempts.reduce((b, a) => (
+      (a.grade != null && b.grade == null) || gradePercent(a.grade) > gradePercent(b.grade) ? a : b
+    )) : null;
+    const status: QuizFilter = !best ? 'todo'
+      : attempts.some((attempt) => attempt.passed === true) ? 'completed'
+      : attempts.some((attempt) => attempt.passed === false) ? 'failed' : 'unavailable';
     return { ...q, best, status };
   }), [quizzes]);
 
@@ -243,6 +248,7 @@ export function QuizzesTab({ real, loading, loadError, kind, id, canTake, naviga
     todo: rows.filter((r) => r.status === 'todo').length,
     completed: rows.filter((r) => r.status === 'completed').length,
     failed: rows.filter((r) => r.status === 'failed').length,
+    unavailable: rows.filter((r) => r.status === 'unavailable').length,
   }), [rows]);
 
   const tabs: PageTabItem[] = [
@@ -250,6 +256,7 @@ export function QuizzesTab({ real, loading, loadError, kind, id, canTake, naviga
     { value: 'todo', label: 'To Do', count: counts.todo },
     { value: 'completed', label: 'Completed', count: counts.completed, tone: 'positive' },
     { value: 'failed', label: 'Failed', count: counts.failed, tone: 'critical', hideWhenEmpty: true },
+    { value: 'unavailable', label: 'Result unavailable', count: counts.unavailable, hideWhenEmpty: true },
   ];
 
   const filtered = filter === 'all' ? rows : rows.filter((r) => r.status === filter);
@@ -312,12 +319,12 @@ function QuizListRow({ quiz, canTake, onTake }: {
       <td className="whitespace-nowrap px-4 py-3 text-[12px] text-foreground-600">{weekLabel || EMPTY_VALUE}</td>
       <td className="whitespace-nowrap px-4 py-3 text-[12px] text-foreground-600">{weekDate || EMPTY_VALUE}</td>
       <td className="whitespace-nowrap px-4 py-3 text-[12px] font-semibold text-foreground-800">
-        {best ? `${gradePercent(best.grade)}%` : EMPTY_VALUE}
+        {best && best.grade != null ? `${gradePercent(best.grade)}%` : EMPTY_VALUE}
       </td>
       <td className="whitespace-nowrap px-4 py-3">
         <StatusBadge
           tone={status === 'completed' ? 'positive' : status === 'failed' ? 'critical' : 'neutral'}
-          label={status === 'completed' ? 'Completed' : status === 'failed' ? 'Failed' : 'To do'}
+          label={status === 'completed' ? 'Completed' : status === 'failed' ? 'Failed' : status === 'unavailable' ? 'Result unavailable' : 'To do'}
         />
       </td>
       <td className="whitespace-nowrap px-4 py-3 text-right">

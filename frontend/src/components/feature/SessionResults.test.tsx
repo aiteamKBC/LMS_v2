@@ -21,6 +21,34 @@ beforeEach(() => { vi.clearAllMocks(); vi.stubGlobal('fetch', fetchMock); fetchM
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
 describe('Saved session results', () => {
+  it('shows the two event recordings on 2 October and the two lecture recordings on 9 October', async () => {
+    const dated = { ...session, startsAt: '2026-10-09T08:00:00Z',
+      artifacts: [
+        { id: 'event-1', type: 'recording', state: 'ready', createdAt: '2026-10-02T08:05:00Z' },
+        { id: 'event-2', type: 'recording', state: 'ready', createdAt: '2026-10-02T10:35:00Z' },
+        { id: 'lecture-1', type: 'recording', state: 'ready', createdAt: '2026-10-09T06:43:00Z' },
+        { id: 'lecture-2', type: 'recording', state: 'ready', createdAt: '2026-10-09T10:43:00Z' },
+      ] };
+    fetchMock.mockImplementation(() => ok({ sessions: [dated] }));
+    const { unmount } = render(<MemoryRouter><SessionResults seriesId="S1" sessionNumber={3}
+      recordingDate="2026-10-02" recordingsOnly learner={{ kind: 'commercial', id: '7' }} /></MemoryRouter>);
+    await screen.findByLabelText('Session recording 1');
+    expect(document.querySelectorAll('video')).toHaveLength(2);
+    expect([...document.querySelectorAll('video')].map(video => video.getAttribute('src')))
+      .toEqual([expect.stringContaining('event-1'), expect.stringContaining('event-2')]);
+    expect(screen.getByText('Recorded on 2026-10-02 (UK date)')).toBeInTheDocument();
+    expect(screen.queryByText(/Scheduled:/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Your original attendance:/)).not.toBeInTheDocument();
+    expect(screen.queryByRole('tab', { name: 'transcripts' })).not.toBeInTheDocument();
+    unmount();
+    render(<MemoryRouter><SessionResults seriesId="S1" sessionNumber={3}
+      recordingDate="2026-10-09" learner={{ kind: 'commercial', id: '7' }} /></MemoryRouter>);
+    await screen.findByLabelText('Session recording 1');
+    expect(document.querySelectorAll('video')).toHaveLength(2);
+    expect([...document.querySelectorAll('video')].map(video => video.getAttribute('src')))
+      .toEqual([expect.stringContaining('lecture-1'), expect.stringContaining('lecture-2')]);
+    expect(screen.getByText(/Scheduled:/)).toBeInTheDocument();
+  });
   it('shows the read-only account check beside the register without changing attendance', async () => {
     const account = (overrides: Record<string, unknown>) => ({ sourceRecordIds: ['R1'], displayName: '', teamsRole: 'Attendee',
       verification: 'verified', tenant: 'home', accountType: 'Microsoft work or school account', email: '', emailSource: 'teams',
@@ -456,4 +484,86 @@ describe('Module session index', () => {
     expect(screen.getByText('Attendance report saved')).toBeInTheDocument();
     expect(coachFetch).not.toHaveBeenCalled();
   });
+  const linkedGuest = { identityKind: 'guest_name', identityValue: 'example guest', revision: 1,
+    name: 'Example Guest', aliasEmail: '', sourceRecordIds: ['R1'], learnerProfileId: 7,
+    learnerName: 'Learner One', scope: 'module' };
+  const linkedSession = { ...session, linkedIdentities: [linkedGuest], attendanceCandidates: [
+    { learnerProfileId: 7, name: 'Learner One', email: 'one@example.invalid' },
+    { learnerProfileId: 8, name: 'Learner Two', email: 'two@example.invalid' },
+  ] };
+
+  it('lets staff correct a linked identity and refreshes the register', async () => {
+    fetchMock.mockImplementation(() => ok({ sessions: [linkedSession] }));
+    vi.mocked(coachFetch).mockResolvedValue({ ok: true, json: async () => ({ learnerName: 'Learner Two', recalculation: 'complete' }) } as Response);
+    render(<MemoryRouter><SessionResults seriesId="S1" sessionNumber={1} moduleId="M" /></MemoryRouter>);
+    fireEvent.click(await screen.findByRole('tab', { name: 'attendance' }));
+    fireEvent.click(screen.getByText('Linked identities (1)'));
+    fireEvent.click(screen.getByRole('button', { name: 'Correct link for Example Guest' }));
+    fireEvent.change(screen.getByLabelText('Correct learner'), { target: { value: '8' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save corrected link' }));
+    await waitFor(() => expect(coachFetch).toHaveBeenCalled());
+    const body = JSON.parse(vi.mocked(coachFetch).mock.calls[0][1]!.body as string);
+    expect(body).toMatchObject({ action: 'change', learnerProfileId: 8, expectedLearnerProfileId: 7,
+      expectedRevision: 1, identityKind: 'guest_name', identityValue: 'example guest', moduleId: 'M' });
+    expect(await screen.findByText('Identity is now matched to Learner Two.')).toBeInTheDocument();
+    await waitFor(() => expect(fetchMock.mock.calls.length).toBeGreaterThan(1));
+  });
+
+  it('offers cancellation and an explicit unlink action without deleting Teams evidence', async () => {
+    fetchMock.mockImplementation(() => ok({ sessions: [linkedSession] }));
+    vi.mocked(coachFetch).mockResolvedValue({ ok: true, json: async () => ({ recalculation: 'complete' }) } as Response);
+    render(<MemoryRouter><SessionResults seriesId="S1" sessionNumber={1} /></MemoryRouter>);
+    fireEvent.click(await screen.findByRole('tab', { name: 'attendance' }));
+    fireEvent.click(screen.getByText('Linked identities (1)'));
+    fireEvent.click(screen.getByRole('button', { name: 'Correct link for Example Guest' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(coachFetch).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Correct link for Example Guest' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm unlink' }));
+    await waitFor(() => expect(coachFetch).toHaveBeenCalled());
+    expect(JSON.parse(vi.mocked(coachFetch).mock.calls[0][1]!.body as string)).toMatchObject({ action: 'unlink', expectedRevision: 1, expectedLearnerProfileId: 7 });
+    expect(await screen.findByText(/Identity unlinked/)).toBeInTheDocument();
+  });
+
+  it('keeps a concurrent correction error visible and preserves the selected learner', async () => {
+    fetchMock.mockImplementation(() => ok({ sessions: [linkedSession] }));
+    vi.mocked(coachFetch).mockResolvedValue({ ok: false, json: async () => ({ error: 'This link changed in another window.' }) } as Response);
+    render(<MemoryRouter><SessionResults seriesId="S1" sessionNumber={1} /></MemoryRouter>);
+    fireEvent.click(await screen.findByRole('tab', { name: 'attendance' }));
+    fireEvent.click(screen.getByText('Linked identities (1)'));
+    fireEvent.click(screen.getByRole('button', { name: 'Correct link for Example Guest' }));
+    fireEvent.change(screen.getByLabelText('Correct learner'), { target: { value: '8' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save corrected link' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('This link changed in another window.');
+    expect(screen.getByLabelText('Correct learner')).toHaveValue('8');
+  });
+
+  it('shows reporting failure as partial success even when a sync job is present', async () => {
+    fetchMock.mockImplementation(() => ok({ sessions: [linkedSession], job: { state: 'completed' } }));
+    vi.mocked(coachFetch).mockResolvedValue({ ok: true, json: async () => ({ learnerName: 'Learner Two', recalculation: 'failed' }) } as Response);
+    render(<MemoryRouter><SessionResults seriesId="S1" sessionNumber={1} /></MemoryRouter>);
+    fireEvent.click(await screen.findByRole('tab', { name: 'attendance' }));
+    fireEvent.click(screen.getByText('Linked identities (1)'));
+    fireEvent.click(screen.getByRole('button', { name: 'Correct link for Example Guest' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save corrected link' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('correction was saved');
+    expect(screen.getByText('Identity is now matched to Learner Two.')).toBeInTheDocument();
+  });
+
+  it('explains automatic full-name matches and allows staff to unlink them', async () => {
+    fetchMock.mockImplementation(() => ok({ sessions: [{ ...linkedSession,
+      linkedIdentities: [{ ...linkedGuest, revision: 0, automatic: true }] }] }));
+    vi.mocked(coachFetch).mockResolvedValue({ ok: true, json: async () => ({ recalculation: 'complete' }) } as Response);
+    render(<MemoryRouter><SessionResults seriesId="S1" sessionNumber={1} moduleId="M" /></MemoryRouter>);
+    fireEvent.click(await screen.findByRole('tab', { name: 'attendance' }));
+    fireEvent.click(screen.getByText('Linked identities (1)'));
+    expect(screen.getByText(/Automatically matched by exact full name/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Correct link for Example Guest' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm unlink' }));
+    await waitFor(() => expect(coachFetch).toHaveBeenCalled());
+    expect(JSON.parse(vi.mocked(coachFetch).mock.calls[0][1]!.body as string)).toMatchObject({
+      action: 'unlink', expectedRevision: 0, expectedLearnerProfileId: 7, moduleId: 'M',
+    });
+  });
+
 });
