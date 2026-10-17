@@ -9528,7 +9528,7 @@ def programme_structure_counts(programme, by_id=None, by_name=None):
     return by_name.get(normalise(programme.get('name')))
 
 
-def build_programmes(training_rows, program_configs, ksb_profiles, include_config_only=False, only_stats_for_ids=None):
+def build_programmes(training_rows, program_configs, ksb_profiles, include_config_only=False, only_stats_for_ids=None, *, include_learner_counts=True):
     configs_by_id = program_config_by_id(program_configs)
     grouped = defaultdict(list)
     group_meta = {}
@@ -9605,7 +9605,9 @@ def build_programmes(training_rows, program_configs, ksb_profiles, include_confi
             if key not in order:
                 order[key] = len(order)
 
-    programme_learner_counts_by_id, programme_learner_counts_by_name = active_learner_programme_counts()
+    programme_learner_counts_by_id, programme_learner_counts_by_name = (
+        active_learner_programme_counts() if include_learner_counts else ({}, {})
+    )
     programmes = []
     for key, rows in sorted(grouped.items(), key=lambda item: order.get(item[0], 999)):
         meta = group_meta.get(key, {})
@@ -9980,7 +9982,7 @@ def active_learner_delivery_counts():
     return dict(cohort_counts), dict(group_counts)
 
 
-def build_cohorts_and_groups(training_rows=None, program_configs=None, include_archived=False):
+def build_cohorts_and_groups(training_rows=None, program_configs=None, include_archived=False, *, include_learner_counts=True):
     """Build the cohort/group overview directly from the normalized tables.
 
     Cohorts come from ``curriculum.cohorts`` and groups from ``curriculum.groups``.
@@ -9992,7 +9994,9 @@ def build_cohorts_and_groups(training_rows=None, program_configs=None, include_a
     module_rows = safe_authoring_module_rows()
     if not include_archived:
         module_rows = [row for row in module_rows if not programme_deleted_row(row)]
-    cohort_learner_counts, group_learner_counts = active_learner_delivery_counts()
+    cohort_learner_counts, group_learner_counts = (
+        active_learner_delivery_counts() if include_learner_counts else ({}, {})
+    )
     modules_by_group = defaultdict(list)
     modules_by_cohort = defaultdict(list)
     for module in module_rows:
@@ -12189,12 +12193,16 @@ def build_curriculum_payload(visibility='operational', compact=False, force=Fals
         return build_curriculum_payload_from_rows(rows, visibility, compact=compact)
 
 
-def build_curriculum_payload_from_rows(rows, visibility='operational', compact=False):
+def build_curriculum_payload_from_rows(rows, visibility='operational', compact=False, *, home_summary=False):
     with curriculum_read_scope():
-        return _build_curriculum_payload_from_rows(rows, visibility, compact=compact)
+        return _build_curriculum_payload_from_rows(rows, visibility, compact=compact, home_summary=home_summary)
 
 
-def _build_curriculum_payload_from_rows(rows, visibility='operational', compact=False):
+def _build_curriculum_payload_from_rows(rows, visibility='operational', compact=False, *, home_summary=False):
+    # Only the dedicated Home projection opts in. Its intermediate rows are not
+    # cached as an overview: other pages still need the counts/library details.
+    if home_summary and not compact:
+        raise ValueError('The Home summary requires compact source rows.')
     training_rows = rows['training'] if visibility == 'all' else [row for row in rows['training'] if is_operational_training_row(row)]
     ksb_profiles = rows['ksb_profiles'] if visibility == 'all' else [profile for profile in rows['ksb_profiles'] if profile.get('is_active')]
     authoring_modules = rows['authoring_modules'] if visibility == 'all' else [
@@ -12223,6 +12231,7 @@ def _build_curriculum_payload_from_rows(rows, visibility='operational', compact=
         # fills its cards in behind the list. See _programme_ksb_stats for the
         # placeholder every programme gets here.
         only_stats_for_ids=frozenset(),
+        include_learner_counts=not home_summary,
     )
     if visibility != 'all':
         # Delivery rows can outlive an authoring module's archive row. In that
@@ -12267,11 +12276,13 @@ def _build_curriculum_payload_from_rows(rows, visibility='operational', compact=
         # Full enrichment can append authoring-only rows and carry archive
         # status from the authoring summary, so apply the rule again.
         modules = [module for module in modules if not is_archived_module_summary(module)]
-    attach_module_assignment_counts(modules)
+    if not home_summary:
+        attach_module_assignment_counts(modules)
     cohorts, groups = build_cohorts_and_groups(
         training_rows,
         rows['program_configs'],
         include_archived=visibility == 'all',
+        include_learner_counts=not home_summary,
     )
     if compact:
         sessions = []
@@ -12306,7 +12317,7 @@ def _build_curriculum_payload_from_rows(rows, visibility='operational', compact=
     # the user has to be able to see in order to attach it. Filtering the library
     # by programme linkage made a newly-created framework vanish on save.
     # `is_active` above is the intended soft-delete for a profile.
-    frameworks, ksb_profiles = build_ksb_data(ksb_profiles, modules, training_rows)
+    frameworks, ksb_profiles = ([], []) if home_summary else build_ksb_data(ksb_profiles, modules, training_rows)
 
     # Bank holidays have no archived state -- nobody authors or retires them --
     # so every visibility sees the same calendar.
