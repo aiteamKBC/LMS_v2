@@ -703,9 +703,14 @@ def read_dashboard(source, section=None, *, records=None, targets=None, dashboar
         coach['phone'] = phone
     if compact_monthly:
         return {**contract_data, 'modules': modules, 'moduleLinks': links, 'reviews': reviews, 'coach': coach}
+    module_progress = _canonical_module_progress(progress_records, modules) if owner is not None else {}
+    if module_progress:
+        from .live_session_progress import read_live_credits, supplement_module_hours
+        module_progress = supplement_module_hours(module_progress, progress_records,
+            read_live_credits(source, module_ids=[module['id'] for module in modules]))
     return {**contract_data, 'actual': actual, 'actualAvailable': owner is not None,
             'moduleActivityHours': module_activity_hours(progress_records, modules) if owner is not None else None,
-            'moduleProgress': _canonical_module_progress(progress_records, modules) if owner is not None else {},
+            'moduleProgress': module_progress,
             'modules': modules, 'moduleLinks': links,
             'sessions': sessions, 'reviews': reviews, 'coach': coach,
             'generatedAt': datetime.now(timezone.utc).isoformat()}

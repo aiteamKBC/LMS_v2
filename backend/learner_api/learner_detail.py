@@ -1646,16 +1646,21 @@ def _resolve_from_master(modules, weeks, components, assigned_modules=None, *, c
             # live_session_ids=False skips the Teams-series lookup for readers
             # that never show teamsLiveSessionId / teamsSessionNumber.
             if fallback_module_ids and live_session_ids:
+                from .attendance_lectures import SHARED_TEAMS_SOURCES_SQL
+                shared_cte = SHARED_TEAMS_SOURCES_SQL.rsplit('SELECT DISTINCT module_id,source_id FROM shared', 1)[0]
                 cur.execute(
-                    "SELECT s.module_catalogue_id, s.id, s.timezone, o.id, "
+                    shared_cte + ", targets AS ("
+                    "SELECT module_catalogue_id AS module_id,module_catalogue_id AS source_id "
+                    "FROM curriculum.modules WHERE module_catalogue_id=ANY(%s) "
+                    "UNION SELECT module_id,source_id FROM shared) "
+                    "SELECT DISTINCT target.module_id, s.id, s.timezone, o.id, "
                     "o.session_number, o.scheduled_start "
-                    "FROM curriculum.live_sessions s "
+                    "FROM targets target JOIN curriculum.live_sessions s ON s.module_catalogue_id=target.source_id "
                     "JOIN curriculum.live_session_occurrences o ON o.live_session_id = s.id "
-                    "WHERE s.module_catalogue_id = ANY(%s) "
-                    "AND s.status NOT IN ('deleted', 'superseded', 'failed') "
-                    "AND o.status NOT IN ('deleted', 'superseded', 'cancelled') "
-                    "ORDER BY s.module_catalogue_id, o.scheduled_start, o.session_number, o.id",
-                    [sorted(fallback_module_ids)],
+                    "WHERE lower(btrim(s.status)) NOT IN ('deleted', 'superseded', 'failed', 'cancelled', 'canceled') "
+                    "AND lower(btrim(o.status)) NOT IN ('deleted', 'superseded', 'cancelled', 'canceled', 'failed') "
+                    "ORDER BY target.module_id, o.scheduled_start, o.session_number, o.id",
+                    [sorted(fallback_module_ids), sorted(fallback_module_ids)],
                 )
                 live_session_fallbacks = _live_session_occurrence_fallbacks(cur.fetchall())
     except DatabaseError as exc:
@@ -2040,6 +2045,10 @@ def build_learner_detail(source, pk, *, compact=False, read_only=False, quiz_vie
     # and every stored progress record remain unchanged.
     from .teams_attendance import annotate_attendance_completion
     detail['components'] = annotate_attendance_completion(detail['components'], learner_profile)
+
+    from .live_session_progress import read_live_credits, supplement_component_progress
+    detail['componentProgress'] = supplement_component_progress(
+        detail.get('componentProgress') or [], read_live_credits(source, components=detail['components']))
 
     if compact:
         # Nullable optional fields dominate the JSON for large plans. Omission
