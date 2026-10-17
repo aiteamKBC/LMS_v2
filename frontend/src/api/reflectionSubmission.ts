@@ -1,6 +1,7 @@
 import { learningFetch } from '@/lib/personalLearning';
 import type { SubmissionAttempt } from './assignmentAttempts';
-import { readLearnerJson, invalidateLearnerReads } from './learnerRead';
+import { readLearnerJson } from './learnerRead';
+import { invalidateWeeklyProgress } from './weeklyLearning';
 import type { MonthlyAssignment } from './monthlyAssignment';
 
 export interface LearningReflectionSubmissionInput {
@@ -93,10 +94,11 @@ export function learningReflectionStatusKey(activityType: string, activityId: st
 export async function loadLearningReflectionStatuses(input: {
   learnerKind: 'commercial' | 'apprenticeship';
   learnerId: string;
-}): Promise<LearningReflectionStatusMap> {
+}, options: { signal?: AbortSignal; revalidate?: boolean } = {}): Promise<LearningReflectionStatusMap> {
   const params = new URLSearchParams(input);
   const data = await readLearnerJson<{ statuses?: Array<{ activityType: string; activityId: string; status: string }> }>(
     `/learner_api/reflection/submissions/?${params.toString()}`,
+    options,
   );
   return Object.fromEntries(
     (data?.statuses || []).map((row) => [
@@ -146,6 +148,6 @@ export async function saveLearningReflectionSubmission(
   if (!response.ok) {
     throw new Error(data.error || `Could not save the reflection (${response.status}).`);
   }
-  invalidateLearnerReads();
+  invalidateWeeklyProgress(input.learnerKind, input.learnerId, input.activityId);
   return { id: data.id || '', status: data.status || '', submissionAttempts: data.submissionAttempts };
 }

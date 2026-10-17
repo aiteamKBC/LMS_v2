@@ -52,7 +52,7 @@ export function ModuleSessions({ moduleId }: { moduleId: string }) {
         <button key={session.id} type="button" onClick={() => setSelected(session)} className="rounded-lg border bg-white px-3 py-2 text-primary-700">
           Session {session.sessionNumber} · {formatSystemTimestamp(session.startsAt)} · {session.fileCount} files
         </button>)}</div></aside>}
-    <SessionResults seriesId={selected.seriesId} sessionNumber={selected.sessionNumber} /></div>;
+    <SessionResults seriesId={selected.seriesId} sessionNumber={selected.sessionNumber} moduleId={moduleId} /></div>;
   return <section className="space-y-4" aria-label="Sessions and recordings">
     <header className="flex items-center justify-between gap-4"><div><h2 className="text-lg font-bold">Sessions & Recordings</h2><p className="mt-1 text-sm text-foreground-500">Open a session to review its recording, transcript and attendance.</p></div>
       <button disabled={loading || saved.refreshing} aria-busy={saved.refreshing} onClick={saved.refresh} className="rounded-lg border bg-white px-3 py-2 text-sm disabled:opacity-60">{saved.refreshing && !loading ? 'Refreshing…' : 'Refresh'}</button></header>

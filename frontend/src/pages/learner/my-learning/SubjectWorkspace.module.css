@@ -167,6 +167,13 @@
 .subjectTheme[data-tone='rose'] { --subject-accent: var(--learner-danger, #b93737); }
 .subjectTheme.card { background: color-mix(in srgb, var(--subject-accent) 3%, var(--kbc-surface, #fff)); border-color: color-mix(in srgb, var(--subject-accent) 22%, var(--kbc-border, #dfe6ee)); }
 .subjectTheme.card:hover { border-color: var(--subject-accent); }
+.moduleCard[data-source='legacy'] {
+  --subject-accent: #b76a18;
+  --subject-ink: #8a4b0f;
+  border-color: #edcfad;
+  background: linear-gradient(105deg, #fffaf3, #fffdf9);
+}
+.moduleCard[data-source='legacy']:hover { border-color: #c67a28; }
 .subjectTheme .coverFallback { background: linear-gradient(120deg, color-mix(in srgb, var(--subject-accent) 12%, var(--kbc-surface, #fff)), color-mix(in srgb, var(--subject-accent) 32%, var(--kbc-surface, #fff))); }
 .subjectTheme .coverSymbol { color: var(--subject-accent); }
 .subjectTheme .nextActivity { background: color-mix(in srgb, var(--subject-accent) 8%, var(--kbc-surface, #fff)); color: var(--subject-ink); }
@@ -233,6 +240,39 @@
   justify-content: space-between;
   gap: 10px;
 }
+
+.sourceBadge {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 8px;
+  border: 1px solid #b9e0d0;
+  border-radius: 7px;
+  background: #e9f7f0;
+  color: #137055;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1.4;
+}
+.sourceBadge[data-source='legacy'] { border-color: #edcfad; background: #fff1de; color: #92520f; }
+.sourceBadge svg { flex-shrink: 0; }
+
+.learningModeBadge {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  padding: 4px 8px;
+  border: 1px solid #b9e0d0;
+  border-radius: 7px;
+  background: #e9f7f0;
+  color: #137055;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1.4;
+  white-space: nowrap;
+}
+.learningModeBadge[data-source='legacy'] { border-color: #edcfad; background: #fff1de; color: #92520f; }
 
 .certificateBadge {
   display: inline-flex;
@@ -310,6 +350,12 @@
 .cardProgress span { color: var(--kbc-muted, #697a8b); }
 .cardProgress [role='progressbar'] > div { background: var(--subject-accent, var(--learner-purple, #673ab7)); }
 .cardProgress [aria-valuenow='100'] > div { background: var(--learner-success, #167853); }
+.hoursProgress { display: grid; gap: 6px; margin-top: 12px; }
+.hoursProgressLabel { display: flex; align-items: center; justify-content: space-between; gap: 10px; color: var(--kbc-muted, #697a8b); font-size: 10px; line-height: 1.4; }
+.hoursProgressLabel span:last-child { text-align: right; }
+.hoursProgressTrack { height: 6px; overflow: hidden; border-radius: 999px; background: #edf1f6; }
+.hoursProgressTrack > span { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, #0f8a66, #49b68d); transition: width 180ms ease; }
+.hoursProgressTrack:not([data-available]) > span { width: 0 !important; }
 
 .cardAction {
   display: flex;
@@ -812,7 +858,7 @@
 .learningPage .list .cardButton > div:first-child { width: 120px; }
 .learningPage .list .cardBody {
   grid-template-areas: "eyebrow progress action" "title progress action" "details progress action";
-  grid-template-columns: minmax(0, 1fr) minmax(130px, 160px) minmax(165px, 180px);
+  grid-template-columns: minmax(0, 1fr) minmax(190px, 220px) minmax(165px, 180px);
   align-content: center;
   gap: 5px 14px;
   padding: 10px 14px 10px 24px;
@@ -858,6 +904,11 @@
 .learningPage .list .nextActivity { display: none; }
 .learningPage .list .cardProgress { align-self: center; }
 .learningPage .list .cardProgress > div > div:first-child { font-size: 13px; }
+/* Labels wrap as whole phrases, never mid-word, when the column is tight. */
+.learningPage .list .cardProgress > div > div:first-child,
+.learningPage .list .hoursProgressLabel { flex-wrap: wrap; row-gap: 2px; }
+.learningPage .list .cardProgress > div > div:first-child > *,
+.learningPage .list .hoursProgressLabel span { white-space: nowrap; }
 .learningPage .list .card:has(.cardProgress p) .cardButton { height: auto; min-height: 126px; flex-basis: auto; }
 .learningPage .list .cardAction { min-height: 38px; align-self: center; font-size: 11px; }
 .learningPage .asidePanel { padding: 13px; border-radius: 10px; }
@@ -975,7 +1026,7 @@
   .learningPage .list .cardButton > div:first-child { width: 120px; height: auto; }
   .learningPage .list .cardBody {
     grid-template-areas: "eyebrow progress action" "title progress action" "details details details";
-    grid-template-columns: minmax(0, 1fr) minmax(120px, 150px) minmax(150px, 170px);
+    grid-template-columns: minmax(0, 1fr) minmax(170px, 200px) minmax(150px, 170px);
     gap: 8px 10px;
   }
   .learningPage .list .cardProgress > div > div:first-child { font-size: 12px; }

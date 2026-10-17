@@ -411,7 +411,16 @@ def points_me(request):
     learner_id, _learner_name, error = require_learner_identity(request)
     if error:
         return error
-    return JsonResponse(points_summary(learner_id))
+    result = points_summary(learner_id)
+    from django.conf import settings
+    if getattr(settings,'KBC_SHARED_REWARDS_READY',False) is True:
+        from .learning_policy import at
+        from django.db import connections
+        with connections['default'].cursor() as cursor:
+            current = at(cursor)
+        if current:
+            result['learningFormula'] = current['settings']
+    return JsonResponse(result)
 
 
 def leaderboard(request):
@@ -1447,6 +1456,8 @@ def points_rule_detail(request, pk):
     # hook, flash-card flips, recognition grants) call services.grant_points()
     # by key, so it must stay stable once set. Retire the rule (active=False)
     # and create a new one instead of repointing an existing key.
+    if rule.key in {'accepted_learning_hour_v2','first_submitted_quiz_v2','verified_learning_bonus_v2'}:
+        return json_error('Use the Learning points policy controls for calculated learning rewards.', status=409)
     direct_fields = ['name', 'description', 'points', 'category', 'frequency', 'trigger', 'active']
     for field in direct_fields:
         if field in payload:

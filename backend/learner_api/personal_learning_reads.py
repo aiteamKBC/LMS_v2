@@ -5,6 +5,7 @@ import re
 from django.db import connections
 from django.http import JsonResponse
 from django.utils import timezone
+from curriculum_api.week_visibility import visible_week_sql
 
 
 def learning_schedule(context):
@@ -23,7 +24,7 @@ def learning_schedule(context):
             raise LookupError('Course not found.')
         row = found[0]
         cursor.execute('''SELECT learning_outcomes FROM curriculum.weeks WHERE module_catalogue_id=%s
-            AND (deleted_at IS NULL OR COALESCE(deleted_via_parent,'')<>'') ORDER BY display_order,week_number,id''', [mid])
+            AND ''' + visible_week_sql('weeks') + ''' ORDER BY display_order,week_number,id''', [mid])
         weeks = cursor.fetchall()
     result = plan_module(row)
     result['learning_outcomes'] = list(dict.fromkeys(value for week in weeks for value in (week[0] if isinstance(week[0], list) else []) if isinstance(value, str) and value.strip()))

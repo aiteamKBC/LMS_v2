@@ -1,4 +1,5 @@
 from . import working_hours_holidays
+from . import reward_tracking
 from .coach_availability import coach_available_slots, case_owner_available_slots
 from . import presentation_design
 from . import personal_learning
@@ -25,12 +26,19 @@ from .first_login_details import first_login_details
 
 from . import certificates, monthly_assignment, legacy_assignments, quiz_reading, review_history
 from . import historical_evidence
+from . import mobile_absence
+from .weekly_learning import learner_weekly_learning
+from .dashboard_header import dashboard_header
+from .dashboard_weekly import dashboard_weekly
+from .dashboard_tabs import dashboard_tab
+from .dashboard_training import training_module
 from . import module_progress, extra_activities, absence_reports, apprenticeship_agreement, attendance, calendar, components, curriculum, calendar_connections, employer_portal, employers, evidence, free_courses_view, ilr_document, monthly_assignment, monthly_reports, training_plan_document, written_agreement, learner_detail, learning_plan, lms_schema, media_proxy, module_shift, quizzes, reflection_ai, reflection_submissions, review_form, student_activity, time_tracking, training_plan_view, training_plan_dashboard, videos, views
 
 from curriculum_api import session_results
 from .session_recovery import link_catchup
 
 urlpatterns = [
+    path("mobile/absence-reports/", mobile_absence.absence_reports, name="mobile-absence-reports"),
     path("mobile/", include("learner_api.mobile_urls")),
     path('migrated-reviews/csrf', migrated_review_party_csrf, name='migrated-review-party-csrf'),
     path('migrated-reviews/<str:review_id>/party', migrated_review_party_detail, name='migrated-review-party-detail'),
@@ -208,6 +216,12 @@ urlpatterns = [
     path("employers/<int:pk>/", employers.employer_detail, name="employer-detail"),
     path("learner-detail/<str:kind>/<int:pk>/", learner_detail.learner_detail, name="learner-detail"),
     path("learner-summary/<str:kind>/<int:pk>/", learner_detail.learner_summary, name="learner-summary"),
+    path("weekly-learning/<str:kind>/<int:pk>/", learner_weekly_learning, name="learner-weekly-learning"),
+    path("dashboard/<str:kind>/<int:pk>/header/", dashboard_header, name="learner-dashboard-header"),
+    path("dashboard/<str:kind>/<int:pk>/weekly/", dashboard_weekly, name="learner-dashboard-weekly"),
+    path("dashboard/<str:kind>/<int:pk>/weekly/<str:week_id>/", dashboard_weekly, name="learner-dashboard-week-detail"),
+    path("dashboard/<str:kind>/<int:pk>/training/modules/<str:module_id>/", training_module, name="learner-dashboard-training-module"),
+    path("dashboard/<str:kind>/<int:pk>/<str:tab>/", dashboard_tab, name="learner-dashboard-tab"),
     path("metrics/<str:kind>/<int:pk>/", learner_metrics, name="learner-metrics"),
     path("overview-week/<str:kind>/<int:pk>/", overview_week, name="learner-overview-week"),
     path("rewards-summary/<str:kind>/<int:pk>/", learner_rewards_summary, name="learner-rewards-summary"),
@@ -252,6 +266,8 @@ urlpatterns = [
     path("curriculum/legacy-otjh/", curriculum.legacy_otjh, name="curriculum-legacy-otjh"),
     # Signed start time shared by quizzes and learning components.
     path("time-tracking/start/", time_tracking.start_time_tracking, name="time-tracking-start"),
+    path("time-tracking/observations/", reward_tracking.observations, name="reward-time-observations"),
+    path("time-tracking/clock/", reward_tracking.clock, name="reward-time-clock"),
     path("working-hours/holidays/", working_hours_holidays.working_hours_holidays, name="working-hours-holidays"),
     # quiz-taking
     path("quizzes/<int:quiz_id>/", quizzes.quiz_detail, name="quiz-detail"),
@@ -302,6 +318,9 @@ urlpatterns = [
     # Declared before the <path:event_key> route below, which would otherwise
     # never be reached for the bare list URL.
     path("reviews/<str:kind>/<int:pk>/", review_form.enrolment_review_documents, name="enrolment-review-documents"),
+    # The four onboarding reviews, issued by the enrolment team (before the event-key routes below).
+    path("reviews/<str:kind>/<int:pk>/onboarding/", review_form.onboarding_reviews, name="enrolment-onboarding-reviews"),
+    path("reviews/<str:kind>/<int:pk>/issue/", review_form.issue_onboarding_review, name="enrolment-review-issue"),
     # Before the <path:event_key> route below, which is greedy and would
     # otherwise absorb the trailing "sign" into the event key.
     path("reviews/<str:kind>/<int:pk>/<str:event_key>/sign/", review_form.enrolment_review_sign, name="enrolment-review-sign"),

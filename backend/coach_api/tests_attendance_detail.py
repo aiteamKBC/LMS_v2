@@ -32,6 +32,7 @@ class CoachDetailProjectionTests(SimpleTestCase):
         self.completed = set()
         self.targets = {}
         for target, kwargs in (
+            ('learner_api.recorded_attendance.saved_delivery_mode', {'return_value': 'live'}),
             ('coach_api.attendance_detail.timezone.now', {'return_value': NOW}),
             ('coach_api.attendance_detail.historical_schedule', {'side_effect': lambda *_: deepcopy(self.schedule)}),
             ('coach_api.attendance_detail.historical_evidence', {'side_effect': lambda *_: deepcopy(self.rows)}),

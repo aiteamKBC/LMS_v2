@@ -36,6 +36,18 @@ def module_activity_hours(records, modules):
     return result
 
 
+def activity_hours_index(activity_hours, module_components):
+    """Resolve quiz-only attribution once, rather than once per selected row."""
+    placements = defaultdict(set)
+    for component in module_components:
+        if component.get('quiz_id') is not None:
+            placements[str(component['quiz_id'])].add(str(component['id']))
+    return {str(component['id']): activity_hours['components'].get(str(component['id']), 0)
+            + (activity_hours['quizzes'].get(str(component['quiz_id']), 0)
+               if component.get('quiz_id') is not None and len(placements[str(component['quiz_id'])]) == 1 else 0)
+            for component in module_components}
+
+
 def selected_activity_hours(activity_hours, components, module_components=None):
     """Sum a selected week's activities once, including legacy quiz references."""
     component_ids = {str(component['id']) for component in components}

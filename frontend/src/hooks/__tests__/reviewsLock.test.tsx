@@ -17,13 +17,11 @@ vi.mock('../useMyLearner', () => ({
   useMyLearner: () => getRememberedLearner(),
 }));
 
-const fetchOnboardingReviews = vi.fn();
-vi.mock('@/api/learnerCalendar', () => ({
-  fetchOnboardingReviews: (...args: unknown[]) => fetchOnboardingReviews(...args),
-  bookLearnerCalendarSession: vi.fn(),
-  cancelLearnerCalendarSession: vi.fn(),
-  fetchFirstSessionSlots: vi.fn(),
-  ukOffsetForDate: vi.fn(),
+// The reviews are issued by the enrolment team and listed from the review API.
+const fetchOnboardingReviewSlots = vi.fn();
+vi.mock('@/api/reviewForm', () => ({
+  fetchOnboardingReviewSlots: (...args: unknown[]) => fetchOnboardingReviewSlots(...args),
+  fetchReviewForm: vi.fn(),
 }));
 // The page's chrome is not under test; only what it puts in <main>.
 vi.mock('@/components/feature/WorkspaceShell', () => ({
@@ -41,7 +39,7 @@ const apprentice = () => ({ kind: 'apprenticeship', id: `lock-${++n}` });
 beforeEach(() => {
   vi.clearAllMocks();
   sessionStorage.clear();
-  fetchOnboardingReviews.mockResolvedValue({ caseOwner: null, reviews: [], allBooked: false });
+  fetchOnboardingReviewSlots.mockResolvedValue({ programme: '', reviews: [], allIssued: false, allCompleted: false });
 });
 
 describe('the onboarding menu', () => {
@@ -100,7 +98,7 @@ describe('the Reviews page', () => {
 
     expect(await screen.findByText('Reviews open once your enrolment is submitted')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Go to My Enrolment/ })).toBeInTheDocument();
-    expect(fetchOnboardingReviews).not.toHaveBeenCalled();
+    expect(fetchOnboardingReviewSlots).not.toHaveBeenCalled();
   });
 
   it('shows the reviews once it is submitted', async () => {
@@ -110,7 +108,7 @@ describe('the Reviews page', () => {
     render(<MemoryRouter><OnboardingReviewsPage /></MemoryRouter>);
 
     expect(await screen.findByText('Your enrolment reviews')).toBeInTheDocument();
-    expect(fetchOnboardingReviews).toHaveBeenCalled();
+    expect(fetchOnboardingReviewSlots).toHaveBeenCalled();
     expect(screen.queryByText('Reviews open once your enrolment is submitted')).not.toBeInTheDocument();
   });
 });

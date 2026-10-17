@@ -5,7 +5,7 @@ import type { HomeProgress } from '@/api/learnerOverview';
 import { ProgressCard } from './ProgressCard';
 
 const data: HomeProgress = {
-  period: { start: '2026-01-02', end: '2026-09-13', timezone: 'Europe/London' },
+  period: { start: '2026-01-02', end: '2026-09-13' },
   otjh: { actual: 13.5033, submitted: 8.25, planned: 492.59, percent: 2.74, missingPlannedActivities: 0 },
   activities: { completed: 21, total: 150 }, assignments: { completed: 3, total: 12 },
   lectures: { completed: 8, total: 10 }, modules: { completed: 1, total: 5 }, undatedActivities: 0,

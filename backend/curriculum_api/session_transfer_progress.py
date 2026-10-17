@@ -31,6 +31,12 @@ def save_transfer_progress(series_id, artifact_id, lease_id, progress, *, close_
                 WHERE a.id=%s AND a.occurrence_id=o.id AND o.live_session_id=%s
                   AND j.live_session_id=o.live_session_id AND j.state='running' AND j.lease_id=%s''',
                 [json.dumps({**progress, 'leaseId': lease_id}), artifact_id, series_id, lease_id])
+            # A long transfer remains owned by this worker. Do not change
+            # started_at: requests queued during a transfer are compared to it.
+            cursor.execute('''UPDATE curriculum.session_result_jobs
+                SET next_attempt_at=now()
+                WHERE live_session_id=%s AND state='running' AND lease_id=%s''',
+                [series_id, lease_id])
     finally:
         # Azure invokes progress hooks in its upload threads. Do not retain a
         # database connection in those short-lived threads.

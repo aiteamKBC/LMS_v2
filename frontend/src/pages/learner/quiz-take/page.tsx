@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { observeRewardInterval, flushRewardObservations, clearRewardObservations } from '@/lib/rewardTracking';
 import { createPortal } from 'react-dom';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { AppIcon } from '@/components/feature/AppIcon';
@@ -38,9 +39,10 @@ const learnerNav = roleNavMap.learner;
 
 type Phase = 'intro' | 'quiz' | 'reflect' | 'results';
 
-function latestQuizAttempt(attempts: LearnerQuizAttempt[], quizId: string | undefined) {
+function latestQuizAttempt(attempts: LearnerQuizAttempt[], quizId: string | undefined, componentId?: string | null) {
   return attempts
-    .filter((attempt) => String(attempt.quizId) === String(quizId))
+    .filter((attempt) => String(attempt.quizId) === String(quizId)
+      || (Boolean(componentId) && attempt.componentId === componentId))
     .sort((left, right) => {
       const submittedDifference = Date.parse(right.submittedAt || '') - Date.parse(left.submittedAt || '');
       if (Number.isFinite(submittedDifference) && submittedDifference !== 0) return submittedDifference;
@@ -85,7 +87,8 @@ function durationSeconds(value: string | null | undefined) {
 /** Rebuild the full result view from the slim attempt stored on the learner. */
 function resultFromStoredAttempt(quiz: Quiz, attempt: LearnerQuizAttempt): QuizAttemptResult {
   const breakdown = (attempt.questions || []).map((stored) => {
-    const question = quiz.questions.find(q => String(q.id) === String(stored.questionId));
+    const question = String(attempt.quizId) === String(quiz.id)
+      ? quiz.questions.find(q => String(q.id) === String(stored.questionId)) : undefined;
     return {
       questionId: stored.questionId,
       questionText: stored.questionText ?? question?.text ?? 'Question no longer available',
@@ -230,8 +233,15 @@ export default function QuizTakePage() {
 
   useEffect(() => {
     if (phase !== 'quiz' || reflectionChoiceOpen || !componentAccess.open) return;
+    let last = performance.now();
     timerRef.current = setInterval(() => {
-      if (document.visibilityState === 'visible') setElapsedSeconds((s) => s + 1);
+      const now = performance.now();
+      if (document.visibilityState === 'visible') {
+        setElapsedSeconds((s) => s + 1);
+        try { observeRewardInterval(trackingSessionRef.current,Math.max(last,now-1000),now); }
+        catch { setSubmitError('Your measured-time draft could not be saved. Keep this page open and retry.'); }
+      }
+      last = now;
     }, 1000);
     return () => { if (timerRef.current) clearInterval(timerRef.current); };
   }, [phase, reflectionChoiceOpen, componentAccess.open]);
@@ -250,8 +260,16 @@ export default function QuizTakePage() {
 
   const totalPoints = useMemo(() => (quiz ? quiz.questions.reduce((n, q) => n + q.points, 0) : 0), [quiz]);
   const latestAttempt = useMemo(
-    () => latestQuizAttempt(detail?.quizAttempts || [], quizId),
-    [detail?.quizAttempts, quizId],
+    () => {
+      const components = (detail?.components || []).filter(component =>
+        String(component.quizMeta?.quizId ?? '') === String(quizId)
+        && (!moduleTitle || component.module === moduleTitle)
+        && (!weekTitle || component.week === weekTitle),
+      );
+      return latestQuizAttempt(detail?.quizAttempts || [], quizId,
+        components.length === 1 ? components[0].componentId : null);
+    },
+    [detail?.quizAttempts, detail?.components, quizId, moduleTitle, weekTitle],
   );
 
   // Where this quiz sits in the plan, for the list beside it. A quiz reached
@@ -334,6 +352,7 @@ export default function QuizTakePage() {
     try {
       const tracking = trackingSessionRef.current || await trackingPromiseRef.current;
       if (!tracking) throw new Error('Quiz timing did not start. Reopen the quiz and try again.');
+      if (tracking.rewardTracking) await flushRewardObservations(tracking,'quiz',String(quiz.id));
       const res = await submitQuizAttempt(quiz.id, kind as 'commercial' | 'apprenticeship', id, {
         answers,
         timeTakenSeconds: elapsedSeconds,
@@ -349,6 +368,7 @@ export default function QuizTakePage() {
       });
       setReflectionChoiceOpen(false);
       setResult(res);
+      clearRewardObservations(tracking);
       setPhase('results');
       setCorrection(null);
       setCorrectionError('');
@@ -1004,7 +1024,7 @@ function ResultsScreen({ quiz, result, kind, learnerId, onBack, onRetake }: {
       </div>
 
       <QuizReadingPanel
-        quizId={quiz.id}
+        quizId={Number(attempt.quizId)}
         attemptNumber={attempt.attempt}
         kind={kind}
         learnerId={learnerId}

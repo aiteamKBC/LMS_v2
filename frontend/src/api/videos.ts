@@ -105,7 +105,7 @@ export function submitVideoProgress(
     `${BASE}/${encodeURIComponent(componentId)}/complete/?kind=${kind}&learnerId=${learnerId}`,
     { method: 'POST', body: JSON.stringify(submission) },
   ).then((result) => {
-    invalidateLearnerDetailCache(kind, learnerId);
+    invalidateLearnerDetailCache(kind, learnerId, { activityId: componentId });
     return result;
   });
 }

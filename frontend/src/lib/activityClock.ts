@@ -1,7 +1,8 @@
 /** Count elapsed study time independently of browser interval throttling.
  * The caller starts/stops media clocks on actual playing/waiting/pause events.
  */
-export function startActivityClock({ countInBackground, pauseOnUnload = false, onElapsed, remainder }: {
+export function startActivityClock({ countInBackground, pauseOnUnload = false, onElapsed, remainder, onInterval }: {
+  onInterval?: (start:number,end:number)=>void;
   countInBackground: boolean;
   /** Reading stops as soon as refresh starts, before the old page is hidden. */
   pauseOnUnload?: boolean;
@@ -16,6 +17,7 @@ export function startActivityClock({ countInBackground, pauseOnUnload = false, o
   const flush = () => {
     const now = performance.now();
     if (!stopped && !suspended && (countInBackground || visible)) {
+      onInterval?.(last,now);
       remainder.milliseconds += Math.max(0, now - last);
       const seconds = Math.floor(remainder.milliseconds / 1000);
       remainder.milliseconds -= seconds * 1000;

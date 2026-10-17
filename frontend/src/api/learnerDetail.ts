@@ -1,5 +1,6 @@
 import { createCachedResource } from './cachedRequest';
 import { readLearnerJson, invalidateLearnerReads } from './learnerRead';
+import { invalidateWeeklyLearning, type WeeklyProgressScope } from './weeklyLearning';
 import type { LearnerAccessGate, LearnerLearningAccess } from '@/utils/learnerAccessGate';
 // ============================================================================
 // Learner-detail API client.
@@ -73,6 +74,9 @@ export interface LearnerComponentEntry {
   files?: import('@/lib/componentFiles').ComponentFile[];
   downloadAllowed?: boolean;            // powerpoint download flag
   reflectionPrompt?: string | null;     // authored reflection prompt / learner guidance
+  /** Completion derived from verified Teams attendance; adds no recorded hours. */
+  attendanceCompleted?: boolean;
+  attendanceCompletedAt?: string | null;
   reflectionRequired?: boolean;         // false completes the activity without the reflection flow
   /** Authored on the component: this activity must be validated by a tutor or
    *  coach. The reflection is what creates the marking record, so an activity
@@ -85,6 +89,9 @@ export interface LearnerComponentEntry {
   liveSessionUrl?: string | null;       // Microsoft Teams join URL for live sessions
   teamsSessionNumber?: number | null;
   teamsLiveSessionId?: string | null;   // curriculum.live_sessions.id for attendance/artifact sync
+  recordingSeriesId?: string | null;    // saved series owning a dated recorded event
+  recordingSessionNumber?: number | null;
+  recordingDate?: string | null;        // recording day in Europe/London
   sessionDate?: string | null;
   sessionTime?: string | null;
   sessionDateTimeUtc?: string | null;
@@ -93,6 +100,9 @@ export interface LearnerComponentEntry {
   quizMeta?: { quizId: number; questions: number | null; duration: number | null; timeUnit: string | null };
   /** A passed quiz whose slot an author has since removed from the module. */
   retired?: boolean;
+  /** Compact Weekly Learning rows only: the server's hasComponentContent
+   *  verdict, sent instead of the descriptions and briefs it reads. */
+  contentAvailable?: boolean;
 }
 export interface LearnerKsbItem {
   code: string;
@@ -320,12 +330,13 @@ export interface LearnerVideoProgress {
 }
 
 /** Remove cached learner data after a progress-changing action. */
-export function invalidateLearnerDetailCache(kind?: LearnerKind, id?: string): void {
+export function invalidateLearnerDetailCache(kind?: LearnerKind, id?: string, scope?: WeeklyProgressScope): void {
   const key = kind && id ? `${kind}:${id}` : undefined;
   detailResource.invalidate(key);
   quizDetailResource.invalidate(key);
   componentResource.invalidate();
   summaryResource.invalidate(key);
+  invalidateWeeklyLearning(key, scope);
   invalidateLearnerReads();
 }
 

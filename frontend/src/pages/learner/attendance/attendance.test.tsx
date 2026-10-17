@@ -11,7 +11,8 @@ import type { LearningSchedule } from '@/api/learnerOverview';
 import type { PlanModule } from '@/api/trainingPlanDashboard';
 import { clearAllCachedResources } from '@/api/cachedRequest';
 
-vi.mock('@/hooks/useMyLearner', () => ({ useMyLearner: () => ({ kind: 'apprenticeship', id: '12' }) }));
+const learnerIdentity = vi.hoisted(() => ({ kind: 'apprenticeship', id: '12' }));
+vi.mock('@/hooks/useMyLearner', () => ({ useMyLearner: () => learnerIdentity }));
 vi.mock('@/hooks/useLearnerWorkspaceAccess', () => ({ useLearnerWorkspaceAccess: () => ({ canProgress: true }) }));
 vi.mock('@/components/feature/WorkspaceShell', () => ({ WorkspaceShell: ({ children }: { children: React.ReactNode }) => <main>{children}</main> }));
 
@@ -28,6 +29,7 @@ const planModule = (id: string, title: string, overrides: Partial<PlanModule> = 
   id, title, description: '', start_date: '2020-01-01', end_date: '2099-12-31', tutor_name: '', coach_name: '', ...overrides,
 });
 beforeEach(() => {
+  learnerIdentity.kind = 'apprenticeship'; learnerIdentity.id = '12';
   clearAllCachedResources(); posts = [];
   Object.defineProperties(HTMLDialogElement.prototype, {
     showModal: { configurable: true, value: function(this: HTMLDialogElement) { this.setAttribute('open', ''); } },
@@ -78,9 +80,176 @@ function CurrentLocation() {
   const location = useLocation();
   return <span data-testid="location">{location.pathname}{location.search}</span>;
 }
+
+it('shows recorded learning credit separately from make-up and keeps waiting outside absence actions', async () => {
+  payload.mode.mode = 'lazy';
+  payload.lectures = [
+    // The API sends canonical "present"; the client maps it to a display status.
+    lecture({ id: 'recorded', title: 'Recorded delivery', status: 'present' as AttendanceLecture['status'], rawStatus: 'absent', effectiveAttendance: 1,
+      attendanceBasis: 'recorded', finalOutcome: 'recorded', catchupStatus: null, canReportAbsence: false }),
+    lecture({ id: 'waiting', title: 'Awaiting delivery', status: 'awaiting_recording', rawStatus: 'absent',
+      attendanceBasis: 'awaiting_recording', counted: false, canReportAbsence: false }),
+  ];
+  payload.totals = { total: 2, attended: 1, absent: 0, covered: 0, upcoming: 0, attendanceRate: 100 };
+  render(<MemoryRouter><AttendancePage /></MemoryRouter>);
+  expect(await screen.findByText('Completed by recording')).toBeInTheDocument();
+  expect(screen.getByText('Awaiting recording')).toBeInTheDocument();
+  expect(screen.queryByText('Made up')).not.toBeInTheDocument();
+  expect(screen.queryByText('Make-up needed')).not.toBeInTheDocument();
+});
 const mount = () => render(<MemoryRouter><AttendancePage /><CurrentLocation /></MemoryRouter>);
 
 describe('Attendance lecture workspace', () => {
+  it.each(['apprenticeship', 'commercial'])('keeps learning-only modules out of the %s attendance selector, default and totals', async kind => {
+    learnerIdentity.kind = kind;
+    payload.modules.push(
+      { id: 'legacy:ksb', title: 'Project Controls Professional L6 : KSBs' },
+      { id: 'native:safe', title: 'Safeguarding For Learners' },
+    );
+    payload.lectures.push(
+      lecture({ id: 'ksb-history', title: 'Historical KSB record', moduleId: 'legacy:ksb', module: 'Project Controls Professional L6 : KSBs' }),
+      lecture({ id: 'safe', title: 'Learning-only record', moduleId: 'native:safe', module: '', status: 'absent' }),
+    );
+    // A learning-only assignment must not replace the current teaching module.
+    schedulePayload.modules = [planModule('safe', 'Safeguarding For Learners'), planModule('new', 'New module')];
+    const before = structuredClone({ payload, schedulePayload });
+    mount();
+    const select = await screen.findByRole('combobox', { name: 'Module' });
+    await waitFor(() => expect(select).toHaveValue('native:new'));
+    expect(within(select).getAllByRole('option').map(option => option.textContent)).toEqual(['All modules', 'Business', 'New module']);
+    fireEvent.change(select, { target: { value: 'all' } });
+    expect(screen.getByText('Total Lectures').parentElement).toHaveTextContent('3');
+    expect(screen.getByText('50% attendance')).toBeInTheDocument();
+    expect(screen.getAllByRole('article')).toHaveLength(3);
+    expect(screen.queryByText('Historical KSB record')).not.toBeInTheDocument();
+    expect(screen.queryByText('Learning-only record')).not.toBeInTheDocument();
+    expect({ payload, schedulePayload }).toEqual(before);
+    expect(posts).toEqual([]);
+  });
+
+  it('does not reintroduce a learning-only module from the current schedule when absent from the workspace options', async () => {
+    schedulePayload.modules = [planModule('ksb', 'Marketing Manager Level 6-KSBs')];
+    mount();
+    const select = await screen.findByRole('combobox', { name: 'Module' });
+    await waitFor(() => expect(fetch).toHaveBeenCalledWith(expect.stringContaining('/training-plan-dashboard/'), expect.anything()));
+    expect(select).toHaveValue('all');
+    expect(within(select).queryByRole('option', { name: /KSBs/ })).not.toBeInTheDocument();
+    expect(screen.getAllByRole('article')).toHaveLength(3);
+  });
+
+  it('shows an empty attendance workspace when all assigned modules are learning-only', async () => {
+    payload.modules = [{ id: 'native:safe', title: 'Safeguarding For Learners' }];
+    payload.lectures = [];
+    schedulePayload.modules = [planModule('safe', 'Safeguarding For Learners')];
+    mount();
+    const select = await screen.findByRole('combobox', { name: 'Module' });
+    expect(select).toHaveValue('all');
+    expect(within(select).getAllByRole('option')).toHaveLength(1);
+    expect(screen.getByText('Total Lectures').parentElement).toHaveTextContent('0');
+    expect(screen.getByText('No lectures yet')).toBeInTheDocument();
+  });
+
+  it.each(['apprenticeship', 'commercial'])('keeps distinct MSP names, lectures and attendance totals separate for %s learners', async kind => {
+    learnerIdentity.kind = kind;
+    const title = 'Managing Successful Programmes: Project Controls for Transformational Change';
+    const oldTitle = 'Ray-Managing Successful Programmes (MSP) Jan 2026';
+    payload.modules = [{ id: 'legacy:msp', title: oldTitle }, { id: 'native:msp', title }];
+    payload.lectures = [
+      lecture({ id: 'msp-one', moduleId: 'legacy:msp', module: oldTitle, title: 'MSP first lecture',
+        monthlyLog: { month: '2026-09', sourceRef: 'att:msp-first' } }),
+      lecture({ id: 'msp-two', moduleId: 'legacy:msp', module: oldTitle, title: 'MSP second lecture' }),
+      ...Array.from({ length: 14 }, (_, index) => lecture({ id: `current-msp-${index}`,
+        moduleId: 'native:msp', module: title, title: `Current MSP lecture ${index + 1}`,
+        source: 'microsoft-teams', status: index < 2 ? 'completed' : index < 4 ? 'absent' : 'upcoming' })),
+    ];
+    const original = structuredClone(payload);
+    schedulePayload.modules = [planModule('msp', title)];
+    mount();
+    const select = await screen.findByRole('combobox', { name: 'Module' });
+    await waitFor(() => expect(select).toHaveValue('native:msp'));
+    expect(within(select).getAllByRole('option')).toHaveLength(3);
+    expect(within(select).getByRole('option', { name: title })).toBeInTheDocument();
+    expect(within(select).getByRole('option', { name: oldTitle })).toHaveValue('legacy:msp');
+    expect(screen.getByText('50% attendance')).toBeInTheDocument();
+    expect(screen.getByText('Total Lectures').parentElement).toHaveTextContent('14');
+    expect(screen.getByText('Attended', { selector: 'p' }).parentElement).toHaveTextContent('2');
+    expect(screen.getByText('Absent', { selector: 'p' }).parentElement).toHaveTextContent('2');
+    expect(screen.getAllByRole('article')).toHaveLength(14);
+    expect(screen.queryByRole('article', { name: 'MSP first lecture' })).not.toBeInTheDocument();
+
+    fireEvent.change(select, { target: { value: 'legacy:msp' } });
+    expect(screen.getByTitle(oldTitle)).toHaveTextContent(oldTitle);
+    expect(screen.getByText('100% attendance')).toBeInTheDocument();
+    expect(screen.getByText('Total Lectures').parentElement).toHaveTextContent('2');
+    expect(screen.getByText('Attended', { selector: 'p' }).parentElement).toHaveTextContent('2');
+    expect(screen.getByText('Absent', { selector: 'p' }).parentElement).toHaveTextContent('0');
+    expect(screen.getAllByRole('article')).toHaveLength(2);
+    fireEvent.click(within(screen.getByRole('article', { name: 'MSP first lecture' })).getByRole('button', { name: 'Open Activities' }));
+    expect(screen.getByTestId('location')).toHaveTextContent(`/learner/monthly-logs/${kind}/12/2026-09?source=att%3Amsp-first`);
+    fireEvent.change(select, { target: { value: 'native:msp' } });
+    expect(screen.getByTitle(title)).toHaveTextContent(title);
+    expect(screen.getAllByRole('article')).toHaveLength(14);
+    expect(screen.queryByRole('article', { name: 'MSP first lecture' })).not.toBeInTheDocument();
+    fireEvent.change(select, { target: { value: 'all' } });
+    expect(screen.getAllByRole('article')).toHaveLength(16);
+    expect(screen.getByText('67% attendance')).toBeInTheDocument();
+    expect(payload).toEqual(original);
+    expect(posts).toEqual([]);
+  });
+
+  it.each(['apprenticeship', 'commercial'])('combines confirmed G1 aliases in the module filter and attendance counts for %s learners', async kind => {
+    learnerIdentity.kind = kind;
+    const title = 'G1- Ray - Project Management Professional - Jan 26';
+    const moduleIds = ['legacy:g1-with-dr', 'legacy:g1-without-dr', 'native:g1'];
+    payload.modules = [
+      { id: moduleIds[0], title: title.replace('Ray', 'Dr.Ray') },
+      { id: moduleIds[1], title }, { id: moduleIds[2], title },
+      { id: 'native:g2', title: title.replace('G1', 'G2') },
+    ];
+    payload.lectures = [
+      lecture({ id: 'g1-original', moduleId: moduleIds[0], module: payload.modules[0].title, title: 'Original G1 lecture',
+        monthlyLog: { month: '2026-09', sourceRef: 'att:original-g1' } }),
+      lecture({ id: 'g1-renamed', moduleId: moduleIds[1], module: title, title: 'Renamed G1 lecture', status: 'absent' }),
+      lecture({ id: 'g1-current', moduleId: moduleIds[2], module: title, title: 'Current G1 lecture', status: 'late', source: 'microsoft-teams' }),
+      lecture({ id: 'g2', moduleId: 'native:g2', module: payload.modules[3].title, title: 'Separate G2 lecture' }),
+    ];
+    const original = structuredClone(payload);
+    schedulePayload.modules = [planModule('g1', title)];
+    mount();
+    const select = await screen.findByRole('combobox', { name: 'Module' });
+    await waitFor(() => expect(select).toHaveValue('native:g1'));
+    expect(within(select).getAllByRole('option')).toHaveLength(3); // All, G1, G2.
+    expect(within(select).getAllByRole('option', { name: title })).toHaveLength(1);
+    expect(screen.getByText('67% attendance')).toBeInTheDocument();
+    expect(screen.getAllByRole('article')).toHaveLength(3);
+    expect(screen.queryByRole('article', { name: 'Separate G2 lecture' })).not.toBeInTheDocument();
+    expect(screen.getByText('Total Lectures').parentElement).toHaveTextContent('3');
+    expect(screen.getByText('Absent', { selector: 'p' }).parentElement).toHaveTextContent('1');
+
+    fireEvent.click(within(screen.getByRole('article', { name: 'Original G1 lecture' })).getByRole('button', { name: 'Open Activities' }));
+    expect(screen.getByTestId('location')).toHaveTextContent(`/learner/monthly-logs/${kind}/12/2026-09?source=att%3Aoriginal-g1`);
+    fireEvent.change(select, { target: { value: 'native:g2' } });
+    expect(screen.getAllByRole('article')).toHaveLength(1);
+    expect(screen.getByRole('article', { name: 'Separate G2 lecture' })).toBeInTheDocument();
+    fireEvent.change(select, { target: { value: 'all' } });
+    expect(screen.getAllByRole('article')).toHaveLength(4);
+    expect(payload).toEqual(original);
+    expect(posts).toEqual([]);
+  });
+
+  it('groups historical aliases with a current module supplied only by the schedule', async () => {
+    const title = 'G1- Ray - Project Management Professional - Jan 26';
+    payload.modules = [{ id: 'legacy:g1', title: title.replace('Ray', 'Dr.Ray') }];
+    payload.lectures = [lecture({ moduleId: 'legacy:g1', module: payload.modules[0].title })];
+    schedulePayload.modules = [planModule('g1', title)];
+    mount();
+    const select = await screen.findByRole('combobox', { name: 'Module' });
+    await waitFor(() => expect(select).toHaveValue('native:g1'));
+    expect(within(select).getAllByRole('option')).toHaveLength(2);
+    expect(screen.getByRole('article', { name: 'First lecture' })).toBeInTheDocument();
+    expect(screen.getByText('100% attendance')).toBeInTheDocument();
+  });
+
   it('shows ended unmarked attendance without changing the percentage denominator', async () => {
     payload.lectures = [lecture(), lecture({ id: 'unmarked', title: 'Unverified lecture', status: 'unmarked' })];
     expect(lectureCounts(payload.lectures)).toMatchObject({ attended: 1, absent: 0, rate: 100 });
@@ -483,12 +652,14 @@ describe('Attendance lecture workspace', () => {
     expect(destination.pathname).not.toContain('/monthly-logs/');
   });
 
-  it('shows Live Sessions without a Lazy Mode control', async () => {
+  it('requests manager approval and keeps Live Sessions effective while pending', async () => {
     mount();
-    expect(await screen.findByText('Live Sessions')).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Lazy Mode' })).not.toBeInTheDocument();
-    expect(screen.queryByRole('switch', { name: 'Lazy Mode' })).not.toBeInTheDocument();
-    expect(posts).toHaveLength(0);
+    fireEvent.click(await screen.findByRole('button', { name: 'Lazy Mode' }));
+    expect(await screen.findByText('Your request has been emailed to your manager for approval.')).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByText(/Awaiting manager approval/)).toBeInTheDocument());
+    expect(payload.mode.mode).toBe('live');
+    expect(JSON.parse(String(posts[0].body))).toEqual({ mode: 'lazy' });
+    expect(screen.getByText('Absence reminders: paused')).toBeInTheDocument();
   });
 
   it('refreshes live source edits when the window regains focus', async () => {

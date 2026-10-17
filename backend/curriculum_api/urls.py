@@ -20,7 +20,7 @@ from .teams_week_meeting import (
     curriculum_week_teams_meeting,
     curriculum_week_teams_meeting_detail,
 )
-from . import recordings_library, session_results, tutor_notifications
+from . import recordings_library, session_results, tutor_notifications, recordings_day, recordings_calendar, recordings_external
 from .learner_activity_status import activity_status
 
 
@@ -39,9 +39,12 @@ urlpatterns = [
     # `archived/` are kept above it for the same reason.
     path('curriculum/modules/tutor-email/', tutor_notifications.modules_tutor_email, name='curriculum-modules-tutor-email'),
     # Every saved recording across modules, for the Recordings page. Read only.
+    path('curriculum/session-recordings/calendar-matches/', recordings_calendar.calendar_matches),
+    path('curriculum/session-recordings/external-recordings/', recordings_external.external_recordings),
     path('curriculum/session-recordings/', recordings_library.recordings_library, name='curriculum-session-recordings'),
     path('curriculum/session-results/<str:series_id>/sync/', session_results.queue_sync),
     path('curriculum/session-results/<str:series_id>/sessions/<int:session_number>/', session_results.admin_session),
+    path('curriculum/session-results/<str:series_id>/sessions/<int:session_number>/day-results/', recordings_day.lecture_day_results),
     path('curriculum/session-results/<str:series_id>/sessions/<int:session_number>/attendance-alias/', session_results.link_attendance_alias),
     path('curriculum/session-results/<str:series_id>/artifacts/<str:artifact_id>/', session_results.admin_content),
     path('curriculum/session-results/<str:series_id>/artifacts/<str:artifact_id>/visibility/', session_results.recording_visibility),
@@ -81,6 +84,7 @@ urlpatterns = [
     path('curriculum/free-programmes/<str:programme_id>/convert/', views.curriculum_free_programme_convert, name='curriculum-free-programme-convert'),
     path('curriculum/free-programmes/<str:programme_id>/import-module/', views.curriculum_free_programme_import_module, name='curriculum-free-programme-import-module'),
     path('curriculum/programmes/<str:identifier>/detail/', views.curriculum_programme_tree_detail, name='curriculum-programme-tree-detail'),
+    path('curriculum/programmes/<str:identifier>/detail/<str:section>/', views.curriculum_programme_detail_section, name='curriculum-programme-detail-section'),
     path('curriculum/programmes/<str:programme_id>/audit-assets/', programme_audit.programme_audit_assets, name='curriculum-programme-audit-assets'),
     path('curriculum/programme-audit/status/', programme_audit.programme_audit_status, name='curriculum-programme-audit-status'),
     path('curriculum/programme-audit/materials/', programme_audit.programme_audit_materials, name='curriculum-programme-audit-materials'),

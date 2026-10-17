@@ -5,6 +5,7 @@ drop modules and attendance/assignment hours cannot inflate activity totals.
 """
 
 from html import unescape
+from curriculum_api.week_visibility import visible_child_sql
 from .source_material_content import hydrate_material
 
 from audit_api.last_audit_ledger_views import _activity_payload, _dict_rows
@@ -26,7 +27,7 @@ def read_activity_sources(cursor, group_ids, module_ids):
         CROSS JOIN LATERAL jsonb_array_elements(section->'materials') material
         JOIN curriculum.components c ON c.id=material->>'component_id'
         WHERE c.module_catalogue_id=ANY(%s)
-          AND (c.deleted_at IS NULL OR COALESCE(c.deleted_via_parent, '') <> '')''',
+          AND ''' + visible_child_sql('c'),
                    [sorted(set(group_ids)), sorted(set(module_ids))])
     candidates = {}
     for component, module, group, activity in cursor.fetchall():
@@ -43,7 +44,7 @@ def read_activity_source_issues(cursor, group_ids, module_ids):
         return {}
     cursor.execute('''SELECT id FROM curriculum.components
         WHERE module_catalogue_id=ANY(%s)
-          AND (deleted_at IS NULL OR COALESCE(deleted_via_parent, '') <> '')''',
+          AND ''' + visible_child_sql('components'),
                    [sorted(set(module_ids))])
     component_ids = {str(row[0]) for row in cursor.fetchall()}
     if not group_ids:

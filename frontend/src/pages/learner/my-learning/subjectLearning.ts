@@ -149,7 +149,11 @@ type LearningPlanSelection = {
  * that distinction instead of labelling every fallback as current. */
 export function learningPlanSelection(subjects: Subject[], real: LearnerDetail | null, metadata?: CoverMetadata | null, schedule?: LearningSchedule | null, today = learningToday()): LearningPlanSelection {
   if (!schedule) return { status: 'unavailable', entries: [] };
-  const plan = learnerHeaderPlan(schedule.modules || [], real || {}, today);
+  const normalise = (value?: string | null) => (value || '').trim().toLowerCase();
+  const fields = [['programme_name', real?.programme], ['cohort_name', real?.cohort], ['group_name', real?.group]] as const;
+  const compatible = (schedule.modules || []).filter(module => fields.every(([key, expected]) =>
+    !normalise(expected) || !normalise(module[key]) || normalise(module[key]) === normalise(expected)));
+  const plan = learnerHeaderPlan(compatible, real || {}, today);
   const first = plan.modules[0];
   if (!first) return { status: 'empty', entries: [] };
   const start = dateKey(first.start_date), end = dateKey(first.end_date);
@@ -214,4 +218,33 @@ export function learningHref(view: 'catalogue' | 'map', kind?: string, learnerId
   if (subject) query.set('subject', subject);
   if (week) query.set('week', week);
   return `${path}${query.size ? `?${query}` : ''}`;
+}
+
+export function groupSubjectActivities(activities: SubjectEntry[]) {
+  const months = new Map<string, Map<string, SubjectEntry[]>>();
+  for (const activity of activities) {
+    const introduction = activity.schedule.date_source === 'introduction';
+    const extra = activity.schedule.date_source === 'extra_activity';
+    const month = introduction ? 'introduction' : extra ? 'extra' : activity.schedule.month || activity.schedule.date?.slice(0, 7) || 'undated';
+    const week = extra ? activity.legacy?.section_title || activity.week || 'Additional activities' : activity.schedule.week_start || activity.week || 'undated';
+    if (!months.has(month)) months.set(month, new Map());
+    const weeks = months.get(month)!;
+    if (!weeks.has(week)) weeks.set(week, []);
+    weeks.get(week)!.push(activity);
+  }
+  const rank = (month: string) => month === 'introduction' ? -1 : month === 'extra' ? 2 : month === 'undated' ? 1 : 0;
+  return [...months].sort(([a], [b]) => rank(a) - rank(b) || a.localeCompare(b)).map(([month, weeks]) => ({
+    month, weeks: [...weeks].sort(([a], [b]) => a.localeCompare(b, undefined, { numeric: true })).map(([week, items]) => ({
+      week, activities: [...items].sort((a, b) => (a.schedule.date || '').localeCompare(b.schedule.date || '') || a.position - b.position || a.title.localeCompare(b.title)),
+    })),
+  }));
+}
+
+export function nativeHref(entry: SubjectEntry, kind?: string, learnerId?: string) {
+  const component = entry.native;
+  if (!component || !kind || !learnerId || !hasComponentContent(component)) return null;
+  const path = component.isQuiz && component.quizMeta ? `quiz/${kind}/${learnerId}/${component.quizMeta.quizId}`
+    : component.type === 'video' && component.videoUrl && component.componentId ? `video/${kind}/${learnerId}/${component.componentId}`
+      : component.componentId ? `component/${kind}/${learnerId}/${component.componentId}` : null;
+  return path ? `/learner/${path}?week=${encodeURIComponent(entry.week || '')}` : null;
 }

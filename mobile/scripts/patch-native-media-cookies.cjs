@@ -76,6 +76,11 @@ function checkedSource(source, patch) {
 
 function planPatches(projectRoot) {
   const root = fs.realpathSync(projectRoot);
+  const manifest = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
+  const sourceModules = manifest.expo?.autolinking?.android?.buildFromSource || [];
+  if (!['expo-audio', 'expo-video'].every(name => sourceModules.includes(name))) {
+    throw new Error('Android must build expo-audio and expo-video from source; precompiled modules omit the session-cookie patch');
+  }
   const lock = JSON.parse(fs.readFileSync(path.join(root, 'package-lock.json'), 'utf8'));
   for (const [name, expected] of Object.entries(VERSIONS)) {
     const installed = JSON.parse(fs.readFileSync(path.join(root, 'node_modules', name, 'package.json'), 'utf8'));

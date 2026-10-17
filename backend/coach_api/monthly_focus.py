@@ -4,6 +4,7 @@ from datetime import date, datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 from django.db import connections
+from curriculum_api.week_visibility import visible_child_sql
 from learner_api import canonical_learning
 from learner_api.dashboard_metrics import point_codes
 from learner_api.subject_content import clean_text
@@ -39,12 +40,12 @@ def read_month_activities(context, month):
             c.expected_otjh AS expected_hours,
             coalesce(nullif(c.ksb_mappings,'[]'::jsonb),
               (SELECT jsonb_agg(jsonb_build_object('code',k.ksb_code)) FROM curriculum.ksb_mappings k
-               WHERE k.component_id=c.id AND (k.deleted_at IS NULL OR COALESCE(k.deleted_via_parent,'')<>'')),
+               WHERE k.component_id=c.id AND ''' + visible_child_sql('k') + '''),
               '[]'::jsonb) AS ksb_mappings,
             coalesce((SELECT q.quiz_id::text FROM curriculum.quiz_component_links q
                       WHERE q.component_id=c.id ORDER BY q.id LIMIT 1),c.settings_json->>'linkedQuizId') AS quiz_id
             FROM curriculum.components c WHERE c.id=ANY(%s) AND c.module_catalogue_id=ANY(%s)
-              AND (c.deleted_at IS NULL OR COALESCE(c.deleted_via_parent,'')<>'')''', [list(dates), assigned])
+              AND ''' + visible_child_sql('c'), [list(dates), assigned])
         native = [{**row, **dates[str(row['id'])]} for row in rows(cursor)]
     component_ids = [str(row['id']) for row in native]
     quiz_ids = [str(row['quiz_id']) for row in native if row.get('quiz_id')]

@@ -97,16 +97,18 @@ def scope(request, learner_id):
     if role == 'coach' and coach_email != actor['email']:
         raise old.ServiceError('Learner not found.', 'not_found', 404)
     # An admin opening the learner workspace can perform learner actions.
-    # A coach preview keeps its separate read-only scope.
+    # So can the learner's own coach: the coach_email check above already
+    # limits a coach to their caseload.
     from coach_api.auth import _requested_view_as_email
     learner_preview = request.GET.get('perspective') == 'learner' and role != 'learner'
-    admin_action = learner_preview and account.role == 'admin' and role == 'admin'
+    admin_action = learner_preview and ((account.role == 'admin' and role == 'admin') or role == 'coach')
     if learner_preview and not admin_action and request.method != 'GET':
         raise old.ServiceError('The learner preview is read-only.', 'forbidden', 403)
     view_as = _requested_view_as_email(request) if role == 'admin' and not learner_preview else None
     if view_as and (coach_email != old.normalize(view_as) or request.method != 'GET'):
         raise old.ServiceError('This coach workspace is read-only.', 'forbidden', 403)
     request.admin_learner_action = admin_action
+    request.coach_learner_action = admin_action and role == 'coach'
     request.admin_learner_id = learner_id
     return {**learner, '_profile': profile, '_canonical_profile': canonical_profile,
             '_view_as': bool(view_as) or (learner_preview and not admin_action)}, 'learner' if admin_action else role

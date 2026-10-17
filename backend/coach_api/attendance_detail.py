@@ -83,6 +83,8 @@ def historical_evidence(source, scheduled, legacy_rows=None):
     rows = kbc_attendance_rows(source) if legacy_rows is None else legacy_rows
     targets = canonical._approved_alternative_targets(source.id) if source.email else {}
     occurrences = sorted({str(row['session_id']) for row in scheduled} |
+                         {str(row['attendance_source_occurrence_id']) for row in scheduled
+                          if row.get('attendance_source_occurrence_id')} |
                          {target for target in targets.values() if target})
     teams = fetch_verified_teams_attendance_rows(learner_emails=[source.email], occurrence_ids=occurrences) if source.email and occurrences else []
     for row in teams:
