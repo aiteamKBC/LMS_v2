@@ -262,7 +262,7 @@ export function Header({ accountButtonRef, pageTitle, pageIcon, pageSubtitle, he
   const initials = initialsOf(displayName);
   const hasLearnerProfile = role === 'learner' && auth.account?.subjectType === 'learner' && Boolean(auth.account.subjectId);
   const headerLook = appearance ?? role;
-  const usesLearnerHeader = headerLook === 'learner' || headerLook === 'coach';
+  const usesLearnerHeader = headerLook === 'learner' || headerLook === 'coach' || headerLook === 'curriculum';
 
   return (
     <>
