@@ -1,4 +1,5 @@
 import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import App from '@/App';
 
@@ -81,7 +82,7 @@ describe('public event feedback through the full app shell', () => {
         caseOwner: null, booked: true, event: null, startsOn: '2026-09-01', access: 'open',
       });
       if (path === '/engagement_api/feedback/my-forms/') return json({ forms: [{
-        id: 9, deliveryId: null, eventRecipientId: 5, title: 'Event feedback', description: '',
+        id: 9, deliveryId: null, eventRecipientId: 5, formType: 'post_event', moduleName: '', title: 'Event feedback', description: '',
         sessionTitle: 'Offline Event', sessionStartsAt: null, assignedAt: '2026-09-29T12:00:00Z',
         dueDate: null, status: 'not_started', responseId: null,
       }] });
@@ -90,8 +91,10 @@ describe('public event feedback through the full app shell', () => {
 
     render(<App />);
 
-    expect(await screen.findByRole('button', { name: /Event feedback/ })).toBeVisible();
-    expect(screen.getByText('Offline Event')).toBeVisible();
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole('button', { name: /Event Feedback/ }));
+    expect(await screen.findByText('Offline Event')).toBeVisible();
     expect(window.location.pathname).toBe('/learner/feedback');
+    expect(window.location.search).toBe('?category=event');
   });
 });

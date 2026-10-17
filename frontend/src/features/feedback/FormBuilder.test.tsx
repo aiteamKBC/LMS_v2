@@ -11,6 +11,27 @@ vi.mock('sweetalert2', () => ({ default: { fire: vi.fn() } }));
 afterEach(() => vi.restoreAllMocks());
 
 describe('post-lecture feedback delivery scope', () => {
+  it('creates a five-star rating with a description for every score and previews it', async () => {
+    const user = userEvent.setup();
+    render(<MemoryRouter><FormBuilder /></MemoryRouter>);
+
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Question 1 type' }), 'rating');
+    expect(screen.getByRole('combobox', { name: 'Rating style' })).toHaveValue('stars');
+
+    const labels = ['Very limited knowledge', 'Basic awareness', 'Moderate understanding', 'Good understanding', 'Very confident'];
+    for (const [index, label] of labels.entries()) {
+      await user.type(screen.getByRole('textbox', { name: `${index + 1} star description` }), label);
+    }
+
+    await user.click(screen.getByRole('button', { name: 'Preview' }));
+
+    expect(screen.getByRole('radio', { name: '1 star: Very limited knowledge' })).toBeInTheDocument();
+    expect(screen.getByRole('radio', { name: '5 stars: Very confident' })).toBeInTheDocument();
+    const scale = screen.getByLabelText('Rating scale descriptions');
+    expect(scale).toHaveTextContent('1 = Very limited knowledge');
+    expect(scale).toHaveTextContent('5 = Very confident');
+  });
+
   it('lets the creator choose section icons and previews sections as steps', async () => {
     const user = userEvent.setup();
     render(<MemoryRouter><FormBuilder /></MemoryRouter>);
