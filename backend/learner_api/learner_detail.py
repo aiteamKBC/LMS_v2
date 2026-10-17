@@ -2041,6 +2041,10 @@ def build_learner_detail(source, pk, *, compact=False, read_only=False, quiz_vie
     # potentially huge curriculum-revision scan cannot change their outcome.
     retain_quiz_progress(detail, completed_only=compact)
 
+    from .live_session_progress import read_live_credits, supplement_component_progress
+    detail['componentProgress'] = supplement_component_progress(
+        detail.get('componentProgress') or [], read_live_credits(source, components=detail['components']))
+
     if compact:
         # Nullable optional fields dominate the JSON for large plans. Omission
         # has the same meaning to consumers; keep false, zero and empty strings.

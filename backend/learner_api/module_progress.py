@@ -146,6 +146,11 @@ def canonical_module_progress(source, profile, *, read_projection=None):
         journal_sources._current.reset(token)
     if read_projection is None:
         detail, current, progress, titles = read_native_progress(source, profile)
+    from .live_session_progress import read_live_credits
+    credits = read_live_credits(source, components=detail['components'])
+    progress = [*progress, *({'kind': 'component', 'passed': None,
+                            'component_ref': row['componentId'], 'submitted_at': row['submittedAt']}
+                           for row in credits)]
     return aggregate_module_progress(activity, detail, current, progress, titles)
 
 
