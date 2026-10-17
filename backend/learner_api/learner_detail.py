@@ -1389,7 +1389,8 @@ def _apply_cohort_schedule(detail, source):
 
 
 def _resolve_from_master(modules, weeks, components, assigned_modules=None, *, compact=False,
-                         live_session_ids=True, expected_otjh=False, strict=False, week_ids=None, identities_only=False):
+                         live_session_ids=True, expected_otjh=False, strict=False, week_ids=None, identities_only=False,
+                         resolved_metadata=None, routing_only=False, compact_content=False):
     """Rebuild the module -> week -> component tree LIVE from the master
     authoring tables (curriculum.modules/weeks/components) so coach edits in the
     Module Builder show up immediately for already-enrolled learners.
@@ -1429,26 +1430,30 @@ def _resolve_from_master(modules, weeks, components, assigned_modules=None, *, c
     live_session_fallbacks = {}
     try:
         with connections["enrolment"].cursor() as cur:
-            cur.execute(
-                "SELECT m.module_catalogue_id, m.title FROM curriculum.modules m "
-                "WHERE m.module_catalogue_id = ANY(%s) "
-                # An assignment is a learner-owned snapshot. Keep content that
-                # was cascade-hidden with its parent programme available to an
-                # already-assigned learner; a row deleted on its own remains
-                # excluded. ``deleted_via_parent`` distinguishes the two cases.
-                "AND (m.deleted_at IS NULL OR COALESCE(m.deleted_via_parent, '') <> '')",
-                [module_ids],
-            )
-            master_module_title = {mid: title for mid, title in cur.fetchall()}
+            if resolved_metadata is not None:
+                master_module_title = {mid: title for mid, title in resolved_metadata['module_titles'].items() if mid in module_ids}
+                master_weeks = [row for row in resolved_metadata['weeks'] if row[1] in master_module_title]
+            else:
+                cur.execute(
+                    "SELECT m.module_catalogue_id, m.title FROM curriculum.modules m "
+                    "WHERE m.module_catalogue_id = ANY(%s) "
+                    # An assignment is a learner-owned snapshot. Keep content that
+                    # was cascade-hidden with its parent programme available to an
+                    # already-assigned learner; a row deleted on its own remains
+                    # excluded. ``deleted_via_parent`` distinguishes the two cases.
+                    "AND (m.deleted_at IS NULL OR COALESCE(m.deleted_via_parent, '') <> '')",
+                    [module_ids],
+                )
+                master_module_title = {mid: title for mid, title in cur.fetchall()}
 
-            cur.execute(
-                "SELECT id, module_catalogue_id, title, week_number, display_order "
-                "FROM curriculum.weeks WHERE module_catalogue_id = ANY(%s) "
-                f"AND {visible_week_sql('weeks')} "
-                "ORDER BY module_catalogue_id, display_order, week_number, id",
-                [module_ids],
-            )
-            master_weeks = cur.fetchall()  # [(week_id, module_id, title, week_number, display_order)]
+                cur.execute(
+                    "SELECT id, module_catalogue_id, title, week_number, display_order "
+                    "FROM curriculum.weeks WHERE module_catalogue_id = ANY(%s) "
+                    f"AND {visible_week_sql('weeks')} "
+                    "ORDER BY module_catalogue_id, display_order, week_number, id",
+                    [module_ids],
+                )
+                master_weeks = cur.fetchall()  # [(week_id, module_id, title, week_number, display_order)]
 
             settings_sql = (
                 "CASE WHEN jsonb_typeof(settings_json::jsonb) = 'object' "
@@ -1499,6 +1504,22 @@ def _resolve_from_master(modules, weeks, components, assigned_modules=None, *, c
                     "jsonb_build_object('_readingContentAvailable',coalesce(regexp_replace("
                     "settings_json->>'readingContent','<[^>]*>|&nbsp;|\\s','','g'),'')<>'')")
 
+            if compact_content:
+                # Dashboard summaries consume identity, title, timing and KSBs,
+                # never contentAvailable. Avoid parsing every lesson body merely
+                # to compute that unused boolean. Keep every URL used by the
+                # removed-video membership rule, and keep quiz/recording links.
+                description_sql = "''"
+                # One JSON operation avoids repeatedly decoding large authored
+                # settings for individual keys. URL presence (the video removal
+                # rule), titles, quiz identity and all scheduling settings stay.
+                settings_sql = ("CASE WHEN jsonb_typeof(settings_json::jsonb)='object' THEN "
+                    "settings_json::jsonb - ARRAY['lessonContent','speakerNotes','readingContent',"
+                    "'assignmentTopics','assignmentBrief','assignmentContent','submissionInstructions',"
+                    "'componentFiles','reflectionPrompt','podcastReflectionQuestion',"
+                    "'readingReflectionPrompts','learnerGuidance','legacySettings'] "
+                    f"ELSE ({settings_sql}) END")
+
             detail_columns = (f"CASE WHEN coalesce(btrim(live_sessions_link,'{strip_chars}'),'')<>'' THEN 'content' END AS live_sessions_link, display_order, NULL AS ksb_mappings, "
                               "false AS reflection_required, NULL AS \"Reflection_Question\", false AS tutor_validation_required") if identities_only else (
                               "live_sessions_link, display_order, ksb_mappings, reflection_required, \"Reflection_Question\", tutor_validation_required")
@@ -1547,7 +1568,30 @@ def _resolve_from_master(modules, weeks, components, assigned_modules=None, *, c
                 ):
                     fallback_module_ids.add(_s(mid))
 
-            if component_ids:
+            if resolved_metadata is not None and 'quiz_links' in resolved_metadata:
+                quiz_id_by_component.update({cid: qid for cid, qid in resolved_metadata['quiz_links'].items() if cid in component_ids})
+            elif component_ids and compact_content:
+                # Reuse identities that passed the module and visibility
+                # predicates above instead of scanning components again.
+                quiz_component_ids = [row[0] for row in master_components if row[3] == 'quiz']
+                if quiz_component_ids:
+                    cur.execute('SELECT component_id,quiz_id FROM curriculum.quiz_component_links '
+                                'WHERE component_id=ANY(%s)', [quiz_component_ids])
+                    quiz_links = cur.fetchall()
+                    if len({row[0] for row in quiz_links}) != len(quiz_links):
+                        # The legacy reader has no explicit tie-break for
+                        # multiply-linked components. Keep its original query
+                        # for those records rather than choosing a new winner.
+                        cur.execute('SELECT link.component_id, link.quiz_id '
+                            'FROM curriculum.quiz_component_links link '
+                            'JOIN curriculum.components component ON component.id = link.component_id '
+                            "WHERE component.module_catalogue_id = ANY(%s) "
+                            "AND component.id = ANY(%s) AND component.type = 'quiz' "
+                            f"AND {visible_child_sql('component')}", [module_ids, component_ids])
+                        quiz_links = cur.fetchall()
+                    for component_id, quiz_id in quiz_links:
+                        quiz_id_by_component[component_id] = quiz_id
+            elif component_ids:
                 cur.execute(
                     "SELECT link.component_id, link.quiz_id "
                     "FROM curriculum.quiz_component_links link "
@@ -1561,14 +1605,15 @@ def _resolve_from_master(modules, weeks, components, assigned_modules=None, *, c
                     quiz_id_by_component[component_id] = quiz_id
 
             linked_quiz_ids = sorted(set(quiz_id_by_component.values()))
-            quiz_meta_by_id = {}
-            if linked_quiz_ids:
+            quiz_meta_by_id = dict((resolved_metadata or {}).get('quiz_meta', {}))
+            missing_quiz_ids = [qid for qid in linked_quiz_ids if qid not in quiz_meta_by_id]
+            if missing_quiz_ids:
                 cur.execute(
                     "SELECT id, title, questions, duration, time_unit FROM curriculum.quizzes "
                     "WHERE id = ANY(%s)",
-                    [linked_quiz_ids],
+                    [missing_quiz_ids],
                 )
-                quiz_meta_by_id = {
+                quiz_meta_by_id.update({
                     row[0]: {
                         "quizId": row[0],
                         "title": row[1],
@@ -1577,7 +1622,7 @@ def _resolve_from_master(modules, weeks, components, assigned_modules=None, *, c
                         "timeUnit": row[4],
                     }
                     for row in cur.fetchall()
-                }
+                })
 
             if identities_only:
                 out_weeks = [{'module': _s(master_module_title.get(mid)), 'week': _s(title) or f'Week {number}',
@@ -1617,17 +1662,21 @@ def _resolve_from_master(modules, weeks, components, assigned_modules=None, *, c
             # no longer picks KSBs by hand on completion — these are applied
             # automatically (see components.py), so the UI shows what will be
             # credited rather than asking.
-            if component_ids:
+            if component_ids and not routing_only:
+                ksb_description = 'NULL AS ksb_description' if compact_content else 'mapping.ksb_description'
+                component_scope = ('WHERE mapping.component_id=ANY(%s) '
+                    if compact_content else
+                    'JOIN curriculum.components component ON component.id = mapping.component_id '
+                    'WHERE component.module_catalogue_id = ANY(%s) AND component.id = ANY(%s) '
+                    f"AND {visible_child_sql('component')} ")
                 cur.execute(
-                    "SELECT mapping.component_id, mapping.ksb_code, mapping.ksb_description, "
+                    f"SELECT mapping.component_id, mapping.ksb_code, {ksb_description}, "
                     "mapping.classification, mapping.weight, mapping.weight_class "
                     "FROM curriculum.ksb_mappings mapping "
-                    "JOIN curriculum.components component ON component.id = mapping.component_id "
-                    "WHERE component.module_catalogue_id = ANY(%s) AND component.id = ANY(%s) "
-                    f"AND {visible_child_sql('component')} "
+                    + component_scope +
                     f"AND {visible_child_sql('mapping')} "
                     "ORDER BY mapping.component_id, mapping.ksb_code",
-                    [module_ids, component_ids],
+                    [component_ids] if compact_content else [module_ids, component_ids],
                 )
                 for comp_id, code, description, classification, weight, weight_class in cur.fetchall():
                     if comp_id in ksbs_by_component:

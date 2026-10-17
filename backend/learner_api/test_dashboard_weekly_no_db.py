@@ -9,6 +9,45 @@ from . import dashboard_weekly as weekly, training_plan_dashboard as schedule, l
 
 
 class DashboardWeeklyTests(SimpleTestCase):
+    def test_selected_quiz_metadata_and_question_availability_are_reused(self):
+        component = ('Q1', 'W1', 'M1', 'quiz', 'Quiz', '', {}, None, 0, None, False, None, False)
+        baseline_cursor = MagicMock()
+        baseline_cursor.fetchall.side_effect = [[('M1', 'Module')], [('W1', 'M1', 'Week 1', 1, 0)],
+                                               [component], [('Q1', 9)], [(9, 'Quiz', 4, 10, 'mins')], []]
+        baseline_connection = MagicMock()
+        baseline_connection.cursor.return_value.__enter__.return_value = baseline_cursor
+        with patch.object(learner_detail, 'connections', {'enrolment': baseline_connection}):
+            _, _, baseline = learner_detail._resolve_from_master([], [], [], assigned_modules=[{'moduleId': 'M1'}],
+                compact=True, strict=True, live_session_ids=False, week_ids=['W1'])
+        self.assertEqual(baseline_cursor.execute.call_count, 6)
+        cursor = MagicMock()
+        cursor.fetchall.return_value = [component]
+        connection = MagicMock()
+        connection.cursor.return_value.__enter__.return_value = cursor
+        metadata = {'module_titles': {'M1': 'Module'}, 'weeks': [('W1', 'M1', 'Week 1', 1, 0)],
+                    'quiz_links': {'Q1': 9}, 'quiz_meta': {9: {'quizId': 9, 'title': 'Quiz', 'questions': 4, 'duration': 10, 'timeUnit': 'mins'}}}
+        with patch.object(learner_detail, 'connections', {'enrolment': connection}):
+            _, _, components = learner_detail._resolve_from_master([], [], [], assigned_modules=[{'moduleId': 'M1'}],
+                compact=True, strict=True, live_session_ids=False, week_ids=['W1'], resolved_metadata=metadata, routing_only=True)
+        self.assertEqual(cursor.execute.call_count, 1)
+        self.assertTrue(weekly._weekly_component(components[0])['contentAvailable'])
+        self.assertEqual(components[0]['quizMeta']['quizId'], 9)
+        self.assertEqual(weekly._weekly_component(components[0]), weekly._weekly_component(baseline[0]))
+
+    def test_request_metadata_reuses_module_week_and_ksb_reads_for_routing(self):
+        cursor = MagicMock()
+        cursor.fetchall.side_effect = [[('C1', 'W1', 'M1', 'reflection', 'Reflect', '', {}, None, 0, None, False, None, False)], []]
+        connection = MagicMock()
+        connection.cursor.return_value.__enter__.return_value = cursor
+        metadata = {'module_titles': {'M1': 'Module'}, 'weeks': [('W1', 'M1', 'Week 1', 1, 0)]}
+        with patch.object(learner_detail, 'connections', {'enrolment': connection}):
+            _, _, components = learner_detail._resolve_from_master([], [], [], assigned_modules=[{'moduleId': 'M1'}],
+                compact=True, strict=True, live_session_ids=False, week_ids=['W1'], resolved_metadata=metadata, routing_only=True)
+        self.assertEqual(components[0]['componentId'], 'C1')
+        self.assertEqual(cursor.execute.call_count, 2)
+        self.assertTrue(cursor.execute.call_args_list[0].args[0].startswith('SELECT id, week_id,'))
+        self.assertTrue(cursor.execute.call_args_list[1].args[0].startswith('SELECT link.component_id,'))
+
     def test_student_delegates_to_canonical_reader_and_sends_only_required_contract(self):
         source = SimpleNamespace(pk=265)
         profile = SimpleNamespace(pk=17, enrolment_id=265)
@@ -19,9 +58,10 @@ class DashboardWeeklyTests(SimpleTestCase):
             result = weekly.read_dashboard_weekly(source, 265, module_id='M1')
         self.assertIs(result, payload)
         self.assertEqual(set(result), {'weeks', 'selectedWeek'})
-        self.assertEqual(read.call_args.kwargs, {'module_id': 'M1', 'include_weeks': True, 'include_navigation': True})
+        self.assertEqual(read.call_args.kwargs, {'module_id': 'M1', 'include_weeks': True, 'include_navigation': True,
+                                                'student_projection': True})
         self.assertIs(read.call_args.args[0].profile, profile)
-        identity.assert_called_once_with(source, 265, heal=False)
+        identity.assert_called_once_with(source, 265, heal=False, fields=('id', 'enrolment_id'))
 
     def test_week_detail_omits_rail_and_preserves_delivery_slot_identity(self):
         selected = {'id': 'M1:2', 'moduleId': 'M1', 'kind': 'live-session', 'slotNumber': 2,
