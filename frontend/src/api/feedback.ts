@@ -12,7 +12,15 @@ export interface FeedbackQuestion {
   text: string;
   required: boolean;
   helpText: string;
-  config: { options?: string[]; min?: number; max?: number; minLabel?: string; maxLabel?: string };
+  config: {
+    options?: string[];
+    min?: number;
+    max?: number;
+    minLabel?: string;
+    maxLabel?: string;
+    display?: 'stars' | 'numbers';
+    labels?: string[];
+  };
   sortOrder?: number;
   answer?: FeedbackAnswerValue;
 }
@@ -111,6 +119,7 @@ export interface LearnerFeedbackListItem {
   id: number; title: string; description: string; assignedAt: string | null;
   dueDate: string | null; status: LearnerFeedbackStatus; responseId: number | null;
   deliveryId: number | null; sessionTitle: string; sessionStartsAt: string | null;
+  formType: FeedbackFormType; moduleName: string;
   eventRecipientId?: number | null;
 }
 

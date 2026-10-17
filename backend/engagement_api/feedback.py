@@ -834,6 +834,7 @@ def learner_forms(request):
         response = responses.get(form.id)
         items.append({
             'id': form.id, 'deliveryId': None, 'eventRecipientId': None,
+            'formType': 'general', 'moduleName': '',
             'title': form.title, 'description': form.description,
             'sessionTitle': '', 'sessionStartsAt': None,
             'assignedAt': _iso(assignment.assigned_at if assignment else None),
@@ -858,6 +859,8 @@ def learner_forms(request):
         response = delivery_responses.get(delivery.id)
         items.append({
             'id': form.id, 'deliveryId': delivery.id,
+            'formType': 'post_lecture',
+            'moduleName': delivery.module_name or form.module_name or '',
             'title': form.title, 'description': form.description,
             'sessionTitle': delivery.session_title, 'sessionStartsAt': _iso(delivery.starts_at),
             'assignedAt': _iso(recipient.assigned_at),
@@ -891,6 +894,8 @@ def learner_forms(request):
                 'id': form.id,
                 'deliveryId': None,
                 'eventRecipientId': recipient.id,
+                'formType': 'post_event',
+                'moduleName': '',
                 'title': form.title,
                 'description': form.description,
                 'sessionTitle': recipient.event.title,
