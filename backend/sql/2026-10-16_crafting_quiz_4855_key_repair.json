@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "scope": "Repair question 16 of linked quiz 4855 only. Preserve draft status, learner history, answers, attempts, grades and hours; no regrading.",
+  "quizIds": [
+    4855
+  ],
+  "repairs": [
+    {
+      "quizId": 4855,
+      "questionId": 83077,
+      "beforeSha256": "c3232961d5b37dffbf1791bf5b677db901268b9f871eb47863c28bc25d554c86",
+      "flags": {
+        "313829": true,
+        "313830": false,
+        "313831": false,
+        "313832": false
+      },
+      "evidence": [
+        "Published quiz 2437, question 43357: identical question and corresponding options identify the ALS Ice Bucket Challenge as the sole correct choice.",
+        "Quiz 4855 is linked to five authored components, including L2:Social Media Strategy, Algorithms and Viral Marketing, despite draft status."
+      ],
+      "rationale": "A single-choice C2C viral social movement question incorrectly marks a private internal sales memo correct as well as the ALS Ice Bucket Challenge. Clear only the incorrect memo flag; preserve every identifier, text, type, point, order and previous submission."
+    }
+  ]
+}

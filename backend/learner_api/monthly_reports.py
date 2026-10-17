@@ -261,7 +261,9 @@ def _submit_monthly_report(request, kind, pk):
     signature = _text(payload.get("signature"))
     signed_name = _text(payload.get("signedName")) or _text(payload.get("learnerName"))
     account = getattr(request, "login_account", None)
-    admin_action = getattr(account, "role", None) == "admin"
+    # An administrator or the learner's own coach signs in their own name.
+    admin_action = (getattr(account, "role", None) == "admin"
+                    or getattr(request, "coach_learner_action", False))
     if admin_action:
         signed_name = account.display_name or account.email
 

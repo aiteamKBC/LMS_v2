@@ -2041,6 +2041,11 @@ def build_learner_detail(source, pk, *, compact=False, read_only=False, quiz_vie
     # potentially huge curriculum-revision scan cannot change their outcome.
     retain_quiz_progress(detail, completed_only=compact)
 
+    # Attendance affects activity completion only; the hours snapshot above
+    # and every stored progress record remain unchanged.
+    from .teams_attendance import annotate_attendance_completion
+    detail['components'] = annotate_attendance_completion(detail['components'], learner_profile)
+
     from .live_session_progress import read_live_credits, supplement_component_progress
     detail['componentProgress'] = supplement_component_progress(
         detail.get('componentProgress') or [], read_live_credits(source, components=detail['components']))

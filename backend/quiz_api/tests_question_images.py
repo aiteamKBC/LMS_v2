@@ -47,7 +47,9 @@ class QuestionImageTests(SimpleTestCase):
         question_manager.filter.return_value.count.return_value = 1
         question_manager.create.side_effect = lambda **values: QuizQuestion(id=21, **values)
         request = RequestFactory().post("/quiz_api/quizzes/7/questions/", json.dumps({"questions": payload}), content_type="application/json")
-        with patch.object(views, "_ensure_quiz_assessment_type_column"), \
+        # This fixture is an unused draft; active-link discovery has separate tests.
+        with patch.object(views, "quiz_requires_valid_key", return_value=False), \
+             patch.object(views, "_ensure_quiz_assessment_type_column"), \
              patch.object(QuizPackage.objects, "get", return_value=quiz), \
              patch.object(QuizPackage.objects, "select_for_update", return_value=QuizPackage.objects), \
              patch.object(QuizPackage, "save"), patch.object(QuizPackage, "refresh_from_db"), \

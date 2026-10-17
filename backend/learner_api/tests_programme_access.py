@@ -9,6 +9,7 @@ from django.test import RequestFactory, SimpleTestCase
 
 from login.api_gate import ApiSessionGateMiddleware, refusal_for
 from .programme_access import DRAFTING_PATHS, learning_access, refusal, submission_refusal
+from .models import EnrolmentUser
 
 
 class ProgrammeAccessTests(SimpleTestCase):
@@ -29,6 +30,30 @@ class ProgrammeAccessTests(SimpleTestCase):
         self.assertEqual(learning_access(self.source), {'blocked': True, 'startDate': '2026-10-01'})
         self.assertEqual(self.cursor.execute.call_args.args[1], ['Marketing', 'October 2026'])
 
+    def test_canonical_cohort_id_survives_a_changed_display_name(self):
+        self.source.cohort_id = 'COH-1'
+        self.source.cohort = 'Old display name'
+        self.assertEqual(learning_access(self.source)['startDate'], '2026-10-01')
+        self.assertEqual(self.cursor.execute.call_args.args[1], ['COH-1'])
+        self.assertNotIn('cohort_name =', self.cursor.execute.call_args.args[0])
+
+    def test_missing_canonical_cohort_cannot_borrow_a_namesakes_date(self):
+        self.source.cohort_id = 'DELETED-COHORT'
+        self.cursor.fetchone.return_value = None
+        self.assertEqual(learning_access(self.source), {'blocked': True, 'startDate': ''})
+        self.assertEqual(self.cursor.execute.call_count, 1)
+
+    def test_enrolment_uses_only_its_linked_matching_profile_id(self):
+        source = EnrolmentUser(
+            id=499, programme='Marketing', cohort='October 2026', start_date=date(2025, 1, 1))
+        with patch('learner_api.programme_access.LearnerProfile.objects') as manager:
+            query = manager.using.return_value.filter.return_value.exclude.return_value.exclude.return_value
+            query.values_list.return_value.distinct.return_value.__getitem__.return_value = ['COH-1']
+            self.assertEqual(learning_access(source)['startDate'], '2026-10-01')
+            manager.using.return_value.filter.assert_called_once_with(
+                enrolment_id=499, programme='Marketing', cohort='October 2026')
+            self.assertEqual(self.cursor.execute.call_args.args[1], ['COH-1'])
+
     def test_all_learning_opens_on_the_cohort_start_day_in_uk_time(self):
         # UK midnight, still the previous UTC day. No per-module date gate.
         self.now.return_value = datetime(2026, 9, 30, 23, 0, tzinfo=timezone.utc)
@@ -38,6 +63,50 @@ class ProgrammeAccessTests(SimpleTestCase):
     def test_missing_cohort_date_does_not_fall_back_to_an_earlier_individual_date(self):
         self.cursor.fetchone.return_value = (None,)
         self.assertEqual(learning_access(self.source), {'blocked': True, 'startDate': ''})
+
+    def test_imported_full_month_resolves_unique_active_abbreviation(self):
+        self.cursor.fetchone.return_value = None
+        self.cursor.fetchall.return_value = [('Oct 2026', date(2026, 9, 15))]
+        self.now.return_value = datetime(2026, 10, 16, tzinfo=timezone.utc)
+        self.assertEqual(learning_access(self.source), {'blocked': False, 'startDate': '2026-09-15'})
+        self.assertEqual(self.cursor.execute.call_args.args[1], ['Marketing'])
+        self.assertIn('deleted_at IS NULL', self.cursor.execute.call_args.args[0])
+
+    def test_alias_preserves_future_start_gate(self):
+        self.cursor.fetchone.return_value = None
+        self.cursor.fetchall.return_value = [('Oct 2026', date(2026, 10, 1))]
+        self.assertEqual(learning_access(self.source), {'blocked': True, 'startDate': '2026-10-01'})
+
+    def test_ambiguous_alias_is_blocked_even_with_matching_dates(self):
+        self.cursor.fetchone.return_value = None
+        self.cursor.fetchall.return_value = [('Oct 2026', date(2026, 9, 1))] * 2
+        self.assertEqual(learning_access(self.source), {'blocked': True, 'startDate': ''})
+
+    def test_alias_missing_date_or_different_year_stays_blocked(self):
+        self.cursor.fetchone.return_value = None
+        for rows in [[('Oct 2026', None)], [('Oct 2025', date(2025, 10, 1))], []]:
+            with self.subTest(rows=rows):
+                self.cursor.fetchall.return_value = rows
+                self.assertEqual(learning_access(self.source), {'blocked': True, 'startDate': ''})
+
+    def test_named_cohort_is_not_fuzzy_matched(self):
+        self.source.cohort = 'October intake 2026'
+        self.cursor.fetchone.return_value = None
+        self.assertEqual(learning_access(self.source), {'blocked': True, 'startDate': ''})
+        self.cursor.fetchall.assert_not_called()
+
+    def test_resolved_alias_opens_quiz_video_podcast_and_submission_gate(self):
+        self.cursor.fetchone.return_value = None
+        self.cursor.fetchall.return_value = [('Oct 2026', date(2026, 9, 15))]
+        self.now.return_value = datetime(2026, 10, 16, tzinfo=timezone.utc)
+        with patch('learner_api.programme_access.EnrolmentUser.all_learners') as manager:
+            manager.only.return_value.get.return_value = self.source
+            for path in ['/learner_api/quizzes/1/submit/',
+                         '/learner_api/videos/video-1/complete/',
+                         '/learner_api/components/podcast-1/complete/']:
+                with self.subTest(path=path):
+                    self.assertIsNone(refusal(path, self.account, 'POST'))
+            self.assertIsNone(submission_refusal(self.account))
 
     def test_direct_and_batch_activity_reads_cannot_bypass_the_start_date(self):
         with patch('login.api_gate._enabled', return_value=True), \

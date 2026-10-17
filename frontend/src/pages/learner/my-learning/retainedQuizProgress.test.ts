@@ -39,6 +39,7 @@ describe('quiz results earned before an author changed the module', () => {
 
   it('does not credit an unrelated attempt or an attempt traced to another component', () => {
     expect(quizAttemptsFor(quiz('COMP-1', 200), [attempt(300, true), attempt(100, true, 'COMP-2')])).toEqual([]);
+    expect(quizAttemptsFor(quiz('COMP-1', 200), [attempt(200, true, 'COMP-2')])).toEqual([]);
     expect(moduleA(learner({ quizAttempts: [attempt(300, true)] })).activities.every(entry => !entry.completed)).toBe(true);
   });
 });

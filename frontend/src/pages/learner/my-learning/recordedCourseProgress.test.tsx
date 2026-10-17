@@ -1,12 +1,13 @@
-import { fireEvent, render, screen, within } from '@testing-library/react';
+import { fireEvent, render, screen, within, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import * as api from '@/api/studentActivity';
 import { currentLearningWeek, subjectWeeks } from './subjectLearning';
-import { groupSubjectActivities } from './SubjectWorkspace';
+import { groupSubjectActivities } from './subjectLearning';
 import type { LearnerDetail } from '@/api/learnerDetail';
 import type { StudentActivityItem, StudentActivityResponse } from '@/api/studentActivity';
-import { buildUnifiedLearningSummary, StudentActivityPanel, subjectsFrom } from './SubjectWorkspace';
+import { StudentActivityPanel } from './SubjectWorkspace';
+import { buildUnifiedLearningSummary, subjectsFrom } from './learningSummary';
 
 vi.mock('./DeferredStudentMaterial', () => ({
   DeferredStudentMaterial: ({ groupId, activityId, reviewQuiz, readOnly }: { groupId: number; activityId: number; reviewQuiz?: boolean; readOnly?: boolean }) =>
@@ -60,6 +61,7 @@ describe('full historical course catalogue', () => {
     expect(row.getByText('Complete')).toBeVisible();
     expect(row.getByText('Saved quiz review 1/10')).toBeVisible();
     expect(row.queryByText('Content not available yet')).not.toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole('region', { name: 'Your subjects' })).toHaveAttribute('aria-busy', 'false'));
     fireEvent.click(row.getByRole('button', { name: 'Close quiz' }));
     expect(row.queryByText('Saved quiz review 1/10')).not.toBeInTheDocument();
     fireEvent.click(row.getByRole('button', { name: 'View quiz' }));
@@ -83,35 +85,37 @@ describe('full historical course catalogue', () => {
           otjh: { historical: 12.5, new: 0, actual: 12.5, planned: 80 } }} />
     </MemoryRouter>;
     const { rerender } = render(view(catalogueData));
-    await screen.findByText('4 subjects · 7 activities');
+    await screen.findByText('5 subjects · 8 activities');
     const stat = (label: string) => within(screen.getByText(label).parentElement!);
-    expect(stat('Total subjects').getByText('4')).toBeVisible();
-    expect(stat('Learning activities').getByText('7')).toBeVisible();
-    expect(stat('Completed activities').getByText('4')).toBeVisible();
-    expect(stat('Overall progress').getByText('57.14%')).toBeVisible();
-    expect(screen.getByRole('progressbar', { name: 'Overall learning progress' })).toHaveAttribute('aria-valuenow', '57.14');
+    expect(stat('Current subjects').getByText('2')).toBeVisible();
+    expect(stat('Learning activities').getByText('2')).toBeVisible();
+    expect(stat('Completed activities').getByText('1')).toBeVisible();
+    expect(stat('Current learning plan progress').getByText('50%')).toBeVisible();
+    expect(screen.getByRole('progressbar', { name: 'Current learning plan progress' })).toHaveAttribute('aria-valuenow', '50');
     expect(stat('Recorded OTJH').getByText('12h 30m')).toBeVisible();
     expect(stat('Planned OTJH').getByText('80h')).toBeVisible();
 
     fireEvent.change(screen.getByRole('combobox', { name: 'Status' }), { target: { value: 'new' } });
-    expect(stat('Learning activities').getByText('7')).toBeVisible();
-    expect(stat('Completed activities').getByText('4')).toBeVisible();
+    expect(stat('Learning activities').getByText('2')).toBeVisible();
+    expect(stat('Completed activities').getByText('1')).toBeVisible();
 
     const refreshed = { ...catalogueData, activities: catalogueData.activities.map(item =>
       item.activity_id === 'catalogue:1:material:20' ? { ...item, completed: true } : item) };
     rerender(view(refreshed, true));
-    expect(stat('Completed activities').getByText('4')).toBeVisible();
+    expect(stat('Completed activities').getByText('1')).toBeVisible();
     rerender(view(refreshed));
-    expect(stat('Completed activities').getByText('5')).toBeVisible();
-    expect(stat('Overall progress').getByText('71.43%')).toBeVisible();
-    expect(screen.getByText('5 of 7 activities completed')).toBeVisible();
+    expect(stat('Completed activities').getByText('1')).toBeVisible();
+    expect(stat('Current learning plan progress').getByText('50%')).toBeVisible();
+    expect(screen.getByText('1 of 2 activities completed')).toBeVisible();
+    expect(screen.getByRole('region', { name: 'Previous learning progress' })).toHaveTextContent('4 of 6');
   });
 
   it('keeps loaded catalogue statistics available when programme metrics are unavailable', () => {
     render(<MemoryRouter><StudentActivityPanel data={catalogueData} metrics={null} loading={false} error={null} onRetry={vi.fn()} /></MemoryRouter>);
     expect(screen.getByText('3 subjects · 6 activities')).toBeVisible();
-    expect(screen.getByText('3 of 6 activities completed')).toBeVisible();
-    expect(screen.getByRole('progressbar', { name: 'Overall learning progress' })).toHaveAttribute('aria-valuenow', '50');
+    expect(screen.getByRole('region', { name: 'Previous learning progress' })).toHaveTextContent('3 of 6');
+    expect(screen.getByText('0 of 0 activities completed')).toBeVisible();
+    expect(screen.getByRole('progressbar', { name: 'Current learning plan progress' })).toHaveAttribute('aria-valuenow', '0');
   });
 
   it('does not populate an empty catalogue with historical programme totals', () => {
@@ -121,7 +125,7 @@ describe('full historical course catalogue', () => {
     </MemoryRouter>);
     expect(screen.getByText('0 subjects · 0 activities')).toBeVisible();
     expect(screen.getByText('0 of 0 activities completed')).toBeVisible();
-    expect(screen.getByRole('progressbar', { name: 'Overall learning progress' })).toHaveAttribute('aria-valuenow', '0');
+    expect(screen.getByRole('progressbar', { name: 'Current learning plan progress' })).toHaveAttribute('aria-valuenow', '0');
   });
 
   it('keeps month-only source placements distinct and chronological on the learning map', () => {
@@ -187,9 +191,9 @@ describe('full historical course catalogue', () => {
   it('counts every component, preserving distinct quiz/material and course identities', () => {
     const result = buildUnifiedLearningSummary(catalogueData, null);
     expect(result.subjects.map(subject => subject.activities.length)).toEqual([3, 2, 1]);
-    expect(result.activityCount).toBe(6);
-    expect(result.completedActivityCount).toBe(3);
-    expect(result.percent).toBe(50);
+    expect(result.activityCount).toBe(0);
+    expect(result.completedActivityCount).toBe(0);
+    expect(result.previousLearning).toEqual({ activityCount: 6, completedActivityCount: 3, percent: 50 });
   });
 
   it('keeps the full imported catalogue separate from a duplicate Builder snapshot', () => {
@@ -201,7 +205,7 @@ describe('full historical course catalogue', () => {
       { id: 'CURRENT', title: 'Current KSBs' }, { id: 'HISTORY', title: 'Course 1' },
     ] });
     expect(result.find(subject => subject.id === 'legacy:1')?.activities).toHaveLength(3);
-    expect(result.some(subject => subject.id === 'current:HISTORY')).toBe(false);
+    expect(result.find(subject => subject.id === 'current:HISTORY')?.activities).toHaveLength(1);
     expect(result.find(subject => subject.id === 'current:CURRENT')?.activities).toHaveLength(1);
   });
 
@@ -234,8 +238,9 @@ describe('recorded historical course progress', () => {
   it('keeps quiz/material namespaces and placements in different courses', () => {
     const result = buildUnifiedLearningSummary(data, null);
     expect(result.subjects.map(s => s.activities.length)).toEqual([1, 2]);
-    expect(result.completedActivityCount).toBe(3);
-    expect(result.percent).toBe(100);
+    expect(result.previousLearning?.completedActivityCount).toBe(3);
+    expect(result.percent).toBe(0);
+    expect(result.previousLearning?.percent).toBe(100);
   });
 
   it('does not mix historical catalogue components into recorded progress or duplicate the current module', () => {
@@ -249,7 +254,7 @@ describe('recorded historical course progress', () => {
     expect(result.filter(s => s.title === 'Current KSBs')).toHaveLength(1);
     expect(result.find(s => s.id === 'legacy:1')?.activities).toHaveLength(1);
     expect(result.find(s => s.id === 'current:CURRENT')?.activities).toHaveLength(1);
-    expect(result.some(s => s.id === 'current:HISTORY')).toBe(false);
+    expect(result.find(s => s.id === 'current:HISTORY')?.activities).toHaveLength(1);
   });
 
   it('shows the catalogue separately from the recorded denominator without repeating accepted time', () => {

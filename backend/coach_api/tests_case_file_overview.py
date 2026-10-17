@@ -116,14 +116,15 @@ class CaseFileOverviewTests(SimpleTestCase):
                 self.assertEqual(hours['percent'], percent)
                 self.assertEqual(hours['planned'], planned)
 
-    def test_historical_records_deduplicate_and_suppress_only_mapped_native_module(self):
+    def test_historical_and_current_module_progress_are_both_visible(self):
         activity = {'progress_basis': 'catalogue_activities',
                     'subjects': [{'id': 1, 'name': 'Recorded', 'module_id': 'M1', 'total': 4, 'completed': 1},
                                  {'id': 2, 'name': 'Unstarted', 'module_id': 'M3', 'total': 3, 'completed': 0}]}
         subjects = [{'id': 'current:M1', 'title': 'Mapped', 'total': 3, 'completed': 3},
                     {'id': 'current:M2', 'title': 'Native', 'total': 3, 'completed': 1}]
         rows = self.render(subjects=subjects, activity=activity)['programmeProgress']
-        self.assertEqual(rows, [{'id': 'current:M2', 'title': 'Native', 'percent': 33.33},
+        self.assertEqual(rows, [{'id': 'current:M1', 'title': 'Mapped', 'percent': 100},
+                                {'id': 'current:M2', 'title': 'Native', 'percent': 33.33},
                                 {'id': 'legacy:1', 'title': 'Recorded', 'percent': 25},
                                 {'id': 'legacy:2', 'title': 'Unstarted', 'percent': 0}])
         self.assertTrue(all(set(row) == {'id', 'title', 'percent'} for row in rows))

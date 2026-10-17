@@ -69,7 +69,7 @@ class SharedModuleProgressTests(SimpleTestCase):
                          [{key: r[key] for key in ('id', 'title', 'percent')} for r in after])
         return after
 
-    def test_catalogue_allocation_partial_zero_and_verified_module_suppression(self):
+    def test_catalogue_and_current_progress_remain_separate_for_the_same_module(self):
         fixture = CourseCatalogueTests()
         fixture.setUp()
         fixture.courses = [{**row, 'id': int(row['source_course_ref']),
@@ -85,7 +85,8 @@ class SharedModuleProgressTests(SimpleTestCase):
         self.assertEqual(by_id['legacy:50']['percent'], 33.33)
         self.assertEqual(by_id['legacy:60']['percent'], 0)
         self.assertIsNone(by_id['current:EMPTY']['percent'])
-        self.assertNotIn('current:M-50', by_id)
+        self.assertEqual(by_id['current:M-50']['total'], 1)
+        self.assertEqual(by_id['current:M-50']['percent'], 0)
 
     def test_native_published_retained_repointed_failed_and_quiz_reading(self):
         components = [{'moduleId': 'M1', 'module': 'Same', 'componentId': f'C{i}'} for i in range(4)]
@@ -105,6 +106,20 @@ class SharedModuleProgressTests(SimpleTestCase):
                     {'kind': 'quiz_reading', 'component_ref': 'C3', 'passed': None, 'submitted_at': None}]
         after = self.compare(None, detail, [{'id': 'M1', 'title': 'Same'}, {'id': 'M2', 'title': 'Same'}], progress)
         self.assertEqual([(r['completed'], r['total'], r['percent']) for r in after], [(4, 6, 66.67), (0, 1, 0)])
+
+    def test_repointed_quiz_attempt_credits_only_its_explicit_component(self):
+        detail = {'components': [
+            {'moduleId': 'M1', 'module': 'Shifted', 'componentId': 'TARGET-1',
+             'isQuiz': True, 'quizMeta': {'quizId': 21}},
+            {'moduleId': 'M1', 'module': 'Shifted', 'componentId': 'TARGET-2',
+             'isQuiz': True, 'quizMeta': {'quizId': 21}},
+        ], 'quizAttempts': [
+            {'quizId': 21, 'componentId': 'TARGET-1', 'passed': True},
+        ]}
+
+        after = self.compare(None, detail, [{'id': 'M1', 'title': 'Shifted'}], [])
+
+        self.assertEqual([(row['completed'], row['total']) for row in after], [(1, 2)])
 
     def test_same_titles_and_foreign_lineage_never_link_modules(self):
         activity = {'progress_basis': 'catalogue_activities',

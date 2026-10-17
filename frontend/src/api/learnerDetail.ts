@@ -74,6 +74,9 @@ export interface LearnerComponentEntry {
   files?: import('@/lib/componentFiles').ComponentFile[];
   downloadAllowed?: boolean;            // powerpoint download flag
   reflectionPrompt?: string | null;     // authored reflection prompt / learner guidance
+  /** Completion derived from verified Teams attendance; adds no recorded hours. */
+  attendanceCompleted?: boolean;
+  attendanceCompletedAt?: string | null;
   reflectionRequired?: boolean;         // false completes the activity without the reflection flow
   /** Authored on the component: this activity must be validated by a tutor or
    *  coach. The reflection is what creates the marking record, so an activity

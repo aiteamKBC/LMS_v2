@@ -87,10 +87,21 @@ const url = '/enrolment_api/public/apprenticeship-application/';
  * way; `eligible` is false when a postcode is not a UK postcode, cannot be
  * found or is outside England (`reasons` says which), and null when the
  * postcodes could not be checked.
+ *
+ * `outcome` says what followed: an eligible applicant is created as a learner
+ * and emailed a set-password invitation ('invited'), or was created but the
+ * email could not be sent ('invitePending'), or already has an account
+ * ('existingAccount'). 'retryLater' means the postcodes could not be checked;
+ * null comes from a server that does not report an outcome.
  */
+export type ApplicationResult = 'invited' | 'invitePending' | 'existingAccount' | 'notEligible' | 'retryLater';
+
+const RESULTS: readonly ApplicationResult[] = ['invited', 'invitePending', 'existingAccount', 'notEligible', 'retryLater'];
+
 export interface ApplicationOutcome {
   eligible: boolean | null;
   reasons: string[];
+  outcome: ApplicationResult | null;
 }
 
 export async function submitApprenticeshipApplication(body: ApplicationSubmission): Promise<ApplicationOutcome> {
@@ -117,6 +128,7 @@ export async function submitApprenticeshipApplication(body: ApplicationSubmissio
   return {
     eligible: typeof data.eligible === 'boolean' ? data.eligible : null,
     reasons: Array.isArray(data.reasons) ? data.reasons.filter((reason: unknown): reason is string => typeof reason === 'string') : [],
+    outcome: RESULTS.includes(data.outcome) ? data.outcome : null,
   };
 }
 

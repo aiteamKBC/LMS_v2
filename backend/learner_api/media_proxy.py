@@ -9,6 +9,7 @@ import asyncio
 import html
 import http.cookiejar
 import json
+import logging
 import mimetypes
 import re
 import urllib.parse
@@ -23,6 +24,8 @@ from django.views.decorators.http import require_GET
 from curriculum_api import upload_storage
 from config.video_streaming import video_chunks
 
+
+logger = logging.getLogger(__name__)
 
 GOOGLE_DRIVE_ID_RE = re.compile(r"^[A-Za-z0-9_-]{10,}$")
 LEGACY_ATTACHMENT_ID_RE = re.compile(r"^[0-9]{1,20}$")
@@ -372,6 +375,26 @@ def _load_legacy_attachment_bytes(attachment_id, upload_hint=''):
     return upstream.read(), None
 
 
+def _open_private_course_file(file_id, range_header=None):
+    """Course video from a private Drive, via the authorised account, or None.
+
+    None also when the Drive API is not configured, the file is not course
+    content, or the API refuses: the anonymous path then answers as before.
+    """
+    from . import google_drive_api
+
+    if not google_drive_api.is_configured() or not google_drive_api.is_course_linked(file_id):
+        return None
+    try:
+        return google_drive_api.open_file(file_id, range_header)
+    except urllib.error.HTTPError as exc:
+        logger.warning("Drive API refused course file %s: HTTP %s", file_id, exc.code)
+        exc.close()
+    except (urllib.error.URLError, TimeoutError, KeyError, ValueError):
+        logger.exception("Drive API request failed for course file %s", file_id)
+    return None
+
+
 @require_GET
 def google_drive_media(request, file_id):
     if not GOOGLE_DRIVE_ID_RE.match(file_id or ""):
@@ -380,7 +403,7 @@ def google_drive_media(request, file_id):
     range_header = request.headers.get("Range")
 
     try:
-        upstream = _open_google_drive_file(file_id, range_header)
+        upstream = _open_private_course_file(file_id, range_header) or _open_google_drive_file(file_id, range_header)
         if upstream is None:
             return HttpResponse("Google Drive returned a page instead of a media file.", status=502)
     except urllib.error.HTTPError as exc:

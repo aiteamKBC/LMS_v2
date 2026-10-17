@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
+import { MemoryRouter } from 'react-router-dom';
 import Page from './page';
 import {
   ApplicationSubmitError,
@@ -22,7 +23,7 @@ vi.mock('@/api/apprenticeshipApplication', async original => ({
 
 const EXETER: PostcodeCheck = { status: 'found', postcode: 'EX1 2MP', country: 'England', region: 'South West', district: 'Exeter', inEngland: true };
 const EDINBURGH: PostcodeCheck = { status: 'found', postcode: 'EH1 1YZ', country: 'Scotland', region: '', district: 'City of Edinburgh', inEngland: false };
-const ELIGIBLE = { eligible: true, reasons: [] };
+const ELIGIBLE = { eligible: true, reasons: [], outcome: 'invited' as const };
 
 beforeEach(() => {
   vi.useFakeTimers({ toFake: ['Date'] });
@@ -33,7 +34,7 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.clearAllMocks(); vi.useRealTimers(); });
 
 const open = async () => {
-  render(<Page />);
+  render(<MemoryRouter><Page /></MemoryRouter>);
   await screen.findByText(/^Section 1 of/);
 };
 const type = (label: RegExp, value: string) => fireEvent.change(screen.getByLabelText(label), { target: { value } });
@@ -107,7 +108,7 @@ it('walks the four sections and submits one complete application', async () => {
   choose(/not previously completed this programme/, 'Yes');
   fireEvent.click(screen.getByRole('button', { name: /Submit application/ }));
 
-  expect(await heading('Application submitted')).toBeInTheDocument();
+  expect(await heading('You are eligible')).toBeInTheDocument();
   expect(submitApprenticeshipApplication).toHaveBeenCalledTimes(1);
   expect(submitApprenticeshipApplication).toHaveBeenCalledWith({
     firstName: 'Sam', surname: 'Example', workEmail: 'sam@employer.example', phoneNumber: '',
@@ -182,7 +183,7 @@ it('carries on past a postcode that does not exist or cannot be checked, with no
 
 it('tells the applicant they are not eligible when the server rules them out by postcode', async () => {
   const reasons = ['Your postcode (EH1 1YZ) is outside England (Scotland).'];
-  vi.mocked(submitApprenticeshipApplication).mockResolvedValue({ eligible: false, reasons });
+  vi.mocked(submitApprenticeshipApplication).mockResolvedValue({ eligible: false, reasons, outcome: 'notEligible' });
   await open();
   await reachProgramme();
   fireEvent.change(screen.getByLabelText(/Choose Your Applying Programme/), { target: { value: 'Marketing Manager Level 6' } });
@@ -196,14 +197,51 @@ it('tells the applicant they are not eligible when the server rules them out by 
   expect(submitApprenticeshipApplication).toHaveBeenCalledTimes(1);
 });
 
-it('treats postcodes that could not be checked as a normal submission', async () => {
-  vi.mocked(submitApprenticeshipApplication).mockResolvedValue({ eligible: null, reasons: [] });
+async function submitProgramme() {
   await open();
   await reachProgramme();
   fireEvent.change(screen.getByLabelText(/Choose Your Applying Programme/), { target: { value: 'Marketing Manager Level 6' } });
   choose(/government funded training programmes/, 'No');
   choose(/not previously completed this programme/, 'Yes');
   fireEvent.click(screen.getByRole('button', { name: /Submit application/ }));
+}
+
+it('tells an eligible applicant their set-password invitation has been emailed', async () => {
+  vi.mocked(submitApprenticeshipApplication).mockResolvedValue(ELIGIBLE);
+  await submitProgramme();
+  expect(await heading('You are eligible')).toHaveFocus();
+  expect(screen.getByText(/with a link to create your password/)).toBeInTheDocument();
+  expect(screen.getByText('sam@employer.example')).toBeInTheDocument();
+});
+
+it('says staff will send the link when the invitation email could not be sent', async () => {
+  vi.mocked(submitApprenticeshipApplication).mockResolvedValue({ eligible: true, reasons: [], outcome: 'invitePending' });
+  await submitProgramme();
+  expect(await heading('You are eligible')).toBeInTheDocument();
+  expect(screen.getByText(/could not send your invitation email just now/)).toBeInTheDocument();
+  expect(screen.queryByText(/We have sent an email/)).not.toBeInTheDocument();
+});
+
+it('sends an applicant who already has an account to sign in or Forgot password', async () => {
+  vi.mocked(submitApprenticeshipApplication).mockResolvedValue({ eligible: true, reasons: [], outcome: 'existingAccount' });
+  await submitProgramme();
+  expect(await heading('You already have an account')).toHaveFocus();
+  expect(screen.getByRole('link', { name: 'sign in' })).toHaveAttribute('href', '/login');
+  expect(screen.getByRole('link', { name: 'Forgot password' })).toHaveAttribute('href', '/forgot-password');
+});
+
+it('keeps the form and asks the applicant to try again when the postcodes could not be checked', async () => {
+  vi.mocked(submitApprenticeshipApplication).mockResolvedValue({ eligible: null, reasons: [], outcome: 'retryLater' });
+  await submitProgramme();
+  expect(await screen.findByText(/please try again in a few minutes/)).toBeInTheDocument();
+  expect(screen.queryByRole('heading', { name: /eligible|Application submitted/ })).not.toBeInTheDocument();
+  expect(screen.getByRole('button', { name: /Submit application/ })).toBeEnabled();
+  expect(screen.getByLabelText(/Choose Your Applying Programme/)).toHaveValue('Marketing Manager Level 6');
+});
+
+it('falls back to "Application submitted" when the server reports no outcome', async () => {
+  vi.mocked(submitApprenticeshipApplication).mockResolvedValue({ eligible: null, reasons: [], outcome: null });
+  await submitProgramme();
   expect(await heading('Application submitted')).toBeInTheDocument();
 });
 
@@ -227,7 +265,7 @@ it('does not send a completion date once the answer is changed to No', async () 
   choose(/government funded training programmes/, 'No');
   choose(/not previously completed this programme/, 'Yes');
   fireEvent.click(screen.getByRole('button', { name: /Submit application/ }));
-  await heading('Application submitted');
+  await heading('You are eligible');
   expect(vi.mocked(submitApprenticeshipApplication).mock.calls[0][0]).toMatchObject({
     attendedFundedTraining: false, fundedTrainingCompletedOn: null,
   });
@@ -300,7 +338,7 @@ it('asks the questions of the published form', async () => {
   choose(/not previously completed this programme/, 'Yes');
   fireEvent.click(screen.getByRole('button', { name: /Submit application/ }));
 
-  await heading('Application submitted');
+  await heading('You are eligible');
   expect(vi.mocked(submitApprenticeshipApplication).mock.calls[0][0]).toMatchObject({
     firstName: 'Sam', dateOfBirth: '', programme: 'Data Analyst Level 4',
     custom: { cf_line_manager: true, cf_manager_name: 'Alex' },
@@ -333,7 +371,7 @@ it('offers to try again when the form cannot be loaded', async () => {
   vi.mocked(fetchEligibilityForm)
     .mockRejectedValueOnce(new Error('The application form is not available just now.'))
     .mockResolvedValueOnce({ layout: null, version: null });
-  render(<Page />);
+  render(<MemoryRouter><Page /></MemoryRouter>);
   expect(await screen.findByRole('alert')).toHaveTextContent('The application form is not available just now.');
   fireEvent.click(screen.getByRole('button', { name: /Try again/ }));
   expect(await screen.findByText('Section 1 of 4')).toBeInTheDocument();

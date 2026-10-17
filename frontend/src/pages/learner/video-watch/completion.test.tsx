@@ -4,7 +4,7 @@ import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 import type { ReactNode } from 'react';
 import { fetchLearnerDetail, type LearnerDetail } from '@/api/learnerDetail';
 import { submitComponentProgress, type ComponentProgressResponse } from '@/api/components';
-import { startTimeTracking } from '@/api/timeTracking';
+import { startTimeTracking, resumeTimeTracking } from '@/api/timeTracking';
 import { submitVideoProgress, type VideoProgressResponse } from '@/api/videos';
 import { fetchEvidence } from '@/api/evidence';
 import { loadLearningReflectionSubmission } from '@/api/reflectionSubmission';
@@ -33,7 +33,7 @@ vi.mock('./readingDownloads', async () => ({
 
 vi.mock('@/api/learnerDetail', () => ({ fetchLearnerDetail: vi.fn() }));
 vi.mock('@/api/components', () => ({ submitComponentProgress: vi.fn() }));
-vi.mock('@/api/timeTracking', () => ({ startTimeTracking: vi.fn() }));
+vi.mock('@/api/timeTracking', () => ({ startTimeTracking: vi.fn(), resumeTimeTracking: vi.fn() }));
 vi.mock('@/api/videos', () => ({ submitVideoProgress: vi.fn() }));
 vi.mock('@/api/reflectionSubmission', () => ({ loadLearningReflectionSubmission: vi.fn(), saveLearningReflectionSubmission: vi.fn() }));
 vi.mock('@/api/evidence', () => ({
@@ -683,6 +683,20 @@ it('preserves a saved audio session and flushes the last seconds when leaving th
   now += 12000;
   unmount();
   expect(JSON.parse(localStorage.getItem(key)!)).toEqual({ elapsedSeconds: 312, session: savedSession });
+});
+
+it('revalidates a reward draft with the server instead of discarding it for device clock skew', async () => {
+  const key = 'learner_activity_timer:v1:apprenticeship:1:C1';
+  const savedSession = { sessionId: 'REWARD', trackingToken: 'saved-token', startedAt: '2099-01-01T00:00:00Z', countingMode: 'visible_page' as const, rewardTracking: true };
+  localStorage.setItem(key, JSON.stringify({ elapsedSeconds: 300, session: savedSession }));
+  vi.mocked(resumeTimeTracking).mockResolvedValue(savedSession);
+  vi.mocked(fetchLearnerDetail).mockResolvedValue({ ...detail(), components: [{ ...first, type: 'podcast', component: 'Podcast', audioUrl: 'https://example.test/lesson.mp3' }] } as unknown as LearnerDetail);
+  vi.spyOn(performance, 'now').mockReturnValue(0);
+  mount();
+  await screen.findByRole('timer', { name: 'Time on this activity: 00 hours, 05 minutes, 00 seconds' });
+  await waitFor(() => expect(resumeTimeTracking).toHaveBeenCalledWith(savedSession, 'component', 'C1'));
+  expect(startTimeTracking).not.toHaveBeenCalled();
+  expect(JSON.parse(localStorage.getItem(key)!)).toEqual({ elapsedSeconds: 300, session: savedSession });
 });
 
 
