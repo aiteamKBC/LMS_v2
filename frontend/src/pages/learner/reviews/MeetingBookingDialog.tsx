@@ -12,8 +12,12 @@ import {
 import { bookingDateRestrictionMessage, firstAvailableBookingDate, isoDate, parseBookingDay } from './bookingDates';
 import styles from './meetingBooking.module.css';
 
+/** A list card supplies identity and optional initial values. The dialog
+ * resolves the full authorized calendar event before allowing a booking. */
+export type MeetingBookingSession = Pick<LearnerCalendarEvent, 'id' | 'eventKey' | 'source'> & Partial<LearnerCalendarEvent>;
+
 type Props = {
-  session: LearnerCalendarEvent;
+  session: MeetingBookingSession;
   title: string;
   learner: { kind: LearnerKind; id: string };
   rules: BookingCalendarRules | null;
@@ -151,7 +155,7 @@ function MeetingBookingForm({ session, title, learner, rules, attendance, onClos
       if (saved && !['scheduled', 'not-scheduled'].includes(saved.status)) {
         throw new Error('This meeting can no longer be scheduled. Close this window and refresh the page.');
       }
-      const resolved = saved || session;
+      const resolved = saved;
       const nextRules = calendar.bookingCalendar || rules;
       setTarget(resolved);
       setCalendarRules(nextRules);

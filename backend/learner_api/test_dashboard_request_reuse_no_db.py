@@ -42,7 +42,7 @@ class PresetCacheTests(SimpleTestCase):
         self.assertIs(resolve.call_args.args[1], cache)
         with patch.object(weekly_learning, 'effective_training_plan', side_effect=RuntimeError('stop')) as plan:
             with self.assertRaises(RuntimeError):
-                weekly_learning.build_weekly_learning(source, 265, learning_summary=True)
+                weekly_learning.build_learning_content_summary(source, 265, learning_summary=True)
         self.assertIs(plan.call_args.args[1], cache)
 
     def test_tab_dispatch_installs_a_fresh_cache_for_each_request(self):
@@ -103,7 +103,7 @@ class BuilderLinkReuseTests(SimpleTestCase):
              patch.object(canonical_learning, 'curriculum_module_ids_for', return_value=[]), \
              patch.object(training_plan_dashboard, '_builder_subject_metadata', read), \
              patch.object(student_activity, '_builder_subject_metadata', read), \
-             patch.object(weekly_learning, 'build_weekly_learning', return_value={'components': [{'moduleId': 'M2'}]}), \
+             patch.object(weekly_learning, 'build_learning_content_summary', return_value={'components': [{'moduleId': 'M2'}]}), \
              patch.object(student_activity_access, 'student_activity_available', return_value=False), \
              patch.object(builder_activity_dates, 'read_builder_activity_dates', return_value={}), \
              patch.object(dashboard_tabs, 'connections', {'enrolment': SimpleNamespace(cursor=lambda: cursor)}):
@@ -157,7 +157,7 @@ class BuilderDatesReuseTests(SimpleTestCase):
         cursor = MagicMock()
         cursor.__enter__.return_value = cursor
         read = {'C1': {'date': '2026-11-02'}}
-        with patch.object(weekly_learning, 'build_weekly_learning', return_value={'components': []}), \
+        with patch.object(weekly_learning, 'build_learning_content_summary', return_value={'components': []}), \
              patch.object(student_activity_access, 'student_activity_available', return_value=False), \
              patch.object(learning_plan, '_effective_plan_ids', return_value=['M1']), \
              patch.object(student_activity, '_builder_subject_metadata', return_value=({}, {})), \
@@ -221,7 +221,7 @@ class TrainingTitleReuseTests(SimpleTestCase):
         from . import dashboard_training as training, weekly_learning, student_activity_access, student_activity, builder_activity_dates
         read = MagicMock(side_effect=lambda cursor, refs: ({}, {r: dict(self.builder[r]) for r in refs if r in self.builder}))
         with patch.object(training, 'connections', {'enrolment': MagicMock()}), \
-             patch.object(weekly_learning, 'build_weekly_learning', side_effect=lambda *a, **k: {**self.detail}), \
+             patch.object(weekly_learning, 'build_learning_content_summary', side_effect=lambda *a, **k: {**self.detail}), \
              patch.object(student_activity_access, 'student_activity_available', return_value=False), \
              patch.object(student_activity, '_builder_subject_metadata', read), \
              patch.object(builder_activity_dates, 'read_builder_activity_dates', return_value={}):
@@ -255,3 +255,28 @@ class TrainingTitleReuseTests(SimpleTestCase):
             response = training.training_module(RequestFactory().get('/module/'), kind='commercial', pk=265, module_id='current:M1')
         self.assertEqual(response.status_code, 200)
         self.assertEqual(seen, [({}, {})])
+
+
+class TrainingDatesReuseTests(SimpleTestCase):
+    def test_same_scope_reuses_dates_but_different_scope_and_learner_do_not(self):
+        from . import dashboard_training as training, weekly_learning, student_activity_access, student_activity, builder_activity_dates
+        source = SimpleNamespace(pk=265, aptem_id=None)
+        dates = MagicMock(side_effect=[{'C1': {'date': '2026-10-01'}}, {}, {}])
+        with patch.object(training, 'connections', {'enrolment': MagicMock()}), \
+             patch.object(weekly_learning, 'build_learning_content_summary', return_value={'components': []}), \
+             patch.object(student_activity_access, 'student_activity_available', return_value=False), \
+             patch.object(student_activity, 'builder_subject_links', return_value={}), \
+             patch.object(builder_activity_dates, 'read_builder_activity_dates', dates):
+            first = training.learning_facts(source, {}, None, [], ['M1', 'M2'])
+            repeated = training.learning_facts(source, {}, None, [], ['M2', 'M1'])
+            self.assertEqual(dates.call_count, 1)
+            self.assertEqual(first, repeated)
+            training.learning_facts(source, {}, None, [], ['M1'])
+            training.learning_facts(SimpleNamespace(pk=266, aptem_id=None), {}, None, [], ['M1'])
+        self.assertEqual(dates.call_count, 3)
+
+    def test_request_initialization_discards_prior_training_dates(self):
+        from .dashboard_tabs import install_request_caches
+        source = SimpleNamespace(_training_activity_dates=(frozenset(['OLD']), {'C': {}}))
+        install_request_caches(source)
+        self.assertIsNone(source._training_activity_dates)

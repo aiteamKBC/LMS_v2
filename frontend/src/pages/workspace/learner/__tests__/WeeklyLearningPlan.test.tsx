@@ -1,13 +1,32 @@
+import type { ComponentProps } from 'react';
+import { weeklyContractFixture, weeklyResourceFixture } from '@/test/weeklyContractFixture';
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { TrainingPlanDashboard } from '@/api/trainingPlanDashboard';
-import { KsbChips, WeeklyLearningPlan } from '../WeeklyLearningPlan';
+import { KsbChips, WeeklyLearningPlan as CanonicalWeeklyLearningPlan } from '../WeeklyLearningPlan';
 
 const learnerDetail = vi.hoisted(() => ({ real: {
   components: [] as { componentId: string; moduleId: string; weekId: string; component: string; type: string }[],
   videoProgress: [] as { componentId: string }[], componentProgress: [] as { componentId: string }[],
 } }));
+
+const weeklyRead = vi.hoisted(() => ({ real: null as unknown, details: new Map<string, unknown>() }));
+vi.mock('@/hooks/useWeeklyLearning', () => ({
+  useWeeklyLearning: () => ({ real: weeklyRead.real, loading: false, loadError: null, refresh: vi.fn() }),
+  useWeeklyLearningWeek: (_kind: string, _id: string, _module: string, week: string) => ({
+    data: weeklyRead.details.get(week), loading: false, error: null, refresh: vi.fn() }),
+}));
+function WeeklyLearningPlan(props: ComponentProps<typeof CanonicalWeeklyLearningPlan> & { schedule: TrainingPlanDashboard; scheduleLoading: boolean }) {
+  const source = { ...learnerDetail.real, schedule: props.schedule };
+  weeklyRead.real = weeklyResourceFixture(weeklyContractFixture(source), props.learnerId);
+  weeklyRead.details.clear();
+  for (const module of props.schedule?.modules || []) for (const slot of module.curriculumSlots || []) {
+    const weekId = `${slot.type === 'reading-week' ? 'reading' : 'slot'}:${module.id}:${slot.slotNumber}`;
+    weeklyRead.details.set(weekId, { ...weeklyContractFixture({ ...source, selectedWeekId: weekId }), weekId, moduleId: module.id });
+  }
+  return <CanonicalWeeklyLearningPlan {...props} />;
+}
 
 vi.mock('@/hooks/useLearnerDetailParam', () => ({
   useLearnerDetailParam: () => ({

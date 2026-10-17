@@ -158,7 +158,9 @@ class MonthlyProjectionTests(SimpleTestCase):
         self.assertIn('min(coalesce(scheduled_start,start_datetime)) AS first_start', sql)
         self.assertIn('GROUP BY module_id', sql)
         self.assertIn('occurrence_id IS NOT NULL', sql)
-        self.assertEqual(params, [['M1'], 'synthetic@example.invalid'])
+        self.assertEqual(params, [['M1']])
+        self.assertNotIn('live_session_attendance', sql)
+        self.assertNotIn('LEFT JOIN LATERAL', sql)
 
 
 class MonthlySourceReadTests(SimpleTestCase):

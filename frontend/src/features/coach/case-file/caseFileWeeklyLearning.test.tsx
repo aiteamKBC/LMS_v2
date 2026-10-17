@@ -11,15 +11,15 @@ import type { WeeklyLearningResponse } from './hooks/useCaseFileWeeklyLearning';
 const transport = vi.hoisted(() => vi.fn());
 vi.mock('@/lib/coachFetch', () => ({ coachFetch: transport }));
 vi.mock('@/hooks/useCoachViewAs', () => ({ useCoachViewAs: () => null }));
-const weeks = [1, 2, 3].map(number => ({ id: `M1:${number}`, moduleId: 'M1', moduleTitle: 'Synthetic module',
+const weeks = [1, 2, 3].map(number => ({ id: `M1:${number}`, moduleId: 'M1',
   weekId: `W${number}`, weekNumber: number, slotNumber: number, title: `Week ${number}`, startDate: `2026-10-${number === 1 ? '05' : '12'}`,
   endDate: `2026-10-${number === 1 ? '11' : '18'}`, status: number === 1 ? 'current' as const : 'upcoming' as const,
-  progress: 50, kind: 'live-session' as const, attended: null, sessionState: 'upcoming' as const, holidayNote: '', holidays: [] }));
-const payload = (id = 'M1:1'): WeeklyLearningResponse => ({ weeks, selectedWeek: { ...weeks.find(week => week.id === id)!,
-  summary: { completedActivities: 1, totalActivities: 2, progress: 50, ksbCount: 2, achievedKsbCount: 1, otjhHours: 1, plannedOtjhHours: 2, untimedActivities: 0 },
-  liveSession: { id: `session-${id}`, title: `Live ${id}`, date: '2026-10-05', startTime: '09:00', endTime: '11:00', start: '2026-10-05T08:00:00Z', durationMinutes: 120, status: 'scheduled', attended: null, joinUrl: 'https://example.test/teams' },
-  activities: [{ id: `reading-${id}`, title: `Reading ${id}`, type: 'reading', completed: true, isQuiz: false, status: 'completed', expectedHours: 1, durationMinutes: 60, quizDuration: null, quizTimeUnit: null, ksbCodes: ['K1'] },
-    { id: `quiz-${id}`, title: `Quiz ${id}`, type: 'quiz', completed: false, isQuiz: true, status: 'in-progress', expectedHours: 1, durationMinutes: null, quizDuration: 60, quizTimeUnit: 'mins', ksbCodes: ['S1'] }] } });
+  progress: 50, completedActivities: 1, totalActivities: 2, kind: 'live-session' as const, attendance: 'upcoming' as const, sessionState: 'upcoming' as const, holidayNote: '', holidays: [] }));
+const payload = (id = 'M1:1'): WeeklyLearningResponse => ({ modules: [{id: 'M1', title: 'Synthetic module'}], weeks, selectedWeek: { weekId: id,
+  summary: { ksbCount: 2, achievedKsbCount: 1, otjhHours: 1, plannedOtjhHours: 2, untimedActivities: 0 },
+  liveSession: { id: `session-${id}`, title: `Live ${id}`, date: '2026-10-05', startTime: '09:00', endTime: '11:00', start: '2026-10-05T08:00:00Z', durationMinutes: 120, status: 'scheduled', sessionState: 'upcoming', attendance: 'upcoming' as const, joinUrl: 'https://example.test/teams' },
+  activities: [{ id: `reading-${id}`, title: `Reading ${id}`, type: 'reading', isQuiz: false, status: 'completed', expectedHours: 1, actualHours: 0, durationMinutes: 60, quizDuration: null, quizTimeUnit: null, ksbCodes: ['K1'] },
+    { id: `quiz-${id}`, title: `Quiz ${id}`, type: 'quiz', isQuiz: true, status: 'in-progress', expectedHours: 1, actualHours: 0, durationMinutes: null, quizDuration: 60, quizTimeUnit: 'mins', ksbCodes: ['S1'] }] } });
 beforeEach(() => {
   clearCaseFileCache();
   transport.mockReset().mockImplementation(async (url: string) => new Response(JSON.stringify(payload(new URL(url, 'https://example.test').searchParams.get('week') || undefined))));
@@ -111,10 +111,10 @@ it('keeps week navigation available and retries a failed selected-week request',
 it('uses the canonical upcoming session state despite stale absent attendance', async () => {
   vi.spyOn(Date, 'now').mockReturnValue(Date.parse('2026-10-07T12:00:00Z'));
   const response = payload();
-  response.weeks[0] = { ...response.weeks[0], startDate: '2026-10-09', status: 'upcoming', attended: null };
-  response.selectedWeek = { ...response.selectedWeek!, ...response.weeks[0], liveSession: {
+  response.weeks[0] = { ...response.weeks[0], startDate: '2026-10-09', status: 'upcoming', attendance: 'upcoming' as const };
+  response.selectedWeek = { ...response.selectedWeek!, liveSession: {
     ...response.selectedWeek!.liveSession!, start: '2026-10-09T08:00:00Z', date: '2026-10-09',
-    status: 'scheduled', sessionState: 'upcoming', attended: false, joinUrl: null,
+    status: 'scheduled', sessionState: 'upcoming', attendance: 'unmarked', joinUrl: null,
   } };
   transport.mockResolvedValue(new Response(JSON.stringify(response)));
   render(<MemoryRouter><CaseFileSessionProvider learnerId="101" coach="coach@example.test"><CaseFileWeeklyLearningTab kind="commercial" learnerId="201" /></CaseFileSessionProvider></MemoryRouter>);
@@ -160,5 +160,16 @@ it('does not prefetch an unsupported placeholder or skip it to fetch farther wee
   render(<MemoryRouter><CaseFileSessionProvider learnerId="101" coach="coach@example.test"><CaseFileWeeklyLearningTab kind="commercial" learnerId="201" /></CaseFileSessionProvider></MemoryRouter>);
   await screen.findByText('Reading M1:1');
   await act(async () => {});
+  expect(transport).toHaveBeenCalledTimes(1);
+});
+
+it('caches the canonical resource without rebuilding its fields', async () => {
+  const response = payload();
+  transport.mockImplementation(async () => new Response(JSON.stringify(response)));
+  const read = () => caseFileSectionRead<WeeklyLearningResponse>('coach-A', '101', 'weekly-learning');
+  const first = await read();
+  expect(first).toEqual(response);
+  expect(first).not.toHaveProperty('version');
+  expect(await read()).toBe(first);
   expect(transport).toHaveBeenCalledTimes(1);
 });

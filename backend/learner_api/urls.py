@@ -27,8 +27,7 @@ from .first_login_details import first_login_details
 from . import certificates, monthly_assignment, legacy_assignments, quiz_reading, review_history
 from . import historical_evidence
 from . import mobile_absence
-from .weekly_learning import learner_weekly_learning
-from .dashboard_header import dashboard_header
+from .dashboard_header import dashboard_header, dashboard_bootstrap
 from .dashboard_weekly import dashboard_weekly
 from .dashboard_tabs import dashboard_tab
 from .dashboard_training import training_module
@@ -216,8 +215,14 @@ urlpatterns = [
     path("employers/<int:pk>/", employers.employer_detail, name="employer-detail"),
     path("learner-detail/<str:kind>/<int:pk>/", learner_detail.learner_detail, name="learner-detail"),
     path("learner-summary/<str:kind>/<int:pk>/", learner_detail.learner_summary, name="learner-summary"),
-    path("weekly-learning/<str:kind>/<int:pk>/", learner_weekly_learning, name="learner-weekly-learning"),
+    path("weekly-learning/<str:kind>/<int:pk>/", dashboard_weekly, name="learner-weekly-learning"),
     path("dashboard/<str:kind>/<int:pk>/header/", dashboard_header, name="learner-dashboard-header"),
+    path("dashboard/<str:kind>/<int:pk>/header/minimal/", dashboard_header, {'minimal': True}, name="learner-dashboard-minimal-header"),
+    path("dashboard/<str:kind>/<int:pk>/bootstrap/", dashboard_bootstrap, name="learner-dashboard-bootstrap"),
+    path("dashboard/<str:kind>/<int:pk>/header/presentation/", dashboard_header, {'presentation': True}, name="learner-dashboard-presentation"),
+    path("dashboard/<str:kind>/<int:pk>/weekly/plan/", dashboard_weekly, name="learner-dashboard-weekly-plan"),
+    path("dashboard/<str:kind>/<int:pk>/weekly/plan/<str:week_id>/", dashboard_weekly, name="learner-dashboard-weekly-plan-detail"),
+    path("dashboard/<str:kind>/<int:pk>/monthly/plan/", dashboard_tab, {'tab': 'monthly', 'canonical_contract': True}, name="learner-dashboard-monthly-plan"),
     path("dashboard/<str:kind>/<int:pk>/weekly/", dashboard_weekly, name="learner-dashboard-weekly"),
     path("dashboard/<str:kind>/<int:pk>/weekly/<str:week_id>/", dashboard_weekly, name="learner-dashboard-week-detail"),
     path("dashboard/<str:kind>/<int:pk>/training/modules/<str:module_id>/", training_module, name="learner-dashboard-training-module"),
