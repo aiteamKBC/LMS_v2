@@ -322,10 +322,32 @@ def _quiz_component_slots(profile, component_ids):
     return _rows(
         """
         SELECT c.id AS component_id, c.module_catalogue_id AS module_id,
-               c.week_id, c.settings_json->>'linkedQuizId' AS quiz_id
+               m.title AS module_title, c.week_id, w.title AS week_title,
+               c.title AS component_title,
+               coalesce(
+                   (SELECT link.quiz_id::text
+                    FROM curriculum.quiz_component_links link
+                    WHERE link.component_id = c.id
+                    ORDER BY link.id
+                    LIMIT 1),
+                   c.settings_json->>'linkedQuizId'
+               ) AS quiz_id
         FROM curriculum.components c
+        JOIN curriculum.modules m ON m.module_catalogue_id = c.module_catalogue_id
+        LEFT JOIN curriculum.weeks w ON w.id = c.week_id
+          AND w.module_catalogue_id = c.module_catalogue_id
         WHERE c.type = 'quiz'
-          AND nullif(c.settings_json->>'linkedQuizId', '') IS NOT NULL
+          AND nullif(
+              coalesce(
+                  (SELECT link.quiz_id::text
+                   FROM curriculum.quiz_component_links link
+                   WHERE link.component_id = c.id
+                   ORDER BY link.id
+                   LIMIT 1),
+                  c.settings_json->>'linkedQuizId'
+              ),
+              ''
+          ) IS NOT NULL
           AND """ + visible_child_sql("c") + """
           AND c.module_catalogue_id IN (
               SELECT module_ref FROM "Learner".learner_training_plan_modules
@@ -344,8 +366,11 @@ def _progress_entries_by_component(profile, component_ids):
 
     Quiz submissions historically store quiz_ref without component_ref. Only
     one matching slot in the learner's plan may claim such an attempt. Explicit
-    module/week references narrow that choice; an existing component reference
-    always wins, including progress already moved by an earlier shift.
+    module/week references narrow that choice first; older attempts retain the
+    module, week and quiz titles shown when submitted, so those conservatively
+    disambiguate cloned/shared quiz slots when stable references are absent.
+    An existing component reference always wins, including progress already
+    moved by an earlier shift.
     """
     if profile is None or not component_ids:
         return {}
@@ -367,14 +392,32 @@ def _progress_entries_by_component(profile, component_ids):
         kind="quiz", quiz_ref__in=list(quiz_ids),
     )
     for entry in attempts:
-        candidates = {
-            _s(slot["component_id"]) for slot in slots
+        candidates = [
+            slot for slot in slots
             if _s(slot["quiz_id"]) == _s(entry.quiz_ref)
             and (not _s(entry.module_ref) or _s(slot["module_id"]) == _s(entry.module_ref))
             and (not _s(entry.week_ref) or _s(slot["week_id"]) == _s(entry.week_ref))
-        }
+        ]
+        # Before component_ref was written, quiz attempts still retained the
+        # visible module/week/quiz titles from the page that submitted them.
+        # Use each title only when it actually narrows an ambiguous set; a
+        # later curriculum rename must not invalidate an otherwise unique slot.
+        for entry_field, slot_field, stable_ref in (
+            ("module_title", "module_title", entry.module_ref),
+            ("week_title", "week_title", entry.week_ref),
+            ("component_title", "component_title", entry.component_ref),
+        ):
+            value = _component_title_key(getattr(entry, entry_field, ""))
+            if len(candidates) <= 1 or stable_ref or not value:
+                continue
+            narrowed = [
+                slot for slot in candidates
+                if _component_title_key(slot.get(slot_field)) == value
+            ]
+            if narrowed:
+                candidates = narrowed
         if len(candidates) == 1:
-            component_id = next(iter(candidates))
+            component_id = _s(candidates[0]["component_id"])
             if component_id in component_ids:
                 grouped.setdefault(component_id, []).append(entry)
     return grouped

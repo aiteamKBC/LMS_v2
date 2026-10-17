@@ -602,11 +602,15 @@ class QuizShiftProgressTests(SimpleTestCase):
         self.profile = SimpleNamespace(pk=211)
         self.slot = {
             "component_id": "C-AQ", "module_id": "MOD-A",
-            "week_id": "W-A1", "quiz_id": "101",
+            "module_title": "Shift 1", "week_id": "W-A1", "week_title": "Lec1",
+            "component_title": "Matching quiz", "quiz_id": "101",
         }
 
     def attempt(self, **changes):
-        entry = _entry(None, kind="quiz", grade=1, attempt=1)
+        entry = _entry(
+            None, kind="quiz", grade=1, attempt=1,
+            component_title="Matching quiz",
+        )
         entry.quiz_ref = "101"
         entry.module_ref = None
         entry.week_ref = None
@@ -637,6 +641,19 @@ class QuizShiftProgressTests(SimpleTestCase):
         self.assertCountEqual(call.args[0].children, [("component_ref__isnull", True), ("component_ref", "")])
         return result
 
+    def test_slot_lookup_reads_normalized_links_before_legacy_settings(self):
+        with patch.object(module_shift, "_rows", return_value=[self.slot]) as rows:
+            result = module_shift._quiz_component_slots(self.profile, ["C-AQ"])
+
+        self.assertEqual(result, [self.slot])
+        sql, params = rows.call_args.args
+        self.assertIn("FROM curriculum.quiz_component_links link", sql)
+        self.assertLess(
+            sql.index("SELECT link.quiz_id::text"),
+            sql.index("c.settings_json->>'linkedQuizId'"),
+        )
+        self.assertEqual(params, [self.profile.pk, ["C-AQ"]])
+
     def test_quiz_only_attempt_is_offered_in_the_progress_summary(self):
         entry = self.attempt()
         summary = self.resolve([entry], summary=True)
@@ -656,6 +673,41 @@ class QuizShiftProgressTests(SimpleTestCase):
         ):
             with self.subTest(other=other):
                 self.assertEqual(self.resolve([self.attempt()], slots=[self.slot, other]), {})
+
+    def test_stored_titles_disambiguate_a_shared_legacy_quiz(self):
+        slots = [
+            self.slot,
+            {
+                **self.slot,
+                "component_id": "C-XQ",
+                "module_id": "MOD-X",
+                "module_title": "Another module",
+                "week_id": "W-X1",
+            },
+        ]
+        entry = self.attempt(module_ref=None, week_ref=None)
+
+        self.assertEqual(self.resolve([entry], slots=slots), {"C-AQ": [entry]})
+
+    def test_title_disambiguation_normalizes_visible_spacing(self):
+        slots = [
+            self.slot,
+            {
+                **self.slot,
+                "component_id": "C-XQ",
+                "module_id": "MOD-X",
+                "module_title": "Another module",
+            },
+        ]
+        entry = self.attempt(
+            module_ref=None,
+            week_ref=None,
+            module_title="  SHIFT\u00a01 ",
+            week_title=" LEC1 ",
+            component_title="MATCHING   QUIZ",
+        )
+
+        self.assertEqual(self.resolve([entry], slots=slots), {"C-AQ": [entry]})
 
     def test_explicit_module_and_week_disambiguate_the_original_slot(self):
         entry = self.attempt(module_ref="MOD-A", week_ref="W-A1")
