@@ -32,6 +32,7 @@ function setup(calendar = schedule(), failed = '', overview = week(), recorded?:
   assignmentStatuses: Array<{ activityType: string; activityId: string; status: string }> = []) {
   const fetch = vi.fn(async (input: Parameters<typeof globalThis.fetch>[0]) => {
     const url = String(input);
+    if (url.includes('/weekly/plan/')) return new Response(JSON.stringify({ modules: [], weeks: [], selectedWeek: null }));
     if (failed && url.includes(failed)) return new Response(JSON.stringify({ error: 'Offline' }), { status: 503 });
     if (url.includes('/reflection/submissions/')) return new Response(JSON.stringify({ statuses: assignmentStatuses }));
     if (url.includes('/attendance/') && url.includes('/lectures/')) return new Response(JSON.stringify({ lectures: [] }));
@@ -84,6 +85,7 @@ describe('dashboard learning layout', () => {
     }
     const fetch = vi.fn(async (input: Parameters<typeof globalThis.fetch>[0]) => {
       const url = String(input);
+    if (url.includes('/weekly/plan/')) return new Response(JSON.stringify({ modules: [], weeks: [], selectedWeek: null }));
       if (url.includes('rewards-summary')) return new Response(JSON.stringify({ points: { learnerId: '125', earned: 0, committed: 0, balance: 0 }, rewards: [] }));
       if (url.includes('/monthly-logs/125/')) return new Response(JSON.stringify({ learner: { id: 125 }, months: [] }));
       return new Response(JSON.stringify(url.includes('overview-week') ? week() : schedule()));

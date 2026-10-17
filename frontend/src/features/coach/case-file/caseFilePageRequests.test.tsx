@@ -19,7 +19,7 @@ const schedule = { months: {}, contractStatus: 'not-available', actual: [], actu
 const sections: Record<string, unknown> = {
   profile: { learner: { id: '101', enrolmentId: '201', aptemId: null, learnerType: 'apprenticeship', name: 'Synthetic Learner', email: 'learner@example.test', programme: 'Programme', group: 'Synthetic Group', employer: 'Synthetic Employer', status: 'Active', startDate: '2026-01-01', plannedEndDate: '2027-01-01' } },
   overview: { wholeProgrammeProgress: { overall: metrics.programme, ksb: metrics.ksb, attendance: { ...attendance, percent: 50 }, otjh: { actual: 12, planned: 100, targetToDate: 25, percent: 48 } }, programmeProgress: [], moduleOverview: moduleOverviewFixture },
-  'weekly-learning': { weeks: [], selectedWeek: null },
+  'weekly-learning': { modules: [], weeks: [], selectedWeek: null },
   'monthly-focus': { month: '2026-09', summary: { requiredHours: 50, achievedHours: 0, differenceHours: -50, ksbCount: null }, reviews: [], assignments: [], lectures: [] },
   'otjh-ksb': { otjh: { actualHours: 12, targetToDateHours: 25, plannedHours: 100, remainingHours: 13, progressPercent: 48,
     months: [{ month: '2026-01', targetHours: 10, submittedHours: 2, completedHours: 12 }] },

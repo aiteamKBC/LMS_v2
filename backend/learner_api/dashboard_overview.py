@@ -57,22 +57,25 @@ def overview_subjects(learning):
     components = defaultdict(list)
     for i, component in enumerate([*native.get('components', []), *native.get('retiredQuizComponents', [])]):
         ref = component.get('componentId') or f"quiz:{(component.get('quizMeta') or {}).get('quizId') or str(component.get('week')) + ':' + str(i)}"
-        components[ref].append(component)
+        components[(ref, component.get('moduleId'))].append(component)
     legacy_done = {}
     for activity in (learning['activity'] or {}).get('activities', []):
         legacy_done.setdefault((f"legacy:{activity['group_id']}", activity['activity_id']), bool(activity.get('completed')))
+    passed_attempts = [a for a in native.get('quizAttempts', []) if a.get('passed') is True]
+    passed_quizzes = {str(a.get('quizId')) for a in passed_attempts}
+    passed_components = {a.get('componentId') for a in passed_attempts}
     def native_done(component):
         quiz = (component.get('quizMeta') or {}).get('quizId')
-        return any(a.get('passed') is True and ((quiz is not None and str(a.get('quizId')) == str(quiz))
-                   or (component.get('componentId') and a.get('componentId') == component['componentId']))
-                   for a in native.get('quizAttempts', [])) if component.get('isQuiz') else str(component.get('componentId')) in completed
+        return ((quiz is not None and str(quiz) in passed_quizzes)
+                or bool(component.get('componentId') and component['componentId'] in passed_components)) \
+            if component.get('isQuiz') else str(component.get('componentId')) in completed
     for subject in subjects:
         module_id = subject.get('moduleId') or (learning['metadata']['builder_subjects'].get(subject['id']) or {}).get('id') \
             or (subject['id'][8:] if subject['id'].startswith('current:') else None)
         for activity in subject['activities']:
             activity['date'] = display_date(activity.get('date'))
-            candidates = [c for ref in activity.get('nativeRefs', [activity['id']]) for c in components.get(ref, [])
-                          if c.get('moduleId') == module_id and (module_id is not None or subject['id'] == f"unlinked:{c.get('module')}")]
+            candidates = [c for ref in activity.get('nativeRefs', [activity['id']]) for c in components.get((ref, module_id), [])
+                          if module_id is not None or subject['id'] == f"unlinked:{c.get('module')}"]
             done = any(native_done(c) for c in candidates) if activity.get('nativeRefs') else native_done(candidates[0] if candidates else {})
             activity['completed'] = legacy_done.get((subject['id'], activity['id']), False) or done
     return subjects
@@ -100,16 +103,24 @@ def read_overview(source, kind, owner, profile, request):
     learning = learning_projection(source, owner, records, compact_content=True)
     native = learning['detail']
     subjects = overview_subjects(learning)
-    displayed = display_modules(subjects, modules, links, {r['module_id']: r for r in bounds})
+    bounds_by_module = {r['module_id']: r for r in bounds}
+    displayed = display_modules(subjects, modules, links, bounds_by_module)
+    # The duplicate-date fallback historically used the first row for a module,
+    # whereas display_modules uses the last. Preserve both rules explicitly.
+    first_bounds_by_module = {}
+    for bound in bounds:
+        first_bounds_by_module.setdefault(bound['module_id'], bound)
     duplicates = Counter(a.get('dedupe') for s in subjects for a in s['activities'] if a.get('dedupe'))
     ledger = schedule._canonical_module_progress(records, list(modules.values()))
     actual_rows = schedule._canonical_actual_rows(owner, records)
+    historical_hours = defaultdict(list)
+    for row in actual_rows:
+        historical_hours[row['groupId']].append(row['hours'])
     chart_modules = []
     for module in displayed:
         entry = ledger.get(str(module['moduleId']))
-        historical = [r for r in actual_rows if module['id'].startswith('legacy:')
-                      and r['groupId'] == module['id'][7:]]
-        actual = entry['hours']['actual'] if entry else sum(r['hours'] for r in historical) if historical else None
+        historical = historical_hours.get(module['id'][7:], []) if module['id'].startswith('legacy:') else []
+        actual = entry['hours']['actual'] if entry else sum(historical) if historical else None
         chart_modules.append({'id': module['id'], 'title': module['title'], 'start': module['start'], 'end': module['end'],
             'activities': {'completed': module['done'], 'total': module['activityCount']},
             'attendance': entry['attendance'] if entry else None,
@@ -119,7 +130,7 @@ def read_overview(source, kind, owner, profile, request):
         if duplicate_rows:
             # Only cross-subject duplicate identities leave the reader. Browser
             # locale ordering owns their winner, exactly as the existing UI did.
-            bound = next((b for b in bounds if b['module_id'] == module['moduleId']), {})
+            bound = first_bounds_by_module.get(module['moduleId'], {})
             unique_dates = [a['date'] for a in module['_subject']['activities'] if a.get('date') and not a.get('needsReview')
                             and duplicates.get(a.get('dedupe'), 0) <= 1]
             from .dashboard_training import day_from_session

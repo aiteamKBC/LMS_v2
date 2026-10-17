@@ -989,11 +989,15 @@ def _mark_missed_catchups(lectures, reported):
                 lecture['catchupStatus'] = 'missed'
 
 
-def read_workspace(source, kind, *, monthly=None):
+def read_workspace(source, kind, *, monthly=None, monthly_occurrences=None):
     from .attendance_mode import read_mode
     register = lecture_register(source)
     if monthly is not None:
         register = [row for row in register if row.get('source') == 'microsoft-teams' and row['session_date'].isoformat().startswith(monthly)]
+        if monthly_occurrences is not None:
+            # Clip only after canonical register normalization. Avoid content and
+            # absence/recovery queries for cards the Monthly UI does not render.
+            register = [row for row in register if (session_key(row), row['session_date'].isoformat()) in monthly_occurrences]
     metadata, activities = ({}, []) if monthly is not None else read_legacy_metadata(source, register)
     native_modules = {row['module_catalogue_id'] for row in register if row.get('source') == 'microsoft-teams'}
     components, progress = read_native_components(source, native_modules, monthly=True) if monthly is not None else read_native_components(source, native_modules)

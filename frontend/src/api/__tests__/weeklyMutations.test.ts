@@ -1,6 +1,7 @@
+import { weeklyResourceFixture } from '@/test/weeklyContractFixture';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { clearAllCachedResources } from '../cachedRequest';
-import { adaptWeeklyLearning, primeWeeklyLearningWeek, peekWeeklyLearningWeek, fetchWeeklyLearningWeek } from '../weeklyLearning';
+import { primeWeeklyLearningWeek, peekWeeklyLearningWeek, fetchWeeklyLearningWeek } from '../weeklyLearning';
 import { weeklyContractFixture } from '@/test/weeklyContractFixture';
 import { saveLearningReflectionSubmission } from '../reflectionSubmission';
 import { confirmMeetingAttendance } from '../meetingAttendance';
@@ -15,7 +16,7 @@ const payload = () => weeklyContractFixture({ weekId: 'slot:M1:1', moduleId: 'M1
 const cached = (id = '201') => peekWeeklyLearningWeek('commercial', id, 'M1', 'slot:M1:1');
 beforeEach(() => {
   clearAllCachedResources();
-  for (const id of ['201', '202']) primeWeeklyLearningWeek('commercial', id, adaptWeeklyLearning(payload(), id));
+  for (const id of ['201', '202']) primeWeeklyLearningWeek('commercial', id, weeklyResourceFixture(payload(), id));
 });
 afterEach(() => { clearAllCachedResources(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
@@ -33,7 +34,7 @@ describe('successful mutation invalidation', () => {
   ] as const;
   it.each(cases.slice(0, 3))('%s keeps an unrelated cached week valid', async (_name, mutate) => {
     for (const [number, componentId, quizId] of [[1, 'C1', 7], [2, 'C2', 8]] as const) {
-      primeWeeklyLearningWeek('commercial', '201', adaptWeeklyLearning(weeklyContractFixture({
+      primeWeeklyLearningWeek('commercial', '201', weeklyResourceFixture(weeklyContractFixture({
         weekId: `slot:M1:${number}`, moduleId: 'M1',
         components: [{ componentId, type: 'quiz', isQuiz: true, quizMeta: { quizId }, contentAvailable: true }], quizAttempts: [],
       }), '201'));
