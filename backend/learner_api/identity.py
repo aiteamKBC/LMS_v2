@@ -7,7 +7,7 @@ from .models import EnrolmentUser, LearnerProfile
 logger = logging.getLogger(__name__)
 
 
-def learner_profile_for_source(source, source_pk=None, *, active_only=False):
+def learner_profile_for_source(source, source_pk=None, *, active_only=False, heal=True):
     """Return the profile belonging to a Created_users row.
 
     ``enrolment_id`` is the real link and is tried first: it is the learner's id
@@ -23,6 +23,9 @@ def learner_profile_for_source(source, source_pk=None, *, active_only=False):
 
     The primary-key fallback below is narrower still: it only helps legacy source
     rows that genuinely have no email.
+
+    ``heal=False`` resolves the same profile without that repair, for GET reads
+    that must never write.
     """
     filters = {"lifecycle_status": "active"} if active_only else {}
 
@@ -60,7 +63,7 @@ def learner_profile_for_source(source, source_pk=None, *, active_only=False):
             # Self-healing: record the link we just had to infer, so the next
             # lookup takes the fast, correct path. Best-effort — a failure here
             # must not stop the caller getting their profile.
-            if source_pk is not None and profile.enrolment_id != source_pk:
+            if heal and source_pk is not None and profile.enrolment_id != source_pk:
                 try:
                     profile.enrolment_id = source_pk
                     profile.save(update_fields=["enrolment_id"])

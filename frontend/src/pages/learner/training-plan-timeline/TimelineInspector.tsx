@@ -2,12 +2,12 @@ import { useEffect, useRef } from 'react';
 import { useCaseFileModuleDetail } from '@/features/coach/case-file/hooks/useCaseFileModuleDetail';
 import { Link } from 'react-router-dom';
 import { ArrowRight, CalendarDays, X } from 'lucide-react';
-import type { TimelineModule } from './model';
+import type { DisplayTimelineModule } from './model';
 import { CurriculumTimeline } from './CurriculumTimeline';
 import { dateLabel, hours, moduleStatus, sessionTime } from './presentation';
 import layout from './ModuleTimeline.module.css';
 
-export function TimelineInspector({ module, coach, href, onClose }: { module: TimelineModule; coach: string; href?: string; onClose: () => void }) {
+export function TimelineInspector({ module, coach, href, onClose }: { module: DisplayTimelineModule; coach: string; href?: string; onClose: () => void }) {
   const focused = useCaseFileModuleDetail(module.detail?.id);
   const detail = focused?.module ?? module.detail;
   const close = useRef<HTMLButtonElement>(null);

@@ -16,7 +16,7 @@ import { fetchLearnerDetail, type LearnerDetail, type LearnerKind, type LearnerK
 import { markingVerdict } from '@/lib/markingVerdict';
 import { submitVideoProgress } from '@/api/videos';
 import { submitComponentProgress } from '@/api/components';
-import { startTimeTracking, type TimeTrackingSession, type TrackingCountingMode } from '@/api/timeTracking';
+import { startTimeTracking, resumeTimeTracking, type TimeTrackingSession, type TrackingCountingMode } from '@/api/timeTracking';
 import { EvidenceFilesButton, EvidencePreviewModal, type EvidencePreview } from '@/components/feature/EvidenceFilesButton';
 import { AssignmentEvidence } from '@/components/feature/AssignmentEvidence';
 import {
@@ -331,6 +331,7 @@ export default function ComponentViewPage() {
     [detail, componentId, completedIds],
   );
   const component = ctx?.component ?? null;
+  const recordedEvent = Boolean(component?.recordingSeriesId && component.recordingSessionNumber && component.recordingDate);
   const readingReadyKey = `${timerStorageKey}:${component?.resourceUrl || ''}`;
   const onReadingReady = useCallback(() => setReadyReading(readingReadyKey), [readingReadyKey]);
   useEffect(() => () => setReadyReading(null), [readingReadyKey]);
@@ -533,8 +534,15 @@ export default function ComponentViewPage() {
     if (canResumeActivityTimer(savedTimer, trackingMode)
         || (isAudio && canResumeActivityTimer(savedTimer, 'visible_page'))) {
       const savedSession = savedTimer!.session!;
-      trackingSessionRef.current = savedSession;
-      trackingPromiseRef.current = Promise.resolve(savedSession);
+      if (savedSession.rewardTracking) {
+        const resumed = resumeTimeTracking(savedSession, activityKind, componentId);
+        trackingPromiseRef.current = resumed;
+        resumed.then(session => { if (!cancelled) trackingSessionRef.current = session; })
+          .catch(error => { if (!cancelled) setSubmitError(error instanceof Error ? error.message : 'Study timing could not synchronize. Your draft is kept.'); });
+      } else {
+        trackingSessionRef.current = savedSession;
+        trackingPromiseRef.current = Promise.resolve(savedSession);
+      }
       setWallElapsed(savedTimer!.elapsedSeconds);
       return () => { cancelled = true; };
     }
@@ -783,7 +791,7 @@ export default function ComponentViewPage() {
           </div>
         ) : !openable ? (
           <div className="bg-background-50 rounded-2xl border border-foreground-200/60 p-6"><EmptyState text="This component can't be completed here yet." /></div>
-        ) : isVideo && !parsed ? (
+        ) : isVideo && !parsed && !recordedEvent ? (
           <div className="bg-background-50 rounded-2xl border border-foreground-200/60 p-6"><EmptyState text="This video has no playable URL yet." /></div>
         ) : phase === 'reflect' ? (
           <div className="space-y-4">
@@ -815,7 +823,7 @@ export default function ComponentViewPage() {
           <div className="grid grid-cols-1 lg:grid-cols-[1fr_320px] gap-6 items-start">
             <div className="min-w-0">
               {isVideo && activityHeading}
-              {!isAssignment && (
+              {!isAssignment && !recordedEvent && (
                 <ComponentContent key={timerStorageKey} component={{ ...component, liveSessionUrl: parsePersonalLearning(id) ? null : component.teamsLiveSessionId && component.teamsSessionNumber
                     ? `/learner_api/session-results/${kind}/${id}/${encodeURIComponent(component.teamsLiveSessionId)}/sessions/${component.teamsSessionNumber}/join/`
                     : component.liveSessionUrl }} contentKind={contentKind} parsed={parsed} title={pageTitle}
@@ -827,11 +835,23 @@ export default function ComponentViewPage() {
                   onUnsupported={() => setUnsupported(true)}
                 />
               )}
+              {recordedEvent && component.recordingSeriesId && component.recordingSessionNumber && (
+                <SessionResults
+                  seriesId={component.recordingSeriesId}
+                  sessionNumber={component.recordingSessionNumber}
+                  recordingDate={component.recordingDate}
+                  recordingsOnly
+                  learner={{ kind: kind as LearnerKind, id: id || '' }}
+                  preview={Boolean(parsePersonalLearning(id))}
+                  onRecordingPlayingChange={setPlayerPlaying}
+                />
+              )}
               {isPlainAssignment && <AssignmentBriefPanel component={component} />}
               {(component.type || '').trim().toLowerCase().replace(/-/g, '_') === 'live_session' && component.teamsLiveSessionId && (
                 component.teamsSessionNumber ? <SessionResults
                   seriesId={component.teamsLiveSessionId}
                   sessionNumber={component.teamsSessionNumber}
+                  recordingDate={component.recordingDate}
                   learner={{ kind: kind as LearnerKind, id: id || '' }}
                   attendanceType={detail?.attendanceType}
                   onRecordingWatchTimeChange={setRecordingWatchSeconds}

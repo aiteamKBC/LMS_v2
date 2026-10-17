@@ -1,7 +1,8 @@
 import { afterEach, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
-import { AssignmentsTab, assignmentMonth } from './AssignmentsTab';
+import { AssignmentsTab } from './AssignmentsTab';
+import { assignmentMonth } from './assignmentMonth';
 import type { LearnerDetail } from '@/api/learnerDetail';
 import { clearAllCachedResources } from '@/api/cachedRequest';
 

@@ -15,7 +15,7 @@ import { RowsSkeleton } from '@/components/feature/Skeletons';
 /**
  * Skills Radar — a sequential self-assessment questionnaire.
  *
- * One KSB at a time ("Question N of M") on an 8-point scale, with an optional
+ * One KSB at a time ("Question N of M") on a 9-point scale, with an optional
  * note and evidence upload per question. The learner answers it; the enrolment
  * team sees the same list read-only (`readOnly` via the wizard's mode), because
  * this is the learner's own self-assessment and staff editing it would falsify

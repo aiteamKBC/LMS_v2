@@ -29,6 +29,7 @@ from .learner_detail import build_learner_detail
 from .learning_plan import effective_training_plan
 from .mobile_progress import measured_time, project_progress
 from .android_download import installer_response
+from curriculum_api.week_visibility import visible_child_sql, visible_week_sql
 
 BASE = "/learner_api/mobile/"
 ANDROID_APK_PATH = "/var/lib/kbc-mobile-release/20261013/KBC-Learn-LMS-internal-candidate.apk"
@@ -358,8 +359,8 @@ def _presentation_metadata(components):
             JOIN curriculum.weeks w ON w.id=c.week_id AND w.module_catalogue_id=c.module_catalogue_id
             JOIN curriculum.modules m ON m.module_catalogue_id=c.module_catalogue_id
             WHERE c.module_catalogue_id=ANY(%s) AND c.id=ANY(%s)
-              AND (c.deleted_at IS NULL OR COALESCE(c.deleted_via_parent, '') <> '')
-              AND (w.deleted_at IS NULL OR COALESCE(w.deleted_via_parent, '') <> '')
+              AND """ + visible_child_sql("c") + """
+              AND """ + visible_week_sql("w") + """
               AND (m.deleted_at IS NULL OR COALESCE(m.deleted_via_parent, '') <> '')""",
             [list(dict.fromkeys(row["moduleId"] for row in eligible.values())), list(eligible)])
         rows = cursor.fetchall()
@@ -592,8 +593,8 @@ def transcript(request, component_id):
             JOIN curriculum.modules m ON m.module_catalogue_id=c.module_catalogue_id
             WHERE c.id=%s AND c.module_catalogue_id=%s AND c.week_id=%s
               AND jsonb_typeof(c.settings_json->'transcript')='string'
-              AND (c.deleted_at IS NULL OR COALESCE(c.deleted_via_parent, '') <> '')
-              AND (w.deleted_at IS NULL OR COALESCE(w.deleted_via_parent, '') <> '')
+              AND """ + visible_child_sql("c") + """
+              AND """ + visible_week_sql("w") + """
               AND (m.deleted_at IS NULL OR COALESCE(m.deleted_via_parent, '') <> '')""",
             [component_id, component["moduleId"], component.get("weekId")])
         row = cursor.fetchone()

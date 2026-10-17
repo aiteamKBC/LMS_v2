@@ -312,6 +312,7 @@ $RECYCLE.BIN/
 # the shared working policy. Everything else at the repository root is local.
 /*
 !/.gitignore
+!/.easignore
 !/AGENTS.md
 !/README.md
 !/AI_marking_prompt.MD

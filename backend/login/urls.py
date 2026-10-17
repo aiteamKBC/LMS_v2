@@ -76,6 +76,7 @@ urlpatterns = [
     path("login/", views.login, name="login"),
     path("logout/", views.logout, name="logout"),
     path("me/", views.me, name="login-me"),
+    path("learner-action-access/", views.learner_action_access, name="login-learner-action-access"),
     # The signed-in person's own saved signature, offered wherever they sign.
     path("me/signature/", saved_signature.my_signature, name="login-my-signature"),
     path("learner-entry/", entry_status, name="learner-entry"),

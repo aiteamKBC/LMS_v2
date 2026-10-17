@@ -67,10 +67,11 @@ const LEARNER_SOURCES: DashboardPlanSources = {
 /**
  * Explicit `sources` win; otherwise a coach case-file session supplies the reads,
  * falling back to the learner's own endpoints. `sources` must be stable across
- * renders (module constant or memoised).
+ * renders (module constant or memoised). `targetsEnabled` defers the Monthly Logs
+ * targets read until a view that shows them is opened; until then they stay loading.
  */
 export function useDashboardPlan(kind?: LearnerKind | null, id?: string | null, enabled = true, caseFileSection = 'overview',
-  sources?: DashboardPlanSources) {
+  sources?: DashboardPlanSources, targetsEnabled = true) {
   const session = useCaseFileSession();
   const readers = useMemo<DashboardPlanSources>(() => sources ?? (session ? {
     week: { read: (_kind, _id, signal, fresh = false) => session.read<OverviewWeek>(caseFileSection, { resource: 'week' }, { signal, refresh: fresh }), peek: () => undefined },
@@ -89,6 +90,7 @@ export function useDashboardPlan(kind?: LearnerKind | null, id?: string | null, 
       setSsot(null);
       return;
     }
+    if (!targetsEnabled) return;
     // Monthly Logs is keyed by the numeric enrolment id. Personal-learning
     // preview ids use a different route and have no retained Audit record.
     if (!/^[1-9]\d*$/.test(id)) {
@@ -107,7 +109,7 @@ export function useDashboardPlan(kind?: LearnerKind | null, id?: string | null, 
         error: error instanceof Error ? error.message : 'SSOT learning hours could not be loaded.' });
     });
     return () => { controller.abort(); };
-  }, [active, kind, id, identity, attempt, readers]);
+  }, [active, targetsEnabled, kind, id, identity, attempt, readers]);
   const refresh = () => { week.refresh(); schedule.refresh(); retryContract(); };
   const ssotData = ssot?.identity === identity ? ssot.data : { months: {}, plannedEndDate: null,
     acceptedTotal: null, plannedTotal: null };
@@ -139,4 +141,8 @@ export function useDashboardPlan(kind?: LearnerKind | null, id?: string | null, 
   };
 }
 
-export type DashboardPlanState = ReturnType<typeof useDashboardPlan>;
+export type DashboardPlanState = Omit<ReturnType<typeof useDashboardPlan>, 'week'> & {
+  week: Omit<ReturnType<typeof useDashboardPlan>['week'], 'data'> & {
+    data: Pick<OverviewWeek, 'planSubjects' | 'monthlyOtjh' | 'metrics'> | null;
+  };
+};

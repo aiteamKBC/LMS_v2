@@ -18,6 +18,8 @@ from django.db.models import Max
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 
+from curriculum_api.week_visibility import visible_child_sql, visible_week_sql
+
 from .identity import learner_profile_for_source
 from .mappers import get_training_plan, training_plan_field
 from .models import (
@@ -702,7 +704,9 @@ def hydrate_training_plan(plan, *, strict=False):
                        c.id, c.title, c.type, c.expected_otjh, to_jsonb(m)->'session_overrides'
                 FROM curriculum.modules m
                 LEFT JOIN curriculum.weeks w ON w.module_catalogue_id = m.module_catalogue_id
+                  AND """ + visible_week_sql("w") + """
                 LEFT JOIN curriculum.components c ON c.week_id = w.id
+                  AND """ + visible_child_sql("c") + """
                 WHERE m.module_catalogue_id = ANY(%s) OR m.title = ANY(%s)
                 ORDER BY m.module_catalogue_id, w.display_order, w.week_number,
                          c.display_order, c.id

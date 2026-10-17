@@ -5,8 +5,8 @@ import { fetchLearnerRewards, peekLearnerRewards } from '@/api/learnerRewards';
 import { useLiveLearnerRead } from '@/hooks/useLiveLearnerRead';
 import styles from './DashboardRewards.module.css';
 
-export function DashboardRewards({ kind, learnerId, canOpenRewards = true }: { kind: LearnerKind; learnerId: string; canOpenRewards?: boolean }) {
-  const { data, loading, error, refresh } = useLiveLearnerRead(kind, learnerId, true, fetchLearnerRewards, peekLearnerRewards);
+export function DashboardRewards({ kind, learnerId, canOpenRewards = true, enabled = true }: { kind: LearnerKind; learnerId: string; canOpenRewards?: boolean; enabled?: boolean }) {
+  const { data, loading, error, refresh } = useLiveLearnerRead(kind, learnerId, enabled, fetchLearnerRewards, peekLearnerRewards);
   const balance = data ? Math.max(0, data.points.balance) : null;
   return <section className={styles.root} aria-label="Rewards and points">
     <header><div><span className={styles.eyebrow}>Celebrate your progress</span><h2>Rewards &amp; points</h2><p>Your learning achievements, recognised.</p></div>
