@@ -1,4 +1,5 @@
-import { readLearnerJson, invalidateLearnerReads } from './learnerRead';
+import { readLearnerJson } from './learnerRead';
+import { invalidateWeeklyProgress } from './weeklyLearning';
 import type { LearnerKind } from '@/api/learnerDetail';
 
 const BASE = '/learner_api/absence-reports';
@@ -100,6 +101,6 @@ export async function submitAbsenceReport(
     throw new Error('Could not reach the server. Is the backend running on port 8000?');
   }
   const data = await parseResponse<LearnerAbsenceReport>(response);
-  invalidateLearnerReads();
+  invalidateWeeklyProgress(kind, learnerId);
   return data;
 }

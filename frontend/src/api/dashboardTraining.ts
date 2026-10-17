@@ -2,7 +2,7 @@ import type { LearnerKind } from './learnerDetail';
 import type { PlanMonth, PlanReview, PlanModule } from './trainingPlanDashboard';
 import type { DisplayTimelineModule } from '@/pages/learner/training-plan-timeline/model';
 import { createCachedResource } from './cachedRequest';
-import { readLearnerJson, subscribeLearnerReadInvalidation, withCallerSignal } from './learnerRead';
+import { peekLearnerJson, readLearnerJson, subscribeLearnerReadInvalidation, withCallerSignal } from './learnerRead';
 
 export type TrainingModule = DisplayTimelineModule;
 export type TrainingTimelineModule = Pick<TrainingModule, 'id' | 'title' | 'moduleId' | 'start' | 'end' | 'done' | 'activityCount' | 'progress'> & {
@@ -31,25 +31,39 @@ const details = createCachedResource<TrainingModule>('dashboard-training-modules
   }
   return module;
 });
-subscribeLearnerReadInvalidation(() => details.invalidate());
+let generation = 0;
+subscribeLearnerReadInvalidation(() => { generation += 1; details.invalidate(); });
+
+function trainingPath(kind: LearnerKind, id: string, subject = '', month = '', programmeStartDate = '', programmeEndDate = '') {
+  const query = new URLSearchParams();
+  if (subject) query.set('subject', subject);
+  if (month) query.set('month', month);
+  if (programmeStartDate) query.set('programmeStartDate', programmeStartDate);
+  if (programmeEndDate) query.set('programmeEndDate', programmeEndDate);
+  return root(kind, id) + (query.size ? `?${query}` : '');
+}
+const validTraining = (data: DashboardTrainingPayload | undefined) => !!data?.timeline
+  && Array.isArray(data.timeline.modules) && Array.isArray(data.timeline.reviews)
+  && (!data.selectedModuleId || data.selectedModule?.id === data.selectedModuleId);
 
 export const dashboardTraining = {
   read: async (kind: LearnerKind, id: string, signal?: AbortSignal, fresh = false, subject = '', month = '', programmeStartDate = '', programmeEndDate = '') => {
-    const query = new URLSearchParams();
-    if (subject) query.set('subject', subject);
-    if (month) query.set('month', month);
-    if (programmeStartDate) query.set('programmeStartDate', programmeStartDate);
-    if (programmeEndDate) query.set('programmeEndDate', programmeEndDate);
-    const url = root(kind, id) + (query.size ? `?${query}` : '');
+    const requestGeneration = generation;
+    const url = trainingPath(kind, id, subject, month, programmeStartDate, programmeEndDate);
     const data = await readLearnerJson<DashboardTrainingPayload>(url, { signal, revalidate: fresh, ttlMs: 30_000 });
-    if (!data?.timeline || !Array.isArray(data.timeline.modules) || !Array.isArray(data.timeline.reviews)
-      || (data.selectedModuleId && data.selectedModule?.id !== data.selectedModuleId)) {
+    if (!validTraining(data)) {
       throw new Error('Could not load your training dashboard. Please try again.');
     }
-    if (data.selectedModule) details.prime(key(kind, id, data.selectedModule.id), data.selectedModule);
+    if (data.selectedModule && requestGeneration === generation && !signal?.aborted
+      && peekLearnerJson<DashboardTrainingPayload>(url) === data) {
+      details.prime(key(kind, id, data.selectedModule.id), data.selectedModule);
+    }
     return data;
   },
-  peek: () => undefined,
+  peek: (kind: LearnerKind, id: string, subject = '', month = '', programmeStartDate = '', programmeEndDate = '') => {
+    const data = peekLearnerJson<DashboardTrainingPayload>(trainingPath(kind, id, subject, month, programmeStartDate, programmeEndDate));
+    return validTraining(data) ? data : undefined;
+  },
 };
 export function readTrainingModule(kind: LearnerKind, id: string, moduleId: string, signal?: AbortSignal, fresh = false) {
   return withCallerSignal(details.read(key(kind, id, moduleId), { revalidate: fresh }).then(module => {

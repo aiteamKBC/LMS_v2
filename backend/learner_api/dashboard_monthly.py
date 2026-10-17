@@ -165,7 +165,7 @@ def read_monthly(source, kind, owner, profile, request):
     # Retain lineage context for direct-save replacement and manual corrections.
     records = canonical.entries_for(owner, lineage_only=True, dashboard_metadata=True)
     targets = canonical.targets_for(owner)
-    learning = learning_projection(source, owner, records)
+    learning = learning_projection(source, owner, records, compact_content=True)
     spine = schedule.read_dashboard(source, section='overview', targets=targets,
                                     dashboard_tab='monthly', compact_monthly=True)
     subjects = display_subjects(learning)
@@ -220,19 +220,30 @@ def read_monthly(source, kind, owner, profile, request):
         required = max(0, required)
     selected = next((s for s in subjects if s['id'] == request.GET.get('subject')), None) or next((s for s in subjects if s['start'] and s['start'][:7] <= month <= s['end'][:7]), None)
     codes = sorted({code for s in subjects if month in s['sessionMonths'] or any(d.startswith(month) for d in s['dates']) for a in s['activities'] for code in a['ksbs']})[:4]
-    attendance = read_workspace(source, kind, monthly=month)['lectures']
     lecture_rows = []
     unique_sessions = {}
+    sessions_by_module = {}
+    for session in sessions:
+        sessions_by_module.setdefault(session['moduleId'], []).append(session)
+    subjects_by_module = {}
     for subject in subjects:
-        for session in sessions:
-            if session['moduleId'] != subject['moduleId']:
-                continue
-            matches = [a for a in subject['activities'] if same_instant(a.get('sessionInstant'), session['start']) or a['category'] == 'live_session' and a['date'] == session_day(session['start'])]
+        subjects_by_module.setdefault(subject['moduleId'], subject)
+        for session in sessions_by_module.get(subject['moduleId'], []):
+            occurrence_day = session_day(session['start'])
+            matches = [a for a in subject['activities'] if same_instant(a.get('sessionInstant'), session['start']) or a['category'] == 'live_session' and a['date'] == occurrence_day]
             unique_sessions[session['id']] = {**session, **({'title': matches[0]['title']} if len(matches) == 1 else {})}
+    # Attendance normalization can read programme-wide evidence and recovery
+    # history. None of it is consumed when this board has no rendered sessions.
+    attendance = read_workspace(source, kind, monthly=month)['lectures'] if unique_sessions else []
+    attendance_by_occurrence = {}
+    for lecture in attendance:
+        if lecture['source'] == 'microsoft-teams':
+            # Preserve next(...)'s first-match semantics for duplicate evidence.
+            attendance_by_occurrence.setdefault((lecture['sessionId'], lecture['date']), lecture)
     for session in unique_sessions.values():
-        lecture = next((r for r in attendance if r['source'] == 'microsoft-teams' and r['sessionId'] == f"teams:{session['id']}" and r['date'] == session_day(session['start'])), None)
+        lecture = attendance_by_occurrence.get((f"teams:{session['id']}", session_day(session['start'])))
         module = modules.get(session['moduleId']) or {}
-        subject = next((s for s in subjects if s['moduleId'] == session['moduleId']), None)
+        subject = subjects_by_module.get(session['moduleId'])
         title = ((subject or {}).get('title') or '').strip() or (session.get('title') or '').strip() or 'Live session'
         tutor = module.get('tutor_name') or module.get('coach_name') or spine['coach']['name'] or 'Tutor'
         session = {key: session.get(key) for key in ('id', 'start', 'end', 'minutes', 'joinUrl', 'status')}

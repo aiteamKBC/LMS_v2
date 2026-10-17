@@ -138,6 +138,23 @@ beforeEach(() => {
 afterEach(() => { cleanup(); clearAllCachedResources(); vi.useRealTimers(); vi.unstubAllGlobals(); });
 
 describe('Dashboard Weekly Learning compact read', () => {
+  it('renders canonical facts without any legacy schedule, components or progress histories', async () => {
+    const wire = weeklyContractFixture({ ...compact(full), schedule });
+    const selected = wire.selectedWeek!;
+    const data: WeeklyLearningDetail = { id: '125', programme: '', cohort: '', group: '', wire,
+      selectedWeek: selected, selectedWeekId: 'slot:M1:1', selectedModuleId: 'M1',
+      components: [], quizAttempts: [], videoProgress: [], componentProgress: [] };
+    reads.weekly = data;
+    primeWeeklyLearningWeek('commercial', '125', data);
+    render(<MemoryRouter><DashboardWeeklyLearningPlan kind="commercial" learnerId="125" schedule={null} scheduleLoading={false} /></MemoryRouter>);
+    await waitFor(() => expect(screen.getByText('Quiz passed')).toBeVisible());
+    expect(screen.getByText('Quiz passed').closest('tr')!.querySelector('a'))
+      .toHaveAttribute('href', '/learner/quiz/commercial/125/11?week=Plan%20week%201');
+    expect(screen.getByText('Quiz retake').closest('tr')).toHaveTextContent('In progress');
+    expect(screen.getByText('Empty placeholder').closest('tr')).toHaveTextContent('Not available');
+    expect(screen.getByRole('combobox', { name: 'Module' })).toHaveValue('M1');
+    expect(reads.detailCalls).toBe(0);
+  });
   it('loads only one selected week and preserves search while switching and revisiting', async () => {
     const source = compact(full);
     const activities = (week: string) => source.components.filter(c => c.weekId === week).map(c =>

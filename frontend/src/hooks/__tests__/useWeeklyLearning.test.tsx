@@ -5,6 +5,8 @@ import { clearAllCachedResources, DEFAULT_TTL_MS } from '@/api/cachedRequest';
 import { fetchLearnerDetail, invalidateLearnerDetailCache } from '@/api/learnerDetail';
 import { invalidateLearnerReads } from '@/api/learnerRead';
 import { useWeeklyLearning } from '../useWeeklyLearning';
+import { fetchWeeklyLearning } from '@/api/weeklyLearning';
+import { StrictMode, type ReactNode } from 'react';
 
 const WEEKLY = '/learner_api/dashboard/';
 let served = 0;
@@ -43,10 +45,81 @@ afterEach(() => {
 });
 
 describe('Dashboard weekly learning read', () => {
+  it('traces the actual initial request once when two mounted callers share it', async () => {
+    sessionStorage.setItem('lms:weekly-trace', '1');
+    delete window.__weeklyLearningTrace;
+    try {
+      const { result } = renderHook(() => [useWeeklyLearning('commercial', '125', true, 'M1'), useWeeklyLearning('commercial', '125', true, 'M1')]);
+      await waitFor(() => expect(result.current.every(read => read.real?.id === '125')).toBe(true));
+      const trace = window.__weeklyLearningTrace!;
+      expect(trace.filter(entry => entry.event === 'request-start')).toHaveLength(1);
+      expect(trace.filter(entry => entry.event === 'request-success')).toHaveLength(1);
+      expect(new Set(trace.map(entry => entry.key)).size).toBe(1);
+      expect(trace.find(entry => entry.event === 'read')?.stack).toContain('useWeeklyLearning');
+    } finally {
+      sessionStorage.removeItem('lms:weekly-trace');
+      delete window.__weeklyLearningTrace;
+    }
+  });
+  it('does not queue a forced refresh when focus arrives during the initial slow request', async () => {
+    let finish!: (response: Response) => void;
+    vi.mocked(fetch).mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+    const { result } = renderHook(() => useWeeklyLearning('commercial', '125', true, 'M1'));
+    await act(async () => {
+      // Browser focus is not a data change. Batch its update with completion
+      // to reproduce the queued revalidation running after the cache fills.
+      window.dispatchEvent(new Event('focus'));
+      document.dispatchEvent(new Event('visibilitychange'));
+      finish(new Response(JSON.stringify(weeklyContractFixture({ id: '125', components: [], quizAttempts: [],
+        schedule: { modules: [], sessions: [] } }))));
+      await new Promise(resolve => setTimeout(resolve, 0));
+    });
+    await waitFor(() => expect(result.current.real?.id).toBe('125'));
+    expect(urls()).toEqual(['/learner_api/dashboard/commercial/125/weekly/?moduleId=M1&version=2']);
+  });
+
+  it('shares a pending StrictMode mount and ignores idle rerenders after thirty seconds', async () => {
+    let finish!: (response: Response) => void;
+    vi.mocked(fetch).mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+    const wrapper = ({ children }: { children: ReactNode }) => <StrictMode>{children}</StrictMode>;
+    const { result, rerender } = renderHook(() => useWeeklyLearning('commercial', '125', true, 'M1'), { wrapper });
+    expect(weeklyCalls()).toBe(1);
+    await act(async () => finish(new Response(JSON.stringify(weeklyContractFixture({ id: '125', components: [], quizAttempts: [],
+      schedule: { modules: [], sessions: [] } })))));
+    await waitFor(() => expect(result.current.real?.id).toBe('125'));
+    vi.setSystemTime(Date.now() + DEFAULT_TTL_MS + 1);
+    rerender();
+    await act(async () => {});
+    expect(weeklyCalls()).toBe(1);
+    returnToTab();
+    await waitFor(() => expect(weeklyCalls()).toBe(2)); // A stale return still refreshes.
+  });
+  it('keeps mounted content after expiry but hides it after an account reset', async () => {
+    const { result, rerender } = renderHook(() => useWeeklyLearning('commercial', '125'));
+    await waitFor(() => expect(result.current.real?.id).toBe('125'));
+    vi.setSystemTime(Date.now() + 6 * 60_000);
+    rerender();
+    expect(result.current.real?.id).toBe('125');
+    clearAllCachedResources();
+    rerender();
+    expect(result.current.real).toBeNull();
+    await waitFor(() => expect(result.current.real?.id).toBe('125'));
+    expect(weeklyCalls()).toBe(2);
+  });
+  it('does not carry a forced refresh into another learner’s fresh cache', async () => {
+    await fetchWeeklyLearning('commercial', '132');
+    const { result, rerender } = renderHook(({ id }) => useWeeklyLearning('commercial', id), { initialProps: { id: '125' } });
+    await waitFor(() => expect(result.current.real?.id).toBe('125'));
+    act(() => result.current.refresh());
+    await waitFor(() => expect(weeklyCalls()).toBe(3));
+    rerender({ id: '132' });
+    await waitFor(() => expect(result.current.real?.id).toBe('132'));
+    expect(weeklyCalls()).toBe(3);
+  });
   it('keys the browser-selected initial module and invalidates its hinted read after completion', async () => {
     const { result } = renderHook(() => useWeeklyLearning('commercial', '265', true, 'alpha'));
     await waitFor(() => expect(result.current.real?.id).toBe('265'));
-    expect(urls()).toEqual(['/learner_api/dashboard/commercial/265/weekly/?moduleId=alpha']);
+    expect(urls()).toEqual(['/learner_api/dashboard/commercial/265/weekly/?moduleId=alpha&version=2']);
     act(() => invalidateLearnerDetailCache('commercial', '265'));
     await waitFor(() => expect(weeklyCalls()).toBe(2));
   });
@@ -62,12 +135,12 @@ describe('Dashboard weekly learning read', () => {
   it('requests only the compact endpoint for the learner', async () => {
     const { result } = renderHook(() => useWeeklyLearning('apprenticeship', '265'));
     await waitFor(() => expect(result.current.real?.id).toBe('265'));
-    expect(urls()).toEqual(['/learner_api/dashboard/apprenticeship/265/weekly/']);
+    expect(urls()).toEqual(['/learner_api/dashboard/apprenticeship/265/weekly/?version=2']);
   });
 
   it('does not refetch across focus and blur cycles while the cache is valid', async () => {
     const { result } = renderHook(() => useWeeklyLearning('commercial', '125'));
-    await waitFor(() => expect(result.current.real?.schedule?.modules[0]?.title).toBe('v1'));
+    await waitFor(() => expect(result.current.real?.wire?.weeks[0]?.moduleTitle).toBe('v1'));
     for (let cycle = 0; cycle < 10; cycle += 1) {
       vi.setSystemTime(Date.now() + 1_500);
       returnToTab();
@@ -77,51 +150,51 @@ describe('Dashboard weekly learning read', () => {
 
   it('re-reads once on return after expiry, keeping the plan on screen', async () => {
     const { result } = renderHook(() => useWeeklyLearning('commercial', '125'));
-    await waitFor(() => expect(result.current.real?.schedule?.modules[0]?.title).toBe('v1'));
+    await waitFor(() => expect(result.current.real?.wire?.weeks[0]?.moduleTitle).toBe('v1'));
     vi.setSystemTime(Date.now() + DEFAULT_TTL_MS + 1);
     returnToTab();
-    expect(result.current.real?.schedule?.modules[0]?.title).toBe('v1');
+    expect(result.current.real?.wire?.weeks[0]?.moduleTitle).toBe('v1');
     expect(result.current.loading).toBe(false);
-    await waitFor(() => expect(result.current.real?.schedule?.modules[0]?.title).toBe('v2'));
+    await waitFor(() => expect(result.current.real?.wire?.weeks[0]?.moduleTitle).toBe('v2'));
     expect(weeklyCalls()).toBe(2);
   });
 
   it('shares one request between components and reuses it on a revisit', async () => {
     const first = renderHook(() => [useWeeklyLearning('commercial', '125'), useWeeklyLearning('commercial', '125')]);
-    await waitFor(() => expect(first.result.current.every(read => read.real?.schedule?.modules[0]?.title === 'v1')).toBe(true));
+    await waitFor(() => expect(first.result.current.every(read => read.real?.wire?.weeks[0]?.moduleTitle === 'v1')).toBe(true));
     first.unmount();
     const revisit = renderHook(() => useWeeklyLearning('commercial', '125'));
-    expect(revisit.result.current.real?.schedule?.modules[0]?.title).toBe('v1');
+    expect(revisit.result.current.real?.wire?.weeks[0]?.moduleTitle).toBe('v1');
     expect(revisit.result.current.loading).toBe(false);
     expect(weeklyCalls()).toBe(1);
   });
 
   it('refreshes after a progress save drops the learner, not after an unrelated save', async () => {
     const { result } = renderHook(() => useWeeklyLearning('commercial', '125'));
-    await waitFor(() => expect(result.current.real?.schedule?.modules[0]?.title).toBe('v1'));
+    await waitFor(() => expect(result.current.real?.wire?.weeks[0]?.moduleTitle).toBe('v1'));
     act(() => invalidateLearnerReads());
     expect(weeklyCalls()).toBe(1);
     act(() => invalidateLearnerDetailCache('commercial', '125'));
-    await waitFor(() => expect(result.current.real?.schedule?.modules[0]?.title).toBe('v2'));
+    await waitFor(() => expect(result.current.real?.wire?.weeks[0]?.moduleTitle).toBe('v2'));
     expect(weeklyCalls()).toBe(2);
   });
 
   it('picks up a completed activity or Module Builder assignment save when the Dashboard remounts', async () => {
     const dashboard = renderHook(() => useWeeklyLearning('commercial', '125'));
-    await waitFor(() => expect(dashboard.result.current.real?.schedule?.modules[0]?.title).toBe('v1'));
+    await waitFor(() => expect(dashboard.result.current.real?.wire?.weeks[0]?.moduleTitle).toBe('v1'));
     dashboard.unmount();
     invalidateLearnerDetailCache();
     const back = renderHook(() => useWeeklyLearning('commercial', '125'));
-    await waitFor(() => expect(back.result.current.real?.schedule?.modules[0]?.title).toBe('v2'));
+    await waitFor(() => expect(back.result.current.real?.wire?.weeks[0]?.moduleTitle).toBe('v2'));
   });
 
   it('keeps the plan and retries on return after a failed refresh', async () => {
     const { result } = renderHook(() => useWeeklyLearning('commercial', '125'));
-    await waitFor(() => expect(result.current.real?.schedule?.modules[0]?.title).toBe('v1'));
+    await waitFor(() => expect(result.current.real?.wire?.weeks[0]?.moduleTitle).toBe('v1'));
     vi.mocked(fetch).mockRejectedValueOnce(new TypeError('offline')).mockRejectedValueOnce(new TypeError('offline'));
     act(() => result.current.refresh());
     await waitFor(() => expect(result.current.loadError).toBeTruthy());
-    expect(result.current.real?.schedule?.modules[0]?.title).toBe('v1');
+    expect(result.current.real?.wire?.weeks[0]?.moduleTitle).toBe('v1');
     vi.setSystemTime(Date.now() + 1_500);
     act(() => window.dispatchEvent(new Event('online')));
     await waitFor(() => expect(result.current.loadError).toBeNull());

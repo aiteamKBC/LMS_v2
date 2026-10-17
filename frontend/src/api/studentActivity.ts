@@ -1,5 +1,6 @@
 import { readLearnerJson, peekLearnerJson, invalidateLearnerReads } from './learnerRead';
 import type { LearnerKind } from './learnerDetail';
+import { invalidateWeeklyProgress } from './weeklyLearning';
 
 export interface StudentActivityItem {
   activity_id: string;
@@ -153,7 +154,9 @@ export async function subjectRequest<T>(url: string, options: SubjectRequestOpti
   const body = await response.json().catch(() => null);
   if (!response.ok) throw new Error(body?.error || `Request failed (${response.status})`);
   if (body == null) throw new Error('The server returned an invalid response.');
-  invalidateLearnerReads();
+  const identity = new URL(url, window.location.origin).pathname.match(/^\/learner_api\/student-activity\/(commercial|apprenticeship)\/([^/]+)\//);
+  if (identity) invalidateWeeklyProgress(identity[1] as LearnerKind, decodeURIComponent(identity[2]));
+  else invalidateLearnerReads();
   return body as T;
 }
 

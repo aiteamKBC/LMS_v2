@@ -1,6 +1,7 @@
 import { learningFetch } from '@/lib/personalLearning';
 import type { SubmissionAttempt } from './assignmentAttempts';
-import { readLearnerJson, invalidateLearnerReads } from './learnerRead';
+import { readLearnerJson } from './learnerRead';
+import { invalidateWeeklyProgress } from './weeklyLearning';
 import type { MonthlyAssignment } from './monthlyAssignment';
 
 export interface LearningReflectionSubmissionInput {
@@ -147,6 +148,6 @@ export async function saveLearningReflectionSubmission(
   if (!response.ok) {
     throw new Error(data.error || `Could not save the reflection (${response.status}).`);
   }
-  invalidateLearnerReads();
+  invalidateWeeklyProgress(input.learnerKind, input.learnerId, input.activityId);
   return { id: data.id || '', status: data.status || '', submissionAttempts: data.submissionAttempts };
 }

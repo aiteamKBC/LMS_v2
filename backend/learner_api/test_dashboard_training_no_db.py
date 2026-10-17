@@ -10,6 +10,18 @@ from . import dashboard_training as training
 
 
 class TrainingProjectionTests(SimpleTestCase):
+    def test_week_session_counts_are_grouped_once_without_changing_scope(self):
+        cursor = MagicMock()
+        cursor.description = []
+        with patch.object(training.schedule, 'rows', return_value=[]), \
+             patch.object(training.schedule, 'attach_curriculum_slots'):
+            training.module_rows(cursor, ['M1', 'M2'], rich_id='M2')
+        sql, params = cursor.execute.call_args_list[1].args
+        self.assertIn('GROUP BY c.module_catalogue_id,c.week_id', sql)
+        self.assertIn('coalesce(live_counts.live_session_count,0)', sql)
+        self.assertIn("c.deleted_at IS NULL OR COALESCE(c.deleted_via_parent,'')<>''", sql)
+        self.assertEqual(params, [['M1', 'M2'], 'M2', ['M1', 'M2']])
+
     def test_selected_native_facts_use_global_retained_quiz_decision(self):
         from . import weekly_learning, student_activity_access, student_activity, builder_activity_dates
         global_detail = {'modules': ['One', 'Two'], 'components': [
