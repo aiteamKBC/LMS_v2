@@ -22,6 +22,27 @@ describe('subject PDF previews', () => {
     expect(screen.getByTitle('Lesson')).toHaveAttribute('src', 'https://example.org/lesson');
   });
 
+  it.each(['audio', 'video', 'document', 'embed'])('opens a Spotify %s lesson in its provider player', (kind) => {
+    const value = 'https://open.spotify.com/episode/example123?si=share';
+    const onEnded = vi.fn();
+    const { container } = render(<Media value={value} kind={kind} title="Podcast" onEnded={onEnded} />);
+    expect(screen.getByTitle('Podcast')).toHaveAttribute('src', 'https://open.spotify.com/embed/episode/example123');
+    expect(container.querySelector('audio,video')).toBeNull();
+    expect(screen.getByRole('link')).toHaveAttribute('href', value);
+    expect(onEnded).not.toHaveBeenCalled();
+  });
+
+  it('uses the embedded video for a Vimeo link labelled as a reading', () => {
+    render(<Media value="https://vimeo.com/123456789/privatehash" kind="document" title="Recorded lesson" />);
+    expect(screen.getByTitle('Recorded lesson')).toHaveAttribute('src', 'https://player.vimeo.com/video/123456789?h=privatehash');
+  });
+
+  it('keeps a provider restriction ahead of automatic player selection', () => {
+    const { container } = render(<Media value="https://open.spotify.com/episode/example123" kind="audio" title="Podcast" canEmbed={false} />);
+    expect(container.querySelector('audio,video,iframe')).toBeNull();
+    expect(screen.getByRole('link')).toBeVisible();
+  });
+
   it.each(['commercial', 'apprenticeship'])('plays a protected %s Azure video without an iframe', (role) => {
     const url = `/learner_api/student-activity/${role}/123/500/10/source-file/`;
     const onEnded = vi.fn();

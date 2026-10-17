@@ -1,6 +1,13 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { createContext, useCallback, useEffect, useRef, useState } from 'react';
 
 export type NarrationBlock = { text: string; pauseMs: number };
+export type PdfPageReader = () => Promise<NarrationBlock[]>;
+
+// Only previews inside a Reading activity join its main read-aloud button.
+// A collapsed linked preview has no reader until the learner opens it.
+export const ReadingPdfNarrationContext = createContext<((id: string, reader: PdfPageReader | null) => void) | null>(null);
+
+export class ReadingNarrationError extends Error {}
 
 // Decorative rules are layout, not spoken content. Keep ordinary hyphens,
 // negative numbers and punctuation inside meaningful sentences.
@@ -160,10 +167,10 @@ export function useReadingNarration(sourceKey: string) {
         window.speechSynthesis.speak(current);
       };
       speak(0);
-    } catch {
+    } catch (error) {
       if (request !== generation.current) return;
       stop();
-      setSpeechError('Could not read this content aloud. Please try again.');
+      setSpeechError(error instanceof ReadingNarrationError ? error.message : 'Could not read this content aloud. Please try again.');
     }
   }, [stop]);
 

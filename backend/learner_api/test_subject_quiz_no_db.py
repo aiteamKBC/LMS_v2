@@ -23,6 +23,7 @@ class ImportedQuizTests(unittest.TestCase):
     def test_exact_lineage_and_server_side_grading(self):
         quiz = quiz_definition(imported_quiz(self.cursor, 50, 60))
         self.assertEqual(self.cursor.execute.call_args.args[1], [50, '60'])
+        self.assertIn("material->>'component_kind'='quiz'", self.cursor.execute.call_args.args[0])
         self.assertTrue(quiz['ready'])
         self.assertNotIn('solution_ids', public_quiz(quiz)['questions'][0])
         self.assertTrue(grade_quiz({'quiz': quiz}, {'12': ['1']})['passed'])
@@ -60,6 +61,41 @@ class ImportedQuizTests(unittest.TestCase):
         other = deepcopy(self.material)
         other['passing_grade_percent'] = 90
         self.cursor.fetchall.return_value = [(self.material,), (other,)]
+        self.assertIsNone(imported_quiz(self.cursor, 50, 60))
+
+    def stored(self):
+        return {'quiz_id': 60, 'maximum_score': 100, 'passing_score': 80,
+            'questions': [{'question_id': 12, 'question_body': 'Example?',
+                'question_type': 'single_choice', 'options': [
+                    {'option_order': 1, 'option_text': 'Yes'}, {'option_order': 2, 'option_text': 'No'}]}],
+            'solutions': [{'question_id': 12, 'correct_answer': ['Yes']}]}
+
+    def test_missing_export_uses_exact_stored_author_definition(self):
+        self.cursor.fetchall.side_effect = [[], [(json.dumps(self.stored()),)]]
+        quiz = quiz_definition(imported_quiz(self.cursor, 50, 60))
+        self.assertTrue(quiz['ready'])
+        self.assertEqual(self.cursor.execute.call_args.args[1], ['50', 'quiz:60', 60, '60'])
+        sql = self.cursor.execute.call_args.args[0]
+        for predicate in ("a.source_activity_kind='quiz'", "a.source_activity_kind='material'",
+                          'a.deleted_at IS NULL', 'm.deleted_at IS NULL', 'c.deleted_at IS NULL'):
+            self.assertIn(predicate, sql)
+        self.assertTrue(grade_quiz({'quiz': quiz}, {'12': ['1']})['passed'])
+        self.assertNotIn('solution_ids', public_quiz(quiz)['questions'][0])
+
+    def test_stored_questions_without_keys_are_only_reviewable(self):
+        stored = self.stored(); stored.pop('solutions')
+        self.cursor.fetchall.side_effect = [[], [(stored,)], [], [(stored,)]]
+        self.assertIsNone(imported_quiz(self.cursor, 50, 60))
+        self.assertEqual(imported_quiz(self.cursor, 50, 60, for_review=True), stored)
+
+    def test_conflicting_stored_revisions_stay_blocked(self):
+        stored = self.stored(); changed = deepcopy(stored); changed['passing_score'] = 90
+        self.cursor.fetchall.side_effect = [[], [(stored,), (changed,)]]
+        self.assertIsNone(imported_quiz(self.cursor, 50, 60))
+
+    def test_other_quiz_identity_never_used_as_fallback(self):
+        stored = self.stored(); stored['quiz_id'] = 61
+        self.cursor.fetchall.side_effect = [[], [(stored,)]]
         self.assertIsNone(imported_quiz(self.cursor, 50, 60))
 
 if __name__ == '__main__':

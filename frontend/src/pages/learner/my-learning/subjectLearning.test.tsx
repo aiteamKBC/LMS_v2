@@ -352,7 +352,7 @@ describe('map and My Learning navigation', () => {
     const schedule = { modules: [module('M1', '2026-09-01', '2026-09-30')], moduleLinks: metadata.builder_subjects } as unknown as TrainingPlanDashboard;
     render(<MemoryRouter><StudentActivityPanel data={completedModule} schedule={schedule} kind="commercial" learnerId="132" loading={false} error={null} onRetry={() => {}} /></MemoryRouter>);
     fireEvent.click(await screen.findByRole('button', { name: 'Continue learning' }));
-    expect(screen.getByRole('heading', { name: 'Another subject' })).toBeVisible();
+    expect(screen.getAllByRole('heading', { name: 'Another subject' })[0]).toBeVisible();
   });
 
   it('hides the whole Continue learning panel when every activity is complete', async () => {
@@ -454,7 +454,7 @@ describe('map and My Learning navigation', () => {
     renderWorkspace('/learner/my-learning/commercial/132?subject=legacy%3A1&week=2026-09-14', 'catalogue');
     await screen.findByRole('region', { name: 'Week 2 materials' });
     expect(screen.getByRole('button', { name: 'Second reading' })).toBeVisible();
-    fireEvent.click(screen.getByRole('button', { name: 'Back to subject' }));
+    expect(screen.getByRole('complementary', { name: 'Module activities' })).toBeVisible();
     expect(screen.getByRole('link', { name: 'View learning map' })).toHaveAttribute('href', '/learner/learning-plan/modules/commercial/132?subject=legacy%3A1');
     fireEvent.click(screen.getByRole('button', { name: 'All subjects' }));
     expect(screen.getByRole('button', { name: /Open subject/ })).toBeVisible();

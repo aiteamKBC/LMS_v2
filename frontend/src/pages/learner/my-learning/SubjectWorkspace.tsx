@@ -1,6 +1,6 @@
-import { useEffect, useId, useMemo, useState, type MouseEvent, type ReactNode } from 'react';
+import { useEffect, useId, useMemo, useState, type MouseEvent } from 'react';
 import { Link, Navigate, useLocation, useNavigate } from 'react-router-dom';
-import { ArrowRight, Award, BookOpen, CalendarDays, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight, GraduationCap, Layers3, Loader2, Map as MapIcon, Search } from 'lucide-react';
+import { ArrowRight, Award, BookOpen, CheckCircle2, ChevronLeft, ChevronRight, GraduationCap, Layers3, Loader2, Map as MapIcon, Search } from 'lucide-react';
 import type { LearnerDetail } from '@/api/learnerDetail';
 import type { LearnerMetrics } from '@/api/learnerMetrics';
 import { type StudentActivityItem, type StudentActivityResponse, type SubjectAttemptResult } from '@/api/studentActivity';
@@ -14,10 +14,12 @@ import { DEFAULT_MODULE_COVER } from './moduleCover';
 import { LearningMapHero, SubjectTimeline } from './SubjectTimeline';
 import { HolidayNoteHint } from '@/components/feature/HolidayNoteHint';
 import { weekHolidayNotes } from '@/pages/learner/training-plan-timeline/model';
-import { groupSubjectActivities, nativeHref, certificateEligible, learningDate, learningDeadlines, learningPlanSelection, learningHref, nextLearningWeek, continuingLearningWeek, currentLearningWeek, recommendedLearningSubject, resolveLearningSubject, subjectMapWeeks, subjectOpeningActivity, subjectLearningStatus } from './subjectLearning';
+import { nativeHref, certificateEligible, learningDate, learningDeadlines, learningPlanSelection, learningHref, nextLearningWeek, continuingLearningWeek, currentLearningWeek, recommendedLearningSubject, resolveLearningSubject, subjectMapWeeks, subjectOpeningActivity, subjectLearningStatus } from './subjectLearning';
 import type { LearningSchedule } from '@/api/learnerOverview';
 import type { PlanModule, PlanModuleProgress, PlanSession } from '@/api/trainingPlanDashboard';
 import { buildUnifiedLearningSummary, type SubjectEntry, type Subject, type CoverMetadata } from './learningSummary';
+import { PreviousLearningNotice } from './PreviousLearningNotice';
+import { SubjectActivityWorkspace } from './SubjectActivityWorkspace';
 export type { SubjectEntry, Subject, CoverMetadata, UnifiedLearningSummary } from './learningSummary';
 
 
@@ -57,35 +59,6 @@ function HoursProgress({ completed, planned, label }: {
     </div>
     <div className={styles.hoursProgressLabel}><span>Completed {completedLabel}</span><span>Planned {plannedLabel}</span></div>
   </div>;
-}
-
-function ActivityGroup({ title, label = title, activities, level, children }: {
-  title: string; label?: string; activities: SubjectEntry[]; level: 3 | 4; children: ReactNode;
-}) {
-  const [expanded, setExpanded] = useState(false);
-  const contentId = useId();
-  const progressId = `${contentId}-progress`;
-  const Heading = level === 3 ? 'h3' : 'h4';
-  const done = activities.filter((entry) => entry.completed).length;
-  const percent = activities.length ? Math.round(done / activities.length * 10000) / 100 : 0;
-  return <section aria-label={label} className={`overflow-hidden border border-foreground-200 bg-white ${level === 3 ? 'rounded-2xl' : 'rounded-xl'}`}>
-    <Heading><button type="button" onClick={() => setExpanded((value) => !value)} aria-expanded={expanded} aria-controls={contentId}
-      aria-label={`${expanded ? 'Collapse' : 'Expand'} ${label}`} aria-describedby={progressId}
-      className="flex w-full flex-wrap items-center gap-x-4 gap-y-2 px-4 py-3 text-left transition-colors hover:bg-background-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary-500">
-      <span className="min-w-0 flex-1 basis-40">
-        <span className={`flex items-center gap-2 font-bold ${level === 3 ? 'text-base' : 'text-sm'}`}>{level === 3 && <CalendarDays size={20} className="shrink-0 text-primary-500" />}{title}</span>
-      </span>
-      <span className="ml-auto flex shrink-0 items-center gap-3">
-        <span id={progressId} role="progressbar" aria-label={`${label} progress`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={percent}
-          aria-valuetext={`${done} of ${activities.length} completed (${percent}%)`} className="flex items-center gap-2 whitespace-nowrap text-xs">
-          <span className="font-normal text-foreground-500">{done}/{activities.length} completed</span>
-          <span className={`rounded-full px-2.5 py-1 font-semibold tabular-nums ${percent === 100 ? 'bg-emerald-50 text-emerald-700' : 'bg-primary-50 text-primary-700'}`}>{percent}%</span>
-        </span>
-        <span className="flex h-7 w-7 items-center justify-center rounded-full bg-background-100 text-primary-700"><ChevronDown size={17} className={`transition-transform ${expanded ? 'rotate-180' : ''}`} /></span>
-      </span>
-    </button></Heading>
-    <div id={contentId} hidden={!expanded}>{children}</div>
-  </section>;
 }
 
 const SUBJECT_CARD_TONES = ['purple', 'navy', 'green', 'gold', 'blue', 'rose'] as const;
@@ -215,18 +188,21 @@ export function SubjectCard({ subject, cover, tone = 'purple', onOpen, template,
   const startDate = planModule?.start_date ? learningDate(planModule.start_date) : 'Not scheduled';
   const endDate = planModule?.end_date ? learningDate(planModule.end_date) : 'Not scheduled';
   const sessionCount = planModule?.educational_session_count;
-  const completedHours = subject.source === 'legacy'
+  const completedHours = subject.source === 'legacy' || subject.replacementCourseRef
     ? subject.acceptedHours ?? null
     : moduleProgress?.hours.actual ?? subject.acceptedHours ?? null;
   const plannedHours = planModule?.total_otjh ?? null;
-  return <article className={`group ${styles.card} ${styles.subjectTheme} ${styles.moduleCard}`} data-tone={tone} data-source={subject.source}>
+  const origin = subject.importedCourseRef || subject.replacementCourseRef ? 'legacy' : subject.source;
+  return <article className={`group ${styles.card} ${styles.subjectTheme} ${styles.moduleCard}`} data-tone={tone} data-source={origin}>
     <button type="button" onClick={onOpen} className={styles.cardButton}>
       <div className="relative w-full"><Cover title={subject.title} url={cover} fallbackUrl={DEFAULT_MODULE_COVER} /></div>
       <div className={styles.cardBody}>
         <div className={styles.cardMetaRow}>
-          <span className={styles.sourceBadge} data-source={subject.source}>
-            {subject.source === 'legacy' ? <BookOpen size={13} aria-hidden="true" /> : <GraduationCap size={13} aria-hidden="true" />}
-            {subject.source === 'legacy' ? 'Old LMS' : 'New LMS'}
+          <span className={styles.sourceBadge} data-source={origin}>
+            {origin === 'legacy' ? <BookOpen size={13} aria-hidden="true" /> : <GraduationCap size={13} aria-hidden="true" />}
+            {subject.source === 'legacy' ? 'Old LMS · Previous learning'
+              : subject.replacementCourseRef ? 'Old LMS · Updated content'
+              : subject.importedCourseRef ? 'Old LMS · Current learning plan' : 'New LMS · Current learning plan'}
           </span>
           {subject.source === 'legacy' && <span className={styles.learningModeBadge} data-source="legacy">Review only</span>}
           <span className={styles.status} data-state={isComplete ? 'complete' : status === 'In progress' ? 'started' : 'new'}>
@@ -268,7 +244,7 @@ function SubjectCardsSkeleton() {
 }
 
 
-function ActivityRow({ entry, kind, learnerId, onProgress, defaultOpen = false }: { defaultOpen?: boolean; entry: SubjectEntry; kind?: string; learnerId?: string; onProgress?: (result: SubjectAttemptResult) => void }) {
+function ActivityRow({ entry, kind, learnerId, onProgress, defaultOpen = false, readOnly = false }: { defaultOpen?: boolean; readOnly?: boolean; entry: SubjectEntry; kind?: string; learnerId?: string; onProgress?: (result: SubjectAttemptResult) => void }) {
   const [open, setOpen] = useState(defaultOpen);
   useEffect(() => { if (defaultOpen) setOpen(true); }, [defaultOpen]);
   const contentId = useId();
@@ -294,8 +270,9 @@ function ActivityRow({ entry, kind, learnerId, onProgress, defaultOpen = false }
     {sourceHref && <Link to={sourceHref} className="rounded-lg border border-foreground-200 px-3 py-2 text-xs font-semibold text-primary-700">View source material</Link>}
     {((legacy && !canOpen && !sourceHref) || (!legacy && !href)) && <span className="text-xs text-foreground-500">{entry.native?.retired ? 'No longer in this module' : 'Content not available yet'}</span>}</div>
   </div>
+    <PreviousLearningNotice learning={entry.native?.previousLearning} kind={kind} learnerId={learnerId} />
     {legacy && <p className="px-4 pb-3 text-[11px] text-foreground-400">OTJH: {legacy.hours_mapped ? formatHoursMinutes(legacy.actual) : 'Unavailable'} · Planned: {legacy.planned_hours_mapped ? formatHoursMinutes(legacy.planned) : 'Unavailable'}</p>}
-    <div id={contentId}>{open && legacy && canOpen && kind && learnerId && <div role="region" aria-label={`${entry.title} content`} className="p-3 pt-0"><StudentMaterial kind={kind} learnerId={learnerId} groupId={legacy.group_id} activityId={legacy.source_activity_id} completed={entry.completed} readOnly={canReviewQuiz} reviewQuiz={canReviewQuiz} onProgress={canReviewQuiz ? undefined : onProgress} /></div>}</div>
+    <div id={contentId}>{open && legacy && canOpen && kind && learnerId && <div role="region" aria-label={`${entry.title} content`} className="p-3 pt-0"><StudentMaterial kind={kind} learnerId={learnerId} groupId={legacy.group_id} activityId={legacy.source_activity_id} completed={entry.completed} readOnly={readOnly || canReviewQuiz} reviewQuiz={canReviewQuiz} onProgress={readOnly || canReviewQuiz ? undefined : onProgress} /></div>}</div>
   </div>;
 }
 
@@ -374,7 +351,7 @@ export function StudentActivityPanel({ data: incomingData, loading, error, onRet
   const subjects = summary.subjects;
   // Canonical evidence IDs identify progress records, not source materials.
   // Refuse ambiguous matches rather than opening a different course's material.
-  const activityMatches = requestedActivity ? subjects.flatMap(subject => subject.activities
+  const activityMatches = requestedActivity ? subjects.flatMap(subject => [...subject.activities, ...(subject.archivedActivities || [])]
     .filter(entry => requestedActivity.startsWith('record:')
       ? entry.legacy?.record_ids?.includes(requestedActivity.slice(7))
         || /^record:[^:]+:[^:]+$/.test(entry.id) && entry.id.slice(entry.id.lastIndexOf(':') + 1) === requestedActivity.slice(7)
@@ -418,9 +395,6 @@ export function StudentActivityPanel({ data: incomingData, loading, error, onRet
   const activeWeek = activityTarget ? weeks.find(week => week.activities.some(entry => entry.id === activityTarget.entry.id))
     : continueCurrentWeek && active ? continuingLearningWeek(active)
     : selectedWeek ? weeks.find(week => week.id === selectedWeek) : undefined;
-  const visibleActivities = active ? active.activities.filter((entry) => !term || active.title.toLocaleLowerCase().includes(term) || entry.title.toLocaleLowerCase().includes(term)) : [];
-  const visibleActivityIds = new Set(visibleActivities.map((entry) => entry.id));
-  const groups = groupSubjectActivities(active?.activities || []).filter(({ weeks }) => weeks.some(({ activities }) => activities.some((entry) => visibleActivityIds.has(entry.id))));
   // The header and course cards describe the same complete catalogue. Programme
   // metrics count ledger records, which can omit activities not yet started.
   const total = summary.activityCount;
@@ -431,7 +405,7 @@ export function StudentActivityPanel({ data: incomingData, loading, error, onRet
   if (requestedActivity && !activityTarget) return <div role="alert" className={styles.empty}><p>{activityMatches.length > 1 ? 'This evidence matches more than one learning activity. Choose the correct module to review it.' : 'This evidence activity is not available in My Learning.'}</p><button onClick={() => select()}>View modules</button></div>;
   // Catalogue links open the existing player directly. Imported-only courses
   // and weeks awaiting content keep their material browser available.
-  const openingActivity = !requestedActivity && active && view === 'catalogue' && (!selectedWeek || activeWeek)
+  const openingActivity = !requestedActivity && active && !active.replacementCourseRef && view === 'catalogue' && (!selectedWeek || activeWeek)
     ? subjectOpeningActivity(active, activeWeek) : undefined;
   const openingHref = openingActivity ? nativeHref(openingActivity, kind, learnerId) : null;
   if (openingHref) return <Navigate to={openingHref} replace />;
@@ -450,7 +424,15 @@ export function StudentActivityPanel({ data: incomingData, loading, error, onRet
       <label className={styles.search}><Search size={18} aria-hidden="true" /><input aria-label="Search modules or activities" value={search} onChange={event => setSearch(event.target.value)} placeholder="Search weeks or activities…" /></label>
       <Link to={learningHref('catalogue', kind, learnerId)} className={styles.textLink}>My Learning<ArrowRight size={17} aria-hidden="true" /></Link>
     </div>}
-    {activeWeek ? <>
+    {view === 'catalogue' && active && (!selectedWeek || activeWeek || activityTarget) ? <>
+      <div className="flex flex-wrap items-center justify-between gap-3"><button onClick={() => select()} className={styles.textLink}><ChevronLeft size={17} />All subjects</button><Link to={learningHref('map', kind, learnerId, active.id)} className={styles.textLink}><MapIcon size={17} />View learning map<ArrowRight size={16} /></Link></div>
+      <SubjectActivityWorkspace key={`${kind}:${learnerId}:${active.id}`} subject={active} weeks={weeks} requestedWeek={activeWeek?.id}
+        requestedActivity={activityTarget?.entry.id} search={search} kind={kind} learnerId={learnerId}
+        progress={<Progress done={active.activities.filter(entry => entry.completed).length} total={active.activities.length} showFormula />}
+        renderWeekProgress={week => <><HolidayNoteHint note={week.weekId ? holidayNotes.get(week.weekId) : undefined} className="mb-2" /><Progress done={week.activities.filter(entry => entry.completed).length} total={week.activities.length} label="Week progress" /></>}
+        renderActivity={entry => <ActivityRow entry={entry} kind={kind} learnerId={learnerId} defaultOpen={entry.id === activityTarget?.entry.id}
+          onProgress={result => { if (entry.legacy) recordProgress(entry.legacy.activity_id, result); }} />} />
+    </> : activeWeek ? <>
       <button onClick={() => select(active!.id)} className={styles.textLink}><ChevronLeft size={17} />{view === 'map' ? 'Back to timeline' : 'Back to subject'}</button>
       <section className={styles.weekMaterial} aria-label={`${activeWeek.label} materials`}><header><p className={styles.eyebrow}>{activeWeek.label}</p><h3>{activeWeek.title}</h3><HolidayNoteHint note={activeWeek.weekId ? holidayNotes.get(activeWeek.weekId) : undefined} className="mb-2" /><Progress done={activeWeek.activities.filter(a => a.completed).length} total={activeWeek.activities.length} label="Week progress" /></header>
         {activeWeek.activities.filter(entry => !term || active!.title.toLowerCase().includes(term) || entry.title.toLowerCase().includes(term)).map(entry => <ActivityRow key={entry.id} defaultOpen={entry.id === activityTarget?.entry.id} entry={entry} kind={kind} learnerId={learnerId} onProgress={result => { if (entry.legacy) recordProgress(entry.legacy.activity_id, result); }} />)}
@@ -466,28 +448,19 @@ export function StudentActivityPanel({ data: incomingData, loading, error, onRet
         onContinue={subject => { setSearch(''); select(subject.id, 'current'); }}
         covers={covers} upcomingSessions={upcomingSessions}
         renderCard={subject => {
-          const planModule = planModulesBySubject.get(subject.id);
+          // Navigation aliases must not replace historical course hours with
+          // the duplicate Builder copy's planned hours or progress.
+          const replacesImport = subject.source === 'legacy' && Object.values(metadata?.imported_courses || {}).includes(subject.id);
+          const planModule = replacesImport ? undefined : planModulesBySubject.get(subject.id);
           return <SubjectCard key={subject.id} subject={subject} cover={covers[subject.id]} tone={subjectTones.get(subject.id)} onOpen={() => select(subject.id)} template={certificateConfig.template} csrfToken={certificateConfig.csrfToken} kind={kind} learnerId={learnerId} planModule={planModule} moduleProgress={planModule ? moduleProgress?.[planModule.id] : undefined} />;
         }} />
       {(data || metrics) && <><div className="flex flex-wrap gap-6 rounded-xl bg-background-100 px-4 py-3 text-xs"><div><span className="block text-foreground-500">Recorded OTJH</span><strong>{recordedOtjh == null ? 'Unavailable' : formatHoursMinutes(recordedOtjh)}</strong></div><div><span className="block text-foreground-500">Planned OTJH</span><strong>{plannedOtjh == null ? 'Unavailable' : formatHoursMinutes(plannedOtjh)}</strong></div></div>{hasProgrammeOtjh && <p className="text-[12px] text-foreground-500">Programme totals include accepted historical hours and new recorded learning. Planned hours come from your training plan.</p>}</>}
-    </> : <>
-      <div className="flex flex-wrap items-center justify-between gap-3"><button onClick={() => select()} className="flex items-center gap-1.5 text-sm font-semibold text-primary-700"><ChevronLeft size={17} />All subjects</button><Link to={learningHref('map', kind, learnerId, active.id)} className={styles.textLink}><MapIcon size={17} />View learning map<ArrowRight size={16} /></Link></div>
-      <div className={`${styles.subjectTheme} relative overflow-hidden rounded-2xl border bg-white`} data-tone={subjectTones.get(active.id)}><Cover title={active.title} url={covers[active.id]} fallbackUrl={DEFAULT_MODULE_COVER} large /><div className="p-5"><Progress done={active.activities.filter((entry) => entry.completed).length} total={active.activities.length} showFormula /></div></div>
-      {groups.map(({ month, weeks }) => {
-        const monthTitle = month === 'introduction' ? 'Introduction' : month === 'extra' ? 'Extra activities' : month === 'undated' ? 'Undated activities' : new Date(`${month}-01T12:00:00Z`).toLocaleDateString('en-GB', { month: 'long', year: 'numeric', timeZone: 'UTC' });
-        return <ActivityGroup key={`${active.id}:${month}`} title={monthTitle} activities={weeks.flatMap(({ activities }) => activities)} level={3}>
-          <div className="space-y-3 p-3 pt-0">{weeks.map(({ week, activities }, index) => {
-            const visibleEntries = activities.filter((entry) => visibleActivityIds.has(entry.id));
-            if (!visibleEntries.length) return null;
-            if (month === 'introduction') return visibleEntries.map((entry) => <ActivityRow key={entry.id} defaultOpen={entry.id === activityTarget?.entry.id} entry={entry} kind={kind} learnerId={learnerId} onProgress={(result) => { if (entry.legacy) recordProgress(entry.legacy.activity_id, result); }} />);
-            const weekTitle = week === 'undated' ? (month === 'undated' ? 'Activities awaiting a date' : 'Activities in this month') : /^\d{4}-/.test(week) ? `Week ${index + 1} · ${week} – ${activities[0].schedule.week_end || ''}` : week;
-            return <ActivityGroup key={week} title={weekTitle} label={`${monthTitle}, ${weekTitle}`} activities={activities} level={4}>
-              {visibleEntries.map((entry) => <ActivityRow key={entry.id} defaultOpen={entry.id === activityTarget?.entry.id} entry={entry} kind={kind} learnerId={learnerId} onProgress={(result) => { if (entry.legacy) recordProgress(entry.legacy.activity_id, result); }} />)}
-            </ActivityGroup>;
-          })}</div>
-        </ActivityGroup>;
-      })}
-      {!visibleActivities.length && <p className="rounded-xl border bg-white p-6 text-sm text-foreground-500">{active.activities.length ? 'No activities match your search.' : 'Activities will appear here when they are added to this subject.'}</p>}
-    </>}
+    </> : null}
+    {active?.archivedActivities?.length ? <details open={!!activityTarget?.entry.legacy} className="rounded-xl border bg-white p-4">
+      <summary className="cursor-pointer text-sm font-semibold text-primary-700">Previous learning record</summary>
+      <p className="py-3 text-xs text-foreground-500">Original results and hours are retained here. Matching completions count once in the updated content above.</p>
+      {active.archivedActivities.filter(entry => !term || entry.title.toLocaleLowerCase().includes(term)).map(entry =>
+        <ActivityRow key={entry.id} entry={entry} kind={kind} learnerId={learnerId} readOnly defaultOpen={entry.id === activityTarget?.entry.id} />)}
+    </details> : null}
   </section>;
 }
