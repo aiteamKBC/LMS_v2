@@ -59,7 +59,7 @@ export function attendanceWorkspaceForDisplay(data: AttendanceWorkspace): Attend
   return { ...data, lectures: data.lectures.map(row => {
     if ((row.status as string) !== 'present') return row;
     const raw = row.rawStatus || row.rawAttendanceStatus;
-    const status: LectureStatus = raw === 'absent' && row.effectiveAttendance === 1 ? 'absent'
+    const status: LectureStatus = raw === 'absent' && row.effectiveStatus === 'made_up' ? 'absent'
       : raw === 'late' ? 'late' : 'completed';
     return { ...row, status };
   }) };
