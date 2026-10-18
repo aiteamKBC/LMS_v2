@@ -93,7 +93,7 @@ def coaching_booking_bounds(month):
     start, end = month_bounds(month)
     if not start:
         return None, None
-    return end - timedelta(days=9), end + timedelta(days=5)
+    return start.replace(day=20), end + timedelta(days=5)
 
 
 def coaching_booking_windows(month):
@@ -269,7 +269,7 @@ def assignment_checks(payload, *, evidence_ids=None, meeting_booked=None, allowe
         ("benefit", "Employer benefit confirmed and measurable outcomes described (20 words)", monthly.get("employerBenefit") is True and words(payload.get("businessImpact")) >= 20),
         ("impact", "Career, job and employer impacts: at least 20 words each", all(words(monthly.get(k)) >= 20 for k in ["careerImpact", "jobImpact", "employerImpact"])),
         ("action", "Action plan and EPA preparedness: at least 20 words each", all(words(monthly.get(k)) >= 20 for k in ["actionPlan", "epaPreparedness"])),
-        ("meeting", "Coaching meeting booked in the submission-month or next-month window (last ten days through the following 5th)", booked),
+        ("meeting", "Coaching meeting booked", booked),
         ("presentation", "MCM PowerPoint uploaded or generated and exported; presentation reviewed", valid_presentation(payload)),
     ]
     return [{"key": key, "label": label, "passed": bool(passed)} for key, label, passed in checks]

@@ -97,6 +97,7 @@ def course_facts(owner, records, courses):
     The shared canonical allocator retains source/journal precedence and verified
     membership exclusions. One canonical row contributes hours once per course.
     """
+    from .course_catalogue_display import retain_learner_schedule
     definitions = canonical.query('''SELECT a.source_activity_id,a.source_activity_title,
         a.source_section_ref,a.source_section_title,a.source_position AS position,
         c.source_course_ref,
@@ -107,7 +108,7 @@ def course_facts(owner, records, courses):
         JOIN curriculum.source_courses c ON c.id=a.source_course_id AND c.deleted_at IS NULL
         WHERE a.source_course_id=ANY(%s) AND a.deleted_at IS NULL AND a.source_system='old_lms'
         ORDER BY c.id,a.source_position NULLS LAST,a.id''', [[c['id'] for c in courses]]) if courses else []
-    definitions = canonical.learner_course_catalogue(courses, definitions)
+    definitions = [dict(d) for d in canonical.learner_course_catalogue(courses, definitions)]
     by_key = {(str(d['source_course_ref']), d['source_activity_id']): d for d in definitions}
     done, started, hours, record_ids = set(), set(), defaultdict(float), defaultdict(set)
     for record, placements in canonical.course_record_placements(by_key, records, include_catalogue=True):
@@ -122,6 +123,7 @@ def course_facts(owner, records, courses):
         for definition in placements:
             course = str(definition['source_course_ref'])
             key = (course, definition['source_activity_id'])
+            retain_learner_schedule(definition, record, completed=is_done)
             if is_started:
                 started.add(key)
             record_ids[key].add(record_id)
@@ -185,10 +187,10 @@ def next_title(items, today):
 
 def assemble_cards(native, current, courses, definitions, done, started, hours, metadata, records, modules, credits, *, search=None):
     """Programme-wide counts with the same explicit import/replacement identities as My Learning."""
-    from .replacement_learning import project_replacement_learning
+    from .progress_transfer_policy import credited_percent
     from .training_plan_dashboard import _canonical_module_progress, module_record_index
     from .live_session_progress import supplement_module_hours
-    from .course_catalogue_display import catalogue_display_context, read_export_placements
+    from .course_catalogue_display import catalogue_display_context, read_export_placements, display_schedule
     # Required only for the visible next-activity preview. SQL expands narrow
     # placement metadata; no course curriculum JSON is transferred to Python.
     if search is None:
@@ -202,12 +204,10 @@ def assemble_cards(native, current, courses, definitions, done, started, hours, 
             'source_activity_id': int(ident) if ident.isdigit() else 0, 'catalogue_kind': kind,
             'completed': (course, ref) in done, 'started': (course, ref) in started,
             '_course_ref': course, 'title': d['source_activity_title'], 'section_title': d.get('source_section_title'),
-            'schedule': d.get('_display_schedule') or {}, 'position': d.get('position') or 0})
+            'schedule': display_schedule(d) or {}, 'position': d.get('position') or 0})
     components = [*native.get('components', []), *native.get('retiredQuizComponents', [])]
-    if search is None:
-        with projection_stage('replacement_reconcile'):
-            components = project_replacement_learning(components, metadata['replacement_settings'],
-                metadata['replacement_courses'], [a for rows in legacy.values() for a in rows])
+    # Historical progress is transferred at module level only after approval.
+    components = [{k:v for k,v in component.items() if k != 'previousLearning'} for component in components]
     native['components'] = components[:len(native.get('components', []))]
     native['retiredQuizComponents'] = components[len(native['components']):]
     by_id = {}
@@ -215,7 +215,11 @@ def assemble_cards(native, current, courses, definitions, done, started, hours, 
         ref = str(course['source_course_ref'])
         by_id[f'legacy:{int(ref)}'] = dict(id=f'legacy:{int(ref)}', title=course['source_course_title'],
             source='legacy', moduleId=course.get('curriculum_module_ref'), _hours=round(hours[ref], 6), _items=legacy[ref])
-    replaced = {ref for ref, old in metadata['imported_courses'].items() if old in by_id}
+    transfers = metadata.get('progress_transfers', [])
+    approved = {f"current:{item['moduleId']}": item for item in transfers if item['status'] == 'approved'}
+    links = {**metadata['imported_courses'], **metadata['replacement_courses']}
+    uses = Counter(links.values())
+    replaced = {ref for ref, old in links.items() if old in by_id and uses[old] == 1 and ref not in approved}
     skipped_titles = set()
     for module in current:
         ref = f"current:{module['id']}"
@@ -259,35 +263,11 @@ def assemble_cards(native, current, courses, definitions, done, started, hours, 
         if title.strip().casefold() not in titles:
             by_id[f'unlinked:{title}'] = dict(id=f'unlinked:{title}', title=title, source='current', _items=[])
             titles.add(title.strip().casefold())
-    uses = Counter(metadata['replacement_courses'].values())
     module_list = list(modules.values())
     progress_index = module_record_index(records,module_list) if search is None else None
-    records_by_id = defaultdict(list)
-    if search is None:
-        for position,record in enumerate(records):
-            records_by_id[str(record['id'])].append((position,record))
-    with projection_stage('replacement_reconcile'):
-        for ref, old in metadata['replacement_courses'].items():
-            subject, previous = by_id.get(ref), by_id.get(old)
-            if not subject or not subject['_items'] or not previous or uses[old] != 1:
-                continue
-            if search is not None:
-                # The catalogue presents the successor's current activities.
-                del by_id[old]
-                continue
-            previous_ids = set().union(*(metadata['record_ids'].get((i.get('_course_ref',str(i['group_id'])), f"{i['catalogue_kind']}:{i['source_activity_id']}"), set()) for i in previous['_items']))
-            mid = subject.get('moduleId')
-            # Evaluate only this successor's union, in original record order. Keep
-            # the shared projector's attribution and final rounding; do not add
-            # rounded per-course totals or project all other modules per successor.
-            combined = dict(progress_index[1].get(mid,()))
-            for record_id in previous_ids:
-                for position,record in records_by_id.get(record_id,()):
-                    combined[position] = {**record,'module_ref':mid}
-            subject.update(replacementCourseRef=old, _hours=_canonical_module_progress([],module_list,
-                record_index=(progress_index[0],{mid:sorted(combined.items())} if mid in progress_index[0] else {}))
-                .get(mid, {}).get('hours', {}).get('actual'))
-            del by_id[old]
+    for ref, transfer in approved.items():
+        if ref in by_id:
+            by_id.pop(transfer['courseRef'], None)
     with projection_stage('module_hours'):
         progress = supplement_module_hours(_canonical_module_progress(records,module_list,record_index=progress_index), records, credits) if search is None else {}
     today = datetime.now(UK).date().isoformat()
@@ -323,11 +303,27 @@ def assemble_cards(native, current, courses, definitions, done, started, hours, 
             finalTestPassed=any(i.get('component', {}).get('isQuiz') and 'final' in i['title'].lower() and native_done({k:v for k,v in i['component'].items() if k not in ('previousLearning','attendanceCompleted')}, native) for i in items),
             planModule={k: module.get(k) for k in ('start_date','end_date','tutor_name','total_otjh','educational_session_count','programme_name','cohort_name','group_name')} if module else None,
             actualHours=subject.pop('_hours',None) if subject['source'] == 'legacy' or subject.get('replacementCourseRef') else progress.get(subject.get('moduleId'), {}).get('hours', {}).get('actual'))
+        pending = next((item for item in transfers if item['courseRef'] == subject['id'] and item['status'] == 'pending'), None)
+        if pending:
+            subject.update(progress=pending['percent'], actualHours=pending['hours'],
+                activityCount=pending['activityCount'], completedActivityCount=pending['completedActivityCount'], transferPending=True)
+        transfer = approved.get(subject['id'])
+        if transfer:
+            completed_ids = [item['id'] for item in items if item['completed']]
+            subject['progress'] = credited_percent(transfer, completed_ids, count)
+            subject['transferredProgress'] = transfer['percent']
+            subject.pop('importedCourseRef', None)
+            previous_ids = set(transfer['recordIds'])
+            native_records = [record for record in records if str(record['id']) not in previous_ids]
+            native_hours = supplement_module_hours(_canonical_module_progress(native_records, module_list), native_records, credits)
+            subject['actualHours'] = round(transfer['hours'] + native_hours.get(subject.get('moduleId'), {}).get('hours', {}).get('actual', 0), 6)
+            subject['status'] = 'Completed' if subject['progress'] == 100 else 'In progress' if subject['progress'] > 0 else 'Upcoming'
         cards.append(subject)
     def totals(source):
         rows = [c for c in cards if c['source'] == source]
         total, complete = sum(c['activityCount'] for c in rows), sum(c['completedActivityCount'] for c in rows)
-        return {'subjects': len(rows), 'total': total, 'completed': complete, 'percent': percent(complete,total)}
+        weighted = sum(c['progress'] * c['activityCount'] for c in rows)
+        return {'subjects': len(rows), 'total': total, 'completed': complete, 'percent': round(weighted/total, 2) if total else 0}
     if search is not None:
         return cards, {}
     return cards, {'current': totals('current'), 'previous': totals('legacy'),
@@ -421,6 +417,8 @@ def load_context(source, owner, subject_id=None, *, purpose='catalogue'):
     metadata = dict(covers=covers, builder_subjects=builder, current_subjects=current, activity_dates=dates,
         imported_courses=imports, replacement_courses=replacements, previous_learning_groups=groups,
         replacement_settings=settings, record_ids=record_ids, modules=modules)
+    from .progress_transfer_store import read_state
+    metadata['progress_transfers'] = read_state(source.pk)['items'] if owner.get('progress_transfer_active') else []
     return assigned, ids, records, native, courses, definitions, done, started, hours, metadata, credits
 
 
