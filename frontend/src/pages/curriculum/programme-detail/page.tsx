@@ -26,6 +26,7 @@ import { KsbAchievementTab } from '@/pages/curriculum/shared/entities/KsbAchieve
 // re-drawn here.
 import {
   DetailRow,
+  EntityDrawer,
   EntityEmptyState,
   EntityFilterBar,
   EntityTable,
@@ -57,6 +58,7 @@ import type {
   CurriculumStaffProfile,
   CurriculumHoliday,
   CurriculumKsbCoverageResponse,
+  CurriculumKsbCoverageSummaryResponse,
   CurriculumKsbSet,
   CurriculumStandard,
 } from '@/lib/curriculumApi';
@@ -68,6 +70,7 @@ import {
   fetchCurriculumProgrammeDetailShell,
   fetchProgrammeKsbStats,
   fetchCurriculumProgrammeKsbCoverage,
+  fetchCurriculumProgrammeKsbCoverageSummary,
   fetchCurriculumScopeLearnerRoster,
   fetchCurriculumKsbSets,
   fetchCurriculumKsbFrameworks,
@@ -491,13 +494,11 @@ function ksbKind(code: string): KsbKind {
   return 'other';
 }
 
+// A code reads exactly as its source stores it. A standard's K13 is its
+// thirteenth knowledge item; showing it as K1.3 invents a sub-item the
+// standard does not have, and sorts it between K1 and K2.
 function formatKsbCode(code: string) {
-  const value = clean(code).toUpperCase();
-  const match = value.match(/^([KSB])(\d+(?:\.\d+)?)$/);
-  if (!match) return value;
-  const [, prefix, number] = match;
-  if (number.includes('.') || number.length === 1) return `${prefix}${number}`;
-  return `${prefix}${number.slice(0, 1)}.${number.slice(1)}`;
+  return clean(code).toUpperCase();
 }
 
 function ksbTone(kind: KsbKind) {
@@ -974,21 +975,39 @@ function programmeDetailToOverview(
   };
 }
 
-/**
- * Resolves once the browser has a moment to spare -- or after `timeoutMs` at
- * the latest -- so a page's non-critical reads start behind the ones it is
- * waiting on instead of alongside them.
- */
-function whenBrowserIdle(signal?: AbortSignal, timeoutMs = 2_000): Promise<void> {
-  return new Promise(resolve => {
-    if (signal?.aborted) {
-      resolve();
-      return;
-    }
-    const requestIdle = (globalThis as { requestIdleCallback?: (callback: () => void, options?: { timeout?: number }) => number }).requestIdleCallback;
-    if (typeof requestIdle === 'function') requestIdle(() => resolve(), { timeout: timeoutMs });
-    else setTimeout(resolve, 200);
-  });
+const programmeReferenceLoaders = {
+  coaches: fetchCurriculumCoaches,
+  tutors: fetchCurriculumTutors,
+  holidays: fetchCurriculumHolidays,
+  ksbFrameworks: fetchCurriculumKsbFrameworks,
+};
+type ProgrammeReference = keyof typeof programmeReferenceLoaders;
+
+function useProgrammeReference(
+  key: ProgrammeReference,
+  enabled: boolean,
+  receive: (key: ProgrammeReference, rows: CurriculumOverview[ProgrammeReference]) => void,
+  revision: number,
+) {
+  const [ready, setReady] = useState(false);
+  const [error, setError] = useState('');
+  const [attempt, setAttempt] = useState(0);
+  useEffect(() => {
+    if (!enabled) return;
+    const controller = new AbortController();
+    setError('');
+    void programmeReferenceLoaders[key](controller.signal)
+      .then(rows => {
+        if (controller.signal.aborted) return;
+        receive(key, rows);
+        setReady(true);
+      })
+      .catch(error => {
+        if (!controller.signal.aborted) setError(error instanceof Error ? error.message : `Unable to load ${key}.`);
+      });
+    return () => controller.abort();
+  }, [enabled, key, receive, revision, attempt]);
+  return { ready, error, retry: () => setAttempt(value => value + 1) };
 }
 
 function useProgrammeDetailData(programmeId: string) {
@@ -999,6 +1018,10 @@ function useProgrammeDetailData(programmeId: string) {
   // A silent reload is in flight behind a page that is still showing real data.
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [readRevision, setReadRevision] = useState(0);
+  const receiveReference = useCallback((key: ProgrammeReference, rows: CurriculumOverview[ProgrammeReference]) => {
+    setData(current => current ? { ...current, [key]: rows } : current);
+  }, []);
 
   // `silent` keeps what is on screen instead of dropping the whole page back to
   // a skeleton. Every save used to take the loud path, so finishing a save blanked
@@ -1033,10 +1056,12 @@ function useProgrammeDetailData(programmeId: string) {
     // rows: the module drawer gets a moduleFormTarget, and a Teams push
     // re-reads the module's structure.
     const sectionOptions = { visibility: 'all' as const, skipCache: options.skipCache, revalidate: options.revalidate };
-    const modulesRequest = fetchCurriculumProgrammeDetailModules(programmeId, signal, sectionOptions);
+    const modulesRequest = fetchCurriculumProgrammeDetailModules(programmeId, signal, { ...sectionOptions, view: 'workspace' });
     // The learner KSB aggregates are expensive on a cold read, so they come
     // from their own endpoint, started now rather than after the shell.
-    const statsRequest = fetchProgrammeKsbStats(programmeId, signal, { visibility: 'all' });
+    const statsRequest = fetchProgrammeKsbStats(programmeId, signal, {
+      visibility: 'all', revalidate: options.revalidate || options.skipCache,
+    });
     // Awaited below; these keep a rejection that lands first from going unhandled.
     modulesRequest.catch(() => undefined);
     statsRequest.catch(() => undefined);
@@ -1067,23 +1092,6 @@ function useProgrammeDetailData(programmeId: string) {
         })
         .catch(() => undefined);
 
-      // Reference lists for the drawers, filters and labels. Started once the
-      // browser is idle rather than in the same tick as the detail, so the
-      // reads the open tab is waiting on (coverage, roster, components) are
-      // not queued behind them. The whole programme list used to be read here
-      // too, only to find this programme again: the detail's own programme row
-      // comes from the same build_programmes() call, so it is used as it is.
-      void whenBrowserIdle(signal).then(() => (signal?.aborted ? null : Promise.all([
-        fetchCurriculumCoaches(signal).catch(() => []),
-        fetchCurriculumTutors(signal).catch(() => []),
-        fetchCurriculumKsbFrameworks(signal).catch(() => []),
-        fetchCurriculumHolidays(signal).catch(() => []),
-      ]))).then((references) => {
-        if (!references || signal?.aborted) return;
-        const [coaches, tutors, ksbFrameworks, holidays] = references;
-        setData((current) => (current ? { ...current, coaches, tutors, ksbFrameworks, holidays } : current));
-      });
-
       const { flat: { modules, sessions } } = await modulesRequest;
       if (signal?.aborted) return null;
       setData(current => (current ? {
@@ -1092,6 +1100,7 @@ function useProgrammeDetailData(programmeId: string) {
         sessions,
         stats: { ...current.stats, modules: modules.length, sessions: sessions.length },
       } : current));
+      if (options.silent || options.skipCache) setReadRevision(value => value + 1);
       setModulesLoading(false);
       return programmeDetailToOverview({ ...shell, cohorts: [], flat: { ...shell.flat, modules, sessions } });
     } catch (err) {
@@ -1131,6 +1140,8 @@ function useProgrammeDetailData(programmeId: string) {
     modulesLoading,
     refreshing,
     error,
+    readRevision,
+    receiveReference,
     reload: (options?: { silent?: boolean }) => load(undefined, { skipCache: true, ...options }),
   };
 }
@@ -2310,11 +2321,11 @@ function isProgrammeDetailTab(value: string | null): value is Tab {
 export default function ProgrammeDetailPage() {
   const { id } = useParams();
   const navigate = useNavigate();
-  const { data, loading, modulesLoading, refreshing, error, reload } = useProgrammeDetailData(id || '');
+  const { data, loading, modulesLoading, refreshing, error, reload, readRevision, receiveReference } = useProgrammeDetailData(id || '');
   const [detailComponents, setDetailComponents] = useState<CurriculumComponent[]>([]);
   const hydratedData = useMemo(() => data ? { ...data, components: detailComponents } : data, [data, detailComponents]);
   const { programme: liveProgramme, found } = useMemo(() => buildLiveProgramme(hydratedData, id || ''), [hydratedData, id]);
-  const [backendCoverage, setBackendCoverage] = useState<CurriculumKsbCoverageResponse | null>(null);
+  const [backendCoverage, setBackendCoverage] = useState<CurriculumKsbCoverageResponse | CurriculumKsbCoverageSummaryResponse | null>(null);
   const [backendCoverageLoading, setBackendCoverageLoading] = useState(false);
   const [backendCoverageError, setBackendCoverageError] = useState<string | null>(null);
   // Learner placements come from the enrolment team's records. Curriculum
@@ -2518,6 +2529,17 @@ export default function ProgrammeDetailPage() {
   // inferred from the KSB profiles and standards, so coverage waits for both
   // rather than reading once with no source and again when they land.
   const explicitKsbSourceId = programmeKsbCoverageSource(liveProgramme).sourceId;
+  const standardSource = normaliseKsbSourceType(coverageKsbSource.sourceType, coverageKsbSource.sourceId) === 'standard';
+  const needsCoverage = tab === 'overview' || tab === 'coverage' || tab === 'achievement' || tab === 'quality';
+  const coachReference = useProgrammeReference('coaches', Boolean(data) && (tab === 'groups' || groupDrawerCohortId !== null), receiveReference, readRevision);
+  const tutorReference = useProgrammeReference('tutors', Boolean(data) && Boolean(editingModule), receiveReference, readRevision);
+  const holidayReference = useProgrammeReference('holidays', Boolean(data) && (cohortDrawerOpen || Boolean(editingModule)), receiveReference, readRevision);
+  useProgrammeReference('ksbFrameworks', Boolean(data) && needsCoverage && !standardSource, receiveReference, readRevision);
+  const pendingEditorReference = [
+    ...(cohortDrawerOpen || editingModule ? [holidayReference] : []),
+    ...(editingModule ? [tutorReference] : []),
+    ...(groupDrawerCohortId !== null ? [coachReference] : []),
+  ].find(reference => !reference.ready);
   const coverageKsbSourceLabel = useMemo(
     () => ksbCoverageSourceLabel(coverageKsbSource, data, programmeKsbSets, skillsStandards),
     [coverageKsbSource, data, programmeKsbSets, skillsStandards],
@@ -2531,6 +2553,7 @@ export default function ProgrammeDetailPage() {
   // reading as a deliberate assignment.
   const coverageKsbSourceApplied = Boolean(splitProgrammeKsbSource(liveProgramme.ksbProfileSourceId).sourceId);
 
+  const summaryCoverageOnly = tab === 'overview';
   const loadBackendCoverage = useCallback((signal?: AbortSignal) => {
     if (!coverageProgrammeIds.length) return Promise.resolve();
     setBackendCoverageLoading(true);
@@ -2539,7 +2562,8 @@ export default function ProgrammeDetailPage() {
       let lastError: unknown = null;
       for (const programmeId of coverageProgrammeIds) {
         try {
-          return await fetchCurriculumProgrammeKsbCoverage(programmeId, coverageKsbSource, signal);
+          const fetchCoverage = summaryCoverageOnly ? fetchCurriculumProgrammeKsbCoverageSummary : fetchCurriculumProgrammeKsbCoverage;
+          return await fetchCoverage(programmeId, { ...coverageKsbSource, revalidate: readRevision > 0 }, signal);
         } catch (error) {
           if (signal?.aborted) throw error;
           lastError = error;
@@ -2548,6 +2572,7 @@ export default function ProgrammeDetailPage() {
       throw lastError || new Error('Unable to load backend KSB coverage heatmap.');
     })()
       .then(result => {
+        if (signal?.aborted) return;
         setBackendCoverage(result);
         setBackendCoverageError(null);
       })
@@ -2560,7 +2585,7 @@ export default function ProgrammeDetailPage() {
       .finally(() => {
         if (!signal?.aborted) setBackendCoverageLoading(false);
       });
-  }, [coverageKsbSource, coverageProgrammeIds]);
+  }, [coverageKsbSource, coverageProgrammeIds, readRevision, summaryCoverageOnly]);
 
   // Sum completed hours across every placement; the readiness calculation later
   // compares that aggregate with planned curriculum hours per placed learner.
@@ -2573,7 +2598,7 @@ export default function ProgrammeDetailPage() {
         try {
           // 'all': a paused or completed placement is still a learner whose
           // hours count towards the programme.
-          return await fetchCurriculumScopeLearnerRoster('programme', programmeId, { learnerStatus: 'all' }, signal);
+          return await fetchCurriculumScopeLearnerRoster('programme', programmeId, { learnerStatus: 'all', revalidate: readRevision > 0 }, signal);
         } catch (error) {
           if (signal?.aborted) throw error;
           lastError = error;
@@ -2597,7 +2622,7 @@ export default function ProgrammeDetailPage() {
       .finally(() => {
         if (!signal?.aborted) setLearnerOtjhLoading(false);
       });
-  }, [coverageProgrammeIds]);
+  }, [coverageProgrammeIds, readRevision]);
 
   useEffect(() => {
     if (tab !== 'overview' || !coverageProgrammeIds.length) return;
@@ -2612,15 +2637,14 @@ export default function ProgrammeDetailPage() {
     };
   }, [coverageProgrammeIds, loadLearnerOtjh, tab]);
 
-  // Overview reads the same coverage the KSB tab draws — its readiness figure and
-  // the header's coverage stat are that heatmap counted, not a second calculation
-  // — so landing on the page loads it once and both agree.
-  const needsCoverage = tab === 'overview' || tab === 'coverage' || tab === 'achievement' || tab === 'quality';
+  // Overview reads per-KSB counts/weights; the detailed tabs request the evidence
+  // matrix only when opened. Both use the same source/scope and mapping rules.
+  const coverageSourceReady = Boolean(explicitKsbSourceId) || (ksbSetsSettled && standardsSettled);
 
   useEffect(() => {
     if (!needsCoverage) return;
-    if (!explicitKsbSourceId && (!ksbSetsSettled || !standardsSettled)) return;
-    const coverageKey = [coverageProgrammeIds.join('|'), coverageKsbSource.sourceType || '', coverageKsbSource.sourceId || ''].join('::');
+    if (!coverageProgrammeIds.length || !coverageSourceReady) return;
+    const coverageKey = [coverageProgrammeIds.join('|'), coverageKsbSource.sourceType || '', coverageKsbSource.sourceId || '', summaryCoverageOnly ? 'summary' : 'full'].join('::');
     if (!coverageKey || coverageRequestKeyRef.current === coverageKey) return;
     coverageRequestKeyRef.current = coverageKey;
     const controller = new AbortController();
@@ -2629,7 +2653,7 @@ export default function ProgrammeDetailPage() {
       controller.abort();
       if (coverageRequestKeyRef.current === coverageKey) coverageRequestKeyRef.current = '';
     };
-  }, [coverageKsbSource.sourceId, coverageKsbSource.sourceType, coverageProgrammeIds, explicitKsbSourceId, ksbSetsSettled, loadBackendCoverage, needsCoverage, standardsSettled]);
+  }, [coverageKsbSource.sourceId, coverageKsbSource.sourceType, coverageProgrammeIds, coverageSourceReady, loadBackendCoverage, needsCoverage, summaryCoverageOnly]);
 
   // Everyone enrolment placed at whichever scope is picked. A module asks at
   // 'module' scope rather than the programme filtered down to it: a module has
@@ -2671,15 +2695,16 @@ export default function ProgrammeDetailPage() {
     setProgrammeLearnerScope({ scope: 'programme', identifier: '', label: 'Programme', description: '' });
   }, [id]);
 
-  useEffect(() => {
-    if (!data) return;
-    const moduleCatalogueIds = [...new Set(data.modules.flatMap(module => [
+  const componentsScopeKey = JSON.stringify([...new Set((data?.modules || []).flatMap(module => [
       module.moduleCatalogueId,
       module.catalogueId,
       module.structureId,
       module.moduleId,
       ...(module.relatedCatalogueIds || []),
-    ]).map(value => clean(value)).filter(Boolean))];
+    ]).map(value => clean(value)).filter(Boolean))].sort());
+
+  useEffect(() => {
+    const moduleCatalogueIds: string[] = JSON.parse(componentsScopeKey);
     if (!moduleCatalogueIds.length) return;
     const componentsKey = moduleCatalogueIds.join('|');
     if (componentsRequestKeyRef.current === componentsKey) return;
@@ -2688,8 +2713,8 @@ export default function ProgrammeDetailPage() {
     // Without the authored long text: the counts, KSB roll-ups and session
     // rows read none of it. The KSB placement preview loads one component's
     // full settings when it opens (see useCompleteComponent).
-    fetchCurriculumComponents(controller.signal, { moduleCatalogueIds, omitContent: true })
-      .then(setDetailComponents)
+    fetchCurriculumComponents(controller.signal, { moduleCatalogueIds, omitContent: true, revalidate: readRevision > 0 })
+      .then(rows => { if (!controller.signal.aborted) setDetailComponents(rows); })
       .catch(error => {
         if (!controller.signal.aborted) {
           componentsRequestKeyRef.current = '';
@@ -2700,7 +2725,7 @@ export default function ProgrammeDetailPage() {
       controller.abort();
       if (componentsRequestKeyRef.current === componentsKey) componentsRequestKeyRef.current = '';
     };
-  }, [data]);
+  }, [componentsScopeKey, readRevision]);
 
   const programmeModuleCatalogueIds = useMemo(() => {
     if (!data) return [] as string[];
@@ -2760,7 +2785,10 @@ export default function ProgrammeDetailPage() {
   }, [tab, programmeModuleCatalogueIds, loadLiveOccurrences]);
 
   useEffect(() => {
-    if (!needsCoverage) return undefined;
+    if (!needsCoverage || !programmeLoaded) return undefined;
+    // Overview needs the applied standard's identity and counts. Detailed KSB
+    // tabs also use authored descriptions as a fallback for legacy mappings.
+    if (tab === 'overview' && explicitKsbSourceId && standardSource) return undefined;
     if (programmeKsbSets.length) return undefined;
     const controller = new AbortController();
     fetchCurriculumKsbSets(controller.signal)
@@ -2772,7 +2800,7 @@ export default function ProgrammeDetailPage() {
         if (!controller.signal.aborted) setKsbSetsSettled(true);
       });
     return () => controller.abort();
-  }, [needsCoverage, programmeKsbSets.length]);
+  }, [needsCoverage, programmeLoaded, programmeKsbSets.length, explicitKsbSourceId, standardSource, tab]);
 
   useEffect(() => {
     if (!needsCoverage) return undefined;
@@ -3532,7 +3560,7 @@ export default function ProgrammeDetailPage() {
     { key: 'groups', label: TAB_LABELS.groups, icon: 'ri-team-line', count: totalGroups },
     { key: 'modules', label: TAB_LABELS.modules, icon: 'ri-stack-line', count: activeModules.length, countLoading: modulesLoading },
     { key: 'sessions', label: TAB_LABELS.sessions, icon: 'ri-time-line', count: deliverySessions.length || undefined, countLoading: modulesLoading },
-    { key: 'coverage', label: TAB_LABELS.coverage, icon: 'ri-node-tree', count: missingKsbCount || undefined, countLoading: modulesLoading },
+    { key: 'coverage', label: TAB_LABELS.coverage, icon: 'ri-node-tree', count: missingKsbCount || undefined, countLoading: backendCoverageLoading && !backendCoverage },
     { key: 'achievement', label: TAB_LABELS.achievement, icon: 'ri-medal-line' },
     { key: 'quality', label: TAB_LABELS.quality, icon: 'ri-shield-check-line' },
     { key: 'reviews', label: TAB_LABELS.reviews, icon: 'ri-clipboard-line' },
@@ -4826,8 +4854,22 @@ export default function ProgrammeDetailPage() {
         onClose={() => setProgrammeDrawerOpen(false)}
         onSaved={() => reload({ silent: true })}
       />
+      {pendingEditorReference && (
+        <EntityDrawer open title="Loading editor options" submitLabel="Retry"
+          submitDisabled={!pendingEditorReference.error} error={pendingEditorReference.error}
+          onSubmit={pendingEditorReference.retry}
+          onClose={() => {
+            setCohortDrawerOpen(false);
+            setEditingCohort(null);
+            setEditingModule(null);
+            setGroupDrawerCohortId(null);
+            setEditingGroup(null);
+          }}>
+          {!pendingEditorReference.error && <p role="status">Loading editor options…</p>}
+        </EntityDrawer>
+      )}
       <CohortFormDrawer
-        open={cohortDrawerOpen}
+        open={cohortDrawerOpen && !pendingEditorReference}
         cohort={editingCohort}
         defaults={{ programmeId: drawerProgrammeId }}
         programmes={drawerProgrammes}
@@ -4836,7 +4878,7 @@ export default function ProgrammeDetailPage() {
         onSaved={() => reload({ silent: true })}
       />
       <GroupFormDrawer
-        open={groupDrawerCohortId !== null}
+        open={groupDrawerCohortId !== null && !pendingEditorReference}
         group={editingGroup}
         defaults={{ programmeId: drawerProgrammeId, cohortId: groupDrawerCohortId || undefined }}
         programmes={drawerProgrammes}
@@ -4846,7 +4888,7 @@ export default function ProgrammeDetailPage() {
         onSaved={() => reload({ silent: true })}
       />
       <ModuleFormDrawer
-        open={Boolean(editingModule)}
+        open={Boolean(editingModule) && !pendingEditorReference}
         module={editingModule}
         defaults={{ programmeId: drawerProgrammeId }}
         programmes={drawerProgrammes}
@@ -5352,11 +5394,24 @@ function buildHeatmapModuleBindings(
 }
 
 function backendCoverageToProgrammeHeatmap(
-  coverage: CurriculumKsbCoverageResponse | null,
+  coverage: CurriculumKsbCoverageResponse | CurriculumKsbCoverageSummaryResponse | null,
   sourceLabels = new Map<string, string>(),
   programmeModules: Array<Pick<Module, 'id' | 'name'>> = [],
   ksbDescriptions = new Map<string, string>(),
 ): { moduleNames: string[]; rows: KsbHeatmapRow[] } | null {
+  if (coverage && 'view' in coverage && coverage.view === 'summary') {
+    return {
+      moduleNames: programmeModules.map(module => module.name),
+      rows: coverage.items.map(row => ({
+        id: row.coverage_key, ksb: row.code, title: row.title || row.code,
+        description: row.description || '', sourceType: row.source_type, sourceId: row.source_id,
+        sourceName: row.source_name || '', sourceLabel: row.source_label || '',
+        totalWeight: Number(row.raw_total_weight || 0), totalOccurrences: Number(row.occurrence_count || 0),
+        coverage: {}, counts: {}, evidence: {}, missing: !(row.raw_total_weight > 0 || row.occurrence_count > 0),
+      })),
+    };
+  }
+  if (!coverage || !('heatmap' in coverage)) return null;
   if (!coverage?.heatmap?.modules?.length) return null;
   const moduleBindings = buildHeatmapModuleBindings(coverage.heatmap.modules, programmeModules);
   const moduleNames = moduleBindings.map(module => module.label);

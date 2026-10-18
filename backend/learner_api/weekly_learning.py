@@ -126,11 +126,12 @@ def _weekly_component(c):
             if value is not None or key in {"module", "week", "component", "expectedOtjh"}}
 
 
-def _progress(profile):
+def _progress(profile, *, active_only=False):
     """The completion facts to_learner_detail splits from training_plan_progress."""
     if profile is None:
         return [], [], []
-    rows = profile.progress_entries.exclude(kind="activity_event").values_list(
+    entries = profile.progress_entries.filter(deleted_at__isnull=True) if active_only else profile.progress_entries
+    rows = entries.exclude(kind="activity_event").values_list(
         "kind", "passed", "component_ref", "quiz_ref", "grade", "started_at", "submitted_at")
     quizzes, videos, components = [], {}, {}
     for kind, passed, component_ref, quiz_ref, grade, started_at, submitted_at in rows:
@@ -149,13 +150,15 @@ def _progress(profile):
     return quizzes, list(videos.values()), list(components.values())
 
 
-def build_learning_content_summary(source, pk, *, learning_summary=False, assigned_modules=None, strict=False, week_ids=None, identities_only=False, progress=None, compact_content=False):
+def build_learning_content_summary(source, pk, *, learning_summary=False, assigned_modules=None, strict=False, week_ids=None, identities_only=False, progress=None, compact_content=False, preserve_legacy=False, include_component_details=False, resolved_metadata=None):
+    from learner_api.projection_performance import projection_stage
+
     # Same readers as build_learner_detail, without its write-on-read repairs.
     from .learner_detail import (_annotate_otjh, _append_week_quizzes,
                                  _apply_programme_assignment_template, _resolve_from_master)
 
     assigned = effective_training_plan(source, request_preset_cache(source)) if assigned_modules is None else assigned_modules
-    modules, weeks, components = ([], [], []) if identities_only or week_ids is not None else flatten_training_plan(get_training_plan(source))
+    modules, weeks, components = ([], [], []) if (identities_only and not preserve_legacy) or week_ids is not None else flatten_training_plan(get_training_plan(source))
     # live_session_ids=False: the Teams series ids it looks up are never sent.
     # expected_otjh=True: master rows bring their expected hours, so only the
     # rest (legacy and snapshot-only entries) need _annotate_otjh's lookups.
@@ -163,23 +166,34 @@ def build_learning_content_summary(source, pk, *, learning_summary=False, assign
     projection_options = {"week_ids": week_ids, "identities_only": identities_only} if identities_only or week_ids is not None else {}
     if compact_content:
         projection_options['compact_content'] = True
-    modules, weeks, components = _resolve_from_master(
-        modules, weeks, components, assigned_modules=assigned, compact=True,
-        live_session_ids=False, expected_otjh=not identities_only, **projection_options, **strict_options)
+    if resolved_metadata is not None:
+        projection_options['resolved_metadata'] = resolved_metadata
+    if identities_only and preserve_legacy:
+        projection_options['catalogue_facts'] = True
+    with projection_stage('native_content'):
+        modules, weeks, components = _resolve_from_master(
+            modules, weeks, components, assigned_modules=assigned, compact=True,
+            live_session_ids=False, expected_otjh=not identities_only, **projection_options, **strict_options)
     if not identities_only:
         components = _apply_programme_assignment_template(components, getattr(source, "programme", ""))
         _annotate_otjh([c for c in components if "expectedOtjh" not in c])
     quiz_options = {"native_week_ids": True} if identities_only or week_ids is not None else {}
-    weeks, components = _append_week_quizzes(weeks, components, assigned_modules=assigned, **strict_options, **quiz_options)
+    if resolved_metadata is not None and 'quiz_modules' in resolved_metadata:
+        quiz_options['resolved_metadata'] = resolved_metadata
+    with projection_stage('native_quizzes'):
+        weeks, components = _append_week_quizzes(weeks, components, assigned_modules=assigned, **strict_options, **quiz_options)
 
     # heal=False: this GET must never write, not even the identity self-heal.
     owned_profile = getattr(source, '_case_file_profile', None) if learning_summary or strict else None
-    quiz_attempts, video_progress, component_progress = progress if progress is not None else _progress(
-        owned_profile if owned_profile is not None else learner_profile_for_source(source, pk, heal=False))
+    profile = owned_profile if owned_profile is not None else (learner_profile_for_source(source, pk, heal=False) if progress is None else None)
+    with projection_stage('native_progress'):
+        quiz_attempts, video_progress, component_progress = progress if progress is not None else _progress(
+            profile, **({'active_only': True} if preserve_legacy else {}))
     detail = {"components": components, "quizAttempts": quiz_attempts}
     # Compact projections need completed credit only, as learner-detail's summary.
     if progress is None:
-        retain_quiz_progress(detail, completed_only=True, **strict_options)
+        with projection_stage('retained_quizzes'):
+            retain_quiz_progress(detail, completed_only=True, **strict_options)
     if week_ids is not None:
         components = [c for c in components if str(c.get("weekId")) in set(map(str, week_ids))]
     result = {
@@ -191,7 +205,7 @@ def build_learning_content_summary(source, pk, *, learning_summary=False, assign
         # buildLearnerJourney's module and week order, for the hero's lecture link.
         "modules": modules,
         "week": [{key: w.get(key) for key in ("module", "week", "moduleId", "weekId")} for w in weeks],
-        "components": components if identities_only else [_weekly_component(c) for c in components],
+        "components": components if identities_only or include_component_details else [_weekly_component(c) for c in components],
         "quizAttempts": quiz_attempts,
         "videoProgress": video_progress,
         "componentProgress": component_progress,

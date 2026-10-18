@@ -224,7 +224,38 @@ def coverage_sort_key(identity):
     return (ksb_sort_key(code), source_type, source_id)
 
 
-def build_coverage(required_ksbs, mapping_rows, module_rows, week_rows, component_rows, include_mapping_only=True):
+def build_coverage_summary(required_ksbs, mapping_rows, include_mapping_only=True):
+    """The same per-source KSB weights/counts without evidence or module cells."""
+    definitions = {}
+    for item in required_ksbs:
+        definition = normalise_required_definition(item)
+        if definition['code']:
+            definitions[coverage_identity(definition)] = definition
+    weights = defaultdict(Decimal)
+    counts = Counter()
+    for row in mapping_rows:
+        mapping = {
+            'code': normalise_code(row.get('ksb_code')),
+            'source_type': clean(row.get('source_type')),
+            'source_id': clean(row.get('source_id')),
+        }
+        identity = coverage_identity(mapping)
+        count = row.get('_stats_count', 1)
+        weights[identity] += decimal_weight(float_weight(row.get('weight'))) * count
+        counts[identity] += count
+        if include_mapping_only and mapping['code'] and identity not in definitions:
+            definitions[identity] = required_definition_from_mapping(mapping)
+    return {
+        'view': 'summary',
+        'items': [
+            {**definitions[identity], 'coverage_key': '|'.join(identity),
+             'raw_total_weight': float_weight(weights[identity]), 'occurrence_count': counts[identity]}
+            for identity in sorted(definitions, key=coverage_sort_key)
+        ],
+    }
+
+
+def build_coverage(required_ksbs, mapping_rows, module_rows, week_rows, component_rows, include_mapping_only=True, *, totals_only=False):
     modules_by_id = {clean(row.get('module_catalogue_id')): row for row in module_rows}
     module_authoring_weeks_by_id = {clean(row.get('id')): row for row in week_rows}
     components_by_id = {clean(row.get('id')): row for row in component_rows}
@@ -232,6 +263,17 @@ def build_coverage(required_ksbs, mapping_rows, module_rows, week_rows, componen
     serialised_mappings = []
     for row in mapping_rows:
         if not clean(row.get('module_catalogue_id')):
+            continue
+        if totals_only:
+            # Same identity and per-mapping rounding as serialise_mapping. The
+            # stats reader needs weights only, not mapping labels or a heatmap.
+            serialised_mappings.append({
+                'code': normalise_code(row.get('ksb_code')),
+                'source_type': clean(row.get('source_type')),
+                'source_id': clean(row.get('source_id')),
+                'weight': float_weight(row.get('weight')),
+                '_stats_count': row.get('_stats_count', 1),
+            })
             continue
         module = modules_by_id.get(clean(row.get('module_catalogue_id')), {})
         week = module_authoring_weeks_by_id.get(clean(row.get('week_id')), {})
@@ -265,7 +307,12 @@ def build_coverage(required_ksbs, mapping_rows, module_rows, week_rows, componen
     for identity in sorted(definitions_by_identity, key=coverage_sort_key):
         definition = definitions_by_identity[identity]
         mappings = by_identity.get(identity, [])
-        raw_total = sum(decimal_weight(mapping.get('weight')) for mapping in mappings)
+        raw_total = sum(decimal_weight(mapping.get('weight')) * (
+            mapping['_stats_count'] if totals_only else 1
+        ) for mapping in mappings)
+        if totals_only:
+            items.append({'code': definition['code'], 'raw_total_weight': float_weight(raw_total)})
+            continue
         module_ids = {mapping.get('module_id') for mapping in mappings if mapping.get('module_id')}
         week_ids = {mapping.get('week_id') for mapping in mappings if mapping.get('week_id')}
         component_ids = {mapping.get('component_id') for mapping in mappings if mapping.get('component_id')}
@@ -311,6 +358,9 @@ def build_coverage(required_ksbs, mapping_rows, module_rows, week_rows, componen
             bucket['total_weight'] = float_weight(
                 decimal_weight(bucket['total_weight']) + raw_total
             )
+
+    if totals_only:
+        return {'items': items}
 
     heatmap_modules = [
         {

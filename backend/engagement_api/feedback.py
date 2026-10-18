@@ -32,7 +32,8 @@ from learner_api.profile_photo import normalize_photo
 from .helpers import json_body, json_error
 from .models import (
     FeedbackAnswer, FeedbackAssignment, FeedbackDelivery, FeedbackDeliveryRecipient,
-    FeedbackEventCampaign, FeedbackEventRecipient, FeedbackForm, FeedbackQuestion, FeedbackResponse,
+    FeedbackEventCampaign, FeedbackEventRecipient, FeedbackExternalRecipient, FeedbackForm,
+    FeedbackQuestion, FeedbackResponse,
     FeedbackSection, FeedbackUpload,
 )
 from .permissions import (
@@ -46,7 +47,9 @@ QUESTION_TYPES = {
     'name', 'email', 'photo_upload',
 }
 CHOICE_TYPES = {'single_choice', 'multiple_choice', 'dropdown', 'likert'}
-FORM_TYPES = {'general', 'post_lecture', 'post_event', 'event_rsvp'}
+EXTERNAL_FORM_TYPES = {'information_session', 'commitment_meeting'}
+VERSIONED_FORM_TYPES = {'post_lecture', *EXTERNAL_FORM_TYPES}
+FORM_TYPES = {'general', 'post_lecture', 'post_event', 'event_rsvp', *EXTERNAL_FORM_TYPES}
 SECTION_ICONS = {
     'ri-file-list-3-line', 'ri-user-line', 'ri-book-open-line',
     'ri-star-line', 'ri-chat-3-line', 'ri-lightbulb-line',
@@ -115,6 +118,8 @@ def _section_dict(section):
 
 
 def _assigned_count(form):
+    if form.form_type in EXTERNAL_FORM_TYPES:
+        return FeedbackExternalRecipient.objects.filter(campaign__form=form).count()
     if form.form_type == 'post_event':
         return FeedbackEventRecipient.objects.filter(
             event__feedback_campaigns__form=form,
@@ -122,7 +127,7 @@ def _assigned_count(form):
             revoked_at__isnull=True,
         ).distinct().count()
     family_ids = [form.id]
-    if form.form_type == 'post_lecture':
+    if form.form_type in VERSIONED_FORM_TYPES:
         family_ids = list(FeedbackForm.objects.filter(template_key=form.template_key).values_list('id', flat=True))
     assignments = list(FeedbackAssignment.objects.filter(form_id__in=family_ids))
     manual_count = (
@@ -138,7 +143,7 @@ def _assigned_count(form):
 
 def form_dict(form, *, include_structure=False):
     response_query = FeedbackResponse.objects.filter(form=form)
-    if form.form_type == 'post_lecture':
+    if form.form_type in VERSIONED_FORM_TYPES:
         response_query = FeedbackResponse.objects.filter(form__template_key=form.template_key)
     responses = list(response_query)
     completed = sum(r.status == 'completed' for r in responses)
@@ -163,8 +168,8 @@ def form_dict(form, *, include_structure=False):
         'updatedAt': _iso(form.updated_at), 'publishedAt': _iso(form.published_at),
         'assignedCount': _assigned_count(form), 'responseCount': completed,
         'startedCount': len(responses),
-        'structureLocked': form.form_type != 'post_lecture' and bool(responses),
-        'willCreateVersion': form.form_type == 'post_lecture' and _form_has_history(form),
+        'structureLocked': form.form_type not in VERSIONED_FORM_TYPES and bool(responses),
+        'willCreateVersion': form.form_type in VERSIONED_FORM_TYPES and _form_has_history(form),
     }
     if include_structure:
         data['sections'] = [_section_dict(s) for s in form.sections.all()]
@@ -179,10 +184,15 @@ def _form_version_dict(form):
         if any(item.target_type == 'all_learners' for item in assignments)
         else len({item.target_id for item in assignments if item.target_type == 'learner'})
     )
-    delivery_count = FeedbackDelivery.objects.filter(form=form).count()
+    external_delivery_count = form.external_campaigns.count() if form.form_type in EXTERNAL_FORM_TYPES else 0
+    external_recipient_count = (
+        FeedbackExternalRecipient.objects.filter(campaign__form=form).count()
+        if form.form_type in EXTERNAL_FORM_TYPES else 0
+    )
+    delivery_count = FeedbackDelivery.objects.filter(form=form).count() + external_delivery_count
     assigned_count = manual_count + FeedbackDeliveryRecipient.objects.filter(
         delivery__form=form, revoked_at__isnull=True,
-    ).count()
+    ).count() + external_recipient_count
     responses = FeedbackResponse.objects.filter(form=form)
     return {
         'id': form.id, 'title': form.title, 'version': form.version,
@@ -205,7 +215,9 @@ def _forms_queryset(*, current_only=False):
 
 
 def _form_has_history(form):
-    return form.responses.exists() or form.deliveries.exists()
+    if form.responses.exists() or form.deliveries.exists():
+        return True
+    return form.form_type in EXTERNAL_FORM_TYPES and form.external_campaigns.exists()
 
 
 def _post_lecture_publish_conflict(form):
@@ -318,7 +330,7 @@ def _apply_curriculum_scope(form, payload):
     if requested_type not in FORM_TYPES:
         raise ValueError('Unsupported feedback form type.')
     form.form_type = requested_type
-    if requested_type in {'general', 'post_event', 'event_rsvp'}:
+    if requested_type in {'general', 'post_event', 'event_rsvp', *EXTERNAL_FORM_TYPES}:
         form.delivery_scope = 'manual'
         for field in (
             'programme_id', 'programme_name', 'cohort_id', 'cohort_name',
@@ -513,15 +525,15 @@ def form_detail(request, pk):
         return json_error('Invalid JSON body.')
     if not form.is_current:
         return json_error('Historical form versions are read-only. Edit the current version instead.', status=409)
-    if form.form_type == 'post_lecture' and _form_has_history(form) and payload.get('formType', 'post_lecture') != 'post_lecture':
-        return json_error('A used post-lecture template cannot be changed into a general form.', status=409)
-    if form.form_type != 'post_lecture' and 'sections' in payload and form.responses.exists():
+    if form.form_type in VERSIONED_FORM_TYPES and _form_has_history(form) and payload.get('formType', form.form_type) != form.form_type:
+        return json_error('A used versioned template cannot be changed to another form type.', status=409)
+    if form.form_type not in VERSIONED_FORM_TYPES and 'sections' in payload and form.responses.exists():
         return json_error('Form structure is locked because a learner has started responding.', status=409)
-    if form.form_type != 'post_lecture' and _curriculum_scope_changed(form, payload) and form.responses.exists():
+    if form.form_type not in VERSIONED_FORM_TYPES and _curriculum_scope_changed(form, payload) and form.responses.exists():
         return json_error('The form type and curriculum scope are locked because a learner has started responding.', status=409)
     try:
         with transaction.atomic():
-            if form.form_type == 'post_lecture' and _form_has_history(form):
+            if form.form_type in VERSIONED_FORM_TYPES and _form_has_history(form):
                 previous = form
                 previous.is_current = False
                 previous.save(update_fields=['is_current', 'updated_at'])
@@ -607,6 +619,8 @@ def form_status(request, pk):
                 target = 'all modules' if form.delivery_scope == 'all_modules' else form.module_name or form.module_catalogue_id
                 return json_error(f'Another current post-lecture form is already published for {target}.', status=409)
         form.published_at = form.published_at or timezone.now()
+    elif status == 'draft' and form.form_type in EXTERNAL_FORM_TYPES and form.external_campaigns.exists():
+        return json_error('A form used by an external feedback campaign cannot be returned to draft. Create a new version instead.', status=409)
     elif status == 'draft' and form.responses.exists():
         return json_error('A form with responses cannot be returned to draft. Close it instead.', status=409)
     form.status = status
@@ -747,6 +761,10 @@ def responses_collection(request):
         responses = responses.filter(status=request.GET['status'])
     if request.GET.get('learner'):
         responses = responses.filter(learner_name__icontains=request.GET['learner'])
+    if request.GET.get('campaignType'):
+        responses = responses.filter(
+            external_recipient__campaign__campaign_type=request.GET['campaignType'],
+        )
     return JsonResponse({'responses': [_response_dict(r) for r in responses]})
 
 
@@ -834,6 +852,7 @@ def learner_forms(request):
         response = responses.get(form.id)
         items.append({
             'id': form.id, 'deliveryId': None, 'eventRecipientId': None,
+            'formType': 'general', 'moduleName': '',
             'title': form.title, 'description': form.description,
             'sessionTitle': '', 'sessionStartsAt': None,
             'assignedAt': _iso(assignment.assigned_at if assignment else None),
@@ -858,6 +877,8 @@ def learner_forms(request):
         response = delivery_responses.get(delivery.id)
         items.append({
             'id': form.id, 'deliveryId': delivery.id,
+            'formType': 'post_lecture',
+            'moduleName': delivery.module_name or form.module_name or '',
             'title': form.title, 'description': form.description,
             'sessionTitle': delivery.session_title, 'sessionStartsAt': _iso(delivery.starts_at),
             'assignedAt': _iso(recipient.assigned_at),
@@ -891,6 +912,8 @@ def learner_forms(request):
                 'id': form.id,
                 'deliveryId': None,
                 'eventRecipientId': recipient.id,
+                'formType': 'post_event',
+                'moduleName': '',
                 'title': form.title,
                 'description': form.description,
                 'sessionTitle': recipient.event.title,

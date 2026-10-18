@@ -174,11 +174,24 @@ def historical_candidate(source_id, family):
     }
 
 
+def template_definition_counts(definition):
+    """Match the library's counts, including both conditional question branches."""
+    def questions(fields):
+        return sum(
+            (0 if field.get('aptemType') == 11 else 1)
+            + questions(field.get('ifTrue') or []) + questions(field.get('ifFalse') or [])
+            for field in fields
+        )
+    sections = definition.get('sections') or []
+    return {'sections': len(sections), 'questions': sum(questions(section.get('fields') or []) for section in sections)}
+
+
 def serialize_template(template, *, definition=False):
     result = {"id": template.pk, "scope": template.scope, "programme_key": template.programme_key,
               "review_family": template.review_family, "name": template.name,
               "is_active": template.is_active, "updated_at": template.updated_at.isoformat(),
-              "source_metadata": template.source_metadata, "fingerprint": fingerprint(template.definition_json)}
+              "source_metadata": template.source_metadata, "fingerprint": fingerprint(template.definition_json),
+              "statistics": template_definition_counts(template.definition_json)}
     if definition:
         result["definition"] = template.definition_json
     return result

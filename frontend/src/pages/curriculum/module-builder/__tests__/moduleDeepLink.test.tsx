@@ -124,6 +124,7 @@ vi.mock('@/lib/curriculumApi', async importOriginal => ({
   fetchCurriculumTutors: vi.fn(async () => []),
   fetchCurriculumTeamsMeetingSummaries: vi.fn(async () => []),
   fetchCurriculumOverview: vi.fn(async () => ({ programmes, cohorts: [], groups: [], modules })),
+  fetchCurriculumDeliveryScope: vi.fn(async () => ({ cohorts: [], groups: [] })),
   fetchCurriculumHolidays: vi.fn(async () => []),
 }));
 
@@ -171,10 +172,25 @@ describe('Module Builder deep links', { timeout: 15000 }, () => {
   it('opens the module a ?module= link names', async () => {
     await renderAt('?module=MOD-20260818112738930447');
     // Reaching the authoring workspace means the catalogue row was resolved and
-    // openModule ran against the canonical id. Read uncached: the workspace
-    // replaces the whole structure on save, so it may only open the current one.
-    await waitFor(() => expect(loadModuleStructure).toHaveBeenCalledWith('MOD-20260818112738930447', { skipCache: true }));
+    // openModule ran against the canonical id. Revalidate with the server; the
+    // payload's revision protects the subsequent structure save.
+    await waitFor(() => expect(loadModuleStructure).toHaveBeenCalledWith('MOD-20260818112738930447', { revalidate: true }));
     expect(createNewModule).not.toHaveBeenCalled();
+  });
+
+  it('opens an assignment module without downloading the unused quiz catalogue', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({ results: [] })));
+    try {
+      const { createEmptyWeek, createEmptyComponent } = await import('../moduleAuthoringData');
+      const week = createEmptyWeek('MOD-20260818112738930447', 1);
+      week.components = [createEmptyComponent(week.id, 'assignment', 1)];
+      loadModuleStructure.mockResolvedValueOnce({ weekStructure: [week] } as never);
+      await renderAt('?module=MOD-20260818112738930447');
+      expect(await screen.findByRole('button', { name: 'Back to modules' })).toBeVisible();
+      expect(fetchSpy.mock.calls.filter(([url]) => String(url).includes('/quiz_api/quizzes/'))).toHaveLength(0);
+    } finally {
+      fetchSpy.mockRestore();
+    }
   });
 
   it('opens the id a ?module= link names, not a namesake the ?moduleTitle= also matches', async () => {
@@ -183,7 +199,7 @@ describe('Module Builder deep links', { timeout: 15000 }, () => {
     // to win outright -- otherwise the row reading 240h30m opens a namesake
     // whose own components add up to 24h32m.
     await renderAt('?module=MOD-20260911122630872014&moduleTitle=Social%20Media%20Marketing');
-    await waitFor(() => expect(loadModuleStructure).toHaveBeenCalledWith('MOD-20260911122630872014', { skipCache: true }));
+    await waitFor(() => expect(loadModuleStructure).toHaveBeenCalledWith('MOD-20260911122630872014', { revalidate: true }));
     // Asserted on the ids alone: the call now carries a second argument, so a
     // `not.toHaveBeenCalledWith(id)` would pass for any id at all.
     const requestedIds = (loadModuleStructure.mock.calls as unknown as unknown[][]).map(call => call[0]);

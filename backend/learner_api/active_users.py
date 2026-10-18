@@ -1276,7 +1276,7 @@ def recompute_completed_hours(learner_id):
         return None
 
 
-def cohort_delivery_window(programme, cohort):
+def cohort_delivery_window(programme, cohort, cohort_id=""):
     """The authored dates a learner inherits by being assigned to a cohort.
 
     Returns ``(start_date, practical_end_date, apprenticeship_end_date)``. The
@@ -1286,22 +1286,33 @@ def cohort_delivery_window(programme, cohort):
     date plus its End Point Assessment period. The apprenticeship date is None
     for a cohort with neither recorded, which is not the same as one that ends
     the day its practical period does.
+
+    ``cohort_id``, when the learner's placement holds one, decides on its own:
+    a renamed cohort keeps its id, and a name a learner record still carries
+    may by then belong to no cohort, or to a different one.
     """
-    programme, cohort = _s(programme), _s(cohort)
-    if not programme or not cohort:
+    programme, cohort, cohort_id = _s(programme), _s(cohort), _s(cohort_id)
+    if not cohort_id and (not programme or not cohort):
         return None, None, None
     try:
         with connections["enrolment"].cursor() as cursor:
-            cursor.execute(
-                # Table was renamed cohort_authoring_details -> cohorts by
-                # curriculum_api migration 0004; same columns.
-                'SELECT start_date, end_date, apprenticeship_end_date '
-                'FROM curriculum."cohorts" '
-                "WHERE lower(btrim(programme_name)) = lower(%s) "
-                "AND lower(btrim(cohort_name)) = lower(%s) "
-                "ORDER BY updated_at DESC NULLS LAST LIMIT 1",
-                [programme, cohort],
-            )
+            if cohort_id:
+                cursor.execute(
+                    'SELECT start_date, end_date, apprenticeship_end_date '
+                    'FROM curriculum."cohorts" WHERE cohort_id = %s',
+                    [cohort_id],
+                )
+            else:
+                cursor.execute(
+                    # Table was renamed cohort_authoring_details -> cohorts by
+                    # curriculum_api migration 0004; same columns.
+                    'SELECT start_date, end_date, apprenticeship_end_date '
+                    'FROM curriculum."cohorts" '
+                    "WHERE lower(btrim(programme_name)) = lower(%s) "
+                    "AND lower(btrim(cohort_name)) = lower(%s) "
+                    "ORDER BY updated_at DESC NULLS LAST LIMIT 1",
+                    [programme, cohort],
+                )
             row = cursor.fetchone()
     except DatabaseError as exc:
         logger.warning("Could not find cohort dates for %s / %s: %s", programme, cohort, exc)
@@ -1309,10 +1320,10 @@ def cohort_delivery_window(programme, cohort):
     return (row[0], row[1], row[2]) if row else (None, None, None)
 
 
-def cohort_dates(programme, cohort):
+def cohort_dates(programme, cohort, cohort_id=""):
     """The cohort's practical delivery window, for callers that only store one
     end date. See cohort_delivery_window for the apprenticeship end date."""
-    start_date, practical_end_date, _ = cohort_delivery_window(programme, cohort)
+    start_date, practical_end_date, _ = cohort_delivery_window(programme, cohort, cohort_id)
     return start_date, practical_end_date
 
 
@@ -1921,15 +1932,10 @@ def mirror_learner_placement(source):
 
         programme = _s(getattr(source, "programme", ""))
         cohort = _s(getattr(source, "cohort", ""))
-        start_date, end_date = cohort_dates(programme, cohort)
         updates = {
             "programme": programme,
             "cohort": cohort,
             "group_name": _s(getattr(source, "group", "")),
-            # The window belongs to the cohort, so it moves with the placement.
-            "start_date": start_date,
-            "end_date": end_date,
-            "gateway_review_date": end_date - timedelta(days=90) if end_date else None,
         }
         # Only when the name resolves to exactly one programme; see
         # _resolve_linkable_programme_id. An ambiguous name leaves the link as it
@@ -1953,6 +1959,16 @@ def mirror_learner_placement(source):
             updates["cohort_id"] = cohort_id
         if group_id:
             updates["group_id"] = group_id
+
+        # The window belongs to the cohort, so it moves with the placement. Read
+        # it from the cohort id the profile is left holding: a name this record
+        # still carries from before a rename resolves to nothing, and reading the
+        # dates by it blanked the learner's start date on any later edit.
+        window_cohort_id = cohort_id or (_s(getattr(profile, "cohort_id", "")) if cohort else "")
+        start_date, end_date = cohort_dates(programme, cohort, window_cohort_id)
+        updates["start_date"] = start_date
+        updates["end_date"] = end_date
+        updates["gateway_review_date"] = end_date - timedelta(days=90) if end_date else None
 
         changed = [
             field for field, value in updates.items()

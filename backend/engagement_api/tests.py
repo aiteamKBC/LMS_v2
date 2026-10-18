@@ -487,6 +487,7 @@ class FeedbackValidationTests(SimpleTestCase):
         )
         delivery = SimpleNamespace(
             id=21, form=form, session_title='Martech - Thur - Session 1',
+            module_name='Martech - Thur',
             starts_at=datetime(2026, 9, 17, 9, tzinfo=timezone.utc),
         )
         recipient = SimpleNamespace(
@@ -518,6 +519,8 @@ class FeedbackValidationTests(SimpleTestCase):
         body = json.loads(response.content)
         self.assertEqual(len(body['forms']), 1)
         self.assertEqual(body['forms'][0]['deliveryId'], 21)
+        self.assertEqual(body['forms'][0]['formType'], 'post_lecture')
+        self.assertEqual(body['forms'][0]['moduleName'], 'Martech - Thur')
         self.assertEqual(body['forms'][0]['sessionTitle'], 'Martech - Thur - Session 1')
 
     def test_staff_feedback_preview_requires_an_explicit_learner(self):
@@ -559,6 +562,8 @@ class FeedbackValidationTests(SimpleTestCase):
         self.assertEqual(response.status_code, 200)
         item = json.loads(response.content)['forms'][0]
         self.assertEqual(item['eventRecipientId'], 44)
+        self.assertEqual(item['formType'], 'post_event')
+        self.assertEqual(item['moduleName'], '')
         self.assertEqual(item['sessionTitle'], 'Leadership Day')
         self.assertEqual(
             event_recipient_query.filter.call_args.kwargs['invite_status__in'],

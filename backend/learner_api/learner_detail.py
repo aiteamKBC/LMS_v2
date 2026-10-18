@@ -558,7 +558,7 @@ def _matching_module_ids_for_quiz_record(quiz_record, modules_by_id, explicit_mo
     return []
 
 
-def _append_week_quizzes(weeks, components, assigned_modules=None, *, strict=False, native_week_ids=False):
+def _append_week_quizzes(weeks, components, assigned_modules=None, *, strict=False, native_week_ids=False, resolved_metadata=None):
     """Append published quizzes for the learner's weeks/modules.
 
     Visibility now honours explicit module assignments (curriculum.quiz_course_links)
@@ -613,7 +613,12 @@ def _append_week_quizzes(weeks, components, assigned_modules=None, *, strict=Fal
 
     try:
         with connections["enrolment"].cursor() as cur:
-            if module_order:
+            cached_modules = (resolved_metadata or {}).get('quiz_modules')
+            if module_order and cached_modules is not None:
+                modules_by_id = {mid:{key:_s(value) for key,value in meta.items()}
+                    for mid,meta in cached_modules.items() if mid in module_order}
+                module_order = [mid for mid in module_order if mid in modules_by_id]
+            elif module_order:
                 cur.execute(
                     """
                     SELECT m.module_catalogue_id, m.title, COALESCE(m.programme_id, ''), COALESCE(m.programme_name, '')
@@ -1335,7 +1340,7 @@ def _component_files(settings, resource_url, file_name):
     return [{"fileName": file_name, "url": resource_url, "size": 0, "contentType": None}] if resource_url else []
 
 
-def _cohort_schedule(cohort_name, programme_name):
+def _cohort_schedule(cohort_name, programme_name, cohort_id=""):
     """The dates the learner's cohort runs to, or an empty dict.
 
     Gateway is not something a learner reaches by finishing their modules early:
@@ -1343,25 +1348,33 @@ def _cohort_schedule(cohort_name, programme_name):
     Gateway open and the EPA window (``epa_months``) begin. The learner page
     needs those dates to say "modules complete, Gateway opens in March" rather
     than declaring someone Gateway-ready a year ahead of their cohort.
+
+    The cohort is found by ``cohort_id`` when the learner's placement holds one,
+    so renaming the cohort does not take its dates off the learner page.
     """
-    cohort_name = _s(cohort_name)
-    if not cohort_name:
+    cohort_name, cohort_id = _s(cohort_name), _s(cohort_id)
+    if not cohort_name and not cohort_id:
         return {}
-    try:
-        with connections["default"].cursor() as cur:
-            cur.execute(
-                """
+    columns = """
                 SELECT start_date, end_date, apprenticeship_end_date,
                        apprenticeship_end_override, epa_months
                 FROM curriculum.cohorts
-                WHERE cohort_name = %s
-                  AND (%s = '' OR programme_name = %s)
-                  AND deleted_at IS NULL
-                ORDER BY updated_at DESC NULLS LAST
-                LIMIT 1
-                """,
-                [cohort_name, _s(programme_name), _s(programme_name)],
-            )
+    """
+    try:
+        with connections["default"].cursor() as cur:
+            if cohort_id:
+                cur.execute(columns + " WHERE cohort_id = %s AND deleted_at IS NULL", [cohort_id])
+            else:
+                cur.execute(
+                    columns + """
+                    WHERE cohort_name = %s
+                      AND (%s = '' OR programme_name = %s)
+                      AND deleted_at IS NULL
+                    ORDER BY updated_at DESC NULLS LAST
+                    LIMIT 1
+                    """,
+                    [cohort_name, _s(programme_name), _s(programme_name)],
+                )
             row = cur.fetchone()
     except DatabaseError as exc:
         logger.warning("Could not read cohort schedule for %r: %s", cohort_name, exc)
@@ -1389,12 +1402,19 @@ def _apply_cohort_schedule(detail, source):
     detail.update({
         "cohortStartDate": "", "gatewayStartDate": "", "epaEndDate": "", "epaMonths": None,
     })
-    detail.update(_cohort_schedule(getattr(source, "cohort", ""), getattr(source, "programme", "")))
+    from .placement_links import placement_ids
+
+    try:
+        cohort_id = placement_ids(source)["cohort_id"]
+    except DatabaseError as exc:
+        logger.warning("Could not read the placement ids for the cohort schedule: %s", exc)
+        cohort_id = ""
+    detail.update(_cohort_schedule(getattr(source, "cohort", ""), getattr(source, "programme", ""), cohort_id))
 
 
 def _resolve_from_master(modules, weeks, components, assigned_modules=None, *, compact=False,
                          live_session_ids=True, expected_otjh=False, strict=False, week_ids=None, identities_only=False,
-                         resolved_metadata=None, routing_only=False, compact_content=False):
+                         resolved_metadata=None, routing_only=False, compact_content=False, catalogue_facts=False):
     """Rebuild the module -> week -> component tree LIVE from the master
     authoring tables (curriculum.modules/weeks/components) so coach edits in the
     Module Builder show up immediately for already-enrolled learners.
@@ -1480,6 +1500,13 @@ def _resolve_from_master(modules, weeks, components, assigned_modules=None, *, c
                     f"jsonb_build_object({video_sql},'readingContent',CASE WHEN "
                     f"coalesce(btrim(settings_json->>'readingContent','{strip_chars}'),'')<>'' THEN 'content' ELSE '' END) "
                     "ELSE '{}'::jsonb END")
+                if catalogue_facts:
+                    # My Learning's aggregate read needs live-session action
+                    # identities, not lesson bodies or KSB/assignment metadata.
+                    keys = ('sessionDate', 'sessionTime', 'sessionDateTimeUtc', 'teamsLiveSessionId',
+                            'teamsSessionNumber', 'teamsOccurrenceId', 'extraTeamsMeetingUrl', 'extraTeamsLiveSessionId')
+                    settings_sql += " || CASE WHEN lower(replace(btrim(type),'-','_'))='live_session' THEN jsonb_build_object(" + ','.join(
+                        f"'{key}',settings_json->'{key}'" for key in keys) + ") ELSE '{}'::jsonb END"
             if compact and not identities_only:
                 # List pages need to know whether a reading can be opened,
                 # not download every lesson's HTML. The runner reads its one
@@ -1596,7 +1623,7 @@ def _resolve_from_master(modules, weeks, components, assigned_modules=None, *, c
                         quiz_links = cur.fetchall()
                     for component_id, quiz_id in quiz_links:
                         quiz_id_by_component[component_id] = quiz_id
-            elif component_ids:
+            elif component_ids and (not catalogue_facts or any(row[3] == 'quiz' for row in master_components)):
                 cur.execute(
                     "SELECT link.component_id, link.quiz_id "
                     "FROM curriculum.quiz_component_links link "
@@ -1642,6 +1669,16 @@ def _resolve_from_master(modules, weeks, components, assigned_modules=None, *, c
                     if isinstance(settings, str):
                         settings = json.loads(settings)
                     settings = settings if isinstance(settings, dict) else {}
+                    if (catalogue_facts and resolved_metadata is not None
+                            and 'live_credit_components' in resolved_metadata
+                            and _s(ctype).strip().lower().replace('-', '_') == 'live_session'):
+                        # Same raw identities as read_live_credits' component
+                        # SELECT, before display-only extra-session overrides.
+                        resolved_metadata['live_credit_components'].append({
+                            'componentId':cid,'moduleId':mid,'title':title,'type':'live_session',
+                            **{key:(value if value is None or isinstance(value,str) else json.dumps(value))
+                               for key in ('teamsOccurrenceId','teamsLiveSessionId','teamsSessionNumber','sessionDate')
+                               for value in [settings.get(key)]}})
                     quiz = quiz_meta_by_id.get(quiz_id_by_component.get(cid))
                     if _s(ctype).strip().lower().replace('-', '_') == 'video' and not (
                         _video_url_from_settings(settings) or quiz or _s(settings.get('readingContent'))
@@ -1652,8 +1689,21 @@ def _resolve_from_master(modules, weeks, components, assigned_modules=None, *, c
                         continue
                     week = week_lookup[(mid, wid)]
                     out_components.append({**week, 'componentId': cid, 'isQuiz': bool(quiz),
-                                           'quizMeta': quiz, 'component': title})
-                return list(dict.fromkeys(_s(value) for value in master_module_title.values())), out_weeks, out_components
+                                           'quizMeta': quiz, 'component': title,
+                                           **({'type': ctype, 'sessionDate': _s(settings.get('sessionDate')) or None,
+                                               'sessionDateTimeUtc': _s(settings.get('sessionDateTimeUtc')) or None,
+                                               'teamsLiveSessionId': (_s(settings.get('extraTeamsLiveSessionId'))
+                                                   if _s(settings.get('extraTeamsMeetingUrl')) else '')
+                                                   or _s(settings.get('teamsLiveSessionId')) or None} if catalogue_facts else {})})
+                titles = list(dict.fromkeys(_s(value) for value in master_module_title.values()))
+                if catalogue_facts:
+                    # Preserve the same id-less rows as the full reader in a
+                    # mixed native/legacy plan. They have no master ID to query.
+                    legacy_titles = list(dict.fromkeys(w.get('module') for w in weeks if not w.get('moduleId') and w.get('module')))
+                    titles.extend(title for title in legacy_titles if title not in titles)
+                    out_weeks.extend(w for w in weeks if not w.get('moduleId') and w.get('module') in legacy_titles)
+                    out_components.extend(c for c in components if not c.get('moduleId') and c.get('module') in legacy_titles)
+                return titles, out_weeks, out_components
 
             # Authored KSB weight per component. Used to calculate and display
             # weighted KSB progress; it does not block activity completion.

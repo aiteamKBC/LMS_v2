@@ -176,7 +176,7 @@ function QuestionField({ question, value, onChange, readOnly, invalid, onPhotoUp
       return <Choice key={option} checkbox label={option} checked={selected.includes(option)} disabled={readOnly} onChange={() => onChange(selected.includes(option) ? selected.filter(x => x !== option) : [...selected, option])} />;
     })}</div>}
     {question.type === 'dropdown' && <select id={inputId} className={inputClass} disabled={readOnly} value={String(value ?? '')} onChange={e => onChange(e.target.value)}><option value="">Select an option</option>{options.map(option => <option key={option}>{option}</option>)}</select>}
-    {question.type === 'rating' && <div className="flex flex-wrap items-center gap-2"><span className="text-[11px] text-foreground-400">{question.config.minLabel}</span>{Array.from({ length: question.config.max || 5 }, (_, i) => i + 1).map(number => <button key={number} type="button" disabled={readOnly} onClick={() => onChange(number)} className={`h-9 w-9 rounded-lg border text-xs font-semibold ${value === number ? 'border-primary-500 bg-primary-500 text-white' : 'border-foreground-200 bg-white text-foreground-600'} disabled:cursor-default`}>{number}</button>)}<span className="text-[11px] text-foreground-400">{question.config.maxLabel}</span></div>}
+    {question.type === 'rating' && <RatingField question={question} value={value} onChange={onChange} readOnly={readOnly} />}
     {question.type === 'photo_upload' && <div
       onDragEnter={dragDropPhotos && !readOnly ? event => { event.preventDefault(); setDraggingPhoto(true); } : undefined}
       onDragOver={dragDropPhotos && !readOnly ? event => event.preventDefault() : undefined}
@@ -188,6 +188,26 @@ function QuestionField({ question, value, onChange, readOnly, invalid, onPhotoUp
       {readOnly && !photoValue && <p className="text-xs text-foreground-400">No photo uploaded.</p>}{uploadError && <p className="mt-2 text-xs text-red-600">{uploadError}</p>}
     </div>}
     {invalid && <p role="alert" className="mt-2 text-xs font-medium text-red-600">This field is required before continuing.</p>}
+  </div>;
+}
+
+function RatingField({ question, value, onChange, readOnly }: { question: FeedbackQuestion; value: FeedbackAnswerValue | undefined; onChange: (value: FeedbackAnswerValue) => void; readOnly: boolean }) {
+  const [hovered, setHovered] = useState(0);
+  const selected = typeof value === 'number' ? value : 0;
+  if (question.config.display !== 'stars') {
+    return <div className="flex flex-wrap items-center gap-2"><span className="text-[11px] text-foreground-400">{question.config.minLabel}</span>{Array.from({ length: question.config.max || 5 }, (_, index) => index + 1).map(number => <button key={number} type="button" disabled={readOnly} onClick={() => onChange(number)} className={`h-9 w-9 rounded-lg border text-xs font-semibold ${selected === number ? 'border-primary-500 bg-primary-500 text-white' : 'border-foreground-200 bg-white text-foreground-600'} disabled:cursor-default`}>{number}</button>)}<span className="text-[11px] text-foreground-400">{question.config.maxLabel}</span></div>;
+  }
+  const labels = Array.from({ length: 5 }, (_, index) => question.config.labels?.[index]?.trim() || '');
+  const highlighted = hovered || selected;
+  return <div>
+    <div role="radiogroup" aria-label={`${question.text} rating`} className="flex items-center gap-1" onMouseLeave={() => setHovered(0)}>
+      {labels.map((label, index) => {
+        const number = index + 1;
+        const accessibleLabel = `${number} ${number === 1 ? 'star' : 'stars'}${label ? `: ${label}` : ''}`;
+        return <button key={number} type="button" role="radio" aria-checked={selected === number} aria-label={accessibleLabel} title={label || accessibleLabel} disabled={readOnly} onMouseEnter={() => !readOnly && setHovered(number)} onFocus={() => !readOnly && setHovered(number)} onBlur={() => setHovered(0)} onClick={() => onChange(number)} className="rounded-md p-1 text-3xl leading-none transition-transform hover:scale-110 focus:outline-none focus:ring-2 focus:ring-amber-300 disabled:cursor-default disabled:hover:scale-100"><i aria-hidden="true" className={`${number <= highlighted ? 'ri-star-fill text-amber-400' : 'ri-star-line text-amber-400'}`} /></button>;
+      })}
+    </div>
+    {labels.some(Boolean) && <p aria-label="Rating scale descriptions" className="mt-2 text-[11px] leading-5 text-foreground-500">Scale: {labels.map((label, index) => label ? <span key={index} className="mr-2 inline-block"><strong className="font-semibold text-foreground-600">{index + 1}</strong> = {label}</span> : null)}</p>}
   </div>;
 }
 

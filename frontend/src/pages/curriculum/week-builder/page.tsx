@@ -2420,15 +2420,18 @@ function QuizBody({ component, onChange, setSetting, rulePoints, weekScope }: Co
   const [previewLoading, setPreviewLoading] = useState(false);
   const [previewError, setPreviewError] = useState('');
 
+  const quizLoadGeneration = useRef(0);
   const loadQuizzes = useCallback(async (signal?: AbortSignal) => {
+    const generation = ++quizLoadGeneration.current;
     setLoading(true);
     setLoadError('');
     try {
-      setQuizzes(await fetchWorkspaceQuizzes(signal));
+      const rows = await fetchWorkspaceQuizzes(signal, { refresh: !signal });
+      if (!signal?.aborted && generation === quizLoadGeneration.current) setQuizzes(rows);
     } catch (err) {
-      if (!signal?.aborted) setLoadError(err instanceof Error ? err.message : 'Unable to load quizzes.');
+      if (!signal?.aborted && generation === quizLoadGeneration.current) setLoadError(err instanceof Error ? err.message : 'Unable to load quizzes.');
     } finally {
-      if (!signal?.aborted) setLoading(false);
+      if (!signal?.aborted && generation === quizLoadGeneration.current) setLoading(false);
     }
   }, []);
 

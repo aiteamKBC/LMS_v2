@@ -34,6 +34,7 @@ from django.http import FileResponse, Http404, HttpResponse, HttpResponseNotModi
 from django.utils.text import get_valid_filename
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET
+from django.views.decorators.gzip import gzip_page
 from django.views.decorators.clickjacking import xframe_options_sameorigin
 from login.permissions import require_role
 from .weekly_schedule import module_weekly_schedule, merged_weekly_schedule
@@ -128,6 +129,7 @@ CURRICULUM_EPOCH_TABLE = 'cache_epoch'
 SHARED_EPOCH_POLL_SECONDS = 3.0
 _SHARED_EPOCH_STATE = {'value': None, 'checked_at': 0.0}
 _SHARED_EPOCH_LOCK = threading.Lock()
+_SHARED_EPOCH_REFRESH_LOCK = threading.Lock()
 _CURRICULUM_EPOCH_TABLE_READY = False
 # Per-thread: a write in this request has invalidated, and one shared bump is
 # owed once the request is through. Deduped because invalidate_curriculum_cache()
@@ -452,19 +454,36 @@ def shared_curriculum_epoch():
         checked_at = _SHARED_EPOCH_STATE['checked_at']
     if value is not None and now - checked_at < SHARED_EPOCH_POLL_SECONDS:
         return value
-    if not ensure_curriculum_epoch_table():
-        return local_shared_curriculum_epoch()
-    try:
-        with transaction.atomic():
-            epoch = read_shared_curriculum_epoch_row()
-    except Exception:
-        logger.warning('Unable to read the shared curriculum epoch.', exc_info=True)
-        # The last value this process saw beats 0: answering 0 would read as
-        # "everybody rolled back", retiring every warm payload in the process
-        # over one unavailable read.
-        return value if value is not None else local_shared_curriculum_epoch()
-    remember_shared_curriculum_epoch(epoch)
-    return epoch
+    # Concurrent page requests share one refresh. The short state lock stays
+    # free while SQL runs, so writes can still publish their new generation.
+    with _SHARED_EPOCH_REFRESH_LOCK:
+        with _SHARED_EPOCH_LOCK:
+            value = _SHARED_EPOCH_STATE['value']
+            checked_at = _SHARED_EPOCH_STATE['checked_at']
+        if value is not None and time.monotonic() - checked_at < SHARED_EPOCH_POLL_SECONDS:
+            return value
+        if not ensure_curriculum_epoch_table():
+            return local_shared_curriculum_epoch()
+        try:
+            # A standalone SELECT needs no BEGIN/COMMIT round trips. Inside a
+            # caller's transaction retain the savepoint: a failed SELECT must
+            # not poison that caller's transaction.
+            needs_savepoint = connection.in_atomic_block or not connection.get_autocommit()
+            guard = transaction.atomic() if needs_savepoint else contextlib.nullcontext()
+            with guard:
+                epoch = read_shared_curriculum_epoch_row()
+        except Exception:
+            logger.warning('Unable to read the shared curriculum epoch.', exc_info=True)
+            with _SHARED_EPOCH_LOCK:
+                latest = _SHARED_EPOCH_STATE['value']
+            return latest if latest is not None else local_shared_curriculum_epoch()
+        with _SHARED_EPOCH_LOCK:
+            # A local write may have published a newer epoch during the read.
+            if _SHARED_EPOCH_STATE['checked_at'] != checked_at:
+                return _SHARED_EPOCH_STATE['value']
+            _SHARED_EPOCH_STATE['value'] = epoch
+            _SHARED_EPOCH_STATE['checked_at'] = time.monotonic()
+        return epoch
 
 
 def write_shared_curriculum_epoch_bump():
@@ -700,19 +719,25 @@ def cached_curriculum_value(key, factory, force=False, ttl=None, shared=True):
             # cached.
             value = factory()
 
+            # Network I/O must not hold the global cache lock: a slow epoch
+            # read or shared-cache write would stall hits for unrelated keys.
+            current_shared_epoch = shared_curriculum_epoch()
             with _CURRICULUM_CACHE_LOCK:
                 # Only publish if no write invalidated the cache while we were building.
-                if epoch == _CURRICULUM_CACHE_EPOCH and shared_epoch == shared_curriculum_epoch():
+                publish = epoch == _CURRICULUM_CACHE_EPOCH and shared_epoch == current_shared_epoch
+                if publish:
                     _CURRICULUM_CACHE[key] = {
                         'expires_at': datetime.now().timestamp() + ttl,
                         'shared_epoch': shared_epoch,
                         'value': value,
                     }
-                    if shared:
-                        try:
-                            cache.set(shared_key, value, timeout=ttl)
-                        except Exception:
-                            logger.warning('Unable to populate shared curriculum payload cache.', exc_info=True)
+            if publish and shared:
+                # This key includes the generation: a concurrent invalidation
+                # retires it even if this network write finishes afterwards.
+                try:
+                    cache.set(shared_key, value, timeout=ttl)
+                except Exception:
+                    logger.warning('Unable to populate shared curriculum payload cache.', exc_info=True)
         finally:
             # After publishing, so a waiter that sees the lock gone finds the
             # value already there.
@@ -8004,7 +8029,7 @@ def curriculum_module_from_authoring_payload(payload):
     }
 
 
-def programme_authoring_modules(programme, config=None):
+def programme_authoring_module_rows(programme, config=None):
     programme_ids = {
         clean_str(programme.get('id')),
         clean_str(programme.get('sourceId')),
@@ -8031,6 +8056,11 @@ def programme_authoring_modules(programme, config=None):
             continue
         if row_programme_name and row_programme_name in programme_names:
             rows.append(row)
+    return rows
+
+
+def programme_authoring_modules(programme, config=None, *, module_rows=None, child_rows=None):
+    rows = programme_authoring_module_rows(programme, config) if module_rows is None else module_rows
     modules = []
     # One batched read for the whole programme. The per-module reader issues seven
     # queries each, so a 122-module programme spent 854 round trips (~105s) here.
@@ -8039,6 +8069,7 @@ def programme_authoring_modules(programme, config=None):
     payloads_by_id = get_authoring_structure_payloads(
         [clean_str(row.get('module_catalogue_id')) for row in rows],
         component_columns=CATALOGUE_SUMMARY_COMPONENT_COLUMNS,
+        **({'child_rows': child_rows} if child_rows is not None else {}),
     )
     for row in rows:
         module_id = clean_str(row.get('module_catalogue_id'))
@@ -8172,11 +8203,16 @@ def is_actual_delivery_row(row, program_configs_by_id):
     return bool(actual_group_identity(row, cohort['id']))
 
 
-def authoring_modules_as_training_rows(*, ensure_tables=True):
+def authoring_modules_as_training_rows(*, ensure_tables=True, module_rows=None, group_rows=None, cohort_rows=None):
     try:
-        module_rows = authoring_fetch_all(AUTHORING_MODULES_TABLE, ensure_tables=ensure_tables)
-        group_rows = {clean_str(row.get('group_id')): row for row in authoring_fetch_all(GROUPS_TABLE, ensure_tables=ensure_tables)}
-        cohort_rows = {clean_str(row.get('cohort_id')): row for row in authoring_fetch_all(COHORT_AUTHORING_DETAILS_TABLE, ensure_tables=ensure_tables)}
+        if module_rows is None:
+            module_rows = authoring_fetch_all(AUTHORING_MODULES_TABLE, ensure_tables=ensure_tables)
+        if group_rows is None:
+            group_rows = authoring_fetch_all(GROUPS_TABLE, ensure_tables=ensure_tables)
+        if cohort_rows is None:
+            cohort_rows = authoring_fetch_all(COHORT_AUTHORING_DETAILS_TABLE, ensure_tables=ensure_tables)
+        group_rows = {clean_str(row.get('group_id')): row for row in group_rows}
+        cohort_rows = {clean_str(row.get('cohort_id')): row for row in cohort_rows}
     except (Exception, AssertionError):
         logger.debug('Could not build fallback training rows from authoring tables.', exc_info=True)
         return []
@@ -8232,10 +8268,12 @@ def authoring_modules_as_training_rows(*, ensure_tables=True):
     return rows
 
 
-def authoring_modules_as_catalogue_rows():
+def authoring_modules_as_catalogue_rows(*, module_rows=None, week_rows=None):
     try:
-        module_rows = authoring_fetch_all(AUTHORING_MODULES_TABLE)
-        week_rows = authoring_fetch_all(AUTHORING_WEEKS_TABLE)
+        if module_rows is None:
+            module_rows = authoring_fetch_all(AUTHORING_MODULES_TABLE)
+        if week_rows is None:
+            week_rows = authoring_fetch_all(AUTHORING_WEEKS_TABLE)
     except (Exception, AssertionError):
         logger.debug('Could not build fallback module catalogue rows from authoring tables.', exc_info=True)
         return []
@@ -8894,17 +8932,26 @@ def build_staff_user_profile_collection(role, visibility='operational'):
     training_rows = get_training_rows()
     if visibility != 'all':
         training_rows = [row for row in training_rows if is_operational_training_row(row)]
+    # Tutor profiles only expose module identities/dates/status. Week titles
+    # and group statistics cannot affect those fields. Legacy catalogues keep
+    # their existing resolver, including non-authoring identifiers.
+    catalogue = (
+        authoring_modules_as_catalogue_rows(week_rows=[])
+        if role == 'tutor' and not table_exists('Modules') else get_module_rows()
+    )
     modules = build_modules(
-        get_module_rows(),
+        catalogue,
         training_rows,
         get_program_config_rows(),
         include_unused=visibility == 'all',
     )
-    _, groups = build_cohorts_and_groups(
-        training_rows,
-        get_program_config_rows(),
-        include_archived=visibility == 'all',
-    )
+    groups = []
+    if role != 'tutor':
+        _, groups = build_cohorts_and_groups(
+            training_rows,
+            get_program_config_rows(),
+            include_archived=visibility == 'all',
+        )
     return build_staff_profiles(profile_rows, role, modules, groups)
 
 
@@ -9420,7 +9467,7 @@ def _empty_programme_structure_counts():
 
 
 @scoped_curriculum_read
-def authoring_programme_structure_counts():
+def authoring_programme_structure_counts(*, source=None):
     """Cohorts, groups, modules and weeks per programme, from the rows that own them.
 
     A programme's card and the programme's own workspace have to answer with the
@@ -9467,7 +9514,7 @@ def authoring_programme_structure_counts():
 
     for table, key in ((COHORT_AUTHORING_DETAILS_TABLE, 'cohorts'), (GROUPS_TABLE, 'groups')):
         try:
-            for row in authoring_fetch_all(table):
+            for row in (source[key] if source is not None else authoring_fetch_all(table)):
                 if not is_countable(row):
                     continue
                 counts = counts_for(row)
@@ -9483,7 +9530,7 @@ def authoring_programme_structure_counts():
     # table is read in full and the database is remote.
     week_counts_by_module = Counter()
     try:
-        for row in active_week_rows(authoring_fetch_all(
+        for row in active_week_rows(source['weeks'] if source is not None else authoring_fetch_all(
             AUTHORING_WEEKS_TABLE,
             columns=['module_catalogue_id', 'deleted_at', 'is_programme_deleted', 'library_state'],
         )):
@@ -9494,7 +9541,7 @@ def authoring_programme_structure_counts():
         logger.debug('Authored week counts are not available yet.', exc_info=True)
 
     try:
-        for row in safe_authoring_module_rows():
+        for row in (source['modules'] if source is not None else safe_authoring_module_rows()):
             # A module archived on its own is soft-deleted, so programme_deleted_row
             # covers it; `status` on a module row is draft/published, not archived.
             if programme_deleted_row(row):
@@ -9528,7 +9575,7 @@ def programme_structure_counts(programme, by_id=None, by_name=None):
     return by_name.get(normalise(programme.get('name')))
 
 
-def build_programmes(training_rows, program_configs, ksb_profiles, include_config_only=False, only_stats_for_ids=None):
+def build_programmes(training_rows, program_configs, ksb_profiles, include_config_only=False, only_stats_for_ids=None, *, include_learner_counts=True, include_structure_counts=True, structure_counts=None, learner_counts=None):
     configs_by_id = program_config_by_id(program_configs)
     grouped = defaultdict(list)
     group_meta = {}
@@ -9536,7 +9583,9 @@ def build_programmes(training_rows, program_configs, ksb_profiles, include_confi
     # Cohorts, groups, modules and weeks all come from the same read of the
     # tables that own them, so the card cannot disagree with the programme's own
     # page about any of the four.
-    structure_counts_by_id, structure_counts_by_name = authoring_programme_structure_counts()
+    structure_counts_by_id, structure_counts_by_name = structure_counts if structure_counts is not None else (
+        authoring_programme_structure_counts() if include_structure_counts else ({}, {})
+    )
     standard_codes = {}
 
     display_program_configs = unique_program_configs_for_display(program_configs)
@@ -9605,7 +9654,9 @@ def build_programmes(training_rows, program_configs, ksb_profiles, include_confi
             if key not in order:
                 order[key] = len(order)
 
-    programme_learner_counts_by_id, programme_learner_counts_by_name = active_learner_programme_counts()
+    programme_learner_counts_by_id, programme_learner_counts_by_name = learner_counts if learner_counts is not None else (
+        active_learner_programme_counts() if include_learner_counts else ({}, {})
+    )
     programmes = []
     for key, rows in sorted(grouped.items(), key=lambda item: order.get(item[0], 999)):
         meta = group_meta.get(key, {})
@@ -9761,7 +9812,7 @@ def active_learner_programme_counts():
 def programme_component_ksb_mapping_count(programme_id, required_codes=None):
     """Distinct required KSBs actually mapped to this programme's components."""
     try:
-        module_rows, _week_rows, _component_rows, mapping_rows = authoring_scope_data('programme', programme_id)
+        module_rows, _week_rows, _component_rows, mapping_rows = authoring_scope_data('programme', programme_id, stats_only=True)
     except Exception as exc:
         logger.warning('Could not count programme component KSB mappings for %s: %s', programme_id, exc)
         return 0
@@ -9818,7 +9869,7 @@ def programme_learner_ksb_progress(programme_id, required_codes=None):
         'learnerKsbCodesTotal': 0,
     }
     try:
-        module_rows, week_rows, component_rows, mapping_rows = authoring_scope_data('programme', programme_id)
+        module_rows, week_rows, component_rows, mapping_rows = authoring_scope_data('programme', programme_id, stats_only=True)
     except Exception as exc:
         logger.warning('Could not load authoring scope for programme KSB progress %s: %s', programme_id, exc)
         return empty
@@ -9834,6 +9885,7 @@ def programme_learner_ksb_progress(programme_id, required_codes=None):
             week_rows,
             component_rows,
             include_mapping_only=not bool(required_ksbs),
+            totals_only=True,
         )
     except Exception as exc:
         logger.warning('Could not build coverage for programme KSB progress %s: %s', programme_id, exc)
@@ -9868,7 +9920,7 @@ def programme_learner_ksb_progress(programme_id, required_codes=None):
         # Totals only: this returns a percentage and four counts, never a row.
         # See learner_progress_ksb_totals() for why the drill-down read is the
         # wrong one to ask here.
-        progress_totals = learner_progress_ksb_totals(learner_ids, list(expected))
+        progress_totals = learner_progress_ksb_totals(learner_ids, list(expected), compact=True)
     except Exception as exc:
         logger.warning('Could not load learner KSB consumption for programme %s: %s', programme_id, exc)
         return result
@@ -9980,7 +10032,7 @@ def active_learner_delivery_counts():
     return dict(cohort_counts), dict(group_counts)
 
 
-def build_cohorts_and_groups(training_rows=None, program_configs=None, include_archived=False):
+def build_cohorts_and_groups(training_rows=None, program_configs=None, include_archived=False, *, include_learner_counts=True, source=None):
     """Build the cohort/group overview directly from the normalized tables.
 
     Cohorts come from ``curriculum.cohorts`` and groups from ``curriculum.groups``.
@@ -9989,10 +10041,12 @@ def build_cohorts_and_groups(training_rows=None, program_configs=None, include_a
     accepted for backwards compatibility with existing callers but is ignored:
     the normalized tables are the only source of truth.
     """
-    module_rows = safe_authoring_module_rows()
+    module_rows = safe_authoring_module_rows() if source is None else source['modules']
     if not include_archived:
         module_rows = [row for row in module_rows if not programme_deleted_row(row)]
-    cohort_learner_counts, group_learner_counts = active_learner_delivery_counts()
+    cohort_learner_counts, group_learner_counts = (
+        active_learner_delivery_counts() if include_learner_counts else ({}, {})
+    )
     modules_by_group = defaultdict(list)
     modules_by_cohort = defaultdict(list)
     for module in module_rows:
@@ -10013,7 +10067,8 @@ def build_cohorts_and_groups(training_rows=None, program_configs=None, include_a
         return sum(parse_int(row.get('sessions_number'), 0) for row in rows)
 
     cohorts = []
-    for detail in cohort_authoring_detail_rows():
+    cohort_details = cohort_authoring_detail_rows() if source is None else source['cohorts']
+    for detail in cohort_details:
         if programme_deleted_row(detail):
             continue
         if not include_archived and detail_is_archived(detail):
@@ -10058,7 +10113,8 @@ def build_cohorts_and_groups(training_rows=None, program_configs=None, include_a
 
     groups = []
     seen_group_ids = set()
-    for detail in group_authoring_detail_rows():
+    group_details = group_authoring_detail_rows() if source is None else source['groups']
+    for detail in group_details:
         if programme_deleted_row(detail):
             continue
         if not include_archived and detail_is_archived(detail):
@@ -12033,7 +12089,7 @@ def prefer_authoring_module_sessions(training_sessions, authoring_sessions, auth
     return [*authoring_sessions, *filtered_training]
 
 
-def build_ksb_data(ksb_profiles, modules, training_rows):
+def build_ksb_data(ksb_profiles, modules, training_rows, *, summary_only=False):
     module_names_by_code = defaultdict(set)
     for module in modules:
         for code in module.get('ksbCodes', []):
@@ -12074,7 +12130,7 @@ def build_ksb_data(ksb_profiles, modules, training_rows):
             })
 
         entries = []
-        for item in normalised_items:
+        for item in ([] if summary_only else normalised_items):
             code = item['fullCode']
             raw_code = item['code']
             mapped_modules = sorted(module_names_by_code.get(code, []) or module_names_by_code.get(raw_code, []))
@@ -12159,7 +12215,12 @@ def build_ksb_data(ksb_profiles, modules, training_rows):
             'standard': profile.get('name') or '',
             'notes': profile.get('description') or '',
             'status': 'published' if profile.get('is_active') else 'archived',
-            'ksbs': entries,
+            **({
+                'ksbCount': len(normalised_items),
+                'knowledgeCount': sum(item['type'] == 'K' for item in normalised_items),
+                'skillCount': sum(item['type'] == 'S' for item in normalised_items),
+                'behaviourCount': sum(item['type'] == 'B' for item in normalised_items),
+            } if summary_only else {'ksbs': entries}),
         })
     return frameworks, sets
 
@@ -12189,12 +12250,16 @@ def build_curriculum_payload(visibility='operational', compact=False, force=Fals
         return build_curriculum_payload_from_rows(rows, visibility, compact=compact)
 
 
-def build_curriculum_payload_from_rows(rows, visibility='operational', compact=False):
+def build_curriculum_payload_from_rows(rows, visibility='operational', compact=False, *, home_summary=False, module_list=False, delivery_source=None, programme_list=False):
     with curriculum_read_scope():
-        return _build_curriculum_payload_from_rows(rows, visibility, compact=compact)
+        return _build_curriculum_payload_from_rows(rows, visibility, compact=compact, home_summary=home_summary, module_list=module_list, delivery_source=delivery_source, programme_list=programme_list)
 
 
-def _build_curriculum_payload_from_rows(rows, visibility='operational', compact=False):
+def _build_curriculum_payload_from_rows(rows, visibility='operational', compact=False, *, home_summary=False, module_list=False, delivery_source=None, programme_list=False):
+    # Only the dedicated Home projection opts in. Its intermediate rows are not
+    # cached as an overview: other pages still need the counts/library details.
+    if (home_summary or module_list or programme_list) and not compact:
+        raise ValueError('The Home summary requires compact source rows.')
     training_rows = rows['training'] if visibility == 'all' else [row for row in rows['training'] if is_operational_training_row(row)]
     ksb_profiles = rows['ksb_profiles'] if visibility == 'all' else [profile for profile in rows['ksb_profiles'] if profile.get('is_active')]
     authoring_modules = rows['authoring_modules'] if visibility == 'all' else [
@@ -12223,6 +12288,10 @@ def _build_curriculum_payload_from_rows(rows, visibility='operational', compact=
         # fills its cards in behind the list. See _programme_ksb_stats for the
         # placeholder every programme gets here.
         only_stats_for_ids=frozenset(),
+        include_learner_counts=not (home_summary or module_list),
+        # A module list only uses programme identities for visibility. Its own
+        # week/content figures are calculated by the module enrichment below.
+        include_structure_counts=not (home_summary or module_list),
     )
     if visibility != 'all':
         # Delivery rows can outlive an authoring module's archive row. In that
@@ -12267,11 +12336,22 @@ def _build_curriculum_payload_from_rows(rows, visibility='operational', compact=
         # Full enrichment can append authoring-only rows and carry archive
         # status from the authoring summary, so apply the rule again.
         modules = [module for module in modules if not is_archived_module_summary(module)]
-    attach_module_assignment_counts(modules)
+    if programme_list:
+        # The legacy programme-count fallback needs these identities, not module
+        # learner assignments, cohort calendars or the complete KSB library.
+        return {'schema': CURRICULUM_SCHEMA, 'programmes': programmes, 'modules': modules}
+    if not home_summary:
+        attach_module_assignment_counts(modules)
+    if module_list:
+        # Programme metadata above is needed for the existing visibility rules;
+        # cohorts, group learner counts and the KSB library are not list inputs.
+        return {'schema': CURRICULUM_SCHEMA, 'modules': modules}
     cohorts, groups = build_cohorts_and_groups(
         training_rows,
         rows['program_configs'],
         include_archived=visibility == 'all',
+        include_learner_counts=not home_summary,
+        **({'source': delivery_source} if delivery_source is not None else {}),
     )
     if compact:
         sessions = []
@@ -12306,7 +12386,7 @@ def _build_curriculum_payload_from_rows(rows, visibility='operational', compact=
     # the user has to be able to see in order to attach it. Filtering the library
     # by programme linkage made a newly-created framework vanish on save.
     # `is_active` above is the intended soft-delete for a profile.
-    frameworks, ksb_profiles = build_ksb_data(ksb_profiles, modules, training_rows)
+    frameworks, ksb_profiles = ([], []) if home_summary else build_ksb_data(ksb_profiles, modules, training_rows)
 
     # Bank holidays have no archived state -- nobody authors or retires them --
     # so every visibility sees the same calendar.
@@ -13665,12 +13745,9 @@ def compact_module_list_rows(modules):
     module row later stays out of this response until somebody puts it in that
     set deliberately.
 
-    It projects an already-built row rather than building a smaller one from
-    scratch, because the rows it is handed are not private to this endpoint. They
-    come out of the `modules:<visibility>:enriched` cache, which the non-compact
-    response serves verbatim, so assembling them differently for compact callers
-    would mean either a second enrichment pass or changing what every other
-    caller gets. Copies rather than edits, for the same reason.
+    Copies rather than edits: full consumers can share the source dictionaries.
+    The compact endpoint also has its own list-only builder/cache, which avoids
+    constructing component edit payloads while retaining this exact contract.
     """
     return [
         {
@@ -19516,12 +19593,12 @@ STRUCTURE_REVISION_SOURCES = (
 )
 
 
-def module_structure_revision(module_catalogue_id):
+def module_structure_revision(module_catalogue_id, *, source_rows=None):
     """Fingerprint of everything a structure PATCH would replace.
 
-    Six indexed single-module reads, shared with the payload reader when inside
-    a curriculum read scope. A module that is not stored fingerprints as the
-    empty structure, so a first save of a fresh draft is never a conflict.
+    Six indexed single-module reads, or the exact source rows already read for
+    an editor GET. PATCH always uses fresh reads. A module that is not stored
+    fingerprints as the empty structure, so a fresh draft is never a conflict.
 
     Rows are sorted by their own key rather than trusted in database order: a
     fingerprint that depended on which order Postgres happened to return the
@@ -19542,12 +19619,25 @@ def module_structure_revision(module_catalogue_id):
     }
     for label, table, keep, sort_column in STRUCTURE_REVISION_SOURCES:
         try:
-            rows = authoring_fetch_all(
-                table,
-                'module_catalogue_id = %s',
-                [catalogue_id],
-                order_sql=payload_order.get(label, ''),
-            )
+            if source_rows is not None:
+                rows = source_rows[table]
+            elif connection.vendor == 'postgresql' and table in (AUTHORING_COMPONENTS_TABLE, AUTHORING_KSB_MAPPINGS_TABLE):
+                from .authoring_read_transport import compact_authoring_rows
+                # Verify every current row in SQL, sharing only unchanged raw
+                # content with the editor read. This remains a fresh revision,
+                # including external writes that never bump the response epoch.
+                rows = compact_authoring_rows(
+                    table, 'module_catalogue_id = %s', [catalogue_id],
+                    'display_order, id' if table == AUTHORING_COMPONENTS_TABLE else 'created_at, id',
+                    reuse_unchanged=True,
+                )
+            else:
+                rows = authoring_fetch_all(
+                    table,
+                    'module_catalogue_id = %s',
+                    [catalogue_id],
+                    order_sql=payload_order.get(label, ''),
+                )
         except Exception:
             # A table that cannot be read must not fail the request it was asked
             # about. Returning '' turns the guard off for this save rather than
@@ -19582,7 +19672,7 @@ def module_structure_revision(module_catalogue_id):
 STRUCTURE_REVISION_UNAVAILABLE = 'unverified'
 
 
-def structure_payload_with_revision(build_payload, module_catalogue_id):
+def structure_payload_with_revision(build_payload, module_catalogue_id, *, source_rows=None):
     """Build a structure payload and stamp the revision it was built from.
 
     The revision is read BEFORE the payload, and that order is the whole point.
@@ -19607,7 +19697,9 @@ def structure_payload_with_revision(build_payload, module_catalogue_id):
     written the structure itself and needs the revision of its own write uses
     ``stamp_revision_after_write``.
     """
-    revision = module_structure_revision(module_catalogue_id) or STRUCTURE_REVISION_UNAVAILABLE
+    revision = module_structure_revision(
+        module_catalogue_id, **({'source_rows': source_rows} if source_rows is not None else {}),
+    ) or STRUCTURE_REVISION_UNAVAILABLE
     payload = build_payload()
     if not payload:
         return payload
@@ -20060,7 +20152,33 @@ def row_in_module_archive(row, markers, bounds=None):
         return True
 
 
-def get_authoring_structure_payload(module_catalogue_id, include_archived=False):
+def read_module_structure_with_revision(module_catalogue_id):
+    """Read each owned row once for both the editable payload and its guard.
+
+    A revision and payload assembled from the same rows cannot certify newer
+    data than the editor received. PATCH still fingerprints fresh database rows
+    before accepting a save. Reused raw rows are verified against their current
+    SQL fingerprints on every rebuild, independently of response-cache epochs.
+    """
+    from .authoring_read_transport import compact_authoring_rows
+    orders = {
+        AUTHORING_WEEKS_TABLE: 'display_order, week_number, id',
+        AUTHORING_COMPONENTS_TABLE: 'display_order, id',
+        AUTHORING_KSB_MAPPINGS_TABLE: 'created_at, id',
+    }
+    source_rows = {
+        table: compact_authoring_rows(
+            table, 'module_catalogue_id = %s', [module_catalogue_id], orders.get(table, sort_column),
+            reuse_unchanged=table in (AUTHORING_COMPONENTS_TABLE, AUTHORING_KSB_MAPPINGS_TABLE),
+        ) for _label, table, _keep, sort_column in STRUCTURE_REVISION_SOURCES
+    }
+    return structure_payload_with_revision(
+        lambda: get_authoring_structure_payload(module_catalogue_id, source_rows=source_rows),
+        module_catalogue_id, source_rows=source_rows,
+    )
+
+
+def get_authoring_structure_payload(module_catalogue_id, include_archived=False, *, source_rows=None):
     """The module's authored structure.
 
     ``include_archived`` is for reading a module that is *in* the archive. The
@@ -20071,7 +20189,12 @@ def get_authoring_structure_payload(module_catalogue_id, include_archived=False)
     see ``row_in_module_archive``. Nothing else about the payload changes, so the
     archive renders the same shape the builder does.
     """
-    module_rows = authoring_fetch_all(AUTHORING_MODULES_TABLE, 'module_catalogue_id = %s', [module_catalogue_id])
+    def owned_rows(table, order=''):
+        if source_rows is not None:
+            return source_rows[table]
+        return authoring_fetch_all(table, 'module_catalogue_id = %s', [module_catalogue_id], order)
+
+    module_rows = owned_rows(AUTHORING_MODULES_TABLE)
     if not module_rows:
         return None
     module = module_rows[0]
@@ -20082,9 +20205,9 @@ def get_authoring_structure_payload(module_catalogue_id, include_archived=False)
     delivery_module = module_delivery_row(module, group_row)
     group_coach_name = clean_str(group_row.get('coach_name'))
     is_programme_deleted = programme_deleted_row(module) or programme_deleted_row(group_row)
-    stored_week_rows = authoring_fetch_all(AUTHORING_WEEKS_TABLE, 'module_catalogue_id = %s', [module_catalogue_id], 'display_order, week_number, id')
-    stored_component_rows = authoring_fetch_all(AUTHORING_COMPONENTS_TABLE, 'module_catalogue_id = %s', [module_catalogue_id], 'display_order, id')
-    stored_mapping_rows = authoring_fetch_all(AUTHORING_KSB_MAPPINGS_TABLE, 'module_catalogue_id = %s', [module_catalogue_id], 'created_at, id')
+    stored_week_rows = owned_rows(AUTHORING_WEEKS_TABLE, 'display_order, week_number, id')
+    stored_component_rows = owned_rows(AUTHORING_COMPONENTS_TABLE, 'display_order, id')
+    stored_mapping_rows = owned_rows(AUTHORING_KSB_MAPPINGS_TABLE, 'created_at, id')
     if include_archived:
         # The type and library exclusions stay: a retired component type and a
         # detached library row are not this module's content either way, and a
@@ -20109,8 +20232,8 @@ def get_authoring_structure_payload(module_catalogue_id, include_archived=False)
         component_rows = active_component_rows(stored_component_rows)
         mapping_source_rows = active_mapping_rows(stored_mapping_rows)
     mapping_rows = mappings_with_inferred_sources(mapping_source_rows, module_rows)
-    completion_rows = authoring_fetch_all(AUTHORING_COMPLETION_TABLE, 'module_catalogue_id = %s', [module_catalogue_id])
-    advanced_rows = authoring_fetch_all(AUTHORING_ADVANCED_TABLE, 'module_catalogue_id = %s', [module_catalogue_id])
+    completion_rows = owned_rows(AUTHORING_COMPLETION_TABLE)
+    advanced_rows = owned_rows(AUTHORING_ADVANCED_TABLE)
 
     mappings_by_week = defaultdict(list)
     mappings_by_component = defaultdict(list)
@@ -20438,6 +20561,7 @@ def get_authoring_structure_payloads(
     include_quality=True,
     include_extra=True,
     component_columns=None,
+    child_rows=None,
 ):
     catalogue_ids = unique([clean_str(value) for value in (module_catalogue_ids or []) if clean_str(value)])
     if not catalogue_ids:
@@ -20448,9 +20572,14 @@ def get_authoring_structure_payloads(
         return {}
 
     found_ids = [clean_str(row.get('module_catalogue_id')) for row in module_rows if clean_str(row.get('module_catalogue_id'))]
+    wanted_ids = set(found_ids)
     placeholders = ', '.join(['%s'] * len(found_ids))
     week_rows = active_week_rows(authoring_fetch_all(AUTHORING_WEEKS_TABLE, f'module_catalogue_id in ({placeholders})', found_ids, 'display_order, week_number, id'))
-    if component_columns is None:
+    if child_rows is not None:
+        component_rows = active_component_rows([
+            row for row in child_rows['components'] if clean_str(row.get('module_catalogue_id')) in wanted_ids
+        ])
+    elif component_columns is None:
         component_rows = active_component_rows(live_component_rows_paged(found_ids, 'display_order, id'))
     else:
         component_rows = active_component_rows(authoring_fetch_all(
@@ -20461,7 +20590,9 @@ def get_authoring_structure_payloads(
             columns=component_columns,
         ))
     mapping_rows = mappings_with_inferred_sources(
-        active_mapping_rows(authoring_fetch_all(AUTHORING_KSB_MAPPINGS_TABLE, f'module_catalogue_id in ({placeholders})', found_ids, 'created_at, id')),
+        active_mapping_rows([
+            row for row in child_rows['mappings'] if clean_str(row.get('module_catalogue_id')) in wanted_ids
+        ] if child_rows is not None else authoring_fetch_all(AUTHORING_KSB_MAPPINGS_TABLE, f'module_catalogue_id in ({placeholders})', found_ids, 'created_at, id')),
         module_rows,
     )
     completion_rows = authoring_fetch_all(AUTHORING_COMPLETION_TABLE, f'module_catalogue_id in ({placeholders})', found_ids) if include_extra else []
@@ -20786,7 +20917,7 @@ CATALOGUE_SUMMARY_COMPONENT_COLUMNS = (
 )
 
 
-def authoring_catalogue_summaries(include_programme_deleted=False, include_content=True):
+def authoring_catalogue_summaries(include_programme_deleted=False, include_content=True, *, list_only=False):
     """Per-module authoring summaries, keyed by module catalogue id.
 
     ``include_content=False`` is for a caller that only counts modules. It skips
@@ -20802,7 +20933,10 @@ def authoring_catalogue_summaries(include_programme_deleted=False, include_conte
     try:
         module_rows = authoring_fetch_all(AUTHORING_MODULES_TABLE, order_sql='updated_at desc, title')
         week_rows = active_week_rows(authoring_fetch_all(AUTHORING_WEEKS_TABLE))
-        if include_content:
+        if include_content and list_only and connection.vendor == 'postgresql':
+            from .catalogue_summary_reads import grouped_catalogue_content_rows
+            component_rows, mapping_rows = grouped_catalogue_content_rows()
+        elif include_content:
             # Narrow deliberately. This builds per-module summaries and week outlines
             # and never reads settings_json (24 MB across this table) or ksb_mappings
             # - the summary sets 'ksbMappings': [] outright. With select * this one
@@ -20815,9 +20949,17 @@ def authoring_catalogue_summaries(include_programme_deleted=False, include_conte
                 AUTHORING_COMPONENTS_TABLE, ('deleted_at', 'is_programme_deleted', 'library_state'),
             )
             component_rows = active_component_rows(authoring_fetch_all(
-                AUTHORING_COMPONENTS_TABLE, where_sql, params, columns=CATALOGUE_SUMMARY_COMPONENT_COLUMNS,
+                AUTHORING_COMPONENTS_TABLE, where_sql, params,
+                columns=(
+                    ('id', 'module_catalogue_id', 'week_id', 'type', 'title', 'expected_otjh',
+                     'deleted_at', 'is_programme_deleted', 'library_state')
+                    if list_only else CATALOGUE_SUMMARY_COMPONENT_COLUMNS
+                ),
             ))
-            mapping_rows = active_mapping_rows(authoring_fetch_all(AUTHORING_KSB_MAPPINGS_TABLE))
+            mapping_rows = active_mapping_rows(authoring_fetch_all(
+                AUTHORING_KSB_MAPPINGS_TABLE,
+                **({'columns': ('module_catalogue_id', 'ksb_code', 'deleted_at', 'is_programme_deleted', 'is_deleted', 'isDeleted', 'isProgrammeDeleted')} if list_only else {}),
+            ))
         else:
             component_rows, mapping_rows = [], []
             content_counts = authoring_module_content_counts()
@@ -20922,13 +21064,23 @@ def authoring_catalogue_summaries(include_programme_deleted=False, include_conte
         component_id = clean_str(row.get('id'))
         week_id = clean_str(row.get('week_id'))
         component_type = normalise_component_type(row.get('type'))
-        summary['lessonCount'] += 1
-        summary['totalOtjhMinutes'] += otjh_rounded_minutes(row.get('expected_otjh'))
+        row_count = parse_int(row.get('row_count'), 1) if list_only else 1
+        summary['lessonCount'] += row_count
+        summary['totalOtjhMinutes'] += otjh_rounded_minutes(row.get('expected_otjh')) * row_count
         summary['totalOtjh'] = otjh_hours_from_minutes(summary['totalOtjhMinutes'])
         if component_type == 'quiz':
-            summary['quizCount'] += 1
+            summary['quizCount'] += row_count
         if component_type == 'live_session':
-            summary['sessionNames'].append(row.get('title') or '')
+            summary['sessionNames'].extend([row.get('title') or ''] * row_count)
+        if list_only:
+            # Delivery-week detection needs only the live-session count per
+            # week. Do not construct every discarded component's edit payload.
+            if component_type == 'live_session':
+                for week in summary['weekStructure']:
+                    if clean_str(week.get('id')) == week_id:
+                        week.setdefault('components', []).extend({'type': 'live-session'} for _ in range(row_count))
+                        break
+            continue
         for week in summary['weekStructure']:
             if clean_str(week.get('id')) != week_id:
                 continue
@@ -21069,7 +21221,7 @@ def saved_authoring_catalogue_items():
     return items
 
 
-def enrich_curriculum_modules_with_authoring_details(modules):
+def enrich_curriculum_modules_with_authoring_details(modules, *, child_rows=None):
     module_ids = unique([
         clean_str(module.get('moduleCatalogueId') or module.get('catalogueId') or module.get('moduleId') or module.get('structureId'))
         for module in modules or []
@@ -21083,6 +21235,7 @@ def enrich_curriculum_modules_with_authoring_details(modules):
         include_quality=False,
         include_extra=False,
         component_columns=CATALOGUE_SUMMARY_COMPONENT_COLUMNS,
+        **({'child_rows': child_rows} if child_rows is not None else {}),
     )
     enriched = []
     for module in modules or []:
@@ -21156,10 +21309,11 @@ def best_authoring_summary(candidates):
     return max(candidates, key=authoring_summary_score)
 
 
-def enrich_modules_with_authoring(modules, include_programme_deleted=False, include_content=True):
+def enrich_modules_with_authoring(modules, include_programme_deleted=False, include_content=True, *, list_only=False):
     try:
         authoring_by_id = authoring_catalogue_summaries(
             include_programme_deleted=include_programme_deleted, include_content=include_content,
+            **({'list_only': True} if list_only else {}),
         )
         authoring_by_training_source = {
             clean_str(summary.get('sourceId')): summary
@@ -21385,10 +21539,13 @@ def authoring_row_delivery_signature(row):
     })
 
 
-def dedupe_authoring_module_rows(module_rows, mapping_rows=None, component_rows=None, week_rows=None):
-    mapping_counts = Counter(clean_str(row.get('module_catalogue_id')) for row in (mapping_rows or []))
-    component_counts = Counter(clean_str(row.get('module_catalogue_id')) for row in (component_rows or []))
-    week_counts = Counter(clean_str(row.get('module_catalogue_id')) for row in (week_rows or []))
+def dedupe_authoring_module_rows(module_rows, mapping_rows=None, component_rows=None, week_rows=None, *, counts=None):
+    if counts is None:
+        mapping_counts = Counter(clean_str(row.get('module_catalogue_id')) for row in (mapping_rows or []))
+        component_counts = Counter(clean_str(row.get('module_catalogue_id')) for row in (component_rows or []))
+        week_counts = Counter(clean_str(row.get('module_catalogue_id')) for row in (week_rows or []))
+    else:
+        mapping_counts, component_counts, week_counts = counts
     selected = {}
     order = {}
     for index, row in enumerate(module_rows):
@@ -21473,7 +21630,7 @@ def programme_summary_is_archived(programme):
     )
 
 
-def enrich_programmes_with_module_counts(programmes, modules, modules_enriched=False, include_archived=False):
+def enrich_programmes_with_module_counts(programmes, modules, modules_enriched=False, include_archived=False, *, include_structure_counts=True):
     all_modules = modules if modules_enriched else enrich_modules_with_authoring(modules)
     live_modules = [module for module in all_modules if not is_archived_module_summary(module)]
     # `include_archived` is what keeps archived PROGRAMMES in the list, for the
@@ -21486,7 +21643,9 @@ def enrich_programmes_with_module_counts(programmes, modules, modules_enriched=F
     # deleting it removes nothing.
     enriched_modules = all_modules if include_archived else live_modules
     archived_keys = set() if include_archived else archived_programme_keys()
-    structure_counts_by_id, structure_counts_by_name = authoring_programme_structure_counts()
+    structure_counts_by_id, structure_counts_by_name = (
+        authoring_programme_structure_counts() if include_structure_counts else ({}, {})
+    )
     enriched_programmes = []
     existing_programme_keys = set()
     for programme in programmes:
@@ -21502,7 +21661,7 @@ def enrich_programmes_with_module_counts(programmes, modules, modules_enriched=F
         # and anything it derives differently is a card that disagrees with the
         # page. The arithmetic below still answers for a legacy programme that
         # has no authoring rows, whose count arrives as len(delivery_rows).
-        if programme_structure_counts(programme, structure_counts_by_id, structure_counts_by_name):
+        if not include_structure_counts or programme_structure_counts(programme, structure_counts_by_id, structure_counts_by_name):
             enriched_programmes.append(programme)
             continue
         countable_modules = all_modules if programme_summary_is_archived(programme) else live_modules
@@ -23483,33 +23642,16 @@ def curriculum_programmes(request):
             if shared.stale:
                 enqueue_curriculum_home_refresh(visibility, reason='stale-read')
             return response
-    payload = cached_curriculum_value(
-        f'overview:{visibility}:compact',
-        lambda: build_curriculum_payload(visibility, compact=True, force=force),
-        force=force,
-    )
-    # The cards need module counts, not module content, so the modules are
-    # enriched without components or KSB mappings (include_content=False). Those
-    # two reads were most of a cold load of this endpoint, and a full enrichment
-    # changes none of the figures counted here -- the warm loop still builds this
-    # same key from the full one, and both have to agree. Read-only: the payload
-    # above is already built and cached by the time this opens.
-    def build_programmes():
-        with curriculum_read_scope():
-            counted_modules = enrich_modules_with_authoring(
-                payload['modules'], include_programme_deleted=visibility == 'all', include_content=False,
-            )
-            return enrich_programmes_with_module_counts(
-                payload['programmes'], counted_modules, modules_enriched=True, include_archived=visibility == 'all',
-            )
-
+    from .programme_list import build_programme_list
+    # Consult the list cache before doing any source work. A programme cache hit
+    # must not first rebuild a missing/expired overview and its unrelated trees.
     programmes = cached_curriculum_value(
         f'programmes:{visibility}:with-module-counts',
-        build_programmes,
+        lambda: build_programme_list(visibility, force=force),
         force=force,
     )
     response = curriculum_collection_response(
-        payload,
+        {'schema': CURRICULUM_SCHEMA},
         'programmes',
         programmes,
     )
@@ -23560,29 +23702,36 @@ def build_programme_ksb_stats(identifier, visibility):
     # call the list payload makes (same rows, same visibility filters, so
     # find_programme() lands on the same programme), and the stats run in a
     # targeted scope: child rows are read for this programme's modules only.
-    # Both build_programmes() calls share one memo, so the parent tables are
-    # still read once.
+    # Both build_programmes() calls share one memo. Only programme identity,
+    # visibility and KSB definitions are needed; module/week catalogues and
+    # programme structure/learner counts cannot affect these statistics.
     with curriculum_read_scope(targeted_child_reads=True):
-        curriculum_rows = get_cached_curriculum_rows(compact=True)
-        training_rows = curriculum_rows['training'] if visibility == 'all' else [
-            row for row in curriculum_rows['training']
+        training_rows = get_training_rows()
+        ksb_profiles = get_ksb_profile_rows()
+        program_configs = get_program_config_rows()
+        training_rows = training_rows if visibility == 'all' else [
+            row for row in training_rows
             if is_operational_training_row(row)
         ]
-        ksb_profiles = curriculum_rows['ksb_profiles'] if visibility == 'all' else [
-            profile for profile in curriculum_rows['ksb_profiles']
+        ksb_profiles = ksb_profiles if visibility == 'all' else [
+            profile for profile in ksb_profiles
             if profile.get('is_active')
         ]
         resolved = find_programme({'programmes': build_programmes(
-            training_rows, curriculum_rows['program_configs'], ksb_profiles,
+            training_rows, program_configs, ksb_profiles,
             include_config_only=visibility == 'all',
             only_stats_for_ids=frozenset(),
+            include_learner_counts=False,
+            include_structure_counts=False,
         )}, identifier)
         if not resolved:
             return None
         programmes = build_programmes(
-            training_rows, curriculum_rows['program_configs'], ksb_profiles,
+            training_rows, program_configs, ksb_profiles,
             include_config_only=visibility == 'all',
             only_stats_for_ids={clean_str(resolved.get('sourceId'))},
+            include_learner_counts=False,
+            include_structure_counts=False,
         )
     programme = find_programme({'programmes': programmes}, identifier)
     if not programme:
@@ -23684,11 +23833,13 @@ def curriculum_programme_tree_detail(request, identifier):
 PROGRAMME_DETAIL_SECTIONS = ('shell', 'modules')
 
 
+@gzip_page
 @require_GET
 def curriculum_programme_detail_section(request, identifier, section):
     if section not in PROGRAMME_DETAIL_SECTIONS:
         return JsonResponse({'error': 'Unknown programme detail section.'}, status=404)
     visibility = curriculum_visibility(request)
+    workspace_view = section == 'modules' and request.GET.get('view') == 'workspace'
     programme_id = clean_str(identifier)
     repair_curriculum_parent_links(programme_id, allow_writes=False)
 
@@ -23696,14 +23847,19 @@ def curriculum_programme_detail_section(request, identifier, section):
         payload = build_curriculum_programme_tree_detail_payload(
             identifier, visibility, include_stats=False, include_components=False,
             include_tree=False, include_week_components=False, section=section,
+            **({'workspace_view': True} if workspace_view else {}),
         )
         if not payload:
             return encode_json_error_entry('Programme not found.', status=404)
+        if workspace_view:
+            payload = programme_modules_workspace_payload(payload)
         return encode_json_entry(payload)
 
     entry = cached_curriculum_value(
-        f'programme-detail-{section}-response:{visibility}:{clean_str(identifier)}',
+        f'programme-detail-{section}-response:{visibility}:{clean_str(identifier)}'
+        + (':workspace-v1' if workspace_view else ''),
         build_section_entry,
+        force=request_bypasses_curriculum_cache(request),
     )
     return conditional_json_response(request, entry)
 
@@ -23714,6 +23870,47 @@ def curriculum_programme_detail_section(request, identifier, section):
 # payload refuses any payload that still carries either marker.
 WEEK_OUTLINE_MODULE_FLAG = 'weekStructureOutline'
 WEEK_OUTLINE_WEEK_FLAG = 'componentsOmitted'
+
+
+# ProgrammeDetailPage reads these for rows, scope matching, deep links and
+# moduleFormTarget(). Keep every form seed: an omitted schedule/holiday/image
+# would otherwise be saved back as an empty value. Editing components reads
+# their own endpoint; authoring metadata and mapping trees have no reader here.
+PROGRAMME_WORKSPACE_MODULE_FIELDS = frozenset({
+    'id', 'moduleId', 'moduleCatalogueId', 'deliveryModuleId', 'structureId',
+    'sourceId', 'sourceType', 'catalogueId', 'relatedCatalogueIds', 'name',
+    'programmeId', 'programme', 'cohortId', 'cohort', 'groupId', 'group',
+    'weeks', 'sessionsNumber', 'ksbCount', 'lessons', 'quizzes', 'assignments',
+    'status', 'authoringStatus', 'deliveryStatus', 'isProgrammeDeleted',
+    'startDate', 'endDate', 'weeklySchedule', 'sessionHolidays', 'deliveryWeeks',
+    'weekDays', 'startTime', 'endTime', 'notes', 'color', 'coverImage',
+    'tutor', 'coach', 'ksbCodes', 'lastUpdated', 'weekStructureOutline',
+})
+PROGRAMME_WORKSPACE_WEEK_FIELDS = frozenset({
+    'id', 'weekNumber', 'number', 'title', 'displayOrder', 'componentsOmitted',
+})
+
+
+def programme_modules_workspace_payload(payload):
+    """Opt-in display/edit metadata, leaving the full detail contract intact.
+
+    Project after duplicate selection and all calculations, so removing rich
+    authoring fields cannot change which module wins or any displayed counts.
+    Planned sessions stay intact: the workspace uses their dates and warnings.
+    """
+    modules = []
+    for module in payload['flat']['modules']:
+        item = {key: value for key, value in module.items() if key in PROGRAMME_WORKSPACE_MODULE_FIELDS}
+        if isinstance(module.get('weekStructure'), list):
+            item['weekStructure'] = [
+                {**{key: value for key, value in week.items() if key in PROGRAMME_WORKSPACE_WEEK_FIELDS},
+                 WEEK_OUTLINE_WEEK_FLAG: True}
+                if isinstance(week, dict) else week
+                for week in module['weekStructure']
+            ]
+            item[WEEK_OUTLINE_MODULE_FLAG] = True
+        modules.append(item)
+    return {**payload, 'flat': {**payload['flat'], 'modules': modules}}
 
 
 def module_rows_with_week_outline(modules):
@@ -23744,7 +23941,7 @@ def module_rows_with_week_outline(modules):
     return projected
 
 
-def build_curriculum_programme_tree_detail_payload(identifier, visibility, include_stats=True, include_components=True, include_tree=True, include_week_components=True, section=None):
+def build_curriculum_programme_tree_detail_payload(identifier, visibility, include_stats=True, include_components=True, include_tree=True, include_week_components=True, section=None, *, workspace_view=False):
     # Same reason build_curriculum_payload() opens a read scope: build_programmes()
     # re-reads authoring modules, programmes, cohorts, groups and ksb_profiles in
     # full once per programme, so without the scope this detail build issued ~250
@@ -23755,10 +23952,10 @@ def build_curriculum_programme_tree_detail_payload(identifier, visibility, inclu
     # for) read that programme's weeks/components/mappings rather than the
     # whole tables -- see authoring_child_rows_for_modules.
     with curriculum_read_scope(targeted_child_reads=True):
-        return _build_curriculum_programme_tree_detail_payload(identifier, visibility, include_stats, include_components, include_tree, include_week_components, section)
+        return _build_curriculum_programme_tree_detail_payload(identifier, visibility, include_stats, include_components, include_tree, include_week_components, section, **({'workspace_view': True} if workspace_view else {}))
 
 
-def _build_curriculum_programme_tree_detail_payload(identifier, visibility, include_stats=True, include_components=True, include_tree=True, include_week_components=True, section=None):
+def _build_curriculum_programme_tree_detail_payload(identifier, visibility, include_stats=True, include_components=True, include_tree=True, include_week_components=True, section=None, *, workspace_view=False):
     # The process-wide rows cache the list payloads share (epoch-checked, 60s
     # TTL) rather than a fresh read of every table: opening a programme straight
     # after the programme list no longer reads the same rows a second time.
@@ -23889,9 +24086,21 @@ def _build_curriculum_programme_tree_detail_payload(identifier, visibility, incl
         program_configs,
         include_unused=False,
     )
+    # Both representations participate in the existing richness-based selection.
+    # Share their raw child rows, not their differently-shaped payloads, so the
+    # chosen module and every schedule/count stay exactly as before.
+    child_rows = None
+    authoring_rows = None
+    if workspace_view:
+        from .programme_workspace_reads import programme_structure_child_rows
+        authoring_rows = programme_authoring_module_rows(programme, config)
+        child_rows = programme_structure_child_rows([
+            *[clean_str(module.get('moduleCatalogueId') or module.get('catalogueId') or module.get('moduleId') or module.get('structureId')) for module in modules],
+            *[clean_str(row.get('module_catalogue_id')) for row in authoring_rows],
+        ])
     modules = unique_curriculum_items([
-        *enrich_curriculum_modules_with_authoring_details(modules),
-        *programme_authoring_modules(programme, config),
+        *enrich_curriculum_modules_with_authoring_details(modules, **({'child_rows': child_rows} if workspace_view else {})),
+        *programme_authoring_modules(programme, config, **({'module_rows': authoring_rows, 'child_rows': child_rows} if workspace_view else {})),
         *programme_config_modules(config),
     ], ['moduleCatalogueId', 'catalogueId', 'moduleId', 'structureId', 'id'])
     # `get_curriculum_rows(compact=True)` deliberately returns no holidays, to
@@ -24190,6 +24399,12 @@ def curriculum_programme_detail(request, identifier):
             # programme_id (and every relationship) unchanged.
             if name and normalise(name) != normalise(config.get('name')):
                 propagate_programme_name(clean_str(config.get('program_id') or key_value), name)
+            # Learner records carry the name too; renamed through their profile's
+            # programme id, never moved. See placement_rename.
+            from .placement_rename import propagate_programme_name_to_learners
+            propagate_programme_name_to_learners(
+                programme_config_id(config) or clean_str(key_value), clean_str(config.get('name')), name,
+            )
 
     invalidate_curriculum_cache()
     # Read after the commit, so the token handed back is the one a reader would
@@ -24377,6 +24592,8 @@ def upsert_programme_for_tree(payload):
         update_rows('programmes', f'{quote_ident(key_column)} = %s', [key_value], updates, allow_null_columns=['required_otjh'])
         source_id = programme_config_id(config) or clean_str(key_value)
         propagate_programme_name(source_id, name)
+        from .placement_rename import propagate_programme_name_to_learners
+        propagate_programme_name_to_learners(source_id, clean_str(config.get('name')), name)
         return {
             'id': source_id,
             'sourceId': source_id,
@@ -24781,16 +24998,50 @@ def curriculum_programme_cohort_collection(request, programme_id):
     return create_curriculum_cohort(body)
 
 
+@gzip_page
+@require_GET
+def curriculum_delivery_scope(request):
+    visibility = curriculum_visibility(request)
+
+    def build():
+        with curriculum_read_scope():
+            cohorts, groups = build_cohorts_and_groups(
+                include_archived=visibility == 'all',
+            )
+            return {'cohorts': cohorts, 'groups': groups}
+
+    return JsonResponse(cached_curriculum_value(
+        f'delivery-scope:{visibility}', build, force=request_bypasses_curriculum_cache(request),
+    ))
+
+
+@gzip_page
 @require_GET
 def curriculum_modules(request):
     visibility = curriculum_visibility(request)
     bypass_cache = request_bypasses_curriculum_cache(request)
+    compact = clean_str(request.GET.get('compact')).lower() in {'1', 'true', 'yes'}
     # One scope around both stages. The enrichment re-reads four of the tables
     # the payload build has already read, and outside a scope there is no memo
     # for it to hit, so a cold build scanned each of them twice. Nested inside,
     # build_curriculum_payload()'s own scope reuses this one.
     with curriculum_read_scope():
-        if bypass_cache:
+        if compact:
+            def build_list():
+                rows = get_cached_curriculum_rows(compact=True, force=bypass_cache)
+                source = build_curriculum_payload_from_rows(rows, visibility, compact=True, module_list=True)
+                enriched = enrich_modules_with_authoring(
+                    source['modules'], include_programme_deleted=visibility == 'all', list_only=True,
+                )
+                if visibility != 'all':
+                    enriched = [item for item in enriched if not programme_deleted_row(item) and not is_archived_module_summary(item)]
+                return compact_module_list_rows(enriched)
+
+            payload = {'schema': CURRICULUM_SCHEMA}
+            modules = cached_curriculum_value(
+                f'modules:{visibility}:list-v2', build_list, force=bypass_cache,
+            )
+        elif bypass_cache:
             payload = build_curriculum_payload(visibility, compact=True, force=True)
             modules = enrich_modules_with_authoring(payload['modules'], include_programme_deleted=visibility == 'all')
         else:
@@ -24814,8 +25065,6 @@ def curriculum_modules(request):
     # Filtering below still works: programmeId, cohortId, groupId and status are
     # all in the whitelist, so the projection cannot make a filter silently
     # match nothing.
-    if clean_str(request.GET.get('compact')).lower() in {'1', 'true', 'yes'}:
-        modules = compact_module_list_rows(modules)
     filters = {
         'programmeId': clean_str(request.GET.get('programme_id') or request.GET.get('programmeId')),
         'cohortId': clean_str(request.GET.get('cohort_id') or request.GET.get('cohortId')),
@@ -25258,12 +25507,10 @@ def curriculum_module_structure(request, module_catalogue_id):
                     # recomputing, so a module authored a moment later is not
                     # missing until the TTL runs out.
                     #
-                    # A no-cache request rebuilds. The Module Builder sends one
-                    # every time it opens a module, and it means it: the
-                    # workspace saves the WHOLE structure back, so a stale read
-                    # here is not a stale screen, it is the next save writing
-                    # pre-edit weeks and components over the stored ones. This
-                    # endpoint was the one read path that ignored the header.
+                    # Explicit no-cache requests (e.g. conflict recovery) rebuild.
+                    # Normal editor opens revalidate against this write-invalidated
+                    # cache. A cached payload keeps its own revision below, so a
+                    # stale editor can never silently overwrite a newer revision.
                     #
                     # The revision is stamped INSIDE the factory, so it is
                     # cached with the payload it describes rather than computed
@@ -25273,10 +25520,7 @@ def curriculum_module_structure(request, module_catalogue_id):
                     # replacing the stored weeks with the cached ones.
                     payload = cached_curriculum_value(
                         f'module-structure:{resolved_catalogue_id}',
-                        lambda: structure_payload_with_revision(
-                            lambda: get_authoring_structure_payload(resolved_catalogue_id),
-                            resolved_catalogue_id,
-                        ),
+                        lambda: read_module_structure_with_revision(resolved_catalogue_id),
                         force=bypass_cache,
                     )
                 else:
@@ -26800,14 +27044,16 @@ def authoring_scope_module_rows(scope='', identifier=''):
 
 
 @scoped_curriculum_read
-def authoring_scope_data(scope='', identifier=''):
+def authoring_scope_data(scope='', identifier='', *, stats_only=False):
     """Module/week/component/mapping rows for a scope.
 
     The component read excludes settings_json for every caller, deliberately:
     each one either feeds ksb_coverage.py (which never reads it) or only counts
-    the rows. Keeping one column set means all callers share a single memoised
-    read inside curriculum_read_scope() instead of one scan per variant.
+    the rows. Programme summary statistics opt into grouped count/weight facts;
+    full coverage callers keep their shared detailed column set.
     """
+    if stats_only and scope != 'programme':
+        raise ValueError('Stats-only authoring rows require a programme scope.')
     ensure_module_authoring_tables()
     module_rows = authoring_scope_module_rows(scope, identifier)
     ident = clean_str(identifier)
@@ -26816,18 +27062,38 @@ def authoring_scope_data(scope='', identifier=''):
     if not module_ids:
         return [], [], [], []
 
-    week_rows = active_week_rows(authoring_child_rows_for_modules(AUTHORING_WEEKS_TABLE, module_ids))
-    component_rows = active_component_rows(authoring_child_rows_for_modules(
-        AUTHORING_COMPONENTS_TABLE, module_ids,
-        # This feeds only ksb_coverage.py and the active-row filters.  A narrow
-        # allow-list is intentional: legacy JSON/text columns are large and a
-        # newly-added component body must not silently enter this aggregate.
-        columns=COMPONENT_KSB_SCOPE_COLUMNS,
-    ))
-    mapping_rows = active_mapping_rows(authoring_child_rows_for_modules(AUTHORING_KSB_MAPPINGS_TABLE, module_ids))
+    # Summary stats use child rows to rank duplicate module deliveries, then
+    # weights/source identities only. Preserve all filter flags, without titles,
+    # descriptions, schedules or other drill-down metadata.
+    deletion_fields = ('deleted_at', 'is_programme_deleted', 'is_deleted', 'isDeleted', 'isProgrammeDeleted')
+    counts = None
+    if stats_only and connection.vendor == 'postgresql':
+        from .ksb_stats_reads import grouped_scope_rows
+        week_rows, component_rows, mapping_rows = grouped_scope_rows(module_ids)
+        counts = []
+        for rows in (mapping_rows, component_rows, week_rows):
+            counter = Counter()
+            for row in rows:
+                counter[clean_str(row.get('module_catalogue_id'))] += row['_stats_count']
+            counts.append(counter)
+    else:
+        week_rows = active_week_rows(authoring_child_rows_for_modules(
+            AUTHORING_WEEKS_TABLE, module_ids,
+            **({'columns': ('module_catalogue_id', 'library_state', *deletion_fields)} if stats_only else {}),
+        ))
+        component_rows = active_component_rows(authoring_child_rows_for_modules(
+            AUTHORING_COMPONENTS_TABLE, module_ids,
+            # Full coverage also excludes component bodies and other large JSON.
+            columns=(('module_catalogue_id', 'type', 'is_programme_deleted', 'deleted_at', 'library_state')
+                     if stats_only else COMPONENT_KSB_SCOPE_COLUMNS),
+        ))
+        mapping_rows = active_mapping_rows(authoring_child_rows_for_modules(
+            AUTHORING_KSB_MAPPINGS_TABLE, module_ids,
+            **({'columns': ('module_catalogue_id', 'component_id', 'ksb_code', 'source_type', 'source_id', 'weight', *deletion_fields)} if stats_only else {}),
+        ))
 
     if scope in {'programme', 'cohort', 'group'}:
-        module_rows = dedupe_authoring_module_rows(module_rows, mapping_rows, component_rows, week_rows)
+        module_rows = dedupe_authoring_module_rows(module_rows, mapping_rows, component_rows, week_rows, **({'counts': counts} if counts is not None else {}))
         module_ids = {clean_str(row.get('module_catalogue_id')) for row in module_rows if clean_str(row.get('module_catalogue_id'))}
         week_rows = [row for row in week_rows if clean_str(row.get('module_catalogue_id')) in module_ids]
         component_rows = [row for row in component_rows if clean_str(row.get('module_catalogue_id')) in module_ids]
@@ -26973,7 +27239,10 @@ def required_ksbs_for_request(request, module_rows, scope='', identifier=''):
 
 
 def _coverage_response_uncached(request, scope='', identifier=''):
-    module_rows, week_rows, component_rows, mapping_rows = authoring_scope_data(scope, identifier)
+    summary_only = scope == 'programme' and request.GET.get('view') == 'summary'
+    module_rows, week_rows, component_rows, mapping_rows = authoring_scope_data(
+        scope, identifier, **({'stats_only': True} if summary_only else {}),
+    )
     if identifier and scope == 'group' and not module_rows:
         # A group that exists but carries no modules yet is empty, not missing.
         # Existence is the groups table, not the module rows.
@@ -26986,14 +27255,20 @@ def _coverage_response_uncached(request, scope='', identifier=''):
         mapping_rows = mappings_with_inferred_sources(mapping_rows, module_rows)
     source_type, source_id, source_origin = resolve_coverage_source(request, module_rows, scope, identifier)
     required_ksbs = [] if actual_mappings_only else required_ksbs_for_resolved_source(source_type, source_id, source_origin)
-    coverage = build_coverage(
-        required_ksbs,
-        mapping_rows,
-        module_rows,
-        week_rows,
-        component_rows,
-        include_mapping_only=actual_mappings_only or not bool(required_ksbs),
-    )
+    if summary_only:
+        from .ksb_coverage import build_coverage_summary
+        coverage = build_coverage_summary(
+            required_ksbs, mapping_rows, include_mapping_only=actual_mappings_only or not bool(required_ksbs),
+        )
+    else:
+        coverage = build_coverage(
+            required_ksbs,
+            mapping_rows,
+            module_rows,
+            week_rows,
+            component_rows,
+            include_mapping_only=actual_mappings_only or not bool(required_ksbs),
+        )
     if not actual_mappings_only:
         coverage = annotate_coverage_sources(coverage)
     return JsonResponse({
@@ -27033,6 +27308,8 @@ def coverage_entry(request, scope='', identifier=''):
     source_id = clean_str(request.GET.get('source_id') or request.GET.get('sourceId'))
     actual = '1' if truthy(request.GET.get('actual_mappings') or request.GET.get('actualMappings')) else '0'
     key = f'ksb-coverage-response:{scope or "all"}:{clean_str(identifier)}:{source_type}:{source_id}:{actual}'
+    if scope == 'programme' and request.GET.get('view') == 'summary':
+        key += ':summary-v1'
 
     def build():
         # One targeted read scope per build. Without it every helper below
@@ -27846,7 +28123,7 @@ def learner_progress_ksb_consumption(learner_ids, programme_ksb_codes, component
     )
 
 
-def learner_progress_ksb_totals(learner_ids, programme_ksb_codes):
+def learner_progress_ksb_totals(learner_ids, programme_ksb_codes, *, compact=False):
     """Return only the achieved KSB totals needed by programme summary cards.
 
     ``learner_progress_ksb_consumption`` deliberately returns the full learner
@@ -27872,6 +28149,14 @@ def learner_progress_ksb_totals(learner_ids, programme_ksb_codes):
     })
     if not code_filter:
         return {}
+
+    if compact:
+        from .ksb_stats_reads import progress_totals
+        try:
+            return progress_totals(learner_ids, code_filter)
+        except Exception as exc:
+            logger.warning('Could not load compact learner progress KSB totals: %s', exc)
+            return {}
 
     totals = defaultdict(lambda: defaultdict(float))
     try:
@@ -29427,6 +29712,27 @@ def _scope_learner_roster_payload_uncached(request, scope, identifier):
         if cohort_name and group_name:
             by_group[f'{cohort_name}||{group_name}'] += 1
 
+    # Bulk Attendance only needs the placement identity to intersect this
+    # roster with the KBC directory. Avoid serialising hours, coaching and
+    # progress fields for that screen; the compact projection keeps the same
+    # endpoint contract for every other caller while making its response much
+    # smaller over the remote database connection.
+    compact = truthy(request.GET.get('compact'))
+    assigned_learners = learners
+    if compact:
+        assigned_learners = [
+            {
+                'id': row.get('id'),
+                'name': row.get('name') or '',
+                'email': row.get('email') or '',
+                'cohort': row.get('cohort') or '',
+                'group': row.get('group') or '',
+                'cohortId': row.get('cohortId') or '',
+                'groupId': row.get('groupId') or '',
+            }
+            for row in learners
+        ]
+
     return {
         'scope': scope,
         'identifier': identifier,
@@ -29436,7 +29742,7 @@ def _scope_learner_roster_payload_uncached(request, scope, identifier):
         'source': 'enrolment',
         'editable': False,
         'assignedLearnerCount': len(learners),
-        'assignedLearners': learners,
+        'assignedLearners': assigned_learners,
         'countsByCohort': dict(by_cohort),
         'countsByGroup': dict(by_group),
     }
@@ -29466,7 +29772,8 @@ def scope_learner_roster_entry(request, scope, identifier):
     learner_status = clean_str(request.GET.get('learnerStatus') or request.GET.get('status')).lower()
     cohort = normalise(clean_str(request.GET.get('cohort')))
     group = normalise(clean_str(request.GET.get('group')))
-    key = f'learner-roster-response:{scope}:{identifier}:{learner_status}:{cohort}:{group}'
+    compact = '1' if truthy(request.GET.get('compact')) else '0'
+    key = f'learner-roster-response:{scope}:{identifier}:{learner_status}:{cohort}:{group}:{compact}'
     return cached_curriculum_value(
         key,
         lambda: encode_json_entry(_scope_learner_roster_payload_uncached(request, scope, identifier)),
@@ -30567,8 +30874,46 @@ def curriculum_ksb_framework_detail(request, identifier):
     return JsonResponse({'updated': True, 'id': identifier})
 
 
+@gzip_page
+@require_GET
+def curriculum_ksb_set_definitions(request, identifier):
+    # A single profile's definitions, independently of curriculum coverage.
+    # Keep archived assigned sources readable when visibility=all is requested.
+    rows = fetch_all(
+        f'select * from {table_name("ksb_profiles")} where cast(id as text) = %s or ksb_profile_id = %s',
+        [identifier, identifier],
+    )
+    if not rows:
+        # Older rows can have a generated public id rather than a stored one.
+        rows = [row for row in get_ksb_profile_rows() if ksb_profile_source_id(row) == identifier]
+    profile = next((row for row in rows if ksb_profile_source_id(row) == identifier or clean_str(row.get('id')) == identifier), None)
+    if profile is None or (curriculum_visibility(request) != 'all' and not profile.get('is_active')):
+        return json_error('KSB profile not found.', status=404)
+    result = build_ksb_data([profile], [], [])[1][0]
+    fields = {'id', 'code', 'rawCode', 'fullCode', 'parentCode', 'parentId', 'displayOrder', 'title', 'description', 'type'}
+    result['ksbs'] = [{key: value for key, value in entry.items() if key in fields} for entry in result['ksbs']]
+    return JsonResponse(result)
+
+
+@gzip_page
 @require_GET
 def curriculum_ksb_sets(request):
+    if request.GET.get('view') == 'summary':
+        visibility = curriculum_visibility(request)
+
+        def build():
+            profiles = get_ksb_profile_rows()
+            if visibility != 'all':
+                profiles = [row for row in profiles if row.get('is_active')]
+            # This list needs identities, programme links and definition counts,
+            # not the curriculum tree or per-definition coverage/activity data.
+            return build_ksb_data(profiles, [], [], summary_only=True)[1]
+
+        results = cached_curriculum_value(
+            f'ksb-source-summaries:{visibility}', build,
+            force=request_bypasses_curriculum_cache(request),
+        )
+        return curriculum_collection_response({'schema': CURRICULUM_SCHEMA}, 'ksbSets', results)
     return curriculum_collection_response(get_cached_payload(request, compact=True), 'ksbSets')
 
 
@@ -31531,6 +31876,10 @@ def curriculum_group_detail(request, identifier):
                     expected_revision, current_revision, group=group_conflict_record(group_id),
                 )
         updated_group = update_group_fields(group_id, updates) or group_row
+        if 'group_name' in updates:
+            # Inside this save's transaction, from the row as it was before it.
+            from .placement_rename import propagate_group_name_to_learners
+            propagate_group_name_to_learners(group_row, updates['group_name'])
         module_delivery_updates = {
             key: updates[key]
             for key in ('session_week_day', 'session_start_time', 'session_end_time')
