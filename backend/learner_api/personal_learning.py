@@ -366,6 +366,11 @@ def learner_request(request, account, identity):
         from .personal_learning_quiz_reading import reading_request
         return reading_request(request, context, detail, reading_match[1], query, payload)
     if request.method == 'GET':
+        if path.startswith(f'/learner_api/my-learning/commercial/{identity}/'):
+            from .personal_learning_catalogue import catalogue_request
+            response = catalogue_request(context, detail, module, path, query)
+            if response is not None:
+                return JsonResponse(response)
         if re.fullmatch(r'/learner_api/learner-(detail|summary)/commercial/' + re.escape(identity) + '/', path):
             if query.get('content') == 'reading':
                 component = component_for(detail, query.get('component_id'))
