@@ -8,7 +8,7 @@
   <li>It cannot publish, delete, or see learner records.</li>
 </ul>
 <p>After you choose, you will be sent back to <strong>{{ redirect_host }}</strong>.</p>
-<form method="post">
+<form method="post" action="{{ request.path }}">
   {% csrf_token %}
   {% for name, value in params.items %}<input type="hidden" name="{{ name }}" value="{{ value }}">
   {% endfor %}

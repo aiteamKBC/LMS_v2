@@ -121,8 +121,8 @@ class ProtocolTests(TransportTestCase):
 class AuthTests(TransportTestCase):
     def assertChallenged(self, response):
         self.assertEqual(response.status_code, 401)
-        self.assertIn('resource_metadata="https://lms.example.com/.well-known/oauth-protected-resource"',
-                      response["WWW-Authenticate"])
+        self.assertEqual(response["WWW-Authenticate"],
+                         'Bearer resource_metadata="https://lms.example.com/.well-known/oauth-protected-resource/mcp/"')
 
     def test_401_variants(self):
         self.assertChallenged(self.post(rpc("ping"), token=""))

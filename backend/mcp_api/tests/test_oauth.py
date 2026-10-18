@@ -556,6 +556,91 @@ class MetadataAndMisconfigTests(OAuthTestCase):
                     self.assertNotIn("WWW-Authenticate", response)
 
 
+class ConsentCsrfOriginTests(OAuthTestCase):
+    """The consent POST under real CSRF checks, as a browser sends it.
+
+    The pages used to send ``Referrer-Policy: no-referrer``, under which the
+    browser sends ``Origin: null`` on the form POST and Django refuses it.
+    """
+
+    BASE = "http://testserver"  # the test client's own origin
+
+    def setUp(self):
+        super().setUp()
+        self.enterContext(mock.patch.dict("os.environ", {"MCP_PUBLIC_BASE_URL": self.BASE}))
+        self.browser = Client(enforce_csrf_checks=True)
+        self.client_id = self.registered()
+        self.signed_in = self.staff
+
+    def consent_page(self):
+        page = self.browser.get("/oauth/authorize", self.authorize_params(self.client_id, resource=None))
+        self.assertEqual(page.status_code, 200)
+        return page
+
+    def submit(self, origin):
+        page = self.consent_page()
+        token = page.context["csrf_token"]
+        return self.browser.post("/oauth/authorize", {
+            **self.authorize_params(self.client_id, resource=None),
+            "decision": "allow", "csrfmiddlewaretoken": str(token),
+        }, HTTP_ORIGIN=origin)
+
+    def test_same_origin_post_with_token_succeeds(self):
+        response = self.submit(self.BASE)
+        self.assertEqual(response.status_code, 302)
+        self.assertTrue(response["Location"].startswith(REDIRECT))
+        query = parse_qs(urlsplit(response["Location"]).query)
+        self.assertEqual(query["state"], ["st-123"])
+        self.assertEqual(len(query["code"]), 1)
+
+    def test_foreign_or_null_origin_is_still_refused(self):
+        for origin in ("https://evil.example", "null"):
+            with self.subTest(origin=origin):
+                self.assertEqual(self.submit(origin).status_code, 403)
+        self.assertEqual(self.store.codes, [])
+
+    def test_form_posts_to_a_same_origin_relative_path(self):
+        self.assertContains(self.consent_page(), '<form method="post" action="/oauth/authorize">')
+
+    def test_pages_send_same_origin_referrer_policy(self):
+        pages = {"consent": self.consent_page()}
+        self.signed_in = None
+        pages["sign-in"] = self.browser.get("/oauth/authorize", self.authorize_params(self.client_id, resource=None))
+        pages["error"] = self.browser.get("/oauth/authorize", self.authorize_params("mcp_unknown"))
+        for name, page in pages.items():
+            with self.subTest(page=name):
+                self.assertEqual(page["Referrer-Policy"], "same-origin")
+                self.assertContains(page, '<meta name="referrer" content="same-origin">', status_code=page.status_code)
+                self.assertEqual(page["X-Frame-Options"], "DENY")
+                self.assertEqual(page["Content-Security-Policy"], "frame-ancestors 'none'")
+                self.assertEqual(page["Cache-Control"], "no-store")
+
+
+class ResourceAgreementTests(OAuthTestCase):
+    """/mcp and /mcp/ each get a challenge and metadata naming themselves (RFC 9728)."""
+
+    def test_challenge_metadata_and_resource_agree_for_both_spellings(self):
+        for path in ("/mcp", "/mcp/"):
+            with self.subTest(path=path):
+                header = self.client.post(path)["WWW-Authenticate"]
+                metadata_url = f"{BASE}/.well-known/oauth-protected-resource{path}"
+                self.assertEqual(header, f'Bearer resource_metadata="{metadata_url}"')
+                metadata = self.client.get(metadata_url[len(BASE):]).json()
+                self.assertEqual(metadata["resource"], f"{BASE}{path}")
+                self.assertEqual(metadata["authorization_servers"], [BASE])
+
+    def test_root_metadata_still_served(self):
+        self.assertEqual(self.client.get("/.well-known/oauth-protected-resource").json()["resource"], f"{BASE}/mcp/")
+
+    def test_authorize_accepts_either_resource_spelling(self):
+        client_id = self.registered()
+        self.signed_in = self.staff
+        for resource in (f"{BASE}/mcp", f"{BASE}/mcp/"):
+            with self.subTest(resource=resource):
+                page = self.client.get("/oauth/authorize", self.authorize_params(client_id, resource=resource))
+                self.assertEqual(page.status_code, 200)
+
+
 class NoSecretsInLogsTests(OAuthTestCase):
     def test_events_never_carry_codes_tokens_or_hashes(self):
         with self.assertLogs("mcp_api.oauth", level="INFO") as logs:

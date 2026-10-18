@@ -64,7 +64,7 @@ class FlagOnTests(McpFlagTestCase):
                 self.assertEqual(
                     response["WWW-Authenticate"],
                     'Bearer resource_metadata="https://lms.example.com'
-                    '/.well-known/oauth-protected-resource"',
+                    f'/.well-known/oauth-protected-resource{path}"',
                 )
 
     def test_get_and_delete_are_not_allowed(self):

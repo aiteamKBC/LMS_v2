@@ -90,10 +90,17 @@ def _oauth_error(error):
 
 # --- /mcp/ ----------------------------------------------------------------------
 
-def _bearer_challenge():
+def _mcp_path(request):
+    """``/mcp`` or ``/mcp/`` -- whichever the client used, so resource and metadata agree."""
+    return "/mcp/" if request.path.endswith("/") else "/mcp"
+
+
+def _bearer_challenge(request):
+    # RFC 9728 path form: the metadata URL ends with the resource's own path, and
+    # that document names exactly the URL the client connected to.
     response = HttpResponse(status=401)
     response["WWW-Authenticate"] = (
-        f'Bearer resource_metadata="{public_base_url()}{PROTECTED_RESOURCE_METADATA_PATH}"'
+        f'Bearer resource_metadata="{public_base_url()}{PROTECTED_RESOURCE_METADATA_PATH}{_mcp_path(request)}"'
     )
     return response
 
@@ -134,7 +141,7 @@ def mcp_endpoint(request):
         return response
     resolved = resolve_bearer(request)
     if resolved is None:
-        return _bearer_challenge()
+        return _bearer_challenge(request)
     account, token = resolved
 
     version = request.headers.get("Mcp-Protocol-Version")
@@ -183,10 +190,11 @@ def _metadata(body):
 @public_cors
 @mcp_feature_required
 @require_http_methods(["GET"])
-def oauth_protected_resource_metadata(request):
+def oauth_protected_resource_metadata(request, mcp_path="/mcp/"):
+    """Root form names ``/mcp/``; the RFC 9728 path forms name ``/mcp`` or ``/mcp/`` exactly."""
     base = public_base_url()
     return _metadata({
-        "resource": oauth.resource_url(),
+        "resource": f"{base}{mcp_path}",
         "authorization_servers": [base],
         "scopes_supported": [SCOPE],
         "bearer_methods_supported": ["header"],
@@ -254,7 +262,10 @@ def _page(request, template, context, status=200):
     response = render(request, f"mcp_api/{template}", context, status=status)
     response["X-Frame-Options"] = "DENY"
     response["Content-Security-Policy"] = "frame-ancestors 'none'"
-    response["Referrer-Policy"] = "no-referrer"
+    # same-origin, not no-referrer: under no-referrer the browser sends
+    # "Origin: null" on the consent POST and Django's CSRF origin check refuses it.
+    # Cross-site requests still carry no referrer.
+    response["Referrer-Policy"] = "same-origin"
     return _no_store(response)
 
 

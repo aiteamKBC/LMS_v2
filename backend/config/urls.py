@@ -62,6 +62,9 @@ urlpatterns = [
     path('mcp', mcp_views.mcp_endpoint, name='mcp-endpoint-noslash'),
     path('oauth/', include('mcp_api.oauth_urls')),
     path('.well-known/oauth-protected-resource', mcp_views.oauth_protected_resource_metadata, name='oauth-protected-resource'),
+    # RFC 9728 path forms, one per spelling of the MCP endpoint.
+    path('.well-known/oauth-protected-resource/mcp', mcp_views.oauth_protected_resource_metadata, {'mcp_path': '/mcp'}, name='oauth-protected-resource-mcp'),
+    path('.well-known/oauth-protected-resource/mcp/', mcp_views.oauth_protected_resource_metadata, {'mcp_path': '/mcp/'}, name='oauth-protected-resource-mcp-slash'),
     path('.well-known/oauth-authorization-server', mcp_views.oauth_authorization_server_metadata, name='oauth-authorization-server'),
 ]
 
