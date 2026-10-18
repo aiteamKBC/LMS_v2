@@ -10039,10 +10039,9 @@ def resolve_coach_review_events(
     end_date: date | None = None,
     source_schedule_rows: tuple[dict, dict] | None = None,
 ) -> dict:
-    """Resolve each learner to exactly one review source by effective Aptem id.
+    """Use Learner.reviews exclusively for every Aptem-linked learner.
 
-    The one exception: an Aptem-linked learner with no imported Aptem MCM gets
-    Curriculum MCM occurrences (never Curriculum Progress Reviews).
+    Empty imported history stays empty; only native learners use Curriculum.
     """
     aptem_by_profile, identity_conflicts = resolve_effective_aptem_ids(learners)
     aptem_reviews_available = True
@@ -10070,22 +10069,6 @@ def resolve_coach_review_events(
         learner for learner in learners
         if int(learner.id) not in aptem_by_profile and int(learner.id) not in identity_conflicts
     ]
-    # An Aptem-linked learner with no imported Aptem MCM still has monthly
-    # coaching due, so their MCMs come from Curriculum like a native learner's.
-    # Progress Reviews stay Aptem-only. The all-history lookup is the same rule
-    # the learner calendar and booking use, so a date window never changes it.
-    # Fail closed: an unavailable Aptem source never switches anyone to Curriculum.
-    aptem_mcm_profiles = set(aptem_by_profile)
-    if aptem_reviews_available and aptem_by_profile:
-        try:
-            aptem_mcm_profiles = fetch_aptem_mcm_profile_ids(aptem_by_profile)
-        except DatabaseError as exc:
-            logger.warning("Could not load Aptem MCM history for coach timetable: %s", exc)
-            aptem_reviews_available = False
-    mcm_fallback_learners = [
-        learner for learner in learners
-        if int(learner.id) in aptem_by_profile and int(learner.id) not in aptem_mcm_profiles
-    ]
     events: list[dict] = list(aptem_events)
     issues: list[dict[str, str]] = [
         {"learnerId": str(profile_id), "code": "aptem_identity_conflict"}
@@ -10107,29 +10090,22 @@ def resolve_coach_review_events(
         "curriculumReviewRows": 0,
         "aptemLearners": len(aptem_by_profile),
         "curriculumLearners": len(native_learners),
-        "curriculumMcmFallbackLearners": len(mcm_fallback_learners),
+        # Retain the response field for existing consumers; fallback is disabled.
+        "curriculumMcmFallbackLearners": 0,
     }
     review_template_cache: dict[str, list[dict]] = {}
 
-    for learner in [*native_learners, *mcm_fallback_learners]:
-        mcm_only = int(learner.id) in aptem_by_profile
+    for learner in native_learners:
         programme_id = resolve_curriculum_programme_id(getattr(learner, "programme_id", None) or getattr(learner, "programme", None))
         template_identifiers = curriculum_review_instances.programme_review_template_identifiers(
             programme_id, template_cache=review_template_cache,
         )
-        if mcm_only:
-            # Aptem stays this learner's primary source: a missing Curriculum
-            # schedule means no fallback, not a review generation issue.
-            if not programme_id or not template_identifiers:
-                continue
-        elif not programme_id:
+        if not programme_id:
             issues.append({"learnerId": str(learner.id), "code": "missing_curriculum_programme"})
         elif not template_identifiers:
             issues.append({"learnerId": str(learner.id), "code": "no_enabled_review_templates"})
 
         review_anchor, anchor_reason = resolve_review_anchor_date(learner.id, commercial_rows, enrolment_rows)
-        if review_anchor is None and mcm_only:
-            continue
         if review_anchor is None:
             log_review_anchor_skip(learner, anchor_reason, programme_id=programme_id, template_cache=review_template_cache)
             counts["reviewAnchorSkipped"] += 1
@@ -10147,16 +10123,14 @@ def resolve_coach_review_events(
             learner.id, commercial_rows, enrolment_rows, learner,
         )
         if not learner_start_date or not learner_end_date or learner_end_date <= learner_start_date:
-            if not mcm_only:
-                issues.append({"learnerId": str(learner.id), "code": "review_schedule_unavailable"})
+            issues.append({"learnerId": str(learner.id), "code": "review_schedule_unavailable"})
             continue
 
         source_row = resolve_caseload_source_row(
             learner, commercial_rows=commercial_rows, enrolment_rows=enrolment_rows,
         )
         employer_attendee = learner_employer_attendee(learner, source_row)
-        if not mcm_only:
-            counts["learnersWithDates"] += 1
+        counts["learnersWithDates"] += 1
         learner_status = clean_text(getattr(learner, "programme_status", None) or getattr(learner, "status", None))
         window_start = start_date or learner_start_date
         window_end = end_date or learner_end_date
@@ -10176,8 +10150,6 @@ def resolve_coach_review_events(
             },
         ):
             event_type = review_event_type_for_type_code(occurrence.get("reviewTypeCode"))
-            if mcm_only and event_type != "mcr":
-                continue
             event = build_generated_calendar_event(
                 learner=learner,
                 owner_email=owner_email,
