@@ -16,6 +16,8 @@ from .bulk_attendance_kbc_history import (
     bulk_attendance_kbc_recent,
     bulk_attendance_save_attendance,
 )
+from .bulk_attendance_live_day import bulk_attendance_live_day
+from .bulk_attendance_live_day_records import bulk_attendance_live_day_records
 from .teams_calendar_actions import calendar_action
 from .teams_week_meeting import (
     curriculum_live_session_meeting_scope,
@@ -30,6 +32,8 @@ urlpatterns = [
     path('curriculum/bulk-attendance/kbc-history/', bulk_attendance_kbc_history, name='curriculum-bulk-attendance-kbc-history'),
     path('curriculum/bulk-attendance/kbc-recent/', bulk_attendance_kbc_recent, name='curriculum-bulk-attendance-kbc-recent'),
     path('curriculum/bulk-attendance/attendance/', bulk_attendance_save_attendance, name='curriculum-bulk-attendance-save-attendance'),
+    path('curriculum/bulk-attendance/live-day/', bulk_attendance_live_day, name='curriculum-bulk-attendance-live-day'),
+    path('curriculum/bulk-attendance/live-day-records/', bulk_attendance_live_day_records, name='curriculum-bulk-attendance-live-day-records'),
     path('curriculum/migrated-review-templates/', migrated_template_views.collection),
     path('curriculum/migrated-review-templates/preview/', migrated_template_views.preview),
     path('curriculum/migrated-review-templates/reset/', migrated_template_views.reset),

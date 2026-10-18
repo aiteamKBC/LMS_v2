@@ -5,6 +5,7 @@ import LearnerStatusBadge from "./LearnerStatusBadge";
 export interface AttendanceRow {
   learner: Learner;
   index: number;
+  groupName: string;
   cohortName: string;
 }
 
@@ -134,7 +135,7 @@ export default function AttendanceTable({
           </p>
         </div>
       ) : (
-        rows.map(({ learner, index, cohortName }) => {
+        rows.map(({ learner, index, groupName, cohortName }) => {
           const selected = selectedIds.includes(learner.id);
           const info = lectureInfo[learner.id];
           const recent = info?.recent ?? [];
@@ -169,7 +170,7 @@ export default function AttendanceTable({
                 <div className="min-w-0">
                   <button
                     type="button"
-                    onClick={() => onOpenHistory({ learner, index, cohortName })}
+                    onClick={() => onOpenHistory({ learner, index, groupName, cohortName })}
                     className="flex cursor-pointer items-center gap-1.5 truncate text-left text-sm font-medium text-foreground-950 transition-colors hover:text-primary-700"
                   >
                     <span className="truncate">{learner.name}</span>
@@ -272,7 +273,7 @@ export default function AttendanceTable({
               <div className="md:w-40 md:text-right">
                 <button
                   type="button"
-                  onClick={() => onOpenHistory({ learner, index, cohortName })}
+                  onClick={() => onOpenHistory({ learner, index, groupName, cohortName })}
                   aria-label={`View details for ${learner.name}`}
                   className="inline-flex cursor-pointer items-center gap-1.5 whitespace-nowrap rounded-full border border-primary-200 bg-primary-50 px-3 py-1.5 text-xs font-medium text-primary-700 transition-colors hover:border-primary-300 hover:bg-primary-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-400"
                 >

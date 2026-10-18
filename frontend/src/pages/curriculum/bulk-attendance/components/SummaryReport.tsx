@@ -3,6 +3,10 @@ import type { AttendanceStatus } from "@/types/bulkAttendance";
 import { getDateRange } from "@/utils/bulkAttendance";
 import { downloadCsv, slugify } from "@/utils/bulkCsv";
 import type { AttendanceRow } from "./AttendanceTable";
+import {
+  downloadAttendanceSummaryPdf,
+  type AttendanceSummaryEntry,
+} from "../attendancePdf";
 
 type BreakdownKey = "group" | "cohort";
 
@@ -15,7 +19,7 @@ interface SummaryReportProps {
   scopeLabel: string;
 }
 
-interface BreakdownEntry {
+interface BreakdownEntry extends AttendanceSummaryEntry {
   name: string;
   learners: number;
   present: number;
@@ -33,7 +37,10 @@ function computeBreakdown(
   const map = new Map<string, BreakdownEntry>();
 
   rows.forEach(({ learner, groupName, cohortName }) => {
-    const name = key === "group" ? groupName : cohortName;
+    const rawName = key === "group" ? groupName : cohortName;
+    const name = rawName && rawName !== "—"
+      ? rawName
+      : key === "group" ? "Unassigned learners" : "Unassigned cohort";
     const entry =
       map.get(name) ??
       { name, learners: 0, present: 0, absent: 0, total: 0, rate: 0 };
@@ -131,7 +138,7 @@ export default function SummaryReport({
 
   const isWeekDefault = start === defaultStart && end === defaultEnd;
 
-  const handleExport = () => {
+  const handleCsvExport = () => {
     const header = [
       columnLabel,
       "Learners",
@@ -161,6 +168,19 @@ export default function SummaryReport({
       `attendance-summary_by-${active}_${slugify(scopeLabel)}_${start}_to_${end}.csv`,
       [header, ...body, overallRow]
     );
+  };
+
+  const handlePdfExport = () => {
+    downloadAttendanceSummaryPdf({
+      rows,
+      entries: activeRows,
+      breakdownLabel: columnLabel,
+      start,
+      end,
+      scopeLabel,
+      dayIsos: rangeDays,
+      getStatus,
+    });
   };
 
   return (
@@ -203,15 +223,26 @@ export default function SummaryReport({
               </button>
             </div>
 
-            <button
-              type="button"
-              onClick={handleExport}
-              disabled={loading || activeRows.length === 0}
-              className="flex cursor-pointer items-center gap-1.5 whitespace-nowrap rounded-md bg-secondary-500 px-3 py-2 text-sm font-medium text-background-50 transition-colors hover:bg-secondary-600 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              <i className="ri-file-download-line" />
-              Export report
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={handleCsvExport}
+                disabled={loading || activeRows.length === 0}
+                className="flex cursor-pointer items-center gap-1.5 whitespace-nowrap rounded-md border border-secondary-200 bg-background-50 px-3 py-2 text-sm font-medium text-secondary-800 transition-colors hover:bg-secondary-50 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <i className="ri-file-excel-2-line" />
+                Export CSV
+              </button>
+              <button
+                type="button"
+                onClick={handlePdfExport}
+                disabled={loading || activeRows.length === 0}
+                className="flex cursor-pointer items-center gap-1.5 whitespace-nowrap rounded-md bg-secondary-500 px-3 py-2 text-sm font-medium text-background-50 transition-colors hover:bg-secondary-600 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <i className="ri-file-pdf-2-line" />
+                Export PDF
+              </button>
+            </div>
           </div>
         </div>
 
@@ -279,22 +310,29 @@ export default function SummaryReport({
         </div>
       ) : (
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[720px] border-collapse text-sm">
+          <table className="w-full min-w-[720px] table-fixed border-collapse text-sm">
+            <colgroup>
+              <col className="w-[30%]" />
+              <col className="w-[15%]" />
+              <col className="w-[15%]" />
+              <col className="w-[15%]" />
+              <col className="w-[25%]" />
+            </colgroup>
             <thead>
               <tr className="border-b border-background-200 bg-background-100">
                 <th className="px-5 py-3 text-left font-label text-xs uppercase tracking-wide text-foreground-500">
                   {columnLabel}
                 </th>
-                <th className="px-5 py-3 text-right font-label text-xs uppercase tracking-wide text-foreground-500">
+                <th className="px-5 py-3 text-center font-label text-xs uppercase tracking-wide text-foreground-500">
                   Learners
                 </th>
-                <th className="px-5 py-3 text-right font-label text-xs uppercase tracking-wide text-foreground-500">
+                <th className="px-5 py-3 text-center font-label text-xs uppercase tracking-wide text-foreground-500">
                   Present
                 </th>
-                <th className="px-5 py-3 text-right font-label text-xs uppercase tracking-wide text-foreground-500">
+                <th className="px-5 py-3 text-center font-label text-xs uppercase tracking-wide text-foreground-500">
                   Absent
                 </th>
-                <th className="w-56 px-5 py-3 text-right font-label text-xs uppercase tracking-wide text-foreground-500">
+                <th className="px-5 py-3 text-center font-label text-xs uppercase tracking-wide text-foreground-500">
                   Attendance rate
                 </th>
               </tr>
@@ -303,7 +341,7 @@ export default function SummaryReport({
               {activeRows.map((entry) => (
                 <tr
                   key={entry.name}
-                  className="border-b border-background-200 last:border-b-0 hover:bg-background-100"
+                  className="h-14 border-b border-background-200 last:border-b-0 hover:bg-background-100"
                 >
                   <td className="px-5 py-3">
                     <div className="flex items-center gap-2.5">
@@ -327,17 +365,17 @@ export default function SummaryReport({
                       </span>
                     </div>
                   </td>
-                  <td className="px-5 py-3 text-right text-foreground-700">
+                  <td className="px-5 py-3 text-center text-foreground-700">
                     {entry.learners}
                   </td>
-                  <td className="px-5 py-3 text-right font-medium text-green-700">
+                  <td className="px-5 py-3 text-center font-medium text-green-700">
                     {entry.present}
                   </td>
-                  <td className="px-5 py-3 text-right text-red-700">
+                  <td className="px-5 py-3 text-center text-red-700">
                     {entry.absent}
                   </td>
                   <td className="px-5 py-3">
-                    <div className="flex items-center justify-end gap-3">
+                    <div className="flex items-center justify-center gap-3">
                       <span className="hidden h-1.5 w-24 overflow-hidden rounded-full bg-background-200 sm:block">
                         <span
                           className={`block h-full rounded-full ${rateBarClass(
@@ -347,7 +385,7 @@ export default function SummaryReport({
                         />
                       </span>
                       <span
-                        className={`w-10 text-right font-semibold ${rateTextClass(
+                        className={`w-10 text-center font-semibold ${rateTextClass(
                           entry.rate
                         )}`}
                       >
@@ -359,23 +397,23 @@ export default function SummaryReport({
               ))}
             </tbody>
             <tfoot>
-              <tr className="border-t border-background-300 bg-background-100">
+              <tr className="h-14 border-t border-background-300 bg-background-100">
                 <td className="px-5 py-3 font-semibold text-foreground-950">
                   Overall
                 </td>
-                <td className="px-5 py-3 text-right font-medium text-foreground-950">
+                <td className="px-5 py-3 text-center font-medium text-foreground-950">
                   {overall.learners}
                 </td>
-                <td className="px-5 py-3 text-right font-medium text-green-700">
+                <td className="px-5 py-3 text-center font-medium text-green-700">
                   {overall.present}
                 </td>
-                <td className="px-5 py-3 text-right font-medium text-red-700">
+                <td className="px-5 py-3 text-center font-medium text-red-700">
                   {overall.absent}
                 </td>
                 <td className="px-5 py-3">
-                  <div className="flex items-center justify-end gap-3">
+                  <div className="flex items-center justify-center gap-3">
                     <span
-                      className={`w-10 text-right font-semibold ${rateTextClass(
+                      className={`w-10 text-center font-semibold ${rateTextClass(
                         overall.rate
                       )}`}
                     >

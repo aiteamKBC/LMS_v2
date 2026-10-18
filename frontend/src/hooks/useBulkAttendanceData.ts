@@ -131,6 +131,9 @@ function toBulkData(
       moduleCatalogueId: mappedModule?.rosterId || (session.moduleCatalogueId ? String(session.moduleCatalogueId) : undefined),
       moduleName: session.module || curriculumModuleName,
       moduleAliases: [session.module, curriculumModuleName].filter(Boolean),
+      programmeId: String(session.programmeId ?? mappedModule?.programmeId ?? ""),
+      cohortId: String(session.cohortId ?? mappedModule?.cohortId ?? ""),
+      groupId: String(session.groupId ?? mappedModule?.groupId ?? ""),
       sessionDate: asDate(session.date),
     };
   });
@@ -193,6 +196,8 @@ function toBulkData(
       curriculumId: placement?.id,
       name: learner.name || learner.email,
       email: learner.email,
+      programme: learner.programme,
+      group: learner.group,
       programmeId,
       cohortId,
       groupId: placement?.groupId || group?.id || "",

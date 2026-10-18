@@ -3,7 +3,9 @@ import {
   fetchBulkAttendanceKbcHistory,
   fetchBulkAttendanceKbcRecent,
   fetchBulkAttendanceLearners,
+  fetchBulkAttendanceLiveDayRecords,
   BulkAttendanceSaveError,
+  createBulkAttendanceLiveDay,
   saveBulkAttendanceChanges,
 } from '../bulkAttendanceLearners';
 
@@ -95,6 +97,44 @@ it('saves KBC and live corrections with a CSRF-protected POST and reports partia
   expect(failure).toBeInstanceOf(BulkAttendanceSaveError);
   expect((failure as BulkAttendanceSaveError).message).toBe('Live changes were not saved.');
   expect((failure as BulkAttendanceSaveError).saved).toEqual(['k-1']);
+});
+
+it('adds attendance to an existing live-session occurrence with a CSRF-protected POST', async () => {
+  const fetch = vi.fn(async (url: string) => (url === '/coach_api/csrf'
+    ? new Response(JSON.stringify({ csrfToken: 'synthetic-token' }))
+    : new Response(JSON.stringify({ created: 2, updated: 1 }))));
+  vi.stubGlobal('fetch', fetch);
+  const input = {
+    learnerIds: ['42', '43', '44'], moduleCatalogueId: 'module-1',
+    date: '2026-10-17', attendance: 'present' as const,
+  };
+
+  await expect(createBulkAttendanceLiveDay(input)).resolves.toEqual({ created: 2, updated: 1 });
+  const call = fetch.mock.calls.find(([url]) => url === '/curriculum_api/curriculum/bulk-attendance/live-day/');
+  expect(call).toBeDefined();
+  const options = (call as unknown as [string, RequestInit])[1];
+  expect(options.method).toBe('POST');
+  expect(JSON.parse(String(options.body))).toEqual(input);
+  expect(new Headers(options.headers).get('X-CSRFToken')).toBe('synthetic-token');
+});
+
+it('reads saved live-session attendance for the chosen module and date', async () => {
+  const records = [{
+    recordKey: 'live:7', learnerId: '42', moduleCatalogueId: 'module-1',
+    occurrenceId: 'occurrence-1', attendance: 'present',
+  }];
+  const fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({ records })));
+  vi.stubGlobal('fetch', fetch);
+  const controller = new AbortController();
+
+  await expect(fetchBulkAttendanceLiveDayRecords('2026-10-17', 'module-1', controller.signal))
+    .resolves.toEqual(records);
+  const [url, options] = fetch.mock.calls[0] as [string, RequestInit];
+  const query = new URL(url, 'https://lms.example.invalid').searchParams;
+  expect(url).toContain('/curriculum_api/curriculum/bulk-attendance/live-day-records/');
+  expect(query.get('date')).toBe('2026-10-17');
+  expect(query.get('module_catalogue_id')).toBe('module-1');
+  expect(options).toEqual(expect.objectContaining({ credentials: 'include', signal: controller.signal }));
 });
 
 it('does not make a request when a learner has no KBC identifier', async () => {

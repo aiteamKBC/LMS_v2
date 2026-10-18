@@ -13,6 +13,8 @@ const mocks = vi.hoisted(() => ({
   kbcHistory: vi.fn(),
   kbcRecent: vi.fn(),
   save: vi.fn(),
+  addLiveDay: vi.fn(),
+  liveDayRecords: vi.fn(),
 }));
 
 vi.mock('@/lib/curriculumApi', () => ({
@@ -26,6 +28,8 @@ vi.mock('@/api/bulkAttendanceLearners', () => ({
   fetchBulkAttendanceKbcHistory: mocks.kbcHistory,
   fetchBulkAttendanceKbcRecent: mocks.kbcRecent,
   saveBulkAttendanceChanges: mocks.save,
+  createBulkAttendanceLiveDay: mocks.addLiveDay,
+  fetchBulkAttendanceLiveDayRecords: mocks.liveDayRecords,
   BulkAttendanceSaveError: class extends Error {
     saved: string[];
     constructor(message: string, saved: string[] = []) {
@@ -68,6 +72,8 @@ beforeEach(() => {
   mocks.kbcHistory.mockResolvedValue({ records: [], warnings: [] });
   mocks.kbcRecent.mockResolvedValue({ recent: {}, warnings: [] });
   mocks.save.mockResolvedValue(['live:7']);
+  mocks.addLiveDay.mockResolvedValue({ created: 1, updated: 0 });
+  mocks.liveDayRecords.mockResolvedValue([]);
 });
 
 it('archives only Completed, EnteredEpa and Withdrawn learners and shows every status', async () => {
@@ -85,7 +91,14 @@ it('archives only Completed, EnteredEpa and Withdrawn learners and shows every s
   expect(screen.getByText('Onboarding')).toBeVisible();
   const header = screen.getByText('Last 4 lectures').parentElement as HTMLElement;
   expect(within(header).getByText('Status')).toBeInTheDocument();
+  expect(within(header).queryByText('Attendance')).not.toBeInTheDocument();
   expect(within(header).queryByText('Lecture')).not.toBeInTheDocument();
+  expect(screen.queryByText('Select session')).not.toBeInTheDocument();
+  const actionsButton = screen.getByRole('button', { name: 'Actions' });
+  expect(actionsButton).toBeVisible();
+  fireEvent.click(actionsButton);
+  expect(screen.getByRole('menuitem', { name: 'Export PDF' })).toBeVisible();
+  expect(screen.getByRole('menuitem', { name: 'Export CSV' })).toBeVisible();
 
   fireEvent.click(screen.getByRole('button', { name: 'Archived (3)' }));
   for (const [name, status] of [['Casey Done', 'Completed'], ['Jamie Epa', 'EnteredEpa'], ['Taylor Left', 'Withdrawn']]) {
@@ -115,9 +128,11 @@ it('filters the register by group using that group\'s roster', async () => {
   fireEvent.click(screen.getByRole('button', { name: /^Group\s*All Groups$/ }));
   expect(screen.getByRole('button', { name: 'Group B' })).toBeVisible();
   fireEvent.click(screen.getByRole('button', { name: 'Group A' }));
+  // The dropdown reflects the choice before the deferred roster request begins.
+  expect(screen.getByRole('button', { name: /^Group\s*Group A$/ })).toBeVisible();
 
   await waitFor(() => expect(mocks.roster).toHaveBeenCalledWith(
-    'group', 'G1', { learnerStatus: 'all' }, expect.any(AbortSignal), { timeoutMs: 180000 },
+    'group', 'G1', { learnerStatus: 'all' }, expect.any(AbortSignal), { timeoutMs: 60000, compact: true },
   ));
   expect(await screen.findByRole('button', { name: 'Morgan Sample' })).toBeVisible();
   expect(screen.queryByRole('button', { name: 'Alex Example' })).not.toBeInTheDocument();
@@ -128,6 +143,131 @@ it('filters the register by group using that group\'s roster', async () => {
   fireEvent.click(screen.getByRole('button', { name: /^Group\s*All Groups$/ }));
   expect(screen.getByRole('button', { name: 'Group A' })).toBeVisible();
   expect(screen.queryByRole('button', { name: 'Group B' })).not.toBeInTheDocument();
+});
+
+it('cascades programme, cohort, group, module and lecture choices', async () => {
+  mocks.overview.mockResolvedValue({
+    programmes: [
+      { id: 'P1', name: 'Engineering' },
+      { id: 'P2', name: 'Design' },
+    ],
+    cohorts: [
+      { id: 'C1', name: 'Autumn', programmeId: 'P1' },
+      { id: 'C2', name: 'Winter', programmeId: 'P1' },
+      { id: 'C3', name: 'Spring', programmeId: 'P2' },
+    ],
+    groups: [
+      { id: 'G1', name: 'Group A', cohortId: 'C1' },
+      { id: 'G2', name: 'Group B', cohortId: 'C1' },
+      { id: 'G3', name: 'Group C', cohortId: 'C2' },
+      { id: 'G4', name: 'Group D', cohortId: 'C3' },
+    ],
+    modules: [
+      // This represents older rows that identify the group but not its cohort.
+      { id: 'M1', moduleCatalogueId: 'MC1', name: 'Module A', programmeId: 'P1', groupId: 'G1' },
+      { id: 'M2', moduleCatalogueId: 'MC2', name: 'Module B', programmeId: 'P1', groupId: 'G2' },
+      { id: 'M3', moduleCatalogueId: 'MC3', name: 'Cohort module', programmeId: 'P1', cohortId: 'C1' },
+      { id: 'M4', moduleCatalogueId: 'MC4', name: 'Unscoped module', programmeId: 'P1' },
+      { id: 'M5', moduleCatalogueId: 'MC5', name: 'Other programme module', programmeId: 'P2', groupId: 'G4' },
+    ],
+    sessions: [],
+  } as unknown as CurriculumOverview);
+  mocks.sessions.mockResolvedValue([
+    { id: 'S1', title: 'Lecture A', moduleId: 'M1', date: '2026-10-18' },
+    { id: 'S2', title: 'Lecture B', moduleId: 'M2', date: '2026-10-18' },
+  ]);
+  mocks.roster.mockImplementation(async (scope: string, identifier: string) => (
+    scope === 'module' && identifier === 'MC1'
+      // Older enrolment rows can carry the Group label before its id backfill.
+      ? { assignedLearners: [{ id: 9, email: 'morgan@example.invalid', cohort: 'Autumn', group: 'Group A', cohortId: 'C1' }] }
+      : { assignedLearners: [] }
+  ));
+
+  const choose = (filter: RegExp, option: string) => {
+    fireEvent.click(screen.getByRole('button', { name: filter }));
+    fireEvent.click(screen.getByRole('button', { name: option }));
+  };
+
+  render(<AttendancePage />);
+  await screen.findByRole('button', { name: 'Alex Example' });
+
+  choose(/^Programme\s*All Programmes$/, 'Engineering');
+  await waitFor(() => expect(mocks.roster).toHaveBeenCalledWith(
+    'programme', 'P1', { learnerStatus: 'all' }, expect.any(AbortSignal), { timeoutMs: 60000, compact: true },
+  ));
+  fireEvent.click(screen.getByRole('button', { name: /^Cohort\s*All Cohorts$/ }));
+  expect(screen.getByRole('button', { name: 'Autumn' })).toBeVisible();
+  expect(screen.queryByRole('button', { name: 'Winter' })).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Spring' })).not.toBeInTheDocument();
+
+  fireEvent.click(screen.getByRole('button', { name: 'Autumn' }));
+  await waitFor(() => expect(mocks.roster).toHaveBeenCalledWith(
+    'cohort', 'C1', { learnerStatus: 'all' }, expect.any(AbortSignal), { timeoutMs: 60000, compact: true },
+  ));
+  fireEvent.click(screen.getByRole('button', { name: /^Group\s*All Groups$/ }));
+  expect(screen.getByRole('button', { name: 'Group A' })).toBeVisible();
+  expect(screen.getByRole('button', { name: 'Group B' })).toBeVisible();
+  expect(screen.queryByRole('button', { name: 'Group C' })).not.toBeInTheDocument();
+
+  fireEvent.click(screen.getByRole('button', { name: 'Group A' }));
+  await waitFor(() => expect(mocks.roster).toHaveBeenCalledWith(
+    'group', 'G1', { learnerStatus: 'all' }, expect.any(AbortSignal), { timeoutMs: 60000, compact: true },
+  ));
+  fireEvent.click(screen.getByRole('button', { name: /^Module\s*All Modules$/ }));
+  expect(screen.getByRole('button', { name: 'Module A' })).toBeVisible();
+  expect(screen.queryByRole('button', { name: 'Module B' })).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Cohort module' })).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Unscoped module' })).not.toBeInTheDocument();
+
+  fireEvent.click(screen.getByRole('button', { name: 'Module A' }));
+  await waitFor(() => expect(mocks.roster).toHaveBeenCalledWith(
+    'module', 'MC1', { learnerStatus: 'all' }, expect.any(AbortSignal), { timeoutMs: 60000, compact: true },
+  ));
+  expect(await screen.findByRole('button', { name: 'Morgan Sample' })).toBeVisible();
+  fireEvent.click(screen.getByRole('button', { name: /^Lecture\s*All Lectures$/ }));
+  expect(screen.getByRole('button', { name: /Lecture A/ })).toBeVisible();
+  expect(screen.queryByRole('button', { name: /Lecture B/ })).not.toBeInTheDocument();
+});
+
+it('adds attendance through the live-session register only after a lecture is selected', async () => {
+  mocks.overview.mockResolvedValue({
+    ...overview,
+    modules: [{ id: 'M1', moduleCatalogueId: 'MC1', name: 'Module A', programmeId: 'P1', cohortId: 'C1' }],
+  });
+  mocks.sessions.mockResolvedValue([
+    { id: 'S1', title: 'Lecture A', moduleId: 'M1', moduleCatalogueId: 'MC1', date: '2026-10-17' },
+  ]);
+  mocks.roster.mockImplementation(async (scope: string, identifier: string) => (
+    scope === 'module' && identifier === 'MC1'
+      ? { assignedLearners: [{ id: 8, email: 'alex@example.invalid', cohort: 'Autumn', cohortId: 'C1' }] }
+      : { assignedLearners: [] }
+  ));
+
+  render(<AttendancePage />);
+  await screen.findByRole('button', { name: 'Alex Example' });
+
+  fireEvent.click(screen.getByRole('button', { name: 'Add attendance day' }));
+  const blocked = await screen.findByRole('dialog', { name: 'Add attendance day' });
+  expect(within(blocked).getByLabelText('Live session')).toBeVisible();
+  expect(within(blocked).getByRole('button', { name: 'Add attendance' })).toBeDisabled();
+  fireEvent.click(within(blocked).getByRole('button', { name: 'Close add attendance day' }));
+
+  fireEvent.click(screen.getByRole('button', { name: /^Module\s*All Modules$/ }));
+  fireEvent.click(screen.getByRole('button', { name: 'Module A' }));
+  await waitFor(() => expect(mocks.roster).toHaveBeenCalledWith(
+    'module', 'MC1', { learnerStatus: 'all' }, expect.any(AbortSignal), { timeoutMs: 60000, compact: true },
+  ));
+  fireEvent.click(screen.getByRole('button', { name: /^Lecture\s*All Lectures$/ }));
+  fireEvent.click(screen.getByRole('button', { name: /Lecture A/ }));
+
+  fireEvent.click(screen.getByRole('button', { name: 'Add attendance day' }));
+  const dialog = await screen.findByRole('dialog', { name: 'Add attendance day' });
+  expect(within(dialog).getByRole('option', { name: /Lecture A/ })).toBeVisible();
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Add attendance' }));
+
+  await waitFor(() => expect(mocks.addLiveDay).toHaveBeenCalledWith({
+    learnerIds: ['301'], moduleCatalogueId: 'MC1', date: '2026-10-17', attendance: 'present',
+  }));
 });
 
 it('loads each filter roster once and reuses it when the filter is chosen again', async () => {
@@ -149,7 +289,7 @@ it('loads each filter roster once and reuses it when the filter is chosen again'
   await screen.findByRole('button', { name: 'Alex Example' });
   choose(/^Group\s*All Groups$/, 'Group A');
   expect(await screen.findByRole('button', { name: 'Morgan Sample' })).toBeVisible();
-  expect(mocks.roster.mock.calls[0][4]).toEqual({ timeoutMs: 180000 });
+  expect(mocks.roster.mock.calls[0][4]).toEqual({ timeoutMs: 60000, compact: true });
 
   choose(/^Group\s*Group A$/, 'All Groups');
   await waitFor(() => expect(screen.getByRole('button', { name: 'Riley Past' })).toBeVisible());
@@ -173,6 +313,49 @@ it('offers a retry when a filter roster cannot be loaded', async () => {
   fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
   expect(await screen.findByRole('button', { name: 'Morgan Sample' })).toBeVisible();
   expect(mocks.roster).toHaveBeenCalledTimes(2);
+});
+
+it('filters groups and modules by date, then loads the displayed live attendance records', async () => {
+  mocks.overview.mockResolvedValue({
+    programmes: [{ id: 'P1', name: 'Engineering' }],
+    cohorts: [{ id: 'C1', name: 'Autumn', programmeId: 'P1' }],
+    groups: [
+      { id: 'G1', name: 'Group A', cohortId: 'C1' },
+      { id: 'G2', name: 'Group B', cohortId: 'C1' },
+    ],
+    modules: [
+      { id: 'M1', moduleCatalogueId: 'MC1', name: 'Module A', programmeId: 'P1', cohortId: 'C1', groupId: 'G1' },
+      { id: 'M2', moduleCatalogueId: 'MC2', name: 'Module B', programmeId: 'P1', cohortId: 'C1', groupId: 'G2' },
+    ],
+    sessions: [],
+  } as unknown as CurriculumOverview);
+  mocks.sessions.mockResolvedValue([
+    { id: 'S1', title: 'Lecture A', moduleId: 'M1', moduleCatalogueId: 'MC1', date: '2026-10-17' },
+    { id: 'S2', title: 'Lecture B', moduleId: 'M2', moduleCatalogueId: 'MC2', date: '2026-10-18' },
+  ]);
+  mocks.roster.mockImplementation(async (scope: string, identifier: string) => (
+    scope === 'module' && identifier === 'MC1'
+      ? { assignedLearners: [{ id: 8, email: 'alex@example.invalid', cohort: 'Autumn', group: 'Group A', cohortId: 'C1', groupId: 'G1' }] }
+      : { assignedLearners: [] }
+  ));
+  mocks.liveDayRecords.mockResolvedValue([{
+    recordKey: 'live:7', learnerId: '301', moduleCatalogueId: 'MC1', occurrenceId: 'O1', attendance: 'present',
+  }]);
+
+  const { container } = render(<AttendancePage />);
+  await screen.findByRole('button', { name: 'Alex Example' });
+  fireEvent.change(container.querySelector('input[type="date"]')!, { target: { value: '2026-10-17' } });
+
+  fireEvent.click(screen.getByRole('button', { name: /^Group\s*All Groups$/ }));
+  expect(screen.getByRole('button', { name: 'Group A' })).toBeVisible();
+  expect(screen.queryByRole('button', { name: 'Group B' })).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: /^Module\s*All Modules$/ }));
+  expect(screen.getByRole('button', { name: 'Module A' })).toBeVisible();
+  expect(screen.queryByRole('button', { name: 'Module B' })).not.toBeInTheDocument();
+
+  fireEvent.click(screen.getByRole('button', { name: 'Module A' }));
+  await waitFor(() => expect(mocks.liveDayRecords).toHaveBeenCalledWith('2026-10-17', 'MC1', expect.any(AbortSignal)));
+  expect(screen.queryByText('Select session')).not.toBeInTheDocument();
 });
 
 it('opens View details when a learner is chosen in the learner directory', async () => {

@@ -7,6 +7,7 @@ import {
 } from "@/utils/bulkAttendance";
 import type { EditableRecord } from "./AttendanceTable";
 import LearnerStatusBadge from "./LearnerStatusBadge";
+import { downloadLearnerAttendancePdf } from "../attendancePdf";
 
 export interface LearnerHistoryRecord {
   id: string;
@@ -102,6 +103,15 @@ export default function LearnerHistoryModal({
 
   const rateClass = rate >= 80 ? "text-green-700" : rate >= 50 ? "text-warning-700" : "text-red-700";
 
+  const handlePdfExport = () => {
+    downloadLearnerAttendancePdf({
+      learner,
+      cohortName,
+      moduleLabel,
+      history: history.map((entry) => ({ ...entry, attendance: statusOf(entry) })),
+    });
+  };
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-foreground-950/40 p-4" onClick={onClose}>
       <section
@@ -129,6 +139,17 @@ export default function LearnerHistoryModal({
             </div>
           </div>
           <div className="flex shrink-0 items-center gap-1">
+            <button
+              type="button"
+              onClick={handlePdfExport}
+              disabled={loading}
+              aria-label="Export learner attendance PDF"
+              title="Export attendance PDF"
+              className="flex h-8 cursor-pointer items-center gap-1.5 rounded-md border border-primary-200 px-2 text-xs font-medium text-primary-700 transition-colors hover:bg-primary-50 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <i className="ri-file-pdf-2-line text-base" />
+              <span className="hidden sm:inline">PDF</span>
+            </button>
             <button
               type="button"
               onClick={() => setShowStats((previous) => !previous)}

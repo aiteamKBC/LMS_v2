@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { WorkspaceShell } from "@/components/feature/WorkspaceShell";
 import { curriculumNavItems } from "@/mocks/navigation";
-import type { AttendanceStatus, Learner, Lecture } from "@/types/bulkAttendance";
+import type { AttendanceStatus, Cohort, Group, Learner, Lecture, Module } from "@/types/bulkAttendance";
 import { useAttendance } from "@/hooks/useBulkAttendance";
 import { useBulkAttendanceData } from "@/hooks/useBulkAttendanceData";
 import {
@@ -10,8 +10,14 @@ import {
   type CurriculumProgrammeAssignedLearner,
 } from "@/lib/curriculumApi";
 
-const ROSTER_TIMEOUT_MS = 180_000;
+const ROSTER_TIMEOUT_MS = 60_000;
+// A Programme -> Cohort -> Group -> Module selection is usually made in quick
+// succession. Waiting briefly avoids requests for every intermediate choice,
+// while the selected filter label still updates at once.
+const ROSTER_DEBOUNCE_MS = 80;
 import {
+  createBulkAttendanceLiveDay,
+  fetchBulkAttendanceLiveDayRecords,
   fetchBulkAttendanceKbcHistory,
   fetchBulkAttendanceKbcRecent,
   BulkAttendanceSaveError,
@@ -26,7 +32,7 @@ import {
   todayIso,
 } from "@/utils/bulkAttendance";
 import { downloadCsv, slugify } from "@/utils/bulkCsv";
-import StatCards from "./components/StatCards";
+import { downloadAttendanceSummaryPdf } from "./attendancePdf";
 import FilterCard, { type FilterOption } from "./components/FilterCard";
 import RegisterTabs, { type RegisterTab } from "./components/RegisterTabs";
 import SearchBar from "./components/SearchBar";
@@ -41,6 +47,9 @@ import LearnerHistoryModal, {
   type LearnerHistoryRecord,
 } from "./components/LearnerHistoryModal";
 import LearnerDirectoryModal from "./components/LearnerDirectoryModal";
+import AddAttendanceDayDialog, {
+  type AddAttendanceDayValues,
+} from "./components/AddAttendanceDayDialog";
 import ArchiveView from "./components/ArchiveView";
 import { isArchivedStatus } from "./learnerStatus";
 
@@ -48,6 +57,49 @@ function statusLabel(status: AttendanceStatus): string {
   if (status === "present") return "Present";
   if (status === "absent") return "Absent";
   return "Unmarked";
+}
+
+function normalizeText(value: string | undefined): string {
+  return (value || "").trim().toLowerCase().replace(/[^a-z0-9]+/g, "");
+}
+
+interface SessionDateScope {
+  moduleIds: Set<string>;
+  groupIds: Set<string>;
+  cohortIds: Set<string>;
+  programmeIds: Set<string>;
+}
+
+/** Resolve the curriculum placements that have a scheduled session on one date. */
+function sessionScopeForDate(
+  lectures: Lecture[],
+  modules: Module[],
+  groups: Group[],
+  cohorts: Cohort[],
+  sessionDate: string,
+): SessionDateScope {
+  const result: SessionDateScope = {
+    moduleIds: new Set(),
+    groupIds: new Set(),
+    cohortIds: new Set(),
+    programmeIds: new Set(),
+  };
+  const modulesById = new Map(modules.map((module) => [module.id, module]));
+  const groupsById = new Map(groups.map((group) => [group.id, group]));
+  const cohortsById = new Map(cohorts.map((cohort) => [cohort.id, cohort]));
+
+  lectures.filter((lecture) => lecture.sessionDate === sessionDate).forEach((lecture) => {
+    const module = modulesById.get(lecture.moduleId);
+    const moduleId = lecture.moduleId || module?.id;
+    const groupId = lecture.groupId || module?.groupId;
+    const cohortId = lecture.cohortId || module?.cohortId || groupsById.get(groupId ?? "")?.cohortId;
+    const programmeId = lecture.programmeId || module?.programmeId || cohortsById.get(cohortId ?? "")?.programmeId;
+    if (moduleId) result.moduleIds.add(moduleId);
+    if (groupId) result.groupIds.add(groupId);
+    if (cohortId) result.cohortIds.add(cohortId);
+    if (programmeId) result.programmeIds.add(programmeId);
+  });
+  return result;
 }
 
 export default function AttendancePage() {
@@ -87,19 +139,30 @@ export default function AttendancePage() {
   const [detailSaveError, setDetailSaveError] = useState<string | null>(null);
   const [pendingEdits, setPendingEdits] = useState<Record<string, BulkAttendanceChange>>({});
   const [kbcRecentVersion, setKbcRecentVersion] = useState(0);
-  const [statusFilter, setStatusFilter] = useState<AttendanceStatus | null>(null);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [showActions, setShowActions] = useState(false);
   const [view, setView] = useState<"register" | "archive">("register");
   const [showLearnerDirectory, setShowLearnerDirectory] = useState(false);
+  const [showAddAttendanceDay, setShowAddAttendanceDay] = useState(false);
+  const [addAttendanceSaving, setAddAttendanceSaving] = useState(false);
+  const [addAttendanceError, setAddAttendanceError] = useState<string | null>(null);
+  const [liveDayError, setLiveDayError] = useState<string | null>(null);
+  const [savingLiveLearnerIds, setSavingLiveLearnerIds] = useState<string[]>([]);
 
   const selectedLecture = useMemo(
     () => lectures.find((lecture) => lecture.id === lectureId) ?? null,
     [lectureId, lectures]
   );
+  const soleDateLecture = useMemo(() => {
+    const onDate = lectures.filter((lecture) => lecture.sessionDate === date);
+    return onDate.length === 1 ? onDate[0] : null;
+  }, [lectures, date]);
 
   // Which roster the current filters need, reduced to plain strings so the
   // request only re-runs when the selection itself changes.
+  // Only an explicit module/lecture selection needs a roster request. A lone
+  // session on the selected date is enough to read attendance, but it should
+  // not blank the learner table while its roster is being fetched.
   const scopedModuleId = moduleId || selectedLecture?.moduleId || "";
   const rosterScope: CurriculumLearnerScope | null = scopedModuleId
     ? "module" : groupId ? "group" : cohortId ? "cohort" : programmeId ? "programme" : null;
@@ -109,6 +172,51 @@ export default function AttendancePage() {
   // Rosters already loaded on this page; going back to a filter is instant.
   const rosterCache = useRef(new Map<string, CurriculumProgrammeAssignedLearner[]>());
   const [rosterRetry, setRosterRetry] = useState(0);
+
+  // Use the placement already present in the directory as an immediate view
+  // while the authoritative curriculum roster request is in flight. The
+  // response below replaces this set, so incomplete legacy placement data can
+  // never become the saved source of truth.
+  const optimisticRosterEmails = useMemo(() => {
+    if (!rosterScope) return null;
+    const targetModule = scopedModuleId
+      ? modules.find((module) => module.id === scopedModuleId)
+      : undefined;
+    const targetGroupId = targetModule?.groupId || groupId;
+    const targetCohortId = targetModule?.cohortId
+      || groups.find((group) => group.id === targetGroupId)?.cohortId
+      || cohortId;
+    const targetProgrammeId = targetModule?.programmeId
+      || cohorts.find((cohort) => cohort.id === targetCohortId)?.programmeId
+      || programmeId;
+    const targetGroupName = targetGroupId
+      ? groups.find((group) => group.id === targetGroupId)?.name
+      : "";
+    const targetCohortName = targetCohortId
+      ? cohorts.find((cohort) => cohort.id === targetCohortId)?.name
+      : "";
+    const targetProgrammeName = targetProgrammeId
+      ? programmes.find((programme) => programme.id === targetProgrammeId)?.name
+      : "";
+    const emails = learners
+      .filter((learner) => {
+        const programmeMatches = targetProgrammeId
+          ? learner.programmeId === targetProgrammeId
+            || normalizeText(learner.programme) === normalizeText(targetProgrammeName)
+          : true;
+        const cohortMatches = targetCohortId
+          ? learner.cohortId === targetCohortId
+            || normalizeText(learner.cohort) === normalizeText(targetCohortName)
+          : true;
+        const groupMatches = targetGroupId
+          ? learner.groupId === targetGroupId
+            || normalizeText(learner.group) === normalizeText(targetGroupName)
+          : true;
+        return programmeMatches && cohortMatches && groupMatches && Boolean(learner.email.trim());
+      })
+      .map((learner) => learner.email.trim().toLowerCase());
+    return new Set(emails);
+  }, [cohortId, cohorts, groupId, groups, learners, modules, programmes, programmeId, rosterScope, scopedModuleId]);
 
   useEffect(() => {
     if (!rosterScope) {
@@ -124,8 +232,9 @@ export default function AttendancePage() {
       assigned.forEach((learner) => {
         const email = learner.email.trim().toLowerCase();
         if (!email) return;
-        // A module roster spans every group; keep only the chosen one.
-        if (rosterScope === "module" && groupId && String(learner.groupId ?? "") !== groupId) return;
+        // The curriculum roster endpoint has already narrowed module learners
+        // to the module's Group. Do not repeat that check here: legacy
+        // enrolment rows can have a Group name without a resolved groupId.
         rowsByEmail.set(email, [...(rowsByEmail.get(email) ?? []), learner]);
       });
       setScopeLearnerEmails(new Set(rowsByEmail.keys()));
@@ -146,35 +255,38 @@ export default function AttendancePage() {
     }
 
     const controller = new AbortController();
-    setScopeLearnerEmails(null);
+    setScopeLearnerEmails(optimisticRosterEmails);
     setScopeLearnersByEmail(new Map());
     setScopeRosterLoading(true);
     setScopeRosterError(null);
-    void fetchCurriculumScopeLearnerRoster(
-      rosterScope,
-      rosterIdentifier,
-      { learnerStatus: "all" },
-      controller.signal,
-      // Programme and module rosters are built from the whole curriculum and
-      // can take well over the default minute.
-      { timeoutMs: ROSTER_TIMEOUT_MS },
-    )
-      .then((roster) => {
-        rosterCache.current.set(cacheKey, roster.assignedLearners);
-        if (!controller.signal.aborted) apply(roster.assignedLearners);
-      })
-      .catch((reason: unknown) => {
-        if (controller.signal.aborted) return;
-        setScopeRosterError(reason instanceof Error
-          ? reason.message
-          : "Unable to load learners for this selection.");
-      })
-      .finally(() => {
-        if (!controller.signal.aborted) setScopeRosterLoading(false);
-      });
+    const requestTimer = window.setTimeout(() => {
+      void fetchCurriculumScopeLearnerRoster(
+        rosterScope,
+        rosterIdentifier,
+        { learnerStatus: "all" },
+        controller.signal,
+        { timeoutMs: ROSTER_TIMEOUT_MS, compact: true },
+      )
+        .then((roster) => {
+          rosterCache.current.set(cacheKey, roster.assignedLearners);
+          if (!controller.signal.aborted) apply(roster.assignedLearners);
+        })
+        .catch((reason: unknown) => {
+          if (controller.signal.aborted) return;
+          setScopeRosterError(reason instanceof Error
+            ? reason.message
+            : "Unable to load learners for this selection.");
+        })
+        .finally(() => {
+          if (!controller.signal.aborted) setScopeRosterLoading(false);
+        });
+    }, ROSTER_DEBOUNCE_MS);
 
-    return () => controller.abort();
-  }, [rosterScope, rosterIdentifier, groupId, rosterRetry]);
+    return () => {
+      window.clearTimeout(requestTimer);
+      controller.abort();
+    };
+  }, [optimisticRosterEmails, rosterScope, rosterIdentifier, rosterRetry]);
 
   // Only the programme status archives a learner: Completed, EnteredEpa or Withdrawn.
   const isArchived = useCallback(
@@ -182,15 +294,38 @@ export default function AttendancePage() {
     []
   );
 
+  const dateSessionScope = useMemo(
+    () => sessionScopeForDate(lectures, modules, groups, cohorts, date),
+    [lectures, modules, groups, cohorts, date],
+  );
+
+  const scopedModules = useMemo(() => {
+    const cohortById = new Map(cohorts.map((cohort) => [cohort.id, cohort]));
+    const groupById = new Map(groups.map((group) => [group.id, group]));
+    return modules.filter((module) => {
+      // Older module rows sometimes only retain their group. Resolve the
+      // group’s cohort so the cascade remains correct for both row shapes.
+      const moduleCohortId = module.cohortId || groupById.get(module.groupId ?? "")?.cohortId;
+      const moduleProgrammeId = module.programmeId || cohortById.get(moduleCohortId ?? "")?.programmeId;
+      if (programmeId && moduleProgrammeId !== programmeId) return false;
+      if (cohortId && moduleCohortId !== cohortId) return false;
+      if (groupId && module.groupId !== groupId) return false;
+      return true;
+    });
+  }, [programmeId, cohortId, groupId, modules, cohorts, groups]);
+
   const cohortOptions = useMemo<FilterOption[]>(() => {
     const list = programmeId
       ? cohorts.filter((cohort) => cohort.programmeId === programmeId)
       : cohorts;
+    const hasSessionsOnDate = dateSessionScope.moduleIds.size > 0;
     return [
       { value: "", label: "All Cohorts" },
-      ...list.map((cohort) => ({ value: cohort.id, label: cohort.name })),
+      ...list
+        .filter((cohort) => !hasSessionsOnDate || dateSessionScope.cohortIds.has(cohort.id))
+        .map((cohort) => ({ value: cohort.id, label: cohort.name })),
     ];
-  }, [programmeId, cohorts]);
+  }, [programmeId, cohorts, dateSessionScope]);
 
   const groupOptions = useMemo<FilterOption[]>(() => {
     const cohortIds = cohortId
@@ -198,31 +333,31 @@ export default function AttendancePage() {
       : programmeId
       ? new Set(cohorts.filter((cohort) => cohort.programmeId === programmeId).map((cohort) => cohort.id))
       : null;
-    const list = cohortIds ? groups.filter((group) => cohortIds.has(group.cohortId)) : groups;
+    const hasSessionsOnDate = dateSessionScope.moduleIds.size > 0;
+    const list = (cohortIds ? groups.filter((group) => cohortIds.has(group.cohortId)) : groups)
+      .filter((group) => !hasSessionsOnDate || dateSessionScope.groupIds.has(group.id));
     return [
       { value: "", label: "All Groups" },
       ...list.map((group) => ({ value: group.id, label: group.name })),
     ];
-  }, [programmeId, cohortId, groups, cohorts]);
+  }, [programmeId, cohortId, groups, cohorts, dateSessionScope]);
 
   const moduleOptions = useMemo<FilterOption[]>(() => {
-    const list = modules.filter((module) => {
-      if (programmeId && module.programmeId !== programmeId) return false;
-      if (cohortId && module.cohortId && module.cohortId !== cohortId) return false;
-      if (groupId && module.groupId && module.groupId !== groupId) return false;
-      return true;
-    });
+    const hasSessionsOnDate = dateSessionScope.moduleIds.size > 0;
+    const list = scopedModules.filter((module) => !hasSessionsOnDate || dateSessionScope.moduleIds.has(module.id));
     return [
       { value: "", label: "All Modules" },
       ...list.map((module) => ({ value: module.id, label: module.name })),
     ];
-  }, [programmeId, cohortId, groupId, modules]);
+  }, [scopedModules, dateSessionScope]);
 
   const lectureOptions = useMemo<FilterOption[]>(() => {
     const allowedModuleIds = new Set(moduleOptions.slice(1).map((option) => option.value));
+    const hasSessionsOnDate = dateSessionScope.moduleIds.size > 0;
     const list = lectures.filter((lecture) =>
       allowedModuleIds.has(lecture.moduleId)
-      && (!moduleId || lecture.moduleId === moduleId),
+      && (!moduleId || lecture.moduleId === moduleId)
+      && (!hasSessionsOnDate || lecture.sessionDate === date),
     );
     return [
       { value: "", label: "All Lectures" },
@@ -231,7 +366,44 @@ export default function AttendancePage() {
         label: `${lecture.name} — ${formatShortDate(lecture.sessionDate)}`,
       })),
     ];
-  }, [moduleId, moduleOptions, lectures]);
+  }, [moduleId, moduleOptions, lectures, date, dateSessionScope]);
+
+  const dateLectures = useMemo(() => {
+    const allowedModuleIds = new Set(moduleOptions.slice(1).map((option) => option.value));
+    return lectures.filter((lecture) =>
+      allowedModuleIds.has(lecture.moduleId)
+      && (!moduleId || lecture.moduleId === moduleId)
+      && lecture.sessionDate === date,
+    );
+  }, [moduleId, moduleOptions, lectures, date]);
+
+  // A module with one live session on the date is unambiguous, so its register
+  // can be viewed and corrected without requiring another lecture click.
+  const attendanceTargetLecture = selectedLecture
+    ?? (dateLectures.length === 1 ? dateLectures[0] : null);
+
+  const addAttendanceLectures = useMemo(
+    () => lectures
+      .filter((lecture) => scopedModules.some((module) => module.id === lecture.moduleId))
+      .map((lecture) => ({
+        id: lecture.id,
+        name: lecture.name,
+        moduleName: lecture.moduleName || "Module",
+        moduleCatalogueId: lecture.moduleCatalogueId,
+        sessionDate: lecture.sessionDate,
+      })),
+    [lectures, scopedModules],
+  );
+
+  const handleDateChange = useCallback((nextDate: string, nextLectureId = "") => {
+    const nextScope = sessionScopeForDate(lectures, modules, groups, cohorts, nextDate);
+    setDate(nextDate);
+    setLectureId(nextLectureId);
+    if (nextScope.moduleIds.size > 0) {
+      setGroupId((current) => nextScope.groupIds.has(current) ? current : "");
+      setModuleId((current) => nextScope.moduleIds.has(current) ? current : "");
+    }
+  }, [lectures, modules, groups, cohorts]);
 
   // Structured filters (Programme / Cohort / Module) applied on their own, so
   // the archive view can reuse them without the register search leaking in.
@@ -275,11 +447,8 @@ export default function AttendancePage() {
     statuses,
     getStatus,
     setStatusForDate,
-    markSelected,
-    clearMarks,
-    presentCount,
-    absentCount,
-    unmarkedCount,
+    applySavedStatuses,
+    replaceSavedStatusesForDate,
     dirty,
     pendingCount,
     save,
@@ -287,8 +456,12 @@ export default function AttendancePage() {
   } = useAttendance({
     learners: activeLearners,
     moduleKey,
-    date: selectedLecture?.sessionDate || date,
-  });  const loading = dataLoading || attendanceLoading || scopeRosterLoading;
+    date: attendanceTargetLecture?.sessionDate || date,
+  });
+  // A slow roster must never block changing another filter. The current
+  // selection is rendered immediately while only its learner results load.
+  const pageLoading = dataLoading || attendanceLoading;
+  const registerLoading = pageLoading || scopeRosterLoading;
 
   const handleGridToggle = (learnerId: string, day: string) => {
     const current = getStatus(learnerId, day);
@@ -303,16 +476,92 @@ export default function AttendancePage() {
     );
   };
 
-  const handleMarkSelected = (status: AttendanceStatus) => {
+  const handleMarkSelected = async (status: Extract<AttendanceStatus, "present" | "absent">) => {
     if (selectedIds.length === 0) return;
-    markSelected(selectedIds, status);
+    const target = attendanceTargetLecture;
+    if (!target?.moduleCatalogueId) {
+      setAddAttendanceError("Choose one live session, or a module with one live session on this date, before changing attendance.");
+      setShowAddAttendanceDay(true);
+      return;
+    }
+    setSavingLiveLearnerIds((current) => Array.from(new Set([...current, ...selectedIds])));
+    setLiveDayError(null);
+    try {
+      const sessionLearners = await learnersAssignedToLiveLecture(target);
+      const targets = sessionLearners.filter(
+        (learner) => selectedIds.includes(learner.id) && Boolean(learner.kbcId),
+      );
+      if (!targets.length) {
+        setLiveDayError("None of the selected learners is assigned to this live session.");
+        return;
+      }
+      await createBulkAttendanceLiveDay({
+        learnerIds: targets.map((learner) => learner.kbcId!),
+        moduleCatalogueId: target.moduleCatalogueId,
+        date: target.sessionDate,
+        attendance: status,
+      });
+      applySavedStatuses(targets.map((learner) => learner.id), target.sessionDate, status);
+      setKbcRecentVersion((version) => version + 1);
+      setDetailHistoryVersion((version) => version + 1);
+    } catch (reason) {
+      setLiveDayError(
+        reason instanceof Error ? reason.message : "Attendance could not be saved. Please try again.",
+      );
+    } finally {
+      setSavingLiveLearnerIds((current) => current.filter((id) => !selectedIds.includes(id)));
+    }
   };
 
-  const handleClearMarks = () => {
-    if (selectedIds.length === 0) return;
-    clearMarks(selectedIds);
+  const handleClearSelection = () => {
+    setSelectedIds([]);
     setShowActions(false);
   };
+
+  useEffect(() => {
+    const sessionDate = attendanceTargetLecture?.sessionDate || date;
+    const moduleCatalogueId = attendanceTargetLecture?.moduleCatalogueId;
+    if (!moduleCatalogueId) {
+      replaceSavedStatusesForDate(sessionDate, {});
+      setLiveDayError(null);
+      return undefined;
+    }
+
+    const controller = new AbortController();
+    setLiveDayError(null);
+    replaceSavedStatusesForDate(sessionDate, {});
+    void fetchBulkAttendanceLiveDayRecords(sessionDate, moduleCatalogueId, controller.signal)
+      .then((records) => {
+        if (controller.signal.aborted) return;
+        const learnerIdByKbcId = new Map(
+          activeLearners
+            .filter((learner) => learner.kbcId)
+            .map((learner) => [learner.kbcId!, learner.id]),
+        );
+        const nextStatuses: Record<string, AttendanceStatus> = {};
+        records.forEach((record) => {
+          const learnerId = learnerIdByKbcId.get(record.learnerId);
+          if (learnerId) nextStatuses[learnerId] = record.attendance;
+        });
+        replaceSavedStatusesForDate(sessionDate, nextStatuses);
+      })
+      .catch((reason: unknown) => {
+        if (controller.signal.aborted) return;
+        setLiveDayError(
+          reason instanceof Error
+            ? reason.message
+            : "Unable to load live-session attendance for this date.",
+        );
+      });
+    return () => controller.abort();
+  }, [
+    attendanceTargetLecture?.id,
+    attendanceTargetLecture?.moduleCatalogueId,
+    attendanceTargetLecture?.sessionDate,
+    date,
+    activeLearners,
+    replaceSavedStatusesForDate,
+  ]);
 
   const cohortNameMap = useMemo(
     () => Object.fromEntries(cohorts.map((cohort) => [cohort.id, cohort.name])),
@@ -342,22 +591,23 @@ export default function AttendancePage() {
           : placement
           ? (placement.cohortId ? cohortNameMap[String(placement.cohortId)] : "") || placement.cohort || "—"
           : cohortNameMap[learner.cohortId] ?? "—";
+        const groupName = placementIsAmbiguous
+          ? "—"
+          : placement
+          ? groupNameMap[placement.groupId] ?? "—"
+          : groupNameMap[learner.groupId] ?? "—";
         return {
           learner,
           index,
+          groupName,
           cohortName,
         };
       }),
-    [cohortNameMap, scopeLearnersByEmail, scopeLearnerEmails]
+    [cohortNameMap, groupNameMap, scopeLearnersByEmail, scopeLearnerEmails]
   );
 
   const rows = useMemo(() => buildRows(activeLearners), [activeLearners, buildRows]);
-  const visibleRows = useMemo(
-    () => statusFilter
-      ? rows.filter((row) => (statuses[row.learner.id] ?? "unmarked") === statusFilter)
-      : rows,
-    [rows, statusFilter, statuses]
-  );
+  const visibleRows = rows;
   const visibleLearners = useMemo(() => visibleRows.map((row) => row.learner), [visibleRows]);
 
   const handleToggleSelectAll = () => {
@@ -368,12 +618,6 @@ export default function AttendancePage() {
       return Array.from(new Set([...previous, ...visibleIds]));
     });
   };
-
-  const handleStatusCardClick = (nextStatus: AttendanceStatus) => {
-    setStatusFilter((previous) => previous === nextStatus ? null : nextStatus);
-    setSelectedIds([]);
-  };
-
 
   const archivedRows = useMemo(
     () => buildRows(scopedLearners.filter((learner) => isArchived(learner))),
@@ -392,6 +636,80 @@ export default function AttendancePage() {
   const activeLectureLabel = selectedLecture
     ? `${selectedLecture.name} (${formatShortDate(selectedLecture.sessionDate)})`
     : "All Lectures";
+
+  const learnersAssignedToLiveLecture = useCallback(async (lecture: Lecture) => {
+    if (!lecture.moduleCatalogueId) return [];
+    const cacheKey = `module:${lecture.moduleCatalogueId}`;
+    let assigned = rosterCache.current.get(cacheKey);
+    if (!assigned) {
+      const roster = await fetchCurriculumScopeLearnerRoster(
+        "module",
+        lecture.moduleCatalogueId,
+        { learnerStatus: "all" },
+        undefined,
+        { timeoutMs: ROSTER_TIMEOUT_MS, compact: true },
+      );
+      assigned = roster.assignedLearners;
+      rosterCache.current.set(cacheKey, assigned);
+    }
+    const sessionEmails = new Set(
+      assigned.map((learner) => learner.email.trim().toLowerCase()).filter(Boolean),
+    );
+    return learners.filter((learner) =>
+      !isArchived(learner) && sessionEmails.has(learner.email.trim().toLowerCase()),
+    );
+  }, [learners, isArchived]);
+
+  const addAttendanceDay = async ({
+    date: attendanceDate,
+    lectureId: targetLectureId,
+    status,
+    scope,
+  }: AddAttendanceDayValues) => {
+    const targetLecture = lectures.find((lecture) => lecture.id === targetLectureId);
+    if (!targetLecture?.moduleCatalogueId) {
+      setAddAttendanceError("Choose a live session linked to a curriculum module first.");
+      return;
+    }
+
+    setAddAttendanceSaving(true);
+    setAddAttendanceError(null);
+    try {
+      const sessionLearners = await learnersAssignedToLiveLecture(targetLecture);
+      const sourceLearners = scope === "selected"
+        ? sessionLearners.filter((learner) => selectedIds.includes(learner.id))
+        : sessionLearners;
+      const targets = sourceLearners.filter((learner) => Boolean(learner.kbcId));
+      if (targets.length === 0) {
+        setAddAttendanceError(
+          scope === "selected"
+            ? "None of the selected learners is assigned to this live session."
+            : "No active learners assigned to this live session have a KBC learner ID.",
+        );
+        return;
+      }
+
+      await createBulkAttendanceLiveDay({
+        learnerIds: targets.map((learner) => learner.kbcId!),
+        moduleCatalogueId: targetLecture.moduleCatalogueId,
+        date: attendanceDate,
+        attendance: status,
+      });
+      applySavedStatuses(targets.map((learner) => learner.id), attendanceDate, status);
+      setDate(attendanceDate);
+      setModuleId(targetLecture.moduleId);
+      setLectureId(targetLecture.id);
+      setShowAddAttendanceDay(false);
+      setKbcRecentVersion((version) => version + 1);
+      setDetailHistoryVersion((version) => version + 1);
+    } catch (reason) {
+      setAddAttendanceError(
+        reason instanceof Error ? reason.message : "Attendance day could not be added. Please try again.",
+      );
+    } finally {
+      setAddAttendanceSaving(false);
+    }
+  };
 
   const moduleIdsByProgramme = useMemo(() => {
     const map = new Map<string, string[]>();
@@ -542,6 +860,36 @@ export default function AttendancePage() {
       `attendance_${slugify(scopeName ?? "all-learners")}_${date}.csv`,
       [header, ...body]
     );
+  };
+
+  const handlePdfExport = () => {
+    const present = visibleRows.filter((row) => getStatus(row.learner.id, date) === "present").length;
+    const absent = visibleRows.filter((row) => getStatus(row.learner.id, date) === "absent").length;
+    const marked = present + absent;
+    const scopeName = selectedLecture?.name
+      || (moduleId ? moduleNameMap[moduleId] : "")
+      || (groupId ? groupNameMap[groupId] : "")
+      || (cohortId ? cohortNameMap[cohortId] : "")
+      || (programmeId ? programmeNameMap[programmeId] : "")
+      || "All learners";
+
+    downloadAttendanceSummaryPdf({
+      rows: visibleRows,
+      entries: [{
+        name: activeLectureLabel === "All Lectures" ? "Selected date" : activeLectureLabel,
+        learners: visibleRows.length,
+        present,
+        absent,
+        total: marked,
+        rate: marked ? Math.round((present / marked) * 100) : 0,
+      }],
+      breakdownLabel: "Register",
+      start: date,
+      end: date,
+      scopeLabel: scopeName,
+      dayIsos: [date],
+      getStatus,
+    });
   };
 
   const exportScope = useMemo(() => {
@@ -715,6 +1063,9 @@ export default function AttendancePage() {
             {attendanceSourceError && (
               <p className="mt-2 text-xs text-danger-600">{attendanceSourceError}</p>
             )}
+            {liveDayError && (
+              <p className="mt-2 text-xs text-danger-600" role="alert">{liveDayError}</p>
+            )}
             {kbcRecentError && (
               <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-danger-600" role="alert">
                 <span>{kbcRecentError}</span>
@@ -736,8 +1087,7 @@ export default function AttendancePage() {
             {scopeRosterLoading && (
               <p className="mt-2 flex items-center gap-1.5 text-xs text-foreground-600" role="status">
                 <i className="ri-loader-4-line animate-spin" />
-                Loading the learners for this selection. Large programmes and modules can take up to a minute;
-                the result is remembered, so choosing it again is instant.
+                Loading learners for the selected filters. You can continue changing the filters while it loads.
               </p>
             )}
             {scopeRosterError && (
@@ -763,10 +1113,7 @@ export default function AttendancePage() {
               <input
                 type="date"
                 value={date}
-                onChange={(event) => {
-                  setDate(event.target.value);
-                  setLectureId("");
-                }}
+                onChange={(event) => handleDateChange(event.target.value)}
                 className="cursor-pointer bg-transparent text-sm text-foreground-950 outline-none"
               />
             </label>
@@ -858,9 +1205,9 @@ export default function AttendancePage() {
               placeholder="All Lectures"
               options={lectureOptions}
               onChange={(value) => {
-                setLectureId(value);
                 const lecture = lectures.find((item) => item.id === value);
-                if (lecture?.sessionDate) setDate(lecture.sessionDate);
+                if (lecture?.sessionDate) handleDateChange(lecture.sessionDate, value);
+                else setLectureId(value);
               }}
             />
           </div>
@@ -872,40 +1219,64 @@ export default function AttendancePage() {
           </section>
         ) : (
           <>
-            <div className="mt-5">
+            <div className="mt-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <RegisterTabs active={tab} onChange={setTab} />
+              <button
+                type="button"
+                onClick={() => {
+                  setAddAttendanceError(null);
+                  setShowAddAttendanceDay(true);
+                }}
+                disabled={pageLoading || activeLearners.length === 0}
+                className="inline-flex w-full cursor-pointer items-center justify-center gap-2 rounded-lg border border-primary-200 bg-background-50 px-4 py-2.5 text-sm font-semibold text-primary-700 shadow-sm transition-colors hover:border-primary-300 hover:bg-primary-50 disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto"
+              >
+                <i className="ri-calendar-event-line text-base" />
+                Add attendance day
+              </button>
             </div>
 
             {tab === "daily" && (
-              <section className="mt-5 space-y-4">
-                <StatCards
-                  total={activeLearners.length}
-                  present={loading ? 0 : presentCount}
-                  absent={loading ? 0 : absentCount}
-                  unmarked={loading ? 0 : unmarkedCount}
-                  selectedStatus={statusFilter}
-                  onLearnersClick={() => setShowLearnerDirectory(true)}
-                  onStatusClick={handleStatusCardClick}
-                />
+              <section className="mt-4 space-y-3">
+                <button
+                  type="button"
+                  onClick={() => setShowLearnerDirectory(true)}
+                  disabled={pageLoading || activeLearners.length === 0}
+                  aria-label={`View all ${activeLearners.length} learners`}
+                  className="group grid w-full cursor-pointer grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-4 rounded-xl border border-background-300 bg-background-50 p-4 text-left shadow-sm transition-all hover:border-primary-300 hover:bg-primary-50 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-400 disabled:cursor-not-allowed disabled:opacity-60 sm:p-5"
+                >
+                  <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-secondary-100 text-secondary-900">
+                    <i className="ri-group-line text-2xl" />
+                  </span>
+                  <span className="min-w-0">
+                    <span className="block font-label text-xs uppercase tracking-wide text-foreground-500">
+                      Learners
+                    </span>
+                    <span className="mt-0.5 block text-2xl font-semibold leading-none text-foreground-950">
+                      {pageLoading || scopeRosterLoading ? "—" : activeLearners.length}
+                    </span>
+                  </span>
+                  <span className="flex items-center gap-2 text-sm font-medium text-primary-700">
+                    <span className="hidden sm:inline">View directory</span>
+                    <i className="ri-arrow-right-line text-lg transition-transform group-hover:translate-x-0.5" />
+                  </span>
+                </button>
 
-                <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                <div className="flex flex-col gap-3 rounded-xl border border-background-300 bg-background-50 p-3 shadow-sm xl:flex-row xl:items-center xl:justify-between">
                   <SearchBar
                     value={query}
                     resultCount={visibleRows.length}
                     onChange={setQuery}
                   />
                   <div className="flex flex-wrap items-center gap-2">
-                    <span className="mr-1 text-sm text-foreground-500">
-                      {loading
-                        ? "Loading learners…"
-                        : selectedIds.length > 0
-                        ? `${selectedIds.length} selected`
-                        : `${visibleRows.length} learners`}
-                    </span>
+                    {selectedIds.length > 0 && (
+                      <span className="mr-1 text-sm text-foreground-500">
+                        {selectedIds.length} selected
+                      </span>
+                    )}
                     <button
                       type="button"
-                      onClick={() => handleMarkSelected("present")}
-                      disabled={loading || selectedIds.length === 0}
+                      onClick={() => void handleMarkSelected("present")}
+                      disabled={registerLoading || selectedIds.length === 0}
                       className="flex cursor-pointer items-center gap-1.5 whitespace-nowrap rounded-md border border-green-300 bg-green-100 px-3 py-2 text-sm font-medium text-green-800 transition-colors hover:bg-green-200 disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       <i className="ri-check-double-line" />
@@ -913,8 +1284,8 @@ export default function AttendancePage() {
                     </button>
                     <button
                       type="button"
-                      onClick={() => handleMarkSelected("absent")}
-                      disabled={loading || selectedIds.length === 0}
+                      onClick={() => void handleMarkSelected("absent")}
+                      disabled={registerLoading || selectedIds.length === 0}
                       className="flex cursor-pointer items-center gap-1.5 whitespace-nowrap rounded-md border border-red-300 bg-red-100 px-3 py-2 text-sm font-medium text-red-800 transition-colors hover:bg-red-200 disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       <i className="ri-close-line" />
@@ -924,13 +1295,13 @@ export default function AttendancePage() {
                       <button
                         type="button"
                         onClick={() => setShowActions((prev) => !prev)}
-                        disabled={loading || selectedIds.length === 0}
+                        disabled={registerLoading || visibleRows.length === 0}
                         aria-haspopup="menu"
                         aria-expanded={showActions}
                         className="flex cursor-pointer items-center gap-1.5 whitespace-nowrap rounded-md border border-background-300 bg-background-50 px-3 py-2 text-sm font-medium text-foreground-800 transition-colors hover:bg-background-200 disabled:cursor-not-allowed disabled:opacity-50"
                       >
                         <i className="ri-more-2-fill" />
-                        Action
+                        Actions
                         <i
                           className={`text-xs ${
                             showActions
@@ -950,36 +1321,54 @@ export default function AttendancePage() {
                           />
                           <div
                             role="menu"
-                            className="absolute right-0 z-20 mt-1 w-56 overflow-hidden rounded-md border border-background-300 bg-background-50 py-1"
+                            className="absolute right-0 z-20 mt-1 w-60 overflow-hidden rounded-md border border-background-300 bg-background-50 py-1"
                           >
                             <button
                               type="button"
                               role="menuitem"
-                              onClick={handleClearMarks}
+                              onClick={() => {
+                                handlePdfExport();
+                                setShowActions(false);
+                              }}
+                              disabled={registerLoading || visibleRows.length === 0}
+                              className="flex w-full cursor-pointer items-center gap-2 px-3 py-2 text-left text-sm text-foreground-800 transition-colors hover:bg-background-100 disabled:cursor-not-allowed disabled:opacity-50"
+                            >
+                              <i className="ri-file-pdf-2-line text-secondary-600" />
+                              Export PDF
+                            </button>
+                            <button
+                              type="button"
+                              role="menuitem"
+                              onClick={() => {
+                                handleExport();
+                                setShowActions(false);
+                              }}
+                              disabled={registerLoading || visibleRows.length === 0}
+                              className="flex w-full cursor-pointer items-center gap-2 px-3 py-2 text-left text-sm text-foreground-800 transition-colors hover:bg-background-100 disabled:cursor-not-allowed disabled:opacity-50"
+                            >
+                              <i className="ri-file-excel-2-line text-secondary-600" />
+                              Export CSV
+                            </button>
+                            <div className="my-1 border-t border-background-200" />
+                            <button
+                              type="button"
+                              role="menuitem"
+                              onClick={handleClearSelection}
                               className="flex w-full cursor-pointer items-center gap-2 px-3 py-2 text-left text-sm text-foreground-800 transition-colors hover:bg-background-100"
                             >
                               <i className="ri-eraser-line text-foreground-500" />
-                              Clear marks
+                              Clear selection
                             </button>
                           </div>
                         </>
                       )}
                     </div>
-                    <button
-                      type="button"
-                      onClick={handleExport}
-                      disabled={loading || visibleRows.length === 0}
-                      className="flex cursor-pointer items-center gap-1.5 whitespace-nowrap rounded-md bg-primary-500 px-3 py-2 text-sm font-medium text-background-50 transition-colors hover:bg-primary-600 disabled:cursor-not-allowed disabled:opacity-50"
-                    >
-                      <i className="ri-download-2-line" />
-                      Export CSV
-                    </button>
                   </div>
                 </div>
 
                 <AttendanceTable
                   rows={visibleRows}
-                  loading={loading}
+                  loading={pageLoading}
                   selectedIds={selectedIds}
                   lectureInfo={lectureInfo}
                   onToggleSelect={handleToggleSelect}
@@ -1018,7 +1407,7 @@ export default function AttendancePage() {
                   rows={rows}
                   days={weekDays}
                   today={todayIso()}
-                  loading={loading}
+                  loading={registerLoading}
                   getStatus={getStatus}
                   onToggle={handleGridToggle}
                 />
@@ -1031,7 +1420,7 @@ export default function AttendancePage() {
                   rows={rows}
                   defaultStart={weekDays[0].iso}
                   defaultEnd={weekDays[6].iso}
-                  loading={loading}
+                  loading={registerLoading}
                   getStatus={getStatus}
                   scopeLabel={exportScope}
                 />
@@ -1145,6 +1534,22 @@ export default function AttendancePage() {
             setShowLearnerDirectory(false);
             setHistoryRow(rows.find((row) => row.learner.id === learner.id) ?? buildRows([learner])[0]);
           }}
+        />
+      )}
+      {showAddAttendanceDay && (
+        <AddAttendanceDayDialog
+          initialDate={date}
+          initialLectureId={selectedLecture?.sessionDate === date ? selectedLecture.id : ""}
+          lectures={addAttendanceLectures}
+          selectedCount={activeLearners.filter((learner) => selectedIds.includes(learner.id)).length}
+          saving={addAttendanceSaving}
+          error={addAttendanceError}
+          onClose={() => {
+            if (addAttendanceSaving) return;
+            setShowAddAttendanceDay(false);
+            setAddAttendanceError(null);
+          }}
+          onSave={(values) => void addAttendanceDay(values)}
         />
       )}
       </div>

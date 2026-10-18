@@ -14,6 +14,8 @@ interface UseAttendanceResult {
   getStatus: (learnerId: string, day: string) => AttendanceStatus;
   setStatus: (learnerId: string, status: AttendanceStatus) => void;
   setStatusForDate: (learnerId: string, day: string, status: AttendanceStatus) => void;
+  applySavedStatuses: (learnerIds: string[], day: string, status: AttendanceStatus) => void;
+  replaceSavedStatusesForDate: (day: string, nextStatuses: Record<string, AttendanceStatus>) => void;
   markAll: (status: AttendanceStatus) => void;
   markSelected: (learnerIds: string[], status: AttendanceStatus) => void;
   clearMarks: (learnerIds: string[]) => void;
@@ -54,6 +56,26 @@ export function useAttendance({ learners, date }: UseAttendanceParams): UseAtten
 
   const setStatusForDate = useCallback((learnerId: string, day: string, status: AttendanceStatus) => {
     setPending((current) => ({ ...current, [keyFor(learnerId, day)]: status }));
+  }, []);
+
+  const applySavedStatuses = useCallback((learnerIds: string[], day: string, status: AttendanceStatus) => {
+    setRecords((current) => ({
+      ...current,
+      ...Object.fromEntries(learnerIds.map((learnerId) => [keyFor(learnerId, day), status])),
+    }));
+  }, []);
+
+  /** Replace only one day's server-backed register results, retaining unsaved edits. */
+  const replaceSavedStatusesForDate = useCallback((day: string, nextStatuses: Record<string, AttendanceStatus>) => {
+    setRecords((current) => {
+      const next = Object.fromEntries(
+        Object.entries(current).filter(([key]) => !key.endsWith(`:${day}`)),
+      ) as Record<string, AttendanceStatus>;
+      Object.entries(nextStatuses).forEach(([learnerId, status]) => {
+        next[keyFor(learnerId, day)] = status;
+      });
+      return next;
+    });
   }, []);
 
   const setStatus = useCallback((learnerId: string, status: AttendanceStatus) => {
@@ -121,6 +143,8 @@ export function useAttendance({ learners, date }: UseAttendanceParams): UseAtten
     getStatus,
     setStatus,
     setStatusForDate,
+    applySavedStatuses,
+    replaceSavedStatusesForDate,
     markAll,
     markSelected,
     clearMarks,

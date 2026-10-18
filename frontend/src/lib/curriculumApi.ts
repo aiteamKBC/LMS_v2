@@ -3530,12 +3530,13 @@ export function fetchCurriculumScopeLearnerRoster(
   identifier: string,
   params: { cohort?: string; group?: string; learnerStatus?: string } = {},
   signal?: AbortSignal,
-  options: { timeoutMs?: number } = {},
+  options: { timeoutMs?: number; compact?: boolean } = {},
 ): Promise<CurriculumScopeLearnerRosterResponse> {
   const query = new URLSearchParams();
   if (params.cohort) query.set('cohort', params.cohort);
   if (params.group) query.set('group', params.group);
   if (params.learnerStatus) query.set('learnerStatus', params.learnerStatus);
+  if (options.compact) query.set('compact', 'true');
   return fetchJson<CurriculumScopeLearnerRosterResponse>(
     scopePath(SCOPE_ROSTER_PATHS, '/curriculum/learner-roster/', scope, identifier, query),
     { signal, timeoutMs: options.timeoutMs ?? 60000 },

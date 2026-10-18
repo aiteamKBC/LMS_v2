@@ -36,6 +36,10 @@ export interface Lecture {
   moduleCatalogueId?: string;
   moduleName?: string;
   moduleAliases?: string[];
+  /** Curriculum placement used to constrain the register by its session date. */
+  programmeId?: string;
+  cohortId?: string;
+  groupId?: string;
   sessionDate: string;
 }
 
@@ -45,6 +49,9 @@ export interface Learner {
   curriculumId?: string;
   name: string;
   email: string;
+  programme?: string;
+  group?: string;
+  cohort?: string;
   programmeId: string;
   cohortId: string;
   groupId: string;

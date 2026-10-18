@@ -66,6 +66,21 @@ export interface BulkAttendanceChange {
   attendance: 'present' | 'absent';
 }
 
+export interface BulkAttendanceLiveDayInput {
+  learnerIds: string[];
+  moduleCatalogueId: string;
+  date: string;
+  attendance: 'present' | 'absent';
+}
+
+export interface BulkAttendanceLiveDayRecord {
+  recordKey: string;
+  learnerId: string;
+  moduleCatalogueId: string;
+  occurrenceId: string;
+  attendance: 'present' | 'absent';
+}
+
 /** Thrown when a save failed; `saved` lists record keys that were saved before it failed. */
 export class BulkAttendanceSaveError extends Error {
   readonly saved: string[];
@@ -95,6 +110,54 @@ export async function saveBulkAttendanceChanges(changes: BulkAttendanceChange[])
     throw new BulkAttendanceSaveError('Saving attendance returned an invalid response.');
   }
   return payload.updated;
+}
+
+/** Add or correct an outcome for an existing LMS live-session occurrence. */
+export async function createBulkAttendanceLiveDay(
+  input: BulkAttendanceLiveDayInput,
+): Promise<{ created: number; updated: number }> {
+  const response = await coachFetch('/curriculum_api/curriculum/bulk-attendance/live-day/', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(payload.error || 'Attendance day could not be added. Please try again.');
+  }
+  if (!Number.isInteger(payload.created) || !Number.isInteger(payload.updated)) {
+    throw new Error('Adding attendance returned an invalid response.');
+  }
+  return { created: payload.created, updated: payload.updated };
+}
+
+/** Read saved register outcomes for one live-session module and local date. */
+export async function fetchBulkAttendanceLiveDayRecords(
+  date: string,
+  moduleCatalogueId: string,
+  signal?: AbortSignal,
+): Promise<BulkAttendanceLiveDayRecord[]> {
+  const query = new URLSearchParams({ date, module_catalogue_id: moduleCatalogueId });
+  const response = await coachFetch(
+    `/curriculum_api/curriculum/bulk-attendance/live-day-records/?${query}`,
+    { signal },
+  );
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(payload.error || 'Unable to load live-session attendance for this date.');
+  }
+  if (!Array.isArray(payload.records)) {
+    throw new Error('Live-session attendance returned an invalid response.');
+  }
+  return payload.records.filter((record): record is BulkAttendanceLiveDayRecord =>
+    record
+    && typeof record === 'object'
+    && typeof record.recordKey === 'string'
+    && typeof record.learnerId === 'string'
+    && typeof record.moduleCatalogueId === 'string'
+    && typeof record.occurrenceId === 'string'
+    && (record.attendance === 'present' || record.attendance === 'absent'),
+  );
 }
 
 /** Each learner's last four marked lectures (KBC + live register), oldest first, keyed by KBC id. */
