@@ -1,4 +1,5 @@
 from . import working_hours_holidays
+from . import reward_tracking
 from .coach_availability import coach_available_slots, case_owner_available_slots
 from . import presentation_design
 from . import personal_learning
@@ -6,7 +7,7 @@ from . import learner_import
 from . import monthly_reflection_ai
 from .assignment_ai_check import assignment_ai_check
 from . import ksb_generation
-from django.urls import path
+from django.urls import include, path
 from coach_api.migrated_completion_views import (
     migrated_review_party_csrf, migrated_review_party_detail, migrated_review_party_pdf, migrated_review_party_sign,
 )
@@ -25,12 +26,19 @@ from .first_login_details import first_login_details
 
 from . import certificates, monthly_assignment, legacy_assignments, quiz_reading, review_history
 from . import historical_evidence
-from . import extra_activities, absence_reports, apprenticeship_agreement, attendance, calendar, components, curriculum, calendar_connections, employer_portal, employers, evidence, free_courses_view, ilr_document, monthly_assignment, monthly_reports, training_plan_document, written_agreement, learner_detail, learning_plan, lms_schema, media_proxy, module_shift, quizzes, reflection_ai, reflection_submissions, review_form, student_activity, time_tracking, training_plan_view, training_plan_dashboard, videos, views
+from . import mobile_absence
+from .dashboard_header import dashboard_header, dashboard_bootstrap
+from .dashboard_weekly import dashboard_weekly
+from .dashboard_tabs import dashboard_tab
+from .dashboard_training import training_module
+from . import module_progress, extra_activities, absence_reports, apprenticeship_agreement, attendance, calendar, components, curriculum, calendar_connections, employer_portal, employers, evidence, free_courses_view, ilr_document, monthly_assignment, monthly_reports, training_plan_document, written_agreement, learner_detail, learning_plan, lms_schema, media_proxy, module_shift, quizzes, reflection_ai, reflection_submissions, review_form, student_activity, time_tracking, training_plan_view, training_plan_dashboard, videos, views
 
 from curriculum_api import session_results
 from .session_recovery import link_catchup
 
 urlpatterns = [
+    path("mobile/absence-reports/", mobile_absence.absence_reports, name="mobile-absence-reports"),
+    path("mobile/", include("learner_api.mobile_urls")),
     path('migrated-reviews/csrf', migrated_review_party_csrf, name='migrated-review-party-csrf'),
     path('migrated-reviews/<str:review_id>/party', migrated_review_party_detail, name='migrated-review-party-detail'),
     path('migrated-reviews/<str:review_id>/party-pdf', migrated_review_party_pdf, name='migrated-review-party-pdf'),
@@ -142,9 +150,9 @@ urlpatterns = [
     # the signature route is declared before the learner route for clarity.
     path("employer-portal/<int:employer_id>/", employer_portal.employer_portal, name="employer-portal"),
     path(
-        "employer-portal/<int:employer_id>/absence-notifications/",
-        employer_portal.employer_absence_notifications,
-        name="employer-absence-notifications",
+        "employer-portal/<int:employer_id>/documents/",
+        employer_portal.employer_portal_documents,
+        name="employer-portal-documents",
     ),
     path(
         "employer-portal/<int:employer_id>/learner/<str:kind>/<int:learner_id>/",
@@ -157,10 +165,48 @@ urlpatterns = [
         name="employer-portal-learner-plan",
     ),
     path(
+        "employer-portal/<int:employer_id>/learner/<str:kind>/<int:learner_id>/overview/<str:part>/",
+        employer_portal.employer_portal_learner_overview,
+        name="employer-portal-learner-overview",
+    ),
+    path(
+        "employer-portal/<int:employer_id>/learner/<str:kind>/<int:learner_id>/assignments/",
+        employer_portal.employer_portal_learner_assignments,
+        name="employer-portal-learner-assignments",
+    ),
+    path("employer-portal/<int:employer_id>/learner/<str:kind>/<int:learner_id>/monthly-logs/",
+         employer_portal.employer_portal_monthly_logs, name="employer-portal-monthly-logs"),
+    path("employer-portal/<int:employer_id>/learner/<str:kind>/<int:learner_id>/monthly-logs/<str:month>/",
+         employer_portal.employer_portal_monthly_logs, name="employer-portal-monthly-log"),
+    path("employer-portal/<int:employer_id>/learner/<str:kind>/<int:learner_id>/monthly-logs/<str:month>/activities/<int:row_id>/",
+         employer_portal.employer_portal_monthly_logs, name="employer-portal-monthly-log-content"),
+    path("employer-portal/<int:employer_id>/learner/<str:kind>/<int:learner_id>/monthly-logs/<str:month>/activities/<int:row_id>/materials/<int:material_id>/",
+         employer_portal.employer_portal_monthly_logs, name="employer-portal-monthly-log-material"),
+    path("employer-portal/<int:employer_id>/learner/<str:kind>/<int:learner_id>/monthly-logs/documents/<uuid:file_id>/",
+         employer_portal.employer_portal_monthly_logs, name="employer-portal-monthly-log-document"),
+    path("employer-portal/<int:employer_id>/learner/<str:kind>/<int:learner_id>/monthly-logs/canonical-documents/<int:file_id>/",
+         employer_portal.employer_portal_monthly_logs, {"document_source": "canonical"}, name="employer-portal-monthly-log-canonical-document"),
+    path(
+        "employer-portal/<int:employer_id>/learner/<str:kind>/<int:learner_id>/assignments/files/<uuid:file_id>/",
+        employer_portal.employer_portal_assignment_file,
+        name="employer-portal-assignment-file",
+    ),
+    path(
+        "employer-portal/<int:employer_id>/learner/<str:kind>/<int:learner_id>/assignments/legacy/<str:evidence_id>/",
+        employer_portal.employer_portal_legacy_assignment_file,
+        name="employer-portal-legacy-assignment-file",
+    ),
+    path(
         "employer-portal/<int:employer_id>/learner/<str:kind>/<int:learner_id>/events/<path:event_key>/review/",
         employer_portal.employer_review_instance,
         name="employer-review-instance",
     ),
+    path("employer-portal/<int:employer_id>/learner/<str:kind>/<int:learner_id>/progress-reviews/",
+         employer_portal.employer_portal_progress_reviews, name="employer-progress-reviews"),
+    path("employer-portal/<int:employer_id>/learner/<str:kind>/<int:learner_id>/progress-reviews/<path:event_key>/pdf/",
+         employer_portal.employer_portal_progress_reviews, {"as_pdf": True}, name="employer-progress-review-pdf"),
+    path("employer-portal/<int:employer_id>/learner/<str:kind>/<int:learner_id>/progress-reviews/<path:event_key>/",
+         employer_portal.employer_portal_progress_reviews, name="employer-progress-review"),
     path(
         "employer-portal/<int:employer_id>/learner/<str:kind>/<int:learner_id>/reviews/<path:event_key>/",
         employer_portal.employer_enrolment_review,
@@ -169,9 +215,22 @@ urlpatterns = [
     path("employers/<int:pk>/", employers.employer_detail, name="employer-detail"),
     path("learner-detail/<str:kind>/<int:pk>/", learner_detail.learner_detail, name="learner-detail"),
     path("learner-summary/<str:kind>/<int:pk>/", learner_detail.learner_summary, name="learner-summary"),
+    path("weekly-learning/<str:kind>/<int:pk>/", dashboard_weekly, name="learner-weekly-learning"),
+    path("dashboard/<str:kind>/<int:pk>/header/", dashboard_header, name="learner-dashboard-header"),
+    path("dashboard/<str:kind>/<int:pk>/header/minimal/", dashboard_header, {'minimal': True}, name="learner-dashboard-minimal-header"),
+    path("dashboard/<str:kind>/<int:pk>/bootstrap/", dashboard_bootstrap, name="learner-dashboard-bootstrap"),
+    path("dashboard/<str:kind>/<int:pk>/header/presentation/", dashboard_header, {'presentation': True}, name="learner-dashboard-presentation"),
+    path("dashboard/<str:kind>/<int:pk>/weekly/plan/", dashboard_weekly, name="learner-dashboard-weekly-plan"),
+    path("dashboard/<str:kind>/<int:pk>/weekly/plan/<str:week_id>/", dashboard_weekly, name="learner-dashboard-weekly-plan-detail"),
+    path("dashboard/<str:kind>/<int:pk>/monthly/plan/", dashboard_tab, {'tab': 'monthly', 'canonical_contract': True}, name="learner-dashboard-monthly-plan"),
+    path("dashboard/<str:kind>/<int:pk>/weekly/", dashboard_weekly, name="learner-dashboard-weekly"),
+    path("dashboard/<str:kind>/<int:pk>/weekly/<str:week_id>/", dashboard_weekly, name="learner-dashboard-week-detail"),
+    path("dashboard/<str:kind>/<int:pk>/training/modules/<str:module_id>/", training_module, name="learner-dashboard-training-module"),
+    path("dashboard/<str:kind>/<int:pk>/<str:tab>/", dashboard_tab, name="learner-dashboard-tab"),
     path("metrics/<str:kind>/<int:pk>/", learner_metrics, name="learner-metrics"),
     path("overview-week/<str:kind>/<int:pk>/", overview_week, name="learner-overview-week"),
     path("rewards-summary/<str:kind>/<int:pk>/", learner_rewards_summary, name="learner-rewards-summary"),
+    path("module-progress/<str:kind>/<int:pk>/", module_progress.learner_module_progress, name="module-progress"),
     path("student-activity/<str:kind>/<int:pk>/", student_activity.student_activity, name="student-activity"),
     path("student-activity/<str:kind>/<int:pk>/<int:group_id>/<int:activity_id>/attempts/", student_activity.start_subject_attempt, name="subject-attempt-start"),
     path("student-activity/<str:kind>/<int:pk>/<int:group_id>/<int:activity_id>/attempts/<uuid:attempt_id>/", student_activity.submit_subject_attempt, name="subject-attempt-submit"),
@@ -194,6 +253,11 @@ urlpatterns = [
     path('student-activity/<str:kind>/<int:pk>/<int:group_id>/<int:activity_id>/files/<int:attachment_id>/', student_activity.subject_file, name='subject-file'),
     path('student-activity/<str:kind>/<int:pk>/<int:group_id>/<int:activity_id>/source-file/', student_activity.source_material_file, name='source-material-file'),
     path("media/google-drive/<str:file_id>/", media_proxy.google_drive_media, name="google-drive-media"),
+    # Imported LMS files: component settings, the slide renderer and the
+    # zero-byte placeholder fallback in curriculum uploads all link here.
+    path("media/legacy-attachment/<str:attachment_id>/", media_proxy.legacy_attachment_media, name="legacy-attachment-media"),
+    path("media/legacy-attachment/<str:attachment_id>/pdf-info/", media_proxy.legacy_attachment_pdf_info, name="legacy-attachment-pdf-info"),
+    path("media/legacy-attachment/<str:attachment_id>/pdf-page/<int:page_number>/", media_proxy.legacy_attachment_pdf_page, name="legacy-attachment-pdf-page"),
     path("attendance/<str:kind>/<int:learner_id>/", attendance.learner_attendance, name="learner-attendance"),
     path("learners/<int:pk>/coach/", views.learner_coach, name="learner-coach"),
     # curriculum lookups for the training-plan builder
@@ -207,6 +271,8 @@ urlpatterns = [
     path("curriculum/legacy-otjh/", curriculum.legacy_otjh, name="curriculum-legacy-otjh"),
     # Signed start time shared by quizzes and learning components.
     path("time-tracking/start/", time_tracking.start_time_tracking, name="time-tracking-start"),
+    path("time-tracking/observations/", reward_tracking.observations, name="reward-time-observations"),
+    path("time-tracking/clock/", reward_tracking.clock, name="reward-time-clock"),
     path("working-hours/holidays/", working_hours_holidays.working_hours_holidays, name="working-hours-holidays"),
     # quiz-taking
     path("quizzes/<int:quiz_id>/", quizzes.quiz_detail, name="quiz-detail"),
@@ -257,6 +323,9 @@ urlpatterns = [
     # Declared before the <path:event_key> route below, which would otherwise
     # never be reached for the bare list URL.
     path("reviews/<str:kind>/<int:pk>/", review_form.enrolment_review_documents, name="enrolment-review-documents"),
+    # The four onboarding reviews, issued by the enrolment team (before the event-key routes below).
+    path("reviews/<str:kind>/<int:pk>/onboarding/", review_form.onboarding_reviews, name="enrolment-onboarding-reviews"),
+    path("reviews/<str:kind>/<int:pk>/issue/", review_form.issue_onboarding_review, name="enrolment-review-issue"),
     # Before the <path:event_key> route below, which is greedy and would
     # otherwise absorb the trailing "sign" into the event key.
     path("reviews/<str:kind>/<int:pk>/<str:event_key>/sign/", review_form.enrolment_review_sign, name="enrolment-review-sign"),

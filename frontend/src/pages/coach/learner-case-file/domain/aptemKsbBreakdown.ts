@@ -2,7 +2,12 @@ export interface AptemKsbRow {
   code: string;
   description: string;
   category: string;
-  components: Array<{ name: string; status: string; achieved: boolean; source?: string }>;
+  components: Array<{ name: string; status: string; achieved: boolean; source?: string; accepted?: boolean; type?: string; module?: string; date?: string; completedAt?: string }>;
+  pointsAchieved?: number;
+  totalPoints?: number;
+  progressPercent?: number | null;
+  activityNames?: string[];
+  activityCount?: number;
   completed: number;
   status: 'Achieved' | 'Not Achieved';
 }
@@ -17,9 +22,9 @@ export function selectAptemKsbGroups(rows: AptemKsbRow[], source: AptemKsbBreakd
   return rows.map((row) => ({
     ...row,
     id: row.code,
-    activities: row.components.map((component) => ({
+    activities: row.activityNames ? row.activityNames.map(name => ({ activityTitle: name, evidenceActivities: [] as Array<{ title: string; type: string; source: string; status: string; achievesKsb: boolean }> })) : row.components.map((component) => ({
       activityTitle: component.name,
-      evidenceActivities: [{ title: component.name, type: 'Component', source: component.source || (source === 'progress' ? 'Progress' : source === 'new_lms' ? 'LMS' : 'Aptem'), status: component.status, achievesKsb: component.achieved }],
+      evidenceActivities: [{ title: component.name, type: component.type || 'Component', module: component.module, date: component.date, completedAt: component.completedAt, accepted: component.accepted, source: component.source || (source === 'progress' ? 'Progress' : source === 'new_lms' ? 'LMS' : 'Aptem'), status: component.status, achievesKsb: component.achieved }],
     })),
   }));
 }

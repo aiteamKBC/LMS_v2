@@ -84,9 +84,11 @@ function useWatchTracking(video: RefObject<HTMLVideoElement | null>, seriesId: s
   };
 }
 
-export function SessionRecordingPlayer({ seriesId, file, transcripts, learner, label, trackWatch = false, onWatchTimeChange }: {
+export function SessionRecordingPlayer({ seriesId, file, transcripts, learner, label, sourceUrl, trackWatch = false, onWatchTimeChange, onPlayingChange }: {
   seriesId: string; file: SessionFile; transcripts: SessionFile[]; learner?: SessionLearner; label: string; trackWatch?: boolean;
+  sourceUrl?: string;
   onWatchTimeChange?: (seconds: number) => void;
+  onPlayingChange?: (playing: boolean) => void;
 }) {
   const video = useRef<HTMLVideoElement>(null);
   const watch = useWatchTracking(video, seriesId, file, learner, trackWatch);
@@ -148,9 +150,13 @@ export function SessionRecordingPlayer({ seriesId, file, transcripts, learner, l
   };
   return <div className="space-y-3">
     <video ref={video} controls playsInline preload="none" className="aspect-video w-full rounded-xl bg-black"
-      src={sessionFileUrl(seriesId, file, learner)} aria-label={label}
+      src={sourceUrl || sessionFileUrl(seriesId, file, learner)} aria-label={label}
+      onPlaying={() => onPlayingChange?.(true)}
+      onWaiting={() => onPlayingChange?.(false)}
+      onSeeking={() => onPlayingChange?.(false)}
       onTimeUpdate={() => { readTime(); watch.onPlayedTime(); }} onSeeked={() => { readTime(); watch.onSeeked(); }}
-      onLoadedMetadata={readTime} onPause={() => { readTime(); watch.onStop(); }} onEnded={watch.onStop} />
+      onLoadedMetadata={readTime} onPause={() => { readTime(); watch.onStop(); onPlayingChange?.(false); }}
+      onEnded={() => { watch.onStop(); onPlayingChange?.(false); }} />
     {trackWatch && (watch.saveError
       ? <p role="status" className="text-xs text-amber-800">{watch.saveError}</p>
       : watch.saved && <p role="status" className="text-xs font-semibold text-primary-700">{watchedText(watch.saved)}</p>)}

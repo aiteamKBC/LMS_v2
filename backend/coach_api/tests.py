@@ -377,47 +377,35 @@ class AttendanceDetailRowsTests(SimpleTestCase):
         self.assertIs(actual_summary, summary)
         self.assertIs(sessions, history)
 
-    @patch("coach_api.views.canonical_attendance_detail_rows")
-    @patch("coach_api.views.CoachManualAttendance.objects")
-    @patch("coach_api.views.serialize_attendance_source_learner")
-    @patch("coach_api.views.attach_caseload_source_rows")
+    @patch("coach_api.attendance_detail.detail_records")
+    @patch("coach_api.views.resolve_caseload_source_row")
+    @patch("coach_api.views.fetch_source_schedule_rows", return_value=({}, {}))
     @patch("coach_api.views.fetch_attendance_caseload_rows")
     def test_detail_view_fetches_only_the_requested_authorised_learner(
-        self, fetch_rows, attach_sources, serialize, manual_objects, detail_rows,
+        self, fetch_rows, fetch_source, resolve_source, detail_rows,
     ):
         source = SimpleNamespace(id=901)
-        row = SimpleNamespace(id=315, _caseload_source=source)
+        row = SimpleNamespace(id=315, username="A Learner", email="learner@example.test",
+            programme="Data", cohort="September", group_name="Group A", coach_name="Coach")
         fetch_rows.return_value = [row]
-        serialize.return_value = {
-            "id": "315", "name": "A Learner", "email": "learner@example.com",
-            "programmeName": "Data", "programmeId": "programme-1",
-            "cohortName": "September", "group": "Cairo A", "groupId": "group-1",
-            "rawProgramStatus": "Active", "learnerType": "apprenticeship",
-            "enrolmentId": "901",
-        }
-        detail_rows.return_value = (
-            {"total": 3, "present": 2, "absent": 1, "unknown": 0},
-            [
-                {"sessionId": "session-1", "status": "present", "counted": True},
-                {"sessionId": "session-2", "status": "present", "counted": True},
-                {"sessionId": "session-3", "status": "absent", "counted": True},
-            ],
-        )
-        manual_objects.filter.return_value = []
-
-        response = call_coach_view(
-            coach_attendance_details,
-            RequestFactory().get("/coach_api/coach/attendance/details", {"learner_id": "315"}),
-        )
+        resolve_source.return_value = source
+        detail_rows.return_value = {"summary": {"sessions": 3, "present": 2, "absent": 1, "attendanceRate": 67},
+            "records": [], "pagination": {"page": 1, "pageSize": 20, "total": 3, "hasMore": False}}
+        request = RequestFactory().get("/coach_api/coach/attendance/details", {"learner_id": "315"})
+        response = call_coach_view(coach_attendance_details, request)
         payload = json.loads(response.content)
-
         self.assertEqual(response.status_code, 200)
-        fetch_rows.assert_called_once_with("coach@example.com", learner_id="315")
-        attach_sources.assert_called_once_with([row])
-        detail_rows.assert_called_once_with(source, learner_profile_id=315)
-        self.assertEqual(payload["learner"]["programme"], "Data")
-        self.assertEqual(payload["learner"]["enrolmentId"], "901")
-        self.assertEqual(payload["summary"], {"total": 3, "present": 2, "absent": 1, "unknown": 0})
+        fetch_rows.assert_called_once_with("coach@example.com", learner_id="315", include_plan=False)
+        fetch_source.assert_called_once_with([row], fields=(
+            'id', 'username', 'email', 'aptem_id', 'employer_id', 'learner_type',
+            'learner_start_date', 'learner_end_date'))
+        detail_rows.assert_called_once_with(source, 315, request.GET)
+        self.assertEqual(payload["learner"], {"id": "315", "name": "A Learner", "email": "learner@example.test",
+            "programme": "Data", "cohort": "September", "group": "Group A"})
+        self.assertEqual(payload["coach"], {"name": "Coach", "email": "coach@example.com"})
+        self.assertIsNone(payload["tutor"])
+        self.assertEqual(payload["summary"], detail_rows.return_value["summary"])
+        self.assertEqual(set(payload), {"learner", "coach", "tutor", "summary", "records", "pagination"})
 
 
 class ManualAttendanceMutationTests(SimpleTestCase):

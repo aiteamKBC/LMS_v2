@@ -90,7 +90,7 @@ def course_detail(context, account, state=None):
     # Preserve all authored fields except participation in a live meeting.
     components = [dict(component, liveSessionUrl=None) for component in components]
     from .programme_access import learning_access
-    access = learning_access(SimpleNamespace(programme=module.get('programme_name'), cohort=module.get('cohort_name'), start_date=module.get('start_date')))
+    access = learning_access(SimpleNamespace(programme=module.get('programme_name'), cohort=module.get('cohort_name'), cohort_id=module.get('cohort_id'), start_date=module.get('start_date')))
     start = access['startDate']
     blocked = context['mode'] != 'all' and access['blocked']
     mappings = {item['code']: item for component in components for item in component.get('ksbMappings', []) if item.get('code')}
@@ -258,6 +258,7 @@ def complete_activity(context, account, detail, activity_id, activity_kind, payl
 
 def submit_quiz(context, account, detail, quiz_id, payload):
     from .quizzes import _fetch_quiz, _grade_question
+    from quiz_api.answer_keys import quiz_submission_error
     component = component_for(detail, quiz_id, 'quiz')
     ensure_open(detail, context)
     quiz = _fetch_quiz(quiz_id)
@@ -266,13 +267,19 @@ def submit_quiz(context, account, detail, quiz_id, payload):
     answers = payload.get('answers')
     if not isinstance(answers, dict):
         raise ValueError('Quiz answers are required.')
+    grading_error = quiz_submission_error(quiz, answers)
+    if grading_error:
+        raise ValueError(grading_error)
     breakdown, stored, earned, possible = [], [], 0, 0
     for question in quiz['questions']:
         result = _grade_question(question, answers.get(str(question['id'])))
         earned += result['earned']
         possible += result['possible']
-        breakdown.append({**result, 'questionId': question['id'], 'questionText': question['text'], 'type': question['type'], 'points': question['points']})
+        breakdown.append({**result, 'questionId': question['id'], 'questionText': question['text'], 'imageUrl': question.get('imageUrl', ''), 'type': question['type'], 'points': question['points']})
         stored.append({'questionId': question['id'], 'earned': result['earned'], 'correct': result['correct'],
+                       'imageUrl': question.get('imageUrl', ''),
+                       'questionText': question['text'], 'type': question['type'], 'possible': result['possible'],
+                       'correctText': result.get('correctAnswer'),
                        'chosenText': result.get('chosenAnswer'), 'chosenAnswerId': result.get('chosenAnswerId'), 'correctAnswerId': result.get('correctAnswerId')})
     with activity_state(context) as state:
         record, repeated = tracking_record(context, payload, quiz_id, 'quiz', state['progress'])

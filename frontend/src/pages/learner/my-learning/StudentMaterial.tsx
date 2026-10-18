@@ -4,6 +4,7 @@ import { VideoPlayer, parseVideoUrl } from '@/components/feature/VideoPlayer';
 import { SlideDeckViewer } from '@/components/feature/SlideDeckViewer';
 import { resolveDocEmbed } from '@/lib/docEmbed';
 import { normalizeReadingHtml } from '@/lib/readingHtml';
+import { previewUrl } from '@/features/old-otjh/previewUrl';
 import { subjectRequest, type SubjectMaterial, type SubjectAttemptResult } from '@/api/studentActivity';
 
 const AttachmentPreview = lazy(() => import('../video-watch/page').then((module) => ({ default: module.InlineAttachmentPreview })));
@@ -58,16 +59,36 @@ export function Media({ value, kind, title, fileName, canEmbed = true, onEnded }
   try { url = new URL(value, window.location.origin); } catch { return <p>Material link is unavailable.</p>; }
   if (!['https:', 'http:'].includes(url.protocol)) return <p>Material link is unavailable.</p>;
   const fileUrl = url.href;
+  const storedFile = url.origin === window.location.origin
+    && (/^\/learner_api\/student-activity\/[^/]+\/\d+\/\d+\/\d+\/source-file\/$/.test(url.pathname)
+      || /^\/login_api\/advanced-admin\/learners\/\d+\/learning\/material\/\d+\/\d+\/source-file\/$/.test(url.pathname));
   const original = <a href={fileUrl} target="_blank" rel="noopener noreferrer" className="text-sm font-semibold text-primary-700 underline">Open material in a new tab</a>;
   if (!canEmbed) return <div className="rounded-xl border bg-background-100 p-4"><p className="mb-2 text-sm">Open this material in a new tab to view it.</p>{original}</div>;
-  if (kind === 'video') return <section className="space-y-2"><div className="relative aspect-video overflow-hidden rounded-xl bg-black"><VideoPlayer parsed={parseVideoUrl(url.href)} title={title} onEnded={onEnded} /></div>{original}</section>;
+  // Legacy type labels can describe the lesson rather than its linked media.
+  // Provider pages need their embedded player, even in a reading/audio lesson.
+  const spotify = url.hostname === 'open.spotify.com';
+  const providerVideo = ['youtube.com', 'www.youtube.com', 'm.youtube.com', 'youtu.be',
+    'vimeo.com', 'www.vimeo.com', 'player.vimeo.com'].includes(url.hostname);
+  const providerUrl = spotify || providerVideo ? previewUrl(fileUrl) || fileUrl : fileUrl;
+  const parsedVideo = parseVideoUrl(providerUrl);
+  // Preserve private Vimeo access parameters already handled by previewUrl.
+  if (providerVideo && parsedVideo.kind === 'vimeo') parsedVideo.src = providerUrl;
+  if (!spotify && (kind === 'video' || providerVideo)) return <section className="space-y-2"><div className="relative aspect-video overflow-hidden rounded-xl bg-black"><VideoPlayer parsed={storedFile ? { kind: 'file', src: fileUrl } : parsedVideo} title={title} onEnded={onEnded} /></div>{original}</section>;
   if (kind === 'pdf') return <section className="space-y-2"><Suspense fallback={<p role="status">Loading file preview…</p>}><AttachmentPreview url={fileUrl} title={title} fileName={fileName || 'document.pdf'} /></Suspense>{original}</section>;
-  if (kind === 'audio') {
+  if (kind === 'audio' && !spotify) {
     const drive = url.href.match(/drive\.google\.com\/(?:file\/d\/|(?:open|uc)\?[^#]*id=)([\w-]{10,})/);
     return <section className="space-y-2"><audio controls src={drive ? `/learner_api/media/google-drive/${drive[1]}/` : fileUrl} onEnded={onEnded} className="w-full" />{original}</section>;
   }
+  if (storedFile && kind === 'document') {
+    if (/\.(pptx?|ppsx?|pptm|ppsm|doc|docm)$/i.test(fileName || '')) {
+      const preview = new URL(fileUrl);
+      preview.searchParams.set('preview', '1');
+      return <section className="space-y-2"><iframe title={title} src={preview.href} className="h-[65vh] min-h-[320px] w-full rounded-xl border bg-white" allowFullScreen />{original}</section>;
+    }
+    return <section className="space-y-2"><Suspense fallback={<p role="status">Loading file preview…</p>}><AttachmentPreview url={fileUrl} title={title} fileName={fileName} /></Suspense>{original}</section>;
+  }
   if (url.origin === window.location.origin && /\.(docx|xlsx?|csv|txt|md|rtf|pdf|pptx|ppsx|pptm|ppsm)$/i.test(url.pathname)) return <section className="space-y-2"><Suspense fallback={<p role="status">Loading file preview…</p>}><AttachmentPreview url={url.href} title={title} /></Suspense>{original}</section>;
-  let src = url.href;
+  let src = providerUrl;
   if (url.hostname === 'drive.google.com') src = src.replace(/\/view(?:\?.*)?$/, '/preview');
   else if (/\.(pdf|pptx|ppsx|pptm|docx?|xlsx?)$/i.test(url.pathname) || /docs\.google\.com/.test(url.hostname)) {
     const embed = resolveDocEmbed(url.href);
@@ -79,9 +100,9 @@ export function Media({ value, kind, title, fileName, canEmbed = true, onEnded }
     sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-downloads allow-presentation" allow="autoplay; fullscreen; picture-in-picture" allowFullScreen />{original}</section>;
 }
 
-export function StudentMaterial({ kind, learnerId, groupId, activityId, completed = false, onProgress }: {
+export function StudentMaterial({ kind, learnerId, groupId, activityId, completed = false, onProgress, readOnly = false, baseUrl, reviewQuiz = false }: {
   kind: string; learnerId: string; groupId: number; activityId: number; completed?: boolean;
-  onProgress?: (result: SubjectAttemptResult) => void;
+  onProgress?: (result: SubjectAttemptResult) => void; readOnly?: boolean; baseUrl?: string; reviewQuiz?: boolean;
 }) {
   const [data, setData] = useState<SubjectMaterial | null>(null);
   const [error, setError] = useState('');
@@ -93,19 +114,20 @@ export function StudentMaterial({ kind, learnerId, groupId, activityId, complete
   const [result, setResult] = useState('');
   const [savedResult, setSavedResult] = useState<SubjectAttemptResult | null>(null);
   const completionHintId = useId();
-  const base = `/learner_api/student-activity/${encodeURIComponent(kind)}/${encodeURIComponent(learnerId)}`;
+  const base = baseUrl || `/learner_api/student-activity/${encodeURIComponent(kind)}/${encodeURIComponent(learnerId)}`;
   const attempts = `${base}/${groupId}/${activityId}/attempts/`;
+  const materialUrl = `${base}/?group_id=${groupId}&activity_id=${activityId}${reviewQuiz ? '&catalogue_kind=quiz' : ''}`;
   useEffect(() => {
     const controller = new AbortController();
     setData(null); setError(''); setAttemptId(null); setAnswers({}); setConfirmed(false); setResult(''); setSavedResult(null);
-    void subjectRequest<SubjectMaterial>(`${base}/?group_id=${groupId}&activity_id=${activityId}`, { signal: controller.signal })
+    void subjectRequest<SubjectMaterial>(materialUrl, { signal: controller.signal })
       .then((payload) => { if (!controller.signal.aborted) setData(payload); })
       .catch((failure: unknown) => { if (!controller.signal.aborted) setError(failure instanceof Error ? failure.message : 'Could not load material.'); });
     return () => controller.abort();
-  }, [base, groupId, activityId, retry]);
+  }, [materialUrl, retry]);
   const post = <T,>(url: string, body: unknown) => subjectRequest<T>(url, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRFToken': data?.csrf_token || '' }, body: JSON.stringify(body) });
   const start = async () => {
-    if (!data || busy || !data.can_attempt || !data.persistence_ready || !data.available || !data.quiz?.ready) return;
+    if (readOnly || reviewQuiz || !data || busy || !data.can_attempt || !data.persistence_ready || !data.available || !data.quiz?.ready) return;
     setBusy(true); setError(''); setResult('');
     try {
       const response = await post<{ attempt_id: string; definition: Partial<SubjectMaterial> }>(attempts, {});
@@ -114,7 +136,7 @@ export function StudentMaterial({ kind, learnerId, groupId, activityId, complete
     finally { setBusy(false); }
   };
   const submit = async () => {
-    if (!data || busy || !data.can_attempt || !data.persistence_ready || !data.available) return;
+    if (readOnly || reviewQuiz || !data || busy || !data.can_attempt || !data.persistence_ready || !data.available) return;
     setBusy(true); setError('');
     try {
       let id = attemptId;
@@ -129,7 +151,7 @@ export function StudentMaterial({ kind, learnerId, groupId, activityId, complete
       setAttemptId(null); setAnswers({});
       onProgress?.(saved);
       try {
-        const latest = await subjectRequest<SubjectMaterial>(`${base}/?group_id=${groupId}&activity_id=${activityId}`);
+        const latest = await subjectRequest<SubjectMaterial>(materialUrl);
         setData(latest);
       } catch {
         setError('Your attempt was saved, but its history could not be refreshed.');
@@ -161,10 +183,11 @@ export function StudentMaterial({ kind, learnerId, groupId, activityId, complete
         <div><h4 className="text-sm font-bold text-foreground-900">Activity progress</h4>
           <p aria-live="polite" className={`mt-1 text-sm font-semibold ${isComplete ? 'text-emerald-700' : 'text-foreground-500'}`}>{isComplete ? 'Complete' : 'Not complete'}</p>
         </div>
-        {quiz && !attemptId ? <button type="button" onClick={start} disabled={actionsDisabled} aria-describedby={completionHint ? completionHintId : undefined} className={actionClass}>{busy ? 'Starting…' : isComplete || data.history.length || data.historical.attempt_number ? 'Try quiz again' : 'Start quiz'}</button>
-          : (quiz || !isComplete) && <button type="button" onClick={submit} disabled={actionsDisabled || !answered || (needsConfirmation && !confirmed)} aria-describedby={completionHint ? completionHintId : undefined} className={actionClass}>{busy ? 'Saving…' : quiz ? 'Submit answers' : 'Submit & complete'}</button>}
+        {!readOnly && (quiz && !attemptId ? <button type="button" onClick={start} disabled={actionsDisabled} aria-describedby={completionHint ? completionHintId : undefined} className={actionClass}>{busy ? 'Starting…' : isComplete || data.history.length || data.historical.attempt_number ? 'Try quiz again' : 'Start quiz'}</button>
+          : (quiz || !isComplete) && <button type="button" onClick={submit} disabled={actionsDisabled || !answered || (needsConfirmation && !confirmed)} aria-describedby={completionHint ? completionHintId : undefined} className={actionClass}>{busy ? 'Saving…' : quiz ? 'Submit answers' : 'Submit & complete'}</button>
+        )}
       </div>
-      {completionHint && <p id={completionHintId} className={`text-sm ${blockedReason ? 'text-amber-800' : 'text-foreground-500'}`}>{completionHint}</p>}
+      {!readOnly && completionHint && <p id={completionHintId} className={`text-sm ${blockedReason ? 'text-amber-800' : 'text-foreground-500'}`}>{completionHint}</p>}
       {needsConfirmation && !!attemptId && <label className="flex items-start gap-2 text-sm"><input type="checkbox" checked={confirmed} disabled={actionsDisabled} onChange={(event) => setConfirmed(event.target.checked)} className="mt-1 accent-primary-600" />I have completed the reading material.</label>}
       {error && <p role="alert" className="text-sm text-red-700">{error}</p>}
       {result && <p role="status" className={`rounded-xl p-3 text-sm font-semibold ${savedResult?.completed ? 'bg-emerald-50 text-emerald-800' : 'bg-amber-50 text-amber-800'}`}>{result}</p>}
@@ -176,7 +199,7 @@ export function StudentMaterial({ kind, learnerId, groupId, activityId, complete
     {quiz && <section className="space-y-4" aria-label="Activity quiz">
       <div className="flex flex-wrap items-center justify-between gap-3"><h4 className="text-lg font-bold">Quiz · {quiz.questions.length} {quiz.questions.length === 1 ? 'question' : 'questions'}</h4>{quiz.passing_percent != null && <p className="text-sm text-foreground-500">Pass mark: {Number(quiz.passing_percent).toFixed(0)}%</p>}</div>
       {quiz.body && <Html value={quiz.body} />}
-      {reviewing && <p className="rounded-xl border border-primary-100 bg-primary-50 p-3 text-sm text-primary-800">Your previous answers are selected below for review. Choose Try quiz again to start a new attempt. Answers that no longer match the current questions remain in your attempt history.</p>}
+      {reviewing && <p className="rounded-xl border border-primary-100 bg-primary-50 p-3 text-sm text-primary-800">{readOnly ? 'Previous answers are shown for review.' : 'Your previous answers are selected below for review. Choose Try quiz again to start a new attempt. Answers that no longer match the current questions remain in your attempt history.'}</p>}
       {!quiz.ready && <p role="status" className="rounded-xl bg-amber-50 p-3 text-sm text-amber-900">{quiz.message} Your previous results are kept.</p>}
       {quiz.questions.map((question, index) => <fieldset key={question.id} disabled={!attemptId || busy} className="space-y-3 rounded-xl border border-foreground-200 p-4">
         <legend className="px-2 text-sm font-bold">Question {index + 1}{question.type === 'multi_choice' ? ' · Select all that apply' : ''}</legend><Html value={question.text} />
@@ -186,8 +209,10 @@ export function StudentMaterial({ kind, learnerId, groupId, activityId, complete
         </label>)}
       </fieldset>)}
     </section>}
+    {reviewQuiz && data.historical.attempt_number == null && data.historical.score == null && !data.historical.answers.length && <p className="text-sm text-foreground-500">No saved attempt is available for this quiz.</p>}
     {(data.historical.answers.length > 0 || data.historical.score != null || data.history.length > 0) && <section className="space-y-3 border-t pt-4" aria-label="Attempt history">
       <h4 className="font-bold">Your attempt history</h4>
+      {reviewQuiz && <p className="text-sm text-foreground-600">{[data.historical.attempt_number != null ? `Attempt ${data.historical.attempt_number}` : '', data.historical.passed === true ? 'Passed' : data.historical.passed === false ? 'Not passed' : ''].filter(Boolean).join(' · ')}</p>}
       {(data.historical.answers.length > 0 || data.historical.score != null) && <details className="rounded-xl border p-3"><summary className="cursor-pointer text-sm font-semibold">Previous learning{data.historical.score != null ? ` · ${data.historical.score}${data.historical.maximum_score ? ` / ${data.historical.maximum_score}` : ''}` : ''}</summary>
         <div className="mt-3 space-y-4">{data.historical.answers.map((answer, index) => <div key={`${answer.question_id}:${index}`}><Html value={answer.question_body || `Question ${index + 1}`} /><p className="mt-1 text-sm text-foreground-600">Your answer: {Array.isArray(answer.learner_answer) ? answer.learner_answer.map(String).join(', ') : String(answer.learner_answer ?? 'Not recorded')}</p></div>)}</div>
       </details>}

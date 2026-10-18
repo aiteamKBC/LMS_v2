@@ -18,15 +18,16 @@ record, so a stale copy would be a compliance problem.
 import json
 import logging
 
-from django.db import DatabaseError
+from django.db import DatabaseError, IntegrityError
 from django.http import JsonResponse
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 
 from coach_api.models import CoachCalendarEvent
-from login.permissions import _auth_gate_enabled, learner_self_or_staff
+from login.permissions import _auth_gate_enabled, learner_self_or_staff, staff_only
 from login.sessions import authenticate_request
 
+from .calendar import ONBOARDING_REVIEW_LABELS, ONBOARDING_REVIEW_TYPES, _case_owner_record
 from .constants import PROGRAMME_STATUS_CHOICES
 from .learner_detail import SOURCE_MODELS
 from .mappers import _s
@@ -45,7 +46,9 @@ SECTIONS_BY_REVIEW = {
         "functionalSkills",
         "fsJobRoleDiscussion",
         "comments",
-        "programmeStatus",
+        # "programmeStatus" (the Programme Status Selector) was removed from this
+        # review: the status is set from the learner's board. Answers already
+        # saved under it stay in Form_answers and its detail-table column.
     ),
     "workspace": (
         # "RPL And Experience"
@@ -144,19 +147,25 @@ def _skills_radar_context(review, learner):
         logger.exception("_skills_radar_context: lookup failed")
         return {"skillsRadar": {"standardId": "", "assessments": [], "ksbs": []}}
 
-    # Resolve the KSB list for this learner's programme so each answer can be
-    # shown with its title and theme instead of a bare id.
+    # Resolve the KSB list each answer was given against, so it is shown with
+    # its title and theme instead of a bare id. That is the source recorded on
+    # the learner's own Skills Radar (a profile, even one archived since, or a
+    # standard); the programme's current source is only the fallback -- a
+    # programme that later moved to a standard must not orphan signed answers.
     ksbs, standard = [], None
     programme = _s(getattr(learner, "programme", ""))
-    if programme:
-        try:
-            from .curriculum import ksb_profile_for_programme
+    answered_against = _s(getattr(radar, "standard_id", ""))
+    try:
+        from .curriculum import ksb_profile_for_programme, ksb_profile_for_source
 
+        if answered_against:
+            standard, ksbs = ksb_profile_for_source(answered_against, programme)
+        if not ksbs and programme:
             standard, ksbs = ksb_profile_for_programme(programme)
-        except DatabaseError:
-            # The panel still lists the answers without titles, so this is not
-            # worth failing the whole form over.
-            logger.exception("_skills_radar_context: KSB profile lookup failed")
+    except DatabaseError:
+        # The panel still lists the answers without titles, so this is not
+        # worth failing the whole form over.
+        logger.exception("_skills_radar_context: KSB profile lookup failed")
 
     answers = {
         _s(row.ksb_id): {
@@ -368,8 +377,8 @@ def enrolment_review_form(request, kind, pk, event_key):
 
     if request.method == "GET":
         # Opening the form for the first time records when the review started, so
-        # "booked but never opened" is distinguishable from "in progress".
-        if review.started_at is None and review.status == EnrolmentReview.STATUS_BOOKED:
+        # "issued (or booked) but never opened" is distinguishable from "in progress".
+        if review.started_at is None and review.status in (EnrolmentReview.STATUS_BOOKED, EnrolmentReview.STATUS_ISSUED):
             try:
                 review.started_at = timezone.now()
                 review.save(update_fields=["started_at", "updated_at"])
@@ -674,3 +683,138 @@ def enrolment_review_documents(request, kind, pk):
         "programme": _s(getattr(learner, "programme", "")),
         "documents": documents,
     })
+
+
+# ── issuing the onboarding reviews ───────────────────────────────────────────
+#
+#     GET  /learner_api/reviews/<kind>/<pk>/onboarding/  -> the four reviews and their state
+#     POST /learner_api/reviews/<kind>/<pk>/issue/       -> body {type}; staff only
+#
+# The four onboarding reviews are issued by the enrolment team from the
+# learner's board rather than booked by the learner: issuing creates the review
+# record — no calendar event, no meeting, no invitation — and the learner opens
+# it from their Reviews page. Reviews booked before issuing existed keep their
+# records and count exactly the same way; completion
+# (learning_plan.onboarding_complete) reads these records, never the calendar.
+
+
+def _current_reviews(pk):
+    """{review_type: the learner's current review of that type}: the newest not cancelled."""
+    rows = (
+        EnrolmentReview.objects.filter(learner_id=pk, review_type__in=ONBOARDING_REVIEW_TYPES)
+        .exclude(status=EnrolmentReview.STATUS_CANCELLED)
+        .order_by("id")
+    )
+    return {row.review_type: row for row in rows}
+
+
+def onboarding_review_slots(pk):
+    """One entry per onboarding review, in order: issued or not, and how far it has got."""
+    current = _current_reviews(pk)
+    slots = []
+    for review_type in ONBOARDING_REVIEW_TYPES:
+        row = current.get(review_type)
+        slot = {"type": review_type, "label": ONBOARDING_REVIEW_LABELS[review_type], "issued": row is not None}
+        if row is not None:
+            done, total = _progress(row)
+            slot.update({
+                "eventKey": row.event_key,
+                "issuedAt": _iso(row.booked_at),
+                "started": bool(row.started_at),
+                "completed": bool(row.form_completed),
+                "completedAt": _iso(row.form_completed_at),
+                "sectionsDone": done,
+                "sectionsTotal": total,
+                "reviewedBy": _s(row.reviewed_by) or _s(row.coach_name),
+                "signatures": _signatures(row, include_saved=False),
+            })
+        slots.append(slot)
+    return slots
+
+
+def _slots_payload(learner, kind, pk):
+    # Enrolment reviews are an apprenticeship requirement; commercial delivery has none.
+    slots = onboarding_review_slots(pk) if kind == "apprenticeship" else []
+    return {
+        "programme": _s(getattr(learner, "programme", "")),
+        "reviews": slots,
+        "allIssued": bool(slots) and all(s["issued"] for s in slots),
+        "allCompleted": bool(slots) and all(s.get("completed") for s in slots),
+    }
+
+
+def _learner_for(kind, pk):
+    model = SOURCE_MODELS.get(kind)
+    if model is None:
+        return None, _error(f"Unknown kind: {kind!r}. Expected 'commercial' or 'apprenticeship'.", 404)
+    learner = model.all_learners.filter(pk=pk).first()
+    if learner is None:
+        return None, _error("Learner not found.", 404)
+    return learner, None
+
+
+@learner_self_or_staff(kwarg="pk")
+def onboarding_reviews(request, kind, pk):
+    """The learner's four onboarding reviews: which are issued, started, completed, signed."""
+    if request.method != "GET":
+        return _error("Method not allowed.", 405)
+    try:
+        learner, failure = _learner_for(kind, pk)
+        if failure is not None:
+            return failure
+        return JsonResponse(_slots_payload(learner, kind, pk))
+    except DatabaseError as exc:
+        logger.exception("onboarding_reviews: lookup failed")
+        return _error(f"Database error: {exc}", 502)
+
+
+@csrf_exempt
+@staff_only()
+def issue_onboarding_review(request, kind, pk):
+    """Issue one onboarding review to the learner. Staff only; each review is issued once."""
+    if request.method != "POST":
+        return _error("Method not allowed.", 405)
+    if kind != "apprenticeship":
+        return _error("Enrolment reviews are only issued to apprenticeship learners.", 400)
+    try:
+        payload = json.loads(request.body or b"{}")
+    except json.JSONDecodeError:
+        return _error("Invalid JSON body.", 400)
+    review_type = payload.get("type") if isinstance(payload, dict) else None
+    if review_type not in ONBOARDING_REVIEW_TYPES:
+        return _error(f"Unknown review type: {review_type!r}.", 400)
+
+    learner = None
+    try:
+        learner, failure = _learner_for(kind, pk)
+        if failure is not None:
+            return failure
+        if review_type in _current_reviews(pk):
+            return JsonResponse({"error": "This review has already been issued.", **_slots_payload(learner, kind, pk)}, status=409)
+        owner_email, owner_name, owner_id = _case_owner_record(learner)
+        account = getattr(request, "login_account", None)
+        issued_by = (getattr(account, "display_name", None) or getattr(account, "email", None) or "") if account else ""
+        EnrolmentReview.objects.create(
+            # One key per learner and review type, so a double click (or two
+            # officers at once) hits the unique Event_key rather than issuing twice.
+            event_key=f"review:{kind}:{pk}:{review_type}",
+            review_type=review_type,
+            review_label=ONBOARDING_REVIEW_LABELS[review_type],
+            learner_kind=kind,
+            learner_id=pk,
+            learner_name=_s(getattr(learner, "username", "")),
+            learner_email=_s(getattr(learner, "email", "")),
+            coach_id=owner_id,
+            coach_name=owner_name,
+            coach_email=owner_email,
+            status=EnrolmentReview.STATUS_ISSUED,
+            notes=f"Issued by {issued_by}" if issued_by else "Issued",
+            booked_at=timezone.now(),
+        )
+    except IntegrityError:
+        return JsonResponse({"error": "This review has already been issued.", **_slots_payload(learner, kind, pk)}, status=409)
+    except DatabaseError as exc:
+        logger.exception("issue_onboarding_review: save failed")
+        return _error(f"Database error: {exc}", 502)
+
+    return JsonResponse(_slots_payload(learner, kind, pk), status=201)

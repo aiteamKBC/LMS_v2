@@ -271,13 +271,13 @@ export function LearnerReviewInstanceForm({
     }
   };
   const allSigned = requiredSignatures.length > 0 && requiredSignatures.every(state => state.signed);
-  const learnerSigned = Boolean(definition.signatures.participant?.signed);
-  const canSign = Boolean(onSign && submitted && definition.signatures.participant?.required && !learnerSigned);
+  const viewerSigned = Boolean(definition.signatures[viewerRole]?.signed);
+  const canSign = Boolean(onSign && submitted && definition.signatures[viewerRole]?.required && !viewerSigned);
   const signatureTitle = allSigned ? 'All signatures saved' : canSign ? 'Ready for your signature'
-    : learnerSigned ? 'Your signature is saved' : submitted ? 'Awaiting required signatures' : 'Your coach is preparing this review';
+    : viewerSigned ? 'Your signature is saved' : submitted ? 'Awaiting required signatures' : 'Your coach is preparing this review';
   const signatureHelp = allSigned ? 'All required parties have signed this review.'
     : canSign ? "Read your coach's notes and the agreed next steps, then sign below."
-    : learnerSigned ? 'You do not need to sign again. This review is waiting for the remaining required signatures.'
+    : viewerSigned ? 'You do not need to sign again. This review is waiting for the remaining required signatures.'
     : submitted ? 'The review is ready for the required parties to sign.'
     : 'The coach must complete this review before you can sign it.';
 
@@ -447,7 +447,7 @@ export function LearnerReviewInstanceForm({
                   </div>
                 ) : (
                   <fieldset disabled={signing} className="min-w-0 border-0 p-0">
-                    <SignaturePad signatoryName={signatoryName} onCommit={(signature) => { void saveSignature(signature); }} onCancel={() => { setSignatureOpen(false); setDrawingSignature(false); }} />
+                    <SignaturePad signatoryName={signatoryName} onCommit={saveSignature} onCancel={() => { setSignatureOpen(false); setDrawingSignature(false); }} />
                   </fieldset>
                 )}
               </div>
@@ -473,7 +473,7 @@ export function LearnerReviewInstanceForm({
             </div>
           ) : (
             <fieldset disabled={signing} className="min-w-0 border-0 p-0">
-              <SignaturePad signatoryName={signatoryName} onCommit={(signature) => { void saveSignature(signature); }} onCancel={() => { setSignatureOpen(false); setDrawingSignature(false); }} />
+              <SignaturePad signatoryName={signatoryName} onCommit={saveSignature} onCancel={() => { setSignatureOpen(false); setDrawingSignature(false); }} />
             </fieldset>
           )}
         </div>

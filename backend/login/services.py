@@ -182,6 +182,35 @@ def invite_subject(subject_type, subject_id, *, subject=None, inviter=None,
     return result
 
 
+def invite_eligible_applicant(learner, *, ip=None, user_agent=None):
+    """Invite a learner just created from the public eligibility form.
+
+    The one invitation issued with no signed-in inviter: the applicant passed
+    the form's postcode check, and the project owner asked for the set-password
+    email to follow automatically. It is kept narrow so it cannot become a way
+    round ``_authorise``:
+
+    * the subject is always a learner row, so the role is always learner --
+      never staff, admin or employer;
+    * only a brand-new account with no password is invited. An address that
+      already signs in (``ensure_account`` hands back its existing account)
+      gets nothing, so this never mails a set-password link for a live login.
+
+    Returns ``(sent, detail)``: ``sent`` is False when no invitation went out,
+    with ``detail`` saying why. Never raises for a mail failure; the invitation
+    row records it and staff can re-send from Accounts.
+    """
+    from .models import SUBJECT_LEARNER
+
+    account, created = ensure_account(SUBJECT_LEARNER, learner.id, subject=learner)
+    if not created or account.has_password or account.subject_type != SUBJECT_LEARNER:
+        return False, "existing-account"
+    _invitation, sent, detail = send_invitation(
+        account, invited_by="eligibility form", ip=ip, user_agent=user_agent
+    )
+    return sent, detail
+
+
 def sync_account(subject_type, subject_id, *, subject=None):
     """Keep an existing login account's email/name/role in step with an edit.
 

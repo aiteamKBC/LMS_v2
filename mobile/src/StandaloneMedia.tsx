@@ -1,0 +1,73 @@
+import React,{useEffect,useMemo,useRef,useState} from 'react';
+import {AppState,Platform,Pressable,Text,View} from 'react-native';
+import {Ionicons} from '@expo/vector-icons';
+import {useAudioPlayer,useAudioPlayerStatus,setAudioModeAsync} from 'expo-audio';
+import {useVideoPlayer,VideoView} from 'expo-video';
+import {base,s} from './styles';
+import {stopVoice} from './voice';
+import MediaPlayer from './MediaPlayer';
+import {parseYouTubeVideoId} from './youtube-player.mjs';
+export type PlaybackSignal={playing:boolean;buffering:boolean;positionSeconds:number;durationSeconds:number;playbackRate?:number};
+export type StandaloneMediaProps={resource:{id:string;url:string;mime:string;title?:string};captions?:{url:string;mime:string;label?:string}[];transcript?:string;headers?:Record<string,string>;active?:boolean;allowBackgroundAudio?:boolean;playOnOpen?:boolean;onSignal?:(signal:PlaybackSignal)=>void;onActiveChange?:(active:boolean)=>void;onInteraction?:()=>void;onTranscriptChange?:(visible:boolean)=>void;onError?:(message:string)=>void};
+const emptySignal:PlaybackSignal={playing:false,buffering:false,positionSeconds:0,durationSeconds:0};
+const seconds=(n:number)=>Math.max(0,Number.isFinite(n)?n:0);
+const clock=(n:number)=>{const value=Math.floor(seconds(n));return Math.floor(value/60)+':'+String(value%60).padStart(2,'0');};
+function useCallbacks(props:StandaloneMediaProps){const ref=useRef(props);ref.current=props;return ref;}
+export type CaptionCue={start:number;end:number;text:string};
+export function parseStandaloneCaptions(raw:string):CaptionCue[]{
+ const stamp=(text:string)=>{const parts=text.replace(',','.').split(':').map(Number);return parts.length===3?parts[0]*3600+parts[1]*60+parts[2]:parts.length===2?parts[0]*60+parts[1]:NaN;};
+ const cues:CaptionCue[]=[];
+ for(const block of raw.replace(/\r/g,'').split(/\n\s*\n/)){
+  const lines=block.split('\n'),i=lines.findIndex(line=>line.includes('-->'));if(i<0)continue;
+  const [from,to]=lines[i].split('-->').map(x=>x.trim().split(/\s+/)[0]);const start=stamp(from),end=stamp(to);
+  const text=lines.slice(i+1).join(' ').replace(/<[^>]*>/g,'').replace(/&amp;/g,'&').replace(/&lt;/g,'<').replace(/&gt;/g,'>').trim();
+  if(Number.isFinite(start)&&Number.isFinite(end)&&end>start&&text)cues.push({start,end,text});
+ }
+ return cues;
+}
+export function StandaloneMedia(props:StandaloneMediaProps){
+ const [showTranscript,setShowTranscript]=useState(false),[cues,setCues]=useState<CaptionCue[]>([]),[position,setPosition]=useState(0),[showCaptions,setShowCaptions]=useState(false);
+ const transcriptCallback=useRef(props.onTranscriptChange);transcriptCallback.current=props.onTranscriptChange;
+ useEffect(()=>{transcriptCallback.current?.(showTranscript);return()=>{transcriptCallback.current?.(false);};},[showTranscript]);
+ const caption=props.captions?.find(c=>c.mime==='text/vtt')||props.captions?.[0];
+ useEffect(()=>{let live=true;setCues([]);if(caption?.url)fetch(caption.url,{credentials:'include',headers:props.headers}).then(r=>{if(!r.ok)throw new Error('Caption unavailable');return r.text();}).then(raw=>{if(live)setCues(parseStandaloneCaptions(raw));}).catch(()=>{});return()=>{live=false;};},[caption?.url]);
+ const transcript=props.transcript||cues.map(c=>c.text).join('\n'),current=cues.find(c=>position>=c.start&&position<c.end)?.text;
+ const signal=(value:PlaybackSignal)=>{setPosition(value.positionSeconds);props.onSignal?.(value);};
+ const playerProps={...props,onSignal:signal};
+ return <View style={{gap:12}}>{parseYouTubeVideoId(props.resource.url)?<MediaPlayer url={props.resource.url} title={props.resource.title||'Learning video'} paused={props.active===false} onState={value=>{const state={playing:value.playing,buffering:value.buffering,positionSeconds:value.position,durationSeconds:value.duration,playbackRate:value.playbackRate};signal(state);props.onActiveChange?.(state.playing&&!state.buffering);if(value.error)props.onError?.(value.error);}}/>:Platform.OS==='web'?<WebMedia {...playerProps}/>:props.resource.mime.startsWith('audio/')?<NativeAudio {...playerProps}/>:<NativeVideo {...playerProps}/>} {!!cues.length&&<><Pressable accessibilityRole="button" onPress={()=>{props.onInteraction?.();setShowCaptions(v=>!v);}} style={[s.button,s.secondary]}><Text style={[s.buttonText,{color:base.green}]}>{showCaptions?'Hide captions':'Show captions'}</Text></Pressable>{showCaptions&&<View style={[s.infoBox,{minHeight:65}]}><Text style={s.body}>{current||'Captions appear here during playback.'}</Text></View>}</>}{!!transcript&&<><Pressable accessibilityRole="button" onPress={()=>{props.onInteraction?.();setShowTranscript(v=>!v);}} style={[s.button,s.secondary]}><Text style={[s.buttonText,{color:base.green}]}>{showTranscript?'Hide transcript':'Read transcript'}</Text></Pressable>{showTranscript&&<View style={s.readingCard}><Text selectable style={s.body}>{transcript}</Text></View>}</>}</View>;
+}
+function WebMedia(props:StandaloneMediaProps){
+ const {resource,captions=[],active=true,allowBackgroundAudio=true,playOnOpen=false}=props,video=resource.mime.startsWith('video/');
+ const media=useRef<HTMLMediaElement|null>(null),callbacks=useCallbacks(props),buffering=useRef(false),[error,setError]=useState('');
+ const signal=()=>{const el=media.current;const value=el?{playing:active&&!el.paused&&!el.ended&&!el.seeking&&el.readyState>=2,buffering:buffering.current||!!el.seeking,positionSeconds:seconds(el.currentTime),durationSeconds:seconds(el.duration),playbackRate:el.playbackRate}:emptySignal;callbacks.current.onSignal?.(value);callbacks.current.onActiveChange?.(value.playing&&!value.buffering);};
+ useEffect(()=>{if(!active){media.current?.pause();signal();}},[active]);
+ useEffect(()=>{const el=media.current;if(!el)return;const hidden=()=>{if(document.hidden&&(video||!allowBackgroundAudio)){el.pause();signal();}};document.addEventListener('visibilitychange',hidden);if(playOnOpen&&active){void stopVoice();el.play().catch(()=>{/* A browser may require another explicit tap; visible native controls remain. */});}return()=>{el.pause();document.removeEventListener('visibilitychange',hidden);callbacks.current.onSignal?.(emptySignal);callbacks.current.onActiveChange?.(false);};},[resource.url]);
+ const wait=()=>{buffering.current=true;signal();};const playing=()=>{buffering.current=false;void stopVoice();signal();};
+ const fail=()=>{const message='This media could not load. Check your connection, then reopen this activity.';setError(message);buffering.current=false;callbacks.current.onError?.(message);callbacks.current.onSignal?.(emptySignal);callbacks.current.onActiveChange?.(false);};
+ return <View style={{gap:10}}>{React.createElement(video?'video':'audio',{ref:(el:HTMLMediaElement|null)=>{media.current=el;},src:resource.url,controls:true,playsInline:true,preload:'metadata','aria-label':resource.title||'Learning media',style:{width:'100%',maxHeight:440,borderRadius:16,background:video?'#102E29':'transparent'},onPlaying:playing,onPlay:signal,onPause:signal,onTimeUpdate:signal,onWaiting:wait,onStalled:wait,onSeeking:wait,onSeeked:()=>{buffering.current=false;signal();},onEnded:signal,onCanPlay:()=>{buffering.current=false;signal();},onError:fail,onPointerDown:()=>callbacks.current.onInteraction?.(),onKeyDown:()=>callbacks.current.onInteraction?.()},...captions.filter(c=>c.mime==='text/vtt').slice(0,1).map(c=>React.createElement('track',{key:c.url,src:c.url,kind:'captions',srcLang:'en-GB',label:c.label||'English'})))}{error&&<Text accessibilityRole="alert" style={s.small}>{error}</Text>}</View>;
+}
+function NativeAudio(props:StandaloneMediaProps){
+ const [attempt,setAttempt]=useState(0);
+ return <NativeAudioInstance key={props.resource.url+':'+attempt} {...props} onRetry={()=>setAttempt(value=>value+1)}/>;
+}
+function NativeAudioInstance(props:StandaloneMediaProps&{onRetry:()=>void}){
+ const {resource,headers,active=true,allowBackgroundAudio=true,playOnOpen=false}=props,callbacks=useCallbacks(props);
+ const source=useMemo(()=>({uri:resource.url,headers,name:resource.title}),[resource.url,JSON.stringify(headers)]),player=useAudioPlayer(source,{updateInterval:500}),status=useAudioPlayerStatus(player),[error,setError]=useState(''),[speed,setSpeed]=useState(1),started=useRef(false);
+ const fail=()=>{const message='Audio could not load. Check your connection, then try audio again. If your session has expired, sign in again.';setError(message);callbacks.current.onError?.(message);callbacks.current.onSignal?.(emptySignal);callbacks.current.onActiveChange?.(false);};
+ useEffect(()=>{if(status.error)fail();},[status.error]);
+ const play=async()=>{callbacks.current.onInteraction?.();if(status.playing){player.pause();return;}try{await stopVoice();await setAudioModeAsync({playsInSilentMode:true,shouldPlayInBackground:allowBackgroundAudio,interruptionMode:'doNotMix'});if(status.didJustFinish)await player.seekTo(0);if(!callbacks.current.active&&callbacks.current.active!==undefined)return;player.setActiveForLockScreen(allowBackgroundAudio,{title:resource.title||'Learning audio',artist:'Kent Business College'});player.play();setError('');}catch{fail();}};
+ useEffect(()=>{const value={playing:active&&!status.error&&status.playing&&status.isLoaded&&!status.didJustFinish,buffering:!status.error&&(status.isBuffering||!status.isLoaded),positionSeconds:seconds(status.currentTime),durationSeconds:seconds(status.duration),playbackRate:status.playbackRate};callbacks.current.onSignal?.(value);callbacks.current.onActiveChange?.(value.playing&&!value.buffering);},[status.playing,status.isLoaded,status.isBuffering,status.currentTime,status.duration,status.didJustFinish,status.error,active]);
+ useEffect(()=>{if(!active)player.pause();},[active]);
+ useEffect(()=>{if(playOnOpen&&active&&status.isLoaded&&!started.current){started.current=true;void play();}},[playOnOpen,active,status.isLoaded]);
+ useEffect(()=>{const sub=AppState.addEventListener('change',state=>{if(state!=='active'&&!allowBackgroundAudio)player.pause();});return()=>{sub.remove();try{player.setActiveForLockScreen(false);player.pause();}catch{}callbacks.current.onSignal?.(emptySignal);callbacks.current.onActiveChange?.(false);};},[player]);
+ const seek=async(delta:number)=>{callbacks.current.onInteraction?.();callbacks.current.onSignal?.({...emptySignal,buffering:true});try{await player.seekTo(Math.max(0,Math.min(status.duration||0,status.currentTime+delta)));}catch{fail();}};
+ return <View style={s.audioCard}><View style={s.spaceBetween}><Ionicons name="headset-outline" color={base.green} size={30}/><Text style={s.small}>{clock(status.currentTime)} / {clock(status.duration)}</Text></View><View style={s.audioTrack}><View style={[s.audioFill,{width:`${status.duration?Math.min(100,100*status.currentTime/status.duration):0}%`}]}/></View><View style={s.playerControls}><Pressable accessibilityRole="button" accessibilityLabel="Rewind 15 seconds" onPress={()=>seek(-15)} style={s.roundControl}><Ionicons name="play-back-outline" size={24} color={base.green}/><Text style={s.small}>15s</Text></Pressable><Pressable accessibilityRole="button" accessibilityLabel={status.playing?'Pause audio':'Play audio'} onPress={play} disabled={!active} style={s.play}><Ionicons name={status.playing?'pause':'play'} size={32} color="white"/></Pressable><Pressable accessibilityRole="button" accessibilityLabel="Forward 15 seconds" onPress={()=>seek(15)} style={s.roundControl}><Ionicons name="play-forward-outline" size={24} color={base.green}/><Text style={s.small}>15s</Text></Pressable></View><Pressable accessibilityRole="button" accessibilityLabel={'Playback speed '+speed} onPress={()=>{const next=speed===1?1.25:speed===1.25?.85:1;setSpeed(next);player.setPlaybackRate(next);callbacks.current.onInteraction?.();}} style={[s.button,s.secondary]}><Text style={[s.buttonText,{color:base.green}]}>Speed · {speed}×</Text></Pressable>{status.isBuffering&&<Text style={s.small}>Loading audio…</Text>}{error&&<><Text accessibilityRole="alert" style={s.small}>{error}</Text><Pressable accessibilityRole="button" onPress={props.onRetry} style={[s.button,s.secondary]}><Text style={[s.buttonText,{color:base.green}]}>Try audio again</Text></Pressable></>}</View>;
+}
+function NativeVideo(props:StandaloneMediaProps){
+ const {resource,headers,active=true,playOnOpen=false}=props,callbacks=useCallbacks(props),[error,setError]=useState('');
+ const source=useMemo(()=>({uri:resource.url,headers,contentType:'progressive' as const,useCaching:false}),[resource.url,JSON.stringify(headers)]);
+ const player=useVideoPlayer(source,p=>{p.timeUpdateEventInterval=.5;p.staysActiveInBackground=false;});
+ useEffect(()=>{const emit=()=>{const value={playing:(callbacks.current.active??true)&&player.playing&&player.status==='readyToPlay',buffering:player.status==='loading',positionSeconds:seconds(player.currentTime),durationSeconds:seconds(player.duration),playbackRate:player.playbackRate};callbacks.current.onSignal?.(value);callbacks.current.onActiveChange?.(value.playing&&!value.buffering);};const subscriptions=[player.addListener('timeUpdate',emit),player.addListener('playingChange',e=>{if(e.isPlaying){void stopVoice();callbacks.current.onInteraction?.();}emit();}),player.addListener('playToEnd',()=>{callbacks.current.onSignal?.(emptySignal);callbacks.current.onActiveChange?.(false);}),player.addListener('statusChange',e=>{if(e.status==='error'){const message='This video could not load. Check your connection and reopen the activity.';setError(message);callbacks.current.onError?.(message);}emit();})];const app=AppState.addEventListener('change',state=>{if(state!=='active')player.pause();});if(playOnOpen&&active)player.play();return()=>{subscriptions.forEach(s=>s.remove());app.remove();try{player.pause();}catch{}callbacks.current.onSignal?.(emptySignal);callbacks.current.onActiveChange?.(false);};},[player]);
+ useEffect(()=>{if(!active)player.pause();},[active]);
+ return <View style={{gap:10}}><VideoView player={player} nativeControls contentFit="contain" fullscreenOptions={{enable:true}} allowsPictureInPicture={false} style={{width:'100%',aspectRatio:16/9,borderRadius:14,backgroundColor:'#102E29'}} onTouchStart={props.onInteraction}/>{error&&<Text accessibilityRole="alert" style={s.small}>{error}</Text>}</View>;
+}

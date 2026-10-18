@@ -13,7 +13,7 @@ from django.views.decorators.http import require_GET, require_POST
 
 from audit_api.last_audit_ledger_views import _connection, _is_completed
 from audit_api.learner_exclusions import is_excluded_learner
-from login.permissions import learner_self_or_staff, learner_self_or_admin, staff_only
+from login.permissions import coach_owns_learner, learner_self_or_staff, learner_self_or_admin, staff_only
 from login.sessions import authenticate_request
 
 from .learner_detail import SOURCE_MODELS
@@ -52,14 +52,14 @@ CURRENT_SUBJECTS_SQL = '''
     WHERE (cm.deleted_at IS NULL OR COALESCE(cm.deleted_via_parent, '') <> '')
 '''
 
-def _direct_progress_records(enrolment_id):
+def _direct_progress_records(enrolment_id, *, profile=None):
     """Progress recorded after the historical audit snapshot was imported.
 
     The Last_audit total already covers every legacy subject displayed by this
     endpoint.  Only direct/current-platform rows are added here; including the
     imported normalized rows as well would count the historical time twice.
     """
-    profile = (
+    profile = profile or (
         LearnerProfile.objects.using('enrolment')
         .filter(enrolment_id=enrolment_id)
         .only('id')
@@ -69,7 +69,7 @@ def _direct_progress_records(enrolment_id):
         return []
     entries = (
         profile.progress_entries.using('enrolment')
-        .filter(component_link_source__in=('direct', 'quiz_ref'))
+        .filter(component_link_source__in=('direct', 'quiz_ref'), deleted_at__isnull=True)
         .exclude(kind='activity_event')
         .values(
             'id', 'kind', 'component_ref', 'quiz_ref', 'component_title', 'component_type',
@@ -136,6 +136,7 @@ def load_direct_progress_records_bulk(enrolment_ids):
     entries = LearnerProgressEntry.objects.using('enrolment').filter(
         learner_id__in=[profile.id for profile in profiles],
         component_link_source__in=('direct', 'quiz_ref'),
+        deleted_at__isnull=True,
     ).exclude(kind='activity_event').values(
         'id', 'learner_id', 'kind', 'component_ref', 'quiz_ref', 'component_title', 'component_type',
         'module_title', 'week_title', 'reported_time', 'claimed_seconds', 'verified_seconds',
@@ -232,7 +233,10 @@ def student_activity(request, kind, pk):
         return _error("Learner not found.", 404)
 
     try:
-        source = model.all_learners.only("id", "aptem_id", "email").get(pk=pk)
+        from .case_file_sources import source_for_case_file
+        source = source_for_case_file(request, kind, pk)
+        if source is None:
+            source = model.all_learners.only("id", "aptem_id", "email").get(pk=pk)
     except model.DoesNotExist:
         return _error("Learner not found.", 404)
     except DatabaseError:
@@ -240,8 +244,14 @@ def student_activity(request, kind, pk):
 
     if request.GET.get('activity_id') is None:
         from . import canonical_learning
+        from .replacement_hours import read_replacement_hours
         try:
-            payload = canonical_learning.source_subjects(pk, summarize_activities)
+            owner = canonical_learning.profile(pk)
+            # Share the exact accepted ledger snapshot with the course catalogue;
+            # summing separately loaded old/current aggregates can double count.
+            records = canonical_learning.entries_for(owner) if owner is not None else None
+            payload = canonical_learning.source_subjects(pk, summarize_activities, owner=owner, records=records)
+            payload['replacement_hours'] = read_replacement_hours(pk, source, owner, records, payload)
             saved = subject_store.state(pk, payload['aptem_id']) if payload['aptem_id'] else {'covers': {}}
             allowed = {f"legacy:{item['id']}" for item in payload['subjects']}
             payload['covers'] = {key: _cover_url(value) for key, value in saved['covers'].items() if key in allowed}
@@ -257,6 +267,26 @@ def student_activity(request, kind, pk):
         return _error("This learner is not linked to Aptem.", 404)
     if not student_activity_available(aptem_id):
         return _error("This learner is not linked to Aptem.", 404)
+
+    if request.GET.get('catalogue_kind') == 'quiz':
+        from . import canonical_learning
+        from .legacy_quiz_review import read_review
+        try:
+            group_id = int(request.GET.get('group_id', ''))
+            quiz_id = int(request.GET.get('activity_id', ''))
+            if not all(0 < value <= 9223372036854775807 for value in (group_id, quiz_id)):
+                raise ValueError()
+        except (ValueError, TypeError):
+            return _error('Invalid quiz reference.', 400)
+        try:
+            owner = canonical_learning.require_profile(pk)
+            if owner['aptem_id'] != aptem_id or not _emails_match(owner['email'], source.email):
+                return _error('The consolidated learner identity needs review.', 409)
+            return _private(read_review(owner, group_id, quiz_id))
+        except canonical_learning.ServiceError as error:
+            return _error(str(error), error.status)
+        except DatabaseError:
+            return _error('Could not load the saved quiz. Please retry.', 503)
 
     # Never forward client filters or Aptem ids into the historical reader.
     try:
@@ -347,7 +377,7 @@ def _cover_url(path):
     return UPLOAD_URL_PREFIX + blob_name_for(path)
 
 
-def _definition_for(stored, group_id=None):
+def _definition_for(stored, group_id=None, *, attachment_resolver=None):
     row = stored['_source']
     quiz_id = row.get('quiz_id')
     # Never fetch definitions from the old LMS during learner requests.
@@ -357,7 +387,7 @@ def _definition_for(stored, group_id=None):
 
         path = _legacy_attachment_upload_path(reference)
         return '/curriculum_api/curriculum/uploads/' + path if path else ''
-    definition = build_material(stored, schema, attachment_resolver=archive_url)
+    definition = build_material(stored, schema, attachment_resolver=archive_url if attachment_resolver is None else attachment_resolver)
     if group_id is not None and quiz_id and definition.get('quiz') and not definition['quiz']['ready']:
         from .subject_quiz import imported_quiz
         try:
@@ -370,12 +400,33 @@ def _definition_for(stored, group_id=None):
             definition['quiz'] = quiz_definition(recovered_quiz)
             definition['available'] = True
     if row.get('_material_blob_ready'):
+        import mimetypes
+        from urllib.parse import unquote, urlsplit
+
         mime = row.get('material_blob_content_type') or ''
         media_kind = 'pdf' if mime == 'application/pdf' else 'audio' if mime.startswith('audio/') else 'video' if mime.startswith('video/') else 'document'
-        definition['media'] = [{'kind': media_kind, 'url': '', 'title': stored['title'],
-            'file_name': stored['title'], 'source_material_file': True, 'can_embed': True}]
+        file_name = (row.get('material_blob_name') or '').rsplit('/', 1)[-1]
+        if not mimetypes.guess_type(file_name)[0]:
+            file_name = stored['title']
+            if not mimetypes.guess_type(file_name)[0]:
+                file_name += mimetypes.guess_extension(mime) or ''
+        primary = {'kind': media_kind, 'url': '', 'title': stored['title'],
+            'file_name': file_name or stored['title'], 'source_material_file': True, 'can_embed': True}
+        archive_path = '/curriculum_api/curriculum/uploads/' + (row.get('material_blob_name') or '')
+        # Re-linked legacy lessons can also contain a reading companion or
+        # other attachments. Replace only their exact registered primary file.
+        def is_registered_file(value):
+            parsed = urlsplit(value or '')
+            return not parsed.netloc and unquote(parsed.path) == archive_path
+        archived = [item for item in definition['media'] if is_registered_file(item['url'])]
+        registered_primary = any(is_registered_file(stored.get(field))
+                                 for field in ('video_url', 'audio_url', 'reading_url'))
+        if archived or registered_primary:
+            definition['media'] = [primary, *[item for item in definition['media'] if item not in archived]]
+        else:
+            definition['media'] = [primary]
         definition['available'] = True
-        definition['has_reading'] = media_kind in {'pdf', 'document'}
+        definition['has_reading'] = definition['has_reading'] or media_kind in {'pdf', 'document'}
     definition['source_live'] = False
     if row.get('quiz_definition_ambiguous') and definition.get('quiz'):
         # The same reading is linked to different quizzes in the original LMS.
@@ -396,9 +447,10 @@ def _local_pdf_urls(definition, kind, pk, group_id, activity_id):
     ]}
 
 
-def _material_response(request, pk, aptem_id, stored, *, kind=None, group_id=None):
+def _material_response(request, pk, aptem_id, stored, *, kind=None, group_id=None, attachment_resolver=None):
     row = stored['_source']
-    definition = _local_pdf_urls(_definition_for(stored, group_id), kind, pk, group_id, row['activity_id'])
+    definition = _local_pdf_urls(_definition_for(stored, group_id, attachment_resolver=attachment_resolver),
+                                 kind, pk, group_id, row['activity_id'])
     try:
         saved = subject_store.state(pk, aptem_id, row['activity_id'], group_id=group_id)
     except DatabaseError:
@@ -423,6 +475,7 @@ def _material_response(request, pk, aptem_id, stored, *, kind=None, group_id=Non
                'can_attempt': bool(account and saved['ready'] and (
                    account.role == 'admin'
                    or (account.role == 'learner' and int(account.subject_id) == pk)
+                   or coach_owns_learner(account, pk)
                )),
                'csrf_token': get_token(request)}
     return _private(payload)
@@ -454,17 +507,29 @@ def _owned_material(kind, pk, group_id, activity_id):
 @learner_self_or_staff(kwarg='pk')
 def source_material_file(request, kind, pk, group_id, activity_id):
     from django.conf import settings
-    from .material_storage import read_url
+    from .material_storage import (
+        OFFICE_PREVIEW_SUFFIXES, curriculum_archive_url, file_response, office_preview_response,
+    )
     try:
         _aptem_id, stored = _owned_material(kind, pk, group_id, activity_id)
         row = stored['_source']
         if not row.get('_material_blob_ready'):
             return _error('This file has not been copied to the LMS yet.', 404)
-        if row.get('material_blob_content_type') == 'application/pdf':
+        archive_url = curriculum_archive_url(row, settings)
+        if archive_url:
+            if str(request.GET.get('preview') or '').lower() in {'1', 'true', 'yes'}:
+                archive_url += '?preview=1'
+            response = HttpResponseRedirect(archive_url)
+        elif row.get('material_blob_content_type') == 'application/pdf':
             from .material_storage import pdf_response
             response = pdf_response(row, settings, request)
+        elif (str(request.GET.get('preview') or '').lower() in {'1', 'true', 'yes'}
+              and str(row.get('material_blob_name') or '').lower().endswith(OFFICE_PREVIEW_SUFFIXES)):
+            response = office_preview_response(row, settings)
         else:
-            response = HttpResponseRedirect(read_url(row, settings))
+            # Streamed, not redirected: the inline Word/Excel preview fetches
+            # this, and Azure's response carries no CORS headers for this site.
+            response = file_response(row, settings, request)
         response['Cache-Control'] = 'private, no-store'
         response['Referrer-Policy'] = 'no-referrer'
         return response
@@ -580,6 +645,26 @@ def _builder_subject_metadata(cursor, refs):
     return covers, links
 
 
+def builder_subject_links(cursor, source, refs, read=None):
+    """``_builder_subject_metadata`` links, reading only refs this request has not resolved.
+
+    Each ref resolves independently, so a Dashboard tab that resolves the plan's
+    modules and then its components' modules reads each module once. Without the
+    cache ``read_tab`` installs on its request-scoped source, this is one read.
+    ``read`` lets a caller keep its own module-level reader binding.
+    """
+    read = read or _builder_subject_metadata
+    cache = getattr(source, '_builder_link_cache', None)
+    if cache is None:
+        return read(cursor, refs)[1]
+    wanted = list(dict.fromkeys(refs))
+    missing = [ref for ref in wanted if ref not in cache]
+    if missing:
+        _, found = read(cursor, missing)
+        cache.update({ref: found.get(ref) for ref in missing})
+    return {ref: dict(cache[ref]) for ref in wanted if cache[ref] is not None}
+
+
 def _effective_current_subjects(cursor, learner_id):
     """Return the same effective module set shown by the enrolment plan.
 
@@ -627,8 +712,14 @@ def subject_covers(request, pk):
             )
             covers.update(builder_covers)
             dates = read_builder_activity_dates(cur, [subject['id'] for subject in current_subjects])
+            from .previous_learning_groups import read_previous_learning_groups
+            previous_groups = read_previous_learning_groups(cur, pk, current_subjects)
+            from .subject_origins import read_imported_courses, read_replacement_courses
+            imported_courses = read_imported_courses(cur, current_subjects)
+            replacement_courses = read_replacement_courses(cur, current_subjects, pk)
         return _private({'covers': covers, 'activity_dates': dates, 'current_subjects': current_subjects,
-                         'builder_subjects': builder_subjects})
+                         'builder_subjects': builder_subjects, 'previous_learning_groups': previous_groups,
+                         'imported_courses': imported_courses, 'replacement_courses': replacement_courses})
     except DatabaseError:
         return _error('Could not load subject images.', 503)
 

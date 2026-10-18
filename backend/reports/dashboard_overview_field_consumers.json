@@ -1,0 +1,105 @@
+{
+  "scope": "Student Dashboard Overview only; existing overview route; coach_view; no database writes",
+  "producer": "backend/learner_api/dashboard_overview.py:read_overview",
+  "fields": {
+    "metrics.otjh.actual": "page.tsx Actual stat and actual/target progress",
+    "metrics.otjh.targetToDate": "page.tsx OTJ target stat and chart target marker",
+    "metrics.ksb.completed,total,percent": "page.tsx KSB card; no code/point/evidence expansion",
+    "attendance.present,sessions": "page.tsx Attendance card; authoritative attendance_outcome excludes unmarked",
+    "reviews.completed,total,percent": "DashboardOverviewTab.tsx Reviews due-to-date card and calendar link",
+    "modules[].id,title,start,end": "OverviewCharts.tsx browser sorting, module picker/default selection, programme row matching and chart date bounds",
+    "modules[].activities.completed,total": "overviewFacts.ts Activities ring and overall activity percentage",
+    "modules[].attendance.attended,total": "overviewFacts.ts independent module attendance ring; null retains no-ended-session state",
+    "modules[].hours.actual,planned": "overviewFacts.ts independent module hours ring and caption",
+    "modules[].ksb.completed,total": "overviewFacts.ts independent activity KSB-point ring",
+    "modules[].deliveryEnd": "OverviewCharts.tsx programme chart bound after scheduler holiday shifts; omitted when unnecessary",
+    "modules[].duplicates[].key,completed,date": "overviewFacts.ts only cross-subject duplicate identities; browser locale winner/counts/date bounds without another API request",
+    "modules[].dateBounds.startFixed,endFixed,first,last": "overviewFacts.ts bounds correction only for modules carrying duplicate placement hints",
+    "programme[].id,title,percent": "ProgressCharts.tsx canonical programme module rows, selection and pagination",
+    "hours.months[].key,target,submitted,completed": "OverviewCharts.tsx chart point labels/range; OtjHoursChart.tsx bars, tooltip, totals and variance",
+    "hours.planned": "OtjHoursChart.tsx overall programme planned denominator",
+    "hours.end": "OverviewCharts.tsx auxiliary end bound from accepted actual rows, visible target months and reviews",
+    "programmeStartDate,programmeEndDate": "page.tsx existing programme-date precedence, then chart range/default module"
+  },
+  "removed_payloads": [
+    "Full schedule/modules/curriculumSlots",
+    "Full weekly planSubjects",
+    "Full learning activity/catalogue/components and attempts",
+    "Full monthly log source objects",
+    "KSB codes/points/definitions/evidence",
+    "Attendance session history",
+    "Review history and meeting payloads"
+  ],
+  "removed_work": [
+    "Full legacy read_dashboard response",
+    "Per-activity KSB point definition expansion",
+    "Duplicate module-progress identity/ORM read",
+    "Unused summarise_plan and component KSB lookup for monthly chart",
+    "Frontend full learning summary and schedule/monthlyLog adapters",
+    "Unused page whole-programme metric props/calculations and unused metrics.otjh.planned response field",
+    "Repeated target-to-date profile lookup; reuse verified owner",
+    "Builder date reread avoided through existing request-scoped cache"
+  ],
+  "preserved_shared_consumers": [
+    "Header, Weekly, Monthly, Training endpoints and default helper contracts",
+    "Legacy Overview component when no dedicated tabData is supplied",
+    "Coach/employer/my-learning/shared chart behavior"
+  ],
+  "limits": [
+    "Canonical metrics_bulk remains a separate authoritative read from display lineage, preserving its established completion population",
+    "Attendance register and Builder date normalization remain broad internally to preserve recovery and holiday semantics",
+    "Live SQL counts/timings and actual learner payload bytes not measured; no verified database/browser target used"
+  ],
+  "validation": {
+    "backend": {
+      "result": "PASS",
+      "tests": 72,
+      "interpreter": ".\\backend\\.venv\\Scripts\\python.exe -",
+      "settings": "config.settings_sqlite_test",
+      "guard": "BaseDatabaseWrapper.ensure_connection raises AssertionError for any attempted connection; all configured aliases asserted SQLite",
+      "suites": [
+        "learner_api.test_dashboard_overview_no_db",
+        "learner_api.test_dashboard_tabs_no_db",
+        "learner_api.test_dashboard_header_no_db",
+        "learner_api.test_dashboard_weekly_no_db",
+        "learner_api.test_dashboard_monthly_no_db",
+        "learner_api.test_dashboard_training_no_db"
+      ],
+      "command": "@'\nimport os,sys,unittest,logging\nfrom unittest.mock import patch\nos.environ['DJANGO_SETTINGS_MODULE']='config.settings_sqlite_test'\nsys.path.insert(0,'backend')\nfrom django.db.backends.base.base import BaseDatabaseWrapper\nwith patch.object(BaseDatabaseWrapper,'ensure_connection',side_effect=AssertionError('Database connections forbidden')):\n import django\n django.setup()\n logging.disable(logging.CRITICAL)\n from django.conf import settings\n assert all(c['ENGINE']=='django.db.backends.sqlite3' for c in settings.DATABASES.values())\n suite=unittest.defaultTestLoader.loadTestsFromNames(['learner_api.test_dashboard_overview_no_db','learner_api.test_dashboard_tabs_no_db','learner_api.test_dashboard_header_no_db','learner_api.test_dashboard_weekly_no_db','learner_api.test_dashboard_monthly_no_db','learner_api.test_dashboard_training_no_db'])\n result=unittest.TextTestRunner(verbosity=1).run(suite)\nsys.exit(not result.wasSuccessful())\n'@ | .\\backend\\.venv\\Scripts\\python.exe -"
+    },
+    "frontend": {
+      "result": "PASS",
+      "tests": 112,
+      "files": 11,
+      "command": "npm --prefix frontend test -- src/hooks/__tests__/dashboardOverview.test.tsx src/pages/workspace/learner/__tests__/OverviewCharts.test.tsx src/pages/workspace/learner/__tests__/dashboardRequestGraph.test.tsx src/pages/workspace/learner/__tests__/DashboardTabs.test.tsx src/pages/workspace/learner/__tests__/DashboardOverviewReviews.test.tsx src/pages/workspace/learner/__tests__/DashboardCompactTraining.test.tsx src/pages/workspace/learner/__tests__/MonthlyPlanBoard.test.tsx src/pages/learner/training-plan-timeline/TrainingPlanDetails.test.tsx src/pages/learner/training-plan-timeline/progress.test.ts src/pages/learner/training-plan-timeline/monthlyHours.test.ts src/pages/learner/training-plan-timeline/employerReadOnly.test.tsx --maxWorkers=2"
+    },
+    "lint": {
+      "command": "npm --prefix frontend run lint",
+      "result": "FAIL",
+      "errors": 32,
+      "warnings": 146,
+      "baseline_errors": 32,
+      "baseline_warnings": 146,
+      "added_findings": 0
+    },
+    "build": {
+      "command": "npm --prefix frontend run build",
+      "result": "FAIL",
+      "reason": "Missing qrcode.react import in src/pages/engagement/events/page.tsx"
+    },
+    "teams_baseline": "NOT REQUIRED: no listed Teams file or called/imported function changed",
+    "expanded_teams_checks": "NOT REQUIRED",
+    "live_teams": "NOT RUN",
+    "live_database_performance": "NOT MEASURED; no verified database target used",
+    "independent_review": "Completed read-only review; no remaining blocking findings",
+    "type_check": {
+      "command": "npm --prefix frontend run type-check",
+      "result": "FAIL",
+      "reason": "TS2307 missing qrcode.react at src/pages/engagement/events/page.tsx:18:27; same error observed before Overview changes"
+    },
+    "diff_check": {
+      "command": "git diff --check",
+      "result": "PASS"
+    }
+  }
+}

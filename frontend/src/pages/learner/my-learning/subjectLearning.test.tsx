@@ -5,7 +5,8 @@ import type { LearnerDetail } from '@/api/learnerDetail';
 import type { PlanModule, TrainingPlanDashboard } from '@/api/trainingPlanDashboard';
 import type { StudentActivityResponse, SubjectMaterial } from '@/api/studentActivity';
 import * as api from '@/api/studentActivity';
-import { StudentActivityPanel, subjectsFrom, type Subject, type SubjectEntry } from './SubjectWorkspace';
+import { StudentActivityPanel, type Subject, type SubjectEntry } from './SubjectWorkspace';
+import { subjectsFrom } from './learningSummary';
 import { certificateEligible, currentLearningSubject, currentLearningWeek, continuingLearningWeek, learningDeadlines, learningPlanSelection, learningToday, learningHref, nextLearningWeek, recommendedLearningSubject, resolveLearningSubject, subjectMapWeeks, subjectWeeks, subjectOpeningActivity } from './subjectLearning';
 
 const entry = (id: string, date: string, completed = false): SubjectEntry => ({ id, title: `Activity ${id}`, category: 'reading', completed, position: 0,
@@ -351,7 +352,7 @@ describe('map and My Learning navigation', () => {
     const schedule = { modules: [module('M1', '2026-09-01', '2026-09-30')], moduleLinks: metadata.builder_subjects } as unknown as TrainingPlanDashboard;
     render(<MemoryRouter><StudentActivityPanel data={completedModule} schedule={schedule} kind="commercial" learnerId="132" loading={false} error={null} onRetry={() => {}} /></MemoryRouter>);
     fireEvent.click(await screen.findByRole('button', { name: 'Continue learning' }));
-    expect(screen.getByRole('heading', { name: 'Another subject' })).toBeVisible();
+    expect(screen.getAllByRole('heading', { name: 'Another subject' })[0]).toBeVisible();
   });
 
   it('hides the whole Continue learning panel when every activity is complete', async () => {
@@ -453,7 +454,7 @@ describe('map and My Learning navigation', () => {
     renderWorkspace('/learner/my-learning/commercial/132?subject=legacy%3A1&week=2026-09-14', 'catalogue');
     await screen.findByRole('region', { name: 'Week 2 materials' });
     expect(screen.getByRole('button', { name: 'Second reading' })).toBeVisible();
-    fireEvent.click(screen.getByRole('button', { name: 'Back to subject' }));
+    expect(screen.getByRole('complementary', { name: 'Module activities' })).toBeVisible();
     expect(screen.getByRole('link', { name: 'View learning map' })).toHaveAttribute('href', '/learner/learning-plan/modules/commercial/132?subject=legacy%3A1');
     fireEvent.click(screen.getByRole('button', { name: 'All subjects' }));
     expect(screen.getByRole('button', { name: /Open subject/ })).toBeVisible();
@@ -475,7 +476,7 @@ describe('map and My Learning navigation', () => {
     await screen.findByRole('button', { name: /Open subject/ });
     fireEvent.change(screen.getByRole('combobox', { name: 'Status' }), { target: { value: 'complete' } });
     expect(screen.queryByRole('button', { name: /Open subject/ })).not.toBeInTheDocument();
-    expect(within(screen.getByText('Learning activities').parentElement!).getByText('2')).toBeVisible();
+    expect(within(screen.getByText('Learning activities').parentElement!).getByText('0')).toBeVisible();
     fireEvent.click(screen.getByRole('button', { name: 'Clear filters' }));
     expect(screen.getByRole('button', { name: 'List' })).toHaveAttribute('aria-pressed', 'true');
     fireEvent.click(screen.getByRole('button', { name: 'Grid' }));
@@ -485,7 +486,7 @@ describe('map and My Learning navigation', () => {
     expect(screen.getByRole('button', { name: /Open subject/ })).toBeVisible();
   });
 
-  it('uses the authoritative activity total everywhere and opens deadline components', async () => {
+  it('uses the displayed activity total despite different programme metrics and opens deadline components', async () => {
     vi.spyOn(api, 'subjectRequest').mockResolvedValue({ ...metadata, activity_dates: {
       'ASSIGNMENT-1': { date: '2050-10-04', month: '2050-10', week_start: '2050-10-04', week_end: '2050-10-10', due_timing: 'end of week' },
       'CHECKPOINT-1': { date: '2050-10-04', month: '2050-10', week_start: '2050-10-04', week_end: '2050-10-10', due_timing: 'end of week' },
@@ -501,8 +502,9 @@ describe('map and My Learning navigation', () => {
         otjh: { historical: 0, new: 0, actual: 0, planned: 0 } }} />
     </MemoryRouter>);
 
-    await screen.findByRole('button', { name: /Open subject/ });
-    expect(screen.getByText('1 subjects · 304 activities')).toBeVisible();
+    await screen.findByRole('button', { name: /New LMS.*Open subject/ });
+    expect(screen.getByText('2 subjects · 4 activities')).toBeVisible();
+    expect(screen.getByText('0 of 2 activities completed')).toBeVisible();
     expect(screen.getByRole('heading', { name: 'Upcoming' })).toBeVisible();
     expect(screen.getByRole('link', { name: /Due assignment/ })).toHaveAttribute('href', '/learner/component/commercial/132/ASSIGNMENT-1');
     expect(screen.getByRole('link', { name: /Due checkpoint/ })).toHaveAttribute('href', '/learner/component/commercial/132/CHECKPOINT-1');

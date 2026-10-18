@@ -1,0 +1,59 @@
+{
+  "name": "kbc-learn",
+  "version": "0.1.0",
+  "private": true,
+  "expo": {
+    "autolinking": {
+      "android": {
+        "buildFromSource": ["expo-audio", "expo-video"]
+      }
+    }
+  },
+  "main": "index.ts",
+  "scripts": {
+    "postinstall": "node scripts/patch-native-media-cookies.cjs",
+    "patch:native-media": "node scripts/patch-native-media-cookies.cjs",
+    "check:native-media": "node scripts/patch-native-media-cookies.cjs --check",
+    "start": "expo start --max-workers 2",
+    "web": "expo start --web --port 8081 --max-workers 2",
+    "typecheck": "tsc --noEmit",
+    "test": "node --test tests/*.test.mjs",
+    "export:web": "expo export --platform web --max-workers 2",
+    "export:ios": "expo export --platform ios --output-dir dist-ios --max-workers 2",
+    "export:native": "expo export --platform ios --platform android --output-dir dist-native --max-workers 2",
+    "doctor": "npx expo-doctor",
+    "preview": "node scripts/preview.mjs"
+  },
+  "dependencies": {
+    "@expo/vector-icons": "^15.0.3",
+    "@react-native-async-storage/async-storage": "2.2.0",
+    "expo": "~57.0.26",
+    "expo-asset": "~57.0.18",
+    "expo-audio": "~57.0.5",
+    "expo-clipboard": "~57.0.2",
+    "expo-constants": "~57.0.20",
+    "expo-dev-client": "~57.0.19",
+    "expo-document-picker": "~57.0.3",
+    "expo-file-system": "~57.0.7",
+    "expo-font": "~57.0.4",
+    "expo-notifications": "~57.0.21",
+    "expo-sharing": "~57.0.22",
+    "expo-speech": "~57.0.3",
+    "expo-speech-recognition": "57.1.0",
+    "expo-splash-screen": "~57.0.9",
+    "expo-status-bar": "~57.0.1",
+    "expo-system-ui": "~57.0.4",
+    "expo-video": "~57.0.5",
+    "expo-web-browser": "~57.0.3",
+    "react": "19.2.3",
+    "react-dom": "19.2.3",
+    "react-native": "0.86.3",
+    "react-native-safe-area-context": "~5.7.0",
+    "react-native-web": "~0.21.0",
+    "react-native-webview": "13.16.1"
+  },
+  "devDependencies": {
+    "@types/react": "~19.2.0",
+    "typescript": "~6.0.3"
+  }
+}

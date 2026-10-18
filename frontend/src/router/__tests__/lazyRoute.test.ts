@@ -57,6 +57,13 @@ describe('recoverFromStaleChunk', () => {
     expect(reload).not.toHaveBeenCalled();
   });
 
+  it('allows one extra reload when the route opts in, then stops', () => {
+    expect(recoverFromStaleChunk(PAGE, 2)).toBe(true);
+    expect(recoverFromStaleChunk(PAGE, 2)).toBe(true);
+    expect(recoverFromStaleChunk(PAGE, 2)).toBe(false);
+    expect(reload).toHaveBeenCalledTimes(2);
+  });
+
   it('still recovers a different page whose chunk is also stale', () => {
     recoverFromStaleChunk(PAGE);
     reload.mockClear();
@@ -130,6 +137,20 @@ describe('lazyRoute, as the router actually wires it', () => {
 
     await expect(second).rejects.toThrow(/Failed to fetch/);
     expect(reload).toHaveBeenCalledTimes(1);
+  });
+
+  it('lets an opted-in route recover from one transient failure after reloading', async () => {
+    const loader = vi.fn().mockRejectedValue(staleChunk());
+    load(lazyRoute(loader, { maxChunkReloads: 2 })).catch(() => {});
+    await vi.advanceTimersByTimeAsync(0);
+    expect(reload).toHaveBeenCalledTimes(1);
+
+    load(lazyRoute(loader, { maxChunkReloads: 2 })).catch(() => {});
+    await vi.advanceTimersByTimeAsync(0);
+    expect(reload).toHaveBeenCalledTimes(2);
+
+    await expect(load(lazyRoute(loader, { maxChunkReloads: 2 }))).rejects.toThrow(/Failed to fetch/);
+    expect(reload).toHaveBeenCalledTimes(2);
   });
 
   it('gives up on a reload that never arrives, rather than holding the skeleton', async () => {

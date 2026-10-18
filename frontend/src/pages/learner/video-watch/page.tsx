@@ -1,7 +1,10 @@
 import { startActivityClock } from '@/lib/activityClock';
+import { observeRewardInterval, flushRewardObservations, clearRewardObservations } from '@/lib/rewardTracking';
 import { SessionResults } from '@/components/feature/SessionResults';
+import { narrationFromHtml, narrationFromPdf, ReadingNarrationError, ReadingPdfNarrationContext, useReadingNarration, type PdfPageReader } from './readingNarration';
 import { parsePersonalLearning } from '@/lib/personalLearning';
-import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
+import { PreviousLearningNotice } from '@/pages/learner/my-learning/PreviousLearningNotice';
+import { useCallback, useContext, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { Mic } from 'lucide-react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
@@ -14,12 +17,12 @@ import { fetchLearnerDetail, type LearnerDetail, type LearnerKind, type LearnerK
 import { markingVerdict } from '@/lib/markingVerdict';
 import { submitVideoProgress } from '@/api/videos';
 import { submitComponentProgress } from '@/api/components';
-import { startTimeTracking, type TimeTrackingSession, type TrackingCountingMode } from '@/api/timeTracking';
+import { startTimeTracking, resumeTimeTracking, type TimeTrackingSession, type TrackingCountingMode } from '@/api/timeTracking';
 import { EvidenceFilesButton, EvidencePreviewModal, type EvidencePreview } from '@/components/feature/EvidenceFilesButton';
 import { AssignmentEvidence } from '@/components/feature/AssignmentEvidence';
 import {
   buildLearnerJourney, componentTypeMeta, componentContentKind, componentNoun, hasComponentContent, isOpenableComponent, gradePercent, formatHoursMinutes,
-  componentCriteria, componentRequiresEvidence, completedComponentIds, isComponentComplete,
+  componentCriteria, componentRequiresEvidence, completedComponentIds, isComponentComplete, isMonthlyAssignment,
   type JourneyComponent,
 } from '@/utils/learnerJourney';
 import { fetchEvidence, getEvidenceDownloadUrl, deleteEvidence, type EvidenceRecord } from '@/api/evidence';
@@ -50,6 +53,7 @@ import { ActivityElapsedTimer } from './ActivityElapsedTimer';
 import manualTimeStyles from './ActivityManualTimeInput.module.css';
 import layoutStyles from './ComponentActivityLayout.module.css';
 import { AssignmentSubmissionWizard, type AssignmentAnswers } from './AssignmentSubmissionWizard';
+import { AssignmentBriefPanel } from './AssignmentBriefSections';
 import { useSavedAssignmentAccess } from './useSavedAssignmentAccess';
 import { absoluteDocUrl, resolveDocEmbed } from '@/lib/docEmbed';
 import { normalizeReadingHtml } from '@/lib/readingHtml';
@@ -63,7 +67,7 @@ import {
 
 const learnerNav = roleNavMap.learner;
 
-type Phase = 'consume' | 'reflection-choice' | 'reflect' | 'confirm';
+type Phase = 'consume' | 'time-entry' | 'reflection-choice' | 'reflect' | 'confirm';
 type TimeSource = 'timer' | 'input';
 
 interface DoneRecord { activityKey: string; componentId: string; timeTaken: string | null }
@@ -109,11 +113,13 @@ function ActivityTimeSpentInput({ onChange, initialSeconds = null }: { onChange:
   const [parts, setParts] = useState(() => partsFromSeconds(initialSeconds));
 
   useEffect(() => {
-    setParts(current => (
-      current.hours || current.minutes
-        ? current
-        : partsFromSeconds(initialSeconds)
-    ));
+    setParts(current => {
+      const currentSeconds = current.hours || current.minutes
+        ? (Number(current.hours) || 0) * 3600 + (Number(current.minutes) || 0) * 60
+        : null;
+      // Keep in-progress typing, but reflect time edited in the other control.
+      return currentSeconds === initialSeconds ? current : partsFromSeconds(initialSeconds);
+    });
   }, [initialSeconds]);
 
   const totalSeconds = (next: typeof parts): number | null => {
@@ -214,6 +220,7 @@ function nextActivityRoute(detail: LearnerDetail | null, currentComponentId: str
 export default function ComponentViewPage() {
   const { kind, id, componentId } = useParams<{ kind: string; id: string; componentId: string }>();
   const timerStorageKey = activityTimerStorageKey(kind, id, componentId);
+  const [readyReading, setReadyReading] = useState<string | null>(null);
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   useEffect(() => { rememberLearner(kind, id); }, [kind, id]);
@@ -254,6 +261,7 @@ export default function ComponentViewPage() {
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [record, setRecord] = useState<DoneRecord | null>(null);
   const [repeating, setRepeating] = useState(false);
+  const [keepPreviousTime, setKeepPreviousTime] = useState(false);
   const [refreshError, setRefreshError] = useState<string | null>(null);
   // Bumped by the uploader so the criteria panel re-checks after an upload.
   const [evidenceVersion, setEvidenceVersion] = useState(0);
@@ -324,6 +332,10 @@ export default function ComponentViewPage() {
     [detail, componentId, completedIds],
   );
   const component = ctx?.component ?? null;
+  const recordedEvent = Boolean(component?.recordingSeriesId && component.recordingSessionNumber && component.recordingDate);
+  const readingReadyKey = `${timerStorageKey}:${component?.resourceUrl || ''}`;
+  const onReadingReady = useCallback(() => setReadyReading(readingReadyKey), [readingReadyKey]);
+  useEffect(() => () => setReadyReading(null), [readingReadyKey]);
   // Where this activity stands with the coach. Only meaningful for an activity
   // the author sent for validation: everything else is finished when the
   // learner completes it. Without this the page said "Ready to complete" on
@@ -345,7 +357,10 @@ export default function ComponentViewPage() {
   // and verify the submitted duration.
   const isLiveSession = (component?.type || '').trim().toLowerCase().replace(/-/g, '_') === 'live_session';
   const hasActivityPanel = isVideo || isLiveSession;
-  const isAssignment = (component?.type || '').trim().toLowerCase().replace(/-/g, '_') === 'assignment';
+  // The monthly assignment uses the eight-step submission. Once an author flags
+  // one, the plan's other assignments are completed like any other activity.
+  const isAssignment = isMonthlyAssignment(component, detail?.components);
+  const isPlainAssignment = !isAssignment && componentRequiresEvidence(component?.type);
   const completed = !!component && isComponentComplete(component, completedIds);
   const recordingAttempt = isAssignment || !completed || repeating;
   const nextActivity = useMemo(() => nextActivityRoute(detail, componentId, kind, id), [detail, componentId, kind, id]);
@@ -384,6 +399,7 @@ export default function ComponentViewPage() {
   }, [needsEvidence, kind, id, componentId, evidenceVersion]);
 
   const criteria = component ? componentCriteria(component, evidenceCount) : null;
+  const finishDisabled = (!!criteria && !criteria.met) || (!isLiveSession && manualTimeMissing);
 
   const moduleTitle = ctx?.moduleTitle ?? searchParams.get('module') ?? '';
   const weekTitle = ctx?.weekTitle ?? searchParams.get('week') ?? '';
@@ -519,8 +535,15 @@ export default function ComponentViewPage() {
     if (canResumeActivityTimer(savedTimer, trackingMode)
         || (isAudio && canResumeActivityTimer(savedTimer, 'visible_page'))) {
       const savedSession = savedTimer!.session!;
-      trackingSessionRef.current = savedSession;
-      trackingPromiseRef.current = Promise.resolve(savedSession);
+      if (savedSession.rewardTracking) {
+        const resumed = resumeTimeTracking(savedSession, activityKind, componentId);
+        trackingPromiseRef.current = resumed;
+        resumed.then(session => { if (!cancelled) trackingSessionRef.current = session; })
+          .catch(error => { if (!cancelled) setSubmitError(error instanceof Error ? error.message : 'Study timing could not synchronize. Your draft is kept.'); });
+      } else {
+        trackingSessionRef.current = savedSession;
+        trackingPromiseRef.current = Promise.resolve(savedSession);
+      }
       setWallElapsed(savedTimer!.elapsedSeconds);
       return () => { cancelled = true; };
     }
@@ -555,9 +578,13 @@ export default function ComponentViewPage() {
   useEffect(() => {
     const activeMedia = isVideo || isAudio;
     if (phase !== 'consume' || !recordingAttempt || !canUseComponent) return;
-    if (contentKind === 'reading' && (loading || loadError || !openable)) return;
+    if (contentKind === 'reading' && (loading || loadError || !openable || readyReading !== readingReadyKey)) return;
     if (activeMedia ? !playerPlaying : (!unsupported && !playerPlaying)) return;
     const clock = startActivityClock({
+      onInterval: (start,end) => {
+        try { observeRewardInterval(trackingSessionRef.current,start,end); }
+        catch { setSubmitError('Your measured-time draft could not be saved. Keep this page open and retry saving.'); }
+      },
       countInBackground: activeMedia,
       pauseOnUnload: contentKind === 'reading',
       remainder: timerRemainder.current,
@@ -571,11 +598,16 @@ export default function ComponentViewPage() {
     });
     timerRef.current = clock;
     return () => clock.stop();
-  }, [phase, recordingAttempt, canUseComponent, unsupported, playerPlaying, isVideo, isAudio, timerStorageKey, contentKind, loading, loadError, openable]);
+  }, [phase, recordingAttempt, canUseComponent, unsupported, playerPlaying, isVideo, isAudio, timerStorageKey, contentKind, loading, loadError, openable, readyReading, readingReadyKey]);
 
   const finishConsuming = () => {
     if (!recordingAttempt) return;
     timerRef.current?.stop();
+    setKeepPreviousTime(false);
+    if (isLiveSession && manualTimeMissing) {
+      setPhase('time-entry');
+      return;
+    }
     if (component?.reflectionRequired === false) {
       setPhase('confirm');
       return;
@@ -585,6 +617,21 @@ export default function ComponentViewPage() {
 
   const confirmCompletion = () => {
     if (!component) return;
+    if (keepPreviousTime && completedTime) {
+      clearActivityTimer(timerStorageKey);
+      setWallElapsed(0);
+      timerRemainder.current.milliseconds = 0;
+      setManualTimeSeconds(null);
+      setTimeSource(usesManualTimeOnly ? 'input' : 'timer');
+      setRepeating(false);
+      setPhase('consume');
+      return;
+    }
+    if (manualTimeMissing) return;
+    if (phase === 'time-entry' && component.reflectionRequired !== false) {
+      setPhase('reflection-choice');
+      return;
+    }
     void finalizeSubmit({
       ksbs: (component.ksbMappings || []).map(mapping => mapping.code),
       feedback: '',
@@ -608,6 +655,7 @@ export default function ComponentViewPage() {
     setRefreshError(null);
     try {
       const tracking = trackingSessionRef.current || await trackingPromiseRef.current;
+      if (tracking?.rewardTracking && timeSource === 'timer') await flushRewardObservations(tracking,isVideo?'video':'component',componentId);
       if (!tracking) throw new Error('Activity timing did not start. Reopen the activity and try again.');
       if (isVideo) {
         const res = await submitVideoProgress(componentId, kind as 'commercial' | 'apprenticeship', id, {
@@ -634,6 +682,7 @@ export default function ComponentViewPage() {
         });
         setRecord({ activityKey: timerStorageKey, componentId, timeTaken: res.record.timeTaken });
       }
+      clearRewardObservations(tracking);
       clearActivityTimer(timerStorageKey);
       setWallElapsed(0);
       timerRemainder.current.milliseconds = 0;
@@ -743,7 +792,7 @@ export default function ComponentViewPage() {
           </div>
         ) : !openable ? (
           <div className="bg-background-50 rounded-2xl border border-foreground-200/60 p-6"><EmptyState text="This component can't be completed here yet." /></div>
-        ) : isVideo && !parsed ? (
+        ) : isVideo && !parsed && !recordedEvent ? (
           <div className="bg-background-50 rounded-2xl border border-foreground-200/60 p-6"><EmptyState text="This video has no playable URL yet." /></div>
         ) : phase === 'reflect' ? (
           <div className="space-y-4">
@@ -774,22 +823,37 @@ export default function ComponentViewPage() {
           /* ── consume phase: content + details + sidebar ── */
           <div className="grid grid-cols-1 lg:grid-cols-[1fr_320px] gap-6 items-start">
             <div className="min-w-0">
+              <PreviousLearningNotice learning={component.previousLearning} kind={kind} learnerId={id} />
               {isVideo && activityHeading}
-              {!isAssignment && (
+              {!isAssignment && !recordedEvent && (
                 <ComponentContent key={timerStorageKey} component={{ ...component, liveSessionUrl: parsePersonalLearning(id) ? null : component.teamsLiveSessionId && component.teamsSessionNumber
                     ? `/learner_api/session-results/${kind}/${id}/${encodeURIComponent(component.teamsLiveSessionId)}/sessions/${component.teamsSessionNumber}/join/`
                     : component.liveSessionUrl }} contentKind={contentKind} parsed={parsed} title={pageTitle}
                   onDuration={(d) => setRealDuration((prev) => prev ?? d)}
                   onProgress={() => undefined}
                   onPlayingChange={setPlayerPlaying}
+                  onReadingReady={onReadingReady}
                   onEnded={() => setPlayerPlaying(false)}
                   onUnsupported={() => setUnsupported(true)}
                 />
               )}
+              {recordedEvent && component.recordingSeriesId && component.recordingSessionNumber && (
+                <SessionResults
+                  seriesId={component.recordingSeriesId}
+                  sessionNumber={component.recordingSessionNumber}
+                  recordingDate={component.recordingDate}
+                  recordingsOnly
+                  learner={{ kind: kind as LearnerKind, id: id || '' }}
+                  preview={Boolean(parsePersonalLearning(id))}
+                  onRecordingPlayingChange={setPlayerPlaying}
+                />
+              )}
+              {isPlainAssignment && <AssignmentBriefPanel component={component} />}
               {(component.type || '').trim().toLowerCase().replace(/-/g, '_') === 'live_session' && component.teamsLiveSessionId && (
                 component.teamsSessionNumber ? <SessionResults
                   seriesId={component.teamsLiveSessionId}
                   sessionNumber={component.teamsSessionNumber}
+                  recordingDate={component.recordingDate}
                   learner={{ kind: kind as LearnerKind, id: id || '' }}
                   attendanceType={detail?.attendanceType}
                   onRecordingWatchTimeChange={setRecordingWatchSeconds}
@@ -816,6 +880,7 @@ export default function ComponentViewPage() {
                   <div className={hasActivityPanel ? layoutStyles.videoTools : 'contents'}>
                   <ActivityTimeSpentInput
                     key={timerStorageKey}
+                    initialSeconds={isLiveSession ? manualTimeSeconds : undefined}
                     onChange={(seconds) => {
                       setManualTimeSeconds(seconds);
                       setTimeSource(seconds == null && !usesManualTimeOnly ? 'timer' : 'input');
@@ -906,23 +971,23 @@ export default function ComponentViewPage() {
                   <div className={hasActivityPanel ? layoutStyles.videoFooter : 'flex min-w-0 max-w-full items-center gap-3'}>
                     <button
                       onClick={finishConsuming}
-                      disabled={(!!criteria && !criteria.met) || manualTimeMissing}
+                      disabled={finishDisabled}
                       title={
                         criteria && !criteria.met
                           ? 'Complete the criteria below before finishing.'
-                          : manualTimeMissing
+                          : manualTimeMissing && !isLiveSession
                             ? 'Enter the time spent before finishing.'
                             : undefined
                       }
                       className={`inline-flex shrink-0 items-center gap-1.5 text-sm font-semibold px-4 py-2 rounded-xl transition-colors ${
-                        (criteria && !criteria.met) || manualTimeMissing
+                        finishDisabled
                           ? 'bg-background-200 text-foreground-400 cursor-not-allowed'
                           : isVideo
                             ? 'bg-primary-600 text-white hover:bg-primary-700 cursor-pointer'
                             : 'bg-emerald-600 text-white hover:bg-emerald-700 cursor-pointer'
                       }`}
                     >
-                      <AppIcon className={(criteria && !criteria.met) || manualTimeMissing ? 'ri-lock-line' : 'ri-check-line'} />
+                      <AppIcon className={finishDisabled ? 'ri-lock-line' : 'ri-check-line'} />
                       Finish
                     </button>
                   </div>
@@ -1004,6 +1069,7 @@ export default function ComponentViewPage() {
                     questionText={component.assignmentBrief}
                     questionFileUrl={component.resourceUrl}
                     questionFileName={component.fileName}
+                    questionFiles={component.files}
                     ksbMappings={component.ksbMappings || []}
                     evidenceFiles={evidenceFiles}
                     evidenceDetails={activityEvidenceContext.trainingPlanDetails}
@@ -1084,10 +1150,13 @@ export default function ComponentViewPage() {
             />
           </div>
         )}
-        {phase === 'confirm' && (
+        {(phase === 'confirm' || phase === 'time-entry') && (
           <CompletionConfirmPopup
             title={pageTitle}
             noun={noun}
+            previousTimeLabel={completed ? completedTime : null}
+            keepPreviousTime={keepPreviousTime}
+            onKeepPreviousTimeChange={setKeepPreviousTime}
             timerLabel={formatClock(elapsedSeconds)}
             inputLabel={manualTimeSeconds == null ? null : formatClock(manualTimeSeconds)}
             inputSeconds={manualTimeSeconds}
@@ -1097,6 +1166,8 @@ export default function ComponentViewPage() {
             }}
             selectedSource={timeSource}
             manualTimeOnly={usesManualTimeOnly}
+            continueToReflection={phase === 'time-entry' && component?.reflectionRequired !== false && !keepPreviousTime}
+            timeEntryHint={isLiveSession ? 'Enter the time you spent on this session to continue.' : undefined}
             evidenceFileName={evidenceFileLabel}
             submitting={submitting}
             error={submitError}
@@ -1142,11 +1213,16 @@ function CompletionConfirmPopup({
   title,
   noun,
   timerLabel,
+  previousTimeLabel,
+  keepPreviousTime,
+  onKeepPreviousTimeChange,
   inputLabel,
   inputSeconds,
   onInputChange,
   selectedSource,
   manualTimeOnly,
+  continueToReflection = false,
+  timeEntryHint,
   evidenceFileName,
   submitting,
   error,
@@ -1155,24 +1231,49 @@ function CompletionConfirmPopup({
   onConfirm,
 }: {
   title: string; noun: string; timerLabel: string; inputLabel: string | null; selectedSource: TimeSource; manualTimeOnly: boolean; evidenceFileName?: string | null;
+  previousTimeLabel?: string | null; keepPreviousTime: boolean; onKeepPreviousTimeChange: (keep: boolean) => void;
   submitting: boolean; error: string | null;
   inputSeconds: number | null; onInputChange: (seconds: number | null) => void;
+  continueToReflection?: boolean; timeEntryHint?: string;
   onSelectSource: (source: TimeSource) => void; onCancel: () => void; onConfirm: () => void;
 }) {
-  const selectedTimeLabel = selectedSource === 'input'
+  const titleId = useId();
+  const panelRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const previous = document.activeElement as HTMLElement | null;
+    const panel = panelRef.current;
+    (panel?.querySelector<HTMLInputElement>('input') || panel?.querySelector<HTMLButtonElement>('button'))?.focus();
+    return () => { if (previous?.isConnected) previous.focus(); };
+  }, []);
+  const selectedTimeLabel = keepPreviousTime && previousTimeLabel ? previousTimeLabel : selectedSource === 'input'
     ? inputLabel || '--:--:--'
     : timerLabel;
 
   return (
     <div className="fixed inset-0 z-50 grid place-items-center bg-foreground-950/35 px-4 py-6 backdrop-blur-[2px]">
-      <div className="w-full max-w-md rounded-2xl border border-background-300 bg-white p-6 text-center shadow-2xl">
+      <div ref={panelRef} role="dialog" aria-modal="true" aria-labelledby={titleId}
+        onKeyDownCapture={(event) => {
+          if (event.key === 'Escape' && !submitting) {
+            event.preventDefault();
+            event.stopPropagation();
+            onCancel();
+          }
+          if (event.key === 'Tab') {
+            const controls = panelRef.current?.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled)');
+            const first = controls?.[0], last = controls?.[controls.length - 1];
+            if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
+            else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
+          }
+        }}
+        className="max-h-full w-full max-w-md overflow-y-auto rounded-2xl border border-background-300 bg-white p-6 text-center shadow-2xl">
         <div className="mx-auto mb-4 grid h-14 w-14 place-items-center rounded-full bg-primary-100">
           <AppIcon className="ri-question-line text-2xl text-primary-700" />
         </div>
-        <h1 className="text-lg font-heading font-bold text-foreground-900">
-          Confirm {noun} completion?
+        <h1 id={titleId} className="text-lg font-heading font-bold text-foreground-900">
+          {continueToReflection ? 'Enter time spent' : `Confirm ${noun} completion?`}
         </h1>
         <p className="mt-1 text-sm text-foreground-500">{title}</p>
+        {timeEntryHint && <p className="mt-3 text-sm font-medium text-foreground-700">{timeEntryHint}</p>}
 
         <div className="mt-5 space-y-3 rounded-xl border border-background-300 bg-background-50 p-4 text-left">
           <div className="flex items-center justify-between gap-3 border-b border-background-300 pb-3">
@@ -1188,6 +1289,32 @@ function CompletionConfirmPopup({
               </span>
             </div>
           )}
+          {previousTimeLabel && (
+            <>
+              <p className="text-xs text-foreground-500">Choose which attempt time to keep. Times will not be added together.</p>
+              <button
+                type="button"
+                aria-pressed={keepPreviousTime}
+                onClick={() => onKeepPreviousTimeChange(true)}
+                disabled={submitting}
+                className={`flex w-full items-center justify-between gap-3 rounded-lg border px-3 py-2 text-left ${keepPreviousTime ? 'border-primary-300 bg-primary-50 text-primary-800' : 'border-background-300 bg-white text-foreground-700'}`}
+              >
+                <span className="text-sm font-semibold">Previous attempt</span>
+                <span className="font-mono text-sm font-bold tabular-nums">{previousTimeLabel}</span>
+              </button>
+              <button
+                type="button"
+                aria-pressed={!keepPreviousTime}
+                onClick={() => onKeepPreviousTimeChange(false)}
+                disabled={submitting}
+                className={`flex w-full items-center justify-between gap-3 rounded-lg border px-3 py-2 text-left ${!keepPreviousTime ? 'border-primary-300 bg-primary-50 text-primary-800' : 'border-background-300 bg-white text-foreground-700'}`}
+              >
+                <span className="text-sm font-semibold">Current attempt</span>
+                <span className="font-mono text-sm font-bold tabular-nums">{selectedSource === 'input' ? inputLabel || '--:--:--' : timerLabel}</span>
+              </button>
+            </>
+          )}
+          <fieldset disabled={submitting || keepPreviousTime} className="space-y-3 disabled:opacity-50">
           {!manualTimeOnly && (
             <button
               type="button"
@@ -1227,6 +1354,7 @@ function CompletionConfirmPopup({
               <ActivityTimeSpentInput initialSeconds={inputSeconds} onChange={onInputChange} />
             </fieldset>
           )}
+          </fieldset>
         </div>
 
         {error && (
@@ -1247,11 +1375,11 @@ function CompletionConfirmPopup({
           <button
             type="button"
             onClick={onConfirm}
-            disabled={submitting || ((manualTimeOnly || selectedSource === 'input') && (inputSeconds == null || inputSeconds <= 0))}
+            disabled={submitting || (!keepPreviousTime && (manualTimeOnly || selectedSource === 'input') && (inputSeconds == null || inputSeconds <= 0))}
             className="inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 py-3 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
           >
             <AppIcon className={submitting ? 'ri-loader-4-line animate-spin' : 'ri-check-line'} />
-            {submitting ? 'Saving...' : 'Confirm'}
+            {submitting ? 'Saving...' : continueToReflection ? 'Continue' : 'Confirm'}
           </button>
         </div>
       </div>
@@ -1271,7 +1399,9 @@ const VIDEO_FILE_RE = /\.(mp4|webm|ogg|mov|m4v)(\?.*)?$/i;
 const PDF_FILE_RE = /\.pdf(\?.*)?$/i;
 const WORD_FILE_RE = /\.docx(\?.*)?$/i;
 const EXCEL_FILE_RE = /\.(xlsx|xls|csv)(\?.*)?$/i;
-const TEXT_FILE_RE = /\.(txt|md|rtf)(\?.*)?$/i;
+// Not .rtf: printed as text it is a wall of control codes. It goes to the
+// Office preview with the other word-processor formats (see docEmbed).
+const TEXT_FILE_RE = /\.(txt|md)(\?.*)?$/i;
 
 function googleDriveFileId(url: string): string | null {
   const match =
@@ -1343,6 +1473,32 @@ const DEFAULT_READING_PREFERENCES: ReadingPreferences = {
   letterSpacing: 0,
   ruler: false,
 };
+
+/** A saved reading is the authored HTML plus the learner's <mark>s. DOMPurify's
+ * defaults drop <iframe>, so every embedded video vanished once a learner had
+ * saved highlights; keep the embeds the live reading shows. */
+const SAVED_READING_SANITIZE = {
+  ADD_TAGS: ['iframe'],
+  ADD_ATTR: ['allow', 'allowfullscreen', 'frameborder', 'scrolling', 'target'],
+};
+
+/** What to tell the learner when a file request fails. The server's own
+ * message ("Learning activities open on 1 October…", "This file is empty…")
+ * says what to do; a bare status code does not. */
+async function fileRequestError(response: Response): Promise<string> {
+  try {
+    if ((response.headers.get('Content-Type') || '').includes('application/json')) {
+      const body = await response.json() as { error?: unknown };
+      if (typeof body.error === 'string' && body.error.trim()) return body.error;
+    }
+  } catch {
+    // Fall through to the status-based messages.
+  }
+  if (response.status === 404) return 'This file could not be found on the server. Please let your coach or the curriculum team know.';
+  if (response.status === 401) return 'Your session has ended. Sign in again to open this file.';
+  if (response.status === 403) return 'You do not have access to this file yet.';
+  return `File request failed (${response.status}). Please try again.`;
+}
 
 function readingStorageKey(componentId: string, suffix: string): string {
   return `kbc-reading:${componentId || 'unknown'}:${suffix}`;
@@ -1448,9 +1604,11 @@ function ReadingAccessibilityToolbar({
 function AccessibleReadingMaterial({
   component,
   title,
+  onReady,
 }: {
   component: JourneyComponent;
   title: string;
+  onReady?: () => void;
 }) {
   const componentId = component.componentId || title;
   const sourceHtml = normalizeReadingHtml(component.contentHtml || '');
@@ -1460,7 +1618,7 @@ function AccessibleReadingMaterial({
   const savedDocument = readStoredJson(readingStorageKey(componentId, 'document'), { sourceHtml: '', html: '' });
   const [html, setHtml] = useState(
     savedDocument.sourceHtml === sourceHtml && savedDocument.html
-      ? DOMPurify.sanitize(savedDocument.html)
+      ? DOMPurify.sanitize(savedDocument.html, SAVED_READING_SANITIZE)
       : sourceHtml,
   );
   // React 19 re-applies innerHTML whenever this object's identity changes, so a
@@ -1469,12 +1627,24 @@ function AccessibleReadingMaterial({
   const innerHtml = useMemo(() => ({ __html: html }), [html]);
   const [preferences, setPreferences] = useState<ReadingPreferences>(() => readStoredJson(readingStorageKey(componentId, 'preferences'), DEFAULT_READING_PREFERENCES));
   const [saved, setSaved] = useState(true);
-  const [speaking, setSpeaking] = useState(false);
+  const [saveError, setSaveError] = useState('');
+  const narration = useReadingNarration(`${componentId}:${component.resourceUrl || ''}:${sourceHtml}`);
+  const { speaking, stop: stopNarration } = narration;
+  const pdfReaders = useRef(new Map<string, PdfPageReader>());
+  const registerPdfReader = useCallback((id: string, reader: PdfPageReader | null) => {
+    // A changed/closed PDF page invalidates any queued text from that page.
+    stopNarration();
+    if (reader) pdfReaders.current.set(id, reader);
+    else pdfReaders.current.delete(id);
+  }, [stopNarration]);
   const [rulerY, setRulerY] = useState<number | null>(null);
   const contentRef = useRef<HTMLDivElement | null>(null);
   const readingBodyRef = useRef<HTMLDivElement | null>(null);
 
-  useEffect(() => () => window.speechSynthesis?.cancel(), []);
+  useEffect(() => {
+    if (!component.resourceUrl && sourceHtml) onReady?.();
+  }, [component.resourceUrl, sourceHtml, onReady]);
+
 
   const highlightSelection = () => {
     const selection = window.getSelection();
@@ -1506,30 +1676,37 @@ function AccessibleReadingMaterial({
   };
 
   const save = () => {
+    // Saved apart, so a reading too large for the browser's storage still keeps
+    // the learner's display preferences -- and the learner is told which part
+    // was not kept instead of the button silently staying on "Save changes".
     try {
       window.localStorage.setItem(readingStorageKey(componentId, 'preferences'), JSON.stringify(preferences));
-      window.localStorage.setItem(readingStorageKey(componentId, 'document'), JSON.stringify({ sourceHtml, html }));
-      setSaved(true);
     } catch {
       setSaved(false);
+      setSaveError('Your browser would not let this page save on this device (storage may be full or blocked in private browsing).');
+      return;
+    }
+    try {
+      window.localStorage.setItem(readingStorageKey(componentId, 'document'), JSON.stringify({ sourceHtml, html }));
+      setSaved(true);
+      setSaveError('');
+    } catch {
+      setSaved(false);
+      setSaveError('Your reading preferences were saved, but your highlights are too large to keep on this device. Use “Download highlighted reading” to keep a copy.');
     }
   };
 
   const readAloud = () => {
-    if (!window.speechSynthesis) return;
     if (speaking) {
-      window.speechSynthesis.cancel();
-      setSpeaking(false);
+      narration.stop();
       return;
     }
-    const text = readingBodyRef.current?.textContent?.trim();
-    if (!text) return;
-    const utterance = new SpeechSynthesisUtterance(text);
-    utterance.onend = () => setSpeaking(false);
-    utterance.onerror = () => setSpeaking(false);
-    window.speechSynthesis.cancel();
-    window.speechSynthesis.speak(utterance);
-    setSpeaking(true);
+    void narration.read(async () => {
+      const text = Array.from(readingBodyRef.current?.querySelectorAll('[data-reading-text]') || [])
+        .flatMap(narrationFromHtml);
+      const pages = await Promise.all(Array.from(pdfReaders.current.values(), readPage => readPage()));
+      return [...text, ...pages.flat()];
+    });
   };
 
   const downloadText = async () => {
@@ -1578,6 +1755,9 @@ function AccessibleReadingMaterial({
         </div>
       )}
       {downloadError && <p role="alert" className="mb-3 text-sm text-red-700">{downloadError}</p>}
+      {saveError && <p role="alert" className="mb-3 text-sm text-red-700">{saveError}</p>}
+      {narration.speechError && <p role="alert" className="mb-3 text-sm text-red-700">{narration.speechError}</p>}
+      <ReadingPdfNarrationContext.Provider value={registerPdfReader}>
       <div ref={readingBodyRef}>
       {component.contentHtml && (
         <div
@@ -1589,6 +1769,7 @@ function AccessibleReadingMaterial({
           {preferences.ruler && rulerY != null && <span className="pointer-events-none absolute inset-x-0 z-10 h-8 border-y border-blue-400/50 bg-blue-300/20" style={{ top: Math.max(0, rulerY - 16) }} />}
           <div
             ref={contentRef}
+            data-reading-text
             className="relative z-0 max-w-none [&_h2]:mb-2 [&_h2]:mt-4 [&_h2]:font-heading [&_h2]:text-lg [&_h2]:font-bold [&_h3]:mb-1.5 [&_h3]:mt-3 [&_h3]:font-heading [&_h3]:text-base [&_h3]:font-semibold [&_p]:mb-3 [&_ul]:mb-3 [&_ul]:list-disc [&_ul]:pl-5 [&_li]:mb-1 [&_strong]:font-semibold [&_em]:italic [&_a]:text-blue-600 [&_a]:underline"
             dangerouslySetInnerHTML={innerHtml}
           />
@@ -1597,12 +1778,14 @@ function AccessibleReadingMaterial({
       {component.resourceUrl ? (
         <div className={component.contentHtml ? 'mt-4 border-t border-background-200 pt-4' : ''}>
           <InlineAttachmentPreview
+            key={component.resourceUrl}
+            onReady={onReady}
             url={component.resourceUrl}
             title={title}
             fileName={component.fileName}
             readingPreferences={preferences}
             annotationKey={componentId}
-            allowAnnotatedDownload={Boolean(component.downloadAllowed)}
+            allowAnnotatedDownload
           />
         </div>
       ) : !component.contentHtml ? (
@@ -1619,6 +1802,7 @@ function AccessibleReadingMaterial({
         <LinkedReadingPreview key={file.url} url={file.url} title={file.label} fileName={file.fileName} />
       ))}
       </div>
+      </ReadingPdfNarrationContext.Provider>
     </>
   );
 }
@@ -1665,7 +1849,7 @@ function ExtraComponentFiles({ component, title, primaryUrl = '', downloadAllowe
             </div>
             {audio
               ? <audio controls preload="metadata" className="w-full" src={proxiedMaterialUrl(file.url)}>Your browser does not support audio playback.</audio>
-              : <InlineAttachmentPreview url={file.url} title={file.fileName || title} fileName={file.fileName} />}
+              : <InlineAttachmentPreview url={file.url} title={file.fileName || title} fileName={file.fileName} allowAnnotatedDownload={downloadAllowed} />}
           </div>
         ))}
       </div>
@@ -1682,23 +1866,23 @@ function LinkedReadingPreview({ url, title, fileName }: { url: string; title: st
       <AppIcon className={open ? 'ri-arrow-up-s-line' : 'ri-arrow-down-s-line'} />
       {open ? 'Hide preview' : 'Preview file'}: {title}
     </button>
-    {open && <div className="mt-3"><InlineAttachmentPreview url={url} title={title} fileName={fileName} /></div>}
+    {open && <div className="mt-3"><InlineAttachmentPreview url={url} title={title} fileName={fileName} allowAnnotatedDownload /></div>}
   </div>;
 }
 
-function InlineMediaPreview({ url, title, fileName }: { url: string; title: string; fileName?: string | null }) {
+function InlineMediaPreview({ url, title, fileName, onReady }: { url: string; title: string; fileName?: string | null; onReady?: () => void }) {
   const media = displayableMediaSource(url, fileName);
   if (!media) return null;
   if (media.kind === 'image') {
     return (
       <div className="overflow-hidden rounded-xl border border-background-300 bg-background-950/95 p-3">
-        <img src={media.src} alt={title} className="mx-auto max-h-[70vh] max-w-full rounded-lg object-contain" />
+        <img src={media.src} alt={title} onLoad={onReady} className="mx-auto max-h-[70vh] max-w-full rounded-lg object-contain" />
       </div>
     );
   }
   return (
     <div className="overflow-hidden rounded-xl border border-background-300 bg-black">
-      <video src={media.src} controls preload="metadata" className="mx-auto max-h-[70vh] w-full bg-black" />
+      <video src={media.src} onLoadedData={onReady} controls preload="metadata" className="mx-auto max-h-[70vh] w-full bg-black" />
     </div>
   );
 }
@@ -1726,10 +1910,16 @@ function DownloadFileButton({ url, fileName, label = 'Download' }: {
   fileName?: string | null;
   label?: string;
 }) {
+  const href = proxiedMaterialUrl(url);
+  // Browsers ignore `download` on another site's link and navigate instead,
+  // which took the learner off the activity (and its timer). Open those apart.
+  const absolute = absoluteDocUrl(href);
+  const external = absolute !== null && new URL(absolute).origin !== window.location.origin;
   return (
     <a
-      href={proxiedMaterialUrl(url)}
+      href={href}
       download={fileLabelFrom(url, fileName)}
+      {...(external ? { target: '_blank', rel: 'noopener noreferrer' } : {})}
       className="inline-flex shrink-0 items-center justify-center gap-1.5 rounded-xl border border-primary-200 bg-primary-50 px-3.5 py-2 text-xs font-bold text-primary-700 transition-colors hover:border-primary-300 hover:bg-primary-100"
     >
       <AppIcon className="ri-download-2-line" />
@@ -1785,13 +1975,16 @@ function AttachedFileCard({ url, fileName, previewed = false }: {
   );
 }
 
-export function InlineAttachmentPreview({ url, title, fileName, readingPreferences, annotationKey, allowAnnotatedDownload = false }: {
+export function InlineAttachmentPreview({ url, title, fileName, readingPreferences, annotationKey, allowAnnotatedDownload = false, pdfTools = true, onReady }: {
+  onReady?: () => void;
   url: string;
   title: string;
   fileName?: string | null;
   readingPreferences?: ReadingPreferences;
   annotationKey?: string;
   allowAnnotatedDownload?: boolean;
+  /** Fit PDF pages to the available width and show the zoom percentage. */
+  pdfTools?: boolean;
 }) {
   const media = displayableMediaSource(url, fileName);
   const previewUrl = proxiedMaterialUrl(url);
@@ -1815,7 +2008,7 @@ export function InlineAttachmentPreview({ url, title, fileName, readingPreferenc
     async function loadPreview() {
       try {
         const response = await fetch(previewUrl, { credentials: 'same-origin' });
-        if (!response.ok) throw new Error(`File request failed (${response.status})`);
+        if (!response.ok) throw new Error(await fileRequestError(response));
 
         if (isWord) {
           const arrayBuffer = await response.arrayBuffer();
@@ -1864,12 +2057,14 @@ export function InlineAttachmentPreview({ url, title, fileName, readingPreferenc
   const previewHtml = preview?.status === 'ready' && preview.kind === 'html' ? preview.html : null;
   const previewInnerHtml = useMemo(() => (previewHtml == null ? undefined : { __html: previewHtml }), [previewHtml]);
 
-  if (media) return <InlineMediaPreview url={url} title={title} fileName={fileName} />;
+  useEffect(() => {
+    if (preview?.status === 'ready') onReady?.();
+  }, [preview, onReady]);
+
+  if (media) return <InlineMediaPreview url={url} title={title} fileName={fileName} onReady={onReady} />;
 
   if (isPdf) {
-    const hostedPdfEmbed = resolveDocEmbed(previewUrl);
-    if (hostedPdfEmbed.mode === 'deck') return <DocumentEmbed url={previewUrl} title={title} />;
-    return <PdfCanvasPreview url={previewUrl} title={title} fileName={fileName} readingPreferences={readingPreferences} annotationKey={annotationKey} allowAnnotatedDownload={allowAnnotatedDownload} />;
+    return <PdfCanvasPreview url={previewUrl} title={title} fileName={fileName} readingPreferences={readingPreferences} annotationKey={annotationKey} allowAnnotatedDownload={allowAnnotatedDownload} fitWidth={pdfTools} onReady={onReady} />;
   }
 
   if (preview?.status === 'loading') {
@@ -1884,6 +2079,7 @@ export function InlineAttachmentPreview({ url, title, fileName, readingPreferenc
     return (
       <div className="max-h-[72vh] overflow-auto rounded-xl border border-background-300 bg-white p-6 shadow-sm" style={readingPreferences ? readingSurfaceStyle(readingPreferences) : undefined}>
         <div
+          data-reading-text
           className="learner-file-preview max-w-none text-sm leading-relaxed text-foreground-800 [&_h1]:mb-3 [&_h1]:text-2xl [&_h1]:font-bold [&_h2]:mb-2 [&_h2]:mt-4 [&_h2]:text-xl [&_h2]:font-bold [&_h3]:mb-2 [&_h3]:mt-3 [&_h3]:text-lg [&_h3]:font-semibold [&_p]:mb-3 [&_ul]:mb-3 [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:mb-3 [&_ol]:list-decimal [&_ol]:pl-5 [&_table]:w-full [&_table]:border-collapse [&_td]:border [&_td]:border-background-300 [&_td]:px-3 [&_td]:py-2 [&_th]:border [&_th]:border-background-300 [&_th]:bg-background-100 [&_th]:px-3 [&_th]:py-2 [&_th]:text-left"
           dangerouslySetInnerHTML={previewInnerHtml}
         />
@@ -1893,7 +2089,7 @@ export function InlineAttachmentPreview({ url, title, fileName, readingPreferenc
 
   if (preview?.status === 'ready' && preview.kind === 'text') {
     return (
-      <pre className="max-h-[72vh] overflow-auto whitespace-pre-wrap rounded-xl border border-background-300 bg-white p-6 text-sm leading-relaxed text-foreground-800 shadow-sm" style={readingPreferences ? readingSurfaceStyle(readingPreferences) : undefined}>
+      <pre data-reading-text className="max-h-[72vh] overflow-auto whitespace-pre-wrap rounded-xl border border-background-300 bg-white p-6 text-sm leading-relaxed text-foreground-800 shadow-sm" style={readingPreferences ? readingSurfaceStyle(readingPreferences) : undefined}>
         {preview.text}
       </pre>
     );
@@ -1910,7 +2106,7 @@ export function InlineAttachmentPreview({ url, title, fileName, readingPreferenc
 
   return (
     <>
-      <DocumentEmbed url={url} title={title} />
+      <DocumentEmbed url={url} title={title} fileName={fileName} onReady={onReady} />
       <div className="mt-3">
         {/* DocumentEmbed above draws the deck itself where it can, so the card
             below offers the file rather than apologising for a missing
@@ -1923,13 +2119,15 @@ export function InlineAttachmentPreview({ url, title, fileName, readingPreferenc
 
 type PdfHighlight = { x: number; y: number; width: number; height: number };
 
-function PdfCanvasPreview({ url, title, fileName, readingPreferences, annotationKey, allowAnnotatedDownload }: {
+function PdfCanvasPreview({ url, title, fileName, readingPreferences, annotationKey, allowAnnotatedDownload, fitWidth = false, onReady }: {
+  onReady?: () => void;
   url: string;
   title: string;
   fileName?: string | null;
   readingPreferences?: ReadingPreferences;
   annotationKey?: string;
   allowAnnotatedDownload: boolean;
+  fitWidth?: boolean;
 }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const dragStartRef = useRef<{ x: number; y: number } | null>(null);
@@ -1945,9 +2143,36 @@ function PdfCanvasPreview({ url, title, fileName, readingPreferences, annotation
   const [highlights, setHighlights] = useState<Record<number, PdfHighlight[]>>(() => readStoredJson(highlightStorageKey, {}));
   const [annotationsSaved, setAnnotationsSaved] = useState(true);
   const [exporting, setExporting] = useState(false);
-  const [speaking, setSpeaking] = useState(false);
+  const [exportError, setExportError] = useState<string | null>(null);
+  const narration = useReadingNarration(`${url}:${pageNumber}`);
+  const { speaking } = narration;
+  const registerPdfReader = useContext(ReadingPdfNarrationContext);
+  const pdfReaderId = useId();
   const [rulerY, setRulerY] = useState<number | null>(null);
   const preferences = readingPreferences || DEFAULT_READING_PREFERENCES;
+
+  const currentPageNarration = useCallback(async () => {
+    if (status !== 'ready' || !pdf) {
+      throw new ReadingNarrationError(status === 'loading'
+        ? 'The PDF is still loading. Please wait, then try Read aloud again.'
+        : 'The open PDF could not be read. Please reload its preview and try again.');
+    }
+    const page = await pdf.getPage(pageNumber);
+    const content = await page.getTextContent();
+    const blocks = narrationFromPdf(content.items);
+    if (!blocks.length) {
+      throw new ReadingNarrationError('No readable text was found on the open PDF page. Scanned pages need a text version to be read aloud.');
+    }
+    return blocks;
+  }, [pageNumber, pdf, status]);
+
+  useEffect(() => {
+    registerPdfReader?.(pdfReaderId, currentPageNarration);
+  }, [registerPdfReader, pdfReaderId, currentPageNarration]);
+
+  // Keep a preview's place in the narration order when its page changes.
+  // Remove it only when the preview closes or the activity unmounts.
+  useEffect(() => () => registerPdfReader?.(pdfReaderId, null), [registerPdfReader, pdfReaderId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1962,7 +2187,7 @@ function PdfCanvasPreview({ url, title, fileName, readingPreferences, annotation
           credentials: 'same-origin',
           headers: { Accept: 'application/pdf,*/*' },
         }).catch(error => { requestFailed = true; throw error; });
-        if (!response.ok) throw new Error(`File request failed (${response.status})`);
+        if (!response.ok) throw new Error(await fileRequestError(response));
         const buffer = await response.arrayBuffer();
         const { GlobalWorkerOptions, getDocument } = await import('pdfjs-dist');
         GlobalWorkerOptions.workerSrc = new URL('pdfjs-dist/build/pdf.worker.min.mjs', import.meta.url).toString();
@@ -2008,7 +2233,8 @@ function PdfCanvasPreview({ url, title, fileName, readingPreferences, annotation
       if (!canvas) return;
       const page = await pdf.getPage(pageNumber);
       if (cancelled) return;
-      const viewport = page.getViewport({ scale });
+      // Fit-width pages can be wider than their PDF point size on a desktop.
+      const viewport = page.getViewport({ scale: fitWidth ? scale * 2 : scale });
       const context = canvas.getContext('2d');
       if (!context) return;
 
@@ -2024,6 +2250,7 @@ function PdfCanvasPreview({ url, title, fileName, readingPreferences, annotation
           throw renderError;
         }
       });
+      if (!cancelled) onReady?.();
     }
 
     void renderPage().catch((renderError: unknown) => {
@@ -2037,9 +2264,8 @@ function PdfCanvasPreview({ url, title, fileName, readingPreferences, annotation
       cancelled = true;
       renderTask?.cancel();
     };
-  }, [pageNumber, pdf, scale]);
+  }, [pageNumber, pdf, scale, fitWidth, onReady]);
 
-  useEffect(() => () => window.speechSynthesis?.cancel(), []);
 
   const pointFromPointer = (event: React.PointerEvent<SVGSVGElement>) => {
     const bounds = event.currentTarget.getBoundingClientRect();
@@ -2066,27 +2292,18 @@ function PdfCanvasPreview({ url, title, fileName, readingPreferences, annotation
   };
 
   const readCurrentPage = async () => {
-    if (!pdf || !window.speechSynthesis) return;
+    if (!pdf) return;
     if (speaking) {
-      window.speechSynthesis.cancel();
-      setSpeaking(false);
+      narration.stop();
       return;
     }
-    const page = await pdf.getPage(pageNumber);
-    const content = await page.getTextContent();
-    const text = content.items.map((item) => ('str' in item ? item.str : '')).join(' ').trim();
-    if (!text) return;
-    const utterance = new SpeechSynthesisUtterance(text);
-    utterance.onend = () => setSpeaking(false);
-    utterance.onerror = () => setSpeaking(false);
-    window.speechSynthesis.cancel();
-    window.speechSynthesis.speak(utterance);
-    setSpeaking(true);
+    await narration.read(currentPageNarration);
   };
 
   const downloadAnnotatedPdf = async () => {
     if (!pdf || exporting) return;
     setExporting(true);
+    setExportError(null);
     try {
       const { jsPDF } = await import('jspdf');
       let output: InstanceType<typeof jsPDF> | null = null;
@@ -2097,7 +2314,7 @@ function PdfCanvasPreview({ url, title, fileName, readingPreferences, annotation
         exportCanvas.width = Math.floor(viewport.width);
         exportCanvas.height = Math.floor(viewport.height);
         const context = exportCanvas.getContext('2d');
-        if (!context) continue;
+        if (!context) throw new Error('Could not prepare the highlighted PDF. Please try again.');
         await page.render({ canvas: exportCanvas, canvasContext: context, viewport }).promise;
         context.save();
         context.globalAlpha = 0.38;
@@ -2115,13 +2332,15 @@ function PdfCanvasPreview({ url, title, fileName, readingPreferences, annotation
         output.addImage(exportCanvas.toDataURL('image/jpeg', 0.92), 'JPEG', 0, 0, exportCanvas.width, exportCanvas.height);
       }
       output?.save(`${fileLabelFrom(url, fileName).replace(/\.pdf$/i, '') || title}-highlighted.pdf`);
+    } catch (exportFailure) {
+      setExportError(exportFailure instanceof Error ? exportFailure.message : 'Could not download the highlighted PDF. Please try again.');
     } finally {
       setExporting(false);
     }
   };
 
   if (status === 'browser') {
-    return <iframe src={url} title={title} className="h-[72vh] min-h-[400px] w-full rounded-xl border border-background-300 bg-white" />;
+    return <iframe src={url} title={title} onLoad={onReady} className="h-[72vh] min-h-[400px] w-full rounded-xl border border-background-300 bg-white" />;
   }
 
   if (status === 'loading') {
@@ -2148,7 +2367,7 @@ function PdfCanvasPreview({ url, title, fileName, readingPreferences, annotation
           <p className="truncate text-sm font-bold text-foreground-900">{fileLabelFrom(url, fileName) || title}</p>
           <p className="text-xs text-foreground-500">Page {pageNumber} of {pageCount || 1}</p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className={fitWidth ? 'flex flex-wrap items-center gap-2' : 'flex items-center gap-2'}>
           <button
             type="button"
             onClick={() => setMarkerActive((value) => !value)}
@@ -2168,6 +2387,7 @@ function PdfCanvasPreview({ url, title, fileName, readingPreferences, annotation
             onClick={() => setScale((value) => Math.max(0.75, value - 0.25))}
             className="grid h-9 w-9 place-items-center rounded-lg border border-background-300 bg-white text-foreground-700 hover:bg-background-50"
             aria-label="Zoom out"
+            disabled={fitWidth && scale <= 0.75}
           >
             <AppIcon className="ri-subtract-line" />
           </button>
@@ -2176,9 +2396,14 @@ function PdfCanvasPreview({ url, title, fileName, readingPreferences, annotation
             onClick={() => setScale((value) => Math.min(2.5, value + 0.25))}
             className="grid h-9 w-9 place-items-center rounded-lg border border-background-300 bg-white text-foreground-700 hover:bg-background-50"
             aria-label="Zoom in"
+            disabled={fitWidth && scale >= 2.5}
           >
             <AppIcon className="ri-add-line" />
           </button>
+          {fitWidth && <>
+            <output aria-label="PDF zoom level" className="text-xs font-semibold tabular-nums">{Math.round(scale / 1.25 * 100)}%</output>
+            <button type="button" onClick={() => setScale(1.25)} className="h-9 rounded-lg border border-background-300 bg-white px-3 text-xs font-bold text-foreground-700">Fit width</button>
+          </>}
           <button
             type="button"
             onClick={() => setPageNumber((value) => Math.max(1, value - 1))}
@@ -2202,7 +2427,7 @@ function PdfCanvasPreview({ url, title, fileName, readingPreferences, annotation
           </button>
           {allowAnnotatedDownload && (
             <button type="button" onClick={() => void downloadAnnotatedPdf()} disabled={exporting} className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-primary-600 px-3 text-xs font-bold text-white disabled:opacity-50">
-              <AppIcon className={exporting ? 'ri-loader-4-line animate-spin' : 'ri-download-2-line'} /> {exporting ? 'Preparing…' : 'Download marked PDF'}
+              <AppIcon className={exporting ? 'ri-loader-4-line animate-spin' : 'ri-download-2-line'} /> {exporting ? 'Preparing…' : 'Download highlighted PDF'}
             </button>
           )}
         </div>
@@ -2213,8 +2438,10 @@ function PdfCanvasPreview({ url, title, fileName, readingPreferences, annotation
         onMouseMove={(event) => preferences.ruler && setRulerY(event.clientY - event.currentTarget.getBoundingClientRect().top + event.currentTarget.scrollTop)}
         onMouseLeave={() => setRulerY(null)}
       >
+        {exportError && <p role="alert" className="mb-3 text-sm text-red-700">{exportError}</p>}
+        {narration.speechError && <p role="alert" className="mb-3 text-sm text-red-700">{narration.speechError}</p>}
         {preferences.ruler && rulerY != null && <span className="pointer-events-none absolute inset-x-0 z-20 h-9 border-y border-blue-400/50 bg-blue-300/20" style={{ top: Math.max(0, rulerY - 18) }} />}
-        <div className="relative mx-auto w-fit max-w-full">
+        <div className={fitWidth ? 'relative mx-auto' : 'relative mx-auto w-fit max-w-full'} style={fitWidth ? { width: `${scale / 1.25 * 100}%` } : undefined}>
           <canvas
             ref={canvasRef}
             className="block max-w-full rounded-lg bg-white shadow-sm"
@@ -2265,8 +2492,8 @@ function PdfCanvasPreview({ url, title, fileName, readingPreferences, annotation
  * "open it instead" card where it is not — an uploaded .pptx can only be
  * previewed by Microsoft's Office viewer, which cannot reach a file that isn't
  * published on the public internet. See @/lib/docEmbed. */
-function DocumentEmbed({ url, title }: { url: string; title: string }) {
-  const embed = resolveDocEmbed(url);
+function DocumentEmbed({ url, title, fileName, onReady }: { url: string; title: string; fileName?: string | null; onReady?: () => void }) {
+  const embed = resolveDocEmbed(url, undefined, fileName);
   // Say why there is no preview. Returning null left a learner looking at a
   // header, a download card, and nothing in between — with no way to tell a
   // file that cannot be shown from one that failed to load. The file itself is
@@ -2281,7 +2508,7 @@ function DocumentEmbed({ url, title }: { url: string; title: string }) {
     </div>
   );
   if (embed.mode === 'unavailable') return unavailable(embed.reason);
-  if (embed.mode === 'deck') return <SlideDeckViewer src={embed.src} title={title} fallback={unavailable} />;
+  if (embed.mode === 'deck') return <SlideDeckViewer src={embed.src} title={title} fallback={unavailable} onReady={onReady} />;
   return (
     // A 4:3 box on a wide card is taller than the screen, which puts the top of
     // the document above the fold and the controls far below it. The ratio still
@@ -2290,7 +2517,7 @@ function DocumentEmbed({ url, title }: { url: string; title: string }) {
       className="rounded-xl overflow-hidden border border-background-300"
       style={{ aspectRatio: '4 / 3', maxHeight: 'calc(100vh - 14rem)' }}
     >
-      <iframe title={title} src={embed.src} className="w-full h-full" />
+      <iframe title={title} src={embed.src} onLoad={onReady} className="w-full h-full" />
     </div>
   );
 }
@@ -2317,7 +2544,8 @@ function ComponentContent(props: Parameters<typeof ComponentBody>[0]) {
   return <ComponentBody {...props} />;
 }
 
-export function ComponentBody({ component, contentKind, parsed, title, onDuration, onProgress, onPlayingChange, onEnded, onUnsupported, preview = false }: {
+export function ComponentBody({ component, contentKind, parsed, title, onDuration, onProgress, onPlayingChange, onEnded, onUnsupported, onReadingReady, preview = false }: {
+  onReadingReady?: () => void;
   preview?: boolean;
   component: JourneyComponent;
   contentKind: ReturnType<typeof componentContentKind>;
@@ -2410,7 +2638,7 @@ export function ComponentBody({ component, contentKind, parsed, title, onDuratio
             <p className="text-xs text-foreground-400">Read the material, then finish and reflect below.</p>
           </div>
         </div>
-        <AccessibleReadingMaterial component={component} title={title} />
+        <AccessibleReadingMaterial component={component} title={title} onReady={onReadingReady} />
         {component.audioUrl && (
           <div className="mt-4 pt-4 border-t border-background-200">
             <p className="text-[11px] font-semibold uppercase tracking-wider text-foreground-400 mb-2">Audio version</p>

@@ -495,12 +495,15 @@ class SubjectBuilderCoverTests(SimpleTestCase):
             [('MOD-1', None, 1, '', '', '', None)],
             [('WEEK-1', 'MOD-1', 'Lecture 06/03/26')],
             [('COMP-1', 'MOD-1', 'WEEK-1', 'Lesson', 'reading', {})],
+            [],  # No imported origin for this assigned native module.
+            [],  # No verified historical replacement for this learner.
         ]
         with patch('learner_api.student_activity.connections') as connections, \
              patch('learner_api.student_activity.subject_store.ready', return_value=True), \
              patch('learner_api.student_activity._effective_current_subjects', return_value=[
                  {'id': 'MOD-1', 'title': 'Renamed subject'},
              ]), \
+             patch('learner_api.previous_learning_groups.read_previous_learning_groups', return_value={}), \
              patch('learner_api.student_activity._cover_url', return_value='https://example.com/old.webp'):
             connections.__getitem__.return_value.cursor.return_value.__enter__.return_value = cursor
             response = subject_covers(RequestFactory().get('/?refs=legacy:42'), pk=132)

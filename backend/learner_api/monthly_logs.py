@@ -97,16 +97,18 @@ def scope(request, learner_id):
     if role == 'coach' and coach_email != actor['email']:
         raise old.ServiceError('Learner not found.', 'not_found', 404)
     # An admin opening the learner workspace can perform learner actions.
-    # A coach preview keeps its separate read-only scope.
+    # So can the learner's own coach: the coach_email check above already
+    # limits a coach to their caseload.
     from coach_api.auth import _requested_view_as_email
     learner_preview = request.GET.get('perspective') == 'learner' and role != 'learner'
-    admin_action = learner_preview and account.role == 'admin' and role == 'admin'
+    admin_action = learner_preview and ((account.role == 'admin' and role == 'admin') or role == 'coach')
     if learner_preview and not admin_action and request.method != 'GET':
         raise old.ServiceError('The learner preview is read-only.', 'forbidden', 403)
     view_as = _requested_view_as_email(request) if role == 'admin' and not learner_preview else None
     if view_as and (coach_email != old.normalize(view_as) or request.method != 'GET'):
         raise old.ServiceError('This coach workspace is read-only.', 'forbidden', 403)
     request.admin_learner_action = admin_action
+    request.coach_learner_action = admin_action and role == 'coach'
     request.admin_learner_id = learner_id
     return {**learner, '_profile': profile, '_canonical_profile': canonical_profile,
             '_view_as': bool(view_as) or (learner_preview and not admin_action)}, 'learner' if admin_action else role
@@ -566,6 +568,12 @@ def detail(request, learner_id, month):
 @endpoint('GET')
 def content(request, learner_id, month, row_id):
     learner, _ = scope(request, learner_id)
+    return content_response(learner, month, row_id)
+
+
+def content_response(learner, month, row_id):
+    """The shared activity reader; callers must authorize the learner first."""
+    learner_id = learner['id']
     if canonical.enabled(learner_id):
         valid_month(month)
         row, record = canonical.content_row(learner['_profile'], month, row_id)
@@ -601,6 +609,11 @@ def content(request, learner_id, month, row_id):
 @endpoint('GET')
 def canonical_material(request, learner_id, month, row_id, material_id):
     learner, _ = scope(request, learner_id)
+    return material_response(learner, month, row_id, material_id)
+
+
+def material_response(learner, month, row_id, material_id):
+    learner_id = learner['id']
     if not canonical.enabled(learner_id):
         raise old.ServiceError('Material not found.', 'not_found', 404)
     valid_month(month)
@@ -618,6 +631,10 @@ def canonical_material(request, learner_id, month, row_id, material_id):
 @endpoint('GET')
 def canonical_document(request, learner_id, file_id):
     scope(request, learner_id)
+    return canonical_document_response(learner_id, file_id)
+
+
+def canonical_document_response(learner_id, file_id):
     owner = canonical.profile(learner_id)
     if owner is None:
         raise old.ServiceError('Document not found.', 'not_found', 404)
@@ -641,6 +658,10 @@ def canonical_document(request, learner_id, file_id):
 @endpoint('GET')
 def document(request, learner_id, file_id):
     scope(request, learner_id)
+    return document_response(learner_id, file_id)
+
+
+def document_response(learner_id, file_id):
     rows = old_repo.query('''SELECT blob_name,original_filename,content_type FROM "Learner".evidence_files
         WHERE id=%s AND learner_id=%s AND status='approved' ''', [str(file_id), str(learner_id)])
     if not rows:

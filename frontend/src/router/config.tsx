@@ -1,6 +1,6 @@
 import type { RouteObject } from "react-router-dom";
 import { Navigate } from "react-router-dom";
-import { CHAT_ENABLED } from "@/lib/featureFlags";
+import { CHAT_ENABLED, LEARNER_FEEDBACK_ENABLED } from "@/lib/featureFlags";
 import { RequireAuth } from "@/components/feature/RequireAuth";
 import { lazyRoute } from "./lazyRoute";
 import { LearnerDashboardRedirect } from "./LearnerDashboardRedirect";
@@ -17,6 +17,11 @@ const AdminAccessLogsPage = lazyRoute(() => import("../pages/admin/access-logs/p
 const SystemAuditTrailPage = lazyRoute(() => import("../pages/admin/audit-trail/page"));
 const SystemAuditTrailPersonPage = lazyRoute(() => import("../pages/admin/audit-trail/person/page"));
 const AdminDashboard = lazyRoute(() => import("../pages/workspace/admin/page"));
+const AdvancedAdminWorkspace = lazyRoute(() => import("../pages/workspace/advanced-admin/page"));
+// Give this route one extra bounded reload if a Vite update is still in flight
+// when the first reload reaches it.
+const AdvancedAdminLearner = lazyRoute(() => import("../pages/workspace/advanced-admin/learner"), { maxChunkReloads: 2 });
+const AdvancedAdminLearnerPreview = lazyRoute(() => import("../pages/workspace/advanced-admin/preview"));
 const EmployerWorkspacePage = lazyRoute(() => import("../pages/workspace/admin/employers/page"));
 const AdminCertificatesPage = lazyRoute(() => import("../pages/admin/certificates/page"));
 const AdminDocumentsPage = lazyRoute(() => import("../pages/admin/documents/page"));
@@ -28,6 +33,7 @@ const AdminSystemSettingsPage = lazyRoute(() => import("../pages/admin/system/pa
 const CoachDirectoryPage = lazyRoute(() => import("../pages/admin/coach-directory/page"));
 const CoachBookingPage = lazyRoute(() => import("../pages/coach-booking/page"));
 const LmsIntroductionPage = lazyRoute(() => import("../pages/lms-introduction/page"));
+const ApprenticeshipApplicationPage = lazyRoute(() => import("../pages/apprenticeship-application/page"));
 const AdminUsersPage = lazyRoute(() => import("../pages/admin/users/page"));
 const PlatformReportPage = lazyRoute(() => import("../pages/admin/platform-report/page"));
 const AttendancePage = lazyRoute(() => import("../pages/learner/attendance/page"));
@@ -41,6 +47,11 @@ const BadgeDetailPage = lazyRoute(() => import("../pages/learner/rewards/badge-d
 const BoardPage = lazyRoute(() => import("../pages/users/BoardPage"));
 const EmployerPortalPage = lazyRoute(() => import("../pages/employer/EmployerPortalPage"));
 const EmployerLearnerPage = lazyRoute(() => import("../pages/employer/EmployerLearnerPage"));
+const EventFeedbackPage = lazyRoute(() => import("../pages/event-feedback/page"));
+const SessionFeedbackPage = lazyRoute(() => import("../pages/session-feedback/page"));
+const EventRsvpPage = lazyRoute(() => import("../pages/event-rsvp/page"));
+const EventCheckInPage = lazyRoute(() => import("../pages/event-check-in/page"));
+const EmployerDocumentsPage = lazyRoute(() => import("../pages/employer/EmployerDocumentsPage"));
 const BudgetsPage = lazyRoute(() => import("../pages/finance/budgets/page"));
 const CallLogsPage = lazyRoute(() => import("../pages/engagement/call-logs/page"));
 const CatchUpPage = lazyRoute(() => import("../pages/learner/catchup/page"));
@@ -93,6 +104,7 @@ const CurriculumGroupWorkspace = lazyRoute(() => import("../pages/curriculum/gro
 const CurriculumEnglandHolidays = lazyRoute(() => import("../pages/curriculum/england-holidays/page"));
 const CurriculumModuleWorkspace = lazyRoute(() => import("../pages/curriculum/module-workspace/page"));
 const CurriculumTeamsMeetings = lazyRoute(() => import("../pages/curriculum/teams-meetings/page"));
+const CurriculumRecordings = lazyRoute(() => import("../pages/curriculum/recordings/page"));
 const CurriculumProgrammes = lazyRoute(() => import("../pages/curriculum/programmes/page"));
 const CurriculumPublishedPage = lazyRoute(() => import("../pages/curriculum/published/page"));
 const CurriculumQAPage = lazyRoute(() => import("../pages/curriculum/curriculum-qa/page"));
@@ -123,9 +135,14 @@ const EngagementClubsPage = lazyRoute(() => import("../pages/engagement/clubs/pa
 const EngagementDashboard = lazyRoute(() => import("../pages/workspace/engagement/page"));
 const EngagementFeedbacksPage = lazyRoute(() => import("../pages/engagement/feedbacks/page"));
 const EngagementReportsPage = lazyRoute(() => import("../pages/engagement/reports/page"));
+const FeedbackPage = lazyRoute(() => import("../pages/engagement/feedback/page"));
+const FeedbackEditorPage = lazyRoute(() => import("../pages/engagement/feedback/editor/page"));
+const FeedbackPreviewPage = lazyRoute(() => import("../pages/engagement/feedback/preview/page"));
 const EventDetailPage = lazyRoute(() => import("../pages/learner/clubs/events/detail/page"));
 const EventsPage = lazyRoute(() => import("../pages/engagement/events/page"));
 const LearnerFlashCardsPage = lazyRoute(() => import("../pages/learner/flash-cards/page"));
+const LearnerFeedbackPage = lazyRoute(() => import("../pages/learner/feedback/page"));
+const LearnerFeedbackFormPage = lazyRoute(() => import("../pages/learner/feedback/form/page"));
 const FinanceReportsPage = lazyRoute(() => import("../pages/finance/reports/page"));
 const FinanceWorkspace = lazyRoute(() => import("../pages/workspace/finance/page"));
 const FlashCardsPage = lazyRoute(() => import("../pages/engagement/flash-cards/page"));
@@ -202,6 +219,7 @@ const MisTeamsSessionsPage = lazyRoute(() => import("../pages/mis/teams-sessions
 const MisTimetablesPage = lazyRoute(() => import("../pages/mis/timetables/page"));
 const MisTutorAssignmentPage = lazyRoute(() => import("../pages/mis/tutor-assignment/page"));
 const ModuleBuilder = lazyRoute(() => import("../pages/curriculum/module-builder/page"));
+const LearnerModuleProgressPage = lazyRoute(() => import("../pages/curriculum/learner-module-progress/page"));
 const ModulesPage = lazyRoute(() => import("../pages/learner/my-learning/page"));
 const ExtraActivityPage = lazyRoute(() => import("../pages/learner/monthly-submission/ExtraActivityPage"));
 const MonthlySubmissionPage = lazyRoute(() => import("../pages/learner/monthly-submission/page"));
@@ -290,6 +308,7 @@ const WeekDetailPage = lazyRoute(() => import("../pages/learner/week-detail/page
 const WhatsAppLogsPage = lazyRoute(() => import("../pages/engagement/whatsapp-logs/page"));
 const WizardPage = lazyRoute(() => import("../pages/users/wizard/WizardPage"));
 const WizardBuilderPage = lazyRoute(() => import("../pages/users/wizard-builder/page"));
+const EligibilityBuilderPage = lazyRoute(() => import("../pages/users/eligibility-builder/page"));
 
 const routes: RouteObject[] = [
   { path: '/old-otjh', element: <OldOtjhPage /> },
@@ -307,6 +326,22 @@ const routes: RouteObject[] = [
     // also what makes the logo and the breadcrumb home icon do the right thing.
     path: "/",
     element: <LoginPage />,
+  },
+  {
+    path: "/event-feedback",
+    element: <EventFeedbackPage />,
+  },
+  {
+    path: "/session-feedback",
+    element: <SessionFeedbackPage />,
+  },
+  {
+    path: "/event-rsvp",
+    element: <EventRsvpPage />,
+  },
+  {
+    path: "/event-check-in",
+    element: <EventCheckInPage />,
   },
   {
     // The public launcher that used to be at "/". Kept reachable: it is the
@@ -408,6 +443,26 @@ const routes: RouteObject[] = [
     element: <AdminDashboard />,
   },
   {
+    path: "/workspace/advanced-admin",
+    element: <AdvancedAdminWorkspace />,
+  },
+  {
+    path: "/workspace/advanced-admin/learners/:learnerId",
+    element: <AdvancedAdminLearner />,
+  },
+  {
+    path: "/workspace/advanced-admin/learners/:learnerId/preview",
+    element: <AdvancedAdminLearnerPreview />,
+  },
+  {
+    path: "/workspace/advanced-admin/learners/:learnerId/preview/:section",
+    element: <AdvancedAdminLearnerPreview />,
+  },
+  {
+    path: "/workspace/advanced-admin/learners/:learnerId/:section",
+    element: <AdvancedAdminLearner />,
+  },
+  {
     // Every employer as a card; each opens /employers/:employerId.
     path: "/workspace/admin/employers",
     element: <EmployerWorkspacePage />,
@@ -457,6 +512,11 @@ const routes: RouteObject[] = [
     path: "/users/wizard-builder",
     element: <WizardBuilderPage />,
   },
+  // The builder of the public eligibility form (/apprenticeship_application). Static too.
+  {
+    path: "/users/eligibility-builder",
+    element: <EligibilityBuilderPage />,
+  },
   {
     path: "/users/:userId",
     element: <BoardPage />,
@@ -466,6 +526,11 @@ const routes: RouteObject[] = [
   {
     path: "/employers/:employerId",
     element: <EmployerPortalPage />,
+  },
+  {
+    // Every document across the employer's learners.
+    path: "/employers/:employerId/documents",
+    element: <EmployerDocumentsPage />,
   },
   {
     path: "/employers/:employerId/learner/:kind/:learnerId",
@@ -580,6 +645,18 @@ const routes: RouteObject[] = [
   {
     path: "/learner/attendance/:kind/:id",
     element: <AttendancePage />,
+  },
+  {
+    path: "/learner/feedback",
+    element: LEARNER_FEEDBACK_ENABLED ? <LearnerFeedbackPage /> : <Navigate to="/workspace/learner" replace />,
+  },
+  {
+    path: "/learner/feedback/:formId",
+    element: LEARNER_FEEDBACK_ENABLED ? <LearnerFeedbackFormPage /> : <Navigate to="/workspace/learner" replace />,
+  },
+  {
+    path: "/learner/feedback/delivery/:deliveryId",
+    element: LEARNER_FEEDBACK_ENABLED ? <LearnerFeedbackFormPage /> : <Navigate to="/workspace/learner" replace />,
   },
   {
     path: "/learner/catchup",
@@ -968,6 +1045,11 @@ const routes: RouteObject[] = [
     element: <LmsIntroductionPage />,
   },
   {
+    // The public apprenticeship eligibility form, for people with no account.
+    path: "/apprenticeship_application",
+    element: <ApprenticeshipApplicationPage />,
+  },
+  {
     path: "/admin/system",
     element: <AdminSystemSettingsPage />,
   },
@@ -1037,6 +1119,10 @@ const routes: RouteObject[] = [
   {
     path: "/curriculum/module-builder",
     element: <ModuleBuilder />,
+  },
+  {
+    path: "/curriculum/learner-module-progress",
+    element: <LearnerModuleProgressPage />,
   },
   {
     path: "/curriculum/ksb-mapping",
@@ -1124,6 +1210,11 @@ const routes: RouteObject[] = [
     // per-module view of the same meeting is the module workspace's Teams tab.
     path: "/curriculum/teams-meetings",
     element: <CurriculumTeamsMeetings />,
+  },
+  {
+    // Every saved live-session recording, by module, group and week. Read only.
+    path: "/curriculum/recordings",
+    element: <CurriculumRecordings />,
   },
   {
     // The bank holiday calendar: GOV.UK holidays stay synced here, and extra
@@ -1360,6 +1451,22 @@ const routes: RouteObject[] = [
   {
     path: "/engagement/reports",
     element: <EngagementReportsPage />,
+  },
+  {
+    path: "/engagement/reports/feedback",
+    element: <FeedbackPage />,
+  },
+  {
+    path: "/engagement/reports/feedback/create",
+    element: <FeedbackEditorPage />,
+  },
+  {
+    path: "/engagement/reports/feedback/forms/:formId/edit",
+    element: <FeedbackEditorPage />,
+  },
+  {
+    path: "/engagement/reports/feedback/forms/:formId/preview",
+    element: <FeedbackPreviewPage />,
   },
   {
     path: "/engagement/flash-cards",
@@ -1701,11 +1808,17 @@ const routes: RouteObject[] = [
  *
  * What is here and why:
  *  - "/" and "/login" are the sign-in form itself.
+ *  - "/event-feedback" opens a token-scoped form for an event attendee; an LMS
+ *    account is not required and the backend still validates the personal token.
+ *  - "/session-feedback" opens a one-recipient Information Session or Commitment
+ *    Meeting feedback link; the backend validates its personal token.
  *  - "/forgot-password", "/set-password", "/reset-password" are reached from an
  *    emailed link by someone who by definition cannot sign in yet; each carries
  *    its own single-use token, which the backend validates.
  *  - "/access-required" is where a signed-in staff account with no access grant
  *    lands. It holds no data — only the request-access button.
+ *  - "/apprenticeship_application" is the eligibility form for applicants, who
+ *    have no account. It only submits a new application and reads nothing back.
  *
  * "/home" is deliberately NOT here. It was the public launcher, and its "explore
  * this section" buttons opened real workspaces reading live data for a visitor
@@ -1714,8 +1827,13 @@ const routes: RouteObject[] = [
 const PUBLIC_PATHS = new Set([
   "/coach-booking/:slug",
   "/lms-introduction",
+  "/apprenticeship_application",
   "/",
   "/login",
+  "/event-feedback",
+  "/session-feedback",
+  "/event-rsvp",
+  "/event-check-in",
   "/access-required",
   "/forgot-password",
   "/set-password",

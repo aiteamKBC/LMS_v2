@@ -1,7 +1,9 @@
 import type { ComponentKsbMapping, LearnerDetail, LearnerQuizAttempt } from '@/api/learnerDetail';
+import { topicHasContent } from '@/lib/assignmentTopics';
 export { formatHoursMinutes } from '@/lib/format';
 
 export interface JourneyComponent {
+  previousLearning?: import('@/api/learnerDetail').PreviousLearningCompletion;
   title: string;
   expectedOtjh: number | null;
   moduleId?: string | null;
@@ -13,6 +15,8 @@ export interface JourneyComponent {
   type?: string | null;
   description?: string | null;
   assignmentTopics?: import('@/lib/assignmentTopics').AssignmentTopic[];
+  /** The author flagged this as the monthly (eight-step) assignment. */
+  monthlyAssignment?: boolean;
   assignmentBrief?: string | null;
   assignmentBriefHtml?: string | null;
   videoUrl?: string | null;
@@ -24,6 +28,9 @@ export interface JourneyComponent {
   files?: import('@/lib/componentFiles').ComponentFile[];
   downloadAllowed?: boolean;
   reflectionPrompt?: string | null;
+  /** Completion derived from verified Teams attendance; adds no recorded hours. */
+  attendanceCompleted?: boolean;
+  attendanceCompletedAt?: string | null;
   reflectionRequired?: boolean;
   /** The author sent this activity for coach validation, so finishing it hands
    *  it in rather than completing it. */
@@ -33,6 +40,9 @@ export interface JourneyComponent {
   liveSessionUrl?: string | null;
   teamsLiveSessionId?: string | null;
   teamsSessionNumber?: number | null;
+  recordingSeriesId?: string | null;
+  recordingSessionNumber?: number | null;
+  recordingDate?: string | null;
   sessionDate?: string | null;
   sessionTime?: string | null;
   sessionDateTimeUtc?: string | null;
@@ -41,6 +51,8 @@ export interface JourneyComponent {
   quizMeta?: { quizId: number; questions: number | null; duration: number | null; timeUnit: string | null };
   quizAttempts?: LearnerQuizAttempt[];
   retired?: boolean;
+  /** See LearnerComponentEntry.contentAvailable. */
+  contentAvailable?: boolean;
 }
 
 /** The attempts that belong to a quiz component: those on the quiz it links
@@ -52,8 +64,13 @@ export function quizAttemptsFor(
   attempts: LearnerQuizAttempt[] | undefined,
 ): LearnerQuizAttempt[] {
   const quizId = component.quizMeta?.quizId;
-  return (attempts || []).filter((attempt) => (quizId != null && String(attempt.quizId) === String(quizId))
-    || (!!component.componentId && attempt.componentId === component.componentId));
+  return (attempts || []).filter((attempt) => {
+    // A shifted attempt keeps the quiz that was actually sat but receives an
+    // explicit destination component. That identity is authoritative: also
+    // falling back to quizId could credit another component reusing the quiz.
+    if (attempt.componentId) return !!component.componentId && attempt.componentId === component.componentId;
+    return quizId != null && String(attempt.quizId) === String(quizId);
+  });
 }
 
 /* ═══════════════════════════════════════════════════════
@@ -86,6 +103,26 @@ export function componentContentKind(type: string | null | undefined): ContentKi
  * are the completion gate. */
 export function componentRequiresEvidence(type: string | null | undefined): boolean {
   return (type || '').trim().toLowerCase().replace(/-/g, '_') === 'assignment';
+}
+
+type MonthlyAssignmentCandidate = { type?: string | null; monthlyAssignment?: boolean | null };
+
+/** Has an author flagged any assignment in this learner's plan as the monthly assignment? */
+export function monthlyAssignmentFlagsInUse(components: readonly MonthlyAssignmentCandidate[] | null | undefined): boolean {
+  return Boolean(components?.some(component => componentRequiresEvidence(component.type) && component.monthlyAssignment === true));
+}
+
+/** Is this the assignment learners submit through the eight-step monthly
+ * submission (and list under Monthly submission)? Until an author flags one,
+ * every assignment is. Once any assignment in the plan is flagged, only the
+ * flagged ones are and the others are completed like any other activity.
+ * learner_api.assignment_settings applies the same rule on completion. */
+export function isMonthlyAssignment(
+  component: MonthlyAssignmentCandidate | null | undefined,
+  components: readonly MonthlyAssignmentCandidate[] | null | undefined,
+): boolean {
+  if (!component || !componentRequiresEvidence(component.type)) return false;
+  return component.monthlyAssignment === true || !monthlyAssignmentFlagsInUse(components);
 }
 
 export interface ComponentCriteria {
@@ -291,6 +328,8 @@ export function completedComponentIds(real: {
  * completion source. Non-quiz rows are looked up in `completedIds`, which
  * callers build with `completedComponentIds`. */
 export function isComponentComplete(c: JourneyComponent, completedIds: Set<string>): boolean {
+  if (c.previousLearning?.completed === true) return true;
+  if (c.type?.replace(/-/g, '_') === 'live_session' && c.attendanceCompleted === true) return true;
   if (c.isQuiz) return (c.quizAttempts || []).some((a) => a.passed);
   return !!c.componentId && completedIds.has(c.componentId);
 }
@@ -358,6 +397,8 @@ export function componentNoun(type: string | null | undefined): string {
 /** Does this activity contain something the learner can actually consume?
  * An id/title alone is not content and must never lead to an empty runner. */
 export function hasComponentContent(c: JourneyComponent): boolean {
+  // Compact rows carry the server's verdict of the rule below (same fixture).
+  if (typeof c.contentAvailable === 'boolean') return c.contentAvailable;
   const hasText = (value?: string | null) => Boolean(value?.replace(/<[^>]*>/g, '').replace(/&nbsp;|\s/g, '').trim());
   const hasUrl = (value?: string | null) => Boolean(value?.trim());
   if (c.isQuiz) return c.quizMeta?.quizId != null && (c.quizMeta.questions ?? 0) > 0;
@@ -365,7 +406,7 @@ export function hasComponentContent(c: JourneyComponent): boolean {
   const type = (c.type || '').trim().toLowerCase().replace(/[\s-]+/g, '_');
   if (type === 'quiz') return false; // Unlinked builder placeholders have no quiz to attempt.
   const hasDescription = hasText(c.description);
-  if (type === 'video') return hasUrl(c.videoUrl);
+  if (type === 'video') return hasUrl(c.videoUrl) || Boolean(c.recordingSeriesId && c.recordingSessionNumber && c.recordingDate);
   if (type === 'podcast' || type === 'audio') return hasUrl(c.audioUrl) || hasUrl(c.resourceUrl) || hasDescription;
   if (type === 'reading') return c.hasReadingContent === true || hasText(c.contentHtml) || hasUrl(c.resourceUrl) || hasUrl(c.audioUrl) || hasDescription;
   if (type === 'powerpoint' || type === 'presentation' || type === 'slides') return hasUrl(c.resourceUrl) || hasDescription;
@@ -380,7 +421,7 @@ export function hasComponentContent(c: JourneyComponent): boolean {
   // Builder rows can retain a default reflection question even when reflection
   // is disabled. That follow-up question is not the assignment's task/brief.
   if (type === 'assignment') {
-    return Boolean(c.assignmentTopics?.some(topic => topic.question.trim() || topic.resources.length)) || hasText(c.assignmentBrief) || hasText(c.assignmentBriefHtml)
+    return Boolean(c.assignmentTopics?.some(topicHasContent)) || hasText(c.assignmentBrief) || hasText(c.assignmentBriefHtml)
       || hasUrl(c.resourceUrl) || hasText(c.contentHtml)
       || c.hasReadingContent === true || hasDescription;
   }
@@ -623,7 +664,10 @@ export function quizAggregateStats(real: LearnerDetail | null): QuizAggregateSta
 }
 
 /** Group a learner's flat week/components arrays into module -> week -> components. */
-export function buildLearnerJourney(real: LearnerDetail | null): JourneyModule[] {
+/** The plan fields a journey is built from; the compact Weekly read carries them too. */
+export type LearnerJourneySource = Pick<LearnerDetail, 'modules' | 'week' | 'components' | 'quizAttempts'>;
+
+export function buildLearnerJourney(real: LearnerJourneySource | null): JourneyModule[] {
   if (!real) return [];
   const groups = [...new Set(real.modules)].flatMap((moduleTitle) => {
     const weeks = real.week.filter((week) => week.module === moduleTitle);
@@ -644,10 +688,13 @@ export function buildLearnerJourney(real: LearnerDetail | null): JourneyModule[]
             ksbMappings: c.ksbMappings,
             componentId: c.componentId, type: c.type, description: c.description,
             assignmentBrief: c.assignmentBrief, assignmentBriefHtml: c.assignmentBriefHtml, assignmentTopics: c.assignmentTopics,
+            monthlyAssignment: c.monthlyAssignment,
             videoUrl: c.videoUrl, durationMinutes: c.durationMinutes,
             audioUrl: c.audioUrl, contentHtml: c.contentHtml, fileName: c.fileName, files: c.files,
             hasReadingContent: c.hasReadingContent,
             downloadAllowed: c.downloadAllowed, reflectionPrompt: c.reflectionPrompt,
+            attendanceCompleted: c.attendanceCompleted, attendanceCompletedAt: c.attendanceCompletedAt,
+            previousLearning: c.previousLearning,
             reflectionRequired: c.reflectionRequired,
             tutorValidationRequired: c.tutorValidationRequired,
             reflectionQuestion: c.reflectionQuestion,
@@ -655,6 +702,9 @@ export function buildLearnerJourney(real: LearnerDetail | null): JourneyModule[]
             liveSessionUrl: c.liveSessionUrl, sessionDate: c.sessionDate, sessionTime: c.sessionTime,
             teamsLiveSessionId: c.teamsLiveSessionId,
             teamsSessionNumber: c.teamsSessionNumber,
+            recordingSeriesId: c.recordingSeriesId,
+            recordingSessionNumber: c.recordingSessionNumber,
+            recordingDate: c.recordingDate,
             sessionDateTimeUtc: c.sessionDateTimeUtc,
             quizAttempts: c.isQuiz && c.quizMeta
               // Normalised progress rows store quiz_ref as text, while the

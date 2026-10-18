@@ -1,0 +1,72 @@
+{
+  "expo": {
+    "name": "KBC Learn LMS Candidate",
+    "slug": "kbc-learn-lmscandidate",
+    "version": "0.5.1",
+    "orientation": "default",
+    "scheme": "kbclearn-lmscandidate",
+    "userInterfaceStyle": "light",
+    "icon": "./assets/crest.png",
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.kentbusinesscollege.learn",
+      "buildNumber": "1",
+      "infoPlist": {
+        "CFBundleDisplayName": "KBC Learn",
+        "NSAppTransportSecurity": {
+          "NSAllowsArbitraryLoads": false,
+          "NSAllowsLocalNetworking": true
+        },
+        "NSMicrophoneUsageDescription": "Use your voice to draft your own answers and practise quizzes.",
+        "NSSpeechRecognitionUsageDescription": "Turn your spoken answers into text for you to review.",
+        "UIBackgroundModes": [
+          "audio"
+        ]
+      }
+    },
+    "android": {
+      "package": "com.kentbusinesscollege.learn.lmscandidate",
+      "predictiveBackGestureEnabled": true,
+      "versionCode": 11
+    },
+    "web": {
+      "bundler": "metro",
+      "name": "KBC Learn",
+      "favicon": "./assets/crest.png"
+    },
+    "plugins": [
+      [
+        "expo-audio",
+        {
+          "enableBackgroundPlayback": true,
+          "microphonePermission": "Allow KBC Learn to hear the answers you choose to dictate."
+        }
+      ],
+      [
+        "expo-speech-recognition",
+        {
+          "microphonePermission": "Allow KBC Learn to hear the answers you choose to dictate.",
+          "speechRecognitionPermission": "Allow KBC Learn to turn your spoken answers into text."
+        }
+      ],
+      "expo-notifications",
+      "expo-web-browser",
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/crest.png",
+          "imageWidth": 120,
+          "backgroundColor": "#F7F5EF"
+        }
+      ],
+      "expo-font",
+      "expo-asset",
+      "expo-video"
+    ],
+    "extra": {
+      "pilotAudience": "assigned-current-learners",
+      "releaseStage": "internal-test-candidate",
+      "officialSite": "https://kentbusinesscollege.com"
+    }
+  }
+}

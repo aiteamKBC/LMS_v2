@@ -270,11 +270,17 @@ def calendar_time_zone(v, series, graph_settings):
     return v.graph_timezone_iana(v.teams_schedule_settings(graph_settings, series=series))
 
 
-def verified_message(live_id):
+def verified_message(live_id, added=None):
     """The learner copy and the organiser copy of a new calendar's schedule.
 
     Both are rendered from the saved occurrences only after Microsoft confirms
     those dates, links and learner invitations.
+
+    ``added`` is the people an update just put on the calendar, when only they
+    are being emailed. Microsoft then has to confirm only the learners among
+    them: a learner already on the calendar whose invitation Microsoft holds
+    under another spelling must not stop a newly added co-organiser hearing
+    about the dates, when that learner is not being emailed anyway.
     """
     from coach_api.views import get_graph_settings
     from . import views as v
@@ -291,7 +297,7 @@ def verified_message(live_id):
     title = series.get('module_title')
     names = session_titles(v, live_id, series, rows)
     message = render_schedule_email(title, rows, zone, session_titles=names)
-    verify_saved_calendar(v, series, rows, recipients)
+    verify_saved_calendar(v, series, rows, recipients if added is None else added_only(recipients, [], added)[0])
     organisers = organiser_recipients(v, series, recipients)
     organiser_copy = render_schedule_email(title, rows, zone, roster=learner_roster(recipients),
                                            settings=meeting_settings(series, zone), session_titles=names)
@@ -327,7 +333,7 @@ def send_creation_emails(live_id, ledger=None, send=None, added=None, key=None):
         if not email_azure.is_configured():
             return {'error': 'Schedule emails are not configured. Check the existing Azure mail settings.',
                     'code': 'schedule_email_not_configured'}
-        recipients, organisers, learner_copy, organiser_copy = verified_message(live_id)
+        recipients, organisers, learner_copy, organiser_copy = verified_message(live_id, added)
         if added is not None:
             recipients, organisers = added_only(recipients, organisers, added)
         return dispatch_until_done(key or live_id, recipients, organisers, learner_copy, organiser_copy, ledger, send or _send_message)
@@ -520,7 +526,7 @@ def schedule_email(request, live_session_id):
                                  'code': 'schedule_email_not_configured'}, status=503)
         if payload.get('changeNotice'):
             return JsonResponse(dispatch_change(live_session_id, payload['changeNotice'], ledger, payload.get('retryFailed', False)))
-        recipients, organisers, learner_copy, organiser_copy = verified_message(live_session_id)
+        recipients, organisers, learner_copy, organiser_copy = verified_message(live_session_id, added)
         if added is not None:
             # People an update added: the same full schedule a creation sends,
             # under the calendar's own key, to them alone.

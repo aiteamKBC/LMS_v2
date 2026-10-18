@@ -258,7 +258,8 @@ export default function AbsenceReportForm({
   };
 
   const finishSubmitted = (created: LearnerAbsenceReport) => {
-    setReports((current) => [created, ...current]);
+    // A retried submission returns the report that was already saved.
+    setReports((current) => [created, ...current.filter((report) => report.id !== created.id)]);
     setSubmittedReport(created);
     setSubmitted(true);
     onSubmitted?.(created);

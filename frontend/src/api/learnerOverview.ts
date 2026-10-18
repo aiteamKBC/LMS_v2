@@ -33,13 +33,12 @@ export type OverviewWeek = {
 
 export type HomeProgressCount = { completed: number; total: number };
 export type HomeProgress = {
-  period: { start: string | null; end: string; timezone: string };
+  period: { start: string | null; end: string };
   otjh: { actual: number | null; submitted: number | null; planned: number | null; percent: number | null; includesHistorical?: boolean; missingPlannedActivities: number };
   activities: HomeProgressCount | null; assignments: HomeProgressCount | null;
   lectures: HomeProgressCount | null; modules: HomeProgressCount;
   undatedActivities: number;
 };
-export type OverviewHome = OverviewWeek & { homeProgress: HomeProgress };
 
 function resource<T>(path: (kind: LearnerKind, id: string) => string, valid: (value: T) => boolean) {
   return {
@@ -56,14 +55,31 @@ function resource<T>(path: (kind: LearnerKind, id: string) => string, valid: (va
 }
 const weekPath = (kind: LearnerKind, id: string) => `/learner_api/overview-week/${kind}/${encodeURIComponent(id)}/`;
 export const overviewWeek = resource<OverviewWeek>(weekPath, value => !!value.weekStart && Array.isArray(value.modules) && Array.isArray(value.deadlines) && !!value.otjh);
-export const overviewDashboard = resource<OverviewWeek>((kind, id) => `${weekPath(kind, id)}?section=dashboard`,
-  value => !!value.weekStart && Array.isArray(value.modules) && Array.isArray(value.deadlines) && !!value.otjh && !!value.metrics);
-export const overviewHome = resource<OverviewHome>((kind, id) => `${weekPath(kind, id)}?section=home`,
-  value => !!value.weekStart && Array.isArray(value.modules) && Array.isArray(value.deadlines)
-    && !!value.homeProgress?.otjh && !!value.homeProgress.period && !!value.homeProgress.modules);
 export const overviewSchedule = resource<TrainingPlanDashboard>(
   (kind, id) => `/learner_api/training-plan-dashboard/${kind}/${encodeURIComponent(id)}/?section=overview`,
   value => Array.isArray(value.sessions) && Array.isArray(value.reviews),
+);
+
+/** Student Home's compact week: current modules and the progress card. */
+export type HomeSummary = Pick<OverviewWeek, 'weekStart' | 'weekEnd'> & {
+  modules: Pick<OverviewWeek['modules'][number], 'id' | 'title' | 'weekLabels'>[];
+  homeProgress: HomeProgress;
+};
+export const homeSummary = resource<HomeSummary>((kind, id) => `${weekPath(kind, id)}?section=home-summary`,
+  value => !!value.weekStart && Array.isArray(value.modules)
+    && !!value.homeProgress?.otjh && !!value.homeProgress.period && !!value.homeProgress.modules);
+
+/**
+ * One of Student Home's nearest events. ``date`` is an ISO instant, or a UK
+ * calendar date (YYYY-MM-DD) for an assignment due date or an unbooked review.
+ * ``booked`` is sent for reviews only.
+ */
+export type UpcomingEvent = { id: string; type: 'session' | 'assignment' | 'review'; title: string; date: string; booked?: boolean };
+/** Student Home's nearest three sessions, assignment deadlines and progress reviews, earliest first. */
+export type UpcomingSchedule = { events: UpcomingEvent[] };
+export const upcomingSchedule = resource<UpcomingSchedule>(
+  (kind, id) => `/learner_api/training-plan-dashboard/${kind}/${encodeURIComponent(id)}/?section=upcoming`,
+  value => Array.isArray(value.events),
 );
 
 export type LearningSchedule = Pick<TrainingPlanDashboard, 'modules' | 'moduleLinks' | 'generatedAt'>;

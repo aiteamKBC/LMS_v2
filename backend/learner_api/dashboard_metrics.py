@@ -2,10 +2,12 @@
 import json
 import logging
 from collections import defaultdict
+from types import SimpleNamespace
 
 import psycopg
 from . import journal_sources
 from django.db import DatabaseError, connections
+from curriculum_api.week_visibility import visible_child_sql
 from django.http import JsonResponse
 from django.views.decorators.http import require_GET
 from .projection_performance import measure_projection
@@ -19,13 +21,24 @@ from .student_activity_access import student_activity_available
 from .student_activity import _direct_progress_records, _direct_progress_otjh, load_direct_progress_records_bulk
 from .learning_plan import _effective_plan_ids
 from .training_plan_contract import selected_contract
-from .training_plan_dashboard import find_contract, number, rows
+from .training_plan_dashboard import TRAINING_PLAN_SOURCE_FIELDS, find_contract, number, plan_planned_hours, rows
 from .otjh_totals import completed_otjh, completed_actual_otjh
 from old_otjh.service import ServiceError
 from . import canonical_learning
 
 log = logging.getLogger(__name__)
 _MISSING = object()
+
+
+def coach_otjh_target_to_date(source, otjh, *, owner=None):
+    from coach_api.selectors.otjh import learner_programme_window
+    from coach_api.views import apply_otjh_to_date_metrics
+    # Projection callers may reuse this source's already-verified SSOT owner.
+    profile = canonical_learning.require_profile(source.pk) if owner is None else owner
+    start, end = learner_programme_window(SimpleNamespace(**profile), source)
+    data = {'otjhCompleted': otjh.get('actual'), 'otjhPlanned': otjh.get('planned')}
+    data.update(otjhProgrammeStartDate=start, plannedEndDate=end)
+    return apply_otjh_to_date_metrics(data)['otjhTargetAsOfToday']
 
 
 def as_json(value, default):
@@ -352,13 +365,13 @@ def _read_legacy_metrics(source, kind, preloaded=None):
             cursor.execute('''SELECT c.id,c.type,c.expected_otjh AS expected_hours,coalesce(nullif(c.ksb_mappings,'[]'::jsonb),
                 (SELECT jsonb_agg(jsonb_build_object('code',k.ksb_code))
                  FROM curriculum.ksb_mappings k WHERE k.component_id=c.id
-                   AND (k.deleted_at IS NULL OR COALESCE(k.deleted_via_parent, '') <> '')), '[]'::jsonb) AS ksb_mappings,
+                   AND ''' + visible_child_sql('k') + '''), '[]'::jsonb) AS ksb_mappings,
                 coalesce((SELECT q.quiz_id::text FROM curriculum.quiz_component_links q
                           WHERE q.component_id=c.id ORDER BY q.id LIMIT 1),
                          c.settings_json->>'linkedQuizId') AS quiz_id
                 FROM curriculum.components c
                 WHERE c.module_catalogue_id=ANY(%s)
-                  AND (c.deleted_at IS NULL OR COALESCE(c.deleted_via_parent, '') <> '')''', [module_ids])
+                  AND ''' + visible_child_sql('c'), [module_ids])
             native = rows(cursor)
         if preloaded is not None and 'native_progress' in preloaded:
             progress = preloaded['native_progress']
@@ -496,6 +509,13 @@ def learner_metrics(request, kind, pk):
                     ).get(source.pk)
                     if payload is None:
                         raise ValueError('Learner identity is unavailable.')
+                    if payload['otjh'].get('planned') is None:
+                        # No SSOT programme plan yet: the target follows the
+                        # learning-plan total, as the home progress card does.
+                        plan_source = model.all_learners.only(*TRAINING_PLAN_SOURCE_FIELDS).get(pk=source.pk)
+                        payload['otjh']['planned'] = plan_planned_hours(
+                            plan_source, canonical_learning.profile(source.pk))
+                    payload['otjh']['targetToDate'] = coach_otjh_target_to_date(source, payload['otjh'])
                 else:
                     payload = read_metrics(source, kind)
     except model.DoesNotExist:
@@ -723,13 +743,13 @@ def load_native_components_bulk(module_ids):
                 coalesce(nullif(c.ksb_mappings,'[]'::jsonb),
                 (SELECT jsonb_agg(jsonb_build_object('code',k.ksb_code))
                  FROM curriculum.ksb_mappings k WHERE k.component_id=c.id
-                   AND (k.deleted_at IS NULL OR COALESCE(k.deleted_via_parent, '') <> '')), '[]'::jsonb) AS ksb_mappings,
+                   AND ''' + visible_child_sql('k') + '''), '[]'::jsonb) AS ksb_mappings,
                 coalesce((SELECT q.quiz_id::text FROM curriculum.quiz_component_links q
                           WHERE q.component_id=c.id ORDER BY q.id LIMIT 1),
                          c.settings_json->>'linkedQuizId') AS quiz_id
             FROM curriculum.components c
             WHERE c.module_catalogue_id=ANY(%s)
-              AND (c.deleted_at IS NULL OR COALESCE(c.deleted_via_parent, '') <> '')''', [ids])
+              AND ''' + visible_child_sql('c'), [ids])
         for item in rows(cursor):
             result.setdefault(str(item.pop('module_catalogue_id')), []).append(item)
     return result

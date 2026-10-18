@@ -54,6 +54,7 @@ class SharedTeamsProjectionTests(unittest.TestCase):
                 'teamsLiveSessionId': 'LIVE-SOURCE',
                 'teamsMeetingUrl': 'https://teams.example/source',
                 'teamsOccurrenceId': 'OCC-SOURCE',
+                'sessionDate': '2026-12-30', 'sessionTime': '12:00', 'durationMinutes': 120,
             }],
         }
         exec(compile(ast.Module(body=[wanted['strip_shared_teams_delivery_settings'], wanted['apply_shared_teams_settings_to_weeks']], type_ignores=[]), 'shared-teams-projection', 'exec'), namespace)
@@ -77,6 +78,20 @@ class SharedTeamsProjectionTests(unittest.TestCase):
             'teamsMeetingUrl': 'https://teams.example/source',
         })
         self.assertEqual(stripped, {'sessionPurpose': 'Keep this text'})
+
+    def test_shared_clock_matches_source_even_when_alias_reading_weeks_differ(self):
+        weeks = [{'id': 'W-ALIAS', 'components': [{
+            'id': 'C-ALIAS', 'type': 'live-session',
+            'settings': {'sessionDate': '2026-12-16', 'sessionTime': '09:00',
+                         'durationMinutes': 60, 'liveSessionLinkOverride': 'https://teams.example/own'},
+        }]}]
+        self.apply({'teams_shared_source_module_id': 'SOURCE'}, weeks)
+        card = weeks[0]['components'][0]
+        self.assertEqual(card['id'], 'C-ALIAS')
+        self.assertEqual(weeks[0]['id'], 'W-ALIAS')
+        self.assertEqual((card['settings']['sessionDate'], card['settings']['sessionTime'],
+                          card['settings']['durationMinutes']), ('2026-12-30', '12:00', 120))
+        self.assertEqual(card['settings']['liveSessionUrl'], 'https://teams.example/own')
 
 
 if __name__ == '__main__':

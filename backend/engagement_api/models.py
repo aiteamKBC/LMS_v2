@@ -1,3 +1,5 @@
+import uuid
+
 from django.db import models
 
 
@@ -104,15 +106,9 @@ class Recognition(models.Model):
 
 
 class Event(models.Model):
-    """An engagement event (workshop, social, competition, etc.)."""
+    """An online or offline engagement event."""
 
-    TYPE_CHOICES = [
-        ('workshop', 'Workshop'),
-        ('social', 'Social'),
-        ('networking', 'Networking'),
-        ('competition', 'Competition'),
-        ('celebration', 'Celebration'),
-    ]
+    TYPE_CHOICES = [('offline', 'Offline'), ('online', 'Online')]
     STATUS_CHOICES = [
         ('upcoming', 'Upcoming'),
         ('ongoing', 'Ongoing'),
@@ -125,11 +121,15 @@ class Event(models.Model):
     # display strings, e.g. '13 Jun 2026' / '13:00 - 15:00'.
     date = models.CharField(max_length=100)
     time = models.CharField(max_length=100)
+    event_date = models.DateField(null=True, blank=True)
+    start_time = models.TimeField(null=True, blank=True)
+    end_time = models.TimeField(null=True, blank=True)
     location = models.CharField(max_length=255)
     type = models.CharField(max_length=20, choices=TYPE_CHOICES)
     attendees = models.IntegerField(default=0)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='upcoming')
     organizer = models.CharField(max_length=255)
+    check_in_token = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -287,6 +287,11 @@ class EventAttendance(models.Model):
     event = models.ForeignKey(Event, on_delete=models.CASCADE, related_name='attendance', db_column='event_id')
     learner_id = models.CharField(max_length=100)
     learner_name = models.CharField(max_length=255)
+    attendee_email = models.EmailField(max_length=320, blank=True, default='')
+    attendee_type = models.CharField(
+        max_length=20, choices=[('learner', 'Learner'), ('guest', 'Guest')], default='learner',
+    )
+    attendance_source = models.CharField(max_length=30, default='manual')
     status = models.CharField(max_length=20, choices=STATUS_CHOICES)
     marked_by = models.CharField(max_length=255, null=True, blank=True)
     marked_at = models.DateTimeField(auto_now=True)
@@ -494,3 +499,380 @@ class FlashCardView(models.Model):
 
     def __str__(self):
         return f'{self.learner_name} flipped card {self.flash_card_id}'
+
+
+# Feedback forms intentionally live in their own database schema, and nothing
+# in the form engine depends on an Engagement route. Like the rest of this
+# app's Neon-backed tables these mappings are unmanaged; see the manual SQL in
+# backend/sql/2026-09-20_feedback_forms.sql.
+class FeedbackForm(models.Model):
+    STATUS_CHOICES = [('draft', 'Draft'), ('published', 'Published'), ('closed', 'Closed')]
+    TYPE_CHOICES = [
+        ('general', 'General'), ('post_lecture', 'Post-lecture'),
+        ('post_event', 'Post-event'), ('event_rsvp', 'Event RSVP'),
+        ('information_session', 'Information Session'),
+        ('commitment_meeting', 'Commitment Meeting'),
+    ]
+    DELIVERY_SCOPE_CHOICES = [('manual', 'Manual'), ('all_modules', 'All modules'), ('module', 'One module')]
+
+    title = models.CharField(max_length=255)
+    form_type = models.CharField(max_length=40, choices=TYPE_CHOICES, default='general')
+    delivery_scope = models.CharField(max_length=20, choices=DELIVERY_SCOPE_CHOICES, default='manual')
+    template_key = models.UUIDField(default=uuid.uuid4)
+    version = models.PositiveIntegerField(default=1)
+    is_current = models.BooleanField(default=True)
+    previous_version = models.ForeignKey(
+        'self', on_delete=models.PROTECT, related_name='next_versions',
+        db_column='previous_version_id', null=True, blank=True,
+    )
+    description = models.TextField(blank=True, default='')
+    instructions = models.TextField(blank=True, default='')
+    programme_id = models.CharField(max_length=255, blank=True, default='')
+    programme_name = models.CharField(max_length=255, blank=True, default='')
+    cohort_id = models.CharField(max_length=255, blank=True, default='')
+    cohort_name = models.CharField(max_length=255, blank=True, default='')
+    group_id = models.CharField(max_length=255, blank=True, default='')
+    group_name = models.CharField(max_length=255, blank=True, default='')
+    module_catalogue_id = models.CharField(max_length=255, blank=True, default='')
+    module_name = models.CharField(max_length=255, blank=True, default='')
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='draft')
+    start_date = models.DateTimeField(null=True, blank=True)
+    due_date = models.DateTimeField(null=True, blank=True)
+    anonymous_responses = models.BooleanField(default=False)
+    allow_save_continue = models.BooleanField(default=True)
+    allow_edit_after_submission = models.BooleanField(default=False)
+    created_by = models.CharField(max_length=255)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    published_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        managed = False
+        db_table = 'Feedback"."feedback_forms'
+
+
+class FeedbackSection(models.Model):
+    form = models.ForeignKey(FeedbackForm, on_delete=models.CASCADE, related_name='sections', db_column='form_id')
+    title = models.CharField(max_length=255)
+    icon = models.CharField(max_length=80, blank=True, default='ri-file-list-3-line')
+    description = models.TextField(blank=True, default='')
+    sort_order = models.IntegerField(default=0)
+
+    class Meta:
+        managed = False
+        db_table = 'Feedback"."feedback_form_sections'
+        ordering = ['sort_order', 'id']
+
+
+class FeedbackQuestion(models.Model):
+    section = models.ForeignKey(FeedbackSection, on_delete=models.CASCADE, related_name='questions', db_column='section_id')
+    question_type = models.CharField(max_length=30)
+    question_text = models.TextField()
+    required = models.BooleanField(default=False)
+    help_text = models.TextField(blank=True, default='')
+    # Options, rating bounds and endpoint labels are deliberately one JSON
+    # configuration object so new question kinds do not require new columns.
+    config = models.JSONField(default=dict)
+    sort_order = models.IntegerField(default=0)
+
+    class Meta:
+        managed = False
+        db_table = 'Feedback"."feedback_questions'
+        ordering = ['sort_order', 'id']
+
+
+class FeedbackAssignment(models.Model):
+    form = models.ForeignKey(FeedbackForm, on_delete=models.CASCADE, related_name='assignments', db_column='form_id')
+    target_type = models.CharField(max_length=30)
+    target_id = models.CharField(max_length=100, null=True, blank=True)
+    assigned_by = models.CharField(max_length=255)
+    assigned_at = models.DateTimeField(auto_now_add=True)
+    due_date = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        managed = False
+        db_table = 'Feedback"."feedback_assignments'
+
+
+class FeedbackDelivery(models.Model):
+    """One published post-lecture template delivered for one lecture occurrence."""
+
+    STATUS_CHOICES = [('open', 'Open'), ('closed', 'Closed'), ('cancelled', 'Cancelled')]
+
+    form = models.ForeignKey(FeedbackForm, on_delete=models.PROTECT, related_name='deliveries', db_column='form_id')
+    occurrence_key = models.CharField(max_length=255)
+    attendance_source = models.CharField(max_length=80, default='attendance')
+    attendance_reference = models.CharField(max_length=255, blank=True, default='')
+    programme_id = models.CharField(max_length=255, blank=True, default='')
+    programme_name = models.CharField(max_length=255, blank=True, default='')
+    cohort_id = models.CharField(max_length=255, blank=True, default='')
+    cohort_name = models.CharField(max_length=255, blank=True, default='')
+    group_id = models.CharField(max_length=255, blank=True, default='')
+    group_name = models.CharField(max_length=255, blank=True, default='')
+    module_catalogue_id = models.CharField(max_length=255)
+    module_name = models.CharField(max_length=500, blank=True, default='')
+    session_title = models.CharField(max_length=500, blank=True, default='')
+    starts_at = models.DateTimeField(null=True, blank=True)
+    ends_at = models.DateTimeField(null=True, blank=True)
+    available_at = models.DateTimeField()
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='open')
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        managed = False
+        db_table = 'Feedback"."feedback_deliveries'
+
+
+class FeedbackDeliveryRecipient(models.Model):
+    """A learner made eligible by finalized attendance for one delivery."""
+
+    delivery = models.ForeignKey(FeedbackDelivery, on_delete=models.CASCADE, related_name='recipients', db_column='delivery_id')
+    learner_id = models.CharField(max_length=100)
+    learner_name = models.CharField(max_length=255)
+    programme = models.CharField(max_length=255, blank=True, default='')
+    attendance_reference = models.CharField(max_length=255, blank=True, default='')
+    assigned_at = models.DateTimeField(auto_now_add=True)
+    due_date = models.DateTimeField(null=True, blank=True)
+    revoked_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        managed = False
+        db_table = 'Feedback"."feedback_delivery_recipients'
+
+
+class FeedbackEventCampaign(models.Model):
+    """A published post-event form made available for one Engagement event."""
+
+    STATUS_CHOICES = [('open', 'Open'), ('closed', 'Closed'), ('cancelled', 'Cancelled')]
+
+    event = models.ForeignKey(Event, on_delete=models.PROTECT, related_name='feedback_campaigns', db_column='event_id')
+    form = models.ForeignKey(FeedbackForm, on_delete=models.PROTECT, related_name='event_campaigns', db_column='form_id')
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='open')
+    created_by = models.CharField(max_length=255)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        managed = False
+        db_table = 'Feedback"."feedback_event_campaigns'
+
+
+class FeedbackEventRecipient(models.Model):
+    """One attendee granted token-scoped access to every open form for an event."""
+
+    INVITE_STATUS_CHOICES = [('pending', 'Pending'), ('sent', 'Sent'), ('failed', 'Failed')]
+
+    event = models.ForeignKey(Event, on_delete=models.PROTECT, related_name='feedback_recipients', db_column='event_id')
+    attendee_name = models.CharField(max_length=255)
+    attendee_email = models.EmailField(max_length=320)
+    learner_id = models.CharField(max_length=100, blank=True, default='')
+    attendance_source = models.CharField(max_length=80, default='spreadsheet')
+    attendance_reference = models.CharField(max_length=255, blank=True, default='')
+    token_hash = models.CharField(max_length=64, null=True, blank=True)
+    token_expires_at = models.DateTimeField(null=True, blank=True)
+    invite_status = models.CharField(max_length=20, choices=INVITE_STATUS_CHOICES, default='pending')
+    invitation_sent_at = models.DateTimeField(null=True, blank=True)
+    invitation_error = models.TextField(blank=True, default='')
+    revoked_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        managed = False
+        db_table = 'Feedback"."feedback_event_recipients'
+
+
+class FeedbackExternalCampaign(models.Model):
+    """A named Information Session or Commitment Meeting feedback campaign."""
+
+    TYPE_CHOICES = [
+        ('information_session', 'Information Session'),
+        ('commitment_meeting', 'Commitment Meeting'),
+    ]
+    STATUS_CHOICES = [('draft', 'Draft'), ('open', 'Open'), ('closed', 'Closed')]
+
+    campaign_type = models.CharField(max_length=40, choices=TYPE_CHOICES)
+    name = models.CharField(max_length=255)
+    session_date = models.DateField()
+    form = models.ForeignKey(
+        FeedbackForm, on_delete=models.PROTECT, related_name='external_campaigns', db_column='form_id',
+    )
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='draft')
+    created_by = models.CharField(max_length=255)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        managed = False
+        db_table = 'Feedback"."feedback_external_campaigns'
+
+
+class FeedbackExternalRecipient(models.Model):
+    """One non-LMS recipient with a personal bearer-token feedback link."""
+
+    STATUS_CHOICES = [
+        ('pending', 'Pending'), ('sent', 'Sent'), ('opened', 'Opened'),
+        ('submitted', 'Submitted'), ('failed', 'Failed'),
+    ]
+
+    campaign = models.ForeignKey(
+        FeedbackExternalCampaign, on_delete=models.CASCADE, related_name='recipients', db_column='campaign_id',
+    )
+    response = models.OneToOneField(
+        'FeedbackResponse', on_delete=models.PROTECT, related_name='external_recipient',
+        db_column='response_id', null=True, blank=True,
+    )
+    recipient_name = models.CharField(max_length=255)
+    recipient_email = models.EmailField(max_length=320)
+    token_hash = models.CharField(max_length=64, null=True, blank=True)
+    token_expires_at = models.DateTimeField(null=True, blank=True)
+    delivery_status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
+    invitation_sent_at = models.DateTimeField(null=True, blank=True)
+    opened_at = models.DateTimeField(null=True, blank=True)
+    submitted_at = models.DateTimeField(null=True, blank=True)
+    invitation_error = models.TextField(blank=True, default='')
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        managed = False
+        db_table = 'Feedback"."feedback_external_recipients'
+
+
+class EventEmailTemplate(models.Model):
+    """Reusable, staff-authored plain-text email copy for event workflows."""
+
+    PURPOSE_CHOICES = [('event_rsvp', 'Event RSVP'), ('post_event', 'Post-event feedback')]
+
+    name = models.CharField(max_length=255)
+    purpose = models.CharField(max_length=30, choices=PURPOSE_CHOICES)
+    subject = models.CharField(max_length=255)
+    body = models.TextField()
+    button_text = models.CharField(max_length=120)
+    created_by = models.CharField(max_length=255)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        managed = False
+        db_table = 'Feedback"."event_email_templates'
+
+
+class EventEmailSetting(models.Model):
+    """Per-event snapshot/override of reusable email copy."""
+
+    event = models.ForeignKey(Event, on_delete=models.PROTECT, related_name='email_settings', db_column='event_id')
+    purpose = models.CharField(max_length=30, choices=EventEmailTemplate.PURPOSE_CHOICES)
+    template = models.ForeignKey(
+        EventEmailTemplate, on_delete=models.SET_NULL, related_name='event_settings',
+        db_column='template_id', null=True, blank=True,
+    )
+    subject = models.CharField(max_length=255)
+    body = models.TextField()
+    button_text = models.CharField(max_length=120)
+    updated_by = models.CharField(max_length=255)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        managed = False
+        db_table = 'Feedback"."event_email_settings'
+        constraints = [
+            models.UniqueConstraint(fields=['event', 'purpose'], name='event_email_setting_unique'),
+        ]
+
+
+class EventRsvpCampaign(models.Model):
+    """One published RSVP form attached to one Engagement event."""
+
+    event = models.OneToOneField(Event, on_delete=models.PROTECT, related_name='rsvp_campaign', db_column='event_id')
+    form = models.ForeignKey(FeedbackForm, on_delete=models.PROTECT, related_name='rsvp_campaigns', db_column='form_id')
+    status = models.CharField(max_length=20, default='open')
+    created_by = models.CharField(max_length=255)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        managed = False
+        db_table = 'Feedback"."event_rsvp_campaigns'
+
+
+class EventRsvpRecipient(models.Model):
+    """A learner or guest invited to declare intent to attend an event."""
+
+    campaign = models.ForeignKey(EventRsvpCampaign, on_delete=models.CASCADE, related_name='recipients', db_column='campaign_id')
+    recipient_name = models.CharField(max_length=255)
+    recipient_email = models.EmailField(max_length=320)
+    learner_id = models.CharField(max_length=100, blank=True, default='')
+    token_hash = models.CharField(max_length=64, null=True, blank=True)
+    token_expires_at = models.DateTimeField(null=True, blank=True)
+    invite_status = models.CharField(max_length=20, default='pending')
+    rsvp_status = models.CharField(max_length=20, default='no_response')
+    invitation_sent_at = models.DateTimeField(null=True, blank=True)
+    invitation_error = models.TextField(blank=True, default='')
+    responded_at = models.DateTimeField(null=True, blank=True)
+    revoked_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        managed = False
+        db_table = 'Feedback"."event_rsvp_recipients'
+
+
+class FeedbackResponse(models.Model):
+    STATUS_CHOICES = [('in_progress', 'In progress'), ('completed', 'Completed')]
+
+    form = models.ForeignKey(FeedbackForm, on_delete=models.PROTECT, related_name='responses', db_column='form_id')
+    delivery = models.ForeignKey(
+        FeedbackDelivery, on_delete=models.PROTECT, related_name='responses',
+        db_column='delivery_id', null=True, blank=True,
+    )
+    event_recipient = models.ForeignKey(
+        FeedbackEventRecipient, on_delete=models.PROTECT, related_name='responses',
+        db_column='event_recipient_id', null=True, blank=True,
+    )
+    rsvp_recipient = models.ForeignKey(
+        EventRsvpRecipient, on_delete=models.PROTECT, related_name='responses',
+        db_column='rsvp_recipient_id', null=True, blank=True,
+    )
+    learner_id = models.CharField(max_length=100, blank=True, default='')
+    learner_name = models.CharField(max_length=255)
+    programme = models.CharField(max_length=255, blank=True, default='')
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='in_progress')
+    started_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    submitted_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        managed = False
+        db_table = 'Feedback"."feedback_responses'
+
+
+class FeedbackAnswer(models.Model):
+    response = models.ForeignKey(FeedbackResponse, on_delete=models.CASCADE, related_name='answers', db_column='response_id')
+    question = models.ForeignKey(FeedbackQuestion, on_delete=models.PROTECT, related_name='answers', db_column='question_id')
+    answer = models.JSONField(null=True, blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        managed = False
+        db_table = 'Feedback"."feedback_answers'
+
+
+class FeedbackUpload(models.Model):
+    """Private image uploaded as the answer to a photo-upload question."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    response = models.ForeignKey(FeedbackResponse, on_delete=models.CASCADE, related_name='uploads', db_column='response_id')
+    question = models.ForeignKey(FeedbackQuestion, on_delete=models.PROTECT, related_name='uploads', db_column='question_id')
+    blob_name = models.TextField()
+    original_name = models.CharField(max_length=255)
+    content_type = models.CharField(max_length=100, default='image/jpeg')
+    size = models.IntegerField()
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        managed = False
+        db_table = 'Feedback"."feedback_uploads'

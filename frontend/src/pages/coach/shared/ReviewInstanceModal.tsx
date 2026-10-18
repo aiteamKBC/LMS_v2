@@ -280,7 +280,6 @@ export function ReviewInstanceModal({
   const [loading, setLoading] = useState(true);
   const [initializationFailed, setInitializationFailed] = useState(false);
   const [initializationRetry, setInitializationRetry] = useState(0);
-  const initializationRequestedRef = useRef('');
   const initializationAttemptsRef = useRef(new Map<string, ReturnType<typeof initializeMigratedReview>>());
   const [saving, setSaving] = useState(false);
   const [bookingOpen, setBookingOpen] = useState(false);
@@ -327,8 +326,9 @@ export function ReviewInstanceModal({
       try {
         let data = await fetchReviewInstanceForm(instanceId, controller.signal);
         if (!active) return;
-        if (!isViewingAsCoach && canInitializeMigratedReview(data)
-          && initializationRequestedRef.current === `${coachIdentity.email}:${instanceId}`) {
+        // Opening an eligible review prepares its form for the assigned coach.
+        // Keep the server eligibility gate and reuse an attempt during effect replay.
+        if (!isViewingAsCoach && canInitializeMigratedReview(data)) {
           const attemptKey = `${coachIdentity.email}:${instanceId}:${initializationRetry}`;
           let attempt = initializationAttemptsRef.current.get(attemptKey);
           if (!attempt) {
@@ -889,13 +889,12 @@ export function ReviewInstanceModal({
                   : 'Admin view-as mode is read-only. Open the learner as the assigned coach to change this review.'}
               </section>
             ) : null}
-            {(canInitializeMigrated || initializationFailed) && !isViewingAsCoach ? (
+            {initializationFailed && !isViewingAsCoach ? (
               <button type="button" onClick={() => {
-                initializationRequestedRef.current = `${coachIdentity.email}:${instanceId}`;
                 setInitializationRetry((current) => current + 1);
               }} disabled={busy}
                 className="rounded-lg bg-primary-700 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60">
-                {initializationFailed ? 'Retry form initialization' : 'Initialize approved migrated form'}
+                Retry loading form
               </button>
             ) : null}
             {definition.migratedForm && definition.booking?.booked ? (
@@ -1267,7 +1266,7 @@ export function ReviewInstanceModal({
                         signatureSaveInFlightRef.current = true;
                         setSaving(true);
                         setError(null);
-                        void (definition.migratedForm
+                        return (definition.migratedForm
                           ? signMigratedReviewAsCoach(definition.instance.id, signature)
                           : signReviewInstance(definition.instance.id, 'advisor', auth.user?.fullName || 'Coach', signature))
                           .then((updated) => {

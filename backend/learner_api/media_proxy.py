@@ -9,6 +9,8 @@ import asyncio
 import html
 import http.cookiejar
 import json
+import logging
+import mimetypes
 import re
 import urllib.parse
 import urllib.error
@@ -16,10 +18,14 @@ import urllib.request
 
 from django.db import DatabaseError, connections
 from django.http import HttpResponse, JsonResponse, StreamingHttpResponse
+from django.views.decorators.clickjacking import xframe_options_sameorigin
 from django.views.decorators.http import require_GET
 
 from curriculum_api import upload_storage
+from config.video_streaming import video_chunks
 
+
+logger = logging.getLogger(__name__)
 
 GOOGLE_DRIVE_ID_RE = re.compile(r"^[A-Za-z0-9_-]{10,}$")
 LEGACY_ATTACHMENT_ID_RE = re.compile(r"^[0-9]{1,20}$")
@@ -57,11 +63,14 @@ def _programme_audit_database_aliases():
 
 
 def _stream_response(upstream):
-    while True:
-        chunk = upstream.read(CHUNK_SIZE)
-        if not chunk:
-            break
-        yield chunk
+    try:
+        while True:
+            chunk = upstream.read(CHUNK_SIZE)
+            if not chunk:
+                break
+            yield chunk
+    finally:
+        upstream.close()
 
 
 async def _async_stream_response(upstream):
@@ -106,8 +115,8 @@ def _google_drive_warning_download_url(page_html):
     return f"{action}?{query}"
 
 
-def _open_google_drive_file(file_id, range_header=None):
-    """Open a Google Drive file stream, following the large-file warning page."""
+def _open_google_drive_file_once(file_id, range_header=None):
+    """Open one stream, rejecting HTML even after the download confirmation."""
     cookie_jar = http.cookiejar.CookieJar()
     opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(cookie_jar))
     headers = {"User-Agent": "Mozilla/5.0"}
@@ -117,14 +126,39 @@ def _open_google_drive_file(file_id, range_header=None):
     url = f"https://drive.google.com/uc?export=download&id={file_id}"
     upstream = opener.open(urllib.request.Request(url, headers=headers), timeout=30)
     content_type = upstream.headers.get("Content-Type") or "application/octet-stream"
-    if "text/html" not in content_type.lower():
+    if not any(kind in content_type.lower() for kind in ("text/html", "application/xhtml+xml")):
         return upstream
 
-    page = upstream.read().decode("utf-8", "replace")
+    try:
+        page = upstream.read().decode("utf-8", "replace")
+    finally:
+        upstream.close()
     download_url = _google_drive_warning_download_url(page)
     if not download_url:
         return None
-    return opener.open(urllib.request.Request(download_url, headers=headers), timeout=30)
+    upstream = opener.open(urllib.request.Request(download_url, headers=headers), timeout=30)
+    content_type = (upstream.headers.get("Content-Type") or "").lower()
+    if "text/html" in content_type or "application/xhtml+xml" in content_type:
+        upstream.close()
+        return None
+    return upstream
+
+
+def _open_google_drive_file(file_id, range_header=None):
+    """Retry a transient Drive failure once; never retry denied/missing files."""
+    for attempt in range(2):
+        try:
+            upstream = _open_google_drive_file_once(file_id, range_header)
+            if upstream is not None:
+                return upstream
+        except urllib.error.HTTPError as exc:
+            if attempt or exc.code not in (429, 500, 502, 503, 504):
+                raise
+            exc.close()
+        except (urllib.error.URLError, TimeoutError) as exc:
+            if attempt:
+                raise urllib.error.URLError("Google Drive media request failed") from exc
+    return None
 
 
 def _office_viewer_source(url):
@@ -183,7 +217,9 @@ def _legacy_attachment_upload_path(attachment_id):
                     for candidate in row:
                         path = urllib.parse.urlparse(candidate or '').path
                         if marker in path:
-                            relative = path.split(marker, 1)[1].lstrip('/')
+                            # Decoded like the hint path: stored names keep
+                            # their spaces, the audit URL carries %20.
+                            relative = urllib.parse.unquote(path.split(marker, 1)[1]).lstrip('/')
                             if relative.startswith(f'_legacy_files/{attachment_id}/'):
                                 return relative
         except (DatabaseError, KeyError):
@@ -317,8 +353,12 @@ def _load_legacy_attachment_bytes(attachment_id, upload_hint=''):
     for upload_path in upload_paths:
         opened = upload_storage.open_stream(upload_path)
         if opened is not None:
-            stream, _total, _content_type = opened
-            return b''.join(stream), None
+            stream, total, _content_type = opened
+            data = b''.join(stream)
+            # A zero-byte placeholder is not the file; fall through to the
+            # original source below instead of handing back an empty document.
+            if total and data:
+                return data, None
 
     try:
         upstream = _open_legacy_attachment(attachment_id)
@@ -335,6 +375,26 @@ def _load_legacy_attachment_bytes(attachment_id, upload_hint=''):
     return upstream.read(), None
 
 
+def _open_private_course_file(file_id, range_header=None):
+    """Course video from a private Drive, via the authorised account, or None.
+
+    None also when the Drive API is not configured, the file is not course
+    content, or the API refuses: the anonymous path then answers as before.
+    """
+    from . import google_drive_api
+
+    if not google_drive_api.is_configured() or not google_drive_api.is_course_linked(file_id):
+        return None
+    try:
+        return google_drive_api.open_file(file_id, range_header)
+    except urllib.error.HTTPError as exc:
+        logger.warning("Drive API refused course file %s: HTTP %s", file_id, exc.code)
+        exc.close()
+    except (urllib.error.URLError, TimeoutError, KeyError, ValueError):
+        logger.exception("Drive API request failed for course file %s", file_id)
+    return None
+
+
 @require_GET
 def google_drive_media(request, file_id):
     if not GOOGLE_DRIVE_ID_RE.match(file_id or ""):
@@ -343,7 +403,7 @@ def google_drive_media(request, file_id):
     range_header = request.headers.get("Range")
 
     try:
-        upstream = _open_google_drive_file(file_id, range_header)
+        upstream = _open_private_course_file(file_id, range_header) or _open_google_drive_file(file_id, range_header)
         if upstream is None:
             return HttpResponse("Google Drive returned a page instead of a media file.", status=502)
     except urllib.error.HTTPError as exc:
@@ -351,10 +411,14 @@ def google_drive_media(request, file_id):
     except urllib.error.URLError:
         return HttpResponse("Could not load media.", status=502)
 
+    content_type = upstream.headers.get("Content-Type") or "application/octet-stream"
     response = StreamingHttpResponse(
-        _async_stream_response(upstream),
+        # Chosen by server interface, not by content type: Drive and blob storage
+        # often label a video application/octet-stream, and an async iterator
+        # under WSGI is read to the end before the first byte is sent.
+        video_chunks(request, _stream_response(upstream)),
         status=getattr(upstream, "status", 200),
-        content_type=upstream.headers.get("Content-Type") or "application/octet-stream",
+        content_type=content_type,
     )
     for header in ("Content-Length", "Content-Range", "Accept-Ranges"):
         value = upstream.headers.get(header)
@@ -367,6 +431,9 @@ def google_drive_media(request, file_id):
 
 
 @require_GET
+# Same reason as curriculum uploads: the site-wide DENY blanks a PDF the learner
+# page frames itself. SAMEORIGIN still refuses every other site.
+@xframe_options_sameorigin
 def legacy_attachment_media(request, attachment_id):
     if not LEGACY_ATTACHMENT_ID_RE.match(attachment_id or ""):
         return HttpResponse("Invalid attachment id.", status=400)
@@ -374,7 +441,8 @@ def legacy_attachment_media(request, attachment_id):
     upload_path = _legacy_attachment_upload_path(attachment_id)
     if upload_path:
         probe = upload_storage.open_stream(upload_path, offset=0, length=1)
-        if probe is not None:
+        # Zero-byte placeholders skip to the original source further down.
+        if probe is not None and probe[1]:
             _probe_stream, total_size, content_type = probe
             start, end = 0, max(total_size - 1, 0)
             range_header = request.headers.get("Range") or ''
@@ -391,10 +459,13 @@ def legacy_attachment_media(request, attachment_id):
             opened = upload_storage.open_stream(upload_path, offset=start, length=length)
             if opened is not None:
                 stream, _total, opened_type = opened
+                file_type = mimetypes.guess_type(upload_path)[0] or ''
+                served_type = opened_type or content_type or (
+                    file_type if file_type.startswith('video/') else 'application/octet-stream')
                 response = StreamingHttpResponse(
-                    stream,
+                    video_chunks(request, stream),
                     status=206 if match else 200,
-                    content_type=opened_type or content_type or 'application/octet-stream',
+                    content_type=served_type,
                 )
                 response['Accept-Ranges'] = 'bytes'
                 response['Content-Length'] = str(length)
@@ -419,7 +490,10 @@ def legacy_attachment_media(request, attachment_id):
         return HttpResponse("Legacy attachment returned an HTML page, not a file.", status=502)
 
     response = StreamingHttpResponse(
-        _async_stream_response(upstream),
+        # Chosen by server interface, not by content type: Drive and blob storage
+        # often label a video application/octet-stream, and an async iterator
+        # under WSGI is read to the end before the first byte is sent.
+        video_chunks(request, _stream_response(upstream)),
         status=getattr(upstream, "status", 200),
         content_type=content_type,
     )

@@ -966,6 +966,34 @@ class ServerSentUpdateEmailTests(unittest.TestCase):
         self.assertIn('Invited learners', copies['tutor@example.invalid'][1])
         self.assertEqual((status['total'], status['accepted']), (2, 2))
 
+    def send_with_one_learner_unconfirmed(self, added):
+        """A calendar whose stored learner two@ Microsoft does not list, plus a newly added co-organiser."""
+        context = EmailTests('test_create_sends_every_schedule_email_in_one_call')
+        series, view, transport, verify = context.create_context()
+        series['co_organizers'] = ['co@example.invalid', 'organizer@example.invalid', 'newco@example.invalid']
+        verify.return_value = {'attendees': [{'emailAddress': {'address': 'one@example.invalid'}}]}
+        with patch.dict(sys.modules, {'curriculum_api.views': view, 'coach_api.views': transport, 'login': types.SimpleNamespace(email_azure=self.mail)}), \
+                patch.dict(service, {'verify_calendar': verify}):
+            return service['send_creation_emails']('LIVE-ONE', ledger=self.ledger, send=self.sender, added=added)
+
+    def test_an_unconfirmed_learner_already_on_the_calendar_does_not_block_an_added_co_organiser(self):
+        status = self.send_with_one_learner_unconfirmed(['NEWCO@example.invalid'])
+        copies = {call.args[0]: call.args[1] for call in self.sender.call_args_list}
+        # Only the person added is emailed, and they get the roster copy.
+        self.assertEqual(set(copies), {'newco@example.invalid'})
+        self.assertIn('Invited learners', copies['newco@example.invalid'][1])
+        self.assertEqual((status['total'], status['accepted']), (1, 1))
+
+    def test_an_added_learner_microsoft_does_not_list_is_still_not_emailed(self):
+        status = self.send_with_one_learner_unconfirmed(['two@example.invalid', 'newco@example.invalid'])
+        self.assertEqual(status['code'], 'schedule_email_blocked')
+        self.sender.assert_not_called()
+
+    def test_an_unconfirmed_learner_still_blocks_the_whole_calendar_email(self):
+        status = self.send_with_one_learner_unconfirmed(None)
+        self.assertEqual(status['code'], 'schedule_email_blocked')
+        self.sender.assert_not_called()
+
     def week_view(self):
         return types.SimpleNamespace(
             parse_graph_datetime=lambda value: utc_datetime(value) if value else None,

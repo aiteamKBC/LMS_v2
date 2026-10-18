@@ -54,9 +54,9 @@ export default function MyLearningPage({ view = 'catalogue' }: { view?: 'catalog
   // On a hard refresh the in-memory learner pin is empty until /login_api/me/
   // settles. Use that authoritative account identity directly for learner
   // self-view; staff/admin accounts still require an explicit URL selection.
-  const accountLearner = auth.account?.role === 'learner' && auth.account.subjectId != null
+  const accountLearner = useMemo(() => auth.account?.role === 'learner' && auth.account.subjectId != null
     ? { kind: auth.account.learnerType === 'commercial' ? 'commercial' as const : 'apprenticeship' as const, id: String(auth.account.subjectId) }
-    : null;
+    : null, [auth.account]);
   const { kind, id } = accountLearner || resolved;
   const reviewAccount = auth.account && auth.account.role !== 'learner';
   useEffect(() => {
@@ -64,9 +64,16 @@ export default function MyLearningPage({ view = 'catalogue' }: { view?: 'catalog
     const params = new URLSearchParams(location.search);
     navigate({ pathname: `/learner/my-learning/${encodeURIComponent(kind)}/${encodeURIComponent(id)}`, search: params.toString() }, { replace: true });
   }, [accountLearner, id, isInitialized, kind, location.search, navigate, reviewAccount, urlId]);
-  const learnerNavItems = useMemo(() => learnerNav.items.map(item => item.id === 'learner-my-learning' && kind && id
-    ? { ...item, href: `/learner/my-learning/${encodeURIComponent(kind)}/${encodeURIComponent(id)}` }
-    : item), [id, kind]);
+  const learnerNavItems = useMemo(() => learnerNav.items.map(item => {
+    if (!kind || !id) return item;
+    if (item.id === 'learner-my-learning') {
+      return { ...item, href: `/learner/my-learning/${encodeURIComponent(kind)}/${encodeURIComponent(id)}` };
+    }
+    if (item.id === 'learner-feedback' && reviewAccount) {
+      return { ...item, href: `/learner/feedback?learnerId=${encodeURIComponent(id)}&kind=${encodeURIComponent(kind)}` };
+    }
+    return item;
+  }), [id, kind, reviewAccount]);
   const { isRealMode, real, loading, loadError, refresh } = useLearnerDetailParam(kind, id);
   const { canProgress, showReadOnlyNotice } = useLearnerWorkspaceAccess(id);
 
@@ -84,6 +91,9 @@ export default function MyLearningPage({ view = 'catalogue' }: { view?: 'catalog
   // learner's assigned free courses. Map view is always the module workspace.
   const requestedMode = new URLSearchParams(location.search).get('mode');
   const mode = view === 'map' ? 'courses' : requestedMode === 'free' ? 'free' : 'courses';
+  const courseParams = new URLSearchParams(location.search);
+  const subjectOpen = view === 'catalogue' && mode === 'courses' && tab === 'modules'
+    && !!(courseParams.get('subject') || courseParams.get('module') || courseParams.get('activity'));
   const setMode = (next: string) => {
     if (next === mode) return;
     const params = new URLSearchParams(location.search);
@@ -94,7 +104,7 @@ export default function MyLearningPage({ view = 'catalogue' }: { view?: 'catalog
   const canTake = !!(kind && id) && canProgress;
 
   const subtitle = real
-    ? [real.programme, real.employer, real.cohort ? `Cohort ${real.cohort}` : ''].filter(Boolean).join(' · ')
+    ? [real.programme, real.name, real.cohort ? `Cohort ${real.cohort}` : ''].filter(Boolean).join(' · ')
     : '';
 
   const tabs: PageTabItem[] = [
@@ -116,7 +126,7 @@ export default function MyLearningPage({ view = 'catalogue' }: { view?: 'catalog
       breadcrumbCurrentLabel={view === 'map' ? 'Learner’s Map' : 'My Learning'}
     >
       <PageContainer><div className={learningStyles.learningPage}>
-        {view === 'catalogue' && isRealMode && (
+        {view === 'catalogue' && isRealMode && !subjectOpen && (
           <ModeSwitch
             value={mode}
             onChange={setMode}
@@ -139,8 +149,8 @@ export default function MyLearningPage({ view = 'catalogue' }: { view?: 'catalog
             <FreeCoursesTab kind={kind} id={id} />
           ) : (
             <>
-              {view === 'catalogue' && <LearningHero />}
-              {view === 'catalogue' && <PageTabs className={learningStyles.catalogueTabs} items={tabs} value={tab} onChange={(v) => setTab(v as TabKey)} label="My Learning section" />}
+              {view === 'catalogue' && !subjectOpen && <LearningHero />}
+              {view === 'catalogue' && !subjectOpen && <PageTabs className={learningStyles.catalogueTabs} items={tabs} value={tab} onChange={(v) => setTab(v as TabKey)} label="My Learning section" />}
 
               {tab === 'modules' ? (
                 <ModulesTab key={`${kind}:${id}`} real={real} loading={loading} loadError={loadError} kind={kind} id={id} showReadOnlyNotice={showReadOnlyNotice} view={view} onRefresh={refresh} />
@@ -195,6 +205,7 @@ export function ModulesTab({ real, loading, loadError, kind, id, showReadOnlyNot
       <SubjectCardsPanel
         metrics={metrics.data}
         view={view} schedule={schedule.data} scheduleLoading={schedule.loading} upcomingSessions={upcomingSchedule.data?.sessions}
+        moduleProgress={upcomingSchedule.data?.moduleProgress}
         kind={kind} learnerId={id} real={real}
         data={activityData ?? null}
         loading={loading || (activityAvailable && activity.loading)}
@@ -209,7 +220,7 @@ export function ModulesTab({ real, loading, loadError, kind, id, showReadOnlyNot
 /* ═══════════════════════════════════════════════════════
    QUIZZES TAB — compact filterable list, replacing the big cards
    ═══════════════════════════════════════════════════════ */
-type QuizFilter = 'all' | 'todo' | 'completed' | 'failed';
+type QuizFilter = 'all' | 'todo' | 'completed' | 'failed' | 'unavailable';
 
 export function QuizzesTab({ real, loading, loadError, kind, id, canTake, navigate, onRetry }: {
   real: ReturnType<typeof useLearnerDetailParam>['real'];
@@ -226,8 +237,12 @@ export function QuizzesTab({ real, loading, loadError, kind, id, canTake, naviga
 
   const rows = useMemo(() => quizzes.map((q) => {
     const attempts = q.attempts;
-    const best = attempts.length ? attempts.reduce((b, a) => (gradePercent(a.grade) > gradePercent(b.grade) ? a : b)) : null;
-    const status: QuizFilter = !best ? 'todo' : best.passed ? 'completed' : 'failed';
+    const best = attempts.length ? attempts.reduce((b, a) => (
+      (a.grade != null && b.grade == null) || gradePercent(a.grade) > gradePercent(b.grade) ? a : b
+    )) : null;
+    const status: QuizFilter = !best ? 'todo'
+      : attempts.some((attempt) => attempt.passed === true) ? 'completed'
+      : attempts.some((attempt) => attempt.passed === false) ? 'failed' : 'unavailable';
     return { ...q, best, status };
   }), [quizzes]);
 
@@ -236,6 +251,7 @@ export function QuizzesTab({ real, loading, loadError, kind, id, canTake, naviga
     todo: rows.filter((r) => r.status === 'todo').length,
     completed: rows.filter((r) => r.status === 'completed').length,
     failed: rows.filter((r) => r.status === 'failed').length,
+    unavailable: rows.filter((r) => r.status === 'unavailable').length,
   }), [rows]);
 
   const tabs: PageTabItem[] = [
@@ -243,6 +259,7 @@ export function QuizzesTab({ real, loading, loadError, kind, id, canTake, naviga
     { value: 'todo', label: 'To Do', count: counts.todo },
     { value: 'completed', label: 'Completed', count: counts.completed, tone: 'positive' },
     { value: 'failed', label: 'Failed', count: counts.failed, tone: 'critical', hideWhenEmpty: true },
+    { value: 'unavailable', label: 'Result unavailable', count: counts.unavailable, hideWhenEmpty: true },
   ];
 
   const filtered = filter === 'all' ? rows : rows.filter((r) => r.status === filter);
@@ -305,12 +322,12 @@ function QuizListRow({ quiz, canTake, onTake }: {
       <td className="whitespace-nowrap px-4 py-3 text-[12px] text-foreground-600">{weekLabel || EMPTY_VALUE}</td>
       <td className="whitespace-nowrap px-4 py-3 text-[12px] text-foreground-600">{weekDate || EMPTY_VALUE}</td>
       <td className="whitespace-nowrap px-4 py-3 text-[12px] font-semibold text-foreground-800">
-        {best ? `${gradePercent(best.grade)}%` : EMPTY_VALUE}
+        {best && best.grade != null ? `${gradePercent(best.grade)}%` : EMPTY_VALUE}
       </td>
       <td className="whitespace-nowrap px-4 py-3">
         <StatusBadge
           tone={status === 'completed' ? 'positive' : status === 'failed' ? 'critical' : 'neutral'}
-          label={status === 'completed' ? 'Completed' : status === 'failed' ? 'Failed' : 'To do'}
+          label={status === 'completed' ? 'Completed' : status === 'failed' ? 'Failed' : status === 'unavailable' ? 'Result unavailable' : 'To do'}
         />
       </td>
       <td className="whitespace-nowrap px-4 py-3 text-right">

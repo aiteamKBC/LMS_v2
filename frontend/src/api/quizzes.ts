@@ -26,6 +26,7 @@ export interface QuizAnswerOption {
 export interface QuizQuestion {
   id: number;
   text: string;
+  imageUrl?: string;
   type: QuestionType;
   points: number;
   sortOrder: number;
@@ -37,6 +38,7 @@ export interface QuizQuestion {
 
 export interface Quiz {
   id: number;
+  unavailableReason?: string | null;
   title: string;
   module: string | null;
   programme: string | null;
@@ -79,6 +81,7 @@ export interface QuizSubmission {
 export interface QuizQuestionResult {
   questionId: number;
   questionText: string;
+  imageUrl?: string;
   type: QuestionType;
   points: number;
   earned: number;
@@ -189,7 +192,7 @@ export function submitQuizAttempt(
     method: 'POST',
     body: JSON.stringify(submission),
   }).then((result) => {
-    invalidateLearnerDetailCache(kind, learnerId);
+    invalidateLearnerDetailCache(kind, learnerId, { quizId });
     return result;
   });
 }
@@ -230,7 +233,7 @@ export function completeQuizReading(
     method: 'POST',
     body: JSON.stringify({ action: 'complete', trackingToken, timeTakenSeconds, timeEntryMode }),
   }).then((reading) => {
-    invalidateLearnerDetailCache(kind, learnerId);
+    invalidateLearnerDetailCache(kind, learnerId, { quizId });
     return reading;
   });
 }

@@ -63,8 +63,26 @@ export type PlanModuleSummary = {
   activityCounts?: Record<string, number>;
   ksbCodes?: string[];
   ksbMappingMissing?: boolean;
+  monthlyActivities?: Array<{
+    id: string;
+    componentId?: string | null;
+    title: string;
+    type: string;
+    date: string;
+    weekTitle?: string | null;
+    expectedHours: number | null;
+    completed: boolean;
+    ksbCodes: string[];
+  }>;
+};
+export type PlanModuleProgress = {
+  attendance: { attended: number; total: number };
+  hours: { actual: number };
+  ksb: { completed: number; total: number; achievedCodes?: string[] };
 };
 export type TrainingPlanDashboard = {
+  /** Accepted ledger hours, scoped to the module and activity rather than completion. */
+  moduleActivityHours?: Record<string, { components: Record<string, number>; quizzes: Record<string, number> }> | null;
   /** Per-module activity/hour/KSB summaries already loaded by the overview read. */
   planSubjects?: PlanModuleSummary[];
   months: Record<string, PlanMonth>;
@@ -79,6 +97,8 @@ export type TrainingPlanDashboard = {
   requiredOtjh?: number | null;
   actual: { month: string; groupId: string | null; hours: number; count: number }[];
   actualAvailable: boolean;
+  /** Learner-progress-entry metrics keyed by the assigned curriculum module id. */
+  moduleProgress?: Record<string, PlanModuleProgress>;
   modules: PlanModule[];
   moduleLinks: Record<string, { id: string; title: string }>;
   sessions: PlanSession[];
