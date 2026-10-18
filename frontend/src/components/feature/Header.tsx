@@ -267,7 +267,7 @@ export function Header({ accountButtonRef, pageTitle, pageIcon, pageSubtitle, he
   return (
     <>
     {/* Every workspace shares the same frame as its icon rail. */}
-    <header className={`kbc-workspace-topbar workspace-topbar relative mx-2 mb-2 mt-2 flex h-16 shrink-0 items-center gap-2 overflow-visible rounded-[20px] border-b border-foreground-100 bg-background-50 px-2 sm:px-3 md:gap-3 md:px-4 lg:ml-0 lg:mr-3 lg:mt-3 lg:gap-4 lg:px-5 [&_.kbc-workspace-switcher-button]:h-10 [&_.kbc-workspace-switcher-button]:gap-2.5 [&_.kbc-workspace-switcher-button]:px-3 [&_.kbc-workspace-switcher-button]:focus-visible:outline-none [&_.kbc-workspace-switcher-button]:focus-visible:ring-2 [&_.kbc-workspace-switcher-button]:focus-visible:ring-white/80 ${usesLearnerHeader ? 'kbc-learner-header' : ''}`}>
+    <header className={`kbc-workspace-topbar workspace-topbar relative mx-2 mb-2 mt-2 flex h-16 shrink-0 items-center gap-2 overflow-visible rounded-[20px] border-b border-foreground-100 bg-background-50 px-2 sm:px-3 md:gap-3 md:px-4 lg:ml-0 lg:mr-3 lg:mt-3 lg:gap-4 lg:px-5 [&_.kbc-workspace-switcher-button]:h-10 [&_.kbc-workspace-switcher-button]:gap-2.5 [&_.kbc-workspace-switcher-button]:px-3 [&_.kbc-workspace-switcher-button]:focus-visible:outline-none [&_.kbc-workspace-switcher-button]:focus-visible:ring-2 [&_.kbc-workspace-switcher-button]:focus-visible:ring-white/80 ${role === 'coach' ? 'z-40' : ''} ${usesLearnerHeader ? 'kbc-learner-header' : ''}`}>
       {usesLearnerHeader && (
         <div
           aria-hidden="true"
