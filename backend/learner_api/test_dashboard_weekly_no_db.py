@@ -58,30 +58,29 @@ class DashboardWeeklyTests(SimpleTestCase):
             result = weekly.read_dashboard_weekly(source, 265, module_id='M1')
         self.assertIs(result, payload)
         self.assertEqual(set(result), {'weeks', 'selectedWeek'})
-        self.assertEqual(read.call_args.kwargs, {'module_id': 'M1', 'include_weeks': True, 'include_navigation': True,
-                                                'student_projection': True})
+        self.assertEqual(read.call_args.kwargs, {'module_id': 'M1', 'include_weeks': True, 'include_actions': True})
         self.assertIs(read.call_args.args[0].profile, profile)
         identity.assert_called_once_with(source, 265, heal=False, fields=('id', 'enrolment_id'))
 
     def test_week_detail_omits_rail_and_preserves_delivery_slot_identity(self):
-        selected = {'id': 'M1:2', 'moduleId': 'M1', 'kind': 'live-session', 'slotNumber': 2,
-                    'activities': [], 'summary': {}, 'liveSession': None}
+        navigation = {'id': 'M1:2', 'moduleId': 'M1', 'kind': 'live-session', 'slotNumber': 2}
+        selected = {'weekId': 'M1:2', 'activities': [], 'summary': {}, 'liveSession': None}
         source = SimpleNamespace(pk=265)
         with patch.object(weekly.canonical_learning, 'require_profile', return_value={'id': 17}), \
              patch.object(weekly, 'learner_profile_for_source', return_value=SimpleNamespace(pk=17, enrolment_id=265)), \
-             patch.object(weekly, 'read_weekly_learning', return_value={'weeks': ['not returned'], 'selectedWeek': selected}) as read:
+             patch.object(weekly, 'read_weekly_learning', return_value={'modules': [], 'weeks': [navigation], 'selectedWeek': selected}) as read:
             result = weekly.read_dashboard_weekly(source, 265, module_id='M1', week_id='slot:M1:2')
-        self.assertEqual(result, {'selectedWeek': selected})
+        self.assertEqual(result, {'modules': [], 'weeks': [navigation], 'selectedWeek': selected})
         self.assertEqual(read.call_args.args[1], 'M1:2')
         self.assertFalse(read.call_args.kwargs['include_weeks'])
 
     def test_routing_loads_only_selected_week_without_progress_or_unrelated_quizzes(self):
-        selected = {'id': 'M1:1', 'moduleId': 'M1', 'weekId': 'W1', 'kind': 'live-session', 'slotNumber': 1,
-                    'activities': [{'id': 'C1', 'completed': False, 'expectedHours': 2}], 'summary': {}, 'liveSession': None}
+        navigation = {'id': 'M1:1', 'moduleId': 'M1', 'weekId': 'W1', 'kind': 'live-session', 'slotNumber': 1}
+        selected = {'weekId': 'M1:1', 'activities': [{'id': 'C1', 'status': 'not-started', 'expectedHours': 2}], 'summary': {}, 'liveSession': None}
         source = SimpleNamespace(pk=265, programme='P')
         with patch.object(weekly.canonical_learning, 'require_profile', return_value={'id': 17}), \
              patch.object(weekly, 'learner_profile_for_source', return_value=SimpleNamespace(pk=17, enrolment_id=265)), \
-             patch.object(weekly, 'read_weekly_learning', return_value={'weeks': [], 'selectedWeek': selected}), \
+             patch.object(weekly, 'read_weekly_learning', return_value={'modules': [], 'weeks': [navigation], 'selectedWeek': selected}), \
              patch.object(weekly, '_resolve_from_master', return_value=([], [], [{'componentId': 'C1', 'type': 'reflection'}])) as routing, \
              patch.object(weekly, '_apply_programme_assignment_template', side_effect=lambda rows, programme: rows):
             result = weekly.read_dashboard_weekly(source, 265, module_id='M1', week_id='slot:M1:1')

@@ -4,7 +4,7 @@ import { useLiveLearnerRead } from './useLiveLearnerRead';
 import type { DashboardPlanState } from '@/pages/workspace/learner/useDashboardPlan';
 import { useCallback, useRef } from 'react';
 
-export function useDashboardTabsData(kind: LearnerKind | null, id: string | undefined, enabled: boolean, opened: ReadonlySet<string>) {
+export function useDashboardTabsData(kind: LearnerKind | null, id: string | undefined, enabled: boolean, opened: ReadonlySet<string>, active?: string) {
   const lastRead = useRef('');
   const reader = useCallback((requestedKind: LearnerKind, requestedId: string, signal?: AbortSignal, fresh = false) => {
     const identity = `${requestedKind}:${requestedId}`;
@@ -14,7 +14,7 @@ export function useDashboardTabsData(kind: LearnerKind | null, id: string | unde
     // learner switches; it must not bypass another learner's valid snapshot.
     return dashboardOverview.read(requestedKind, requestedId, signal, fresh && !changed);
   }, []);
-  const read = useLiveLearnerRead(kind, id, enabled && opened.has('overview'), reader, dashboardOverview.peek);
+  const read = useLiveLearnerRead(kind, id, enabled && opened.has('overview'), reader, dashboardOverview.peek, active === undefined || active === 'overview');
   // Shared tab props retain their legacy plan interface. Real Overview renders
   // compact facts directly without a legacy schedule or learning merge.
   const plan: DashboardPlanState = {

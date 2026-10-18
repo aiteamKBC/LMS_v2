@@ -1,9 +1,11 @@
 import { startActivityClock } from '@/lib/activityClock';
+import { fetchAttachmentResource, fetchPdfResource } from '@/api/pdfResource';
 import { observeRewardInterval, flushRewardObservations, clearRewardObservations } from '@/lib/rewardTracking';
 import { SessionResults } from '@/components/feature/SessionResults';
-import { narrationFromHtml, narrationFromPdf, useReadingNarration } from './readingNarration';
+import { narrationFromHtml, narrationFromPdf, ReadingNarrationError, ReadingPdfNarrationContext, useReadingNarration, type PdfPageReader } from './readingNarration';
 import { parsePersonalLearning } from '@/lib/personalLearning';
-import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
+import { PreviousLearningNotice } from '@/pages/learner/my-learning/PreviousLearningNotice';
+import { useCallback, useContext, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { Mic } from 'lucide-react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
@@ -822,6 +824,7 @@ export default function ComponentViewPage() {
           /* ── consume phase: content + details + sidebar ── */
           <div className="grid grid-cols-1 lg:grid-cols-[1fr_320px] gap-6 items-start">
             <div className="min-w-0">
+              <PreviousLearningNotice learning={component.previousLearning} kind={kind} learnerId={id} />
               {isVideo && activityHeading}
               {!isAssignment && !recordedEvent && (
                 <ComponentContent key={timerStorageKey} component={{ ...component, liveSessionUrl: parsePersonalLearning(id) ? null : component.teamsLiveSessionId && component.teamsSessionNumber
@@ -1627,7 +1630,14 @@ function AccessibleReadingMaterial({
   const [saved, setSaved] = useState(true);
   const [saveError, setSaveError] = useState('');
   const narration = useReadingNarration(`${componentId}:${component.resourceUrl || ''}:${sourceHtml}`);
-  const { speaking } = narration;
+  const { speaking, stop: stopNarration } = narration;
+  const pdfReaders = useRef(new Map<string, PdfPageReader>());
+  const registerPdfReader = useCallback((id: string, reader: PdfPageReader | null) => {
+    // A changed/closed PDF page invalidates any queued text from that page.
+    stopNarration();
+    if (reader) pdfReaders.current.set(id, reader);
+    else pdfReaders.current.delete(id);
+  }, [stopNarration]);
   const [rulerY, setRulerY] = useState<number | null>(null);
   const contentRef = useRef<HTMLDivElement | null>(null);
   const readingBodyRef = useRef<HTMLDivElement | null>(null);
@@ -1692,8 +1702,12 @@ function AccessibleReadingMaterial({
       narration.stop();
       return;
     }
-    void narration.read(() => Array.from(readingBodyRef.current?.querySelectorAll('[data-reading-text]') || [])
-      .flatMap(narrationFromHtml));
+    void narration.read(async () => {
+      const text = Array.from(readingBodyRef.current?.querySelectorAll('[data-reading-text]') || [])
+        .flatMap(narrationFromHtml);
+      const pages = await Promise.all(Array.from(pdfReaders.current.values(), readPage => readPage()));
+      return [...text, ...pages.flat()];
+    });
   };
 
   const downloadText = async () => {
@@ -1744,6 +1758,7 @@ function AccessibleReadingMaterial({
       {downloadError && <p role="alert" className="mb-3 text-sm text-red-700">{downloadError}</p>}
       {saveError && <p role="alert" className="mb-3 text-sm text-red-700">{saveError}</p>}
       {narration.speechError && <p role="alert" className="mb-3 text-sm text-red-700">{narration.speechError}</p>}
+      <ReadingPdfNarrationContext.Provider value={registerPdfReader}>
       <div ref={readingBodyRef}>
       {component.contentHtml && (
         <div
@@ -1788,6 +1803,7 @@ function AccessibleReadingMaterial({
         <LinkedReadingPreview key={file.url} url={file.url} title={file.label} fileName={file.fileName} />
       ))}
       </div>
+      </ReadingPdfNarrationContext.Provider>
     </>
   );
 }
@@ -1992,7 +2008,7 @@ export function InlineAttachmentPreview({ url, title, fileName, readingPreferenc
 
     async function loadPreview() {
       try {
-        const response = await fetch(previewUrl, { credentials: 'same-origin' });
+        const response = await fetchAttachmentResource(previewUrl);
         if (!response.ok) throw new Error(await fileRequestError(response));
 
         if (isWord) {
@@ -2131,8 +2147,33 @@ function PdfCanvasPreview({ url, title, fileName, readingPreferences, annotation
   const [exportError, setExportError] = useState<string | null>(null);
   const narration = useReadingNarration(`${url}:${pageNumber}`);
   const { speaking } = narration;
+  const registerPdfReader = useContext(ReadingPdfNarrationContext);
+  const pdfReaderId = useId();
   const [rulerY, setRulerY] = useState<number | null>(null);
   const preferences = readingPreferences || DEFAULT_READING_PREFERENCES;
+
+  const currentPageNarration = useCallback(async () => {
+    if (status !== 'ready' || !pdf) {
+      throw new ReadingNarrationError(status === 'loading'
+        ? 'The PDF is still loading. Please wait, then try Read aloud again.'
+        : 'The open PDF could not be read. Please reload its preview and try again.');
+    }
+    const page = await pdf.getPage(pageNumber);
+    const content = await page.getTextContent();
+    const blocks = narrationFromPdf(content.items);
+    if (!blocks.length) {
+      throw new ReadingNarrationError('No readable text was found on the open PDF page. Scanned pages need a text version to be read aloud.');
+    }
+    return blocks;
+  }, [pageNumber, pdf, status]);
+
+  useEffect(() => {
+    registerPdfReader?.(pdfReaderId, currentPageNarration);
+  }, [registerPdfReader, pdfReaderId, currentPageNarration]);
+
+  // Keep a preview's place in the narration order when its page changes.
+  // Remove it only when the preview closes or the activity unmounts.
+  useEffect(() => () => registerPdfReader?.(pdfReaderId, null), [registerPdfReader, pdfReaderId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -2143,12 +2184,11 @@ function PdfCanvasPreview({ url, title, fileName, readingPreferences, annotation
       try {
         setStatus('loading');
         setError(null);
-        const response = await fetch(url, {
-          credentials: 'same-origin',
-          headers: { Accept: 'application/pdf,*/*' },
-        }).catch(error => { requestFailed = true; throw error; });
+        const response = await fetchPdfResource(url).catch(error => { requestFailed = true; throw error; });
         if (!response.ok) throw new Error(await fileRequestError(response));
         const buffer = await response.arrayBuffer();
+        if (!buffer.byteLength) throw new Error('The PDF response contains no file data. Please try opening the original file.');
+        if (cancelled) return;
         const { GlobalWorkerOptions, getDocument } = await import('pdfjs-dist');
         GlobalWorkerOptions.workerSrc = new URL('pdfjs-dist/build/pdf.worker.min.mjs', import.meta.url).toString();
         const document = await getDocument({ data: new Uint8Array(buffer) }).promise;
@@ -2257,11 +2297,7 @@ function PdfCanvasPreview({ url, title, fileName, readingPreferences, annotation
       narration.stop();
       return;
     }
-    await narration.read(async () => {
-      const page = await pdf.getPage(pageNumber);
-      const content = await page.getTextContent();
-      return narrationFromPdf(content.items);
-    });
+    await narration.read(currentPageNarration);
   };
 
   const downloadAnnotatedPdf = async () => {

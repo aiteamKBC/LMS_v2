@@ -18,5 +18,6 @@ describe('dashboard Rewards tab preview', () => {
     const preview = (await screen.findByText('Available points')).closest('[inert]');
     expect(preview).toHaveAttribute('aria-hidden', 'true');
     expect(screen.queryByRole('link', { name: 'View rewards' })).not.toBeInTheDocument();
+    expect(fetch).not.toHaveBeenCalled();
   });
 });

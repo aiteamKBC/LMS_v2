@@ -153,4 +153,7 @@ class Command(BaseCommand):
             failed += bool(error)
         self.stdout.write(f'Processed {processed} session jobs; {failed} need retry.')
         if failed:
-            raise CommandError('Some session jobs need retry; saved results remain available.')
+            error = CommandError('Some session jobs need retry; saved results remain available.')
+            error.session_jobs_need_retry = True
+            error.failed_jobs = failed
+            raise error

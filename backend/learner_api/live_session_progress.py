@@ -10,6 +10,7 @@ from django.db import connections
 from django.utils import timezone
 
 from .attendance_rules import attendance_outcome
+from .projection_performance import projection_call
 
 
 def _live(component):
@@ -20,12 +21,14 @@ def project_live_credits(components, register, *, now=None):
     from .attendance_lectures import LIVE_SESSION_MINUTES
     now = now or timezone.now()
     components = {str(c['componentId']): c for c in components if c.get('componentId') and _live(c)}
+    register_by_module = defaultdict(list)
+    for row in register:
+        if row.get('source') == 'microsoft-teams':
+            register_by_module[row.get('module_catalogue_id')].append(row)
     candidates = defaultdict(list)
     for component_id, component in components.items():
         matches = []
-        for row in register:
-            if row.get('source') != 'microsoft-teams' or row.get('module_catalogue_id') != component.get('moduleId'):
-                continue
+        for row in register_by_module.get(component.get('moduleId'), []):
             occurrence = str(row.get('attendance_source_occurrence_id') or row.get('occurrence_id') or row.get('session_id') or '')
             if component.get('teamsOccurrenceId'):
                 matched = str(component['teamsOccurrenceId']) in {occurrence, str(row.get('session_id') or '')}
@@ -90,8 +93,8 @@ def read_live_credits(source, *, components=None, module_ids=None, register=None
     if not live:
         return []
     if register is None:
-        register = lecture_register(source, module_ids=sorted({c['moduleId'] for c in live}))
-    return project_live_credits(live, register)
+        register = lecture_register(source, module_ids=sorted({c['moduleId'] for c in live}), credit_projection=True)
+    return projection_call('credit_projection', project_live_credits, live, register)
 
 
 def supplement_component_progress(progress, credits):
@@ -119,16 +122,29 @@ def supplement_module_hours(metrics, records, credits):
     """
     from . import canonical_learning as canonical
     result = {key: {**value, 'hours': dict(value['hours'])} for key, value in metrics.items()}
+    credits = credits if isinstance(credits,(list,tuple)) else list(credits)
+    component_ids = {credit['componentId'] for credit in credits if credit['moduleId'] in result}
+    if not component_ids:
+        return result
+    seconds_by_component = defaultdict(float)
+    corrected = set()
+    for record in records:
+        component_id = str(record.get('component_ref') or '')
+        if component_id not in component_ids:
+            continue
+        if record.get('actual_basis') == 'staff:module-progress':
+            corrected.add(component_id)
+        if canonical.counts_as_actual(record):
+            seconds_by_component[component_id] += canonical.number(record.get('actual_seconds'))
     seen = set()
     for credit in credits:
         component_id, module_id = credit['componentId'], credit['moduleId']
         if component_id in seen or module_id not in result:
             continue
         seen.add(component_id)
-        existing = [r for r in records if str(r.get('component_ref') or '') == component_id]
-        if any(r.get('actual_basis') == 'staff:module-progress' for r in existing):
+        if component_id in corrected:
             continue
-        seconds = sum(canonical.number(r.get('actual_seconds')) for r in existing if canonical.counts_as_actual(r))
+        seconds = seconds_by_component[component_id]
         result[module_id]['hours']['actual'] = round(
             result[module_id]['hours']['actual'] + max(0, credit['hours'] - seconds / 3600), 4)
     return result

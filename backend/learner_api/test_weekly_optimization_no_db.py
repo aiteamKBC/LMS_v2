@@ -15,7 +15,7 @@ def payload_size_report():
     import gzip
     import json
     from coach_api.weekly_learning import week_rows
-    from .dashboard_weekly import compact_weekly
+    from coach_api.weekly_contract import compact_weekly
     slots = [{'slotNumber': number, 'sessionNumber': number, 'type': 'live-session',
               'date': (date(2026, 10, 5) + timedelta(weeks=number - 1)).isoformat(),
               'weekId': f'W{number}', 'weekTitle': f'Week {number}'} for number in range(1, 53)]
@@ -29,7 +29,7 @@ def payload_size_report():
     weeks[0].update(completedActivities=4, totalActivities=8, progress=50)
     selected.update(completedActivities=4, totalActivities=8, progress=50)
     before = {'weeks': weeks, 'selectedWeek': selected}
-    after = compact_weekly(before)
+    after = compact_weekly(weeks=weeks, selected=selected, summary={key: value for key, value in selected['summary'].items() if key not in {'completedActivities', 'totalActivities', 'progress'}}, activities=[{key: value for key, value in activity.items() if key != 'completed'} for activity in selected['activities']])
     result = {}
     for label, payload in [('before', before), ('after', after)]:
         encoded = json.dumps(payload).encode('utf-8')
@@ -43,24 +43,24 @@ class WeeklyCompactContractTests(SimpleTestCase):
         self.assertLess(report['after']['json_bytes'], report['before']['json_bytes'])
         print('Weekly synthetic 52-week/8-selected-activity bytes:', report)
 
-    def test_v2_references_navigation_and_preserves_holidays_actions_and_null_hours(self):
-        from .dashboard_weekly import compact_weekly
+    def test_canonical_references_navigation_and_preserves_holidays_actions_and_null_hours(self):
+        from coach_api.weekly_contract import compact_weekly
         holiday = {'id': 'H1', 'label': 'College', 'startDate': '2026-12-27', 'endDate': '2026-12-29'}
         navigation = {'id': 'M1:1', 'moduleId': 'M1', 'moduleTitle': 'Module', 'kind': 'reading-week',
                       'slotNumber': 1, 'holidays': [holiday], 'sessionState': 'unmarked', 'attended': None}
         selected = {**navigation, 'summary': {'completedActivities': 0, 'totalActivities': 0, 'progress': 0,
                     'otjhHours': None}, 'liveSession': None, 'activities': []}
         before = {'weeks': [navigation], 'selectedWeek': selected}
-        result = compact_weekly(before)
-        self.assertEqual(result['version'], 2)
+        result = compact_weekly(weeks=[navigation], selected=navigation, summary={'otjhHours': None})
+        self.assertNotIn('version', result)
         self.assertEqual(result['selectedWeek']['weekId'], 'M1:1')
         self.assertNotIn('holidays', result['selectedWeek'])
         self.assertEqual(result['weeks'][0]['holidays'], [holiday])
         self.assertEqual(result['weeks'][0]['attendance'], 'unmarked')
         self.assertIsNone(result['selectedWeek']['summary']['otjhHours'])
-        detail = compact_weekly({'selectedWeek': selected}, detail=True)
-        self.assertNotIn('weeks', detail)
-        self.assertEqual(detail['week']['id'], 'M1:1')
+        detail = compact_weekly(weeks=[navigation], selected=navigation, summary={'otjhHours': None})
+        self.assertEqual(detail['weeks'][0]['id'], 'M1:1')
+        self.assertEqual(set(detail), {'modules', 'weeks', 'selectedWeek'})
         self.assertIn('attended', selected)  # serializer never mutates legacy contracts
 
 
@@ -201,7 +201,7 @@ class WeeklyCalendarTests(SimpleTestCase):
 
 class WeeklyAttendanceTests(SimpleTestCase):
     def test_canonical_attendance_is_separate_from_lifecycle(self):
-        from .dashboard_weekly import learner_attendance
+        from coach_api.weekly_contract import learner_attendance
         for state, attended, expected in [('unmarked', None, 'unmarked'), ('missed', False, 'absent'),
                                          ('attended', True, 'present'), ('upcoming', True, 'upcoming'),
                                          ('live', None, 'unmarked'), ('unscheduled', None, 'unmarked')]:

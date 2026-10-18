@@ -382,6 +382,9 @@ class RegisterTests(unittest.TestCase):
         def exclude(self, *_args, **kwargs): return self
         def only(self, *_args): return self
         def order_by(self, *_args): return self
+        def values(self, *fields):
+            # ORM subqueries now project module/series keys before roster reads.
+            return [dict(zip(fields, row)) for row in self.values_list(*fields)]
         def values_list(self, *fields, **_kwargs):
             def value(row, field):
                 for part in field.split('__'):
@@ -412,6 +415,8 @@ class RegisterTests(unittest.TestCase):
         )
         ns = {'__name__': 'learner_api.teams_attendance', '__package__': 'learner_api',
             'defaultdict': defaultdict, 'evidence_seconds': evidence_seconds, 'datetime': datetime,
+            'projection_call': lambda name, function, *args, **kwargs: function(*args, **kwargs),
+            'projection_operation': lambda name: nullcontext(),
             'datetime_timezone': timezone, 'parse_datetime': instant, 'Q': self.Q,
             '_attendance_alias_rows': lambda *_args: [],
             'identity_rules': lambda *_args: [], 'apply_reviewed_identities': apply_reviewed_identities,
@@ -1859,8 +1864,10 @@ class ArchiveWorkerTests(unittest.TestCase):
 
     def test_partial_graph_success_archives_available_files_and_schedules_retry(self):
         command, ns, cursor = self.worker(partial=True)
-        with self.assertRaises(RuntimeError):
+        with self.assertRaises(RuntimeError) as retry:
             command.handle(limit=2, scheduled=False, provision_container=False)
+        self.assertTrue(retry.exception.session_jobs_need_retry)
+        self.assertEqual(retry.exception.failed_jobs, 1)
         ns['archive_series'].assert_called_once_with('S', lease_id=cursor.execute.call_args_list[1].args[1][0])
         finish = next(call for call in cursor.execute.call_args_list if 'finished_at=now()' in call.args[0])
         self.assertEqual(finish.args[1][0], 'failed')

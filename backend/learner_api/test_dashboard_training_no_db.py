@@ -35,7 +35,7 @@ class TrainingProjectionTests(SimpleTestCase):
         connection = MagicMock()
         builder = {f'current:{mid}': {'id': mid, 'title': title} for mid, title in (('M1', 'One'), ('M2', 'Two'))}
         with patch.object(training, 'connections', {'enrolment': connection}), \
-             patch.object(weekly_learning, 'build_weekly_learning', side_effect=[global_detail, rich]) as read, \
+             patch.object(weekly_learning, 'build_learning_content_summary', side_effect=[global_detail, rich]) as read, \
              patch.object(student_activity_access, 'student_activity_available', return_value=False), \
              patch.object(student_activity, '_builder_subject_metadata', return_value=({}, builder)), \
              patch.object(builder_activity_dates, 'read_builder_activity_dates', return_value={}):
@@ -67,6 +67,8 @@ class TrainingProjectionTests(SimpleTestCase):
         self.assertEqual(result['selectedModuleId'], 'current:M2')
         details.assert_called_once()
         self.assertNotIn('actual', result['timeline'])
+        self.assertNotIn('months', result['timeline'])
+        self.assertEqual(result['timeline']['monthKeys'], [])
 
     def test_module_request_bypasses_programme_timeline_readers(self):
         connection = MagicMock()

@@ -228,12 +228,18 @@ def merge_session_register_rows(rows):
     return [by_email[email] for email in sorted(by_email)]
 
 
-def result_rows(series, *, session_number=None, email=None, identity=False, module_catalogue_id='', attendance_only=False):
+def result_rows(series, *, session_number=None, email=None, identity=False, module_catalogue_id='', attendance_only=False, occurrence_ids=None):
     params = [series['id']]
     where = ''
     if session_number is not None:
         where = ' AND session_number=%s'
         params.append(session_number)
+    if occurrence_ids is not None:
+        ids = sorted({str(value) for value in occurrence_ids if value})
+        if not ids:
+            return []
+        where += ' AND id=ANY(%s)'
+        params.append(ids)
     occurrences = read('SELECT * FROM curriculum.live_session_occurrences WHERE live_session_id=%s' + where + ' ORDER BY session_number,id', params)
     ids = [item['id'] for item in occurrences]
     if not ids:

@@ -5,7 +5,7 @@ import type { BookingCalendarRules, LearnerCalendarEvent } from '@/api/learnerCa
 import {
   bookLearnerCalendarSession, fetchCalendarConnections, fetchLearnerCalendarEvents, fetchPersonalCalendarAvailability,
 } from '@/api/learnerCalendar';
-import MeetingBookingDialog from '../MeetingBookingDialog';
+import MeetingBookingDialog, { type MeetingBookingSession } from '../MeetingBookingDialog';
 
 vi.mock('@/api/learnerCalendar', () => ({
   bookLearnerCalendarSession: vi.fn(),
@@ -28,7 +28,7 @@ function meeting(overrides: Partial<LearnerCalendarEvent> = {}): LearnerCalendar
   } as LearnerCalendarEvent;
 }
 
-function mount(session: LearnerCalendarEvent, onClose = vi.fn()) {
+function mount(session: MeetingBookingSession, onClose = vi.fn()) {
   render(<MemoryRouter><main aria-label="Coaching page">Coaching page</main>
     <MeetingBookingDialog session={session} title="your coaching meeting" learner={{ kind: 'apprenticeship', id: '125' }}
       rules={rules} onClose={onClose} onBooked={vi.fn()} /></MemoryRouter>);
@@ -57,6 +57,25 @@ afterEach(() => {
 });
 
 describe('MeetingBookingDialog', () => {
+  it('resolves a minimal Monthly V2 booking input against the authorized calendar', async () => {
+    const event = meeting();
+    mount({ id: event.id, eventKey: event.eventKey, source: event.source, title: event.title,
+      date: event.date, durationMinutes: event.durationMinutes, status: event.status });
+    const dialog = await screen.findByRole('dialog', { name: 'Book monthly coaching' });
+    await waitFor(() => expect(within(dialog).getByRole('button', { name: 'Book session' })).toBeEnabled());
+    expect(fetchLearnerCalendarEvents).toHaveBeenCalledWith('apprenticeship', '125', { revalidate: true });
+    expect(within(dialog).getByLabelText('Day')).toHaveValue('2026-10-15');
+  });
+
+  it('refuses booking when a minimal card identity is absent from the authorized calendar', async () => {
+    vi.mocked(fetchLearnerCalendarEvents).mockResolvedValue({ events: [], bookingCalendar: rules } as never);
+    mount({ id: 'unknown', eventKey: 'unknown', source: 'mcr', date: '2026-10-15' });
+    const dialog = await screen.findByRole('dialog', { name: 'Book monthly coaching' });
+    expect(await within(dialog).findByRole('alert')).toHaveTextContent('This meeting is no longer available');
+    expect(within(dialog).getByRole('button', { name: 'Book session' })).toBeDisabled();
+    expect(bookLearnerCalendarSession).not.toHaveBeenCalled();
+  });
+
   it('keeps the page and form when the day field reports an unparseable date with a connected calendar', async () => {
     mount(meeting());
     const dialog = await screen.findByRole('dialog', { name: 'Book monthly coaching' });

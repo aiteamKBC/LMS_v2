@@ -5,6 +5,7 @@ import logging
 import re
 
 from . import journal_sources
+from .projection_performance import projection_call
 from django.db import DatabaseError, connections
 from django.conf import settings
 from django.http import JsonResponse
@@ -294,12 +295,17 @@ def normalize_native_occurrences(source, result):
     return result
 
 
-def lecture_register(source, *, module_ids=None, records=None, learner_profile_id=None, apply_adjustments=True, preloaded=None, scheduled=None):
+def lecture_register(source, *, module_ids=None, records=None, learner_profile_id=None, apply_adjustments=True, preloaded=None, scheduled=None, credit_projection=False):
     # Bulk consumers can preload source rows; all schedule, recovery and saved
     # confirmation rules still run through this same learner register.
-    records = combined_attendance_rows(source) if records is None else records
+    if credit_projection and records is None:
+        if scheduled is None:
+            scheduled = projection_call('attendance_schedule', read_native_occurrences, source, module_ids=module_ids) if preloaded is None else preloaded['scheduled']
+        records = projection_call('attendance_sources', combined_attendance_rows, source, credit_projection=True, register_schedule=scheduled)
+    else:
+        records = combined_attendance_rows(source) if records is None else records
     if scheduled is None:
-        scheduled = read_native_occurrences(source, module_ids=module_ids) if preloaded is None else preloaded['scheduled']
+        scheduled = projection_call('attendance_schedule', read_native_occurrences, source, module_ids=module_ids) if preloaded is None else preloaded['scheduled']
     by_occurrence = {str(row['session_id']): row for row in scheduled}
     by_attendance_source = {}
     for row in scheduled:
@@ -342,25 +348,32 @@ def lecture_register(source, *, module_ids=None, records=None, learner_profile_i
         result.append({**row, 'updated_at': _aware(row.get('updated_at'))})
     result.extend(by_occurrence.values())
     from .shared_teams_attendance import apply_shared_attendance
-    result = apply_shared_attendance(result, source)
+    result = projection_call('shared_series', apply_shared_attendance, result, source)
     # Ended sessions remain unmarked until evidence or a saved correction exists.
     result = [_ended_unmarked_status(row, now) for row in result]
     if attended_alternatives:
-        result = _apply_attended_alternatives(result, source.id, attended_alternatives, **({} if preloaded is None else {'targets': preloaded['targets']}))
-    result = _apply_completed_catchups(result, source.id, **({} if preloaded is None else {'completed': preloaded['completed']}))
+        result = projection_call('attendance_recovery', _apply_attended_alternatives, result, source.id, attended_alternatives, **({} if preloaded is None else {'targets': preloaded['targets']}))
+    result = projection_call('attendance_catchups', _apply_completed_catchups, result, source.id, **({} if preloaded is None else {'completed': preloaded['completed']}))
     from .attendance_confirmation import apply_confirmations, read_confirmations
-    merged = _merge_register_duplicates(apply_confirmations(result, (read_confirmations(source.id) if preloaded is None else preloaded['confirmations'])))
+    merged = _merge_register_duplicates(apply_confirmations(result, (projection_call('attendance_confirmations', read_confirmations, source.id) if preloaded is None else preloaded['confirmations'])))
     from .recorded_attendance import apply_recorded_attendance
-    merged = apply_recorded_attendance(merged, source)
+    merged = projection_call('attendance_recorded', apply_recorded_attendance, merged, source)
     if not apply_adjustments:
         return merged
+    if learner_profile_id is None and credit_projection:
+        profile = getattr(source, '_case_file_profile', None)
+        owner = getattr(source, '_canonical_profile', None)
+        if (profile is not None and owner is not None
+                and str(owner['id']) == str(profile.pk)
+                and str(profile.enrolment_id) == str(source.id)):
+            learner_profile_id = profile.pk
     if learner_profile_id is None:
         from .models import LearnerProfile
         profile_ids = list(LearnerProfile.objects.filter(enrolment_id=source.id).values_list('id', flat=True))
         if len(profile_ids) > 1:
             raise ValueError('Attendance requires an unambiguous learner profile.')
         learner_profile_id = profile_ids[0] if profile_ids else None
-    return _apply_coach_source_adjustments(merged, learner_profile_id, **({} if preloaded is None else {'adjustments': preloaded['adjustments']})) if learner_profile_id is not None else merged
+    return projection_call('attendance_corrections', _apply_coach_source_adjustments, merged, learner_profile_id, **({} if preloaded is None else {'adjustments': preloaded['adjustments']})) if learner_profile_id is not None else merged
 
 
 def _ended_unmarked_status(row, now):
@@ -638,7 +651,8 @@ def read_legacy_metadata(source, register):
                      a.raw #> '{{live_lms_component,ksbs}}') AS ksbs,
             EXISTS (SELECT 1 FROM "Learner".subject_activity_attempts p
               WHERE p.enrolment_id=%s AND p.aptem_id=l.aptem_id AND p.group_id=gl.group_id
-                AND p.activity_id=a.activity_id AND p.completed=true) AS new_completed
+                AND p.activity_id=a.activity_id AND p.completed=true
+                AND coalesce(p.definition->>'catalogue_kind','material')='material') AS new_completed
             FROM "Last_audit".learners l
             JOIN "Last_audit".group_learners gl ON gl.learner_id=l.learner_id
             JOIN "Last_audit".groups g ON g.group_id=gl.group_id
@@ -974,11 +988,15 @@ def _mark_missed_catchups(lectures, reported):
                 lecture['catchupStatus'] = 'missed'
 
 
-def read_workspace(source, kind, *, monthly=None):
+def read_workspace(source, kind, *, monthly=None, monthly_occurrences=None):
     from .attendance_mode import read_mode
     register = lecture_register(source)
     if monthly is not None:
         register = [row for row in register if row.get('source') == 'microsoft-teams' and row['session_date'].isoformat().startswith(monthly)]
+        if monthly_occurrences is not None:
+            # Clip only after canonical register normalization. Avoid content and
+            # absence/recovery queries for cards the Monthly UI does not render.
+            register = [row for row in register if (session_key(row), row['session_date'].isoformat()) in monthly_occurrences]
     metadata, activities = ({}, []) if monthly is not None else read_legacy_metadata(source, register)
     native_modules = {row['module_catalogue_id'] for row in register if row.get('source') == 'microsoft-teams'}
     components, progress = read_native_components(source, native_modules, monthly=True) if monthly is not None else read_native_components(source, native_modules)

@@ -95,7 +95,7 @@ def main():
                     stack.enter_context(journal_sources.learner_journal_reads())
                     try:
                         payload = read(selection)
-                        raw = JsonResponse(weekly.compact_weekly(payload, detail=selection is not None)).content
+                        raw = JsonResponse(payload).content
                         record.update(raw_bytes=len(raw), gzip_bytes=len(gzip.compress(raw, mtime=0)),
                                       payload_sha256=hashlib.sha256(raw).hexdigest())
                         if selection is None and len(selections) == 1:

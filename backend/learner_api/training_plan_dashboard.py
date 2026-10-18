@@ -296,8 +296,8 @@ def _canonical_actual_rows(owner, records=None):
     ]
 
 
-def _canonical_module_progress(records, modules):
-    """Project learner-progress-entry facts onto the assigned module ids."""
+def module_record_index(records, modules):
+    """Canonical module attribution, retaining input positions and title ambiguity."""
     by_id = {str(module['id']): module for module in modules}
     ids_by_title = defaultdict(list)
     for module_id, module in by_id.items():
@@ -305,13 +305,23 @@ def _canonical_module_progress(records, modules):
         if title:
             ids_by_title[title].append(module_id)
 
-    def module_id_for(record):
+    grouped = defaultdict(list)
+    for position,record in enumerate(records):
         direct = str(record.get('module_ref') or '').strip()
         if direct in by_id:
-            return direct
-        title = clean_text(record.get('module_title')).casefold()
-        matches = ids_by_title.get(title, [])
-        return matches[0] if len(matches) == 1 else None
+            module_id = direct
+        else:
+            title = clean_text(record.get('module_title')).casefold()
+            matches = ids_by_title.get(title, [])
+            module_id = matches[0] if len(matches) == 1 else None
+        if module_id is not None:
+            grouped[module_id].append((position,record))
+    return by_id,grouped
+
+
+def _canonical_module_progress(records, modules, *, record_index=None):
+    """Project learner-progress-entry facts onto the assigned module ids."""
+    by_id,grouped = module_record_index(records,modules) if record_index is None else record_index
 
     result = {
         module_id: {'hours': {'actual': 0}, 'ksb': {'completed': 0, 'total': 0},
@@ -319,10 +329,7 @@ def _canonical_module_progress(records, modules):
         for module_id in by_id
     }
     achieved_codes = defaultdict(set)
-    for record in records:
-        module_id = module_id_for(record)
-        if module_id is None:
-            continue
+    for module_id,record in ((mid,record) for mid,items in grouped.items() for _,record in items):
         metric = result[module_id]
         if canonical_learning.counts_as_actual(record):
             metric['hours']['actual'] += sum(
@@ -398,6 +405,15 @@ def _plan_session_rows(cur, email, ids, since=None, until=None, *, rail_only=Fal
     """Session rows on the plan's modules, earliest first, starting in ``[since, until)`` when given."""
     bounds = [(since, '>='), (until, '<')]
     window = ''.join(f' AND coalesce(o.scheduled_start,s.start_datetime){op}%s' for bound, op in bounds if bound)
+    # Bounds never consume attendance. Removing this scalar subquery and its
+    # LEFT LATERAL lookup preserves the session population (its aggregate
+    # returns at most one row) while avoiding a historical lookup per occurrence.
+    attendance_sql = 'NULL' if navigation_only else '''CASE WHEN coalesce(CASE WHEN replaced_attendance.occurrence_id IS NOT NULL
+                                THEN replaced_attendance.attendance_report_id
+                                ELSE o.attendance_report_id END,'')='' THEN NULL
+             ELSE EXISTS(SELECT 1 FROM curriculum.live_session_attendance a
+                 WHERE a.occurrence_id=COALESCE(replaced_attendance.occurrence_id,o.id)
+                   AND lower(btrim(a.email))=%s AND a.total_attendance_seconds>0) END'''
     statement = f'''WITH RECURSIVE owners(module_id,owner_id,depth) AS (
         SELECT m.module_catalogue_id,
                coalesce(nullif(btrim(m.teams_shared_source_module_id),''),m.module_catalogue_id),0
@@ -413,17 +429,12 @@ def _plan_session_rows(cur, email, ids, since=None, until=None, *, rail_only=Fal
         SELECT s.id AS session_id,delivery.module_id,target_module.title AS module_title,
         s.start_datetime,s.duration_minutes,{"NULL" if rail_only else "s.join_url"} AS series_join_url,s.repeat_pattern,s.status AS series_status,
         o.id AS occurrence_id,o.scheduled_start,o.scheduled_end,{"NULL" if rail_only else "o.join_url"} AS join_url,o.status,
-        CASE WHEN coalesce(CASE WHEN replaced_attendance.occurrence_id IS NOT NULL
-                                THEN replaced_attendance.attendance_report_id
-                                ELSE o.attendance_report_id END,'')='' THEN NULL
-             ELSE EXISTS(SELECT 1 FROM curriculum.live_session_attendance a
-                 WHERE a.occurrence_id=COALESCE(replaced_attendance.occurrence_id,o.id)
-                   AND lower(btrim(a.email))=%s AND a.total_attendance_seconds>0) END AS attended
+        {attendance_sql} AS attended
         FROM delivery
         JOIN curriculum.live_sessions s ON s.module_catalogue_id=delivery.owner_id
         JOIN curriculum.modules target_module ON target_module.module_catalogue_id=delivery.module_id
         LEFT JOIN curriculum.live_session_occurrences o ON o.live_session_id=s.id
-        {REPLACED_ATTENDANCE_LATERAL_SQL}
+        {'' if navigation_only else REPLACED_ATTENDANCE_LATERAL_SQL}
         WHERE lower(s.status) NOT IN ('cancelled','deleted','failed','superseded')
           AND (o.id IS NULL OR lower(o.status) NOT IN ('cancelled','deleted','failed','superseded')){window}
         ORDER BY coalesce(o.scheduled_start,s.start_datetime)'''
@@ -434,7 +445,8 @@ def _plan_session_rows(cur, email, ids, since=None, until=None, *, rail_only=Fal
             FROM ({statement}) monthly_session_bounds
             WHERE occurrence_id IS NOT NULL OR repeat_pattern IS NULL OR repeat_pattern IN ('none','')
             GROUP BY module_id'''
-    cur.execute(statement, [ids, email, *(bound.astimezone(timezone.utc).replace(tzinfo=None) for bound, _ in bounds if bound)])
+    cur.execute(statement, [ids, *([] if navigation_only else [email]),
+                            *(bound.astimezone(timezone.utc).replace(tzinfo=None) for bound, _ in bounds if bound)])
     return rows(cur)
 
 
@@ -579,13 +591,13 @@ def read_dashboard(source, section=None, *, records=None, targets=None, dashboar
     # Monthly renders its board, Overview its progress cards. Only Training
     # renders module descriptions and curriculum learning outcomes. Legacy
     # callers keep their complete projection unless explicitly selecting a tab.
-    rich_modules = dashboard_tab not in ('monthly', 'overview', 'weekly')
+    rich_modules = section != 'my-learning' and dashboard_tab not in ('monthly', 'overview', 'weekly')
     owner = getattr(source, '_canonical_profile', None)
     email = str(source.email or '').strip().casefold()
     actual, modules, sessions = [], [], []
     progress_records = []
     historical = None
-    targets = targets if targets is not None else (canonical_learning.targets_for(owner) if owner is not None and section != 'weekly' else {})
+    targets = targets if targets is not None else (canonical_learning.targets_for(owner) if owner is not None and section not in ('weekly', 'my-learning', 'learning') else {})
     contract_data = {
         'months': {
             month: {'label': month, 'topics': [], 'planned': hours, 'source': 'ssot'}
@@ -599,7 +611,7 @@ def read_dashboard(source, section=None, *, records=None, targets=None, dashboar
         LearnerProfile.objects.filter(enrolment_id=source.pk)
         .only(*TRAINING_PLAN_PROFILE_FIELDS)
         .first()
-        if section not in ('contract', 'learning') else None
+        if section not in ('contract', 'learning', 'my-learning') else None
     )
     with connections['enrolment'].cursor() as cur:
         if section == 'contract':
@@ -608,7 +620,7 @@ def read_dashboard(source, section=None, *, records=None, targets=None, dashboar
             # Hours and module progress read lineage, never raw evidence bodies
             # (as the canonical metrics read), so the payload JSON stays in Neon.
             progress_records = records if records is not None else canonical_learning.entries_for(owner, lineage_only=True)
-            if section != 'weekly':
+            if section not in ('weekly', 'my-learning'):
                 actual = _canonical_actual_rows(owner, progress_records)
         if section == 'weekly' and hasattr(source, '_dashboard_module_ids'):
             ids, links = source._dashboard_module_ids, {}
@@ -641,12 +653,27 @@ def read_dashboard(source, section=None, *, records=None, targets=None, dashboar
                    AND lower(replace(coalesce(c.type, ''), '-', '_'))='live_session'
                    AND ''' + visible_child_sql('c') + '''
                 ) AS live_session_count'''
+            # My Learning counts authored sessions once for the complete module
+            # set rather than executing a correlated component count per week.
+            live_join = ''
+            live_params = [ids]
+            if section == 'my-learning':
+                live_sessions = 'coalesce(live_counts.live_session_count,0) AS live_session_count'
+                live_join = '''LEFT JOIN (
+                    SELECT c.module_catalogue_id,c.week_id,count(*) AS live_session_count
+                    FROM curriculum.components c WHERE c.module_catalogue_id=ANY(%s)
+                      AND lower(replace(coalesce(c.type,''),'-','_'))='live_session'
+                      AND ''' + visible_child_sql('c') + '''
+                    GROUP BY c.module_catalogue_id,c.week_id
+                ) live_counts ON live_counts.module_catalogue_id=w.module_catalogue_id
+                    AND live_counts.week_id=w.id'''
+                live_params = [ids, ids]
             cur.execute(f'''SELECT w.id,w.module_catalogue_id,w.week_number,w.title,{outcomes_column},
                 w.holiday_note_enabled,w.holiday_note,{live_sessions}
-                FROM curriculum.weeks w
+                FROM curriculum.weeks w {live_join}
                 WHERE w.module_catalogue_id=ANY(%s)
                   AND ''' + visible_week_sql('w') + '''
-                ORDER BY w.display_order,w.week_number,w.id''', [ids])
+                ORDER BY w.display_order,w.week_number,w.id''', live_params)
             for row in rows(cur):
                 week_counts[row['module_catalogue_id']] += 1
                 outcomes = [text for text in (clean_text(o) if isinstance(o, str) else '' for o in as_list(row['learning_outcomes'])) if text]
@@ -688,6 +715,17 @@ def read_dashboard(source, section=None, *, records=None, targets=None, dashboar
             'moduleLinks': links,
             'generatedAt': datetime.now(timezone.utc).isoformat(),
         }
+    if section == 'my-learning':
+        # One owner for cards, their accepted hours and upcoming sessions. Do
+        # not build programme allocations, reviews or coach contact details.
+        module_progress = _canonical_module_progress(progress_records, modules) if owner is not None else {}
+        if module_progress:
+            from .live_session_progress import read_live_credits, supplement_module_hours
+            module_progress = supplement_module_hours(module_progress, progress_records,
+                read_live_credits(source, module_ids=[module['id'] for module in modules]))
+        return {'modules': modules, 'moduleLinks': links, 'sessions': sessions,
+                'moduleProgress': module_progress,
+                'generatedAt': datetime.now(timezone.utc).isoformat()}
     # The overview must never wait for an Azure PDF download. Older clients
     # still receive the complete response when no section was requested.
     contact = current_coach(source, profile, historical)
@@ -735,7 +773,7 @@ def training_plan_dashboard(request, kind, pk):
         # ``learning`` is the detailed weekly dashboard projection.  Keep it
         # on the same read path as overview so clients can request the weekly
         # modules/sessions without being rejected by the section guard.
-            if section not in (None, 'overview', 'learning', 'contract', 'upcoming'):
+            if section not in (None, 'overview', 'learning', 'contract', 'upcoming', 'my-learning'):
                 return JsonResponse({'error': 'Invalid training plan section.'}, status=400)
             with measurement.stage(section or 'complete'):
                 payload = read_dashboard(source, section=section)

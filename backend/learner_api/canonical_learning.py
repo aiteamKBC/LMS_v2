@@ -140,7 +140,7 @@ def entries(learner_id):
     return entries_for(owner)
 
 
-def entries_for(owner, *, overview_only=False, entry_ids=None, lineage_only=False, dashboard_metadata=False, training_summary=False):
+def entries_for(owner, *, overview_only=False, entry_ids=None, lineage_only=False, dashboard_metadata=False, training_summary=False, monthly_summary=False, catalogue_summary=False):
     """``lineage_only`` keeps every progress column but replaces an object
     ``source_payload`` (raw evidence) with just its ``original_source_ref``,
     the only key the completion and hours projection reads.
@@ -151,7 +151,18 @@ def entries_for(owner, *, overview_only=False, entry_ids=None, lineage_only=Fals
     ``training_summary`` retains completion, timing and lineage facts without
     evidence bodies or reporting-segment/historical-component payloads. The
     complete learner fact set preserves cross-module native-save deduplication.
+
+    ``monthly_summary`` uses explicit progress facts instead of progress.*,
+    retaining full reporting segments, source links and historical attribution.
+    It never restricts the learner-wide reconciliation population by month.
     """
+    from learner_api.projection_performance import projection_stage
+
+    # My Learning needs lineage/completion and canonical seconds, never KSB
+    # metrics or reporting-history bodies. Presence of segments still gates
+    # unsynchronised saves; historical source identities still match attempts.
+    if catalogue_summary:
+        training_summary = True
     # Optional caller-owned selection is applied before the evidence/lineage
     # joins. The learner predicate always remains mandatory.
     selection = '' if entry_ids is None else ' AND progress.id=ANY(%s)'
@@ -163,7 +174,7 @@ def entries_for(owner, *, overview_only=False, entry_ids=None, lineage_only=Fals
             THEN to_jsonb(p)-'source_payload'||jsonb_build_object('source_payload',
                  jsonb_build_object('original_source_ref',p.source_payload->'original_source_ref'))
             ELSE to_jsonb(p) END'''
-    if dashboard_metadata or training_summary:
+    if dashboard_metadata or (training_summary and not catalogue_summary):
         # Dashboard summaries need the course's introduction marker and the
         # provisional-allocation verdict. Extract those object keys in SQL.
         # Preserve encoded-string/nonobject payloads as legacy lineage does;
@@ -177,7 +188,7 @@ def entries_for(owner, *, overview_only=False, entry_ids=None, lineage_only=Fals
                 'reconciliation',jsonb_build_object('reporting_allocation',jsonb_build_object(
                     'estimated',p.source_payload->'reconciliation'->'reporting_allocation'->'estimated'))))
             ELSE to_jsonb(p) END'''
-    if overview_only or training_summary:
+    if overview_only or training_summary or monthly_summary:
         # Completion projection needs saved timing/attempt facts, never raw
         # evidence bodies. Keep lineage required by recorded course allocation.
         columns = ','.join('progress.' + field for field in (
@@ -187,7 +198,15 @@ def entries_for(owner, *, overview_only=False, entry_ids=None, lineage_only=Fals
             'verified_seconds', 'expected_otjh', 'source_system', 'component_link_source',
             'actual_seconds', 'accepted', 'reporting_started_at', 'reporting_ended_at',
             'reporting_month', 'achieved_score', 'total_score', 'activity_status'))
-        if training_summary:
+        if catalogue_summary:
+            # Narrow evidence before materialising/serialising the canonical
+            # CTE row, rather than putting its full body in to_jsonb(p) first.
+            columns += """,CASE WHEN jsonb_typeof(progress.source_payload)='object'
+                THEN jsonb_build_object('original_source_ref',progress.source_payload->'original_source_ref')
+                ELSE progress.source_payload END AS source_payload,
+                progress.feed_kind,to_jsonb(progress)->'actual_basis' AS actual_basis"""
+            payload = 'to_jsonb(p)'
+        elif training_summary or monthly_summary:
             columns += ",progress.source_payload,progress.feed_kind,to_jsonb(progress)->'actual_basis' AS actual_basis"
         else:
             columns += ",jsonb_build_object('original_source_ref',progress.source_payload->>'original_source_ref') AS source_payload"
@@ -195,71 +214,73 @@ def entries_for(owner, *, overview_only=False, entry_ids=None, lineage_only=Fals
     historical_payload = ("jsonb_build_object('source_system',h.source_system,"
         "'source_course_ref',h.source_course_ref,'source_activity_id',h.source_activity_id)"
         if training_summary else 'to_jsonb(h)')
-    records = query(f'''WITH canonical AS (
-        SELECT {columns}
-        FROM "Learner".learner_progress_entries progress
-        WHERE progress.learner_id=%s AND progress.deleted_at IS NULL{selection}
-    ), progress_ksbs AS (
+    ksb_cte = '' if catalogue_summary else f''', progress_ksbs AS (
         SELECT k.progress_id,jsonb_agg(k.ksb_code ORDER BY k.position) AS payload
         FROM "Learner".learner_progress_ksbs k
         JOIN canonical p ON p.id=k.progress_id
         WHERE {_ksb_not_excluded()}
         GROUP BY k.progress_id
-    ), reporting_segments AS (
-        SELECT s.progress_id,jsonb_agg({segment_payload} ORDER BY s.segment_order,s.id) AS payload
-        FROM "Learner".learner_activity_reporting_segments s
-        JOIN canonical p ON p.id=s.progress_id AND p.learner_id=s.learner_id
-        GROUP BY s.progress_id
-    ), activity_sources AS (
-        SELECT s.canonical_progress_id AS progress_id,jsonb_agg(jsonb_build_object(
-            'source_id',s.id,'source_system',s.source_system,'source_activity_id',s.source_activity_id,
-            'completed',s.completed,
-            'source_course_ref',c.source_course_ref,'source_course_id',c.id,
-            'course_title',c.source_course_title,'catalogue_id',a.id,
-            'component_ref',coalesce(nullif(s.curriculum_component_ref,''),a.curriculum_component_ref),
-            'module_ref',c.curriculum_module_ref,'group_ref',c.curriculum_group_ref,
-            'activity_status',s.activity_status,
-            'source_activity_kind',a.source_activity_kind) ORDER BY s.id) AS payload
-        FROM "Learner".learner_activity_sources s
-        JOIN canonical p ON s.canonical_progress_id=p.id AND s.learner_id=p.learner_id
-        LEFT JOIN curriculum.source_activities a ON a.id=s.source_catalog_activity_id AND a.deleted_at IS NULL
-        LEFT JOIN curriculum.source_courses c ON c.id=a.source_course_id AND c.deleted_at IS NULL
-        WHERE s.deleted_at IS NULL
-        GROUP BY s.canonical_progress_id
-    ), journal_routes AS (
-        SELECT j.progress_id,jsonb_agg(jsonb_build_object(
-            'group_id',j.group_id,'activity_id',j.activity_id,'source_ref',j.source_ref,
-            'source_system',s.source_system,'month',j.month,'activity_date',j.activity_date) ORDER BY j.id) AS payload,
-            sum(j.planned_hours) AS planned
-        FROM "Learner".learner_journal_rows j
-        JOIN canonical p ON j.progress_id=p.id AND j.canonical_learner_id=p.learner_id
-        JOIN "Learner".learner_activity_sources s ON s.id=j.source_id
-          AND s.learner_id=p.learner_id AND s.canonical_progress_id=p.id AND s.deleted_at IS NULL
-        WHERE j.deleted_at IS NULL
-        GROUP BY j.progress_id
-    ), historical_components AS (
-        SELECT link.progress_id,jsonb_agg({historical_payload} ORDER BY h.id) AS payload
-        FROM "Learner".learner_progress_historical_components link
-        JOIN canonical p ON p.id=link.progress_id
-        JOIN curriculum.historical_components h ON h.id=link.historical_component_ref
-          AND h.deleted_at IS NULL AND h.historical_only=true
-        GROUP BY link.progress_id
-    )
-        SELECT {payload} AS payload,
-          coalesce(k.payload,'[]'::jsonb) AS ksbs,
-          coalesce(seg.payload,'[]'::jsonb) AS segments,
-          coalesce(src.payload,'[]'::jsonb) AS sources,
-          coalesce(j.payload,'[]'::jsonb) AS journal_routes,
-          j.planned AS journal_planned_hours,
-          coalesce(h.payload,'[]'::jsonb) AS historical_components
-        FROM canonical p
-        LEFT JOIN progress_ksbs k ON k.progress_id=p.id
-        LEFT JOIN reporting_segments seg ON seg.progress_id=p.id
-        LEFT JOIN activity_sources src ON src.progress_id=p.id
-        LEFT JOIN journal_routes j ON j.progress_id=p.id
-        LEFT JOIN historical_components h ON h.progress_id=p.id
-        ORDER BY p.reporting_month,p.reporting_started_at NULLS LAST,p.id''',
-        params)
+    )'''
+    with projection_stage('ledger_read'):
+        records = query(f'''WITH canonical AS (
+            SELECT {columns}
+            FROM "Learner".learner_progress_entries progress
+            WHERE progress.learner_id=%s AND progress.deleted_at IS NULL{selection}
+        ){ksb_cte}, reporting_segments AS (
+            SELECT s.progress_id,{"'[{}]'::jsonb" if catalogue_summary else f"jsonb_agg({segment_payload} ORDER BY s.segment_order,s.id)"} AS payload
+            FROM "Learner".learner_activity_reporting_segments s
+            JOIN canonical p ON p.id=s.progress_id AND p.learner_id=s.learner_id
+            GROUP BY s.progress_id
+        ), activity_sources AS (
+            SELECT s.canonical_progress_id AS progress_id,jsonb_agg(jsonb_build_object(
+                'source_id',s.id,'source_system',s.source_system,'source_activity_id',s.source_activity_id,
+                'completed',s.completed,
+                'source_course_ref',c.source_course_ref,'source_course_id',c.id,
+                'course_title',c.source_course_title,'catalogue_id',a.id,
+                'component_ref',coalesce(nullif(s.curriculum_component_ref,''),a.curriculum_component_ref),
+                'module_ref',c.curriculum_module_ref,'group_ref',c.curriculum_group_ref,
+                'activity_status',s.activity_status,
+                'source_activity_kind',a.source_activity_kind) ORDER BY s.id) AS payload
+            FROM "Learner".learner_activity_sources s
+            JOIN canonical p ON s.canonical_progress_id=p.id AND s.learner_id=p.learner_id
+            LEFT JOIN curriculum.source_activities a ON a.id=s.source_catalog_activity_id AND a.deleted_at IS NULL
+            LEFT JOIN curriculum.source_courses c ON c.id=a.source_course_id AND c.deleted_at IS NULL
+            WHERE s.deleted_at IS NULL
+            GROUP BY s.canonical_progress_id
+        ), journal_routes AS (
+            SELECT j.progress_id,jsonb_agg(jsonb_build_object(
+                'group_id',j.group_id,'activity_id',j.activity_id,'source_ref',j.source_ref,
+                'source_system',s.source_system,'month',j.month,'activity_date',j.activity_date) ORDER BY j.id) AS payload,
+                sum(j.planned_hours) AS planned
+            FROM "Learner".learner_journal_rows j
+            JOIN canonical p ON j.progress_id=p.id AND j.canonical_learner_id=p.learner_id
+            JOIN "Learner".learner_activity_sources s ON s.id=j.source_id
+              AND s.learner_id=p.learner_id AND s.canonical_progress_id=p.id AND s.deleted_at IS NULL
+            WHERE j.deleted_at IS NULL
+            GROUP BY j.progress_id
+        ), historical_components AS (
+            SELECT link.progress_id,jsonb_agg({historical_payload} ORDER BY h.id) AS payload
+            FROM "Learner".learner_progress_historical_components link
+            JOIN canonical p ON p.id=link.progress_id
+            JOIN curriculum.historical_components h ON h.id=link.historical_component_ref
+              AND h.deleted_at IS NULL AND h.historical_only=true
+            GROUP BY link.progress_id
+        )
+            SELECT {payload} AS payload,
+              {"'[]'::jsonb" if catalogue_summary else "coalesce(k.payload,'[]'::jsonb)"} AS ksbs,
+              coalesce(seg.payload,'[]'::jsonb) AS segments,
+              coalesce(src.payload,'[]'::jsonb) AS sources,
+              coalesce(j.payload,'[]'::jsonb) AS journal_routes,
+              j.planned AS journal_planned_hours,
+              coalesce(h.payload,'[]'::jsonb) AS historical_components
+            FROM canonical p
+            {'' if catalogue_summary else 'LEFT JOIN progress_ksbs k ON k.progress_id=p.id'}
+            LEFT JOIN reporting_segments seg ON seg.progress_id=p.id
+            LEFT JOIN activity_sources src ON src.progress_id=p.id
+            LEFT JOIN journal_routes j ON j.progress_id=p.id
+            LEFT JOIN historical_components h ON h.progress_id=p.id
+            ORDER BY p.reporting_month,p.reporting_started_at NULLS LAST,p.id''',
+            params)
     from learner_api import journal_sources
     journal_enabled = journal_sources.enabled()
     loaded = []
@@ -271,13 +292,16 @@ def entries_for(owner, *, overview_only=False, entry_ids=None, lineage_only=Fals
             item['expected_otjh'] = float(record['journal_planned_hours'])
             item['journal_planned_hours'] = float(record['journal_planned_hours'])
         loaded.append(item)
-    result = progress_records_with_completion(loaded, current_records(owner, loaded))
-    if journal_enabled:
-        # Completion is independent of accepted hours. Reapply the shared rule
-        # after current saves are projected so old-LMS source/status evidence is
-        # retained in the journal learner view only.
-        for record in result:
-            record['completed'] = counts_as_completed(record)
+    with projection_stage('ledger_reconcile'):
+        current = current_records(owner, loaded)
+    with projection_stage('ledger_completion'):
+        result = progress_records_with_completion(loaded, current)
+        if journal_enabled:
+            # Completion is independent of accepted hours. Reapply the shared rule
+            # after current saves are projected so old-LMS source/status evidence is
+            # retained in the journal learner view only.
+            for record in result:
+                record['completed'] = counts_as_completed(record)
     return result
 
 
@@ -764,15 +788,8 @@ def content(item, owner=None, record=None):
         'html': f'<p>{escape(note)}</p>' if note else '<p>No material is directly linked to this activity.</p>'}]}
 
 
-def source_subjects(learner_id, summarize, *, owner=None, records=None, overview_only=False, include_totals=True,
-                    course_ids=None, module_ids=None):
-    """Owned course catalogue with progress, or a compact recorded overview."""
-    from learner_api.course_catalogue_display import read_export_placements, catalogue_display_context
-    owner = owner if owner is not None else profile(learner_id)
-    if owner is None:
-        raise ServiceError('The consolidated learner identity needs review.', 'identity_review_required', 409)
-    # Filter membership before loading a selected module's catalogue. Keep the
-    # complete canonical fact set supplied by the caller for lineage/dedupe.
+def owned_source_courses(owner, *, course_ids=None, module_ids=None):
+    """Owned old-LMS memberships; optional selection never replaces ownership."""
     scoped = course_ids is not None or module_ids is not None
     selection = ' AND (c.source_course_ref=ANY(%s) OR c.curriculum_module_ref=ANY(%s))' if scoped else ''
     params = [owner['id']]
@@ -786,6 +803,19 @@ def source_subjects(learner_id, summarize, *, owner=None, records=None, overview
         WHERE m.learner_id=%s AND m.deleted_at IS NULL AND c.source_system='old_lms'
           AND c.source_course_ref ~ '^[0-9]+$'{selection}
         ORDER BY c.source_course_title,c.id''', params)
+    return courses
+
+
+def source_subjects(learner_id, summarize, *, owner=None, records=None, overview_only=False, include_totals=True, include_ledger=True,
+                    course_ids=None, module_ids=None):
+    """Owned course catalogue with progress, or a compact recorded overview."""
+    from learner_api.course_catalogue_display import read_export_placements, catalogue_display_context
+    owner = owner if owner is not None else profile(learner_id)
+    if owner is None:
+        raise ServiceError('The consolidated learner identity needs review.', 'identity_review_required', 409)
+    # Filter membership before loading a selected module's catalogue. Keep the
+    # complete canonical fact set supplied by the caller for lineage/dedupe.
+    courses = owned_source_courses(owner, course_ids=course_ids, module_ids=module_ids)
     catalogue_columns = ("a.source_activity_id,c.source_course_ref" if overview_only else
         '''a.id,a.source_course_id,a.source_activity_id,a.source_activity_kind,
         a.source_activity_title,a.source_activity_type,a.source_section_ref,a.source_section_title,a.curriculum_component_ref,
@@ -822,7 +852,9 @@ def source_subjects(learner_id, summarize, *, owner=None, records=None, overview
     total = round(sum(recorded_seconds(r) for r in records if counts_as_actual(r)) / 3600, 4)
     result.update(recorded_otjh_total=total, audit_lms_actual=total,
         audit_ksb_evidenced=len({k for r in records if counts_as_actual(r) for k in r['ksbs']}),
-        direct_otjh_activities=[], canonical_otjh_activities=otjh_activities(records))
+        direct_otjh_activities=[])
+    if include_ledger:
+        result['canonical_otjh_activities'] = otjh_activities(records)
     result['activity_sources'] = {key: values[0] for key, values in links.items() if len(values) == 1}
     result['activity_source_issues'] = {key: 'ambiguous_lineage' for key, values in links.items() if len(values) != 1}
     canonical_modules = {
@@ -834,7 +866,7 @@ def source_subjects(learner_id, summarize, *, owner=None, records=None, overview
     result['unresolved_source_routes'] = sum(len(values) != 1 for values in links.values())
     from learner_api import journal_sources
     if journal_sources.enabled():
-        result['audit_tp_planned'] = programme_planned_hours(learner_id)
+        result['audit_tp_planned'] = programme_planned_hours(learner_id, owner=owner)
     else:
         monthly_targets = targets_for(owner)
         result['audit_tp_planned'] = sum(monthly_targets.values()) if monthly_targets else None
@@ -903,17 +935,8 @@ def learner_course_catalogue(courses, catalogue):
             if (str(item['source_course_ref']), item['source_activity_id']) not in excluded]
 
 
-def recorded_course_items(courses, catalogue, records, *, overview_only=False, include_catalogue=False):
-    """Allocate a final record once per course, using exact catalogue lineage.
-
-    Historical/component guesses do not substitute for learner source links.
-    A quiz and material sharing a numeric ID remain distinct activities.
-    """
-    catalogue = learner_course_catalogue(courses, catalogue)
-    by_course = {str(c['source_course_ref']): [] for c in courses}
-    definitions = {(str(d['source_course_ref']), d['source_activity_id']): d for d in catalogue
-                   if str(d['source_course_ref']) in by_course}
-    links = {}
+def course_record_placements(definitions, records, *, include_catalogue=False):
+    """Canonical course allocation, shared by aggregate and activity readers."""
     for record in records:
         placements = {}
         for source in record.get('sources') or []:
@@ -957,8 +980,30 @@ def recorded_course_items(courses, catalogue, records, *, overview_only=False, i
             for route in sorted(keys, key=lambda route: (route != key, str(route))):
                 if route in definitions:
                     placements.setdefault(route if include_catalogue else route[0], definitions[route])
+        yield record, list(placements.values())
+
+
+def recorded_course_items(courses, catalogue, records, *, overview_only=False, include_catalogue=False):
+    """Allocate a final record once per course, using exact catalogue lineage.
+
+    Historical/component guesses do not substitute for learner source links.
+    A quiz and material sharing a numeric ID remain distinct activities.
+    """
+    catalogue = learner_course_catalogue(courses, catalogue)
+    by_course = {str(c['source_course_ref']): [] for c in courses}
+    definitions = {(str(d['source_course_ref']), d['source_activity_id']): d for d in catalogue
+                   if str(d['source_course_ref']) in by_course}
+    definitions_by_course = {ref: [] for ref in by_course}
+    for (ref, _), definition in definitions.items():
+        definitions_by_course[ref].append(definition)
+    catalogue_counts = {}
+    for definition in catalogue:
+        ref = str(definition['source_course_ref'])
+        catalogue_counts[ref] = catalogue_counts.get(ref, 0) + 1
+    links = {}
+    for record, placements in course_record_placements(definitions, records, include_catalogue=include_catalogue):
         counted_courses = set()
-        for definition in placements.values():
+        for definition in placements:
             course = str(definition['source_course_ref'])
             if overview_only:
                 by_course[course].append({'activity_id': f"record:{course}:{record['id']}",
@@ -1003,7 +1048,7 @@ def recorded_course_items(courses, catalogue, records, *, overview_only=False, i
     for course in courses:
         ref = str(course['source_course_ref'])
         activity = by_course[ref]
-        course_definitions = [d for (course_ref, _), d in definitions.items() if course_ref == ref]
+        course_definitions = definitions_by_course[ref]
         if include_catalogue:
             activity = catalogue_items_with_progress(course_definitions, activity)
             for definition in course_definitions:
@@ -1018,7 +1063,7 @@ def recorded_course_items(courses, catalogue, records, *, overview_only=False, i
         subjects.append({'id': int(ref), 'name': course['source_course_title'],
             'module_id': course.get('curriculum_module_ref'),
             **({} if overview_only else {
-                'catalogue_count': sum(str(d['source_course_ref']) == ref for d in catalogue),
+                'catalogue_count': catalogue_counts.get(ref, 0),
                 'accepted_hours': round(sum(a['actual'] for a in activity), 6)})})
         items.extend(activity)
     return items, subjects, links

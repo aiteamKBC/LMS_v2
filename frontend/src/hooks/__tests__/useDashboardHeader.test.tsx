@@ -13,11 +13,11 @@ const wrapper = ({ children }: { children: ReactNode }) => <StrictMode>{children
 beforeEach(() => {
   clearAllCachedResources();
   vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible');
-  vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ version: 2, learner: { name: 'Learner' } }))));
+  vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ learner: { id: '7', name: 'Learner' }, modules: [], moduleLabel: 'Module', initialWeeklyModuleId: null, nextAssignment: null, nextLiveSession: null, nextReview: null }))));
 });
 afterEach(() => { cleanup(); clearAllCachedResources(); remote.listeners.clear(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
-describe('Header schedule freshness', () => {
+describe('Dashboard Header freshness', () => {
   it('does not let a pre-change request replace the refreshed schedule', async () => {
     let finish!: (response: Response) => void;
     vi.mocked(fetch).mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
@@ -25,7 +25,7 @@ describe('Header schedule freshness', () => {
     await waitFor(() => expect(fetch).toHaveBeenCalledTimes(1));
     act(() => remote.listeners.forEach(listener => listener('/curriculum/modules/M1/')));
     await waitFor(() => expect(result.current.real?.name).toBe('Learner'));
-    await act(async () => finish(new Response(JSON.stringify({ version: 2, learner: { name: 'Stale learner' } }))));
+    await act(async () => finish(new Response(JSON.stringify({ learner: { id: '7', name: 'Stale learner' }, modules: [], moduleLabel: 'Module', initialWeeklyModuleId: null, nextAssignment: null, nextLiveSession: null, nextReview: null }))));
     expect(result.current.real?.name).toBe('Learner');
     expect(fetch).toHaveBeenCalledTimes(2);
   });

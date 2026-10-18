@@ -14,6 +14,14 @@ from .teams_create_drafts import teams_create_draft
 from .teams_schedule_delivery import forward_schedule_email, schedule_email
 from .teams_calendar_state import sync_calendar_state
 from .teams_directory import search_teams_directory
+from .bulk_attendance_learners import bulk_attendance_learners
+from .bulk_attendance_kbc_history import (
+    bulk_attendance_kbc_history,
+    bulk_attendance_kbc_recent,
+    bulk_attendance_save_attendance,
+)
+from .bulk_attendance_live_day import bulk_attendance_live_day
+from .bulk_attendance_live_day_records import bulk_attendance_live_day_records
 from .teams_calendar_actions import calendar_action
 from .teams_week_meeting import (
     curriculum_live_session_meeting_scope,
@@ -23,9 +31,16 @@ from .teams_week_meeting import (
 from . import recordings_library, session_results, tutor_notifications, recordings_day, recordings_calendar, recordings_external
 from .attendance_corrections import session_attendance_correction
 from .learner_activity_status import activity_status
+from .home_summary import curriculum_home_summary
 
 
 urlpatterns = [
+    path('curriculum/bulk-attendance/learners/', bulk_attendance_learners, name='curriculum-bulk-attendance-learners'),
+    path('curriculum/bulk-attendance/kbc-history/', bulk_attendance_kbc_history, name='curriculum-bulk-attendance-kbc-history'),
+    path('curriculum/bulk-attendance/kbc-recent/', bulk_attendance_kbc_recent, name='curriculum-bulk-attendance-kbc-recent'),
+    path('curriculum/bulk-attendance/attendance/', bulk_attendance_save_attendance, name='curriculum-bulk-attendance-save-attendance'),
+    path('curriculum/bulk-attendance/live-day/', bulk_attendance_live_day, name='curriculum-bulk-attendance-live-day'),
+    path('curriculum/bulk-attendance/live-day-records/', bulk_attendance_live_day_records, name='curriculum-bulk-attendance-live-day-records'),
     path('curriculum/modules/<str:module_id>/learners/<int:learner_id>/activities/<str:component_id>/status/', activity_status),
     path('curriculum/migrated-review-templates/', migrated_template_views.collection),
     path('curriculum/migrated-review-templates/preview/', migrated_template_views.preview),
@@ -64,6 +79,8 @@ urlpatterns = [
     path('curriculum/review-types/<str:review_type_id>/', review_types.curriculum_review_type_detail, name='curriculum-review-type-detail'),
     path('curriculum/reviews/<str:review_id>/', reviews.curriculum_review_detail, name='curriculum-review-detail'),
     path('curriculum/overview/', views.curriculum_overview, name='curriculum-overview'),
+    path('curriculum/home-summary/', curriculum_home_summary, name='curriculum-home-summary'),
+    path('curriculum/delivery-scope/', views.curriculum_delivery_scope, name='curriculum-delivery-scope'),
     path('curriculum/stats/', views.curriculum_stats, name='curriculum-stats'),
     # Polled by every open tab to notice a write made somewhere else. Kept next
     # to nothing in cost: one Redis read, no database.
@@ -200,6 +217,7 @@ urlpatterns = [
     path('curriculum/ksb-profiles/', views.curriculum_ksb_framework_collection, name='curriculum-ksb-profiles'),
     path('curriculum/ksb-profiles/<str:identifier>/', views.curriculum_ksb_framework_detail, name='curriculum-ksb-profile-detail'),
     path('curriculum/ksb-sets/', views.curriculum_ksb_sets, name='curriculum-ksb-sets'),
+    path('curriculum/ksb-sets/<str:identifier>/definitions/', views.curriculum_ksb_set_definitions, name='curriculum-ksb-set-definitions'),
     path('curriculum/cohorts/', views.curriculum_cohort_collection, name='curriculum-cohorts'),
     # Before the '<str:identifier>' routes below, or 'archived' is read as a cohort id.
     path('curriculum/cohorts/archived/', views.curriculum_archived_cohorts, name='curriculum-cohorts-archived'),

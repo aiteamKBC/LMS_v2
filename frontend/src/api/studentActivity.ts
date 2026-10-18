@@ -96,11 +96,14 @@ export interface StudentActivityResponse {
   /** Complete accepted ledger from Learner.learner_progress_entries. When
    * present it replaces mixed legacy/direct activity-log projections. */
   canonical_otjh_activities?: CanonicalOtjhActivity[];
+  /** Accepted old/current ledger union for explicitly verified course successors. */
+  replacement_hours?: Record<string, { course_ref: string; accepted_hours: number }>;
   planned_total: number | null;
   mapped_count: number;
   planned_mapped_count: number;
   activities: StudentActivityItem[];
   source_status?: 'live' | 'historical';
+  verification_status?: 'verified' | 'unavailable';
   activity_sources?: Record<string, { module_id: string; group_id: number; activity_id: number }>;
   activity_source_issues?: Record<string, 'missing_source_component_id' | 'missing_group_id_activity_id' | 'ambiguous_lineage'>;
   subjects?: { id: number; name: string; module_id?: string | null; catalogue_count?: number; accepted_hours?: number }[];
@@ -160,9 +163,9 @@ export async function subjectRequest<T>(url: string, options: SubjectRequestOpti
   return body as T;
 }
 
-export async function fetchStudentActivity(kind: LearnerKind, learnerId: string, signal?: AbortSignal, force = false): Promise<StudentActivityResponse> {
+export async function fetchStudentActivity(kind: LearnerKind, learnerId: string, signal?: AbortSignal, force = false, view?: 'my-learning'): Promise<StudentActivityResponse> {
   const payload = await readLearnerJson<StudentActivityResponse>(
-    `/learner_api/student-activity/${kind}/${learnerId}/`,
+    `/learner_api/student-activity/${kind}/${learnerId}/${view ? '?view=my-learning' : ''}`,
     { signal, headers: { Accept: 'application/json' }, ttlMs: 30_000, force },
   );
   if (!Array.isArray(payload.activities)) {
@@ -172,6 +175,6 @@ export async function fetchStudentActivity(kind: LearnerKind, learnerId: string,
   return payload;
 }
 
-export function peekStudentActivity(kind: LearnerKind, learnerId: string): StudentActivityResponse | undefined {
-  return peekLearnerJson(`/learner_api/student-activity/${kind}/${learnerId}/`, { headers: { Accept: 'application/json' } });
+export function peekStudentActivity(kind: LearnerKind, learnerId: string, view?: 'my-learning'): StudentActivityResponse | undefined {
+  return peekLearnerJson(`/learner_api/student-activity/${kind}/${learnerId}/${view ? '?view=my-learning' : ''}`, { headers: { Accept: 'application/json' } });
 }

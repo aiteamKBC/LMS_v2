@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { WorkspaceHeroBanner } from '@/components/feature/WorkspaceHeroBanner';
 import { ThemedSelect } from '@/components/feature/ThemedSelect';
+import { useListQueryState } from '@/hooks/useListQueryState';
 import { roleNavMap } from '@/mocks/navigation';
 
 const curriculumNav = roleNavMap.curriculum;
@@ -254,16 +255,24 @@ function quizToCheckpoint(quiz: QuizPackageResponse): MonthlyCheckpoint {
   };
 }
 
+const CHECKPOINT_QUERY_DEFAULTS = { programme: 'all', month: 'all', status: 'all', view: '' };
+
 export default function CheckpointsPage() {
   const navigate = useNavigate();
   const checkpointFileInputRef = useRef<HTMLInputElement | null>(null);
   const [checkpoints, setCheckpoints] = useState(initialCheckpoints);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [programmeFilter, setProgrammeFilter] = useState('all');
-  const [monthFilter, setMonthFilter] = useState('all');
-  const [statusFilter, setStatusFilter] = useState<'all' | CheckpointStatus>('all');
-  const [showArchive, setShowArchive] = useState(false);
+  // In the URL, so Back from a checkpoint's quiz editor returns to the list as
+  // it was left.
+  const { state: query, setValues: setQuery } = useListQueryState(CHECKPOINT_QUERY_DEFAULTS);
+  const programmeFilter = String(query.programme);
+  const monthFilter = String(query.month);
+  const statusFilter = statusOptions.some(option => option.value === query.status) ? query.status as 'all' | CheckpointStatus : 'all';
+  const showArchive = query.view === 'archive';
+  const setProgrammeFilter = (value: string) => setQuery({ programme: value });
+  const setMonthFilter = (value: string) => setQuery({ month: value });
+  const setStatusFilter = (value: 'all' | CheckpointStatus) => setQuery({ status: value });
   const [showCreate, setShowCreate] = useState(false);
   const [form, setForm] = useState(emptyForm);
   const [selectedQuizFile, setSelectedQuizFile] = useState<File | null>(null);
@@ -346,7 +355,8 @@ export default function CheckpointsPage() {
   const openCheckpointEditor = (checkpoint: MonthlyCheckpoint) => {
     // navigate, not window.location: the latter reloaded the SPA, which threw
     // away this page's loaded state and re-fetched every route chunk.
-    navigate(`/curriculum/quiz-xml/${checkpoint.id}/edit`);
+    // The editor's Back then steps back to this list, filters and all.
+    navigate(`/curriculum/quiz-xml/${checkpoint.id}/edit`, { state: { backLabel: 'Back to Checkpoints' } });
   };
 
   const updateCheckpointStatus = async (checkpoint: MonthlyCheckpoint, status: CheckpointStatus) => {
@@ -483,10 +493,7 @@ export default function CheckpointsPage() {
               Quiz names are generated as <strong>Month - Week - Quiz title</strong> so coaches can track monthly progress.
             </div>
             <button
-              onClick={() => {
-                setShowArchive(current => !current);
-                setStatusFilter('all');
-              }}
+              onClick={() => setQuery({ view: showArchive ? '' : 'archive', status: 'all' })}
               className={`inline-flex h-10 w-full items-center justify-center gap-1.5 whitespace-nowrap rounded-lg border px-4 text-sm font-semibold transition-smooth sm:w-auto ${
                 showArchive
                   ? 'border-orange-200 bg-orange-50 text-orange-700 hover:bg-orange-100'

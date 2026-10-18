@@ -16,15 +16,12 @@ const quizDetailResource = createCachedResource<LearnerDetail>('learner-quiz-det
   readLearnerJson(`${BASE}/${key.replace(':', '/')}/?content=quiz`));
 const componentResource = createCachedResource<LearnerDetail>('learner-component-detail', async key => {
   const [kind, id, componentId] = JSON.parse(key) as [LearnerKind, string, string];
-  const detail = await detailResource.read(`${kind}:${id}`);
-  const component = detail.components.find(item => item.componentId === componentId);
-  // A reading can contain only an iframe/image: it has no text for the list's
-  // availability flag, but the runner must still receive the original markup.
-  if (!component || component.contentHtml || (!component.hasReadingContent && component.type !== 'reading')) return detail;
-  const reading = await readLearnerJson<{ componentId: string; contentHtml: string | null }>(
-    `${BASE}/${kind}/${id}/?content=reading&component_id=${encodeURIComponent(componentId)}`);
-  if (reading.componentId !== componentId) throw new Error('The server returned a different activity. Please try again.');
-  return { ...detail, components: detail.components.map(item => item === component ? { ...item, contentHtml: reading.contentHtml } : item) };
+  const detail = await readLearnerJson<LearnerDetail>(
+    `${BASE}/${kind}/${id}/?content=activity&component_id=${encodeURIComponent(componentId)}`);
+  if (String(detail.id) !== id || !detail.components?.some(item => item.componentId === componentId)) {
+    throw new Error('The server returned a different activity. Please try again.');
+  }
+  return detail;
 });
 const summaryResource = createCachedResource<LearnerSummary>('learner-summary', key =>
   readLearnerJson(`/learner_api/learner-summary/${key.replace(':', '/')}/`));
@@ -45,7 +42,17 @@ export interface ComponentKsbMapping {
   weight: number;
 }
 
+export interface PreviousLearningCompletion {
+  courseRef: string;
+  activityId: string;
+  sourceActivityId: number;
+  catalogueKind: 'material' | 'quiz';
+  completed: boolean;
+}
+
 export interface LearnerComponentEntry {
+  /** Exact owned source activity in a verified course replacement; no new attempt or hours. */
+  previousLearning?: PreviousLearningCompletion;
   module: string | null;
   week: string | null;
   component: string;

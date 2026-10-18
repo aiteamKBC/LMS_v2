@@ -79,7 +79,8 @@ def catalogue_display_context(definitions, exports):
             continue
         section = (str(row.get('section_id') or ''), str(row.get('section_order') or ''),
                    unescape(str(row.get('section_title') or '')))
-        sections[course][section] = section_schedule(section[2])
+        if section not in sections[course]:
+            sections[course][section] = section_schedule(section[2])
         if section[0] and section not in section_refs[(course, section[0])]:
             section_refs[(course, section[0])].append(section)
         kind = str(row.get('component_kind') or '').lower()
@@ -101,7 +102,8 @@ def catalogue_display_context(definitions, exports):
             continue
         dated = [int(s[1]) for s, schedule in values.items() if schedule['month'] != 'undated']
         if dated:
-            introductions.update((course, s) for s in values if int(s[1]) < min(dated)
+            first_dated = min(dated)
+            introductions.update((course, s) for s in values if int(s[1]) < first_dated
                                  and values[s]['date_source'] in {'undated', 'introduction'})
 
     enriched = []

@@ -16,7 +16,6 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--runs', type=int, default=3)
-    parser.add_argument('--paired', action='store_true', help='Alternate reconstructed pre-task and current readers.')
     parser.add_argument('--verify-views', action='store_true', help='Read-only view-level status checks, excluding auth middleware.')
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[1]
@@ -40,38 +39,6 @@ def main():
     from django.http import JsonResponse
     from learner_api import dashboard_weekly as weekly, journal_sources
     from learner_api.projection_performance import ProjectionPerformance
-    import types
-    baseline_reader = types.ModuleType('coach_api._week_switch_baseline')
-    baseline_reader.__package__ = 'coach_api'
-    code = (root / 'coach_api/weekly_learning.py').read_text().replace(
-        'if student_projection and not include_weeks:', 'if False:')
-    code = code.replace("AS fallback_ksb_mappings''' if student_projection else ''",
-                        "AS fallback_ksb_mappings''' if False else ''").replace(
-                        'if student_projection:\n            for row in details:', 'if False:\n            for row in details:')
-    exec(compile(code, 'pre-task:coach_api/weekly_learning.py', 'exec'), baseline_reader.__dict__)
-    from learner_api.identity import learner_profile_for_source
-    from learner_api import canonical_learning
-    import inspect
-    ledger_globals = dict(canonical_learning.__dict__)
-    ledger_code = inspect.getsource(canonical_learning.weekly_hour_records).replace(
-        ' AND s.learner_id=%s)', ')').replace("[owner['id'], owner['id']]", "[owner['id']]")
-    exec(compile(ledger_code, 'pre-task:canonical_learning.weekly_hour_records', 'exec'), ledger_globals)
-    def baseline_identity(source, pk, **kwargs):
-        kwargs.pop('fields', None)
-        return learner_profile_for_source(source, pk, **kwargs)
-    def baseline_calendar(cohort_ids):
-        from curriculum_api.views import (clean_str, curriculum_in_clause, authoring_fetch_all,
-            COHORT_AUTHORING_DETAILS_TABLE, get_holiday_rows, scheduling_holidays_from, parse_json_value)
-        wanted = list(dict.fromkeys(clean_str(value) for value in cohort_ids if clean_str(value)))
-        if not wanted:
-            return {}
-        clause, params = curriculum_in_clause('cohort_id', wanted)
-        cohorts = authoring_fetch_all(COHORT_AUTHORING_DETAILS_TABLE, clause, params, ensure_tables=False)
-        if not cohorts:
-            return {}
-        holidays = get_holiday_rows()
-        return {clean_str(cohort['cohort_id']): scheduling_holidays_from(holidays, cohort.get('start_date'),
-            parse_json_value(cohort.get('excluded_holiday_ids'), [])) for cohort in cohorts if clean_str(cohort.get('cohort_id'))}
     for alias in ('default', 'enrolment'):
         with connections[alias].cursor() as cursor:
             cursor.execute('SHOW transaction_read_only')
@@ -86,7 +53,7 @@ def main():
     module_id, = [mid for mid in candidates if mid in module_ids]
     records = []
     for run in range(args.runs):
-        variants = ['baseline', 'optimized'] if args.paired else ['optimized']
+        variants = ['canonical']
         if run % 2:
             variants.reverse()
         for number, variant in [(number, variant) for number in (2, 3, 2) for variant in variants]:
@@ -105,11 +72,6 @@ def main():
                                         'rows': context['cursor'].rowcount, 'callers': callers})
                 return execute
             with ExitStack() as stack:
-                if variant == 'baseline':
-                    stack.enter_context(patch.object(weekly, 'read_weekly_learning', baseline_reader.read_weekly_learning))
-                    stack.enter_context(patch.object(weekly, 'learner_profile_for_source', baseline_identity))
-                    stack.enter_context(patch('learner_api.weekly_calendar.cohort_holidays', baseline_calendar))
-                    stack.enter_context(patch.object(canonical_learning, 'weekly_hour_records', ledger_globals['weekly_hour_records']))
                 for connection in connections.all():
                     stack.enter_context(connection.execute_wrapper(wrapper(connection.alias)))
                 stack.enter_context(patch('requests.sessions.Session.request', side_effect=AssertionError('HTTP forbidden')))
@@ -118,8 +80,7 @@ def main():
                 source = weekly.assignment_projection(weekly.SOURCE_MODELS['commercial'].all_learners.only(*weekly.WEEKLY_SOURCE_FIELDS)).get(pk=265)
                 source.training_plan, source.learning_plan = source._weekly_training_plan, source._weekly_learning_plan
                 payload = weekly.read_dashboard_weekly(source, 265, week_id=f'slot:{module_id}:{number}', module_id=module_id)
-                compact = weekly.compact_weekly(payload, detail=True)
-                raw = JsonResponse(compact).content
+                raw = JsonResponse(payload).content
             record = {'run': run, 'week': number, 'variant': variant, **measurement.fields(), 'raw_bytes': len(raw),
                       'gzip_bytes': len(gzip.compress(raw, mtime=0)), 'activities': len(payload['selectedWeek']['activities']), 'queries': queries}
             # Save payload hashes, never learner/activity content, for parity checks.
@@ -135,7 +96,7 @@ def main():
         with patch('requests.sessions.Session.request', side_effect=AssertionError('HTTP forbidden')), \
              patch('urllib.request.urlopen', side_effect=AssertionError('HTTP forbidden')):
             for pk, number in ((101, None), (265, 2), (265, 3)):
-                request = RequestFactory().get('/weekly/', {'version': '2', **({'moduleId': module_id} if number else {})})
+                request = RequestFactory().get('/weekly/', {'moduleId': module_id} if number else {})
                 response = view(request, 'commercial', pk, **({'week_id': f'slot:{module_id}:{number}'} if number else {}))
                 statuses.append({'enrolment_id': pk, 'week': number, 'status': response.status_code})
                 assert response.status_code == 200

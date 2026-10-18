@@ -2,6 +2,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testi
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { clearAllCachedResources } from '@/api/cachedRequest';
+import { invalidateLearnerReads } from '@/api/learnerRead';
 import type { DashboardTrainingPayload, TrainingModule } from '@/api/dashboardTraining';
 import type { DashboardTabsProps } from '../DashboardTabs';
 import DashboardTrainingTab from '../tabs/DashboardTrainingTab';
@@ -35,6 +36,33 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
 describe('compact Training Plan', () => {
+  it('stops its clock when hidden and resumes it when active', async () => {
+    const start = vi.spyOn(window, 'setInterval');
+    const stop = vi.spyOn(window, 'clearInterval');
+    const view = mount({ active: true });
+    await screen.findByText('Description M1');
+    expect(start.mock.calls.filter(([, delay]) => delay === 30_000)).toHaveLength(1);
+    const index = start.mock.calls.findIndex(([, delay]) => delay === 30_000);
+    const timer = start.mock.results[index].value;
+    view.rerender(<MemoryRouter><DashboardTrainingTab {...props} active={false} /></MemoryRouter>);
+    expect(stop).toHaveBeenCalledWith(timer);
+    expect(start.mock.calls.filter(([, delay]) => delay === 30_000)).toHaveLength(1);
+    view.rerender(<MemoryRouter><DashboardTrainingTab {...props} active /></MemoryRouter>);
+    await waitFor(() => expect(start.mock.calls.filter(([, delay]) => delay === 30_000)).toHaveLength(2));
+  });
+  it('defers hidden refreshes and reuses the refreshed timeline selected detail', async () => {
+    const view = mount({ active: true });
+    await screen.findByText('Description M1');
+    view.rerender(<MemoryRouter><DashboardTrainingTab {...props} active={false} /></MemoryRouter>);
+    act(() => { invalidateLearnerReads(); invalidateLearnerReads(); });
+    expect(requests()).toHaveLength(1);
+    expect(screen.getByText('Description M1')).toBeTruthy();
+    view.rerender(<MemoryRouter><DashboardTrainingTab {...props} active /></MemoryRouter>);
+    await waitFor(() => expect(requests()).toHaveLength(2));
+    await screen.findByText('Description M1');
+    await act(async () => {});
+    expect(requests().filter(url => url.includes('/modules/'))).toEqual([]);
+  });
   it('loads only the requested deep-link module and includes subject/month in the initial URL', async () => {
     mount({}, '/?subject=current%3AM2&month=2026-11');
     await screen.findByText('Description M2');

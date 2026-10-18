@@ -82,6 +82,35 @@ describe('useLearnerWorkspaceAccess', () => {
     expect(access('56')).toEqual({ canProgress: false, showReadOnlyNotice: true });
   });
 
+  it.each(['commercial', 'apprenticeship'])('lets staff study their own linked %s record without changing roles', (learnerRecordKind) => {
+    const account: AuthUser = { ...ADMIN, role: 'staff', learnerRecordId: 56, learnerRecordKind };
+    signedIn(account);
+    expect(access('56')).toEqual({ canProgress: true, showReadOnlyNotice: false });
+    expect(access(56).canProgress).toBe(true);
+    expect(access('19')).toEqual({ canProgress: false, showReadOnlyNotice: true });
+    expect(account.role).toBe('staff');
+    expect(account.subjectId).toBe(13);
+  });
+
+  it('does not mistake a staff subject id for their learner id', () => {
+    signedIn({ ...ADMIN, role: 'staff', subjectId: 56, learnerRecordId: 19 });
+    expect(access('56').canProgress).toBe(false);
+  });
+
+  it('requires a resolved staff identity and a valid linked learner', () => {
+    const account: AuthUser = { ...ADMIN, role: 'staff', learnerRecordId: 56 };
+    signedIn(account, false);
+    expect(access('56')).toEqual({ canProgress: false, showReadOnlyNotice: false });
+    for (const learnerRecordId of [undefined, null, 0, -1]) {
+      signedIn({ ...account, learnerRecordId });
+      expect(access(learnerRecordId).canProgress).toBe(false);
+    }
+    signedIn({ ...account, role: 'employer', subjectType: 'employer' });
+    expect(access('56').canProgress).toBe(false);
+    signedIn({ ...account, subjectType: 'learner' });
+    expect(access('56').canProgress).toBe(false);
+  });
+
   it('does not enable admin actions until both session and learner are resolved', () => {
     signedIn(ADMIN, false);
     expect(access('56').canProgress).toBe(false);

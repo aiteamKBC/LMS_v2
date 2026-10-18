@@ -20,6 +20,7 @@ class CoachLearnerActionTests(SimpleTestCase):
         self.enterContext(patch.dict('os.environ', {'LEARNER_API_REQUIRE_AUTH': '1'}))
         self.authenticate = self.enterContext(patch.object(permissions, 'authenticate_request', return_value=COACH))
         self.owns = self.enterContext(patch.object(permissions, 'coach_owns_learner', return_value=True))
+        self.enterContext(patch('login.learner_enrolment.existing_learner_record', return_value=None))
         self.audit = self.enterContext(patch('login.invitations.record'))
 
     def test_own_coach_writes_as_themselves_and_is_audited_as_a_coach(self):
@@ -121,6 +122,7 @@ class LearnerActionAccessEndpointTests(SimpleTestCase):
         self.factory = RequestFactory()
         self.authenticate = self.enterContext(patch.object(views, 'authenticate_request'))
         self.owns = self.enterContext(patch.object(permissions, 'coach_owns_learner', return_value=False))
+        self.enterContext(patch('login.learner_enrolment.existing_learner_record', return_value=None))
 
     def answer(self, account, query='?learnerId=56'):
         self.authenticate.return_value = account

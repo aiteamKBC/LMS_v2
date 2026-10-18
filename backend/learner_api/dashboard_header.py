@@ -28,7 +28,7 @@ HEADER_SOURCE_FIELDS = tuple(field for field in TRAINING_PLAN_SOURCE_FIELDS
                              if field not in ('modules', 'weeks', 'components')) + IDENTITY_FIELDS
 
 
-def read_header_source(model, pk):
+def read_header_source(model, pk, *, minimal=False):
     """Keep assignment semantics without transferring stored curriculum snapshots."""
     from django.db.models.expressions import RawSQL
     from .models import SafeJSONField
@@ -84,25 +84,27 @@ def header_sessions(cur, ids, now):
     return result
 
 
-def header_identity(source):
+def header_identity(source, *, minimal=False):
     """Match learner-summary's status, dates and navigation gates without its second lookup."""
     status = programme_status(source) or DEFAULT_PROGRAMME_STATUS
     start, end, origin = _group_dates(source)
     source._resolved_group_dates = (start, end, origin)
-    return {
+    identity = {
         'id': str(source.id), 'name': _s(source.username), 'programme': _s(source.programme),
         'programmeStatus': status, 'onboardingStatus': _s(source.onboarding_status),
         'firstSessionUnlocked': _first_session_unlocked(source, status),
         'cohort': _s(source.cohort), 'employer': _s(source.employer),
         'organization': _s(source.organization),
-        'programmeStartDate': _iso_date(start),
         'learnerStartDate': _s(source.learner_start_date),
         'learnerEndDate': _s(source.learner_end_date),
-        'programmeEndDate': _iso_date(source.end_date or source.practical_period_end_date
-                                    or source.apprenticeship_end_date or end),
         'accessGate': access_gate(source), 'learningAccess': learning_access(source),
         'studentActivityAvailable': student_activity_available(source.aptem_id),
     }
+    if not minimal:
+        identity.update(programmeStartDate=_iso_date(start),
+            programmeEndDate=_iso_date(source.end_date or source.practical_period_end_date
+                                      or source.apprenticeship_end_date or end))
+    return identity
 
 
 def lecture_href(cur, sessions, kind, pk, now):
@@ -171,7 +173,7 @@ def weekly_header_candidates(modules, source):
 def next_review(reviews, now):
     """Match homeData.upcomingReviewOrMcm, including booking precedence and ties."""
     today, clock = now.astimezone(UK).date().isoformat(), now.astimezone(UK).strftime('%H:%M')
-    candidates = []
+    candidate = None
     for row in reviews:
         if row.get('source') not in ('mcr', 'progress-review') or not _active(row.get('status')):
             continue
@@ -187,18 +189,21 @@ def next_review(reviews, now):
             moment = moment.replace(tzinfo=timezone.utc)
         elif (moment.replace(tzinfo=timezone.utc) if moment.tzinfo is None else moment) < now:
             continue
-        candidates.append((moment.timestamp(), time or '23:59', f"review-action-{row['id']}", row))
-    return [min(candidates, key=lambda item: item[:3])[3]] if candidates else []
+        item = (moment.timestamp(), time or '23:59', f"review-action-{row['id']}", row)
+        if candidate is None or item[:3] < candidate[:3]:
+            candidate = item
+    return [candidate[3]] if candidate else []
 
 
-def header_profile(source, pk):
+def header_profile(source, pk, *, identity_only=False):
     """Read the delivery profile once, retaining the canonical identity guard.
 
     The account side of the canonical join is the enrolment row already read by
     this request. Read two profiles to preserve the duplicate-bridge rejection;
     never use a same-number profile or an email fallback.
     """
-    profiles = list(LearnerProfile.objects.filter(enrolment_id=pk).only(*TRAINING_PLAN_PROFILE_FIELDS)[:2])
+    fields = ('id', 'email', 'aptem_id') if identity_only else TRAINING_PLAN_PROFILE_FIELDS
+    profiles = list(LearnerProfile.objects.filter(enrolment_id=pk).only(*fields)[:2])
     if not profiles:
         raise ServiceError('The learner is not linked to the consolidated learning record.',
                            'ssot_identity_required', 409)
@@ -213,31 +218,76 @@ def header_profile(source, pk):
     return profile, owner
 
 
-def build_dashboard_header(source, kind, pk, now=None, include_pending_delivery=False):
-    now = now or datetime.now(timezone.utc)
+def dashboard_modules(source, owner, *, include_coach=True, include_week_counts=True):
+    """Shared compact assignment/navigation read; no presentation histories."""
+    ids = sorted(set(_effective_plan_ids(source, {})) |
+                 set(canonical_learning.curriculum_module_ids_for(owner)))
+    if not ids:
+        return ids, []
+    coach_column = ",coalesce(nullif(btrim(g.coach_name),''),m.coach_name) AS coach_name" if include_coach else ''
+    coach_join = ' LEFT JOIN curriculum.groups g ON g.group_id=m.group_id' if include_coach else ''
+    week_count = '''EXISTS (SELECT 1 FROM curriculum.weeks w WHERE w.module_catalogue_id=m.module_catalogue_id
+             AND (w.deleted_at IS NULL OR COALESCE(w.deleted_via_parent,'')<>''))''' if include_week_counts else '0'
+    with connections['enrolment'].cursor() as cur:
+        cur.execute(f'''SELECT m.module_catalogue_id AS id,m.title,m.start_date,m.end_date,
+            m.programme_name,m.cohort_name,m.group_name,m.sessions_number,
+            {week_count} AS week_count{coach_column}
+            FROM curriculum.modules m{coach_join}
+            WHERE m.module_catalogue_id=ANY(%s) ORDER BY m.title''', [ids])
+        return ids, rows(cur)
+
+
+def build_dashboard_bootstrap(source, pk, *, include_pending_delivery=False):
     learner = header_identity(source)
+    candidates = []
+    if include_pending_delivery or learner['programmeStatus'].strip().casefold() not in ('fresh user', 'onboarding'):
+        _, owner = header_profile(source, pk, identity_only=True)
+        _, modules = dashboard_modules(source, owner, include_coach=False)
+        candidates = weekly_header_candidates(modules, source)
+    return {'learner': learner, 'weeklyCandidates': candidates}
+
+
+@require_GET
+@learner_self_or_staff(kwarg='pk')
+@journal_sources.learner_journal_view
+def dashboard_bootstrap(request, kind, pk):
+    model = SOURCE_MODELS.get(kind)
+    if model is None:
+        return JsonResponse({'error': 'Unknown learner kind.'}, status=404)
+    try:
+        with measure_projection('dashboard-bootstrap', kind=kind, learner_id=pk):
+            source = read_header_source(model, pk)
+            account = getattr(request, 'login_account', None)
+            payload = build_dashboard_bootstrap(source, pk,
+                include_pending_delivery=bool(account and account.role != 'learner'))
+    except model.DoesNotExist:
+        return JsonResponse({'error': 'Learner not found.'}, status=404)
+    except ServiceError as error:
+        return JsonResponse({'error': str(error)}, status=error.status)
+    except DatabaseError:
+        return JsonResponse({'error': 'Could not verify your Dashboard access. Please try again.'}, status=503)
+    response = JsonResponse(payload)
+    response['Cache-Control'] = 'private, no-store'
+    response['Vary'] = 'Cookie'
+    return response
+
+
+def build_dashboard_header(source, kind, pk, now=None, include_pending_delivery=False, *, identity_required=True):
+    now = now or datetime.now(timezone.utc)
+    learner = header_identity(source) if identity_required else {
+        'programmeStatus': programme_status(source) or DEFAULT_PROGRAMME_STATUS}
     # Redirected learners need their identity gates, not unavailable delivery tables.
     if not include_pending_delivery and learner['programmeStatus'].strip().casefold() in ('fresh user', 'onboarding'):
         return {'learner': learner, 'schedule': {'modules': [],
                 'sessions': [], 'reviews': [], 'coach': {'name': ''}},
                 'week': {'deadlines': []}, 'lectureHref': None, 'weeklyCandidates': []}
     profile, owner = header_profile(source, pk)
+    ids, modules = dashboard_modules(source, owner, **({'include_week_counts': False} if not identity_required else {}))
     with connections['enrolment'].cursor() as cur:
         # plan_module_ids' metadata reader selected cover URLs only to recover
         # these same IDs. Header navigation needs only their native identities.
-        ids = sorted(set(_effective_plan_ids(source, {})) |
-                     set(canonical_learning.curriculum_module_ids_for(owner)))
-        modules = []
         sessions = []
         if ids:
-            cur.execute('''SELECT m.module_catalogue_id AS id,m.title,m.start_date,m.end_date,
-                m.programme_name,m.cohort_name,m.group_name,m.sessions_number,
-                EXISTS (SELECT 1 FROM curriculum.weeks w WHERE w.module_catalogue_id=m.module_catalogue_id
-                 AND (w.deleted_at IS NULL OR COALESCE(w.deleted_via_parent,'')<>'')) AS week_count,
-                coalesce(nullif(btrim(g.coach_name),''),m.coach_name) AS coach_name
-                FROM curriculum.modules m LEFT JOIN curriculum.groups g ON g.group_id=m.group_id
-                WHERE m.module_catalogue_id=ANY(%s) ORDER BY m.title''', [ids])
-            modules = rows(cur)
             # The persistent header consumes one nearest lecture. Tabs own
             # their complete schedules, so never transfer the whole series.
             sessions = sorted((row for row in header_sessions(cur, ids, now) if _active(row['status'])),
@@ -264,11 +314,81 @@ def build_dashboard_header(source, kind, pk, now=None, include_pending_delivery=
                 and not (key == 'date' and value == row.get('targetDate'))} for row in reviews]
     # module_session_plan_for_count emits slots only for a dated module
     # with a positive stored/authored count. Filter before placement matching.
-    weekly_candidates = weekly_header_candidates(modules, source)
+    weekly_candidates = weekly_header_candidates(modules, source) if identity_required else []
     modules = header_modules(modules, source)
     return {'learner': learner, 'schedule': {'modules': modules,
             'sessions': sessions, 'reviews': reviews, 'coach': coach},
             'week': {'deadlines': deadlines}, 'lectureHref': href, 'weeklyCandidates': weekly_candidates}
+
+
+def selected_header_modules(candidates, today):
+    """Resolve the visible list before projecting away scheduling inputs."""
+    ordered = sorted(candidates, key=lambda m: (m.get('start_date') or '9999',
+                                               m['title'].casefold(), str(m['id'])))
+    active = [m for m in ordered if m.get('start_date') and m.get('end_date')
+              and m['start_date'] <= today <= m['end_date']]
+    if active:
+        return ('Current modules' if len(active) > 1 else 'Current module'), active
+    upcoming = next((m for m in ordered if (m.get('start_date') or '') > today), None)
+    if upcoming:
+        return 'Next module', [upcoming]
+    past = sorted((m for m in ordered if m.get('end_date') and m['end_date'] < today),
+                  key=lambda m: (m['end_date'], str(m['id'])), reverse=True)
+    if past:
+        latest = past[0]['end_date']
+        return 'Last module', [min((m for m in past if m['end_date'] == latest), key=lambda m: str(m['id']))]
+    return ('Modules' if len(ordered) > 1 else 'Module'), ordered
+
+
+def build_minimal_header(source, kind, pk, now=None, include_pending_delivery=False):
+    """One canonical read; never builds Bootstrap or Presentation responses."""
+    now = now or datetime.now(timezone.utc)
+    identity = header_identity(source, minimal=True)
+    # These facts are consumed by the existing workspace/nav/redirect gates.
+    payload = {'learner': identity, 'coach': {'name': ''}, 'modules': [], 'moduleLabel': 'Module',
+               'initialWeeklyModuleId': None, 'nextAssignment': None,
+               'nextLiveSession': None, 'nextReview': None}
+    if not include_pending_delivery and identity['programmeStatus'].strip().casefold() in ('fresh user', 'onboarding'):
+        return payload
+    # Review cycle and coach contact share the canonical profile read.
+    profile, owner = header_profile(source, pk)
+    ids, modules = dashboard_modules(source, owner)
+    contact = current_coach(source, profile, None)
+    name, email = contact['coach_name'], contact['coach_email']
+    if not name and not email and source_coach(source) is None:
+        name = assigned_group_coach(source, modules)
+    payload['coach'] = {'name': name}
+    if email:
+        payload['coach']['email'] = email
+        phone = coach_phone(email)
+        if phone:
+            payload['coach']['phone'] = phone
+    today = now.astimezone(UK).date().isoformat()
+    label, visible = selected_header_modules(header_modules(modules, source), today)
+    _, weekly = selected_header_modules(weekly_header_candidates(modules, source), today)
+    payload.update(moduleLabel=label, modules=[{'id': str(m['id']), 'title': m['title']} for m in visible],
+                   initialWeeklyModuleId=str(weekly[0]['id']) if weekly else None)
+    with connections['enrolment'].cursor() as cur:
+        sessions = header_sessions(cur, ids, now) if ids else []
+        href = lecture_href(cur, sessions, kind, pk, now)
+    if sessions:
+        session = sessions[0]
+        payload['nextLiveSession'] = {'title': session['title'], 'date': session['start'],
+                                     'href': href or f'/learner/my-learning/{kind}/{pk}?subject=current:{quote(str(session["moduleId"]), safe="")}&week=current'}
+    reviews = next_review(plan_reviews(source, profile, ('mcr', 'progress-review'), header_only=True), now)
+    if reviews:
+        review = reviews[0]
+        payload['nextReview'] = {'sessionId': str(review['id']),
+            'eventKey': str(review.get('eventKey') or review['id']), 'source': review['source'],
+            'title': review.get('title') or ('Monthly Coaching Meeting' if review['source'] == 'mcr' else 'Progress Review'),
+            'date': review.get('scheduledDate') or review.get('targetDate') or review.get('date'),
+            **{key: review[key] for key in ('scheduledDate', 'scheduledTime', 'meetingLink') if review.get(key)}}
+    assignments = upcoming_assignment_deadlines(source, profile, now.astimezone(UK).date(), header_only=True)
+    if assignments:
+        assignment = assignments[0]
+        payload['nextAssignment'] = {'title': assignment['title'], 'date': assignment['date'],
+                                     'href': '/learner/monthly-submission'}
+    return payload
 
 
 def compact_header(payload):
@@ -301,18 +421,24 @@ def compact_header(payload):
 @require_GET
 @learner_self_or_staff(kwarg='pk')
 @journal_sources.learner_journal_view
-def dashboard_header(request, kind, pk):
+def dashboard_header(request, kind, pk, presentation=False, minimal=False):
     model = SOURCE_MODELS.get(kind)
     if model is None:
         return JsonResponse({'error': 'Unknown learner kind.'}, status=404)
     try:
         with measure_projection('dashboard-header', kind=kind, learner_id=pk):
-            source = read_header_source(model, pk)
+            source = read_header_source(model, pk, **({'minimal': True} if minimal else {}))
             account = getattr(request, 'login_account', None)
-            payload = build_dashboard_header(source, kind, pk,
-                include_pending_delivery=bool(account and account.role != 'learner'))
-            if request.headers.get('X-LMS-Header-Version') == '2':
+            builder = build_minimal_header if minimal else build_dashboard_header
+            payload = builder(source, kind, pk,
+                include_pending_delivery=bool(account and account.role != 'learner'),
+                **({'identity_required': False} if presentation else {}))
+            if not minimal and (presentation or request.headers.get('X-LMS-Header-Version') == '2'):
                 payload = compact_header(payload)
+            if presentation:
+                # Bootstrap owns these fields; presentation never gates tabs.
+                payload = {key: value for key, value in payload.items()
+                           if key not in ('learner', 'weeklyCandidates', 'version')}
     except model.DoesNotExist:
         return JsonResponse({'error': 'Learner not found.'}, status=404)
     except ServiceError as error:
@@ -321,5 +447,5 @@ def dashboard_header(request, kind, pk):
         return JsonResponse({'error': 'Could not load your Dashboard header. Please try again.'}, status=503)
     response = JsonResponse(payload)
     response['Cache-Control'] = 'private, no-store'
-    response['Vary'] = 'X-LMS-Header-Version, Cookie'
+    response['Vary'] = 'Cookie' if presentation or minimal else 'X-LMS-Header-Version, Cookie'
     return response
