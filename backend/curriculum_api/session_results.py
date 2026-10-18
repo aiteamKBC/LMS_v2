@@ -14,7 +14,7 @@ from django.views.decorators.http import require_GET, require_POST
 from login.permissions import require_role, learner_self_or_staff
 
 from .attendance_identity import identity_check, staff_roles
-from .attendance_link_policy import apply_reviewed_identities, identity_key, link_specs, record_key, unmatched_roster
+from .attendance_link_policy import apply_reviewed_identities, identity_key, link_specs, record_key, unmatched_roster, attendance_bot
 from .attendance_link_store import identity_rules, save_rule
 from .session_results_policy import attendance_display_name, attendance_name_key, session_roster, attendance_csv, instant, session_runs
 from .session_media_policy import hidden_artifact_ids, recording_transcript_links, transcript_timing_ready, artifact_metadata
@@ -405,6 +405,7 @@ def result_rows(series, *, session_number=None, email=None, identity=False, modu
         unmatched_records = [] if email is not None else [
             row for row in reviewed_records
             if (str(row.get('email') or '').strip().casefold() not in expected or row.get('identityReviewRequired'))
+            and (str(row.get('email') or '').strip().casefold() in expected or not attendance_bot(row))
             and (str(row.get('email') or '').strip().casefold() not in known_emails
                  or str(row.get('email') or '').strip().casefold() in expected)
             and str(row.get('email') or '').strip().casefold() not in protected_emails

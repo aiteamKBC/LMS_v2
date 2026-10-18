@@ -21,6 +21,7 @@ from .teams_week_meeting import (
     curriculum_week_teams_meeting_detail,
 )
 from . import recordings_library, session_results, tutor_notifications, recordings_day, recordings_calendar, recordings_external
+from .attendance_corrections import session_attendance_correction
 from .learner_activity_status import activity_status
 
 
@@ -46,6 +47,7 @@ urlpatterns = [
     path('curriculum/session-results/<str:series_id>/sessions/<int:session_number>/', session_results.admin_session),
     path('curriculum/session-results/<str:series_id>/sessions/<int:session_number>/day-results/', recordings_day.lecture_day_results),
     path('curriculum/session-results/<str:series_id>/sessions/<int:session_number>/attendance-alias/', session_results.link_attendance_alias),
+    path('curriculum/session-results/<str:series_id>/sessions/<int:session_number>/attendance-correction/', session_attendance_correction),
     path('curriculum/session-results/<str:series_id>/artifacts/<str:artifact_id>/', session_results.admin_content),
     path('curriculum/session-results/<str:series_id>/artifacts/<str:artifact_id>/visibility/', session_results.recording_visibility),
     path('curriculum/session-results/<str:series_id>/sessions/<int:session_number>/attendance.csv', session_results.export_attendance),

@@ -24,7 +24,7 @@ package.__path__ = [str(ROOT)]
 sys.modules['curriculum_api'] = package
 from curriculum_api.session_results_policy import (attendance_display_name, attendance_name_key, attendance_seconds, evidence_seconds, session_roster,
     attendance_csv, archive_prefix, transcript_text, instant, session_runs)
-from curriculum_api.attendance_link_policy import apply_reviewed_identities, identity_key, link_specs, record_key, unmatched_roster
+from curriculum_api.attendance_link_policy import apply_reviewed_identities, identity_key, link_specs, record_key, unmatched_roster, attendance_bot
 from curriculum_api.session_graph import collection
 from curriculum_api.session_transfer_progress import byte_count
 from curriculum_api.session_media_policy import (hidden_artifact_ids, recordings_for_transcript,
@@ -543,7 +543,7 @@ class EndpointTests(unittest.TestCase):
             'session_runs': session_runs, 'evidence_seconds': evidence_seconds, 'attendance_name_key': attendance_name_key,
             'attendance_display_name': attendance_display_name,
             'apply_reviewed_identities': apply_reviewed_identities, 'identity_key': identity_key,
-            'record_key': record_key, 'link_specs': link_specs, 'unmatched_roster': unmatched_roster,
+            'record_key': record_key, 'link_specs': link_specs, 'unmatched_roster': unmatched_roster, 'attendance_bot': attendance_bot,
             'identity_rules': Mock(return_value=[]),
             'effective_module_register_rows': Mock(return_value=[]),
             'known_learner_emails': Mock(return_value=set()),
@@ -820,6 +820,8 @@ class EndpointTests(unittest.TestCase):
                     {'id': 'IN', 'occurrence_id': 'O', 'email': 'member@example.invalid', 'total_attendance_seconds': 7200},
                     {'id': 'UNKNOWN', 'occurrence_id': 'O', 'email': 'unknown@example.invalid', 'total_attendance_seconds': 600},
                     {'id': 'GUEST', 'occurrence_id': 'O', 'email': '', 'display_name': 'Unknown Guest', 'total_attendance_seconds': 600},
+                    {'id': 'BOT', 'occurrence_id': 'O', 'email': '', 'display_name': 'Example Notetaker', 'total_attendance_seconds': 7200},
+                    {'id': 'BOT-EMAIL', 'occurrence_id': 'O', 'email': 'recorder@fireflies.ai', 'display_name': 'Recording assistant', 'total_attendance_seconds': 7200},
                 ]
                 register = [{'occurrence_id': 'O', 'learner_profile_id': 7, 'learner_email': 'member@example.invalid',
                              'learner_name': 'Module Member', 'attendance_status': 'absent', 'attended_seconds': 0}]
@@ -829,6 +831,7 @@ class EndpointTests(unittest.TestCase):
                 self.assertEqual([(r['email'], r['attendance'], r['seconds']) for r in result['attendance']],
                                  [('member@example.invalid', 1, 7200)])
                 self.assertEqual(records[0]['total_attendance_seconds'], seconds)
+                self.assertEqual(len(records), 6)  # Hidden rows remain in the original evidence.
 
     def test_known_module_member_requiring_identity_review_stays_visible(self):
         self.ns['apply_recovery'] = lambda rows: None
