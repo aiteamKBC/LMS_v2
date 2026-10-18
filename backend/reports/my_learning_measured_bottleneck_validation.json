@@ -1,0 +1,556 @@
+{
+  "branch": "coach_view",
+  "restrictions_observed": [
+    "No branch changes, commits, merges, deployments, migrations, schema changes, production writes or profiling requests.",
+    "Initial git status was clean. Existing tracked implementation preserved."
+  ],
+  "sql_read_reductions": {
+    "live_credits": {
+      "removed_selects": 3,
+      "removed": [
+        "Verified identity re-read in fetch_verified_teams_attendance_rows (1)",
+        "Unused group display metadata in credit projection (1)",
+        "Canonical profile-ID lookup in lecture_register (1)"
+      ],
+      "conditions": "Catalogue has an already verified canonical owner/profile; identity email agrees. Full roster ambiguity, report evidence, corrections and recovery reads remain.",
+      "evidence": "Two mocked QuerySet materializations avoided in attendance parity test; one mocked profile values_list evaluation avoided in register test. No real SQL benchmark."
+    },
+    "activity_dates": {
+      "removed_selects": 3,
+      "removed": [
+        "Module scheduling SELECT",
+        "Visible week SELECT",
+        "Component scheduling SELECT"
+      ],
+      "evidence": "Same-date fixture: cursor.execute count 3 -> 0. Holiday reader and canonical planner still run."
+    },
+    "native_content": {
+      "removed_selects": 0,
+      "changes": [
+        "Strict catalogue flattens only retained id-less legacy snapshots; synthetic 1000-native-component tree is not visited.",
+        "Invisible/mismatched-week components are excluded before settings projection.",
+        "Date settings use the established ->> text projection alongside native JSON identities, preserving type semantics."
+      ]
+    }
+  },
+  "functions_changed": [
+    "attendance.combined_attendance_rows",
+    "attendance_lectures.lecture_register",
+    "teams_attendance.fetch_verified_teams_attendance_rows",
+    "live_session_progress.read_live_credits",
+    "my_learning.catalogue_module_rows",
+    "my_learning.load_context",
+    "learner_detail._resolve_from_master",
+    "weekly_learning.build_learning_content_summary",
+    "builder_activity_dates.read_builder_activity_dates",
+    "session_sync_runtime._review_loop"
+  ],
+  "attendance_findings": "The 19 measured enrolment callbacks are aggregate evidence, not SQL identities. Source shows separate batched roster, alias, reviewed identity, occurrence/report, recovery, confirmation and correction reads, plus conditional shared-series/recovery work. No assertion that 19 means 19 per-session queries or that every measured callback has been individually identified. Series selection now uses learner-plan membership or approved alternatives before broader roster work, retaining full ambiguity rosters.",
+  "direct_psycopg": "Retained. fetch_kbc_attendance_rows makes one connection/read on this path. KBC has a separately configured database target; no safe existing equivalent connection was established without connecting or changing transaction behavior.",
+  "azure": {
+    "initiator": "config.wsgi/config.asgi -> SessionSyncWSGI/SessionSyncASGI -> start_automatic_sync -> session-recording-review thread -> _review_loop -> run_reviewer -> review_session_recordings management command -> review_ready_recordings -> blob.get_blob_properties",
+    "finding": "Separate daemon thread in each serving process, started by its first HTTP request. It shares process CPU, memory, scheduling and network resources; attributable foreground delay has not been measured.",
+    "fix": "Wait one existing five-minute review interval before first pass. Periodic availability review, repair queue, manual command, recording playback and automatic result processing remain. This defers cold-start review; it does not fully isolate background work or prove the observed logs came exclusively from this initiator."
+  },
+  "parity": "Guarded public shared catalogue fixture and commercial/apprenticeship, native/legacy, replacement, retained quiz, correction, historical completion, recorded/shared attendance regression cases passed except the recorded holiday failure. New attendance test compares credit output with nonempty display groups; all other attendance fields remain equal. No PostgreSQL or real-user parity claim.",
+  "validation": {
+    "guarded_backend": {
+      "command": "@'\nimport os,sys,unittest,socket\nsys.path.insert(0,'backend')\nos.environ['DJANGO_SETTINGS_MODULE']='config.settings_sqlite_test'\nos.environ['DJANGO_USE_SQLITE']='true'\nos.environ['CURRICULUM_WARM']='0'\nfrom django.conf import settings\nassert all(db['ENGINE']=='django.db.backends.sqlite3' for db in settings.DATABASES.values())\nfrom unittest.mock import patch\nfrom django.db.backends.base.base import BaseDatabaseWrapper\nnames=['learner_api.tests_my_learning_no_db','learner_api.tests_my_learning_performance_no_db','learner_api.tests_my_learning_diagnostics_no_db','learner_api.tests_my_learning_bottlenecks_no_db','learner_api.test_projection_performance_no_db','learner_api.test_dashboard_training_no_db','learner_api.test_dashboard_request_reuse_no_db','learner_api.test_dashboard_weekly_no_db','learner_api.test_weekly_optimization_no_db','learner_api.test_previous_learning_groups_no_db','learner_api.test_ksb_point_display_no_db','learner_api.test_replacement_learning_no_db','learner_api.tests_weekly_learning','learner_api.tests_live_session_progress','learner_api.test_retained_quiz_progress_no_db','learner_api.test_canonical_metrics_bulk_no_db','learner_api.test_dashboard_monthly_no_db','learner_api.test_dashboard_overview_no_db','learner_api.test_dashboard_tabs_no_db','learner_api.tests_attendance_lectures','learner_api.tests_builder_activity_dates','learner_api.test_teams_attendance_module_roster_no_db','learner_api.test_teams_attendance_alias_no_db','learner_api.tests_shared_teams_attendance','learner_api.tests_recorded_attendance','learner_api.tests.TeamsAttendanceEligibilityTests','learner_api.tests.TeamsAttendanceSyncTests','learner_api.tests.LearnerAttendanceEndpointTests','curriculum_api.tests.TeamsMultiDayRecurrenceTests','curriculum_api.tests.TeamsAttendanceRosterTests','coach_api.tests_errors']\nwith patch.object(BaseDatabaseWrapper,'ensure_connection',side_effect=AssertionError('Database access prohibited')):\n import django\n django.setup()\n with patch.object(socket.socket,'connect',side_effect=AssertionError('Network access prohibited')):\n  result=unittest.TextTestRunner().run(unittest.defaultTestLoader.loadTestsFromNames(names))\nsys.exit(not result.wasSuccessful())\n'@ | python -",
+      "total": 340,
+      "passed": 338,
+      "failed": 2,
+      "failures": [
+        {
+          "test": "learner_api.tests_builder_activity_dates.BuilderActivityDatesTests.test_selected_holidays_move_components_into_the_correct_month",
+          "actual": "2026-10-26",
+          "expected": "2026-11-02",
+          "baseline": "Reproduced by loading HEAD:backend/learner_api/builder_activity_dates.py into a separate namespace and substituting its original reader in this test. Holiday rules/tests not changed."
+        },
+        {
+          "test": "coach_api.tests_errors.CoachErrorSecurityTests.test_batch_wrapper_does_not_reintroduce_exception_leakage",
+          "actual": 401,
+          "expected": 500,
+          "baseline": "Unresolved. No passing baseline claim; no authorization gate weakened."
+        }
+      ]
+    },
+    "isolated_learning": {
+      "command": "PYTHONPATH=backend CURRICULUM_WARM=0 python -m unittest backend.learner_api.test_canonical_learning_no_db backend.learner_api.test_current_learning_no_db backend.learner_api.test_my_learning_cleanup_no_db backend.learner_api.test_course_catalogue_no_db backend.learner_api.test_course_catalogue_display_no_db backend.learner_api.test_quiz_placement_no_db backend.learner_api.test_source_completion_no_db backend.learner_api.test_programme_target_no_db backend.learner_api.test_subject_origins_no_db",
+      "passed": 140
+    },
+    "local_content": {
+      "command": "PYTHONPATH=backend python -m unittest backend.learner_api.test_local_subject_content_no_db",
+      "passed": 21
+    },
+    "recording_runtime": {
+      "command": "python -m unittest backend.curriculum_api.test_session_sync_runtime_no_db backend.curriculum_api.test_session_recording_review_no_db",
+      "passed": 26
+    },
+    "frontend_feature": {
+      "command": "npm --prefix frontend run test -- src/pages/learner/my-learning src/pages/workspace/learner/__tests__ src/api/__tests__/weeklyLearningContract.test.ts src/api/__tests__/weeklyMutations.test.ts src/hooks/__tests__/useWeeklyLearning.test.tsx src/hooks/__tests__/useWeeklyLearningWeek.test.tsx src/api/__tests__/learnerRead.test.ts src/api/__tests__/learnerOverview.test.ts src/hooks/__tests__/learnerNavigation.test.tsx --maxWorkers=2",
+      "passed": 508,
+      "files": 46
+    },
+    "teams_baseline": {
+      "command": "npm --prefix frontend run test:teams",
+      "result": "PASS",
+      "passed": 119,
+      "files": 9
+    },
+    "expanded_teams": {
+      "result": "PARTIAL / BLOCKED",
+      "executed": "Guarded attendance lectures, eligibility/sync, shared/recorded attendance, live credit, curriculum recurrence/roster and coach error cases are included in the 340-case run.",
+      "blocked": "Database-backed curriculum meeting/sync-verdict and coach race/security suites require a safely provisioned PostgreSQL test runner. No such target verified; no schema provisioning or database connections performed."
+    },
+    "type_check": {
+      "command": "npm --prefix frontend run type-check",
+      "result": "PASS"
+    },
+    "build": {
+      "command": "npm --prefix frontend run build",
+      "result": "PASS",
+      "modules": 4210,
+      "warnings": "Dependency direct-eval, chunk-size and plugin-timing warnings."
+    },
+    "lint": {
+      "command": ".\\node_modules\\.bin\\eslint.cmd src/api/myLearning.ts src/pages/learner/my-learning/CompactModules.tsx src/pages/learner/my-learning/LearningCatalogue.tsx src/pages/learner/my-learning/learningSummary.ts src/pages/learner/my-learning/compactModules.test.tsx src/pages/learner/my-learning/studentActivity.test.tsx --report-unused-disable-directives --max-warnings 0",
+      "cwd": "frontend",
+      "result": "PASS"
+    },
+    "syntax": "ast.parse on every changed Python file and new regression file: PASS",
+    "diff": {
+      "command": "git diff --check",
+      "result": "PASS"
+    },
+    "live_teams": "NOT RUN",
+    "http_measurement": "NOT RUN"
+  },
+  "impact": "Expected: six fewer scoped SELECTs, narrower Teams series/roster work, less native snapshot/hidden-week processing and deferred cold-start recording HEADs. Measured improvement: UNMEASURED. Under-five-second uncached goal: UNVERIFIED. Cannot translate removed queries into milliseconds using aggregate stage timings.",
+  "remaining_latency_followup": {
+    "scope": {
+      "branch": "coach_view",
+      "preserved": "All changes present at the start of this follow-up remain. No branches, commits, merges, migrations, deployments, database/schema writes or HTTP benchmark requests.",
+      "initial_worktree": "The prior attendance/native/date/runtime changes, tests and validation JSON were already modified/untracked; they were not reset or replaced."
+    },
+    "latest_user_evidence": {
+      "view_ms": 18660,
+      "http_ms_approx": 20090,
+      "live_credits_ms": 7060,
+      "native_content_ms": 2420,
+      "ledger_read_ms": 1560,
+      "enrolment_callbacks": 19,
+      "enrolment_client_ms": 4114,
+      "default_callbacks": 3,
+      "default_client_ms": 435,
+      "unattributed_ms": 2466,
+      "note": "Single samples supplied by user; no controlled performance attribution."
+    },
+    "implemented": [
+      {
+        "group": "Known occurrence replacement associations",
+        "selects_before": 1,
+        "selects_after": 0,
+        "functions": [
+          "attendance_lectures.lecture_register",
+          "attendance.combined_attendance_rows",
+          "teams_attendance.fetch_verified_teams_attendance_rows"
+        ],
+        "change": "Read the canonical native schedule first on the credit-only path and reuse its concrete replacement association facts. Limit Teams occurrences to those consumed by the register plus approved alternative occurrences. Fetch associations only for missing facts.",
+        "preserved": "The schedule sets scope and association only. Actual attendance still requires completed reports, reviewed identities and canonical evidence. Own occurrence report readiness uses the occurrence read, not an older schedule value. Shared aliases and unknown alternatives retain the authoritative lookup.",
+        "limits": "One association SELECT still runs when any required association is missing. No blanket 19->17 runtime claim."
+      },
+      {
+        "group": "Reviewed module aliases and occurrence links",
+        "selects_before": 2,
+        "selects_after": 1,
+        "functions": [
+          "teams_attendance._attendance_review_rows",
+          "teams_attendance.fetch_verified_teams_attendance_rows"
+        ],
+        "change": "One parameterized UNION ALL read batches the two independent optional tables after relevant occurrences are known.",
+        "preserved": "Module-scoped aliases, occurrence/record-specific reviewed links, full module ambiguity rosters and existing identity_rules remain. Only undefined-table SQLSTATE 42P01 uses independent fallbacks; transport/permission errors propagate.",
+        "limits": "A missing optional table incurs the failed combined probe plus original fallback reads. Schema readiness was not inspected against production."
+      },
+      {
+        "group": "Shared session projections",
+        "selects_before": "unchanged number of reads",
+        "selects_after": "unchanged number of reads; narrower row scope",
+        "functions": [
+          "shared_teams_attendance.apply_shared_attendance",
+          "curriculum_api.session_results.result_rows"
+        ],
+        "change": "Pass consumed source occurrence IDs into the existing per-series reader. Preserve full roster/identity/recovery resolution for those occurrences.",
+        "preserved": "Both learner kinds, shared meeting identity, corrections, report readiness, raw absence versus recovery completion and ambiguity rules.",
+        "limits": "Existing shared-context, identity-rule and recovery SELECTs remain; no new cross-request attendance cache."
+      },
+      {
+        "group": "Native normalized quiz link and metadata path",
+        "selects_before": 3,
+        "selects_after": 2,
+        "functions": [
+          "learner_detail._resolve_from_master"
+        ],
+        "change": "For the strict catalogue identity path, join normalized component links to small quiz metadata in one SELECT. Keep pre-resolved request-local quiz metadata precedence.",
+        "preserved": "Exact quizId/title/questions/duration/timeUnit, linked settings, assignments, activity counts, native/legacy reconciliation and published placement rules.",
+        "limits": "Extra settings-only quiz IDs still need the missing-metadata read. Duplicate normalized links trigger the unchanged legacy reader: three original SELECTs plus one probe. No tie-break was invented."
+      },
+      {
+        "group": "Catalogue historical ledger reporting segments",
+        "selects_before": 1,
+        "selects_after": 1,
+        "functions": [
+          "canonical_learning.entries_for"
+        ],
+        "change": "Catalogue reporting segments become a per-progress nonempty marker rather than sorted JSON aggregation of all segment IDs. Other ledger projections retain their segment payloads.",
+        "preserved": "Segments are only a direct-save presence gate for this catalogue; original accepted seconds, correction markers, source/journal/history ownership and learner-wide attribution remain. Public fixture remains unchanged.",
+        "limits": "The canonical source/journal/history joins and learner-wide progress population remain. No PostgreSQL plan or elapsed-time claim."
+      }
+    ],
+    "attendance_query_group_inventory": [
+      "KBC legacy register: one separately configured direct psycopg connection/read when the Aptem identity permits it.",
+      "Canonical native schedule: one shared/replaced-occurrence read on the normal path, with its existing fallback path.",
+      "Approved recovery guests: coach report read, conditional current-profile resolution and occurrence-to-series association; full guest ambiguity context remains.",
+      "Eligible Teams series and normalized assignments: scoped series query with membership subqueries; full selected-module roster read remains necessary.",
+      "Matching learner profiles: full ambiguity roster, not just the requested learner.",
+      "Concrete report occurrences and raw attendance evidence: separate narrow occurrence and scoped raw evidence reads.",
+      "Replacement associations: reused for known concrete schedule rows; remaining unknown/shared/recovery associations are read.",
+      "Reviewed aliases/occurrence links: batched; optional-table compatibility fallback remains.",
+      "Recurring reviewed identity rules: existing saved-rule and historical-link inference reads remain.",
+      "Recovery projection: canonical absence and conditional approved-alternative presence evidence remain.",
+      "Shared delivery context: existing per-series register and reviewed identity calculation remains, scoped by consumed occurrences.",
+      "Register supplements: completed catch-up evidence, saved confirmations, recorded delivery preference/readiness and watch evidence, and coach corrections remain."
+    ],
+    "callback_limit": "These source groups explain why this is more than one attendance SELECT. The aggregate 19 callbacks do not identify each statement or optional branch in the user's captured process. Two source-level SELECTs in the previously optimized ordinary path are redundant and removed by the new isolated cases; no assertion that all 19 callbacks ran the current on-disk source.",
+    "direct_psycopg": {
+      "retained": true,
+      "function": "attendance.fetch_kbc_attendance_rows",
+      "role": "Authoritative Aptem-scoped legacy KBC attendance remains part of the same canonical register and duplicate/correction handling. A primary/enrolment connection cannot be substituted without proving it targets this separate database and preserves transactions.",
+      "lifecycle": "One psycopg.connect(..., connect_timeout=10) per call, with a context-managed cursor and connection. Successful exit completes the read transaction and closes the connection; failure rolls back/closes. No connection is retained in a learner cache. Connection acquisition, execute/fetch and network waiting remain outside Django callback timing."
+    },
+    "reviewer": {
+      "process_evidence": "Read-only CIM metadata showed runserver --noreload processes started before the previous runtime source edit. Read-only listener inspection found one Python process listening on 127.0.0.1:8000 and its Python parent; this is not evidence of two serving workers. No attach, reload, restart or HTTP request was performed.",
+      "loaded_code_limit": "Startup config.wsgi/config.asgi imports session_sync_runtime. A --noreload process does not load later source edits automatically. The current disk delay cannot be claimed active merely because the file was edited; the existing process predates those edits. Loaded Python objects/threads were not inspected invasively.",
+      "lifecycle": "Each serving process can start its own automatic worker and reviewer. Normal Django autoreload replaces the process, terminating its daemon threads. Re-execution/importlib-style reload in one process now retains thread handles, stop state and foreground counters, including upgrade from the prior runtime. Only HTTP wrappers and the explicit management command initiate reviewer work in searched source; sync/archive paths may make their own storage calls.",
+      "fixes": [
+        "Preserve the existing five-minute first-pass delay.",
+        "Use an atomic add for a five-minute slot on the existing cache to coalesce duplicate automatic review passes when the cache is shared.",
+        "Wait for currently running local view handling before starting a pass, with a 30-second bound so continuous traffic cannot starve availability review.",
+        "Retain runtime handles across same-process module re-execution to avoid orphaning existing reviewer references."
+      ],
+      "preserved": "Manual review command bypasses slot claims. Automatic recording result processing, periodic availability checks, repair queue, playback and streaming response behavior remain.",
+      "limits": "Cache coordination is best effort; local-memory/fallback caches cannot coordinate multiple processes, and cache failure retains review with possible duplicate work. A running pass still shares CPU/network with new requests. WSGI streaming iteration is deliberately unchanged. No actual foreground contention or live HEAD reduction measured."
+    },
+    "parity": "Unchanged public catalogue fixture passes; Commercial/Apprenticeship, current/legacy, replacements, corrections, historical completion, approved alternatives, shared/recorded attendance and retained quizzes are covered by guarded cases. New cases compare credit output, native quiz metadata and accepted-hour/direct-save rules. There is no PostgreSQL or real-user output-parity claim.",
+    "tests": {
+      "guarded": {
+        "command": "@'\nimport os,sys,unittest,socket\nsys.path.insert(0,'backend')\nos.environ['DJANGO_SETTINGS_MODULE']='config.settings_sqlite_test'\nos.environ['DJANGO_USE_SQLITE']='true'\nos.environ['CURRICULUM_WARM']='0'\nfrom django.conf import settings\nassert all(db['ENGINE']=='django.db.backends.sqlite3' for db in settings.DATABASES.values())\nfrom unittest.mock import patch\nfrom django.db.backends.base.base import BaseDatabaseWrapper\nnames=['learner_api.tests_my_learning_no_db','learner_api.tests_my_learning_performance_no_db','learner_api.tests_my_learning_diagnostics_no_db','learner_api.tests_my_learning_bottlenecks_no_db','learner_api.tests_my_learning_remaining_latency_no_db','learner_api.test_projection_performance_no_db','learner_api.test_dashboard_training_no_db','learner_api.test_dashboard_request_reuse_no_db','learner_api.test_dashboard_weekly_no_db','learner_api.test_weekly_optimization_no_db','learner_api.test_previous_learning_groups_no_db','learner_api.test_ksb_point_display_no_db','learner_api.test_replacement_learning_no_db','learner_api.tests_weekly_learning','learner_api.tests_live_session_progress','learner_api.test_retained_quiz_progress_no_db','learner_api.test_canonical_metrics_bulk_no_db','learner_api.test_dashboard_monthly_no_db','learner_api.test_dashboard_overview_no_db','learner_api.test_dashboard_tabs_no_db','learner_api.tests_attendance_lectures','learner_api.tests_builder_activity_dates','learner_api.test_teams_attendance_module_roster_no_db','learner_api.test_teams_attendance_alias_no_db','learner_api.tests_shared_teams_attendance','learner_api.tests_recorded_attendance','learner_api.tests.TeamsAttendanceEligibilityTests','learner_api.tests.TeamsAttendanceSyncTests','learner_api.tests.LearnerAttendanceEndpointTests','curriculum_api.tests.TeamsMultiDayRecurrenceTests','curriculum_api.tests.TeamsAttendanceRosterTests','coach_api.tests_errors']\nwith patch.object(BaseDatabaseWrapper,'ensure_connection',side_effect=AssertionError('Database access prohibited')), patch('psycopg.connect', side_effect=AssertionError('Direct database access prohibited')), patch('psycopg.Connection.connect', side_effect=AssertionError('Direct database access prohibited')):\n import django\n django.setup()\n with patch.object(socket.socket,'connect',side_effect=AssertionError('Network access prohibited')):\n  result=unittest.TextTestRunner().run(unittest.defaultTestLoader.loadTestsFromNames(names))\nsys.exit(not result.wasSuccessful())\n'@ | python -",
+        "total": 351,
+        "passed": 349,
+        "failed": 2,
+        "failures": [
+          {
+            "test": "learner_api.tests_builder_activity_dates.BuilderActivityDatesTests.test_selected_holidays_move_components_into_the_correct_month",
+            "actual": "2026-10-26",
+            "expected": "2026-11-02",
+            "baseline": "Reproduced by loading HEAD:backend/learner_api/builder_activity_dates.py into a separate namespace and substituting its original reader in this test. Holiday rules/tests not changed."
+          },
+          {
+            "test": "coach_api.tests_errors.CoachErrorSecurityTests.test_batch_wrapper_does_not_reintroduce_exception_leakage",
+            "actual": 401,
+            "expected": 500,
+            "baseline": "Unresolved. No passing baseline claim; no authorization gate weakened."
+          }
+        ],
+        "guards": "SQLite-only configured aliases asserted; BaseDatabaseWrapper.ensure_connection, psycopg.connect and psycopg.Connection.connect denied. socket.socket.connect denied during test execution. No real DB/network access required."
+      },
+      "isolated": {
+        "command": "$env:PYTHONPATH='backend'\n$env:CURRICULUM_WARM='0'\npython -m unittest backend.learner_api.test_canonical_learning_no_db backend.learner_api.test_current_learning_no_db backend.learner_api.test_my_learning_cleanup_no_db backend.learner_api.test_course_catalogue_no_db backend.learner_api.test_course_catalogue_display_no_db backend.learner_api.test_quiz_placement_no_db backend.learner_api.test_source_completion_no_db backend.learner_api.test_programme_target_no_db backend.learner_api.test_subject_origins_no_db backend.learner_api.test_local_subject_content_no_db",
+        "passed": 161
+      },
+      "recording_runtime": {
+        "command": "python -m unittest backend.curriculum_api.test_session_sync_runtime_no_db backend.curriculum_api.test_session_recording_review_no_db backend.curriculum_api.test_session_results_no_db",
+        "result": "PASS",
+        "passed": 169
+      },
+      "frontend_feature": {
+        "command": "npm --prefix frontend run test -- src/pages/learner/my-learning src/pages/workspace/learner/__tests__ src/api/__tests__/weeklyLearningContract.test.ts src/api/__tests__/weeklyMutations.test.ts src/hooks/__tests__/useWeeklyLearning.test.tsx src/hooks/__tests__/useWeeklyLearningWeek.test.tsx src/api/__tests__/learnerRead.test.ts src/api/__tests__/learnerOverview.test.ts src/hooks/__tests__/learnerNavigation.test.tsx --maxWorkers=2",
+        "passed": 508,
+        "files": 46,
+        "result": "PASS"
+      },
+      "teams_baseline": {
+        "command": "npm --prefix frontend run test:teams",
+        "result": "PASS",
+        "passed": 119,
+        "files": 9
+      },
+      "type_check": {
+        "command": "npm --prefix frontend run type-check",
+        "result": "PASS"
+      },
+      "build": {
+        "command": "npm --prefix frontend run build",
+        "result": "PASS",
+        "modules": 4210,
+        "warnings": "Dependency direct-eval, chunk-size and plugin timing warnings."
+      },
+      "lint": {
+        "command": ".\\node_modules\\.bin\\eslint.cmd src/api/myLearning.ts src/pages/learner/my-learning/CompactModules.tsx src/pages/learner/my-learning/LearningCatalogue.tsx src/pages/learner/my-learning/learningSummary.ts src/pages/learner/my-learning/compactModules.test.tsx src/pages/learner/my-learning/studentActivity.test.tsx --report-unused-disable-directives --max-warnings 0",
+        "cwd": "frontend",
+        "result": "PASS"
+      },
+      "diff": {
+        "command": "git diff --check",
+        "result": "PASS"
+      },
+      "syntax": "Changed Python files parsed with ast.parse: PASS",
+      "expanded_teams": "PARTIAL / BLOCKED: guarded attendance/recurrence/roster/error cases ran; database-backed PostgreSQL meeting/sync-verdict/race/security suites still require a verified safe test target. No production-connected runner started.",
+      "live_teams": "NOT RUN",
+      "http_measurement": "NOT RUN",
+      "test_maintenance": "Updated only assertions required by the intentional new query/read contract. Extended the source-only Query fixture with values() so existing roster eligibility assertions execute with subquery projections. No assertions skipped or auth gates weakened."
+    },
+    "impact": "Additional source-level savings: two attendance SELECTs in the known concrete-occurrence case and one SELECT in the normal three-query native path, plus narrower shared/occurrence reads and less ledger segment aggregation. Conditional fallback cases save fewer queries or add a compatibility probe. All timings and the under-five-second target remain UNVERIFIED against the new source. The user's before/after samples cannot be attributed to these changes or even assumed to represent the current disk code while the old --noreload process remains."
+  },
+  "hidden_io_followup": {
+    "scope": {
+      "branch": "coach_view",
+      "preserved": "All prior tracked and untracked work retained. No branches, commits, merges, migrations, deployments, schema changes, production database writes or HTTP benchmark requests performed."
+    },
+    "user_measurement": {
+      "http_ms": 25260,
+      "view_ms": 22200,
+      "live_credits_ms": 10240,
+      "enrolment_sql_callbacks": 14,
+      "enrolment_client_ms": 5280,
+      "default_sql_callbacks": 3,
+      "default_client_ms": 1130,
+      "unattributed_wall_ms": 3750,
+      "native_content_ms": 1490,
+      "activity_dates_ms": 790,
+      "ledger_read_ms": 720,
+      "assignments_ms": 2070,
+      "context": "User confirms this ordinary local request followed a backend restart. These are individual samples, not controlled percentiles. The callback reduction from 22 to 17 is not evidence of improved request latency."
+    },
+    "hidden_io": {
+      "measured": "Only the user's existing aggregate SQL and unattributed wall categories are measured on a real request. No new real operation timings were collected by the agent.",
+      "implemented": "The existing projection_stage event now includes bounded operations, independently timed without subtracting them from existing stage totals or adding any query.",
+      "groups": {
+        "kbc_connect": "psycopg.connect acquisition: DNS/TCP/TLS/authentication and client setup as observable at this boundary.",
+        "kbc_execute": "The original single KBC SELECT execution.",
+        "kbc_fetch": "The original fetchall, including driver fetching and row decoding CPU.",
+        "kbc_decode": "Python normalization of the returned rows.",
+        "kbc_total": "inclusive_elapsed_ms covers the whole KBC lifecycle; exclusive elapsed_ms retains residual cursor/context entry and transaction/connection cleanup.",
+        "teams_reports": "Teams reader aggregate; exclusive remainder includes its other membership/session/guest work.",
+        "attendance_roster": "Full authorized module roster read.",
+        "attendance_profiles": "Identity-scope and full ambiguity-profile reads and materialization, without extra result-list copies.",
+        "teams_occurrences": "Concrete completed-report occurrence reads and fetching.",
+        "teams_evidence": "Raw report evidence reads and fetching.",
+        "reviewed_links": "Existing reviewed alias/link read.",
+        "identity_rules": "Existing recurring and legacy reviewed identity rules.",
+        "identity_matching": "Canonical per-occurrence reviewed-identity matching; full ambiguity rules remain.",
+        "attendance_associations": "Authoritative association lookup for facts not already loaded in the request.",
+        "attendance_schedule": "Canonical shared/replaced native schedule read.",
+        "attendance_recovery": "Canonical recovery reads and projection, including approved alternatives.",
+        "attendance_catchups": "Canonical completed catch-up evidence and projection.",
+        "attendance_confirmations": "Saved attendance confirmation reads.",
+        "attendance_recorded": "Recorded mode/watch evidence and projection.",
+        "attendance_corrections": "Staff source adjustment reads and projection.",
+        "shared_series": "Canonical shared-series roster, identity and recovery processing.",
+        "credit_projection": "Final canonical live-credit matching and projection.",
+        "assignment_placement": "Existing placement resolution, including any cursor acquisition/read.",
+        "assignment_query": "Existing group/manual-roster curriculum query, cursor acquisition, execute, fetch and row processing."
+      },
+      "fields": {
+        "elapsed_ms": "Exclusive operation wall time; repeated operations aggregate.",
+        "inclusive_elapsed_ms": "Wall time including nested operations. Do not add it to exclusive child timings.",
+        "thread_cpu_ms": "Exclusive current-thread CPU, including Python and C driver/client processing.",
+        "processing_cpu_ms": "Exclusive thread CPU outside Django execute callbacks.",
+        "django_sql_calls": "Django execute callback count attributed to the innermost operation.",
+        "django_client_execute_ms": "Django driver execute wall time; not PostgreSQL server execution.",
+        "non_cpu_wall_ms": "Exclusive wall minus current-thread CPU. Includes known driver waiting, other I/O and thread scheduling.",
+        "unwrapped_wall_ms": "Exclusive wall minus Django execute wall and CPU outside those callbacks. This isolates the remaining fetch/acquisition/direct-I/O/cache/scheduling category without counting known Django execute wall twice.",
+        "calls_and_failures": "Bounded numeric counters; no exception messages or bodies."
+      },
+      "safety": "Same LMS_MY_LEARNING_TRACE=1 + DEBUG + runserver + localhost/loopback initial-catalogue gate. Request headers/parameters cannot enable it. No timers, SQL wrappers or diagnostic logs on the disabled path. Fixed operation whitelist; unknown names aggregate under other. One existing event per traced request. No SQL/parameters, credentials, learner names, URLs, tokens, response bodies or exception text enter the collector.",
+      "limits": "Operations and stages are separate accounting views: do not add operation durations to stage totals. Non-CPU/unwrapped wall can include scheduling, not only I/O. Django acquisition/fetch and PostgreSQL server execution remain incompletely separated. Background threads are not attributed as foreground operations."
+    },
+    "repeated_work_removed": [
+      {
+        "group": "Saved assignment plan decoding",
+        "before": 2,
+        "after": 1,
+        "unit": "stored-plan decode passes for saved plans",
+        "functions": [
+          "learning_plan.effective_training_plan",
+          "learning_plan._effective_plan_ids"
+        ],
+        "preserved": "Empty, unsaved, explicit, inherited and legacy CSV semantics; fresh subsequent reads; both learner kinds. No persistent plan cache or query removal.",
+        "evidence": "Guarded before/after HEAD-function probe and new tests on a synthetic 1,000-component saved plan."
+      },
+      {
+        "group": "Live-credit matching",
+        "before": 50000,
+        "after": 1000,
+        "unit": "visits to the original register iterable in a 50-component/50-module/1,000-row fixture",
+        "functions": [
+          "live_session_progress.project_live_credits"
+        ],
+        "preserved": "Same candidate matching, ambiguity/duplicate suppression, report readiness, >180-second evidence requirement, raw/effective status, shared identity and awarded hours.",
+        "evidence": "Exact credit output equality against HEAD implementation. Candidate matching still scans the corresponding per-module buckets; this is not a whole-request time benchmark."
+      },
+      {
+        "group": "Identity input roster and alias construction",
+        "before": 2,
+        "after": 1,
+        "unit": "full input roster builds for two occurrences with the same module and approved-guest set",
+        "functions": [
+          "teams_attendance.fetch_verified_teams_attendance_rows"
+        ],
+        "preserved": "Different module/guest sets keep separate cache entries. Full request-local roster remains authoritative. Per-report canonical identity and ambiguity matching still runs.",
+        "evidence": "Two canonical matching calls receive the same complete request-local roster object; output presence remains equal. No cross-request/cross-learner cache."
+      },
+      {
+        "group": "Unused stored invitation snapshot projection",
+        "before": 4,
+        "after": 3,
+        "unit": "LiveSession selected fields (id/module_catalogue_id/module_title, with attendees removed)",
+        "functions": [
+          "teams_attendance.fetch_verified_teams_attendance_rows"
+        ],
+        "preserved": "Assignment/approved-recovery roster remains authoritative. Stored invitations were not consumed by this reader's eligibility or output.",
+        "evidence": "Existing roster/eligibility tests and explicit projection regression pass. SELECT count remains 1 -> 1; transferred-byte/time impact is unmeasured."
+      }
+    ],
+    "source_level_sql": {
+      "additional_selects_removed_this_followup": 0,
+      "diagnostic_queries_added": 0,
+      "kbc": {
+        "connection_calls_before": 1,
+        "connection_calls_after": 1,
+        "selects_before": 1,
+        "selects_after": 1,
+        "fetchall_calls_before": 1,
+        "fetchall_calls_after": 1
+      },
+      "teams_series_select": {
+        "before": 1,
+        "after": 1,
+        "change": "One unused column removed."
+      },
+      "assignments": "Existing conditional placement/preset/manual-roster SELECTs unchanged.",
+      "native_and_ledger": "Existing narrow identity/quiz projections and learner-owned canonical source/journal/history reads retained. No further redundant SQL read was established from the supplied aggregate timings.",
+      "note": "No new real-request callback count or time improvement claimed."
+    },
+    "kbc_lifecycle": "Retained as the authoritative Aptem-scoped legacy register used by canonical merge/correction handling. One separately configured psycopg connection per eligible call, connect_timeout=10, one SELECT and fetchall. Cursor and connection contexts still close on success or failure; successful read transaction completion/cleanup is observable in the lifecycle remainder. No safe equivalent existing connection/transaction target was established, so none was substituted.",
+    "worker": {
+      "source": "SessionSyncWSGI/ASGI -> start_automatic_sync -> _automatic_loop -> run_worker -> process_session_results -> curriculum_teams_meeting_artifacts/Graph -> archive_series/Graph/Azure.",
+      "command_error": "The command's explicit CommandError is raised after failed jobs and retry state have been saved. The old runtime classified that ordinary retry outcome as a worker failure. The command now marks only that specific exception with numeric failed-job metadata; runtime logs a safe saved-retry warning. Other CommandError outcomes remain errors. Manual command failure exit and durable retry state/backoff/leases are unchanged.",
+      "actual_cause": "The specific Graph/archive/link/database cause of the user's captured failed jobs remains UNRESOLVED: exception type alone does not identify it, and no live job-state query or remote sync was run.",
+      "proven_scheduling_issue": "HTTP wrappers started automatic threads before marking the first request active. The immediate automatic loop could begin Graph/database work alongside that first request. Wrappers now mark the request first, and automatic sync waits for foreground views using the existing bounded 30-second idle grace.",
+      "preserved": "Automatic sync still runs without browser traffic and cannot starve indefinitely under continuous requests. Explicit manual sync remains immediate. Existing reviewer delay/cache coordination, recording availability checks, playback, meeting behavior and job retry policies remain.",
+      "interference_limit": "These threads share serving-process CPU, memory and network/database resources. In-flight work still competes with newly arriving requests, and separate serving processes can do background work. No causal foreground latency or Graph/Azure availability improvement was measured; no new background infrastructure was added."
+    },
+    "functions_changed": [
+      "projection_performance.projection_operation",
+      "projection_performance.projection_call",
+      "projection_performance.LocalProjectionPerformance.operation",
+      "projection_performance.LocalProjectionPerformance.execute_for",
+      "projection_performance.LocalProjectionPerformance.emit",
+      "attendance.fetch_kbc_attendance_rows",
+      "attendance.combined_attendance_rows",
+      "attendance_lectures.lecture_register",
+      "teams_attendance.fetch_verified_teams_attendance_rows",
+      "live_session_progress.project_live_credits",
+      "live_session_progress.read_live_credits",
+      "learning_plan._rows",
+      "learning_plan._preset_ids_for",
+      "learning_plan._effective_plan_ids",
+      "learning_plan.effective_training_plan",
+      "session_sync_runtime.run_worker",
+      "session_sync_runtime._automatic_loop",
+      "session_sync_runtime.SessionSyncWSGI.__call__",
+      "session_sync_runtime.SessionSyncASGI.__call__",
+      "process_session_results.Command.handle"
+    ],
+    "validation": {
+      "guarded_backend": {
+        "command": "@'\nimport os,sys,unittest,socket\nsys.path.insert(0,'backend')\nos.environ['DJANGO_SETTINGS_MODULE']='config.settings_sqlite_test'\nos.environ['DJANGO_USE_SQLITE']='true'\nos.environ['CURRICULUM_WARM']='0'\nfrom django.conf import settings\nassert all(db['ENGINE']=='django.db.backends.sqlite3' for db in settings.DATABASES.values())\nfrom unittest.mock import patch\nfrom django.db.backends.base.base import BaseDatabaseWrapper\nnames=['learner_api.tests_my_learning_no_db','learner_api.tests_my_learning_performance_no_db','learner_api.tests_my_learning_diagnostics_no_db','learner_api.tests_my_learning_bottlenecks_no_db','learner_api.tests_my_learning_remaining_latency_no_db','learner_api.tests_my_learning_hidden_io_no_db','learner_api.tests_learning_plan_group_sync','learner_api.test_placement_links_no_db','learner_api.test_projection_performance_no_db','learner_api.test_dashboard_training_no_db','learner_api.test_dashboard_request_reuse_no_db','learner_api.test_dashboard_weekly_no_db','learner_api.test_weekly_optimization_no_db','learner_api.test_previous_learning_groups_no_db','learner_api.test_ksb_point_display_no_db','learner_api.test_replacement_learning_no_db','learner_api.tests_weekly_learning','learner_api.tests_live_session_progress','learner_api.test_retained_quiz_progress_no_db','learner_api.test_canonical_metrics_bulk_no_db','learner_api.test_dashboard_monthly_no_db','learner_api.test_dashboard_overview_no_db','learner_api.test_dashboard_tabs_no_db','learner_api.tests_attendance_lectures','learner_api.tests_builder_activity_dates','learner_api.test_teams_attendance_module_roster_no_db','learner_api.test_teams_attendance_alias_no_db','learner_api.tests_shared_teams_attendance','learner_api.tests_recorded_attendance','learner_api.tests.TeamsAttendanceEligibilityTests','learner_api.tests.TeamsAttendanceSyncTests','learner_api.tests.LearnerAttendanceEndpointTests','curriculum_api.tests.TeamsMultiDayRecurrenceTests','curriculum_api.tests.TeamsAttendanceRosterTests','coach_api.tests_errors']\nwith patch.object(BaseDatabaseWrapper,'ensure_connection',side_effect=AssertionError('Database access prohibited')), patch('psycopg.connect', side_effect=AssertionError('Direct database access prohibited')), patch('psycopg.Connection.connect', side_effect=AssertionError('Direct database access prohibited')):\n import django\n django.setup()\n with patch.object(socket.socket,'connect',side_effect=AssertionError('Network access prohibited')):\n  result=unittest.TextTestRunner().run(unittest.defaultTestLoader.loadTestsFromNames(names))\nsys.exit(not result.wasSuccessful())\n'@ | python -",
+        "total": 392,
+        "passed": 390,
+        "failed": 2,
+        "failures": [
+          {
+            "test": "learner_api.tests_builder_activity_dates.BuilderActivityDatesTests.test_selected_holidays_move_components_into_the_correct_month",
+            "actual": "2026-10-26",
+            "expected": "2026-11-02",
+            "baseline": "Reproduced by loading HEAD:backend/learner_api/builder_activity_dates.py into a separate namespace and substituting its original reader in this test. Holiday rules/tests not changed."
+          },
+          {
+            "test": "coach_api.tests_errors.CoachErrorSecurityTests.test_batch_wrapper_does_not_reintroduce_exception_leakage",
+            "actual": 401,
+            "expected": 500,
+            "baseline": "Unresolved. No passing baseline claim; no authorization gate weakened."
+          }
+        ],
+        "guards": "SQLite target asserted; Django ensure_connection and direct psycopg connect entry points denied; network connect denied during tests. External transports mocked."
+      },
+      "isolated_learning": {
+        "command": "$env:PYTHONPATH='backend'\n$env:CURRICULUM_WARM='0'\npython -m unittest backend.learner_api.test_canonical_learning_no_db backend.learner_api.test_current_learning_no_db backend.learner_api.test_my_learning_cleanup_no_db backend.learner_api.test_course_catalogue_no_db backend.learner_api.test_course_catalogue_display_no_db backend.learner_api.test_quiz_placement_no_db backend.learner_api.test_source_completion_no_db backend.learner_api.test_programme_target_no_db backend.learner_api.test_subject_origins_no_db backend.learner_api.test_local_subject_content_no_db",
+        "passed": 161
+      },
+      "runtime_recordings_results": {
+        "command": "python -m unittest backend.curriculum_api.test_session_sync_runtime_no_db backend.curriculum_api.test_session_recording_review_no_db backend.curriculum_api.test_session_results_no_db",
+        "passed": 173,
+        "result": "PASS"
+      },
+      "frontend_feature": {
+        "command": "npm --prefix frontend run test -- src/pages/learner/my-learning src/pages/workspace/learner/__tests__ src/api/__tests__/weeklyLearningContract.test.ts src/api/__tests__/weeklyMutations.test.ts src/hooks/__tests__/useWeeklyLearning.test.tsx src/hooks/__tests__/useWeeklyLearningWeek.test.tsx src/api/__tests__/learnerRead.test.ts src/api/__tests__/learnerOverview.test.ts src/hooks/__tests__/learnerNavigation.test.tsx --maxWorkers=2",
+        "passed": 508,
+        "files": 46,
+        "result": "PASS"
+      },
+      "teams_baseline": {
+        "command": "npm --prefix frontend run test:teams",
+        "passed": 119,
+        "files": 9,
+        "result": "PASS"
+      },
+      "type_check": {
+        "command": "npm --prefix frontend run type-check",
+        "result": "PASS"
+      },
+      "build": {
+        "command": "npm --prefix frontend run build",
+        "modules": 4210,
+        "result": "PASS",
+        "warnings": "Dependency eval/chunk-size/plugin timing warnings."
+      },
+      "lint": {
+        "command": ".\\node_modules\\.bin\\eslint.cmd src/api/myLearning.ts src/pages/learner/my-learning/CompactModules.tsx src/pages/learner/my-learning/LearningCatalogue.tsx src/pages/learner/my-learning/learningSummary.ts src/pages/learner/my-learning/compactModules.test.tsx src/pages/learner/my-learning/studentActivity.test.tsx --report-unused-disable-directives --max-warnings 0",
+        "cwd": "frontend",
+        "result": "PASS"
+      },
+      "syntax": "All modified and untracked Python files parsed with ast.parse: PASS.",
+      "diff": {
+        "command": "git diff --check",
+        "result": "PASS"
+      },
+      "baseline_probe": {
+        "command": "@'\nimport os,sys,unittest,socket\nsys.path.insert(0,'backend')\nos.environ['DJANGO_SETTINGS_MODULE']='config.settings_sqlite_test'\nos.environ['DJANGO_USE_SQLITE']='true'\nos.environ['CURRICULUM_WARM']='0'\nfrom django.conf import settings\nassert all(db['ENGINE']=='django.db.backends.sqlite3' for db in settings.DATABASES.values())\nfrom unittest.mock import patch\nfrom django.db.backends.base.base import BaseDatabaseWrapper\nnames=[]\nwith patch.object(BaseDatabaseWrapper,'ensure_connection',side_effect=AssertionError('Database access prohibited')), patch('psycopg.connect', side_effect=AssertionError('Direct database access prohibited')), patch('psycopg.Connection.connect', side_effect=AssertionError('Direct database access prohibited')):\n import django\n django.setup()\n with patch.object(socket.socket,'connect',side_effect=AssertionError('Network access prohibited')):\n  import ast,subprocess,json\n  from learner_api import live_session_progress as live, learning_plan as plan, mappers\n  from learner_api.tests_live_session_progress import component,lecture,NOW\n  from types import SimpleNamespace\n  def original(path,name,namespace):\n   tree=ast.parse(subprocess.check_output(['git','show','HEAD:'+path]).decode('utf-8-sig'))\n   node=next(n for n in tree.body if isinstance(n,ast.FunctionDef) and n.name==name)\n   ns=dict(namespace)\n   exec(compile(ast.Module(body=[node],type_ignores=[]),'<HEAD '+name+'>','exec'),ns)\n   return ns[name]\n  class CountingRows(list):\n   visits=0\n   def __iter__(self):\n    for row in super().__iter__():\n     self.visits+=1\n     yield row\n  rows=CountingRows([lecture(session_id=f'O{i}-{j}',occurrence_id=f'O{i}-{j}',module_catalogue_id=f'M{i}') for i in range(50) for j in range(20)])\n  components=[component(componentId=f'C{i}',moduleId=f'M{i}',teamsOccurrenceId=f'O{i}-0') for i in range(50)]\n  prior=original('backend/learner_api/live_session_progress.py','project_live_credits',live.__dict__)\n  before=prior(components,rows,now=NOW); old_visits=rows.visits\n  rows.visits=0\n  after=live.project_live_credits(components,rows,now=NOW)\n  assert before==after\n  prior_plan=original('backend/learner_api/learning_plan.py','effective_training_plan',plan.__dict__)\n  saved=[{'moduleId':'M1','assignmentMode':'explicit','weeks':[{'components':[{'componentId':str(i)} for i in range(1000)]}]}]\n  source=SimpleNamespace(training_plan=json.dumps(saved),learning_plan=None)\n  real=mappers.stored_training_plan\n  counts=[]\n  for fn in (prior_plan,plan.effective_training_plan):\n   with patch.object(plan,'stored_training_plan',wraps=real) as direct,patch.object(mappers,'stored_training_plan',wraps=real) as nested:\n    assert fn(source)==saved\n    counts.append(direct.call_count+nested.call_count)\n  print(json.dumps({'register_visits_before':old_visits,'register_visits_after':rows.visits,'credit_output_parity':True,'saved_plan_decodes_before':counts[0],'saved_plan_decodes_after':counts[1],'new_sql_queries':0}))\n  result=SimpleNamespace(wasSuccessful=lambda:True)\nsys.exit(not result.wasSuccessful())\n'@ | python -",
+        "credit_output_parity": true,
+        "register_visits_before": 50000,
+        "register_visits_after": 1000,
+        "saved_plan_decode_passes_before": 2,
+        "saved_plan_decode_passes_after": 1,
+        "sql_queries": 0
+      },
+      "fixture_maintenance": "The newly included learning-plan API suite had a synthetic learner missing the existing free_courses model field. Reproduced its AttributeError against HEAD _serialize, then added free_courses=[] to the fixture only. Extended the pure AST fixture with inactive timing helpers; strengthened command retry-state assertions. No test assertion removed, test skipped, or production auth/serializer gate weakened.",
+      "expanded_teams": "PARTIAL / BLOCKED: guarded applicable cases ran, but database-backed PostgreSQL meeting/sync-verdict/race/security suites still need a verified safe test target. No production-connected runner or schema provisioning performed.",
+      "live_teams": "NOT RUN",
+      "new_http_measurement": "NOT RUN",
+      "parity": "Unchanged public catalogue fixture passes; current/previous counts, passed/retained quizzes, accepted hours, KSB/legacy attribution, corrections, recovery/shared attendance and Commercial/Apprenticeship variants remain covered by guarded tests. No PostgreSQL or real-user parity claim."
+    },
+    "next_evidence": "After the user loads the updated code in the usual authorized local development session, the next ordinary authorized catalogue load can emit operations under the existing local opt-in. Match its request_id to the existing response correlation header. Inspect KBC acquisition/execute/fetch/lifecycle, Teams evidence/identity/recovery/shared groups and assignment placement/query timings. No benchmark loop, extra endpoint, profiling query or agent production-Neon request is needed or was performed.",
+    "impact": "The 3.75-second real-request unattributed category remains unresolved at finer granularity. New timing boundaries make it observable on a subsequent authorized request; the fixture reductions prove less duplicate CPU work and one narrower projection, not HTTP speed. The startup race and retry-error classification are corrected in source. Under-five-second uncached goal and measured HTTP improvement: UNVERIFIED."
+  }
+}
