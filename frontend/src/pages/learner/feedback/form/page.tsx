@@ -10,7 +10,7 @@ import { useResolvedLearner } from '@/hooks/useMyLearner';
 import { roleNavMap } from '@/mocks/navigation';
 
 export default function LearnerFeedbackFormPage() {
-  const { formId, deliveryId } = useParams();
+  const { formId, deliveryId, reviewDeliveryId } = useParams();
   const navigate = useNavigate();
   const location = useLocation();
   const { auth, isInitialized } = useAuth();
@@ -38,11 +38,12 @@ export default function LearnerFeedbackFormPage() {
   const autoSaveChain = useRef<Promise<void>>(Promise.resolve());
 
   useEffect(() => {
-    if (!isInitialized || (!formId && !deliveryId) || (viewerReadOnly && !learnerId)) return;
+    if (!isInitialized || (!formId && !deliveryId && !reviewDeliveryId) || (viewerReadOnly && !learnerId)) return;
     const previewLearner = viewerReadOnly ? learnerId : undefined;
     const load = eventRecipientId && formId
       ? feedbackApi.myEventForm(eventRecipientId, Number(formId), previewLearner)
-      : deliveryId ? feedbackApi.myDelivery(Number(deliveryId), previewLearner) : feedbackApi.myForm(Number(formId), previewLearner);
+      : reviewDeliveryId ? feedbackApi.myReviewDelivery(Number(reviewDeliveryId), previewLearner)
+        : deliveryId ? feedbackApi.myDelivery(Number(deliveryId), previewLearner) : feedbackApi.myForm(Number(formId), previewLearner);
     load.then(({ form: loaded }) => {
       setForm(loaded);
       const loadedAnswers = loaded.response?.answers || {};
@@ -50,7 +51,7 @@ export default function LearnerFeedbackFormPage() {
       setAnswers(loadedAnswers);
       setComplete(loaded.response?.status === 'completed');
     }).catch(error => void Swal.fire({ icon: 'error', title: 'Could not open form', text: error.message }));
-  }, [deliveryId, eventRecipientId, formId, isInitialized, learnerId, viewerReadOnly]);
+  }, [deliveryId, eventRecipientId, formId, isInitialized, learnerId, reviewDeliveryId, viewerReadOnly]);
 
   useEffect(() => () => {
     if (autoSaveTimer.current !== null) window.clearTimeout(autoSaveTimer.current);
@@ -81,6 +82,7 @@ export default function LearnerFeedbackFormPage() {
         if (revision === autoSaveRevision.current) setAutoSaveStatus('saving');
         try {
           if (eventRecipientId) await feedbackApi.saveEventResponse(eventRecipientId, form.id, nextAnswers, false);
+          else if (reviewDeliveryId) await feedbackApi.saveReviewDeliveryResponse(Number(reviewDeliveryId), nextAnswers, false);
           else if (deliveryId) await feedbackApi.saveDeliveryResponse(Number(deliveryId), nextAnswers, false);
           else await feedbackApi.saveResponse(form.id, nextAnswers, false);
           if (revision === autoSaveRevision.current) setAutoSaveStatus('saved');
@@ -110,6 +112,7 @@ export default function LearnerFeedbackFormPage() {
     try {
       await autoSaveChain.current.catch(() => undefined);
       if (eventRecipientId) await feedbackApi.saveEventResponse(eventRecipientId, form.id, answersRef.current, submit);
+      else if (reviewDeliveryId) await feedbackApi.saveReviewDeliveryResponse(Number(reviewDeliveryId), answersRef.current, submit);
       else if (deliveryId) await feedbackApi.saveDeliveryResponse(Number(deliveryId), answersRef.current, submit);
       else await feedbackApi.saveResponse(form.id, answersRef.current, submit);
       if (submit) setComplete(true);
@@ -127,7 +130,7 @@ export default function LearnerFeedbackFormPage() {
     if (learnerKind) previewParams.set('kind', learnerKind);
   }
   if (eventRecipientId) previewParams.set('eventRecipientId', String(eventRecipientId));
-  if (requestedCategory && ['lecture', 'event', 'general'].includes(requestedCategory)) previewParams.set('category', requestedCategory);
+  if (requestedCategory && ['lecture', 'mcm', 'progress-review', 'event', 'general'].includes(requestedCategory)) previewParams.set('category', requestedCategory);
   const previewQuery = previewParams.toString() ? `?${previewParams}` : '';
   return <WorkspaceShell role="learner" roleLabel={nav.label} navItems={nav.items} workspaceLabel={nav.workspaceLabel} pageTitle={form?.title || 'Feedback'} pageSubtitle="Complete your assigned feedback form" userName={auth.account?.displayName || 'Learner'} userRole="Learner">
     <div className="p-6">
@@ -135,9 +138,10 @@ export default function LearnerFeedbackFormPage() {
       {viewerReadOnly && learnerId && <div className="mx-auto mb-4 max-w-4xl rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs font-medium text-amber-800">Learner feedback preview — responses cannot be changed or submitted from this view.</div>}
       {form ? locked && !viewerReadOnly ? <Completed /> : <div className="mx-auto max-w-4xl rounded-2xl border border-foreground-200/70 bg-white p-6 shadow-xl sm:p-8">
         {form.delivery?.sessionTitle && <div className="mb-4 rounded-lg bg-primary-50 p-3 text-sm font-semibold text-primary-800">{form.delivery.sessionTitle}{form.delivery.startsAt ? ` · ${formatDateTime(form.delivery.startsAt)}` : ''}</div>}
+        {form.reviewDelivery && <div className="mb-4 rounded-lg bg-violet-50 p-3 text-sm font-semibold text-violet-800">{form.reviewDelivery.reviewName || form.reviewDelivery.reviewType} · Completed {formatDateTime(form.reviewDelivery.completedAt)}</div>}
         <FeedbackFormExperience title={form.title} description={form.description} instructions={form.instructions}
           sections={sections} activeSection={step} answers={answers} invalidQuestionIds={invalidQuestionIds}
-          onChange={updateAnswer} onPhotoUpload={eventRecipientId ? undefined : (questionId, file) => feedbackApi.uploadPhoto(form.id, questionId, file, deliveryId ? Number(deliveryId) : undefined)}
+          onChange={updateAnswer} onPhotoUpload={eventRecipientId ? undefined : (questionId, file) => feedbackApi.uploadPhoto(form.id, questionId, file, deliveryId ? Number(deliveryId) : undefined, reviewDeliveryId ? Number(reviewDeliveryId) : undefined)}
           readOnly={locked || viewerReadOnly}
           onStepChange={index => { if (index <= step) { setStep(index); setInvalidQuestionIds(new Set()); } }}
           onBack={() => { setStep(step - 1); setInvalidQuestionIds(new Set()); }} onNext={nextStep}

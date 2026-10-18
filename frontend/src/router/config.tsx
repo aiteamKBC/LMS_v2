@@ -646,6 +646,10 @@ const routes: RouteObject[] = [
     element: LEARNER_FEEDBACK_ENABLED ? <LearnerFeedbackPage /> : <Navigate to="/workspace/learner" replace />,
   },
   {
+    path: "/learner/feedback/review/:reviewDeliveryId",
+    element: LEARNER_FEEDBACK_ENABLED ? <LearnerFeedbackFormPage /> : <Navigate to="/workspace/learner" replace />,
+  },
+  {
     path: "/learner/feedback/:formId",
     element: LEARNER_FEEDBACK_ENABLED ? <LearnerFeedbackFormPage /> : <Navigate to="/workspace/learner" replace />,
   },

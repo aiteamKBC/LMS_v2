@@ -510,6 +510,8 @@ class FeedbackForm(models.Model):
     TYPE_CHOICES = [
         ('general', 'General'), ('post_lecture', 'Post-lecture'),
         ('post_event', 'Post-event'), ('event_rsvp', 'Event RSVP'),
+        ('post_mcm_review', 'MCM Feedback'),
+        ('post_progress_review', 'Progress Review Feedback'),
     ]
     DELIVERY_SCOPE_CHOICES = [('manual', 'Manual'), ('all_modules', 'All modules'), ('module', 'One module')]
 
@@ -637,6 +639,26 @@ class FeedbackDeliveryRecipient(models.Model):
     class Meta:
         managed = False
         db_table = 'Feedback"."feedback_delivery_recipients'
+
+
+class FeedbackReviewDelivery(models.Model):
+    """One future completed imported review pinned to its feedback template."""
+
+    form = models.ForeignKey(
+        FeedbackForm, on_delete=models.PROTECT, related_name='review_deliveries', db_column='form_id',
+    )
+    source_review_id = models.BigIntegerField(unique=True)
+    aptem_review_id = models.TextField(blank=True, default='')
+    learner_id = models.CharField(max_length=100)
+    learner_name = models.CharField(max_length=255, blank=True, default='')
+    review_type = models.CharField(max_length=255)
+    review_name = models.CharField(max_length=500, blank=True, default='')
+    completed_at = models.DateTimeField()
+    assigned_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        managed = False
+        db_table = 'Feedback"."feedback_review_deliveries'
 
 
 class FeedbackEventCampaign(models.Model):
@@ -777,6 +799,10 @@ class FeedbackResponse(models.Model):
     rsvp_recipient = models.ForeignKey(
         EventRsvpRecipient, on_delete=models.PROTECT, related_name='responses',
         db_column='rsvp_recipient_id', null=True, blank=True,
+    )
+    review_delivery = models.ForeignKey(
+        FeedbackReviewDelivery, on_delete=models.PROTECT, related_name='responses',
+        db_column='review_delivery_id', null=True, blank=True,
     )
     learner_id = models.CharField(max_length=100, blank=True, default='')
     learner_name = models.CharField(max_length=255)
