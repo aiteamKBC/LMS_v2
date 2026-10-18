@@ -37,7 +37,7 @@ class SubjectAttemptScopeTests(SimpleTestCase):
             subject_store.state(132, 4176, 10, group_id=2)
         sql, values = cursor.execute.call_args_list[1].args
         self.assertIn('group_id=%s AND activity_id=%s', sql)
-        self.assertEqual(values, [132, 4176, 2, 10])
+        self.assertEqual(values, [132, 4176, 2, 10, 'material'])
         self.assertIn('GROUP BY group_id, activity_id', cursor.execute.call_args_list[0].args[0])
 
     def test_history_without_course_is_not_returned(self):

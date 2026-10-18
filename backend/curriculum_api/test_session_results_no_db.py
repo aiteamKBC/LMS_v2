@@ -24,7 +24,7 @@ package.__path__ = [str(ROOT)]
 sys.modules['curriculum_api'] = package
 from curriculum_api.session_results_policy import (attendance_display_name, attendance_name_key, attendance_seconds, evidence_seconds, session_roster,
     attendance_csv, archive_prefix, transcript_text, instant, session_runs)
-from curriculum_api.attendance_link_policy import apply_reviewed_identities, identity_key, link_specs, record_key, unmatched_roster
+from curriculum_api.attendance_link_policy import apply_reviewed_identities, identity_key, link_specs, record_key, unmatched_roster, attendance_bot
 from curriculum_api.session_graph import collection
 from curriculum_api.session_transfer_progress import byte_count
 from curriculum_api.session_media_policy import (hidden_artifact_ids, recordings_for_transcript,
@@ -382,6 +382,9 @@ class RegisterTests(unittest.TestCase):
         def exclude(self, *_args, **kwargs): return self
         def only(self, *_args): return self
         def order_by(self, *_args): return self
+        def values(self, *fields):
+            # ORM subqueries now project module/series keys before roster reads.
+            return [dict(zip(fields, row)) for row in self.values_list(*fields)]
         def values_list(self, *fields, **_kwargs):
             def value(row, field):
                 for part in field.split('__'):
@@ -412,6 +415,8 @@ class RegisterTests(unittest.TestCase):
         )
         ns = {'__name__': 'learner_api.teams_attendance', '__package__': 'learner_api',
             'defaultdict': defaultdict, 'evidence_seconds': evidence_seconds, 'datetime': datetime,
+            'projection_call': lambda name, function, *args, **kwargs: function(*args, **kwargs),
+            'projection_operation': lambda name: nullcontext(),
             'datetime_timezone': timezone, 'parse_datetime': instant, 'Q': self.Q,
             '_attendance_alias_rows': lambda *_args: [],
             'identity_rules': lambda *_args: [], 'apply_reviewed_identities': apply_reviewed_identities,
@@ -543,7 +548,7 @@ class EndpointTests(unittest.TestCase):
             'session_runs': session_runs, 'evidence_seconds': evidence_seconds, 'attendance_name_key': attendance_name_key,
             'attendance_display_name': attendance_display_name,
             'apply_reviewed_identities': apply_reviewed_identities, 'identity_key': identity_key,
-            'record_key': record_key, 'link_specs': link_specs, 'unmatched_roster': unmatched_roster,
+            'record_key': record_key, 'link_specs': link_specs, 'unmatched_roster': unmatched_roster, 'attendance_bot': attendance_bot,
             'identity_rules': Mock(return_value=[]),
             'effective_module_register_rows': Mock(return_value=[]),
             'known_learner_emails': Mock(return_value=set()),
@@ -820,6 +825,8 @@ class EndpointTests(unittest.TestCase):
                     {'id': 'IN', 'occurrence_id': 'O', 'email': 'member@example.invalid', 'total_attendance_seconds': 7200},
                     {'id': 'UNKNOWN', 'occurrence_id': 'O', 'email': 'unknown@example.invalid', 'total_attendance_seconds': 600},
                     {'id': 'GUEST', 'occurrence_id': 'O', 'email': '', 'display_name': 'Unknown Guest', 'total_attendance_seconds': 600},
+                    {'id': 'BOT', 'occurrence_id': 'O', 'email': '', 'display_name': 'Example Notetaker', 'total_attendance_seconds': 7200},
+                    {'id': 'BOT-EMAIL', 'occurrence_id': 'O', 'email': 'recorder@fireflies.ai', 'display_name': 'Recording assistant', 'total_attendance_seconds': 7200},
                 ]
                 register = [{'occurrence_id': 'O', 'learner_profile_id': 7, 'learner_email': 'member@example.invalid',
                              'learner_name': 'Module Member', 'attendance_status': 'absent', 'attended_seconds': 0}]
@@ -829,6 +836,7 @@ class EndpointTests(unittest.TestCase):
                 self.assertEqual([(r['email'], r['attendance'], r['seconds']) for r in result['attendance']],
                                  [('member@example.invalid', 1, 7200)])
                 self.assertEqual(records[0]['total_attendance_seconds'], seconds)
+                self.assertEqual(len(records), 6)  # Hidden rows remain in the original evidence.
 
     def test_known_module_member_requiring_identity_review_stays_visible(self):
         self.ns['apply_recovery'] = lambda rows: None
@@ -1856,8 +1864,10 @@ class ArchiveWorkerTests(unittest.TestCase):
 
     def test_partial_graph_success_archives_available_files_and_schedules_retry(self):
         command, ns, cursor = self.worker(partial=True)
-        with self.assertRaises(RuntimeError):
+        with self.assertRaises(RuntimeError) as retry:
             command.handle(limit=2, scheduled=False, provision_container=False)
+        self.assertTrue(retry.exception.session_jobs_need_retry)
+        self.assertEqual(retry.exception.failed_jobs, 1)
         ns['archive_series'].assert_called_once_with('S', lease_id=cursor.execute.call_args_list[1].args[1][0])
         finish = next(call for call in cursor.execute.call_args_list if 'finished_at=now()' in call.args[0])
         self.assertEqual(finish.args[1][0], 'failed')

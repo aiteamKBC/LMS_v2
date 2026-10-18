@@ -195,7 +195,7 @@ SOURCE_MODELS = {
 IFRAME_SRC_RE = re.compile(r"<iframe[^>]+src=[\"']([^\"']+)[\"']", re.IGNORECASE)
 
 
-def _active_profile_for_source(source, source_pk):
+def _active_profile_for_source(source, source_pk, *, heal=True):
     """Resolve the saved profile, including learners awaiting an invitation.
 
     ``Created_users`` and ``Learner.learners`` have independent primary-key
@@ -204,7 +204,7 @@ def _active_profile_for_source(source, source_pk):
     fallback for older records that do not have an email.
     """
     # Saved progress/KSBs remain visible to authorised viewers before activation.
-    profile = learner_profile_for_source(source, source_pk)
+    profile = learner_profile_for_source(source, source_pk, **({'heal': False} if not heal else {}))
     if profile is None:
         return None
 
@@ -1555,19 +1555,36 @@ def _resolve_from_master(modules, weeks, components, assigned_modules=None, *, c
             detail_columns = (f"CASE WHEN coalesce(btrim(live_sessions_link,'{strip_chars}'),'')<>'' THEN 'content' END AS live_sessions_link, display_order, NULL AS ksb_mappings, "
                               "false AS reflection_required, NULL AS \"Reflection_Question\", false AS tutor_validation_required") if identities_only else (
                               "live_sessions_link, display_order, ksb_mappings, reflection_required, \"Reflection_Question\", tutor_validation_required")
+            schedule_column = ''
+            if catalogue_facts and resolved_metadata is not None and 'schedule_components' in resolved_metadata:
+                from .builder_activity_dates import COMPONENT_SCHEDULE_SETTINGS
+                # Keep ->> text semantics for dates independent of the native
+                # identity projection's JSON types and display overrides.
+                schedule_column = ', ' + COMPONENT_SCHEDULE_SETTINGS.replace('c.settings_json', 'settings_json')
             cur.execute(
                 "SELECT id, week_id, module_catalogue_id, type, title, "
                 f"{description_sql} AS description, "
                 f"{settings_sql} AS settings_json, "
                 f"{detail_columns}"
-                f"{', expected_otjh' if expected_otjh else ''} "
+                f"{', expected_otjh' if expected_otjh else ''}{schedule_column} "
                 "FROM curriculum.components WHERE module_catalogue_id = ANY(%s) "
                 f"{'AND week_id = ANY(%s) ' if week_ids is not None else ''}"
                 f"AND {visible_child_sql('components')} "
+                + (f"AND (week_id IS NULL OR EXISTS (SELECT 1 FROM curriculum.weeks visible_parent "
+                   f"WHERE visible_parent.id=components.week_id "
+                   f"AND visible_parent.module_catalogue_id=components.module_catalogue_id "
+                   f"AND {visible_week_sql('visible_parent')})) " if catalogue_facts else '') +
                 "ORDER BY week_id, display_order, id",
                 [module_ids, *([week_ids] if week_ids is not None else [])],
             )
             master_components = cur.fetchall()
+            if catalogue_facts and resolved_metadata is not None and 'schedule_components' in resolved_metadata:
+                # Preserve the date reader's ordering and module-level
+                # components; empty weeks are still supplied independently.
+                resolved_metadata['schedule_components'] = [
+                    (row[0], row[2], row[1], row[4], row[3], row[-1])
+                    for row in sorted(master_components,
+                        key=lambda row: (row[2], row[8] is None, row[8], row[0]))]
 
             # Quiz components are linked either through settings_json.linkedQuizId
             # (the Module Builder save format) or the normalized link table.
@@ -1600,7 +1617,28 @@ def _resolve_from_master(modules, weeks, components, assigned_modules=None, *, c
                 ):
                     fallback_module_ids.add(_s(mid))
 
-            if resolved_metadata is not None and 'quiz_links' in resolved_metadata:
+            quiz_meta_by_id = dict((resolved_metadata or {}).get('quiz_meta', {}))
+            batched_links = None
+            if (catalogue_facts and not (resolved_metadata is not None and 'quiz_links' in resolved_metadata)
+                    and any(row[3] == 'quiz' for row in master_components)):
+                # The normalized links and their small quiz metadata formerly
+                # required two remote SELECTs. Keep the original reader for
+                # ambiguous multiply-linked components, with its tie behavior.
+                cur.execute("SELECT link.component_id,link.quiz_id,q.id,q.title,q.questions,q.duration,q.time_unit "
+                    "FROM curriculum.quiz_component_links link "
+                    "JOIN curriculum.components component ON component.id=link.component_id "
+                    "LEFT JOIN curriculum.quizzes q ON q.id=link.quiz_id "
+                    "WHERE component.module_catalogue_id=ANY(%s) AND component.id=ANY(%s) "
+                    f"AND component.type='quiz' AND {visible_child_sql('component')}", [module_ids, component_ids])
+                joined = cur.fetchall()
+                if len({row[0] for row in joined}) == len(joined):
+                    batched_links = [(row[0], row[1]) for row in joined]
+                    quiz_meta_by_id.update({row[2]: {'quizId':row[2], 'title':row[3], 'questions':row[4],
+                        'duration':row[5], 'timeUnit':row[6]} for row in joined
+                        if row[2] is not None and row[2] not in quiz_meta_by_id})
+            if batched_links is not None:
+                quiz_id_by_component.update(batched_links)
+            elif resolved_metadata is not None and 'quiz_links' in resolved_metadata:
                 quiz_id_by_component.update({cid: qid for cid, qid in resolved_metadata['quiz_links'].items() if cid in component_ids})
             elif component_ids and compact_content:
                 # Reuse identities that passed the module and visibility
@@ -1637,7 +1675,6 @@ def _resolve_from_master(modules, weeks, components, assigned_modules=None, *, c
                     quiz_id_by_component[component_id] = quiz_id
 
             linked_quiz_ids = sorted(set(quiz_id_by_component.values()))
-            quiz_meta_by_id = dict((resolved_metadata or {}).get('quiz_meta', {}))
             missing_quiz_ids = [qid for qid in linked_quiz_ids if qid not in quiz_meta_by_id]
             if missing_quiz_ids:
                 cur.execute(
@@ -2083,7 +2120,17 @@ def _annotate_otjh(components):
     return components, round(total, 2)
 
 
-def build_learner_detail(source, pk, *, compact=False, read_only=False, quiz_view=False):
+def _activity_module_components(components, component_id):
+    selected = next((c for c in components if c.get('componentId') == component_id), None)
+    if selected is None:
+        raise ServiceError("Activity not found in this learner's plan.", status=404)
+    module_id = selected.get('moduleId')
+    return [c for c in components if (c.get('moduleId') == module_id if module_id else
+            not c.get('moduleId') and c.get('module') == selected.get('module'))]
+
+
+def build_learner_detail(source, pk, *, compact=False, read_only=False, quiz_view=False,
+                         activity_component_id=None):
     """The learner's full workspace payload for one already-loaded source row.
 
     Split out of the view so other callers can serve the same shape behind their
@@ -2101,7 +2148,7 @@ def build_learner_detail(source, pk, *, compact=False, read_only=False, quiz_vie
     if not read_only:
         hydrate_source_training_plan(source)
     assigned_modules = effective_training_plan(source)
-    learner_profile = _active_profile_for_source(source, pk)
+    learner_profile = _active_profile_for_source(source, pk, **({'heal': False} if activity_component_id else {}))
 
     if learner_profile and not learner_profile.ksbs and not read_only:
         try:
@@ -2138,7 +2185,7 @@ def build_learner_detail(source, pk, *, compact=False, read_only=False, quiz_vie
     )
     # Quiz runners need the plan, progress and reflection requirements, not
     # dashboard totals or their persistence on a GET request.
-    snapshot = None if quiz_view else _live_otjh_snapshot(detail, learner_profile)
+    snapshot = None if quiz_view or activity_component_id else _live_otjh_snapshot(detail, learner_profile)
     if snapshot is not None:
         _apply_live_otjh_snapshot(detail, snapshot)
     if snapshot is not None and learner_profile is not None and not read_only:
@@ -2154,10 +2201,22 @@ def build_learner_detail(source, pk, *, compact=False, read_only=False, quiz_vie
     # potentially huge curriculum-revision scan cannot change their outcome.
     retain_quiz_progress(detail, completed_only=compact)
 
+    # The viewer consumes completion counts for this module and navigation
+    # identities elsewhere. Do not resolve attendance/recovery for unrelated
+    # modules merely to construct its Next activity link.
+    attendance_components = detail['components']
+    if activity_component_id:
+        attendance_components = _activity_module_components(attendance_components, activity_component_id)
+
     # Attendance affects activity completion only; the hours snapshot above
     # and every stored progress record remain unchanged.
     from .teams_attendance import annotate_attendance_completion
-    detail['components'] = annotate_attendance_completion(detail['components'], learner_profile)
+    annotated = annotate_attendance_completion(attendance_components, learner_profile)
+    if activity_component_id:
+        by_identity = {id(original): replacement for original, replacement in zip(attendance_components, annotated)}
+        detail['components'] = [by_identity.get(id(c), c) for c in detail['components']]
+    else:
+        detail['components'] = annotated
 
     # Carry earned completion into an explicitly verified replacement without
     # manufacturing attempts or changing the persisted hours/attendance above.
@@ -2166,7 +2225,9 @@ def build_learner_detail(source, pk, *, compact=False, read_only=False, quiz_vie
 
     from .live_session_progress import read_live_credits, supplement_component_progress
     detail['componentProgress'] = supplement_component_progress(
-        detail.get('componentProgress') or [], read_live_credits(source, components=detail['components']))
+        detail.get('componentProgress') or [], read_live_credits(source, components=(
+            _activity_module_components(detail['components'], activity_component_id)
+            if activity_component_id else detail['components'])))
 
     if compact:
         # Nullable optional fields dominate the JSON for large plans. Omission
@@ -2228,6 +2289,21 @@ def learner_detail(request, kind, pk):
             if reading is None:
                 return _error("Activity not found in this learner's plan.", 404)
             response = JsonResponse(reading)
+            response['Cache-Control'] = 'private, no-store'
+            return response
+        if request.GET.get("content") == "activity":
+            component_id = request.GET.get("component_id")
+            if not component_id:
+                return _error("An activity identity is required.", 400)
+            detail = build_learner_detail(source, pk, compact=True, read_only=True,
+                                          activity_component_id=component_id)
+            component = next(c for c in detail['components'] if c.get('componentId') == component_id)
+            if not component.get('contentHtml') and (component.get('hasReadingContent') or component.get('type') == 'reading'):
+                reading = _reading_content(source, component_id)
+                if reading is None:
+                    return _error("Activity not found in this learner's plan.", 404)
+                component['contentHtml'] = reading['contentHtml']
+            response = JsonResponse(detail)
             response['Cache-Control'] = 'private, no-store'
             return response
         options = {"compact": True} if request.GET.get("content") == "summary" else {}

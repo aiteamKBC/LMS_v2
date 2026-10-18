@@ -5,7 +5,7 @@ const OVERVIEW_ENDPOINT = '/coach_api/coach/attendance';
 const DETAILS_ENDPOINT = '/coach_api/coach/attendance/details';
 
 export interface BulkSession { id: string; occurrenceStart: string; module: string; sessionTitle: string }
-export interface BulkLearner { learnerId: string; status: 'present' | 'absent' | 'unmarked' | 'upcoming' | 'in_progress' | null; version: string }
+export interface BulkLearner { learnerId: string; status: 'present' | 'absent' | 'unmarked' | 'upcoming' | 'in_progress' | null; version: string; manualStatus?: 'present' | 'absent' | null }
 export interface AttendanceGroupOption { id: string; name: string; cohort: string }
 export interface AttendanceOptions { programmes: Array<{ id: string; name: string; groups: AttendanceGroupOption[] }> }
 export interface AttendanceSessionOption { id: string; date: string; title: string; time: string; status: 'scheduled' | 'completed' }
@@ -52,7 +52,7 @@ export async function fetchBulkAttendance(programmeId: string, groupId: string, 
   return payload;
 }
 
-export async function saveBulkAttendance(programmeId: string, groupId: string, sessionOccurrenceId: string, records: Array<{ learnerId: string; status: 'present' | 'absent'; version: string }>): Promise<{ results: BulkAttendanceResult[] }> {
+export async function saveBulkAttendance(programmeId: string, groupId: string, sessionOccurrenceId: string, records: Array<{ learnerId: string; status: 'present' | 'absent' | 'reset'; version: string }>): Promise<{ results: BulkAttendanceResult[] }> {
   const response = await coachFetch('/coach_api/coach/attendance/bulk', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ programmeId, groupId, sessionOccurrenceId, records }),

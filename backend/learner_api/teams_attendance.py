@@ -20,6 +20,7 @@ from curriculum_api.attendance_link_policy import apply_reviewed_identities
 from curriculum_api.attendance_link_store import identity_rules
 
 from .models import LearnerProfile, LearnerTrainingPlanModule
+from .projection_performance import projection_call, projection_operation
 from .replaced_teams_attendance import REPLACED_ATTENDANCE_LATERAL_SQL
 
 
@@ -116,6 +117,30 @@ def _attendance_identity_link_rows(database: str, occurrence_ids):
         if getattr(cause, 'sqlstate', None) != '42P01':
             raise
         return []
+
+
+def _attendance_review_rows(database, module_refs, occurrence_ids):
+    """One scoped read for two optional reviewed-identity tables.
+
+    Older schemas retain the independent readers and their missing-table rules.
+    Never swallow a permission, transport or malformed-query failure.
+    """
+    try:
+        with connections[database].cursor() as cursor:
+            cursor.execute('''SELECT 'alias',module_catalogue_id::text,alias_email,canonical_email
+                FROM curriculum.live_session_attendance_aliases WHERE module_catalogue_id=ANY(%s)
+                UNION ALL
+                SELECT 'link',occurrence_id::text,attendance_row_id::text,canonical_email
+                FROM curriculum.live_session_attendance_identity_links WHERE occurrence_id=ANY(%s)''',
+                [list(module_refs), list(occurrence_ids)])
+            rows = cursor.fetchall()
+    except DatabaseError as error:
+        if getattr(error.__cause__ or error, 'sqlstate', None) != '42P01':
+            raise
+        return (_attendance_alias_rows(database, module_refs),
+                _attendance_identity_link_rows(database, occurrence_ids))
+    return ([tuple(row[1:]) for row in rows if row[0] == 'alias'],
+            [tuple(row[1:]) for row in rows if row[0] == 'link'])
 
 
 def _replaced_attendance_sources(database: str, occurrence_ids) -> dict[str, dict[str, str]]:
@@ -238,6 +263,9 @@ def fetch_verified_teams_attendance_rows(
     include_reported_participants: bool = False,
     occurrence_ids: list[str] | None = None,
     independent_learner_scope: bool = False,
+    verified_profile=None,
+    include_group_metadata: bool = True,
+    register_schedule=None,
 ) -> list[dict]:
     """Build real attendance from completed Microsoft Teams reports.
 
@@ -271,17 +299,53 @@ def fetch_verified_teams_attendance_rows(
             identity_filter |= Q(id__in=ids)
         if emails:
             identity_filter |= Q(email_normalized__in=emails)
-        identity_learners_by_email = {
-            _email(learner.email): learner
-            for learner in LearnerProfile.objects.using(database).filter(identity_filter).only(
-                'id', 'enrolment_id', 'full_name', 'email', 'coach_name',
-            )
-            if _email(learner.email)
-        }
+        # Only reuse a profile already verified by the catalogue's owner check.
+        # Keep the full-roster read below: name ambiguity cannot be checked on
+        # this one learner alone.
+        if (verified_profile is not None and not ids and len(emails) == 1
+                and _email(verified_profile.email) == emails[0]):
+            identity_learners_by_email = {emails[0]: verified_profile}
+        else:
+            with projection_operation('attendance_profiles'):
+                identity_learners_by_email = {
+                    _email(learner.email): learner
+                    for learner in LearnerProfile.objects.using(database).filter(identity_filter).only(
+                        'id', 'enrolment_id', 'full_name', 'email', 'coach_name',
+                    )
+                    if _email(learner.email)
+                }
         if not identity_learners_by_email:
             return []
 
+    from .alternative_recovery import approved_alternative_guests
+    # Include all approved guests in the ambiguity check; narrow returned
+    # attendance below, after deciding whether a full name is unique.
+    approved_guests = approved_alternative_guests(database, None,
+        **({'occurrence_ids': occurrence_ids} if occurrence_ids is not None else {}))
+    if register_schedule is not None and identity_learners_by_email is not None:
+        # Register projection discards other occurrences, except independently
+        # approved recovery guests. Keep all those alternatives and their full
+        # ambiguity roster; a schedule is scope, never attendance evidence.
+        relevant = {str(row.get('attendance_source_occurrence_id') or row['session_id'])
+                    if row.get('attendance_source_module_id') else str(row['session_id'])
+                    for row in register_schedule}
+        relevant.update(key for key, guests in approved_guests.items()
+                        if set(guests) & identity_learners_by_email.keys())
+        occurrence_ids = sorted(relevant)
     session_queryset = LiveSession.objects.using(database)
+    if identity_learners_by_email is not None:
+        # Series membership is the same normalized plan roster used below.
+        # Retain approved alternatives outside that roster and still load the
+        # entire selected module roster before resolving ambiguous identities.
+        assigned_refs = LearnerTrainingPlanModule.objects.using(database).filter(
+            learner__email_normalized__in=list(identity_learners_by_email),
+        ).values('module_ref')
+        guest_ids = [key for key, guests in approved_guests.items()
+                     if set(guests) & identity_learners_by_email.keys()]
+        session_queryset = session_queryset.filter(
+            Q(module_catalogue_id__in=assigned_refs)
+            | Q(id__in=LiveSessionOccurrence.objects.using(database)
+                .filter(id__in=guest_ids).values('live_session_id')))
     if occurrence_ids is not None:
         if not occurrence_ids:
             return []
@@ -290,22 +354,14 @@ def fetch_verified_teams_attendance_rows(
     if modules:
         session_queryset = session_queryset.filter(module_catalogue_id__in=modules)
     sessions = list(
-        session_queryset.only("id", "module_catalogue_id", "module_title", "attendees")
+        session_queryset.only("id", "module_catalogue_id", "module_title")
     )
     if not sessions:
         return []
 
-    assigned_by_module = _assigned_learner_emails_by_module(
+    assigned_by_module = projection_call('attendance_roster', _assigned_learner_emails_by_module,
         database, [session.module_catalogue_id for session in sessions],
     )
-    aliases_by_module: dict[str, dict[str, str]] = defaultdict(dict)
-    for module_ref, alias_email, canonical_email in _attendance_alias_rows(
-        database, assigned_by_module
-    ):
-        alias_key = _email(alias_email)
-        canonical_key = _email(canonical_email)
-        if alias_key and canonical_key:
-            aliases_by_module[str(module_ref or '').strip()][alias_key] = canonical_key
     expected_emails_by_session: dict[str, set[str]] = {}
     all_expected_emails: set[str] = set()
     for session in sessions:
@@ -322,11 +378,6 @@ def fetch_verified_teams_attendance_rows(
     # Approved recovery guests extend only the selected occurrence.  They do
     # not become module/group members and are never added to the recurring
     # Teams series attendee snapshot.
-    from .alternative_recovery import approved_alternative_guests
-    # Include all approved guests in the ambiguity check; narrow returned
-    # attendance below, after deciding whether a full name is unique.
-    approved_guests = approved_alternative_guests(database, None,
-        **({'occurrence_ids': occurrence_ids} if occurrence_ids is not None else {}))
     occurrence_series = {}
     if approved_guests:
         occurrence_series = dict(
@@ -364,12 +415,13 @@ def fetch_verified_teams_attendance_rows(
     for occurrence_id, session_id in occurrence_series.items():
         if session_id in sessions_by_id:
             matching_emails.update(approved_guests[occurrence_id])
-    matching_learners = {
-        _email(learner.email): learner
-        for learner in LearnerProfile.objects.using(database).filter(
-            email_normalized__in=matching_emails,
-        ).only('id', 'enrolment_id', 'full_name', 'email', 'coach_name')
-    }
+    with projection_operation('attendance_profiles'):
+        matching_learners = {
+            _email(learner.email): learner
+            for learner in LearnerProfile.objects.using(database).filter(
+                email_normalized__in=matching_emails,
+            ).only('id', 'enrolment_id', 'full_name', 'email', 'coach_name')
+        }
     learners_by_email = {email: learner for email, learner in matching_learners.items() if email in all_expected_emails}
     if not learners_by_email:
         return []
@@ -380,7 +432,7 @@ def fetch_verified_teams_attendance_rows(
     module_rows = ModuleAuthoringModule.objects.using(database).filter(
         module_catalogue_id__in=module_refs_needed,
     ).only("module_catalogue_id", "group_id", "group_name")
-    modules_by_id = {row.module_catalogue_id: row for row in module_rows}
+    modules_by_id = {row.module_catalogue_id: row for row in module_rows} if include_group_metadata else {}
 
     occurrence_queryset = (
         LiveSessionOccurrence.objects.using(database)
@@ -401,15 +453,25 @@ def fetch_verified_teams_attendance_rows(
             Q(actual_start__date__lte=end_date)
             | Q(actual_start__isnull=True, scheduled_start__date__lte=end_date)
         )
-    occurrences = list(
-        occurrence_queryset.order_by("scheduled_start", "session_number", "id")
+    occurrences = projection_call('teams_occurrences', list,
+        occurrence_queryset.only('id', 'live_session_id', 'actual_start', 'actual_end',
+            'scheduled_start', 'scheduled_end', 'session_number', 'attendance_report_id',
+            'artifacts_synced_at', 'updated_at').order_by("scheduled_start", "session_number", "id")
     )
     if not occurrences:
         return []
 
-    replaced_sources = _replaced_attendance_sources(
-        database, [occurrence.id for occurrence in occurrences],
-    )
+    # The native schedule already read this same replacement lateral join.
+    # Reuse concrete destination associations only; shared aliases and recovery
+    # alternatives without those facts still use the authoritative SQL reader.
+    known_sources = {str(row['session_id']): {
+        'occurrence_id': str(row.get('attendance_source_occurrence_id') or row['session_id']),
+        'attendance_report_id': row.get('attendance_report_id') or '',
+    } for row in (register_schedule or []) if not row.get('attendance_source_module_id')
+      and 'attendance_source_occurrence_id' in row and 'attendance_report_id' in row}
+    missing_sources = [occurrence.id for occurrence in occurrences if str(occurrence.id) not in known_sources]
+    replaced_sources = {**known_sources, **(projection_call('attendance_associations', _replaced_attendance_sources, database, missing_sources)
+                                          if missing_sources else {})}
     attendance_source_by_occurrence = {
         str(occurrence.id): str(
             replaced_sources.get(str(occurrence.id), {}).get('occurrence_id')
@@ -420,7 +482,8 @@ def fetch_verified_teams_attendance_rows(
     attendance_report_by_occurrence = {
         str(occurrence.id): str((
             replaced_sources[str(occurrence.id)].get('attendance_report_id')
-            if str(occurrence.id) in replaced_sources
+            if (str(occurrence.id) in replaced_sources
+                and str(replaced_sources[str(occurrence.id)].get('occurrence_id')) != str(occurrence.id))
             else occurrence.attendance_report_id
         ) or '').strip()
         for occurrence in occurrences
@@ -449,10 +512,20 @@ def fetch_verified_teams_attendance_rows(
     source_occurrence_ids = {
         attendance_source_by_occurrence[str(occurrence.id)] for occurrence in occurrences
     }
+    if register_schedule is not None:
+        alias_rows, link_rows = projection_call('reviewed_links', _attendance_review_rows, database, assigned_by_module, source_occurrence_ids)
+    else:
+        alias_rows = _attendance_alias_rows(database, assigned_by_module)
+        link_rows = _attendance_identity_link_rows(database, source_occurrence_ids)
+    aliases_by_module = defaultdict(dict)
+    for module_ref, alias_email, canonical_email in alias_rows:
+        alias_key, canonical_key = _email(alias_email), _email(canonical_email)
+        if alias_key and canonical_key:
+            aliases_by_module[str(module_ref or '').strip()][alias_key] = canonical_key
     reviewed_identity_links = {
         (str(occurrence_id), str(attendance_row_id)): _email(canonical_email)
         for occurrence_id, attendance_row_id, canonical_email
-        in _attendance_identity_link_rows(database, source_occurrence_ids)
+        in link_rows
         if _email(canonical_email)
     }
 
@@ -462,7 +535,7 @@ def fetch_verified_teams_attendance_rows(
         target_occurrences_by_source[
             attendance_source_by_occurrence[str(occurrence.id)]
         ].append(occurrence.id)
-    attendance_records = list(
+    attendance_records = projection_call('teams_evidence', list,
         LiveSessionAttendance.objects.using(database)
         .filter(occurrence_id__in=source_occurrence_ids)
         .only(
@@ -478,7 +551,7 @@ def fetch_verified_teams_attendance_rows(
         )
     )
     rules_by_module = defaultdict(list)
-    for rule in identity_rules(list(assigned_by_module), database):
+    for rule in projection_call('identity_rules', identity_rules, list(assigned_by_module), database):
         rules_by_module[rule['module_catalogue_id']].append(rule)
     raw_by_source = defaultdict(list)
     for record in attendance_records:
@@ -488,6 +561,9 @@ def fetch_verified_teams_attendance_rows(
             'raw_data': record.raw_data, 'role': record.role,
         })
     resolved_by_context = {}
+    identity_rosters = {}
+    module_alias_rows = {module_ref:[{'alias_email':key, 'canonical_email':value} for key,value in aliases.items()]
+                         for module_ref,aliases in aliases_by_module.items()}
     legacy_links = [{'occurrence_id': occurrence, 'attendance_row_id': source,
                      'canonical_email': email} for (occurrence, source), email in reviewed_identity_links.items()]
     for record in attendance_records:
@@ -500,15 +576,14 @@ def fetch_verified_teams_attendance_rows(
             module_ref = str(session.module_catalogue_id or '').strip() if session else ''
             context_key = (module_ref, str(target_occurrence_id))
             if context_key not in resolved_by_context:
-                module_aliases = [{'alias_email': key, 'canonical_email': value}
-                                  for key, value in aliases_by_module.get(module_ref, {}).items()]
-                resolved_by_context[context_key] = {str(row['id']): row for row in apply_reviewed_identities(
-                    raw_by_source[str(record.occurrence_id)], module_aliases, legacy_links,
-                    rules_by_module.get(module_ref, []),
-                    learners={email: {'name': learner.full_name, 'learnerProfileId': learner.id}
-                              for email, learner in matching_learners.items()
-                              if email in (assigned_by_module.get(module_ref, set())
-                                           | set(approved_guests.get(target_occurrence_id, set())))})}
+                roster_key = (module_ref, frozenset(approved_guests.get(target_occurrence_id, set())))
+                if roster_key not in identity_rosters:
+                    eligible = assigned_by_module.get(module_ref, set()) | set(roster_key[1])
+                    identity_rosters[roster_key] = {email: {'name':learner.full_name, 'learnerProfileId':learner.id}
+                        for email,learner in matching_learners.items() if email in eligible}
+                resolved_by_context[context_key] = {str(row['id']): row for row in projection_call('identity_matching', apply_reviewed_identities,
+                    raw_by_source[str(record.occurrence_id)], module_alias_rows.get(module_ref, []), legacy_links,
+                    rules_by_module.get(module_ref, []), learners=identity_rosters[roster_key])}
             resolved = resolved_by_context[context_key][source_row_id]
             blocked_identity = resolved.get('identityReviewRequired')
             email_key = '' if blocked_identity else _email(resolved.get('email'))
@@ -613,7 +688,7 @@ def fetch_verified_teams_attendance_rows(
             )
 
     from .session_recovery import apply_recovery_to_rows
-    return apply_recovery_to_rows(rows)
+    return projection_call('attendance_recovery', apply_recovery_to_rows, rows)
 
 
 ATTENDANCE_REPORTING_TABLE = '"Learner"."learner_attendance_details"'
