@@ -238,6 +238,11 @@ def rule_for(path):
     # view authenticates on a signed, 15-minute token naming one upload.
     if path.startswith('/curriculum_api/office-preview/'):
         return None
+    # The MCP server for AI connectors carries no session cookie. Its views
+    # authenticate a bearer token (or, for the OAuth consent step, check the
+    # session themselves), and all of them are 404 while MCP_ENABLED is off.
+    if path.startswith(('/mcp/', '/oauth/', '/.well-known/oauth-')):
+        return None
     from old_otjh.gate import is_transition_path
     if is_transition_path(path):
         return '/audit_api/', LEARNER_AND_STAFF
