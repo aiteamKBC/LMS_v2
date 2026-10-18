@@ -14,6 +14,14 @@ from .teams_create_drafts import teams_create_draft
 from .teams_schedule_delivery import forward_schedule_email, schedule_email
 from .teams_calendar_state import sync_calendar_state
 from .teams_directory import search_teams_directory
+from .bulk_attendance_learners import bulk_attendance_learners
+from .bulk_attendance_kbc_history import (
+    bulk_attendance_kbc_history,
+    bulk_attendance_kbc_recent,
+    bulk_attendance_save_attendance,
+)
+from .bulk_attendance_live_day import bulk_attendance_live_day
+from .bulk_attendance_live_day_records import bulk_attendance_live_day_records
 from .teams_calendar_actions import calendar_action
 from .teams_week_meeting import (
     curriculum_live_session_meeting_scope,
@@ -25,6 +33,12 @@ from .learner_activity_status import activity_status
 
 
 urlpatterns = [
+    path('curriculum/bulk-attendance/learners/', bulk_attendance_learners, name='curriculum-bulk-attendance-learners'),
+    path('curriculum/bulk-attendance/kbc-history/', bulk_attendance_kbc_history, name='curriculum-bulk-attendance-kbc-history'),
+    path('curriculum/bulk-attendance/kbc-recent/', bulk_attendance_kbc_recent, name='curriculum-bulk-attendance-kbc-recent'),
+    path('curriculum/bulk-attendance/attendance/', bulk_attendance_save_attendance, name='curriculum-bulk-attendance-save-attendance'),
+    path('curriculum/bulk-attendance/live-day/', bulk_attendance_live_day, name='curriculum-bulk-attendance-live-day'),
+    path('curriculum/bulk-attendance/live-day-records/', bulk_attendance_live_day_records, name='curriculum-bulk-attendance-live-day-records'),
     path('curriculum/modules/<str:module_id>/learners/<int:learner_id>/activities/<str:component_id>/status/', activity_status),
     path('curriculum/migrated-review-templates/', migrated_template_views.collection),
     path('curriculum/migrated-review-templates/preview/', migrated_template_views.preview),

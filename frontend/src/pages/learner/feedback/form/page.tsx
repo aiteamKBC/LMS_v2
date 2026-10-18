@@ -17,6 +17,7 @@ export default function LearnerFeedbackFormPage() {
   const params = new URLSearchParams(location.search);
   const requestedKind = params.get('kind') || undefined;
   const requestedLearnerId = params.get('learnerId') || undefined;
+  const requestedCategory = params.get('category');
   const eventRecipientId = params.get('eventRecipientId') ? Number(params.get('eventRecipientId')) : null;
   const resolved = useResolvedLearner(requestedKind, requestedLearnerId);
   const account = auth.account;
@@ -126,6 +127,7 @@ export default function LearnerFeedbackFormPage() {
     if (learnerKind) previewParams.set('kind', learnerKind);
   }
   if (eventRecipientId) previewParams.set('eventRecipientId', String(eventRecipientId));
+  if (requestedCategory && ['lecture', 'event', 'general'].includes(requestedCategory)) previewParams.set('category', requestedCategory);
   const previewQuery = previewParams.toString() ? `?${previewParams}` : '';
   return <WorkspaceShell role="learner" roleLabel={nav.label} navItems={nav.items} workspaceLabel={nav.workspaceLabel} pageTitle={form?.title || 'Feedback'} pageSubtitle="Complete your assigned feedback form" userName={auth.account?.displayName || 'Learner'} userRole="Learner">
     <div className="p-6">
