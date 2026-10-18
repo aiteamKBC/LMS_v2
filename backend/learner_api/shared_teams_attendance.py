@@ -21,7 +21,9 @@ def apply_shared_attendance(rows, learner):
         # Once per series/delivery, not once per lecture. Resolve against the
         # full delivery roster before filtering this learner (name ambiguity).
         sessions = result_rows({'id': series_id, 'module_catalogue_id': owner},
-                               email=email, module_catalogue_id=module_id, attendance_only=True)
+                               email=email, module_catalogue_id=module_id, attendance_only=True,
+                               occurrence_ids={str(row.get('attendance_source_occurrence_id') or row['session_id'])
+                                               for row in scheduled})
         by_id = {str(session['id']): session for session in sessions}
         for row in scheduled:
             session = by_id.get(str(row.get('attendance_source_occurrence_id') or ''))

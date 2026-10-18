@@ -1555,19 +1555,36 @@ def _resolve_from_master(modules, weeks, components, assigned_modules=None, *, c
             detail_columns = (f"CASE WHEN coalesce(btrim(live_sessions_link,'{strip_chars}'),'')<>'' THEN 'content' END AS live_sessions_link, display_order, NULL AS ksb_mappings, "
                               "false AS reflection_required, NULL AS \"Reflection_Question\", false AS tutor_validation_required") if identities_only else (
                               "live_sessions_link, display_order, ksb_mappings, reflection_required, \"Reflection_Question\", tutor_validation_required")
+            schedule_column = ''
+            if catalogue_facts and resolved_metadata is not None and 'schedule_components' in resolved_metadata:
+                from .builder_activity_dates import COMPONENT_SCHEDULE_SETTINGS
+                # Keep ->> text semantics for dates independent of the native
+                # identity projection's JSON types and display overrides.
+                schedule_column = ', ' + COMPONENT_SCHEDULE_SETTINGS.replace('c.settings_json', 'settings_json')
             cur.execute(
                 "SELECT id, week_id, module_catalogue_id, type, title, "
                 f"{description_sql} AS description, "
                 f"{settings_sql} AS settings_json, "
                 f"{detail_columns}"
-                f"{', expected_otjh' if expected_otjh else ''} "
+                f"{', expected_otjh' if expected_otjh else ''}{schedule_column} "
                 "FROM curriculum.components WHERE module_catalogue_id = ANY(%s) "
                 f"{'AND week_id = ANY(%s) ' if week_ids is not None else ''}"
                 f"AND {visible_child_sql('components')} "
+                + (f"AND (week_id IS NULL OR EXISTS (SELECT 1 FROM curriculum.weeks visible_parent "
+                   f"WHERE visible_parent.id=components.week_id "
+                   f"AND visible_parent.module_catalogue_id=components.module_catalogue_id "
+                   f"AND {visible_week_sql('visible_parent')})) " if catalogue_facts else '') +
                 "ORDER BY week_id, display_order, id",
                 [module_ids, *([week_ids] if week_ids is not None else [])],
             )
             master_components = cur.fetchall()
+            if catalogue_facts and resolved_metadata is not None and 'schedule_components' in resolved_metadata:
+                # Preserve the date reader's ordering and module-level
+                # components; empty weeks are still supplied independently.
+                resolved_metadata['schedule_components'] = [
+                    (row[0], row[2], row[1], row[4], row[3], row[-1])
+                    for row in sorted(master_components,
+                        key=lambda row: (row[2], row[8] is None, row[8], row[0]))]
 
             # Quiz components are linked either through settings_json.linkedQuizId
             # (the Module Builder save format) or the normalized link table.
@@ -1600,7 +1617,28 @@ def _resolve_from_master(modules, weeks, components, assigned_modules=None, *, c
                 ):
                     fallback_module_ids.add(_s(mid))
 
-            if resolved_metadata is not None and 'quiz_links' in resolved_metadata:
+            quiz_meta_by_id = dict((resolved_metadata or {}).get('quiz_meta', {}))
+            batched_links = None
+            if (catalogue_facts and not (resolved_metadata is not None and 'quiz_links' in resolved_metadata)
+                    and any(row[3] == 'quiz' for row in master_components)):
+                # The normalized links and their small quiz metadata formerly
+                # required two remote SELECTs. Keep the original reader for
+                # ambiguous multiply-linked components, with its tie behavior.
+                cur.execute("SELECT link.component_id,link.quiz_id,q.id,q.title,q.questions,q.duration,q.time_unit "
+                    "FROM curriculum.quiz_component_links link "
+                    "JOIN curriculum.components component ON component.id=link.component_id "
+                    "LEFT JOIN curriculum.quizzes q ON q.id=link.quiz_id "
+                    "WHERE component.module_catalogue_id=ANY(%s) AND component.id=ANY(%s) "
+                    f"AND component.type='quiz' AND {visible_child_sql('component')}", [module_ids, component_ids])
+                joined = cur.fetchall()
+                if len({row[0] for row in joined}) == len(joined):
+                    batched_links = [(row[0], row[1]) for row in joined]
+                    quiz_meta_by_id.update({row[2]: {'quizId':row[2], 'title':row[3], 'questions':row[4],
+                        'duration':row[5], 'timeUnit':row[6]} for row in joined
+                        if row[2] is not None and row[2] not in quiz_meta_by_id})
+            if batched_links is not None:
+                quiz_id_by_component.update(batched_links)
+            elif resolved_metadata is not None and 'quiz_links' in resolved_metadata:
                 quiz_id_by_component.update({cid: qid for cid, qid in resolved_metadata['quiz_links'].items() if cid in component_ids})
             elif component_ids and compact_content:
                 # Reuse identities that passed the module and visibility
@@ -1637,7 +1675,6 @@ def _resolve_from_master(modules, weeks, components, assigned_modules=None, *, c
                     quiz_id_by_component[component_id] = quiz_id
 
             linked_quiz_ids = sorted(set(quiz_id_by_component.values()))
-            quiz_meta_by_id = dict((resolved_metadata or {}).get('quiz_meta', {}))
             missing_quiz_ids = [qid for qid in linked_quiz_ids if qid not in quiz_meta_by_id]
             if missing_quiz_ids:
                 cur.execute(

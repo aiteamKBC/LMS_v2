@@ -227,7 +227,7 @@ def entries_for(owner, *, overview_only=False, entry_ids=None, lineage_only=Fals
             FROM "Learner".learner_progress_entries progress
             WHERE progress.learner_id=%s AND progress.deleted_at IS NULL{selection}
         ){ksb_cte}, reporting_segments AS (
-            SELECT s.progress_id,jsonb_agg({segment_payload} ORDER BY s.segment_order,s.id) AS payload
+            SELECT s.progress_id,{"'[{}]'::jsonb" if catalogue_summary else f"jsonb_agg({segment_payload} ORDER BY s.segment_order,s.id)"} AS payload
             FROM "Learner".learner_activity_reporting_segments s
             JOIN canonical p ON p.id=s.progress_id AND p.learner_id=s.learner_id
             GROUP BY s.progress_id

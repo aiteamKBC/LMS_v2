@@ -36,7 +36,7 @@ class SharedTeamsAttendanceTests(SimpleTestCase):
                 self.assertEqual(rows[0]['session_id'], 'O:ALIAS')
                 self.assertEqual(rows[0]['attended_seconds'], 7302)
                 reader.assert_called_once_with({'id': 'S', 'module_catalogue_id': 'OWNER'},
-                    email=self.learner.email, module_catalogue_id='ALIAS', attendance_only=True)
+                    email=self.learner.email, module_catalogue_id='ALIAS', attendance_only=True, occurrence_ids={'O'})
 
     def test_missing_unfinished_and_other_learner_evidence_do_not_grant_attendance(self):
         for session in ({'id': 'O', 'reportReady': False, 'attendance': []},
