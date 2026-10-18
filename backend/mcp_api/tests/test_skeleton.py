@@ -38,9 +38,10 @@ class McpFlagTestCase(SimpleTestCase):
 
 class FlagOffTests(McpFlagTestCase):
     def test_mcp_endpoint_is_not_found(self):
-        for method in ("get", "post", "delete"):
-            with self.subTest(method=method):
-                self.assertEqual(getattr(self.client, method)("/mcp/").status_code, 404)
+        for path in ("/mcp/", "/mcp"):
+            for method in ("get", "post", "delete"):
+                with self.subTest(path=path, method=method):
+                    self.assertEqual(getattr(self.client, method)(path).status_code, 404)
 
     def test_oauth_paths_are_not_found(self):
         self.assertEqual(self.client.get("/oauth/anything").status_code, 404)
@@ -56,15 +57,24 @@ class FlagOnTests(McpFlagTestCase):
     mcp_enabled = "1"
 
     def test_mcp_endpoint_demands_a_bearer_token(self):
-        for method in ("get", "post", "delete"):
-            with self.subTest(method=method):
-                response = getattr(self.client, method)("/mcp/")
+        for path in ("/mcp/", "/mcp"):
+            with self.subTest(path=path):
+                response = self.client.post(path)
                 self.assertEqual(response.status_code, 401)
                 self.assertEqual(
                     response["WWW-Authenticate"],
                     'Bearer resource_metadata="https://lms.example.com'
                     '/.well-known/oauth-protected-resource"',
                 )
+
+    def test_get_and_delete_are_not_allowed(self):
+        # Stateless JSON mode: no SSE stream to GET, no session to DELETE (4.1).
+        for path in ("/mcp/", "/mcp"):
+            for method in ("get", "delete"):
+                with self.subTest(path=path, method=method):
+                    response = getattr(self.client, method)(path)
+                    self.assertEqual(response.status_code, 405)
+                    self.assertEqual(response["Allow"], "POST")
 
     def test_mcp_endpoint_post_needs_no_csrf_token(self):
         client = Client(enforce_csrf_checks=True)
@@ -82,6 +92,7 @@ class GateExemptionTests(SimpleTestCase):
     def test_mcp_paths_are_not_gated(self):
         for path in (
             "/mcp/",
+            "/mcp",
             "/oauth/token",
             "/.well-known/oauth-protected-resource",
             "/.well-known/oauth-authorization-server",
