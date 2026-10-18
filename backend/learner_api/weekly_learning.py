@@ -1,31 +1,16 @@
-"""Compact read for the Student Dashboard's Weekly Learning panel.
+"""Read-only content/availability projection for Training and learning summaries.
 
-    GET /learner_api/weekly-learning/<kind>/<int:pk>/
-
-The panel draws every week of the learner's assigned modules (a progress ring
-per week, a module picker, instant week selection), so it needs each assigned
-activity's identity, timing, KSB codes and completion -- not descriptions,
-lesson HTML, files, activity history or hours totals.
-
-Strictly read-only: it never calls build_learner_detail, whose activation,
-plan-hydration, KSB and OTJH-snapshot repairs write on GET, and it resolves the
-learner profile without the identity helper's enrolment-link self-heal. The
-authored tree, assignment templates, expected OTJH, week quizzes and retained
-quiz credit come from the same readers learner-detail uses, so membership and
-completion follow the canonical rules.
+Weekly HTTP routes use dashboard_weekly and coach_api.weekly_learning instead.
+This helper retains the existing content/template readers used by other features.
 """
 import re
 
-from django.db import DatabaseError
-from django.http import JsonResponse
 
-from login.permissions import learner_self_or_staff
 
 from .identity import learner_profile_for_source
 from .learning_plan import effective_training_plan, request_preset_cache
 from .mappers import _s, flatten_training_plan, get_training_plan
 from .models import _serialise_quiz_ref
-from .projection_performance import measure_projection
 from .retained_quiz_progress import retain_quiz_progress
 
 # JavaScript's \s and String.prototype.trim() set. The availability rule below
@@ -164,7 +149,7 @@ def _progress(profile):
     return quizzes, list(videos.values()), list(components.values())
 
 
-def build_weekly_learning(source, pk, *, learning_summary=False, assigned_modules=None, strict=False, week_ids=None, identities_only=False, progress=None):
+def build_learning_content_summary(source, pk, *, learning_summary=False, assigned_modules=None, strict=False, week_ids=None, identities_only=False, progress=None, compact_content=False):
     # Same readers as build_learner_detail, without its write-on-read repairs.
     from .learner_detail import (_annotate_otjh, _append_week_quizzes,
                                  _apply_programme_assignment_template, _resolve_from_master)
@@ -176,6 +161,8 @@ def build_weekly_learning(source, pk, *, learning_summary=False, assigned_module
     # rest (legacy and snapshot-only entries) need _annotate_otjh's lookups.
     strict_options = {'strict': True} if strict else {}
     projection_options = {"week_ids": week_ids, "identities_only": identities_only} if identities_only or week_ids is not None else {}
+    if compact_content:
+        projection_options['compact_content'] = True
     modules, weeks, components = _resolve_from_master(
         modules, weeks, components, assigned_modules=assigned, compact=True,
         live_session_ids=False, expected_otjh=not identities_only, **projection_options, **strict_options)
@@ -212,31 +199,3 @@ def build_weekly_learning(source, pk, *, learning_summary=False, assigned_module
     if learning_summary:
         result['retiredQuizComponents'] = [_weekly_component(c) for c in detail.get('retiredQuizComponents', [])]
     return result
-
-
-@learner_self_or_staff(kwarg="pk")
-def learner_weekly_learning(request, kind, pk):
-    from .learner_detail import SOURCE_MODELS, _error
-
-    # After the access gate, in learner-detail's order, so every caller gets
-    # the same status from both endpoints.
-    if request.method != "GET":
-        return _error("Method not allowed.", 405)
-    model = SOURCE_MODELS.get(kind)
-    if model is None:
-        return _error(f"Unknown kind: {kind!r}. Expected 'commercial' or 'apprenticeship'.", 404)
-    try:
-        # all_learners, as learner-detail: the default manager hides commercial rows.
-        source = model.all_learners.get(pk=pk)
-    except model.DoesNotExist:
-        return _error("Learner not found.", 404)
-    except DatabaseError as exc:
-        return _error(f"Database error: {exc}", 502)
-    try:
-        with measure_projection('weekly-learning', kind=kind, learner_id=pk) as measurement:
-            with measurement.stage('weekly'):
-                response = JsonResponse(build_weekly_learning(source, pk))
-        response['Cache-Control'] = 'private, no-store'
-        return response
-    except DatabaseError as exc:
-        return _error(f"Database error: {exc}", 502)

@@ -236,6 +236,7 @@
 
 .cardMetaRow {
   display: inline-flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: 10px;
@@ -257,6 +258,22 @@
 }
 .sourceBadge[data-source='legacy'] { border-color: #edcfad; background: #fff1de; color: #92520f; }
 .sourceBadge svg { flex-shrink: 0; }
+
+.learningModeBadge {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  padding: 4px 8px;
+  border: 1px solid #b9e0d0;
+  border-radius: 7px;
+  background: #e9f7f0;
+  color: #137055;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1.4;
+  white-space: nowrap;
+}
+.learningModeBadge[data-source='legacy'] { border-color: #edcfad; background: #fff1de; color: #92520f; }
 
 .certificateBadge {
   display: inline-flex;

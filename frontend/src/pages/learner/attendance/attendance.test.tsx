@@ -80,6 +80,23 @@ function CurrentLocation() {
   const location = useLocation();
   return <span data-testid="location">{location.pathname}{location.search}</span>;
 }
+
+it('shows recorded learning credit separately from make-up and keeps waiting outside absence actions', async () => {
+  payload.mode.mode = 'lazy';
+  payload.lectures = [
+    // The API sends canonical "present"; the client maps it to a display status.
+    lecture({ id: 'recorded', title: 'Recorded delivery', status: 'present' as AttendanceLecture['status'], rawStatus: 'absent', effectiveAttendance: 1,
+      attendanceBasis: 'recorded', finalOutcome: 'recorded', catchupStatus: null, canReportAbsence: false }),
+    lecture({ id: 'waiting', title: 'Awaiting delivery', status: 'awaiting_recording', rawStatus: 'absent',
+      attendanceBasis: 'awaiting_recording', counted: false, canReportAbsence: false }),
+  ];
+  payload.totals = { total: 2, attended: 1, absent: 0, covered: 0, upcoming: 0, attendanceRate: 100 };
+  render(<MemoryRouter><AttendancePage /></MemoryRouter>);
+  expect(await screen.findByText('Completed by recording')).toBeInTheDocument();
+  expect(screen.getByText('Awaiting recording')).toBeInTheDocument();
+  expect(screen.queryByText('Made up')).not.toBeInTheDocument();
+  expect(screen.queryByText('Make-up needed')).not.toBeInTheDocument();
+});
 const mount = () => render(<MemoryRouter><AttendancePage /><CurrentLocation /></MemoryRouter>);
 
 describe('Attendance lecture workspace', () => {

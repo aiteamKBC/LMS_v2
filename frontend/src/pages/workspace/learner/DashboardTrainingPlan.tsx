@@ -65,7 +65,7 @@ export function DashboardTrainingPlan({ kind, learnerId, plan, canOpenActivities
   const terminalError = error || pageError || learningSubjectsError;
   const weeklyFocus = canOpenActivities && !monthlyOnly && !trainingOnly && (hasSnapshot || !terminalError)
     ? <WeeklyLearningPlan kind={kind} learnerId={learnerId}
-    schedule={schedule.data} scheduleLoading={schedule.loading} scheduleError={schedule.error || undefined} /> : undefined;
+    /> : undefined;
   useEffect(() => {
     if (!hasSnapshot || (!initialSubjectId && hash !== '#module-timeline') || scrolled.current === scrollDestination) return;
     scrolled.current = scrollDestination;

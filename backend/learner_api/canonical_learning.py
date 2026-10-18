@@ -140,7 +140,7 @@ def entries(learner_id):
     return entries_for(owner)
 
 
-def entries_for(owner, *, overview_only=False, entry_ids=None, lineage_only=False, dashboard_metadata=False, training_summary=False):
+def entries_for(owner, *, overview_only=False, entry_ids=None, lineage_only=False, dashboard_metadata=False, training_summary=False, monthly_summary=False):
     """``lineage_only`` keeps every progress column but replaces an object
     ``source_payload`` (raw evidence) with just its ``original_source_ref``,
     the only key the completion and hours projection reads.
@@ -151,6 +151,10 @@ def entries_for(owner, *, overview_only=False, entry_ids=None, lineage_only=Fals
     ``training_summary`` retains completion, timing and lineage facts without
     evidence bodies or reporting-segment/historical-component payloads. The
     complete learner fact set preserves cross-module native-save deduplication.
+
+    ``monthly_summary`` uses explicit progress facts instead of progress.*,
+    retaining full reporting segments, source links and historical attribution.
+    It never restricts the learner-wide reconciliation population by month.
     """
     # Optional caller-owned selection is applied before the evidence/lineage
     # joins. The learner predicate always remains mandatory.
@@ -177,7 +181,7 @@ def entries_for(owner, *, overview_only=False, entry_ids=None, lineage_only=Fals
                 'reconciliation',jsonb_build_object('reporting_allocation',jsonb_build_object(
                     'estimated',p.source_payload->'reconciliation'->'reporting_allocation'->'estimated'))))
             ELSE to_jsonb(p) END'''
-    if overview_only or training_summary:
+    if overview_only or training_summary or monthly_summary:
         # Completion projection needs saved timing/attempt facts, never raw
         # evidence bodies. Keep lineage required by recorded course allocation.
         columns = ','.join('progress.' + field for field in (
@@ -187,7 +191,7 @@ def entries_for(owner, *, overview_only=False, entry_ids=None, lineage_only=Fals
             'verified_seconds', 'expected_otjh', 'source_system', 'component_link_source',
             'actual_seconds', 'accepted', 'reporting_started_at', 'reporting_ended_at',
             'reporting_month', 'achieved_score', 'total_score', 'activity_status'))
-        if training_summary:
+        if training_summary or monthly_summary:
             columns += ",progress.source_payload,progress.feed_kind,to_jsonb(progress)->'actual_basis' AS actual_basis"
         else:
             columns += ",jsonb_build_object('original_source_ref',progress.source_payload->>'original_source_ref') AS source_payload"
@@ -279,6 +283,44 @@ def entries_for(owner, *, overview_only=False, entry_ids=None, lineage_only=Fals
         for record in result:
             record['completed'] = counts_as_completed(record)
     return result
+
+
+def weekly_hour_records(owner):
+    """Hours-only projection; retain learner-wide facts needed by native dedupe.
+
+    Attempts/source completion cannot change accepted ledger seconds. Only
+    unsynchronised direct saves need current assignment markings. Reporting
+    segments are a presence gate here, never additional hour allocations.
+    """
+    from .current_learning import project_current
+    fields = ('id', 'learner_id', 'kind', 'module_ref', 'module_title', 'component_ref',
+              'component_type', 'quiz_ref', 'passed', 'reported_time', 'submitted_at',
+              'started_at', 'time_tracking_source', 'claimed_seconds', 'verified_seconds',
+              'source_system', 'component_link_source', 'actual_seconds', 'accepted')
+    records = query('''SELECT ''' + ','.join('progress.' + field for field in fields) + ''',
+        to_jsonb(progress)->>'actual_basis' AS actual_basis,
+        CASE WHEN jsonb_typeof(progress.source_payload)='object' THEN
+          jsonb_build_object('original_source_ref',progress.source_payload->'original_source_ref')
+          ELSE progress.source_payload END AS source_payload,
+        CASE WHEN EXISTS(SELECT 1 FROM "Learner".learner_activity_reporting_segments s
+            WHERE s.progress_id=progress.id AND s.learner_id=progress.learner_id AND s.learner_id=%s)
+          THEN '[{}]'::jsonb ELSE '[]'::jsonb END AS segments
+        FROM "Learner".learner_progress_entries progress
+        WHERE progress.learner_id=%s AND progress.deleted_at IS NULL
+          ORDER BY progress.reporting_month,progress.reporting_started_at NULLS LAST,progress.id''', [owner['id'], owner['id']])
+    records = [{**record, 'segments': decoded(record.get('segments'), [])} for record in records]
+    pending = sorted({str(record['component_ref']) for record in records
+                      if record.get('component_ref') and record.get('component_type') == 'assignment'
+                      and is_unsynchronised_direct_save(record)})
+    markings = {}
+    if pending:
+        submissions = query('''SELECT component_ref,status,actual_time_hours
+            FROM "Learner".learning_reflection_submissions
+            WHERE learner_id=%s AND learner_kind=%s AND activity_type IN ('assignment','extra_activity')
+              AND component_ref=ANY(%s) ORDER BY submitted_at NULLS FIRST,id''',
+            [str(owner['enrolment_id']), owner.get('learner_type'), pending])
+        markings = {str(row['component_ref']): row for row in submissions}
+    return progress_records_with_completion(records, project_current(records, markings))
 
 
 def progress_records_with_completion(records, current):
@@ -537,7 +579,7 @@ def material_parts(item, owner, record=None):
                and r.get('source_course_ref') and r.get('source_activity_id')]
     if sources:
         # Preserve the activity namespace: quiz:10 must never open material:10.
-        keys = {(str(r['source_course_ref']), r['source_activity_id']) for r in sources}
+        keys = {recorded_source_key(r) for r in sources}
     else:
         component_ids = {r.get('curriculum_component_ref') or r.get('component_ref')
                          for r in [record, *(record.get('sources') or [])]}
@@ -821,6 +863,23 @@ def recorded_activity_schedule(record, course):
         'date_source': 'introduction' if introduction else 'consolidated_record'}
 
 
+def recorded_source_key(source):
+    """Resolve a course-qualified legacy identity only inside its stored route.
+
+    Older imports used one global material/quiz key per learner. A component
+    reused by two courses needs distinct source rows, while catalogue IDs and
+    learner-facing material links retain the original typed component ID.
+    """
+    course = str(source.get('source_course_ref') or '')
+    reference = str(source.get('source_activity_id') or '')
+    if reference.startswith('course:'):
+        match = re.fullmatch(r'course:([1-9]\d*):((?:material|quiz):[1-9]\d*)', reference)
+        if not match or source.get('source_system') != 'old_lms' or match[1] != course:
+            return None
+        reference = match[2]
+    return course, reference
+
+
 def learner_course_catalogue(courses, catalogue):
     """Keep restored legacy components within their verified learner/course scope.
 
@@ -858,11 +917,18 @@ def recorded_course_items(courses, catalogue, records, *, overview_only=False, i
     by_course = {str(c['source_course_ref']): [] for c in courses}
     definitions = {(str(d['source_course_ref']), d['source_activity_id']): d for d in catalogue
                    if str(d['source_course_ref']) in by_course}
+    definitions_by_course = {ref: [] for ref in by_course}
+    for (ref, _), definition in definitions.items():
+        definitions_by_course[ref].append(definition)
+    catalogue_counts = {}
+    for definition in catalogue:
+        ref = str(definition['source_course_ref'])
+        catalogue_counts[ref] = catalogue_counts.get(ref, 0) + 1
     links = {}
     for record in records:
         placements = {}
         for source in record.get('sources') or []:
-            key = (str(source.get('source_course_ref')), source.get('source_activity_id'))
+            key = recorded_source_key(source)
             if source.get('source_system') == 'old_lms' and key in definitions:
                 placements.setdefault(key if include_catalogue else key[0], definitions[key])
         # Imported journal rows and new attempts retain a typed course/material
@@ -948,7 +1014,7 @@ def recorded_course_items(courses, catalogue, records, *, overview_only=False, i
     for course in courses:
         ref = str(course['source_course_ref'])
         activity = by_course[ref]
-        course_definitions = [d for (course_ref, _), d in definitions.items() if course_ref == ref]
+        course_definitions = definitions_by_course[ref]
         if include_catalogue:
             activity = catalogue_items_with_progress(course_definitions, activity)
             for definition in course_definitions:
@@ -963,7 +1029,7 @@ def recorded_course_items(courses, catalogue, records, *, overview_only=False, i
         subjects.append({'id': int(ref), 'name': course['source_course_title'],
             'module_id': course.get('curriculum_module_ref'),
             **({} if overview_only else {
-                'catalogue_count': sum(str(d['source_course_ref']) == ref for d in catalogue),
+                'catalogue_count': catalogue_counts.get(ref, 0),
                 'accepted_hours': round(sum(a['actual'] for a in activity), 6)})})
         items.extend(activity)
     return items, subjects, links

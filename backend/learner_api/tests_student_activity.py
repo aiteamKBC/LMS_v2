@@ -495,6 +495,8 @@ class SubjectBuilderCoverTests(SimpleTestCase):
             [('MOD-1', None, 1, '', '', '', None)],
             [('WEEK-1', 'MOD-1', 'Lecture 06/03/26')],
             [('COMP-1', 'MOD-1', 'WEEK-1', 'Lesson', 'reading', {})],
+            [],  # No imported origin for this assigned native module.
+            [],  # No verified historical replacement for this learner.
         ]
         with patch('learner_api.student_activity.connections') as connections, \
              patch('learner_api.student_activity.subject_store.ready', return_value=True), \

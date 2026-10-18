@@ -3,7 +3,6 @@ import { useLocation, useSearchParams } from 'react-router-dom';
 import type { DashboardTabsProps } from '../DashboardTabs';
 import { dashboardTraining, timelineModuleForDisplay, peekTrainingModule, readTrainingModule, type TrainingModule } from '@/api/dashboardTraining';
 import type { TrainingPlanDashboard } from '@/api/trainingPlanDashboard';
-import { subscribeLearnerReadInvalidation } from '@/api/learnerRead';
 import { useLiveLearnerRead } from '@/hooks/useLiveLearnerRead';
 import { ModuleTimeline } from '@/pages/learner/training-plan-timeline/ModuleTimeline';
 import { ModuleOverview } from '@/pages/learner/training-plan-timeline/ModuleOverview';
@@ -11,7 +10,7 @@ import { dateKey } from '@/pages/learner/training-plan-timeline/model';
 import styles from '@/pages/learner/training-plan-timeline/trainingPlan.module.css';
 import layout from '@/pages/learner/training-plan-timeline/TrainingPlanDetails.module.css';
 
-function TrainingPlanContent({ kind, learnerId, programmeStartDate, programmeEndDate }: DashboardTabsProps) {
+function TrainingPlanContent({ kind, learnerId, programmeStartDate, programmeEndDate, active = true }: DashboardTabsProps) {
   const [params] = useSearchParams();
   const { hash } = useLocation();
   const subject = params.get('subject') || '';
@@ -20,11 +19,17 @@ function TrainingPlanContent({ kind, learnerId, programmeStartDate, programmeEnd
   const displayStart = dateKey(programmeStartDate);
   const displayEnd = dateKey(programmeEndDate);
   const initialReader = useMemo(() => (requestedKind: typeof kind, id: string, signal?: AbortSignal, fresh = false) => dashboardTraining.read(requestedKind, id, signal, fresh, subject, requestedMonth, displayStart, displayEnd), [subject, requestedMonth, displayStart, displayEnd]);
-  const read = useLiveLearnerRead(kind, learnerId, true, initialReader, dashboardTraining.peek);
+  const peekReader = useMemo(() => (requestedKind: typeof kind, id: string) => dashboardTraining.peek(requestedKind, id, subject, requestedMonth, displayStart, displayEnd), [subject, requestedMonth, displayStart, displayEnd]);
+  const read = useLiveLearnerRead(kind, learnerId, true, initialReader, peekReader, active);
   const payload = read.data;
   const identity = `${kind}:${learnerId}:${subject}:${requestedMonth}`;
   const [now, setNow] = useState(Date.now);
-  useEffect(() => { const timer = window.setInterval(() => setNow(Date.now()), 30_000); return () => window.clearInterval(timer); }, []);
+  useEffect(() => {
+    if (!active) return;
+    setNow(Date.now());
+    const timer = window.setInterval(() => setNow(Date.now()), 30_000);
+    return () => window.clearInterval(timer);
+  }, [active]);
   const today = new Date(now).toLocaleDateString('en-CA', { timeZone: 'Europe/London' });
   const minMonth = displayStart.slice(0, 7) || payload?.timeline.start || '';
   const maxMonth = [payload?.timeline.end || '', displayEnd.slice(0, 7)].sort().at(-1) || '';
@@ -40,9 +45,10 @@ function TrainingPlanContent({ kind, learnerId, programmeStartDate, programmeEnd
   const [detailState, setDetailState] = useState<{ identity: string; id: string; module?: TrainingModule; error?: string }>();
   const handledRevision = useRef(0);
   const retryDetail = () => setRevision(value => value + 1);
-  useEffect(() => subscribeLearnerReadInvalidation(() => setRevision(value => value + 1)), []);
   useEffect(() => {
-    if (!payload || !selectedId) return;
+    // Refresh the timeline first: it already returns and primes its selected
+    // detail. A cleared snapshot must not launch a duplicate detail request.
+    if (!active || !payload || payload !== peekReader(kind, learnerId) || !selectedId) return;
     const controller = new AbortController();
     setDetailState({ identity, id: selectedId });
     const fresh = handledRevision.current !== revision;
@@ -53,19 +59,22 @@ function TrainingPlanContent({ kind, learnerId, programmeStartDate, programmeEnd
       if (!controller.signal.aborted) setDetailState({ identity, id: selectedId, error: reason instanceof Error ? reason.message : 'Could not load module details.' });
     });
     return () => controller.abort();
-  }, [payload, selectedId, identity, kind, learnerId, revision]);
+  }, [payload, selectedId, identity, kind, learnerId, revision, active, peekReader]);
   const state = detailState?.identity === identity && detailState.id === selectedId ? detailState : undefined;
   const detail = state?.module || (selectedId ? peekTrainingModule(kind, learnerId, selectedId) : undefined);
   const detailError = state?.error;
   const detailLoading = !!selectedId && !detail && !detailError;
   const modules = useMemo(() => (payload?.timeline.modules || []).map(module => module.id === detail?.id ? detail : timelineModuleForDisplay(module)), [payload, detail]);
-  const timelineData: TrainingPlanDashboard = {
-    months: Object.fromEntries(Object.entries<{ topics: string[] }>(payload?.timeline.months || {}).map(([key, month]) => [key, { label: '', topics: month.topics, planned: null, source: 'training' }])),
-    actual: [], actualAvailable: false, modules: [], moduleLinks: {}, sessions: [], reviews: payload?.timeline.reviews || [],
-    coach: { name: payload?.timeline.coachName || '', bookingUrl: null }, contractStatus: 'ready', generatedAt: '',
-  };
-  // Range months replace the legacy all-month ledgers used only to choose year controls.
-  for (const month of [minMonth, maxMonth]) if (month && !timelineData.months[month]) timelineData.months[month] = { label: '', topics: [], planned: null, source: 'training' };
+  const timelineData = useMemo<TrainingPlanDashboard>(() => {
+    const data: TrainingPlanDashboard = {
+      months: Object.fromEntries((payload?.timeline.monthKeys || []).map(key => [key, { label: '', topics: [], planned: null, source: 'training' }])),
+      actual: [], actualAvailable: false, modules: [], moduleLinks: {}, sessions: [], reviews: payload?.timeline.reviews || [],
+      coach: { name: payload?.timeline.coachName || '', bookingUrl: null }, contractStatus: 'ready', generatedAt: '',
+    };
+    // Range months replace the legacy all-month ledgers used only to choose year controls.
+    for (const month of [minMonth, maxMonth]) if (month && !data.months[month]) data.months[month] = { label: '', topics: [], planned: null, source: 'training' };
+    return data;
+  }, [payload, minMonth, maxMonth]);
   const root = useRef<HTMLDivElement>(null);
   const scrolled = useRef('');
   useEffect(() => {

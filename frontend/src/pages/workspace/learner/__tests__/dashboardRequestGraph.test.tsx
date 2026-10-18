@@ -1,4 +1,5 @@
 import { weeklyContractFixture } from '@/test/weeklyContractFixture';
+import { dashboardHeaderFixture } from '@/test/dashboardHeaderFixture';
 import { dashboardMonthlyFixture } from '@/test/dashboardMonthlyFixture';
 import * as React from 'react';
 import { Component, type ReactNode } from 'react';
@@ -55,7 +56,7 @@ function plan(id: string) {
 }
 
 const summary = (id: string, status = 'Active') => ({ id, name: `Learner ${id}`, email: `l${id}@example.test`, phone: '',
-  learnerType: 'commercial', programme: 'Leadership', programmeStatus: status, cohort: '', group: '', employer: '',
+  learnerType: 'commercial' as const, programme: 'Leadership', programmeStatus: status, cohort: '', group: '', employer: '',
   lineManager: '', isActive: true, studentActivityAvailable: false });
 
 /** The full learner-detail payload the hero link used before the change. */
@@ -92,7 +93,7 @@ function body(url: string): unknown {
   const id = url.match(/\/(?:commercial|apprenticeship)\/(\d+)\//)?.[1] || '265';
   if (url.includes('/curriculum/cache-epoch/')) return { epoch: 0, changes: [] };
   if (url.includes('/profile-photo/')) return null;
-  if (url.includes('/dashboard/') && url.endsWith('/header/')) return { learner: summary(id, status), schedule: { ...schedule(id), modules: [{ id: `mod-${id}`, title: `Module ${id}` }] }, week: { deadlines: deadlineDate ? [{ id: 'A1', type: 'assignment', title: 'Due assignment', date: deadlineDate }] : [] }, lectureHref: learnerLiveSessionHref(fullDetail(id) as unknown as LearnerDetail, { date: SESSION_START, moduleId: `mod-${id}`, title: `Live session for ${id}` }, 'commercial', id) };
+  if (url.includes('/dashboard/') && url.endsWith('/header/minimal/')) return dashboardHeaderFixture({ learner: summary(id, status), schedule: { ...schedule(id), modules: [{ id: `mod-${id}`, title: `Module ${id}`, start_date: null, end_date: null }] }, week: { deadlines: deadlineDate ? [{ id: 'A1', type: 'assignment', title: 'Due assignment', date: deadlineDate, subjectId: `current:mod-${id}` }] : [] }, lectureHref: learnerLiveSessionHref(fullDetail(id) as unknown as LearnerDetail, { date: SESSION_START, moduleId: `mod-${id}`, title: `Live session for ${id}` }, 'commercial', id) });
   if (/\/dashboard\/.*\/monthly\//.test(url)) return dashboardMonthlyFixture(new URL(url, 'https://example.test').searchParams.get('month') || '2026-10');
   if (/\/dashboard\/.*\/training\/$/.test(new URL(url, 'https://example.test').pathname)) {
     const selectedModule = { id: `current:mod-${id}`, title: `Module ${id}`, moduleId: `mod-${id}`,
@@ -112,13 +113,12 @@ function body(url: string): unknown {
   };
   if (url.includes('/learner-summary/')) return summary(id, status);
   if (url.includes('/learner-detail/')) return fullDetail(id, status);
-  if (/\/dashboard\/.*\/weekly\/[^/]+\//.test(url)) {
+  if (/\/dashboard\/.*\/weekly\/plan\/[^/]+\//.test(url)) {
     const parsed = new URL(url, 'https://example.test');
-    const weekId = decodeURIComponent(parsed.pathname.split('/')[6]);
-    return { selectedWeek: weeklyContractFixture({ ...compactWeekly(id), schedule: weeklySchedule(id),
-      selectedWeekId: weekId }).selectedWeek };
+    const weekId = decodeURIComponent(parsed.pathname.split('/')[7]);
+    return weeklyContractFixture({ ...compactWeekly(id), schedule: weeklySchedule(id), selectedWeekId: weekId });
   }
-  if (/\/dashboard\/.*\/weekly\/$/.test(url)) return weeklyContractFixture({ ...compactWeekly(id), schedule: weeklySchedule(id) });
+  if (/\/dashboard\/.*\/weekly\/plan\/$/.test(new URL(url, 'https://example.test').pathname)) return weeklyContractFixture({ ...compactWeekly(id), schedule: weeklySchedule(id) });
   if (url.includes('/training-plan-dashboard/')) return schedule(id);
   if (url.includes('/overview-week/')) return { weekStart: '2026-10-12', weekEnd: '2026-10-18', timezone: 'Europe/London',
     planSubjects: [], modules: [], deadlines: [], undatedActivities: 0, expectedHours: null, missingExpectedHours: 0,
@@ -233,18 +233,65 @@ afterEach(() => {
 });
 
 describe('Student Dashboard request graph', () => {
-  it('uses browser module ordering to select the initial week in exactly two dashboard reads', async () => {
+  it('hides protected cached content if Header reports a real permission failure', async () => {
+    const original = vi.mocked(fetch).getMockImplementation()!;
+    vi.mocked(fetch).mockImplementation((input, init) => String(input).endsWith('/header/minimal/')
+      ? Promise.resolve(new Response(JSON.stringify({ error: 'Permission revoked' }), { status: 403 })) : original(input, init));
+    renderDashboard();
+    expect(await screen.findByText('Permission revoked')).toBeVisible();
+    expect(screen.queryByRole('tablist')).not.toBeInTheDocument();
+  });
+  it('rejects incomplete Header data without starting protected tab reads', async () => {
+    vi.mocked(fetch).mockResolvedValue(new Response(JSON.stringify({ learner: {}, weeklyCandidates: [] })));
+    renderDashboard();
+    expect(await screen.findByText('Dashboard Header response required.')).toBeVisible();
+    expect(screen.queryByRole('tablist')).not.toBeInTheDocument();
+    expect(dashboardUrls()).toEqual(['/learner_api/dashboard/commercial/265/header/minimal/']);
+  });
+  it.each(['weekly', 'monthly', 'training', 'overview', 'rewards'])('opens %s after the canonical Header resolves', async tab => {
+    let release!: () => void;
+    hold = { match: /\/header\/minimal\/$/, promise: new Promise(resolve => { release = resolve; }) };
+    window.history.replaceState(null, '', `/workspace/learner/commercial/265/dashboard?tab=${tab}`);
+    renderDashboard(`/workspace/learner/commercial/265/dashboard?tab=${tab}`);
+    await settle();
+    expect(screen.queryByRole('tablist')).not.toBeInTheDocument();
+    expect(count(HEADER)).toBe(1);
+    expect(dashboardUrls().filter(url => /\/(weekly|monthly|training|overview)\//.test(url))).toEqual([]);
+    await act(async () => release());
+    await waitForDashboard();
+    expect(screen.getByRole('tab', { name: { weekly: 'Weekly Learning', monthly: 'Monthly Plan', training: 'Training Plan', overview: 'Overview', rewards: 'Rewards' }[tab]! })).toHaveAttribute('aria-selected', 'true');
+  });
+
+  it('retries a failed canonical Header before starting protected tabs', async () => {
+    const original = vi.mocked(fetch).getMockImplementation()!;
+    vi.mocked(fetch).mockImplementation((input, init) => String(input).endsWith('/header/minimal/')
+      ? Promise.resolve(new Response(JSON.stringify({ error: 'Header unavailable' }), { status: 503 })) : original(input, init));
+    renderDashboard();
+    expect(await screen.findByText('Header unavailable')).toBeVisible();
+    expect(screen.queryByRole('tablist')).not.toBeInTheDocument();
+    vi.mocked(fetch).mockImplementation(original);
+    fireEvent.click(screen.getByRole('button', { name: /try again|retry/i }));
+    await waitForDashboard();
+    expect(count(HEADER)).toBe(3);
+  });
+
+  it.each(['learner', 'staff'])('blocks all protected content on Header denial as %s', async role => {
+    viewer.role = role;
+    vi.mocked(fetch).mockResolvedValue(new Response(JSON.stringify({ error: 'Access denied' }), { status: 403 }));
+    renderDashboard();
+    expect(await screen.findByText('Access denied')).toBeVisible();
+    expect(screen.queryByRole('tablist')).not.toBeInTheDocument();
+    expect(dashboardUrls()).toEqual(['/learner_api/dashboard/commercial/265/header/minimal/']);
+  });
+  it('uses the authoritative Header module to select the initial week in exactly two dashboard reads', async () => {
     const original = vi.mocked(fetch).getMockImplementation()!;
     vi.mocked(fetch).mockImplementation(async (input, init) => {
       const url = String(input);
-      if (url.endsWith('/header/')) {
+      if (url.endsWith('/header/minimal/')) {
         const header = body(url) as object;
-        return new Response(JSON.stringify({ ...header, weeklyCandidates: [
-          { id: 'other-265', title: 'Zulu', start_date: '2026-10-01', end_date: '2026-10-31' },
-          { id: 'mod-265', title: 'alpha', start_date: '2026-10-01', end_date: '2026-10-31' },
-        ] }));
+        return new Response(JSON.stringify({ ...header, initialWeeklyModuleId: 'mod-265' }));
       }
-      if (url.includes('/weekly/?')) return new Response(JSON.stringify(weeklyContractFixture({ ...compactWeekly('265'),
+      if (url.includes('/weekly/plan/?')) return new Response(JSON.stringify(weeklyContractFixture({ ...compactWeekly('265'),
         components: compactWeekly('265').components.filter(c => c.weekId === 'w1-265'), schedule: weeklySchedule('265'),
         selectedModuleId: 'mod-265', selectedWeekId: 'slot:mod-265:1',
         weekSummaries: [{ moduleId: 'mod-265', weekId: 'w1-265', slotNumber: 1, progress: { total: 1, completed: 1, percent: 100 } }],
@@ -255,7 +302,7 @@ describe('Student Dashboard request graph', () => {
     await waitForDashboard();
     await waitFor(() => expect(screen.getByText('Kick-off session')).toBeInTheDocument());
     await settle();
-    expect(urls().filter(url => WEEKLY.test(url))).toEqual(['/learner_api/dashboard/commercial/265/weekly/?moduleId=mod-265']);
+    expect(urls().filter(url => WEEKLY.test(url))).toEqual(['/learner_api/dashboard/commercial/265/weekly/plan/?moduleId=mod-265']);
     expect(count(HEADER)).toBe(1);
     expect(dashboardUrls().filter(url => url.includes('/dashboard/'))).toHaveLength(2);
   });
@@ -306,7 +353,7 @@ describe('Student Dashboard request graph', () => {
 
   it('shows a Weekly API failure instead of an empty schedule', async () => {
     const original = vi.mocked(fetch).getMockImplementation()!;
-    vi.mocked(fetch).mockImplementation((input, init) => String(input).endsWith('/weekly/')
+    vi.mocked(fetch).mockImplementation((input, init) => new URL(String(input), 'https://example.test').pathname.endsWith('/weekly/plan/')
       ? Promise.resolve(new Response(JSON.stringify({ error: 'Weekly read denied' }), { status: 403 }))
       : original(input, init));
     renderDashboard(); await waitForDashboard();
@@ -334,7 +381,7 @@ describe('Student Dashboard request graph', () => {
     console.info(`[${role}] Weekly cold-load requests:\n  ${dashboardUrls().join('\n  ')}`);
     expect(count(DETAIL)).toBe(0);
     expect(count(WEEKLY)).toBe(1);
-    expect(urls().filter(url => WEEKLY.test(url))).toEqual(['/learner_api/dashboard/commercial/265/weekly/']);
+    expect(urls().filter(url => WEEKLY.test(url))).toEqual(['/learner_api/dashboard/commercial/265/weekly/plan/']);
     expect(count(SUMMARY)).toBe(0);
     expect(count(HEADER)).toBe(1);
     expect(count(SCHEDULE)).toBe(0);
@@ -406,6 +453,7 @@ describe('Student Dashboard request graph', () => {
     expect(dashboardUrls().filter(url => /\/training-plan-dashboard\/|\/overview-week\/|\/weekly-learning\/|\/learner-detail\//.test(url))).toEqual([]);
     expect(count(SUMMARY)).toBe(0);
     expect(count(HEADER)).toBe(1);
+    expect(count(/\/bootstrap\//)).toBe(0);
   });
 
   it('staff reviewing a Fresh learner still get the Dashboard and its reads', async () => {
@@ -472,11 +520,11 @@ describe('Student Dashboard request graph', () => {
     await waitFor(() => expect(count(WEEKLY)).toBe(1));
     for (const [label, section] of [['Monthly Plan', 'monthly'], ['Training Plan', 'training'], ['Overview', 'overview']] as const) {
       fireEvent.click(screen.getByRole('tab', { name: label }));
-      await waitFor(() => expect(urls().filter(url => new URL(url, 'https://example.test').pathname.endsWith(`/${section}/`))).toHaveLength(1));
+      await waitFor(() => expect(urls().filter(url => new URL(url, 'https://example.test').pathname.endsWith(section === 'monthly' ? '/monthly/plan/' : `/${section}/`))).toHaveLength(1));
       fireEvent.click(screen.getByRole('tab', { name: 'Weekly Learning' }));
       fireEvent.click(screen.getByRole('tab', { name: label }));
       await settle();
-      expect(urls().filter(url => new URL(url, 'https://example.test').pathname.endsWith(`/${section}/`))).toHaveLength(1);
+      expect(urls().filter(url => new URL(url, 'https://example.test').pathname.endsWith(section === 'monthly' ? '/monthly/plan/' : `/${section}/`))).toHaveLength(1);
     }
     const before = dashboardUrls();
     fireEvent.click(screen.getByRole('tab', { name: 'Rewards' })); await settle();

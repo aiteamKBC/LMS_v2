@@ -30,7 +30,8 @@ def _selection(week_id, module_id):
         return None
     # Preserve the Student cache/routing IDs while Coach uses module:slot IDs.
     try:
-        prefix, mid, slot = week_id.split(':')
+        parts = week_id.split(':')
+        prefix, mid, slot = parts if len(parts) == 3 else ('slot', *parts)
         if prefix not in {'slot', 'reading'} or not slot.isdigit() or int(slot) < 1 or mid != module_id:
             raise ValueError
     except ValueError:
@@ -40,7 +41,7 @@ def _selection(week_id, module_id):
 
 def read_dashboard_weekly(source, pk, *, week_id=None, module_id=None):
     owner = canonical_learning.require_profile(pk)
-    profile = learner_profile_for_source(source, pk, heal=False)
+    profile = learner_profile_for_source(source, pk, heal=False, fields=('id', 'enrolment_id'))
     if profile is None or profile.pk != owner['id'] or profile.enrolment_id != pk:
         raise ServiceError('The consolidated learner identity needs review.', 'identity_review_required', 409)
     source._canonical_profile = owner
@@ -48,24 +49,23 @@ def read_dashboard_weekly(source, pk, *, week_id=None, module_id=None):
     selection = _selection(week_id, module_id)
     try:
         payload = read_weekly_learning(SimpleNamespace(source=source, profile=profile), selection,
-                                      module_id=module_id, include_weeks=week_id is None, include_navigation=True)
+                                      module_id=module_id, include_weeks=week_id is None, include_actions=True)
     except LookupError:
         raise ServiceError('Week not found.', 'not_found', 404)
     selected = payload['selectedWeek']
-    if week_id is not None and (selected is None or slot_id(selected['moduleId'], {
-            'type': selected['kind'], 'slotNumber': selected['slotNumber']}) != week_id):
+    navigation = next((week for week in payload['weeks'] if selected and week['id'] == selected['weekId']), None)
+    if week_id is not None and (navigation is None or slot_id(navigation['moduleId'], {
+            'type': navigation['kind'], 'slotNumber': navigation['slotNumber']}) != week_id
+            and navigation['id'] != week_id):
         raise ServiceError('Week not found.', 'not_found', 404)
-    if selected:
-        # Navigator instants are already represented by liveSession in detail.
-        selected.pop('sessionStart', None)
-        selected.pop('sessionDurationMinutes', None)
     if selected and selected['activities']:
         # Eligibility and routing remain the Student resolver's responsibility.
         # Only the selected authored week is read; no progress is reloaded and
         # no separate component/progress/schedule payload crosses the wire.
         _, _, components = _resolve_from_master([], [], [],
-            assigned_modules=[{'moduleId': selected['moduleId']}], strict=True, compact=True,
-            live_session_ids=False, week_ids=[str(selected['weekId'])])
+            assigned_modules=[{'moduleId': navigation['moduleId']}], strict=True, compact=True,
+            live_session_ids=False, week_ids=[str(navigation['weekId'])],
+            resolved_metadata=getattr(source, '_weekly_resolved_metadata', None), routing_only=True)
         components = _apply_programme_assignment_template(components, source.programme)
         routing = {str(row['componentId']): _weekly_component(row) for row in components}
         for activity in selected['activities']:
@@ -74,11 +74,11 @@ def read_dashboard_weekly(source, pk, *, week_id=None, module_id=None):
                 raise ServiceError('Activity routing could not be resolved.', 'invalid_week', 503)
             activity.update({key: row.get(key) for key in (
                 'contentAvailable', 'videoUrl', 'sessionDate', 'sessionDateTimeUtc', 'teamsLiveSessionId') if key in row})
-    return payload if week_id is None else {'selectedWeek': selected}
+    return payload
 
 
-@require_GET
 @learner_self_or_staff(kwarg='pk')
+@require_GET
 @journal_sources.learner_journal_view
 def dashboard_weekly(request, kind, pk, week_id=None):
     model = SOURCE_MODELS.get(kind)
@@ -95,7 +95,7 @@ def dashboard_weekly(request, kind, pk, week_id=None):
         return JsonResponse({'error': 'Learner not found.'}, status=404)
     except ServiceError as error:
         return JsonResponse({'error': str(error)}, status=error.status)
-    except DatabaseError:
+    except (DatabaseError, ValueError):
         return JsonResponse({'error': 'Could not load your weekly plan. Please try again.'}, status=503)
     response['Cache-Control'] = 'private, no-store'
     return response

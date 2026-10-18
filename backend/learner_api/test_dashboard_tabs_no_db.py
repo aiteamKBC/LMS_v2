@@ -91,7 +91,9 @@ class DashboardMonthlyHoursTests(SimpleTestCase):
         entries.assert_not_called()
         schedule.assert_not_called()
         training.assert_called_once()
-        profile.assert_called_once_with(source, 5, heal=False)
+        profile.assert_called_once_with(
+            source, 5, heal=False,
+            fields=training_plan_dashboard.TRAINING_PLAN_PROFILE_FIELDS)
         attendance.assert_not_called()
         progress.assert_not_called()
 
@@ -226,6 +228,26 @@ class DashboardTabModuleReadTests(SimpleTestCase):
 
 
 class DashboardSourceMetadataTests(SimpleTestCase):
+    def test_monthly_facts_omit_presentation_columns_but_keep_reconciliation_and_history(self):
+        canonical = dashboard_tabs.canonical
+        with patch.object(canonical, 'query', return_value=[]) as query, \
+             patch.object(canonical, 'current_records', return_value=[]):
+            canonical.entries_for({'id': 15}, lineage_only=True, dashboard_metadata=True, monthly_summary=True)
+        sql, params = query.call_args.args
+        self.assertEqual(params, [15])
+        self.assertNotIn('SELECT progress.*', sql)
+        for field in ('feedback', 'feed_detail', 'feed_action', 'feed_title', 'time_tracking_calculation'):
+            self.assertNotIn('progress.' + field, sql)
+        for field in ('source_payload', 'actual_seconds', 'accepted', 'reporting_month', 'component_link_source',
+                      'claimed_seconds', 'verified_seconds', 'reported_time', 'time_tracking_source',
+                      'submitted_at', 'quiz_ref', 'achieved_score', 'total_score', 'feed_kind'):
+            self.assertIn('progress.' + field, sql)
+        self.assertIn('to_jsonb(s) ORDER BY s.segment_order', sql)
+        self.assertIn('to_jsonb(h) ORDER BY h.id', sql)
+        self.assertIn('progress.learner_id=%s', sql)
+        self.assertIn('progress.deleted_at IS NULL', sql)
+        self.assertNotIn('progress.reporting_month=', sql)
+
     def test_dashboard_sql_extracts_only_required_placement_and_provisional_keys(self):
         canonical = dashboard_tabs.canonical
         with patch.object(canonical, 'query', return_value=[]) as query, \

@@ -1,4 +1,6 @@
 import * as React from 'react';
+import { dashboardHeaderFixture } from '@/test/dashboardHeaderFixture';
+import type { LegacyDashboardHeader } from '@/test/dashboardHeaderFixture';
 import { Component, type ReactNode, type ComponentType } from 'react';
 import * as Router from 'react-router-dom';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
@@ -41,19 +43,20 @@ const detail = () => ({ id: '125', name: 'Test learner', email: 'learner@example
   lineManager: '', isActive: true, modules: [], week: [], components: [], ksbs: [], quizAttempts: [], videoProgress: [],
   componentProgress: [], activityFeed: [], totalExpectedOtjh: 0, studentActivityAvailable: false });
 
-const isDashboardHeader = (url: string) => /\/dashboard\/[^/]+\/[^/]+\/header\//.test(url);
+const isDashboardHeader = (url: string) => /\/dashboard\/[^/]+\/[^/]+\/(?:header\/|bootstrap\/)/.test(url);
 function headerFixture(learner: unknown = detail(), schedule: unknown = payload('/training-plan-dashboard/')) {
   const source = learner as { programme?: string; cohort?: string; group?: string };
   const original = schedule as TrainingPlanDashboard;
-  const selected = learnerHeaderPlan(original.modules || [], source, '2026-09-07');
-  return { learner, schedule: { ...original, moduleLinks: undefined, modules: selected.modules.map(({ id, title, start_date, end_date }) => {
+  const selected = learnerHeaderPlan(original.modules || [], source, new Date(Date.now()).toISOString().slice(0, 10));
+  return dashboardHeaderFixture({ learner, schedule: { ...original, moduleLinks: undefined, modules: selected.modules.map(({ id, title, start_date, end_date }) => {
     const imported = Object.entries(original.moduleLinks || {}).filter(([ref, module]) => ref.startsWith('legacy:') && module.id === id);
     return { id, title, start_date, end_date, ...(imported.length === 1 ? { subjectId: imported[0][0] } : {}) };
-  }) }, week: { deadlines: [] }, lectureHref: null };
+  }) }, week: { deadlines: [] }, lectureHref: null } as LegacyDashboardHeader);
 }
 function dashboardFixture(url: string, value: unknown) {
-  return isDashboardHeader(url) && value && typeof value === 'object' && 'name' in value
+  const header = isDashboardHeader(url) && value && typeof value === 'object' && 'name' in value
     ? headerFixture(value) : value;
+  return header;
 }
 
 function tabFixture(section: string, overrides: Record<string, unknown> = {}) {
@@ -72,7 +75,7 @@ function payload(url: string): unknown {
   if (url.includes('/curriculum/cache-epoch/')) return { epoch: 0, changes: [] };
   if (url.includes('/curriculum/cache-epoch/')) return { epoch: 0, changes: [] };
   if (url.includes('/profile-photo/')) return null;
-  if (isDashboardHeader(url)) return headerFixture();
+  if (isDashboardHeader(url)) return dashboardFixture(url, headerFixture());
   const section = url.match(/\/dashboard\/[^/]+\/[^/]+\/(monthly|training|overview)\/$/)?.[1];
   if (section) return tabFixture(section);
   if (url.includes('/overview-week/')) return { weekStart: '2026-09-07', weekEnd: '2026-09-13', timezone: 'Europe/London', planSubjects: [], modules: [], deadlines: [], undatedActivities: 0, expectedHours: null, missingExpectedHours: 0, otjh: { actual: 0, historical: 0, new: 0, undatedHistoricalRows: 0 },
@@ -80,8 +83,7 @@ function payload(url: string): unknown {
       ksb: { completed: 0, total: 0, percent: null, status: 'empty', codes: [] },
       otjh: { historical: 0, new: 0, actual: 0, planned: null } } };
   if (/\/learner-(detail|summary)\//.test(url)) return detail();
-  if (/\/dashboard\/.*\/weekly\/$/.test(url)) return { id: '125', programme: 'Leadership', cohort: '', group: '', modules: [], week: [],
-    components: [], quizAttempts: [], videoProgress: [], componentProgress: [], schedule: { modules: [], sessions: [] } };
+  if (/\/dashboard\/.*\/weekly\/plan\/$/.test(url.split('?')[0])) return { version: 2, modules: [], weeks: [], selectedWeek: null };
   if (url.includes('/subject-covers/')) return { covers: {}, current_subjects: [], builder_subjects: {}, modules: {} };
   if (url.includes('/training-plan-dashboard/')) return { months: {}, actual: [], actualAvailable: false, modules: [], moduleLinks: {}, sessions: [], reviews: [], coach: { name: '', bookingUrl: null }, contractStatus: 'not-available', generatedAt: '' };
   if (url.includes('/reflection/submissions/')) return { statuses: [], assignments: [], submission: null };
@@ -203,7 +205,7 @@ describe('learner loading and recovery', () => {
     vi.stubGlobal('fetch', vi.fn(async (input: Parameters<typeof globalThis.fetch>[0]) => {
       const url = String(input);
       if ((url.includes('/learner-summary/') || isDashboardHeader(url))) return new Response(JSON.stringify(dashboardFixture(url, {
-        ...detail(), learnerStartDate: '2026-01-10', programmeStartDate: '2026-02-01', programmeEndDate: '2027-01-31',
+        ...detail(), learnerStartDate: '2026-01-10', learnerEndDate: '2027-10-17', programmeStartDate: '2026-02-01', programmeEndDate: '2027-01-31',
         learningAccess: { blocked: false, startDate: '2026-02-01' },
       })));
       if (url.includes('/training-plan-dashboard/') && url.includes('section=contract')) {
@@ -315,6 +317,7 @@ describe('learner loading and recovery', () => {
     expect(vi.mocked(fetch).mock.calls.some(([url])=>String(url).includes('/coach/'))).toBe(false);
     plan={...plan,coach:{name:'Replacement coach',bookingUrl:null},modules:plan.modules.map(item=>item.id==='marketing'?{...item,start_date:'2026-09-10'}:item)};
     act(()=>invalidateLearnerReads());
+    await waitFor(() => expect(hero.getByText('Current module')).toBeVisible());
     expect(await hero.findByText('Replacement coach')).toBeVisible();
     expect(hero.getByText('Current module')).toBeVisible();
     fireEvent.click(hero.getByRole('button',{name:'Continue learning'}));
@@ -493,18 +496,18 @@ describe('learner loading and recovery', () => {
     expect(otjh.getByText('Target to date').nextElementSibling).toHaveTextContent('410.00 h');
   });
 
-  it('shows unavailable header facts when the schedule fails instead of claiming the coach is unassigned', async () => {
+  it('shows a recoverable Header error when the combined request fails', async () => {
     vi.stubGlobal('fetch',vi.fn(async(input:RequestInfo|URL)=>{
       const url=String(input);
-      return isDashboardHeader(url)
+      return url.endsWith('/header/minimal/')
         ? new Response(JSON.stringify({error:'Plan unavailable'}),{status:503})
         : new Response(JSON.stringify(payload(url)));
     }));
     const Page=(await modules['/src/pages/workspace/learner/page.tsx']()).default;
     render(<MemoryRouter><ToastProvider><Page /></ToastProvider></MemoryRouter>);
-    const hero=within(await screen.findByLabelText('Learner programme'));
-    expect((await hero.findAllByText('Unavailable')).length).toBeGreaterThanOrEqual(2);
-    expect(hero.queryByText('Not yet assigned')).not.toBeInTheDocument();
+    expect(await screen.findByText('Plan unavailable')).toBeVisible();
+    expect(screen.queryByLabelText('Learner programme')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /try again|retry/i })).toBeVisible();
   });
 
   it('opens the exact review booking form from the dashboard Schedule action without submitting it', async () => {

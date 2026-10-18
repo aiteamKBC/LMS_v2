@@ -186,11 +186,28 @@ describe('Saved session results', () => {
     expect(screen.getByLabelText('Session recording 1')).toHaveAttribute('src', '/learner_api/session-results/commercial/7/S1/artifacts/recording-1/');
   });
 
-  it('hides the Teams attendance card for a Recorded learner', async () => {
+  it.each(['commercial', 'apprenticeship'] as const)('credits live attendance for a Recorded %s learner without requiring playback', async kind => {
+    render(<MemoryRouter><SessionResults seriesId="S1" sessionNumber={1}
+      learner={{ kind, id: '7' }} attendanceType="Recorded" /></MemoryRouter>);
+    expect(await screen.findByText('Your original attendance: Present')).toBeInTheDocument();
+    expect(screen.getByText('Your live attendance counts for this session. Watching the recording is optional.')).toBeInTheDocument();
+    expect(screen.queryByText('Open attendance and report absence')).not.toBeInTheDocument();
+    expect(screen.queryByRole('tab', { name: 'attendance' })).not.toBeInTheDocument();
+    expect(screen.getByLabelText('Session recording 1')).toBeInTheDocument();
+    expect(fetchMock.mock.calls.every(([, options]) => !options?.method || options.method === 'GET')).toBe(true);
+  });
+
+  it.each(['absent', 'pending', 'review', 'made_up'])('does not claim live attendance for a Recorded learner with %s outcome', async outcome => {
+    const raw = outcome === 'made_up' ? 'absent' : outcome;
+    fetchMock.mockImplementation(() => ok({ sessions: [{ ...session, attendance: [{ ...session.attendance[0],
+      status: raw, rawStatus: raw, attendance: outcome === 'made_up' ? 1 : 0,
+      rawAttendance: 0, effectiveAttendance: outcome === 'made_up' ? 1 : 0, finalOutcome: outcome,
+    }] }] }));
     render(<MemoryRouter><SessionResults seriesId="S1" sessionNumber={1}
       learner={{ kind: 'commercial', id: '7' }} attendanceType="Recorded" /></MemoryRouter>);
     await screen.findByLabelText('Session recording 1');
     expect(screen.queryByText(/Your original attendance:/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Watching the recording is optional/)).not.toBeInTheDocument();
     expect(screen.getByRole('tab', { name: 'recordings' })).toBeInTheDocument();
   });
 
@@ -198,6 +215,36 @@ describe('Saved session results', () => {
     render(<MemoryRouter><SessionResults seriesId="S1" sessionNumber={1}
       learner={{ kind: 'commercial', id: '7' }} attendanceType="Not recorded" /></MemoryRouter>);
     expect(await screen.findByText('Your original attendance: Present')).toBeInTheDocument();
+  });
+
+  it.each(['commercial', 'apprenticeship'] as const)('uses Users recorded mode for %s even without a recorded contract', async kind => {
+    fetchMock.mockImplementation(() => ok({ sessions: [{ ...session, attendanceMode: 'lazy', learningOutcome: 'present' }] }));
+    render(<MemoryRouter><SessionResults seriesId="S1" sessionNumber={1} learner={{ kind, id: '7' }} /></MemoryRouter>);
+    expect(await screen.findByText('Your live attendance counts for this session. Watching the recording is optional.')).toBeInTheDocument();
+  });
+
+  it.each([
+    ['awaiting_recording', 'Awaiting recording'], ['recorded', 'Completed by recording'],
+  ])('shows recorded delivery outcome %s without claiming live presence or offering absence reporting', async (learningOutcome, label) => {
+    fetchMock.mockImplementation(() => ok({ sessions: [{ ...session, attendanceMode: 'lazy', learningOutcome,
+      attendance: [{ ...session.attendance[0], status: 'absent', rawStatus: 'absent', finalOutcome: 'absent', attendance: 0 }],
+    }] }));
+    render(<MemoryRouter><SessionResults seriesId="S1" sessionNumber={1} learner={{ kind: 'commercial', id: '7' }} /></MemoryRouter>);
+    expect(await screen.findByText(label)).toBeInTheDocument();
+    expect(screen.queryByText('Your original attendance: Present')).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: /report absence/i })).not.toBeInTheDocument();
+    expect(screen.getByLabelText('Session recording 1')).toBeInTheDocument();
+  });
+
+  it('keeps live-mode absence despite a recorded contract field and recording recovery plan', async () => {
+    fetchMock.mockImplementation(() => ok({ sessions: [{ ...session, attendanceMode: 'live',
+      attendance: [{ ...session.attendance[0], status: 'absent', rawStatus: 'absent', finalOutcome: 'absent', attendance: 0,
+        recoveryType: 'recorded', absenceReported: true }],
+    }] }));
+    render(<MemoryRouter><SessionResults seriesId="S1" sessionNumber={1} attendanceType="Recorded" learner={{ kind: 'commercial', id: '7' }} /></MemoryRouter>);
+    expect(await screen.findByText('Your original attendance: Absent')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'View recovery plan' })).toBeInTheDocument();
+    expect(screen.queryByText('Completed by recording')).not.toBeInTheDocument();
   });
 
   it('keeps a reported recovery separate from the original absence', async () => {

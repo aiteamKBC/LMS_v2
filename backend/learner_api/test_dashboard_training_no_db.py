@@ -10,6 +10,18 @@ from . import dashboard_training as training
 
 
 class TrainingProjectionTests(SimpleTestCase):
+    def test_week_session_counts_are_grouped_once_without_changing_scope(self):
+        cursor = MagicMock()
+        cursor.description = []
+        with patch.object(training.schedule, 'rows', return_value=[]), \
+             patch.object(training.schedule, 'attach_curriculum_slots'):
+            training.module_rows(cursor, ['M1', 'M2'], rich_id='M2')
+        sql, params = cursor.execute.call_args_list[1].args
+        self.assertIn('GROUP BY c.module_catalogue_id,c.week_id', sql)
+        self.assertIn('coalesce(live_counts.live_session_count,0)', sql)
+        self.assertIn("c.deleted_at IS NULL OR COALESCE(c.deleted_via_parent,'')<>''", sql)
+        self.assertEqual(params, [['M1', 'M2'], 'M2', ['M1', 'M2']])
+
     def test_selected_native_facts_use_global_retained_quiz_decision(self):
         from . import weekly_learning, student_activity_access, student_activity, builder_activity_dates
         global_detail = {'modules': ['One', 'Two'], 'components': [
@@ -23,7 +35,7 @@ class TrainingProjectionTests(SimpleTestCase):
         connection = MagicMock()
         builder = {f'current:{mid}': {'id': mid, 'title': title} for mid, title in (('M1', 'One'), ('M2', 'Two'))}
         with patch.object(training, 'connections', {'enrolment': connection}), \
-             patch.object(weekly_learning, 'build_weekly_learning', side_effect=[global_detail, rich]) as read, \
+             patch.object(weekly_learning, 'build_learning_content_summary', side_effect=[global_detail, rich]) as read, \
              patch.object(student_activity_access, 'student_activity_available', return_value=False), \
              patch.object(student_activity, '_builder_subject_metadata', return_value=({}, builder)), \
              patch.object(builder_activity_dates, 'read_builder_activity_dates', return_value={}):
@@ -55,6 +67,8 @@ class TrainingProjectionTests(SimpleTestCase):
         self.assertEqual(result['selectedModuleId'], 'current:M2')
         details.assert_called_once()
         self.assertNotIn('actual', result['timeline'])
+        self.assertNotIn('months', result['timeline'])
+        self.assertEqual(result['timeline']['monthKeys'], [])
 
     def test_module_request_bypasses_programme_timeline_readers(self):
         connection = MagicMock()

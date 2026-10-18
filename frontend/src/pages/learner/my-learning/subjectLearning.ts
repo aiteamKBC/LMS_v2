@@ -129,7 +129,12 @@ export function resolveLearningSubject(subjects: Subject[], requested?: string |
   if (!requested) return undefined;
   const exact = subjects.find(s => s.id === requested);
   if (exact) return exact;
+  const unified = subjects.filter(s => s.replacementCourseRef === requested);
+  if (unified.length === 1) return unified[0];
   const moduleId = requested.replace(/^current:/, '');
+  const importedCourse = metadata?.imported_courses?.[`current:${moduleId}`];
+  const original = importedCourse && subjects.find(s => s.id === importedCourse && s.source === 'legacy');
+  if (original) return original;
   const links = { ...metadata?.builder_subjects, ...schedule?.moduleLinks };
   const matches = subjects.filter(s => links[s.id]?.id === moduleId || s.activities.some(a => a.native?.moduleId === moduleId)
     || s.activities.some(a => a.legacy && Object.values(metadata?.activity_sources || {}).some(source => source.module_id === moduleId && source.group_id === a.legacy!.group_id)));

@@ -1,13 +1,32 @@
+import type { ComponentProps } from 'react';
+import { weeklyContractFixture, weeklyResourceFixture } from '@/test/weeklyContractFixture';
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { TrainingPlanDashboard } from '@/api/trainingPlanDashboard';
-import { KsbChips, WeeklyLearningPlan } from '../WeeklyLearningPlan';
+import { KsbChips, WeeklyLearningPlan as CanonicalWeeklyLearningPlan } from '../WeeklyLearningPlan';
 
 const learnerDetail = vi.hoisted(() => ({ real: {
   components: [] as { componentId: string; moduleId: string; weekId: string; component: string; type: string }[],
   videoProgress: [] as { componentId: string }[], componentProgress: [] as { componentId: string }[],
 } }));
+
+const weeklyRead = vi.hoisted(() => ({ real: null as unknown, details: new Map<string, unknown>() }));
+vi.mock('@/hooks/useWeeklyLearning', () => ({
+  useWeeklyLearning: () => ({ real: weeklyRead.real, loading: false, loadError: null, refresh: vi.fn() }),
+  useWeeklyLearningWeek: (_kind: string, _id: string, _module: string, week: string) => ({
+    data: weeklyRead.details.get(week), loading: false, error: null, refresh: vi.fn() }),
+}));
+function WeeklyLearningPlan(props: ComponentProps<typeof CanonicalWeeklyLearningPlan> & { schedule: TrainingPlanDashboard; scheduleLoading: boolean }) {
+  const source = { ...learnerDetail.real, schedule: props.schedule };
+  weeklyRead.real = weeklyResourceFixture(weeklyContractFixture(source), props.learnerId);
+  weeklyRead.details.clear();
+  for (const module of props.schedule?.modules || []) for (const slot of module.curriculumSlots || []) {
+    const weekId = `${slot.type === 'reading-week' ? 'reading' : 'slot'}:${module.id}:${slot.slotNumber}`;
+    weeklyRead.details.set(weekId, { ...weeklyContractFixture({ ...source, selectedWeekId: weekId }), weekId, moduleId: module.id });
+  }
+  return <CanonicalWeeklyLearningPlan {...props} />;
+}
 
 vi.mock('@/hooks/useLearnerDetailParam', () => ({
   useLearnerDetailParam: () => ({
@@ -52,10 +71,10 @@ describe('weekly live session attendance', () => {
 
   it.each([
     { at: '2026-09-07T07:59:59Z', attended: null, label: 'upcoming', state: 'current' },
-    { at: '2026-09-07T10:00:00Z', attended: null, label: 'not attended', state: 'current' },
+    { at: '2026-09-07T10:00:00Z', attended: null, label: 'unmarked', state: 'current' },
     { at: '2026-09-07T10:01:00Z', attended: false, label: 'not attended', state: 'current' },
     { at: '2026-09-07T10:01:00Z', attended: true, label: 'attended', state: 'attended' },
-    { at: '2026-09-14T12:00:00Z', attended: null, label: 'not attended', state: 'missed' },
+    { at: '2026-09-14T12:00:00Z', attended: null, label: 'unmarked', state: 'unmarked' },
     { at: '2026-09-14T12:00:00Z', attended: true, label: 'attended', state: 'attended' },
   ])('shows $label and disables joining at $at', ({ at, attended, label, state }) => {
     vi.useFakeTimers();
@@ -69,7 +88,7 @@ describe('weekly live session attendance', () => {
   });
 
   it('uses purple for the current week, red for a past missed week, and gray for an upcoming week', () => {
-    const schedule = sessionSchedule(null);
+    const schedule = sessionSchedule(false);
     schedule.modules[0].curriculumSlots?.push({ slotNumber: 2, date: '2026-09-14', day: 'Monday',
       type: 'live-session', sessionNumber: 2, holidays: [], weekId: 'W2', weekTitle: 'Plan week 2' });
     vi.useFakeTimers();
@@ -93,7 +112,7 @@ describe('weekly live session attendance', () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-09-13T22:59:30Z'));
     render(<MemoryRouter><WeeklyLearningPlan kind="commercial" learnerId="125"
-      schedule={sessionSchedule(null)} scheduleLoading={false} /></MemoryRouter>);
+      schedule={sessionSchedule(false)} scheduleLoading={false} /></MemoryRouter>);
 
     expect(screen.getByRole('img', { name: 'Plan week 1 session: not attended' })).toHaveAttribute('data-state', 'current');
     act(() => vi.advanceTimersByTime(30_000));
@@ -149,7 +168,7 @@ describe('weekly live session attendance', () => {
     act(() => vi.advanceTimersByTime(60 * 60_000));
     expect(screen.getByRole('img', { name: 'Plan week 1 session: in progress' })).toBeVisible();
     act(() => vi.advanceTimersByTime(60 * 60_000));
-    expect(screen.getByRole('img', { name: 'Plan week 1 session: not attended' })).toHaveAttribute('data-state', 'current');
+    expect(screen.getByRole('img', { name: 'Plan week 1 session: unmarked' })).toHaveAttribute('data-state', 'current');
     expect(screen.getByRole('button', { name: 'Join session' })).toBeDisabled();
   });
 

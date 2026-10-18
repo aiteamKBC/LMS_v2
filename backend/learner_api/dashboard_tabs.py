@@ -48,14 +48,15 @@ def monthly_hours(owner, records, targets, *, signed_months=(), current_month=No
                 'planned_hours': totals['planned']}}
 
 
-def learning_projection(source, owner, records):
-    from .weekly_learning import build_weekly_learning
+def learning_projection(source, owner, records, *, compact_content=False, monthly_assignments=False):
+    from .weekly_learning import build_learning_content_summary
     from .student_activity_access import student_activity_available
     from .student_activity_data import summarize_activities
     from .builder_activity_dates import read_builder_activity_dates
     from .student_activity import builder_subject_links
 
-    weekly = build_weekly_learning(source, source.pk, learning_summary=True)
+    options = {'compact_content': True} if compact_content else {}
+    weekly = build_learning_content_summary(source, source.pk, learning_summary=True, **options)
     detail = {key: weekly.get(key, []) for key in (
         'modules', 'components', 'retiredQuizComponents', 'quizAttempts', 'videoProgress', 'componentProgress')}
     # Catalogue membership is intentional: a recorded-only projection changes
@@ -71,7 +72,7 @@ def learning_projection(source, owner, records):
             'activity_id', 'group_id', 'group_name', 'activity', 'category', 'completed', 'position',
             'date', 'month', 'week_start', 'week_end', 'date_needs_review', 'date_source',
             'section_title', 'source_activity_id', 'catalogue_kind', 'best_score_percent',
-            'quiz_score', 'quiz_maximum_score') if key in item}
+            'quiz_score', 'quiz_maximum_score', *(('planned',) if monthly_assignments else ())) if key in item}
             for item in activity['activities']]
     from .learning_plan import _effective_plan_ids, request_preset_cache
     ids = _effective_plan_ids(source, request_preset_cache(source))
@@ -97,14 +98,19 @@ def install_request_caches(source):
     resolution, and each Builder module title is read once across plan and learning reads."""
     source._plan_preset_cache = {}
     source._builder_link_cache = {}
+    source._training_activity_dates = None
 
 
-def read_tab(source, kind, tab, request):
+def read_tab(source, kind, tab, request, *, canonical_contract=False):
     from .identity import learner_profile_for_source
 
     owner = canonical.require_profile(source.pk)
     source._canonical_profile = owner
-    profile = learner_profile_for_source(source, source.pk, heal=False)
+    profile_options = {}
+    if tab in ('monthly', 'training', 'overview'):
+        from .training_plan_dashboard import TRAINING_PLAN_PROFILE_FIELDS
+        profile_options['fields'] = TRAINING_PLAN_PROFILE_FIELDS
+    profile = learner_profile_for_source(source, source.pk, heal=False, **profile_options)
     if profile is None or profile.pk != owner['id'] or profile.enrolment_id != source.pk:
         raise ServiceError('The consolidated learner identity needs review.', 'identity_review_required', 409)
     source._case_file_profile = profile
@@ -114,7 +120,8 @@ def read_tab(source, kind, tab, request):
         return read_training(source, kind, owner, profile, request)
     if tab == 'monthly':
         from .dashboard_monthly import read_monthly
-        return read_monthly(source, kind, owner, profile, request)
+        return read_monthly(source, kind, owner, profile, request,
+                            **({'canonical_contract': True} if canonical_contract else {}))
     if tab == 'overview':
         from .dashboard_overview import read_overview
         return read_overview(source, kind, owner, profile, request)
@@ -124,7 +131,7 @@ def read_tab(source, kind, tab, request):
 @require_GET
 @learner_self_or_staff(kwarg='pk')
 @learner_journal_view
-def dashboard_tab(request, kind, pk, tab):
+def dashboard_tab(request, kind, pk, tab, canonical_contract=False):
     from .learner_detail import SOURCE_MODELS
     model = SOURCE_MODELS.get(kind)
     if model is None or tab not in ('monthly', 'training', 'overview'):
@@ -139,7 +146,8 @@ def dashboard_tab(request, kind, pk, tab):
                     *TRAINING_PLAN_SOURCE_FIELDS, 'username', 'employer_id', 'learning_plan', 'training_plan',
                 ])).get(pk=pk)
             with measurement.stage(tab):
-                payload = read_tab(source, kind, tab, request)
+                payload = read_tab(source, kind, tab, request,
+                                   **({'canonical_contract': True} if canonical_contract else {}))
     except model.DoesNotExist:
         return JsonResponse({'error': 'Learner not found.'}, status=404)
     except ServiceError as error:

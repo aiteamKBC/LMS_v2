@@ -3,6 +3,7 @@ from django.urls import path
 from django.views.decorators.cache import never_cache
 from . import safeguarding_sso
 from . import inclusion_sso
+from . import support_sso
 from . import coach_directory
 from . import lms_introduction
 
@@ -70,6 +71,7 @@ urlpatterns = [
     path('admin/coach-directory/', coach_directory.directory, name='admin-coach-directory'),
     path('admin/coach-directory/<int:pk>/', coach_directory.directory, name='admin-coach-directory-item'),
     path("safeguarding/authorize/", safeguarding_sso.authorize, name="safeguarding-authorize"),
+    path("support/authorize/", support_sso.authorize, name="support-authorize"),
     path("health/", views.health, name="login-health"),
 
     # --- session ---

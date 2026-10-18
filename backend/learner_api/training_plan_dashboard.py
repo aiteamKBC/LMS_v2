@@ -120,7 +120,7 @@ def plan_module(row):
             'learning_outcomes': []}
 
 
-def attach_curriculum_slots(module_rows, by_id, week_counts, weeks_by_number=None, *, strict=False):
+def attach_curriculum_slots(module_rows, by_id, week_counts, weeks_by_number=None, *, strict=False, holiday_loader=None):
     """Give every learner module the curriculum slot spine the Builder shows.
 
     This is a READ of the curriculum scheduler, not a second one. The holidays
@@ -159,7 +159,7 @@ def attach_curriculum_slots(module_rows, by_id, week_counts, weeks_by_number=Non
 
     weeks_by_number = weeks_by_number or {}
     try:
-        holidays = cohort_selected_holidays_by_cohort(
+        holidays = (holiday_loader or cohort_selected_holidays_by_cohort)(
             [row.get('cohort_id') for row in module_rows]
         )
     except Exception:
@@ -398,6 +398,15 @@ def _plan_session_rows(cur, email, ids, since=None, until=None, *, rail_only=Fal
     """Session rows on the plan's modules, earliest first, starting in ``[since, until)`` when given."""
     bounds = [(since, '>='), (until, '<')]
     window = ''.join(f' AND coalesce(o.scheduled_start,s.start_datetime){op}%s' for bound, op in bounds if bound)
+    # Bounds never consume attendance. Removing this scalar subquery and its
+    # LEFT LATERAL lookup preserves the session population (its aggregate
+    # returns at most one row) while avoiding a historical lookup per occurrence.
+    attendance_sql = 'NULL' if navigation_only else '''CASE WHEN coalesce(CASE WHEN replaced_attendance.occurrence_id IS NOT NULL
+                                THEN replaced_attendance.attendance_report_id
+                                ELSE o.attendance_report_id END,'')='' THEN NULL
+             ELSE EXISTS(SELECT 1 FROM curriculum.live_session_attendance a
+                 WHERE a.occurrence_id=COALESCE(replaced_attendance.occurrence_id,o.id)
+                   AND lower(btrim(a.email))=%s AND a.total_attendance_seconds>0) END'''
     statement = f'''WITH RECURSIVE owners(module_id,owner_id,depth) AS (
         SELECT m.module_catalogue_id,
                coalesce(nullif(btrim(m.teams_shared_source_module_id),''),m.module_catalogue_id),0
@@ -413,17 +422,12 @@ def _plan_session_rows(cur, email, ids, since=None, until=None, *, rail_only=Fal
         SELECT s.id AS session_id,delivery.module_id,target_module.title AS module_title,
         s.start_datetime,s.duration_minutes,{"NULL" if rail_only else "s.join_url"} AS series_join_url,s.repeat_pattern,s.status AS series_status,
         o.id AS occurrence_id,o.scheduled_start,o.scheduled_end,{"NULL" if rail_only else "o.join_url"} AS join_url,o.status,
-        CASE WHEN coalesce(CASE WHEN replaced_attendance.occurrence_id IS NOT NULL
-                                THEN replaced_attendance.attendance_report_id
-                                ELSE o.attendance_report_id END,'')='' THEN NULL
-             ELSE EXISTS(SELECT 1 FROM curriculum.live_session_attendance a
-                 WHERE a.occurrence_id=COALESCE(replaced_attendance.occurrence_id,o.id)
-                   AND lower(btrim(a.email))=%s AND a.total_attendance_seconds>0) END AS attended
+        {attendance_sql} AS attended
         FROM delivery
         JOIN curriculum.live_sessions s ON s.module_catalogue_id=delivery.owner_id
         JOIN curriculum.modules target_module ON target_module.module_catalogue_id=delivery.module_id
         LEFT JOIN curriculum.live_session_occurrences o ON o.live_session_id=s.id
-        {REPLACED_ATTENDANCE_LATERAL_SQL}
+        {'' if navigation_only else REPLACED_ATTENDANCE_LATERAL_SQL}
         WHERE lower(s.status) NOT IN ('cancelled','deleted','failed','superseded')
           AND (o.id IS NULL OR lower(o.status) NOT IN ('cancelled','deleted','failed','superseded')){window}
         ORDER BY coalesce(o.scheduled_start,s.start_datetime)'''
@@ -434,7 +438,8 @@ def _plan_session_rows(cur, email, ids, since=None, until=None, *, rail_only=Fal
             FROM ({statement}) monthly_session_bounds
             WHERE occurrence_id IS NOT NULL OR repeat_pattern IS NULL OR repeat_pattern IN ('none','')
             GROUP BY module_id'''
-    cur.execute(statement, [ids, email, *(bound.astimezone(timezone.utc).replace(tzinfo=None) for bound, _ in bounds if bound)])
+    cur.execute(statement, [ids, *([] if navigation_only else [email]),
+                            *(bound.astimezone(timezone.utc).replace(tzinfo=None) for bound, _ in bounds if bound)])
     return rows(cur)
 
 
@@ -703,9 +708,14 @@ def read_dashboard(source, section=None, *, records=None, targets=None, dashboar
         coach['phone'] = phone
     if compact_monthly:
         return {**contract_data, 'modules': modules, 'moduleLinks': links, 'reviews': reviews, 'coach': coach}
+    module_progress = _canonical_module_progress(progress_records, modules) if owner is not None else {}
+    if module_progress:
+        from .live_session_progress import read_live_credits, supplement_module_hours
+        module_progress = supplement_module_hours(module_progress, progress_records,
+            read_live_credits(source, module_ids=[module['id'] for module in modules]))
     return {**contract_data, 'actual': actual, 'actualAvailable': owner is not None,
             'moduleActivityHours': module_activity_hours(progress_records, modules) if owner is not None else None,
-            'moduleProgress': _canonical_module_progress(progress_records, modules) if owner is not None else {},
+            'moduleProgress': module_progress,
             'modules': modules, 'moduleLinks': links,
             'sessions': sessions, 'reviews': reviews, 'coach': coach,
             'generatedAt': datetime.now(timezone.utc).isoformat()}

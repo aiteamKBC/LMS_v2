@@ -1,6 +1,6 @@
 import { createCachedResource } from './cachedRequest';
 import { readLearnerJson, invalidateLearnerReads } from './learnerRead';
-import { invalidateWeeklyLearning } from './weeklyLearning';
+import { invalidateWeeklyLearning, type WeeklyProgressScope } from './weeklyLearning';
 import type { LearnerAccessGate, LearnerLearningAccess } from '@/utils/learnerAccessGate';
 // ============================================================================
 // Learner-detail API client.
@@ -45,7 +45,17 @@ export interface ComponentKsbMapping {
   weight: number;
 }
 
+export interface PreviousLearningCompletion {
+  courseRef: string;
+  activityId: string;
+  sourceActivityId: number;
+  catalogueKind: 'material' | 'quiz';
+  completed: boolean;
+}
+
 export interface LearnerComponentEntry {
+  /** Exact owned source activity in a verified course replacement; no new attempt or hours. */
+  previousLearning?: PreviousLearningCompletion;
   module: string | null;
   week: string | null;
   component: string;
@@ -330,13 +340,13 @@ export interface LearnerVideoProgress {
 }
 
 /** Remove cached learner data after a progress-changing action. */
-export function invalidateLearnerDetailCache(kind?: LearnerKind, id?: string): void {
+export function invalidateLearnerDetailCache(kind?: LearnerKind, id?: string, scope?: WeeklyProgressScope): void {
   const key = kind && id ? `${kind}:${id}` : undefined;
   detailResource.invalidate(key);
   quizDetailResource.invalidate(key);
   componentResource.invalidate();
   summaryResource.invalidate(key);
-  invalidateWeeklyLearning(key);
+  invalidateWeeklyLearning(key, scope);
   invalidateLearnerReads();
 }
 

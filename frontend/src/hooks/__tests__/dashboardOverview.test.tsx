@@ -10,6 +10,35 @@ beforeEach(() => { clearAllCachedResources(); vi.stubGlobal('fetch', vi.fn(async
 afterEach(() => { cleanup(); clearAllCachedResources(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 const wrapper = ({ children }: { children: ReactNode }) => <StrictMode>{children}</StrictMode>;
 describe('compact Overview request lifecycle', () => {
+  it('retains a hidden snapshot, defers invalidations, and refreshes once on activation', async () => {
+    const { result, rerender } = renderHook(({ active }) => useDashboardTabsData('commercial', '265', true, new Set(['overview']), active),
+      { initialProps: { active: 'overview' }, wrapper });
+    await waitFor(() => expect(result.current.overview.payload).not.toBeNull());
+    const snapshot = result.current.overview.payload;
+    rerender({ active: 'weekly' });
+    act(() => { invalidateLearnerReads(); invalidateLearnerReads(); window.dispatchEvent(new Event('focus')); });
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(result.current.overview.payload).toBe(snapshot);
+    rerender({ active: 'overview' });
+    await waitFor(() => expect(fetch).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(result.current.overview.payload).not.toBe(snapshot));
+    rerender({ active: 'weekly' });
+    rerender({ active: 'overview' });
+    await act(async () => {});
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
+  it('consumes a manual refresh once instead of forcing every cached reactivation', async () => {
+    const { result, rerender } = renderHook(({ active }) => useDashboardTabsData('commercial', '265', true, new Set(['overview']), active),
+      { initialProps: { active: 'overview' } });
+    await waitFor(() => expect(result.current.overview.payload).not.toBeNull());
+    const initial = result.current.overview.payload;
+    act(() => result.current.overview.refresh());
+    await waitFor(() => expect(result.current.overview.payload).not.toBe(initial));
+    expect(fetch).toHaveBeenCalledTimes(2);
+    rerender({ active: 'weekly' }); rerender({ active: 'overview' });
+    await act(async () => {});
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
   it('starts only on Overview, deduplicates StrictMode and reuses a valid snapshot', async () => {
     const { result, rerender, unmount } = renderHook(({ opened }) => useDashboardTabsData('commercial', '265', true, new Set(opened)),
       { initialProps: { opened: ['weekly'] }, wrapper });
