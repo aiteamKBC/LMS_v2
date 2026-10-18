@@ -88,6 +88,17 @@ function componentTitleKey(value: string): string {
     .toLocaleLowerCase('en');
 }
 
+/** Automatic matches stay conservative; staff can review other same-type targets. */
+function isAutomaticComponentMatch(source: ShiftComponent, target: ShiftComponent): boolean {
+  if (source.componentId === target.componentId) return true;
+  const sourceTitle = componentTitleKey(source.title);
+  return (
+    source.type === target.type &&
+    Boolean(sourceTitle) &&
+    componentTitleKey(target.title) === sourceTitle
+  );
+}
+
 /** Search the visible module metadata without changing the selected module. */
 function moduleMatchesSearch(module: LearningPlanModule, query: string): boolean {
   const needle = componentTitleKey(query);
@@ -168,15 +179,9 @@ function WeekPair({
 }) {
   const progressed = pair.from.components.filter((c) => c.progress);
   const targets = pair.to?.components || [];
-  /** Same id first; cloned components need the same cleaned title and type. */
-  const matchingTargets = (component: ShiftComponent) =>
-    targets.filter((target) =>
-      target.componentId === component.componentId || (
-        target.type === component.type &&
-        Boolean(componentTitleKey(component.title)) &&
-        componentTitleKey(target.title) === componentTitleKey(component.title)
-      ),
-    );
+  /** Staff may manually choose a same-type component, but only in the paired week. */
+  const selectableTargets = (component: ShiftComponent) =>
+    targets.filter((target) => target.type === component.type);
   // Which target each progressed component was mapped onto, so the right-hand
   // column can show what is about to land on it.
   const landing = new Map<string, ShiftComponent>();
@@ -214,6 +219,12 @@ function WeekPair({
             </p>
             {pair.from.components.map((component) => {
               const summary = progressSummary(component);
+              const selectedTarget = targets.find(
+                (target) => target.componentId === mapping[component.componentId],
+              );
+              const isManualMatch = Boolean(
+                selectedTarget && !isAutomaticComponentMatch(component, selectedTarget),
+              );
               return (
                 <div
                   key={component.componentId}
@@ -245,14 +256,14 @@ function WeekPair({
                         className={selectClass}
                         value={mapping[component.componentId] || ''}
                         onChange={(e) => onMap(component.componentId, e.target.value)}
-                        disabled={matchingTargets(component).length === 0}
+                        disabled={selectableTargets(component).length === 0}
                       >
                         <option value="">
-                          {matchingTargets(component).length === 0
-                            ? 'No matching component ID or title and type'
+                          {selectableTargets(component).length === 0
+                            ? 'No component of the same type in the paired week'
                             : 'Archive this progress'}
                         </option>
-                        {matchingTargets(component).map((target) => (
+                        {selectableTargets(component).map((target) => (
                           <option
                             key={target.componentId}
                             value={target.componentId}
@@ -264,9 +275,16 @@ function WeekPair({
                             }
                           >
                             {target.title} ({target.type} · ID {target.componentId})
+                            {!isAutomaticComponentMatch(component, target) ? ' — manual match' : ''}
                           </option>
                         ))}
                       </select>
+                      {isManualMatch && (
+                        <span className="mt-1 block text-[11px] font-medium text-amber-700">
+                          Manual match: the titles differ. Confirm this is the equivalent component
+                          before shifting.
+                        </span>
+                      )}
                     </label>
                   )}
                 </div>
@@ -688,7 +706,8 @@ export function ShiftModuleModal({ learnerId, learnerName, onClose, onSaved }: P
               <strong className="text-foreground-800">{toModule?.moduleTitle}</strong>. Exact lesson
               titles can match even when cohort calendars use different week numbers. Open a week
               to review its completed components. Automatic component matches use the same ID, or
-              one exact title and type match. Ambiguous or unmatched progress is archived and
+              one exact title and type match. When titles differ, you can manually choose a
+              same-type component in the paired week. Unmatched progress is archived and
               removed from active completion, achieved hours and KSB totals.
             </p>
             {progress.weeks.map((pair) => (

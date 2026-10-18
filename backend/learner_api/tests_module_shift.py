@@ -115,6 +115,14 @@ MODULES.update({
         **MODULES["MOD-LOOSE"], "module_catalogue_id": "MOD-PROGRAMME-ONLY",
         "title": "Programme only", "programme_name": "Test 25/8",
     },
+    "MOD-DELETED-PROGRAMME": {
+        **MODULES["MOD-1"], "module_catalogue_id": "MOD-DELETED-PROGRAMME",
+        "title": "Deleted programme copy", "is_programme_deleted": True,
+    },
+    "MOD-SOFT-DELETED": {
+        **MODULES["MOD-1"], "module_catalogue_id": "MOD-SOFT-DELETED",
+        "title": "Soft-deleted copy", "deleted_at": "2026-10-01T00:00:00Z",
+    },
 })
 
 
@@ -132,7 +140,7 @@ def _fake_rows(sql, params):
         return [dict(row)] if row else []
     # Match the candidate SQL; production code then verifies programme identity.
     programme_id, programme_name, cohort_ids, group_ids, listed_ids = params
-    return [
+    rows = [
         dict(m)
         for m in MODULES.values()
         if (programme_id and m.get("programme_id") == programme_id)
@@ -141,6 +149,13 @@ def _fake_rows(sql, params):
         or (m["group_id"] and m["group_id"] in group_ids)
         or m["module_catalogue_id"] in listed_ids
     ]
+    # Mirror the visibility predicates present in the candidate SQL. Keeping
+    # this conditional makes the regression fail if either clause is removed.
+    if "deleted_at IS NULL" in sql:
+        rows = [row for row in rows if not row.get("deleted_at")]
+    if "COALESCE(is_programme_deleted, FALSE) = FALSE" in sql:
+        rows = [row for row in rows if not row.get("is_programme_deleted")]
+    return rows
 
 
 class ModuleShiftOptionTests(SimpleTestCase):
@@ -163,6 +178,13 @@ class ModuleShiftOptionTests(SimpleTestCase):
         )
         # An explicit different programme id is never offered.
         self.assertNotIn("MOD-OTHER-PROGRAMME", [m["moduleId"] for m in body["modules"]])
+
+    def test_deleted_programme_and_soft_deleted_modules_are_not_shift_targets(self):
+        _response, body = self._call("MOD-1")
+
+        module_ids = [module["moduleId"] for module in body["modules"]]
+        self.assertNotIn("MOD-DELETED-PROGRAMME", module_ids)
+        self.assertNotIn("MOD-SOFT-DELETED", module_ids)
 
     def test_a_module_naming_only_its_group_resolves_through_the_group(self):
         _response, body = self._call("MOD-GROUP-ONLY")
@@ -352,6 +374,17 @@ class ModuleShiftWriteTests(SimpleTestCase):
         learner = _learner([{"moduleId": "MOD-1"}])
 
         response, body = self._shift(learner, {"fromModuleId": "MOD-1", "toModuleId": "MOD-OTHER-PROGRAMME"})
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("not taught to", body["error"])
+        learner.save.assert_not_called()
+
+    def test_a_module_from_a_deleted_programme_is_refused_by_the_write(self):
+        learner = _learner([{"moduleId": "MOD-1"}])
+
+        response, body = self._shift(learner, {
+            "fromModuleId": "MOD-1", "toModuleId": "MOD-DELETED-PROGRAMME",
+        })
 
         self.assertEqual(response.status_code, 400)
         self.assertIn("not taught to", body["error"])
