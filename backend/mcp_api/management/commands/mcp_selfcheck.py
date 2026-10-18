@@ -9,6 +9,12 @@ leaves nothing behind even when a check fails half-way.
 - ``--mode oauth`` (Step 3): register -> code with PKCE -> exchange -> resolve_bearer
   -> refresh rotation -> refresh reuse (family revoked) -> code reuse -> revoke,
   as the first active staff account holding curriculum or super-admin access.
+- ``--mode transport`` (Step 4): a real token through ``/mcp/`` with Django's test
+  client -- initialize, tools/list, and a test-only tool that confirms the actor is
+  the token's account with source ``mcp:*`` during the call and cleared after.
+- ``--mode delete-clients --client-name NAME [--confirm]``: delete named test
+  clients and their codes, tokens and pending changes. The only mode that commits;
+  without ``--confirm`` it only lists what it would delete.
 
 Branch-only guard
 -----------------
@@ -319,22 +325,95 @@ OAUTH_STEPS = (
 )
 
 
+# --- transport mode: a real token through /mcp/ via Django's test client ------------
+#
+# The test-only tool exists only while this command runs. It records what it saw
+# in ``state`` and returns no email: the PII guard (strict on the branch) would
+# rightly refuse a result carrying one.
+
+SELFCHECK_TOOL = "selfcheck_whoami"
+
+
+def _mcp_post(state, message):
+    return state["http"].post(
+        "/mcp/", json.dumps(message), content_type="application/json",
+        HTTP_AUTHORIZATION=f"Bearer {state['tokens']['access_token']}",
+    )
+
+
+def transport_mint_token(state):
+    from mcp_api.oauth import exchange_code
+
+    oauth_register(state)
+    code, verifier = _consent(state)
+    state["tokens"] = exchange_code(state["client"], code, state["redirect_uri"], verifier)
+
+
+def transport_initialize(state):
+    response = _mcp_post(state, {"jsonrpc": "2.0", "id": 1, "method": "initialize",
+                                 "params": {"protocolVersion": "2025-06-18", "capabilities": {},
+                                            "clientInfo": {"name": "mcp_selfcheck", "version": "1"}}})
+    _expect(response.status_code == 200, f"initialize returned HTTP {response.status_code}")
+    result = response.json()["result"]
+    _expect(result["serverInfo"]["name"] == "kbc-lms", "unexpected serverInfo")
+    _expect(result["protocolVersion"] == "2025-06-18", "protocol version not negotiated")
+
+
+def transport_tools_list(state):
+    response = _mcp_post(state, {"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
+    names = [t["name"] for t in response.json()["result"]["tools"]]
+    _expect(SELFCHECK_TOOL in names, f"tools/list returned {names}")
+
+
+def transport_tools_call(state):
+    from curriculum_api import versioning
+
+    response = _mcp_post(state, {"jsonrpc": "2.0", "id": 3, "method": "tools/call",
+                                 "params": {"name": SELFCHECK_TOOL, "arguments": {}}})
+    result = response.json()["result"]
+    _expect(not result.get("isError"), f"tool call failed: {result['content'][0]['text']}")
+    seen = state["seen"]
+    _expect(seen.get("actor", {}).get("email") == state["account"].email,
+            "actor during the call is not the token's account")
+    _expect(seen.get("source", "").startswith("mcp:"), f"source during the call was {seen.get('source')!r}")
+    _expect(result["structuredContent"] == {"actor_matches": True, "source": seen["source"]},
+            "unexpected tool result")
+    _expect(versioning.current_actor() == versioning.NO_ACTOR, "actor still set after the call")
+    _expect(not versioning.current_source().startswith("mcp:"), "mcp source still set after the call")
+
+
+TRANSPORT_STEPS = (
+    ("mint a real token (register, consent, exchange)", transport_mint_token),
+    ("initialize", transport_initialize),
+    ("tools/list shows the test tool", transport_tools_list),
+    ("tools/call: actor = token account, source mcp:*, cleared after", transport_tools_call),
+)
+
+
 class Command(BaseCommand):
     help = (
-        "On the Neon test branch only: round-trip each MCP table (--mode tables) or run "
-        "the OAuth flow end to end (--mode oauth), then roll everything back."
+        "On the Neon test branch only: round-trip each MCP table (--mode tables), run the "
+        "OAuth flow (--mode oauth) or a real token through /mcp/ (--mode transport), then "
+        "roll everything back. --mode delete-clients removes named test clients (committed)."
     )
 
     def add_arguments(self, parser):
-        parser.add_argument("--mode", choices=("tables", "oauth"), default="tables")
+        parser.add_argument("--mode", choices=("tables", "oauth", "transport", "delete-clients"), default="tables")
+        parser.add_argument("--client-name", action="append", default=[],
+                            help="delete-clients: exact client_name to remove (repeatable).")
+        parser.add_argument("--confirm", action="store_true", help="delete-clients: actually delete.")
 
     def handle(self, *args, **options):
         branch_id = assert_test_branch()
         mode = options["mode"]
         self.stdout.write(f"mcp_selfcheck --mode {mode} on Neon branch {branch_id}")
+        if mode == "delete-clients":
+            self._delete_clients(options["client_name"], options["confirm"])
+            return
 
+        run = {"tables": self._tables, "oauth": self._oauth, "transport": self._transport}[mode]
         with transaction.atomic(using=ENROLMENT_DB):
-            failures = self._tables() if mode == "tables" else self._oauth()
+            failures = run()
             # Nothing this run wrote survives it, whatever happened above.
             transaction.set_rollback(True, using=ENROLMENT_DB)
 
@@ -368,16 +447,69 @@ class Command(BaseCommand):
         # Every table is reported, not just the first failure.
         return sum(not self._report(table, check, ctx) for table, check in CHECKS)
 
-    def _oauth(self):
-        account = _curriculum_account()
-        if account is None:
-            raise CommandError("No active staff account with curriculum or super-admin access on this branch.")
-        self.stdout.write(f"  using login account {account.pk}")
-        state = {"account": account}
-        for index, (name, step) in enumerate(OAUTH_STEPS):
+    def _steps(self, steps, state):
+        for index, (name, step) in enumerate(steps):
             if not self._report(name, step, state):
-                skipped = len(OAUTH_STEPS) - index - 1
+                skipped = len(steps) - index - 1
                 if skipped:
                     self.stdout.write(f"  SKIP {skipped} later step(s)")
                 return 1 + skipped
         return 0
+
+    def _account(self):
+        account = _curriculum_account()
+        if account is None:
+            raise CommandError("No active staff account with curriculum or super-admin access on this branch.")
+        self.stdout.write(f"  using login account {account.pk}")
+        return account
+
+    def _oauth(self):
+        return self._steps(OAUTH_STEPS, {"account": self._account()})
+
+    def _transport(self):
+        from unittest import mock
+
+        from django.test import Client
+
+        from curriculum_api import versioning
+        from mcp_api.tools import ToolResult, tool, unregister
+
+        state = {"account": self._account(), "http": Client(HTTP_HOST="localhost"), "seen": {}}
+
+        @tool(SELFCHECK_TOOL, "Self-check only: reports who the call runs as.", {"type": "object"})
+        def whoami(request, arguments):
+            state["seen"] = {"actor": versioning.current_actor(), "source": versioning.current_source()}
+            matches = state["seen"]["actor"].get("email") == state["account"].email
+            return ToolResult("Self-check tool ran.", {"actor_matches": matches, "source": state["seen"]["source"]})
+
+        env = {"MCP_ENABLED": "1", "MCP_PUBLIC_BASE_URL": os.environ.get("MCP_PUBLIC_BASE_URL") or "http://localhost"}
+        try:
+            # LoginSessionMiddleware returns the connection after every response
+            # (close_old_connections). Inside this run's rollback transaction that
+            # would close it mid-transaction, so it is stood down for the run --
+            # what Django's test client already does for request_finished.
+            with mock.patch.dict(os.environ, env), mock.patch("login.middleware.close_old_connections"):
+                return self._steps(TRANSPORT_STEPS, state)
+        finally:
+            unregister(SELFCHECK_TOOL)
+
+    def _delete_clients(self, names, confirm):
+        """Remove named test clients and everything that references them. Committed."""
+        if not names:
+            raise CommandError("Give at least one --client-name.")
+        clients = list(McpOAuthClient.objects.filter(client_name__in=names).order_by("id"))
+        if not clients:
+            self.stdout.write("  no matching clients")
+            return
+        for client in clients:
+            self.stdout.write(f"  client row {client.pk}: {client.client_name!r} created {client.created_at:%Y-%m-%d %H:%M}")
+        if not confirm:
+            self.stdout.write(self.style.WARNING("Dry run - add --confirm to delete these rows."))
+            return
+        with transaction.atomic(using=ENROLMENT_DB):
+            counts = {
+                model.__name__: model.objects.filter(client__in=clients).delete()[0]
+                for model in (McpPendingChange, McpOAuthToken, McpOAuthCode)
+            }
+            counts["McpOAuthClient"] = McpOAuthClient.objects.filter(pk__in=[c.pk for c in clients]).delete()[0]
+        self.stdout.write(self.style.SUCCESS(f"  deleted {counts}"))
