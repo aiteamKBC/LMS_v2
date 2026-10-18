@@ -16,11 +16,12 @@ A learner part-way through a module has progress on its components, and that
 progress is the reason the shift is not just a swap of ids: it has to land on
 the equivalent components of the module they are moving to. Weeks are matched
 by stable id or one exact cleaned title before falling back to delivery order;
-components are matched by stable component id first and, for cloned group
-modules with new ids, by one exact cleaned title and type.
-Ambiguous or unmatched progress is soft-archived when the learner leaves the
-source module. It remains available as historical evidence, but no longer
-contributes to the learner's active progress, hours or KSB totals.
+components are matched automatically by stable component id first and, for
+cloned group modules with new ids, by one exact cleaned title and type. Staff
+can manually choose another same-type component in the paired target week.
+Progress left unmatched is soft-archived when the learner leaves the source
+module. It remains available as historical evidence, but no longer contributes
+to the learner's active progress, hours or KSB totals.
 
 A completed component often carries a reflection awaiting a tutor or coach, or
 one they have already marked with feedback. That review belongs to the work, not
@@ -670,12 +671,23 @@ def _validate_mappings(mappings, from_id, to_id):
     if not mappings:
         return [], ""
 
+    source_weeks = _weeks_with_components(from_id)
+    target_weeks = _weeks_with_components(to_id)
     source = {
-        c["componentId"]: c for w in _weeks_with_components(from_id) for c in w["components"]
+        c["componentId"]: c for w in source_weeks for c in w["components"]
     }
     target = {
-        c["componentId"]: c for w in _weeks_with_components(to_id) for c in w["components"]
+        c["componentId"]: c for w in target_weeks for c in w["components"]
     }
+    allowed_targets = {}
+    for position, source_week in enumerate(source_weeks):
+        paired_week = _paired_target_week(source_week, target_weeks, position)
+        paired_ids = {
+            component["componentId"]
+            for component in (paired_week or {}).get("components", [])
+        }
+        for component in source_week["components"]:
+            allowed_targets.setdefault(component["componentId"], set()).update(paired_ids)
 
     pairs, claimed = [], {}
     for item in mappings:
@@ -691,8 +703,8 @@ def _validate_mappings(mappings, from_id, to_id):
             return None, f"Component '{source_id}' is not part of the module being left."
         if target_id not in target:
             return None, f"Component '{target_id}' is not part of the module being joined."
-        # Type, identity and exact-title rules are enforced here as well as in
-        # the picker, since this is what the stored progress ends up claiming.
+        # Manual choices remain inside the paired week and component type. The
+        # server enforces this as this is what the stored progress ends up claiming.
         source_type = source[source_id]["type"]
         target_type = target[target_id]["type"]
         if source_type != target_type:
@@ -703,10 +715,10 @@ def _validate_mappings(mappings, from_id, to_id):
         # Two components' progress landing on one would credit it twice.
         if claimed.get(target_id, source_id) != source_id:
             return None, "Two components cannot be moved onto the same component."
-        if not _components_match(source[source_id], target[target_id]):
+        if target_id not in allowed_targets.get(source_id, set()):
             return None, (
-                f"'{source[source_id]['title']}' can only be matched by the same component id, "
-                "or to a component with the same title and type."
+                f"'{target[target_id]['title']}' is not in the target week paired with "
+                f"'{source[source_id]['title']}'."
             )
         claimed[target_id] = source_id
         pairs.append((source_id, target_id))

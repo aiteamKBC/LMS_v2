@@ -112,6 +112,46 @@ describe('programme-wide module shift', () => {
     });
   });
 
+  it('allows staff to manually match a renamed component of the same type', async () => {
+    const renamedProgress = {
+      ...progress,
+      suggested: [],
+      weeks: [{
+        ...progress.weeks[0],
+        to: {
+          ...progress.weeks[0].to,
+          components: [{
+            componentId: 'C2', title: 'Renamed target video', type: 'video', otjHours: 1,
+          }],
+        },
+      }],
+    };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(response(options))
+      .mockResolvedValueOnce(response(renamedProgress))
+      .mockResolvedValueOnce(response({ plan: [target], progressMoved: 1 }));
+    vi.stubGlobal('fetch', fetchMock);
+    const user = userEvent.setup();
+    render(<ShiftModuleModal learnerId="62" learnerName="Example learner" onClose={vi.fn()} />);
+
+    await user.click(await screen.findByRole('button', { name: /Another cohort module/ }));
+    await user.click(screen.getByRole('button', { name: 'Next: match progress' }));
+    const select = await screen.findByLabelText('Move progress on Original video to');
+
+    expect(select).toBeEnabled();
+    expect(screen.getByRole('option', { name: /Renamed target video.*manual match/ })).toBeVisible();
+    await user.selectOptions(select, 'C2');
+    expect(screen.getByText(/Manual match: the titles differ/)).toBeVisible();
+    await user.click(screen.getByRole('button', { name: 'Shift module & progress' }));
+
+    const [, request] = fetchMock.mock.calls[2];
+    expect(JSON.parse(request.body)).toEqual({
+      fromModuleId: 'SOURCE',
+      toModuleId: 'TARGET',
+      progressMappings: [{ fromComponentId: 'C1', toComponentId: 'C2' }],
+    });
+  });
+
   it('explains and reports archiving when progress has no matching target', async () => {
     const unmatched = {
       ...progress,
