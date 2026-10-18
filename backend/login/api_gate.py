@@ -217,8 +217,6 @@ def rule_for(path):
     # other Engagement endpoint.
     if path.startswith('/engagement_api/feedback/public-event/'):
         return None
-    if path.startswith('/engagement_api/feedback/public-session/'):
-        return None
     if path.startswith('/engagement_api/feedback/public-rsvp/'):
         return None
     if path.startswith('/engagement_api/event-check-in/'):

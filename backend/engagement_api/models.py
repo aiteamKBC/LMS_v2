@@ -510,8 +510,6 @@ class FeedbackForm(models.Model):
     TYPE_CHOICES = [
         ('general', 'General'), ('post_lecture', 'Post-lecture'),
         ('post_event', 'Post-event'), ('event_rsvp', 'Event RSVP'),
-        ('information_session', 'Information Session'),
-        ('commitment_meeting', 'Commitment Meeting'),
     ]
     DELIVERY_SCOPE_CHOICES = [('manual', 'Manual'), ('all_modules', 'All modules'), ('module', 'One module')]
 
@@ -681,63 +679,6 @@ class FeedbackEventRecipient(models.Model):
     class Meta:
         managed = False
         db_table = 'Feedback"."feedback_event_recipients'
-
-
-class FeedbackExternalCampaign(models.Model):
-    """A named Information Session or Commitment Meeting feedback campaign."""
-
-    TYPE_CHOICES = [
-        ('information_session', 'Information Session'),
-        ('commitment_meeting', 'Commitment Meeting'),
-    ]
-    STATUS_CHOICES = [('draft', 'Draft'), ('open', 'Open'), ('closed', 'Closed')]
-
-    campaign_type = models.CharField(max_length=40, choices=TYPE_CHOICES)
-    name = models.CharField(max_length=255)
-    session_date = models.DateField()
-    form = models.ForeignKey(
-        FeedbackForm, on_delete=models.PROTECT, related_name='external_campaigns', db_column='form_id',
-    )
-    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='draft')
-    created_by = models.CharField(max_length=255)
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
-
-    class Meta:
-        managed = False
-        db_table = 'Feedback"."feedback_external_campaigns'
-
-
-class FeedbackExternalRecipient(models.Model):
-    """One non-LMS recipient with a personal bearer-token feedback link."""
-
-    STATUS_CHOICES = [
-        ('pending', 'Pending'), ('sent', 'Sent'), ('opened', 'Opened'),
-        ('submitted', 'Submitted'), ('failed', 'Failed'),
-    ]
-
-    campaign = models.ForeignKey(
-        FeedbackExternalCampaign, on_delete=models.CASCADE, related_name='recipients', db_column='campaign_id',
-    )
-    response = models.OneToOneField(
-        'FeedbackResponse', on_delete=models.PROTECT, related_name='external_recipient',
-        db_column='response_id', null=True, blank=True,
-    )
-    recipient_name = models.CharField(max_length=255)
-    recipient_email = models.EmailField(max_length=320)
-    token_hash = models.CharField(max_length=64, null=True, blank=True)
-    token_expires_at = models.DateTimeField(null=True, blank=True)
-    delivery_status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
-    invitation_sent_at = models.DateTimeField(null=True, blank=True)
-    opened_at = models.DateTimeField(null=True, blank=True)
-    submitted_at = models.DateTimeField(null=True, blank=True)
-    invitation_error = models.TextField(blank=True, default='')
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
-
-    class Meta:
-        managed = False
-        db_table = 'Feedback"."feedback_external_recipients'
 
 
 class EventEmailTemplate(models.Model):

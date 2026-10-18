@@ -1,6 +1,6 @@
 from django.urls import path
 
-from . import event_checkin, event_emails, event_feedback_views, event_rsvp_views, external_feedback_views, feedback, shared_reward_views, views, learning_policy_views
+from . import event_checkin, event_emails, event_feedback_views, event_rsvp_views, feedback, shared_reward_views, views, learning_policy_views
 
 urlpatterns = [
     # Reusable feedback-form engine. Staff management and learner-owned routes
@@ -35,10 +35,6 @@ urlpatterns = [
     path('feedback/email-templates/', event_emails.email_templates, name='event-email-templates'),
     path('feedback/public-event/csrf/', event_feedback_views.public_csrf, name='feedback-public-event-csrf'),
     path('feedback/public-event/', event_feedback_views.public_event_access, name='feedback-public-event'),
-    path('feedback/external-campaigns/', external_feedback_views.campaigns, name='feedback-external-campaigns'),
-    path('feedback/external-campaigns/<int:campaign_id>/', external_feedback_views.campaign_detail, name='feedback-external-campaign-detail'),
-    path('feedback/public-session/csrf/', external_feedback_views.public_csrf, name='feedback-public-session-csrf'),
-    path('feedback/public-session/', external_feedback_views.public_access, name='feedback-public-session'),
     path('feedback/public-rsvp/csrf/', event_rsvp_views.public_csrf, name='event-rsvp-csrf'),
     path('feedback/public-rsvp/', event_rsvp_views.public_access, name='event-rsvp-public'),
     path('feedback/public-rsvp/photo/', event_rsvp_views.public_photo_upload, name='event-rsvp-photo-upload'),
