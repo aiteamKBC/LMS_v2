@@ -65,6 +65,7 @@ const ClubsPage = lazyRoute(() => import("../pages/learner/clubs/page"));
 const CoachAiMarking = lazyRoute(() => import("../pages/coach/ai-marking/page"));
 const CoachAttendance = lazyRoute(() => import("../pages/coach/attendance/page"));
 const CoachSupportTickets = lazyRoute(() => import("../pages/coach/support-tickets/page"));
+const CoachInfoSource = lazyRoute(() => import("../pages/coach/info-source/page"));
 const CoachAttendanceProfile = lazyRoute(() => import("../pages/coach/attendance-profile/page"));
 const CoachCaseFiles = lazyRoute(() => import("../pages/coach/case-files/page"));
 const CoachCaseload = lazyRoute(() => import("../pages/coach/caseload/page"));
@@ -914,6 +915,10 @@ const routes: RouteObject[] = [
   {
     path: "/coach/support-tickets",
     element: <CoachSupportTickets />,
+  },
+  {
+    path: "/coach/info-source",
+    element: <CoachInfoSource />,
   },
   {
     path: "/coach/absence-reports",
