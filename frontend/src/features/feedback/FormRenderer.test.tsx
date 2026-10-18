@@ -18,6 +18,47 @@ const sections: FeedbackSection[] = [{
 }];
 
 describe('FormRenderer', () => {
+  it('renders an accessible five-star rating, its scale descriptions and emits the score', async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    const starSections: FeedbackSection[] = [{
+      id: 2,
+      title: 'Knowledge',
+      description: '',
+      questions: [{
+        id: 20,
+        type: 'rating',
+        text: 'How familiar were you with this topic?',
+        required: true,
+        helpText: '',
+        config: {
+          min: 1,
+          max: 5,
+          display: 'stars',
+          labels: ['Very limited', 'Basic', 'Moderate', 'Good', 'Very confident'],
+        },
+      }],
+    }];
+    function Harness() {
+      const [answers, setAnswers] = useState<Record<number, FeedbackAnswerValue>>({});
+      return <FormRenderer sections={starSections} answers={answers} onChange={(id, value) => {
+        setAnswers(current => ({ ...current, [id]: value }));
+        onChange(id, value);
+      }} />;
+    }
+
+    render(<Harness />);
+    const fifthStar = screen.getByRole('radio', { name: '5 stars: Very confident' });
+    expect(fifthStar).toHaveAttribute('aria-checked', 'false');
+    const scale = screen.getByLabelText('Rating scale descriptions');
+    expect(scale).toHaveTextContent('1 = Very limited');
+    expect(scale).toHaveTextContent('5 = Very confident');
+    await user.click(fifthStar);
+
+    expect(onChange).toHaveBeenCalledWith(20, 5);
+    expect(fifthStar).toHaveAttribute('aria-checked', 'true');
+  });
+
   it('renders professional step progress and identifies missing required answers', () => {
     const steps: FeedbackSection[] = [
       ...sections,
