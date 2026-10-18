@@ -97,6 +97,24 @@ export interface SessionSyncJob {
 }
 export interface SessionLearner { kind: LearnerKind; id: string }
 const adminBase = '/curriculum_api/curriculum/session-results';
+export interface SessionAttendanceCorrection {
+  learnerProfileId: number; email?: string; manualStatus: 'present' | 'absent' | null; version: string;
+}
+const correctionUrl = (seriesId: string, number: number) =>
+  `${adminBase}/${encodeURIComponent(seriesId)}/sessions/${number}/attendance-correction/`;
+export const loadSessionAttendanceCorrections = (seriesId: string, number: number, moduleId: string, signal?: AbortSignal) =>
+  read<{ corrections: SessionAttendanceCorrection[]; editable: boolean }>(`${correctionUrl(seriesId, number)}?moduleId=${encodeURIComponent(moduleId)}`, signal);
+export async function saveSessionAttendanceCorrection(seriesId: string, number: number, moduleId: string,
+  correction: SessionAttendanceCorrection, action: 'present' | 'absent' | 'reset') {
+  const response = await coachFetch(correctionUrl(seriesId, number), {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ moduleId, learnerProfileId: correction.learnerProfileId, version: correction.version, action }),
+  });
+  const payload = await response.json();
+  if (!response.ok) throw new Error(payload.error || 'Attendance correction could not be saved.');
+  invalidateLearnerReads();
+  return payload as SessionAttendanceCorrection;
+}
 export const sessionBase = (seriesId: string, learner?: SessionLearner) => learner
   ? `/learner_api/session-results/${learner.kind}/${encodeURIComponent(learner.id)}/${encodeURIComponent(seriesId)}`
   : `${adminBase}/${encodeURIComponent(seriesId)}`;
