@@ -48,6 +48,7 @@ const BoardPage = lazyRoute(() => import("../pages/users/BoardPage"));
 const EmployerPortalPage = lazyRoute(() => import("../pages/employer/EmployerPortalPage"));
 const EmployerLearnerPage = lazyRoute(() => import("../pages/employer/EmployerLearnerPage"));
 const EventFeedbackPage = lazyRoute(() => import("../pages/event-feedback/page"));
+const SessionFeedbackPage = lazyRoute(() => import("../pages/session-feedback/page"));
 const EventRsvpPage = lazyRoute(() => import("../pages/event-rsvp/page"));
 const EventCheckInPage = lazyRoute(() => import("../pages/event-check-in/page"));
 const EmployerDocumentsPage = lazyRoute(() => import("../pages/employer/EmployerDocumentsPage"));
@@ -328,6 +329,10 @@ const routes: RouteObject[] = [
   {
     path: "/event-feedback",
     element: <EventFeedbackPage />,
+  },
+  {
+    path: "/session-feedback",
+    element: <SessionFeedbackPage />,
   },
   {
     path: "/event-rsvp",
@@ -1800,6 +1805,8 @@ const routes: RouteObject[] = [
  *  - "/" and "/login" are the sign-in form itself.
  *  - "/event-feedback" opens a token-scoped form for an event attendee; an LMS
  *    account is not required and the backend still validates the personal token.
+ *  - "/session-feedback" opens a one-recipient Information Session or Commitment
+ *    Meeting feedback link; the backend validates its personal token.
  *  - "/forgot-password", "/set-password", "/reset-password" are reached from an
  *    emailed link by someone who by definition cannot sign in yet; each carries
  *    its own single-use token, which the backend validates.
@@ -1819,6 +1826,7 @@ const PUBLIC_PATHS = new Set([
   "/",
   "/login",
   "/event-feedback",
+  "/session-feedback",
   "/event-rsvp",
   "/event-check-in",
   "/access-required",
