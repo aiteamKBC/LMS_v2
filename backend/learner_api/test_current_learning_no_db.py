@@ -22,8 +22,9 @@ def adapter():
     scope = dict(datetime=datetime, ZoneInfo=ZoneInfo, json=json, re=re, isfinite=isfinite,
                  GRADED_PROGRESS_KINDS={'quiz'})
     load('progress_rules.py', scope)
+    load('ksb_points.py', scope)
     load('active_users.py', scope, {'_s', '_number', '_reported_minutes', '_progress_text',
-        '_manual_claimed_seconds', '_progress_record_minutes', 'otjh_progress_dedupe_key',
+        '_selected_timer_seconds', '_manual_claimed_seconds', '_progress_record_minutes', 'otjh_progress_dedupe_key',
         'dedupe_otjh_progress_records', '_component_expected_hours_lookup', 'completed_hours_value_from_progress'})
     load('current_learning.py', scope)
     return scope
@@ -144,6 +145,33 @@ class CurrentLearningTests(unittest.TestCase):
         self.assertIsNone(rows[1]['actual_seconds'])
         self.assertTrue(rows[1]['completed'])
 
+    def test_standalone_quiz_and_material_with_same_id_do_not_share_completion(self):
+        material = {'id': 1, 'completed': False, 'actual_seconds': 600,
+                    'source_payload': {'original_source_ref': 'la:5:9'},
+                    'sources': [{'source_system': 'old_lms', 'source_course_ref': '5', 'source_activity_id': 'material:9'}]}
+        quiz = {'id': 2, 'completed': False, 'actual_seconds': None,
+                'source_payload': {'original_source_ref': 'la:5:9'},
+                'sources': [{'source_system': 'old_lms', 'source_course_ref': '5', 'source_activity_id': 'quiz:9'}]}
+        merge = self.scope['merge_attempts']
+        rows = merge([material, quiz], [self.attempt(catalogue_kind='quiz')])
+        self.assertEqual(len(rows), 2)
+        self.assertFalse(rows[0]['completed'])
+        self.assertTrue(rows[1]['completed'])
+        self.assertEqual(rows[0]['actual_seconds'], 600)
+        self.assertIsNone(rows[1]['actual_seconds'])
+        rows = merge([material, quiz], [self.attempt()])
+        self.assertTrue(rows[0]['completed'])
+        self.assertFalse(rows[1]['completed'])
+
+    def test_new_quiz_result_has_exact_catalogue_route_and_is_idempotent(self):
+        merge = self.scope['merge_attempts']
+        attempt = self.attempt(catalogue_kind='quiz')
+        rows = merge([], [attempt])
+        self.assertEqual(rows[0]['sources'], [{'source_system': 'old_lms', 'source_course_ref': '5', 'source_activity_id': 'quiz:9'}])
+        self.assertEqual(merge(rows, [attempt]), rows)
+        self.assertFalse(rows[0]['accepted'])
+        self.assertIsNone(rows[0]['actual_seconds'])
+
     def test_accepted_extra_activity_once_and_no_drafts(self):
         s = dict(id='extra1', submitted_at=self.native['submitted_at'], activity_type='extra_activity',
                  status='accepted', actual_time_hours=1, ksb_codes=['K1'])
@@ -199,7 +227,7 @@ class CurrentLearningTests(unittest.TestCase):
         scope['require_profile'] = lambda _: owner
         scope['targets_for'] = lambda _: {}
         saved = []
-        scope['entries_for'] = lambda _: self.project(saved)
+        scope['entries_for'] = lambda _, **kwargs: self.project(saved)
         self.assertEqual(scope['metrics'](123)['programme']['completed'], 0)
         saved.append(self.native)
         result = scope['metrics'](123)
@@ -218,7 +246,7 @@ class CurrentLearningTests(unittest.TestCase):
         scope['targets_for'] = lambda _: {}
         record = {'id': 10, 'accepted': False, 'actual_seconds': 3600, 'ksbs': [],
                   'source_payload': {'original_source_ref': 'la:5:9'}}
-        scope['entries_for'] = lambda _: scope['merge_attempts']([record], [self.attempt()])
+        scope['entries_for'] = lambda _, **kwargs: scope['merge_attempts']([record], [self.attempt()])
         result = scope['metrics'](123)
         self.assertEqual(result['programme']['completed'], 1)
         self.assertEqual(result['programme']['total'], 1)

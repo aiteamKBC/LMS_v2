@@ -125,21 +125,29 @@ def merge_attempts(records, attempts):
     """Use saved course attempts for completion, never manufacture their hours."""
     result = [dict(p) for p in records]
     for attempt in attempts:
-        ref = f"la:{attempt['group_id']}:{attempt['activity_id']}"
+        catalogue_kind = attempt.get('catalogue_kind', 'material')
+        ref = f"{'la' if catalogue_kind == 'material' else 'subject:quiz'}:{attempt['group_id']}:{attempt['activity_id']}"
+        route = {'source_system': 'old_lms', 'source_course_ref': str(attempt['group_id']),
+                 'source_activity_id': f"{catalogue_kind}:{attempt['activity_id']}"}
         matches = []
         for p in result:
-            linked = source_reference(p) == ref or any(
+            links = [*(p.get('sources') or []), *(p.get('historical_components') or [])]
+            typed = [link for link in links if link.get('source_system') == 'old_lms'
+                     and str(link.get('source_course_ref')) == str(attempt['group_id'])]
+            linked = (not typed and source_reference(p) == ref) or any(
                 link.get('source_system') == 'old_lms'
                 and str(link.get('source_course_ref')) == str(attempt['group_id'])
-                and link.get('source_activity_id') == f"material:{attempt['activity_id']}"
-                for link in [*(p.get('sources') or []), *(p.get('historical_components') or [])])
+                and link.get('source_activity_id') == route['source_activity_id']
+                for link in links)
             if linked:
                 matches.append(p)
         if not matches:
             at = instant(attempt['submitted_at'])
-            matches = [{'id': f"subject:{attempt['group_id']}:{attempt['activity_id']}",
+            record_id = (f"subject:{attempt['group_id']}:{attempt['activity_id']}" if catalogue_kind == 'material'
+                         else f"subject:quiz:{attempt['group_id']}:{attempt['activity_id']}")
+            matches = [{'id': record_id,
                 'component_title': attempt.get('title'), 'kind': 'quiz', 'accepted': False,
-                'actual_seconds': None, 'ksbs': [], 'sources': [], 'segments': [],
+                'actual_seconds': None, 'ksbs': [], 'sources': [route], 'segments': [],
                 'source_payload': {'original_source_ref': ref},
                 'reporting_month': at.strftime('%Y-%m'), 'reporting_started_at': at}]
             result.extend(matches)
@@ -206,12 +214,13 @@ def current_records(owner, records):
     projected = merge_submissions(project_current(records, markings), submissions)
     if not owner.get('aptem_id') or not attempts_relation_exists():
         return projected
-    attempts = query('''SELECT group_id,activity_id,bool_or(completed) AS completed,
+    attempts = query('''SELECT group_id,activity_id,
+        coalesce(definition->>'catalogue_kind','material') AS catalogue_kind,bool_or(completed) AS completed,
         max(score_percent) AS best_percent,max(submitted_at) AS submitted_at,
         max(definition->>'title') AS title
         FROM "Learner".subject_activity_attempts
         WHERE enrolment_id=%s AND aptem_id=%s AND submitted_at IS NOT NULL
-        GROUP BY group_id,activity_id''', [owner['enrolment_id'], owner['aptem_id']])
+        GROUP BY group_id,activity_id,coalesce(definition->>'catalogue_kind','material')''', [owner['enrolment_id'], owner['aptem_id']])
     return merge_attempts(projected, attempts)
 
 
@@ -281,11 +290,12 @@ def current_records_bulk(owners, records_by_learner_id):
     placeholders = ','.join(['(%s,%s)'] * len(attempt_pairs))
     params = [value for pair in attempt_pairs for value in pair]
     attempts = query(f'''SELECT enrolment_id,aptem_id,group_id,activity_id,
+        coalesce(definition->>'catalogue_kind','material') AS catalogue_kind,
         bool_or(completed) AS completed,max(score_percent) AS best_percent,
         max(submitted_at) AS submitted_at,max(definition->>'title') AS title
         FROM "Learner".subject_activity_attempts
         WHERE (enrolment_id,aptem_id) IN ({placeholders}) AND submitted_at IS NOT NULL
-        GROUP BY enrolment_id,aptem_id,group_id,activity_id''', params)
+        GROUP BY enrolment_id,aptem_id,group_id,activity_id,coalesce(definition->>'catalogue_kind','material')''', params)
     attempts_by_identity = {pair: [] for pair in attempt_pairs}
     for attempt in attempts:
         key = (int(attempt['enrolment_id']), int(attempt['aptem_id']))

@@ -171,8 +171,8 @@ describe('learner subject cards', () => {
     expect(screen.queryByText('Upload image')).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: /Updated Leadership/ }));
     selectMonthWeek('Undated activities');
-    expect(screen.getByRole('group', { name: 'Introduction activity' })).toBeVisible();
-    expect(screen.getByText('Complete')).toBeInTheDocument();
+    expect(screen.getByRole('group', { name: 'Reflection activity' })).toBeVisible();
+    expect(screen.getByRole('progressbar', { name: 'Subject progress' })).toHaveAttribute('aria-valuenow', '50');
     expect(container.querySelector('input[type="file"]')).toBeNull();
   });
 
@@ -211,7 +211,7 @@ describe('learner subject cards', () => {
     fireEvent.click(module);
     selectMonthWeek('Undated activities');
     expect(screen.getByRole('button', { name: 'All subjects' })).toBeInTheDocument();
-    expect(screen.getByText('Complete')).toBeInTheDocument();
+    expect(screen.getByRole('progressbar', { name: 'Subject progress' })).toHaveAttribute('aria-valuenow', '50');
     expect(screen.getByText('Not complete')).toBeInTheDocument();
     expect(screen.getByRole('group', { name: 'Reflection activity' })).toBeVisible();
     expect(screen.getByText(/OTJH: Unavailable/)).toBeInTheDocument();
@@ -411,9 +411,10 @@ describe('subjects shared with Module Builder', () => {
     const headings = within(screen.getByRole('complementary', { name: 'Module activities' })).getAllByRole('heading', { level: 3 });
     expect(headings[0]).toHaveTextContent('Introduction');
     expect(headings[1]).toHaveTextContent('October 2026');
-    expect(weekProgress()).toHaveAttribute('aria-valuenow', '100');
+    expect(weekProgress()).toHaveAttribute('aria-valuenow', '0');
     expect(screen.getByRole('progressbar', { name: 'Subject progress' })).toHaveAttribute('aria-valuenow', '50');
     selectMonthWeek('Introduction');
+    expect(weekProgress()).toHaveAttribute('aria-valuenow', '100');
     expect(screen.getByRole('group', { name: 'Welcome activity' })).toBeVisible();
     expect(screen.getByText('First lecture')).not.toBeVisible();
   });
@@ -674,7 +675,44 @@ function mockMaterialRequests(material = activityMaterial, save: () => Promise<S
 }
 
 describe('subject months, weeks and completion', () => {
-  afterEach(() => vi.restoreAllMocks());
+  afterEach(() => { vi.restoreAllMocks(); vi.useRealTimers(); });
+
+  it.each(['commercial', 'apprenticeship'])('opens the dated current-week component before unfinished introduction content (%s)', async kind => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-03-03T12:00:00Z'));
+    const requests = mockMaterialRequests();
+    const current = { ...scheduledData, activities: [
+      { ...data.activities[1], activity_id: 'intro', source_activity_id: 99, month: 'undated', date_source: 'introduction', section_title: 'Introduction' },
+      ...scheduledData.activities,
+    ] };
+    render(<StudentActivityPanel data={current} kind={kind} learnerId="132" loading={false} error={null} onRetry={vi.fn()} />);
+    fireEvent.click(await screen.findByRole('button', { name: /Leadership/ }));
+    expect(await screen.findByRole('region', { name: 'March lesson content' })).toBeVisible();
+    expect(await screen.findByTitle('Reflection frame')).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'Open activity' })).not.toBeInTheDocument();
+    expect(requests.mock.calls.filter(([url]) => url.includes('/student-activity/'))).toHaveLength(1);
+    expect(requests.mock.calls.find(([url]) => url.includes('/student-activity/'))![0]).toContain('activity_id=12');
+    expect(screen.getByText('Current week')).toBeVisible();
+    selectMonthWeek('Introduction');
+    expect(screen.getByText('Selected week')).toBeVisible();
+    expect(screen.getByRole('button', { name: /Week 2.*Current/ })).toBeVisible();
+    expect(requests.mock.calls.filter(([, options]) => options?.method === 'POST')).toHaveLength(0);
+  });
+
+  it('opens completed course content for review without calling any week current', async () => {
+    mockMaterialRequests({ ...activityMaterial, completed: true, can_attempt: false });
+    const completed = { ...scheduledData, activities: scheduledData.activities.map(entry => ({ ...entry, completed: true })) };
+    render(<StudentActivityPanel data={completed} kind="commercial" learnerId="132" loading={false} error={null} onRetry={vi.fn()} />);
+    fireEvent.click(await screen.findByRole('button', { name: /Leadership/ }));
+    expect(await screen.findByTitle('Reflection frame')).toBeVisible();
+    expect(screen.queryByText('Current week')).not.toBeInTheDocument();
+    expect(screen.queryByText('Current', { exact: true })).not.toBeInTheDocument();
+    expect(screen.getByText('Week activities')).toBeVisible();
+    expect(screen.getByRole('progressbar', { name: 'Subject progress' })).toHaveAttribute('aria-valuenow', '100');
+    selectMonthWeek('March 2026');
+    expect(screen.getByRole('region', { name: 'March lesson content' })).toBeVisible();
+    expect(screen.queryByText('Current', { exact: true })).not.toBeInTheDocument();
+  });
 
   it('completes a reused activity only in the course where it was submitted', async () => {
     mockMaterialRequests();
@@ -683,7 +721,7 @@ describe('subject months, weeks and completion', () => {
     render(<StudentActivityPanel data={{ ...data, activities: [first, second], count: 2, completed_count: 0, module_count: 2 }} kind="commercial" learnerId="132" loading={false} error={null} onRetry={vi.fn()} />);
     fireEvent.click(await screen.findByRole('button', { name: /Course A/ }));
     selectMonthWeek('Undated activities');
-    fireEvent.click(screen.getByRole('button', { name: 'Reflection' }));
+    expect(await screen.findByRole('region', { name: 'Reflection content' })).toBeVisible();
     fireEvent.click(await screen.findByRole('button', { name: 'Submit & complete' }));
     await screen.findByText('Activity completed.');
     expect(screen.getByRole('progressbar', { name: 'Subject progress' })).toHaveAttribute('aria-valuenow', '100');
@@ -699,19 +737,21 @@ describe('subject months, weeks and completion', () => {
     const history: StudentActivityResponse = { ...data, activities: [
       { ...data.activities[0], activity_id: 'catalogue:1:material:10', catalogue_kind: 'material', activity: 'Original reading' },
       { ...data.activities[0], activity_id: 'catalogue:1:quiz:10', catalogue_kind: 'quiz', category: 'quiz', activity: 'Original quiz', can_open_material: false },
-      { ...data.activities[1], activity: 'Unavailable quiz', catalogue_kind: 'quiz', category: 'quiz', can_open_material: false },
+      { ...data.activities[1], activity: 'Unavailable material', catalogue_kind: 'material', can_open_material: false },
     ] };
     render(<StudentActivityPanel data={history} kind={kind} learnerId="132" loading={false} error={null} onRetry={vi.fn()} />);
     fireEvent.click(await screen.findByRole('button', { name: /Leadership/ }));
     const sidebar = within(screen.getByRole('complementary', { name: 'Module activities' }));
-    expect(sidebar.getByRole('button', { name: /Unavailable quiz/ })).toBeDisabled();
+    expect(sidebar.getByRole('button', { name: /Unavailable material/ })).toBeDisabled();
     fireEvent.click(sidebar.getByRole('button', { name: /Original quiz/ }));
-    expect(await screen.findByText('Saved quiz review')).toBeVisible();
+    const review = await screen.findByRole('region', { name: 'Original quiz content' });
+    expect(await within(review).findByText('Saved quiz review')).toBeVisible();
     expect(screen.getByRole('group', { name: 'Original quiz activity' })).toHaveTextContent('Complete');
     expect(screen.queryByRole('region', { name: 'Original reading content' })).not.toBeInTheDocument();
     const materialRequests = requests.mock.calls.filter(([url]) => url.includes('/student-activity/'));
-    expect(materialRequests).toHaveLength(1);
-    expect(materialRequests[0][0]).toContain(`/student-activity/${kind}/132/?group_id=1&activity_id=10&catalogue_kind=quiz`);
+    expect(materialRequests).toHaveLength(2);
+    expect(materialRequests[0][0]).toContain(`/student-activity/${kind}/132/?group_id=1&activity_id=10`);
+    expect(materialRequests[1][0]).toContain(`/student-activity/${kind}/132/?group_id=1&activity_id=10&catalogue_kind=quiz`);
     expect(requests.mock.calls.filter(([, options]) => options?.method === 'POST')).toHaveLength(0);
     expect(screen.queryByRole('button', { name: /Start quiz|Try quiz again|Submit/ })).not.toBeInTheDocument();
   });
@@ -722,20 +762,20 @@ describe('subject months, weeks and completion', () => {
     fireEvent.click(await screen.findByRole('button', { name: /Leadership/ }));
     expect(screen.getByRole('complementary', { name: 'Module activities' })).toBeVisible();
     expect(screen.queryByRole('button', { name: /^Expand February/ })).not.toBeInTheDocument();
-    expect(screen.queryByTitle('Reflection frame')).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Reflection' }));
     const frame = await screen.findByTitle('Reflection frame');
+    expect(screen.queryByRole('button', { name: 'Open activity' })).not.toBeInTheDocument();
     expect(frame).toHaveAttribute('src', 'https://example.org/lesson');
     selectMonthWeek('March 2026');
     expect(frame).not.toBeVisible();
-    expect(screen.getByRole('button', { name: 'March lesson' })).toBeVisible();
+    expect(screen.getByRole('region', { name: 'March lesson content' })).toBeVisible();
     selectMonthWeek();
     expect(frame).toBeVisible();
-    expect(screen.getByRole('button', { name: 'Reflection' })).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.getByRole('region', { name: 'Reflection content' })).toBeVisible();
+    expect(requests.mock.calls.filter(([url]) => url.includes('activity_id=11'))).toHaveLength(1);
     expect(requests.mock.calls.filter(([, options]) => options?.method === 'POST')).toHaveLength(0);
     fireEvent.click(screen.getByRole('button', { name: 'All subjects' }));
     fireEvent.click(screen.getByRole('button', { name: /Leadership/ }));
-    expect(screen.queryByTitle('Reflection frame')).not.toBeInTheDocument();
+    expect(await screen.findByTitle('Reflection frame')).toBeVisible();
   });
 
   it('keeps course and week progress based on all activities while searching', () => {
@@ -777,8 +817,8 @@ describe('subject months, weeks and completion', () => {
     selectMonthWeek('Extra activities');
     fireEvent.change(screen.getByRole('textbox', { name: 'Search modules or activities' }), { target: { value: 'Extra reading' } });
     expect(weekProgress()).toHaveAttribute('aria-valuenow', '0');
-    fireEvent.click(screen.getByRole('button', { name: 'Extra reading' }));
-    expect(await screen.findByTitle('Reflection frame')).toBeVisible();
+    expect(screen.getByRole('region', { name: 'Extra reading content' })).toBeVisible();
+    expect(await within(screen.getByRole('region', { name: 'Extra reading content' })).findByTitle('Reflection frame')).toBeVisible();
     fireEvent.click(screen.getByRole('button', { name: 'Submit & complete' }));
     await screen.findByText('Activity completed.');
     expect(weekProgress()).toHaveAttribute('aria-valuenow', '10');
@@ -811,13 +851,14 @@ describe('subject months, weeks and completion', () => {
     expect(screen.getByRole('button', { name: /^Introduction, 2 components/ })).toHaveAttribute('aria-current', 'step');
     expect(weekProgress()).toHaveAttribute('aria-valuenow', '50');
     selectMonthWeek('Introduction');
-    expect(screen.getByRole('button', { name: 'Safeguarding' })).toBeVisible();
+    fireEvent.click(within(screen.getByRole('complementary', { name: 'Module activities' })).getByRole('button', { name: /Safeguarding/ }));
+    expect(screen.getByRole('group', { name: 'Safeguarding activity' })).toBeVisible();
     expect(within(screen.getByRole('group', { name: 'Safeguarding activity' })).getByText('Complete')).toBeVisible();
     expect(screen.getByText(/Best score 80%/)).toBeVisible();
     expect(screen.queryByText(/2025-05-27|Activities awaiting a date/)).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'October lecture' })).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Reflection' }));
-    await screen.findByTitle('Reflection frame');
+    fireEvent.click(within(screen.getByRole('complementary', { name: 'Module activities' })).getByRole('button', { name: /Reflection/ }));
+    await within(screen.getByRole('region', { name: 'Reflection content' })).findByTitle('Reflection frame');
     fireEvent.click(screen.getByRole('button', { name: 'Submit & complete' }));
     await screen.findByText('Activity completed.');
     expect(weekProgress()).toHaveAttribute('aria-valuenow', '100');
@@ -836,9 +877,10 @@ describe('subject months, weeks and completion', () => {
     fireEvent.click(screen.getByRole('button', { name: /Leadership/ }));
     selectMonthWeek();
     selectMonthWeek('March 2026');
-    expect(screen.getAllByText('Lecture: Lecture 1 - 06/02/2026')).toHaveLength(2);
+    expect(screen.getByText('Lecture: Course templates')).toBeVisible();
     expect(screen.queryByText(/Date awaiting confirmation|Date needs review|activity dates? needs? confirmation/i)).not.toBeInTheDocument();
     selectMonthWeek();
+    expect(screen.getByText('Lecture: Lecture 1 - 06/02/2026')).toBeVisible();
     expect(screen.queryByText(/Date awaiting confirmation|Date needs review|activity dates? needs? confirmation/i)).not.toBeInTheDocument();
     expect(screen.getByRole('progressbar', { name: 'Subject progress' })).toHaveAttribute('aria-valuenow', '33.33');
   });
@@ -851,7 +893,7 @@ describe('subject months, weeks and completion', () => {
     render(<ModulesTab real={{ studentActivityAvailable: true } as LearnerDetail} loading={false} loadError={null} kind="commercial" id="132" />);
     fireEvent.click(await screen.findByRole('button', { name: /Leadership/ }));
     selectMonthWeek();
-    fireEvent.click(screen.getByRole('button', { name: 'Reflection' }));
+    expect(screen.getByRole('region', { name: 'Reflection content' })).toBeVisible();
     const submit = await screen.findByRole('button', { name: 'Submit & complete' });
     const frame = screen.getByTitle('Reflection frame');
     expect(submit.compareDocumentPosition(frame) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
@@ -870,11 +912,11 @@ describe('subject months, weeks and completion', () => {
     const submitted = requests.mock.calls.find(([url]) => url.endsWith('/attempt-1/'))![1]!;
     expect(JSON.parse(submitted.body as string)).toEqual({ answers: {}, reading_confirmed: true });
     expect(submitted.headers).toMatchObject({ 'X-CSRFToken': 'csrf-value' });
-    fireEvent.click(screen.getByRole('button', { name: 'Reflection' }));
-    expect(within(screen.getByRole('group', { name: 'Reflection activity' })).getByText('Complete')).toBeVisible();
+    selectMonthWeek('March 2026');
+    selectMonthWeek();
+    expect(within(screen.getByRole('region', { name: 'Reflection content' })).getByText('Complete')).toBeVisible();
     expect(within(screen.getByRole('group', { name: 'Reflection activity' })).queryByText('Not complete')).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Reflection' }));
-    await screen.findByTitle('Reflection frame');
+    expect(frame).toBeVisible();
     expect(screen.queryByRole('button', { name: 'Submit & complete' })).not.toBeInTheDocument();
     expect(requests.mock.calls.filter(([, options]) => options?.method === 'POST')).toHaveLength(2);
     fireEvent.click(screen.getByRole('button', { name: 'All subjects' }));
@@ -887,7 +929,7 @@ describe('subject months, weeks and completion', () => {
     render(<StudentActivityPanel data={scheduledData} kind="commercial" learnerId="132" loading={false} error={null} onRetry={vi.fn()} />);
     fireEvent.click(await screen.findByRole('button', { name: /Leadership/ }));
     selectMonthWeek();
-    fireEvent.click(screen.getByRole('button', { name: 'Reflection' }));
+    expect(screen.getByRole('region', { name: 'Reflection content' })).toBeVisible();
     fireEvent.click(await screen.findByRole('button', { name: 'Submit & complete' }));
     expect(await screen.findByRole('alert')).toHaveTextContent('Could not save');
     expect(screen.getByRole('progressbar', { name: 'Subject progress' })).toHaveAttribute('aria-valuenow', '33.33');
@@ -935,7 +977,7 @@ describe('subject months, weeks and completion', () => {
     render(<StudentActivityPanel data={scheduledData} kind="commercial" learnerId="132" loading={false} error={null} onRetry={vi.fn()} />);
     fireEvent.click(await screen.findByRole('button', { name: /Leadership/ }));
     selectMonthWeek();
-    fireEvent.click(screen.getByRole('button', { name: 'Reflection' }));
+    expect(screen.getByRole('region', { name: 'Reflection content' })).toBeVisible();
     fireEvent.click(await screen.findByRole('button', { name: 'Start quiz' }));
     const submit = await screen.findByRole('button', { name: 'Submit answers' });
     expect(submit).toBeDisabled();
@@ -946,8 +988,8 @@ describe('subject months, weeks and completion', () => {
     selectMonthWeek('March 2026');
     expect(submit).not.toBeVisible();
     selectMonthWeek();
-    expect(screen.getByLabelText('Choice A')).toBeChecked();
-    expect(screen.getByLabelText('I have completed the reading material.')).toBeChecked();
+    expect(within(screen.getByRole('region', { name: 'Reflection content' })).getByLabelText('Choice A')).toBeChecked();
+    expect(within(screen.getByRole('region', { name: 'Reflection content' })).getByLabelText('I have completed the reading material.')).toBeChecked();
     expect(submit).toBeVisible();
     expect(requests.mock.calls.filter(([, options]) => options?.method === 'POST')).toHaveLength(1);
     fireEvent.click(submit);
@@ -967,7 +1009,7 @@ describe('subject months, weeks and completion', () => {
     render(<StudentActivityPanel data={scheduledData} kind="commercial" learnerId="132" loading={false} error={null} onRetry={vi.fn()} />);
     fireEvent.click(await screen.findByRole('button', { name: /Leadership/ }));
     selectMonthWeek();
-    fireEvent.click(screen.getByRole('button', { name: 'Reflection' }));
+    expect(screen.getByRole('region', { name: 'Reflection content' })).toBeVisible();
     fireEvent.click(await screen.findByRole('button', { name: 'Start quiz' }));
     await waitFor(() => expect(screen.getByLabelText('Choice A')).toBeEnabled());
     fireEvent.click(screen.getByLabelText('Choice A'));

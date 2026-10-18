@@ -310,7 +310,8 @@ describe('map and My Learning navigation', () => {
   it('opens the evidence activity in its My Learning week', async () => {
     renderWorkspace('/learner/my-learning/commercial/132?activity=2', 'catalogue');
     expect(await screen.findByRole('region', { name: 'Second reading content' })).toBeVisible();
-    expect(screen.getByRole('button', { name: 'Second reading' })).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.getByRole('group', { name: 'Second reading activity' })).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'Open activity' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'First reading' })).not.toBeInTheDocument();
   });
 
@@ -337,7 +338,7 @@ describe('map and My Learning navigation', () => {
       <StudentActivityPanel data={completedCurrentWeek} kind="commercial" learnerId="132" loading={false} error={null} onRetry={() => {}} />
     </MemoryRouter>);
     expect(await screen.findByRole('region', { name: 'Week 2 materials' })).toBeVisible();
-    expect(screen.getByRole('button', { name: 'Second reading' })).toBeVisible();
+    expect(screen.getByRole('group', { name: 'Second reading activity' })).toBeVisible();
     expect(screen.queryByRole('button', { name: 'First reading' })).not.toBeInTheDocument();
   });
 
@@ -453,7 +454,7 @@ describe('map and My Learning navigation', () => {
   it('opens a saved week directly in My Learning and links the same subject back to the map', async () => {
     renderWorkspace('/learner/my-learning/commercial/132?subject=legacy%3A1&week=2026-09-14', 'catalogue');
     await screen.findByRole('region', { name: 'Week 2 materials' });
-    expect(screen.getByRole('button', { name: 'Second reading' })).toBeVisible();
+    expect(screen.getByRole('group', { name: 'Second reading activity' })).toBeVisible();
     expect(screen.getByRole('complementary', { name: 'Module activities' })).toBeVisible();
     expect(screen.getByRole('link', { name: 'View learning map' })).toHaveAttribute('href', '/learner/learning-plan/modules/commercial/132?subject=legacy%3A1');
     fireEvent.click(screen.getByRole('button', { name: 'All subjects' }));
