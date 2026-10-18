@@ -1,9 +1,9 @@
 """Moving a learner's progress when they are shifted between modules.
 
-The pairing is by position — week 1 to week 1 — but which *component* a piece of
-progress lands on is a human decision, so these cover the offer (which weeks and
-components are shown, and what is suggested) and the write (what is moved and
-what is archived).
+The pairing prefers stable week identity or one exact lesson title before
+falling back to delivery position. Which *component* a piece of progress lands
+on is a human decision, so these cover the offer (which weeks and components
+are shown, and what is suggested) and the write (what is moved and archived).
 """
 import json
 from datetime import datetime, timezone as tz
@@ -77,6 +77,10 @@ def _entry(component_ref, kind="component", **kwargs):
         attempt=kwargs.get("attempt"),
         submitted_at=kwargs.get("submitted_at", datetime(2026, 8, 26, 11, 48, tzinfo=tz.utc)),
         started_at=None,
+        reported_time=kwargs.get("reported_time", ""),
+        claimed_seconds=kwargs.get("claimed_seconds"),
+        verified_seconds=kwargs.get("verified_seconds"),
+        time_tracking_source=kwargs.get("time_tracking_source", ""),
         save=Mock(),
     )
 
@@ -184,6 +188,43 @@ class ProgressPairingTests(PairingCase, SimpleTestCase):
                 {"fromComponentId": "C-A3", "toComponentId": "C-B3"},
             ],
         )
+
+    def test_same_lesson_title_moves_video_when_cohorts_use_different_week_numbers(self):
+        source_weeks = [{
+            "weekId": "FRI-W5", "weekNumber": 5, "title": "L4: Data, Insight and Analytics",
+            "components": [{
+                "componentId": "FRI-VID", "title": "P1 - VID - Your First Cold Case",
+                "type": "video", "otjHours": 0.08,
+            }],
+        }]
+        target_weeks = [
+            {"weekId": "THUR-W3", "weekNumber": 3, "title": "Earlier lesson", "components": []},
+            {
+                "weekId": "THUR-W4", "weekNumber": 4, "title": "L4: Data, Insight and Analytics",
+                "components": [{
+                    "componentId": "THUR-VID", "title": "P1 - VID - Your First Cold Case",
+                    "type": "video", "otjHours": 0.08,
+                }],
+            },
+        ]
+        profile = SimpleNamespace(id=211)
+        with patch("learner_api.module_shift._weeks_with_components", side_effect=[source_weeks, target_weeks]), \
+                patch("learner_api.module_shift.learner_profile_for_source", return_value=profile), \
+                patch("learner_api.module_shift._progress_by_component", return_value={
+                    "FRI-VID": {
+                        "entries": 1, "kinds": ["video"], "lastAt": "",
+                        "otjHours": 0.08, "points": 0,
+                    },
+                }), patch("learner_api.module_shift._reviews_by_component", return_value={}):
+            weeks, suggested, reason = module_shift._progress_pairing(
+                SimpleNamespace(pk=62), "MARTECH-FRI", "MARTECH-THUR",
+            )
+
+        self.assertEqual(reason, "")
+        self.assertEqual(weeks[0]["to"]["weekId"], "THUR-W4")
+        self.assertEqual(suggested, [{
+            "fromComponentId": "FRI-VID", "toComponentId": "THUR-VID",
+        }])
 
     def test_no_progress_says_so_rather_than_offering_an_empty_pairing(self):
         response, body = self._call([])
@@ -412,10 +453,12 @@ class RepointTests(SimpleTestCase):
         self.assertEqual(entry.week_ref, "W-B1")
         # The group teaching it changes with the module.
         self.assertEqual(entry.group_title, "G2 T")
-        # The component's own values come from the component now credited.
-        self.assertEqual(float(entry.expected_otjh), 3.0)
+        # The learner's recorded duration stays exactly as earned. The target
+        # component's authored estimate must not rewrite historical progress.
+        self.assertEqual(float(entry.expected_otjh), 2.0)
         self.assertEqual(entry.points, 20)
         self.assertEqual(entry.component_link_status, "resolved_to_current_component")
+        self.assertNotIn("expected_otjh", module_shift.REPOINTED_FIELDS)
 
     def test_what_the_learner_actually_did_is_not_rewritten(self):
         entry = _entry("C-A3", grade=72, attempt=2)
@@ -427,6 +470,32 @@ class RepointTests(SimpleTestCase):
         self.assertEqual(entry.attempt, 2)
         self.assertEqual(entry.submitted_at, submitted)
         self.assertEqual(entry.kind, "component")
+
+    def test_a_three_hour_video_keeps_its_recorded_duration_when_repointed(self):
+        entry = _entry(
+            "C-A1", kind="video", reported_time="180.0 minutes",
+            claimed_seconds=10800, verified_seconds=300,
+            time_tracking_source="active_playback:input",
+        )
+        recorded = (
+            entry.reported_time, entry.claimed_seconds,
+            entry.verified_seconds, entry.time_tracking_source,
+        )
+
+        self._repoint(
+            [entry], pairs=(("C-A1", "C-B1"),),
+            context={**TARGET_CONTEXT, "componentType": "video", "componentTitle": "Recorded Session 1"},
+        )
+
+        self.assertEqual(entry.component_ref, "C-B1")
+        self.assertEqual((
+            entry.reported_time, entry.claimed_seconds,
+            entry.verified_seconds, entry.time_tracking_source,
+        ), recorded)
+        changed = set(entry.save.call_args.kwargs["update_fields"])
+        self.assertTrue({
+            "reported_time", "claimed_seconds", "verified_seconds", "time_tracking_source",
+        }.isdisjoint(changed))
 
     def test_the_original_component_is_recorded_once(self):
         entry = _entry("C-A3")
@@ -533,11 +602,15 @@ class QuizShiftProgressTests(SimpleTestCase):
         self.profile = SimpleNamespace(pk=211)
         self.slot = {
             "component_id": "C-AQ", "module_id": "MOD-A",
-            "week_id": "W-A1", "quiz_id": "101",
+            "module_title": "Shift 1", "week_id": "W-A1", "week_title": "Lec1",
+            "component_title": "Matching quiz", "quiz_id": "101",
         }
 
     def attempt(self, **changes):
-        entry = _entry(None, kind="quiz", grade=1, attempt=1)
+        entry = _entry(
+            None, kind="quiz", grade=1, attempt=1,
+            component_title="Matching quiz",
+        )
         entry.quiz_ref = "101"
         entry.module_ref = None
         entry.week_ref = None
@@ -568,6 +641,19 @@ class QuizShiftProgressTests(SimpleTestCase):
         self.assertCountEqual(call.args[0].children, [("component_ref__isnull", True), ("component_ref", "")])
         return result
 
+    def test_slot_lookup_reads_normalized_links_before_legacy_settings(self):
+        with patch.object(module_shift, "_rows", return_value=[self.slot]) as rows:
+            result = module_shift._quiz_component_slots(self.profile, ["C-AQ"])
+
+        self.assertEqual(result, [self.slot])
+        sql, params = rows.call_args.args
+        self.assertIn("FROM curriculum.quiz_component_links link", sql)
+        self.assertLess(
+            sql.index("SELECT link.quiz_id::text"),
+            sql.index("c.settings_json->>'linkedQuizId'"),
+        )
+        self.assertEqual(params, [self.profile.pk, ["C-AQ"]])
+
     def test_quiz_only_attempt_is_offered_in_the_progress_summary(self):
         entry = self.attempt()
         summary = self.resolve([entry], summary=True)
@@ -587,6 +673,41 @@ class QuizShiftProgressTests(SimpleTestCase):
         ):
             with self.subTest(other=other):
                 self.assertEqual(self.resolve([self.attempt()], slots=[self.slot, other]), {})
+
+    def test_stored_titles_disambiguate_a_shared_legacy_quiz(self):
+        slots = [
+            self.slot,
+            {
+                **self.slot,
+                "component_id": "C-XQ",
+                "module_id": "MOD-X",
+                "module_title": "Another module",
+                "week_id": "W-X1",
+            },
+        ]
+        entry = self.attempt(module_ref=None, week_ref=None)
+
+        self.assertEqual(self.resolve([entry], slots=slots), {"C-AQ": [entry]})
+
+    def test_title_disambiguation_normalizes_visible_spacing(self):
+        slots = [
+            self.slot,
+            {
+                **self.slot,
+                "component_id": "C-XQ",
+                "module_id": "MOD-X",
+                "module_title": "Another module",
+            },
+        ]
+        entry = self.attempt(
+            module_ref=None,
+            week_ref=None,
+            module_title="  SHIFT\u00a01 ",
+            week_title=" LEC1 ",
+            component_title="MATCHING   QUIZ",
+        )
+
+        self.assertEqual(self.resolve([entry], slots=slots), {"C-AQ": [entry]})
 
     def test_explicit_module_and_week_disambiguate_the_original_slot(self):
         entry = self.attempt(module_ref="MOD-A", week_ref="W-A1")

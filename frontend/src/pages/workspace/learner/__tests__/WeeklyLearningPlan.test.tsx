@@ -52,10 +52,10 @@ describe('weekly live session attendance', () => {
 
   it.each([
     { at: '2026-09-07T07:59:59Z', attended: null, label: 'upcoming', state: 'current' },
-    { at: '2026-09-07T10:00:00Z', attended: null, label: 'not attended', state: 'current' },
+    { at: '2026-09-07T10:00:00Z', attended: null, label: 'unmarked', state: 'current' },
     { at: '2026-09-07T10:01:00Z', attended: false, label: 'not attended', state: 'current' },
     { at: '2026-09-07T10:01:00Z', attended: true, label: 'attended', state: 'attended' },
-    { at: '2026-09-14T12:00:00Z', attended: null, label: 'not attended', state: 'missed' },
+    { at: '2026-09-14T12:00:00Z', attended: null, label: 'unmarked', state: 'unmarked' },
     { at: '2026-09-14T12:00:00Z', attended: true, label: 'attended', state: 'attended' },
   ])('shows $label and disables joining at $at', ({ at, attended, label, state }) => {
     vi.useFakeTimers();
@@ -69,7 +69,7 @@ describe('weekly live session attendance', () => {
   });
 
   it('uses purple for the current week, red for a past missed week, and gray for an upcoming week', () => {
-    const schedule = sessionSchedule(null);
+    const schedule = sessionSchedule(false);
     schedule.modules[0].curriculumSlots?.push({ slotNumber: 2, date: '2026-09-14', day: 'Monday',
       type: 'live-session', sessionNumber: 2, holidays: [], weekId: 'W2', weekTitle: 'Plan week 2' });
     vi.useFakeTimers();
@@ -93,7 +93,7 @@ describe('weekly live session attendance', () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-09-13T22:59:30Z'));
     render(<MemoryRouter><WeeklyLearningPlan kind="commercial" learnerId="125"
-      schedule={sessionSchedule(null)} scheduleLoading={false} /></MemoryRouter>);
+      schedule={sessionSchedule(false)} scheduleLoading={false} /></MemoryRouter>);
 
     expect(screen.getByRole('img', { name: 'Plan week 1 session: not attended' })).toHaveAttribute('data-state', 'current');
     act(() => vi.advanceTimersByTime(30_000));
@@ -149,7 +149,7 @@ describe('weekly live session attendance', () => {
     act(() => vi.advanceTimersByTime(60 * 60_000));
     expect(screen.getByRole('img', { name: 'Plan week 1 session: in progress' })).toBeVisible();
     act(() => vi.advanceTimersByTime(60 * 60_000));
-    expect(screen.getByRole('img', { name: 'Plan week 1 session: not attended' })).toHaveAttribute('data-state', 'current');
+    expect(screen.getByRole('img', { name: 'Plan week 1 session: unmarked' })).toHaveAttribute('data-state', 'current');
     expect(screen.getByRole('button', { name: 'Join session' })).toBeDisabled();
   });
 

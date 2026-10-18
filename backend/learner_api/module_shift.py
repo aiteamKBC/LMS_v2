@@ -14,9 +14,10 @@ it was stored, so a learner part-way through delivery can still be moved.
 
 A learner part-way through a module has progress on its components, and that
 progress is the reason the shift is not just a swap of ids: it has to land on
-the equivalent components of the module they are moving to. Weeks are shown in
-the same position, but components are matched by stable component id first and,
-for cloned group modules with new ids, by one exact cleaned title and type.
+the equivalent components of the module they are moving to. Weeks are matched
+by stable id or one exact cleaned title before falling back to delivery order;
+components are matched by stable component id first and, for cloned group
+modules with new ids, by one exact cleaned title and type.
 Ambiguous or unmatched progress is soft-archived when the learner leaves the
 source module. It remains available as historical evidence, but no longer
 contributes to the learner's active progress, hours or KSB totals.
@@ -322,10 +323,32 @@ def _quiz_component_slots(profile, component_ids):
     return _rows(
         """
         SELECT c.id AS component_id, c.module_catalogue_id AS module_id,
-               c.week_id, c.settings_json->>'linkedQuizId' AS quiz_id
+               m.title AS module_title, c.week_id, w.title AS week_title,
+               c.title AS component_title,
+               coalesce(
+                   (SELECT link.quiz_id::text
+                    FROM curriculum.quiz_component_links link
+                    WHERE link.component_id = c.id
+                    ORDER BY link.id
+                    LIMIT 1),
+                   c.settings_json->>'linkedQuizId'
+               ) AS quiz_id
         FROM curriculum.components c
+        JOIN curriculum.modules m ON m.module_catalogue_id = c.module_catalogue_id
+        LEFT JOIN curriculum.weeks w ON w.id = c.week_id
+          AND w.module_catalogue_id = c.module_catalogue_id
         WHERE c.type = 'quiz'
-          AND nullif(c.settings_json->>'linkedQuizId', '') IS NOT NULL
+          AND nullif(
+              coalesce(
+                  (SELECT link.quiz_id::text
+                   FROM curriculum.quiz_component_links link
+                   WHERE link.component_id = c.id
+                   ORDER BY link.id
+                   LIMIT 1),
+                  c.settings_json->>'linkedQuizId'
+              ),
+              ''
+          ) IS NOT NULL
           AND """ + visible_child_sql("c") + """
           AND c.module_catalogue_id IN (
               SELECT module_ref FROM "Learner".learner_training_plan_modules
@@ -344,8 +367,11 @@ def _progress_entries_by_component(profile, component_ids):
 
     Quiz submissions historically store quiz_ref without component_ref. Only
     one matching slot in the learner's plan may claim such an attempt. Explicit
-    module/week references narrow that choice; an existing component reference
-    always wins, including progress already moved by an earlier shift.
+    module/week references narrow that choice first; older attempts retain the
+    module, week and quiz titles shown when submitted, so those conservatively
+    disambiguate cloned/shared quiz slots when stable references are absent.
+    An existing component reference always wins, including progress already
+    moved by an earlier shift.
     """
     if profile is None or not component_ids:
         return {}
@@ -367,14 +393,32 @@ def _progress_entries_by_component(profile, component_ids):
         kind="quiz", quiz_ref__in=list(quiz_ids),
     )
     for entry in attempts:
-        candidates = {
-            _s(slot["component_id"]) for slot in slots
+        candidates = [
+            slot for slot in slots
             if _s(slot["quiz_id"]) == _s(entry.quiz_ref)
             and (not _s(entry.module_ref) or _s(slot["module_id"]) == _s(entry.module_ref))
             and (not _s(entry.week_ref) or _s(slot["week_id"]) == _s(entry.week_ref))
-        }
+        ]
+        # Before component_ref was written, quiz attempts still retained the
+        # visible module/week/quiz titles from the page that submitted them.
+        # Use each title only when it actually narrows an ambiguous set; a
+        # later curriculum rename must not invalidate an otherwise unique slot.
+        for entry_field, slot_field, stable_ref in (
+            ("module_title", "module_title", entry.module_ref),
+            ("week_title", "week_title", entry.week_ref),
+            ("component_title", "component_title", entry.component_ref),
+        ):
+            value = _component_title_key(getattr(entry, entry_field, ""))
+            if len(candidates) <= 1 or stable_ref or not value:
+                continue
+            narrowed = [
+                slot for slot in candidates
+                if _component_title_key(slot.get(slot_field)) == value
+            ]
+            if narrowed:
+                candidates = narrowed
         if len(candidates) == 1:
-            component_id = next(iter(candidates))
+            component_id = _s(candidates[0]["component_id"])
             if component_id in component_ids:
                 grouped.setdefault(component_id, []).append(entry)
     return grouped
@@ -492,8 +536,43 @@ def _suggested_pair(component, target_week, claimed=None):
     return title_matches[0]["componentId"] if len(title_matches) == 1 else ""
 
 
+def _paired_target_week(source_week, target_weeks, position):
+    """Find the equivalent destination week without trusting calendar position.
+
+    Cohort copies can schedule the same lesson under different week numbers
+    (for example a Friday copy in week 5 and a Thursday copy in week 4). A
+    stable id wins, then one exact cleaned lesson title. Week number and list
+    position remain conservative fallbacks for older, generically titled plans.
+    """
+    source_id = _s(source_week.get("weekId"))
+    same_id = [
+        week for week in target_weeks
+        if source_id and _s(week.get("weekId")) == source_id
+    ]
+    if len(same_id) == 1:
+        return same_id[0]
+
+    source_title = _component_title_key(source_week.get("title"))
+    same_title = [
+        week for week in target_weeks
+        if source_title and _component_title_key(week.get("title")) == source_title
+    ]
+    if len(same_title) == 1:
+        return same_title[0]
+
+    source_number = source_week.get("weekNumber")
+    same_number = [
+        week for week in target_weeks
+        if source_number is not None and week.get("weekNumber") == source_number
+    ]
+    if len(same_number) == 1:
+        return same_number[0]
+
+    return target_weeks[position] if position < len(target_weeks) else None
+
+
 def _progress_pairing(learner, from_id, to_id):
-    """The weeks of `from_id` holding progress, paired by position with `to_id`."""
+    """The progressed weeks of `from_id`, paired with equivalent `to_id` lessons."""
     source_weeks = _weeks_with_components(from_id)
     target_weeks = _weeks_with_components(to_id)
     if not source_weeks:
@@ -516,9 +595,9 @@ def _progress_pairing(learner, from_id, to_id):
         # Only the weeks the learner has actually worked in.
         if not any(c["componentId"] in progress for c in week["components"]):
             continue
-        # None when the module being joined is shorter: those components cannot
-        # be paired, and the picker says so rather than dropping them silently.
-        target = target_weeks[index] if index < len(target_weeks) else None
+        # Cohort copies can move a lesson to another numbered week. Prefer the
+        # same stable week/title before using the historical position fallback.
+        target = _paired_target_week(week, target_weeks, index)
         pairs.append({
             "order": index + 1,
             "from": {
@@ -674,7 +753,7 @@ REPOINTED_FIELDS = [
     "legacy_component_ref", "programme_ref", "programme_title",
     "module_ref", "module_title", "week_ref", "week_title",
     "group_ref", "group_title", "cohort_ref", "cohort_title",
-    "component_ref", "component_title", "component_type", "expected_otjh", "points",
+    "component_ref", "component_title", "component_type", "points",
     "component_link_status", "component_link_source",
 ]
 
@@ -757,11 +836,11 @@ def _repoint_progress(learner, profile, pairs, entries_by_component=None):
     """Move the learner's progress from each source component to its target.
 
     Only where the activity sits is rewritten — module, week, component, and the
-    component's own hours and points. What the learner did is left exactly as it
-    was: grades, attempts, scores, timestamps and quiz answers describe an
-    attempt that really happened, and rewriting those to match another module's
-    quiz would be inventing a record. The reflection and its tutor decision move
-    with it, for the same reason.
+    target component's points. What the learner did is left exactly as it was:
+    recorded/fallback hours, grades, attempts, scores, timestamps and quiz
+    answers describe an attempt that really happened, and rewriting those to
+    match another module's quiz would be inventing a record. The reflection and
+    its tutor decision move with it, for the same reason.
     """
     counts = {"entries": 0, "entryIds": [], "reviews": 0, "reviewsKept": 0}
     if entries_by_component is None:
@@ -789,8 +868,6 @@ def _repoint_progress(learner, profile, pairs, entries_by_component=None):
             entry.component_ref = target_id
             entry.component_title = _s(context.get("componentTitle")) or entry.component_title
             entry.component_type = _s(context.get("componentType")) or entry.component_type
-            if context.get("expectedOtjh") is not None:
-                entry.expected_otjh = _decimal(context.get("expectedOtjh"))
             if context.get("points") not in (None, ""):
                 entry.points = context.get("points")
             entry.component_link_status = "resolved_to_current_component"

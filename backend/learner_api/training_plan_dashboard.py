@@ -120,7 +120,7 @@ def plan_module(row):
             'learning_outcomes': []}
 
 
-def attach_curriculum_slots(module_rows, by_id, week_counts, weeks_by_number=None, *, strict=False):
+def attach_curriculum_slots(module_rows, by_id, week_counts, weeks_by_number=None, *, strict=False, holiday_loader=None):
     """Give every learner module the curriculum slot spine the Builder shows.
 
     This is a READ of the curriculum scheduler, not a second one. The holidays
@@ -159,7 +159,7 @@ def attach_curriculum_slots(module_rows, by_id, week_counts, weeks_by_number=Non
 
     weeks_by_number = weeks_by_number or {}
     try:
-        holidays = cohort_selected_holidays_by_cohort(
+        holidays = (holiday_loader or cohort_selected_holidays_by_cohort)(
             [row.get('cohort_id') for row in module_rows]
         )
     except Exception:
@@ -703,9 +703,14 @@ def read_dashboard(source, section=None, *, records=None, targets=None, dashboar
         coach['phone'] = phone
     if compact_monthly:
         return {**contract_data, 'modules': modules, 'moduleLinks': links, 'reviews': reviews, 'coach': coach}
+    module_progress = _canonical_module_progress(progress_records, modules) if owner is not None else {}
+    if module_progress:
+        from .live_session_progress import read_live_credits, supplement_module_hours
+        module_progress = supplement_module_hours(module_progress, progress_records,
+            read_live_credits(source, module_ids=[module['id'] for module in modules]))
     return {**contract_data, 'actual': actual, 'actualAvailable': owner is not None,
             'moduleActivityHours': module_activity_hours(progress_records, modules) if owner is not None else None,
-            'moduleProgress': _canonical_module_progress(progress_records, modules) if owner is not None else {},
+            'moduleProgress': module_progress,
             'modules': modules, 'moduleLinks': links,
             'sessions': sessions, 'reviews': reviews, 'coach': coach,
             'generatedAt': datetime.now(timezone.utc).isoformat()}

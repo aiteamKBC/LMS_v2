@@ -1,6 +1,7 @@
 import { learningFetch, personalLearningUrl } from '@/lib/personalLearning';
 import { coachFetch } from '@/lib/coachFetch';
 import type { LearnerKind } from './learnerDetail';
+import { invalidateLearnerReads } from './learnerRead';
 
 export interface SessionPerson {
   email: string; name: string; seconds: number; expected: boolean;
@@ -64,6 +65,8 @@ export interface SessionFile {
 export interface TranscriptLink { id: string; timingReady: boolean; offsetSeconds: number | null }
 export interface TranscriptCue { start: number; end: number; speaker: string; text: string }
 export interface SessionResult {
+  attendanceMode?: 'live' | 'lazy';
+  learningOutcome?: 'present' | 'recorded' | 'awaiting_recording' | 'upcoming' | 'in_progress' | 'unmarked';
   id: string; seriesId: string; sessionNumber: number; startsAt: string; endsAt: string;
   title?: string; actualStartsAt?: string | null; actualEndsAt?: string | null;
   runs?: { startsAt: string; endsAt: string }[];
@@ -128,6 +131,7 @@ export async function recordRecordingWatch(seriesId: string, file: SessionFile, 
     headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrfToken, 'X-Requested-With': 'XMLHttpRequest' },
   });
   if (!response.ok) throw new Error(`Viewing time could not be saved (${response.status}).`);
+  invalidateLearnerReads();
   return response.json() as Promise<{ watchedSeconds: number; durationSeconds: number }>;
 }
 export const loadTranscriptCues = (seriesId: string, artifactId: string, learner?: SessionLearner, signal?: AbortSignal) =>

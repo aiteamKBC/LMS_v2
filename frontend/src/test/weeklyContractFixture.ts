@@ -20,9 +20,12 @@ export function weeklyContractFixture(value: unknown): WeeklyLearningResponse {
       && new Date(session.start).toLocaleDateString('en-CA', { timeZone: 'Europe/London' }) === slot.date);
     return { id: `${module.id}:${slot.slotNumber}`, moduleId: module.id, moduleTitle: module.title, weekId: slot.weekId,
       weekNumber: slot.sessionNumber ?? slot.slotNumber, slotNumber: slot.slotNumber, kind: slot.type, title: slot.weekTitle ?? `Week ${slot.sessionNumber}`,
-      startDate: slot.date, endDate: end.toISOString().slice(0,10), status: 'current', progress: progress.percent,
+      startDate: slot.date, endDate: end.toISOString().slice(0,10), status: slot.date > new Date().toLocaleDateString('en-CA', { timeZone: 'Europe/London' })
+        ? 'upcoming' : end.toISOString().slice(0,10) < new Date().toLocaleDateString('en-CA', { timeZone: 'Europe/London' }) ? 'past' : 'current', progress: progress.percent,
       completedActivities: progress.completed, totalActivities: progress.total, attended: live?.attended ?? null,
-      sessionState: live ? 'upcoming' : 'unscheduled', sessionStart: live?.start, sessionDurationMinutes: live?.minutes,
+      sessionState: live ? Date.parse(live.start) > Date.now() ? 'upcoming' : live.attended === true ? 'attended'
+        : live.attended === false ? 'missed' : live.minutes && Date.parse(live.start) + live.minutes * 60_000 <= Date.now() ? 'unmarked' : 'live'
+        : 'unscheduled', sessionStart: live?.start, sessionDurationMinutes: live?.minutes,
       holidayNote: slot.holidayNote ?? '', holidays: slot.holidays };
   }));
   const requestedId = detail.weekId ?? detail.selectedWeekId;
@@ -37,7 +40,7 @@ export function weeklyContractFixture(value: unknown): WeeklyLearningResponse {
     totalActivities: week.totalActivities, progress: week.progress, ksbCount: ksb.total, achievedKsbCount: ksb.achieved,
     otjhHours: hours.actualHours, plannedOtjhHours: hours.plannedHours, untimedActivities: hours.untimed },
     liveSession: session ? { ...session, date: week.startDate, durationMinutes: session.minutes, endTime: null,
-      sessionState: 'upcoming' } : null,
+      sessionState: week.sessionState } : null,
     activities: components.map(component => ({ id: component.componentId!, title: component.title, type: component.type ?? 'activity',
       completed: activityStatus(component, done) === 'completed', status: activityStatus(component, done), isQuiz: !!component.isQuiz,
       expectedHours: activityExpectedMinutes(component) == null ? null : activityExpectedMinutes(component)! / 60,

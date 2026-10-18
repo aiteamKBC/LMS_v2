@@ -1,5 +1,6 @@
-import { readLearnerJson, invalidateLearnerReads } from './learnerRead';
+import { readLearnerJson } from './learnerRead';
 import type { LearnerKind } from './learnerDetail';
+import { invalidateWeeklyProgress } from './weeklyLearning';
 
 export interface MeetingAttendance {
   id: string; title: string; status?: string; date: string | null; startTime: string | null; durationMinutes: number | null;
@@ -20,6 +21,6 @@ export async function confirmMeetingAttendance(kind: LearnerKind, id: string, me
     headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrfToken }, body: JSON.stringify({ meetingId }) });
   const data = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(data.error || 'Could not record attendance. Please try again.');
-  invalidateLearnerReads();
+  invalidateWeeklyProgress(kind, id);
   return data;
 }

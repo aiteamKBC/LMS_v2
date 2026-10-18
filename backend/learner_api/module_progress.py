@@ -104,8 +104,10 @@ def aggregate_module_progress(activity, detail, current, progress, titles=None):
             if item.get('isQuiz'):
                 done = bool(item.get('quizMeta')) and any(
                     attempt.get('passed') is True and (
-                        (quiz_id is not None and str(attempt.get('quizId')) == str(quiz_id))
-                        or (component_id and attempt.get('componentId') == component_id))
+                        (bool(attempt.get('componentId')) and bool(component_id)
+                         and str(attempt.get('componentId')) == str(component_id))
+                        or (not attempt.get('componentId') and quiz_id is not None
+                            and str(attempt.get('quizId')) == str(quiz_id)))
                     for attempt in detail['quizAttempts'])
             else:
                 done = item.get('attendanceCompleted') is True or (bool(component_id) and str(component_id) in completed)
@@ -143,6 +145,11 @@ def canonical_module_progress(source, profile, *, read_projection=None):
         journal_sources._current.reset(token)
     if read_projection is None:
         detail, current, progress, titles = read_native_progress(source, profile)
+    from .live_session_progress import read_live_credits
+    credits = read_live_credits(source, components=detail['components'])
+    progress = [*progress, *({'kind': 'component', 'passed': None,
+                            'component_ref': row['componentId'], 'submitted_at': row['submittedAt']}
+                           for row in credits)]
     return aggregate_module_progress(activity, detail, current, progress, titles)
 
 

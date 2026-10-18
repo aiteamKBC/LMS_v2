@@ -10,6 +10,7 @@ import { useResolvedLearner } from '@/hooks/useMyLearner';
 import { upcomingSchedule, homeSummary } from '@/api/learnerOverview';
 import type { LearnerKind } from '@/api/learnerDetail';
 import { LearnerLoadError } from '@/components/feature/LearnerLoadError';
+import { SupportChatWidget } from '@/components/SupportChatWidget';
 import { learnerHref } from '@/lib/learnerRoutes';
 import { homeActions, greeting, homeUpcomingEvents, withLearner } from './homeData';
 import { ReferenceIcon } from './ReferenceIcon';
@@ -149,6 +150,11 @@ function LearnerHome({ kind, id, preview = false }: { kind?: LearnerKind; id?: s
         {schedule.error && <div className={styles.empty} role="alert">Some upcoming activity could not be loaded. <button onClick={schedule.refresh}>Try again</button></div>}
       </aside>
       <footer className={styles.footer}><span>KENT BUSINESS COLLEGE&nbsp;&nbsp; LEARN&nbsp;&nbsp; BELONG&nbsp;&nbsp; ACHIEVE</span><p>A Brighter Kent<br/>A Bolder You</p></footer>
+      {/* Home only. Its launcher is positioned against the Inclusion &
+          Safeguarding tab, which lives on this page, and the learner is signed
+          in by the time they reach it — neither holds on the login screen or
+          on pages that render the shared workspace shell instead. */}
+      <SupportChatWidget />
     </main>
   </div>;
 }

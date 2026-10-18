@@ -56,12 +56,13 @@ export function SessionResults({ seriesId, sessionNumber, moduleId, learner, att
   const [recordingWatchSeconds, setRecordingWatchSeconds] = useState<Record<string, number>>({});
   const [currentTime, setCurrentTime] = useState(() => Date.now());
   const kind = learner?.kind, learnerId = learner?.id;
-  const recordedSessionsLearner = (attendanceType || '').trim().toLowerCase() === 'recorded';
   const load = useCallback((signal: AbortSignal) =>
     loadSessionResult(seriesId, sessionNumber, kind && learnerId ? { kind, id: learnerId } : undefined, signal, moduleId),
   [seriesId, sessionNumber, moduleId, kind, learnerId]);
   const saved = useSavedSessionData(load, true, data => ['queued', 'running'].includes(data?.job?.state || ''));
   const session = saved.data?.sessions[0];
+  const recordedSessionsLearner = session?.attendanceMode !== undefined
+    ? session.attendanceMode === 'lazy' : (attendanceType || '').trim().toLowerCase() === 'recorded';
   const loading = saved.loading;
   const scheduledStart = Date.parse(session?.startsAt || '');
   const upcoming = Number.isFinite(scheduledStart) && scheduledStart > currentTime;
@@ -89,6 +90,8 @@ export function SessionResults({ seriesId, sessionNumber, moduleId, learner, att
   const own = learner ? session?.attendance?.[0] : undefined;
   const ownRawStatus = own ? rawStatusOf(own) : undefined;
   const ownFinalOutcome = own ? finalOutcomeOf(own) : undefined;
+  const liveAttendanceSatisfied = !upcoming && session?.reportReady
+    && ownRawStatus === 'present' && ownFinalOutcome === 'present' && own?.attendance === 1;
   const sync = async () => {
     setSyncing(true); setError(''); setNotice(''); setNoticeKind('sync');
     try { setNotice((await requestSessionSync(seriesId)).message); saved.refresh(); }
@@ -167,9 +170,17 @@ export function SessionResults({ seriesId, sessionNumber, moduleId, learner, att
       ? 'Saved recordings and transcripts are not ready for playback yet. Please contact your tutor.'
       : 'Recording storage needs setup. Saved attendance is available below; synchronization and playback are unavailable until setup is complete.'}</p>}
     {loading ? <p role="status" className="p-5 text-sm">Loading saved session…</p> : !session ? !error && !saved.error && <p className="p-5 text-sm">This session has not been linked yet.</p> : <>
-      {learner && !preview && !recordingsOnly && !recordedSessionsLearner && <div className="m-4 rounded-xl border bg-background-50 p-4 text-sm">
+      {learner && !preview && !recordingsOnly && recordedSessionsLearner && !upcoming && !liveAttendanceSatisfied
+        && ['recorded', 'awaiting_recording'].includes(session.learningOutcome || '') && <div className="m-4 rounded-xl border bg-background-50 p-4 text-sm" role="status">
+          <strong>{session.learningOutcome === 'recorded' ? 'Completed by recording' : 'Awaiting recording'}</strong>
+          <p>{session.learningOutcome === 'recorded'
+            ? 'This session counts once towards your attendance through recorded learning.'
+            : 'Complete the session recordings to receive attendance credit. This session is excluded from your attendance percentage while you wait.'}</p>
+        </div>}
+      {learner && !preview && !recordingsOnly && (!recordedSessionsLearner || liveAttendanceSatisfied) && <div className="m-4 rounded-xl border bg-background-50 p-4 text-sm">
         <strong>Your original attendance: {ownRawStatus ? rawLabels[ownRawStatus] : upcoming ? 'Not available yet' : session.reportReady ? 'Identity needs review' : 'Awaiting report'}</strong>
         {own && <p className="mt-1 text-foreground-500">{Math.floor(own.seconds / 60)}m {own.seconds % 60}s verified in Teams. Presence requires more than 3 minutes.</p>}
+        {recordedSessionsLearner && liveAttendanceSatisfied && <p className="mt-1 font-semibold text-primary-700">Your live attendance counts for this session. Watching the recording is optional.</p>}
         {ownFinalOutcome && ownRawStatus && ownFinalOutcome !== ownRawStatus && <p className="mt-1 font-semibold text-primary-700">Effective outcome: {outcomeLabels[ownFinalOutcome]}</p>}
         {own?.attendance === 0 && !own.catchupCompleted && <Link className="mt-2 inline-block font-semibold text-primary-700 underline" to="/learner/attendance">{own.absenceReported ? 'View recovery plan' : 'Open attendance and report absence'}</Link>}
       </div>}

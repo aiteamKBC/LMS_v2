@@ -1,4 +1,6 @@
 import * as React from 'react';
+import { dashboardHeaderFixture } from '@/test/dashboardHeaderFixture';
+import type { LegacyDashboardHeader } from '@/api/dashboardHeader';
 import { Component, type ReactNode, type ComponentType } from 'react';
 import * as Router from 'react-router-dom';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
@@ -46,10 +48,10 @@ function headerFixture(learner: unknown = detail(), schedule: unknown = payload(
   const source = learner as { programme?: string; cohort?: string; group?: string };
   const original = schedule as TrainingPlanDashboard;
   const selected = learnerHeaderPlan(original.modules || [], source, '2026-09-07');
-  return { learner, schedule: { ...original, moduleLinks: undefined, modules: selected.modules.map(({ id, title, start_date, end_date }) => {
+  return dashboardHeaderFixture({ learner, schedule: { ...original, moduleLinks: undefined, modules: selected.modules.map(({ id, title, start_date, end_date }) => {
     const imported = Object.entries(original.moduleLinks || {}).filter(([ref, module]) => ref.startsWith('legacy:') && module.id === id);
     return { id, title, start_date, end_date, ...(imported.length === 1 ? { subjectId: imported[0][0] } : {}) };
-  }) }, week: { deadlines: [] }, lectureHref: null };
+  }) }, week: { deadlines: [] }, lectureHref: null } as LegacyDashboardHeader);
 }
 function dashboardFixture(url: string, value: unknown) {
   return isDashboardHeader(url) && value && typeof value === 'object' && 'name' in value
@@ -80,8 +82,7 @@ function payload(url: string): unknown {
       ksb: { completed: 0, total: 0, percent: null, status: 'empty', codes: [] },
       otjh: { historical: 0, new: 0, actual: 0, planned: null } } };
   if (/\/learner-(detail|summary)\//.test(url)) return detail();
-  if (/\/dashboard\/.*\/weekly\/$/.test(url)) return { id: '125', programme: 'Leadership', cohort: '', group: '', modules: [], week: [],
-    components: [], quizAttempts: [], videoProgress: [], componentProgress: [], schedule: { modules: [], sessions: [] } };
+  if (/\/dashboard\/.*\/weekly\/$/.test(url.split('?')[0])) return { version: 2, modules: [], weeks: [], selectedWeek: null };
   if (url.includes('/subject-covers/')) return { covers: {}, current_subjects: [], builder_subjects: {}, modules: {} };
   if (url.includes('/training-plan-dashboard/')) return { months: {}, actual: [], actualAvailable: false, modules: [], moduleLinks: {}, sessions: [], reviews: [], coach: { name: '', bookingUrl: null }, contractStatus: 'not-available', generatedAt: '' };
   if (url.includes('/reflection/submissions/')) return { statuses: [], assignments: [], submission: null };

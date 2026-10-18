@@ -297,7 +297,17 @@ UPCOMING_ASSIGNMENTS_SQL = f'''SELECT c.id,c.module_catalogue_id AS module_id,c.
       AND (w.id IS NULL OR {visible_week_sql('w')})'''
 
 
-def upcoming_assignment_deadlines(source, profile, today, until=None):
+# Header supplies the scheduling rows it already reads to the canonical Builder
+# planner. Empty weeks still consume slots; unrelated component bodies/metadata
+# do not influence an assignment's week date.
+HEADER_ASSIGNMENTS_SQL = UPCOMING_ASSIGNMENTS_SQL.replace('w.title AS section_title',
+    f'c.week_id,{COMPONENT_SCHEDULE_SETTINGS} AS schedule_settings,w.title AS section_title', 1) + '''
+      AND lower(regexp_replace(coalesce(c.settings_json->>'dueTiming',''),
+          '^[[:space:]]+|[[:space:]]+$','','g'))='end of week'
+    ORDER BY ''' + COMPONENT_ORDER
+
+
+def upcoming_assignment_deadlines(source, profile, today, until=None, *, header_only=False):
     """Home's assignment deadlines due from ``today`` to ``until`` (UK dates, inclusive), earliest first.
 
     The same rows and rule as the ``home-summary`` week deadlines: current plan
@@ -315,12 +325,15 @@ def upcoming_assignment_deadlines(source, profile, today, until=None):
             (today + timedelta(days=offset)).weekday() == 6 for offset in range((until - today).days + 1)):
         return []
     with connections['enrolment'].cursor() as cur:
-        cur.execute(UPCOMING_ASSIGNMENTS_SQL, [profile.id if profile is not None else None, source.pk])
+        cur.execute(HEADER_ASSIGNMENTS_SQL if header_only else UPCOMING_ASSIGNMENTS_SQL,
+                    [profile.id if profile is not None else None, source.pk])
         candidates = [row for row in rows(cur)
                       if str(row.get('due_timing') or '').strip().casefold() == 'end of week']
         if not candidates:
             return []
-        dates = read_builder_activity_dates(cur, sorted({row['module_id'] for row in candidates}))
+        options = {'components': [(row['id'], row['module_id'], row['week_id'], row['title'],
+                                   row['type'], row['schedule_settings']) for row in candidates]} if header_only else {}
+        dates = read_builder_activity_dates(cur, sorted({row['module_id'] for row in candidates}), **options)
     due, progress = [], []
     for row in candidates:
         row.update(dates.get(str(row['id'])) or activity_schedule(row['title'], section_title=row['section_title']))

@@ -41,6 +41,12 @@ def register_row(**overrides):
 
 class AttendanceLectureTests(SimpleTestCase):
     def setUp(self):
+        assignments = patch('learner_api.attendance_lectures.effective_assigned_module_ids', return_value=['assigned-module'])
+        assignments.start()
+        self.addCleanup(assignments.stop)
+        delivery = patch('learner_api.recorded_attendance.saved_delivery_mode', return_value='live')
+        delivery.start()
+        self.addCleanup(delivery.stop)
         profiles = patch('learner_api.models.LearnerProfile.objects')
         manager = profiles.start()
         manager.filter.return_value.values_list.return_value = []
@@ -94,8 +100,8 @@ class AttendanceLectureTests(SimpleTestCase):
              patch('learner_api.attendance_lectures.dict_rows', return_value=[]):
             read_native_occurrences(SimpleNamespace(id=12, email=' LEARNER@example.test '))
         assignment_sql, assignment_params = cur.execute.call_args_list[0].args
-        self.assertIn('enrolment."Created_users" WHERE id=%s', assignment_sql)
-        self.assertEqual(assignment_params, [12])
+        self.assertIn('cm.module_catalogue_id=ANY(%s)', assignment_sql)
+        self.assertEqual(assignment_params, [['assigned-module']])
         schedule_sql, schedule_params = cur.execute.call_args_list[1].args
         self.assertEqual(len(cur.execute.call_args_list), 2)
         self.assertIn('teams_shared_source_module_id', schedule_sql)
@@ -197,7 +203,7 @@ class AttendanceLectureTests(SimpleTestCase):
         self.assertEqual(result[0]['attendance_source_occurrence_id'], 'source-occ')
         self.assertEqual(result[0]['attendance_status'], 'present')
 
-    def test_empty_json_plan_still_uses_normalized_module_assignments(self):
+    def test_effective_plan_is_not_augmented_by_stale_normalized_assignments(self):
         conn = MagicMock()
         cur = conn.cursor.return_value.__enter__.return_value
         cur.fetchall.return_value = [('assigned-module', 'Current module title')]
@@ -205,8 +211,8 @@ class AttendanceLectureTests(SimpleTestCase):
              patch('learner_api.attendance_lectures.dict_rows', return_value=[]):
             read_native_occurrences(SimpleNamespace(id=12, email='learner@example.test'))
         assignment_sql = cur.execute.call_args_list[0].args[0]
-        self.assertIn('"Learner".learner_training_plan_modules', assignment_sql)
-        self.assertNotIn("WHERE jsonb_typeof(source.plan) IS DISTINCT FROM 'array'", assignment_sql)
+        self.assertNotIn('learner_training_plan_modules', assignment_sql)
+        self.assertEqual(cur.execute.call_args_list[0].args[1], [['assigned-module']])
 
     def test_confirmed_teams_attendee_is_present_when_the_saved_invite_is_missing(self):
         source = SimpleNamespace(id=12, username='Learner', email='learner@example.test')
@@ -501,6 +507,32 @@ class AttendanceLectureTests(SimpleTestCase):
         self.assertEqual(build_lectures([merged], {}, [], [], 'apprenticeship', 12)[0]['durationMinutes'], 120)
         summary = _summarize_attendance(rows)
         self.assertEqual((summary['sessions'], summary['present']), (1, 1))
+
+    def test_recorded_learner_live_attendance_needs_no_recording_and_counts_once(self):
+        for kind in ('commercial', 'apprenticeship'):
+            for watched in (False, True):
+                with self.subTest(kind=kind, watched=watched):
+                    row = register_row(source='microsoft-teams', session_id='occ-1',
+                        module_catalogue_id='mod-1', attendance_status='present',
+                        raw_attendance_status='present', effective_attendance=1)
+                    source = SimpleNamespace(id=12, email='learner@example.test', attendance_type='Recorded')
+                    progress = [{'componentId': 'recording-1', 'status': 'completed'}] if watched else []
+                    with patch('learner_api.attendance_lectures.lecture_register', return_value=[row]), \
+                         patch('learner_api.attendance_lectures.read_legacy_metadata', return_value=({}, [])), \
+                         patch('learner_api.attendance_lectures.read_native_components', return_value=([], progress)), \
+                         patch('learner_api.attendance_lectures.read_assigned_modules', return_value=[]), \
+                         patch('learner_api.attendance_mode.read_mode', return_value={
+                             'mode': 'lazy', 'requestedMode': None, 'updatedAt': None}), \
+                         patch('learner_api.attendance_lectures.connections', {'enrolment': MagicMock()}), \
+                         patch('learner_api.attendance_lectures.dict_rows', return_value=[]):
+                        result = read_workspace(source, kind)
+                    self.assertEqual(result['mode']['mode'], 'lazy')
+                    self.assertEqual((result['totals']['total'], result['totals']['attended'], result['totals']['absent']), (1, 1, 0))
+                    lecture = result['lectures'][0]
+                    self.assertEqual(lecture['status'], 'present')
+                    self.assertIsNone(lecture['catchupStatus'])
+                    self.assertIsNone(lecture['recovery'])
+                    self.assertFalse(lecture['canReportAbsence'])
 
     def test_completed_teams_catchup_is_shown_as_covered(self):
         row = register_row(source='microsoft-teams', session_id='occ-1', module_catalogue_id='mod-1',

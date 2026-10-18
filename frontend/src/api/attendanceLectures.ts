@@ -1,8 +1,9 @@
 import type { LearnerKind } from './learnerDetail';
 import type { LearnerAttendance } from './learnerAttendance';
-import { invalidateLearnerReads, peekLearnerJson, readLearnerJson } from './learnerRead';
+import { peekLearnerJson, readLearnerJson } from './learnerRead';
+import { invalidateWeeklyProgress } from './weeklyLearning';
 
-export type LectureStatus = 'completed' | 'late' | 'absent' | 'upcoming' | 'in_progress' | 'pending' | 'unmarked';
+export type LectureStatus = 'completed' | 'late' | 'absent' | 'upcoming' | 'in_progress' | 'pending' | 'unmarked' | 'awaiting_recording';
 export interface LectureActivity {
   id: string; title: string; type: string; completed: boolean;
   href?: string; groupId?: number; activityId?: number;
@@ -24,6 +25,7 @@ export interface AttendanceLecture {
   effectiveAttendanceStatus?: string;
   effectiveAttendance?: 0 | 1 | null;
   finalOutcome?: string;
+  attendanceBasis?: 'recorded' | 'awaiting_recording' | null;
   updatedAt: string | null; canReportAbsence: boolean; excused?: boolean;
   absenceReport: { id: number; status: string } | null;
   recovery?: {
@@ -59,7 +61,8 @@ export function attendanceWorkspaceForDisplay(data: AttendanceWorkspace): Attend
   return { ...data, lectures: data.lectures.map(row => {
     if ((row.status as string) !== 'present') return row;
     const raw = row.rawStatus || row.rawAttendanceStatus;
-    const status: LectureStatus = raw === 'absent' && row.effectiveAttendance === 1 ? 'absent'
+    const status: LectureStatus = row.attendanceBasis === 'recorded' ? 'completed'
+      : raw === 'absent' && row.effectiveAttendance === 1 ? 'absent'
       : raw === 'late' ? 'late' : 'completed';
     return { ...row, status };
   }) };
@@ -99,7 +102,7 @@ export async function confirmAttendance(kind: LearnerKind, id: string, lectureId
       !Number.isFinite(result?.creditedMinutes) || result.creditedMinutes <= 0 || !Number.isFinite(result?.creditedHours)) {
     throw new Error('Attendance could not be confirmed. Please refresh the page and try again.');
   }
-  invalidateLearnerReads();
+  invalidateWeeklyProgress(kind, id);
   return result;
 }
 export type SavedAttendanceMode = Pick<AttendanceMode, 'mode' | 'requestedMode'>;
@@ -119,6 +122,6 @@ export async function updateAttendanceMode(kind: LearnerKind, id: string, mode: 
   });
   const result = await response.json();
   if (!response.ok) throw new Error(result.error || 'Could not update attendance mode.');
-  invalidateLearnerReads();
+  invalidateWeeklyProgress(kind, id);
   return result;
 }

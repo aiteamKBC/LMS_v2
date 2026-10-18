@@ -6,8 +6,8 @@ cannot run faster than real time. Counted like completing a normal video
 (``learner_self_or_admin``): the learner, or an administrator operating the
 learner's workspace. Coaches and other staff viewing the page are refused.
 
-Viewing is informational. Watching a recording does not make up a missed
-lecture (catch-ups and alternative sessions do).
+Viewing does not make up a live-mode learner's absence. Recorded delivery uses
+the saved watch evidence for read-time credit, independently of recovery plans.
 """
 import json
 import logging

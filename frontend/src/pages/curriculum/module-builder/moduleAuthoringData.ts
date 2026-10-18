@@ -2165,6 +2165,7 @@ export async function loadModuleStructure(
   try {
     return recalculateModule(await fetchCurriculumJson<ModuleCatalogueItem>(
       `/curriculum/modules/${encodeURIComponent(catalogueId)}/structure/`,
+      // Full authored content can take longer on a cold remote-database read.
       { timeoutMs: 90000, skipCache: options.skipCache, revalidate: options.revalidate },
     ));
   } catch (err) {

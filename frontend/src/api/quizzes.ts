@@ -192,7 +192,7 @@ export function submitQuizAttempt(
     method: 'POST',
     body: JSON.stringify(submission),
   }).then((result) => {
-    invalidateLearnerDetailCache(kind, learnerId);
+    invalidateLearnerDetailCache(kind, learnerId, { quizId });
     return result;
   });
 }
@@ -233,7 +233,7 @@ export function completeQuizReading(
     method: 'POST',
     body: JSON.stringify({ action: 'complete', trackingToken, timeTakenSeconds, timeEntryMode }),
   }).then((reading) => {
-    invalidateLearnerDetailCache(kind, learnerId);
+    invalidateLearnerDetailCache(kind, learnerId, { quizId });
     return reading;
   });
 }
