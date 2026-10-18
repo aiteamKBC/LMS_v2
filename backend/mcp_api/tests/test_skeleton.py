@@ -70,12 +70,12 @@ class FlagOnTests(McpFlagTestCase):
         client = Client(enforce_csrf_checks=True)
         self.assertEqual(client.post("/mcp/").status_code, 401)
 
-    def test_well_known_metadata_is_a_placeholder(self):
+    def test_well_known_metadata_is_served(self):
         for url in WELL_KNOWN_URLS:
             with self.subTest(url=url):
                 response = self.client.get(url)
-                self.assertEqual(response.status_code, 501)
-                self.assertEqual(response.json()["code"], "not_implemented")
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(response["Content-Type"], "application/json")
 
 
 class GateExemptionTests(SimpleTestCase):
