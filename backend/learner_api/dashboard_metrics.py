@@ -455,7 +455,8 @@ def _read_legacy_metrics(source, kind, preloaded=None):
                 else:
                     cursor.execute('''SELECT DISTINCT group_id,activity_id FROM "Learner".subject_activity_attempts
                         WHERE enrolment_id=%s AND aptem_id=%s AND completed=true
-                          AND submitted_at IS NOT NULL''', [source.pk, aptem_id])
+                          AND submitted_at IS NOT NULL
+                          AND coalesce(definition->>'catalogue_kind','material')='material' ''', [source.pk, aptem_id])
                     attempts = {(str(group), str(activity)) for group, activity in cursor.fetchall()}
                 if preloaded is not None and 'export_links' in preloaded:
                     export_rows = preloaded['export_links']
@@ -549,7 +550,8 @@ def load_subject_attempts_bulk(keys):
         cursor.execute(f'''SELECT DISTINCT enrolment_id, aptem_id, group_id, activity_id
             FROM "Learner".subject_activity_attempts
             WHERE (enrolment_id, aptem_id) IN ({placeholders})
-              AND completed=true AND submitted_at IS NOT NULL''', params)
+              AND completed=true AND submitted_at IS NOT NULL
+              AND coalesce(definition->>'catalogue_kind','material')='material' ''', params)
         for enrolment_id, aptem_id, group_id, activity_id in cursor.fetchall():
             result.setdefault((int(enrolment_id), int(aptem_id)), set()).add((str(group_id), str(activity_id)))
     return result

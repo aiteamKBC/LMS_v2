@@ -29,6 +29,30 @@ async function open(data: SubjectMaterial) {
 describe('previous quiz answers in the main quiz', () => {
   beforeEach(() => vi.resetAllMocks());
 
+  it.each(['commercial', 'apprenticeship'])('saves an unfinished standalone quiz with its typed identity and reloads completion (%s)', async kind => {
+    const data = { ...material(), completed: false, csrf_token: 'synthetic-csrf',
+      historical: { score: null, maximum_score: null, passed: null, attempt_number: null, status: null, answers: [] } };
+    const saved = { score_percent: 100, passed: true, completed: true };
+    vi.mocked(subjectRequest).mockResolvedValueOnce(data);
+    const onProgress = vi.fn();
+    render(<StudentMaterial kind={kind} learnerId="123" groupId={50} activityId={60} catalogueQuiz onProgress={onProgress} />);
+    vi.mocked(subjectRequest).mockResolvedValueOnce({ attempt_id: 'new', definition: {} });
+    fireEvent.click(await screen.findByRole('button', { name: 'Start quiz' }));
+    await screen.findByRole('button', { name: 'Submit answers' });
+    fireEvent.click(screen.getByRole('checkbox', { name: 'First answer' }));
+    vi.mocked(subjectRequest).mockResolvedValueOnce(saved).mockResolvedValueOnce({ ...data, completed: true, can_attempt: false });
+    fireEvent.click(screen.getByRole('button', { name: 'Submit answers' }));
+    expect(await screen.findByText('Complete')).toBeVisible();
+    expect(onProgress).toHaveBeenCalledWith(saved);
+    const base = `/learner_api/student-activity/${kind}/123`;
+    expect(subjectRequest).toHaveBeenCalledWith(`${base}/50/60/attempts/?catalogue_kind=quiz`, expect.objectContaining({ method: 'POST' }));
+    expect(subjectRequest).toHaveBeenCalledWith(`${base}/50/60/attempts/new/?catalogue_kind=quiz`, expect.objectContaining({
+      method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRFToken': 'synthetic-csrf' },
+      body: JSON.stringify({ answers: { '12': ['2'] }, reading_confirmed: false }),
+    }));
+    expect(screen.queryByRole('button', { name: /Start quiz|Try quiz again|Submit/ })).not.toBeInTheDocument();
+  });
+
   it('selects historical answers for read-only review and starts a blank retake', async () => {
     const quiz = await open(material());
     expect(quiz.getByRole('checkbox', { name: 'First answer' })).toBeChecked();

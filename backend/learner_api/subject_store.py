@@ -50,15 +50,18 @@ def covers_for(subject_refs):
         return dict(cur.fetchall())
 
 
-def state(enrolment_id, aptem_id, activity_id=None, *, group_id=None):
+def state(enrolment_id, aptem_id, activity_id=None, *, group_id=None, catalogue_kind='material'):
     with connections[ALIAS].cursor() as cur:
         if not ready(cur):
             return {'ready': False, 'progress': [], 'history': [], 'covers': {}}
-        cur.execute(f'''SELECT group_id, activity_id, bool_or(completed) AS completed,
+        cur.execute(f'''SELECT group_id, activity_id,
+                               coalesce(definition->>'catalogue_kind','material') AS catalogue_kind,
+                               bool_or(completed) AS completed,
                                max(score_percent) AS best_percent,
                                count(*) AS attempt_count
                         FROM {ATTEMPTS} WHERE enrolment_id=%s AND aptem_id=%s
-                          AND submitted_at IS NOT NULL GROUP BY group_id, activity_id''', [enrolment_id, aptem_id])
+                          AND submitted_at IS NOT NULL GROUP BY group_id, activity_id,
+                            coalesce(definition->>'catalogue_kind','material')''', [enrolment_id, aptem_id])
         progress = _rows(cur)
         history = []
         if activity_id is not None and group_id is not None:
@@ -66,7 +69,8 @@ def state(enrolment_id, aptem_id, activity_id=None, *, group_id=None):
                                    reading_confirmed, started_at, submitted_at, definition
                             FROM {ATTEMPTS} WHERE enrolment_id=%s AND aptem_id=%s
                               AND group_id=%s AND activity_id=%s AND submitted_at IS NOT NULL
-                            ORDER BY submitted_at DESC, id DESC''', [enrolment_id, aptem_id, group_id, activity_id])
+                              AND coalesce(definition->>'catalogue_kind','material')=%s
+                            ORDER BY submitted_at DESC, id DESC''', [enrolment_id, aptem_id, group_id, activity_id, catalogue_kind])
             history = _rows(cur)
             for row in history:
                 row['answers'] = _json(row['answers'])
@@ -85,6 +89,9 @@ def state(enrolment_id, aptem_id, activity_id=None, *, group_id=None):
 def start(enrolment_id, aptem_id, group_id, activity_id, definition):
     attempt_id = str(uuid4())
     snapshot = {key: definition.get(key) for key in ('title', 'quiz', 'has_reading', 'available')}
+    snapshot['catalogue_kind'] = definition.get('catalogue_kind', 'material')
+    if snapshot['catalogue_kind'] not in {'material', 'quiz'}:
+        raise ValueError('Invalid activity kind.')
     with connections[ALIAS].cursor() as cur:
         if not ready(cur):
             raise StoreUnavailable('Saving activities is not enabled yet. Please contact your learning team.')
@@ -96,15 +103,16 @@ def start(enrolment_id, aptem_id, group_id, activity_id, definition):
     return attempt_id
 
 
-def finish(enrolment_id, aptem_id, group_id, activity_id, attempt_id, answers, reading_confirmed):
+def finish(enrolment_id, aptem_id, group_id, activity_id, attempt_id, answers, reading_confirmed, *, catalogue_kind='material'):
     with transaction.atomic(using=ALIAS):
         with connections[ALIAS].cursor() as cur:
             if not ready(cur):
                 raise StoreUnavailable('Saving activities is not enabled yet. Please contact your learning team.')
             cur.execute(f'''SELECT definition, submitted_at, score_percent, passed, completed
                             FROM {ATTEMPTS} WHERE id=%s AND enrolment_id=%s AND aptem_id=%s
-                              AND group_id=%s AND activity_id=%s FOR UPDATE''',
-                        [attempt_id, enrolment_id, aptem_id, group_id, activity_id])
+                              AND group_id=%s AND activity_id=%s
+                              AND coalesce(definition->>'catalogue_kind','material')=%s FOR UPDATE''',
+                        [attempt_id, enrolment_id, aptem_id, group_id, activity_id, catalogue_kind])
             row = cur.fetchone()
             if not row:
                 raise LookupError('Attempt not found.')
@@ -142,14 +150,15 @@ def save_cover(subject_ref, storage_path, account_id):
 def overlay_progress(items, progress):
     # An activity can be reused in several courses. Each placement has its own
     # attempts, just as the original LMS keys results by learner/course/activity.
-    by_id = {(row['group_id'], row['activity_id']): row for row in progress if row.get('group_id') is not None}
+    by_id = {(row['group_id'], row['activity_id'], row.get('catalogue_kind', 'material')): row
+             for row in progress if row.get('group_id') is not None}
     for item in items:
         old_completed = bool(item['completed'])
         maximum, score = item.get('quiz_maximum_score'), item.get('quiz_score')
         old_percent = float(score) / float(maximum) * 100 if score is not None and maximum and float(maximum) > 0 else None
         item['historical_completed'] = old_completed
         item['historical_score_percent'] = old_percent
-        new = by_id.get((item['group_id'], item['source_activity_id']), {})
+        new = by_id.get((item['group_id'], item['source_activity_id'], item.get('catalogue_kind', 'material')), {})
         new_percent = float(new['best_percent']) if new.get('best_percent') is not None else None
         values = [value for value in (old_percent, new_percent) if value is not None]
         item['best_score_percent'] = max(values) if values else None

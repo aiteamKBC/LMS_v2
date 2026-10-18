@@ -15,7 +15,7 @@ def functions(filename, names, namespace):
 namespace = {'re': re, 'isfinite': isfinite,
              'GRADED_PROGRESS_KINDS': {'quiz'}, 'ACCEPTED_ASSIGNMENT_STATUSES': {'accepted', 'partial'}}
 functions('active_users.py', {'_s', '_number', '_reported_minutes', '_progress_text',
-    'otjh_progress_dedupe_key', '_manual_claimed_seconds', '_progress_record_minutes',
+    'otjh_progress_dedupe_key', '_selected_timer_seconds', '_manual_claimed_seconds', '_progress_record_minutes',
     'dedupe_otjh_progress_records', '_component_expected_hours_lookup',
     'completed_hours_value_from_progress'}, namespace)
 functions('progress_rules.py', {'_kind', 'progress_counts_as_achieved', 'progress_record_counts_as_achieved'}, namespace)
