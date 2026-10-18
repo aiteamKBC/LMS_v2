@@ -1,0 +1,70 @@
+%% Catalog association map; unvalidated edges do not prove existing row integrity.
+erDiagram
+    Engagement__attendance_interventions {
+        bigint id PK
+    }
+    Engagement__club_meeting_attendance {
+        bigint id PK
+        bigint meeting_id FK
+    }
+    Engagement__club_meetings {
+        integer id PK
+        integer club_id FK
+    }
+    Engagement__club_memberships {
+        bigint id PK
+        bigint club_id FK
+    }
+    Engagement__clubs {
+        integer id PK
+    }
+    Engagement__event_attendance {
+        bigint id PK
+        bigint event_id FK
+    }
+    Engagement__event_bookings {
+        bigint id PK
+        integer event_id FK
+    }
+    Engagement__event_qr_attendance {
+        bigint id PK
+        bigint event_id FK
+    }
+    Engagement__event_qr_links {
+        bigint id PK
+        bigint event_id FK
+    }
+    Engagement__events {
+        integer id PK
+    }
+    Engagement__flash_card_decks {
+        integer id PK
+    }
+    Engagement__flash_card_views {
+        integer id PK
+        integer flash_card_id FK
+    }
+    Engagement__flash_cards {
+        integer id PK
+        integer deck_id FK
+    }
+    Engagement__learning_reward_policies {
+        bigint id PK
+    }
+    Engagement__points_grants {
+        integer id PK
+        integer rule_id FK
+    }
+    Engagement__points_rules {
+        integer id PK
+    }
+    Engagement__club_meetings ||..o{ Engagement__club_meeting_attendance : "club_meeting_attendance_meeting_id_fkey"
+    Engagement__clubs ||..o{ Engagement__club_meetings : "club_meetings_club_id_fkey"
+    Engagement__clubs ||..o{ Engagement__club_memberships : "club_memberships_club_id_fkey"
+    Engagement__events ||..o{ Engagement__event_attendance : "event_attendance_event_id_fkey"
+    Engagement__events ||..o{ Engagement__event_bookings : "event_bookings_event_id_fkey"
+    Engagement__events ||..o{ Engagement__event_qr_attendance : "event_qr_attendance_event_id_fkey"
+    Engagement__events ||..o| Engagement__event_qr_links : "event_qr_links_event_id_fkey"
+    Engagement__flash_cards ||..o{ Engagement__flash_card_views : "flash_card_views_flash_card_id_fkey"
+    Engagement__flash_card_decks ||..o{ Engagement__flash_cards : "flash_cards_deck_id_fkey"
+    Engagement__points_rules ||..o{ Engagement__points_grants : "points_grants_rule_id_fkey"

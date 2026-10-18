@@ -1,0 +1,84 @@
+%% Catalog association map; unvalidated edges do not prove existing row integrity.
+%% Proposed: preserve these objects/edges; complete approved integrity corrections and validation. No new FK is authorized.
+erDiagram
+    curriculum__historical_components {
+        character_varying_128_ id PK
+        bigint source_catalog_activity_id FK
+        bigint source_course_id FK
+        character_varying_128_ curriculum_module_ref FK
+        character_varying_128_ curriculum_week_ref FK
+    }
+    curriculum__holidays {
+        bigint id PK
+    }
+    curriculum__ksb_definitions {
+        bigint id PK
+        bigint profile_version_id FK
+    }
+    curriculum__ksb_mappings {
+        character_varying_128_ id PK
+    }
+    curriculum__ksb_profile_versions {
+        bigint id PK
+    }
+    curriculum__ksb_profiles {
+        character_varying_128_ id PK
+    }
+    curriculum__learner_activity_display_audit {
+        bigint id PK
+    }
+    curriculum__learner_activity_display_overrides {
+        bigint learner_id PK
+        character_varying_128_ module_id PK
+        character_varying_128_ component_id PK
+    }
+    curriculum__learner_review_additions {
+        character_varying_128_ id PK
+        character_varying_128_ review_template_id FK
+    }
+    curriculum__live_session_absences {
+        bigint id PK
+    }
+    curriculum__live_session_artifacts {
+        character_varying_128_ id PK
+        character_varying_128_ occurrence_id FK
+    }
+    curriculum__live_session_attendance {
+        character_varying_128_ id PK
+        character_varying_128_ occurrence_id FK
+    }
+    curriculum__live_session_attendance_aliases {
+        bigint id PK
+    }
+    curriculum__live_session_attendance_identity_audit {
+        bigint id PK
+    }
+    curriculum__live_session_attendance_identity_links {
+        bigint id PK
+    }
+    curriculum__live_session_occurrences {
+        character_varying_128_ id PK
+    }
+    curriculum__modules {
+        character_varying_128_ module_catalogue_id PK
+    }
+    curriculum__review_templates {
+        character_varying_128_ id PK
+    }
+    curriculum__source_activities {
+        bigint id PK
+    }
+    curriculum__source_courses {
+        bigint id PK
+    }
+    curriculum__weeks {
+        character_varying_128_ id PK
+    }
+    curriculum__modules |o..o{ curriculum__historical_components : "historical_components_curriculum_module_ref_fkey"
+    curriculum__weeks |o..o{ curriculum__historical_components : "historical_components_curriculum_week_ref_fkey"
+    curriculum__source_activities |o..o{ curriculum__historical_components : "historical_components_source_catalog_activity_id_fkey"
+    curriculum__source_courses |o..o{ curriculum__historical_components : "historical_components_source_course_id_fkey"
+    curriculum__ksb_profile_versions ||..o{ curriculum__ksb_definitions : "ksb_definitions_profile_version_id_fkey"
+    curriculum__review_templates ||..o{ curriculum__learner_review_additions : "learner_review_additions_template_fk"
+    curriculum__live_session_occurrences ||..o{ curriculum__live_session_artifacts : "live_session_artifacts_occurrence_id_fkey"
+    curriculum__live_session_occurrences ||..o{ curriculum__live_session_attendance : "live_session_attendance_occurrence_id_fkey"

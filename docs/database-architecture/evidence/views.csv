@@ -1,0 +1,1786 @@
+schema,name,kind,populated,definition,definition_sha256
+Coach,coach_calendar_event,v,True," SELECT id,
+    event_key,
+    owner_email,
+    owner_name,
+    learner_id,
+    learner_name,
+    learner_email,
+    event_type,
+    sequence,
+    target_date,
+    scheduled_date,
+    scheduled_time,
+    duration_minutes,
+    status,
+    meeting_provider,
+    meeting_link,
+    graph_event_id,
+    graph_web_link,
+    notes,
+    last_graph_sync_error,
+    created_at,
+    updated_at,
+    review_responses,
+    review_completed_at,
+    manager_signed_at,
+    manager_signed_by,
+    graph_organizer_email,
+    operation_id,
+    idempotency_key,
+    sync_state,
+    sync_attempt_count,
+    last_sync_attempt_at,
+    review_template_id,
+    review_instance_id,
+    occurrence_number
+   FROM ""Learner"".coach_calendar_event;",a70a0808a8285350c6da1aa6973da041b75221e603f7d23ffc221e360f377734
+Learner,learner_target_hours_current,v,True," WITH latest AS (
+         SELECT DISTINCT ON (learner_target_hours_daily.learner_id) learner_target_hours_daily.learner_id,
+            learner_target_hours_daily.enrolment_id,
+            learner_target_hours_daily.aptem_id,
+            learner_target_hours_daily.coach_email,
+            learner_target_hours_daily.planned_hours,
+            learner_target_hours_daily.start_date,
+            learner_target_hours_daily.planned_end_date,
+            learner_target_hours_daily.status,
+            learner_target_hours_daily.status_reason,
+            learner_target_hours_daily.formula_version,
+            learner_target_hours_daily.calculation_method,
+            learner_target_hours_daily.source_system,
+            learner_target_hours_daily.source_reference,
+            learner_target_hours_daily.calculated_by,
+            learner_target_hours_daily.calculated_at,
+            learner_target_hours_daily.updated_at,
+            learner_target_hours_daily.as_of_date AS snapshot_date,
+            learner_target_hours_daily.target_hours AS snapshot_target_hours
+           FROM ""Learner"".learner_target_hours_daily
+          ORDER BY learner_target_hours_daily.learner_id, learner_target_hours_daily.as_of_date DESC
+        ), base AS (
+         SELECT l.id AS learner_id,
+            l.enrolment_id,
+            l.aptem_id AS profile_aptem_id,
+            l.coach_email::text AS coach_email,
+            l.programme_status,
+            l.lifecycle_status,
+            l.planned_hours AS profile_planned_hours,
+            l.start_date AS profile_start_date,
+            l.end_date AS profile_end_date,
+            l.""Learner_Start_date"" AS profile_learner_start_date,
+            l.""Learner_end_date"" AS profile_learner_end_date,
+            cu.aptem_id AS source_aptem_id,
+            cu.""Planned_hours"" AS source_planned_hours,
+            cu.""Start_date"" AS source_start_date,
+            cu.""End_date"" AS source_end_date,
+            cu.""Learner_start_date"" AS source_learner_start_date,
+            cu.""Learner_end_date"" AS source_learner_end_date,
+            cu.""Apprenticeship_End_date"" AS source_apprenticeship_end_date,
+            cu.""Practical_period_end_date"" AS source_practical_end_date,
+            d.aptem_id AS snapshot_aptem_id,
+            d.planned_hours AS snapshot_planned_hours,
+            d.start_date AS snapshot_start_date,
+            d.planned_end_date AS snapshot_end_date,
+            d.snapshot_date,
+            d.snapshot_target_hours,
+            d.formula_version,
+            d.calculation_method,
+            d.calculated_by,
+            d.calculated_at,
+            d.updated_at,
+            ct.training_plan_planned_hours AS contract_training_plan_hours,
+            ct.planned AS contract_planned_hours,
+            ct.program_start_date::date AS contract_start_date,
+            ct.planned_end_date::date AS contract_end_date
+           FROM ""Learner"".learners l
+             LEFT JOIN latest d ON d.learner_id = l.id
+             LEFT JOIN enrolment.""Created_users"" cu ON cu.id = l.enrolment_id
+             LEFT JOIN LATERAL ( SELECT c.training_plan_planned_hours,
+                    c.planned,
+                    c.program_start_date,
+                    c.planned_end_date
+                   FROM fetching_evidence.aptem_cv_contracts_probe c
+                     LEFT JOIN ""Audit"".contract_document_archive a ON a.contract_id = c.id
+                  WHERE c.learner_id =
+                        CASE
+                            WHEN COALESCE(NULLIF(l.aptem_id::text, '<literal redacted>'::text), NULLIF(cu.aptem_id, '<literal redacted>'::text)) ~ '<literal redacted>'::text THEN COALESCE(NULLIF(l.aptem_id::text, '<literal redacted>'::text), NULLIF(cu.aptem_id, '<literal redacted>'::text))::bigint
+                            ELSE NULL::bigint
+                        END AND lower(COALESCE(NULLIF(a.display_name, '<literal redacted>'::text), c.document_name)) ~ '<literal redacted>'::text AND a.archived_at IS NULL AND a.deleted_at IS NULL
+                  ORDER BY (COALESCE(c.fully_signed_date, c.date)) DESC NULLS LAST, c.id DESC
+                 LIMIT 1) ct ON true
+        ), resolved AS (
+         SELECT b.learner_id,
+            b.enrolment_id,
+            b.profile_aptem_id,
+            b.coach_email,
+            b.programme_status,
+            b.lifecycle_status,
+            b.profile_planned_hours,
+            b.profile_start_date,
+            b.profile_end_date,
+            b.profile_learner_start_date,
+            b.profile_learner_end_date,
+            b.source_aptem_id,
+            b.source_planned_hours,
+            b.source_start_date,
+            b.source_end_date,
+            b.source_learner_start_date,
+            b.source_learner_end_date,
+            b.source_apprenticeship_end_date,
+            b.source_practical_end_date,
+            b.snapshot_aptem_id,
+            b.snapshot_planned_hours,
+            b.snapshot_start_date,
+            b.snapshot_end_date,
+            b.snapshot_date,
+            b.snapshot_target_hours,
+            b.formula_version,
+            b.calculation_method,
+            b.calculated_by,
+            b.calculated_at,
+            b.updated_at,
+            b.contract_training_plan_hours,
+            b.contract_planned_hours,
+            b.contract_start_date,
+            b.contract_end_date,
+            COALESCE(b.contract_training_plan_hours, b.contract_planned_hours, ""Learner"".target_hours_safe_numeric(b.source_planned_hours), b.profile_planned_hours, b.snapshot_planned_hours) AS resolved_planned_hours,
+            COALESCE(b.contract_start_date, ""Learner"".target_hours_safe_date(b.source_start_date), ""Learner"".target_hours_safe_date(b.source_learner_start_date), b.profile_start_date, ""Learner"".target_hours_safe_date(b.profile_learner_start_date), b.snapshot_start_date) AS resolved_start_date,
+            COALESCE(b.contract_end_date, ""Learner"".target_hours_safe_date(b.source_end_date), ""Learner"".target_hours_safe_date(b.source_learner_end_date), ""Learner"".target_hours_safe_date(b.source_apprenticeship_end_date), ""Learner"".target_hours_safe_date(b.source_practical_end_date), b.profile_end_date, ""Learner"".target_hours_safe_date(b.profile_learner_end_date), b.snapshot_end_date) AS resolved_end_date,
+            lower(replace(replace(replace(btrim(COALESCE(NULLIF(b.programme_status::text, '<literal redacted>'::text), NULLIF(b.lifecycle_status::text, '<literal redacted>'::text))), '<literal redacted>'::text, '<literal redacted>'::text), '<literal redacted>'::text, '<literal redacted>'::text), '<literal redacted>'::text, '<literal redacted>'::text)) AS status_norm
+           FROM base b
+        ), classified AS (
+         SELECT r.learner_id,
+            r.enrolment_id,
+            r.profile_aptem_id,
+            r.coach_email,
+            r.programme_status,
+            r.lifecycle_status,
+            r.profile_planned_hours,
+            r.profile_start_date,
+            r.profile_end_date,
+            r.profile_learner_start_date,
+            r.profile_learner_end_date,
+            r.source_aptem_id,
+            r.source_planned_hours,
+            r.source_start_date,
+            r.source_end_date,
+            r.source_learner_start_date,
+            r.source_learner_end_date,
+            r.source_apprenticeship_end_date,
+            r.source_practical_end_date,
+            r.snapshot_aptem_id,
+            r.snapshot_planned_hours,
+            r.snapshot_start_date,
+            r.snapshot_end_date,
+            r.snapshot_date,
+            r.snapshot_target_hours,
+            r.formula_version,
+            r.calculation_method,
+            r.calculated_by,
+            r.calculated_at,
+            r.updated_at,
+            r.contract_training_plan_hours,
+            r.contract_planned_hours,
+            r.contract_start_date,
+            r.contract_end_date,
+            r.resolved_planned_hours,
+            r.resolved_start_date,
+            r.resolved_end_date,
+            r.status_norm,
+                CASE
+                    WHEN r.status_norm = '<literal redacted>'::text OR r.status_norm ~~ '<literal redacted>'::text THEN '<literal redacted>'::text
+                    WHEN (r.status_norm = ANY (ARRAY['<literal redacted>'::text, '<literal redacted>'::text, '<literal redacted>'::text])) AND r.resolved_planned_hours > 0::numeric AND r.resolved_start_date IS NOT NULL AND r.resolved_end_date IS NOT NULL AND r.resolved_end_date > r.resolved_start_date THEN '<literal redacted>'::text
+                    ELSE '<literal redacted>'::text
+                END AS resolved_status
+           FROM resolved r
+        )
+ SELECT learner_id,
+    enrolment_id,
+        CASE
+            WHEN COALESCE(NULLIF(profile_aptem_id::text, '<literal redacted>'::text), NULLIF(source_aptem_id, '<literal redacted>'::text)) ~ '<literal redacted>'::text THEN COALESCE(NULLIF(profile_aptem_id::text, '<literal redacted>'::text), NULLIF(source_aptem_id, '<literal redacted>'::text))::bigint
+            ELSE snapshot_aptem_id
+        END AS aptem_id,
+    coach_email,
+    CURRENT_DATE AS as_of_date,
+    snapshot_date,
+    resolved_planned_hours::numeric(12,2) AS planned_hours,
+    resolved_start_date AS start_date,
+    resolved_end_date AS planned_end_date,
+        CASE
+            WHEN resolved_start_date IS NOT NULL AND resolved_end_date IS NOT NULL AND resolved_end_date > resolved_start_date THEN GREATEST(0, LEAST(CURRENT_DATE - resolved_start_date, resolved_end_date - resolved_start_date))
+            ELSE NULL::integer
+        END AS elapsed_days,
+        CASE
+            WHEN resolved_start_date IS NOT NULL AND resolved_end_date IS NOT NULL AND resolved_end_date > resolved_start_date THEN resolved_end_date - resolved_start_date
+            ELSE NULL::integer
+        END AS programme_days,
+        CASE
+            WHEN resolved_status = '<literal redacted>'::text THEN ""Learner"".target_hours_as_of(resolved_planned_hours, resolved_start_date, resolved_end_date, CURRENT_DATE)
+            ELSE NULL::numeric
+        END AS target_hours,
+    snapshot_target_hours,
+    resolved_status AS status,
+        CASE
+            WHEN resolved_status = '<literal redacted>'::text AND CURRENT_DATE < resolved_start_date THEN '<literal redacted>'::text
+            WHEN resolved_status = '<literal redacted>'::text AND CURRENT_DATE >= resolved_end_date THEN '<literal redacted>'::text
+            WHEN resolved_status = '<literal redacted>'::text THEN '<literal redacted>'::text
+            WHEN status_norm = '<literal redacted>'::text THEN '<literal redacted>'::text
+            WHEN status_norm ~~ '<literal redacted>'::text THEN '<literal redacted>'::text
+            WHEN (status_norm = ANY (ARRAY['<literal redacted>'::text, '<literal redacted>'::text, '<literal redacted>'::text])) AND (resolved_planned_hours IS NULL OR resolved_planned_hours <= 0::numeric) THEN '<literal redacted>'::text
+            WHEN status_norm = ANY (ARRAY['<literal redacted>'::text, '<literal redacted>'::text, '<literal redacted>'::text]) THEN '<literal redacted>'::text
+            ELSE '<literal redacted>'::text || COALESCE(status_norm, '<literal redacted>'::text)
+        END AS status_reason,
+    COALESCE(formula_version, '<literal redacted>'::text) AS formula_version,
+    COALESCE(calculation_method, '<literal redacted>'::text) AS calculation_method,
+    '<literal redacted>'::text AS source_system,
+    (((('<literal redacted>'::text || learner_id::text) || '<literal redacted>'::text) || COALESCE(enrolment_id::text, '<literal redacted>'::text)) || '<literal redacted>'::text) || COALESCE(source_aptem_id, profile_aptem_id::text, snapshot_aptem_id::text, '<literal redacted>'::text) AS source_reference,
+    COALESCE(calculated_by, '<literal redacted>'::text) AS calculated_by,
+    calculated_at,
+    COALESCE(updated_at, now()) AS updated_at
+   FROM classified;",68d49e6985c0de839279cf56de4efe3628753a9801276ed9e39d8b4a0e62148d
+Learner,monthly_audit_signoffs,v,True," SELECT id,
+    source_learner_id AS learner_id,
+    programme_key,
+    report_month,
+    signer_role,
+    signer_name,
+    review_confirmed,
+    signature_data,
+    signed_at,
+    signature_source_type,
+    signature_source_document_id,
+    signature_source_document_name,
+    signature_source_review_date,
+    signature_extraction_method,
+    snapshot_digest AS snapshot_hash,
+    audit_version,
+    created_at,
+    updated_at
+   FROM ""Learner"".learner_monthly_signatures;",e5b560cba12cf06da9af840998295201e513884110e9bb07cde05cc118f3c287
+Learner,training_plan_target_overrides,v,True," SELECT learner.aptem_id,
+    target.programme_profile_id,
+    target.report_month AS month,
+    target.target_hours,
+    target.updated_by,
+    target.created_at,
+    target.updated_at
+   FROM ""Learner"".learner_monthly_targets target
+     JOIN ""Learner"".learners learner ON learner.id = target.learner_id
+  WHERE learner.aptem_id IS NOT NULL AND target.target_hours IS NOT NULL;",655269fcf9a078949c33d8c8b1026e6b5afc1de5c70cee91aa4ba0556700d869
+Learner,verified_teams_attendance,v,True," SELECT id,
+    learner_id,
+    learner_name,
+    learner_email,
+    session_id,
+    session_title,
+    session_type,
+    session_date,
+    session_start_time,
+    session_end_time,
+    attendance_status,
+    minutes_late,
+    absence_reason,
+    catchup_completed,
+    catchup_date,
+    coach_name,
+    module_title,
+    week_title,
+    created_at,
+    updated_at,
+    attended_seconds,
+    attendance_report_id,
+    live_session_id,
+    source,
+    synced_at,
+    enrolment_id,
+    learner_profile_id,
+    occurrence_id,
+    module_catalogue_id,
+    group_id,
+    group_name,
+    is_expected,
+    eligibility_reason,
+    source_record_id,
+    scheduled_start,
+    scheduled_end,
+    actual_start,
+    actual_end,
+    first_join_at,
+    last_leave_at,
+    calculated_at
+   FROM ""Learner"".learner_attendance_details
+  WHERE source::text = '<literal redacted>'::text AND is_expected;",b5eaf9e6a7af7e9bbf2ec2f28178942e394a0752745e162b24b36c4c6ef721a6
+curriculum,component_ksb_weighting,v,True," SELECT lineage.component_id,
+    lineage.component_title,
+    lineage.week_id,
+    lineage.week_number,
+    lineage.week_title,
+    lineage.module_catalogue_id,
+    lineage.module_title,
+    lineage.group_id,
+    lineage.group_name,
+    lineage.cohort_id,
+    lineage.cohort_name,
+    lineage.programme_id,
+    lineage.programme_name,
+    km.id AS mapping_id,
+    km.ksb_id,
+    km.ksb_code,
+    km.ksb_description,
+    km.source_type,
+    km.source_id,
+    km.classification,
+    km.weight_class,
+    km.weight AS ksb_weight,
+    lineage.is_deleted OR km.deleted_at IS NOT NULL OR COALESCE(km.is_programme_deleted, false) AS is_deleted
+   FROM curriculum.component_learning_lineage lineage
+     LEFT JOIN curriculum.ksb_mappings km ON km.component_id::text = lineage.component_id::text;",742ec7dc73dadaa3e3b9dc8d2f80d1a11b54a2865d1256ecd150c123e4b5b6bc
+curriculum,component_learning_lineage,v,True," SELECT c.id AS component_id,
+    c.title AS component_title,
+    c.type AS component_type,
+    c.expected_otjh,
+    c.points,
+    c.ksb_mappings,
+    c.reflection_required,
+    c.workplace_evidence_required,
+    c.tutor_validation_required,
+    c.deleted_at AS component_deleted_at,
+    c.deleted_by AS component_deleted_by,
+    c.deleted_via_parent AS component_deleted_via_parent,
+    w.id AS week_id,
+    w.week_number,
+    w.title AS week_title,
+    w.deleted_at AS week_deleted_at,
+    w.deleted_via_parent AS week_deleted_via_parent,
+    m.module_catalogue_id,
+    m.title AS module_title,
+    m.group_id,
+    m.group_name,
+    m.cohort_id,
+    m.cohort_name,
+    m.programme_id,
+    COALESCE(p.name, m.programme_name) AS programme_name,
+    COALESCE(p.is_archived, false) AS programme_is_archived,
+    p.deleted_at AS programme_deleted_at,
+    c.deleted_at IS NOT NULL OR w.deleted_at IS NOT NULL OR m.deleted_at IS NOT NULL OR g.deleted_at IS NOT NULL OR ch.deleted_at IS NOT NULL OR p.deleted_at IS NOT NULL OR COALESCE(c.is_programme_deleted, false) OR COALESCE(w.is_programme_deleted, false) OR COALESCE(m.is_programme_deleted, false) OR COALESCE(g.is_programme_deleted, false) OR COALESCE(ch.is_programme_deleted, false) OR COALESCE(p.is_archived, false) AS is_deleted
+   FROM curriculum.components c
+     LEFT JOIN curriculum.weeks w ON w.id::text = c.week_id::text
+     LEFT JOIN curriculum.modules m ON m.module_catalogue_id::text = c.module_catalogue_id::text
+     LEFT JOIN curriculum.groups g ON g.group_id::text = m.group_id::text
+     LEFT JOIN curriculum.cohorts ch ON ch.cohort_id::text = m.cohort_id::text
+     LEFT JOIN curriculum.programmes p ON p.programme_id::text = m.programme_id::text;",a631b8f5c646927769d5a8ed5da91f47dd58f6fa1f715516f41a0ba773c63975
+curriculum,component_learning_summary,v,True," SELECT lineage.component_id,
+    lineage.component_title,
+    lineage.component_type,
+    lineage.expected_otjh,
+    lineage.points,
+    lineage.ksb_mappings,
+    lineage.reflection_required,
+    lineage.workplace_evidence_required,
+    lineage.tutor_validation_required,
+    lineage.component_deleted_at,
+    lineage.component_deleted_by,
+    lineage.component_deleted_via_parent,
+    lineage.week_id,
+    lineage.week_number,
+    lineage.week_title,
+    lineage.week_deleted_at,
+    lineage.week_deleted_via_parent,
+    lineage.module_catalogue_id,
+    lineage.module_title,
+    lineage.group_id,
+    lineage.group_name,
+    lineage.cohort_id,
+    lineage.cohort_name,
+    lineage.programme_id,
+    lineage.programme_name,
+    lineage.programme_is_archived,
+    lineage.programme_deleted_at,
+    lineage.is_deleted,
+    COALESCE(sum((mapping.value ->> '<literal redacted>'::text)::numeric), 0::numeric) AS ksb_weight_total,
+    count(mapping.value) AS ksb_mapping_count,
+    COALESCE(jsonb_agg(mapping.value ORDER BY (mapping.value ->> '<literal redacted>'::text)) FILTER (WHERE mapping.value IS NOT NULL), '<literal redacted>'::jsonb) AS component_ksb_mappings
+   FROM curriculum.component_learning_lineage lineage
+     LEFT JOIN LATERAL jsonb_array_elements(COALESCE(lineage.ksb_mappings, '<literal redacted>'::jsonb)) mapping(value) ON true
+  GROUP BY lineage.component_id, lineage.component_title, lineage.component_type, lineage.expected_otjh, lineage.points, lineage.ksb_mappings, lineage.reflection_required, lineage.workplace_evidence_required, lineage.tutor_validation_required, lineage.component_deleted_at, lineage.component_deleted_by, lineage.component_deleted_via_parent, lineage.week_id, lineage.week_number, lineage.week_title, lineage.week_deleted_at, lineage.week_deleted_via_parent, lineage.module_catalogue_id, lineage.module_title, lineage.group_id, lineage.group_name, lineage.cohort_id, lineage.cohort_name, lineage.programme_id, lineage.programme_name, lineage.programme_is_archived, lineage.programme_deleted_at, lineage.is_deleted;",7dd7f1e0bf52e9e0833dea0fe7910d3f337aa6b1324be37b095a7ad1b4d9e0b5
+fetching_evidence,aptem_learner_subject_funding,v,True," SELECT a.learner_id,
+    a.programme_name_snapshot,
+    a.assignment_source,
+    a.confidence,
+    c.id,
+    c.subject_key,
+    c.subject_name,
+    c.apprenticeship_level,
+    c.currency,
+    c.training_delivery,
+    c.distance_online_blended,
+    c.english_maths,
+    c.assessment_progress_reviews,
+    c.registration_exam_certification,
+    c.materials,
+    c.administration_including_epa,
+    c.subcontractor_training,
+    c.subcontractor_assessment,
+    c.subcontractor_support,
+    c.monitoring,
+    c.end_point_assessment,
+    c.apprenticeship_certification,
+    c.external_quality_assurance,
+    c.other_non_fundable_costs,
+    c.total_price,
+    c.funding_band_maximum,
+    c.balance_due,
+    c.actual_funding,
+    c.cost_breakdown,
+    c.source_image_name,
+    c.source_image_sha256,
+    c.extraction_method,
+    c.created_at,
+    c.updated_at
+   FROM fetching_evidence.aptem_learner_subject_assignments a
+     JOIN fetching_evidence.aptem_subject_funding_catalog c ON c.id = a.subject_id;",c7ef52e8fe494f1b3c80d1b3fb20bd11cea4589f718e02536b981df4cba292e2
+fetching_evidence,learner_hours_monthly_display,v,True," SELECT monthly.learner_id,
+    users.""FullName"" AS learner_name,
+    users.""Program Name"" AS programme_name,
+    monthly.planned_hours_monthly,
+    monthly.completed_hours_monthly,
+    monthly.updated_at
+   FROM fetching_evidence.learner_hours_monthly monthly
+     LEFT JOIN ""LMS"".""Aptem_users"" users ON users.""ID"" = monthly.learner_id;",cae85d951a7323c26adbeb9a57a32da24715bb18dac67225296cdac2793aeb02
+kbc_career_identity,learners,v,True," SELECT c.id::bigint AS enrolment_id,
+    c.uuid::text AS enrolment_uuid,
+    lower(btrim(c.""Email"")) AS email,
+    COALESCE(NULLIF(btrim(c.""Preferred_name""), '<literal redacted>'::text), NULLIF(btrim(c.""Username""), '<literal redacted>'::text), NULLIF(btrim(a.""Display_name""), '<literal redacted>'::text), c.""Email"") AS name,
+    NULLIF(btrim(c.""Programme""), '<literal redacted>'::text) AS programme,
+    NULLIF(btrim(c.""Coach_name""), '<literal redacted>'::text) AS coach_name,
+    NULLIF(lower(btrim(c.""Coach_email"")), '<literal redacted>'::text) AS coach_email,
+    c.""Programme_status"" AS programme_status,
+    a.id AS lms_account_id,
+    a.""Subject_id"" AS lms_subject_id,
+    a.""Is_active"" AS lms_active,
+    a.""Password_set_at"" AS password_set_at
+   FROM enrolment.""Created_users"" c
+     LEFT JOIN login.""Login_accounts"" a ON a.""Subject_type"" = '<literal redacted>'::text AND a.""Role"" = '<literal redacted>'::text AND a.""Subject_id"" = c.id AND lower(btrim(a.""Email"")) = lower(btrim(c.""Email""))
+  WHERE COALESCE(btrim(c.""Email""), '<literal redacted>'::text) <> '<literal redacted>'::text AND (c.""Programme_status"" = ANY (ARRAY['<literal redacted>'::text, '<literal redacted>'::text, '<literal redacted>'::text, '<literal redacted>'::text])) AND (COALESCE(btrim(c.""Programme""), '<literal redacted>'::text) <> ALL (ARRAY['<literal redacted>'::text, '<literal redacted>'::text]));",c564d3f29c851b52ee667d5b5967c2b16f19c613e4aaab75509cd6e93d967d78
+kbc_coaching_reporting,learners,v,True," SELECT ""ID""::text AS learner_id,
+    ""FullName"" AS learner_name,
+    lower(TRIM(BOTH FROM ""Email"")) AS learner_email,
+    ""OwnerName"" AS coach_name,
+    COALESCE(NULLIF(lower(TRIM(BOTH FROM ""OwnerEmail"")), '<literal redacted>'::text), '<literal redacted>'::text) AS coach_key,
+    case_owner_id::text AS coach_source_id,
+    ""Program-Status"" AS learner_status,
+    ""Start-Date"" AS start_date,
+    ""End-Date"" AS end_date,
+    ""Program Name"" AS programme
+   FROM ""LMS"".""Aptem_users"" a;",34cab84be45d5390a369cbd2b421f24e4d44140e4decdfb0eec86f20ee4d73ef
+kbc_coaching_reporting,review_evidence,v,True," SELECT r.id::text AS id,
+    r.raw_text
+   FROM ""Learner"".reviews r
+     JOIN ""LMS"".""Aptem_users"" a ON a.""ID""::text = (r.review_data ->> '<literal redacted>'::text) AND lower(TRIM(BOTH FROM a.""Email"")) = lower(TRIM(BOTH FROM r.learner_email))
+  WHERE r.review_type = ANY (ARRAY['<literal redacted>'::text, '<literal redacted>'::text, '<literal redacted>'::text]);",c9ec37fbd10a67cab690ccec8fcac085328f241efc23bc305e8b2ee6e51f2083
+kbc_coaching_reporting,reviews,v,True," SELECT r.id::text AS id,
+    r.aptem_review_id,
+    r.review_data ->> '<literal redacted>'::text AS learner_id,
+    lower(TRIM(BOTH FROM r.learner_email)) AS learner_email,
+    r.learner_name,
+        CASE
+            WHEN r.review_type = '<literal redacted>'::text THEN '<literal redacted>'::text
+            ELSE '<literal redacted>'::text
+        END AS kind,
+    r.review_type,
+    r.reviewer_name,
+        CASE
+            WHEN r.status = '<literal redacted>'::text THEN '<literal redacted>'::text
+            ELSE r.status
+        END AS status,
+    r.extraction_status,
+    r.last_seen_at,
+    r.updated_at,
+    COALESCE((r.planned_scheduled_date AT TIME ZONE '<literal redacted>'::text)::date,
+        CASE
+            WHEN ""left""((r.review_data -> '<literal redacted>'::text) ->> '<literal redacted>'::text, 11) ~ '<literal redacted>'::text THEN to_date(""left""((r.review_data -> '<literal redacted>'::text) ->> '<literal redacted>'::text, 11), '<literal redacted>'::text)
+            ELSE NULL::date
+        END) AS planned_date,
+    COALESCE((r.completed_date AT TIME ZONE '<literal redacted>'::text)::date,
+        CASE
+            WHEN ((r.review_data -> '<literal redacted>'::text) ->> '<literal redacted>'::text) ~ '<literal redacted>'::text THEN to_date((r.review_data -> '<literal redacted>'::text) ->> '<literal redacted>'::text, '<literal redacted>'::text)
+            ELSE NULL::date
+        END) AS completed_day,
+    lower(TRIM(BOTH FROM a.""Email"")) = lower(TRIM(BOTH FROM r.learner_email)) AS identity_confirmed
+   FROM ""Learner"".reviews r
+     JOIN ""LMS"".""Aptem_users"" a ON a.""ID""::text = (r.review_data ->> '<literal redacted>'::text)
+  WHERE r.review_type = ANY (ARRAY['<literal redacted>'::text, '<literal redacted>'::text, '<literal redacted>'::text]);",047366f04763f5768afac9d826f7b2448475e2c5418b8a0bafa0ac8443ac8b65
+kbc_coaching_reporting,schedules,v,True," WITH slots AS (
+         SELECT p_1.""ID""::text AS learner_id,
+            '<literal redacted>'::text AS kind,
+            s.slot,
+            to_jsonb(p_1.*) ->> ('<literal redacted>'::text || s.slot) AS raw_date,
+            COALESCE(to_jsonb(p_1.*) ->> ('<literal redacted>'::text || s.slot), '<literal redacted>'::text) AS status
+           FROM ""LMS"".""PR"" p_1
+             CROSS JOIN generate_series(1, 16) s(slot)
+        UNION ALL
+         SELECT p_1.""ID""::text AS ""ID"",
+            '<literal redacted>'::text,
+            s.slot,
+            to_jsonb(p_1.*) ->> ('<literal redacted>'::text || s.slot),
+            COALESCE(to_jsonb(p_1.*) ->> ('<literal redacted>'::text || s.slot), '<literal redacted>'::text) AS ""coalesce""
+           FROM ""LMS"".""MCR"" p_1
+             CROSS JOIN generate_series(1, 22) s(slot)
+        ), parsed AS (
+         SELECT slots.learner_id,
+            slots.kind,
+            slots.slot,
+            slots.raw_date,
+            slots.status,
+                CASE
+                    WHEN slots.raw_date ~ '<literal redacted>'::text AND ""substring""(slots.raw_date, 4, 2)::integer >= 1 AND ""substring""(slots.raw_date, 4, 2)::integer <= 12 AND ""substring""(slots.raw_date, 1, 2)::integer >= 1 AND ""substring""(slots.raw_date, 1, 2)::integer <= 31 THEN to_date(slots.raw_date, '<literal redacted>'::text)
+                    ELSE NULL::date
+                END AS planned_date
+           FROM slots
+        )
+ SELECT l.learner_id,
+    l.learner_name,
+    l.learner_email,
+    l.coach_name,
+    l.coach_key,
+    l.coach_source_id,
+    l.learner_status,
+    l.start_date,
+    l.end_date,
+    l.programme,
+    p.kind,
+    p.slot,
+    (((p.kind || '<literal redacted>'::text) || p.learner_id) || '<literal redacted>'::text) || p.slot AS id,
+    p.status,
+    p.planned_date,
+    p.raw_date,
+    COALESCE(to_char(p.planned_date::timestamp with time zone, '<literal redacted>'::text) = p.raw_date, false) AS date_valid
+   FROM parsed p
+     JOIN kbc_coaching_reporting.learners l USING (learner_id)
+  WHERE NULLIF(TRIM(BOTH FROM p.raw_date), '<literal redacted>'::text) IS NOT NULL;",6cb26a828910bf64160eafa5dce4ea8a34b3a25b9c283f6fa560569b434cf26b
+kbc_quality_reporting,aptem_programmes,v,True," WITH identities AS (
+         SELECT lower(TRIM(BOTH FROM ilr_learning_deliveries.email)) AS email
+           FROM ""Audit"".ilr_learning_deliveries
+          WHERE ilr_learning_deliveries.aim_type = 1 AND NULLIF(TRIM(BOTH FROM ilr_learning_deliveries.email), '<literal redacted>'::text) IS NOT NULL
+          GROUP BY (lower(TRIM(BOTH FROM ilr_learning_deliveries.email)))
+         HAVING count(DISTINCT ilr_learning_deliveries.learn_ref_number) = 1
+        ), demographics AS (
+         SELECT DISTINCT ON ((lower(TRIM(BOTH FROM d_1.email)))) lower(TRIM(BOTH FROM d_1.email)) AS email,
+            d_1.date_of_birth,
+            d_1.ethnicity,
+            d_1.lldd_health_prob,
+            d_1.lldd_health_problems,
+            d_1.address_line_3,
+            d_1.sex,
+            d_1.file_preparation_date
+           FROM ""Audit"".ilr_learning_deliveries d_1
+             JOIN identities i ON lower(TRIM(BOTH FROM d_1.email)) = i.email
+          WHERE d_1.aim_type = 1
+          ORDER BY (lower(TRIM(BOTH FROM d_1.email))), d_1.file_preparation_date DESC NULLS LAST, d_1.updated_at DESC, d_1.id DESC
+        ), users AS (
+         SELECT a_1.""ID"",
+            a_1.""FullName"",
+            a_1.""Email"",
+            a_1.""Minimum"",
+            a_1.""Planned"",
+            a_1.""Submitted"",
+            a_1.""Completed"",
+            a_1.""Forecast"",
+            a_1.""Exepected"",
+            a_1.""ProgressVariance"",
+            a_1.""Progress-Hours"",
+            a_1.""OTJHoursStatus"",
+            a_1.""TotalTargetKSB"",
+            a_1.""TotalCompletedKSB"",
+            a_1.""KSBStatus"",
+            a_1.""Start-Date"",
+            a_1.""End-Date"",
+            a_1.""Total Days"",
+            a_1.""Elapsed-Days"",
+            a_1.""Program Name"",
+            a_1.""Program-Status"",
+            a_1.""Price"",
+            a_1.""TotalCompCount"",
+            a_1.""TargetCompCount"",
+            a_1.""CompletedCompCount"",
+            a_1.""TargetComp%"",
+            a_1.""CompletedComp%"",
+            a_1.""CompStatus"",
+            a_1.""OwnerName"",
+            a_1.""OwnerEmail"",
+            a_1.""OwnerPhone"",
+            a_1.""Coach-RAG"",
+            a_1.""OrganizationName"",
+            a_1.""ManagerName"",
+            a_1.""ManagerEmail"",
+            a_1.""Employer Repsentative"",
+            a_1.""apprenticeship-agreement"",
+            a_1.trainingplan,
+            a_1.""individual-learning-record"",
+            a_1.""contract-for-service"",
+            a_1.""written-agreement"",
+            a_1.""Assignment Evidence"",
+            a_1.""AssignEvdHours"",
+            a_1.""LMS Evidence"",
+            a_1.""LMSEvdHours"",
+            a_1.""ExtraAct-Evidence"",
+            a_1.""ExtrEvdHours"",
+            a_1.""Group"",
+            a_1.""Disability"",
+            a_1.case_owner_id,
+            a_1.""Gender"",
+            a_1.subprogramme,
+            a_1.""Manager Phone"",
+            a_1.""Learner Phone"",
+            a_1.""Address"",
+            a_1.""post code"",
+            a_1.""Markers_Markers"",
+            a_1.components,
+            a_1.""Employer Email"",
+            a_1.""Working hours"",
+            a_1.""Subscription Status"",
+            a_1.""Levy or Not"",
+            a_1.""Target"",
+            a_1.components_json,
+            count(*) OVER (PARTITION BY (lower(TRIM(BOTH FROM a_1.""Email"")))) AS email_matches
+           FROM ""LMS"".""Aptem_users"" a_1
+        )
+ SELECT md5(a.""ID""::text) AS learner_key,
+    a.""Program Name"" AS programme_name,
+    a.""Program-Status"" AS programme_status,
+    a.""Start-Date""::text AS start_date,
+        CASE
+            WHEN d.date_of_birth <= a.""Start-Date"" THEN EXTRACT(year FROM age(a.""Start-Date""::timestamp with time zone, d.date_of_birth::timestamp with time zone))::integer
+            ELSE NULL::integer
+        END AS age_at_start,
+    COALESCE(NULLIF(TRIM(BOTH FROM a.""Gender""), '<literal redacted>'::text), d.sex::text) AS gender,
+    d.ethnicity::text AS ethnicity,
+    d.lldd_health_prob::text AS lldd,
+    ARRAY( SELECT DISTINCT x.value ->> '<literal redacted>'::text
+           FROM jsonb_array_elements(
+                CASE
+                    WHEN jsonb_typeof(d.lldd_health_problems) = '<literal redacted>'::text THEN d.lldd_health_problems
+                    ELSE '<literal redacted>'::jsonb
+                END) x(value)
+          WHERE (x.value ->> '<literal redacted>'::text) IS NOT NULL) AS lldd_categories,
+    NULLIF(initcap(TRIM(BOTH FROM d.address_line_3)), '<literal redacted>'::text) AS city,
+    d.file_preparation_date::text AS demographic_date,
+    d.email IS NOT NULL AS demographics_matched
+   FROM users a
+     LEFT JOIN demographics d ON lower(TRIM(BOTH FROM a.""Email"")) = d.email AND a.email_matches = 1;",85b24111a2df7a95bc26022db57f910c5e854c5203e5f25e108a0fe59c925b8b
+kbc_quality_reporting,attendance_roster,v,True," WITH unique_ids AS (
+         SELECT learners.aptem_id,
+            min(learners.id) AS id
+           FROM ""Learner"".learners
+          WHERE learners.aptem_id IS NOT NULL
+          GROUP BY learners.aptem_id
+         HAVING count(*) = 1
+        ), unique_emails AS (
+         SELECT lower(TRIM(BOTH FROM learners.email)) AS email,
+            min(learners.id) AS id
+           FROM ""Learner"".learners
+          WHERE NULLIF(TRIM(BOTH FROM learners.email), '<literal redacted>'::text) IS NOT NULL
+          GROUP BY (lower(TRIM(BOTH FROM learners.email)))
+         HAVING count(*) = 1
+        ), joined AS (
+         SELECT i.learner_id,
+            i.learner_email,
+            i.learner_name,
+            i.programme,
+            COALESCE(NULLIF(l.programme, '<literal redacted>'::text), i.lms_programme) AS lms_programme,
+            l.cohort AS lms_cohort,
+            COALESCE(NULLIF(l.group_name, '<literal redacted>'::text), i.teaching_group) AS teaching_group,
+            COALESCE(NULLIF(l.coach_name, '<literal redacted>'::text), i.coach_name) AS coach_name,
+            COALESCE(NULLIF(l.programme_status::text, '<literal redacted>'::text), i.learner_status) AS learner_status,
+            l.id::text AS lms_id,
+            l.updated_at AS lms_updated_at,
+            i.gender,
+            i.ethnicity,
+            i.age_at_start
+           FROM kbc_quality_reporting.inclusion_roster_v2 i
+             LEFT JOIN unique_ids ai ON ai.aptem_id::text = i.learner_id
+             LEFT JOIN unique_emails ae ON ae.email = lower(TRIM(BOTH FROM i.learner_email))
+             LEFT JOIN ""Learner"".learners l ON l.id = COALESCE(ai.id, ae.id)
+        )
+ SELECT joined.learner_id,
+    joined.learner_email,
+    joined.learner_name,
+    joined.programme,
+    joined.lms_programme,
+    joined.lms_cohort,
+    joined.teaching_group,
+    joined.coach_name,
+    joined.learner_status,
+    joined.lms_id,
+    joined.lms_updated_at,
+    joined.gender,
+    joined.ethnicity,
+    joined.age_at_start
+   FROM joined
+UNION ALL
+ SELECT COALESCE(l.aptem_id::text, '<literal redacted>'::text || l.id::text) AS learner_id,
+    l.email AS learner_email,
+    l.full_name AS learner_name,
+    NULL::text AS programme,
+    l.programme AS lms_programme,
+    l.cohort AS lms_cohort,
+    l.group_name AS teaching_group,
+    l.coach_name,
+    l.programme_status AS learner_status,
+    l.id::text AS lms_id,
+    l.updated_at AS lms_updated_at,
+    NULL::text AS gender,
+    NULL::text AS ethnicity,
+    NULL::integer AS age_at_start
+   FROM ""Learner"".learners l
+  WHERE NOT (EXISTS ( SELECT 1
+           FROM joined j
+          WHERE j.lms_id = l.id::text)) AND NOT (EXISTS ( SELECT 1
+           FROM joined j
+          WHERE j.learner_id = l.aptem_id::text));",3a15e1f248437cd9d051f3cb3b2ce72787f902ff0cdc2843c074152947967137
+kbc_quality_reporting,feedback_answers,v,True," WITH completed AS (
+         SELECT r_1.id,
+            r_1.learner_id,
+            r_1.aptem_review_id,
+            r_1.review_name,
+            r_1.review_type,
+            r_1.reviewer_name,
+            r_1.planned_scheduled_date,
+            r_1.completed_date,
+            r_1.status,
+            r_1.source_url,
+            r_1.review_data,
+            r_1.raw_text,
+            r_1.content_hash,
+            r_1.extraction_status,
+            r_1.last_error,
+            r_1.first_seen_at,
+            r_1.last_seen_at,
+            r_1.last_extracted_at,
+            r_1.created_at,
+            r_1.updated_at,
+            r_1.learner_name,
+            r_1.learner_email,
+            COALESCE((r_1.completed_date AT TIME ZONE '<literal redacted>'::text)::date,
+                CASE
+                    WHEN ((r_1.review_data -> '<literal redacted>'::text) ->> '<literal redacted>'::text) ~ '<literal redacted>'::text THEN
+                    CASE
+                        WHEN to_char(to_date((r_1.review_data -> '<literal redacted>'::text) ->> '<literal redacted>'::text, '<literal redacted>'::text)::timestamp with time zone, '<literal redacted>'::text) = ((r_1.review_data -> '<literal redacted>'::text) ->> '<literal redacted>'::text) THEN to_date((r_1.review_data -> '<literal redacted>'::text) ->> '<literal redacted>'::text, '<literal redacted>'::text)
+                        ELSE NULL::date
+                    END
+                    ELSE NULL::date
+                END) AS completed_day
+           FROM ""Learner"".reviews r_1
+          WHERE r_1.status = '<literal redacted>'::text AND (r_1.review_type = ANY (ARRAY['<literal redacted>'::text, '<literal redacted>'::text, '<literal redacted>'::text]))
+        )
+ SELECT r.id::text AS review_id,
+    r.aptem_review_id,
+    md5(COALESCE(NULLIF(r.review_data ->> '<literal redacted>'::text, '<literal redacted>'::text), '<literal redacted>'::text || r.learner_id::text)) AS learner_key,
+    r.completed_day::text AS completed_day,
+    r.review_type,
+    r.source_url,
+    TRIM(BOTH FROM regexp_replace(regexp_replace(s.section_name, '<literal redacted>'::text, '<literal redacted>'::text, '<literal redacted>'::text), '<literal redacted>'::text, '<literal redacted>'::text, '<literal redacted>'::text)) AS section,
+    TRIM(BOTH FROM regexp_replace(f.value ->> '<literal redacted>'::text, '<literal redacted>'::text, '<literal redacted>'::text, '<literal redacted>'::text)) AS question,
+    TRIM(BOTH FROM regexp_replace(f.value ->> '<literal redacted>'::text, '<literal redacted>'::text, '<literal redacted>'::text, '<literal redacted>'::text)) AS answer,
+    r.last_extracted_at::text AS last_extracted_at,
+    r.last_seen_at::text AS last_seen_at,
+    r.updated_at::text AS updated_at
+   FROM completed r
+     JOIN ""Learner"".review_sections s ON s.review_id = r.id
+     CROSS JOIN LATERAL jsonb_array_elements(
+        CASE
+            WHEN jsonb_typeof(s.fields_json) = '<literal redacted>'::text THEN s.fields_json
+            ELSE '<literal redacted>'::jsonb
+        END) f(value)
+  WHERE r.completed_day IS NOT NULL AND r.completed_day <= (now() AT TIME ZONE '<literal redacted>'::text)::date AND (s.section_name ~~* '<literal redacted>'::text OR s.section_name ~~* '<literal redacted>'::text OR s.section_name ~~* '<literal redacted>'::text OR s.section_name ~~* '<literal redacted>'::text OR s.section_name ~~* '<literal redacted>'::text);",b04cc3aeb5abb4e9a7a778646dcf7b1f387ba7a2cee8587cff64617b3500c65a
+kbc_quality_reporting,feedback_source_status,v,True," SELECT max(last_extracted_at)::text AS archive_extracted_at,
+    max(last_seen_at)::text AS archive_seen_at,
+    max(updated_at)::text AS archive_updated_at,
+    round(100.0 * count(*) FILTER (WHERE extraction_status = '<literal redacted>'::text)::numeric / NULLIF(count(*), 0)::numeric, 2) AS extraction_error_percentage
+   FROM ""Learner"".reviews
+  WHERE review_type = ANY (ARRAY['<literal redacted>'::text, '<literal redacted>'::text, '<literal redacted>'::text]);",5dd15fcaeeba93e395779c26dc692bad0a656710f7e219da5fc89d80310597f6
+kbc_quality_reporting,ilr_programmes,v,True," WITH latest_files AS (
+         SELECT DISTINCT ON (ilr_learning_deliveries.academic_year) ilr_learning_deliveries.academic_year,
+            ilr_learning_deliveries.source_file_sha256
+           FROM ""Audit"".ilr_learning_deliveries
+          ORDER BY ilr_learning_deliveries.academic_year, ilr_learning_deliveries.file_preparation_date DESC NULLS LAST, ilr_learning_deliveries.imported_at DESC, ilr_learning_deliveries.id DESC
+        ), aims AS (
+         SELECT d.id,
+            d.record_key,
+            d.source_file_name,
+            d.source_file_sha256,
+            d.collection,
+            d.academic_year,
+            d.file_preparation_date,
+            d.protective_marking,
+            d.ukprn,
+            d.software_supplier,
+            d.software_package,
+            d.software_release,
+            d.source_serial_no,
+            d.source_datetime,
+            d.learn_ref_number,
+            d.uln,
+            d.family_name,
+            d.given_names,
+            d.date_of_birth,
+            d.ethnicity,
+            d.sex,
+            d.lldd_health_prob,
+            d.ni_number,
+            d.postcode_prior,
+            d.postcode,
+            d.address_line_1,
+            d.address_line_2,
+            d.address_line_3,
+            d.address_line_4,
+            d.telephone,
+            d.email,
+            d.prior_attainments,
+            d.lldd_health_problems,
+            d.employment_statuses,
+            d.learn_aim_ref,
+            d.aim_type,
+            d.aim_seq_number,
+            d.learn_start_date,
+            d.original_learn_start_date,
+            d.learn_plan_end_date,
+            d.fund_model,
+            d.planned_hours,
+            d.otj_actual_hours,
+            d.programme_type,
+            d.standard_code,
+            d.delivery_location_postcode,
+            d.epa_org_id,
+            d.completion_status,
+            d.learn_actual_end_date,
+            d.withdrawal_reason,
+            d.outcome,
+            d.achievement_date,
+            d.sw_sup_aim_id,
+            d.learning_delivery_fams,
+            d.app_fin_records,
+            d.imported_at,
+            d.updated_at,
+            min(COALESCE(d.original_learn_start_date, d.learn_start_date)) OVER (PARTITION BY d.learn_ref_number, d.standard_code) AS cohort_start,
+            count(*) OVER (PARTITION BY d.learn_ref_number, d.standard_code) AS source_rows
+           FROM ""Audit"".ilr_learning_deliveries d
+             JOIN latest_files f USING (academic_year, source_file_sha256)
+          WHERE d.aim_type = 1 AND d.programme_type = 25 AND NULLIF(TRIM(BOTH FROM d.learn_ref_number), '<literal redacted>'::text) IS NOT NULL
+        ), latest AS (
+         SELECT DISTINCT ON (aims.learn_ref_number, aims.standard_code) aims.id,
+            aims.record_key,
+            aims.source_file_name,
+            aims.source_file_sha256,
+            aims.collection,
+            aims.academic_year,
+            aims.file_preparation_date,
+            aims.protective_marking,
+            aims.ukprn,
+            aims.software_supplier,
+            aims.software_package,
+            aims.software_release,
+            aims.source_serial_no,
+            aims.source_datetime,
+            aims.learn_ref_number,
+            aims.uln,
+            aims.family_name,
+            aims.given_names,
+            aims.date_of_birth,
+            aims.ethnicity,
+            aims.sex,
+            aims.lldd_health_prob,
+            aims.ni_number,
+            aims.postcode_prior,
+            aims.postcode,
+            aims.address_line_1,
+            aims.address_line_2,
+            aims.address_line_3,
+            aims.address_line_4,
+            aims.telephone,
+            aims.email,
+            aims.prior_attainments,
+            aims.lldd_health_problems,
+            aims.employment_statuses,
+            aims.learn_aim_ref,
+            aims.aim_type,
+            aims.aim_seq_number,
+            aims.learn_start_date,
+            aims.original_learn_start_date,
+            aims.learn_plan_end_date,
+            aims.fund_model,
+            aims.planned_hours,
+            aims.otj_actual_hours,
+            aims.programme_type,
+            aims.standard_code,
+            aims.delivery_location_postcode,
+            aims.epa_org_id,
+            aims.completion_status,
+            aims.learn_actual_end_date,
+            aims.withdrawal_reason,
+            aims.outcome,
+            aims.achievement_date,
+            aims.sw_sup_aim_id,
+            aims.learning_delivery_fams,
+            aims.app_fin_records,
+            aims.imported_at,
+            aims.updated_at,
+            aims.cohort_start,
+            aims.source_rows
+           FROM aims
+          ORDER BY aims.learn_ref_number, aims.standard_code, aims.file_preparation_date DESC NULLS LAST, aims.learn_start_date DESC NULLS LAST, aims.aim_seq_number DESC, aims.updated_at DESC, aims.id DESC
+        )
+ SELECT md5(learn_ref_number::text) AS learner_key,
+    standard_code::text AS programme_code,
+    cohort_start::text AS start_date,
+        CASE
+            WHEN date_of_birth <= cohort_start THEN EXTRACT(year FROM age(cohort_start::timestamp with time zone, date_of_birth::timestamp with time zone))::integer
+            ELSE NULL::integer
+        END AS age_at_start,
+    sex AS gender,
+    ethnicity::text AS ethnicity,
+    lldd_health_prob::text AS lldd,
+    ARRAY( SELECT DISTINCT x.value ->> '<literal redacted>'::text
+           FROM jsonb_array_elements(
+                CASE
+                    WHEN jsonb_typeof(latest.lldd_health_problems) = '<literal redacted>'::text THEN latest.lldd_health_problems
+                    ELSE '<literal redacted>'::jsonb
+                END) x(value)
+          WHERE (x.value ->> '<literal redacted>'::text) IS NOT NULL) AS lldd_categories,
+    NULLIF(initcap(TRIM(BOTH FROM address_line_3)), '<literal redacted>'::text) AS city,
+    completion_status,
+    outcome,
+    achievement_date::text AS achievement_date,
+    learn_actual_end_date::text AS actual_end_date,
+    file_preparation_date::text AS source_date,
+    academic_year AS return_year,
+    imported_at::text AS imported_at,
+    source_rows::integer AS source_rows
+   FROM latest;",b55391cd7d4138b6f79ba34c3430892847fcdaabf29dd9e40fe615e7004a2e96
+kbc_quality_reporting,inclusion_learners,v,True," WITH review_dates AS MATERIALIZED (
+         SELECT reviews.learner_id,
+            max(reviews.completed_day) FILTER (WHERE reviews.kind = '<literal redacted>'::text)::text AS latest_monthly,
+            max(reviews.completed_day) FILTER (WHERE reviews.kind = '<literal redacted>'::text)::text AS latest_review
+           FROM kbc_coaching_reporting.reviews
+          WHERE reviews.identity_confirmed AND reviews.status = '<literal redacted>'::text AND reviews.completed_day <= CURRENT_DATE
+          GROUP BY reviews.learner_id
+        )
+ SELECT a.""ID""::text AS learner_id,
+    a.""FullName"" AS learner_name,
+    lower(TRIM(BOTH FROM a.""Email"")) AS learner_email,
+    a.""Learner Phone"" AS learner_phone,
+    a.""OwnerName"" AS coach_name,
+    a.""OrganizationName"" AS employer,
+    a.""Program Name"" AS programme,
+    a.""Group"" AS intake,
+    a.""Program-Status"" AS learner_status,
+    a.""Start-Date""::text AS start_date,
+    a.""End-Date""::text AS end_date,
+    q.lldd,
+    q.lldd_categories,
+    q.demographic_date,
+    q.demographics_matched,
+    a.""OTJHoursStatus"" AS otj_status,
+    a.""Completed""::double precision AS otj_completed,
+    a.""Exepected""::double precision AS otj_expected,
+    a.""TotalCompletedKSB"" AS ksb_completed,
+    a.""TotalTargetKSB"" AS ksb_target,
+    d.latest_monthly,
+    d.latest_review
+   FROM ""LMS"".""Aptem_users"" a
+     JOIN kbc_quality_reporting.aptem_programmes q ON q.learner_key = md5(a.""ID""::text)
+     LEFT JOIN review_dates d ON d.learner_id = a.""ID""::text;",6336f193ed66f242053ad588a960dd81bc1e56b6eee5bac7dfd72aaf5852e245
+kbc_quality_reporting,inclusion_monthly_v2,v,True," WITH accepted AS MATERIALIZED (
+         SELECT learner_progress_entries.id,
+            learner_progress_entries.learner_id,
+            learner_progress_entries.entry_order,
+            learner_progress_entries.kind,
+            learner_progress_entries.module_ref,
+            learner_progress_entries.module_title,
+            learner_progress_entries.week_ref,
+            learner_progress_entries.week_title,
+            learner_progress_entries.component_ref,
+            learner_progress_entries.component_title,
+            learner_progress_entries.component_type,
+            learner_progress_entries.quiz_ref,
+            learner_progress_entries.attempt,
+            learner_progress_entries.grade,
+            learner_progress_entries.achieved_score,
+            learner_progress_entries.total_score,
+            learner_progress_entries.passed,
+            learner_progress_entries.feedback,
+            learner_progress_entries.reported_time,
+            learner_progress_entries.started_at,
+            learner_progress_entries.submitted_at,
+            learner_progress_entries.time_taken,
+            learner_progress_entries.feed_kind,
+            learner_progress_entries.feed_action,
+            learner_progress_entries.feed_title,
+            learner_progress_entries.feed_detail,
+            learner_progress_entries.feed_occurred_at,
+            learner_progress_entries.plan_component_id,
+            learner_progress_entries.programme_ref,
+            learner_progress_entries.programme_title,
+            learner_progress_entries.cohort_ref,
+            learner_progress_entries.cohort_title,
+            learner_progress_entries.group_ref,
+            learner_progress_entries.group_title,
+            learner_progress_entries.expected_otjh,
+            learner_progress_entries.points,
+            learner_progress_entries.component_link_status,
+            learner_progress_entries.legacy_component_ref,
+            learner_progress_entries.component_link_source,
+            learner_progress_entries.time_tracking_source,
+            learner_progress_entries.time_tracking_calculation,
+            learner_progress_entries.time_tracking_session_ref,
+            learner_progress_entries.claimed_seconds,
+            learner_progress_entries.server_session_seconds,
+            learner_progress_entries.verified_seconds,
+            learner_progress_entries.outside_working_hours,
+            learner_progress_entries.outside_working_hours_confirmed,
+            learner_progress_entries.outside_working_hours_confirmed_at,
+            learner_progress_entries.enrolment_id,
+            learner_progress_entries.programme_id,
+            learner_progress_entries.aptem_id,
+            learner_progress_entries.curriculum_component_id,
+            learner_progress_entries.source_system,
+            learner_progress_entries.source_activity_id,
+            learner_progress_entries.source_attempt_key,
+            learner_progress_entries.canonical_activity_key,
+            learner_progress_entries.activity_status,
+            learner_progress_entries.accepted,
+            learner_progress_entries.actual_seconds,
+            learner_progress_entries.actual_basis,
+            learner_progress_entries.reporting_started_at,
+            learner_progress_entries.reporting_ended_at,
+            learner_progress_entries.reporting_month,
+            learner_progress_entries.reporting_timestamp_label,
+            learner_progress_entries.source_payload,
+            learner_progress_entries.sync_run_id,
+            learner_progress_entries.deleted_at,
+            learner_progress_entries.ssot_created_at,
+            learner_progress_entries.ssot_updated_at,
+            learner_progress_entries.curriculum_component_ref,
+            learner_progress_entries.inside_working_hours_confirmed,
+            learner_progress_entries.inside_working_hours_confirmed_at,
+            learner_progress_entries.reflection_skipped,
+            learner_progress_entries.declared_completed_at,
+            learner_progress_entries.submission_validation_reason
+           FROM ""Learner"".learner_progress_entries
+          WHERE learner_progress_entries.accepted = true AND learner_progress_entries.deleted_at IS NULL
+        ), activity AS (
+         SELECT p.learner_id,
+            COALESCE(s_1.reporting_month, p.reporting_month) AS month,
+            sum(
+                CASE
+                    WHEN s_1.id IS NOT NULL THEN s_1.actual_seconds
+                    ELSE p.actual_seconds
+                END) / 3600.0 AS actual,
+            max(p.ssot_updated_at) AS actual_updated_at
+           FROM accepted p
+             LEFT JOIN ""Learner"".learner_activity_reporting_segments s_1 ON s_1.progress_id = p.id
+          WHERE COALESCE(s_1.reporting_month, p.reporting_month)::text ~ '<literal redacted>'::text AND COALESCE(s_1.reporting_month, p.reporting_month)::text < to_char(CURRENT_DATE::timestamp with time zone, '<literal redacted>'::text) AND (COALESCE(s_1.reporting_ended_at, p.reporting_ended_at) IS NULL OR COALESCE(s_1.reporting_ended_at, p.reporting_ended_at) <= now()) AND COALESCE(s_1.actual_seconds, p.actual_seconds) >= 0
+          GROUP BY p.learner_id, (COALESCE(s_1.reporting_month, p.reporting_month))
+        ), targets AS (
+         SELECT learner_monthly_targets.learner_id,
+            learner_monthly_targets.report_month AS month,
+                CASE
+                    WHEN count(*) = 1 AND min(learner_monthly_targets.target_hours) > 0::numeric THEN min(learner_monthly_targets.target_hours)
+                    ELSE NULL::numeric
+                END AS expected,
+            max(learner_monthly_targets.updated_at) AS target_updated_at,
+            string_agg(DISTINCT learner_monthly_targets.basis, '<literal redacted>'::text) AS target_basis
+           FROM ""Learner"".learner_monthly_targets
+          WHERE learner_monthly_targets.report_month::text ~ '<literal redacted>'::text
+          GROUP BY learner_monthly_targets.learner_id, learner_monthly_targets.report_month
+        ), attendance_unique AS (
+         SELECT DISTINCT ON (learner_attendance_details.learner_id, (COALESCE(learner_attendance_details.occurrence_id, learner_attendance_details.session_id))) learner_attendance_details.learner_id,
+            learner_attendance_details.session_date,
+            learner_attendance_details.attendance_status,
+            learner_attendance_details.calculated_at
+           FROM ""Learner"".learner_attendance_details
+          WHERE learner_attendance_details.is_expected = true AND learner_attendance_details.session_date < CURRENT_DATE AND COALESCE(learner_attendance_details.occurrence_id, learner_attendance_details.session_id) IS NOT NULL AND (learner_attendance_details.attendance_status::text = ANY (ARRAY['<literal redacted>'::character varying, '<literal redacted>'::character varying, '<literal redacted>'::character varying]::text[]))
+          ORDER BY learner_attendance_details.learner_id, (COALESCE(learner_attendance_details.occurrence_id, learner_attendance_details.session_id)), learner_attendance_details.calculated_at DESC NULLS LAST, learner_attendance_details.updated_at DESC NULLS LAST, learner_attendance_details.id DESC
+        ), attendance AS (
+         SELECT attendance_unique.learner_id,
+            to_char(attendance_unique.session_date::timestamp with time zone, '<literal redacted>'::text) AS month,
+            count(*) AS sessions,
+            count(*) FILTER (WHERE attendance_unique.attendance_status::text = ANY (ARRAY['<literal redacted>'::character varying, '<literal redacted>'::character varying]::text[])) AS attended,
+            max(attendance_unique.calculated_at) AS attendance_updated_at
+           FROM attendance_unique
+          GROUP BY attendance_unique.learner_id, (to_char(attendance_unique.session_date::timestamp with time zone, '<literal redacted>'::text))
+        ), keys AS (
+         SELECT activity.learner_id,
+            activity.month
+           FROM activity
+        UNION
+         SELECT targets.learner_id,
+            targets.month
+           FROM targets
+        UNION
+         SELECT attendance.learner_id,
+            attendance.month
+           FROM attendance
+        )
+ SELECT k.learner_id::text AS lms_id,
+    k.month,
+    a.actual::double precision AS actual,
+    t.expected::double precision AS expected,
+    t.target_basis,
+    s.sessions::integer AS sessions,
+    s.attended::integer AS attended,
+    a.actual_updated_at,
+    t.target_updated_at,
+    s.attendance_updated_at
+   FROM keys k
+     LEFT JOIN activity a USING (learner_id, month)
+     LEFT JOIN targets t USING (learner_id, month)
+     LEFT JOIN attendance s USING (learner_id, month);",c70bb98b7d06a1193e608436806ba265a2c777e9e8d337db38e7f239c3f574c4
+kbc_quality_reporting,inclusion_plan_months,v,True," WITH unique_identity AS MATERIALIZED (
+         SELECT learners.aptem_id,
+            min(learners.id) AS lms_id
+           FROM ""Learner"".learners
+          WHERE learners.aptem_id IS NOT NULL
+          GROUP BY learners.aptem_id
+         HAVING count(*) = 1
+        ), identity AS (
+         SELECT u.aptem_id,
+            u.lms_id,
+            l.programme_id,
+            l.enrolment_id
+           FROM unique_identity u
+             JOIN ""Learner"".learners l ON l.id = u.lms_id
+        ), imported AS (
+         SELECT i.lms_id,
+            j.key AS month,
+                CASE
+                    WHEN j.value ~ '<literal redacted>'::text THEN j.value::numeric
+                    ELSE NULL::numeric
+                END AS expected,
+            s.last_seen AS updated_at
+           FROM identity i
+             JOIN ""Learner"".source_lms_learners s USING (aptem_id)
+             CROSS JOIN LATERAL jsonb_each_text(
+                CASE
+                    WHEN jsonb_typeof(s.planned_hours_monthly) = '<literal redacted>'::text THEN s.planned_hours_monthly
+                    ELSE '<literal redacted>'::jsonb
+                END) j(key, value)
+          WHERE j.key ~ '<literal redacted>'::text
+        ), scoped_targets AS (
+         SELECT i.lms_id,
+            t_1.report_month AS month,
+            t_1.target_hours,
+            t_1.updated_at
+           FROM identity i
+             JOIN ""Learner"".learner_monthly_targets t_1 ON t_1.learner_id = i.lms_id
+          WHERE t_1.report_month::text ~ '<literal redacted>'::text AND (NULLIF(t_1.programme_id, '<literal redacted>'::text) IS NULL OR t_1.programme_id = i.programme_id::text) AND (t_1.enrolment_id IS NULL OR t_1.enrolment_id = i.enrolment_id) AND (COALESCE(t_1.programme_profile_id, '<literal redacted>'::text) = '<literal redacted>'::text OR NULLIF(t_1.programme_id, '<literal redacted>'::text) IS NOT NULL AND t_1.programme_id = i.programme_id::text)
+        ), individual AS (
+         SELECT scoped_targets.lms_id,
+            scoped_targets.month,
+                CASE
+                    WHEN count(*) = 1 AND min(scoped_targets.target_hours) >= 0::numeric THEN min(scoped_targets.target_hours)
+                    ELSE NULL::numeric
+                END AS expected,
+            max(scoped_targets.updated_at) AS updated_at
+           FROM scoped_targets
+          GROUP BY scoped_targets.lms_id, scoped_targets.month
+        ), keys AS (
+         SELECT imported.lms_id,
+            imported.month
+           FROM imported
+        UNION
+         SELECT individual.lms_id,
+            individual.month
+           FROM individual
+        )
+ SELECT k.lms_id::text AS lms_id,
+    k.month,
+        CASE
+            WHEN t.lms_id IS NOT NULL THEN t.expected
+            ELSE p.expected
+        END::double precision AS expected,
+        CASE
+            WHEN t.lms_id IS NOT NULL AND t.expected IS NULL THEN '<literal redacted>'::text
+            WHEN t.lms_id IS NOT NULL THEN '<literal redacted>'::text
+            ELSE '<literal redacted>'::text
+        END AS target_basis,
+        CASE
+            WHEN t.lms_id IS NOT NULL THEN t.updated_at
+            ELSE p.updated_at
+        END AS target_updated_at
+   FROM keys k
+     LEFT JOIN imported p USING (lms_id, month)
+     LEFT JOIN individual t USING (lms_id, month);",be104ce830007e1fbfba637a0ffa987c2554b6819dcddffc09e4e4db1220a330
+kbc_quality_reporting,inclusion_roster_v2,v,True," SELECT i.learner_id,
+    i.learner_name,
+    i.learner_email,
+    i.learner_phone,
+    i.coach_name,
+    i.employer,
+    i.programme,
+    i.intake,
+    i.learner_status,
+    i.start_date,
+    i.end_date,
+    i.lldd,
+    i.lldd_categories,
+    i.demographic_date,
+    i.demographics_matched,
+    i.otj_status,
+    i.otj_completed,
+    i.otj_expected,
+    i.ksb_completed,
+    i.ksb_target,
+    i.latest_monthly,
+    i.latest_review,
+    q.gender,
+    q.ethnicity,
+    q.age_at_start,
+    q.city,
+    a.""post code"" AS postcode,
+    l.id::text AS lms_id,
+    l.group_name AS teaching_group,
+    l.updated_at AS lms_updated_at,
+    l.programme AS lms_programme
+   FROM kbc_quality_reporting.inclusion_learners i
+     JOIN kbc_quality_reporting.aptem_programmes q ON q.learner_key = md5(i.learner_id)
+     JOIN ""LMS"".""Aptem_users"" a ON a.""ID""::text = i.learner_id
+     LEFT JOIN ( SELECT learners.aptem_id,
+            min(learners.id) AS id
+           FROM ""Learner"".learners
+          WHERE learners.aptem_id IS NOT NULL
+          GROUP BY learners.aptem_id
+         HAVING count(*) = 1) m ON m.aptem_id::text = i.learner_id
+     LEFT JOIN ""Learner"".learners l ON l.id = m.id;",f30a70ea39391de1ad82b1af5cba0b5759804847d9c1dc2fcaaa11a8aab8f9d0
+kbc_quality_reporting,inclusion_tests_v2,v,True," SELECT DISTINCT ON (p.learner_id, q.id) p.learner_id::text AS lms_id,
+    (('<literal redacted>'::text || q.title::text) || '<literal redacted>'::text) || COALESCE(q.version, '<literal redacted>'::character varying)::text AS assessment,
+    '<literal redacted>'::text || q.id::text AS assessment_key,
+    100.0 * p.achieved_score / p.total_score AS score,
+        CASE
+            WHEN p.passed = true THEN '<literal redacted>'::text
+            WHEN p.passed = false THEN '<literal redacted>'::text
+            ELSE NULL::text
+        END AS grade,
+    COALESCE(p.submitted_at, p.reporting_ended_at)::date::text AS date,
+    p.attempt
+   FROM ""Learner"".learner_progress_entries p
+     JOIN curriculum.quizzes q ON q.id::text = p.quiz_ref AND q.status::text = '<literal redacted>'::text
+  WHERE p.deleted_at IS NULL AND p.source_system = '<literal redacted>'::text AND p.total_score > 0::numeric AND p.achieved_score >= 0::numeric AND p.achieved_score <= p.total_score AND COALESCE(p.submitted_at, p.reporting_ended_at) <= now()
+  ORDER BY p.learner_id, q.id, (COALESCE(p.submitted_at, p.reporting_ended_at)) DESC, p.attempt DESC NULLS LAST, p.id DESC;",1f9d403bb37be1235c16bc0cd8f21a849603da83bd4b0f152f933e8d1ec85bcf
+kbc_quality_reporting,inclusion_time_monthly,v,True," WITH boundary AS (
+         SELECT date_trunc('<literal redacted>'::text, (now() AT TIME ZONE '<literal redacted>'::text)) AS month_start
+        ), canonical AS MATERIALIZED (
+         SELECT DISTINCT ON (p_1.learner_id, (COALESCE(NULLIF(p_1.canonical_activity_key, '<literal redacted>'::text), '<literal redacted>'::text || p_1.id::text))) p_1.id,
+            p_1.learner_id,
+            p_1.entry_order,
+            p_1.kind,
+            p_1.module_ref,
+            p_1.module_title,
+            p_1.week_ref,
+            p_1.week_title,
+            p_1.component_ref,
+            p_1.component_title,
+            p_1.component_type,
+            p_1.quiz_ref,
+            p_1.attempt,
+            p_1.grade,
+            p_1.achieved_score,
+            p_1.total_score,
+            p_1.passed,
+            p_1.feedback,
+            p_1.reported_time,
+            p_1.started_at,
+            p_1.submitted_at,
+            p_1.time_taken,
+            p_1.feed_kind,
+            p_1.feed_action,
+            p_1.feed_title,
+            p_1.feed_detail,
+            p_1.feed_occurred_at,
+            p_1.plan_component_id,
+            p_1.programme_ref,
+            p_1.programme_title,
+            p_1.cohort_ref,
+            p_1.cohort_title,
+            p_1.group_ref,
+            p_1.group_title,
+            p_1.expected_otjh,
+            p_1.points,
+            p_1.component_link_status,
+            p_1.legacy_component_ref,
+            p_1.component_link_source,
+            p_1.time_tracking_source,
+            p_1.time_tracking_calculation,
+            p_1.time_tracking_session_ref,
+            p_1.claimed_seconds,
+            p_1.server_session_seconds,
+            p_1.verified_seconds,
+            p_1.outside_working_hours,
+            p_1.outside_working_hours_confirmed,
+            p_1.outside_working_hours_confirmed_at,
+            p_1.enrolment_id,
+            p_1.programme_id,
+            p_1.aptem_id,
+            p_1.curriculum_component_id,
+            p_1.source_system,
+            p_1.source_activity_id,
+            p_1.source_attempt_key,
+            p_1.canonical_activity_key,
+            p_1.activity_status,
+            p_1.accepted,
+            p_1.actual_seconds,
+            p_1.actual_basis,
+            p_1.reporting_started_at,
+            p_1.reporting_ended_at,
+            p_1.reporting_month,
+            p_1.reporting_timestamp_label,
+            p_1.source_payload,
+            p_1.sync_run_id,
+            p_1.deleted_at,
+            p_1.ssot_created_at,
+            p_1.ssot_updated_at,
+            p_1.curriculum_component_ref,
+            p_1.inside_working_hours_confirmed,
+            p_1.inside_working_hours_confirmed_at,
+            p_1.reflection_skipped,
+            p_1.declared_completed_at,
+            p_1.submission_validation_reason
+           FROM ""Learner"".learner_progress_entries p_1
+             JOIN ""Learner"".learners l ON l.id = p_1.learner_id
+          WHERE p_1.accepted AND p_1.deleted_at IS NULL AND (p_1.aptem_id IS NULL OR l.aptem_id IS NULL OR p_1.aptem_id = l.aptem_id) AND (NULLIF(p_1.programme_id, '<literal redacted>'::text) IS NULL OR NULLIF(l.programme_id::text, '<literal redacted>'::text) IS NULL OR p_1.programme_id = l.programme_id::text) AND (p_1.enrolment_id IS NULL OR l.enrolment_id IS NULL OR p_1.enrolment_id = l.enrolment_id)
+          ORDER BY p_1.learner_id, (COALESCE(NULLIF(p_1.canonical_activity_key, '<literal redacted>'::text), '<literal redacted>'::text || p_1.id::text)), p_1.ssot_updated_at DESC NULLS LAST, p_1.id DESC
+        ), activity AS (
+         SELECT p_1.learner_id::text AS lms_id,
+            COALESCE(s.reporting_month, p_1.reporting_month) AS month,
+            sum(
+                CASE
+                    WHEN s.id IS NOT NULL THEN s.actual_seconds
+                    ELSE p_1.actual_seconds
+                END) / 3600.0 AS actual,
+            max(GREATEST(p_1.ssot_updated_at, s.updated_at)) AS actual_updated_at
+           FROM canonical p_1
+             CROSS JOIN boundary b
+             LEFT JOIN ""Learner"".learner_activity_reporting_segments s ON s.progress_id = p_1.id AND s.learner_id = p_1.learner_id
+          WHERE COALESCE(s.reporting_month, p_1.reporting_month)::text ~ '<literal redacted>'::text AND COALESCE(s.reporting_month, p_1.reporting_month)::text < to_char(b.month_start, '<literal redacted>'::text) AND (p_1.source_system = '<literal redacted>'::text OR COALESCE(s.reporting_ended_at, p_1.reporting_ended_at) IS NULL OR COALESCE(s.reporting_ended_at, p_1.reporting_ended_at) <= (b.month_start AT TIME ZONE '<literal redacted>'::text)) AND
+                CASE
+                    WHEN s.id IS NOT NULL THEN s.actual_seconds
+                    ELSE p_1.actual_seconds
+                END >= 0
+          GROUP BY p_1.learner_id, (COALESCE(s.reporting_month, p_1.reporting_month))
+        ), keys AS (
+         SELECT activity.lms_id,
+            activity.month
+           FROM activity
+        UNION
+         SELECT inclusion_plan_months.lms_id,
+            inclusion_plan_months.month
+           FROM kbc_quality_reporting.inclusion_plan_months
+        )
+ SELECT k.lms_id,
+    k.month,
+    a.actual::double precision AS actual,
+    p.expected,
+    p.target_basis,
+    a.actual_updated_at,
+    p.target_updated_at
+   FROM keys k
+     LEFT JOIN activity a USING (lms_id, month)
+     LEFT JOIN kbc_quality_reporting.inclusion_plan_months p USING (lms_id, month);",d955f1c9dfcaa2ab32681977b891f5a3962ab6018943b510c6e79a4cfde70344
+kbc_quality_reporting,inclusion_time_progress,v,True," WITH boundary AS (
+         SELECT date_trunc('<literal redacted>'::text, (now() AT TIME ZONE '<literal redacted>'::text)) AS month_start
+        ), actual AS (
+         SELECT inclusion_time_monthly.lms_id,
+            sum(inclusion_time_monthly.actual) AS hours,
+            max(inclusion_time_monthly.actual_updated_at) AS updated_at
+           FROM kbc_quality_reporting.inclusion_time_monthly
+             CROSS JOIN boundary b_1
+          WHERE inclusion_time_monthly.month::text < to_char(b_1.month_start, '<literal redacted>'::text)
+          GROUP BY inclusion_time_monthly.lms_id
+        ), due AS (
+         SELECT inclusion_plan_months.lms_id,
+                CASE
+                    WHEN count(*) FILTER (WHERE inclusion_plan_months.expected IS NULL) = 0 THEN sum(inclusion_plan_months.expected)
+                    ELSE NULL::double precision
+                END AS hours,
+            max(inclusion_plan_months.target_updated_at) AS updated_at,
+            string_agg(DISTINCT inclusion_plan_months.target_basis, '<literal redacted>'::text) AS basis
+           FROM kbc_quality_reporting.inclusion_plan_months
+             CROSS JOIN boundary b_1
+          WHERE inclusion_plan_months.month < to_char(b_1.month_start, '<literal redacted>'::text)
+          GROUP BY inclusion_plan_months.lms_id
+        ), plan_baseline AS (
+         SELECT s_1.aptem_id
+           FROM ""Learner"".source_lms_learners s_1
+          WHERE (EXISTS ( SELECT 1
+                   FROM jsonb_each_text(
+                        CASE
+                            WHEN jsonb_typeof(s_1.planned_hours_monthly) = '<literal redacted>'::text THEN s_1.planned_hours_monthly
+                            ELSE '<literal redacted>'::jsonb
+                        END) j(key, value)
+                  WHERE j.key ~ '<literal redacted>'::text))
+        )
+ SELECT r.learner_id,
+    a.hours AS time_actual_hours,
+        CASE
+            WHEN pb.aptem_id IS NOT NULL AND d.hours > 0::double precision THEN d.hours
+            ELSE NULL::double precision
+        END AS time_planned_to_date_hours,
+        CASE
+            WHEN s.planned_hours_total > 0::numeric THEN s.planned_hours_total::double precision
+            ELSE NULL::double precision
+        END AS time_total_planned_hours,
+        CASE
+            WHEN pb.aptem_id IS NOT NULL AND d.hours > 0::double precision AND a.hours IS NOT NULL THEN 100::double precision * a.hours / d.hours
+            ELSE NULL::double precision
+        END AS time_progress_pct,
+        CASE
+            WHEN s.planned_hours_total > 0::numeric AND a.hours IS NOT NULL THEN 100::double precision * a.hours / s.planned_hours_total::double precision
+            ELSE NULL::double precision
+        END AS time_total_progress_pct,
+    (b.month_start - '<literal redacted>'::interval)::date::text AS time_as_of,
+    ('<literal redacted>'::text ||
+        CASE
+            WHEN pb.aptem_id IS NULL THEN '<literal redacted>'::text
+            ELSE COALESCE(d.basis, '<literal redacted>'::text)
+        END) || '<literal redacted>'::text AS time_basis,
+    d.updated_at AS time_plan_updated_at,
+    a.updated_at AS time_actual_updated_at,
+    s.last_seen AS time_total_plan_updated_at
+   FROM kbc_quality_reporting.inclusion_roster_v2 r
+     CROSS JOIN boundary b
+     LEFT JOIN actual a ON a.lms_id = r.lms_id
+     LEFT JOIN due d ON d.lms_id = r.lms_id
+     LEFT JOIN ""Learner"".source_lms_learners s ON s.aptem_id::text = r.learner_id
+     LEFT JOIN plan_baseline pb ON pb.aptem_id::text = r.learner_id;",d76c966b101c5caa49f1216a2ef8659f13cf2047a33bcce13b12be20f4fc003b
+kbc_quality_reporting,otj_allocation_checks,v,True," WITH canonical AS MATERIALIZED (
+         SELECT DISTINCT ON (p.learner_id, (COALESCE(NULLIF(p.canonical_activity_key, '<literal redacted>'::text), '<literal redacted>'::text || p.id::text))) p.id,
+            p.learner_id,
+            p.actual_seconds,
+            p.reporting_month,
+            p.reporting_started_at,
+            p.reporting_ended_at,
+            p.ssot_updated_at
+           FROM ""Learner"".learner_progress_entries p
+             JOIN ""Learner"".learners l_1 ON l_1.id = p.learner_id
+          WHERE p.accepted AND p.deleted_at IS NULL AND (p.aptem_id IS NULL OR l_1.aptem_id IS NULL OR p.aptem_id = l_1.aptem_id) AND (NULLIF(p.programme_id, '<literal redacted>'::text) IS NULL OR NULLIF(l_1.programme_id::text, '<literal redacted>'::text) IS NULL OR p.programme_id = l_1.programme_id::text) AND (p.enrolment_id IS NULL OR l_1.enrolment_id IS NULL OR p.enrolment_id = l_1.enrolment_id)
+          ORDER BY p.learner_id, (COALESCE(NULLIF(p.canonical_activity_key, '<literal redacted>'::text), '<literal redacted>'::text || p.id::text)), p.ssot_updated_at DESC NULLS LAST, p.id DESC
+        ), units AS (
+         SELECT p.id AS progress_id,
+            p.learner_id,
+                CASE
+                    WHEN s.id IS NOT NULL THEN s.actual_seconds
+                    ELSE p.actual_seconds
+                END AS seconds,
+            COALESCE(s.reporting_month, p.reporting_month) AS month,
+            COALESCE(s.reporting_started_at, p.reporting_started_at) AS started_at,
+            COALESCE(s.reporting_ended_at, p.reporting_ended_at) AS ended_at,
+            GREATEST(p.ssot_updated_at, s.updated_at) AS updated_at
+           FROM canonical p
+             LEFT JOIN ""Learner"".learner_activity_reporting_segments s ON s.progress_id = p.id AND s.learner_id = p.learner_id
+        ), classified AS (
+         SELECT units.progress_id,
+            units.learner_id,
+            units.seconds,
+            units.month,
+            units.started_at,
+            units.ended_at,
+            units.updated_at,
+            NOT COALESCE(units.month::text ~ '<literal redacted>'::text, false) AS month_unallocated,
+            COALESCE(units.started_at > now() OR units.ended_at > now(), false) AS future_dated
+           FROM units
+        ), checks AS (
+         SELECT classified.learner_id,
+            count(DISTINCT classified.progress_id) FILTER (WHERE classified.month_unallocated AND classified.seconds >= 0) AS unallocated_activity_count,
+            COALESCE(sum(classified.seconds) FILTER (WHERE classified.month_unallocated AND classified.seconds >= 0), 0::numeric) AS known_unallocated_seconds,
+            count(DISTINCT classified.progress_id) FILTER (WHERE classified.seconds IS NULL) AS missing_duration_activity_count,
+            count(DISTINCT classified.progress_id) FILTER (WHERE classified.seconds < 0) AS invalid_duration_activity_count,
+            count(DISTINCT classified.progress_id) FILTER (WHERE classified.month_unallocated AND classified.seconds >= 0 AND classified.future_dated) AS future_dated_unallocated_activity_count,
+            max(classified.updated_at) AS allocation_checked_source_updated_at
+           FROM classified
+          GROUP BY classified.learner_id
+        )
+ SELECT l.id::text AS lms_id,
+    COALESCE(c.unallocated_activity_count, 0::bigint) AS unallocated_activity_count,
+    COALESCE(c.known_unallocated_seconds, 0::numeric) AS known_unallocated_seconds,
+    COALESCE(c.missing_duration_activity_count, 0::bigint) AS missing_duration_activity_count,
+    COALESCE(c.invalid_duration_activity_count, 0::bigint) AS invalid_duration_activity_count,
+    COALESCE(c.future_dated_unallocated_activity_count, 0::bigint) AS future_dated_unallocated_activity_count,
+    c.allocation_checked_source_updated_at
+   FROM ""Learner"".learners l
+     LEFT JOIN checks c ON c.learner_id = l.id;",c5d84f5779edd8f6acaf314ca44cabf959a75cecf813762f155be7c76dfe4cbe
+kbc_sync,combined_attendance_source,v,True," WITH legacy AS MATERIALIZED (
+         SELECT lower(btrim(k.""Email"")) AS raw_email,
+            k.date AS session_date,
+            regexp_replace(lower(btrim(COALESCE(NULLIF(btrim(k.module), '<literal redacted>'::text), k.lecture_name))), '<literal redacted>'::text, '<literal redacted>'::text, '<literal redacted>'::text) AS module_key,
+            COALESCE(NULLIF(btrim(k.module), '<literal redacted>'::text), NULLIF(btrim(k.lecture_name), '<literal redacted>'::text)) AS module_name,
+            NULLIF(btrim(k.""FullName""), '<literal redacted>'::text) AS learner_name,
+            k.""ID"" AS aptem_id,
+            k.key AS record_key,
+            to_jsonb(k.*) AS payload,
+                CASE
+                    WHEN k.""Attendance"" = 1 THEN '<literal redacted>'::text
+                    WHEN k.""Attendance"" = 0 THEN '<literal redacted>'::text
+                    ELSE '<literal redacted>'::text
+                END AS status
+           FROM kbc_sync.kbc_attendance k
+        ), lms_raw AS MATERIALIZED (
+         SELECT a.id,
+            a.learner_profile_id,
+            a.occurrence_id,
+            lower(btrim(a.learner_email::text)) AS raw_email,
+            o.scheduled_start::date AS session_date,
+            regexp_replace(lower(btrim(s.module_title)), '<literal redacted>'::text, '<literal redacted>'::text, '<literal redacted>'::text) AS module_key,
+            s.module_title AS module_name,
+            COALESCE(NULLIF(btrim(a.learner_name::text), '<literal redacted>'::text), NULLIF(btrim(l.full_name), '<literal redacted>'::text)) AS learner_name,
+            l.aptem_id,
+            to_jsonb(a.*) || jsonb_build_object('<literal redacted>', l.aptem_id, '<literal redacted>', o.scheduled_start::date, '<literal redacted>', s.module_title) AS payload,
+                CASE
+                    WHEN lower(btrim(a.attendance_status::text)) = ANY (ARRAY['<literal redacted>'::text, '<literal redacted>'::text]) THEN lower(btrim(a.attendance_status::text))
+                    ELSE '<literal redacted>'::text
+                END AS status
+           FROM curriculum.live_session_learner_attendance a
+             JOIN curriculum.live_session_occurrences o ON o.id::text = a.occurrence_id::text
+             JOIN curriculum.live_sessions s ON s.id::text = a.live_session_id::text
+             LEFT JOIN ""Learner"".learners l ON l.id = a.learner_profile_id
+        ), lms AS (
+         SELECT COALESCE(m.raw_email, a.raw_email) AS learner_email,
+            a.raw_email,
+            a.session_date,
+            a.module_key,
+            a.module_name,
+            a.learner_name,
+            a.aptem_id,
+            a.learner_profile_id,
+            a.occurrence_id,
+            a.id::text AS record_key,
+            a.payload,
+            a.status
+           FROM lms_raw a
+             LEFT JOIN LATERAL ( SELECT k.raw_email
+                   FROM legacy k
+                  WHERE k.aptem_id = a.aptem_id AND k.session_date = a.session_date AND k.module_key = a.module_key
+                  ORDER BY (k.raw_email = a.raw_email) DESC, k.raw_email
+                 LIMIT 1) m ON true
+        ), all_records AS (
+         SELECT '<literal redacted>'::text AS source,
+            legacy.raw_email AS learner_email,
+            legacy.raw_email,
+            legacy.session_date,
+            legacy.module_key,
+            legacy.module_name,
+            legacy.learner_name,
+            legacy.aptem_id,
+            NULL::bigint AS learner_profile_id,
+            NULL::text AS occurrence_id,
+            legacy.record_key,
+            legacy.payload,
+            legacy.status
+           FROM legacy
+        UNION ALL
+         SELECT '<literal redacted>'::text,
+            lms.learner_email,
+            lms.raw_email,
+            lms.session_date,
+            lms.module_key,
+            lms.module_name,
+            lms.learner_name,
+            lms.aptem_id,
+            lms.learner_profile_id,
+            lms.occurrence_id,
+            lms.record_key,
+            lms.payload,
+            lms.status
+           FROM lms
+        )
+ SELECT learner_email,
+    session_date,
+    module_key,
+    COALESCE(min(module_name) FILTER (WHERE source = '<literal redacted>'::text), min(module_name) FILTER (WHERE source = '<literal redacted>'::text)) AS module_name,
+    COALESCE(min(learner_name) FILTER (WHERE source = '<literal redacted>'::text), min(learner_name) FILTER (WHERE source = '<literal redacted>'::text)) AS learner_name,
+    COALESCE(jsonb_object_agg(record_key, payload) FILTER (WHERE source = '<literal redacted>'::text), '<literal redacted>'::jsonb) AS legacy_records,
+    COALESCE(jsonb_object_agg(record_key, payload) FILTER (WHERE source = '<literal redacted>'::text), '<literal redacted>'::jsonb) AS lms_records,
+    COALESCE(array_agg(DISTINCT aptem_id ORDER BY aptem_id) FILTER (WHERE aptem_id IS NOT NULL), '<literal redacted>'::bigint[]) AS aptem_ids,
+    COALESCE(array_agg(DISTINCT learner_profile_id ORDER BY learner_profile_id) FILTER (WHERE learner_profile_id IS NOT NULL), '<literal redacted>'::bigint[]) AS lms_profile_ids,
+    COALESCE(array_agg(DISTINCT occurrence_id ORDER BY occurrence_id) FILTER (WHERE occurrence_id IS NOT NULL), '<literal redacted>'::text[]) AS lms_occurrence_ids,
+    COALESCE(array_agg(DISTINCT raw_email ORDER BY raw_email) FILTER (WHERE raw_email IS NOT NULL), '<literal redacted>'::text[]) AS learner_emails,
+    count(*) FILTER (WHERE source = '<literal redacted>'::text)::integer AS legacy_record_count,
+    count(*) FILTER (WHERE source = '<literal redacted>'::text)::integer AS lms_record_count,
+        CASE
+            WHEN bool_or(status = '<literal redacted>'::text) AND bool_or(status = '<literal redacted>'::text) THEN '<literal redacted>'::text
+            WHEN bool_or(status = '<literal redacted>'::text) THEN '<literal redacted>'::text
+            WHEN bool_or(status = '<literal redacted>'::text) THEN '<literal redacted>'::text
+            ELSE '<literal redacted>'::text
+        END AS attendance_result,
+    count(DISTINCT aptem_id) > 1 AS identity_conflict
+   FROM all_records
+  WHERE learner_email IS NOT NULL AND learner_email <> '<literal redacted>'::text AND session_date IS NOT NULL AND module_key IS NOT NULL AND module_key <> '<literal redacted>'::text
+  GROUP BY learner_email, session_date, module_key;",25fb34dbf526958ee41a94865916ec98075bebe0c773f4d7a53c88cc48b806bf
+khaled_learning_hub,ingestion_source_summary,v,True," SELECT run.run_id,
+    run.source_system,
+    run.entity_scope,
+    run.status,
+    run.expected_count,
+    run.received_count,
+    run.unique_count,
+    run.stored_count,
+    run.duplicate_count,
+    run.rejected_count,
+    count(DISTINCT raw.record_id)::integer AS raw_records,
+    count(DISTINCT activity.activity_id)::integer AS activities,
+    count(DISTINCT issue.issue_id) FILTER (WHERE issue.resolved_at IS NULL)::integer AS open_issues
+   FROM khaled_learning_hub.ingestion_runs run
+     LEFT JOIN khaled_learning_hub.raw_source_records raw ON raw.run_id = run.run_id
+     LEFT JOIN khaled_learning_hub.activities activity ON activity.run_id = run.run_id
+     LEFT JOIN khaled_learning_hub.ingestion_issues issue ON issue.run_id = run.run_id
+  GROUP BY run.run_id, run.source_system, run.entity_scope, run.status, run.expected_count, run.received_count, run.unique_count, run.stored_count, run.duplicate_count, run.rejected_count;",b40420ed7ff480903b56aa8a24fbc271e006cdff29a472d458d3a01254f45bb9
+khaled_learning_hub,latest_learner_match_review,v,True," SELECT review.id,
+    review.run_id,
+    review.enrolment_id,
+    review.enrolment_name,
+    review.enrolment_email,
+    review.enrolment_aptem_id,
+    review.first_date,
+    review.aptem_candidate_id,
+    review.aptem_name,
+    review.aptem_email,
+    review.aptem_score,
+    review.aptem_status,
+    review.aptem_method,
+    review.aptem_reasons,
+    review.aptem_alternatives,
+    review.lms_candidate_id,
+    review.lms_name,
+    review.lms_email,
+    review.lms_score,
+    review.lms_status,
+    review.lms_method,
+    review.lms_reasons,
+    review.decision,
+    review.decision_note,
+    review.decided_by,
+    review.decided_at
+   FROM khaled_learning_hub.learner_match_review review
+     JOIN ( SELECT match_runs.run_id
+           FROM khaled_learning_hub.match_runs
+          ORDER BY match_runs.created_at DESC, match_runs.run_id DESC
+         LIMIT 1) latest ON latest.run_id = review.run_id;",23496828291a6349de6546274f2cf3a773849af5d14b0064c71055a34e5ddc50
+khaled_learning_hub,latest_match_summary,v,True," SELECT aptem_status,
+    lms_status,
+    decision,
+    count(*)::integer AS learners
+   FROM khaled_learning_hub.latest_learner_match_review
+  GROUP BY aptem_status, lms_status, decision;",7ae168bd05abe94949f801af7f5190029aa57925cb44f332bc44b9bc7fd61557
+khaled_learning_hub,latest_verified_activities,v,True," SELECT activity.activity_id,
+    activity.run_id,
+    activity.raw_record_id,
+    activity.enrolment_id,
+    activity.aptem_id,
+    activity.legacy_lms_id,
+    activity.source_system,
+    activity.source_learner_id,
+    activity.source_activity_key,
+    activity.source_course_key,
+    activity.source_group_key,
+    activity.source_attempt_key,
+    activity.title,
+    activity.description,
+    activity.activity_kind,
+    activity.activity_status,
+    activity.completed,
+    activity.activity_date,
+    activity.occurred_at,
+    activity.started_at,
+    activity.completed_at,
+    activity.source_timezone,
+    activity.planned_seconds,
+    activity.source_reported_seconds,
+    activity.media_duration_seconds,
+    activity.calculated_actual_seconds,
+    activity.approved_actual_seconds,
+    activity.hours_rule_version,
+    activity.content_body,
+    activity.source_url,
+    activity.embed_url,
+    activity.media_provider,
+    activity.validation_status,
+    activity.validation_issues,
+    activity.created_at,
+    activity.updated_at
+   FROM khaled_learning_hub.activities activity
+     JOIN khaled_learning_hub.latest_verified_ingestion_runs run ON run.run_id = activity.run_id AND run.entity_scope = '<literal redacted>'::text
+  WHERE activity.validation_status = '<literal redacted>'::text;",79745543e68635d0f7be92c8e9eeea89a64ab4cb4a546377f3b107e337bc19d1
+khaled_learning_hub,latest_verified_ingestion_runs,v,True," SELECT DISTINCT ON (source_system, entity_scope) run_id,
+    match_run_id,
+    source_system,
+    entity_scope,
+    status,
+    started_at,
+    completed_at,
+    expected_count,
+    received_count,
+    unique_count,
+    stored_count,
+    duplicate_count,
+    rejected_count,
+    source_cursor,
+    verification,
+    error_summary,
+    created_by
+   FROM khaled_learning_hub.ingestion_runs run
+  WHERE status = '<literal redacted>'::text
+  ORDER BY source_system, entity_scope, completed_at DESC NULLS LAST, started_at DESC, run_id DESC;",efd5d8e5f1570140fd0c5063fa529aa2d2ca86b7cdb0df471bedb5087f84fe7a
+public,pg_stat_statements,v,True," SELECT userid,
+    dbid,
+    toplevel,
+    queryid,
+    query,
+    plans,
+    total_plan_time,
+    min_plan_time,
+    max_plan_time,
+    mean_plan_time,
+    stddev_plan_time,
+    calls,
+    total_exec_time,
+    min_exec_time,
+    max_exec_time,
+    mean_exec_time,
+    stddev_exec_time,
+    rows,
+    shared_blks_hit,
+    shared_blks_read,
+    shared_blks_dirtied,
+    shared_blks_written,
+    local_blks_hit,
+    local_blks_read,
+    local_blks_dirtied,
+    local_blks_written,
+    temp_blks_read,
+    temp_blks_written,
+    shared_blk_read_time,
+    shared_blk_write_time,
+    local_blk_read_time,
+    local_blk_write_time,
+    temp_blk_read_time,
+    temp_blk_write_time,
+    wal_records,
+    wal_fpi,
+    wal_bytes,
+    wal_buffers_full,
+    jit_functions,
+    jit_generation_time,
+    jit_inlining_count,
+    jit_inlining_time,
+    jit_optimization_count,
+    jit_optimization_time,
+    jit_emission_count,
+    jit_emission_time,
+    jit_deform_count,
+    jit_deform_time,
+    parallel_workers_to_launch,
+    parallel_workers_launched,
+    stats_since,
+    minmax_stats_since
+   FROM pg_stat_statements(true) pg_stat_statements(userid, dbid, toplevel, queryid, query, plans, total_plan_time, min_plan_time, max_plan_time, mean_plan_time, stddev_plan_time, calls, total_exec_time, min_exec_time, max_exec_time, mean_exec_time, stddev_exec_time, rows, shared_blks_hit, shared_blks_read, shared_blks_dirtied, shared_blks_written, local_blks_hit, local_blks_read, local_blks_dirtied, local_blks_written, temp_blks_read, temp_blks_written, shared_blk_read_time, shared_blk_write_time, local_blk_read_time, local_blk_write_time, temp_blk_read_time, temp_blk_write_time, wal_records, wal_fpi, wal_bytes, wal_buffers_full, jit_functions, jit_generation_time, jit_inlining_count, jit_inlining_time, jit_optimization_count, jit_optimization_time, jit_emission_count, jit_emission_time, jit_deform_count, jit_deform_time, parallel_workers_to_launch, parallel_workers_launched, stats_since, minmax_stats_since);",a7d302f946532331aba5555ba48b125d4aa4fb08b36a2deabf851424b09a8804
+public,pg_stat_statements_info,v,True," SELECT dealloc,
+    stats_reset
+   FROM pg_stat_statements_info() pg_stat_statements_info(dealloc, stats_reset);",c8c7ea423e30064b1d95b0c3be96f3ab6349825885ae7518cdef0089ae48836d

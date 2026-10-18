@@ -1,0 +1,65 @@
+%% Catalog association map; unvalidated edges do not prove existing row integrity.
+%% Proposed: preserve these objects/edges; complete approved integrity corrections and validation. No new FK is authorized.
+erDiagram
+    Learner__assignment_classification_jobs {
+        bigint id PK
+    }
+    Learner__assignment_classification_results {
+        bigint id PK
+    }
+    Learner__assignment_classification_runs {
+        bigint id PK
+    }
+    Learner__attendance_preferences {
+        bigint learner_id PK
+    }
+    Learner__attendance_reminders {
+        bigint learner_id PK
+        text session_key PK
+    }
+    Learner__calendar_busy_slots {
+        bigint id PK
+        bigint connection_id FK
+    }
+    Learner__calendar_connections {
+        bigint id PK
+    }
+    Learner__certificate_audit_logs {
+        bigint id PK
+        bigint template_id FK
+        bigint certificate_id FK
+    }
+    Learner__certificate_template_assets {
+        bigint id PK
+        bigint template_id FK
+    }
+    Learner__certificate_templates {
+        bigint id PK
+    }
+    Learner__coach_calendar_event {
+        bigint id PK
+    }
+    Learner__contract_document_archive {
+        bigint contract_id PK
+    }
+    Learner__contract_evidence_links {
+        bigint contract_id PK
+    }
+    Learner__contract_source_link_archive {
+        text source_link_id PK
+    }
+    Learner__evidence_content_classification {
+        bigint evidence_id PK
+    }
+    Learner__learner_certificates {
+        bigint id PK
+    }
+    enrolment__Created_users {
+        integer id PK
+    }
+    enrolment__Created_users ||..o| Learner__attendance_preferences : "attendance_preferences_learner_id_fkey"
+    enrolment__Created_users ||..o{ Learner__attendance_reminders : "attendance_reminders_learner_id_fkey"
+    Learner__calendar_connections ||..o{ Learner__calendar_busy_slots : "calendar_busy_slots_connection_id_fkey"
+    Learner__learner_certificates |o..o{ Learner__certificate_audit_logs : "certificate_audit_logs_certificate_id_fkey"
+    Learner__certificate_templates |o..o{ Learner__certificate_audit_logs : "certificate_audit_logs_template_id_fkey"
+    Learner__certificate_templates ||..o{ Learner__certificate_template_assets : "certificate_template_assets_template_id_fkey"
