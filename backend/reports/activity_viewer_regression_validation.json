@@ -1,0 +1,115 @@
+{
+  "branch": "coach_view",
+  "baseline_commit": "ece913fb0db703f7a04de3f94606a07ada61fe7c",
+  "scope": "Resolve or classify the nine Activity Viewer frontend failures. Existing changes/untracked files preserved. No commits, branches, database writes, migrations, deployments or real profiling requests.",
+  "baseline_evidence": {
+    "method": "Copied HEAD page.tsx, ActivitySidebar.tsx and completion.test.tsx to three uniquely named files in the same existing source folder. Redirected only relative imports to the HEAD copies. No assertions, fixtures or test behavior changed. Assignment and historical implementations/tests are unchanged against HEAD. Removed only these generated probe files after the comparison; no source replacement or worktree.",
+    "command": "npm --prefix frontend run test -- src/pages/learner/video-watch/__regression_baseline_completion.test.tsx src/pages/learner/video-watch/AssignmentSubmissionWizard.test.tsx src/pages/learner/my-learning/recordedCourseProgress.test.tsx -t 'personal booking exemption|normal coaching step|failed reading preview|opens completed standalone|links a recovered quiz source|full denominator and both|preserves links from a recorded' --maxWorkers=2",
+    "result": "Exactly nine targeted cases: eight failed at HEAD, one passed. The selected-case probe excluded unrelated tests only for baseline comparison; full final validation runs the complete suites.",
+    "unchanged_paths_verified_by_git_diff": [
+      "frontend/src/pages/learner/video-watch/AssignmentSubmissionWizard.tsx",
+      "frontend/src/pages/learner/video-watch/MonthlyAssignmentSteps.tsx",
+      "frontend/src/pages/learner/video-watch/AssignmentSubmissionWizard.test.tsx",
+      "frontend/src/pages/learner/my-learning/SubjectWorkspace.tsx",
+      "frontend/src/pages/learner/my-learning/SubjectActivityWorkspace.tsx",
+      "frontend/src/pages/learner/my-learning/recordedCourseProgress.test.tsx"
+    ]
+  },
+  "classifications": [
+    {
+      "test": "AssignmentSubmissionWizard: shows the personal booking exemption while keeping presentation and validation",
+      "cases": 1,
+      "classification": "Confirmed baseline failure",
+      "cause": "personalStudy renames index 7 (Quality checks) to Presentation, but MonthlyAssignmentSteps renders coaching/presentation at index 6. The expected personal exemption notice is absent. The relevant implementation and test are unchanged against HEAD; the baseline probe reproduces the failure.",
+      "action": "Documented existing assignment defect; did not change step order, UI, assertion or fixture."
+    },
+    {
+      "test": "AssignmentSubmissionWizard: keeps the normal coaching step when previewing the learner experience",
+      "cases": 1,
+      "classification": "Confirmed baseline failure",
+      "cause": "The coaching step renders AssignmentCoachingBooking without the expected personal-preview notice/guard. The literal expected notice is absent from production source. The unchanged HEAD implementation/test reproduces the failure.",
+      "action": "Documented existing personal-preview defect; no guessed authorization or meeting behavior change."
+    },
+    {
+      "test": "completion: does not count a failed reading preview as reading time",
+      "cases": 1,
+      "classification": "Recent PDF-loader regression candidate isolated by HEAD comparison; fixed and verified",
+      "cause": "The old raw-fetch path passes this assertion at HEAD. The recent shared binary loader handed out clones of shared consumable Response streams; the original assertion failed intermittently in isolated and broad runs. Sharing a fully buffered response snapshot avoids that stream-sharing path and preserves file error metadata for each caller.",
+      "action": "Both PDF/document loaders now share private byte/status/header snapshots and construct independent caller responses. Bodyless 204/205/304 responses retain null bodies. Existing reading-preview assertion unchanged; all 56 completion tests and focused viewer tests pass."
+    },
+    {
+      "test": "recordedCourseProgress: opens completed standalone quizzes for read-only review (commercial/apprenticeship)",
+      "cases": 2,
+      "classification": "Confirmed baseline assertions against previous inline interaction",
+      "cause": "SubjectWorkspace passes direct to ActivityRow in the focused workspace, suppressing the per-row Close quiz/View quiz controls that these assertions request. The selected saved review itself renders successfully. Both cases fail against unchanged HEAD.",
+      "action": "Preserved the focused Activity Viewer and original assertions."
+    },
+    {
+      "test": "recordedCourseProgress: links a recovered quiz source to the exact parent in its course (commercial/apprenticeship)",
+      "cases": 2,
+      "classification": "Confirmed baseline assertion conflicts with retained mounted material",
+      "cause": "The requested correct parent Source material 1/20 is rendered. SubjectActivityWorkspace deliberately retains previously opened material mounted under hidden containers to preserve drafts; the test asserts the old Source material 1/10 is absent from the DOM rather than hidden. Both cases fail identically at HEAD.",
+      "action": "No routing/ID change and no removal of hidden material or drafts."
+    },
+    {
+      "test": "recordedCourseProgress: shows the full denominator and both completed and remaining components after opening",
+      "cases": 1,
+      "classification": "Confirmed baseline assertion against all-rows presentation",
+      "cause": "The focused workspace displays one selected activity with navigation to others. The test expects multiple unselected activity groups to be rendered together. HEAD reproduces the failure; original catalogue denominators are not changed.",
+      "action": "Preserved selected-activity UI and catalogue calculations."
+    },
+    {
+      "test": "recordedCourseProgress: preserves links from a recorded activity to its catalogue component",
+      "cases": 1,
+      "classification": "Confirmed baseline assertion against all-rows presentation",
+      "cause": "The recorded alias resolves and the selected quiz group is found. Failure occurs on the subsequent expectation for an unrelated unselected pending activity group. HEAD reproduces this failure.",
+      "action": "Preserved canonical record alias mapping and focused activity rendering."
+    }
+  ],
+  "quiz_404": {
+    "chain": "SubjectWorkspace.ActivityRow -> DeferredStudentMaterial -> StudentMaterial -> subjectRequest",
+    "construction": "Default GET /learner_api/student-activity/{kind}/{learnerId}/?group_id={legacy.group_id}&activity_id={legacy.source_activity_id}&catalogue_kind=quiz; an explicit baseUrl may replace the route prefix.",
+    "consumption": "student_activity.student_activity validates the canonical owner, then legacy_quiz_review.read_review matches course ID, source quiz ID, quiz kind and owned canonical catalogue membership. It returns 404 unless exactly one match exists.",
+    "finding": "No provable frontend ID substitution or incorrect lookup established. Actual screenshot membership/mapping remains unverified without production access. Kept canonical identities, authorization and legitimate 404s intact."
+  },
+  "fix_files": [
+    "frontend/src/api/pdfResource.ts",
+    "frontend/src/api/__tests__/viewerRequests.test.ts"
+  ],
+  "preserved": "No baseline assertions removed, skipped, weakened or fixtures changed. Activity-scoped detail, conditional reading GET removal, learning schedule projection, session/watch/transcript in-flight sharing, account-scoped cache cleanup and mutation invalidation remain intact. No backend implementation changes in this follow-up.",
+  "validation": {
+    "focused": {
+      "passed": 86,
+      "files": 4,
+      "command": "npm --prefix frontend run test -- src/pages/learner/video-watch/completion.test.tsx src/pages/learner/video-watch/readingPdfNarration.test.tsx src/api/__tests__/viewerRequests.test.ts src/api/__tests__/activityRequestGraph.test.ts --maxWorkers=2"
+    },
+    "full": {
+      "result": "881 passed, 8 confirmed baseline failures; 889 tests across 73 files. No remaining reading/PDF regression in the final run.",
+      "command": "npm --prefix frontend run test -- src/pages/learner/video-watch src/pages/learner/quiz-take src/pages/learner/my-learning src/pages/workspace/learner/__tests__ src/api/__tests__/activityRequestGraph.test.ts src/api/__tests__/learnerRead.test.ts src/api/__tests__/viewerRequests.test.ts src/components/feature/SessionResults.test.tsx src/components/feature/SessionRecordingPlayer.test.tsx src/hooks/__tests__/learnerNavigation.test.tsx src/hooks/__tests__/useWeeklyLearning.test.tsx src/hooks/__tests__/useWeeklyLearningWeek.test.tsx --maxWorkers=2"
+    },
+    "teams": {
+      "passed": 119,
+      "files": 9,
+      "command": "npm --prefix frontend run test:teams",
+      "result": "PASS"
+    },
+    "type_check": {
+      "command": "npm --prefix frontend run type-check",
+      "result": "PASS after final source edit"
+    },
+    "build": {
+      "command": "npm --prefix frontend run build",
+      "result": "PASS after final source edit; existing eval/chunk/plugin warnings"
+    },
+    "lint": {
+      "command": ".\\node_modules\\.bin\\eslint.cmd src/api/pdfResource.ts src/api/__tests__/viewerRequests.test.ts --report-unused-disable-directives --max-warnings 0",
+      "cwd": "frontend",
+      "result": "PASS"
+    },
+    "diff": "git diff --check PASS",
+    "backend": "NOT REQUIRED: no backend implementation changed in this follow-up.",
+    "live_teams": "NOT RUN",
+    "real_http": "NOT RUN",
+    "superseded_validation": "One earlier broad run loaded source while bodyless-response cases were being added and reported two extra failures for 205/304. That was not accepted as final validation. The implementation was corrected and the full final-state suite restarted after edits stopped."
+  }
+}

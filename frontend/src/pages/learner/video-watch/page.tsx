@@ -1,4 +1,5 @@
 import { startActivityClock } from '@/lib/activityClock';
+import { fetchAttachmentResource, fetchPdfResource } from '@/api/pdfResource';
 import { observeRewardInterval, flushRewardObservations, clearRewardObservations } from '@/lib/rewardTracking';
 import { SessionResults } from '@/components/feature/SessionResults';
 import { narrationFromHtml, narrationFromPdf, ReadingNarrationError, ReadingPdfNarrationContext, useReadingNarration, type PdfPageReader } from './readingNarration';
@@ -2007,7 +2008,7 @@ export function InlineAttachmentPreview({ url, title, fileName, readingPreferenc
 
     async function loadPreview() {
       try {
-        const response = await fetch(previewUrl, { credentials: 'same-origin' });
+        const response = await fetchAttachmentResource(previewUrl);
         if (!response.ok) throw new Error(await fileRequestError(response));
 
         if (isWord) {
@@ -2183,12 +2184,11 @@ function PdfCanvasPreview({ url, title, fileName, readingPreferences, annotation
       try {
         setStatus('loading');
         setError(null);
-        const response = await fetch(url, {
-          credentials: 'same-origin',
-          headers: { Accept: 'application/pdf,*/*' },
-        }).catch(error => { requestFailed = true; throw error; });
+        const response = await fetchPdfResource(url).catch(error => { requestFailed = true; throw error; });
         if (!response.ok) throw new Error(await fileRequestError(response));
         const buffer = await response.arrayBuffer();
+        if (!buffer.byteLength) throw new Error('The PDF response contains no file data. Please try opening the original file.');
+        if (cancelled) return;
         const { GlobalWorkerOptions, getDocument } = await import('pdfjs-dist');
         GlobalWorkerOptions.workerSrc = new URL('pdfjs-dist/build/pdf.worker.min.mjs', import.meta.url).toString();
         const document = await getDocument({ data: new Uint8Array(buffer) }).promise;

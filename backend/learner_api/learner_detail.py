@@ -195,7 +195,7 @@ SOURCE_MODELS = {
 IFRAME_SRC_RE = re.compile(r"<iframe[^>]+src=[\"']([^\"']+)[\"']", re.IGNORECASE)
 
 
-def _active_profile_for_source(source, source_pk):
+def _active_profile_for_source(source, source_pk, *, heal=True):
     """Resolve the saved profile, including learners awaiting an invitation.
 
     ``Created_users`` and ``Learner.learners`` have independent primary-key
@@ -204,7 +204,7 @@ def _active_profile_for_source(source, source_pk):
     fallback for older records that do not have an email.
     """
     # Saved progress/KSBs remain visible to authorised viewers before activation.
-    profile = learner_profile_for_source(source, source_pk)
+    profile = learner_profile_for_source(source, source_pk, **({'heal': False} if not heal else {}))
     if profile is None:
         return None
 
@@ -2120,7 +2120,17 @@ def _annotate_otjh(components):
     return components, round(total, 2)
 
 
-def build_learner_detail(source, pk, *, compact=False, read_only=False, quiz_view=False):
+def _activity_module_components(components, component_id):
+    selected = next((c for c in components if c.get('componentId') == component_id), None)
+    if selected is None:
+        raise ServiceError("Activity not found in this learner's plan.", status=404)
+    module_id = selected.get('moduleId')
+    return [c for c in components if (c.get('moduleId') == module_id if module_id else
+            not c.get('moduleId') and c.get('module') == selected.get('module'))]
+
+
+def build_learner_detail(source, pk, *, compact=False, read_only=False, quiz_view=False,
+                         activity_component_id=None):
     """The learner's full workspace payload for one already-loaded source row.
 
     Split out of the view so other callers can serve the same shape behind their
@@ -2138,7 +2148,7 @@ def build_learner_detail(source, pk, *, compact=False, read_only=False, quiz_vie
     if not read_only:
         hydrate_source_training_plan(source)
     assigned_modules = effective_training_plan(source)
-    learner_profile = _active_profile_for_source(source, pk)
+    learner_profile = _active_profile_for_source(source, pk, **({'heal': False} if activity_component_id else {}))
 
     if learner_profile and not learner_profile.ksbs and not read_only:
         try:
@@ -2175,7 +2185,7 @@ def build_learner_detail(source, pk, *, compact=False, read_only=False, quiz_vie
     )
     # Quiz runners need the plan, progress and reflection requirements, not
     # dashboard totals or their persistence on a GET request.
-    snapshot = None if quiz_view else _live_otjh_snapshot(detail, learner_profile)
+    snapshot = None if quiz_view or activity_component_id else _live_otjh_snapshot(detail, learner_profile)
     if snapshot is not None:
         _apply_live_otjh_snapshot(detail, snapshot)
     if snapshot is not None and learner_profile is not None and not read_only:
@@ -2191,10 +2201,22 @@ def build_learner_detail(source, pk, *, compact=False, read_only=False, quiz_vie
     # potentially huge curriculum-revision scan cannot change their outcome.
     retain_quiz_progress(detail, completed_only=compact)
 
+    # The viewer consumes completion counts for this module and navigation
+    # identities elsewhere. Do not resolve attendance/recovery for unrelated
+    # modules merely to construct its Next activity link.
+    attendance_components = detail['components']
+    if activity_component_id:
+        attendance_components = _activity_module_components(attendance_components, activity_component_id)
+
     # Attendance affects activity completion only; the hours snapshot above
     # and every stored progress record remain unchanged.
     from .teams_attendance import annotate_attendance_completion
-    detail['components'] = annotate_attendance_completion(detail['components'], learner_profile)
+    annotated = annotate_attendance_completion(attendance_components, learner_profile)
+    if activity_component_id:
+        by_identity = {id(original): replacement for original, replacement in zip(attendance_components, annotated)}
+        detail['components'] = [by_identity.get(id(c), c) for c in detail['components']]
+    else:
+        detail['components'] = annotated
 
     # Carry earned completion into an explicitly verified replacement without
     # manufacturing attempts or changing the persisted hours/attendance above.
@@ -2203,7 +2225,9 @@ def build_learner_detail(source, pk, *, compact=False, read_only=False, quiz_vie
 
     from .live_session_progress import read_live_credits, supplement_component_progress
     detail['componentProgress'] = supplement_component_progress(
-        detail.get('componentProgress') or [], read_live_credits(source, components=detail['components']))
+        detail.get('componentProgress') or [], read_live_credits(source, components=(
+            _activity_module_components(detail['components'], activity_component_id)
+            if activity_component_id else detail['components'])))
 
     if compact:
         # Nullable optional fields dominate the JSON for large plans. Omission
@@ -2265,6 +2289,21 @@ def learner_detail(request, kind, pk):
             if reading is None:
                 return _error("Activity not found in this learner's plan.", 404)
             response = JsonResponse(reading)
+            response['Cache-Control'] = 'private, no-store'
+            return response
+        if request.GET.get("content") == "activity":
+            component_id = request.GET.get("component_id")
+            if not component_id:
+                return _error("An activity identity is required.", 400)
+            detail = build_learner_detail(source, pk, compact=True, read_only=True,
+                                          activity_component_id=component_id)
+            component = next(c for c in detail['components'] if c.get('componentId') == component_id)
+            if not component.get('contentHtml') and (component.get('hasReadingContent') or component.get('type') == 'reading'):
+                reading = _reading_content(source, component_id)
+                if reading is None:
+                    return _error("Activity not found in this learner's plan.", 404)
+                component['contentHtml'] = reading['contentHtml']
+            response = JsonResponse(detail)
             response['Cache-Control'] = 'private, no-store'
             return response
         options = {"compact": True} if request.GET.get("content") == "summary" else {}
