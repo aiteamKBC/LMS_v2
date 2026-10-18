@@ -33,6 +33,16 @@ function library(local?: api.MigratedTemplate): api.TemplateLibrary {
       inherited_from_global: review_family === 'PR' && !local?.is_active, programme_override_exists: !!local && review_family === 'PR' })) };
 }
 function mount() { return render(<MemoryRouter><ReviewTemplatesPage /></MemoryRouter>); }
+it('shows question and section counts from the list without fetching whole templates', async () => {
+  const response = library();
+  response.templates = response.templates.map(template => ({ ...template, statistics: { questions: 61, sections: 8 } }));
+  vi.mocked(api.listMigratedTemplates).mockResolvedValue(response);
+  mount();
+  const card = await screen.findByRole('article', { name: 'Standard PR' });
+  await waitFor(() => expect(card).toHaveTextContent('61 questions'));
+  expect(card).toHaveTextContent('8 sections');
+  expect(api.getMigratedTemplate).not.toHaveBeenCalled();
+});
 async function selectProgramme() {
   await screen.findByRole('article', { name: 'Standard PR' });
   fireEvent.change(screen.getByLabelText('Programme'), { target: { value: 'id:PROG-ME-L4' } });

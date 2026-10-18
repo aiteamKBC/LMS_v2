@@ -5,7 +5,7 @@
 // authored inline without leaving the page. Takes the quiz id as a prop and an
 // optional onClose (rendered as a back/close control instead of the route Link).
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { QuizQuestionImage } from '@/components/feature/QuizQuestionImage';
 import { QuizQuestionImageField } from '@/components/feature/QuizQuestionImageField';
@@ -369,6 +369,12 @@ function normaliseCourseLinks(payload: CourseLinksState | null): CourseLinksStat
 
 export function QuizEditorPanel({ quizId, onClose, onSaved }: { quizId: string | number | undefined; onClose?: () => void; onSaved?: () => void }) {
   const { success, error: toastError } = useToast();
+  const navigate = useNavigate();
+  const location = useLocation();
+  // Opened from a filtered list (the quiz workspace or checkpoints), which names
+  // itself here: Back is then one step in history, so that list returns with its
+  // filters as they were. Opened any other way, the link opens the workspace.
+  const returnLabel = (location.state as { backLabel?: string } | null)?.backLabel || '';
   const [activeTab, setActiveTab] = useState<EditorTab>('questions');
   const [data, setData] = useState<QuizEditorData | null>(null);
   const [settings, setSettings] = useState<QuizSettingsState | null>(null);
@@ -940,8 +946,12 @@ export function QuizEditorPanel({ quizId, onClose, onSaved }: { quizId: string |
                 <AppIcon className="ri-arrow-left-line mr-1"></AppIcon> Back to week
               </button>
             ) : (
-              <Link to="/curriculum/quiz-xml" className="text-xs font-semibold text-[#5b2dbb] hover:text-[#43207d]">
-                <AppIcon className="ri-arrow-left-line mr-1"></AppIcon> Back to Quiz Workspace
+              <Link to="/curriculum/quiz-xml" onClick={event => {
+                if (!returnLabel || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+                event.preventDefault();
+                navigate(-1);
+              }} className="text-xs font-semibold text-[#5b2dbb] hover:text-[#43207d]">
+                <AppIcon className="ri-arrow-left-line mr-1"></AppIcon> {returnLabel || 'Back to Quiz Workspace'}
               </Link>
             )}
             <h2 className="mt-2 text-2xl font-heading font-bold text-foreground-900">{data.quiz.title}</h2>

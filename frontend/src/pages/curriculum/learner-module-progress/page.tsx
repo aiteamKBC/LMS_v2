@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Link, useSearchParams } from 'react-router-dom';
+import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { AnimatedProgressCircle } from '@/components/ui/AnimatedProgressCircle';
@@ -12,7 +12,8 @@ import {
   type CurriculumActivityCompletionTime,
   type CurriculumProgrammeAssignedLearner, type CurriculumScopeLearnerKsbImpactResponse,
 } from '@/lib/curriculumApi';
-import { formatHoursMinutes, formatSystemTimestamp } from '@/lib/format';
+import { formatSystemTimestamp } from '@/lib/format';
+import { formatHoursClock } from '@/lib/hoursClock';
 import { EntityEmptyState, InlineError } from '../shared/entities/ui';
 import {
   buildProgressRows, plannedPoints, ratioPercent, recordedHours, resolveProgressLearner, overallPercent,
@@ -91,7 +92,7 @@ function ActivityTable({ rows, onOpen, onStatus, busy }: { rows: ProgressRow[]; 
       const writable = 'canChangeStatus' in row.activity && row.activity.canChangeStatus;
       return <tr key={row.id}>
         <td><div className="lmp-activity-name"><TypeIcon type={row.type} /><div><strong>{text(row.activity.componentTitle, row.type)}</strong><span>{row.type}</span></div></div></td>
-        <td title={log?.hoursSource || 'Recorded activity hours'}>{hours == null ? '—' : formatHoursMinutes(hours)}</td>
+        <td title={log?.hoursSource || 'Recorded activity hours'}>{hours == null ? '—' : formatHoursClock(hours)}</td>
         <td><span className="lmp-ksb-codes">{row.ksbs.length ? row.ksbs.join(', ') : '—'}</span></td>
         <td title="Planned activity points">{row.plannedPoints == null ? '—' : numberLabel(row.plannedPoints)}</td>
         <td>{log?.timeEntryMode === 'input' && log.activityDate ? <span className="lmp-recorded-time">Input<small>{log.activityDate}</small></span> : log?.startedAt && log.endedAt ? <span className="lmp-recorded-time" title={submittedLabel(log.startedAt)}>
@@ -143,14 +144,14 @@ function ActivityDrawer({ row, onClose, moduleId, learnerId }: { row: ProgressRo
       <header><div><p>Activity details</p><h2>{text(row.activity.componentTitle, row.type)}</h2></div>
         <button type="button" ref={close} onClick={onClose} aria-label="Close activity details"><AppIcon name="ri-close-line" size={22} /></button></header>
       <div className="lmp-drawer-content"><div className="lmp-drawer-status"><TypeIcon type={row.type} /><StatusBadge row={row} /></div>
-        <dl><div><dt>Recorded OTH</dt><dd>{hours == null ? 'Not recorded' : formatHoursMinutes(hours)}</dd></div>
+        <dl><div><dt>Recorded OTH</dt><dd>{hours == null ? 'Not recorded' : formatHoursClock(hours)}</dd></div>
           {log && <div><dt>Calculated status</dt><dd>{log.calculatedStatus.replace(/_/g, ' ')}</dd></div>}
-          {log && <div><dt>Accepted OTH</dt><dd>{log.acceptedOtjh == null ? 'Not available' : formatHoursMinutes(log.acceptedOtjh)}</dd></div>}
+          {log && <div><dt>Accepted OTH</dt><dd>{log.acceptedOtjh == null ? 'Not available' : formatHoursClock(log.acceptedOtjh)}</dd></div>}
           {Boolean(log?.unallocatedAcceptedRecords) && <div><dt>Time allocation</dt><dd>{log!.unallocatedAcceptedRecords} accepted record(s) without allocated time. Recorded accepted hours are included in progress.</dd></div>}
           {log?.multipleRecordedAllocations && <div><dt>Data review</dt><dd>Multiple Activity Log allocations. The row shows the highest eligible allocation; accepted hours include the persisted ledger allocations. Review the Activity Log before changing hours.</dd></div>}
           {log?.startedAt && <div><dt>Activity Log time (UK)</dt><dd>{submittedLabel(log.startedAt)} → {submittedLabel(log.endedAt || undefined)}</dd></div>}
           {log?.timeEntryMode === 'input' && log.activityDate && <div><dt>Activity Log date</dt><dd>{log.activityDate} · Input</dd></div>}
-          <div><dt>Planned OTH</dt><dd>{row.activity.expectedOtjh == null ? 'Not available' : formatHoursMinutes(row.activity.expectedOtjh)}</dd></div>
+          <div><dt>Planned OTH</dt><dd>{row.activity.expectedOtjh == null ? 'Not available' : formatHoursClock(row.activity.expectedOtjh)}</dd></div>
           <div><dt>Submitted (UK time)</dt><dd>{submittedLabel(row.history?.submittedAt || row.activity.submittedAt)}</dd></div>
           <div><dt>KSBs mapped / evidenced</dt><dd>{row.ksbs.join(', ') || 'None recorded'}</dd></div>
           <div><dt>Points planned</dt><dd>{row.plannedPoints == null ? 'Not available' : numberLabel(row.plannedPoints)}</dd></div>
@@ -169,6 +170,9 @@ function ActivityDrawer({ row, onClose, moduleId, learnerId }: { row: ProgressRo
 
 export default function LearnerModuleProgressPage() {
   const [params] = useSearchParams();
+  const navigate = useNavigate();
+  const location = useLocation();
+  const openedFromModuleBuilder = (location.state as { from?: string } | null)?.from === 'module-builder';
   const moduleId = params.get('moduleId') || params.get('module') || '';
   const learnerId = params.get('learnerId') || params.get('learner') || '';
   const enrolmentId = params.get('enrolmentId') || '';
@@ -285,7 +289,14 @@ export default function LearnerModuleProgressPage() {
     pageTitle="Learner Module Progress" hideBreadcrumbs showBackButton={false}>
     <div className="lmp-page">
       <header className="lmp-page-heading"><div><h1>Learner Module Progress</h1><p>Review a learner’s progress for this module, including activity completion, OTH, KSBs and assessment status.</p></div>
-        <Link className="lmp-back-button" to={`/curriculum/module-builder?module=${encodeURIComponent(moduleId)}`}><AppIcon name="ri-arrow-left-line" size={19} />Back to Students</Link></header>
+        <Link className="lmp-back-button" to={`/curriculum/module-builder?module=${encodeURIComponent(moduleId)}`} onClick={event => {
+          // Opened from the module's learner list: Back is one step in history,
+          // so the catalogue returns with its filters, search and that list open.
+          // Opened any other way, the link still lands on the module.
+          if (!openedFromModuleBuilder || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+          event.preventDefault();
+          navigate(-1);
+        }}><AppIcon name="ri-arrow-left-line" size={19} />Back to Students</Link></header>
       {!moduleId || (!learnerId && !enrolmentId) ? <EntityEmptyState icon="ri-user-search-line" title="Choose a learner to view progress" message="Open View progress from an assigned learner in the module roster." />
         : loading ? <div className="lmp-loading" role="status">Loading learner progress…</div>
         : error ? <InlineError message={error} onRetry={() => setRetry(value => value + 1)} />
@@ -302,7 +313,7 @@ export default function LearnerModuleProgressPage() {
           <div className="lmp-summary-grid">
             <section className="lmp-panel" aria-labelledby="lmp-overview"><h2 id="lmp-overview">Progress Overview</h2><div className="lmp-overview-grid">
               <OverviewCard label="OTH Progress" tone="green" percent={othPercent}
-                value={otjh && actualHours != null ? `${formatHoursMinutes(actualHours)} / ${formatHoursMinutes(otjh.plannedOtjh)}` : 'Not available'} detail={`${logHours === undefined ? 'Credited / planned hours' : 'Activity Log accepted / planned hours'}${unallocatedRecords ? ` · ${unallocatedRecords} accepted record(s) without allocated time` : ''}`} />
+                value={otjh && actualHours != null ? `${formatHoursClock(actualHours)} / ${formatHoursClock(otjh.plannedOtjh)}` : 'Not available'} detail={`${logHours === undefined ? 'Credited / planned hours' : 'Activity Log accepted / planned hours'}${unallocatedRecords ? ` · ${unallocatedRecords} accepted record(s) without allocated time` : ''}`} />
               <OverviewCard label="KSB Progress" tone="purple" percent={ksbPercent}
                 value={consumption ? `${numberLabel(consumption.consumedWeightTotal)} / ${numberLabel(consumption.expectedWeightTotal)}` : 'Not available'} detail="Achieved / mapped weight" />
               <OverviewCard label="Activities Progress" tone="blue" percent={activityPercent} value={`${completed} / ${activities.length} completed`} detail="All assigned activities" />
@@ -333,7 +344,7 @@ export default function LearnerModuleProgressPage() {
               return <section className="lmp-week" key={week.id} aria-label={week.title}>
                 <button type="button" className="lmp-week-heading" aria-expanded={open} aria-controls={`lmp-week-${index}`} onClick={() => toggleWeek(week.id)}>
                   <AppIcon name={open ? 'ri-arrow-down-s-line' : 'ri-arrow-right-s-line'} size={21} /><strong>{week.title}</strong><span className="lmp-week-count">{done} / {week.rows.length} activities</span>
-                  <span className="lmp-week-metrics"><span className="lmp-pill lmp-pill-green" title="Recorded accepted hours">OTH: {hours == null ? 'N/A' : formatHoursMinutes(hours)}</span>
+                  <span className="lmp-week-metrics"><span className="lmp-pill lmp-pill-green" title="Recorded accepted hours">OTH: {hours == null ? 'N/A' : formatHoursClock(hours)}</span>
                     <span className="lmp-pill lmp-pill-blue" title="Distinct mapped or evidenced KSBs">KSBs: {codes.size}</span><span className="lmp-pill lmp-pill-orange" title="Planned points">Points: {weekPoints == null ? 'N/A' : numberLabel(weekPoints)}</span>
                     <ProgressBar percent={percent} label={`${week.title} completion`} tone={percent === 100 ? 'green' : 'purple'} /><b>{percent == null ? 'N/A' : `${percent}%`}</b></span>
                 </button>

@@ -71,6 +71,32 @@ describe('coach attendance overview', () => {
     await waitFor(() => expect(screen.getByLabelText('Attendance for Mona Test')).toBeEnabled());
   }
 
+  it('saves and resets an individual correction through the scoped bulk endpoint', async () => {
+    await renderSelectionRoster();
+    const original = vi.mocked(coachFetch).getMockImplementation()!;
+    vi.mocked(coachFetch).mockImplementation(async (url, init) => {
+      if (init?.method !== 'POST') return original(url, init);
+      const payload = JSON.parse(String(init.body));
+      const reset = payload.records[0].status === 'reset';
+      return new Response(JSON.stringify({ results: [{ learnerId: '42', status: reset ? 'absent' : 'present',
+        manualStatus: reset ? null : 'present', version: reset ? 'v3' : 'v2', recent: [] }] }));
+    });
+    const edit = screen.getByRole('button', { name: `Edit attendance for ${learners[0].learner}` });
+    fireEvent.click(edit);
+    fireEvent.click(screen.getByRole('button', { name: /Mark present/ }));
+    await screen.findByText('Manually adjusted');
+    expect(screen.getByLabelText(`Attendance for ${learners[0].learner}`)).toHaveValue('present');
+    fireEvent.click(edit);
+    fireEvent.click(screen.getByRole('button', { name: /Reset manual correction/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm reset' }));
+    await screen.findByText('Manual correction reset. Original attendance restored.');
+    expect(screen.getByLabelText(`Attendance for ${learners[0].learner}`)).toHaveValue('absent');
+    expect(JSON.parse(String(vi.mocked(coachFetch).mock.calls.at(-1)![1]?.body))).toMatchObject({
+      programmeId: 'programme-1', groupId: 'group-1', sessionOccurrenceId: 'occ-1',
+      records: [{ learnerId: '42', status: 'reset', version: 'v2' }],
+    });
+  });
+
   it('requires a session, resets edits on occurrence changes and preserves request counts', async () => {
     render(<MemoryRouter><CoachAttendance /></MemoryRouter>);
     fireEvent.change(await screen.findByRole('combobox', { name: 'Programme' }), { target: { value: 'programme-1' } });

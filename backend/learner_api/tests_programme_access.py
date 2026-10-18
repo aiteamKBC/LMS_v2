@@ -43,16 +43,38 @@ class ProgrammeAccessTests(SimpleTestCase):
         self.assertEqual(learning_access(self.source), {'blocked': True, 'startDate': ''})
         self.assertEqual(self.cursor.execute.call_count, 1)
 
-    def test_enrolment_uses_only_its_linked_matching_profile_id(self):
+    def profile_rows(self, manager, rows):
+        query = manager.using.return_value.filter.return_value.values_list.return_value
+        query.__getitem__.return_value = rows
+
+    def test_enrolment_reaches_its_profile_by_enrolment_id_not_by_names(self):
         source = EnrolmentUser(
             id=499, programme='Marketing', cohort='October 2026', start_date=date(2025, 1, 1))
-        with patch('learner_api.programme_access.LearnerProfile.objects') as manager:
-            query = manager.using.return_value.filter.return_value.exclude.return_value.exclude.return_value
-            query.values_list.return_value.distinct.return_value.__getitem__.return_value = ['COH-1']
+        with patch('learner_api.placement_links.LearnerProfile.objects') as manager:
+            self.profile_rows(manager, [('PROG-1', 'COH-1', 'GRP-1')])
             self.assertEqual(learning_access(source)['startDate'], '2026-10-01')
-            manager.using.return_value.filter.assert_called_once_with(
-                enrolment_id=499, programme='Marketing', cohort='October 2026')
+            manager.using.return_value.filter.assert_called_once_with(enrolment_id=499)
             self.assertEqual(self.cursor.execute.call_args.args[1], ['COH-1'])
+
+    def test_renamed_cohort_still_opens_on_its_date_for_an_enrolment_holding_the_old_name(self):
+        # The 16 Oct 2026 incident: the cohort was renamed, the enrolment row
+        # still said the old name, and a name lookup found no cohort at all.
+        source = EnrolmentUser(
+            id=499, programme='Marketing', cohort='Oct 2026', start_date=date(2025, 1, 1))
+        self.cursor.fetchone.return_value = (date(2026, 9, 1),)
+        with patch('learner_api.placement_links.LearnerProfile.objects') as manager:
+            self.profile_rows(manager, [('PROG-1', 'COH-1', '')])
+            self.assertEqual(learning_access(source), {'blocked': False, 'startDate': '2026-09-01'})
+        self.assertEqual(self.cursor.execute.call_count, 1)
+        self.assertNotIn('cohort_name', self.cursor.execute.call_args.args[0])
+
+    def test_enrolment_without_a_profile_id_still_falls_back_to_its_names(self):
+        source = EnrolmentUser(
+            id=499, programme='Marketing', cohort='October 2026', start_date=date(2025, 1, 1))
+        with patch('learner_api.placement_links.LearnerProfile.objects') as manager:
+            self.profile_rows(manager, [('', None, '')])
+            self.assertEqual(learning_access(source)['startDate'], '2026-10-01')
+        self.assertEqual(self.cursor.execute.call_args.args[1], ['Marketing', 'October 2026'])
 
     def test_all_learning_opens_on_the_cohort_start_day_in_uk_time(self):
         # UK midnight, still the previous UTC day. No per-module date gate.

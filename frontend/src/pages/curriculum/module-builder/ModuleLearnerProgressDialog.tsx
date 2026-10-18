@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { showCurriculumConfirm } from '@/components/feature/CurriculumSweetAlert';
-import { formatHoursMinutes } from '@/lib/format';
+import { formatHoursClock } from '@/lib/hoursClock';
 import type {
   CurriculumLearnerKsbConsumption,
   CurriculumProgrammeAssignedLearner,
@@ -208,7 +208,7 @@ export function ModuleLearnerProgressDialog({ moduleName, moduleId, impact, assi
           )}
           <div className="rounded-xl border border-background-200 bg-background-50 p-3">
             <p className="text-[10px] font-bold uppercase tracking-wider text-foreground-400">OTJH progress</p>
-            <p className="mt-1 text-lg font-black text-foreground-900"><Hint text={otjhHint(totalHours ?? null, plannedHours, totalPercent, 'module')}>{totalHours == null ? 'N/A' : formatHoursMinutes(totalHours)}</Hint> <span className="text-[11px] font-bold text-foreground-400">/ {formatHoursMinutes(plannedHours)}</span></p>
+            <p className="mt-1 text-lg font-black text-foreground-900"><Hint text={otjhHint(totalHours ?? null, plannedHours, totalPercent, 'module')}>{totalHours == null ? 'N/A' : formatHoursClock(totalHours)}</Hint> <span className="text-[11px] font-bold text-foreground-400">/ {formatHoursClock(plannedHours)}</span></p>
             <ProgressBar value={totalPercent || 0} tone="primary" />
             <p className="mt-1 text-[10px] font-semibold text-foreground-500"><Hint text={otjhHint(totalHours ?? null, plannedHours, totalPercent, 'module')}>{`${totalPercent == null ? 'N/A' : `${percentage(totalPercent)}%`} of assigned planned hours${log ? ' · Activity Log accepted hours' : ''}`}</Hint></p>
             {Boolean(log?.unallocatedAcceptedRecords) && <p className="mt-1 text-[10px] text-foreground-500">{plural(log!.unallocatedAcceptedRecords!, 'accepted record')} without allocated time; recorded hours are included.</p>}
@@ -277,6 +277,9 @@ export function ModuleLearnerProgressDialog({ moduleName, moduleId, impact, assi
                     {moduleId && (
                       <Link
                         to={`/curriculum/learner-module-progress?moduleId=${encodeURIComponent(moduleId)}&${learner.enrolmentId != null ? 'enrolmentId' : 'learnerId'}=${encodeURIComponent(String(learner.enrolmentId ?? id))}`}
+                        // Tells the progress page that Back is one step in
+                        // history: this catalogue, its filters and this dialog.
+                        state={{ from: 'module-builder' }}
                         className="mt-3 inline-flex h-8 items-center gap-1.5 rounded-lg border border-primary-200 bg-primary-50 px-3 text-[10px] font-bold text-primary-700 hover:bg-primary-100"
                       >
                         <AppIcon name="ri-bar-chart-2-line" size={14}></AppIcon>
@@ -304,7 +307,7 @@ export function ModuleLearnerProgressDialog({ moduleName, moduleId, impact, assi
                       <div>
                         <div className="flex items-baseline justify-between text-[10px] font-bold text-foreground-600">
                           <span>OTJH</span>
-                          <Hint text={otjhHint(achieved, planned, otjhProgress, 'learner')}>{`${achieved == null ? 'N/A' : formatHoursMinutes(achieved)} / ${formatHoursMinutes(planned)}`}</Hint>
+                          <Hint text={otjhHint(achieved, planned, otjhProgress, 'learner')}>{`${achieved == null ? 'N/A' : formatHoursClock(achieved)} / ${formatHoursClock(planned)}`}</Hint>
                         </div>
                         <ProgressBar value={otjhProgress || 0} tone="primary" />
                         <p className="mt-1 text-[10px] font-semibold text-foreground-400"><Hint text={otjhHint(achieved, planned, otjhProgress, 'learner')}>{`${otjhProgress == null ? 'N/A' : `${percentage(otjhProgress)}%`} complete`}</Hint></p>

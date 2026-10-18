@@ -366,11 +366,34 @@ export interface WorkspaceQuizSummary {
   passingGrade?: number | null;
 }
 
-export async function fetchWorkspaceQuizzes(_signal?: AbortSignal): Promise<WorkspaceQuizSummary[]> {
-  const response = await fetch(`${QUIZ_API_BASE}/quizzes/?status=all&assessmentType=quiz`);
-  if (!response.ok) throw new Error(`Quiz API returned ${response.status} for quizzes`);
-  const data = await response.json();
-  return Array.isArray(data?.results) ? data.results : [];
+let workspaceQuizzesInFlight: Promise<WorkspaceQuizSummary[]> | null = null;
+
+export function fetchWorkspaceQuizzes(signal?: AbortSignal, options: { refresh?: boolean } = {}): Promise<WorkspaceQuizSummary[]> {
+  if (signal?.aborted) return Promise.reject(new DOMException('Aborted', 'AbortError'));
+  // StrictMode and two open quiz editors share the read. Each subscriber can
+  // leave without cancelling the transport another editor still needs. Keep no
+  // settled cache: Refresh and reopening after quiz edits read the latest list.
+  if (!workspaceQuizzesInFlight || options.refresh) {
+    const pending = fetch(`${QUIZ_API_BASE}/quizzes/?status=all&assessmentType=quiz&view=picker`)
+      .then(async response => {
+        if (!response.ok) throw new Error(`Quiz API returned ${response.status} for quizzes`);
+        const data = await response.json();
+        return Array.isArray(data?.results) ? data.results : [];
+      });
+    workspaceQuizzesInFlight = pending;
+    const clear = () => { if (workspaceQuizzesInFlight === pending) workspaceQuizzesInFlight = null; };
+    pending.then(clear, clear);
+  }
+  const request = workspaceQuizzesInFlight;
+  if (!signal) return request;
+  return new Promise((resolve, reject) => {
+    const abort = () => reject(new DOMException('Aborted', 'AbortError'));
+    signal.addEventListener('abort', abort, { once: true });
+    request.then(
+      rows => { signal.removeEventListener('abort', abort); if (!signal.aborted) resolve(rows); },
+      error => { signal.removeEventListener('abort', abort); if (!signal.aborted) reject(error); },
+    );
+  });
 }
 
 /** Moves the component with id `fromId` to the position currently held by `toId`. */

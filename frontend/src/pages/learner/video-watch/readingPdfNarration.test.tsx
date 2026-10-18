@@ -1,7 +1,8 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import type { JourneyComponent } from '@/utils/learnerJourney';
-import { ComponentBody } from './page';
+import { StrictMode } from 'react';
+import { ComponentBody, InlineAttachmentPreview } from './page';
 
 const pdfText = vi.hoisted(() => vi.fn());
 vi.mock('pdfjs-dist', () => ({
@@ -21,6 +22,19 @@ const speak = vi.fn<(utterance: SpeechSynthesisUtterance) => void>();
 const cancel = vi.fn();
 const textContent = (text: string) => ({
   items: [{ str: text, transform: [12, 0, 0, 12, 0, 700], height: 12, hasEOL: true }],
+});
+
+it('shares the PDF GET across StrictMode mounts', async () => {
+  render(<StrictMode><InlineAttachmentPreview url="/strict.pdf" title="Strict PDF" /></StrictMode>);
+  await screen.findByText('Page 1 of 3');
+  expect(fetch).toHaveBeenCalledTimes(1);
+});
+
+it('explains a 204 PDF response without passing empty bytes to the viewer', async () => {
+  vi.stubGlobal('fetch', vi.fn(async () => new Response(null, { status: 204 })));
+  render(<InlineAttachmentPreview url="/empty.pdf" title="Empty PDF" />);
+  await screen.findByText(/The PDF response contains no file data/);
+  expect(fetch).toHaveBeenCalledTimes(1);
 });
 
 beforeEach(() => {

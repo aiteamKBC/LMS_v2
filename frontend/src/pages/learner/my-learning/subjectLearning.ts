@@ -13,10 +13,11 @@ export type LearningWeek = { id: string; label: string; title: string; start: st
   weekId?: string };
 export const learningToday = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Europe/London' });
 export const learningDate = (date: string) => new Date(`${date.slice(0, 10)}T12:00:00Z`).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' });
-export const subjectPercent = (subject: Subject) => subject.activities.length ? Math.round(subject.activities.filter(a => a.completed).length / subject.activities.length * 10000) / 100 : 0;
+export const subjectPercent = (subject: Subject) => subject.card ? subject.card.progress : subject.activities.length ? Math.round(subject.activities.filter(a => a.completed).length / subject.activities.length * 10000) / 100 : 0;
 
 /** Enrolment remains visible before any learning has started. */
 export function subjectLearningStatus(subject: Subject): 'Completed' | 'In progress' | 'Upcoming' {
+  if (subject.card) return subject.card.status;
   if (subject.activities.length && subject.activities.every(activity => activity.completed)) return 'Completed';
   const started = subject.activities.some(activity => {
     const legacy = activity.legacy;
@@ -29,10 +30,10 @@ export function subjectLearningStatus(subject: Subject): 'Completed' | 'In progr
 }
 
 export function certificateEligible(subject: Subject, template: CertificateTemplateSummary | null) {
-  const total = subject.activities.length;
-  const completed = subject.activities.filter(activity => activity.completed).length;
+  const total = subject.card?.activityCount ?? subject.activities.length;
+  const completed = subject.card?.completedActivityCount ?? subject.activities.filter(activity => activity.completed).length;
   const percent = total ? Math.round(completed / total * 10000) / 100 : 0;
-  const finalTestPassed = subject.activities.some(activity => {
+  const finalTestPassed = subject.card?.finalTestPassed ?? subject.activities.some(activity => {
     const component = activity.native;
     return component?.isQuiz
       && (component.title || '').toLowerCase().includes('final')
@@ -136,7 +137,7 @@ export function resolveLearningSubject(subjects: Subject[], requested?: string |
   const original = importedCourse && subjects.find(s => s.id === importedCourse && s.source === 'legacy');
   if (original) return original;
   const links = { ...metadata?.builder_subjects, ...schedule?.moduleLinks };
-  const matches = subjects.filter(s => links[s.id]?.id === moduleId || s.activities.some(a => a.native?.moduleId === moduleId)
+  const matches = subjects.filter(s => links[s.id]?.id === moduleId || s.moduleId === moduleId || s.activities.some(a => a.native?.moduleId === moduleId)
     || s.activities.some(a => a.legacy && Object.values(metadata?.activity_sources || {}).some(source => source.module_id === moduleId && source.group_id === a.legacy!.group_id)));
   if (matches.length === 1) return matches[0];
   const title = metadata?.current_subjects?.find(s => s.id === moduleId)?.title || schedule?.modules?.find(m => m.id === moduleId)?.title;
@@ -152,7 +153,7 @@ type LearningPlanSelection = {
 /** Only the assigned training-plan teaching period can make a module current.
  * Keep the header's placement rules and its next/previous choices, but preserve
  * that distinction instead of labelling every fallback as current. */
-export function learningPlanSelection(subjects: Subject[], real: LearnerDetail | null, metadata?: CoverMetadata | null, schedule?: LearningSchedule | null, today = learningToday()): LearningPlanSelection {
+export function learningPlanSelection(subjects: Subject[], real: Pick<LearnerDetail, 'programme' | 'cohort' | 'group'> | null, metadata?: CoverMetadata | null, schedule?: LearningSchedule | null, today = learningToday()): LearningPlanSelection {
   if (!schedule) return { status: 'unavailable', entries: [] };
   const normalise = (value?: string | null) => (value || '').trim().toLowerCase();
   const fields = [['programme_name', real?.programme], ['cohort_name', real?.cohort], ['group_name', real?.group]] as const;
@@ -171,15 +172,15 @@ export function learningPlanSelection(subjects: Subject[], real: LearnerDetail |
   return { status, entries };
 }
 
-export function currentLearningSubject(subjects: Subject[], real: LearnerDetail | null, metadata?: CoverMetadata | null, schedule?: LearningSchedule | null, today = learningToday()) {
+export function currentLearningSubject(subjects: Subject[], real: Pick<LearnerDetail, 'programme' | 'cohort' | 'group'> | null, metadata?: CoverMetadata | null, schedule?: LearningSchedule | null, today = learningToday()) {
   const selection = learningPlanSelection(subjects, real, metadata, schedule, today);
   return selection.status === 'current' ? selection.entries[0]?.subject : undefined;
 }
 
 /** Continue with an unfinished current module, then the next dated module,
  * then any remaining subject when the plan has no usable dates. */
-export function recommendedLearningSubject(subjects: Subject[], real: LearnerDetail | null, metadata?: CoverMetadata | null, schedule?: LearningSchedule | null, today = learningToday()) {
-  const hasRemaining = (subject: Subject) => subject.activities.some(activity => !activity.completed);
+export function recommendedLearningSubject(subjects: Subject[], real: Pick<LearnerDetail, 'programme' | 'cohort' | 'group'> | null, metadata?: CoverMetadata | null, schedule?: LearningSchedule | null, today = learningToday()) {
+  const hasRemaining = (subject: Subject) => subject.card ? subject.card.completedActivityCount < subject.card.activityCount : subject.activities.some(activity => !activity.completed);
   const selection = learningPlanSelection(subjects, real, metadata, schedule, today);
   const planned = selection.entries.find(entry => hasRemaining(entry.subject))?.subject;
   if (['current', 'next'].includes(selection.status) && planned) return planned;

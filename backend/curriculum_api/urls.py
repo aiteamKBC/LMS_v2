@@ -29,7 +29,9 @@ from .teams_week_meeting import (
     curriculum_week_teams_meeting_detail,
 )
 from . import recordings_library, session_results, tutor_notifications, recordings_day, recordings_calendar, recordings_external
+from .attendance_corrections import session_attendance_correction
 from .learner_activity_status import activity_status
+from .home_summary import curriculum_home_summary
 
 
 urlpatterns = [
@@ -60,6 +62,7 @@ urlpatterns = [
     path('curriculum/session-results/<str:series_id>/sessions/<int:session_number>/', session_results.admin_session),
     path('curriculum/session-results/<str:series_id>/sessions/<int:session_number>/day-results/', recordings_day.lecture_day_results),
     path('curriculum/session-results/<str:series_id>/sessions/<int:session_number>/attendance-alias/', session_results.link_attendance_alias),
+    path('curriculum/session-results/<str:series_id>/sessions/<int:session_number>/attendance-correction/', session_attendance_correction),
     path('curriculum/session-results/<str:series_id>/artifacts/<str:artifact_id>/', session_results.admin_content),
     path('curriculum/session-results/<str:series_id>/artifacts/<str:artifact_id>/visibility/', session_results.recording_visibility),
     path('curriculum/session-results/<str:series_id>/sessions/<int:session_number>/attendance.csv', session_results.export_attendance),
@@ -76,6 +79,8 @@ urlpatterns = [
     path('curriculum/review-types/<str:review_type_id>/', review_types.curriculum_review_type_detail, name='curriculum-review-type-detail'),
     path('curriculum/reviews/<str:review_id>/', reviews.curriculum_review_detail, name='curriculum-review-detail'),
     path('curriculum/overview/', views.curriculum_overview, name='curriculum-overview'),
+    path('curriculum/home-summary/', curriculum_home_summary, name='curriculum-home-summary'),
+    path('curriculum/delivery-scope/', views.curriculum_delivery_scope, name='curriculum-delivery-scope'),
     path('curriculum/stats/', views.curriculum_stats, name='curriculum-stats'),
     # Polled by every open tab to notice a write made somewhere else. Kept next
     # to nothing in cost: one Redis read, no database.
@@ -212,6 +217,7 @@ urlpatterns = [
     path('curriculum/ksb-profiles/', views.curriculum_ksb_framework_collection, name='curriculum-ksb-profiles'),
     path('curriculum/ksb-profiles/<str:identifier>/', views.curriculum_ksb_framework_detail, name='curriculum-ksb-profile-detail'),
     path('curriculum/ksb-sets/', views.curriculum_ksb_sets, name='curriculum-ksb-sets'),
+    path('curriculum/ksb-sets/<str:identifier>/definitions/', views.curriculum_ksb_set_definitions, name='curriculum-ksb-set-definitions'),
     path('curriculum/cohorts/', views.curriculum_cohort_collection, name='curriculum-cohorts'),
     # Before the '<str:identifier>' routes below, or 'archived' is read as a cohort id.
     path('curriculum/cohorts/archived/', views.curriculum_archived_cohorts, name='curriculum-cohorts-archived'),

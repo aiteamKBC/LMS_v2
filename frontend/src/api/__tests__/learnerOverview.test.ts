@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { homeSummary, learningSchedule, overviewSchedule, overviewWeek, upcomingSchedule } from '../learnerOverview';
+import { homeSummary, learningSchedule, myLearningSchedule, overviewSchedule, overviewWeek, upcomingSchedule } from '../learnerOverview';
 import { dashboardOverview } from '../dashboardTabs';
 import { dashboardOverviewFixture } from '@/test/dashboardOverviewFixture';
 import { clearAllCachedResources } from '../cachedRequest';
@@ -68,6 +68,17 @@ describe('dashboard overview transport', () => {
 });
 
 describe('My Learning schedule transport', () => {
+  it('deduplicates the combined card/session read and isolates learners and old sections', async () => {
+    const schedule = { modules: [], moduleLinks: {}, sessions: [], moduleProgress: {}, generatedAt: '2026-10-18T00:00:00Z' };
+    vi.mocked(fetch).mockResolvedValue(new Response(JSON.stringify(schedule)));
+    const result = await Promise.all([myLearningSchedule.read('commercial', '125'), myLearningSchedule.read('commercial', '125')]);
+    expect(result).toEqual([schedule, schedule]);
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(String(vi.mocked(fetch).mock.calls[0][0])).toContain('/125/?section=my-learning');
+    expect(myLearningSchedule.peek('commercial', '126')).toBeUndefined();
+    expect(myLearningSchedule.peek('apprenticeship', '125')).toBeUndefined();
+    expect(learningSchedule.peek('commercial', '125')).toBeUndefined();
+  });
   it('requests the lightweight learning section', async () => {
     const schedule = { modules: [], moduleLinks: {}, generatedAt: '2026-09-16T00:00:00Z' };
     vi.mocked(fetch).mockResolvedValueOnce(new Response(JSON.stringify(schedule)));

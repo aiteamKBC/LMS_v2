@@ -34,7 +34,7 @@ from .apprenticeship_agreement import (
     _group_dates,
     _weeks_between,
 )
-from .learning_plan import _group_module_ids, _programme_modules, _saved_modules
+from .learning_plan import _saved_modules, learner_group_module_ids, learner_programme_modules
 from .learner_progression import advance_learner
 from .mappers import _s
 from .models import EnrolmentUser, TrainingPlanDocument
@@ -68,13 +68,12 @@ def _extended_ilr_answers(learner_id):
 
 def _plan_modules(learner):
     """The learner's learning plan, falling back to their group's preset."""
-    programme = _s(learner.programme)
-    catalogue = {m["moduleId"]: m for m in _programme_modules(programme)}
+    catalogue = {m["moduleId"]: m for m in learner_programme_modules(learner)}
     saved = _saved_modules(learner)
     ids = (
         [_s(m.get("moduleId")) for m in saved]
         if saved
-        else _group_module_ids(programme, _s(learner.group))
+        else learner_group_module_ids(learner)
     )
     return [catalogue[i] for i in ids if i in catalogue]
 

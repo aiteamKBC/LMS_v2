@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { AppIcon } from '@/components/feature/AppIcon';
 import type { JourneyComponent } from '@/utils/learnerJourney';
 import { componentTypeMeta, gradePercent, hasComponentContent, isComponentComplete, resourceTypeMeta } from '@/utils/learnerJourney';
-import { overviewSchedule } from '@/api/learnerOverview';
+import { learningSchedule } from '@/api/learnerOverview';
 import { HolidayNoteHint } from '@/components/feature/HolidayNoteHint';
 import { weekHolidayNotes } from '@/pages/learner/training-plan-timeline/model';
 import { useLiveLearnerRead } from '@/hooks/useLiveLearnerRead';
@@ -52,6 +52,8 @@ export interface ActivitySidebarProps {
   /** Source-specific availability; never creates native content or quiz attempts. */
   canOpen?: (component: JourneyComponent) => boolean;
   monthHeadingFor?: (week: SidebarWeek, index: number) => string | null;
+  /** Catalogue current week is independent of the week being reviewed; null means completed. */
+  currentWeekKey?: string | null;
   accessOpen?: boolean;
   onAccessBlocked?: () => void;
 }
@@ -110,6 +112,7 @@ export function ActivitySidebar({
   onSelectWeek,
   canOpen,
   monthHeadingFor,
+  currentWeekKey,
   accessOpen = true,
   onAccessBlocked,
 }: ActivitySidebarProps) {
@@ -118,7 +121,7 @@ export function ActivitySidebar({
   // Read the plan whenever there is a week to describe, not only when the list
   // below has more than one row: a single-week module can still fall on a
   // holiday, and its hint has to reach the learner too.
-  const schedule = useLiveLearnerRead(learnerKind, id, weeks.length > 0, overviewSchedule.read, overviewSchedule.peek);
+  const schedule = useLiveLearnerRead(learnerKind, id, weeks.length > 0, learningSchedule.read, learningSchedule.peek);
   const moduleIds = new Set(weeks.flatMap(week => week.components.flatMap(component => component.moduleId ? [component.moduleId] : [])));
   const matchingModules = (schedule.data?.modules || []).filter(module => moduleIds.size
     ? moduleIds.has(module.id) : module.title.trim().toLowerCase() === moduleTitle.trim().toLowerCase());
@@ -137,6 +140,9 @@ export function ActivitySidebar({
   const weekDoneCount = weekComponents.filter((c) => isComponentComplete(c, completedIds)).length;
   const activeWeekIndex = weeks.findIndex((w) => w.active);
   const currentWeekLabel = activeWeekIndex < 0 ? weekTitle : weekDisplayLabel(weeks, activeWeekIndex);
+  const isCurrentWeek = (week: SidebarWeek) => currentWeekKey === undefined ? week.active : week.key === currentWeekKey;
+  const weekHeading = currentWeekKey === null ? 'Week activities'
+    : currentWeekKey === undefined || weeks.some(week => week.active && isCurrentWeek(week)) ? 'Current week' : 'Selected week';
   const contentAvailableFor = canOpen || hasComponentContent;
   const openableFor = canOpen || ((c: JourneyComponent) => hasComponentContent(c) && isNavigableComponent(c));
   const hasUnavailableContent = weekComponents.some((c) => !contentAvailableFor(c));
@@ -172,7 +178,7 @@ export function ActivitySidebar({
       </section>}
       <div className="overflow-hidden rounded-xl border border-emerald-200 bg-emerald-50/70 shadow-sm">
         <div className="border-b border-emerald-100 px-4 py-3">
-          <p className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-primary-600">Current week</p>
+          <p className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-primary-600">{weekHeading}</p>
           <h2 className="text-sm font-heading font-bold text-primary-900">{currentWeekLabel || 'This week'}</h2>
           <p className="text-[11px] text-foreground-400 mt-0.5">
             {weekComponents.length} components{' '}
@@ -273,7 +279,7 @@ export function ActivitySidebar({
                   {monthHeadings[index] && <h3 className="border-b border-primary-100 bg-primary-50/80 px-4 py-2 text-[11px] font-bold uppercase tracking-wide text-primary-800">{monthHeadings[index]}</h3>}
                   <button
                     disabled={!viewable}
-                    aria-label={`${weekDisplayLabel(weeks, index)}, ${w.count} components${w.active ? ', Current' : weekComplete ? ', Done' : ''}`}
+                    aria-label={`${weekDisplayLabel(weeks, index)}, ${w.count} components${isCurrentWeek(w) ? ', Current' : weekComplete ? ', Done' : ''}`}
                     aria-expanded={!onSelectWeek && viewable ? expanded : undefined}
                     aria-current={onSelectWeek && w.active ? 'step' : undefined}
                     onClick={() => onSelectWeek ? onSelectWeek(w) : setExpandedWeek(toggleExpandedWeek(expandedWeek, weekKey))}
@@ -302,10 +308,10 @@ export function ActivitySidebar({
                         {w.count} components{weekComplete ? ' complete' : ''}
                       </span>
                     </span>
-                    {w.active && (
+                    {isCurrentWeek(w) && (
                       <span className="text-[10px] font-semibold text-primary-600 shrink-0">Current</span>
                     )}
-                    {weekComplete && !w.active && (
+                    {weekComplete && !isCurrentWeek(w) && (
                       <span className="text-[10px] font-semibold text-emerald-700 shrink-0">Done</span>
                     )}
                     {!viewable ? (

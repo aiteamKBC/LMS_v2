@@ -440,6 +440,14 @@ def _format_size(size):
     return f"{size} B"
 
 
+QUIZ_PICKER_FIELDS = {
+    'id': 'id', 'title': 'title', 'programmeId': 'programme_id',
+    'programme': 'programme', 'module': 'module', 'weekId': 'week_id',
+    'questions': 'questions', 'status': 'status', 'assessmentType': 'assessment_type',
+    'duration': 'duration', 'passingGrade': 'passing_grade',
+}
+
+
 def _serialize_quiz(quiz):
     return {
         "id": quiz.id,
@@ -3325,6 +3333,14 @@ def quizzes(request):
                 queryset = queryset.filter(status=status)
         if query:
             queryset = queryset.filter(title__icontains=query)
+        if request.GET.get('view') == 'picker':
+            # The authoring picker only links a quiz and displays its summary.
+            # It does not use assignment counts, uploaded content or settings;
+            # computing those here reads every linked curriculum component.
+            return JsonResponse({'results': [
+                {name: row[column] for name, column in QUIZ_PICKER_FIELDS.items()}
+                for row in queryset.values(*QUIZ_PICKER_FIELDS.values())
+            ]})
         quizzes_to_serialize = _sync_quiz_assignment_counts(queryset)
         if status == "trash":
             quizzes_to_serialize = [_sync_quiz_assignment_count(quiz) for quiz in quizzes_to_serialize]
