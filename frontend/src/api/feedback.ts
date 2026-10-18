@@ -1,5 +1,5 @@
 export type FeedbackFormStatus = 'draft' | 'published' | 'closed';
-export type FeedbackFormType = 'general' | 'post_lecture' | 'post_event' | 'event_rsvp';
+export type FeedbackFormType = 'general' | 'post_lecture' | 'post_event' | 'event_rsvp' | 'information_session' | 'commitment_meeting';
 export type FeedbackDeliveryScope = 'manual' | 'all_modules' | 'module';
 export type FeedbackQuestionType = 'short_text' | 'long_text' | 'yes_no' | 'single_choice' | 'multiple_choice' | 'dropdown' | 'rating' | 'likert' | 'number' | 'date' | 'name' | 'email' | 'photo_upload';
 export interface FeedbackNameAnswer { firstName: string; lastName: string }
@@ -12,7 +12,15 @@ export interface FeedbackQuestion {
   text: string;
   required: boolean;
   helpText: string;
-  config: { options?: string[]; min?: number; max?: number; minLabel?: string; maxLabel?: string };
+  config: {
+    options?: string[];
+    min?: number;
+    max?: number;
+    minLabel?: string;
+    maxLabel?: string;
+    display?: 'stars' | 'numbers';
+    labels?: string[];
+  };
   sortOrder?: number;
   answer?: FeedbackAnswerValue;
 }
@@ -111,6 +119,7 @@ export interface LearnerFeedbackListItem {
   id: number; title: string; description: string; assignedAt: string | null;
   dueDate: string | null; status: LearnerFeedbackStatus; responseId: number | null;
   deliveryId: number | null; sessionTitle: string; sessionStartsAt: string | null;
+  formType: FeedbackFormType; moduleName: string;
   eventRecipientId?: number | null;
 }
 
@@ -118,6 +127,9 @@ export interface FeedbackResponse {
   id: number; formId: number; formTitle: string; learnerId: string | null;
   learnerName: string; programme: string; status: 'in_progress' | 'completed';
   startedAt: string; updatedAt: string; submittedAt: string | null;
+  externalRecipientId?: number | null;
+  campaignType?: 'information_session' | 'commitment_meeting' | null;
+  campaignName?: string; sessionDate?: string | null;
   sections?: FeedbackSection[];
 }
 

@@ -34,6 +34,22 @@ def ready(cursor):
     return bool(row and row[0] and row[1])
 
 
+def covers_for(subject_refs):
+    """Only owned catalogue covers; completion comes from the canonical ledger.
+
+    Unlike state(), this never aggregates attempts or reads every course cover.
+    Callers must resolve the allowed subject references before calling it.
+    """
+    refs = list(dict.fromkeys(subject_refs))
+    if not refs:
+        return {}
+    with connections[ALIAS].cursor() as cur:
+        if not ready(cur):
+            return {}
+        cur.execute(f'SELECT subject_ref,storage_path FROM {COVERS} WHERE subject_ref=ANY(%s)', [refs])
+        return dict(cur.fetchall())
+
+
 def state(enrolment_id, aptem_id, activity_id=None, *, group_id=None):
     with connections[ALIAS].cursor() as cur:
         if not ready(cur):

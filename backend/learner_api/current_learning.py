@@ -124,17 +124,22 @@ def source_reference(record):
 def merge_attempts(records, attempts):
     """Use saved course attempts for completion, never manufacture their hours."""
     result = [dict(p) for p in records]
+    # One record can be reached through several lineage links. Index positions,
+    # preserving original row order and merging each matching row only once.
+    by_route = {}
+    for index,p in enumerate(result):
+        source_ref = source_reference(p)
+        routes = {source_ref} if isinstance(source_ref,str) else set()
+        for link in [*(p.get('sources') or []), *(p.get('historical_components') or [])]:
+            if link.get('source_system') == 'old_lms':
+                activity = link.get('source_activity_id')
+                if isinstance(activity,str) and activity.startswith('material:'):
+                    routes.add(f"la:{link.get('source_course_ref')}:{activity[9:]}")
+        for route in routes:
+            by_route.setdefault(route,[]).append(index)
     for attempt in attempts:
         ref = f"la:{attempt['group_id']}:{attempt['activity_id']}"
-        matches = []
-        for p in result:
-            linked = source_reference(p) == ref or any(
-                link.get('source_system') == 'old_lms'
-                and str(link.get('source_course_ref')) == str(attempt['group_id'])
-                and link.get('source_activity_id') == f"material:{attempt['activity_id']}"
-                for link in [*(p.get('sources') or []), *(p.get('historical_components') or [])])
-            if linked:
-                matches.append(p)
+        matches = [result[index] for index in by_route.get(ref,())]
         if not matches:
             at = instant(attempt['submitted_at'])
             matches = [{'id': f"subject:{attempt['group_id']}:{attempt['activity_id']}",
@@ -143,6 +148,7 @@ def merge_attempts(records, attempts):
                 'source_payload': {'original_source_ref': ref},
                 'reporting_month': at.strftime('%Y-%m'), 'reporting_started_at': at}]
             result.extend(matches)
+            by_route.setdefault(ref,[]).append(len(result)-1)
         for p in matches:
             p['completed'] = bool(p.get('completed', p.get('accepted')) or attempt['completed'])
             if attempt.get('best_percent') is not None:

@@ -87,3 +87,10 @@ export const learningSchedule = resource<LearningSchedule>(
   (kind, id) => `/learner_api/training-plan-dashboard/${kind}/${encodeURIComponent(id)}/?section=learning`,
   value => Array.isArray(value.modules) && !!value.moduleLinks,
 );
+
+/** My Learning cards and upcoming sessions share one module/ledger read. */
+export type MyLearningSchedule = LearningSchedule & Pick<TrainingPlanDashboard, 'sessions' | 'moduleProgress'>;
+export const myLearningSchedule = resource<MyLearningSchedule>(
+  (kind, id) => `/learner_api/training-plan-dashboard/${kind}/${encodeURIComponent(id)}/?section=my-learning`,
+  value => Array.isArray(value.modules) && !!value.moduleLinks && Array.isArray(value.sessions) && !!value.moduleProgress,
+);
