@@ -1,9 +1,14 @@
 """Round-trip every MCP table on the Neon test branch -- never anywhere else.
 
 The DB-backed test suites cannot start (see ``docs/mcp/README.md``), so this is the
-real-database check for each MCP step. It inserts, reads, updates and deletes one
-row per table, prints OK/FAIL per table, and rolls the whole run back, so it
+real-database check for each MCP step, and it rolls the whole run back, so it
 leaves nothing behind even when a check fails half-way.
+
+- ``--mode tables`` (default, Step 2): insert, read, update and delete one row per
+  table; OK/FAIL per table.
+- ``--mode oauth`` (Step 3): register -> code with PKCE -> exchange -> resolve_bearer
+  -> refresh rotation -> refresh reuse (family revoked) -> code reuse -> revoke,
+  as the first active staff account holding curriculum or super-admin access.
 
 Branch-only guard
 -----------------
@@ -28,6 +33,7 @@ import json
 import os
 import uuid
 from datetime import timedelta
+from types import SimpleNamespace
 from urllib.parse import urlparse
 
 from django.conf import settings
@@ -191,39 +197,187 @@ CHECKS = (
 )
 
 
+# --- oauth mode: the Step 3 flow end to end on real rows -------------------------
+#
+# Steps share one state dict and run in order; a failure skips the rest, since
+# each depends on the one before. Plaintext codes and tokens live only in that
+# dict for the run and are never printed.
+
+def _curriculum_account():
+    """The first active, unlocked staff account that may use MCP, or None."""
+    from mcp_api.auth import has_mcp_access, rejection_reason
+
+    now = timezone.now()
+    for account in LoginAccount.objects.filter(subject_type="staff", is_active=True).order_by("id")[:200]:
+        if has_mcp_access(account) and rejection_reason(account, now, now) is None:
+            return account
+    return None
+
+
+def _bearer(access_token):
+    from mcp_api.auth import resolve_bearer
+
+    return resolve_bearer(SimpleNamespace(headers={"Authorization": f"Bearer {access_token}"}))
+
+
+def _expect_invalid_grant(call):
+    from mcp_api.oauth import OAuthError
+
+    try:
+        call()
+    except OAuthError as error:
+        _expect(error.error == "invalid_grant", f"expected invalid_grant, got {error.error}")
+    else:
+        raise AssertionError("expected invalid_grant, the call succeeded")
+
+
+def oauth_register(state):
+    from mcp_api import settings as mcp_settings
+    from mcp_api.oauth import register_client
+
+    host = "claude.ai" if "claude.ai" in mcp_settings.allowed_redirect_hosts() else sorted(mcp_settings.allowed_redirect_hosts())[0]
+    state["redirect_uri"] = f"https://{host}/mcp-selfcheck/callback"
+    state["client"] = register_client({"client_name": "mcp_selfcheck", "redirect_uris": [state["redirect_uri"]]})
+
+
+def _consent(state):
+    from mcp_api.oauth import create_code, pkce_s256
+
+    verifier = new_token()
+    code = create_code(state["client"], state["account"], {
+        "code_challenge": pkce_s256(verifier),
+        "redirect_uri": state["redirect_uri"],
+        "scope": "lms.curriculum",
+    })
+    return code, verifier
+
+
+def oauth_code_with_pkce(state):
+    state["code"], state["verifier"] = _consent(state)
+    row = McpOAuthCode.objects.get(code_hash=hash_token(state["code"]))
+    _expect(row.used_at is None and row.account_id == state["account"].pk, "code row not as created")
+
+
+def oauth_exchange(state):
+    from mcp_api.oauth import exchange_code
+
+    _expect_invalid_grant(lambda: exchange_code(state["client"], state["code"], state["redirect_uri"], "x" * 43))
+    state["code"], state["verifier"] = _consent(state)  # the wrong verifier burned the first code
+    state["first"] = exchange_code(state["client"], state["code"], state["redirect_uri"], state["verifier"])
+    _expect(McpOAuthCode.objects.get(code_hash=hash_token(state["code"])).used_at is not None, "code not marked used")
+
+
+def oauth_resolve_bearer(state):
+    resolved = _bearer(state["first"]["access_token"])
+    _expect(resolved is not None and resolved[0].pk == state["account"].pk, "access token did not resolve")
+
+
+def oauth_refresh_rotation(state):
+    from mcp_api.oauth import refresh
+
+    state["second"] = refresh(state["client"], state["first"]["refresh_token"])
+    _expect(_bearer(state["first"]["access_token"]) is None, "rotated access token still works")
+    _expect(_bearer(state["second"]["access_token"]) is not None, "new access token does not resolve")
+
+
+def oauth_refresh_reuse(state):
+    from mcp_api.oauth import refresh
+
+    _expect_invalid_grant(lambda: refresh(state["client"], state["first"]["refresh_token"]))
+    _expect(_bearer(state["second"]["access_token"]) is None, "family not revoked on reuse")
+    live = McpOAuthToken.objects.filter(client=state["client"], revoked_at__isnull=True).count()
+    _expect(live == 0, f"{live} token(s) still live after reuse")
+
+
+def oauth_code_reuse(state):
+    from mcp_api.oauth import exchange_code
+
+    code, verifier = _consent(state)
+    body = exchange_code(state["client"], code, state["redirect_uri"], verifier)
+    _expect_invalid_grant(lambda: exchange_code(state["client"], code, state["redirect_uri"], verifier))
+    _expect(_bearer(body["access_token"]) is None, "tokens from a reused code still work")
+
+
+def oauth_revoke(state):
+    from mcp_api.oauth import exchange_code, revoke_token
+
+    code, verifier = _consent(state)
+    body = exchange_code(state["client"], code, state["redirect_uri"], verifier)
+    revoke_token(body["refresh_token"], state["client"])
+    _expect(_bearer(body["access_token"]) is None, "revoked token still works")
+
+
+OAUTH_STEPS = (
+    ("register client", oauth_register),
+    ("create code with PKCE", oauth_code_with_pkce),
+    ("exchange (wrong verifier refused, right one accepted)", oauth_exchange),
+    ("resolve_bearer", oauth_resolve_bearer),
+    ("refresh rotation", oauth_refresh_rotation),
+    ("refresh reuse revokes the family", oauth_refresh_reuse),
+    ("code reuse revokes its tokens", oauth_code_reuse),
+    ("revoke", oauth_revoke),
+)
+
+
 class Command(BaseCommand):
-    help = "Insert/read/update/delete one row in each MCP table on the Neon test branch, then roll back."
+    help = (
+        "On the Neon test branch only: round-trip each MCP table (--mode tables) or run "
+        "the OAuth flow end to end (--mode oauth), then roll everything back."
+    )
+
+    def add_arguments(self, parser):
+        parser.add_argument("--mode", choices=("tables", "oauth"), default="tables")
 
     def handle(self, *args, **options):
         branch_id = assert_test_branch()
-        self.stdout.write(f"mcp_selfcheck on Neon branch {branch_id}")
+        mode = options["mode"]
+        self.stdout.write(f"mcp_selfcheck --mode {mode} on Neon branch {branch_id}")
 
-        failures = 0
         with transaction.atomic(using=ENROLMENT_DB):
-            account_id = LoginAccount.objects.order_by("id").values_list("id", flat=True).first()
-            if account_id is None:
-                raise CommandError("No login account exists to attach test rows to.")
-            ctx = {
-                "now": timezone.now(),
-                "account_id": account_id,
-                "client": McpOAuthClient.objects.create(
-                    client_id=f"mcp-selfcheck-{uuid.uuid4().hex}",
-                    client_name="selfcheck fixture",
-                    redirect_uris=["https://claude.ai/api/mcp/auth_callback"],
-                ),
-            }
-            for table, check in CHECKS:
-                try:
-                    with transaction.atomic(using=ENROLMENT_DB):
-                        check(ctx)
-                except Exception as exc:  # report every table, not just the first failure
-                    failures += 1
-                    self.stdout.write(self.style.ERROR(f"  FAIL {table}: {type(exc).__name__}: {exc}"))
-                else:
-                    self.stdout.write(self.style.SUCCESS(f"  OK   {table}"))
+            failures = self._tables() if mode == "tables" else self._oauth()
             # Nothing this run wrote survives it, whatever happened above.
             transaction.set_rollback(True, using=ENROLMENT_DB)
 
         if failures:
-            raise CommandError(f"mcp_selfcheck: {failures} table(s) failed.")
+            raise CommandError(f"mcp_selfcheck: {failures} check(s) failed.")
         self.stdout.write(self.style.SUCCESS("mcp_selfcheck: all OK"))
+
+    def _report(self, name, check, ctx):
+        try:
+            with transaction.atomic(using=ENROLMENT_DB):
+                check(ctx)
+        except Exception as exc:  # noqa: BLE001 - report the failure, keep the rollback
+            self.stdout.write(self.style.ERROR(f"  FAIL {name}: {type(exc).__name__}: {exc}"))
+            return False
+        self.stdout.write(self.style.SUCCESS(f"  OK   {name}"))
+        return True
+
+    def _tables(self):
+        account_id = LoginAccount.objects.order_by("id").values_list("id", flat=True).first()
+        if account_id is None:
+            raise CommandError("No login account exists to attach test rows to.")
+        ctx = {
+            "now": timezone.now(),
+            "account_id": account_id,
+            "client": McpOAuthClient.objects.create(
+                client_id=f"mcp-selfcheck-{uuid.uuid4().hex}",
+                client_name="selfcheck fixture",
+                redirect_uris=["https://claude.ai/api/mcp/auth_callback"],
+            ),
+        }
+        # Every table is reported, not just the first failure.
+        return sum(not self._report(table, check, ctx) for table, check in CHECKS)
+
+    def _oauth(self):
+        account = _curriculum_account()
+        if account is None:
+            raise CommandError("No active staff account with curriculum or super-admin access on this branch.")
+        self.stdout.write(f"  using login account {account.pk}")
+        state = {"account": account}
+        for index, (name, step) in enumerate(OAUTH_STEPS):
+            if not self._report(name, step, state):
+                skipped = len(OAUTH_STEPS) - index - 1
+                if skipped:
+                    self.stdout.write(f"  SKIP {skipped} later step(s)")
+                return 1 + skipped
+        return 0
