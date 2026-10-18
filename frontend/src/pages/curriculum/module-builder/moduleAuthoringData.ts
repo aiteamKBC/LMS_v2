@@ -1006,8 +1006,8 @@ export function applyModuleWeekSessionPlan(
     // The week runs on the delivered day. The raw plan still carries slotDate
     // for the "this date was closed" explanation, but the structure itself
     // follows the actual session date after holiday shifts.
-    const sessionDate = firstSession ? (firstSession.date || '') : '';
-    const sessionDay = firstSession ? (firstSession.day || '') : '';
+    let sessionDate = firstSession ? (firstSession.date || '') : '';
+    let sessionDay = firstSession ? (firstSession.day || '') : '';
     let components = week.components;
     if (liveComponents.length) {
       const plannedByComponentId = new Map<string, ModuleWeekSessionPlan['sessions'][number] | undefined>();
@@ -1024,7 +1024,14 @@ export function applyModuleWeekSessionPlan(
       //
       // Mirrors `apply_module_session_plan_to_weeks` in curriculum_api/views.py.
       liveComponents.forEach((component, offset) => {
-        plannedByComponentId.set(component.id, slots[offset]);
+        // A stored session number anchors this component to its existing plan
+        // entry even when non-teaching weeks move around it. Match the backend's
+        // fallback when that numbered entry is no longer in the plan.
+        const explicitNumber = Number(component.settings?.teamsSessionNumber || 0);
+        const numberedSession = explicitNumber > 0
+          ? sessions.find(session => session.sessionNumber === explicitNumber)
+          : undefined;
+        plannedByComponentId.set(component.id, numberedSession || slots[offset]);
       });
       let componentsMoved = false;
       const plannedComponents = week.components.map(component => {
@@ -1086,6 +1093,17 @@ export function applyModuleWeekSessionPlan(
         };
       });
       if (componentsMoved) components = plannedComponents;
+      const firstLive = components.find(component => component.type === 'live-session');
+      const firstNumber = Number(firstLive?.settings?.teamsSessionNumber || 0);
+      const firstNumberedSession = firstNumber > 0
+        ? sessions.find(session => session.sessionNumber === firstNumber)
+        : undefined;
+      if (firstNumberedSession) {
+        // A numbered session can stay on its original date after its week moves.
+        // Read the resulting settings so a confirmed Teams date is also preserved.
+        sessionDate = trimmed(firstLive?.settings?.sessionDate) || firstNumberedSession.date || '';
+        sessionDay = trimmed(firstLive?.settings?.sessionDay) || firstNumberedSession.day || '';
+      }
     }
     if (
       components === week.components
