@@ -1,3 +1,4 @@
+import { weeklyResourceFixture } from '@/test/weeklyContractFixture';
 import { weeklyContractFixture } from '@/test/weeklyContractFixture';
 import { act as reactAct, cleanup, fireEvent, render, screen, within, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
@@ -5,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { LearnerComponentEntry, LearnerDetail } from '@/api/learnerDetail';
 import type { TrainingPlanDashboard } from '@/api/trainingPlanDashboard';
 import type { WeeklyLearningDetail } from '@/api/weeklyLearning';
-import { adaptWeeklyLearning, primeWeeklyLearningWeek } from '@/api/weeklyLearning';
+import { primeWeeklyLearningWeek } from '@/api/weeklyLearning';
 import { clearAllCachedResources } from '@/api/cachedRequest';
 import { hasComponentContent } from '@/utils/learnerJourney';
 import { DashboardWeeklyLearningPlan, WeeklyLearningPlan } from '../WeeklyLearningPlan';
@@ -63,7 +64,7 @@ const full: LearnerDetail = {
 } as unknown as LearnerDetail;
 
 /** The server's projection (weekly_learning._weekly_component), applied to the same rows. */
-function compact(detail: LearnerDetail): WeeklyLearningDetail {
+function compact(detail: LearnerDetail) {
   return {
     id: detail.id, programme: detail.programme, cohort: detail.cohort, group: detail.group,
     modules: detail.modules,
@@ -109,11 +110,11 @@ function renderBoth() {
   const source = { ...compact(full), schedule };
   for (const module of schedule.modules) for (const slot of module.curriculumSlots ?? []) {
     const response = weeklyContractFixture({ ...source, selectedWeekId: `slot:${module.id}:${slot.slotNumber}` });
-    primeWeeklyLearningWeek('commercial', '125', adaptWeeklyLearning(response, '125'));
+    primeWeeklyLearningWeek('commercial', '125', weeklyResourceFixture(response, '125'));
   }
-  reads.weekly = adaptWeeklyLearning(weeklyContractFixture(source), '125');
-  const before = render(<MemoryRouter><WeeklyLearningPlan kind="commercial" learnerId="125" schedule={schedule} scheduleLoading={false} /></MemoryRouter>);
-  const after = render(<MemoryRouter><DashboardWeeklyLearningPlan kind="commercial" learnerId="125" schedule={schedule} scheduleLoading={false} /></MemoryRouter>);
+  reads.weekly = weeklyResourceFixture(weeklyContractFixture(source), '125');
+  const before = render(<MemoryRouter><WeeklyLearningPlan kind="commercial" learnerId="125" /></MemoryRouter>);
+  const after = render(<MemoryRouter><DashboardWeeklyLearningPlan kind="commercial" learnerId="125" /></MemoryRouter>);
   return { before: before.container, after: after.container };
 }
 
@@ -138,15 +139,29 @@ beforeEach(() => {
 afterEach(() => { cleanup(); clearAllCachedResources(); vi.useRealTimers(); vi.unstubAllGlobals(); });
 
 describe('Dashboard Weekly Learning compact read', () => {
+  it('pauses the weekly clock while a visited panel is hidden', () => {
+    reads.weekly = null;
+    const interval = vi.spyOn(window, 'setInterval');
+    const clear = vi.spyOn(window, 'clearInterval');
+    try {
+      const view = render(<MemoryRouter><DashboardWeeklyLearningPlan kind="commercial" learnerId="125" active={false} /></MemoryRouter>);
+      expect(interval).not.toHaveBeenCalled();
+      view.rerender(<MemoryRouter><DashboardWeeklyLearningPlan kind="commercial" learnerId="125" active /></MemoryRouter>);
+      expect(interval).toHaveBeenCalledTimes(1);
+      view.rerender(<MemoryRouter><DashboardWeeklyLearningPlan kind="commercial" learnerId="125" active={false} /></MemoryRouter>);
+      expect(clear).toHaveBeenCalledWith(interval.mock.results[0].value);
+    } finally {
+      interval.mockRestore();
+      clear.mockRestore();
+    }
+  });
   it('renders canonical facts without any legacy schedule, components or progress histories', async () => {
     const wire = weeklyContractFixture({ ...compact(full), schedule });
     const selected = wire.selectedWeek!;
-    const data: WeeklyLearningDetail = { id: '125', programme: '', cohort: '', group: '', wire,
-      selectedWeek: selected, selectedWeekId: 'slot:M1:1', selectedModuleId: 'M1',
-      components: [], quizAttempts: [], videoProgress: [], componentProgress: [] };
+    const data: WeeklyLearningDetail = weeklyResourceFixture(wire, '125');
     reads.weekly = data;
     primeWeeklyLearningWeek('commercial', '125', data);
-    render(<MemoryRouter><DashboardWeeklyLearningPlan kind="commercial" learnerId="125" schedule={null} scheduleLoading={false} /></MemoryRouter>);
+    render(<MemoryRouter><DashboardWeeklyLearningPlan kind="commercial" learnerId="125" /></MemoryRouter>);
     await waitFor(() => expect(screen.getByText('Quiz passed')).toBeVisible());
     expect(screen.getByText('Quiz passed').closest('tr')!.querySelector('a'))
       .toHaveAttribute('href', '/learner/quiz/commercial/125/11?week=Plan%20week%201');
@@ -159,17 +174,12 @@ describe('Dashboard Weekly Learning compact read', () => {
     const source = compact(full);
     const activities = (week: string) => source.components.filter(c => c.weekId === week).map(c =>
       Object.fromEntries(Object.entries(c).filter(([key]) => !['module', 'week', 'moduleId', 'weekId'].includes(key))));
-    reads.weekly = { ...source, schedule, selectedModuleId: 'M1', selectedWeekId: 'slot:M1:1',
-      components: activities('W1'),
-      weekSummaries: [{ moduleId: 'M1', weekId: 'W1', slotNumber: 1, progress: { total: 9, completed: 1, percent: 100 / 9 } },
-        { moduleId: 'M1', weekId: 'W2', slotNumber: 2, progress: { total: 2, completed: 1, percent: 50 } }] };
-    delete (reads.weekly as WeeklyLearningDetail).modules;
-    delete (reads.weekly as WeeklyLearningDetail).week;
+    reads.weekly = weeklyResourceFixture(weeklyContractFixture({ ...source, schedule, selectedWeekId: 'slot:M1:1' }), '125');
     primeWeeklyLearningWeek('commercial', '125', reads.weekly as WeeklyLearningDetail);
     vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify(weeklyContractFixture({ weekId: 'slot:M1:2', moduleId: 'M1',
       components: activities('W2'), quizAttempts: source.quizAttempts,
       videoProgress: source.videoProgress, componentProgress: source.componentProgress, schedule: { sessions: [] } })))));
-    const view = render(<MemoryRouter><DashboardWeeklyLearningPlan kind="commercial" learnerId="125" schedule={null} scheduleLoading={false} /></MemoryRouter>);
+    const view = render(<MemoryRouter><DashboardWeeklyLearningPlan kind="commercial" learnerId="125" /></MemoryRouter>);
     await waitFor(() => expect(screen.getByText('Quiz passed')).toBeInTheDocument());
     expect(fetch).not.toHaveBeenCalled();
     fireEvent.change(screen.getByRole('textbox', { name: 'Search activities' }), { target: { value: 'Listen' } });
@@ -183,13 +193,13 @@ describe('Dashboard Weekly Learning compact read', () => {
     expect(fetch).toHaveBeenCalledTimes(1);
     reads.weekly = { ...(reads.weekly as WeeklyLearningDetail), id: '126' };
     primeWeeklyLearningWeek('commercial', '126', reads.weekly as WeeklyLearningDetail);
-    view.rerender(<MemoryRouter><DashboardWeeklyLearningPlan kind="commercial" learnerId="126" schedule={null} scheduleLoading={false} /></MemoryRouter>);
+    view.rerender(<MemoryRouter><DashboardWeeklyLearningPlan kind="commercial" learnerId="126" /></MemoryRouter>);
     expect(screen.getByRole('textbox', { name: 'Search activities' })).toHaveValue('');
     expect(screen.getByText('Quiz passed')).toBeInTheDocument();
     expect(screen.queryByText('Listen')).not.toBeInTheDocument();
     expect(fetch).toHaveBeenCalledTimes(1);
   });
-  it('renders exactly what the learner-detail panel renders for the current week', async () => {
+  it('renders the same canonical UI for My Learning and Dashboard for the current week', async () => {
     const { before, after } = renderBoth();
     await reactAct(async () => {});
     expect(markup(after)).toBe(markup(before));
@@ -225,8 +235,9 @@ describe('Dashboard Weekly Learning compact read', () => {
   });
 
   it('reads only the compact source on the Dashboard', () => {
-    reads.weekly = { ...compact(full), schedule };
-    render(<MemoryRouter><DashboardWeeklyLearningPlan kind="commercial" learnerId="125" schedule={schedule} scheduleLoading={false} /></MemoryRouter>);
+    reads.weekly = weeklyResourceFixture(weeklyContractFixture({ ...compact(full), schedule }), '125');
+    primeWeeklyLearningWeek('commercial', '125', reads.weekly as WeeklyLearningDetail);
+    render(<MemoryRouter><DashboardWeeklyLearningPlan kind="commercial" learnerId="125" /></MemoryRouter>);
     expect(reads.weeklyCalls).toBeGreaterThan(0);
     expect(reads.detailCalls).toBe(0);
     expect(screen.getByRole('table')).toBeInTheDocument();

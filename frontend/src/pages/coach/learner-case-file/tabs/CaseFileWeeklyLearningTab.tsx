@@ -1,3 +1,4 @@
+import { selectedNavigation, attendedEvidence } from '@/api/weeklyLearningContract';
 import { useEffect, useState } from 'react';
 import { BookOpen } from 'lucide-react';
 import { AnimatedProgressCircle } from '@/components/ui/AnimatedProgressCircle';
@@ -22,8 +23,10 @@ export function CaseFileWeeklyLearningTab({ kind, learnerId }: { kind: LearnerKi
   useEffect(() => { if (response.data) setNavigator(response.data.weeks); }, [response.data]);
   const weeks = response.data?.weeks || navigator;
   const selected = response.data?.selectedWeek;
-  const current = selected || weeks.find(week => week.id === selection);
-  const modules = [...new Map(weeks.map(week => [week.moduleId, week.moduleTitle])).entries()];
+  const current = response.data ? selectedNavigation(response.data) : weeks.find(week => week.id === selection);
+  const [moduleNames, setModuleNames] = useState(response.data?.modules || []);
+  useEffect(() => { if (response.data) setModuleNames(response.data.modules); }, [response.data]);
+  const modules = (response.data?.modules || moduleNames).map(module => [module.id, module.title]);
   const moduleId = current?.moduleId || weeks[0]?.moduleId;
   const activities: JourneyComponent[] = (selected?.activities || []).map(activity => ({
     componentId: activity.id, title: activity.title, type: activity.type,
@@ -35,7 +38,7 @@ export function CaseFileWeeklyLearningTab({ kind, learnerId }: { kind: LearnerKi
     expectedTimeLabel: activityExpectedTimeLabel({ isQuiz: activity.isQuiz, durationMinutes: activity.durationMinutes,
       expectedOtjh: null, quizMeta: activity.isQuiz ? { duration: activity.quizDuration, timeUnit: activity.quizTimeUnit } : undefined }),
   }]));
-  const completedIds = new Set((selected?.activities || []).filter(item => item.completed).map(item => item.id));
+  const completedIds = new Set((selected?.activities || []).filter(item => item.status === 'completed').map(item => item.id));
   const actualHours = Object.fromEntries((selected?.activities || []).map(activity => [activity.id, activity.actualHours ?? null]));
   if (!weeks.length && !response.error && !response.data) return <WeeklyLearningPlanSkeleton />;
   return <section aria-label="Weekly learning plan" className={`${styles.weeklyPlan} grid grid-cols-1 gap-3 lg:grid-cols-[240px_minmax(0,1fr)]`}>
@@ -66,8 +69,8 @@ export function CaseFileWeeklyLearningTab({ kind, learnerId }: { kind: LearnerKi
             {week.kind === 'reading-week' ? <BookOpen size={13} aria-hidden="true" /> : <><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10" fill="none" strokeWidth="2" /><AnimatedProgressCircle cx="12" cy="12" r="10" fill="none" strokeWidth="2" strokeLinecap="round" strokeDasharray={`${week.progress} 100`} pathLength="100" /></svg><span aria-hidden="true" /></>}
           </span>
           {!!week.totalActivities && <span role="progressbar" className="sr-only" aria-label={`${week.title} activity progress`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={week.progress} aria-valuetext={`${week.completedActivities} of ${week.totalActivities} activities complete`} />}
-          <button type="button" aria-current={(selection || selected?.id) === week.id ? 'true' : undefined}
-            onClick={() => { if (week.id !== selected?.id) setSelection(week.id); }} className={`block w-full rounded-lg px-2.5 py-2 text-left transition ${week.status === 'past' ? 'bg-emerald-50/70 text-emerald-950 hover:bg-emerald-50' : week.status === 'current' ? 'bg-slate-100 text-foreground-950 shadow-sm' : (selection || selected?.id) === week.id ? 'bg-primary-50 text-primary-950 shadow-sm' : week.kind === 'reading-week' ? 'bg-amber-50/75 hover:bg-amber-50' : 'hover:bg-background-100'}`}>
+          <button type="button" aria-current={(selection || selected?.weekId) === week.id ? 'true' : undefined}
+            onClick={() => { if (week.id !== selected?.weekId) setSelection(week.id); }} className={`block w-full rounded-lg px-2.5 py-2 text-left transition ${week.status === 'past' ? 'bg-emerald-50/70 text-emerald-950 hover:bg-emerald-50' : week.status === 'current' ? 'bg-slate-100 text-foreground-950 shadow-sm' : (selection || selected?.weekId) === week.id ? 'bg-primary-50 text-primary-950 shadow-sm' : week.kind === 'reading-week' ? 'bg-amber-50/75 hover:bg-amber-50' : 'hover:bg-background-100'}`}>
             <span className="block text-[13px] font-bold">{week.title}</span>
             <span className="block text-[11px] text-foreground-500">{dateLabel(week.startDate)} – {dateLabel(week.endDate)}</span>
             <span className="sr-only">{week.status === 'current' ? 'Current week' : week.status === 'past' ? 'Completed' : 'Upcoming'}</span>
@@ -81,24 +84,24 @@ export function CaseFileWeeklyLearningTab({ kind, learnerId }: { kind: LearnerKi
         : !response.data ? <div role="status">Loading this week…</div>
           : !selected ? <EmptyState title="Your weekly plan will appear here" description="Once a module is assigned, its weeks and activities will show up in this space." /> : <>
             <div className="flex flex-col gap-4 border-b border-foreground-100 pb-5 xl:flex-row xl:justify-between">
-              <div><p className="text-xs font-bold">{selected.kind === 'reading-week' ? 'Reading week' : `Week ${selected.weekNumber}`}</p>
-                <h2 className="text-2xl font-extrabold">{selected.title}</h2>
-                <p className="text-sm text-foreground-500">{dateLabel(selected.startDate)} – {dateLabel(selected.endDate)}</p>
-                <HolidayNoteHint note={selected.holidayNote} />
+              <div><p className="text-xs font-bold">{current!.kind === 'reading-week' ? 'Reading week' : `Week ${current!.weekNumber}`}</p>
+                <h2 className="text-2xl font-extrabold">{current!.title}</h2>
+                <p className="text-sm text-foreground-500">{dateLabel(current!.startDate)} – {dateLabel(current!.endDate)}</p>
+                <HolidayNoteHint note={current!.holidayNote} />
               </div>
-              {selected.kind !== 'reading-week' && <div className="grid w-full shrink-0 grid-cols-1 gap-3 sm:grid-cols-3 xl:w-[660px]">
-                <WeekStatCard label="Week progress" value={`${selected.summary.progress}%`} percent={selected.summary.totalActivities ? selected.summary.progress : null} tone="bg-primary-600" caption={`${selected.summary.completedActivities} of ${selected.summary.totalActivities} activities`} />
+              {current!.kind !== 'reading-week' && <div className="grid w-full shrink-0 grid-cols-1 gap-3 sm:grid-cols-3 xl:w-[660px]">
+                <WeekStatCard label="Week progress" value={`${current!.progress}%`} percent={current!.totalActivities ? current!.progress : null} tone="bg-primary-600" caption={`${current!.completedActivities} of ${current!.totalActivities} activities`} />
                 <WeekStatCard label="KSBs this week" value={selected.summary.ksbCount ? `${Math.round(selected.summary.achievedKsbCount / selected.summary.ksbCount * 10000) / 100}%` : '—'} percent={selected.summary.ksbCount ? selected.summary.achievedKsbCount / selected.summary.ksbCount * 100 : null} tone="bg-emerald-600" caption={selected.summary.ksbCount ? `${selected.summary.achievedKsbCount} of ${selected.summary.ksbCount} KSBs` : 'No KSBs mapped this week'} />
                 <WeekStatCard label="OTJH this week" value={selected.summary.plannedOtjhHours ? `${Math.round((selected.summary.otjhHours || 0) / selected.summary.plannedOtjhHours * 10000) / 100}%` : '—'} percent={selected.summary.plannedOtjhHours ? (selected.summary.otjhHours || 0) / selected.summary.plannedOtjhHours * 100 : null} tone="bg-amber-500" caption={selected.summary.plannedOtjhHours ? `${formatHoursMinutes(selected.summary.otjhHours || 0)} of ${formatHoursMinutes(selected.summary.plannedOtjhHours)} hours${selected.summary.untimedActivities ? ` · ${selected.summary.untimedActivities} untimed` : ''}` : 'No expected time set'} />
               </div>}
             </div>
             <section className="mt-5" aria-labelledby="weekly-session-heading">
-              {selected.kind === 'reading-week' ? <ReadingWeekPanel week={{ kind: 'reading-week', slotNumber: selected.slotNumber, date: selected.startDate, holidays: selected.holidays }} />
-                : selected.liveSession ? <LiveSessionSummary derivedState={selected.liveSession.sessionState} headingId="weekly-session-heading" canJoinSession={false} now={now} week={{ kind: 'session', slotNumber: selected.slotNumber, sessionNumber: selected.weekNumber, date: selected.startDate, title: selected.liveSession.title, start: selected.liveSession.start, minutes: selected.liveSession.durationMinutes, attended: selected.liveSession.attended, joinUrl: selected.liveSession.joinUrl, holidays: selected.holidays, learningOutcomes: [] }} />
+              {current!.kind === 'reading-week' ? <ReadingWeekPanel week={{ kind: 'reading-week', slotNumber: current!.slotNumber, date: current!.startDate, holidays: current!.holidays }} />
+                : selected.liveSession ? <LiveSessionSummary derivedState={selected.liveSession.sessionState} headingId="weekly-session-heading" canJoinSession={false} now={now} week={{ kind: 'session', slotNumber: current!.slotNumber, sessionNumber: current!.weekNumber, date: current!.startDate, title: selected.liveSession.title, start: selected.liveSession.start, minutes: selected.liveSession.durationMinutes, attended: attendedEvidence(selected.liveSession.attendance), joinUrl: selected.liveSession.joinUrl, holidays: current!.holidays, learningOutcomes: [] }} />
                   : <p id="weekly-session-heading">No live session is scheduled for this week.</p>}
             </section>
-            {selected.kind !== 'reading-week' && <section className="mt-5" aria-labelledby="weekly-activities-heading">
-              <ActivitiesTableModern components={activities} completedIds={completedIds} kind={kind} learnerId={learnerId} week={selected.title} canOpenActivities={false} summaries={summaries} actualHours={actualHours} />
+            {current!.kind !== 'reading-week' && <section className="mt-5" aria-labelledby="weekly-activities-heading">
+              <ActivitiesTableModern components={activities} completedIds={completedIds} kind={kind} learnerId={learnerId} week={current!.title} canOpenActivities={false} summaries={summaries} actualHours={actualHours} />
             </section>}
           </>}
     </div>

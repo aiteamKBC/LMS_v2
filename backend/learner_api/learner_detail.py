@@ -27,6 +27,7 @@ from .projection_performance import measure_projection
 from django.utils import timezone
 
 from login.permissions import learner_self_or_staff
+from old_otjh.service import ServiceError
 from curriculum_api.session_component_identity import occurrence_fallbacks as _live_session_occurrence_fallbacks
 
 from .active_users import completed_hours_from_progress, fmt_hours, hydrate_source_training_plan, target_by_elapsed_time, week_by_elapsed_time
@@ -740,7 +741,10 @@ def _append_week_quizzes(weeks, components, assigned_modules=None, *, strict=Fal
 
     next_weeks = list(weeks)
     next_components = list(components)
-    seen_positions = set()
+    # Builder placement is authoritative. A published quiz may still have an
+    # old/missing week_id; that must not append a second copy of a quiz already
+    # linked to a component in this module. Other modules remain independent.
+    seen_quizzes = set()
     for component in next_components:
         quiz_meta = component.get("quizMeta")
         if not component.get("isQuiz") or not isinstance(quiz_meta, dict):
@@ -748,9 +752,8 @@ def _append_week_quizzes(weeks, components, assigned_modules=None, *, strict=Fal
         quiz_id = quiz_meta.get("quizId")
         if quiz_id is None:
             continue
-        seen_positions.add((
+        seen_quizzes.add((
             _s(component.get("moduleId")) or _s(component.get("module")),
-            _s(component.get("weekId")) or _s(component.get("week")),
             str(quiz_id),
         ))
 
@@ -758,8 +761,8 @@ def _append_week_quizzes(weeks, components, assigned_modules=None, *, strict=Fal
         module_id = _s(week.get("moduleId")) or _s(week.get("module"))
         week_id = (_s(week.get("weekId")) if native_week_ids else "") or week_ids_by_key.get((week.get("module"), week.get("week"))) or _s(week.get("weekId"))
         for quiz in week_quizzes_by_week_id.get(week_id, []):
-            key = (module_id, week_id or _s(week.get("week")), str(quiz["id"]))
-            if key in seen_positions:
+            key = (module_id, str(quiz["id"]))
+            if key in seen_quizzes:
                 continue
             next_components.append({
                 "module": week.get("module"),
@@ -777,11 +780,12 @@ def _append_week_quizzes(weeks, components, assigned_modules=None, *, strict=Fal
                     "timeUnit": quiz["timeUnit"],
                 },
             })
-            seen_positions.add(key)
+            seen_quizzes.add(key)
 
     existing_week_ids = {_s(week.get("weekId")) for week in next_weeks if _s(week.get("weekId"))}
     for module_id in module_order:
-        queued = module_level_quizzes_by_module_id.get(module_id, [])
+        queued = [quiz for quiz in module_level_quizzes_by_module_id.get(module_id, [])
+                  if (module_id, str(quiz["id"])) not in seen_quizzes]
         if not queued:
             continue
         module_title = modules_by_id.get(module_id, {}).get("module") or module_titles_by_id.get(module_id) or module_id
@@ -795,8 +799,8 @@ def _append_week_quizzes(weeks, components, assigned_modules=None, *, strict=Fal
             })
             existing_week_ids.add(synthetic_week_id)
         for quiz in queued:
-            key = (module_id, synthetic_week_id, str(quiz["id"]))
-            if key in seen_positions:
+            key = (module_id, str(quiz["id"]))
+            if key in seen_quizzes:
                 continue
             next_components.append({
                 "module": module_title,
@@ -814,7 +818,7 @@ def _append_week_quizzes(weeks, components, assigned_modules=None, *, strict=Fal
                     "timeUnit": quiz["timeUnit"],
                 },
             })
-            seen_positions.add(key)
+            seen_quizzes.add(key)
 
     return next_weeks, next_components
 
@@ -2120,6 +2124,11 @@ def build_learner_detail(source, pk, *, compact=False, read_only=False, quiz_vie
     from .teams_attendance import annotate_attendance_completion
     detail['components'] = annotate_attendance_completion(detail['components'], learner_profile)
 
+    # Carry earned completion into an explicitly verified replacement without
+    # manufacturing attempts or changing the persisted hours/attendance above.
+    from .replacement_learning import annotate_replacement_learning
+    detail['components'] = annotate_replacement_learning(detail['components'], pk)
+
     from .live_session_progress import read_live_credits, supplement_component_progress
     detail['componentProgress'] = supplement_component_progress(
         detail.get('componentProgress') or [], read_live_credits(source, components=detail['components']))
@@ -2195,6 +2204,8 @@ def learner_detail(request, kind, pk):
         ) as measurement:
             with measurement.stage('detail'):
                 return JsonResponse(build_learner_detail(source, pk, **options))
+    except ServiceError as exc:
+        return _error(str(exc), exc.status)
     except DatabaseError as exc:
         return _error(f"Database error: {exc}", 502)
 

@@ -4,13 +4,13 @@ from datetime import date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 from django.db import connections
+from .weekly_contract import compact_weekly
 from learner_api.progress_rules import progress_counts_as_achieved
 from curriculum_api.week_visibility import visible_child_sql, visible_week_sql
 from .weekly_live_attendance import (read_weekly_live_evidence, credit_in_week,
                                      week_live_session, add_live_activity_hours)
 
 BUSINESS_ZONE = ZoneInfo('Europe/London')
-VISIBLE = visible_child_sql('ksb_mappings')
 VISIBLE_WEEK = visible_week_sql('weeks')
 
 
@@ -111,7 +111,7 @@ def week_rows(modules, today):
     return result
 
 
-def read_weekly_learning(context, selection=None, *, module_id=None, include_weeks=True, include_navigation=False, student_projection=False):
+def read_weekly_learning(context, selection=None, *, module_id=None, include_weeks=True, include_actions=False):
     from learner_api.weekly_hours import module_activity_hours, selected_activity_hours, activity_hours_index
     from learner_api.learning_plan import _effective_plan_ids
     from learner_api import canonical_learning
@@ -138,7 +138,7 @@ def read_weekly_learning(context, selection=None, *, module_id=None, include_wee
     today = now.astimezone(BUSINESS_ZONE).date().isoformat()
     calendar_columns = '''to_jsonb(m)->'session_holidays' AS session_holidays,
             to_jsonb(m)->'session_overrides' AS session_overrides,
-            to_jsonb(m)->'weekly_schedule' AS weekly_schedule,''' if student_projection else ''
+            to_jsonb(m)->'weekly_schedule' AS weekly_schedule,'''
     with connections['enrolment'].cursor() as cur:
         cur.execute(f'''SELECT m.module_catalogue_id AS id,m.title,m.start_date,m.end_date,
             m.weeks_number,m.sessions_number,m.cohort_id,
@@ -149,9 +149,8 @@ def read_weekly_learning(context, selection=None, *, module_id=None, include_wee
             FROM curriculum.modules m LEFT JOIN curriculum.groups g ON g.group_id=m.group_id
             WHERE m.module_catalogue_id=ANY(%s) ORDER BY m.title''', [ids])
         modules = rows(cur)
-        if student_projection:
-            from learner_api.weekly_calendar import normalise_projected_calendar
-            modules = [normalise_projected_calendar(row) for row in modules]
+        from learner_api.weekly_calendar import normalise_projected_calendar
+        modules = [normalise_projected_calendar(row) for row in modules]
         cur.execute(f'''SELECT id,module_catalogue_id,week_number,title,holiday_note_enabled,holiday_note,display_order
             FROM curriculum.weeks WHERE module_catalogue_id=ANY(%s) AND {VISIBLE_WEEK}
             ORDER BY display_order,week_number,id''', [schedule_ids])
@@ -164,10 +163,8 @@ def read_weekly_learning(context, selection=None, *, module_id=None, include_wee
                 'id': row['id'], 'title': clean_text(row['title']), 'learningOutcomes': [],
                 'holidayNote': clean_text(row['holiday_note']) if row['holiday_note_enabled'] else ''})
         spine = {row['id']: {'id': row['id'], 'title': clean_text(row['title'])} for row in modules}
-        calendar_options = {}
-        if student_projection:
-            from learner_api.weekly_calendar import cohort_holidays
-            calendar_options = {'strict': True, 'holiday_loader': cohort_holidays}
+        from learner_api.weekly_calendar import cohort_holidays
+        calendar_options = {'strict': True, 'holiday_loader': cohort_holidays}
         attach_curriculum_slots([row for row in modules if row['id'] in schedule_ids], spine, counts, authored, **calendar_options)
         # Match learnerHeaderPlan's default module ordering/window selection.
         candidates = sorted([row for row in modules if spine[row['id']].get('curriculumSlots')],
@@ -187,14 +184,14 @@ def read_weekly_learning(context, selection=None, *, module_id=None, include_wee
         if selection and selected is None:
             raise LookupError('Week not found in this learner plan.')
         if selected is None:
-            return {'weeks': weeks, 'selectedWeek': None}
+            return compact_weekly(weeks=weeks if include_weeks else ())
         # Navigator needs completion counts, not content. Booleans preserve the
         # existing removed-video visibility rule without transferring any URLs/HTML.
         content_presence = ' OR '.join(f"coalesce(btrim(c.settings_json->>'{key}'),'') <> ''"
                                       for key in ('videoUrl', 'readingContent', 'podcastUrl', 'audioUrl', 'liveSessionUrl', 'teamsMeetingUrl', *_RESOURCE_URL_KEYS))
         detail_filter = ''
         detail_params = [sorted(content_ids)]
-        if student_projection and not include_weeks:
+        if not include_weeks:
             # Only selected-week activities need completion/content checks. Keep
             # every quiz placement in the module: legacy quiz-only hours must
             # remain ambiguous when the same quiz is placed in another week.
@@ -220,14 +217,13 @@ def read_weekly_learning(context, selection=None, *, module_id=None, include_wee
         register, live_credits = read_weekly_live_evidence(source, owner, schedule_ids, sorted(content_ids))
         credits_by_component = {credit['componentId']: credit for credit in live_credits}
         progress_query = context.profile.progress_entries.filter(kind__in=['quiz', 'video', 'component', 'quiz_reading'])
-        if student_projection:
-            from django.db.models import Q
-            # Restrict completion to the assigned projection, retaining quiz-only
-            # legacy attempts and all attempts for each selected component.
-            # Keep quiz refs in their legacy text forms (e.g. leading zeroes):
-            # progress_index owns their numeric normalization.
-            progress_query = progress_query.filter(Q(component_ref__in=[row['id'] for row in components])
-                                                   | Q(kind='quiz'))
+        from django.db.models import Q
+        # Restrict completion to the assigned projection, retaining quiz-only
+        # legacy attempts and all attempts for each selected component.
+        # Keep quiz refs in their legacy text forms (e.g. leading zeroes):
+        # progress_index owns their numeric normalization.
+        progress_query = progress_query.filter(Q(component_ref__in=[row['id'] for row in components])
+                                               | Q(kind='quiz'))
         progress = progress_index(progress_query.values('kind', 'component_ref', 'quiz_ref', 'passed', 'submitted_at'))
         def completion_for_week(component, week):
             credit = credits_by_component.get(str(component['id']))
@@ -251,11 +247,11 @@ def read_weekly_learning(context, selection=None, *, module_id=None, include_wee
         marker_date_filter = '' if include_weeks else " AND (coalesce(o.scheduled_start,s.start_datetime) AT TIME ZONE 'UTC' AT TIME ZONE 'Europe/London')::date=%s::date"
         marker_details = ''' ,s.id AS session_id,s.module_catalogue_id AS module_id,s.module_title,
               s.start_datetime,s.duration_minutes,s.join_url AS series_join_url,s.status AS series_status,
-              o.id AS occurrence_id,o.scheduled_start,o.scheduled_end,o.join_url''' if student_projection else ''
+              o.id AS occurrence_id,o.scheduled_start,o.scheduled_end,o.join_url'''
         # Select detail columns from the same first occurrence used by the rail.
         # This removes the second attendance EXISTS and the second session read.
         selected_marker_details = ''',session_id,module_id,module_title,start_datetime,duration_minutes,
-              series_join_url,series_status,occurrence_id,scheduled_start,scheduled_end,join_url''' if student_projection else ''
+              series_join_url,series_status,occurrence_id,scheduled_start,scheduled_end,join_url'''
         cur.execute(f'''WITH markers AS (
             SELECT s.module_catalogue_id,coalesce(o.status,s.status) AS status,coalesce(o.scheduled_start,s.start_datetime) AS start,
               coalesce(o.scheduled_end,coalesce(o.scheduled_start,s.start_datetime) + s.duration_minutes * interval '1 minute') AS finish,
@@ -275,15 +271,19 @@ def read_weekly_learning(context, selection=None, *, module_id=None, include_wee
         markers = {}
         navigation = {}
         for row in marker_rows:
-            if include_navigation:
-                start, finish = row['start'], row['finish']
-                navigation[(row['module_catalogue_id'], row['day'].isoformat())] = {
-                    'sessionStart': (start.replace(tzinfo=timezone.utc) if start.tzinfo is None else start).isoformat(),
-                    'sessionDurationMinutes': (finish - start).total_seconds() / 60 if finish else None}
+            start, finish = row['start'], row['finish']
+            navigation[(row['module_catalogue_id'], row['day'].isoformat())] = {
+                'sessionStart': (start.replace(tzinfo=timezone.utc) if start.tzinfo is None else start).isoformat(),
+                'sessionDurationMinutes': (finish - start).total_seconds() / 60 if finish else None}
             markers[(row['module_catalogue_id'], row['day'].isoformat())] = derived_session(
                 row['start'], row['finish'], row['status'], row['attended'], now)
+        register_by_module = defaultdict(list)
+        for row in register:
+            register_by_module[row.get('module_catalogue_id')].append(row)
+        canonical_sessions = {}
         for week in weeks:
-            canonical_session = week_live_session(register, week, now)
+            canonical_session = week_live_session(register_by_module[week['moduleId']], week, now)
+            canonical_sessions[week['id']] = canonical_session
             if canonical_session:
                 key = (week['moduleId'], week['startDate'])
                 markers[key] = {'state': canonical_session['sessionState'], 'attended': canonical_session['attended']}
@@ -292,8 +292,7 @@ def read_weekly_learning(context, selection=None, *, module_id=None, include_wee
             marker = markers.get((week['moduleId'], week['startDate'])) if week['kind'] != 'reading-week' else None
             week['attended'] = marker['attended'] if marker else None
             week['sessionState'] = marker['state'] if marker else 'unscheduled'
-            if include_navigation:
-                week.update(navigation.get((week['moduleId'], week['startDate']), {}))
+            week.update(navigation.get((week['moduleId'], week['startDate']), {}))
         weeks = visible_week_rows(weeks, markers)
         retained_modules = {week['moduleId'] for week in weeks}
         default_module = module_id or next((row['id'] for row in active + future + past + candidates
@@ -306,12 +305,12 @@ def read_weekly_learning(context, selection=None, *, module_id=None, include_wee
         if selection and selected is None:
             raise LookupError('Week not found in this learner plan.')
         if selected is None:
-            return {'weeks': weeks, 'selectedWeek': None}
+            return compact_weekly(weeks=weeks if include_weeks else ())
         selected_components = by_week[(selected['moduleId'], selected['weekId'])] if selected['kind'] != 'reading-week' else []
         component_ids = [row['id'] for row in selected_components]
         fallback_columns = f''', (SELECT jsonb_agg(jsonb_build_object('code',k.ksb_code) ORDER BY k.ksb_code)
             FROM curriculum.ksb_mappings k WHERE k.component_id=c.id AND {visible_child_sql('k')})
-            AS fallback_ksb_mappings''' if student_projection else ''
+            AS fallback_ksb_mappings'''
         cur.execute(f'''SELECT c.id,c.title,c.type,c.ksb_mappings,
             CASE WHEN jsonb_typeof(c.settings_json->'durationMinutes')='number'
                 THEN c.settings_json->>'durationMinutes' END AS duration_minutes,
@@ -323,21 +322,15 @@ def read_weekly_learning(context, selection=None, *, module_id=None, include_wee
             WHERE c.id=ANY(%s) ORDER BY c.display_order,c.id''', [component_ids])
         details = rows(cur)
         mappings = {row['id']: _component_ksb_items(row['ksb_mappings']) for row in details}
-        missing = [cid for cid in component_ids if not mappings.get(cid)]
-        if student_projection:
-            for row in details:
-                if row['id'] in missing:
-                    mappings[row['id']] = _component_ksb_items(row.get('fallback_ksb_mappings'))
-        else:
-            cur.execute(f'''SELECT component_id,ksb_code FROM curriculum.ksb_mappings
-                WHERE component_id=ANY(%s) AND {VISIBLE} ORDER BY component_id,ksb_code''', [missing])
-            for cid, code in cur.fetchall():
-                mappings.setdefault(cid, []).append({'code': code})
+        missing = {cid for cid in component_ids if not mappings.get(cid)}
+        for row in details:
+            if row['id'] in missing:
+                mappings[row['id']] = _component_ksb_items(row.get('fallback_ksb_mappings'))
         completion = {row['id']: completion_for_week(row, selected) for row in selected_components}
         selected_by_id = {row['id']: row for row in selected_components}
-        if student_projection:
-            # The Student routing reader needs these same module/week identities;
-            # pass request-local facts rather than querying both tables again.
+        # The Student routing reader needs these same module/week identities;
+        # pass request-local facts rather than querying both tables again.
+        if include_actions:
             source._weekly_resolved_metadata = {
                 'module_titles': {row['id']: row['title'] for row in modules},
                 'weeks': [(row['id'], row['module_catalogue_id'], row['title'], row['week_number'], row.get('display_order', 0))
@@ -357,35 +350,18 @@ def read_weekly_learning(context, selection=None, *, module_id=None, include_wee
             factor = 60 if unit in {'h','hr','hrs','hour','hours'} else 1/60 if unit in {'s','sec','secs','second','seconds'} else 1 if unit in {'min','mins','minute','minutes'} else None
             minutes = (float(quiz_duration) * factor if factor is not None else None) if quiz_duration else duration
             activities.append({'id': row['id'], 'title': _display_quiz_title(row['quiz_title']) if selected_by_id[row['id']]['is_quiz'] else _display_component_title(row['type'], row['title']),
-                               'type': row['type'], 'completed': done, 'status': status,
+                               'type': row['type'], 'status': status,
                                'isQuiz': selected_by_id[row['id']]['is_quiz'],
                                'expectedHours': minutes / 60 if minutes is not None else None,
                                'durationMinutes': duration, 'quizDuration': quiz_duration, 'quizTimeUnit': row['quiz_time_unit'],
                                'ksbCodes': sorted({str(item['code']).strip().upper() for item in mappings.get(row['id'], []) if item.get('code')})})
-        if include_navigation:
-            for activity in activities:
-                if activity['isQuiz']:
-                    activity['quizId'] = selected_by_id[activity['id']]['quiz_id']
+        for activity in activities:
+            if activity['isQuiz']:
+                activity['quizId'] = selected_by_id[activity['id']]['quiz_id']
         live = None
         if selected['kind'] != 'reading-week':
-            if student_projection:
-                sessions = [row for row in marker_rows if row['module_catalogue_id'] == selected['moduleId']
-                            and row['day'].isoformat() == selected['startDate']]
-            else:
-                cur.execute('''SELECT s.id AS session_id,s.module_catalogue_id AS module_id,s.module_title,
-                s.start_datetime,s.duration_minutes,s.join_url AS series_join_url,s.status AS series_status,
-                o.id AS occurrence_id,o.scheduled_start,o.scheduled_end,o.join_url,o.status,
-                CASE WHEN coalesce(o.attendance_report_id,'')='' THEN NULL ELSE EXISTS(
-                  SELECT 1 FROM curriculum.live_session_attendance a WHERE a.occurrence_id=o.id
-                  AND lower(btrim(a.email))=%s AND a.total_attendance_seconds>0) END AS attended
-                FROM curriculum.live_sessions s LEFT JOIN curriculum.live_session_occurrences o ON o.live_session_id=s.id
-                WHERE s.module_catalogue_id=%s AND lower(s.status) NOT IN ('cancelled','deleted','failed','superseded')
-                AND (o.id IS NULL AND coalesce(s.repeat_pattern,'') IN ('','none') OR o.id IS NOT NULL
-                     AND lower(o.status) NOT IN ('cancelled','deleted','failed','superseded'))
-                AND (coalesce(o.scheduled_start,s.start_datetime) AT TIME ZONE 'UTC' AT TIME ZONE 'Europe/London')::date=%s::date
-                ORDER BY coalesce(o.scheduled_start,s.start_datetime) LIMIT 1''',
-                [str(source.email or '').strip().lower(), selected['moduleId'], selected['startDate']])
-                sessions = rows(cur)
+            sessions = [row for row in marker_rows if row['module_catalogue_id'] == selected['moduleId']
+                        and row['day'].isoformat() == selected['startDate']]
             if sessions:
                 session = plan_session(sessions[0])
                 instant = datetime.fromisoformat(session['start'])
@@ -400,14 +376,14 @@ def read_weekly_learning(context, selection=None, *, module_id=None, include_wee
                         'startTime': start.strftime('%H:%M'), 'endTime': end.strftime('%H:%M') if end else None,
                         'start': session['start'], 'durationMinutes': session['minutes'], 'status': state['status'],
                         'sessionState': state['state'], 'attended': state['attended'], 'joinUrl': session['joinUrl']}
-        canonical_session = week_live_session(register, selected, now)
+        canonical_session = canonical_sessions.get(selected['id'])
         if canonical_session:
             live = canonical_session
             selected['sessionState'], selected['attended'] = live['sessionState'], live['attended']
     codes = {code for item in activities for code in item['ksbCodes']}
-    achieved = {code for item in activities if item['completed'] for code in item['ksbCodes']}
+    achieved = {code for item in activities if item['status'] == 'completed' for code in item['ksbCodes']}
     planned = sum(item['expectedHours'] or 0 for item in activities)
-    records = canonical_learning.weekly_hour_records(owner) if student_projection else canonical_learning.entries_for(owner)
+    records = canonical_learning.weekly_hour_records(owner)
     activity_hours = module_activity_hours(records, modules)
     activity_hours = add_live_activity_hours(activity_hours, records,
         [credit for credit in live_credits if credit_in_week(credit, selected)
@@ -420,9 +396,8 @@ def read_weekly_learning(context, selection=None, *, module_id=None, include_wee
     hours_by_component = activity_hours_index(module_hours, module_components)
     for activity in activities:
         activity['actualHours'] = round(hours_by_component[str(activity['id'])], 4)
-    return {'weeks': weeks, 'selectedWeek': {**selected, 'summary': {
-        'completedActivities': sum(item['completed'] for item in activities), 'totalActivities': len(activities),
-        'progress': selected['progress'], 'ksbCount': len(codes), 'achievedKsbCount': len(achieved),
-        'otjhHours': completed_hours, 'plannedOtjhHours': planned,
-        'untimedActivities': sum(item['expectedHours'] is None for item in activities)},
-        'liveSession': live, 'activities': activities}}
+    return compact_weekly(weeks=weeks if include_weeks else (selected,), selected=selected,
+        summary={'ksbCount': len(codes), 'achievedKsbCount': len(achieved),
+                 'otjhHours': completed_hours, 'plannedOtjhHours': planned,
+                 'untimedActivities': sum(item['expectedHours'] is None for item in activities)},
+        live_session=live, activities=activities)

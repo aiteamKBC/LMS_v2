@@ -12,7 +12,7 @@ const SHOW_WHILE_REFRESHING_MS = 5 * 60_000;
  * rules: a return to the tab re-reads only when the cached plan has expired,
  * a save removed it, or the last read failed.
  */
-export function useWeeklyLearning(kind: LearnerKind | null, learnerId: string | undefined, enabled = true, initialModuleId?: string | null) {
+export function useWeeklyLearning(kind: LearnerKind | null, learnerId: string | undefined, enabled = true, initialModuleId?: string | null, active = true) {
   const identity = kind && learnerId && enabled ? `${kind}:${learnerId}:${initialModuleId || ''}` : null;
   const traceKey = `${kind}:${learnerId}${initialModuleId ? `|${encodeURIComponent(initialModuleId)}` : ''}`;
   const [state, setState] = useState<{
@@ -29,7 +29,7 @@ export function useWeeklyLearning(kind: LearnerKind | null, learnerId: string | 
   const refresh = useCallback(() => requestRefresh('manual'), [requestRefresh]);
 
   useEffect(() => {
-    if (!identity || !kind || !learnerId) return;
+    if (!active || !identity || !kind || !learnerId) return;
     let lastRefresh = 0;
     const onReturn = (event: Event) => {
       traceWeeklyLearning('browser-event', traceKey, event.type);
@@ -52,11 +52,11 @@ export function useWeeklyLearning(kind: LearnerKind | null, learnerId: string | 
       window.removeEventListener('online', onReturn);
       document.removeEventListener('visibilitychange', onReturn);
     };
-  }, [identity, kind, learnerId, requestRefresh, initialModuleId, traceKey]);
+  }, [identity, kind, learnerId, requestRefresh, initialModuleId, traceKey, active]);
 
   useEffect(() => {
-    if (!identity || !kind || !learnerId) return;
-    if (hasSnapshot && acceptedIdentity.current === identity && consumedRefresh.current === refreshTick) return;
+    if (!active || !identity || !kind || !learnerId) return;
+    if (hasSnapshot && peekWeeklyLearning(kind, learnerId, 0, initialModuleId) && acceptedIdentity.current === identity && consumedRefresh.current === refreshTick) return;
     traceWeeklyLearning('effect-start', traceKey);
     let cancelled = false;
     const cached = peekWeeklyLearning(kind, learnerId, SHOW_WHILE_REFRESHING_MS, initialModuleId);
@@ -75,7 +75,7 @@ export function useWeeklyLearning(kind: LearnerKind | null, learnerId: string | 
         }));
       });
     return () => { traceWeeklyLearning('effect-cleanup', traceKey); cancelled = true; };
-  }, [identity, kind, learnerId, refreshTick, initialModuleId, hasSnapshot, traceKey]);
+  }, [identity, kind, learnerId, refreshTick, initialModuleId, hasSnapshot, traceKey, active]);
 
   // Hide the previous learner on the first render of a new identity.
   const current = identity && state?.identity === identity ? state : null;
@@ -95,7 +95,7 @@ export function useWeeklyLearning(kind: LearnerKind | null, learnerId: string | 
 }
 
 /** Identity-keyed state prevents a slow response replacing a newer selection. */
-export function useWeeklyLearningWeek(kind: LearnerKind, learnerId: string, moduleId: string | null, weekId: string | null, enabled: boolean, revision: unknown, adjacentWeekId?: string | null) {
+export function useWeeklyLearningWeek(kind: LearnerKind, learnerId: string, moduleId: string | null, weekId: string | null, enabled: boolean, revision: unknown, adjacentWeekId?: string | null, active = true) {
   const identity = enabled && moduleId && weekId ? JSON.stringify([kind, learnerId, moduleId, weekId]) : null;
   const [state, setState] = useState<{ identity: string; data: WeeklyLearningWeek | null; error: string | null } | null>(null);
   const [retry, setRetry] = useState(0);
@@ -103,10 +103,10 @@ export function useWeeklyLearningWeek(kind: LearnerKind, learnerId: string, modu
   const hasSnapshot = !!(enabled && moduleId && weekId && peekWeeklyLearningWeek(kind, learnerId, moduleId, weekId, Number.POSITIVE_INFINITY));
   const refresh = useCallback(() => setRetry(value => value + 1), []);
   useEffect(() => subscribeLearnerReadInvalidation(() => {
-    if (enabled && moduleId && weekId && !peekWeeklyLearningWeek(kind, learnerId, moduleId, weekId)) refresh();
-  }), [enabled, kind, learnerId, moduleId, weekId, refresh]);
+    if (active && enabled && moduleId && weekId && !peekWeeklyLearningWeek(kind, learnerId, moduleId, weekId)) refresh();
+  }), [enabled, kind, learnerId, moduleId, weekId, refresh, active]);
   useEffect(() => {
-    if (!identity || !moduleId || !weekId) return;
+    if (!active || !identity || !moduleId || !weekId) return;
     let cancelled = false;
     const cached = peekWeeklyLearningWeek(kind, learnerId, moduleId, weekId);
     if (cached && cached === accepted.current) return;
@@ -117,7 +117,7 @@ export function useWeeklyLearningWeek(kind: LearnerKind, learnerId: string, modu
       if (!cancelled) setState({ identity, data: null, error: error instanceof Error ? error.message : 'Could not load this week.' });
     });
     return () => { cancelled = true; };
-  }, [identity, kind, learnerId, moduleId, weekId, revision, retry, hasSnapshot]);
+  }, [identity, kind, learnerId, moduleId, weekId, revision, retry, hasSnapshot, active]);
   const cached = enabled && moduleId && weekId ? peekWeeklyLearningWeek(kind, learnerId, moduleId, weekId) : undefined;
   const retained = enabled && moduleId && weekId ? peekWeeklyLearningWeek(kind, learnerId, moduleId, weekId, Number.POSITIVE_INFINITY) : undefined;
   const current = state?.identity === identity ? state : null;
@@ -125,12 +125,12 @@ export function useWeeklyLearningWeek(kind: LearnerKind, learnerId: string, modu
   useEffect(() => {
     // Only one neighbour, after the selected request has settled. Navigation
     // changes cancel the delay; prefetch uses the existing deduplicated cache.
-    if (!enabled || !visible || !moduleId || !adjacentWeekId || adjacentWeekId === weekId
+    if (!active || !enabled || !visible || !moduleId || !adjacentWeekId || adjacentWeekId === weekId
       || peekWeeklyLearningWeek(kind, learnerId, moduleId, adjacentWeekId)) return;
     const timer = window.setTimeout(() => {
       void prefetchWeeklyLearningWeek(kind, learnerId, moduleId, adjacentWeekId);
     }, 750);
     return () => window.clearTimeout(timer);
-  }, [enabled, visible, kind, learnerId, moduleId, weekId, adjacentWeekId]);
+  }, [enabled, visible, kind, learnerId, moduleId, weekId, adjacentWeekId, active]);
   return { data: visible, loading: !!identity && !visible && !current?.error, error: current?.error ?? null, refresh };
 }

@@ -4,10 +4,10 @@ import { completedComponentIds, isComponentComplete, quizAttemptsFor, type Journ
 
 export type Schedule = Pick<StudentActivityItem, 'date' | 'month' | 'week_start' | 'week_end' | 'date_needs_review' | 'date_source'> & { due_timing?: string };
 export type SubjectEntry = { id: string; title: string; category: string; completed: boolean; position: number; schedule: Schedule; week?: string; legacy?: StudentActivityItem; native?: JourneyComponent; bestScorePercent?: number | null };
-export type Subject = { id: string; title: string; source: 'legacy' | 'current'; moduleId?: string | null; activities: SubjectEntry[]; recordedHistory?: boolean; catalogueProgress?: boolean; catalogueCount?: number; acceptedHours?: number; previousLearningFor?: string };
+export type Subject = { id: string; title: string; source: 'legacy' | 'current'; moduleId?: string | null; activities: SubjectEntry[]; recordedHistory?: boolean; catalogueProgress?: boolean; catalogueCount?: number; acceptedHours?: number; previousLearningFor?: string; importedCourseRef?: string; replacementCourseRef?: string; archivedActivities?: SubjectEntry[] };
 type BuilderSubject = { id: string; title: string };
 type ActivitySource = { module_id: string; group_id: number; activity_id: number };
-export type CoverMetadata = { covers: Record<string, string>; activity_dates?: Record<string, Schedule>; current_subjects?: BuilderSubject[]; builder_subjects?: Record<string, BuilderSubject>; activity_sources?: Record<string, ActivitySource>; previous_learning_groups?: Record<string, string> };
+export type CoverMetadata = { covers: Record<string, string>; activity_dates?: Record<string, Schedule>; current_subjects?: BuilderSubject[]; builder_subjects?: Record<string, BuilderSubject>; activity_sources?: Record<string, ActivitySource>; previous_learning_groups?: Record<string, string>; imported_courses?: Record<string, string>; replacement_courses?: Record<string, string> };
 export type UnifiedLearningSummary = {
   subjects: Subject[];
   subjectCount: number;
@@ -19,7 +19,7 @@ export type UnifiedLearningSummary = {
 export type LearningSummaryDetail = Pick<LearnerDetail,
   'modules' | 'components' | 'retiredQuizComponents' | 'quizAttempts' | 'videoProgress' | 'componentProgress'>;
 export type LearningSummaryActivity = Pick<StudentActivityResponse,
-  'subjects' | 'activities' | 'progress_basis' | 'activity_sources'>;
+  'subjects' | 'activities' | 'progress_basis' | 'activity_sources' | 'replacement_hours'>;
 
 export function subjectRefs(data: LearningSummaryActivity | null, real: LearningSummaryDetail | null) {
   return [...new Set([
@@ -64,22 +64,40 @@ export function subjectsFrom(data: LearningSummaryActivity | null, real: Learnin
     if (!subject.activities.some((entry) => entry.id === item.activity_id)) subject.activities.push({ id: item.activity_id, title: item.activity, category: item.category, completed: item.completed, position: item.position || 0, schedule: item.month ? item : scheduleForDate(item.date), legacy: item });
     subjects.set(key, subject);
   }
+  const importedCourses = metadata?.imported_courses || {};
+  // Replace only a proven import with the exact owned course returned by
+  // student-activity. A shared title or curriculum link is not an identity.
+  const replaced = new Set(Object.entries(importedCourses)
+    .filter(([ref, course]) => ref.startsWith('current:') && subjects.get(course)?.source === 'legacy')
+    .map(([ref]) => ref));
+  const replacedTitles = new Set<string>();
   const completed = completedComponentIds(real);
   for (const subject of currentSubjects) {
+    const key = `current:${subject.id}`;
+    if (replaced.has(key)) {
+      replacedTitles.add(subject.title.trim().toLowerCase());
+      continue;
+    }
     // While current-plan detail is unavailable, keep the existing historical
     // browser rather than publishing an empty duplicate of a linked course.
     if (!real && [...subjects.values()].some(previous => previous.source === 'legacy'
       && (previous.moduleId === subject.id || builderSubjects[previous.id]?.id === subject.id
+        || metadata?.replacement_courses?.[key] === previous.id
         || metadata?.previous_learning_groups?.[previous.id] === `current:${subject.id}`))) continue;
-    const key = `current:${subject.id}`;
-    if (!subjects.has(key)) subjects.set(key, { id: key, title: subject.title, source: 'current', activities: [] });
+    if (!subjects.has(key)) subjects.set(key, { id: key, title: subject.title, source: 'current', activities: [],
+      ...(importedCourses[key] ? { importedCourseRef: importedCourses[key] } : {}) });
   }
   // Removed quizzes the learner passed follow the live plan, so they keep their
   // module and count as completed work there.
   const planEntries = [...(real?.components || []), ...(real?.retiredQuizComponents || [])];
   for (const [index, item] of planEntries.entries()) {
     const key = item.moduleId ? `current:${item.moduleId}` : `unlinked:${item.module}`;
-    const subject = subjects.get(key) || { id: key, title: item.module || 'Unnamed subject', source: 'current' as const, activities: [] };
+    if (replaced.has(key)) {
+      replacedTitles.add((item.module || '').trim().toLowerCase());
+      continue;
+    }
+    const subject = subjects.get(key) || { id: key, title: item.module || 'Unnamed subject', source: 'current' as const, activities: [],
+      ...(importedCourses[key] ? { importedCourseRef: importedCourses[key] } : {}) };
     const component: JourneyComponent = { ...item, title: item.component,
       quizAttempts: item.isQuiz && item.quizMeta ? quizAttemptsFor(item, real?.quizAttempts) : undefined };
     const id = item.componentId || `quiz:${item.quizMeta?.quizId ?? `${item.week}:${index}`}`;
@@ -93,10 +111,35 @@ export function subjectsFrom(data: LearningSummaryActivity | null, real: Learnin
     subjects.set(key, subject);
   }
   for (const title of real?.modules || []) {
+    // The title-only fallback must not recreate an import whose id was just
+    // replaced, including a Builder copy renamed after the original course.
+    if (replacedTitles.has(title.trim().toLowerCase())) continue;
     if ([...subjects.values()].some(subject => subject.title.trim().toLowerCase() === title.trim().toLowerCase())) continue;
     subjects.set(`unlinked:${title}`, { id: `unlinked:${title}`, title, source: 'current', activities: [] });
   }
-  return [...subjects.values()].map((subject) => ({ ...subject, title: builderSubjects[subject.id]?.title || subject.title,
+  // A verified successor has one current catalogue and one completion verdict
+  // per component. Previous activity rows remain reviewable, outside that
+  // denominator. No title matching, percentage addition or history mutation.
+  const replacements = Object.entries(metadata?.replacement_courses || {});
+  for (const [currentRef, oldRef] of replacements) {
+    const current = subjects.get(currentRef), old = subjects.get(oldRef);
+    if (!current?.activities.length || current.source !== 'current' || old?.source !== 'legacy'
+      || replacements.filter(([, ref]) => ref === oldRef).length !== 1) continue;
+    const hours = data?.replacement_hours?.[currentRef];
+    subjects.set(currentRef, { ...current, replacementCourseRef: oldRef, archivedActivities: old.activities,
+      acceptedHours: hours?.course_ref === oldRef ? hours.accepted_hours : undefined,
+      activities: current.activities.map(entry => {
+        const lineage = entry.native?.previousLearning;
+        const original = lineage?.courseRef === oldRef
+          ? old.activities.find(item => item.id === lineage.activityId
+            && item.legacy?.catalogue_kind === lineage.catalogueKind
+            && item.legacy.source_activity_id === lineage.sourceActivityId) : undefined;
+        return original?.completed && !entry.completed ? { ...entry, completed: true } : entry;
+      }) });
+    subjects.delete(oldRef);
+  }
+  return [...subjects.values()].map((subject) => ({ ...subject,
+    title: builderSubjects[subject.id]?.title || subject.title,
     previousLearningFor: subject.source === 'legacy' && subjects.get(metadata?.previous_learning_groups?.[subject.id] || '')?.source === 'current'
       ? metadata?.previous_learning_groups?.[subject.id] : undefined }))
     .sort((a, b) => a.title.localeCompare(b.title) || a.id.localeCompare(b.id));

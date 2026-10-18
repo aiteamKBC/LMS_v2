@@ -49,7 +49,7 @@ def case_file_learning_module(request, learner_id, module_id, week_id=None):
 # Resource names are transport projections, never client-selected data sources.
 RESOURCES = {
     'overview': {'detail', 'activity', 'covers', 'week', 'schedule', 'hours'},
-    'weekly-learning': {'detail', 'week', 'schedule', 'hours'},
+    'weekly-learning': set(),
     'monthly-focus': {'focus'},
     'otjh-ksb': set(),
     'learning-plan': {'detail', 'activity', 'covers', 'week', 'schedule', 'hours', 'module'},
@@ -203,7 +203,7 @@ def build_tab(context, section, month=None):
         return normalize_assignments(parts)
     readers = {resource: lambda resource=resource: context.payload(resource)
                for resource in ('schedule', 'week', 'hours')}
-    if section in {'weekly-learning', 'learning-plan'}:
+    if section == 'learning-plan':
         readers['detail'] = lambda: read_plan_detail(context)
     if section == 'learning-plan':
         readers['covers'] = lambda: context.payload('covers')
@@ -223,7 +223,7 @@ def build_tab(context, section, month=None):
                  'month', 'actual_hours', 'not_accepted_hours', 'training_plan_target'}}
                  for row in hours.get('months', [])]}
     result = {'schedule': schedule, 'week': week, 'hours': hours}
-    if section in {'weekly-learning', 'learning-plan'}:
+    if section == 'learning-plan':
         result['detail'] = parts['detail']
     if section == 'learning-plan':
         result['covers'] = parts['covers']
@@ -542,7 +542,7 @@ def case_file_section(request, learner_id, section='profile'):
                         response = JsonResponse(read_weekly_learning(context, request.GET.get('week')))
                     except LookupError as error:
                         response = JsonResponse({'detail': str(error)}, status=404)
-            elif section in {'weekly-learning', 'monthly-focus', 'otjh-ksb', 'learning-plan', 'assignments'} and not request.GET.get('resource'):
+            elif section in {'monthly-focus', 'otjh-ksb', 'learning-plan', 'assignments'} and not request.GET.get('resource'):
                 month = request.GET.get('month', '')
                 if section == 'monthly-focus' and not re.fullmatch(r'\d{4}-(0[1-9]|1[0-2])', month):
                     response = JsonResponse({'detail': 'A valid month (YYYY-MM) is required.'}, status=400)
@@ -607,7 +607,7 @@ def case_file_section(request, learner_id, section='profile'):
                 else:
                     response = JsonResponse(build_tab(context, section, month))
             else:
-                defaults = {'overview': 'detail', 'weekly-learning': 'week', 'monthly-focus': 'schedule',
+                defaults = {'overview': 'detail', 'monthly-focus': 'schedule',
                             'otjh-ksb': 'breakdown', 'learning-plan': 'schedule',
                             'assignments': 'marking', 'attendance': 'summary'}
                 resource = request.GET.get('resource') or defaults.get(section, 'invalid')

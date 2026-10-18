@@ -21,45 +21,6 @@ from .learner_detail import _resolve_from_master, _apply_programme_assignment_te
 WEEKLY_SOURCE_FIELDS = ('id', 'aptem_id', 'learner_type', 'username', 'email', 'programme', 'cohort', 'group')
 
 
-def learner_attendance(week):
-    if week.get('sessionState') == 'upcoming':
-        return 'upcoming'
-    if week.get('sessionState') in {'cancelled', 'unscheduled'}:
-        return 'unmarked'
-    return 'present' if week.get('attended') is True else 'absent' if week.get('attended') is False else 'unmarked'
-
-
-def compact_weekly(payload, *, detail=False):
-    """Opt-in v2; legacy Student and Coach wire contracts stay unchanged."""
-    def navigation(week):
-        return {**{key: value for key, value in week.items()
-                   if key not in {'moduleTitle', 'attended', 'activities', 'summary', 'liveSession'}},
-                'attendance': learner_attendance(week)}
-    modules = {}
-    for week in payload.get('weeks', []):
-        modules.setdefault(week['moduleId'], {'id': week['moduleId'], 'title': week['moduleTitle']})
-    selected = payload.get('selectedWeek')
-    result = {'version': 2, 'selectedWeek': None}
-    if not detail:
-        result.update(modules=list(modules.values()), weeks=[navigation(week) for week in payload['weeks']])
-    if selected:
-        live = selected['liveSession']
-        result['selectedWeek'] = {
-            'weekId': selected['id'],
-            'summary': {key: value for key, value in selected['summary'].items()
-                        if key not in {'completedActivities', 'totalActivities', 'progress'}},
-            'liveSession': {**{key: value for key, value in live.items()
-                              if key not in {'date', 'startTime', 'endTime', 'attended'}},
-                            'attendance': learner_attendance(live)} if live else None,
-            'activities': [{key: value for key, value in activity.items()
-                            if key not in {'completed', 'sessionDate', 'sessionDateTimeUtc', 'teamsLiveSessionId'}}
-                           for activity in selected['activities']],
-        }
-        if detail:
-            result['week'] = navigation(selected)
-    return result
-
-
 def slot_id(module_id, slot):
     return f"{'reading' if slot.get('type') == 'reading-week' else 'slot'}:{module_id}:{slot['slotNumber']}"
 
@@ -69,7 +30,8 @@ def _selection(week_id, module_id):
         return None
     # Preserve the Student cache/routing IDs while Coach uses module:slot IDs.
     try:
-        prefix, mid, slot = week_id.split(':')
+        parts = week_id.split(':')
+        prefix, mid, slot = parts if len(parts) == 3 else ('slot', *parts)
         if prefix not in {'slot', 'reading'} or not slot.isdigit() or int(slot) < 1 or mid != module_id:
             raise ValueError
     except ValueError:
@@ -87,25 +49,22 @@ def read_dashboard_weekly(source, pk, *, week_id=None, module_id=None):
     selection = _selection(week_id, module_id)
     try:
         payload = read_weekly_learning(SimpleNamespace(source=source, profile=profile), selection,
-                                      module_id=module_id, include_weeks=week_id is None, include_navigation=True,
-                                      student_projection=True)
+                                      module_id=module_id, include_weeks=week_id is None, include_actions=True)
     except LookupError:
         raise ServiceError('Week not found.', 'not_found', 404)
     selected = payload['selectedWeek']
-    if week_id is not None and (selected is None or slot_id(selected['moduleId'], {
-            'type': selected['kind'], 'slotNumber': selected['slotNumber']}) != week_id):
+    navigation = next((week for week in payload['weeks'] if selected and week['id'] == selected['weekId']), None)
+    if week_id is not None and (navigation is None or slot_id(navigation['moduleId'], {
+            'type': navigation['kind'], 'slotNumber': navigation['slotNumber']}) != week_id
+            and navigation['id'] != week_id):
         raise ServiceError('Week not found.', 'not_found', 404)
-    if selected:
-        # Navigator instants are already represented by liveSession in detail.
-        selected.pop('sessionStart', None)
-        selected.pop('sessionDurationMinutes', None)
     if selected and selected['activities']:
         # Eligibility and routing remain the Student resolver's responsibility.
         # Only the selected authored week is read; no progress is reloaded and
         # no separate component/progress/schedule payload crosses the wire.
         _, _, components = _resolve_from_master([], [], [],
-            assigned_modules=[{'moduleId': selected['moduleId']}], strict=True, compact=True,
-            live_session_ids=False, week_ids=[str(selected['weekId'])],
+            assigned_modules=[{'moduleId': navigation['moduleId']}], strict=True, compact=True,
+            live_session_ids=False, week_ids=[str(navigation['weekId'])],
             resolved_metadata=getattr(source, '_weekly_resolved_metadata', None), routing_only=True)
         components = _apply_programme_assignment_template(components, source.programme)
         routing = {str(row['componentId']): _weekly_component(row) for row in components}
@@ -115,11 +74,11 @@ def read_dashboard_weekly(source, pk, *, week_id=None, module_id=None):
                 raise ServiceError('Activity routing could not be resolved.', 'invalid_week', 503)
             activity.update({key: row.get(key) for key in (
                 'contentAvailable', 'videoUrl', 'sessionDate', 'sessionDateTimeUtc', 'teamsLiveSessionId') if key in row})
-    return payload if week_id is None else {'selectedWeek': selected}
+    return payload
 
 
-@require_GET
 @learner_self_or_staff(kwarg='pk')
+@require_GET
 @journal_sources.learner_journal_view
 def dashboard_weekly(request, kind, pk, week_id=None):
     model = SOURCE_MODELS.get(kind)
@@ -131,8 +90,6 @@ def dashboard_weekly(request, kind, pk, week_id=None):
             source.training_plan = source._weekly_training_plan
             source.learning_plan = source._weekly_learning_plan
             payload = read_dashboard_weekly(source, pk, week_id=week_id, module_id=request.GET.get('moduleId'))
-            if request.GET.get('version') == '2':
-                payload = compact_weekly(payload, detail=week_id is not None)
             response = JsonResponse(payload)
     except model.DoesNotExist:
         return JsonResponse({'error': 'Learner not found.'}, status=404)
