@@ -172,6 +172,36 @@ class CurrentLearningTests(unittest.TestCase):
         self.assertFalse(rows[0]['accepted'])
         self.assertIsNone(rows[0]['actual_seconds'])
 
+    def test_indexed_quiz_attempt_preserves_history_and_other_course_fallback(self):
+        link = {'source_system': 'old_lms', 'source_course_ref': '5', 'source_activity_id': 'quiz:9'}
+        record = {'id': 1, 'completed': False, 'accepted': False, 'actual_seconds': 600,
+                  'source_payload': {'original_source_ref': 'la:6:9'},
+                  'sources': [link], 'historical_components': [dict(link)]}
+        original = json.loads(json.dumps(record))
+        merge = self.scope['merge_attempts']
+        rows = merge([record], [self.attempt(catalogue_kind='quiz'), self.attempt(catalogue_kind='quiz')])
+        self.assertEqual(len(rows), 1)
+        self.assertTrue(rows[0]['completed'])
+        self.assertFalse(rows[0]['accepted'])
+        self.assertEqual(rows[0]['actual_seconds'], 600)
+        self.assertEqual(record, original)
+        # A typed link in course 5 does not invalidate the original route in 6.
+        rows = merge([record], [{**self.attempt(), 'group_id': 6}])
+        self.assertEqual(len(rows), 1)
+        self.assertTrue(rows[0]['completed'])
+
+    def test_indexed_typed_lineage_overrides_stale_quiz_reference_in_same_course(self):
+        record = {'id': 1, 'completed': False, 'actual_seconds': 600,
+                  'source_payload': {'original_source_ref': 'subject:quiz:5:9'},
+                  'historical_components': [{'source_system': 'old_lms', 'source_course_ref': 5,
+                                             'source_activity_id': 'material:9'}]}
+        rows = self.scope['merge_attempts']([record], [self.attempt(catalogue_kind='quiz')])
+        self.assertEqual(len(rows), 2)
+        self.assertFalse(rows[0]['completed'])
+        self.assertEqual(rows[0]['actual_seconds'], 600)
+        self.assertTrue(rows[1]['completed'])
+        self.assertIsNone(rows[1]['actual_seconds'])
+
     def test_accepted_extra_activity_once_and_no_drafts(self):
         s = dict(id='extra1', submitted_at=self.native['submitted_at'], activity_type='extra_activity',
                  status='accepted', actual_time_hours=1, ksb_codes=['K1'])
@@ -221,14 +251,15 @@ class CurrentLearningTests(unittest.TestCase):
     def test_dashboard_refresh_reads_new_saved_completion_and_time(self):
         scope = self.scope
         load('canonical_learning.py', scope, {'metrics', 'metrics_from_records',
-            'recorded_seconds', 'allocations', 'counts_as_completed'})
+            'recorded_seconds', 'allocations', 'counts_as_completed', 'point_ratio'})
         scope['number'] = lambda value: float(value or 0)
         owner = {'id': 1}
         scope['require_profile'] = lambda _: owner
         scope['targets_for'] = lambda _: {}
         saved = []
-        scope['entries_for'] = lambda _, **kwargs: self.project(saved)
+        scope['entries_for'] = Mock(side_effect=lambda _, **options: self.project(saved))
         self.assertEqual(scope['metrics'](123)['programme']['completed'], 0)
+        scope['entries_for'].assert_called_once_with(owner, lineage_only=True)
         saved.append(self.native)
         result = scope['metrics'](123)
         self.assertEqual(result['programme']['completed'], 1)
@@ -239,18 +270,19 @@ class CurrentLearningTests(unittest.TestCase):
     def test_quiz_only_completion_does_not_credit_unapproved_hours(self):
         scope = self.scope
         load('canonical_learning.py', scope, {'metrics', 'metrics_from_records',
-            'recorded_seconds', 'allocations', 'counts_as_completed'})
+            'recorded_seconds', 'allocations', 'counts_as_completed', 'point_ratio'})
         scope['number'] = lambda value: float(value or 0)
         owner = {'id': 1}
         scope['require_profile'] = lambda _: owner
         scope['targets_for'] = lambda _: {}
         record = {'id': 10, 'accepted': False, 'actual_seconds': 3600, 'ksbs': [],
                   'source_payload': {'original_source_ref': 'la:5:9'}}
-        scope['entries_for'] = lambda _, **kwargs: scope['merge_attempts']([record], [self.attempt()])
+        scope['entries_for'] = Mock(side_effect=lambda _, **options: scope['merge_attempts']([record], [self.attempt()]))
         result = scope['metrics'](123)
         self.assertEqual(result['programme']['completed'], 1)
         self.assertEqual(result['programme']['total'], 1)
         self.assertEqual(result['otjh']['actual'], 0)
+        scope['entries_for'].assert_called_once_with(owner, lineage_only=True)
 
 
 if __name__ == '__main__':

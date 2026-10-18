@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { LearnerKind } from '@/api/learnerDetail';
 import { subscribeLearnerReadInvalidation } from '@/api/learnerRead';
 
@@ -19,14 +19,16 @@ export function useLiveLearnerRead<T>(
   enabled: boolean,
   read: Reader<T>,
   peek: Peek<T>,
+  active = true,
 ): LiveLearnerReadResult<T> {
   const key = `${kind}:${id}`;
   const [revision, setRevision] = useState(0);
+  const consumedRevision = useRef({ key, revision: 0 });
   const [state, setState] = useState<{ key: string; data: T | undefined; error: string } | null>(null);
   const refresh = useCallback(() => setRevision(value => value + 1), []);
 
   useEffect(() => {
-    if (!enabled || !kind || !id) return;
+    if (!enabled || !active || !kind || !id) return;
     let disposed = false;
     let sequence = 0;
     let pending = false;
@@ -55,14 +57,16 @@ export function useLiveLearnerRead<T>(
       // A pre-save request may finish last. Replace its caller and ignore it.
       load(true, true);
     });
-    load(revision > 0);
+    const fresh = consumedRevision.current.key === key && consumedRevision.current.revision !== revision;
+    consumedRevision.current = { key, revision };
+    load(fresh);
 
     return () => {
       disposed = true;
       controller?.abort();
       unsubscribe();
     };
-  }, [key, kind, id, enabled, read, peek, revision]);
+  }, [key, kind, id, enabled, active, read, peek, revision]);
 
   const current = enabled && state?.key === key ? state : null;
   const data = enabled && kind && id

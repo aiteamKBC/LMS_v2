@@ -250,11 +250,15 @@ def student_activity(request, kind, pk):
             # Share the exact accepted ledger snapshot with the course catalogue;
             # summing separately loaded old/current aggregates can double count.
             records = canonical_learning.entries_for(owner) if owner is not None else None
-            payload = canonical_learning.source_subjects(pk, summarize_activities, owner=owner, records=records)
+            payload = canonical_learning.source_subjects(pk, summarize_activities, owner=owner, records=records,
+                include_ledger=request.GET.get('view') != 'my-learning')
+            # Historical describes lineage, not a failed refresh. This read
+            # verified the canonical owner and evidence successfully.
+            payload['verification_status'] = 'verified'
             payload['replacement_hours'] = read_replacement_hours(pk, source, owner, records, payload)
-            saved = subject_store.state(pk, payload['aptem_id']) if payload['aptem_id'] else {'covers': {}}
             allowed = {f"legacy:{item['id']}" for item in payload['subjects']}
-            payload['covers'] = {key: _cover_url(value) for key, value in saved['covers'].items() if key in allowed}
+            covers = subject_store.covers_for(sorted(allowed)) if payload['aptem_id'] else {}
+            payload['covers'] = {key: _cover_url(value) for key, value in covers.items() if key in allowed}
             return _private(payload)
         except canonical_learning.ServiceError as error:
             return _error(str(error), error.status)
@@ -296,77 +300,26 @@ def student_activity(request, kind, pk):
         except DatabaseError:
             return _error('Could not load the saved quiz. Please retry.', 503)
 
-    # Never forward client filters or Aptem ids into the historical reader.
+    # The catalogue branch above always returns. Only an explicitly selected,
+    # owned material reaches this reader; never rebuild the historical summary.
+    try:
+        activity_id = int(request.GET['activity_id'])
+        group_id = int(request.GET.get('group_id', ''))
+    except (ValueError, TypeError):
+        return _error('Invalid activity reference.', 400)
     try:
         with _connection().cursor() as cursor:
-            if request.GET.get("activity_id") is not None:
-                try:
-                    activity_id = int(request.GET["activity_id"])
-                    group_id = int(request.GET.get("group_id", ""))
-                except (ValueError, TypeError):
-                    return _error("Invalid activity reference.", 400)
-                payload = read_student_material(cursor, aptem_id, group_id, activity_id, include_source=True)
-            else:
-                payload = read_student_activity(cursor, aptem_id)
-                if payload is not None:
-                    payload.update(read_audit_hour_totals(cursor, aptem_id))
-                    # Same audit mapping the coach caseload counts, so a coach
-                    # and their learner never read different KSB figures.
-                    payload['audit_ksb_evidenced'] = read_evidenced_ksb_counts_bulk(
-                        cursor, [aptem_id],
-                    ).get(aptem_id)
+            payload = read_student_material(cursor, aptem_id, group_id, activity_id, include_source=True)
     except DatabaseError:
-        return _error("Could not read Last_audit activities. Please try again.", 503)
-    material_request = request.GET.get('activity_id') is not None
-    if (payload is None and not material_request) or is_excluded_learner(aptem_id, (payload or {}).get('learner_name', '')):
-        return _error("No audit activity record is linked to this learner.", 404)
-    audit_email = (payload or {}).pop('_identity_email', '') or (payload or {}).get('_source', {}).get('learner_email', '')
+        return _error('Could not read Last_audit activities. Please try again.', 503)
+    if payload is None:
+        return _error('Activity not found.', 404)
+    if is_excluded_learner(aptem_id, payload.get('learner_name', '')):
+        return _error('No audit activity record is linked to this learner.', 404)
+    audit_email = payload.pop('_identity_email', '') or payload.get('_source', {}).get('learner_email', '')
     if not _emails_match(getattr(source, 'email', ''), audit_email):
         return _error('The previous learning identity could not be verified.', 404)
-    # Content and history are read from our stored, ownership-checked snapshot.
-    live = None
-    if material_request:
-        if payload is None:
-            return _error('Activity not found.', 404)
-        return _material_response(request, pk, aptem_id, payload, kind=kind, group_id=group_id)
-    schedules = {}
-    try:
-        saved = subject_store.state(pk, aptem_id)
-        direct_progress = _direct_progress_records(pk)
-        direct_otjh = _direct_progress_otjh(direct_progress)
-    except DatabaseError:
-        return _error('Could not load your subject progress and dates. Please try again.', 503)
-    payload = subject_source.overlay_subjects(payload, live, schedules)
-    payload['source_status'] = 'live' if live is not None else 'historical'
-    try:
-        group_ids = [row['id'] for row in payload.get('subjects', [])]
-        payload['activity_sources'] = _activity_sources(pk, group_ids)
-        payload['activity_source_issues'] = _activity_source_issues(pk, group_ids)
-    except DatabaseError:
-        return _error('Could not verify the links between your current and previous activities. Please try again.', 503)
-    payload.update(summarize_activities(subject_store.overlay_progress(payload['activities'], saved['progress'])))
-    payload['module_count'] = len(payload.get('subjects') or []) or payload['module_count']
-    payload['recorded_otjh_total'] = combined_recorded_otjh(
-        payload.get('actual_total'),
-        direct_otjh,
-    )
-    payload['direct_otjh_activities'] = direct_progress
-    allowed = {f"legacy:{item['group_id']}" for item in payload['activities']}
-    payload['covers'] = {key: _cover_url(value) for key, value in saved['covers'].items() if key in allowed}
-    from . import canonical_learning
-    if canonical_learning.enabled(pk):
-        try:
-            owner = canonical_learning.profile(pk)
-            if owner['aptem_id'] != aptem_id:
-                return _error('The consolidated learner identity needs review.', 409)
-            payload = canonical_learning.overlay_subjects(payload, canonical_learning.entries(pk), summarize_activities)
-        except DatabaseError:
-            return _error('Could not load the consolidated learning record. Please retry.', 503)
-        except canonical_learning.ServiceError as error:
-            return _error(str(error), error.status)
-    response = JsonResponse(payload)
-    response["Cache-Control"] = "private, no-store"
-    return response
+    return _material_response(request, pk, aptem_id, payload, kind=kind, group_id=group_id)
 
 
 def _private(payload, status=200):

@@ -55,8 +55,6 @@ function resource<T>(path: (kind: LearnerKind, id: string) => string, valid: (va
 }
 const weekPath = (kind: LearnerKind, id: string) => `/learner_api/overview-week/${kind}/${encodeURIComponent(id)}/`;
 export const overviewWeek = resource<OverviewWeek>(weekPath, value => !!value.weekStart && Array.isArray(value.modules) && Array.isArray(value.deadlines) && !!value.otjh);
-export const overviewDashboard = resource<OverviewWeek>((kind, id) => `${weekPath(kind, id)}?section=dashboard`,
-  value => !!value.weekStart && Array.isArray(value.modules) && Array.isArray(value.deadlines) && !!value.otjh && !!value.metrics);
 export const overviewSchedule = resource<TrainingPlanDashboard>(
   (kind, id) => `/learner_api/training-plan-dashboard/${kind}/${encodeURIComponent(id)}/?section=overview`,
   value => Array.isArray(value.sessions) && Array.isArray(value.reviews),
@@ -88,4 +86,11 @@ export type LearningSchedule = Pick<TrainingPlanDashboard, 'modules' | 'moduleLi
 export const learningSchedule = resource<LearningSchedule>(
   (kind, id) => `/learner_api/training-plan-dashboard/${kind}/${encodeURIComponent(id)}/?section=learning`,
   value => Array.isArray(value.modules) && !!value.moduleLinks,
+);
+
+/** My Learning cards and upcoming sessions share one module/ledger read. */
+export type MyLearningSchedule = LearningSchedule & Pick<TrainingPlanDashboard, 'sessions' | 'moduleProgress'>;
+export const myLearningSchedule = resource<MyLearningSchedule>(
+  (kind, id) => `/learner_api/training-plan-dashboard/${kind}/${encodeURIComponent(id)}/?section=my-learning`,
+  value => Array.isArray(value.modules) && !!value.moduleLinks && Array.isArray(value.sessions) && !!value.moduleProgress,
 );

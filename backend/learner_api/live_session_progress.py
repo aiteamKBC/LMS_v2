@@ -119,16 +119,29 @@ def supplement_module_hours(metrics, records, credits):
     """
     from . import canonical_learning as canonical
     result = {key: {**value, 'hours': dict(value['hours'])} for key, value in metrics.items()}
+    credits = credits if isinstance(credits,(list,tuple)) else list(credits)
+    component_ids = {credit['componentId'] for credit in credits if credit['moduleId'] in result}
+    if not component_ids:
+        return result
+    seconds_by_component = defaultdict(float)
+    corrected = set()
+    for record in records:
+        component_id = str(record.get('component_ref') or '')
+        if component_id not in component_ids:
+            continue
+        if record.get('actual_basis') == 'staff:module-progress':
+            corrected.add(component_id)
+        if canonical.counts_as_actual(record):
+            seconds_by_component[component_id] += canonical.number(record.get('actual_seconds'))
     seen = set()
     for credit in credits:
         component_id, module_id = credit['componentId'], credit['moduleId']
         if component_id in seen or module_id not in result:
             continue
         seen.add(component_id)
-        existing = [r for r in records if str(r.get('component_ref') or '') == component_id]
-        if any(r.get('actual_basis') == 'staff:module-progress' for r in existing):
+        if component_id in corrected:
             continue
-        seconds = sum(canonical.number(r.get('actual_seconds')) for r in existing if canonical.counts_as_actual(r))
+        seconds = seconds_by_component[component_id]
         result[module_id]['hours']['actual'] = round(
             result[module_id]['hours']['actual'] + max(0, credit['hours'] - seconds / 3600), 4)
     return result

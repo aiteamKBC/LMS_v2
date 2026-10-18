@@ -11,7 +11,7 @@ from unittest.mock import MagicMock, patch
 from django.db import DatabaseError
 from django.test import RequestFactory, SimpleTestCase
 
-from . import learner_detail, weekly_learning
+from . import learner_detail, weekly_learning, dashboard_weekly
 
 CASES = Path(__file__).resolve().parents[2] / 'frontend/src/utils/__tests__/componentContentCases.json'
 
@@ -103,7 +103,7 @@ class BuildWeeklyLearningTests(SimpleTestCase):
              patch.object(learner_detail, '_append_week_quizzes', side_effect=lambda weeks, rows, **_k: (weeks, rows)), \
              patch.object(weekly_learning, 'learner_profile_for_source', return_value=profile) as identity, \
              patch('learner_api.retained_quiz_progress.read_quiz_slots', return_value=list(slots)):
-            payload = weekly_learning.build_weekly_learning(source, 265)
+            payload = weekly_learning.build_learning_content_summary(source, 265)
         resolve.assert_called_once_with([], [], [], assigned_modules=plan.return_value, compact=True,
                                         live_session_ids=False, expected_otjh=True)
         # Strictly read-only: the identity self-heal is switched off.
@@ -182,15 +182,16 @@ class WeeklyLearningEndpointTests(SimpleTestCase):
     def call(self, view, account, *, method='get', error=None, missing=False):
         model = MagicMock()
         model.DoesNotExist = type('Missing', (Exception,), {})
-        source = SimpleNamespace(pk=201, id=201)
+        source = SimpleNamespace(pk=201, id=201, _weekly_training_plan=[], _weekly_learning_plan=[])
         model.all_learners.get.side_effect = model.DoesNotExist() if missing else None
         model.all_learners.get.return_value = source
         request = getattr(RequestFactory(), method)('/learner_api/weekly-learning/commercial/201/')
         request.login_account = account
-        payload = {'id': '201', 'components': []}
+        payload = {'modules': [], 'weeks': [], 'selectedWeek': None}
         with patch('login.permissions.authenticate_request', return_value=account), \
              patch.dict(learner_detail.SOURCE_MODELS, {'commercial': model}), \
-             patch.object(weekly_learning, 'build_weekly_learning', return_value=payload, side_effect=error) as weekly, \
+             patch.object(dashboard_weekly, 'assignment_projection', side_effect=lambda query: model.all_learners), \
+             patch.object(dashboard_weekly, 'read_dashboard_weekly', return_value=payload, side_effect=error) as weekly, \
              patch.object(learner_detail, 'build_learner_detail', return_value=payload, side_effect=error) as detail:
             response = view(request, kind='commercial', pk=201)
         return response, weekly, detail
@@ -205,10 +206,10 @@ class WeeklyLearningEndpointTests(SimpleTestCase):
         }
         for (name, account), method in [(item, method) for item in accounts.items() for method in ('get', 'post')]:
             with self.subTest(name, method=method):
-                weekly, *_ = self.call(weekly_learning.learner_weekly_learning, account, method=method)
+                weekly, *_ = self.call(dashboard_weekly.dashboard_weekly, account, method=method)
                 detail, *_ = self.call(learner_detail.learner_detail, account, method=method)
                 self.assertEqual(weekly.status_code, detail.status_code)
-        own, built, full = self.call(weekly_learning.learner_weekly_learning, accounts['own learner'])
+        own, built, full = self.call(dashboard_weekly.dashboard_weekly, accounts['own learner'])
         self.assertEqual(own.status_code, 200)
         self.assertEqual(own['Cache-Control'], 'private, no-store')
         built.assert_called_once()
@@ -216,16 +217,16 @@ class WeeklyLearningEndpointTests(SimpleTestCase):
 
     def test_refused_and_failed_reads_never_report_an_empty_plan(self):
         learner = SimpleNamespace(role='learner', subject_id=201)
-        post, built, _ = self.call(weekly_learning.learner_weekly_learning, learner, method='post')
+        post, built, _ = self.call(dashboard_weekly.dashboard_weekly, learner, method='post')
         self.assertEqual(post.status_code, 405)
         built.assert_not_called()
-        missing, built, _ = self.call(weekly_learning.learner_weekly_learning, learner, missing=True)
+        missing, built, _ = self.call(dashboard_weekly.dashboard_weekly, learner, missing=True)
         self.assertEqual(missing.status_code, 404)
         built.assert_not_called()
-        failed, *_ = self.call(weekly_learning.learner_weekly_learning, learner, error=DatabaseError('offline'))
-        self.assertEqual(failed.status_code, 502)
+        failed, *_ = self.call(dashboard_weekly.dashboard_weekly, learner, error=DatabaseError('offline'))
+        self.assertEqual(failed.status_code, 503)
         self.assertNotIn('components', json.loads(failed.content))
-        unknown = weekly_learning.learner_weekly_learning
+        unknown = dashboard_weekly.dashboard_weekly
         with patch('login.permissions.authenticate_request', return_value=learner):
             request = RequestFactory().get('/learner_api/weekly-learning/other/201/')
             request.login_account = learner
@@ -259,9 +260,11 @@ class FakeCursor:
                           None, 1, None, False, None, False, 1.5)]
         elif 'FROM curriculum.weeks' in sql:
             self.rows = [('W1', 'M1', 'Week 1', 1, 1)]
+        elif 'JOIN curriculum.live_sessions' in sql:
+            self.rows = self.live_rows
         elif 'FROM curriculum.modules' in sql:
             self.rows = [('M1', 'Marketing')]
-        elif 'FROM curriculum.live_sessions' in sql:
+        elif 'curriculum.live_sessions' in sql:
             self.rows = self.live_rows
         else:
             self.rows = []

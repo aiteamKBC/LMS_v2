@@ -18,7 +18,7 @@ export function headerItems(header: DashboardHeader | null, now: number) {
   return {
     lecture: upcoming(header?.nextLiveSession?.date) ? header!.nextLiveSession!
       : { title: 'Next lecture', date: null, moduleId: undefined, href: '/learner/attendance' },
-    assignment: upcoming(header?.nextDeadline?.date) ? header!.nextDeadline!
+    assignment: upcoming(header?.nextAssignment?.date) ? header!.nextAssignment!
       : { title: 'Next assignment', date: null, href: '/learner/monthly-submission' },
     review: upcoming(review?.date, review?.scheduledDate ? review.scheduledTime : undefined) ? review! : null,
   };

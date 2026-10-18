@@ -7,10 +7,11 @@ import type { LearnerDetail } from '@/api/learnerDetail';
 import type { LearningSchedule } from '@/api/learnerOverview';
 import * as api from '@/api/studentActivity';
 import * as reads from '@/api/learnerRead';
-import { ModulesTab, QuizzesTab, StudentActivityPanel } from './page';
+import { QuizzesTab, StudentActivityPanel } from './page';
 import { StudentMaterial } from './StudentMaterial';
 import { buildUnifiedLearningSummary, subjectsFrom } from './learningSummary';
 import { useSubjectMetadata } from './useSubjectLearningData';
+import { CompactModules } from './CompactModules';
 
 // AppIcon is normally supplied by the app build's auto-import plugin.
 vi.stubGlobal('AppIcon', () => <span />);
@@ -43,6 +44,12 @@ function weekProgress() {
 
 describe('learner subject cards', () => {
   afterEach(() => vi.restoreAllMocks());
+
+  it('does not describe successfully verified canonical history as a failed refresh', () => {
+    render(<StudentActivityPanel data={{ ...data, source_status: 'historical', verification_status: 'verified' }} loading={false} error={null} onRetry={vi.fn()} />);
+    expect(screen.queryByText(/The latest results could not be verified/)).not.toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Leadership' })).toBeVisible();
+  });
 
   it('labels and filters old LMS courses separately from assigned new Curriculum modules', async () => {
     vi.spyOn(api, 'subjectRequest').mockResolvedValue({
@@ -186,21 +193,7 @@ describe('learner subject cards', () => {
     expect(screen.getByRole('img', { name: 'Updated Leadership cover' })).toHaveAttribute('src', '/assets/my-learning/default-module-cover.png');
   });
 
-  it('loads on opening Modules and ignores an old learner response after navigation', async () => {
-    vi.spyOn(api, 'subjectRequest').mockResolvedValue({ covers: {} });
-    let resolveAnna!: (value: StudentActivityResponse) => void;
-    const fetch = vi.spyOn(api, 'fetchStudentActivity')
-      .mockImplementationOnce(() => new Promise((resolve) => { resolveAnna = resolve; }))
-      .mockResolvedValueOnce({ ...data, learner_name: 'Amy-Marie Field' });
-    const real = { studentActivityAvailable: true } as LearnerDetail;
-    const { rerender } = render(<ModulesTab key="132" real={real} loading={false} loadError={null} kind="commercial" id="132" />);
-    await waitFor(() => expect(fetch).toHaveBeenCalledWith('commercial', '132', expect.any(AbortSignal), false));
-    rerender(<ModulesTab key="133" real={real} loading={false} loadError={null} kind="commercial" id="133" />);
-    expect(await screen.findByText('Amy-Marie Field')).toBeInTheDocument();
-    await act(async () => { resolveAnna(data); });
-    expect(screen.queryByText('Anna Rundell')).not.toBeInTheDocument();
-    expect(fetch.mock.calls[0][2]?.aborted).toBe(true);
-  });
+
   it('opens a subject card and distinguishes missing OTJH from recorded zero', () => {
     render(<StudentActivityPanel data={data} loading={false} error={null} onRetry={vi.fn()} />);
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
@@ -371,20 +364,6 @@ describe('subjects shared with Module Builder', () => {
     expect(summary.completedActivityCount).toBe(1);
   });
 
-  it('renders cached subjects immediately while activity and metadata revalidate', async () => {
-    let finishActivity!: (value: StudentActivityResponse) => void;
-    let finishMetadata!: (value: typeof linkedMetadata) => void;
-    vi.spyOn(api, 'peekStudentActivity').mockReturnValue(data);
-    vi.spyOn(reads, 'peekLearnerJson').mockReturnValue(linkedMetadata);
-    vi.spyOn(api, 'fetchStudentActivity').mockImplementation(() => new Promise(resolve => { finishActivity = resolve; }));
-    vi.spyOn(api, 'subjectRequest').mockImplementation(() => new Promise(resolve => { finishMetadata = resolve; }));
-    render(<ModulesTab real={linkedReal} loading={false} loadError={null} kind="commercial" id="132" />);
-    expect(screen.getByRole('button', { name: /New LMS.*Leadership/ })).toBeVisible();
-    expect(screen.getByText('1 of 3 completed')).toBeVisible();
-    expect(screen.queryByText('Loading subjects')).not.toBeInTheDocument();
-    await act(async () => { finishActivity(data); finishMetadata(linkedMetadata); });
-    expect(screen.getByText('1 of 3 completed')).toBeVisible();
-  });
 
   it('opens a native module directly in its activity player without month or week clicks', async () => {
     vi.spyOn(api, 'subjectRequest').mockResolvedValue({ covers: {} });
@@ -456,24 +435,6 @@ describe('subjects shared with Module Builder', () => {
     expect(subject.activities[1].schedule.month).toBe('undated');
   });
 
-  it('loads history and metadata together, publishing cards only when both are ready', async () => {
-    let finishActivity!: (value: StudentActivityResponse) => void;
-    let finishMetadata!: (value: typeof linkedMetadata) => void;
-    vi.spyOn(api, 'fetchStudentActivity').mockImplementation(() => new Promise(resolve => { finishActivity = resolve; }));
-    const metadata = vi.spyOn(api, 'subjectRequest').mockImplementation(() => new Promise(resolve => { finishMetadata = resolve; }));
-    render(<ModulesTab real={linkedReal} loading={false} loadError={null} kind="commercial" id="132" />);
-    expect(screen.getByRole('status')).toHaveTextContent('Loading subjects');
-    expect(screen.queryByRole('button', { name: /New LMS.*Leadership/ })).not.toBeInTheDocument();
-    expect(metadata).toHaveBeenCalledOnce();
-    expect(metadata).toHaveBeenCalledWith('/learner_api/subject-covers/132/?refs=', expect.objectContaining({ signal: expect.any(AbortSignal) }));
-    await act(async () => finishActivity(data));
-    expect(metadata).toHaveBeenCalledOnce();
-    expect(screen.queryByRole('region', { name: 'Your subjects' })).not.toBeInTheDocument();
-    await act(async () => finishMetadata(linkedMetadata));
-    expect(screen.getAllByRole('button', { name: /New LMS.*Leadership/ })).toHaveLength(1);
-    expect(screen.getByText('1 of 3 completed')).toBeInTheDocument();
-    expect(screen.queryByRole('status')).not.toBeInTheDocument();
-  });
 
   it.each(['legacy', 'native'])('waits for metadata even when only %s data has arrived', async source => {
     let finish!: (value: typeof linkedMetadata) => void;
@@ -486,34 +447,6 @@ describe('subjects shared with Module Builder', () => {
     expect(screen.getByRole('region', { name: 'Your subjects' })).toBeInTheDocument();
   });
 
-  it('keeps the complete cards and search while refreshed learner, activities and links arrive', async () => {
-    let finishActivity!: (value: StudentActivityResponse) => void;
-    let finishMetadata!: (value: typeof linkedMetadata) => void;
-    const activity = vi.spyOn(api, 'fetchStudentActivity').mockResolvedValueOnce(data)
-      .mockImplementationOnce(() => new Promise(resolve => { finishActivity = resolve; }));
-    const metadata = vi.spyOn(api, 'subjectRequest').mockResolvedValueOnce(linkedMetadata)
-      .mockImplementationOnce(() => new Promise(resolve => { finishMetadata = resolve; }));
-    const props = { kind: 'commercial' as const, id: '132', loadError: null };
-    const { rerender } = render(<ModulesTab {...props} real={linkedReal} loading={false} />);
-    const card = await screen.findByRole('button', { name: /New LMS.*Leadership/ });
-    fireEvent.change(screen.getByRole('textbox', { name: 'Search modules or activities' }), { target: { value: 'Leadership' } });
-    rerender(<ModulesTab {...props} real={linkedReal} loading />);
-    expect(screen.getByRole('button', { name: /New LMS.*Leadership/ })).toBe(card);
-    const refreshed = { ...linkedReal, components: linkedReal.components.slice(0, 2) };
-    rerender(<ModulesTab {...props} real={refreshed} loading={false} />);
-    expect(screen.getByText('1 of 3 completed')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /New LMS.*Leadership/ })).toBe(card);
-    expect(metadata).toHaveBeenCalledTimes(2);
-    await act(async () => finishActivity(data));
-    expect(screen.getByText('1 of 3 completed')).toBeInTheDocument();
-    expect(metadata).toHaveBeenCalledTimes(2);
-    await act(async () => finishMetadata(linkedMetadata));
-    expect(within(screen.getByRole('button', { name: /New LMS.*Leadership/ })).getByText('1 of 2 completed')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /New LMS.*Leadership/ })).toBe(card);
-    expect(screen.getByRole('textbox', { name: 'Search modules or activities' })).toHaveValue('Leadership');
-    expect(activity).toHaveBeenCalledTimes(2);
-    expect(screen.queryByText('Loading subjects')).not.toBeInTheDocument();
-  });
 
   it('shows a metadata retry instead of misleading partial cards', async () => {
     vi.spyOn(api, 'subjectRequest').mockRejectedValueOnce(new Error('Unavailable')).mockResolvedValueOnce(linkedMetadata);
@@ -889,9 +822,15 @@ describe('subject months, weeks and completion', () => {
     let finish!: (result: SubjectAttemptResult) => void;
     const pending = new Promise<SubjectAttemptResult>((resolve) => { finish = resolve; });
     const requests = mockMaterialRequests(activityMaterial, () => pending);
-    vi.spyOn(api, 'fetchStudentActivity').mockResolvedValueOnce(scheduledData).mockRejectedValueOnce(new Error('Refresh unavailable'));
-    render(<ModulesTab real={{ studentActivityAvailable: true } as LearnerDetail} loading={false} loadError={null} kind="commercial" id="132" />);
-    fireEvent.click(await screen.findByRole('button', { name: /Leadership/ }));
+    vi.spyOn(reads, 'readLearnerJson').mockResolvedValueOnce({ subjectId: 'legacy:1',
+      detail: { id: '132', modules: [], components: [], week: [], quizAttempts: [], videoProgress: [], componentProgress: [] },
+      activity: scheduledData, metadata: { covers: {} }, schedule: { modules: [], moduleLinks: {}, generatedAt: '' }, sessions: [] })
+      .mockRejectedValueOnce(new Error('Refresh unavailable'));
+    renderReact(<MemoryRouter initialEntries={['/?subject=legacy%3A1']}><CompactModules kind="commercial" id="132" catalogue={{ learner: { id: '132', kind: 'commercial', name: 'Synthetic learner', programme: '', cohort: '', group: '' },
+      summary: { current: { subjects: 0, total: 0, completed: 0, percent: 0 }, previous: { subjects: 1, total: 3, completed: 1, percent: 33.33 }, subjectCount: 1 },
+      modules: [{ id: 'legacy:1', title: 'Leadership', source: 'legacy', activityCount: 3, completedActivityCount: 1, progress: 33.33, status: 'In progress', finalTestPassed: false }],
+      otjh: { actual: null, planned: null }, upcoming: [], hasMoreUpcoming: false }} loading={false} error="" refresh={vi.fn()} /></MemoryRouter>);
+    await screen.findByRole('button', { name: 'All subjects' });
     selectMonthWeek();
     expect(screen.getByRole('region', { name: 'Reflection content' })).toBeVisible();
     const submit = await screen.findByRole('button', { name: 'Submit & complete' });

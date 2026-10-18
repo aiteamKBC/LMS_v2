@@ -282,3 +282,119 @@ class DashboardHeaderTests(SimpleTestCase):
         self.assertEqual(header.lecture_href(cursor, sessions, 'commercial', 7,
                                             datetime(2026, 10, 15, tzinfo=timezone.utc)),
                          '/learner/component/commercial/7/C1?module=Module&week=Week%201')
+
+
+class MinimalHeaderTests(SimpleTestCase):
+    def test_single_projection_preserves_actions_and_coach_without_candidates_dates(self):
+        now = datetime(2026, 10, 15, 9, tzinfo=timezone.utc)
+        source = SimpleNamespace(programme='P', cohort='C', group='G')
+        identity = {'id': '7', 'name': 'Synthetic Learner', 'programmeStatus': 'Active'}
+        modules = [{'id': ident, 'title': title, 'start_date': date(2026, 10, 1),
+                    'end_date': date(2026, 10, 31), 'sessions_number': 1, 'week_count': 1}
+                   for ident, title in [('M2', 'Zulu'), ('M1', 'alpha')]]
+        connection = MagicMock()
+        review = {'id': 'R1', 'eventKey': 'review:R1', 'title': 'Review', 'source': 'progress-review',
+                  'status': 'scheduled', 'scheduledDate': '2026-10-16', 'scheduledTime': '10:00',
+                  'meetingLink': 'https://example.test/meeting'}
+        for kind in ('commercial', 'apprenticeship'):
+            for imported in (False, True):
+                profile = SimpleNamespace(id=9, aptem_id=123 if imported else None)
+                with self.subTest(kind=kind, imported=imported), \
+                     patch.object(header, 'header_identity', return_value=identity), \
+                     patch.object(header, 'header_profile', return_value=(profile, {'id': 9})), \
+                     patch.object(header, 'dashboard_modules', return_value=(['M1', 'M2'], modules)) as read_modules, \
+                     patch.object(header, 'connections', {'enrolment': connection}), \
+                     patch.object(header, 'header_sessions', return_value=[{'id': 'O1', 'moduleId': 'M1',
+                         'title': 'Session', 'start': '2026-10-16T09:00:00+00:00', 'status': 'scheduled'}]) as sessions, \
+                     patch.object(header, 'lecture_href', return_value='/learner/component/C1'), \
+                     patch.object(header, 'plan_reviews', return_value=[review]) as reviews, \
+                     patch.object(header, 'upcoming_assignment_deadlines', return_value=[{
+                         'id': 'A1', 'title': 'Assignment', 'date': '2026-10-18'}]) as assignments, \
+                     patch.object(header, 'build_dashboard_bootstrap', side_effect=AssertionError('Full Bootstrap forbidden')), \
+                     patch.object(header, 'build_dashboard_header', side_effect=AssertionError('Full Header forbidden')), \
+                     patch.object(header, 'current_coach', return_value={'coach_name': 'Example Coach', 'coach_email': 'coach@example.test'}), \
+                     patch.object(header, 'coach_phone', return_value='000000000'):
+                    result = header.build_minimal_header(source, kind, 7, now)
+                self.assertEqual(set(result), {'learner', 'coach', 'modules', 'moduleLabel', 'initialWeeklyModuleId',
+                                              'nextAssignment', 'nextLiveSession', 'nextReview'})
+                self.assertEqual(result['modules'], [{'id': 'M1', 'title': 'alpha'}, {'id': 'M2', 'title': 'Zulu'}])
+                self.assertEqual(result['initialWeeklyModuleId'], 'M1')
+                self.assertEqual(result['nextAssignment'], {'title': 'Assignment', 'date': '2026-10-18',
+                                                         'href': '/learner/monthly-submission'})
+                self.assertEqual(result['nextLiveSession']['href'], '/learner/component/C1')
+                self.assertEqual(result['nextReview']['eventKey'], 'review:R1')
+                self.assertEqual(result['nextReview']['meetingLink'], review['meetingLink'])
+                self.assertEqual(result['coach'], {'name': 'Example Coach', 'email': 'coach@example.test', 'phone': '000000000'})
+                self.assertEqual(read_modules.call_args.kwargs, {})
+                self.assertEqual(sessions.call_count, 1)
+                self.assertEqual(reviews.call_count, 1)
+                self.assertEqual(assignments.call_count, 1)
+
+    def test_redirected_learners_skip_all_delivery_reads(self):
+        for status in ('Fresh user', 'Onboarding'):
+            with patch.object(header, 'header_identity', return_value={'programmeStatus': status}), \
+                 patch.object(header, 'header_profile', side_effect=AssertionError('Delivery forbidden')):
+                result = header.build_minimal_header(object(), 'apprenticeship', 7)
+            self.assertEqual(result['modules'], [])
+            self.assertIsNone(result['initialWeeklyModuleId'])
+            self.assertIsNone(result['nextAssignment'])
+
+    def test_selection_keeps_identity_with_duplicate_module_names(self):
+        modules = [{'id': 'M2', 'title': 'Same', 'start_date': '2026-10-01', 'end_date': '2026-10-31'},
+                   {'id': 'M1', 'title': 'Same', 'start_date': '2026-10-01', 'end_date': '2026-10-31'}]
+        label, selected = header.selected_header_modules(modules, '2026-10-15')
+        self.assertEqual(label, 'Current modules')
+        self.assertEqual([m['id'] for m in selected], ['M1', 'M2'])
+        self.assertEqual(header.selected_header_modules(modules, '2026-09-01')[1][0]['id'], 'M1')
+        self.assertEqual(header.selected_header_modules(modules, '2026-11-01')[1][0]['id'], 'M1')
+        self.assertEqual(header.selected_header_modules([], '2026-10-15'), ('Module', []))
+
+    def test_minimal_route_retains_authorization_and_private_cache(self):
+        from django.urls import resolve
+        route = resolve('/learner_api/dashboard/commercial/7/header/minimal/')
+        self.assertTrue(route.kwargs['minimal'])
+        for kind in ('commercial', 'apprenticeship'):
+            for account, status in [(SimpleNamespace(role='learner', subject_id=7), 200),
+                                    (SimpleNamespace(role='staff'), 200),
+                                    (SimpleNamespace(role='learner', subject_id=8), 404),
+                                    (SimpleNamespace(role='employer'), 403), (None, 401)]:
+                with self.subTest(kind=kind, status=status), \
+                     patch('login.permissions.authenticate_request', return_value=account), \
+                     patch.object(header, 'read_header_source') as source, \
+                     patch.object(header, 'build_minimal_header', return_value={'learner': {'id': '7'}}) as build:
+                    response = header.dashboard_header(RequestFactory().get('/'), kind=kind, pk=7, minimal=True)
+                self.assertEqual(response.status_code, status)
+                self.assertEqual(build.call_count, int(status == 200))
+                self.assertEqual(source.call_count, int(status == 200))
+                if status == 200:
+                    self.assertEqual(response['Cache-Control'], 'private, no-store')
+
+    def test_minimal_source_does_not_load_curriculum_snapshots(self):
+        model = MagicMock()
+        query = model.all_learners.only.return_value
+        query.annotate.return_value = query
+        query.get.return_value = SimpleNamespace(_header_training_plan=[], _header_learning_plan=[])
+        header.read_header_source(model, 7, minimal=True)
+        fields = model.all_learners.only.call_args.args
+        for field in ('modules', 'weeks', 'components'):
+            self.assertNotIn(field, fields)
+
+    def test_minimal_identity_contains_requested_values_and_only_required_gate_facts(self):
+        source = SimpleNamespace(id=7, username='Synthetic Learner', programme='Example Programme',
+            cohort='October 2026', employer='Example Employer', organization='Example Organization',
+            onboarding_status='Submitted', learner_start_date='2026-10-01', learner_end_date='2027-10-01',
+            aptem_id=None)
+        gate = {'blocked': False, 'reasons': [], 'startDate': '', 'outstandingDocuments': []}
+        learning = {'blocked': False, 'startDate': '2026-10-01'}
+        with patch.object(header, 'programme_status', return_value='Active'), \
+             patch.object(header, '_group_dates', return_value=(date(2026, 10, 1), date(2027, 10, 1), 'group')), \
+             patch.object(header, '_first_session_unlocked', return_value=True), \
+             patch.object(header, 'access_gate', return_value=gate), \
+             patch.object(header, 'learning_access', return_value=learning), \
+             patch.object(header, 'student_activity_available', return_value=False):
+            actual = header.header_identity(source, minimal=True)
+        self.assertEqual(actual, {'id': '7', 'name': 'Synthetic Learner', 'programme': 'Example Programme',
+            'cohort': 'October 2026', 'employer': 'Example Employer', 'organization': 'Example Organization',
+            'learnerStartDate': '2026-10-01', 'learnerEndDate': '2027-10-01', 'programmeStatus': 'Active',
+            'onboardingStatus': 'Submitted', 'firstSessionUnlocked': True,
+            'accessGate': gate, 'learningAccess': learning, 'studentActivityAvailable': False})

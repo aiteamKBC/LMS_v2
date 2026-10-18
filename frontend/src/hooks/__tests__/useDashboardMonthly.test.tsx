@@ -2,7 +2,7 @@ import { act, renderHook, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { clearAllCachedResources } from '@/api/cachedRequest';
 import { invalidateLearnerReads } from '@/api/learnerRead';
-import { fetchDashboardMonthly } from '@/api/dashboardMonthly';
+import { fetchDashboardMonthly, peekDashboardMonthly } from '@/api/dashboardMonthly';
 import { dashboardMonthlyFixture } from '@/test/dashboardMonthlyFixture';
 import { useDashboardMonthly } from '../useDashboardMonthly';
 
@@ -16,6 +16,23 @@ beforeEach(() => {
 afterEach(() => { clearAllCachedResources(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
 describe('selected-month dashboard reads', () => {
+  it('defers hidden invalidation and refreshes the selected month once on activation', async () => {
+    const { result, rerender } = renderHook(({ active }) => useDashboardMonthly('commercial', '265', '2026-10', '', true, undefined, active),
+      { initialProps: { active: true } });
+    await waitFor(() => expect(result.current.data?.month).toBe('2026-10'));
+    const snapshot = result.current.data;
+    rerender({ active: false });
+    act(() => { invalidateLearnerReads(); invalidateLearnerReads(); });
+    expect(result.current.data).toBe(snapshot);
+    expect(fetch).toHaveBeenCalledTimes(1);
+    rerender({ active: true });
+    await waitFor(() => expect(result.current.refreshing).toBe(false));
+    expect(fetch).toHaveBeenCalledTimes(2);
+    rerender({ active: false });
+    rerender({ active: true });
+    await waitFor(() => expect(result.current.refreshing).toBe(false));
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
   it('defers disabled reads, fetches only a requested month, and reuses resolved initial month', async () => {
     const { result, rerender } = renderHook(({ month, enabled }) => useDashboardMonthly('commercial', '265', month, '', enabled),
       { initialProps: { month: '', enabled: false } });
@@ -26,7 +43,7 @@ describe('selected-month dashboard reads', () => {
     rerender({ month: '2026-11', enabled: true });
     expect(result.current.data).toBeNull();
     await waitFor(() => expect(result.current.data?.month).toBe('2026-11'));
-    expect(String(vi.mocked(fetch).mock.calls[1][0])).toBe('/learner_api/dashboard/commercial/265/monthly/?month=2026-11');
+    expect(String(vi.mocked(fetch).mock.calls[1][0])).toBe('/learner_api/dashboard/commercial/265/monthly/plan/?month=2026-11');
     rerender({ month: '2026-10', enabled: true });
     expect(result.current.data?.month).toBe('2026-10');
     await waitFor(() => expect(result.current.refreshing).toBe(false));
@@ -49,7 +66,7 @@ describe('selected-month dashboard reads', () => {
     await waitFor(() => expect(fetch).toHaveBeenCalledTimes(4));
     rerender({ id: '266', month: '2026-11', subject: 'legacy:1', kind: 'apprenticeship' });
     await waitFor(() => expect(fetch).toHaveBeenCalledTimes(5));
-    expect(String(vi.mocked(fetch).mock.calls[4][0])).toContain('/apprenticeship/266/monthly/?month=2026-11&subject=legacy%3A1');
+    expect(String(vi.mocked(fetch).mock.calls[4][0])).toContain('/apprenticeship/266/monthly/plan/?month=2026-11&subject=legacy%3A1');
   });
 
   it('replaces a pre-save pending read and never restores it after invalidation', async () => {
@@ -57,12 +74,12 @@ describe('selected-month dashboard reads', () => {
     vi.mocked(fetch).mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
     const { result } = renderHook(() => useDashboardMonthly('commercial', '265', '2026-10'));
     act(() => invalidateLearnerReads());
-    await waitFor(() => expect(result.current.data?.summary.achievedHours).toBe(12));
-    const stale = dashboardMonthlyFixture(); stale.summary.achievedHours = 1;
+    await waitFor(() => expect(result.current.data?.summary.achievedHours).toBe('12 hrs'));
+    const stale = dashboardMonthlyFixture(); stale.summary.achievedHours = '1 hrs';
     await act(async () => finish(new Response(JSON.stringify(stale))));
-    expect(result.current.data?.summary.achievedHours).toBe(12);
+    expect(result.current.data?.summary.achievedHours).toBe('12 hrs');
     const cached = await fetchDashboardMonthly('commercial', '265', '2026-10');
-    expect(cached.summary.achievedHours).toBe(12);
+    expect(cached.summary.achievedHours).toBe('12 hrs');
     expect(fetch).toHaveBeenCalledTimes(2);
   });
 
@@ -88,7 +105,7 @@ describe('selected-month dashboard reads', () => {
     vi.mocked(fetch).mockResolvedValueOnce(new Response(JSON.stringify({ error: 'Not authorized' }), { status: 403 }));
     act(() => result.current.refresh());
     await waitFor(() => expect(result.current.error).toBe('Not authorized'));
-    expect(result.current.data?.summary.achievedHours).toBe(12);
+    expect(result.current.data?.summary.achievedHours).toBe('12 hrs');
     act(() => result.current.refresh());
     await waitFor(() => expect(result.current.error).toBe(''));
     await waitFor(() => expect(result.current.refreshing).toBe(false));
@@ -101,5 +118,16 @@ describe('selected-month dashboard reads', () => {
     await expect(fetchDashboardMonthly('commercial', '265', '2026-10')).rejects.toThrow('Could not load');
     vi.mocked(fetch).mockResolvedValueOnce(new Response(JSON.stringify({ ...dashboardMonthlyFixture(), summary: { ksbs: [] } })));
     await expect(fetchDashboardMonthly('commercial', '265', '2026-10')).rejects.toThrow('Could not load');
+  });
+
+  it('expires server action deadlines inside the existing cache TTL', async () => {
+    const expired = dashboardMonthlyFixture(); expired.refreshAt = '2020-01-01T00:00:00Z';
+    vi.mocked(fetch).mockResolvedValueOnce(new Response(JSON.stringify(expired)));
+    await fetchDashboardMonthly('commercial', '265', '2026-10');
+    expect(peekDashboardMonthly('commercial', '265', '2026-10')).toBeUndefined();
+    const current = await fetchDashboardMonthly('commercial', '265', '2026-10');
+    expect(current.refreshAt).toBe('2099-01-01T00:00:00Z');
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(String(vi.mocked(fetch).mock.calls[0][0])).toContain('/monthly/plan/');
   });
 });

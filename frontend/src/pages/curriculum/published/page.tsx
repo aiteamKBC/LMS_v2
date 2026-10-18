@@ -1,6 +1,7 @@
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { curriculumNavItems } from '@/mocks/navigation';
 import { useCurriculumData } from '@/hooks/useCurriculumData';
+import { useListQueryState } from '@/hooks/useListQueryState';
 import type { CurriculumCohort, CurriculumModule } from '@/lib/curriculumApi';
 import { cleanText, formatDateLabel, matchesSearch, normaliseKey } from '../shared/entities/model';
 import {
@@ -86,12 +87,20 @@ const SORT_OPTIONS = [
   { value: 'programme', label: 'Programme' },
 ];
 
+const PUBLISHED_QUERY_DEFAULTS = { q: '', programme: '', state: '', sort: 'attention' };
+
 export default function CurriculumPublished() {
   const { data, loading, error, reload } = useCurriculumData({ compact: true });
-  const [search, setSearch] = useState('');
-  const [programmeFilter, setProgrammeFilter] = useState('');
-  const [stateFilter, setStateFilter] = useState('');
-  const [sort, setSort] = useState('attention');
+  // In the URL, so Back from a module returns to the list as it was left.
+  const { state: query, setValues: setQuery, reset: resetQuery } = useListQueryState(PUBLISHED_QUERY_DEFAULTS);
+  const search = String(query.q);
+  const programmeFilter = String(query.programme);
+  const stateFilter = String(query.state);
+  const sort = String(query.sort);
+  const setSearch = (value: string) => setQuery({ q: value });
+  const setProgrammeFilter = (value: string) => setQuery({ programme: value });
+  const setStateFilter = (value: string) => setQuery({ state: value });
+  const setSort = (value: string) => setQuery({ sort: value });
 
   const modules = useMemo(() => data?.modules ?? [], [data?.modules]);
   const cohorts = useMemo(() => data?.cohorts ?? [], [data?.cohorts]);
@@ -193,7 +202,7 @@ export default function CurriculumPublished() {
             },
           ]}
           sort={{ value: sort, onChange: setSort, options: SORT_OPTIONS, defaultValue: 'attention', label: 'Order' }}
-          onReset={() => { setSearch(''); setProgrammeFilter(''); setStateFilter(''); setSort('attention'); }}
+          onReset={() => resetQuery()}
           isDirty={dirty}
           disabled={!loading && !rows.length}
           summary={

@@ -174,11 +174,11 @@ export function SubjectCard({ subject, cover, tone = 'purple', onOpen, template,
   csrfToken: string;
   kind?: string;
   learnerId?: string;
-  planModule?: PlanModule;
-  moduleProgress?: PlanModuleProgress;
+  planModule?: Omit<PlanModule, 'description' | 'coach_name'> & Partial<Pick<PlanModule, 'description' | 'coach_name'>>;
+  moduleProgress?: Pick<PlanModuleProgress, 'hours'> & Partial<Omit<PlanModuleProgress, 'hours'>>;
 }) {
-  const total = subject.activities.length;
-  const completed = subject.activities.filter((activity) => activity.completed).length;
+  const total = subject.card?.activityCount ?? subject.activities.length;
+  const completed = subject.card?.completedActivityCount ?? subject.activities.filter((activity) => activity.completed).length;
   const isComplete = total > 0 && completed === total;
   const certificateReady = certificateEligible(subject, template);
   const status = subjectLearningStatus(subject);
@@ -223,7 +223,7 @@ export function SubjectCard({ subject, cover, tone = 'purple', onOpen, template,
           <HoursProgress completed={completedHours} planned={plannedHours} label={`${subject.title} hours progress`} />
           {subject.recordedHistory && <p className="mt-2 text-xs text-foreground-500">Recorded activities only · Full catalogue: {subject.catalogueCount ?? 0}</p>}
         </div>
-        <span className={styles.nextActivity}>{isComplete ? <CheckCircle2 size={20} /> : <BookOpen size={20} />}<span><small>{isComplete ? 'Well done' : 'Next up'}</small><strong>{isComplete ? subject.recordedHistory ? 'All recorded activities complete' : 'All activities complete' : next?.title || 'Explore this subject'}</strong></span><ChevronRight size={16} /></span>
+        <span className={styles.nextActivity}>{isComplete ? <CheckCircle2 size={20} /> : <BookOpen size={20} />}<span><small>{isComplete ? 'Well done' : 'Next up'}</small><strong>{isComplete ? subject.recordedHistory ? 'All recorded activities complete' : 'All activities complete' : subject.card?.nextTitle || next?.title || 'Explore this subject'}</strong></span><ChevronRight size={16} /></span>
         <span className={styles.cardAction}>Open subject<ArrowRight size={16} aria-hidden="true" /></span>
       </div>
     </button>
@@ -231,7 +231,7 @@ export function SubjectCard({ subject, cover, tone = 'purple', onOpen, template,
   </article>;
 }
 
-function SubjectCardsSkeleton() {
+export function SubjectCardsSkeleton() {
   return <div role="status" className={styles.workspace} aria-label="Loading subjects">
     <div className={styles.loadingHeader}><div><span className={styles.loadingLabel}>Loading subjects</span><p className={styles.loadingHint}>Getting your activities and progress ready…</p></div><BookOpen size={22} aria-hidden="true" /></div>
     <div className={`${styles.stats} ${styles.skeletonStats}`} aria-hidden="true">{[0, 1, 2, 3].map(key => <div key={key} className={styles.stat}><span className={`${styles.skeletonLine} ${styles.mediumLine}`} /><span className={`${styles.skeletonLine} ${styles.shortLine}`} /></div>)}</div>
@@ -276,12 +276,12 @@ function ActivityRow({ entry, kind, learnerId, onProgress, defaultOpen = false, 
   </div>;
 }
 
-export function StudentActivityPanel({ data: incomingData, loading, error, onRetry, kind, learnerId, real: incomingReal = null, onProgress, metrics, view = 'catalogue', schedule, scheduleLoading = false, upcomingSessions, moduleProgress }: {
+export function StudentActivityPanel({ data: incomingData, loading, error, onRetry, kind, learnerId, real: incomingReal = null, onProgress, metrics, view = 'catalogue', schedule, scheduleLoading = false, upcomingSessions, moduleProgress, resolvedMetadata, catalogueSubjects }: {
   kind?: string; learnerId?: string; real?: LearnerDetail | null; data: StudentActivityResponse | null;
-  loading: boolean; error: string | null; onRetry: () => void; onProgress?: () => void;
+  loading: boolean; error: string | null; onRetry: () => void; onProgress?: (changes?: { id: string; total: number; completed: number }[]) => void;
   metrics?: LearnerMetrics | null;
   view?: 'catalogue' | 'map'; schedule?: LearningSchedule | null; scheduleLoading?: boolean; upcomingSessions?: PlanSession[];
-  moduleProgress?: Record<string, PlanModuleProgress>;
+  moduleProgress?: Record<string, PlanModuleProgress>; resolvedMetadata?: CoverMetadata; catalogueSubjects?: Subject[];
 }) {
   const [search, setSearch] = useState('');
   const location = useLocation();
@@ -300,7 +300,8 @@ export function StudentActivityPanel({ data: incomingData, loading, error, onRet
   };
   const identity = `${kind}:${learnerId}`;
   const [certificateConfig, setCertificateConfig] = useState<{ template: CertificateTemplateSummary | null; csrfToken: string }>({ template: null, csrfToken: '' });
-  const { metadata: incomingMetadata, error: imageError, retry: retryMetadata } = useSubjectMetadata(incomingData, incomingReal, kind, learnerId, !error, true);
+  const { metadata: fetchedMetadata, error: imageError, retry: retryMetadata } = useSubjectMetadata(incomingData, incomingReal, kind, learnerId, !error && !resolvedMetadata, true);
+  const incomingMetadata = resolvedMetadata ?? fetchedMetadata;
   const ready = !loading && !error && (!learnerId || !!incomingMetadata);
   const [snapshot, setSnapshot] = useState<{
     identity: string; data: StudentActivityResponse | null; real: LearnerDetail | null; metadata?: CoverMetadata | null;
@@ -322,13 +323,13 @@ export function StudentActivityPanel({ data: incomingData, loading, error, onRet
   const [savedProgress, setSavedProgress] = useState<{ identity: string; activities: Record<string, SubjectAttemptResult> }>({ identity, activities: {} });
   useEffect(() => {
     setCertificateConfig({ template: null, csrfToken: '' });
-    if (view !== 'catalogue' || !kind || !learnerId) return;
+    if (view !== 'catalogue' || selected || requestedActivity || !kind || !learnerId) return;
     let cancelled = false;
     fetchLearnerCertificateTemplate(kind, learnerId)
       .then((result) => { if (!cancelled) setCertificateConfig({ template: result.template, csrfToken: result.csrfToken || '' }); })
       .catch(() => { if (!cancelled) setCertificateConfig({ template: null, csrfToken: '' }); });
     return () => { cancelled = true; };
-  }, [view, kind, learnerId]);
+  }, [view, kind, learnerId, selected, requestedActivity]);
   const updatedData = useMemo(() => {
     if (!data || savedProgress.identity !== identity) return data;
     return { ...data, activities: data.activities.map((item) => {
@@ -345,10 +346,17 @@ export function StudentActivityPanel({ data: incomingData, loading, error, onRet
       const scores = [existing?.score_percent, result.score_percent].filter((score): score is number => score != null);
       return { identity, activities: { ...activities, [activityId]: { ...result, completed: !!existing?.completed || result.completed, score_percent: scores.length ? Math.max(...scores) : null } } };
     });
-    onProgress?.();
+    const projected = updatedData ? { ...updatedData, activities: updatedData.activities.map(item => item.activity_id === activityId
+      ? { ...item, completed: item.completed || result.completed } : item) } : null;
+    const changed = buildUnifiedLearningSummary(projected, real, metadata);
+    onProgress?.(changed.subjects.map(subject => ({ id: subject.id, total: subject.activities.length,
+      completed: subject.activities.filter(item => item.completed).length })));
   };
   const summary = useMemo(() => buildUnifiedLearningSummary(updatedData, real, metadata), [updatedData, real, metadata]);
-  const subjects = summary.subjects;
+  const subjects = useMemo(() => catalogueSubjects
+    ? [...catalogueSubjects.filter(card => !summary.subjects.some(subject => subject.id === card.id || subject.replacementCourseRef === card.id)), ...summary.subjects]
+      .sort((a, b) => a.title.localeCompare(b.title) || a.id.localeCompare(b.id))
+    : summary.subjects, [catalogueSubjects, summary.subjects]);
   // Canonical evidence IDs identify progress records, not source materials.
   // Refuse ambiguous matches rather than opening a different course's material.
   const activityMatches = requestedActivity ? subjects.flatMap(subject => [...subject.activities, ...(subject.archivedActivities || [])]
@@ -417,7 +425,7 @@ export function StudentActivityPanel({ data: incomingData, loading, error, onRet
     </header>}
     {imageError && <p role="alert" className="text-sm text-amber-800">{imageError} <button onClick={retryMetadata} className="font-semibold underline">Try again</button></p>}
     {error && <p role="alert" className="rounded-xl bg-amber-50 p-3 text-sm text-amber-800">{error} <button onClick={onRetry} className="font-semibold underline">Try again</button></p>}
-    {data?.source_status === 'historical' && <p role="status" className="rounded-xl bg-amber-50 p-3 text-sm text-amber-800">Showing saved previous learning. The latest results could not be verified. <button onClick={onRetry} className="font-semibold underline">Try again</button></p>}
+    {data?.source_status === 'historical' && data.verification_status !== 'verified' && <p role="status" className="rounded-xl bg-amber-50 p-3 text-sm text-amber-800">Showing saved previous learning. The latest results could not be verified. <button onClick={onRetry} className="font-semibold underline">Try again</button></p>}
     {selected && !active && <p role="alert" className={styles.empty}>This module is not available in your learning plan. <button onClick={() => select()}>Show your modules</button></p>}
     {view === 'map' && <div className={styles.mapToolbar}>
       <label className={styles.selectLabel}>Module<select aria-label="Filter by module" value={active?.id || ''} onChange={event => { setSearch(''); select(event.target.value); }}><option value="" disabled>{scheduleLoading ? 'Finding your current module…' : 'Choose a module'}</option>{subjects.map(subject => <option key={subject.id} value={subject.id}>{subject.title}{planSelection.entries.some(entry => entry.subject.id === subject.id) ? ` · ${planLabel}` : ''}</option>)}</select></label>

@@ -29,7 +29,7 @@ TARGET_ROWS = [
     ("W-B1", 1, "Week 1", "C-B2", "reading", "Reading Material 2", 2.0),
     ("W-B1", 1, "Week 1", "C-B3", "powerpoint", "PowerPoint 3", 3.0),
     ("W-B1", 1, "Week 1", "C-B4", "video", "Recorded Session 2", 1.0),
-    ("W-B2", 2, "Week 2", None, None, None, None),
+    ("W-B2", 2, "Week 2", "C-B5", "video", "Another week's video", 1.0),
 ]
 MODULE_ROWS = {"MOD-A": SOURCE_ROWS, "MOD-B": TARGET_ROWS}
 
@@ -392,12 +392,20 @@ class MappingValidationTests(SimpleTestCase):
         self.assertIn("is a video", error)
         self.assertIn("is a reading", error)
 
-    def test_the_same_type_with_a_different_title_is_rejected(self):
-        _pairs, error = self._validate([
+    def test_staff_can_manually_match_a_different_title_of_the_same_type(self):
+        pairs, error = self._validate([
             {"fromComponentId": "C-A1", "toComponentId": "C-B4"},
         ])
 
-        self.assertIn("same title and type", error)
+        self.assertEqual(error, "")
+        self.assertEqual(pairs, [("C-A1", "C-B4")])
+
+    def test_manual_match_cannot_use_a_component_from_another_target_week(self):
+        _pairs, error = self._validate([
+            {"fromComponentId": "C-A1", "toComponentId": "C-B5"},
+        ])
+
+        self.assertIn("not in the target week paired", error)
 
     def test_two_components_cannot_land_on_the_same_one(self):
         _pairs, error = self._validate([

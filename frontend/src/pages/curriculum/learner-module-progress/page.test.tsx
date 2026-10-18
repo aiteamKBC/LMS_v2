@@ -64,12 +64,12 @@ describe('Activity status and Overall Progress', () => {
     data.learnerActivityPlan![0].logState!.acceptedOtjh = 1.5;
     fetchImpact.mockResolvedValue(data); open(); await screen.findByText('Test reading c1');
     const overview = screen.getByRole('article', { name: 'OTH Progress' });
-    expect(overview).toHaveTextContent('2h 30m / 6h');
+    expect(overview).toHaveTextContent('02:30:00 / 06:00:00');
     expect(overview).toHaveTextContent('1 accepted record(s) without allocated time');
-    expect(screen.getByRole('region', { name: 'Week 1 | Introduction' })).toHaveTextContent('OTH: 2h 30m');
+    expect(screen.getByRole('region', { name: 'Week 1 | Introduction' })).toHaveTextContent('OTH: 02:30:00');
     expect(screen.getByText('Test quiz c2').closest('tr')).toHaveTextContent('—');
     fireEvent.click(screen.getByRole('button', { name: 'Not Started' }));
-    expect(overview).toHaveTextContent('2h 30m / 6h');
+    expect(overview).toHaveTextContent('02:30:00 / 06:00:00');
   });
 
   it('retains earlier module hours and other learners totals when a saved status cannot refresh', async () => {
@@ -83,7 +83,7 @@ describe('Activity status and Overall Progress', () => {
     open(); await screen.findByText('Test reading c1');
     fireEvent.click(screen.getByRole('button', { name: 'Change status for Test reading c1' }));
     await screen.findByText(/Status saved. Could not refresh summaries/);
-    expect(screen.getByRole('article', { name: 'OTH Progress' })).toHaveTextContent('3h 30m / 6h');
+    expect(screen.getByRole('article', { name: 'OTH Progress' })).toHaveTextContent('03:30:00 / 06:00:00');
     expect(screen.getByRole('article', { name: 'OTH Progress' })).toHaveTextContent('1 accepted record(s) without allocated time');
   });
   it('averages the three card percentages and keeps the average unchanged by filters', async () => {
@@ -106,11 +106,11 @@ describe('Activity status and Overall Progress', () => {
     await waitFor(() => expect(screen.getByRole('article', { name: 'Activities Progress' })).toHaveTextContent('1 / 6 completed'));
     expect(saveStatus).toHaveBeenCalledWith('MOD-1', 'profile-1', 'c1', expect.objectContaining({ displayStatus: 'not_started', expectedRevision: 0, snapshotHash: 'snapshot-c1' }));
     expect(saveStatus.mock.calls[0][3]).not.toHaveProperty('durationSeconds');
-    expect(screen.getByRole('article', { name: 'OTH Progress' })).toHaveTextContent('2h / 6h');
+    expect(screen.getByRole('article', { name: 'OTH Progress' })).toHaveTextContent('02:00:00 / 06:00:00');
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
     const liveRow = screen.getByText('Test reading c1').closest('tr')!;
     expect(liveRow).not.toHaveTextContent('Manual');
-    expect(liveRow).toHaveTextContent('1h'); expect(liveRow).toHaveTextContent('10:00:00 → 11:00:00');
+    expect(liveRow).toHaveTextContent('01:00:00'); expect(liveRow).toHaveTextContent('10:00:00 → 11:00:00');
   });
 
   it('asks for OTH and start time, calculates the end and updates only the saved activity after success', async () => {
@@ -167,7 +167,7 @@ describe('Activity status and Overall Progress', () => {
     fetchImpact.mockResolvedValueOnce({...saved,learnerActivityPlan:saved.learnerActivityPlan?.map(item=>item.componentId==='c2'?{...item,logState:{...state,revision:2,displayStatus:'not_started'},displayStatus:'not_started'}:item)});
     fireEvent.click(screen.getByRole('button',{name:'Change status for Test quiz c2'}));
     await waitFor(()=>expect(live).toHaveTextContent('Not Started'));
-    expect(live).toHaveTextContent('Input');expect(live).toHaveTextContent('32m');expect(live).not.toHaveTextContent('Manual');
+    expect(live).toHaveTextContent('Input');expect(live).toHaveTextContent('00:32:00');expect(live).not.toHaveTextContent('Manual');
   });
 
   it('preserves input and current status when the server refuses a signed month or conflict', async () => {
@@ -210,11 +210,11 @@ describe('Activity status and Overall Progress', () => {
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
     expect(saveStatus.mock.calls[0][3]).toMatchObject({ attendanceMode: 'attended', durationSeconds: 9000, timeEntryMode: 'input', activityDate: '2026-10-01' });
     const live = screen.getByText('Test live-session c6').closest('tr')!;
-    expect(live).toHaveTextContent('Attended'); expect(live).toHaveTextContent('2h 30m'); expect(live).not.toHaveTextContent('Manual');
+    expect(live).toHaveTextContent('Attended'); expect(live).toHaveTextContent('02:30:00'); expect(live).not.toHaveTextContent('Manual');
     saveStatus.mockResolvedValueOnce({ state: { ...state, revision: 2, displayStatus: 'not_started' } });
     fetchImpact.mockResolvedValueOnce({ ...saved, learnerActivityPlan: saved.learnerActivityPlan?.map(item => item.componentId === 'c6' ? { ...item, displayStatus: 'not_started' } : item) });
     fireEvent.click(screen.getByRole('button', { name: 'Change status for Test live-session c6' }));
-    await waitFor(() => expect(live).toHaveTextContent('Not Started')); expect(live).toHaveTextContent('2h 30m');
+    await waitFor(() => expect(live).toHaveTextContent('Not Started')); expect(live).toHaveTextContent('02:30:00');
     expect(saveStatus.mock.calls[1][3]).not.toHaveProperty('attendanceMode'); expect(saveStatus.mock.calls[1][3]).not.toHaveProperty('durationSeconds');
   });
 

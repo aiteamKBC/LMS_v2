@@ -39,7 +39,7 @@ def learning_facts(source, owner, profile, records, ids, *, selected=False, subj
     The timeline requests identity-only native rows. Rich native facts, including
     KSB mappings, are restricted to one assigned module on a detail request.
     """
-    from .weekly_learning import build_weekly_learning
+    from .weekly_learning import build_learning_content_summary
     from .student_activity_access import student_activity_available
     from .student_activity_data import summarize_activities
     from .builder_activity_dates import read_builder_activity_dates
@@ -49,11 +49,11 @@ def learning_facts(source, owner, profile, records, ids, *, selected=False, subj
     context = getattr(source, '_training_identity_native', None)
     if selected and context is None:
         all_ids = getattr(source, '_training_module_ids', ids)
-        context = build_weekly_learning(source, source.pk, learning_summary=True,
+        context = build_learning_content_summary(source, source.pk, learning_summary=True,
             assigned_modules=[{'moduleId': mid} for mid in all_ids], strict=True, identities_only=True)
         source._training_identity_native = context
     progress = {'progress': (context.get('quizAttempts', []), context.get('videoProgress', []), context.get('componentProgress', []))} if selected else {}
-    native = build_weekly_learning(source, source.pk, learning_summary=True,
+    native = build_learning_content_summary(source, source.pk, learning_summary=True,
                                   assigned_modules=assigned, strict=True,
                                   identities_only=not selected, **progress,
                                   **({'compact_content': True} if selected else {}))
@@ -89,7 +89,14 @@ def learning_facts(source, owner, profile, records, ids, *, selected=False, subj
     with connections['enrolment'].cursor() as cur:
         # Timeline, selected-module and plan reads share this request's title cache.
         builder = builder_subject_links(cur, source, refs)
-        dates = read_builder_activity_dates(cur, ids)
+        # These facts are reused when the initial timeline also selects a module.
+        # Keep scope exact: a different module population must be read independently.
+        cached_dates = getattr(source, '_training_activity_dates', None)
+        if cached_dates is not None and cached_dates[0] == frozenset(ids):
+            dates = cached_dates[1]
+        else:
+            dates = read_builder_activity_dates(cur, ids)
+            source._training_activity_dates = (frozenset(ids), dates)
     learning = {'activity': activity, 'detail': native, 'metadata': {
         'builder_subjects': builder, 'activity_dates': dates,
         'current_subjects': [{'id': mid, 'title': builder.get(f'current:{mid}', {}).get('title') or ''}
@@ -104,22 +111,27 @@ def learning_facts(source, owner, profile, records, ids, *, selected=False, subj
         components.setdefault(ref, component)
     legacy_done = {(f"legacy:{a['group_id']}", a['activity_id']): bool(a.get('completed'))
                    for a in (activity or {}).get('activities', [])}
+    passed_attempts = [a for a in native.get('quizAttempts', []) if a.get('passed')]
+    passed_quizzes = {str(a.get('quizId')) for a in passed_attempts}
+    passed_components = {a.get('componentId') for a in passed_attempts}
     for subject in subjects:
         for item in subject['activities']:
             component = components.get(item['id']) or {}
             quiz = (component.get('quizMeta') or {}).get('quizId')
-            done = any(a.get('passed') and ((quiz is not None and str(a.get('quizId')) == str(quiz))
-                       or (component.get('componentId') and a.get('componentId') == component['componentId']))
-                       for a in native.get('quizAttempts', [])) if component.get('isQuiz') else str(component.get('componentId')) in completed
+            done = ((quiz is not None and str(quiz) in passed_quizzes)
+                    or bool(component.get('componentId') and component['componentId'] in passed_components)) \
+                if component.get('isQuiz') else str(component.get('componentId')) in completed
             item['completed'] = legacy_done.get((subject['id'], item['id']), False) or done
             item['_native'] = bool(component)
             item['_mappingMissing'] = not component or component.get('ksbMappings') is None
     return subjects, native
 
 
-def module_rows(cur, ids, *, rich_id=None):
+def module_rows(cur, ids, *, rich_id=None, identity_metadata=None):
     """One metadata read; transfer descriptions for the focused module only."""
-    cur.execute('''SELECT m.module_catalogue_id AS id,m.title,
+    extra_columns = ',m.cover_image_url' if identity_metadata is not None else ''
+    module_visibility = " AND (m.deleted_at IS NULL OR COALESCE(m.deleted_via_parent,'')<>'')" if identity_metadata is not None else ''
+    cur.execute(f'''SELECT m.module_catalogue_id AS id,m.title{extra_columns},
         CASE WHEN m.module_catalogue_id=%s THEN m.description ELSE '' END AS description,
         m.start_date,m.end_date,m.tutor_name,
         coalesce(nullif(btrim(g.coach_name),''),m.coach_name) AS coach_name,
@@ -128,16 +140,17 @@ def module_rows(cur, ids, *, rich_id=None):
         coalesce(nullif(m.session_start_time,''),g.session_start_time) AS session_start_time,
         coalesce(nullif(m.session_end_time,''),g.session_end_time) AS session_end_time
         FROM curriculum.modules m LEFT JOIN curriculum.groups g ON g.group_id=m.group_id
-        WHERE m.module_catalogue_id=ANY(%s) ORDER BY m.title''', [rich_id, ids])
+        WHERE m.module_catalogue_id=ANY(%s){module_visibility} ORDER BY m.title''', [rich_id, ids])
     found = schedule.rows(cur)
     modules = {r['id']: schedule.plan_module(r) for r in found}
-    cur.execute('''WITH live_counts AS (
+    week_order = ',w.display_order' if identity_metadata is not None else ''
+    cur.execute(f'''WITH live_counts AS (
         SELECT c.module_catalogue_id,c.week_id,count(*) AS live_session_count
         FROM curriculum.components c WHERE c.module_catalogue_id=ANY(%s)
           AND lower(replace(coalesce(c.type,''),'-','_'))='live_session'
           AND (c.deleted_at IS NULL OR COALESCE(c.deleted_via_parent,'')<>'')
         GROUP BY c.module_catalogue_id,c.week_id
-    ) SELECT w.id,w.module_catalogue_id,w.week_number,w.title,
+    ) SELECT w.id,w.module_catalogue_id,w.week_number,w.title{week_order},
         CASE WHEN w.module_catalogue_id=%s THEN w.learning_outcomes ELSE '[]'::jsonb END AS learning_outcomes,
         w.holiday_note_enabled,w.holiday_note,
         coalesce(live_counts.live_session_count,0) AS live_session_count
@@ -147,7 +160,13 @@ def module_rows(cur, ids, *, rich_id=None):
           AND (w.deleted_at IS NULL OR COALESCE(w.deleted_via_parent,'')<>'')
         ORDER BY w.display_order,w.week_number,w.id''', [ids, rich_id, ids])
     counts, weeks = defaultdict(int), {}
-    for row in schedule.rows(cur):
+    week_rows = schedule.rows(cur)
+    if identity_metadata is not None:
+        from .student_activity import _builder_cover_url
+        identity_metadata.update(module_titles={r['id']: r['title'] for r in found},
+            weeks=[(r['id'],r['module_catalogue_id'],r['title'],r['week_number'],r.get('display_order')) for r in week_rows],
+            covers={f"current:{r['id']}": _builder_cover_url(r.get('cover_image_url')) for r in found})
+    for row in week_rows:
         mid = row['module_catalogue_id']
         counts[mid] += 1
         outcomes = [schedule.clean_text(o) for o in schedule.as_list(row['learning_outcomes']) if isinstance(o, str) and schedule.clean_text(o)]
@@ -217,8 +236,12 @@ def selected_detail(source, owner, profile, records, selected, modules, links, *
     activity_counts = dict(Counter(a.get('category') or 'activity' for a in activities))
     codes = sorted({k for a in activities for k in a.get('ksbs', [])})
     mapping_missing = any(a.get('_mappingMissing', not a.get('_native')) for a in activities)
+    live_activities = defaultdict(list)
+    for activity in activities:
+        if activity.get('category') == 'live_session':
+            live_activities[activity.get('date')].append(activity)
     for session in sessions:
-        matches = [a for a in activities if a.get('category') == 'live_session' and a.get('date') == day_from_session(session['start'])]
+        matches = live_activities.get(day_from_session(session['start']), [])
         if len(matches) == 1:
             session['title'] = matches[0]['title']
     all_dates = {*selected['dates'], *(day_from_session(s['start']) for s in sessions)}
@@ -324,7 +347,7 @@ def read_training(source, kind, owner, profile, request, module_id=None):
     if not coach_name and not coach['coach_email'] and schedule.source_coach(source) is None:
         coach_name = schedule.assigned_group_coach(source, list(modules.values()))
     return {'timeline': {'start': minimum[:7], 'end': maximum[:7], 'programmeStartDate': minimum,
-        'months': {m: {'topics': []} for m in targets}, 'modules': [timeline_module(m) for m in displayed],
+        'monthKeys': list(targets), 'modules': [timeline_module(m) for m in displayed],
         'reviews': reviews, 'coachName': coach_name},
         'selectedModuleId': selected['id'] if selected else None,
         'selectedModule': selected_detail(source, owner, profile, records, selected, modules, links) if selected else None}

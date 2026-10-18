@@ -124,23 +124,38 @@ def source_reference(record):
 def merge_attempts(records, attempts):
     """Use saved course attempts for completion, never manufacture their hours."""
     result = [dict(p) for p in records]
+    # One record can be reached through several lineage links. Index positions,
+    # preserving original row order and merging each matching row only once.
+    by_route = {}
+    for index, p in enumerate(result):
+        source_ref = source_reference(p)
+        routes, typed_courses = set(), set()
+        for link in [*(p.get('sources') or []), *(p.get('historical_components') or [])]:
+            if link.get('source_system') == 'old_lms':
+                course = str(link.get('source_course_ref'))
+                typed_courses.add(course)
+                activity = link.get('source_activity_id')
+                if isinstance(activity, str):
+                    if activity.startswith('material:'):
+                        routes.add(f"la:{course}:{activity[9:]}")
+                    elif activity.startswith('quiz:'):
+                        routes.add(f"subject:quiz:{course}:{activity[5:]}")
+        # Typed lineage overrides a historical untyped reference for that
+        # course only. A quiz and a material can share the same numeric id.
+        if isinstance(source_ref, str):
+            parts = source_ref.split(':')
+            course = (parts[1] if len(parts) == 3 and parts[0] == 'la' else
+                      parts[2] if len(parts) == 4 and parts[:2] == ['subject', 'quiz'] else None)
+            if course is not None and course not in typed_courses:
+                routes.add(source_ref)
+        for route in routes:
+            by_route.setdefault(route, []).append(index)
     for attempt in attempts:
         catalogue_kind = attempt.get('catalogue_kind', 'material')
         ref = f"{'la' if catalogue_kind == 'material' else 'subject:quiz'}:{attempt['group_id']}:{attempt['activity_id']}"
         route = {'source_system': 'old_lms', 'source_course_ref': str(attempt['group_id']),
                  'source_activity_id': f"{catalogue_kind}:{attempt['activity_id']}"}
-        matches = []
-        for p in result:
-            links = [*(p.get('sources') or []), *(p.get('historical_components') or [])]
-            typed = [link for link in links if link.get('source_system') == 'old_lms'
-                     and str(link.get('source_course_ref')) == str(attempt['group_id'])]
-            linked = (not typed and source_reference(p) == ref) or any(
-                link.get('source_system') == 'old_lms'
-                and str(link.get('source_course_ref')) == str(attempt['group_id'])
-                and link.get('source_activity_id') == route['source_activity_id']
-                for link in links)
-            if linked:
-                matches.append(p)
+        matches = [result[index] for index in by_route.get(ref, ())]
         if not matches:
             at = instant(attempt['submitted_at'])
             record_id = (f"subject:{attempt['group_id']}:{attempt['activity_id']}" if catalogue_kind == 'material'
@@ -151,6 +166,7 @@ def merge_attempts(records, attempts):
                 'source_payload': {'original_source_ref': ref},
                 'reporting_month': at.strftime('%Y-%m'), 'reporting_started_at': at}]
             result.extend(matches)
+            by_route.setdefault(ref,[]).append(len(result)-1)
         for p in matches:
             p['completed'] = bool(p.get('completed', p.get('accepted')) or attempt['completed'])
             if attempt.get('best_percent') is not None:

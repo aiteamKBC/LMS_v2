@@ -24,7 +24,9 @@ def learner_rewards_summary(request, kind, pk):
         if not model.all_learners.filter(pk=pk).exists():
             return JsonResponse({'error': 'Learner not found.'}, status=404)
         points = points_summary(str(pk))
-        rewards = Reward.objects.filter(active=True, stock__gt=F('total_claimed')).order_by('points', 'name')[:3]
+        rewards = Reward.objects.filter(active=True, stock__gt=F('total_claimed')).only(
+            'id', 'name', 'description', 'points', 'category', 'stock', 'total_claimed',
+        ).order_by('points', 'name')[:3]
         payload = {'points': points, 'rewards': [
             {'id': str(reward.pk), 'name': reward.name, 'description': reward.description,
              'points': reward.points, 'category': reward.category,

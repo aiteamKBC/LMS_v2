@@ -6,14 +6,11 @@ import { AppIcon } from '@/components/feature/AppIcon';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { WorkspaceHeroBanner } from '@/components/feature/WorkspaceHeroBanner';
 import { PageContainer } from '@/components/ui/PageContainer';
-import { useCurriculumData } from '@/hooks/useCurriculumData';
-import { useCurriculumProgrammes } from '@/hooks/useCurriculumProgrammes';
+import { useCurriculumHome, type HomeModule, type ProgrammeFocus } from './useCurriculumHome';
 import { curriculumNavItems } from '@/mocks/navigation';
-import type { CurriculumCohort, CurriculumGroup, CurriculumModule, CurriculumProgramme } from '@/lib/curriculumApi';
 
 type AttentionTone = 'rose' | 'amber' | 'sky';
 type AttentionIssue = { key: string; title: string; detail: string; count: number; href: string; action: string; icon: string; tone: AttentionTone };
-type ProgrammeFocus = { programme: CurriculumProgramme; issues: string[]; issueCount: number };
 type GuideStep = {
   title: string;
   shortTitle: string;
@@ -114,44 +111,23 @@ const CURRICULUM_GUIDE_STEPS: GuideStep[] = [
 
 export default function CurriculumStudio() {
   const [guideOpen, setGuideOpen] = useState(false);
-  const { data, loading: dataLoading, error: dataError } = useCurriculumData({ compact: true });
-  const { programmes, loading: programmesLoading, error: programmesError } = useCurriculumProgrammes();
-  const modules = useMemo(() => data?.modules ?? [], [data?.modules]);
-  const cohorts = useMemo(() => data?.cohorts ?? [], [data?.cohorts]);
-  const groups = useMemo(() => data?.groups ?? [], [data?.groups]);
-  const loading = dataLoading || programmesLoading;
-  const error = dataError || programmesError;
-
-  const draftModules = useMemo(() => modules.filter(module => normalise(module.status) !== 'published'), [modules]);
-  const modulesWithoutKsb = useMemo(() => modules.filter(module => Number(module.ksbCount || 0) === 0), [modules]);
-  const unassignedTutors = useMemo(() => modules.filter(module => isMissingAssignment(module.tutor)), [modules]);
-  const unassignedCoaches = useMemo(() => groups.filter(group => isMissingAssignment(group.coach)), [groups]);
-  const programmesWithoutKsb = useMemo(
-    () => programmes.filter(programme => Number(programme.ksbTotal || 0) === 0 && !clean(programme.ksbProfileSourceId)),
-    [programmes],
-  );
+  const { data, loading, error, reload } = useCurriculumHome();
+  const counts = data?.attentionCounts;
+  const continueModules = data?.continueModules ?? [];
+  const programmeFocus = data?.programmeFocus ?? [];
+  const openIssueCount = data?.stats.openIssues ?? 0;
+  const unavailable = !data && Boolean(error);
 
   const attentionIssues = useMemo<AttentionIssue[]>(() => {
     const issues: AttentionIssue[] = [
-      { key: 'programme-ksb-source', title: 'Programmes need a KSB source', detail: 'Choose the standard or KSB profile before mapping content.', count: programmesWithoutKsb.length, href: '/curriculum/programmes', action: 'Review programmes', icon: 'ri-node-tree', tone: 'rose' },
-      { key: 'module-mapping', title: 'Modules have no KSB mappings', detail: 'Open coverage and map each gap to the right component.', count: modulesWithoutKsb.length, href: '/curriculum/ksb-mapping', action: 'Open coverage', icon: 'ri-link-unlink', tone: 'amber' },
-      { key: 'draft-content', title: 'Modules are still in draft', detail: 'Continue authoring the content that is not yet published.', count: draftModules.length, href: '/curriculum/module-builder', action: 'Continue authoring', icon: 'ri-draft-line', tone: 'sky' },
-      { key: 'group-coach', title: 'Groups have no coach', detail: 'Assign a coach before the delivery setup is complete.', count: unassignedCoaches.length, href: '/curriculum/groups', action: 'Assign coaches', icon: 'ri-user-search-line', tone: 'amber' },
-      { key: 'module-tutor', title: 'Modules have no tutor', detail: 'A scheduled module needs an owner for its live sessions.', count: unassignedTutors.length, href: '/curriculum/delivery', action: 'Review delivery', icon: 'ri-user-settings-line', tone: 'amber' },
+      { key: 'programme-ksb-source', title: 'Programmes need a KSB source', detail: 'Choose the standard or KSB profile before mapping content.', count: counts?.['programme-ksb-source'] ?? 0, href: '/curriculum/programmes', action: 'Review programmes', icon: 'ri-node-tree', tone: 'rose' },
+      { key: 'module-mapping', title: 'Modules have no KSB mappings', detail: 'Open coverage and map each gap to the right component.', count: counts?.['module-mapping'] ?? 0, href: '/curriculum/ksb-mapping', action: 'Open coverage', icon: 'ri-link-unlink', tone: 'amber' },
+      { key: 'draft-content', title: 'Modules are still in draft', detail: 'Continue authoring the content that is not yet published.', count: counts?.['draft-content'] ?? 0, href: '/curriculum/module-builder', action: 'Continue authoring', icon: 'ri-draft-line', tone: 'sky' },
+      { key: 'group-coach', title: 'Groups have no coach', detail: 'Assign a coach before the delivery setup is complete.', count: counts?.['group-coach'] ?? 0, href: '/curriculum/groups', action: 'Assign coaches', icon: 'ri-user-search-line', tone: 'amber' },
+      { key: 'module-tutor', title: 'Modules have no tutor', detail: 'A scheduled module needs an owner for its live sessions.', count: counts?.['module-tutor'] ?? 0, href: '/curriculum/delivery', action: 'Review delivery', icon: 'ri-user-settings-line', tone: 'amber' },
     ];
     return issues.filter(issue => issue.count > 0).sort((left, right) => right.count - left.count);
-  }, [draftModules.length, modulesWithoutKsb.length, programmesWithoutKsb.length, unassignedCoaches.length, unassignedTutors.length]);
-
-  const programmeFocus = useMemo(
-    () => programmes.map(programme => buildProgrammeFocus(programme, modules, cohorts, groups)).filter(item => item.issueCount > 0).sort((left, right) => right.issueCount - left.issueCount).slice(0, 6),
-    [cohorts, groups, modules, programmes],
-  );
-  const continueModules = useMemo(
-    () => [...(draftModules.length ? draftModules : modules)].sort((left, right) => dateValue(right.lastUpdated) - dateValue(left.lastUpdated)).slice(0, 5),
-    [draftModules, modules],
-  );
-  const openIssueCount = attentionIssues.reduce((total, issue) => total + issue.count, 0);
-  const activeCohorts = cohorts.filter(cohort => normalise(cohort.status) === 'active').length;
+  }, [counts]);
 
   return (
     <WorkspaceShell role="curriculum" roleLabel="Curriculum Designer" navItems={curriculumNavItems} workspaceLabel="Curriculum Studio" pageTitle="Curriculum Home" pageSubtitle="Your next curriculum actions, in priority order" userName="Rachel Myers" userRole="Curriculum Designer">
@@ -162,7 +138,7 @@ export default function CurriculumStudio() {
             title="What needs your attention?"
             description="Start with a blocker, continue your latest module, or create a programme. Supporting reports stay out of the way until you need them."
             icon="ri-book-open-line"
-            footer={<div className="mt-3">{!loading && <span className={`inline-flex rounded-full px-3 py-1 text-[10px] font-semibold ${openIssueCount ? 'bg-amber-50 text-amber-700' : 'bg-emerald-50 text-emerald-700'}`}>{openIssueCount ? `${openIssueCount} open actions` : 'Everything looks clear'}</span>}</div>}
+            footer={<div className="mt-3">{!loading && !unavailable && <span className={`inline-flex rounded-full px-3 py-1 text-[10px] font-semibold ${openIssueCount ? 'bg-amber-50 text-amber-700' : 'bg-emerald-50 text-emerald-700'}`}>{openIssueCount ? `${openIssueCount} open actions` : 'Everything looks clear'}</span>}</div>}
             actions={              <div className="flex max-w-full flex-wrap gap-2">
                 <Link to="/curriculum/programmes?create=programme" className="inline-flex h-10 min-h-10 min-w-0 items-center justify-center gap-2 rounded-xl bg-[#b27715] px-3 py-2 text-center text-[12px] font-extrabold leading-4 text-white shadow-[0_8px_18px_rgba(178,119,21,0.3)] ring-1 ring-[#b27715]/30 transition-all duration-200 hover:bg-[#965f0d] hover:shadow-[0_10px_24px_rgba(178,119,21,0.4)] focus:outline-none focus:ring-2 focus:ring-[#b27715] focus:ring-offset-2 active:translate-y-px lg:whitespace-nowrap"><AppIcon className="ri-add-circle-line shrink-0 text-lg" />Create programme</Link>
                 <Link to="/curriculum/module-builder" className="curriculum-home-continue-button inline-flex h-10 min-h-10 min-w-0 items-center justify-center gap-2 rounded-xl border border-primary-200/70 bg-white/80 px-3 py-2 text-center text-[12px] font-bold leading-4 text-primary-800 transition-all duration-200 hover:border-primary-300 hover:bg-white hover:text-primary-900 focus:outline-none focus:ring-2 focus:ring-primary-300 focus:ring-offset-2 active:translate-y-px lg:whitespace-nowrap"><AppIcon className="ri-edit-box-line shrink-0 text-lg" />Continue authoring</Link>
@@ -170,26 +146,26 @@ export default function CurriculumStudio() {
               </div>}
           />
 
-          {error && <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-[12px] font-semibold text-red-700">Curriculum data could not be refreshed: {error}</div>}
+          {error && <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-[12px] font-semibold text-red-700">Curriculum data could not be refreshed: {error} <button type="button" onClick={() => { void reload(); }} className="ml-2 underline">Retry</button></div>}
 
           <section className="grid gap-3 sm:grid-cols-3">
-            <SummaryCard label="Programmes" value={programmes.length} detail="Open programme workspaces" href="/curriculum/programmes" icon="ri-stack-line" loading={loading} />
-            <SummaryCard label="Active delivery" value={activeCohorts} detail={`${groups.length} groups across all cohorts`} href="/curriculum/delivery" icon="ri-calendar-check-line" loading={loading} />
-            <SummaryCard label="Needs attention" value={openIssueCount} detail={attentionIssues.length ? `${attentionIssues.length} types of action` : 'No blockers found'} href="/curriculum/quality" icon="ri-error-warning-line" loading={loading} warning={openIssueCount > 0} />
+            <SummaryCard label="Programmes" value={data?.stats.programmes ?? 0} detail="Open programme workspaces" href="/curriculum/programmes" icon="ri-stack-line" loading={loading || unavailable} />
+            <SummaryCard label="Active delivery" value={data?.stats.activeCohorts ?? 0} detail={data ? `${data.stats.groups} groups across all cohorts` : 'Groups across all cohorts'} href="/curriculum/delivery" icon="ri-calendar-check-line" loading={loading || unavailable} />
+            <SummaryCard label="Needs attention" value={openIssueCount} detail={unavailable ? 'Summary unavailable' : attentionIssues.length ? `${attentionIssues.length} types of action` : 'No blockers found'} href="/curriculum/quality" icon="ri-error-warning-line" loading={loading || unavailable} warning={openIssueCount > 0} />
           </section>
 
           <section className="grid items-stretch gap-4 xl:grid-cols-2">
             <div className="h-full rounded-2xl border border-foreground-200 bg-background-50 shadow-sm">
               <SectionHeader title="Needs attention" detail="Live gaps, ordered by impact. Each row opens where it can be fixed." href="/curriculum/quality" action="View Quality" />
               <div className="p-3">
-                {loading ? <LoadingRows count={4} /> : attentionIssues.length ? <div className="space-y-2">{attentionIssues.map(issue => <AttentionRow key={issue.key} issue={issue} />)}</div> : <EmptyState icon="ri-checkbox-circle-line" title="No curriculum blockers found" detail="You can continue authoring or review an active programme." />}
+                {loading ? <LoadingRows count={4} /> : unavailable ? null : attentionIssues.length ? <div className="space-y-2">{attentionIssues.map(issue => <AttentionRow key={issue.key} issue={issue} />)}</div> : <EmptyState icon="ri-checkbox-circle-line" title="No curriculum blockers found" detail="You can continue authoring or review an active programme." />}
               </div>
             </div>
             <aside className="h-full rounded-2xl border border-foreground-200 bg-background-50 shadow-sm">
               <SectionHeader title="Continue working" detail="Draft and recently updated modules." href="/curriculum/library" action="Open Library" />
               <div className="p-3">
                 <div className="overflow-hidden rounded-xl border border-background-200 bg-background-100/35 divide-y divide-background-200/80">
-                  {loading ? <LoadingRows count={4} /> : continueModules.length ? continueModules.map(module => <ContinueModuleRow key={moduleIdentity(module)} module={module} />) : <EmptyState icon="ri-layout-4-line" title="No modules yet" detail="Create your first reusable module from the Library." compact />}
+                  {loading ? <LoadingRows count={4} /> : unavailable ? null : continueModules.length ? continueModules.map(module => <ContinueModuleRow key={module.id} module={module} />) : <EmptyState icon="ri-layout-4-line" title="No modules yet" detail="Create your first reusable module from the Library." compact />}
                 </div>
               </div>
             </aside>
@@ -198,7 +174,7 @@ export default function CurriculumStudio() {
           <section className="rounded-2xl border border-foreground-200 bg-background-50 shadow-sm">
             <SectionHeader title="Programmes to review" detail="Programme-level gaps grouped together, so you do not have to hunt across separate lists." href="/curriculum/programmes" action="All programmes" />
             <div className="grid gap-3 p-3 md:grid-cols-2 xl:grid-cols-3">
-              {loading ? Array.from({ length: 3 }).map((_, index) => <div key={index} className="h-32 animate-pulse rounded-xl bg-background-100" />) : programmeFocus.length ? programmeFocus.map(item => <ProgrammeFocusCard key={programmeIdentity(item.programme)} item={item} />) : <div className="md:col-span-2 xl:col-span-3"><EmptyState icon="ri-shield-check-line" title="All programmes are clear" detail="No missing structure, KSB source or staffing gaps were found in the current data." /></div>}
+              {loading ? Array.from({ length: 3 }).map((_, index) => <div key={index} className="h-32 animate-pulse rounded-xl bg-background-100" />) : unavailable ? null : programmeFocus.length ? programmeFocus.map(item => <ProgrammeFocusCard key={item.programme.id} item={item} />) : <div className="md:col-span-2 xl:col-span-3"><EmptyState icon="ri-shield-check-line" title="All programmes are clear" detail="No missing structure, KSB source or staffing gaps were found in the current data." /></div>}
             </div>
           </section>
 
@@ -333,14 +309,14 @@ function AttentionRow({ issue }: { issue: AttentionIssue }) {
   return <Link to={issue.href} className="group grid gap-2.5 rounded-xl border border-foreground-200/70 bg-background-50 p-3 transition-all duration-200 hover:border-primary-200 hover:bg-primary-50/25 focus:outline-none focus:ring-2 focus:ring-primary-300 focus:ring-inset sm:grid-cols-[auto_minmax(0,1fr)_auto] sm:items-center"><span className={`flex h-9 w-9 items-center justify-center rounded-lg ${tones[issue.tone]}`}><AppIcon className={`${issue.icon} text-base`} /></span><span className="min-w-0"><span className="flex flex-wrap items-center gap-2"><span className="text-[12px] font-bold text-foreground-900">{issue.title}</span><span className="rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-extrabold text-amber-700">{issue.count}</span></span><span className="mt-1 block text-[11px] leading-5 text-foreground-500">{issue.detail}</span></span><span className="inline-flex items-center gap-1 text-[11px] font-bold text-primary-700">{issue.action}<AppIcon className="ri-arrow-right-line transition-transform duration-200 group-hover:translate-x-0.5" /></span></Link>;
 }
 
-function ContinueModuleRow({ module }: { module: CurriculumModule }) {
-  const href = `/curriculum/module-builder?module=${encodeURIComponent(moduleIdentity(module))}`;
+function ContinueModuleRow({ module }: { module: HomeModule }) {
+  const href = `/curriculum/module-builder?module=${encodeURIComponent(module.id)}`;
   const published = normalise(module.status) === 'published';
   return <Link to={href} className="group flex min-h-[58px] items-center gap-3 rounded-lg px-3 py-2.5 transition-all duration-200 hover:bg-primary-50/35 focus:outline-none focus:ring-2 focus:ring-primary-300 focus:ring-inset"><span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary-50 text-primary-700"><AppIcon className="ri-layout-4-line" /></span><span className="min-w-0 flex-1"><span className="block truncate text-[12px] font-bold text-foreground-900">{clean(module.name) || 'Untitled module'}</span><span className="mt-0.5 block truncate text-[10px] leading-4 text-foreground-500">{clean(module.programme) || 'Reusable module'} · {Number(module.weeks || 0)} weeks</span></span><span className={`shrink-0 rounded-full px-2 py-1 text-[9px] font-extrabold uppercase ${published ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>{published ? 'Published' : 'Draft'}</span><AppIcon className="ri-arrow-right-s-line shrink-0 text-foreground-300 transition-colors group-hover:text-primary-600" /></Link>;
 }
 
 function ProgrammeFocusCard({ item }: { item: ProgrammeFocus }) {
-  const id = programmeIdentity(item.programme);
+  const id = item.programme.id;
   return <Link to={`/curriculum/programmes/${encodeURIComponent(id)}`} className="group flex min-h-[128px] flex-col rounded-[14px] border border-foreground-200/70 bg-background-50 p-4 shadow-[0_4px_14px_-12px_rgba(31,14,59,0.25)] transition-all duration-200 hover:border-primary-200 hover:shadow-[0_10px_20px_-14px_rgba(68,30,115,0.28)] focus:outline-none focus:ring-2 focus:ring-primary-300 focus:ring-offset-2"><div className="flex items-start justify-between gap-3"><span className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary-50 text-primary-700"><AppIcon className="ri-stack-line" /></span><span className="rounded-full bg-amber-50 px-2.5 py-1 text-[10px] font-extrabold text-amber-700">{item.issueCount} {item.issueCount === 1 ? 'action' : 'actions'}</span></div><h3 className="mt-2 line-clamp-1 text-[13px] font-bold text-foreground-950">{item.programme.name}</h3><p className="mt-1 line-clamp-2 text-[11px] leading-5 text-foreground-500">{item.issues.join(' · ')}</p><span className="mt-auto inline-flex items-center gap-1 pt-2 text-[10px] font-bold text-primary-700">Open programme <AppIcon className="ri-arrow-right-line transition-transform duration-200 group-hover:translate-x-0.5" /></span></Link>;
 }
 
@@ -360,28 +336,5 @@ function LoadingRows({ count }: { count: number }) {
   return <div className="space-y-2 py-1">{Array.from({ length: count }).map((_, index) => <div key={index} className="h-14 animate-pulse rounded-xl bg-background-100" />)}</div>;
 }
 
-function buildProgrammeFocus(programme: CurriculumProgramme, modules: CurriculumModule[], cohorts: CurriculumCohort[], groups: CurriculumGroup[]): ProgrammeFocus {
-  const programmeModules = modules.filter(module => belongsToProgramme(programme, module.programmeId) || belongsToProgramme(programme, module.programme));
-  const programmeCohorts = cohorts.filter(cohort => belongsToProgramme(programme, cohort.programmeId) || belongsToProgramme(programme, cohort.programme));
-  const cohortIds = new Set(programmeCohorts.map(cohort => normalise(cohort.id)));
-  const programmeGroups = groups.filter(group => belongsToProgramme(programme, group.programmeId) || belongsToProgramme(programme, group.programme) || cohortIds.has(normalise(group.cohortId)));
-  const issues: string[] = [];
-  if (Number(programme.ksbTotal || 0) === 0 && !clean(programme.ksbProfileSourceId)) issues.push('No KSB source');
-  if (!programmeModules.length) issues.push('No modules');
-  if (!programmeCohorts.length) issues.push('No delivery setup');
-  const moduleMappingGaps = programmeModules.filter(module => Number(module.ksbCount || 0) === 0).length;
-  const tutorGaps = programmeModules.filter(module => isMissingAssignment(module.tutor)).length;
-  const coachGaps = programmeGroups.filter(group => isMissingAssignment(group.coach)).length;
-  if (moduleMappingGaps) issues.push(`${moduleMappingGaps} mapping ${moduleMappingGaps === 1 ? 'gap' : 'gaps'}`);
-  if (tutorGaps) issues.push(`${tutorGaps} without tutor`);
-  if (coachGaps) issues.push(`${coachGaps} without coach`);
-  return { programme, issues, issueCount: issues.length };
-}
-
-function belongsToProgramme(programme: CurriculumProgramme, value: unknown) { const key = normalise(value); return Boolean(key) && [programme.id, programme.sourceId, programme.name].some(candidate => normalise(candidate) === key); }
-function programmeIdentity(programme: CurriculumProgramme) { return clean(programme.sourceId || programme.id || programme.name); }
-function moduleIdentity(module: CurriculumModule) { return clean(module.moduleCatalogueId || module.catalogueId || module.id || module.sourceId || module.name); }
 function clean(value: unknown) { return String(value ?? '').trim(); }
 function normalise(value: unknown) { return clean(value).toLowerCase(); }
-function isMissingAssignment(value: unknown) { const key = normalise(value); return !key || key === 'unassigned' || key === 'not assigned' || key === 'tbc'; }
-function dateValue(value: unknown) { const parsed = Date.parse(clean(value)); return Number.isFinite(parsed) ? parsed : 0; }
