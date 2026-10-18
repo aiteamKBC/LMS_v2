@@ -205,11 +205,15 @@ def _programme_shift_modules(programme, groups, cohorts):
         f"""
         SELECT {MODULE_COLUMNS}, cohort_id, cohort_name, group_id
         FROM curriculum.modules
-        WHERE (programme_id = %s AND programme_id <> '')
-           OR (programme_name = %s AND programme_name <> '')
-           OR cohort_id = ANY(%s::text[])
-           OR group_id = ANY(%s::text[])
-           OR module_catalogue_id = ANY(%s::text[])
+        WHERE deleted_at IS NULL
+          AND COALESCE(is_programme_deleted, FALSE) = FALSE
+          AND (
+               (programme_id = %s AND programme_id <> '')
+            OR (programme_name = %s AND programme_name <> '')
+            OR cohort_id = ANY(%s::text[])
+            OR group_id = ANY(%s::text[])
+            OR module_catalogue_id = ANY(%s::text[])
+          )
         ORDER BY start_date NULLS LAST, group_name NULLS LAST, title
         """,
         [*programme, cohort_ids, group_ids, listed_ids],
