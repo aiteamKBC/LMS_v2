@@ -24,24 +24,22 @@ def record(event_type, key, template=""):
 
 
 class NarrowedReviewEventsTests(SimpleTestCase):
-    def read(self, records, only_sources, fallback=False, **options):
+    def read(self, records, only_sources, **options):
         imported = [{"eventKey": "imported-review:1", "source": "progress-review"},
                     {"eventKey": "imported-review:2", "source": "mcr"}]
         with patch.object(calendar.CoachCalendarEvent.objects, "filter") as stored, \
              patch("learner_api.imported_review_calendar.imported_events_for_learner",
                    return_value=imported) as read_imported, \
-             patch.object(calendar, "_curriculum_mcm_fallback", return_value=fallback) as mcm_fallback, \
              patch.object(calendar, "_curriculum_cycle_events", return_value=[]) as cycle, \
              patch.object(calendar, "_serialize_event",
                           side_effect=lambda row: {"eventKey": row.event_key, "source": row.event_type}) as serialize:
             stored.return_value.order_by.return_value = records
             events = calendar.coaching_events_for_learner(source(), profile(), only_sources=only_sources, **options)
-        return events, read_imported, mcm_fallback, cycle, serialize
+        return events, read_imported, cycle, serialize
 
-    def test_progress_review_reader_skips_the_mcm_fallback_and_section_text(self):
+    def test_progress_review_reader_skips_curriculum_and_section_text(self):
         rows = [record("mcr", "native-mcm"), record("catch-up", "catch-up-1")]
-        events, read_imported, mcm_fallback, cycle, serialize = self.read(rows, {"progress-review"})
-        mcm_fallback.assert_not_called()
+        events, read_imported, cycle, serialize = self.read(rows, {"progress-review"})
         cycle.assert_not_called()
         serialize.assert_not_called()
         self.assertEqual(read_imported.call_args.kwargs, {"include_sections": False, "dates_only": False})
@@ -49,29 +47,32 @@ class NarrowedReviewEventsTests(SimpleTestCase):
                          ["imported-review:1"])
 
     def test_a_dates_only_reader_skips_the_review_history(self):
-        _, read_imported, _, _, _ = self.read([], {"progress-review"}, dates_only=True)
+        _, read_imported, _, _ = self.read([], {"progress-review"}, dates_only=True)
         self.assertEqual(read_imported.call_args.kwargs, {"include_sections": False, "dates_only": True})
 
-    def test_templated_mcm_rows_keep_the_fallback_because_a_template_can_retype_them(self):
+    def test_templated_native_mcm_rows_do_not_supplement_aptem_reviews(self):
         rows = [record("mcr", "native-mcm", template="T-1")]
-        _, _, mcm_fallback, _, _ = self.read(rows, {"progress-review"}, fallback=True)
-        mcm_fallback.assert_called_once()
+        events, _, cycle, serialize = self.read(rows, {"progress-review"})
+        cycle.assert_not_called()
+        serialize.assert_not_called()
+        self.assertNotIn("native-mcm", [item["eventKey"] for item in events])
 
-    def test_readers_that_keep_mcms_still_read_the_fallback(self):
-        _, _, mcm_fallback, _, _ = self.read([], {"mcr", "progress-review"})
-        mcm_fallback.assert_called_once()
+    def test_mcm_and_progress_readers_keep_only_imported_reviews(self):
+        events, _, cycle, _ = self.read([], {"mcr", "progress-review"})
+        cycle.assert_not_called()
+        self.assertEqual([item["eventKey"] for item in events], ["imported-review:1", "imported-review:2"])
 
     def test_default_calendar_reads_are_unchanged(self):
         rows = [record("catch-up", "catch-up-1")]
-        events, read_imported, mcm_fallback, _, serialize = self.read(rows, None)
-        mcm_fallback.assert_called_once()
+        events, read_imported, cycle, serialize = self.read(rows, None)
+        cycle.assert_not_called()
         serialize.assert_called_once()
         self.assertEqual(read_imported.call_args.kwargs, {})
         self.assertEqual(events[-1], {"eventKey": "catch-up-1", "source": "catch-up"})
 
     def test_matching_sources_are_still_serialised(self):
         rows = [record("student-support", "support-1"), record("catch-up", "catch-up-1")]
-        events, _, _, _, serialize = self.read(rows, {"mcr", "progress-review", "student-support"})
+        events, _, _, serialize = self.read(rows, {"mcr", "progress-review", "student-support"})
         self.assertEqual(serialize.call_count, 1)
         self.assertEqual(events[-1]["eventKey"], "support-1")
 
