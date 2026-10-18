@@ -86,4 +86,13 @@ describe('learner account menu', () => {
     expect(document.querySelector('.kbc-workspace-topbar')).toHaveClass('kbc-learner-header');
     expect(document.querySelector('.kbc-learner-header-pattern')).toBeInTheDocument();
   });
+
+  it('keeps the coach account menu above the scrolling page content', async () => {
+    showHeader('coach');
+
+    const topbar = document.querySelector('.kbc-workspace-topbar');
+    expect(topbar).toHaveClass('z-40', 'overflow-visible');
+    await userEvent.click(screen.getByRole('button', { name: 'Account menu' }));
+    expect(screen.getByRole('menu')).toHaveClass('z-50');
+  });
 });
