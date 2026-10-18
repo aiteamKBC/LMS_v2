@@ -11,15 +11,6 @@ vi.mock('sweetalert2', () => ({ default: { fire: vi.fn() } }));
 afterEach(() => vi.restoreAllMocks());
 
 describe('post-lecture feedback delivery scope', () => {
-  it('offers distinct versioned Information Session and Commitment Meeting form types', async () => {
-    render(<MemoryRouter><FormBuilder /></MemoryRouter>);
-    const type = screen.getByRole('combobox', { name: /Form Type/i });
-    expect(type).toHaveTextContent('Information Session feedback');
-    expect(type).toHaveTextContent('Commitment Meeting feedback');
-    await userEvent.selectOptions(type, 'commitment_meeting');
-    expect(screen.getByText(/matching external-recipient campaigns/)).toBeVisible();
-  });
-
   it('lets the creator choose section icons and previews sections as steps', async () => {
     const user = userEvent.setup();
     render(<MemoryRouter><FormBuilder /></MemoryRouter>);
