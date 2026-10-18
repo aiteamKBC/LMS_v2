@@ -19,6 +19,7 @@ def main():
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--runs', type=int, default=2)
     parser.add_argument('--baseline', action='store_true', help='Read Monthly implementation from local HEAD without changing files.')
+    parser.add_argument('--version', choices=('1', '2'), default='1', help='Opt-in Monthly wire contract.')
     parser.add_argument('--max-samples', type=int, default=0, help='Zero selects every available stratum.')
     parser.add_argument('--sample-start', type=int, default=0, help='Skip previously measured strata.')
     parser.add_argument('--month', action='append', help='Repeat for selected YYYY-MM values; default includes the year transition.')
@@ -129,7 +130,7 @@ def main():
                                 'records': records, 'in_progress': {**record, 'queries': queries}}, indent=2))
                     return execute
                 record = {'sample': sample, 'kind': kind, 'lineage': lineage, 'month': month, 'run': run,
-                          'variant': 'baseline' if args.baseline else 'optimized'}
+                          'variant': 'baseline' if args.baseline else 'optimized', 'version': args.version}
                 with ExitStack() as stack:
                     for connection in connections.all():
                         stack.enter_context(connection.execute_wrapper(wrapper(connection.alias)))
@@ -148,7 +149,7 @@ def main():
                     try:
                         source = SOURCE_MODELS[kind].all_learners.only(*dict.fromkeys([
                             *TRAINING_PLAN_SOURCE_FIELDS, 'username', 'employer_id', 'learning_plan', 'training_plan'])).get(pk=pk)
-                        payload = dashboard_tabs.read_tab(source, kind, 'monthly', RequestFactory().get('/monthly/', {'month': month}))
+                        payload = dashboard_tabs.read_tab(source, kind, 'monthly', RequestFactory().get('/monthly/', {'month': month, 'version': args.version}))
                         started = perf_counter()
                         raw = JsonResponse(payload).content
                         record.update(serialization_ms=round((perf_counter() - started) * 1000, 3),

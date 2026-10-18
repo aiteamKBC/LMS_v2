@@ -32,15 +32,19 @@ const data: StudentActivityResponse = {
   ],
 };
 
-function expandMonthAndWeek(month = 'February 2026') {
-  fireEvent.click(screen.getByRole('button', { name: `Expand ${month}` }));
-  fireEvent.click(screen.getByRole('button', { name: new RegExp(`^Expand ${month}, `) }));
+function selectMonthWeek(month = 'February 2026') {
+  const sidebar = within(screen.getByRole('complementary', { name: 'Module activities' }));
+  const heading = sidebar.getByRole('heading', { name: month, level: 3 });
+  fireEvent.click(within(heading.closest('li')!).getByRole('button'));
+}
+function weekProgress() {
+  return screen.getByRole('progressbar', { name: 'Week progress' });
 }
 
 describe('learner subject cards', () => {
   afterEach(() => vi.restoreAllMocks());
 
-  it('filters old Aptem modules separately from new Curriculum modules', async () => {
+  it('labels and filters old LMS courses separately from assigned new Curriculum modules', async () => {
     vi.spyOn(api, 'subjectRequest').mockResolvedValue({
       covers: {}, current_subjects: [{ id: 'MOD-NEW', title: 'New curriculum module' }],
     });
@@ -52,10 +56,10 @@ describe('learner subject cards', () => {
     await screen.findByRole('heading', { name: 'New curriculum module' });
     expect(screen.getByRole('heading', { name: 'Leadership' })).toBeVisible();
     const oldLmsCard = within(screen.getByRole('button', { name: /Leadership.*Open subject/ }));
-    expect(oldLmsCard.getByText('Old LMS')).toBeVisible();
+    expect(oldLmsCard.getByText('Old LMS · Previous learning')).toBeVisible();
     expect(oldLmsCard.getByText('Review only')).toBeVisible();
     const newLmsCard = within(screen.getByRole('button', { name: /New curriculum module.*Open subject/ }));
-    expect(newLmsCard.getByText('New LMS')).toBeVisible();
+    expect(newLmsCard.getByText('New LMS · Current learning plan')).toBeVisible();
     expect(newLmsCard.queryByText('Study here & record progress')).not.toBeInTheDocument();
     expect(screen.getByRole('tab', { name: 'All modules' })).toHaveAttribute('aria-selected', 'true');
 
@@ -149,7 +153,7 @@ describe('learner subject cards', () => {
       }]} as LearnerDetail} kind="commercial" learnerId="132" loading={false} error={null} onRetry={vi.fn()} />
     </MemoryRouter>);
     const workspace=within(await screen.findByRole('region',{name:'Your subjects'}));
-    expect(await workspace.findByRole('heading',{name:'Current module'})).toBeVisible();
+    expect((await workspace.findAllByRole('heading',{name:'Current module'}))[0]).toBeVisible();
     expect(workspace.getByRole('button',{name:'All subjects'})).toBeVisible();
     expect(workspace.queryByRole('button',{name:/Open subject/})).not.toBeInTheDocument();
   });
@@ -166,8 +170,8 @@ describe('learner subject cards', () => {
     expect(container.querySelector('input[type="file"]')).toBeNull();
     expect(screen.queryByText('Upload image')).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: /Updated Leadership/ }));
-    expandMonthAndWeek('Undated activities');
-    expect(screen.getByText('Introduction')).toBeVisible();
+    selectMonthWeek('Undated activities');
+    expect(screen.getByRole('group', { name: 'Introduction activity' })).toBeVisible();
     expect(screen.getByText('Complete')).toBeInTheDocument();
     expect(container.querySelector('input[type="file"]')).toBeNull();
   });
@@ -205,11 +209,11 @@ describe('learner subject cards', () => {
     expect(within(screen.getByText('Recorded OTJH').parentElement!).queryByText('Unavailable')).not.toBeInTheDocument();
     const module = screen.getByRole('button', { name: /Leadership/ });
     fireEvent.click(module);
-    expandMonthAndWeek('Undated activities');
+    selectMonthWeek('Undated activities');
     expect(screen.getByRole('button', { name: 'All subjects' })).toBeInTheDocument();
     expect(screen.getByText('Complete')).toBeInTheDocument();
     expect(screen.getByText('Not complete')).toBeInTheDocument();
-    expect(screen.getByText('Reflection')).toBeInTheDocument();
+    expect(screen.getByRole('group', { name: 'Reflection activity' })).toBeVisible();
     expect(screen.getByText(/OTJH: Unavailable/)).toBeInTheDocument();
   });
 
@@ -217,10 +221,10 @@ describe('learner subject cards', () => {
     render(<StudentActivityPanel data={data} loading={false} error={null} onRetry={vi.fn()} />);
     fireEvent.change(screen.getByRole('textbox', { name: 'Search modules or activities' }), { target: { value: 'Reflection' } });
     fireEvent.click(screen.getByRole('button', { name: /Leadership/ }));
-    expandMonthAndWeek('Undated activities');
-    expect(screen.getByText('1 of 2 completed')).toBeInTheDocument();
-    expect(screen.queryByText('Introduction')).not.toBeInTheDocument();
-    expect(screen.getByText('Reflection')).toBeInTheDocument();
+    selectMonthWeek('Undated activities');
+    expect(within(screen.getByRole('region', { name: 'Module progress' })).getByText('1 of 2 completed')).toBeVisible();
+    expect(screen.queryByRole('group', { name: 'Introduction activity' })).not.toBeInTheDocument();
+    expect(screen.getByRole('group', { name: 'Reflection activity' })).toBeVisible();
   });
 
   it('offers retry on a failed fetch', () => {
@@ -404,13 +408,13 @@ describe('subjects shared with Module Builder', () => {
         'NEW-LESSON': { date: '2026-10-21', month: '2026-10', week_start: '2026-10-19', week_end: '2026-10-25' } } });
     render(<StudentActivityPanel data={null} real={real} kind="commercial" learnerId={learnerId} loading={false} error={null} onRetry={vi.fn()} />);
     fireEvent.click(await screen.findByRole('button', { name: /New module/ }));
-    const headings = screen.getAllByRole('heading', { level: 3 });
+    const headings = within(screen.getByRole('complementary', { name: 'Module activities' })).getAllByRole('heading', { level: 3 });
     expect(headings[0]).toHaveTextContent('Introduction');
     expect(headings[1]).toHaveTextContent('October 2026');
-    expect(screen.getByRole('progressbar', { name: 'Introduction progress' })).toHaveAttribute('aria-valuenow', '100');
+    expect(weekProgress()).toHaveAttribute('aria-valuenow', '100');
     expect(screen.getByRole('progressbar', { name: 'Subject progress' })).toHaveAttribute('aria-valuenow', '50');
-    fireEvent.click(screen.getByRole('button', { name: 'Expand Introduction' }));
-    expect(screen.getByText('Welcome')).toBeVisible();
+    selectMonthWeek('Introduction');
+    expect(screen.getByRole('group', { name: 'Welcome activity' })).toBeVisible();
     expect(screen.getByText('First lecture')).not.toBeVisible();
   });
 
@@ -433,9 +437,9 @@ describe('subjects shared with Module Builder', () => {
     expect(screen.queryByRole('region', { name: 'September 2026' })).not.toBeInTheDocument();
     for (const [month, title] of [['October 2026', 'October reading'], ['November 2026', 'November quiz'],
       ['December 2026', 'December assignment'], ['January 2027', 'January video']]) {
-      expect(screen.getByRole('region', { name: month })).toBeVisible();
-      expandMonthAndWeek(month);
-      expect(screen.getByText(title)).toBeVisible();
+      expect(within(screen.getByRole('complementary', { name: 'Module activities' })).getByRole('heading', { name: month })).toBeVisible();
+      selectMonthWeek(month);
+      expect(screen.getByRole('group', { name: `${title} activity` })).toBeVisible();
     }
     expect(screen.getByRole('progressbar', { name: 'Subject progress' })).toHaveAttribute('aria-valuenow', '25');
   });
@@ -678,7 +682,7 @@ describe('subject months, weeks and completion', () => {
     const second = { ...first, activity_id: 'la:2:11', group_id: 2, group_name: 'Course B' };
     render(<StudentActivityPanel data={{ ...data, activities: [first, second], count: 2, completed_count: 0, module_count: 2 }} kind="commercial" learnerId="132" loading={false} error={null} onRetry={vi.fn()} />);
     fireEvent.click(await screen.findByRole('button', { name: /Course A/ }));
-    expandMonthAndWeek('Undated activities');
+    selectMonthWeek('Undated activities');
     fireEvent.click(screen.getByRole('button', { name: 'Reflection' }));
     fireEvent.click(await screen.findByRole('button', { name: 'Submit & complete' }));
     await screen.findByText('Activity completed.');
@@ -689,49 +693,59 @@ describe('subject months, weeks and completion', () => {
     expect(screen.getByRole('progressbar', { name: 'Subject progress' })).toHaveAttribute('aria-valuenow', '0');
   });
 
-  it('starts with months and weeks closed and reveals activities only after both are opened', async () => {
-    mockMaterialRequests();
-    render(<StudentActivityPanel data={scheduledData} kind="commercial" learnerId="132" loading={false} error={null} onRetry={vi.fn()} />);
+  it.each(['commercial', 'apprenticeship'])('opens historical quizzes from the shared sidebar without confusing material IDs (%s)', async kind => {
+    const requests = mockMaterialRequests({ ...activityMaterial, completed: true, has_reading: false,
+      reading_html: '<p>Saved quiz review</p>', can_attempt: false });
+    const history: StudentActivityResponse = { ...data, activities: [
+      { ...data.activities[0], activity_id: 'catalogue:1:material:10', catalogue_kind: 'material', activity: 'Original reading' },
+      { ...data.activities[0], activity_id: 'catalogue:1:quiz:10', catalogue_kind: 'quiz', category: 'quiz', activity: 'Original quiz', can_open_material: false },
+      { ...data.activities[1], activity: 'Unavailable quiz', catalogue_kind: 'quiz', category: 'quiz', can_open_material: false },
+    ] };
+    render(<StudentActivityPanel data={history} kind={kind} learnerId="132" loading={false} error={null} onRetry={vi.fn()} />);
     fireEvent.click(await screen.findByRole('button', { name: /Leadership/ }));
-    expect(screen.getByRole('button', { name: 'Expand February 2026' })).toHaveAttribute('aria-expanded', 'false');
-    expect(screen.getByRole('button', { name: 'Expand March 2026' })).toHaveAttribute('aria-expanded', 'false');
-    expect(screen.queryByRole('button', { name: /Week 1/ })).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Reflection' })).not.toBeInTheDocument();
-    expect(screen.queryByTitle('Reflection frame')).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Expand February 2026' }));
-    const week = screen.getByRole('button', { name: /^Expand February 2026, Week 1/ });
-    expect(week).toHaveAttribute('aria-expanded', 'false');
-    expect(screen.queryByRole('button', { name: 'Reflection' })).not.toBeInTheDocument();
-    fireEvent.click(week);
-    expect(screen.getByRole('button', { name: 'Reflection' })).toBeVisible();
-    expect(screen.queryByRole('button', { name: 'March lesson' })).not.toBeInTheDocument();
-    fireEvent.click(week);
-    fireEvent.click(screen.getByRole('button', { name: 'Collapse February 2026' }));
-    expect(screen.queryByRole('button', { name: /^Expand February 2026, Week 1/ })).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Expand February 2026' }));
-    expect(week).toHaveAttribute('aria-expanded', 'false');
-    fireEvent.click(week);
-    fireEvent.click(screen.getByRole('button', { name: 'Reflection' }));
-    expect(await screen.findByTitle('Reflection frame')).toHaveAttribute('src', 'https://example.org/lesson');
-    expect(screen.getByRole('button', { name: 'Reflection' })).toHaveAttribute('aria-expanded', 'true');
-    fireEvent.click(screen.getByRole('button', { name: 'Reflection' }));
-    expect(screen.queryByTitle('Reflection frame')).not.toBeInTheDocument();
-    expandMonthAndWeek('March 2026');
-    expect(screen.getByRole('button', { name: 'March lesson' })).toBeVisible();
-    fireEvent.click(screen.getByRole('button', { name: 'All subjects' }));
-    fireEvent.click(screen.getByRole('button', { name: /Leadership/ }));
-    expect(screen.getByRole('button', { name: 'Expand February 2026' })).toHaveAttribute('aria-expanded', 'false');
-    expect(screen.queryByRole('button', { name: /Week 1/ })).not.toBeInTheDocument();
+    const sidebar = within(screen.getByRole('complementary', { name: 'Module activities' }));
+    expect(sidebar.getByRole('button', { name: /Unavailable quiz/ })).toBeDisabled();
+    fireEvent.click(sidebar.getByRole('button', { name: /Original quiz/ }));
+    expect(await screen.findByText('Saved quiz review')).toBeVisible();
+    expect(screen.getByRole('group', { name: 'Original quiz activity' })).toHaveTextContent('Complete');
+    expect(screen.queryByRole('region', { name: 'Original reading content' })).not.toBeInTheDocument();
+    const materialRequests = requests.mock.calls.filter(([url]) => url.includes('/student-activity/'));
+    expect(materialRequests).toHaveLength(1);
+    expect(materialRequests[0][0]).toContain(`/student-activity/${kind}/132/?group_id=1&activity_id=10&catalogue_kind=quiz`);
+    expect(requests.mock.calls.filter(([, options]) => options?.method === 'POST')).toHaveLength(0);
+    expect(screen.queryByRole('button', { name: /Start quiz|Try quiz again|Submit/ })).not.toBeInTheDocument();
   });
 
-  it('keeps course, month and week progress based on all activities while searching', () => {
+  it('uses the shared week sidebar and preserves opened material when switching weeks', async () => {
+    const requests = mockMaterialRequests();
+    render(<StudentActivityPanel data={scheduledData} kind="commercial" learnerId="132" loading={false} error={null} onRetry={vi.fn()} />);
+    fireEvent.click(await screen.findByRole('button', { name: /Leadership/ }));
+    expect(screen.getByRole('complementary', { name: 'Module activities' })).toBeVisible();
+    expect(screen.queryByRole('button', { name: /^Expand February/ })).not.toBeInTheDocument();
+    expect(screen.queryByTitle('Reflection frame')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Reflection' }));
+    const frame = await screen.findByTitle('Reflection frame');
+    expect(frame).toHaveAttribute('src', 'https://example.org/lesson');
+    selectMonthWeek('March 2026');
+    expect(frame).not.toBeVisible();
+    expect(screen.getByRole('button', { name: 'March lesson' })).toBeVisible();
+    selectMonthWeek();
+    expect(frame).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Reflection' })).toHaveAttribute('aria-expanded', 'true');
+    expect(requests.mock.calls.filter(([, options]) => options?.method === 'POST')).toHaveLength(0);
+    fireEvent.click(screen.getByRole('button', { name: 'All subjects' }));
+    fireEvent.click(screen.getByRole('button', { name: /Leadership/ }));
+    expect(screen.queryByTitle('Reflection frame')).not.toBeInTheDocument();
+  });
+
+  it('keeps course and week progress based on all activities while searching', () => {
     render(<StudentActivityPanel data={scheduledData} loading={false} error={null} onRetry={vi.fn()} />);
     fireEvent.click(screen.getByRole('button', { name: /Leadership/ }));
     fireEvent.change(screen.getByRole('textbox', { name: 'Search modules or activities' }), { target: { value: 'Reflection' } });
-    expandMonthAndWeek();
+    selectMonthWeek();
     expect(screen.getByRole('progressbar', { name: 'Subject progress' })).toHaveAttribute('aria-valuenow', '33.33');
-    expect(screen.getByRole('progressbar', { name: 'February 2026 progress' })).toHaveAttribute('aria-valuenow', '50');
-    expect(screen.getByRole('progressbar', { name: /^February 2026, Week 1/ })).toHaveAttribute('aria-valuenow', '50');
+    expect(weekProgress()).toHaveAttribute('aria-valuenow', '50');
+    expect(screen.getByRole('complementary', { name: 'Module activities' })).toHaveTextContent(/2 components\s*\u00b7\s*1 done/);
     expect(screen.getByText(/1 ÷ 3 × 100 = 33.33%/)).toBeInTheDocument();
   });
 
@@ -752,25 +766,27 @@ describe('subject months, weeks and completion', () => {
     ] };
     render(<StudentActivityPanel data={courseData} kind="commercial" learnerId="132" loading={false} error={null} onRetry={vi.fn()} />);
     fireEvent.click(await screen.findByRole('button', { name: /Leadership/ }));
-    const headings = screen.getAllByRole('heading', { level: 3 }).map((heading) => heading.textContent);
+    const headings = within(screen.getByRole('complementary', { name: 'Module activities' })).getAllByRole('heading', { level: 3 }).map((heading) => heading.textContent);
     expect(headings.at(-1)).toContain('Extra activities');
-    expect(screen.getByRole('button', { name: 'Expand Extra activities' })).toHaveAttribute('aria-expanded', 'false');
-    expect(screen.getByRole('progressbar', { name: 'August 2026 progress' })).toHaveAttribute('aria-valuenow', '100');
-    expect(screen.getByRole('progressbar', { name: 'Extra activities progress' })).toHaveAttribute('aria-valuenow', '0');
+    expect(screen.queryByRole('group', { name: 'Extra reading activity' })).not.toBeInTheDocument();
+    selectMonthWeek('August 2026');
+    expect(weekProgress()).toHaveAttribute('aria-valuenow', '100');
+    selectMonthWeek('Extra activities');
+    expect(weekProgress()).toHaveAttribute('aria-valuenow', '0');
     expect(screen.getByText('52 of 64 completed')).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Expand Extra activities' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Expand Extra activities, Lec13: Financial Accounts' }));
+    selectMonthWeek('Extra activities');
     fireEvent.change(screen.getByRole('textbox', { name: 'Search modules or activities' }), { target: { value: 'Extra reading' } });
-    expect(screen.getByRole('progressbar', { name: 'Extra activities progress' })).toHaveAttribute('aria-valuenow', '0');
+    expect(weekProgress()).toHaveAttribute('aria-valuenow', '0');
     fireEvent.click(screen.getByRole('button', { name: 'Extra reading' }));
     expect(await screen.findByTitle('Reflection frame')).toBeVisible();
     fireEvent.click(screen.getByRole('button', { name: 'Submit & complete' }));
     await screen.findByText('Activity completed.');
-    expect(screen.getByRole('progressbar', { name: 'Extra activities progress' })).toHaveAttribute('aria-valuenow', '10');
-    expect(screen.getByRole('progressbar', { name: 'Extra activities, Lec13: Financial Accounts progress' })).toHaveAttribute('aria-valuenow', '10');
+    expect(weekProgress()).toHaveAttribute('aria-valuenow', '10');
+    expect(screen.getByRole('complementary', { name: 'Module activities' })).toHaveTextContent(/10 components\s*\u00b7\s*1 done/);
     expect(screen.getByText('53 of 64 completed')).toBeInTheDocument();
     fireEvent.change(screen.getByRole('textbox', { name: 'Search modules or activities' }), { target: { value: '' } });
-    expect(screen.getByRole('progressbar', { name: 'August 2026 progress' })).toHaveAttribute('aria-valuenow', '100');
+    selectMonthWeek('August 2026');
+    expect(weekProgress()).toHaveAttribute('aria-valuenow', '100');
     expect(requests.mock.calls.filter(([, options]) => options?.method === 'POST')).toHaveLength(2);
   });
 
@@ -787,14 +803,14 @@ describe('subject months, weeks and completion', () => {
     ] };
     render(<StudentActivityPanel data={introData} kind="commercial" learnerId="132" loading={false} error={null} onRetry={vi.fn()} />);
     fireEvent.click(await screen.findByRole('button', { name: /Leadership/ }));
-    const headings = screen.getAllByRole('heading', { level: 3 });
+    const headings = within(screen.getByRole('complementary', { name: 'Module activities' })).getAllByRole('heading', { level: 3 });
     expect(headings[0]).toHaveTextContent('Introduction');
     expect(headings[1]).toHaveTextContent('October 2025');
     expect(headings.at(-1)).toHaveTextContent('Extra activities');
     expect(screen.queryByText('May 2025')).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Expand Introduction' })).toHaveAttribute('aria-expanded', 'false');
-    expect(screen.getByRole('progressbar', { name: 'Introduction progress' })).toHaveAttribute('aria-valuenow', '50');
-    fireEvent.click(screen.getByRole('button', { name: 'Expand Introduction' }));
+    expect(screen.getByRole('button', { name: /^Introduction, 2 components/ })).toHaveAttribute('aria-current', 'step');
+    expect(weekProgress()).toHaveAttribute('aria-valuenow', '50');
+    selectMonthWeek('Introduction');
     expect(screen.getByRole('button', { name: 'Safeguarding' })).toBeVisible();
     expect(within(screen.getByRole('group', { name: 'Safeguarding activity' })).getByText('Complete')).toBeVisible();
     expect(screen.getByText(/Best score 80%/)).toBeVisible();
@@ -804,10 +820,12 @@ describe('subject months, weeks and completion', () => {
     await screen.findByTitle('Reflection frame');
     fireEvent.click(screen.getByRole('button', { name: 'Submit & complete' }));
     await screen.findByText('Activity completed.');
-    expect(screen.getByRole('progressbar', { name: 'Introduction progress' })).toHaveAttribute('aria-valuenow', '100');
+    expect(weekProgress()).toHaveAttribute('aria-valuenow', '100');
     expect(screen.getByRole('progressbar', { name: 'Subject progress' })).toHaveAttribute('aria-valuenow', '50');
-    expect(screen.getByRole('progressbar', { name: 'October 2025 progress' })).toHaveAttribute('aria-valuenow', '0');
-    expect(screen.getByRole('progressbar', { name: 'Extra activities progress' })).toHaveAttribute('aria-valuenow', '0');
+    selectMonthWeek('October 2025');
+    expect(weekProgress()).toHaveAttribute('aria-valuenow', '0');
+    selectMonthWeek('Extra activities');
+    expect(weekProgress()).toHaveAttribute('aria-valuenow', '0');
   });
 
   it('shows lecture details without exposing date-review messages to the learner', () => {
@@ -816,11 +834,11 @@ describe('subject months, weeks and completion', () => {
       : { ...item, section_title: 'Lecture 1 - 06/02/2026', date_source: 'section_title', date_needs_review: false });
     render(<StudentActivityPanel data={{ ...scheduledData, activities }} loading={false} error={null} onRetry={vi.fn()} />);
     fireEvent.click(screen.getByRole('button', { name: /Leadership/ }));
-    expandMonthAndWeek();
-    expandMonthAndWeek('March 2026');
+    selectMonthWeek();
+    selectMonthWeek('March 2026');
     expect(screen.getAllByText('Lecture: Lecture 1 - 06/02/2026')).toHaveLength(2);
     expect(screen.queryByText(/Date awaiting confirmation|Date needs review|activity dates? needs? confirmation/i)).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Collapse March 2026' }));
+    selectMonthWeek();
     expect(screen.queryByText(/Date awaiting confirmation|Date needs review|activity dates? needs? confirmation/i)).not.toBeInTheDocument();
     expect(screen.getByRole('progressbar', { name: 'Subject progress' })).toHaveAttribute('aria-valuenow', '33.33');
   });
@@ -832,7 +850,7 @@ describe('subject months, weeks and completion', () => {
     vi.spyOn(api, 'fetchStudentActivity').mockResolvedValueOnce(scheduledData).mockRejectedValueOnce(new Error('Refresh unavailable'));
     render(<ModulesTab real={{ studentActivityAvailable: true } as LearnerDetail} loading={false} loadError={null} kind="commercial" id="132" />);
     fireEvent.click(await screen.findByRole('button', { name: /Leadership/ }));
-    expandMonthAndWeek();
+    selectMonthWeek();
     fireEvent.click(screen.getByRole('button', { name: 'Reflection' }));
     const submit = await screen.findByRole('button', { name: 'Submit & complete' });
     const frame = screen.getByTitle('Reflection frame');
@@ -847,8 +865,8 @@ describe('subject months, weeks and completion', () => {
     expect(within(screen.getByRole('region', { name: 'Activity completion' })).getByText('Complete')).toBeVisible();
     expect(await screen.findByText(/Refresh unavailable/)).toBeInTheDocument();
     expect(screen.getByRole('progressbar', { name: 'Subject progress' })).toHaveAttribute('aria-valuenow', '66.67');
-    expect(screen.getByRole('progressbar', { name: 'February 2026 progress' })).toHaveAttribute('aria-valuenow', '100');
-    expect(screen.getByRole('progressbar', { name: /^February 2026, Week 1/ })).toHaveAttribute('aria-valuenow', '100');
+    expect(weekProgress()).toHaveAttribute('aria-valuenow', '100');
+    expect(screen.getByRole('complementary', { name: 'Module activities' })).toHaveTextContent(/2 components\s*\u00b7\s*2 done/);
     const submitted = requests.mock.calls.find(([url]) => url.endsWith('/attempt-1/'))![1]!;
     expect(JSON.parse(submitted.body as string)).toEqual({ answers: {}, reading_confirmed: true });
     expect(submitted.headers).toMatchObject({ 'X-CSRFToken': 'csrf-value' });
@@ -868,7 +886,7 @@ describe('subject months, weeks and completion', () => {
     const requests = mockMaterialRequests(activityMaterial, save);
     render(<StudentActivityPanel data={scheduledData} kind="commercial" learnerId="132" loading={false} error={null} onRetry={vi.fn()} />);
     fireEvent.click(await screen.findByRole('button', { name: /Leadership/ }));
-    expandMonthAndWeek();
+    selectMonthWeek();
     fireEvent.click(screen.getByRole('button', { name: 'Reflection' }));
     fireEvent.click(await screen.findByRole('button', { name: 'Submit & complete' }));
     expect(await screen.findByRole('alert')).toHaveTextContent('Could not save');
@@ -916,7 +934,7 @@ describe('subject months, weeks and completion', () => {
     const requests = mockMaterialRequests(quiz, async () => ({ score_percent: 80, passed: true, completed: true }));
     render(<StudentActivityPanel data={scheduledData} kind="commercial" learnerId="132" loading={false} error={null} onRetry={vi.fn()} />);
     fireEvent.click(await screen.findByRole('button', { name: /Leadership/ }));
-    expandMonthAndWeek();
+    selectMonthWeek();
     fireEvent.click(screen.getByRole('button', { name: 'Reflection' }));
     fireEvent.click(await screen.findByRole('button', { name: 'Start quiz' }));
     const submit = await screen.findByRole('button', { name: 'Submit answers' });
@@ -925,6 +943,13 @@ describe('subject months, weeks and completion', () => {
     expect(submit).toBeDisabled();
     fireEvent.click(screen.getByLabelText('I have completed the reading material.'));
     expect(submit).toBeEnabled();
+    selectMonthWeek('March 2026');
+    expect(submit).not.toBeVisible();
+    selectMonthWeek();
+    expect(screen.getByLabelText('Choice A')).toBeChecked();
+    expect(screen.getByLabelText('I have completed the reading material.')).toBeChecked();
+    expect(submit).toBeVisible();
+    expect(requests.mock.calls.filter(([, options]) => options?.method === 'POST')).toHaveLength(1);
     fireEvent.click(submit);
     await screen.findByText(/Attempt saved: 80%/);
     expect(within(screen.getByRole('region', { name: 'Activity completion' })).getByText('Complete')).toBeVisible();
@@ -941,7 +966,7 @@ describe('subject months, weeks and completion', () => {
     mockMaterialRequests(quiz, async () => ({ score_percent: 0, passed: false, completed: false }));
     render(<StudentActivityPanel data={scheduledData} kind="commercial" learnerId="132" loading={false} error={null} onRetry={vi.fn()} />);
     fireEvent.click(await screen.findByRole('button', { name: /Leadership/ }));
-    expandMonthAndWeek();
+    selectMonthWeek();
     fireEvent.click(screen.getByRole('button', { name: 'Reflection' }));
     fireEvent.click(await screen.findByRole('button', { name: 'Start quiz' }));
     await waitFor(() => expect(screen.getByLabelText('Choice A')).toBeEnabled());

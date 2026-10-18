@@ -74,7 +74,7 @@ export function LearningCatalogue({ summary, search, onSearch, current, renderCa
   const visible = summary.subjects.filter(subject => {
     const progress = subjectPercent(subject);
     return (!term || subject.title.toLocaleLowerCase().includes(term) || subject.activities.some(a => a.title.toLocaleLowerCase().includes(term)))
-      && (sourceFilter === 'all' || subject.source === sourceFilter)
+      && (sourceFilter === 'all' || (subject.importedCourseRef || subject.replacementCourseRef ? 'legacy' : subject.source) === sourceFilter)
       && (filter === 'all' || (filter === 'complete' ? progress === 100 : filter === 'new' ? progress === 0 : progress > 0 && progress < 100));
   }).sort((a, b) => {
     if (sort === 'name') return a.title.localeCompare(b.title);
@@ -86,12 +86,12 @@ export function LearningCatalogue({ summary, search, onSearch, current, renderCa
     if (bStart) return 1;
     return a.title.localeCompare(b.title);
   });
-  // Group only explicit server-owned links. Keep both source records available
-  // to navigation and source filters; never merge their completion denominators.
-  const displayed = sourceFilter === 'all' ? [...new globalThis.Map(visible.map(subject => {
-    const target = subject.previousLearningFor && summary.subjects.find(item => item.id === subject.previousLearningFor);
+  // Other explicitly grouped courses still retain their independent history.
+  const displayed = [...new globalThis.Map(visible.map(subject => {
+    const group = sourceFilter === 'all' && subject.previousLearningFor;
+    const target = group && summary.subjects.find(item => item.id === group);
     return target ? [target.id, target] as const : [subject.id, subject] as const;
-  })).values()] : visible;
+  })).values()];
   const today = learningToday();
   const upcoming = [
     ...deadlines.filter(item => item.date >= today).map(item => ({

@@ -24,11 +24,40 @@ from .session_transfer_progress import summarize_transfers
 log = logging.getLogger(__name__)
 
 
+def effective_module_register_rows(module_catalogue_id, occurrences):
+    """Project current plan membership; saved evidence is merged separately."""
+    if not module_catalogue_id or not occurrences:
+        return []
+    from learner_api.attendance_assignments import module_roster
+    members = module_roster(module_catalogue_id)
+    return [{
+        **member, 'occurrence_id': occurrence['id'],
+        'source_occurrence_id': occurrence['id'],
+        'attendance_status': 'absent' if occurrence.get('attendance_report_id') and occurrence.get('actual_end') else 'pending',
+        'recovery_status': 'none', 'attended_seconds': 0,
+        'attendance_report_id': occurrence.get('attendance_report_id'),
+        'first_join_at': None, 'last_leave_at': None,
+    } for occurrence in occurrences for member in members]
+
+
 def read(sql, params=()):
     with connections['default'].cursor() as cursor:
         cursor.execute(sql, params)
         names = [column[0] for column in cursor.description]
         return [dict(zip(names, values)) for values in cursor.fetchall()]
+
+
+def known_learner_emails(emails):
+    """Identify reported learner addresses without guessing from display names."""
+    wanted = sorted({str(value or '').strip().casefold() for value in emails} - {''})
+    if not wanted:
+        return set()
+    rows = read('''SELECT lower(btrim("Email")) AS email
+        FROM enrolment."Created_users" WHERE lower(btrim("Email"))=ANY(%s)
+        UNION
+        SELECT lower(btrim(email)) AS email
+        FROM "Learner".learners WHERE lower(btrim(email))=ANY(%s)''', [wanted, wanted])
+    return {row['email'] for row in rows}
 
 
 def json_value(value, default):
@@ -140,33 +169,40 @@ def replaced_module_register_rows(module_catalogue_id, source_occurrence_ids):
             module_catalogue_id, source_occurrence_ids,
         ])
     if rows:
-        return rows
+        occurrences = read('''SELECT id,attendance_report_id,actual_end
+            FROM curriculum.live_session_occurrences WHERE id=ANY(%s)''', [
+                list({row['source_occurrence_id'] for row in rows}),
+            ])
+        return rows + effective_module_register_rows(module_catalogue_id, occurrences)
     # A shared Teams duplicate deliberately owns no live_sessions or
     # occurrences. The builder projects the source module's meeting identity
     # onto it at read time (views.apply_shared_teams_settings_to_weeks). Match
-    # that same explicit ownership relation and use the duplicate's learner
-    # plan mirror as its roster; never fall back to the source module's roster.
-    return read('''SELECT source_o.id AS source_occurrence_id,
-        NULL AS occurrence_id,learner.id AS learner_profile_id,
-        lower(btrim(learner.email)) AS learner_email,
-        learner.full_name AS learner_name,
-        CASE WHEN coalesce(source_o.attendance_report_id,'')<>'' AND source_o.actual_end IS NOT NULL
-             THEN 'absent' ELSE 'pending' END AS attendance_status,
-        'none' AS recovery_status,0 AS attended_seconds,
-        source_o.attendance_report_id,NULL AS first_join_at,NULL AS last_leave_at
-        FROM curriculum.modules target_module
+    # that ownership chain, including a duplicate of a duplicate. Its effective
+    # plan supplies learners; the source module's roster must not leak across.
+    occurrences = read('''WITH RECURSIVE shared AS (
+        SELECT module_catalogue_id,teams_shared_source_module_id AS source_id,
+               ARRAY[module_catalogue_id]::text[] AS path,1 AS depth
+        FROM curriculum.modules WHERE module_catalogue_id=%s
+        UNION ALL
+        SELECT m.module_catalogue_id,m.teams_shared_source_module_id,
+               shared.path || m.module_catalogue_id,shared.depth+1
+        FROM shared JOIN curriculum.modules m ON m.module_catalogue_id=shared.source_id
+        WHERE shared.depth<5 AND NOT m.module_catalogue_id=ANY(shared.path)
+    )
+        SELECT DISTINCT source_o.id,source_o.attendance_report_id,source_o.actual_end
+        FROM shared
         JOIN curriculum.live_sessions source_session
-          ON source_session.module_catalogue_id=target_module.teams_shared_source_module_id
+          ON source_session.module_catalogue_id=shared.source_id
         JOIN curriculum.live_session_occurrences source_o
           ON source_o.live_session_id=source_session.id
-        LEFT JOIN "Learner".learner_training_plan_modules plan_module
-          ON plan_module.module_ref=target_module.module_catalogue_id
-        LEFT JOIN "Learner".learners learner ON learner.id=plan_module.learner_id
-        WHERE target_module.module_catalogue_id=%s
-          AND source_o.id=ANY(%s)
+        WHERE source_o.id=ANY(%s)
           AND lower(btrim(source_session.status)) NOT IN ('cancelled','canceled','deleted','failed','superseded')
           AND lower(btrim(source_o.status)) NOT IN ('cancelled','canceled','deleted','failed','superseded')
-        ORDER BY learner.full_name,learner.id''', [module_catalogue_id, source_occurrence_ids])
+        ORDER BY source_o.id''', [module_catalogue_id, source_occurrence_ids])
+    # Keep an association marker for a valid meeting even with an empty roster.
+    return ([{'source_occurrence_id': occurrence['id'], 'learner_profile_id': None}
+             for occurrence in occurrences]
+            + effective_module_register_rows(module_catalogue_id, occurrences))
 
 
 def merge_session_register_rows(rows):
@@ -226,9 +262,18 @@ def result_rows(series, *, session_number=None, email=None, identity=False, modu
     if context_requested and not context_source_ids:
         return []
     roster_module_id = module_catalogue_id if context_source_ids else series.get('module_catalogue_id')
+    if not context_requested:
+        register_rows += effective_module_register_rows(roster_module_id, occurrences)
     aliases = attendance_alias_rows(roster_module_id)
     identity_links = attendance_identity_link_rows(ids)
     rules = identity_rules([roster_module_id])
+    # Shared meetings contain participants from other deliveries. They are not
+    # unresolved identities in this module. This only filters the review list;
+    # raw evidence, matching decisions and attendance totals stay untouched.
+    known_emails = known_learner_emails(
+        [row.get('email') for row in records]
+        + [row.get('canonical_email') for row in (*aliases, *identity_links, *rules)]
+    ) if email is None else set()
     archive_ready = True
     try:
         artifacts = [] if attendance_only else read('''SELECT a.id,a.occurrence_id,a.artifact_type,a.created_datetime,a.end_datetime,
@@ -360,6 +405,8 @@ def result_rows(series, *, session_number=None, email=None, identity=False, modu
         unmatched_records = [] if email is not None else [
             row for row in reviewed_records
             if (str(row.get('email') or '').strip().casefold() not in expected or row.get('identityReviewRequired'))
+            and (str(row.get('email') or '').strip().casefold() not in known_emails
+                 or str(row.get('email') or '').strip().casefold() in expected)
             and str(row.get('email') or '').strip().casefold() not in protected_emails
             and str(row.get('role') or '').strip().casefold() not in {'organizer', 'presenter', 'coorganizer', 'co-organizer'}
         ]
@@ -537,6 +584,7 @@ def link_attendance_alias(request, series_id, session_number):
         else:
             roster = read('''SELECT learner_profile_id,learner_email,learner_name
                 FROM curriculum.live_session_learner_attendance WHERE occurrence_id=%s''', [occurrence['id']])
+            roster += effective_module_register_rows(module_id, [occurrence])
         candidate = next((row for row in roster if row.get('learner_profile_id') == learner_profile_id), None)
         if action != 'unlink' and (not candidate or not candidate.get('learner_email')):
             return JsonResponse({'error': 'Choose a learner assigned to this module session.'}, status=400)

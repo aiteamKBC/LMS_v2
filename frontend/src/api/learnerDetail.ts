@@ -45,7 +45,17 @@ export interface ComponentKsbMapping {
   weight: number;
 }
 
+export interface PreviousLearningCompletion {
+  courseRef: string;
+  activityId: string;
+  sourceActivityId: number;
+  catalogueKind: 'material' | 'quiz';
+  completed: boolean;
+}
+
 export interface LearnerComponentEntry {
+  /** Exact owned source activity in a verified course replacement; no new attempt or hours. */
+  previousLearning?: PreviousLearningCompletion;
   module: string | null;
   week: string | null;
   component: string;

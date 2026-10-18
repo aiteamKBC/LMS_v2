@@ -140,7 +140,7 @@ def entries(learner_id):
     return entries_for(owner)
 
 
-def entries_for(owner, *, overview_only=False, entry_ids=None, lineage_only=False, dashboard_metadata=False, training_summary=False):
+def entries_for(owner, *, overview_only=False, entry_ids=None, lineage_only=False, dashboard_metadata=False, training_summary=False, monthly_summary=False):
     """``lineage_only`` keeps every progress column but replaces an object
     ``source_payload`` (raw evidence) with just its ``original_source_ref``,
     the only key the completion and hours projection reads.
@@ -151,6 +151,10 @@ def entries_for(owner, *, overview_only=False, entry_ids=None, lineage_only=Fals
     ``training_summary`` retains completion, timing and lineage facts without
     evidence bodies or reporting-segment/historical-component payloads. The
     complete learner fact set preserves cross-module native-save deduplication.
+
+    ``monthly_summary`` uses explicit progress facts instead of progress.*,
+    retaining full reporting segments, source links and historical attribution.
+    It never restricts the learner-wide reconciliation population by month.
     """
     # Optional caller-owned selection is applied before the evidence/lineage
     # joins. The learner predicate always remains mandatory.
@@ -177,7 +181,7 @@ def entries_for(owner, *, overview_only=False, entry_ids=None, lineage_only=Fals
                 'reconciliation',jsonb_build_object('reporting_allocation',jsonb_build_object(
                     'estimated',p.source_payload->'reconciliation'->'reporting_allocation'->'estimated'))))
             ELSE to_jsonb(p) END'''
-    if overview_only or training_summary:
+    if overview_only or training_summary or monthly_summary:
         # Completion projection needs saved timing/attempt facts, never raw
         # evidence bodies. Keep lineage required by recorded course allocation.
         columns = ','.join('progress.' + field for field in (
@@ -187,7 +191,7 @@ def entries_for(owner, *, overview_only=False, entry_ids=None, lineage_only=Fals
             'verified_seconds', 'expected_otjh', 'source_system', 'component_link_source',
             'actual_seconds', 'accepted', 'reporting_started_at', 'reporting_ended_at',
             'reporting_month', 'achieved_score', 'total_score', 'activity_status'))
-        if training_summary:
+        if training_summary or monthly_summary:
             columns += ",progress.source_payload,progress.feed_kind,to_jsonb(progress)->'actual_basis' AS actual_basis"
         else:
             columns += ",jsonb_build_object('original_source_ref',progress.source_payload->>'original_source_ref') AS source_payload"
@@ -913,6 +917,13 @@ def recorded_course_items(courses, catalogue, records, *, overview_only=False, i
     by_course = {str(c['source_course_ref']): [] for c in courses}
     definitions = {(str(d['source_course_ref']), d['source_activity_id']): d for d in catalogue
                    if str(d['source_course_ref']) in by_course}
+    definitions_by_course = {ref: [] for ref in by_course}
+    for (ref, _), definition in definitions.items():
+        definitions_by_course[ref].append(definition)
+    catalogue_counts = {}
+    for definition in catalogue:
+        ref = str(definition['source_course_ref'])
+        catalogue_counts[ref] = catalogue_counts.get(ref, 0) + 1
     links = {}
     for record in records:
         placements = {}
@@ -1003,7 +1014,7 @@ def recorded_course_items(courses, catalogue, records, *, overview_only=False, i
     for course in courses:
         ref = str(course['source_course_ref'])
         activity = by_course[ref]
-        course_definitions = [d for (course_ref, _), d in definitions.items() if course_ref == ref]
+        course_definitions = definitions_by_course[ref]
         if include_catalogue:
             activity = catalogue_items_with_progress(course_definitions, activity)
             for definition in course_definitions:
@@ -1018,7 +1029,7 @@ def recorded_course_items(courses, catalogue, records, *, overview_only=False, i
         subjects.append({'id': int(ref), 'name': course['source_course_title'],
             'module_id': course.get('curriculum_module_ref'),
             **({} if overview_only else {
-                'catalogue_count': sum(str(d['source_course_ref']) == ref for d in catalogue),
+                'catalogue_count': catalogue_counts.get(ref, 0),
                 'accepted_hours': round(sum(a['actual'] for a in activity), 6)})})
         items.extend(activity)
     return items, subjects, links

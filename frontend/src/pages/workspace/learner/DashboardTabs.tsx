@@ -35,6 +35,8 @@ export type DashboardTabsProps = {
   onTabOpen?: (id: DashboardTabId) => void;
   tabData?: DashboardTabSnapshots;
   monthlyDataEnabled?: boolean;
+  /** Hidden visited panels retain selection and snapshots but defer network work. */
+  active?: boolean;
   attendanceWorkspace?: AttendanceWorkspace;
   programmeProgress?: CanonicalModuleProgress[];
 };
@@ -55,7 +57,7 @@ export function DashboardTabs(props: DashboardTabsProps) {
   const panelProps = useMemo(() => props, [props]);
   const propsFor = (id: DashboardTabId): DashboardTabsProps => {
     const snapshot = id === 'overview' ? props.tabData?.[id] : undefined;
-    return snapshot ? { ...panelProps, plan: snapshot.plan } : panelProps;
+    return { ...panelProps, ...(snapshot ? { plan: snapshot.plan } : {}), active: active === id };
   };
   return <section className={styles.tabs} aria-label="Learner dashboard sections">
     <div className={styles.tabList} role="tablist" aria-label="Dashboard tabs">
@@ -66,7 +68,7 @@ export function DashboardTabs(props: DashboardTabsProps) {
     {tabs.filter(tab => visited.has(tab.id)).map(tab => <div key={tab.id} id={`learner-dashboard-panel-${tab.id}`} role="tabpanel" aria-labelledby={`learner-dashboard-tab-${tab.id}`} hidden={active !== tab.id} className={styles.panel}>
       <Suspense fallback={<div role="status" className={styles.loading}>Loading {tab.label.toLowerCase()}…</div>}>
         {tab.id === 'overview' && <OverviewTab {...propsFor(tab.id)} />}
-        {tab.id === 'weekly' && <WeeklyTab {...panelProps} />}
+        {tab.id === 'weekly' && <WeeklyTab {...propsFor(tab.id)} />}
         {tab.id === 'monthly' && <MonthlyTab {...propsFor(tab.id)} />}
         {tab.id === 'training' && <TrainingTab {...propsFor(tab.id)} />}
         {tab.id === 'rewards' && <RewardsTab {...panelProps} />}

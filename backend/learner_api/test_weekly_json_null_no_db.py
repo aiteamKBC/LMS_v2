@@ -95,12 +95,13 @@ class WeeklyJsonNullTests(SimpleTestCase):
         for mid in ids:
             with self.subTest(module=mid), \
                  patch('coach_api.weekly_learning.connections'), \
+                 patch('coach_api.weekly_learning.read_weekly_live_evidence', return_value=([], [])), \
                  patch('learner_api.learning_plan._effective_plan_ids', return_value=ids), \
                  patch('learner_api.canonical_learning.curriculum_module_ids_for', return_value=[]), \
                  patch('learner_api.canonical_learning.weekly_hour_records', return_value=[]), \
                  patch('learner_api.training_plan_dashboard.rows', side_effect=[modules, authored, [], [], []]), \
                  patch('learner_api.weekly_calendar.cohort_holidays', return_value={}):
-                result = read_weekly_learning(context, module_id=mid, include_navigation=True, student_projection=True)
+                result = read_weekly_learning(context, module_id=mid)
             self.assertEqual({row['moduleId'] for row in result['weeks']}, set(ids))
             self.assertEqual(len(result['weeks']), 4)
-            self.assertEqual(result['selectedWeek']['moduleId'], mid)
+            self.assertEqual(next(week['moduleId'] for week in result['weeks'] if week['id'] == result['selectedWeek']['weekId']), mid)

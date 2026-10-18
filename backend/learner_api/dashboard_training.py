@@ -39,7 +39,7 @@ def learning_facts(source, owner, profile, records, ids, *, selected=False, subj
     The timeline requests identity-only native rows. Rich native facts, including
     KSB mappings, are restricted to one assigned module on a detail request.
     """
-    from .weekly_learning import build_weekly_learning
+    from .weekly_learning import build_learning_content_summary
     from .student_activity_access import student_activity_available
     from .student_activity_data import summarize_activities
     from .builder_activity_dates import read_builder_activity_dates
@@ -49,11 +49,11 @@ def learning_facts(source, owner, profile, records, ids, *, selected=False, subj
     context = getattr(source, '_training_identity_native', None)
     if selected and context is None:
         all_ids = getattr(source, '_training_module_ids', ids)
-        context = build_weekly_learning(source, source.pk, learning_summary=True,
+        context = build_learning_content_summary(source, source.pk, learning_summary=True,
             assigned_modules=[{'moduleId': mid} for mid in all_ids], strict=True, identities_only=True)
         source._training_identity_native = context
     progress = {'progress': (context.get('quizAttempts', []), context.get('videoProgress', []), context.get('componentProgress', []))} if selected else {}
-    native = build_weekly_learning(source, source.pk, learning_summary=True,
+    native = build_learning_content_summary(source, source.pk, learning_summary=True,
                                   assigned_modules=assigned, strict=True,
                                   identities_only=not selected, **progress,
                                   **({'compact_content': True} if selected else {}))
@@ -89,7 +89,14 @@ def learning_facts(source, owner, profile, records, ids, *, selected=False, subj
     with connections['enrolment'].cursor() as cur:
         # Timeline, selected-module and plan reads share this request's title cache.
         builder = builder_subject_links(cur, source, refs)
-        dates = read_builder_activity_dates(cur, ids)
+        # These facts are reused when the initial timeline also selects a module.
+        # Keep scope exact: a different module population must be read independently.
+        cached_dates = getattr(source, '_training_activity_dates', None)
+        if cached_dates is not None and cached_dates[0] == frozenset(ids):
+            dates = cached_dates[1]
+        else:
+            dates = read_builder_activity_dates(cur, ids)
+            source._training_activity_dates = (frozenset(ids), dates)
     learning = {'activity': activity, 'detail': native, 'metadata': {
         'builder_subjects': builder, 'activity_dates': dates,
         'current_subjects': [{'id': mid, 'title': builder.get(f'current:{mid}', {}).get('title') or ''}
@@ -104,13 +111,16 @@ def learning_facts(source, owner, profile, records, ids, *, selected=False, subj
         components.setdefault(ref, component)
     legacy_done = {(f"legacy:{a['group_id']}", a['activity_id']): bool(a.get('completed'))
                    for a in (activity or {}).get('activities', [])}
+    passed_attempts = [a for a in native.get('quizAttempts', []) if a.get('passed')]
+    passed_quizzes = {str(a.get('quizId')) for a in passed_attempts}
+    passed_components = {a.get('componentId') for a in passed_attempts}
     for subject in subjects:
         for item in subject['activities']:
             component = components.get(item['id']) or {}
             quiz = (component.get('quizMeta') or {}).get('quizId')
-            done = any(a.get('passed') and ((quiz is not None and str(a.get('quizId')) == str(quiz))
-                       or (component.get('componentId') and a.get('componentId') == component['componentId']))
-                       for a in native.get('quizAttempts', [])) if component.get('isQuiz') else str(component.get('componentId')) in completed
+            done = ((quiz is not None and str(quiz) in passed_quizzes)
+                    or bool(component.get('componentId') and component['componentId'] in passed_components)) \
+                if component.get('isQuiz') else str(component.get('componentId')) in completed
             item['completed'] = legacy_done.get((subject['id'], item['id']), False) or done
             item['_native'] = bool(component)
             item['_mappingMissing'] = not component or component.get('ksbMappings') is None
@@ -217,8 +227,12 @@ def selected_detail(source, owner, profile, records, selected, modules, links, *
     activity_counts = dict(Counter(a.get('category') or 'activity' for a in activities))
     codes = sorted({k for a in activities for k in a.get('ksbs', [])})
     mapping_missing = any(a.get('_mappingMissing', not a.get('_native')) for a in activities)
+    live_activities = defaultdict(list)
+    for activity in activities:
+        if activity.get('category') == 'live_session':
+            live_activities[activity.get('date')].append(activity)
     for session in sessions:
-        matches = [a for a in activities if a.get('category') == 'live_session' and a.get('date') == day_from_session(session['start'])]
+        matches = live_activities.get(day_from_session(session['start']), [])
         if len(matches) == 1:
             session['title'] = matches[0]['title']
     all_dates = {*selected['dates'], *(day_from_session(s['start']) for s in sessions)}
@@ -324,7 +338,7 @@ def read_training(source, kind, owner, profile, request, module_id=None):
     if not coach_name and not coach['coach_email'] and schedule.source_coach(source) is None:
         coach_name = schedule.assigned_group_coach(source, list(modules.values()))
     return {'timeline': {'start': minimum[:7], 'end': maximum[:7], 'programmeStartDate': minimum,
-        'months': {m: {'topics': []} for m in targets}, 'modules': [timeline_module(m) for m in displayed],
+        'monthKeys': list(targets), 'modules': [timeline_module(m) for m in displayed],
         'reviews': reviews, 'coachName': coach_name},
         'selectedModuleId': selected['id'] if selected else None,
         'selectedModule': selected_detail(source, owner, profile, records, selected, modules, links) if selected else None}

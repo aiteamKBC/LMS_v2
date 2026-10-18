@@ -1,14 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { homeSummary, learningSchedule, overviewDashboard, overviewSchedule, overviewWeek, upcomingSchedule } from '../learnerOverview';
+import { homeSummary, learningSchedule, overviewSchedule, overviewWeek, upcomingSchedule } from '../learnerOverview';
+import { dashboardOverview } from '../dashboardTabs';
+import { dashboardOverviewFixture } from '@/test/dashboardOverviewFixture';
 import { clearAllCachedResources } from '../cachedRequest';
 
 const week = { weekStart: '2026-09-07', modules: [], deadlines: [], otjh: {} };
-const dashboard = { ...week, metrics: {
-  migrated: false,
-  programme: { completed: 1, total: 2, percent: 50, status: 'available' },
-  otjh: { historical: 0, new: 1, actual: 1, planned: 10 },
-  ksb: { completed: 1, total: 2, percent: 50, status: 'available', codes: [] },
-} };
 const home = { ...week, homeProgress: {
   otjh: { actual: 10, submitted: 2, planned: 100, percent: 10, missingPlannedActivities: 0 },
   period: { start: '2026-01-01', end: '2026-09-13' },
@@ -57,16 +53,17 @@ describe('home upcoming transport', () => {
 });
 
 describe('dashboard overview transport', () => {
-  it('loads weekly content and metrics through one dashboard-scoped request', async () => {
+  it('loads canonical dashboard facts independently of the legacy weekly cache', async () => {
+    const dashboard = dashboardOverviewFixture();
     vi.mocked(fetch).mockResolvedValueOnce(new Response(JSON.stringify(dashboard)));
-    await expect(overviewDashboard.read('commercial', '125')).resolves.toEqual(dashboard);
-    expect(String(vi.mocked(fetch).mock.calls[0][0])).toContain('/overview-week/commercial/125/?section=dashboard');
+    await expect(dashboardOverview.read('commercial', '125')).resolves.toEqual(dashboard);
+    expect(String(vi.mocked(fetch).mock.calls[0][0])).toBe('/learner_api/dashboard/commercial/125/overview/');
     expect(overviewWeek.peek('commercial', '125')).toBeUndefined();
   });
 
   it('rejects a dashboard response without metrics', async () => {
     vi.mocked(fetch).mockResolvedValueOnce(new Response(JSON.stringify(week)));
-    await expect(overviewDashboard.read('commercial', '125')).rejects.toThrow('Could not load your overview');
+    await expect(dashboardOverview.read('commercial', '125')).rejects.toThrow('Could not load your overview');
   });
 });
 

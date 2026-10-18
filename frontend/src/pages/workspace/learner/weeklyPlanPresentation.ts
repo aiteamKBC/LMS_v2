@@ -1,3 +1,4 @@
+import { attendedEvidence } from '@/api/weeklyLearningContract';
 import type { CanonicalSelectedWeek, CanonicalWeek } from '@/api/weeklyLearning';
 import type { CurriculumRow } from '@/pages/learner/training-plan-timeline/model';
 import type { JourneyComponent } from '@/utils/learnerJourney';
@@ -9,7 +10,7 @@ export function canonicalWeekRow(week: CanonicalWeek, live?: CanonicalSelectedWe
   return { kind: 'session', slotNumber: week.slotNumber, date: week.startDate, sessionNumber: week.weekNumber,
     weekId: week.weekId, weekTitle: week.title, title: live?.title ?? week.title,
     start: live?.start ?? week.sessionStart ?? null, minutes: live?.durationMinutes ?? week.sessionDurationMinutes ?? null,
-    attended: live?.attended ?? week.attended, joinUrl: live?.joinUrl ?? null,
+    attended: attendedEvidence(live?.attendance ?? week.attendance), joinUrl: live?.joinUrl ?? null,
     holidays: week.holidays, holidayNote: week.holidayNote };
 }
 
@@ -21,6 +22,6 @@ export function canonicalActivityRows(week: CanonicalSelectedWeek): JourneyCompo
       ? { quizId: activity.quizId, questions: null, duration: activity.quizDuration, timeUnit: activity.quizTimeUnit } : undefined,
     durationMinutes: activity.durationMinutes, expectedOtjh: activity.expectedHours,
     contentAvailable: activity.contentAvailable, videoUrl: activity.videoUrl,
-    weeklyCompleted: activity.completed, weeklyStatus: activity.status, ksbCodes: activity.ksbCodes,
+    weeklyCompleted: activity.status === 'completed', weeklyStatus: activity.status, ksbCodes: activity.ksbCodes,
   }));
 }

@@ -185,7 +185,7 @@ def main():
                     source.training_plan = source._weekly_training_plan
                     source.learning_plan = source._weekly_learning_plan
                     try:
-                        raw = JsonResponse(weekly.compact_weekly(weekly.read_dashboard_weekly(source, pk))).content
+                        raw = JsonResponse(weekly.read_dashboard_weekly(source, pk)).content
                     except Exception as error:
                         import traceback
                         weekly_records.append({'sample': sample, 'run': run, 'error_type': type(error).__name__,

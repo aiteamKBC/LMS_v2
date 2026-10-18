@@ -24,34 +24,19 @@ from .student_activity import _direct_progress_records
 from .student_activity_access import student_activity_available
 from .training_plan_dashboard import rows as dict_rows
 from .replaced_teams_attendance import REPLACED_ATTENDANCE_LATERAL_SQL
+from .attendance_assignments import assigned_module_ids as effective_assigned_module_ids
 
 log = logging.getLogger(__name__)
-ATTENDANCE_SOURCE_FIELDS = ('id', 'username', 'email', 'aptem_id', 'employer_id', 'learner_type')
+ATTENDANCE_SOURCE_FIELDS = ('id', 'username', 'email', 'aptem_id', 'employer_id', 'learner_type',
+                            'programme', 'group', 'training_plan', 'learning_plan')
 
-# Attendance must use both persisted representations of the current learning
-# plan.  An empty JSON array is common while the normalized learner-plan mirror
-# already contains the assigned modules (for example immediately after a plan
-# rebuild).  The shared student-activity query intentionally treats a JSON
-# array as authoritative, so attendance keeps its own union rather than
-# changing that behaviour for unrelated learner screens.
+# The effective plan includes group inheritance and respects explicit/empty
+# selections, exactly as My Learning. A stale normalized mirror is not a
+# second assignment authority. Historical attendance is read separately.
 ATTENDANCE_SUBJECTS_SQL = '''
-    WITH source AS (
-        SELECT id, CASE WHEN jsonb_typeof("Training_plan"::jsonb)='array'
-            THEN "Training_plan"::jsonb ELSE "Learning_plan"::jsonb END AS plan
-        FROM enrolment."Created_users" WHERE id=%s
-    ), assigned AS (
-        SELECT entry->>'moduleId' AS module_id FROM source
-        CROSS JOIN LATERAL jsonb_array_elements(
-            CASE WHEN jsonb_typeof(plan)='array' THEN plan ELSE '[]'::jsonb END
-        ) entry
-        UNION
-        SELECT coalesce(m.curriculum_module_id,nullif(m.module_ref,'')) FROM source
-        JOIN "Learner".learners l ON l.enrolment_id=source.id
-        JOIN "Learner".learner_training_plan_modules m ON m.learner_id=l.id
-    )
     SELECT DISTINCT cm.module_catalogue_id,cm.title
-    FROM assigned JOIN curriculum.modules cm ON cm.module_catalogue_id=assigned.module_id
-    WHERE (cm.deleted_at IS NULL OR COALESCE(cm.deleted_via_parent, '') <> '')
+    FROM curriculum.modules cm WHERE cm.module_catalogue_id=ANY(%s)
+      AND (cm.deleted_at IS NULL OR COALESCE(cm.deleted_via_parent, '') <> '')
 '''
 
 
@@ -234,9 +219,9 @@ def read_native_occurrences(source, *, module_ids=None):
     with connections['enrolment'].cursor() as cur:
         if module_ids is None:
             # An old Teams invitation is not a current curriculum assignment.
-            # Use the same saved plan as My Learning and Training Plan, then exclude
+            # Use the same effective plan as My Learning and Training Plan, then exclude
             # deleted delivery modules and replaced meeting series below.
-            cur.execute(ATTENDANCE_SUBJECTS_SQL, [source.id])
+            cur.execute(ATTENDANCE_SUBJECTS_SQL, [effective_assigned_module_ids(source)])
             module_ids = [row[0] for row in cur.fetchall()]
         else:
             module_ids = list(dict.fromkeys(str(value or '').strip() for value in module_ids))
@@ -675,7 +660,7 @@ def read_native_components(source, module_refs=None, *, monthly=False):
     if module_refs is not None and not module_refs:
         return [], [] if monthly else _direct_progress_records(source.id)
     with connections['enrolment'].cursor() as cur:
-        cur.execute(ATTENDANCE_SUBJECTS_SQL, [source.id])
+        cur.execute(ATTENDANCE_SUBJECTS_SQL, [effective_assigned_module_ids(source)])
         modules = [row[0] for row in cur.fetchall() if module_refs is None or row[0] in module_refs]
         description = "''::text" if monthly else 'c.description'
         cur.execute(f'''SELECT c.id,c.module_catalogue_id,c.week_id,c.type,c.title,{description} AS description,
@@ -714,7 +699,7 @@ def read_assigned_modules(source):
     its zero/upcoming state.
     """
     with connections['enrolment'].cursor() as cur:
-        cur.execute(ATTENDANCE_SUBJECTS_SQL, [source.id])
+        cur.execute(ATTENDANCE_SUBJECTS_SQL, [effective_assigned_module_ids(source)])
         return [{'id': row[0], 'title': row[1]} for row in cur.fetchall()]
 
 
@@ -989,11 +974,15 @@ def _mark_missed_catchups(lectures, reported):
                 lecture['catchupStatus'] = 'missed'
 
 
-def read_workspace(source, kind, *, monthly=None):
+def read_workspace(source, kind, *, monthly=None, monthly_occurrences=None):
     from .attendance_mode import read_mode
     register = lecture_register(source)
     if monthly is not None:
         register = [row for row in register if row.get('source') == 'microsoft-teams' and row['session_date'].isoformat().startswith(monthly)]
+        if monthly_occurrences is not None:
+            # Clip only after canonical register normalization. Avoid content and
+            # absence/recovery queries for cards the Monthly UI does not render.
+            register = [row for row in register if (session_key(row), row['session_date'].isoformat()) in monthly_occurrences]
     metadata, activities = ({}, []) if monthly is not None else read_legacy_metadata(source, register)
     native_modules = {row['module_catalogue_id'] for row in register if row.get('source') == 'microsoft-teams'}
     components, progress = read_native_components(source, native_modules, monthly=True) if monthly is not None else read_native_components(source, native_modules)

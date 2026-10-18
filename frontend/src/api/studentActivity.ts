@@ -96,6 +96,8 @@ export interface StudentActivityResponse {
   /** Complete accepted ledger from Learner.learner_progress_entries. When
    * present it replaces mixed legacy/direct activity-log projections. */
   canonical_otjh_activities?: CanonicalOtjhActivity[];
+  /** Accepted old/current ledger union for explicitly verified course successors. */
+  replacement_hours?: Record<string, { course_ref: string; accepted_hours: number }>;
   planned_total: number | null;
   mapped_count: number;
   planned_mapped_count: number;

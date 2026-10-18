@@ -1,5 +1,5 @@
 import type { LearnerKind } from './learnerDetail';
-import type { PlanMonth, PlanReview, PlanModule } from './trainingPlanDashboard';
+import type { PlanReview, PlanModule } from './trainingPlanDashboard';
 import type { DisplayTimelineModule } from '@/pages/learner/training-plan-timeline/model';
 import { createCachedResource } from './cachedRequest';
 import { peekLearnerJson, readLearnerJson, subscribeLearnerReadInvalidation, withCallerSignal } from './learnerRead';
@@ -17,7 +17,7 @@ export type DashboardTrainingPayload = {
   timeline: {
     start: string; end: string; programmeStartDate?: string | null;
     modules: TrainingTimelineModule[]; reviews: PlanReview[];
-    months?: Record<string, Pick<PlanMonth, 'topics'>>; coachName?: string;
+    monthKeys?: string[]; coachName?: string;
   };
   selectedModuleId: string | null;
   selectedModule: TrainingModule | null;
