@@ -33,6 +33,12 @@ def allowed_redirect_hosts():
     return frozenset(host.strip().lower() for host in raw.split(",") if host.strip())
 
 
+def allowed_origins():
+    """Browser origins allowed to call /mcp/ besides MCP_PUBLIC_BASE_URL (MCP_ALLOWED_ORIGINS)."""
+    raw = os.environ.get("MCP_ALLOWED_ORIGINS", "")
+    return frozenset(o.strip().rstrip("/") for o in raw.split(",") if o.strip())
+
+
 def loopback_http_allowed():
     """Plain-http loopback redirects are for Inspector on a dev/branch server only."""
     return bool(settings.DEBUG or getattr(settings, "RUN_APP_ON_TEST_BRANCH", False))

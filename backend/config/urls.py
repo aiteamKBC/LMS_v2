@@ -58,6 +58,8 @@ urlpatterns = [
     # MCP server for AI connectors. 404 unless MCP_ENABLED; outside the *_api
     # prefixes, so production LiteSpeed must be told to forward these paths.
     path('mcp/', include('mcp_api.urls')),
+    # Some MCP clients drop the slash, and APPEND_SLASH cannot redirect a POST.
+    path('mcp', mcp_views.mcp_endpoint, name='mcp-endpoint-noslash'),
     path('oauth/', include('mcp_api.oauth_urls')),
     path('.well-known/oauth-protected-resource', mcp_views.oauth_protected_resource_metadata, name='oauth-protected-resource'),
     path('.well-known/oauth-authorization-server', mcp_views.oauth_authorization_server_metadata, name='oauth-authorization-server'),

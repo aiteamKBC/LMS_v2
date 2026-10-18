@@ -14,12 +14,14 @@ sends no CORS headers and may not be framed.
 """
 import json
 import logging
+import time
 from functools import wraps
 from urllib.parse import urlsplit
 
 from django.core.cache import cache
 from django.http import HttpResponse, HttpResponseNotFound, HttpResponseRedirect, JsonResponse
 from django.shortcuts import render
+from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
 
@@ -27,10 +29,12 @@ from login.invitations import frontend_base_url
 from login.security import client_ip
 from login.sessions import authenticate_request
 
-from . import oauth
-from .auth import has_mcp_access
-from .events import event
-from .settings import SCOPE, mcp_enabled, public_base_url
+from . import oauth, protocol
+from .auth import has_mcp_access, resolve_bearer
+from .context import mcp_call
+from .events import call_event, event
+from .models import McpOAuthToken
+from .settings import SCOPE, allowed_origins, mcp_enabled, public_base_url
 
 logger = logging.getLogger("mcp_api")
 
@@ -86,17 +90,85 @@ def _oauth_error(error):
 
 # --- /mcp/ ----------------------------------------------------------------------
 
-@csrf_exempt
-@public_cors
-@mcp_feature_required
-@require_http_methods(["GET", "POST", "DELETE"])
-def mcp_endpoint(request):
-    """No token is accepted yet (Step 4), so every call is told where to get one (RFC 9728)."""
+def _bearer_challenge():
     response = HttpResponse(status=401)
     response["WWW-Authenticate"] = (
         f'Bearer resource_metadata="{public_base_url()}{PROTECTED_RESOURCE_METADATA_PATH}"'
     )
     return response
+
+
+def _origin_allowed(request):
+    """DNS-rebinding guard: a browser Origin must be this server or an allowlisted one."""
+    origin = request.headers.get("Origin")
+    if not origin:
+        return True
+    return origin.rstrip("/") in {public_base_url(), *allowed_origins()}
+
+
+#: Refresh ``Last_used_at`` at most this often, so a busy client does not write per call.
+_LAST_USED_REFRESH_SECONDS = 300
+
+
+def _touch(token):
+    now = timezone.now()
+    if token.last_used_at is None or (now - token.last_used_at).total_seconds() >= _LAST_USED_REFRESH_SECONDS:
+        McpOAuthToken.objects.filter(pk=token.pk).update(last_used_at=now)
+
+
+@csrf_exempt
+@public_cors
+@mcp_feature_required
+def mcp_endpoint(request):
+    """MCP Streamable HTTP, stateless JSON: POST one JSON-RPC message, get one reply.
+
+    Bearer tokens are accepted here and nowhere else. The token's account becomes
+    ``request.login_account`` and the curriculum-history actor for the whole call,
+    and both are cleared in ``finally`` (``context.mcp_call``).
+    """
+    if not _origin_allowed(request):
+        return JsonResponse({"error": "Origin not allowed.", "code": "origin_not_allowed"}, status=403)
+    if request.method != "POST":
+        response = HttpResponse(status=405)
+        response["Allow"] = "POST"
+        return response
+    resolved = resolve_bearer(request)
+    if resolved is None:
+        return _bearer_challenge()
+    account, token = resolved
+
+    version = request.headers.get("Mcp-Protocol-Version")
+    if version and version not in protocol.SUPPORTED_PROTOCOL_VERSIONS:
+        status, body = protocol.error(None, protocol.INVALID_REQUEST, f"Unsupported MCP-Protocol-Version {version}.", 400)
+        return JsonResponse(body, status=status)
+
+    _touch(token)
+    started = time.monotonic()
+    action, outcome = "", "error"
+    try:
+        try:
+            message = json.loads(request.body or b"")
+        except ValueError:
+            status, body = protocol.error(None, protocol.PARSE_ERROR, "Parse error: the body is not JSON.", 400)
+        else:
+            action = message.get("method", "") if isinstance(message, dict) else ""
+            with mcp_call(request, account, token.client):
+                try:
+                    status, body, tool_name = protocol.handle(request, message, account.pk)
+                except Exception:
+                    logger.exception("MCP request failed")
+                    status, body, tool_name = (*protocol.error(
+                        message.get("id") if isinstance(message, dict) else None,
+                        protocol.INTERNAL_ERROR, protocol.GENERIC_FAILURE,
+                    ), None)
+            action = tool_name or action
+        failed = body is not None and ("error" in body or body.get("result", {}).get("isError"))
+        outcome = "error" if failed else "ok"
+    finally:
+        call_event(account.pk, token.client, action, outcome, round((time.monotonic() - started) * 1000))
+    if body is None:
+        return HttpResponse(status=status)
+    return JsonResponse(body, status=status)
 
 
 # --- metadata (RFC 9728 / RFC 8414) -----------------------------------------------
