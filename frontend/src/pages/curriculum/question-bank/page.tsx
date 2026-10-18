@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
+import { useListQueryState } from '@/hooks/useListQueryState';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { WorkspaceHeroBanner } from '@/components/feature/WorkspaceHeroBanner';
 import { ThemedSelect } from '@/components/feature/ThemedSelect';
@@ -97,13 +98,21 @@ function statusIcon(status: string) {
   return 'ri-file-edit-line';
 }
 
+const QUESTION_BANK_QUERY_DEFAULTS = { programme: 'all', q: '', type: 'all', status: 'all' };
+
 export default function QuestionBankPage() {
   const { success, error: toastError } = useToast();
   const [questionBank, setQuestionBank] = useState<QuestionBankData | null>(null);
-  const [bankProgramme, setBankProgramme] = useState<'all' | string>('all');
-  const [bankSearch, setBankSearch] = useState('');
-  const [typeFilter, setTypeFilter] = useState<'all' | QuestionType>('all');
-  const [statusFilter, setStatusFilter] = useState('all');
+  // In the URL, so stepping back here from the quiz workspace keeps the filters.
+  const { state: query, setValues: setQuery } = useListQueryState(QUESTION_BANK_QUERY_DEFAULTS);
+  const bankProgramme = String(query.programme);
+  const bankSearch = String(query.q);
+  const typeFilter = String(query.type) as 'all' | QuestionType;
+  const statusFilter = String(query.status);
+  const setBankProgramme = (value: string) => setQuery({ programme: value });
+  const setBankSearch = (value: string) => setQuery({ q: value });
+  const setTypeFilter = (value: 'all' | QuestionType) => setQuery({ type: value });
+  const setStatusFilter = (value: string) => setQuery({ status: value });
   const [bankLoading, setBankLoading] = useState(true);
   const [bankError, setBankError] = useState('');
   const [selectedQuestion, setSelectedQuestion] = useState<QuestionBankQuestion | null>(null);
@@ -382,11 +391,7 @@ export default function QuestionBankPage() {
                   {hasActiveQuestionFilters && (
                     <button
                       type="button"
-                      onClick={() => {
-                        setTypeFilter('all');
-                        setStatusFilter('all');
-                        setBankSearch('');
-                      }}
+                      onClick={() => setQuery({ type: 'all', status: 'all', q: '' })}
                       className="mt-4 h-9 px-4 rounded-lg bg-[#5b2dbb] text-white text-xs font-semibold hover:bg-[#4c1d95] transition-smooth"
                     >
                       Clear filters

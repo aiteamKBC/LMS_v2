@@ -7,6 +7,8 @@ treated any parent stamp as "archived with its module", so the stale set
 (Event MasterClass, then every title one week late) outranked the live weeks
 the Module Builder shows. The components and KSB mappings archived with those
 weeks carried the same stamp, so the same rule covers them.
+the Module Builder shows. The components and KSB mappings archived with those
+weeks carried the same stamp, so the same rule covers them.
 """
 import re
 from pathlib import Path
@@ -41,29 +43,7 @@ READER_PATHS = {
     'coach_api/weekly_learning.py': 1,
 }
 
-# Every learner/coach read of curriculum.components / ksb_mappings that filters
-# deleted rows, with the number of predicates it builds from the shared rule.
-CHILD_READER_PATHS = {
-    'learner_api/training_plan_dashboard.py': 1,
-    'learner_api/overview_week.py': 4,
-    'learner_api/mobile.py': 2,
-    'learner_api/learner_detail.py': 5,
-    'learner_api/builder_activity_dates.py': 1,
-    'learner_api/curriculum.py': 1,
-    'learner_api/module_shift.py': 2,
-    'learner_api/training_plan_document.py': 1,
-    'learner_api/active_users.py': 1,
-    'learner_api/assignment_settings.py': 1,
-    'learner_api/dashboard_metrics.py': 4,
-    'learner_api/student_activity_data.py': 2,
-    'coach_api/overview_modules.py': 1,
-    'coach_api/otjh_ksb.py': 1,
-    'coach_api/learning_plan_projection.py': 1,
-    'coach_api/monthly_focus.py': 2,
-    'coach_api/weekly_learning.py': 2,
-}
-
-# The old rule: any parent stamp kept a deleted week, component or mapping visible.
+# The old rule: any parent stamp kept a deleted week visible.
 LEAKY_WEEK_RULE = re.compile(
     r"(?:\b(?:w|c|k|component|mapping)\.deleted_at IS NULL\W+OR COALESCE\((?:w|c|k|component|mapping)\.deleted_via_parent"
     r"|FROM curriculum\.(?:weeks|components|ksb_mappings)\b[^;]{0,200}?deleted_at IS NULL OR COALESCE\(deleted_via_parent)",

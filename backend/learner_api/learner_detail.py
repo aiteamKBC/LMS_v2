@@ -1340,7 +1340,7 @@ def _component_files(settings, resource_url, file_name):
     return [{"fileName": file_name, "url": resource_url, "size": 0, "contentType": None}] if resource_url else []
 
 
-def _cohort_schedule(cohort_name, programme_name):
+def _cohort_schedule(cohort_name, programme_name, cohort_id=""):
     """The dates the learner's cohort runs to, or an empty dict.
 
     Gateway is not something a learner reaches by finishing their modules early:
@@ -1348,25 +1348,33 @@ def _cohort_schedule(cohort_name, programme_name):
     Gateway open and the EPA window (``epa_months``) begin. The learner page
     needs those dates to say "modules complete, Gateway opens in March" rather
     than declaring someone Gateway-ready a year ahead of their cohort.
+
+    The cohort is found by ``cohort_id`` when the learner's placement holds one,
+    so renaming the cohort does not take its dates off the learner page.
     """
-    cohort_name = _s(cohort_name)
-    if not cohort_name:
+    cohort_name, cohort_id = _s(cohort_name), _s(cohort_id)
+    if not cohort_name and not cohort_id:
         return {}
-    try:
-        with connections["default"].cursor() as cur:
-            cur.execute(
-                """
+    columns = """
                 SELECT start_date, end_date, apprenticeship_end_date,
                        apprenticeship_end_override, epa_months
                 FROM curriculum.cohorts
-                WHERE cohort_name = %s
-                  AND (%s = '' OR programme_name = %s)
-                  AND deleted_at IS NULL
-                ORDER BY updated_at DESC NULLS LAST
-                LIMIT 1
-                """,
-                [cohort_name, _s(programme_name), _s(programme_name)],
-            )
+    """
+    try:
+        with connections["default"].cursor() as cur:
+            if cohort_id:
+                cur.execute(columns + " WHERE cohort_id = %s AND deleted_at IS NULL", [cohort_id])
+            else:
+                cur.execute(
+                    columns + """
+                    WHERE cohort_name = %s
+                      AND (%s = '' OR programme_name = %s)
+                      AND deleted_at IS NULL
+                    ORDER BY updated_at DESC NULLS LAST
+                    LIMIT 1
+                    """,
+                    [cohort_name, _s(programme_name), _s(programme_name)],
+                )
             row = cur.fetchone()
     except DatabaseError as exc:
         logger.warning("Could not read cohort schedule for %r: %s", cohort_name, exc)
@@ -1394,7 +1402,14 @@ def _apply_cohort_schedule(detail, source):
     detail.update({
         "cohortStartDate": "", "gatewayStartDate": "", "epaEndDate": "", "epaMonths": None,
     })
-    detail.update(_cohort_schedule(getattr(source, "cohort", ""), getattr(source, "programme", "")))
+    from .placement_links import placement_ids
+
+    try:
+        cohort_id = placement_ids(source)["cohort_id"]
+    except DatabaseError as exc:
+        logger.warning("Could not read the placement ids for the cohort schedule: %s", exc)
+        cohort_id = ""
+    detail.update(_cohort_schedule(getattr(source, "cohort", ""), getattr(source, "programme", ""), cohort_id))
 
 
 def _resolve_from_master(modules, weeks, components, assigned_modules=None, *, compact=False,

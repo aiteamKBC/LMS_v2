@@ -67,8 +67,8 @@ describe('ModuleLearnerProgressDialog', () => {
       achievedTotal: 1.25, plannedTotal: 4, source: 'Activity Log', unallocatedAcceptedRecords: 2,
     } };
     render(<ModuleLearnerProgressDialog moduleName="Digital Leadership" impact={enriched} onClose={vi.fn()} onAssignMore={vi.fn()} onRemoveLearner={vi.fn()} />);
-    expect(screen.getByText('1h 15m / 4h')).toBeInTheDocument();
-    expect(screen.getByText('1h 15m')).toBeInTheDocument();
+    expect(screen.getByText('01:15:00 / 04:00:00')).toBeInTheDocument();
+    expect(screen.getByText('01:15:00')).toBeInTheDocument();
     expect(screen.getByText('2 accepted records without allocated time.')).toBeInTheDocument();
     expect(screen.getByText(/2 accepted records without allocated time; recorded hours are included/)).toBeInTheDocument();
     expect(screen.queryByText('N/A')).not.toBeInTheDocument();
@@ -76,7 +76,7 @@ describe('ModuleLearnerProgressDialog', () => {
   it('uses the same accepted Activity Log hours as the learner page when available', () => {
     const enriched = { ...impact, activityLogOtjh:{ learners:[{ learnerId:'learner-1',plannedOtjh:4,achievedOtjh:1.25 }],achievedTotal:1.25,plannedTotal:4,source:'Activity Log' } };
     render(<ModuleLearnerProgressDialog moduleName="Digital Leadership" impact={enriched} onClose={vi.fn()} onAssignMore={vi.fn()} onRemoveLearner={vi.fn()} />);
-    expect(screen.getByText('1h 15m / 4h')).toBeInTheDocument();
+    expect(screen.getByText('01:15:00 / 04:00:00')).toBeInTheDocument();
     expect(screen.getByText('1.5 / 3')).toBeInTheDocument();
     expect(screen.getByText(/Activity Log accepted hours/)).toBeInTheDocument();
   });
@@ -86,7 +86,7 @@ describe('ModuleLearnerProgressDialog', () => {
     render(<MemoryRouter><ModuleLearnerProgressDialog moduleId="MOD-1" moduleName="Digital Leadership"
       impact={enriched} assignedLearners={[directoryLearner]} onClose={vi.fn()} onAssignMore={vi.fn()} onRemoveLearner={vi.fn()} /></MemoryRouter>);
     expect(screen.getByRole('link', { name: 'View progress' })).toHaveAttribute('href', '/curriculum/learner-module-progress?moduleId=MOD-1&enrolmentId=91');
-    expect(screen.getByText('2h / 4h')).toBeInTheDocument();
+    expect(screen.getByText('02:00:00 / 04:00:00')).toBeInTheDocument();
   });
   it('shows assigned learners with OTJH and achieved KSB weight progress', () => {
     const assignMore = vi.fn();
@@ -94,7 +94,7 @@ describe('ModuleLearnerProgressDialog', () => {
 
     expect(screen.getByRole('dialog', { name: 'Definition of Project Management learner progress' })).toBeInTheDocument();
     expect(screen.getByText('A Learner')).toBeInTheDocument();
-    expect(screen.getByText('2h / 4h')).toBeInTheDocument();
+    expect(screen.getByText('02:00:00 / 04:00:00')).toBeInTheDocument();
     expect(screen.getByText('1.5 / 3')).toBeInTheDocument();
     expect(screen.getByText('KSB weights achieved')).toBeInTheDocument();
     screen.getByRole('button', { name: 'Assign more learners' }).click();
@@ -127,7 +127,7 @@ describe('ModuleLearnerProgressDialog', () => {
 
     expect(screen.getByText('2 learners assigned to this module')).toBeInTheDocument();
     expect(screen.getByText('Recently assigned learner')).toBeInTheDocument();
-    expect(screen.getByText('0h / 0h')).toBeInTheDocument();
+    expect(screen.getByText('00:00:00 / 00:00:00')).toBeInTheDocument();
   });
 
   it('offers removal from each learner card and waits for the server result', async () => {

@@ -35,16 +35,23 @@ def propagate_cohort_name(cohort, name):
         if connection.vendor == 'postgresql':
             # All writes use the parent's connection, including the enrolment and
             # profile schemas, so a failure rolls back the entire rename.
+            # An enrolment whose profile carries this cohort's id is renamed by
+            # that link, even when its programme label has gone stale since; one
+            # without an id still needs its programme and old name to match.
+            # Either way only the old name is replaced: no learner changes cohort.
             cursor.execute(
                 '''UPDATE enrolment."Created_users" u SET "Cohort" = %s
-                   WHERE u."Programme" = %s AND u."Cohort" = %s
-                     AND NOT EXISTS (
-                       SELECT 1 FROM "Learner".learners l
-                       WHERE l.enrolment_id = u.id
-                         AND nullif(btrim(l.cohort_id), '') IS NOT NULL
-                         AND l.cohort_id <> %s)
+                   WHERE u."Cohort" = %s
+                     AND (EXISTS (
+                            SELECT 1 FROM "Learner".learners l
+                            WHERE l.enrolment_id = u.id AND l.cohort_id = %s)
+                          OR (u."Programme" = %s AND NOT EXISTS (
+                            SELECT 1 FROM "Learner".learners l
+                            WHERE l.enrolment_id = u.id
+                              AND nullif(btrim(l.cohort_id), '') IS NOT NULL
+                              AND l.cohort_id <> %s)))
                    RETURNING u.id, u."Learner_type"''',
-                [name, programme, old_name, cohort_id],
+                [name, old_name, cohort_id, programme, cohort_id],
             )
             affected = set(cursor.fetchall())
             cursor.execute(

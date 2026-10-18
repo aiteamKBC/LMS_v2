@@ -73,6 +73,25 @@ function parseStatusParam(value: string | null): 'all' | QuizStatus {
   return statusOptions.some(option => option.value === value) ? value as 'all' | QuizStatus : 'all';
 }
 
+// The rest of the list controls, read back from the URL the same way.
+function parseDatePresetParam(value: string | null): DateFilterPreset {
+  return value === 'custom' || dateFilterPresets.some(option => option.value === value) ? value as DateFilterPreset : 'all';
+}
+
+function parseDayParam(value: string | null) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value || '');
+  return match ? new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3])) : null;
+}
+
+function dayParam(date: Date | null) {
+  if (!date) return '';
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+}
+
+function parsePageSizeParam(value: string | null) {
+  return pageSizeOptions.some(option => option.value === value) ? String(value) : '10';
+}
+
 interface QuizPackage {
   id: number;
   title: string;
@@ -882,14 +901,18 @@ export default function QuizXmlWorkspacePage() {
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
   const [bulkAction, setBulkAction] = useState('');
   const [filterStatus, setFilterStatus] = useState<'all' | QuizStatus>(() => parseStatusParam(searchParams.get('status')));
-  const [search, setSearch] = useState('');
-  const [dateFilterPreset, setDateFilterPreset] = useState<DateFilterPreset>('all');
-  const [customDateRange, setCustomDateRange] = useState<{ start: Date | null; end: Date | null }>({ start: null, end: null });
+  const [search, setSearch] = useState(() => searchParams.get('q') || '');
+  const [dateFilterPreset, setDateFilterPreset] = useState<DateFilterPreset>(() => parseDatePresetParam(searchParams.get('date')));
+  const [customDateRange, setCustomDateRange] = useState<{ start: Date | null; end: Date | null }>(() => {
+    const start = parseDayParam(searchParams.get('from'));
+    const end = parseDayParam(searchParams.get('to'));
+    return { start: start ? startOfDay(start) : null, end: end ? endOfDay(end) : null };
+  });
   const [dateFilterOpen, setDateFilterOpen] = useState(false);
   const [moreMenuOpen, setMoreMenuOpen] = useState(false);
   const [calendarViewDate, setCalendarViewDate] = useState(() => new Date());
-  const [currentPage, setCurrentPage] = useState(1);
-  const [pageSize, setPageSize] = useState('10');
+  const [currentPage, setCurrentPage] = useState(() => Math.max(1, Math.floor(Number(searchParams.get('page'))) || 1));
+  const [pageSize, setPageSize] = useState(() => parsePageSizeParam(searchParams.get('size')));
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [showCreate, setShowCreate] = useState(false);
@@ -976,13 +999,39 @@ export default function QuizXmlWorkspacePage() {
     }
   }, [searchParams, setSearchParams]);
 
+  // The search, date filter and page sit in the URL beside the status, replaced
+  // rather than pushed, so Back from a quiz editor returns to the list as it
+  // was left instead of starting the search again.
   useEffect(() => {
-    setCurrentPage(1);
-  }, [filterStatus, search, pageSize, dateFilterPreset, customDateRange.start, customDateRange.end]);
+    const next = new URLSearchParams(searchParams);
+    const custom = dateFilterPreset === 'custom';
+    ([
+      ['q', search],
+      ['date', dateFilterPreset === 'all' ? '' : dateFilterPreset],
+      ['from', custom ? dayParam(customDateRange.start) : ''],
+      ['to', custom ? dayParam(customDateRange.end) : ''],
+      ['page', currentPage > 1 ? String(currentPage) : ''],
+      ['size', pageSize === '10' ? '' : pageSize],
+    ] as const).forEach(([key, value]) => { if (value) next.set(key, value); else next.delete(key); });
+    if (next.toString() !== searchParams.toString()) setSearchParams(next, { replace: true });
+  }, [currentPage, customDateRange.end, customDateRange.start, dateFilterPreset, pageSize, search, searchParams, setSearchParams]);
 
+  // Back to the first page when a filter actually changes -- not on arrival,
+  // or a page restored from the URL would be thrown away.
+  const filterSignature = [filterStatus, search, pageSize, dateFilterPreset, dayParam(customDateRange.start), dayParam(customDateRange.end)].join('|');
+  const lastFilterSignatureRef = useRef(filterSignature);
   useEffect(() => {
+    if (lastFilterSignatureRef.current === filterSignature) return;
+    lastFilterSignatureRef.current = filterSignature;
+    setCurrentPage(1);
+  }, [filterSignature]);
+
+  // Clamped only once the list has loaded; an empty list mid-load would
+  // otherwise send a restored page back to page 1.
+  useEffect(() => {
+    if (loading) return;
     setCurrentPage(current => Math.min(current, Math.max(1, Math.ceil(quizzes.length / Number(pageSize)))));
-  }, [quizzes.length, pageSize]);
+  }, [loading, quizzes.length, pageSize]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -1656,7 +1705,8 @@ export default function QuizXmlWorkspacePage() {
   const openQuestionEditor = async (quiz: QuizPackage) => {
     // navigate, not window.location: the latter reloaded the SPA, which threw
     // away this page's loaded state and re-fetched every route chunk.
-    navigate(`/curriculum/quiz-xml/${quiz.id}/edit`);
+    // The editor's Back then steps back to this list, filters and all.
+    navigate(`/curriculum/quiz-xml/${quiz.id}/edit`, { state: { backLabel: 'Back to Quiz Workspace' } });
   };
 
   const updateEditorQuestion = (questionId: number, patch: Partial<QuizPreviewQuestion>) => {
