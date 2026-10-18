@@ -34,6 +34,8 @@
 5. **Rollback rehearsal:** `99_rollback.sql`, then the section C query. Expected: **0 rows**.
 6. **Re-apply:** `01_create.sql`, section C query again, then the self-check again. Expected: as steps 3 and 4.
 
+**Record (2026-10-18):** steps 1–4 done on `security_test`; self-check OK on all four tables. Steps 5–6 **waived by the owner** (low risk: four `DROP TABLE IF EXISTS`, dependants first, nothing else references these tables). Production was applied the same day by the owner, without the B1 snapshot; tables empty and unused while `MCP_ENABLED` is off.
+
 ## B. Production (later, separate release, only when the owner decides)
 
 1. **Restore point.** In the Neon console, create a snapshot (or branch) of Production. Write its name down: `__________`.
