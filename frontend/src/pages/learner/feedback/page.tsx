@@ -7,7 +7,7 @@ import { useAuth } from '@/hooks/useAuth';
 import { useResolvedLearner } from '@/hooks/useMyLearner';
 import { roleNavMap } from '@/mocks/navigation';
 
-type FeedbackCategory = 'lecture' | 'event' | 'general';
+type FeedbackCategory = 'lecture' | 'mcm' | 'progress-review' | 'event' | 'general';
 
 const CATEGORIES: Array<{
   id: FeedbackCategory;
@@ -18,6 +18,8 @@ const CATEGORIES: Array<{
   wash: string;
 }> = [
   { id: 'lecture', title: 'Lecture Feedback', description: 'Feedback for every lecture you attended.', icon: 'ri-presentation-line', tone: 'bg-violet-100 text-violet-700 ring-violet-200', wash: 'from-violet-50' },
+  { id: 'mcm', title: 'MCM Feedback', description: 'Feedback after a completed Monthly Coaching Meeting.', icon: 'ri-user-voice-line', tone: 'bg-fuchsia-100 text-fuchsia-700 ring-fuchsia-200', wash: 'from-fuchsia-50' },
+  { id: 'progress-review', title: 'Progress Review Feedback', description: 'Feedback after a completed Progress Review.', icon: 'ri-line-chart-line', tone: 'bg-amber-100 text-amber-700 ring-amber-200', wash: 'from-amber-50' },
   { id: 'event', title: 'Event Feedback', description: 'Share your experience after events.', icon: 'ri-calendar-event-line', tone: 'bg-blue-100 text-blue-700 ring-blue-200', wash: 'from-blue-50' },
   { id: 'general', title: 'General Feedback', description: 'Other feedback forms assigned to you.', icon: 'ri-survey-line', tone: 'bg-emerald-100 text-emerald-700 ring-emerald-200', wash: 'from-emerald-50' },
 ];
@@ -79,6 +81,8 @@ export default function LearnerFeedbackPage() {
 
   const formsByCategory = useMemo(() => ({
     lecture: forms.filter(form => categoryFor(form) === 'lecture'),
+    mcm: forms.filter(form => categoryFor(form) === 'mcm'),
+    'progress-review': forms.filter(form => categoryFor(form) === 'progress-review'),
     event: forms.filter(form => categoryFor(form) === 'event'),
     general: forms.filter(form => categoryFor(form) === 'general'),
   }), [forms]);
@@ -93,7 +97,9 @@ export default function LearnerFeedbackPage() {
   }
 
   function openForm(form: LearnerFeedbackListItem) {
-    const path = form.deliveryId ? `/learner/feedback/delivery/${form.deliveryId}` : `/learner/feedback/${form.id}`;
+    const path = form.reviewDeliveryId
+      ? `/learner/feedback/review/${form.reviewDeliveryId}`
+      : form.deliveryId ? `/learner/feedback/delivery/${form.deliveryId}` : `/learner/feedback/${form.id}`;
     const search = contextSearch(activeCategory?.id, form.eventRecipientId);
     navigate(`${path}${search ? `?${search}` : ''}`);
   }
@@ -173,6 +179,8 @@ function FeedbackCard({ form, category, onOpen }: { form: LearnerFeedbackListIte
 function categoryFor(form: LearnerFeedbackListItem): FeedbackCategory {
   const type: FeedbackFormType = form.formType || (form.deliveryId ? 'post_lecture' : form.eventRecipientId ? 'post_event' : 'general');
   if (type === 'post_lecture') return 'lecture';
+  if (type === 'post_mcm_review') return 'mcm';
+  if (type === 'post_progress_review') return 'progress-review';
   if (type === 'post_event') return 'event';
   return 'general';
 }
@@ -190,7 +198,7 @@ function groupLectures(forms: LearnerFeedbackListItem[]) {
 }
 
 function sortDate(form: LearnerFeedbackListItem) { return new Date(form.sessionStartsAt || form.assignedAt || 0).getTime(); }
-function formKey(form: LearnerFeedbackListItem) { return form.eventRecipientId ? `event-${form.eventRecipientId}-${form.id}` : form.deliveryId ? `delivery-${form.deliveryId}` : `form-${form.id}`; }
+function formKey(form: LearnerFeedbackListItem) { return form.reviewDeliveryId ? `review-${form.reviewDeliveryId}` : form.eventRecipientId ? `event-${form.eventRecipientId}-${form.id}` : form.deliveryId ? `delivery-${form.deliveryId}` : `form-${form.id}`; }
 function Status({ status }: { status: string }) { const style = status === 'completed' ? 'bg-emerald-100 text-emerald-700' : status === 'in_progress' ? 'bg-amber-100 text-amber-700' : 'bg-background-200 text-foreground-600'; return <span className={`rounded-full px-2 py-1 text-[10px] font-semibold ${style}`}>{status.replace('_', ' ').replace(/\b\w/g, value => value.toUpperCase())}</span>; }
 function formatDate(value: string | null) { return value ? new Date(value).toLocaleDateString('en-GB') : '—'; }
 function formatDateTime(value: string) { return new Date(value).toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' }); }
