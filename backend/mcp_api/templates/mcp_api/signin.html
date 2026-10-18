@@ -1,0 +1,11 @@
+{% extends "mcp_api/base.html" %}
+{% block title %}Sign in · Kent Business College LMS{% endblock %}
+{% block content %}
+<h1>Sign in to the LMS to continue</h1>
+<p><strong>{{ client_name }}</strong> is asking to connect to your LMS account.</p>
+<p>Sign in to the LMS in a new tab (with your password or Microsoft), then come back here and choose <strong>Continue</strong>.</p>
+<div class="actions">
+  <a class="btn" href="{{ login_url }}" target="_blank" rel="noopener noreferrer">Sign in to the LMS</a>
+  <a class="btn primary" href="{{ continue_url }}">Continue</a>
+</div>
+{% endblock %}
