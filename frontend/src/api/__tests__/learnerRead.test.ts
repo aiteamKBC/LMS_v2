@@ -2,7 +2,7 @@ import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 import { readLearnerJson, invalidateLearnerReads, LEARNER_READ_TIMEOUT_MS, LEARNER_SOURCE_READ_TIMEOUT_MS } from '../learnerRead';
 import { clearAllCachedResources } from '../cachedRequest';
 import { fetchLearnerDetail, fetchLearnerSummary, peekLearnerDetail, invalidateLearnerDetailCache } from '../learnerDetail';
-import { fetchStudentActivity } from '../studentActivity';
+import { fetchStudentActivity, peekStudentActivity } from '../studentActivity';
 import { fetchTrainingPlanDashboard } from '../trainingPlanDashboard';
 import { overviewSchedule } from '../learnerOverview';
 import { fetchLearnerFirstSession } from '../learnerCalendar';
@@ -21,6 +21,22 @@ beforeEach(() => { clearAllCachedResources(); vi.stubGlobal('fetch', vi.fn()); }
 afterEach(() => { clearAllCachedResources(); vi.useRealTimers(); vi.unstubAllGlobals(); });
 
 describe('learner data transport', () => {
+  it('isolates the My Learning catalogue from the full OTJH ledger and invalidates both after saves', async () => {
+    const compact = { activities: [], subjects: [], verification_status: 'verified' };
+    vi.mocked(fetch).mockResolvedValueOnce(reply(compact));
+    await Promise.all([fetchStudentActivity('commercial', '125', undefined, false, 'my-learning'),
+      fetchStudentActivity('commercial', '125', undefined, false, 'my-learning')]);
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(String(vi.mocked(fetch).mock.calls[0][0])).toBe('/learner_api/student-activity/commercial/125/?view=my-learning');
+    expect(peekStudentActivity('commercial', '125')).toBeUndefined();
+    expect(peekStudentActivity('apprenticeship', '125', 'my-learning')).toBeUndefined();
+    vi.mocked(fetch).mockResolvedValueOnce(reply({ ...compact, canonical_otjh_activities: [] }));
+    await fetchStudentActivity('commercial', '125');
+    expect(fetch).toHaveBeenCalledTimes(2);
+    invalidateLearnerReads();
+    expect(peekStudentActivity('commercial', '125')).toBeUndefined();
+    expect(peekStudentActivity('commercial', '125', 'my-learning')).toBeUndefined();
+  });
   it.each(['case owner', 'coach'])('refreshes the dashboard coach after saving the %s', async field => {
     vi.mocked(fetch).mockResolvedValueOnce(reply({ sessions: [], reviews: [], coach: { name: 'Rewan Yasser' } }));
     expect((await overviewSchedule.read('commercial', '501')).coach.name).toBe('Rewan Yasser');

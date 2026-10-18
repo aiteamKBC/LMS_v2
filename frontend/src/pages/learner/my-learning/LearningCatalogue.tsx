@@ -10,6 +10,8 @@ import { learningDate, learningHref, learningToday, subjectPercent } from './sub
 import { DEFAULT_MODULE_COVER } from './moduleCover';
 import styles from './SubjectWorkspace.module.css';
 
+export type UpcomingLearningLink = { id: string; title: string; type: string; date: string; href: string; online: boolean };
+
 function assignmentsHref(kind?: string, learnerId?: string) {
   return `${learningHref('catalogue', kind, learnerId)}?tab=assignments`;
 }
@@ -35,7 +37,7 @@ function sessionHref(session: PlanSession, subjects: Subject[], kind?: string, l
   if (match?.native?.componentId && kind && learnerId) {
     return `/learner/component/${encodeURIComponent(kind)}/${encodeURIComponent(learnerId)}/${encodeURIComponent(match.native.componentId)}?week=${encodeURIComponent(match.week || '')}`;
   }
-  const subject = subjects.find(item => item.activities.some(activity => activity.native?.moduleId === session.moduleId));
+  const subject = subjects.find(item => item.moduleId === session.moduleId || item.activities.some(activity => activity.native?.moduleId === session.moduleId));
   return learningHref('catalogue', kind, learnerId, subject?.id);
 }
 
@@ -58,12 +60,13 @@ export function LearningHero({ map = false }: { map?: boolean }) {
   </header>;
 }
 
-export function LearningCatalogue({ summary, search, onSearch, current, renderCard, onContinue, moduleStartDate, kind, learnerId, total, done, percent, deadlines = [], covers = {}, upcomingSessions = [], reviewMode = false }: {
+export function LearningCatalogue({ summary, search, onSearch, current, renderCard, onContinue, moduleStartDate, kind, learnerId, total, done, percent, deadlines = [], covers = {}, upcomingSessions = [], reviewMode = false, activityMatches = [], upcomingLinks, hasMoreUpcoming = false, onLoadUpcoming }: {
   summary: UnifiedLearningSummary; search: string; onSearch: (value: string) => void; current?: Subject;
   renderCard: (subject: Subject) => ReactNode; onContinue: (subject: Subject) => void;
   moduleStartDate: (subject: Subject) => string | null | undefined; kind?: string; learnerId?: string;
   total: number | string; done: number | string; percent: number | null;
   deadlines?: OverviewWeek['deadlines']; covers?: Record<string, string>; upcomingSessions?: PlanSession[]; reviewMode?: boolean;
+  activityMatches?: string[]; upcomingLinks?: UpcomingLearningLink[]; hasMoreUpcoming?: boolean; onLoadUpcoming?: () => void;
 }) {
   const [filter, setFilter] = useState('all');
   const [sourceFilter, setSourceFilter] = useState<'all' | Subject['source']>('all');
@@ -73,7 +76,7 @@ export function LearningCatalogue({ summary, search, onSearch, current, renderCa
   const term = search.trim().toLocaleLowerCase();
   const visible = summary.subjects.filter(subject => {
     const progress = subjectPercent(subject);
-    return (!term || subject.title.toLocaleLowerCase().includes(term) || subject.activities.some(a => a.title.toLocaleLowerCase().includes(term)))
+    return (!term || subject.title.toLocaleLowerCase().includes(term) || activityMatches.includes(subject.id) || subject.activities.some(a => a.title.toLocaleLowerCase().includes(term)))
       && (sourceFilter === 'all' || (subject.importedCourseRef || subject.replacementCourseRef ? 'legacy' : subject.source) === sourceFilter)
       && (filter === 'all' || (filter === 'complete' ? progress === 100 : filter === 'new' ? progress === 0 : progress > 0 && progress < 100));
   }).sort((a, b) => {
@@ -93,7 +96,7 @@ export function LearningCatalogue({ summary, search, onSearch, current, renderCa
     return target ? [target.id, target] as const : [subject.id, subject] as const;
   })).values()];
   const today = learningToday();
-  const upcoming = [
+  const upcoming = upcomingLinks?.map(item => ({ ...item, detail: item.type === 'session' ? 'Live session' : item.type === 'assignment' ? 'Assignment due' : 'Checkpoint' })) ?? [
     ...deadlines.filter(item => item.date >= today).map(item => ({
       id: `deadline:${item.id}`, title: item.title, detail: item.type === 'assignment' ? 'Assignment due' : 'Checkpoint',
       date: item.date, sortDate: Date.parse(item.date), href: deadlineHref(item, kind, learnerId), type: item.type, online: false,
@@ -101,15 +104,15 @@ export function LearningCatalogue({ summary, search, onSearch, current, renderCa
     ...upcomingSessions.filter(item => item.start && !['cancelled', 'canceled', 'completed', 'deleted', 'failed', 'superseded'].includes(item.status?.toLowerCase() || '')
       && (item.start.length === 10 ? item.start >= today : sessionStartMs(item.start) >= Date.now())).map(item => ({
       id: `session:${item.id}`, title: item.title, detail: 'Live session', date: item.start,
-      sortDate: sessionStartMs(item.start), href: sessionHref(item, summary.subjects, kind, learnerId),
+      sortDate: sessionStartMs(item.start), href: (item as PlanSession & { href?: string }).href || sessionHref(item, summary.subjects, kind, learnerId),
       type: 'session', online: Boolean(item.joinUrl),
     })),
   ].sort((a, b) => a.sortDate - b.sortDate);
   const currentSubjects = summary.subjects.filter(subject => subject.source === 'current');
   const previous = summary.previousLearning;
-  const listedTotal = summary.subjects.reduce((sum, subject) => sum + subject.activities.length, 0);
+  const listedTotal = summary.subjects.reduce((sum, subject) => sum + (subject.card?.activityCount ?? subject.activities.length), 0);
   const learningSubjects = currentSubjects.length ? currentSubjects : summary.subjects;
-  const hasRemainingActivity = (subject: Subject) => subject.activities.some(activity => !activity.completed);
+  const hasRemainingActivity = (subject: Subject) => subject.card ? subject.card.completedActivityCount < subject.card.activityCount : subject.activities.some(activity => !activity.completed);
   const continueSubject = current && learningSubjects.includes(current) && hasRemainingActivity(current)
     ? current
     : learningSubjects.find(hasRemainingActivity);
@@ -151,8 +154,8 @@ export function LearningCatalogue({ summary, search, onSearch, current, renderCa
         : <div className={styles.empty}><BookOpen size={30} /><p>{summary.subjectCount ? 'No subjects or activities match your filters.' : 'Your subjects will appear here when they are assigned.'}</p>{summary.subjectCount > 0 && <button onClick={() => { onSearch(''); setSourceFilter('all'); setFilter('all'); }}>Clear filters</button>}</div>}
     </div>
     <aside className={styles.catalogueAside} aria-label="Learning shortcuts">
-      {continueSubject && <section className={styles.asidePanel}><div className={styles.asideHeading}><h2><BookOpen size={19} />Continue learning</h2><button type="button" className={styles.asideTextButton} onClick={() => onContinue(continueSubject)}>Open<ArrowRight size={14} /></button></div><div className={styles.continueSubject}><img src={covers[continueSubject.id] || DEFAULT_MODULE_COVER} alt="" loading="lazy" className={covers[continueSubject.id] ? undefined : styles.defaultCoverImage} /><div><strong>{continueSubject.title}</strong><p>{continueSubject.activities.filter(item => item.completed).length} of {continueSubject.activities.length} activities</p><div className={styles.miniTrack}><span style={{ width: `${subjectPercent(continueSubject)}%` }} /></div></div><b>{subjectPercent(continueSubject)}%</b></div><button type="button" className={styles.primaryButton} onClick={() => onContinue(continueSubject)}>Continue learning<ArrowRight size={17} /></button></section>}
-      <section className={styles.asidePanel}><div className={styles.asideHeading}><h2><CalendarDays size={19} />Upcoming</h2>{upcoming.length > 3 && <button type="button" className={styles.asideTextButton} aria-expanded={showAllUpcoming} onClick={() => setShowAllUpcoming(value => !value)}>{showAllUpcoming ? 'Show less' : 'View all'}<ArrowRight size={14} /></button>}</div>
+      {continueSubject && <section className={styles.asidePanel}><div className={styles.asideHeading}><h2><BookOpen size={19} />Continue learning</h2><button type="button" className={styles.asideTextButton} onClick={() => onContinue(continueSubject)}>Open<ArrowRight size={14} /></button></div><div className={styles.continueSubject}><img src={covers[continueSubject.id] || DEFAULT_MODULE_COVER} alt="" loading="lazy" className={covers[continueSubject.id] ? undefined : styles.defaultCoverImage} /><div><strong>{continueSubject.title}</strong><p>{continueSubject.card?.completedActivityCount ?? continueSubject.activities.filter(item => item.completed).length} of {continueSubject.card?.activityCount ?? continueSubject.activities.length} activities</p><div className={styles.miniTrack}><span style={{ width: `${subjectPercent(continueSubject)}%` }} /></div></div><b>{subjectPercent(continueSubject)}%</b></div><button type="button" className={styles.primaryButton} onClick={() => onContinue(continueSubject)}>Continue learning<ArrowRight size={17} /></button></section>}
+      <section className={styles.asidePanel}><div className={styles.asideHeading}><h2><CalendarDays size={19} />Upcoming</h2>{(upcoming.length > 3 || hasMoreUpcoming) && <button type="button" className={styles.asideTextButton} aria-expanded={showAllUpcoming} onClick={() => { if (!showAllUpcoming) onLoadUpcoming?.(); setShowAllUpcoming(value => !value); }}>{showAllUpcoming ? 'Show less' : 'View all'}<ArrowRight size={14} /></button>}</div>
         {upcoming.length ? (showAllUpcoming ? upcoming : upcoming.slice(0, 3)).map(item => <Link className={styles.deadline} key={item.id} to={item.href}><span className={styles.deadlineIcon} data-kind={item.type}>{item.type === 'session' ? <CalendarDays size={18} /> : <ClipboardList size={18} />}</span><div><strong>{item.title}</strong><small>{item.detail} · {item.type === 'session' ? formatSystemTimestamp(item.date, { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : learningDate(item.date)}</small></div>{item.online && <span className={styles.onlineBadge}>Online</span>}</Link>) : <p className={styles.asideEmpty}>No upcoming sessions or deadlines.</p>}
       </section>
       {!reviewMode && <><Link className={styles.mapShortcut} to={learningHref('map', kind, learnerId)}><Map size={25} /><div><strong>Learner’s Map</strong><span>See your learning week by week</span></div><ArrowRight size={18} /></Link>

@@ -193,14 +193,15 @@ class CurrentLearningTests(unittest.TestCase):
     def test_dashboard_refresh_reads_new_saved_completion_and_time(self):
         scope = self.scope
         load('canonical_learning.py', scope, {'metrics', 'metrics_from_records',
-            'recorded_seconds', 'allocations', 'counts_as_completed'})
+            'recorded_seconds', 'allocations', 'counts_as_completed', 'point_ratio'})
         scope['number'] = lambda value: float(value or 0)
         owner = {'id': 1}
         scope['require_profile'] = lambda _: owner
         scope['targets_for'] = lambda _: {}
         saved = []
-        scope['entries_for'] = lambda _: self.project(saved)
+        scope['entries_for'] = Mock(side_effect=lambda _, **options: self.project(saved))
         self.assertEqual(scope['metrics'](123)['programme']['completed'], 0)
+        scope['entries_for'].assert_called_once_with(owner, lineage_only=True)
         saved.append(self.native)
         result = scope['metrics'](123)
         self.assertEqual(result['programme']['completed'], 1)
@@ -211,18 +212,19 @@ class CurrentLearningTests(unittest.TestCase):
     def test_quiz_only_completion_does_not_credit_unapproved_hours(self):
         scope = self.scope
         load('canonical_learning.py', scope, {'metrics', 'metrics_from_records',
-            'recorded_seconds', 'allocations', 'counts_as_completed'})
+            'recorded_seconds', 'allocations', 'counts_as_completed', 'point_ratio'})
         scope['number'] = lambda value: float(value or 0)
         owner = {'id': 1}
         scope['require_profile'] = lambda _: owner
         scope['targets_for'] = lambda _: {}
         record = {'id': 10, 'accepted': False, 'actual_seconds': 3600, 'ksbs': [],
                   'source_payload': {'original_source_ref': 'la:5:9'}}
-        scope['entries_for'] = lambda _: scope['merge_attempts']([record], [self.attempt()])
+        scope['entries_for'] = Mock(side_effect=lambda _, **options: scope['merge_attempts']([record], [self.attempt()]))
         result = scope['metrics'](123)
         self.assertEqual(result['programme']['completed'], 1)
         self.assertEqual(result['programme']['total'], 1)
         self.assertEqual(result['otjh']['actual'], 0)
+        scope['entries_for'].assert_called_once_with(owner, lineage_only=True)
 
 
 if __name__ == '__main__':
