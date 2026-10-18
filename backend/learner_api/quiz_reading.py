@@ -19,7 +19,7 @@ from login.permissions import learner_self_only
 from .active_users import completed_hours_from_progress, save_progress_record
 from .identity import learner_profile_for_source
 from .models import CommercialUser, EnrolmentUser, LearnerProgressEntry
-from .quizzes import _fetch_quiz, _format_clock
+from .quizzes import _fetch_quiz, _format_clock, _parse_image_matching_answer
 from .reflection_ai import _openai_client
 from .time_tracking import TrackingSessionError, tracking_session_already_used, verify_tracking_session
 
@@ -118,7 +118,14 @@ def _apply_reading_time_mode(tracking, mode):
 
 def _answer_labels(question, answer_ids):
     ids = answer_ids if isinstance(answer_ids, list) else [answer_ids]
-    lookup = {answer["id"]: str(answer.get("text") or "") for answer in question.get("answers") or []}
+    lookup = {}
+    for index, answer in enumerate(question.get("answers") or []):
+        text = str(answer.get("text") or "")
+        if question.get("type") == "image_matching":
+            pair = _parse_image_matching_answer(text)
+            label = pair["left"] or f"Image {chr(65 + index)}"
+            text = f"{label} -> {pair['right']}"
+        lookup[answer["id"]] = text
     return [lookup[answer_id] for answer_id in ids if answer_id in lookup and lookup[answer_id]]
 
 

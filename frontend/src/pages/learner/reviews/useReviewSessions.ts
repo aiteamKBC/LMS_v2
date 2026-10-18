@@ -3,14 +3,19 @@ import { fetchLearnerDetail, type LearnerDetail } from '@/api/learnerDetail';
 import { fetchLearnerCalendarEvents, type BookingCalendarRules, type LearnerCalendarEvent } from '@/api/learnerCalendar';
 import { useLinkedLearner } from '@/hooks/useMyLearner';
 import { useLiveRefresh } from '@/hooks/useRefreshOnReturn';
+import { reviewCategory } from '@/lib/reviewCategory';
 
 export type ReviewSessionSource = 'mcr' | 'progress-review' | 'review';
 
 export function isReviewSession(event: LearnerCalendarEvent, source: ReviewSessionSource) {
+  // Imported ordinary reviews share the legacy Progress Review booking source.
+  // Classify their display by the stored type without changing booking identity.
+  const importedReviewType = event.importedReviewType ?? event.importedReview?.type;
+  if (importedReviewType != null) {
+    return reviewCategory({ ...event, importedReviewType }) === source;
+  }
   if (source === 'review') {
-    // Generic Reviews are Curriculum occurrences.  Requiring the template
-    // link keeps legacy/imported rows out of this section and prevents a new
-    // review type from being silently treated as a Progress Review.
+    // Native ordinary reviews still require their Curriculum template link.
     return event.source === 'review' && Boolean(event.reviewTemplateId);
   }
   const code = source === 'mcr' ? 'mcm' : 'progress_review';

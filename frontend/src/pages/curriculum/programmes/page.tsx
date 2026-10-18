@@ -28,7 +28,8 @@ import {
   fetchCurriculumModules,
   fetchCurriculumProgrammeKsbCoverage,
   fetchCurriculumProgrammeLearnerKsbImpact,
-  fetchCurriculumKsbSets,
+  fetchCurriculumKsbSetSummaries,
+  fetchCurriculumKsbSourceDefinitions,
   fetchCurriculumStandards,
   saveCurriculumProgrammeOrder,
   updateCurriculumCohort,
@@ -42,6 +43,9 @@ import {
   type CurriculumProgrammeLearnerKsbImpactResponse,
   type CurriculumKsbEntry,
   type CurriculumKsbSet,
+  type CurriculumKsbSetSummary,
+  type CurriculumKsbSourceDefinitions,
+  type CurriculumKsbDefinition,
   type CurriculumKsbTraceMapping,
   type CurriculumGroup,
   type CurriculumModule,
@@ -74,11 +78,14 @@ type ProgrammeAppliedKsbSource = {
    */
   standard?: CurriculumStandard;
 };
+type ProgrammeKsbSet = CurriculumKsbSet | CurriculumKsbSetSummary;
 type ProgrammeKsbSourceReview = {
   programme: CurriculumProgramme;
   source: ProgrammeAppliedKsbSource;
-  ksbSet?: CurriculumKsbSet;
+  ksbSet?: CurriculumKsbSourceDefinitions;
   standard?: CurriculumStandard;
+  loading?: boolean;
+  error?: string;
 };
 type ProgrammeKsbSourceItem = {
   id: string;
@@ -384,7 +391,9 @@ export default function CurriculumProgrammes() {
   const [learnerImpactLoading, setLearnerImpactLoading] = useState(false);
   const [learnerImpactError, setLearnerImpactError] = useState<string | null>(null);
   const [sourceReview, setSourceReview] = useState<ProgrammeKsbSourceReview | null>(null);
-  const [ksbSets, setKsbSets] = useState<CurriculumKsbSet[]>([]);
+  const [ksbSets, setKsbSets] = useState<ProgrammeKsbSet[]>([]);
+  const [reviewDefinitions, setReviewDefinitions] = useState<CurriculumKsbSourceDefinitions[]>([]);
+  const reviewRequest = useRef(0);
   const [standards, setStandards] = useState<CurriculumStandard[]>([]);
   const [ksbSourcesLoading, setKsbSourcesLoading] = useState(true);
   const [ksbSourcesError, setKsbSourcesError] = useState<string | null>(null);
@@ -418,13 +427,13 @@ export default function CurriculumProgrammes() {
     [listedProgrammes, programmeKsbStats],
   );
   const { data: curriculumData, reload: reloadCurriculumData } = useCurriculumData({ autoLoad: false, compact: true, includeHolidays: true, refreshModules: true, compactModules: true });
-  const ksbDescriptions = useMemo(() => buildProgrammeKsbDescriptionLookup(ksbSets, standards), [ksbSets, standards]);
+  const ksbDescriptions = useMemo(() => buildProgrammeKsbDescriptionLookup(reviewDefinitions, standards), [reviewDefinitions, standards]);
 
   const loadKsbSources = useCallback(async (signal?: AbortSignal) => {
     setKsbSourcesLoading(true);
     setKsbSourcesError(null);
     const [setsResult, standardsResult] = await Promise.allSettled([
-      fetchCurriculumKsbSets(signal, { all: true }),
+      fetchCurriculumKsbSetSummaries(signal),
       fetchCurriculumStandards(signal),
     ]);
     if (signal?.aborted) return;
@@ -623,7 +632,7 @@ export default function CurriculumProgrammes() {
 
   const refreshProgrammeCards = async () => {
     const [nextKsbSets, nextStandards] = await Promise.all([
-      fetchCurriculumKsbSets(undefined, { all: true }).catch(() => ksbSets),
+      fetchCurriculumKsbSetSummaries().catch(() => ksbSets),
       fetchCurriculumStandards().catch(() => standards),
       // Silent: the drawer has already closed on a successful save, so the cards
       // stay on screen with the previous data instead of collapsing to skeletons
@@ -729,18 +738,32 @@ export default function CurriculumProgrammes() {
   };
 
   const openProgrammeKsbReview = async (programme: CurriculumProgramme) => {
+    const request = ++reviewRequest.current;
     const programmeId = programme.sourceId || programme.id;
     setReviewProgramme(programme);
     setReviewItems([]);
+    setReviewDefinitions([]);
     setReviewError(null);
     setReviewLoading(true);
     try {
       const coverage = await fetchCurriculumProgrammeKsbCoverage(programmeId);
+      const sourceIds = uniqueTextValues([
+        programme.ksbProfileSourceId || '',
+        ...(coverage.items || []).map(item => String(item.sourceId || item.source_id || '')),
+      ]).filter(id => !id.startsWith('standard:'));
+      const profiles = new Map(sourceIds.flatMap(id => {
+        const source = findProgrammeKsbSetBySourceId(ksbSets, id.replace(/^(profile|framework):/i, ''));
+        return source ? [[ksbSourceIdForProgrammeCard(source), source] as const] : [];
+      }));
+      const definitions = await Promise.all(Array.from(profiles.keys()).map(id => fetchCurriculumKsbSourceDefinitions(id)));
+      if (request !== reviewRequest.current) return;
+      setReviewDefinitions(definitions);
       setReviewItems((coverage.items || []).filter(isReadableAppliedKsbCoverageItem));
     } catch (err) {
+      if (request !== reviewRequest.current) return;
       setReviewError(err instanceof Error ? err.message : 'Unable to load programme KSB coverage.');
     } finally {
-      setReviewLoading(false);
+      if (request === reviewRequest.current) setReviewLoading(false);
     }
   };
 
@@ -766,7 +789,7 @@ export default function CurriculumProgrammes() {
   const applyProgrammeKsbSource = async (
     programme: CurriculumProgramme,
     sourceValue: string,
-    options: { sets?: CurriculumKsbSet[] } = {},
+    options: { sets?: ProgrammeKsbSet[] } = {},
   ) => {
     const [kind, id] = sourceValue.split(':');
     const programmeId = programme.sourceId || programme.id;
@@ -834,7 +857,7 @@ export default function CurriculumProgrammes() {
       const refreshAfterApply = Promise.all([
         reload({ skipCache: true, silent: true }),
         reloadCurriculumData({ skipCache: true, silent: true }),
-        fetchCurriculumKsbSets(undefined, { all: true }).then(setKsbSets),
+        fetchCurriculumKsbSetSummaries().then(setKsbSets),
         fetchCurriculumStandards().then(setStandards),
       ]).catch(error => {
         // The source is already persisted. A slow cache refresh must not hold
@@ -903,7 +926,7 @@ export default function CurriculumProgrammes() {
         }
       }
       const [nextKsbSets, nextStandards] = await Promise.all([
-        fetchCurriculumKsbSets(undefined, { all: true }).catch(() => ksbSets),
+        fetchCurriculumKsbSetSummaries().catch(() => ksbSets),
         fetchCurriculumStandards().catch(() => standards),
         reload({ silent: true }),
       ]);
@@ -921,7 +944,7 @@ export default function CurriculumProgrammes() {
     const key = programme.sourceId || programme.id;
     setParkingKsbProfileFor(key);
     try {
-      const { frameworkId, sets } = await ensureSharedEmptyKsbProfile(ksbSets);
+      const { frameworkId, sets } = await ensureSharedEmptyKsbProfile(ksbSets, fetchCurriculumKsbSetSummaries);
       setKsbSets(sets);
       await applyProgrammeKsbSource(programme, `profile:${frameworkId}`, { sets });
     } catch (err) {
@@ -951,7 +974,7 @@ export default function CurriculumProgrammes() {
     await refreshProgrammeCards();
   };
 
-  const openAppliedKsbSourceReview = (programme: CurriculumProgramme, source: ProgrammeAppliedKsbSource) => {
+  const openAppliedKsbSourceReview = async (programme: CurriculumProgramme, source: ProgrammeAppliedKsbSource) => {
     if (!source.value) {
       setApplyProgramme(programme);
       return;
@@ -960,7 +983,14 @@ export default function CurriculumProgrammes() {
     if (kind === 'profile') {
       const ksbSet = findProgrammeKsbSetBySourceId(ksbSets, id);
       if (ksbSet) {
-        setSourceReview({ programme, source, ksbSet });
+        const pending: ProgrammeKsbSourceReview = { programme, source, loading: true };
+        setSourceReview(pending);
+        try {
+          const definitions = await fetchCurriculumKsbSourceDefinitions(ksbSourceIdForProgrammeCard(ksbSet));
+          setSourceReview(current => current === pending ? { programme, source, ksbSet: definitions } : current);
+        } catch (err) {
+          setSourceReview(current => current === pending ? { programme, source, error: err instanceof Error ? err.message : 'Unable to load KSB definitions.' } : current);
+        }
         return;
       }
     }
@@ -1555,6 +1585,7 @@ export default function CurriculumProgrammes() {
             loading={reviewLoading}
             error={reviewError}
             onClose={() => {
+              reviewRequest.current += 1;
               setReviewProgramme(null);
               setReviewItems([]);
               setReviewError(null);
@@ -1599,6 +1630,7 @@ export default function CurriculumProgrammes() {
           <ProgrammeKsbSourceModal
             review={sourceReview}
             onClose={() => setSourceReview(null)}
+            onRetry={() => { void openAppliedKsbSourceReview(sourceReview.programme, sourceReview.source); }}
           />
         )}
       </div>
@@ -2074,7 +2106,7 @@ function ProgrammeKsbReviewModal({
   );
 }
 
-function ProgrammeKsbSourceModal({ review, onClose }: { review: ProgrammeKsbSourceReview; onClose: () => void }) {
+function ProgrammeKsbSourceModal({ review, onClose, onRetry }: { review: ProgrammeKsbSourceReview; onClose: () => void; onRetry: () => void }) {
   const [query, setQuery] = useState('');
   const items = useMemo(() => programmeKsbSourceItems(review), [review]);
   const filteredItems = useMemo(() => {
@@ -2096,7 +2128,7 @@ function ProgrammeKsbSourceModal({ review, onClose }: { review: ProgrammeKsbSour
             <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-primary-200">Applied KSB Profile</p>
             <h3 className="mt-2 truncate text-xl font-heading font-bold">{review.source.title}</h3>
             <p className="mt-1 text-[12px] font-semibold text-white/70">
-              {review.programme.name} - {filteredItems.length} of {items.length} KSBs shown - {review.source.detail}
+              {review.programme.name} - {review.loading ? 'Loading definitions' : review.error ? 'Definitions unavailable' : `${filteredItems.length} of ${items.length} KSBs shown`} - {review.source.detail}
             </p>
           </div>
           <button type="button" onClick={onClose} className="flex h-9 w-9 items-center justify-center rounded-xl bg-white/10 text-white transition-smooth hover:bg-white/15" aria-label="Close KSB profile">
@@ -2117,7 +2149,12 @@ function ProgrammeKsbSourceModal({ review, onClose }: { review: ProgrammeKsbSour
         </div>
 
         <div className="min-h-0 flex-1 overflow-auto p-4">
-          {items.length ? (
+          {review.loading ? <p role="status">Loading KSB definitions...</p> : review.error ? (
+            <div role="alert">
+              <p>{review.error}</p>
+              <button type="button" onClick={onRetry} className="mt-3 rounded-lg border border-primary-200 px-3 py-2 text-primary-700">Retry</button>
+            </div>
+          ) : items.length ? (
             <div className="grid gap-4 lg:grid-cols-3">
               <ProgrammeKsbSourceColumn title="Knowledge" count={groupedItems.knowledge.length} items={groupedItems.knowledge} tone="primary" />
               <ProgrammeKsbSourceColumn title="Skills" count={groupedItems.skills.length} items={groupedItems.skills} tone="emerald" />
@@ -2180,7 +2217,7 @@ function ApplyProgrammeKsbSourceModal({
   onRetry,
 }: {
   programme: CurriculumProgramme;
-  ksbSets: CurriculumKsbSet[];
+  ksbSets: ProgrammeKsbSet[];
   standards: CurriculumStandard[];
   sourcesLoading: boolean;
   sourcesError: string | null;
@@ -2195,7 +2232,7 @@ function ApplyProgrammeKsbSourceModal({
   const profileOptions = useMemo(() => ksbSets.map(set => ({
     value: `profile:${ksbSourceIdForProgrammeCard(set)}`,
     title: set.standard || set.programmeName || 'KSB profile',
-    subtitle: `${set.programmeName || 'No programme'} - ${set.ksbs.length} KSBs`,
+    subtitle: `${set.programmeName || 'No programme'} - ${ksbSetCount(set)} KSBs`,
     detail: ksbSetCountsLabel(set),
   })).filter(option => option.value !== 'profile:'), [ksbSets]);
   const standardOptions = useMemo(() => standards.map(standard => ({
@@ -2840,11 +2877,11 @@ function uniqueTextValues(values: unknown[]) {
   });
 }
 
-function ksbSourceIdForProgrammeCard(set: CurriculumKsbSet) {
+function ksbSourceIdForProgrammeCard(set: ProgrammeKsbSet) {
   return String(set.frameworkId || set.ksbProfileId || set.profileId || set.programmeId || set.programmeName || set.standard || '').trim();
 }
 
-function findProgrammeKsbSetBySourceId(sets: CurriculumKsbSet[], sourceId: string) {
+function findProgrammeKsbSetBySourceId(sets: ProgrammeKsbSet[], sourceId: string) {
   const key = normalise(sourceId);
   return sets.find(set => [
     ksbSourceIdForProgrammeCard(set),
@@ -2858,7 +2895,12 @@ function findProgrammeKsbSetBySourceId(sets: CurriculumKsbSet[], sourceId: strin
   ].some(value => normalise(value) === key));
 }
 
-function ksbSetCountsLabel(set: CurriculumKsbSet) {
+function ksbSetCount(set: ProgrammeKsbSet) {
+  return 'ksbCount' in set ? set.ksbCount : set.ksbs.length;
+}
+
+function ksbSetCountsLabel(set: ProgrammeKsbSet) {
+  if ('ksbCount' in set) return `${set.knowledgeCount} K / ${set.skillCount} S / ${set.behaviourCount} B`;
   const counts = set.ksbs.reduce((total, item) => {
     const family = normalise(item.type || item.code);
     if (family.startsWith('skill') || normalise(item.code).startsWith('s')) total.s += 1;
@@ -2877,7 +2919,7 @@ function ksbSourceFamily(type: unknown, code: unknown): ProgrammeKsbSourceItem['
   return 'knowledge';
 }
 
-function flattenProgrammeKsbEntries(entries: CurriculumKsbEntry[], parentCode = ''): ProgrammeKsbSourceItem[] {
+function flattenProgrammeKsbEntries(entries: CurriculumKsbDefinition[], parentCode = ''): ProgrammeKsbSourceItem[] {
   return entries.flatMap((entry, index) => {
     const code = programmeKsbCode(entry.code || entry.rawCode || entry.fullCode || '');
     const item: ProgrammeKsbSourceItem = {
@@ -2952,7 +2994,7 @@ function standardCountsLabel(standard: CurriculumStandard) {
   return `${standard.knowledge || 0} K / ${standard.skills || 0} S / ${standard.behaviours || 0} B`;
 }
 
-function resolveProgrammeAppliedKsbSource(programme: CurriculumProgramme, ksbSets: CurriculumKsbSet[], standards: CurriculumStandard[]): ProgrammeAppliedKsbSource {
+function resolveProgrammeAppliedKsbSource(programme: CurriculumProgramme, ksbSets: ProgrammeKsbSet[], standards: CurriculumStandard[]): ProgrammeAppliedKsbSource {
   const explicitSource = String(programme.ksbProfileSourceId || '').trim();
   if (explicitSource) {
     const explicitKind = explicitSource.startsWith('standard:') ? 'standard' : 'profile';
@@ -2967,9 +3009,9 @@ function resolveProgrammeAppliedKsbSource(programme: CurriculumProgramme, ksbSet
           value: `profile:${ksbSourceIdForProgrammeCard(profile)}`,
           kind: 'profile',
           title: profile.standard || profile.programmeName || 'KSB profile',
-          subtitle: `${profile.programmeName || programme.name} - ${profile.ksbs.length} KSBs`,
+          subtitle: `${profile.programmeName || programme.name} - ${ksbSetCount(profile)} KSBs`,
           detail: ksbSetCountsLabel(profile),
-          ksbCount: profile.ksbs.length,
+          ksbCount: ksbSetCount(profile),
           standard: linkedStandard,
         };
       }
@@ -3019,13 +3061,11 @@ function resolveProgrammeAppliedKsbSource(programme: CurriculumProgramme, ksbSet
   };
 }
 
+// A code reads exactly as its source stores it. A standard's K13 is its
+// thirteenth knowledge item; showing it as K1.3 invents a sub-item the
+// standard does not have.
 function programmeKsbCode(value: unknown) {
-  const code = String(value || '').trim().toUpperCase();
-  const match = code.match(/^([KSB])(\d+(?:\.\d+)?)$/);
-  if (!match) return code;
-  const [, prefix, number] = match;
-  if (number.includes('.') || number.length === 1) return `${prefix}${number}`;
-  return `${prefix}${number.slice(0, 1)}.${number.slice(1)}`;
+  return String(value || '').trim().toUpperCase();
 }
 
 function programmeKsbSourceType(sourceType?: string, sourceId?: string) {
@@ -3059,9 +3099,9 @@ function addProgrammeKsbDescription(lookup: Map<string, string>, code: string, d
   });
 }
 
-function buildProgrammeKsbDescriptionLookup(ksbSets: CurriculumKsbSet[], standards: CurriculumStandard[]) {
+function buildProgrammeKsbDescriptionLookup(ksbSets: CurriculumKsbSourceDefinitions[], standards: CurriculumStandard[]) {
   const lookup = new Map<string, string>();
-  const visitEntry = (entry: CurriculumKsbEntry & { children?: CurriculumKsbEntry[] }, sourceType = '', sourceId = '') => {
+  const visitEntry = (entry: CurriculumKsbDefinition & { children?: CurriculumKsbDefinition[] }, sourceType = '', sourceId = '') => {
     [entry.code, entry.rawCode, entry.fullCode].filter(Boolean).forEach(code => {
       addProgrammeKsbDescription(lookup, String(code), entry.description || entry.title, sourceType, sourceId);
     });

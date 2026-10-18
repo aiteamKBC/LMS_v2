@@ -6,18 +6,14 @@ import { useMyLearner } from '@/hooks/useMyLearner';
 import { ONBOARDING_NAV_ITEMS, ONBOARDING_ROUTE } from '@/hooks/useOnboardingRedirect';
 import { useEnrolmentSubmitted } from '@/hooks/useLearnerNavGate';
 import {
-  bookLearnerCalendarSession,
-  cancelLearnerCalendarSession,
-  fetchFirstSessionSlots,
-  fetchOnboardingReviews,
-  ukOffsetForDate,
-  type OnboardingReview,
-  type OnboardingReviewsResponse,
+  fetchOnboardingReviewSlots,
+  fetchReviewForm,
+  issuedLabel,
+  type OnboardingReviewSlot,
+  type OnboardingReviewSlotsResponse,
   type OnboardingReviewType,
-  type SessionSlot,
-} from '@/api/learnerCalendar';
-import { SessionSlotPicker, slotLabel } from '@/components/feature/SessionSlotPicker';
-import { fetchReviewForm, type ReviewFormResponse } from '@/api/reviewForm';
+  type ReviewFormResponse,
+} from '@/api/reviewForm';
 import { btnPrimary, btnSecondary } from '@/pages/users/components/ui';
 import SignReviewModal from './SignReviewModal';
 import { downloadReviewPdf } from './reviewDocument';
@@ -35,332 +31,122 @@ const REVIEW_ICONS: Record<OnboardingReviewType, string> = {
   'uln-privacy': 'ri-shield-user-line',
 };
 
-const todayIso = () => new Date().toISOString().slice(0, 10);
-
-/** One review: either its booked slot, or the form to book it. */
-function ReviewCard({
-  review,
-  coachName,
-  disabled,
-  onBooked,
-}: {
-  review: OnboardingReview;
-  coachName: string;
-  disabled: boolean;
-  onBooked: () => void;
-}) {
+/**
+ * One review. Until the enrolment team issues it there is nothing to do but
+ * wait; once issued, the learner fills it in, signs it and can download it.
+ */
+function ReviewCard({ review, onChanged }: { review: OnboardingReviewSlot; onChanged: () => void }) {
   const { kind, id } = useMyLearner();
   const navigate = useNavigate();
   const icon = REVIEW_ICONS[review.type];
-  const [open, setOpen] = useState(false);
-  const [date, setDate] = useState(todayIso());
-  const [time, setTime] = useState('');
-  const [duration, setDuration] = useState('60');
-  // The case owner's free hours for the chosen day -- the same college-day
-  // slots the first learning session offers, read from the same mailbox the
-  // review is booked on.
-  const [slots, setSlots] = useState<SessionSlot[]>([]);
-  const [unconfirmed, setUnconfirmed] = useState('');
-  const [slotsLoading, setSlotsLoading] = useState(false);
-  const [slotsError, setSlotsError] = useState('');
-  const [notes, setNotes] = useState('');
-  const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
-  // A booking can save locally while the Microsoft Graph sync fails (e.g. the
-  // case owner has no tenant mailbox). That means no invite email was sent, so
-  // it has to be shown rather than silently swallowed.
-  const [warning, setWarning] = useState<string | null>(null);
-  const [confirmCancel, setConfirmCancel] = useState(false);
   const [downloading, setDownloading] = useState(false);
   const [downloadErr, setDownloadErr] = useState('');
+  // The list carries only whether each side has signed, so the full signature
+  // (needed to show/replace it) is fetched when the dialog opens.
+  const [signing, setSigning] = useState(false);
+  const [signData, setSignData] = useState<ReviewFormResponse | null>(null);
+  const eventKey = review.eventKey;
+
+  useEffect(() => {
+    if (!signing || signData || !eventKey) return;
+    let cancelled = false;
+    fetchReviewForm(kind, id, eventKey)
+      .then((res) => !cancelled && setSignData(res))
+      .catch((e: Error) => { if (!cancelled) { setErr(e.message); setSigning(false); } });
+    return () => { cancelled = true; };
+  }, [signing, signData, kind, id, eventKey]);
 
   // The same document the review's own Export PDF produces, built from the
   // saved review — so it is offered on the same terms: once the form is done.
   const download = async () => {
-    if (!review.event || downloading) return;
+    if (!eventKey || downloading) return;
     setDownloading(true);
     setDownloadErr('');
     try {
-      downloadReviewPdf(await fetchReviewForm(kind, id, review.event.eventKey), REVIEW_QUESTION_LABELS);
+      downloadReviewPdf(await fetchReviewForm(kind, id, eventKey), REVIEW_QUESTION_LABELS);
     } catch (e) {
       setDownloadErr(e instanceof Error ? e.message : 'Could not download the review.');
     } finally {
       setDownloading(false);
     }
   };
-  // The list payload carries only whether each side has signed, so the full
-  // signature (needed to show/replace it) is fetched when the dialog opens.
-  const [signing, setSigning] = useState(false);
-  const [signData, setSignData] = useState<ReviewFormResponse | null>(null);
 
-  useEffect(() => {
-    if (!signing || signData || !review.event) return;
-    let cancelled = false;
-    fetchReviewForm(kind, id, review.event.eventKey)
-      .then((res) => !cancelled && setSignData(res))
-      .catch((e: Error) => { if (!cancelled) { setErr(e.message); setSigning(false); } });
-    return () => { cancelled = true; };
-  }, [signing, signData, kind, id, review.event]);
-
-  // Reloaded whenever the day changes, and the picked hour dropped: the new day
-  // has its own free hours, and keeping the old pick could book a time the case
-  // owner is busy for.
-  useEffect(() => {
-    setTime('');
-    if (!open || !date) {
-      setSlots([]);
-      setUnconfirmed('');
-      setSlotsError('');
-      setSlotsLoading(false);
-      return;
-    }
-    const controller = new AbortController();
-    setSlotsLoading(true);
-    setSlotsError('');
-    fetchFirstSessionSlots(kind, id, date, controller.signal)
-      .then((result) => {
-        if (controller.signal.aborted) return;
-        setSlots(result.slots);
-        setUnconfirmed(result.unconfirmed);
-      })
-      .catch((e: Error) => {
-        if (controller.signal.aborted) return;
-        setSlots([]);
-        setUnconfirmed('');
-        setSlotsError(e.message || 'Could not check your case owner’s calendar.');
-      })
-      .finally(() => { if (!controller.signal.aborted) setSlotsLoading(false); });
-    return () => controller.abort();
-  }, [open, kind, id, date]);
-
-  const bookable = slots.some((slot) => slot.time === time && slot.available);
-
-  const submit = async () => {
-    if (saving || !bookable) return;
-    setSaving(true);
-    setErr(null);
-    setWarning(null);
-    try {
-      const res = await bookLearnerCalendarSession(kind, id, {
-        sessionType: review.type,
-        scheduledDate: date,
-        scheduledTime: time,
-        durationMinutes: parseInt(duration, 10),
-        // The slots are UK wall clock, as for the first session.
-        timezoneOffsetMinutes: ukOffsetForDate(date),
-        notes: notes.trim() || undefined,
-      });
-      setOpen(false);
-      if (res.warning) setWarning(res.warning);
-      onBooked();
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : 'Could not book this review.');
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const cancel = async () => {
-    if (saving || !review.event) return;
-    setSaving(true);
-    setErr(null);
-    setWarning(null);
-    try {
-      const res = await cancelLearnerCalendarSession(kind, id, review.event.eventKey);
-      setConfirmCancel(false);
-      if (res.warning) setWarning(res.warning);
-      onBooked();
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : 'Could not cancel this review.');
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  // Booked, but the invite never reached Microsoft -- treat it as needing
-  // attention rather than done, so it isn't mistaken for a confirmed meeting.
-  const notInvited = review.booked && review.event?.invited === false;
+  const done = Boolean(review.completed);
+  const learnerSigned = Boolean(review.signatures?.learner.signed);
 
   return (
     <div className={`rounded-2xl border p-4 md:p-5 transition-smooth ${
-      notInvited ? 'border-amber-200 bg-amber-50/40'
-        : review.booked ? 'border-emerald-200 bg-emerald-50/40' : 'border-foreground-200/70 bg-background-50'
+      done ? 'border-emerald-200 bg-emerald-50/40' : review.issued ? 'border-primary-200 bg-background-50' : 'border-foreground-200/70 bg-background-50'
     }`}>
       <div className="flex items-start gap-3">
         <span className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${
-          notInvited ? 'bg-amber-500 text-white'
-            : review.booked ? 'bg-emerald-500 text-white' : 'bg-primary-50 text-primary-600'
+          done ? 'bg-emerald-500 text-white' : review.issued ? 'bg-primary-50 text-primary-600' : 'bg-background-100 text-foreground-400'
         }`}>
-          <i className={`${notInvited ? 'ri-alert-line' : review.booked ? 'ri-check-line' : icon} text-[18px]`} />
+          <i className={`${done ? 'ri-check-line' : review.issued ? icon : 'ri-lock-line'} text-[18px]`} />
         </span>
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
             <h3 className="text-[14px] font-heading font-semibold text-foreground-900">{review.label}</h3>
-            {review.booked && (
-              <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${
-                notInvited ? 'bg-amber-100 text-amber-800' : 'bg-emerald-100 text-emerald-700'
-              }`}>{notInvited ? 'Invite not sent' : 'Booked'}</span>
-            )}
+            <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${
+              done ? 'bg-emerald-100 text-emerald-700'
+                : review.started ? 'bg-amber-100 text-amber-800'
+                  : review.issued ? 'bg-primary-100 text-primary-700' : 'bg-background-200 text-foreground-500'
+            }`}>
+              {done ? 'Completed' : review.started ? 'In progress' : review.issued ? 'Ready to start' : 'Not issued yet'}
+            </span>
           </div>
-
-          {review.booked && review.event ? (
-            <div className="mt-2.5">
-              <p className="text-[12px] text-foreground-700 inline-flex flex-wrap items-center gap-x-3 gap-y-1">
-                <span><i className={`ri-calendar-line mr-1 ${notInvited ? 'text-amber-600' : 'text-emerald-600'}`} />{review.event.scheduledDate}</span>
-                <span><i className={`ri-time-line mr-1 ${notInvited ? 'text-amber-600' : 'text-emerald-600'}`} />{review.event.scheduledTime || 'Time TBC'}</span>
-                {review.event.coachName && <span><i className={`ri-user-line mr-1 ${notInvited ? 'text-amber-600' : 'text-emerald-600'}`} />{review.event.coachName}</span>}
-                {review.event.meetingLink && (
-                  <a href={review.event.meetingLink} target="_blank" rel="noreferrer" className="meeting-join-action inline-flex items-center rounded-lg px-2.5 py-1.5 text-[11px] font-semibold">
-                    <i className="ri-video-chat-line mr-1" />Join Teams meeting
-                  </a>
-                )}
-              </p>
-              {notInvited && (
-                <p className="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-2 mt-2.5">
-                  <i className="ri-error-warning-line mr-1" />
-                  This slot is saved, but the calendar invite and email could not be sent. Please tell your
-                  programme team, or cancel and book again.
-                </p>
+          {review.issued && (review.issuedAt || (done && review.completedAt)) && (
+            <p className="text-[11px] text-foreground-500 mt-1 flex flex-wrap gap-x-4 gap-y-0.5">
+              {review.issuedAt && <span><i className="ri-time-line mr-1" aria-hidden="true" />Issued {issuedLabel(review.issuedAt)}</span>}
+              {done && review.completedAt && (
+                <span className="text-emerald-700"><i className="ri-check-double-line mr-1" aria-hidden="true" />Completed {issuedLabel(review.completedAt)}</span>
               )}
-              {confirmCancel ? (
-                <div className="mt-3 rounded-xl border border-red-200 bg-red-50/60 p-3">
-                  <p className="text-[12px] text-foreground-700">
-                    Cancel this review? It will be removed from both calendars and
-                    {review.event.coachName ? ` ${review.event.coachName}` : ' your enrolment officer'} will be emailed. You can book a new time afterwards.
-                  </p>
-                  {err && <p className="text-[11px] text-red-600 mt-2"><i className="ri-error-warning-line mr-1" />{err}</p>}
-                  <div className="flex items-center gap-2 mt-3">
-                    <button onClick={cancel} disabled={saving}
-                      className="inline-flex items-center gap-1.5 text-[12px] font-semibold px-3 py-1.5 rounded-lg bg-red-600 text-white hover:bg-red-700 disabled:opacity-60">
-                      {saving ? <><i className="ri-loader-4-line animate-spin" />Cancelling…</> : <><i className="ri-close-circle-line" />Yes, cancel booking</>}
-                    </button>
-                    <button onClick={() => { setConfirmCancel(false); setErr(null); }} disabled={saving} className={btnSecondary}>Keep it</button>
-                  </div>
-                </div>
-              ) : (
-                <div className="mt-2.5 flex flex-wrap items-center gap-3">
-                  {/* Once booked, the review's form is what's left to do — so the
-                      primary action becomes Start / Continue / View. */}
-                  {review.hasForm && (
-                    <button onClick={() => navigate(`/learner/onboarding/reviews/${encodeURIComponent(review.event!.eventKey)}`)}
-                      className={btnPrimary}>
-                      {review.formCompleted
-                        ? <><i className="ri-eye-line" />View review</>
-                        : review.formStarted
-                          ? <><i className="ri-play-circle-line" />Continue review</>
-                          : <><i className="ri-play-circle-line" />Start</>}
-                    </button>
-                  )}
-                  {/* Signing opens only once the review is finished. */}
-                  {review.formCompleted && (
-                    <button onClick={() => setSigning(true)} className={btnSecondary}>
-                      {review.learnerSigned
-                        ? <><i className="ri-check-line text-emerald-600" />Signed</>
-                        : <><i className="ri-pen-nib-line" />Sign review</>}
-                    </button>
-                  )}
-                  {review.formCompleted && (
-                    <button onClick={() => { void download(); }} disabled={downloading} className={btnSecondary}>
-                      {downloading
-                        ? <><i className="ri-loader-4-line animate-spin" />Preparing…</>
-                        : <><i className="ri-download-2-line" />Download review</>}
-                    </button>
-                  )}
-                  <button onClick={() => setConfirmCancel(true)}
-                    className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-red-600 hover:text-red-700 hover:underline">
-                    <i className="ri-close-circle-line" />Cancel booking
-                  </button>
-                  {downloadErr && (
-                    <p role="alert" className="w-full text-[11px] text-red-600"><i className="ri-error-warning-line mr-1" />{downloadErr}</p>
-                  )}
-                </div>
-              )}
-            </div>
-          ) : open ? (
-            <div className="mt-3 space-y-3">
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                <label className="block">
-                  <span className="text-[10px] font-semibold text-foreground-500 block mb-1">Date</span>
-                  <input type="date" value={date} min={todayIso()} disabled={saving}
-                    onChange={(e) => { setDate(e.target.value); setErr(null); }}
-                    className="w-full bg-background-100 border border-foreground-200 rounded-lg px-2 py-1.5 text-[12px] text-foreground-800 focus:outline-none focus:ring-1 focus:ring-primary-400/40 disabled:opacity-60" />
-                  <span className="text-[10px] text-foreground-400 block mt-1">Weekdays only — not weekends or UK bank holidays.</span>
-                </label>
-                <label className="block">
-                  <span className="text-[10px] font-semibold text-foreground-500 block mb-1">Duration</span>
-                  <select value={duration} onChange={(e) => setDuration(e.target.value)}
-                    className="w-full bg-background-100 border border-foreground-200 rounded-lg px-2 py-1.5 text-[12px] text-foreground-800 cursor-pointer focus:outline-none focus:ring-1 focus:ring-primary-400/40">
-                    <option value="30">30 minutes</option>
-                    <option value="45">45 minutes</option>
-                    <option value="60">1 hour</option>
-                  </select>
-                </label>
-              </div>
-              <div className="block">
-                <span id={`review-time-label-${review.type}`} className="text-[10px] font-semibold text-foreground-500 block mb-1">Time (UK)</span>
-                {date ? (
-                  <SessionSlotPicker
-                    slots={slots}
-                    value={time}
-                    onChange={(next) => { setTime(next); setErr(null); }}
-                    labelledBy={`review-time-label-${review.type}`}
-                    disabled={saving}
-                    loading={slotsLoading}
-                    error={slotsError}
-                    unconfirmed={unconfirmed}
-                  />
-                ) : (
-                  <p className="text-[12px] text-foreground-500">
-                    Choose a date to see the times {coachName || 'your case owner'} is free.
-                  </p>
-                )}
-                {time && (
-                  <p className="text-[11px] text-foreground-500 mt-2">
-                    Review at <span className="font-semibold">{slotLabel(time)}</span> UK time.
-                  </p>
-                )}
-              </div>
-              <label className="block">
-                <span className="text-[10px] font-semibold text-foreground-500 block mb-1">Notes (optional)</span>
-                <textarea rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Anything you'd like to cover?"
-                  className="w-full bg-background-100 border border-foreground-200 rounded-lg px-2 py-1.5 text-[12px] text-foreground-800 resize-none focus:outline-none focus:ring-1 focus:ring-primary-400/40" />
-              </label>
-              {err && <p className="text-[11px] text-red-600"><i className="ri-error-warning-line mr-1" />{err}</p>}
-              <div className="flex items-center gap-2">
-                <button onClick={submit} disabled={saving || !bookable} className={btnPrimary}>
-                  {saving ? <><i className="ri-loader-4-line animate-spin" />Booking…</> : <><i className="ri-calendar-check-line" />Confirm booking</>}
-                </button>
-                <button onClick={() => { setOpen(false); setErr(null); }} disabled={saving} className={btnSecondary}>Cancel</button>
-              </div>
-            </div>
-          ) : (
-            <button
-              onClick={() => setOpen(true)}
-              disabled={disabled}
-              title={disabled ? 'A case owner must be assigned before you can book' : undefined}
-              className={`${btnPrimary} mt-3 ${disabled ? 'opacity-60 cursor-not-allowed' : ''}`}
-            >
-              {/* Label kept verbatim -- lowercasing would mangle "FS" and "RPL". */}
-              <i className="ri-add-line" />Book {review.label}
-            </button>
-          )}
-          {!review.booked && !open && coachName && (
-            <p className="text-[11px] text-foreground-400 mt-2">Booked with {coachName}, added to both calendars, and emailed to them.</p>
-          )}
-          {warning && (
-            <p className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-2 mt-2.5">
-              <i className="ri-error-warning-line mr-1" />
-              Saved, but the calendar invite could not be sent: {warning}
             </p>
           )}
+
+          {!review.issued || !eventKey ? (
+            <p className="text-[12px] text-foreground-500 mt-2">
+              Your enrolment officer will issue this review to you. It will appear here, ready to start.
+            </p>
+          ) : (
+            <div className="mt-2.5 flex flex-wrap items-center gap-3">
+              <button onClick={() => navigate(`/learner/onboarding/reviews/${encodeURIComponent(eventKey)}`)} className={btnPrimary}>
+                {done
+                  ? <><i className="ri-eye-line" />View review</>
+                  : review.started
+                    ? <><i className="ri-play-circle-line" />Continue review</>
+                    : <><i className="ri-play-circle-line" />Start</>}
+              </button>
+              {/* Signing opens only once the review is finished. */}
+              {done && (
+                <button onClick={() => setSigning(true)} className={btnSecondary}>
+                  {learnerSigned
+                    ? <><i className="ri-check-line text-emerald-600" />Signed</>
+                    : <><i className="ri-pen-nib-line" />Sign review</>}
+                </button>
+              )}
+              {done && (
+                <button onClick={() => { void download(); }} disabled={downloading} className={btnSecondary}>
+                  {downloading
+                    ? <><i className="ri-loader-4-line animate-spin" />Preparing…</>
+                    : <><i className="ri-download-2-line" />Download review</>}
+                </button>
+              )}
+              {downloadErr && (
+                <p role="alert" className="w-full text-[11px] text-red-600"><i className="ri-error-warning-line mr-1" />{downloadErr}</p>
+              )}
+            </div>
+          )}
+          {err && <p className="text-[11px] text-red-600 mt-2"><i className="ri-error-warning-line mr-1" />{err}</p>}
         </div>
       </div>
 
-      {signing && signData && review.event && (
+      {signing && signData && eventKey && (
         <SignReviewModal
           kind={kind}
           learnerId={id}
-          eventKey={review.event.eventKey}
+          eventKey={eventKey}
           party="learner"
           defaultName={signData.learnerInformation.name}
           signatures={signData.signatures}
@@ -368,7 +154,7 @@ function ReviewCard({
           onSigned={(signatures) => {
             setSignData((prev) => (prev ? { ...prev, signatures } : prev));
             // Refresh the list so the button flips to "Signed".
-            onBooked();
+            onChanged();
           }}
         />
       )}
@@ -379,10 +165,9 @@ function ReviewCard({
 /**
  * The learner's four enrolment reviews.
  *
- * Shown once the enrolment form has been submitted: all four must be booked
- * before the enrolment team finishes the enrolment. They are booked with the
- * learner's case owner rather than a coach — an onboarding learner has no coach
- * assigned yet, which is exactly what these meetings lead to.
+ * Shown once the enrolment form has been submitted. The enrolment team issues
+ * each review from the learner's board — there is nothing to book — and the
+ * learner then completes and signs it here.
  */
 export default function OnboardingReviewsPage() {
   const { kind, id } = useMyLearner();
@@ -391,7 +176,7 @@ export default function OnboardingReviewsPage() {
   // Locked until the enrolment is submitted; the sidebar item is locked too, so
   // this covers a bookmark or a typed address.
   const submitted = useEnrolmentSubmitted(isCommercial ? undefined : kind, id);
-  const [data, setData] = useState<OnboardingReviewsResponse | null>(null);
+  const [data, setData] = useState<OnboardingReviewSlotsResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -403,7 +188,7 @@ export default function OnboardingReviewsPage() {
       return;
     }
     if (submitted !== true) return;
-    fetchOnboardingReviews(kind, id)
+    fetchOnboardingReviewSlots(kind, id)
       .then(setData)
       .catch((e: Error) => setError(e.message))
       .finally(() => setLoading(false));
@@ -411,11 +196,8 @@ export default function OnboardingReviewsPage() {
 
   useEffect(load, [load]);
 
-  const bookedCount = data?.reviews.filter((r) => r.booked).length ?? 0;
-  const total = data?.reviews.length ?? 4;
-  // Bookings whose invite never sent aren't really done -- surface them so the
-  // learner isn't left thinking all four meetings are confirmed.
-  const notInvitedCount = data?.reviews.filter((r) => r.booked && r.event?.invited === false).length ?? 0;
+  const completedCount = data?.reviews.filter((r) => r.completed).length ?? 0;
+  const total = data?.reviews.length || 4;
 
   if (isCommercial) {
     return (
@@ -460,8 +242,8 @@ export default function OnboardingReviewsPage() {
               <i className="ri-lock-line text-3xl text-primary-600" aria-hidden="true" />
               <h2 className="mt-3 text-lg font-heading font-semibold text-foreground-900">Reviews open once your enrolment is submitted</h2>
               <p className="mt-2 text-[13px] leading-relaxed text-foreground-600">
-                Please complete every step of your enrolment and press Submit enrolment. You can then book your four
-                enrolment reviews here.
+                Please complete every step of your enrolment and press Submit enrolment. Your enrolment officer will
+                then issue your four enrolment reviews here.
               </p>
               <button className={`${btnPrimary} mt-5`} onClick={() => navigate(ONBOARDING_ROUTE)}>
                 <i className="ri-file-user-line" aria-hidden="true" />Go to My Enrolment
@@ -480,7 +262,7 @@ export default function OnboardingReviewsPage() {
       navItems={ONBOARDING_NAV_ITEMS}
       workspaceLabel={learnerNav.workspaceLabel}
       pageTitle="Reviews"
-      pageSubtitle="Book your four enrolment reviews"
+      pageSubtitle="Complete your four enrolment reviews"
       userName="Learner"
       userRole="Learner"
     >
@@ -490,19 +272,18 @@ export default function OnboardingReviewsPage() {
             <div className="min-w-0">
               <h2 className="text-[15px] font-heading font-semibold text-foreground-900">Your enrolment reviews</h2>
               <p className="text-[12px] text-foreground-500 mt-1 max-w-2xl leading-relaxed">
-                Thank you for submitting your enrolment. To complete it, please book all four reviews below with your
-                enrolment officer. Each one appears in your calendar and theirs.
+                Thank you for submitting your enrolment. Your enrolment officer issues each of the four reviews below;
+                once a review is issued, open it, complete it and sign it.
               </p>
             </div>
             <span className={`text-[12px] font-semibold px-3 py-1.5 rounded-full shrink-0 ${
-              notInvitedCount > 0 ? 'bg-amber-100 text-amber-800'
-                : bookedCount === total ? 'bg-emerald-100 text-emerald-700' : 'bg-primary-50 text-primary-700'
+              completedCount === total ? 'bg-emerald-100 text-emerald-700' : 'bg-primary-50 text-primary-700'
             }`}>
-              {bookedCount} of {total} booked
+              {completedCount} of {total} completed
             </span>
           </div>
           <div className="mt-3 h-1.5 rounded-full bg-background-200 overflow-hidden">
-            <div className="h-full rounded-full bg-primary-500 transition-all duration-500" style={{ width: `${(bookedCount / total) * 100}%` }} />
+            <div className="h-full rounded-full bg-primary-500 transition-all duration-500" style={{ width: `${(completedCount / total) * 100}%` }} />
           </div>
         </div>
 
@@ -519,36 +300,23 @@ export default function OnboardingReviewsPage() {
           </div>
         )}
 
-        {!loading && !error && data && !data.caseOwner && (
-          <div className="rounded-xl border border-amber-200 bg-amber-50/70 px-4 py-3 text-[12px] text-amber-800">
-            <i className="ri-error-warning-line mr-1.5" />
-            No case owner has been assigned to you yet, so these reviews can’t be booked. Please contact your programme team.
-          </div>
-        )}
-
         {!loading && !error && data && (
           <div className="space-y-3">
             {data.reviews.map((review) => (
-              <ReviewCard
-                key={review.type}
-                review={review}
-                coachName={data.caseOwner?.name ?? ''}
-                disabled={!data.caseOwner}
-                onBooked={load}
-              />
+              <ReviewCard key={review.type} review={review} onChanged={load} />
             ))}
           </div>
         )}
 
-        {!loading && !error && data?.allBooked && (
+        {!loading && !error && data?.allCompleted && (
           <div className="rounded-2xl border border-emerald-200 bg-emerald-50/50 p-4 flex items-start gap-3">
             <span className="w-9 h-9 rounded-xl bg-emerald-500 text-white flex items-center justify-center shrink-0">
               <i className="ri-check-double-line" />
             </span>
             <div>
-              <p className="text-[13px] font-semibold text-emerald-800">All four reviews are booked</p>
+              <p className="text-[13px] font-semibold text-emerald-800">All four reviews are completed</p>
               <p className="text-[12px] text-emerald-700/90 mt-0.5">
-                Your enrolment officer will confirm your place once the reviews have taken place.
+                Once every review is signed, your enrolment officer will confirm your place.
               </p>
             </div>
           </div>

@@ -8,16 +8,13 @@ vi.mock('@/components/feature/WorkspaceShell', () => ({
   WorkspaceShell: ({ children }: { children: ReactNode }) => <div>{children}</div>,
 }));
 
-vi.mock('@/hooks/useCurriculumData', () => ({
-  useCurriculumData: () => ({
-    data: { modules: [], cohorts: [], groups: [] },
+vi.mock('./useCurriculumHome', () => ({
+  useCurriculumHome: () => ({
+    data: { stats: { programmes: 0, activeCohorts: 0, groups: 0, openIssues: 0 }, attentionCounts: {}, continueModules: [], programmeFocus: [] },
     loading: false,
     error: null,
+    reload: vi.fn(),
   }),
-}));
-
-vi.mock('@/hooks/useCurriculumProgrammes', () => ({
-  useCurriculumProgrammes: () => ({ programmes: [], loading: false, error: null }),
 }));
 
 import CurriculumStudio from './page';

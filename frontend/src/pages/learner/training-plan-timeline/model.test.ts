@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { barPosition, buildPlanModules, monthMetrics, nextSession, percent, reviewToBook, sessionDay, timelineYears, uniquePlanSessions } from './model';
 import type { TrainingPlanDashboard, PlanSession } from '@/api/trainingPlanDashboard';
-import { subjectsFrom, type Subject } from '../my-learning/SubjectWorkspace';
+import { type Subject } from '../my-learning/SubjectWorkspace';
+import { subjectsFrom } from '../my-learning/learningSummary';
 import type { LearnerDetail } from '@/api/learnerDetail';
+import { moduleMeasures } from './progress';
 
 const data: TrainingPlanDashboard = { months: { '2026-09': { label: '', topics: [], planned: 18, source: 'contract' } }, actual: [
   { month: '2026-09', groupId: '1', hours: 7, count: 2 }, { month: '2026-09', groupId: null, hours: 4.5, count: 1 },
@@ -10,6 +12,51 @@ const data: TrainingPlanDashboard = { months: { '2026-09': { label: '', topics: 
 const subject: Subject = { id: 'legacy:1', title: 'Marketing', source: 'legacy', activities: ['2026-09-01','2026-09-08','2026-09-15','2026-09-22'].map((date, i) => ({ id: `${i}`, title: `Activity ${i}`, completed: i < 2, category: 'reading', position: i, schedule: { date } })) };
 
 describe('Training Plan calculations', () => {
+  it('does not replace current completion with a previous-learning summary for the same module', () => {
+    const current: Subject = { ...subject, id: 'current:module-1', source: 'current', activities: subject.activities.slice(0, 1) };
+    const previous = { id: 'legacy:1', title: 'Marketing', source: 'legacy', moduleIds: ['module-1'],
+      total: 564, completed: 54, dates: [], sessionTitles: [] } as NonNullable<TrainingPlanDashboard['planSubjects']>[number];
+    const [result] = buildPlanModules([current], { ...data, planSubjects: [previous] });
+    expect(result).toMatchObject({ id: 'current:module-1', done: 1, activityCount: 1, progress: 100 });
+    expect(previous).toMatchObject({ completed: 54, total: 564 });
+  });
+
+  it('keeps the server course link through learning summaries so all module measures can resolve', () => {
+    const subjects = subjectsFrom({ progress_basis: 'recorded_activities',
+      subjects: [{ id: 10, name: 'Imported course', module_id: 'M10' },
+        { id: 20, name: 'Imported course', module_id: 'M20' }],
+      activities: [],
+    }, null);
+    const schedule: TrainingPlanDashboard = { ...data, moduleLinks: {}, actual: [], modules: [
+      { id: 'M10', title: 'Curriculum title', description: '', start_date: null, end_date: null,
+        tutor_name: '', coach_name: '', total_otjh: 4 },
+    ], moduleProgress: {
+      M10: { hours: { actual: 2 }, attendance: { attended: 1, total: 2 },
+        ksb: { completed: 2, total: 4, achievedCodes: ['K1', 'S1'] } },
+      M20: { hours: { actual: 0 }, attendance: { attended: 0, total: 1 },
+        ksb: { completed: 0, total: 1, achievedCodes: [] } },
+    } };
+    const [first, second] = buildPlanModules(subjects, schedule);
+    expect(first).toMatchObject({ id: 'legacy:10', moduleId: 'M10', actual: 2,
+      achievedKsbCodes: ['K1', 'S1'], detail: { total_otjh: 4 } });
+    expect(moduleMeasures(first, schedule).filter(measure => measure.label !== 'Activities'))
+      .toEqual([
+        { label: 'Attendance', value: 50, detail: '1 / 2 scheduled sessions attended' },
+        { label: 'Hours', value: 50, detail: '2 / 4 hours' },
+        { label: 'KSBs', value: 50, detail: '2 / 4 activity KSB points achieved' },
+      ]);
+    expect(second).toMatchObject({ moduleId: 'M20', actual: 0, achievedKsbCodes: [] });
+    expect(first.activities).toBe(subjects[0].activities);
+  });
+
+  it('leaves an unlinked course unavailable instead of matching another module by title', () => {
+    const subjects = subjectsFrom({ subjects: [{ id: 10, name: 'Marketing' }], activities: [] }, null);
+    const [module] = buildPlanModules(subjects, { ...data, moduleLinks: {}, actual: [],
+      moduleProgress: { M1: { hours: { actual: 2 }, attendance: { attended: 1, total: 2 },
+        ksb: { completed: 1, total: 1, achievedCodes: ['K1'] } } } });
+    expect(module).toMatchObject({ moduleId: null, actual: null, ksbProgress: null, achievedKsbCodes: null });
+  });
+
   it('keeps consolidated monthly actual independent of historical display rows', () => {
     const combined = { ...data, monthlyOtjh: { '2026-09': {
       planned: 18, actual: 12, includesHistorical: true, missingPlannedActivities: 0,

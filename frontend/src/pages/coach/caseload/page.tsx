@@ -481,6 +481,13 @@ export function CoachCaseloadContent({ embedded = false, embeddedLearners, dashb
 
   const handleOpenProfile = useCallback((learner: Learner) => openProfile(learner), [openProfile]);
 
+  // Opens the same learner workspace the Enrolment Users directory links to.
+  // That route resolves the enrolment record id, not the LearnerProfile `id`.
+  const openLearnerPage = useCallback((learner: Learner) => {
+    if (!learner.learnerType || !learner.enrolmentId) return;
+    navigate(`/workspace/learner/${learner.learnerType}/${learner.enrolmentId}`);
+  }, [navigate]);
+
   const runExport = useCallback((rows: Learner[]) => {
     if (rows.length === 0) return;
     setIsExportingPdf(true);
@@ -650,6 +657,7 @@ export function CoachCaseloadContent({ embedded = false, embeddedLearners, dashb
               selectionMode={selectionMode}
               onToggleSelect={handleToggleSelect}
               onOpenProfile={handleOpenProfile}
+              onOpenLearnerPage={openLearnerPage}
               today={today}
             />
           )}

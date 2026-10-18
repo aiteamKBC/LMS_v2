@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { WorkspaceHeroBanner } from '@/components/feature/WorkspaceHeroBanner';
 import { SkeletonBlock } from '@/components/feature/Skeletons';
+import { useListQueryState } from '@/hooks/useListQueryState';
 import { fetchCurriculumStandards, type CurriculumStandard } from '@/lib/curriculumApi';
 import { curriculumNavItems } from '@/mocks/navigation';
 
@@ -66,14 +67,22 @@ function StandardSkeletons() {
   );
 }
 
+const STANDARDS_QUERY_DEFAULTS = { q: '', level: 'all', route: 'all', status: 'all' };
+
 export default function CurriculumStandards() {
   const [standards, setStandards] = useState<CurriculumStandard[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [search, setSearch] = useState('');
-  const [level, setLevel] = useState('all');
-  const [route, setRoute] = useState('all');
-  const [status, setStatus] = useState('all');
+  // In the URL, so Back from a standard returns to the list as it was left.
+  const { state: query, setValues: setQuery } = useListQueryState(STANDARDS_QUERY_DEFAULTS);
+  const search = String(query.q);
+  const level = String(query.level);
+  const route = String(query.route);
+  const status = String(query.status);
+  const setSearch = (value: string) => setQuery({ q: value });
+  const setLevel = (value: string) => setQuery({ level: value });
+  const setRoute = (value: string) => setQuery({ route: value });
+  const setStatus = (value: string) => setQuery({ status: value });
 
   useEffect(() => {
     const controller = new AbortController();

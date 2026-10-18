@@ -1528,6 +1528,8 @@ export interface WorkspaceTab {
   label: string;
   icon: string;
   count?: number;
+  /** The count's data is still loading: a spinner stands in for the number. */
+  countLoading?: boolean;
 }
 
 /**
@@ -1719,7 +1721,11 @@ export function WorkspaceTabs({
               <AppIcon className={`${tab.icon} text-[14px]`}></AppIcon>
             </span>
             <span>{tab.label}</span>
-            {tab.count != null && (
+            {tab.countLoading ? (
+              <span role="status" aria-label={`Loading ${tab.label.toLowerCase()} count`} className={`inline-flex rounded-full px-1.5 py-0.5 text-[10px] ${active === tab.key ? 'bg-white/[0.15] text-white' : 'bg-foreground-100 text-foreground-500'}`}>
+                <AppIcon className="ri-loader-4-line animate-spin text-[10px]"></AppIcon>
+              </span>
+            ) : tab.count != null && (
               <span className={`rounded-full px-1.5 py-0.5 text-[10px] ${active === tab.key ? 'bg-white/[0.15] text-white' : 'bg-foreground-100 text-foreground-500'}`}>
                 {tab.count}
               </span>

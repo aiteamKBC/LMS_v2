@@ -42,6 +42,7 @@ from django.http import HttpResponseRedirect, JsonResponse
 from django.views.decorators.http import require_GET
 
 from . import identity
+from .android_download_access import staff_download_allowed
 from .invitations import frontend_base_url, record
 from .models import EVENT_LOGIN
 from .security import (
@@ -227,8 +228,8 @@ def _nonce_matches(request, expected_hash):
 def start(request):
     """Return the Microsoft authorization URL for the SPA to navigate to.
 
-    Every successful sign-in starts at the account's home. A previous page or
-    an old client's ``next`` parameter must not be restored after authentication.
+    Normal sign-in starts at the account's home. The explicit Android download
+    intent has one fixed destination; arbitrary return paths are never accepted.
     """
     settings = config()
     if missing_settings():
@@ -239,9 +240,10 @@ def start(request):
 
     # Only the hash goes into the state; the value itself stays in the cookie.
     nonce = generate_token()
-    state = signing.dumps(
-        {"n": hash_token(nonce)}, salt=STATE_SALT, compress=True
-    )
+    payload = {"n": hash_token(nonce)}
+    if request.GET.get("download") == "android":
+        payload["download"] = "android"
+    state = signing.dumps(payload, salt=STATE_SALT, compress=True)
     query = urlencode(
         {
             "client_id": settings["client_id"],
@@ -394,6 +396,8 @@ def callback(request):
     # from its current access grant. Ignore `next` in older in-flight states too,
     # so all sign-in methods have the same landing behaviour.
     destination = "/learner/home" if account.role == "learner" else "/"
+    if payload.get("download") == "android" and (account.role == "learner" or staff_download_allowed(account)):
+        destination = "/login?download=android"
     response = HttpResponseRedirect(f"{frontend_base_url()}{destination}")
     # Deliberately not remembered. There is no checkbox on this route to read a
     # preference from, and inventing one in the person's favour is the wrong

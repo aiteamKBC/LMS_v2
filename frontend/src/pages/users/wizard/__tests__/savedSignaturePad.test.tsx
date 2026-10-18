@@ -75,7 +75,10 @@ describe('SignaturePad saved signature', () => {
     const button = await screen.findByRole('button', { name: /Sign with this signature/ });
 
     await userEvent.click(button);
-    expect(await screen.findByRole('button', { name: /Signing\.\.\./ })).toBeDisabled();
+    const signingButton = await screen.findByRole('button', { name: /Signing\.\.\./ });
+    expect(signingButton).toBeDisabled();
+    expect(screen.getByTestId('signature-action-spinner')).toHaveClass('animate-spin');
+    expect(screen.getByRole('button', { name: 'Use a different signature' })).toBeDisabled();
     expect(screen.getByRole('button', { name: 'Cancel' })).toBeDisabled();
     await userEvent.click(screen.getByRole('button', { name: /Signing\.\.\./ }));
     expect(onCommit).toHaveBeenCalledTimes(1);

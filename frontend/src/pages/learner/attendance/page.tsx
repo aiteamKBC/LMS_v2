@@ -1,6 +1,6 @@
 import { invalidateLearnerReads } from '@/api/learnerRead';
 import { useCallback, useMemo, useRef, useState, type CSSProperties } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { roleNavMap } from '@/mocks/navigation';
@@ -34,14 +34,28 @@ import { learningToday } from '../my-learning/subjectLearning';
 import { dateKey } from '../training-plan-timeline/model';
 import styles from './attendance.module.css';
 import { lectureCounts } from './lectureCounts';
+import { attendanceLecturesForDisplay, attendanceModuleGroups, isLearningOnlyModule } from './moduleGroups';
 
 const learnerNav = roleNavMap.learner;
 
+// The Join endpoint returns here, in the tab it opened, when it cannot send the learner to Teams.
+function joinErrorMessage(reason: string) {
+  if (reason === 'ended') return 'That session has already ended, so it can no longer be joined.';
+  if (reason === 'not-found') return 'That session could not be found in your current modules. Please refresh your lectures or contact support.';
+  return 'The Teams link for that session is not available right now. Please try again in a few minutes or contact your tutor.';
+}
 
 export default function AttendancePage() {
   const learner = useMyLearner();
   const access = useLearnerWorkspaceAccess(learner.id);
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const joinError = searchParams.get('joinError');
+  const dismissJoinError = () => {
+    const next = new URLSearchParams(searchParams);
+    next.delete('joinError');
+    setSearchParams(next, { replace: true });
+  };
   const read = useLiveLearnerRead(learner.kind, learner.id, true, fetchAttendanceWorkspace, peekAttendanceWorkspace);
   const schedule = useLiveLearnerRead(learner.kind, learner.id, true, learningSchedule.read, learningSchedule.peek);
   useRefreshOnReturn(() => { read.refresh(); schedule.refresh(); }, { enabled: Boolean(learner.kind && learner.id) });
@@ -63,17 +77,22 @@ export default function AttendancePage() {
   const [attendError, setAttendError] = useState('');
   const [attendNotice, setAttendNotice] = useState('');
   const [confirmations, setConfirmations] = useState<Record<string, number>>({});
-  const allLectures = useMemo(() => (data?.lectures || []).map(row => {
-    const minutes = confirmations[`${learner.kind}:${learner.id}:${row.id}`];
-    return minutes == null ? row : { ...row, status: 'completed' as const, attendanceConfirmed: true,
-      creditedMinutes: minutes, canReportAbsence: false, catchupStatus: null };
-  }), [data, confirmations, learner.kind, learner.id]);
+  const allLectures = useMemo(() => {
+    const modules = [...(data?.modules || []), ...(schedule.data?.modules || []).map(module => ({
+      id: `native:${module.id}`, title: module.title,
+    }))];
+    return attendanceLecturesForDisplay(data?.lectures || [], modules).map(row => {
+      const minutes = confirmations[`${learner.kind}:${learner.id}:${row.id}`];
+      return minutes == null ? row : { ...row, status: 'completed' as const, attendanceConfirmed: true,
+        creditedMinutes: minutes, canReportAbsence: false, catchupStatus: null };
+    });
+  }, [data, schedule.data, confirmations, learner.kind, learner.id]);
   const now = useLectureClock(allLectures);
   const featured = featuredLecture(allLectures, now, data?.timeZone);
   const today = learningToday();
   const currentModule = useMemo(() => {
     if (!schedule.data) return null;
-    const modules = schedule.data.modules.map(module => {
+    const modules = schedule.data.modules.filter(module => !isLearningOnlyModule(module.title)).map(module => {
       const storedEnd = dateKey(module.end_date);
       const deliveryEnd = dateKey(module.effectiveEndDate);
       return deliveryEnd > storedEnd ? { ...module, end_date: deliveryEnd } : module;
@@ -83,15 +102,20 @@ export default function AttendancePage() {
   }, [schedule.data, today]);
   const moduleOptions = useMemo(() => {
     const options = data?.modules || [];
-    if (!currentModule || options.some(module => module.id === `native:${currentModule.id}`)) return options;
-    return [...options, { id: `native:${currentModule.id}`, title: currentModule.title }];
+    const withCurrent = !currentModule || options.some(module => module.id === `native:${currentModule.id}`)
+      ? options : [...options, { id: `native:${currentModule.id}`, title: currentModule.title }];
+    return attendanceModuleGroups(withCurrent);
   }, [data, currentModule]);
   const requestedModule = moduleSelection?.learnerKey === learnerKey ? moduleSelection.moduleId : null;
+  const requestedGroup = moduleOptions.find(module => module.moduleIds.includes(requestedModule || ''));
+  const currentGroup = currentModule && moduleOptions.find(module => module.moduleIds.includes(`native:${currentModule.id}`));
   const selectedModule = requestedModule === 'all' ? 'all'
-    : requestedModule && moduleOptions.some(module => module.id === requestedModule) ? requestedModule
-      : currentModule ? `native:${currentModule.id}` : 'all';
+    : requestedGroup?.id || currentGroup?.id || 'all';
   const setModuleId = (moduleId: string) => setModuleSelection({ learnerKey, moduleId });
-  const lectures = useMemo(() => allLectures.filter(row => selectedModule === 'all' || row.moduleId === selectedModule), [allLectures, selectedModule]);
+  const lectures = useMemo(() => {
+    const moduleIds = moduleOptions.find(module => module.id === selectedModule)?.moduleIds || [];
+    return allLectures.filter(row => selectedModule === 'all' || moduleIds.includes(row.moduleId));
+  }, [allLectures, selectedModule, moduleOptions]);
   const counts = useMemo(() => lectureCounts(lectures), [lectures]);
   const tabs: PageTabItem[] = [
     { value: 'all', label: 'All', count: counts.all },
@@ -177,6 +201,10 @@ export default function AttendancePage() {
           <RowAction label="My recovery plans" icon="ri-calendar-todo-line" onClick={() => setShowRecoveryPlans(true)} />
           <RowAction label="Report absence" icon="ri-calendar-close-line" emphasis="primary" onClick={() => setReport('choose')} />
         </div> : undefined} />
+      {joinError && <div role="alert" className="flex items-start justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm">
+        <span>{joinErrorMessage(joinError)}</span>
+        <button type="button" onClick={dismissJoinError} className="shrink-0 font-semibold underline">Dismiss</button>
+      </div>}
       {read.error && data && <div role="alert" className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm">
         Lectures could not refresh. Showing the last loaded record. <button onClick={read.refresh} className="font-semibold underline">Retry</button>
       </div>}

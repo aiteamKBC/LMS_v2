@@ -1,9 +1,9 @@
 """Moving a learner's progress when they are shifted between modules.
 
-The pairing is by position — week 1 to week 1 — but which *component* a piece of
-progress lands on is a human decision, so these cover the offer (which weeks and
-components are shown, and what is suggested) and the write (what is rewritten,
-and just as importantly what is left alone).
+The pairing prefers stable week identity or one exact lesson title before
+falling back to delivery position. Which *component* a piece of progress lands
+on is a human decision, so these cover the offer (which weeks and components
+are shown, and what is suggested) and the write (what is moved and archived).
 """
 import json
 from datetime import datetime, timezone as tz
@@ -12,7 +12,7 @@ from unittest.mock import Mock, patch
 
 from django.test import RequestFactory, SimpleTestCase
 
-from . import module_shift
+from . import learning_plan, module_shift
 
 # Two modules built from the same shape: three components in week 1, one of
 # which differs in type, plus a second week with none. Enough to exercise
@@ -27,9 +27,9 @@ SOURCE_ROWS = [
 TARGET_ROWS = [
     ("W-B1", 1, "Week 1", "C-B1", "video", "Recorded Session 1", 0.0),
     ("W-B1", 1, "Week 1", "C-B2", "reading", "Reading Material 2", 2.0),
-    ("W-B1", 1, "Week 1", "C-B3", "powerpoint", "shift ppt", 3.0),
+    ("W-B1", 1, "Week 1", "C-B3", "powerpoint", "PowerPoint 3", 3.0),
     ("W-B1", 1, "Week 1", "C-B4", "video", "Recorded Session 2", 1.0),
-    ("W-B2", 2, "Week 2", None, None, None, None),
+    ("W-B2", 2, "Week 2", "C-B5", "video", "Another week's video", 1.0),
 ]
 MODULE_ROWS = {"MOD-A": SOURCE_ROWS, "MOD-B": TARGET_ROWS}
 
@@ -77,6 +77,10 @@ def _entry(component_ref, kind="component", **kwargs):
         attempt=kwargs.get("attempt"),
         submitted_at=kwargs.get("submitted_at", datetime(2026, 8, 26, 11, 48, tzinfo=tz.utc)),
         started_at=None,
+        reported_time=kwargs.get("reported_time", ""),
+        claimed_seconds=kwargs.get("claimed_seconds"),
+        verified_seconds=kwargs.get("verified_seconds"),
+        time_tracking_source=kwargs.get("time_tracking_source", ""),
         save=Mock(),
     )
 
@@ -118,6 +122,7 @@ class PairingCase:
     def setUp(self):
         super().setUp()
         self.enterContext(patch('login.permissions.authenticate_request', return_value=SimpleNamespace(role='admin')))
+        self.enterContext(patch('learner_api.module_shift._quiz_component_slots', return_value=[]))
 
     def _call(self, entries, reviews=(), **query):
         params = {"from": "MOD-A", "to": "MOD-B"}
@@ -184,6 +189,43 @@ class ProgressPairingTests(PairingCase, SimpleTestCase):
             ],
         )
 
+    def test_same_lesson_title_moves_video_when_cohorts_use_different_week_numbers(self):
+        source_weeks = [{
+            "weekId": "FRI-W5", "weekNumber": 5, "title": "L4: Data, Insight and Analytics",
+            "components": [{
+                "componentId": "FRI-VID", "title": "P1 - VID - Your First Cold Case",
+                "type": "video", "otjHours": 0.08,
+            }],
+        }]
+        target_weeks = [
+            {"weekId": "THUR-W3", "weekNumber": 3, "title": "Earlier lesson", "components": []},
+            {
+                "weekId": "THUR-W4", "weekNumber": 4, "title": "L4: Data, Insight and Analytics",
+                "components": [{
+                    "componentId": "THUR-VID", "title": "P1 - VID - Your First Cold Case",
+                    "type": "video", "otjHours": 0.08,
+                }],
+            },
+        ]
+        profile = SimpleNamespace(id=211)
+        with patch("learner_api.module_shift._weeks_with_components", side_effect=[source_weeks, target_weeks]), \
+                patch("learner_api.module_shift.learner_profile_for_source", return_value=profile), \
+                patch("learner_api.module_shift._progress_by_component", return_value={
+                    "FRI-VID": {
+                        "entries": 1, "kinds": ["video"], "lastAt": "",
+                        "otjHours": 0.08, "points": 0,
+                    },
+                }), patch("learner_api.module_shift._reviews_by_component", return_value={}):
+            weeks, suggested, reason = module_shift._progress_pairing(
+                SimpleNamespace(pk=62), "MARTECH-FRI", "MARTECH-THUR",
+            )
+
+        self.assertEqual(reason, "")
+        self.assertEqual(weeks[0]["to"]["weekId"], "THUR-W4")
+        self.assertEqual(suggested, [{
+            "fromComponentId": "FRI-VID", "toComponentId": "THUR-VID",
+        }])
+
     def test_no_progress_says_so_rather_than_offering_an_empty_pairing(self):
         response, body = self._call([])
 
@@ -199,34 +241,130 @@ class ProgressPairingTests(PairingCase, SimpleTestCase):
 
 
 class SuggestedPairTests(SimpleTestCase):
-    """The suggestion is only a starting point, but it should be the obvious one."""
+    """Suggestions use identity, then an exact cleaned title and type."""
 
     def setUp(self):
         with patch("learner_api.module_shift._rows", side_effect=_fake_rows):
             self.target = module_shift._weeks_with_components("MOD-B")[0]
 
-    def test_same_position_wins_when_the_types_agree(self):
-        component = {"componentId": "C-A2", "type": "reading"}
+    def test_same_cleaned_title_and_type_are_suggested(self):
+        component = {
+            "componentId": "C-A2", "type": "reading",
+            "title": "  READING\u00a0material 2 ",
+        }
 
-        self.assertEqual(module_shift._suggested_pair(component, 1, 0, self.target), "C-B2")
+        self.assertEqual(module_shift._suggested_pair(component, self.target), "C-B2")
 
-    def test_a_moved_position_falls_back_to_the_same_rank_of_that_type(self):
-        component = {"componentId": "C-A4", "type": "video"}
+    def test_same_position_and_type_do_not_override_a_different_title(self):
+        component = {"componentId": "C-A9", "type": "video", "title": "Different lesson"}
 
-        # Second video on each side, even though the positions have drifted.
-        self.assertEqual(module_shift._suggested_pair(component, 9, 1, self.target), "C-B4")
+        self.assertEqual(module_shift._suggested_pair(component, self.target), "")
 
-    def test_nothing_of_that_type_suggests_nothing_rather_than_a_near_miss(self):
-        component = {"componentId": "C-A9", "type": "quiz"}
+    def test_same_id_wins_even_when_the_title_changed(self):
+        component = {"componentId": "C-B4", "type": "video", "title": "Old title"}
 
-        # The target week has no quiz; suggesting the component in that slot
-        # would be proposing a video as evidence of a quiz.
-        self.assertEqual(module_shift._suggested_pair(component, 0, 0, self.target), "")
+        self.assertEqual(module_shift._suggested_pair(component, self.target), "C-B4")
+
+    def test_an_already_claimed_target_is_not_suggested_twice(self):
+        component = {"componentId": "C-A2", "type": "reading", "title": "Reading Material 2"}
+
+        self.assertEqual(module_shift._suggested_pair(component, self.target, {"C-B2"}), "")
+
+    def test_ambiguous_title_is_left_unmatched(self):
+        component = {"componentId": "C-A2", "type": "reading", "title": "Reading Material 2"}
+        target = {
+            "components": [
+                *self.target["components"],
+                {"componentId": "C-B5", "type": "reading", "title": "reading material 2"},
+            ],
+        }
+
+        self.assertEqual(module_shift._suggested_pair(component, target), "")
 
     def test_a_week_that_does_not_exist_suggests_nothing(self):
-        component = {"componentId": "C-A2", "type": "reading"}
+        component = {"componentId": "C-A2", "type": "reading", "title": "Reading Material 2"}
 
-        self.assertEqual(module_shift._suggested_pair(component, 1, 0, None), "")
+        self.assertEqual(module_shift._suggested_pair(component, None), "")
+
+
+class ShiftedPlanTests(SimpleTestCase):
+    """A shift must remain visible after group inheritance and mirror reads."""
+
+    def setUp(self):
+        self.source = {"moduleId": "MOD-A", "moduleTitle": "Martech - Thur"}
+        self.target = {"moduleId": "MOD-B", "moduleTitle": "Martech - Fri"}
+        self.learner = SimpleNamespace(
+            pk=62,
+            programme="Marketing", group="G1-MarTech",
+            learning_plan=[self.source], training_plan=None, save=Mock(),
+        )
+
+    def test_leaving_a_group_module_makes_the_shift_explicit(self):
+        with patch("learner_api.module_shift._group_module_ids", return_value=["MOD-A"]):
+            shifted = module_shift._shifted_plan(
+                self.learner, [self.source], self.target, "MOD-A",
+            )
+
+        self.assertEqual([entry["moduleId"] for entry in shifted], ["MOD-B"])
+        self.assertEqual(shifted[0]["assignmentMode"], "explicit")
+        self.learner.learning_plan = shifted
+        self.assertEqual(learning_plan._effective_plan_ids(self.learner, {}), ["MOD-B"])
+
+    def test_a_non_group_module_does_not_freeze_the_rest_of_the_plan(self):
+        with patch("learner_api.module_shift._group_module_ids", return_value=["MOD-X"]):
+            shifted = module_shift._shifted_plan(
+                self.learner, [self.source], self.target, "MOD-A",
+            )
+
+        self.assertNotIn("assignmentMode", shifted[0])
+
+    def test_save_uses_the_selected_plan_field_and_updates_only_the_shifted_mirror(self):
+        profile = SimpleNamespace(pk=248, learning_plan=None)
+        with (
+            patch("learner_api.module_shift.learner_profile_for_source", return_value=profile),
+            patch("learner_api.module_shift.LearnerProfile"),
+            patch("learner_api.module_shift.EnrolmentUser"),
+            patch("learner_api.module_shift._replace_json_plan_module", return_value=True) as json_replace,
+            patch("learner_api.module_shift._sync_legacy_titles_from_json"),
+            patch("learner_api.module_shift._replace_mirrored_module", return_value=True) as replace,
+            patch("learner_api.module_shift.sync_learning_plan_mirror") as full_mirror,
+        ):
+            field, saved_profile, mirrored = module_shift._save_shifted_plan(
+                self.learner, [self.target], "MOD-A", "MOD-B",
+            )
+
+        self.assertEqual(field, "learning_plan")
+        self.assertIs(saved_profile, profile)
+        self.assertTrue(mirrored)
+        self.assertEqual(self.learner.learning_plan, [self.target])
+        self.learner.save.assert_not_called()
+        self.assertEqual(json_replace.call_count, 2)
+        replace.assert_called_once_with(profile, "MOD-A", self.target)
+        full_mirror.assert_not_called()
+
+    def test_save_respects_a_training_plan_backed_learner(self):
+        self.learner.learning_plan = None
+        self.learner.training_plan = [self.source]
+
+        profile = SimpleNamespace(pk=248, learning_plan=None)
+        with (
+            patch("learner_api.module_shift.learner_profile_for_source", return_value=profile),
+            patch("learner_api.module_shift.LearnerProfile"),
+            patch("learner_api.module_shift.EnrolmentUser"),
+            patch("learner_api.module_shift._replace_json_plan_module", return_value=True),
+            patch("learner_api.module_shift._sync_legacy_titles_from_json"),
+            patch("learner_api.module_shift._replace_mirrored_module", return_value=True),
+            patch("learner_api.module_shift.sync_learning_plan_mirror") as full_mirror,
+        ):
+            field, _profile, mirrored = module_shift._save_shifted_plan(
+                self.learner, [self.target], "MOD-A", "MOD-B",
+            )
+
+        self.assertEqual(field, "training_plan")
+        self.assertTrue(mirrored)
+        self.assertEqual(self.learner.training_plan, [self.target])
+        self.learner.save.assert_not_called()
+        full_mirror.assert_not_called()
 
 
 class MappingValidationTests(SimpleTestCase):
@@ -240,7 +378,7 @@ class MappingValidationTests(SimpleTestCase):
         self.assertEqual(error, "")
         self.assertEqual(pairs, [("C-A2", "C-B2")])
 
-    def test_a_pair_with_no_target_means_leave_that_progress_alone(self):
+    def test_a_pair_with_no_target_is_left_unmatched_for_archiving(self):
         pairs, error = self._validate([{"fromComponentId": "C-A2", "toComponentId": ""}])
 
         self.assertEqual(error, "")
@@ -254,14 +392,20 @@ class MappingValidationTests(SimpleTestCase):
         self.assertIn("is a video", error)
         self.assertIn("is a reading", error)
 
-    def test_the_same_type_at_a_different_position_is_allowed(self):
-        # The picker offers this: matching is by type, not by slot.
+    def test_staff_can_manually_match_a_different_title_of_the_same_type(self):
         pairs, error = self._validate([
             {"fromComponentId": "C-A1", "toComponentId": "C-B4"},
         ])
 
         self.assertEqual(error, "")
         self.assertEqual(pairs, [("C-A1", "C-B4")])
+
+    def test_manual_match_cannot_use_a_component_from_another_target_week(self):
+        _pairs, error = self._validate([
+            {"fromComponentId": "C-A1", "toComponentId": "C-B5"},
+        ])
+
+        self.assertIn("not in the target week paired", error)
 
     def test_two_components_cannot_land_on_the_same_one(self):
         _pairs, error = self._validate([
@@ -283,6 +427,9 @@ class MappingValidationTests(SimpleTestCase):
 
 
 class RepointTests(SimpleTestCase):
+    def setUp(self):
+        self.enterContext(patch('learner_api.module_shift._quiz_component_slots', return_value=[]))
+
     def _repoint(self, entries, pairs=(("C-A3", "C-B3"),), context=None, review_rows=()):
         queryset = Mock()
         queryset.exclude.return_value = entries
@@ -314,10 +461,12 @@ class RepointTests(SimpleTestCase):
         self.assertEqual(entry.week_ref, "W-B1")
         # The group teaching it changes with the module.
         self.assertEqual(entry.group_title, "G2 T")
-        # The component's own values come from the component now credited.
-        self.assertEqual(float(entry.expected_otjh), 3.0)
+        # The learner's recorded duration stays exactly as earned. The target
+        # component's authored estimate must not rewrite historical progress.
+        self.assertEqual(float(entry.expected_otjh), 2.0)
         self.assertEqual(entry.points, 20)
         self.assertEqual(entry.component_link_status, "resolved_to_current_component")
+        self.assertNotIn("expected_otjh", module_shift.REPOINTED_FIELDS)
 
     def test_what_the_learner_actually_did_is_not_rewritten(self):
         entry = _entry("C-A3", grade=72, attempt=2)
@@ -330,6 +479,32 @@ class RepointTests(SimpleTestCase):
         self.assertEqual(entry.submitted_at, submitted)
         self.assertEqual(entry.kind, "component")
 
+    def test_a_three_hour_video_keeps_its_recorded_duration_when_repointed(self):
+        entry = _entry(
+            "C-A1", kind="video", reported_time="180.0 minutes",
+            claimed_seconds=10800, verified_seconds=300,
+            time_tracking_source="active_playback:input",
+        )
+        recorded = (
+            entry.reported_time, entry.claimed_seconds,
+            entry.verified_seconds, entry.time_tracking_source,
+        )
+
+        self._repoint(
+            [entry], pairs=(("C-A1", "C-B1"),),
+            context={**TARGET_CONTEXT, "componentType": "video", "componentTitle": "Recorded Session 1"},
+        )
+
+        self.assertEqual(entry.component_ref, "C-B1")
+        self.assertEqual((
+            entry.reported_time, entry.claimed_seconds,
+            entry.verified_seconds, entry.time_tracking_source,
+        ), recorded)
+        changed = set(entry.save.call_args.kwargs["update_fields"])
+        self.assertTrue({
+            "reported_time", "claimed_seconds", "verified_seconds", "time_tracking_source",
+        }.isdisjoint(changed))
+
     def test_the_original_component_is_recorded_once(self):
         entry = _entry("C-A3")
 
@@ -338,7 +513,7 @@ class RepointTests(SimpleTestCase):
 
         # A second shift keeps the first reference rather than overwriting it.
         entry.component_ref = "C-B3"
-        self._repoint([entry])
+        self._repoint([entry], pairs=(("C-B3", "C-C3"),))
         self.assertEqual(entry.legacy_component_ref, "C-A3")
 
     def test_ksbs_are_remapped_to_the_component_now_credited(self):
@@ -363,6 +538,221 @@ class RepointTests(SimpleTestCase):
 
         self.assertEqual(counts["entries"], 0)
         self.assertEqual(entry.component_ref, "C-A3")
+
+
+class ArchiveProgressTests(SimpleTestCase):
+    def test_unmatched_source_progress_is_soft_archived(self):
+        base = Mock()
+        scoped = Mock()
+        base.filter.return_value = scoped
+        scoped.update.return_value = 2
+        profile = SimpleNamespace(pk=211)
+
+        with patch.object(module_shift, "LearnerProgressEntry") as model, \
+                patch.object(module_shift.timezone, "now", return_value="archived-at"):
+            model.objects.filter.return_value = base
+            archived = module_shift._archive_unmatched_progress(
+                profile, "MOD-A", {"C-A1", "C-A2"},
+            )
+
+        self.assertEqual(archived, 2)
+        model.objects.filter.assert_called_once_with(
+            learner=profile, deleted_at__isnull=True,
+        )
+        scoped.update.assert_called_once_with(deleted_at="archived-at")
+
+    def test_progress_that_was_moved_is_not_archived_even_if_component_ids_are_shared(self):
+        base = Mock()
+        scoped = Mock()
+        unmatched = Mock()
+        base.filter.return_value = scoped
+        scoped.exclude.return_value = unmatched
+        unmatched.update.return_value = 1
+
+        with patch.object(module_shift, "LearnerProgressEntry") as model:
+            model.objects.filter.return_value = base
+            archived = module_shift._archive_unmatched_progress(
+                SimpleNamespace(pk=211), "MOD-A", {"SHARED"}, (), [8],
+            )
+
+        self.assertEqual(archived, 1)
+        scoped.exclude.assert_called_once_with(pk__in=[8])
+
+    def test_a_uniquely_resolved_legacy_quiz_is_in_the_archive_scope(self):
+        base = Mock()
+        scoped = Mock()
+        base.filter.return_value = scoped
+        scoped.update.return_value = 1
+
+        with patch.object(module_shift, "LearnerProgressEntry") as model:
+            model.objects.filter.return_value = base
+            archived = module_shift._archive_unmatched_progress(
+                SimpleNamespace(pk=211), "MOD-A", {"C-AQ"}, [17],
+            )
+
+        self.assertEqual(archived, 1)
+        archive_scope = base.filter.call_args.args[0]
+        self.assertIn(("pk__in", [17]), archive_scope.children)
+
+    def test_a_learner_without_a_delivery_profile_has_nothing_to_archive(self):
+        with patch.object(module_shift, "LearnerProgressEntry") as model:
+            self.assertEqual(
+                module_shift._archive_unmatched_progress(None, "MOD-A", {"C-A1"}),
+                0,
+            )
+        model.objects.filter.assert_not_called()
+
+
+class QuizShiftProgressTests(SimpleTestCase):
+    """Quiz submissions have quiz_ref but no component_ref, unlike readings."""
+
+    def setUp(self):
+        self.profile = SimpleNamespace(pk=211)
+        self.slot = {
+            "component_id": "C-AQ", "module_id": "MOD-A",
+            "module_title": "Shift 1", "week_id": "W-A1", "week_title": "Lec1",
+            "component_title": "Matching quiz", "quiz_id": "101",
+        }
+
+    def attempt(self, **changes):
+        entry = _entry(
+            None, kind="quiz", grade=1, attempt=1,
+            component_title="Matching quiz",
+        )
+        entry.quiz_ref = "101"
+        entry.module_ref = None
+        entry.week_ref = None
+        entry.passed = True
+        entry.achieved_score = 10
+        entry.total_score = 10
+        entry.verified_seconds = 68
+        entry.questions = [{"questionId": 5, "chosenAnswerId": 8}]
+        for key, value in changes.items():
+            setattr(entry, key, value)
+        return entry
+
+    def resolve(self, attempts, *, slots=None, direct=(), summary=False):
+        queryset = Mock()
+        queryset.exclude.return_value = list(direct)
+        with patch.object(module_shift, "_quiz_component_slots", return_value=slots or [self.slot]), \
+                patch.object(module_shift, "LearnerProgressEntry") as model:
+            model.objects.filter.side_effect = [queryset, attempts]
+            resolver = module_shift._progress_by_component if summary else module_shift._progress_entries_by_component
+            result = resolver(self.profile, ["C-AQ"])
+        self.assertEqual(model.objects.filter.call_args_list[0].kwargs["learner"], self.profile)
+        call = model.objects.filter.call_args_list[1]
+        self.assertEqual(call.kwargs, {
+            "learner": self.profile, "deleted_at__isnull": True,
+            "kind": "quiz", "quiz_ref__in": ["101"],
+        })
+        self.assertEqual(call.args[0].connector, "OR")
+        self.assertCountEqual(call.args[0].children, [("component_ref__isnull", True), ("component_ref", "")])
+        return result
+
+    def test_slot_lookup_reads_normalized_links_before_legacy_settings(self):
+        with patch.object(module_shift, "_rows", return_value=[self.slot]) as rows:
+            result = module_shift._quiz_component_slots(self.profile, ["C-AQ"])
+
+        self.assertEqual(result, [self.slot])
+        sql, params = rows.call_args.args
+        self.assertIn("FROM curriculum.quiz_component_links link", sql)
+        self.assertLess(
+            sql.index("SELECT link.quiz_id::text"),
+            sql.index("c.settings_json->>'linkedQuizId'"),
+        )
+        self.assertEqual(params, [self.profile.pk, ["C-AQ"]])
+
+    def test_quiz_only_attempt_is_offered_in_the_progress_summary(self):
+        entry = self.attempt()
+        summary = self.resolve([entry], summary=True)
+        self.assertEqual(summary["C-AQ"]["entries"], 1)
+        self.assertEqual(summary["C-AQ"]["kinds"], ["quiz"])
+        self.assertIsNone(entry.component_ref)  # Preview never writes.
+        entry.save.assert_not_called()
+
+    def test_passed_and_failed_attempts_are_both_preserved(self):
+        attempts = [self.attempt(passed=False, grade=0.2), self.attempt(attempt=2)]
+        self.assertEqual(self.resolve(attempts), {"C-AQ": attempts})
+
+    def test_shared_quiz_without_a_unique_slot_is_left_in_place(self):
+        for other in (
+            {**self.slot, "component_id": "C-AQ2"},
+            {**self.slot, "component_id": "C-XQ", "module_id": "MOD-X"},
+        ):
+            with self.subTest(other=other):
+                self.assertEqual(self.resolve([self.attempt()], slots=[self.slot, other]), {})
+
+    def test_stored_titles_disambiguate_a_shared_legacy_quiz(self):
+        slots = [
+            self.slot,
+            {
+                **self.slot,
+                "component_id": "C-XQ",
+                "module_id": "MOD-X",
+                "module_title": "Another module",
+                "week_id": "W-X1",
+            },
+        ]
+        entry = self.attempt(module_ref=None, week_ref=None)
+
+        self.assertEqual(self.resolve([entry], slots=slots), {"C-AQ": [entry]})
+
+    def test_title_disambiguation_normalizes_visible_spacing(self):
+        slots = [
+            self.slot,
+            {
+                **self.slot,
+                "component_id": "C-XQ",
+                "module_id": "MOD-X",
+                "module_title": "Another module",
+            },
+        ]
+        entry = self.attempt(
+            module_ref=None,
+            week_ref=None,
+            module_title="  SHIFT\u00a01 ",
+            week_title=" LEC1 ",
+            component_title="MATCHING   QUIZ",
+        )
+
+        self.assertEqual(self.resolve([entry], slots=slots), {"C-AQ": [entry]})
+
+    def test_explicit_module_and_week_disambiguate_the_original_slot(self):
+        entry = self.attempt(module_ref="MOD-A", week_ref="W-A1")
+        slots = [self.slot, {**self.slot, "component_id": "C-XQ", "module_id": "MOD-X"},
+                 {**self.slot, "component_id": "C-AQ2", "week_id": "W-A2"}]
+        self.assertEqual(self.resolve([entry], slots=slots), {"C-AQ": [entry]})
+
+    def test_an_attempt_explicitly_from_another_module_or_week_is_not_taken(self):
+        for changes in ({"module_ref": "MOD-X"}, {"week_ref": "W-A2"}, {"quiz_ref": "999"}):
+            with self.subTest(changes=changes):
+                self.assertEqual(self.resolve([self.attempt(**changes)]), {})
+
+    def test_existing_component_link_does_not_need_the_old_quiz_link(self):
+        moved = self.attempt(component_ref="C-AQ", quiz_ref="99")
+        self.assertEqual(self.resolve([], direct=[moved]), {"C-AQ": [moved]})
+
+    def test_repoint_preserves_the_original_quiz_answers_scores_and_times(self):
+        entry = self.attempt()
+        entries = self.resolve([entry])
+        historical_fields = ("quiz_ref", "grade", "attempt", "passed", "achieved_score", "total_score",
+                             "verified_seconds", "questions", "submitted_at", "started_at")
+        original = {field: getattr(entry, field) for field in historical_fields}
+        with patch.object(module_shift, "_component_learning_context", return_value={
+            **TARGET_CONTEXT, "componentType": "quiz", "componentTitle": "Matching quiz",
+        }), patch.object(module_shift, "_rewrite_ksbs"), \
+                patch.object(module_shift, "_move_review", return_value=(0, 0)), \
+                patch.object(module_shift, "_progress_entries_by_component") as resolve:
+            counts = module_shift._repoint_progress(
+                SimpleNamespace(pk=62), self.profile, [("C-AQ", "C-BQ")], entries,
+            )
+        resolve.assert_not_called()  # Already resolved against the pre-shift plan.
+        self.assertEqual(counts["entries"], 1)
+        self.assertEqual(entry.component_ref, "C-BQ")
+        self.assertEqual(entry.legacy_component_ref, "C-AQ")
+        self.assertEqual(entry.module_ref, "MOD-B")
+        self.assertEqual({field: getattr(entry, field) for field in historical_fields}, original)
+        entry.save.assert_called_once_with(update_fields=module_shift.REPOINTED_FIELDS)
 
 
 class ReviewMoveTests(SimpleTestCase):

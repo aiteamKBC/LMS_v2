@@ -55,6 +55,16 @@ def load_env_file(path):
 
 load_env_file(BASE_DIR / '.env')
 
+# New LMS mobile pilot: explicit default-off release gates.
+KBC_MOBILE_API_ENABLED = os.environ.get("KBC_MOBILE_API_ENABLED", "0").strip().lower() in {"1", "true", "yes", "on"}
+KBC_MOBILE_COMMS_ENABLED = os.environ.get("KBC_MOBILE_COMMS_ENABLED", "0").strip().lower() in {"1", "true", "yes", "on"}
+KBC_MOBILE_PUSH_ENABLED = os.environ.get("KBC_MOBILE_PUSH_ENABLED", "0").strip().lower() in {"1", "true", "yes", "on"}
+KBC_MOBILE_FCM_PROJECT = os.environ.get("KBC_MOBILE_FCM_PROJECT", "kbc-learn-mobile")
+KBC_MOBILE_FCM_CREDENTIAL = os.environ.get("KBC_MOBILE_FCM_CREDENTIAL", "/etc/kbc-mobile/notification-sender.json")
+KBC_MOBILE_CALENDAR_WRITES_ENABLED = os.environ.get("KBC_MOBILE_CALENDAR_WRITES_ENABLED", "0").strip().lower() in {"1", "true", "yes", "on"}
+KBC_SHARED_REWARDS_READY = os.environ.get("KBC_SHARED_REWARDS_READY", "0").strip().lower() in {"1", "true", "yes", "on"}
+
+
 SAFEGUARDING_SSO_SECRET = os.environ.get("SAFEGUARDING_SSO_SECRET", "").strip()
 INCLUSION_SSO_SECRET = os.environ.get("INCLUSION_SSO_SECRET", "").strip()
 INCLUSION_SSO_CALLBACK_URL = os.environ.get(
@@ -76,7 +86,7 @@ DB_CONN_MAX_AGE = int(os.environ.get('DB_CONN_MAX_AGE', '300'))
 DB_CONN_HEALTH_CHECKS = os.environ.get('DB_CONN_HEALTH_CHECKS', 'true').lower() != 'false'
 # Seconds to wait for a database connection before giving up. Keeps a stalled DNS
 # resolver or unreachable Neon endpoint from hanging a request indefinitely.
-DB_CONNECT_TIMEOUT = int(os.environ.get('DB_CONNECT_TIMEOUT', '10'))
+DB_CONNECT_TIMEOUT = int(os.environ.get('DB_CONNECT_TIMEOUT', '45'))
 # Milliseconds Postgres itself will run a statement (lock waits included) before
 # cancelling it. connect_timeout only bounds opening a connection; once one is
 # open, a query that stalls on a held lock or a slow-to-wake Neon compute has
@@ -93,7 +103,7 @@ DB_POOL = os.environ.get('DB_POOL', 'true').lower() != 'false'
 # A local runserver can start before Neon has finished opening a connection.
 # Pool checkout needs its own budget: connect_timeout applies per address.
 DB_POOL_TIMEOUT = int(os.environ.get(
-    'DB_POOL_TIMEOUT', '45' if 'runserver' in sys.argv else str(DB_CONNECT_TIMEOUT),
+    'DB_POOL_TIMEOUT', '65' if 'runserver' in sys.argv else str(DB_CONNECT_TIMEOUT),
 ))
 DB_POOL_OPTIONS = {
     'min_size': 1,
@@ -383,6 +393,7 @@ INSTALLED_APPS = [
     'progress_reviews_api',
     'knowledge_base',
     'chat',
+    'mobile_comms',
     # One shared projection table, one transactional outbox and one short-lived
     # performance-sample table for aggregate screens across every workspace.
     'read_models',
@@ -446,6 +457,12 @@ PERFORMANCE_DIAGNOSTIC_ACCOUNT_IDS = frozenset(
     if value.strip()
 )
 PERFORMANCE_SAMPLE_RETENTION_DAYS = int(os.environ.get('PERFORMANCE_SAMPLE_RETENTION_DAYS', '14'))
+
+# Learner-facing feedback is controlled independently from Django's global DEBUG
+# mode. Staff authoring/reporting and token-scoped public event flows are separate.
+LEARNER_FEEDBACK_ENABLED = (
+    os.environ.get("LEARNER_FEEDBACK_ENABLED", "false").lower() == "true"
+)
 
 ROOT_URLCONF = 'config.urls'
 
@@ -931,6 +948,8 @@ FILE_UPLOAD_MAX_MEMORY_SIZE = int(os.environ.get('FILE_UPLOAD_MAX_MEMORY_SIZE', 
 # Azure Blob Storage (learner evidence uploads — see learner_api/evidence_storage.py).
 AZURE_STORAGE_ACCOUNT = os.environ.get("AZURE_STORAGE_ACCOUNT", "")
 AZURE_STORAGE_KEY = os.environ.get("AZURE_STORAGE_KEY", "")
+KNOWLEDGE_BASE_AZURE_CONTAINER = os.environ.get("KNOWLEDGE_BASE_AZURE_CONTAINER", "")
+KNOWLEDGE_BASE_STORAGE = os.environ.get("KNOWLEDGE_BASE_STORAGE", "local")
 AZURE_QUARANTINE_CONTAINER = os.environ.get("AZURE_QUARANTINE_CONTAINER", "evidence-quarantine")
 AZURE_APPROVED_CONTAINER = os.environ.get("AZURE_APPROVED_CONTAINER", "evidence-approved")
 AZURE_REJECTED_CONTAINER = os.environ.get("AZURE_REJECTED_CONTAINER", "evidence-rejected")

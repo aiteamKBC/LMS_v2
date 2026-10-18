@@ -1,30 +1,51 @@
 import { useMemo } from 'react';
 import { Link } from 'react-router-dom';
-import { ArrowRight, CalendarDays, CheckCircle2, Clock3, FileText, MessageCircle } from 'lucide-react';
+import { ArrowRight, CalendarDays, CheckCircle2, Clock3, ExternalLink, FileText, MessageCircle } from 'lucide-react';
 import DOMPurify from 'dompurify';
 import type { LearnerKind } from '@/api/learnerDetail';
+import { hasHtmlText, presentTopic, topicLabel, type AssignmentResourceLink } from '@/lib/assignmentTopics';
 import { monthName, statusLabels, type AssignmentMonth, type MonthlyAssignmentRow } from './model';
 import styles from './monthlySubmission.module.css';
 import { AssignmentSubmissions } from './AssignmentSubmissions';
 import { AssignmentAttachment } from './AssignmentAttachment';
 
+/** Authored text: rich text is sanitised, plain text keeps its line breaks. */
+function BriefText({ value }: { value: string }) {
+  const html = useMemo(() => /<[a-zA-Z][^>]*>/.test(value) ? DOMPurify.sanitize(value) : '', [value]);
+  return html ? <div className={styles.question} dangerouslySetInnerHTML={{ __html: html }} /> : <p className={styles.question}>{value}</p>;
+}
+
+function ResourceLinks({ links }: { links: AssignmentResourceLink[] }) {
+  return <ul className={styles.resourceLinks}>{links.map(link => <li key={link.url}>
+    <a href={link.url} target="_blank" rel="noreferrer"><ExternalLink size={14} aria-hidden="true" />{link.label}</a>
+  </li>)}</ul>;
+}
+
 export function AssignmentDetailsCard({ assignment, group, kind, learnerId }: {
   assignment: MonthlyAssignmentRow; group: AssignmentMonth; kind: LearnerKind; learnerId: string;
 }) {
-  const rawQuestion = assignment.assignmentBriefHtml || assignment.assignmentBrief || assignment.description || '';
+  const topics = assignment.assignmentTopics || [];
+  // One topic is the assignment itself; two or more are options to choose from.
+  const single = topics.length === 1 ? presentTopic(topics[0]) : null;
+  const options = topics.length > 1 ? topics.map(topic => ({ topic, shown: presentTopic(topic) })) : [];
+  const rawQuestion = (single && hasHtmlText(single.question) ? single.question : '')
+    || assignment.assignmentBriefHtml || assignment.assignmentBrief || assignment.description || '';
   const attachmentUrl = assignment.resourceUrl?.trim();
   const questionHtml = useMemo(() => /<[a-zA-Z][^>]*>/.test(rawQuestion) ? DOMPurify.sanitize(rawQuestion) : '', [rawQuestion]);
+  const extraFiles = (single?.files || []).filter(file => file.url !== attachmentUrl);
+  const resourceLinks = single?.links || [];
+  const otherTopics = group.topics.filter(topic => !group.planAssignments.includes(topic));
   const href = `/learner/monthly-submission/${kind}/${encodeURIComponent(learnerId)}/${encodeURIComponent(assignment.id)}`
     + (group.month ? `?month=${group.month}` : '');
   const supportParams = new URLSearchParams({ book: 'student-support', kind, learner: learnerId,
-    notes: `Assignment support: ${assignment.component}\n${group.label}${group.topics.length ? ` — ${group.topics.join(' · ')}` : ''}\n${[assignment.module, assignment.week].filter(Boolean).join(' · ')}`.slice(0, 500) });
+    notes: `Assignment support: ${assignment.title}\n${group.label}${group.topics.length ? ` — ${group.topics.join(' · ')}` : ''}\n${[assignment.module, assignment.week].filter(Boolean).join(' · ')}`.slice(0, 500) });
   const ksbs = [...new Map((assignment.ksbMappings || []).map(mapping => [mapping.code, mapping])).values()];
   return <section className={styles.hero} aria-labelledby="assignment-details-title">
     <div className={styles.heroHeader}>
       <div className={styles.heroHeading}><span className={styles.heroIcon}><FileText size={24} aria-hidden="true" /></span><div>
         <p className={styles.eyebrow}>Your monthly assignment</p>
         <h2 id="assignment-details-title">{monthName(group.month)}</h2>
-        {(group.label !== monthName(group.month) || group.topics.length > 0) && <p className={styles.focus}>{[group.label !== monthName(group.month) ? group.label : '', ...group.topics].filter(Boolean).join(' · ')}</p>}
+        {(group.label !== monthName(group.month) || otherTopics.length > 0) && <p className={styles.focus}>{[group.label !== monthName(group.month) ? group.label : '', ...otherTopics].filter(Boolean).join(' · ')}</p>}
       </div></div>
       <span className={styles.status} data-status={assignment.status}>
         {assignment.submitted && <CheckCircle2 size={14} aria-hidden="true" />}{statusLabels[assignment.status] || assignment.status.replaceAll('_', ' ') || 'Status unavailable'}
@@ -32,13 +53,33 @@ export function AssignmentDetailsCard({ assignment, group, kind, learnerId }: {
     </div>
     <div className={styles.heroBody}>
       <div className={styles.brief}>
+        {group.planAssignments.length > 0 && <p className={styles.planAssignment}>
+          Assignment in your training plan: <strong>{group.planAssignments.join(' · ')}</strong>
+        </p>}
         <p className={styles.eyebrow}>Assignment question</p>
-        <h3>{assignment.component}</h3>
+        <h3>{assignment.title}</h3>
         {questionHtml ? <div className={styles.question} dangerouslySetInnerHTML={{ __html: questionHtml }} />
           : <p className={styles.question}>{rawQuestion || (attachmentUrl
             ? 'Read the attached file for the assignment instructions, then start your submission.'
             : 'Your tutor has not added the assignment question yet. Use the support button if you need help getting started.')}</p>}
-        {attachmentUrl && <AssignmentAttachment key={`${kind}:${learnerId}:${assignment.id}:${attachmentUrl}`} url={attachmentUrl} fileName={assignment.fileName} title={assignment.component} />}
+        {single?.instructions && <section className={styles.briefSection} aria-label="Instructions">
+          <p className={styles.eyebrow}>Instructions</p><BriefText value={single.instructions} />
+        </section>}
+        {options.length > 0 && <section className={styles.briefSection} aria-label="Assignment options">
+          <p className={styles.eyebrow}>Choose one of these options</p>
+          <ol className={styles.options}>{options.map(({ topic, shown }) => <li key={topic.id}>
+            <strong>{topicLabel(topic)}</strong>
+            {hasHtmlText(shown.question) && <BriefText value={shown.question} />}
+            {shown.instructions && <><p className={styles.optionLabel}>Instructions</p><BriefText value={shown.instructions} /></>}
+            {(shown.links.length > 0 || shown.files.length > 0) && <ResourceLinks links={[
+              ...shown.files.map(file => ({ label: file.fileName || 'Assignment file', url: file.url })), ...shown.links]} />}
+          </li>)}</ol>
+        </section>}
+        {resourceLinks.length > 0 && <section className={styles.briefSection} aria-label="Resources">
+          <p className={styles.eyebrow}>Resources</p><ResourceLinks links={resourceLinks} />
+        </section>}
+        {attachmentUrl && <AssignmentAttachment key={`${kind}:${learnerId}:${assignment.id}:${attachmentUrl}`} url={attachmentUrl} fileName={assignment.fileName} title={assignment.title} />}
+        {extraFiles.map(file => <AssignmentAttachment key={`${kind}:${learnerId}:${assignment.id}:${file.url}`} url={file.url} fileName={file.fileName} title={assignment.title} />)}
         <AssignmentSubmissions key={`${kind}:${learnerId}:${assignment.id}`} kind={kind} learnerId={learnerId} activityId={assignment.id}
           month={group.month} marking={assignment.marking} status={assignment.status} submissionCount={assignment.submissionCount} />
         {ksbs.length > 0 && <div className={styles.ksbs}><p className={styles.eyebrow}>Knowledge, skills & behaviours</p><div>

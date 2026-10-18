@@ -1,0 +1,854 @@
+{
+  "scope": "read-only projection; no HTTP/auth/browser timing",
+  "lineage_definition": "legacy has active old_lms progress; native has none (may have no progress)",
+  "read_only_aliases_verified": [
+    "default",
+    "enrolment"
+  ],
+  "records": [
+    {
+      "sample": 0,
+      "kind": "commercial",
+      "lineage": "legacy",
+      "run": 0,
+      "selection": 0,
+      "mode": "navigation",
+      "raw_bytes": 49143,
+      "gzip_bytes": 4723,
+      "payload_sha256": "8e528049e34c8fd47a7a2aebc33335249fdb93c30804e70f5fa740f8e46fe35c",
+      "projection": "weekly-benchmark",
+      "learner_id": "redacted",
+      "section": "",
+      "duration_ms": 5024.95,
+      "query_count": 14,
+      "db_duration_ms": 3946.89,
+      "query_count_by_alias": {
+        "default": 2,
+        "enrolment": 12
+      },
+      "db_duration_ms_by_alias": {
+        "default": 346.33,
+        "enrolment": 3600.56
+      },
+      "stage_durations_ms": {}
+    },
+    {
+      "sample": 0,
+      "kind": "commercial",
+      "lineage": "legacy",
+      "run": 0,
+      "selection": 1,
+      "mode": "detail",
+      "raw_bytes": 15400,
+      "gzip_bytes": 2583,
+      "payload_sha256": "d44b8c1496bdfa00ca2efce195571c3d3ee6897ded07acb147554bd62c9210db",
+      "projection": "weekly-benchmark",
+      "learner_id": "redacted",
+      "section": "",
+      "duration_ms": 2600.25,
+      "query_count": 13,
+      "db_duration_ms": 2483.96,
+      "query_count_by_alias": {
+        "default": 1,
+        "enrolment": 12
+      },
+      "db_duration_ms_by_alias": {
+        "default": 267.43,
+        "enrolment": 2216.53
+      },
+      "stage_durations_ms": {}
+    },
+    {
+      "sample": 0,
+      "kind": "commercial",
+      "lineage": "legacy",
+      "run": 0,
+      "selection": 2,
+      "mode": "detail",
+      "raw_bytes": 16789,
+      "gzip_bytes": 2649,
+      "payload_sha256": "7bf34d874fab56ea9c30d376fe8a9ec90554db38c618f33ee4f6b4a9b07ff024",
+      "projection": "weekly-benchmark",
+      "learner_id": "redacted",
+      "section": "",
+      "duration_ms": 2805.82,
+      "query_count": 13,
+      "db_duration_ms": 2690.09,
+      "query_count_by_alias": {
+        "default": 1,
+        "enrolment": 12
+      },
+      "db_duration_ms_by_alias": {
+        "default": 256.6,
+        "enrolment": 2433.48
+      },
+      "stage_durations_ms": {}
+    },
+    {
+      "sample": 0,
+      "kind": "commercial",
+      "lineage": "legacy",
+      "run": 0,
+      "selection": 3,
+      "mode": "detail",
+      "raw_bytes": 77211,
+      "gzip_bytes": 8182,
+      "payload_sha256": "9834620d5896df455f1ddbb9861100375399d73ab5d1069fd9d771ec03acb791",
+      "projection": "weekly-benchmark",
+      "learner_id": "redacted",
+      "section": "",
+      "duration_ms": 2196.43,
+      "query_count": 13,
+      "db_duration_ms": 2012.1,
+      "query_count_by_alias": {
+        "default": 1,
+        "enrolment": 12
+      },
+      "db_duration_ms_by_alias": {
+        "default": 261.75,
+        "enrolment": 1750.35
+      },
+      "stage_durations_ms": {}
+    },
+    {
+      "sample": 0,
+      "kind": "commercial",
+      "lineage": "legacy",
+      "run": 1,
+      "selection": 0,
+      "mode": "navigation",
+      "raw_bytes": 49143,
+      "gzip_bytes": 4723,
+      "payload_sha256": "8e528049e34c8fd47a7a2aebc33335249fdb93c30804e70f5fa740f8e46fe35c",
+      "projection": "weekly-benchmark",
+      "learner_id": "redacted",
+      "section": "",
+      "duration_ms": 3237.65,
+      "query_count": 13,
+      "db_duration_ms": 2894.89,
+      "query_count_by_alias": {
+        "default": 1,
+        "enrolment": 12
+      },
+      "db_duration_ms_by_alias": {
+        "default": 194.05,
+        "enrolment": 2700.84
+      },
+      "stage_durations_ms": {}
+    },
+    {
+      "sample": 0,
+      "kind": "commercial",
+      "lineage": "legacy",
+      "run": 1,
+      "selection": 1,
+      "mode": "detail",
+      "raw_bytes": 15400,
+      "gzip_bytes": 2583,
+      "payload_sha256": "d44b8c1496bdfa00ca2efce195571c3d3ee6897ded07acb147554bd62c9210db",
+      "projection": "weekly-benchmark",
+      "learner_id": "redacted",
+      "section": "",
+      "duration_ms": 1903.98,
+      "query_count": 13,
+      "db_duration_ms": 1792.84,
+      "query_count_by_alias": {
+        "default": 1,
+        "enrolment": 12
+      },
+      "db_duration_ms_by_alias": {
+        "default": 218.16,
+        "enrolment": 1574.68
+      },
+      "stage_durations_ms": {}
+    },
+    {
+      "sample": 0,
+      "kind": "commercial",
+      "lineage": "legacy",
+      "run": 1,
+      "selection": 2,
+      "mode": "detail",
+      "raw_bytes": 16789,
+      "gzip_bytes": 2649,
+      "payload_sha256": "7bf34d874fab56ea9c30d376fe8a9ec90554db38c618f33ee4f6b4a9b07ff024",
+      "projection": "weekly-benchmark",
+      "learner_id": "redacted",
+      "section": "",
+      "duration_ms": 2523.67,
+      "query_count": 13,
+      "db_duration_ms": 2412.44,
+      "query_count_by_alias": {
+        "default": 1,
+        "enrolment": 12
+      },
+      "db_duration_ms_by_alias": {
+        "default": 678.6,
+        "enrolment": 1733.84
+      },
+      "stage_durations_ms": {}
+    },
+    {
+      "sample": 0,
+      "kind": "commercial",
+      "lineage": "legacy",
+      "run": 1,
+      "selection": 3,
+      "mode": "detail",
+      "raw_bytes": 77211,
+      "gzip_bytes": 8182,
+      "payload_sha256": "9834620d5896df455f1ddbb9861100375399d73ab5d1069fd9d771ec03acb791",
+      "projection": "weekly-benchmark",
+      "learner_id": "redacted",
+      "section": "",
+      "duration_ms": 1961.2,
+      "query_count": 13,
+      "db_duration_ms": 1798.91,
+      "query_count_by_alias": {
+        "default": 1,
+        "enrolment": 12
+      },
+      "db_duration_ms_by_alias": {
+        "default": 195.26,
+        "enrolment": 1603.64
+      },
+      "stage_durations_ms": {}
+    },
+    {
+      "sample": 1,
+      "kind": "commercial",
+      "lineage": "legacy",
+      "run": 0,
+      "selection": 0,
+      "mode": "navigation",
+      "raw_bytes": 37692,
+      "gzip_bytes": 5256,
+      "payload_sha256": "dac822c69dd9695103457e7e4d710a1f8f2e60af1bb3d6149086a7a525a05837",
+      "projection": "weekly-benchmark",
+      "learner_id": "redacted",
+      "section": "",
+      "duration_ms": 2260.36,
+      "query_count": 14,
+      "db_duration_ms": 2158.09,
+      "query_count_by_alias": {
+        "default": 2,
+        "enrolment": 12
+      },
+      "db_duration_ms_by_alias": {
+        "default": 386.34,
+        "enrolment": 1771.75
+      },
+      "stage_durations_ms": {}
+    },
+    {
+      "sample": 1,
+      "kind": "commercial",
+      "lineage": "legacy",
+      "run": 0,
+      "selection": 1,
+      "mode": "detail",
+      "raw_bytes": 77217,
+      "gzip_bytes": 8179,
+      "payload_sha256": "9179a45b31c48b0d1d1eb486a857de0fa7f87f1e11fb0c7794b3d595dd9bd9bd",
+      "projection": "weekly-benchmark",
+      "learner_id": "redacted",
+      "section": "",
+      "duration_ms": 1822.45,
+      "query_count": 14,
+      "db_duration_ms": 1724.46,
+      "query_count_by_alias": {
+        "default": 2,
+        "enrolment": 12
+      },
+      "db_duration_ms_by_alias": {
+        "default": 275.36,
+        "enrolment": 1449.1
+      },
+      "stage_durations_ms": {}
+    },
+    {
+      "sample": 1,
+      "kind": "commercial",
+      "lineage": "legacy",
+      "run": 0,
+      "selection": 2,
+      "mode": "detail",
+      "raw_bytes": 30203,
+      "gzip_bytes": 4018,
+      "payload_sha256": "ba32f0239889df35413f12b7692eb643675881fe0d0f9469a1cc1add225c1c7d",
+      "projection": "weekly-benchmark",
+      "learner_id": "redacted",
+      "section": "",
+      "duration_ms": 1541.59,
+      "query_count": 14,
+      "db_duration_ms": 1489.82,
+      "query_count_by_alias": {
+        "default": 2,
+        "enrolment": 12
+      },
+      "db_duration_ms_by_alias": {
+        "default": 345.36,
+        "enrolment": 1144.46
+      },
+      "stage_durations_ms": {}
+    },
+    {
+      "sample": 1,
+      "kind": "commercial",
+      "lineage": "legacy",
+      "run": 0,
+      "selection": 3,
+      "mode": "detail",
+      "raw_bytes": 27420,
+      "gzip_bytes": 3921,
+      "payload_sha256": "613b8efe9155c72c562349bfa9ed0511521c1e89c957020e0463c1afcb6773c6",
+      "projection": "weekly-benchmark",
+      "learner_id": "redacted",
+      "section": "",
+      "duration_ms": 1299.77,
+      "query_count": 14,
+      "db_duration_ms": 1265.45,
+      "query_count_by_alias": {
+        "default": 2,
+        "enrolment": 12
+      },
+      "db_duration_ms_by_alias": {
+        "default": 254.98,
+        "enrolment": 1010.47
+      },
+      "stage_durations_ms": {}
+    },
+    {
+      "sample": 1,
+      "kind": "commercial",
+      "lineage": "legacy",
+      "run": 1,
+      "selection": 0,
+      "mode": "navigation",
+      "raw_bytes": 37692,
+      "gzip_bytes": 5256,
+      "payload_sha256": "dac822c69dd9695103457e7e4d710a1f8f2e60af1bb3d6149086a7a525a05837",
+      "projection": "weekly-benchmark",
+      "learner_id": "redacted",
+      "section": "",
+      "duration_ms": 3074.63,
+      "query_count": 14,
+      "db_duration_ms": 2864.23,
+      "query_count_by_alias": {
+        "default": 2,
+        "enrolment": 12
+      },
+      "db_duration_ms_by_alias": {
+        "default": 270.55,
+        "enrolment": 2593.68
+      },
+      "stage_durations_ms": {}
+    },
+    {
+      "sample": 1,
+      "kind": "commercial",
+      "lineage": "legacy",
+      "run": 1,
+      "selection": 1,
+      "mode": "detail",
+      "raw_bytes": 77217,
+      "gzip_bytes": 8179,
+      "payload_sha256": "9179a45b31c48b0d1d1eb486a857de0fa7f87f1e11fb0c7794b3d595dd9bd9bd",
+      "projection": "weekly-benchmark",
+      "learner_id": "redacted",
+      "section": "",
+      "duration_ms": 2381.34,
+      "query_count": 14,
+      "db_duration_ms": 2308.71,
+      "query_count_by_alias": {
+        "default": 2,
+        "enrolment": 12
+      },
+      "db_duration_ms_by_alias": {
+        "default": 382.88,
+        "enrolment": 1925.83
+      },
+      "stage_durations_ms": {}
+    },
+    {
+      "sample": 1,
+      "kind": "commercial",
+      "lineage": "legacy",
+      "run": 1,
+      "selection": 2,
+      "mode": "detail",
+      "raw_bytes": 30203,
+      "gzip_bytes": 4018,
+      "payload_sha256": "ba32f0239889df35413f12b7692eb643675881fe0d0f9469a1cc1add225c1c7d",
+      "projection": "weekly-benchmark",
+      "learner_id": "redacted",
+      "section": "",
+      "duration_ms": 1381.3,
+      "query_count": 14,
+      "db_duration_ms": 1326.49,
+      "query_count_by_alias": {
+        "default": 2,
+        "enrolment": 12
+      },
+      "db_duration_ms_by_alias": {
+        "default": 278.37,
+        "enrolment": 1048.12
+      },
+      "stage_durations_ms": {}
+    },
+    {
+      "sample": 1,
+      "kind": "commercial",
+      "lineage": "legacy",
+      "run": 1,
+      "selection": 3,
+      "mode": "detail",
+      "raw_bytes": 27420,
+      "gzip_bytes": 3921,
+      "payload_sha256": "613b8efe9155c72c562349bfa9ed0511521c1e89c957020e0463c1afcb6773c6",
+      "projection": "weekly-benchmark",
+      "learner_id": "redacted",
+      "section": "",
+      "duration_ms": 1375.67,
+      "query_count": 14,
+      "db_duration_ms": 1312.07,
+      "query_count_by_alias": {
+        "default": 2,
+        "enrolment": 12
+      },
+      "db_duration_ms_by_alias": {
+        "default": 267.73,
+        "enrolment": 1044.34
+      },
+      "stage_durations_ms": {}
+    },
+    {
+      "sample": 2,
+      "kind": "commercial",
+      "lineage": "native",
+      "run": 0,
+      "selection": 0,
+      "mode": "navigation",
+      "raw_bytes": 207363,
+      "gzip_bytes": 15332,
+      "payload_sha256": "f6065d16195f6c93259f821e410fbce2a92f4c99ae68d10742989415d47603ea",
+      "projection": "weekly-benchmark",
+      "learner_id": "redacted",
+      "section": "",
+      "duration_ms": 1762.76,
+      "query_count": 12,
+      "db_duration_ms": 1493.59,
+      "query_count_by_alias": {
+        "default": 1,
+        "enrolment": 11
+      },
+      "db_duration_ms_by_alias": {
+        "default": 211.66,
+        "enrolment": 1281.93
+      },
+      "stage_durations_ms": {}
+    },
+    {
+      "sample": 2,
+      "kind": "commercial",
+      "lineage": "native",
+      "run": 0,
+      "selection": 1,
+      "mode": "detail",
+      "raw_bytes": 8480,
+      "gzip_bytes": 1599,
+      "payload_sha256": "9dba2f90a0cedf985fb6adf935deb9b04f12dec15190f8d5edd999f74c6e6e5e",
+      "projection": "weekly-benchmark",
+      "learner_id": "redacted",
+      "section": "",
+      "duration_ms": 1168.6,
+      "query_count": 13,
+      "db_duration_ms": 1119.26,
+      "query_count_by_alias": {
+        "default": 1,
+        "enrolment": 12
+      },
+      "db_duration_ms_by_alias": {
+        "default": 187.53,
+        "enrolment": 931.73
+      },
+      "stage_durations_ms": {}
+    },
+    {
+      "sample": 2,
+      "kind": "commercial",
+      "lineage": "native",
+      "run": 0,
+      "selection": 2,
+      "mode": "detail",
+      "raw_bytes": 8608,
+      "gzip_bytes": 1668,
+      "payload_sha256": "93cd9b22490cea6d6067de11bb5fa226265e83da20085ab19c88748703f2f560",
+      "projection": "weekly-benchmark",
+      "learner_id": "redacted",
+      "section": "",
+      "duration_ms": 1095.15,
+      "query_count": 13,
+      "db_duration_ms": 1060.64,
+      "query_count_by_alias": {
+        "default": 1,
+        "enrolment": 12
+      },
+      "db_duration_ms_by_alias": {
+        "default": 188.69,
+        "enrolment": 871.95
+      },
+      "stage_durations_ms": {}
+    },
+    {
+      "sample": 2,
+      "kind": "commercial",
+      "lineage": "native",
+      "run": 0,
+      "selection": 3,
+      "mode": "detail",
+      "raw_bytes": 8603,
+      "gzip_bytes": 1627,
+      "payload_sha256": "04835ac4c3400d1637600c7b2fc48d174f5f924941619ae75a85e3ebb842a923",
+      "projection": "weekly-benchmark",
+      "learner_id": "redacted",
+      "section": "",
+      "duration_ms": 1128.36,
+      "query_count": 13,
+      "db_duration_ms": 1077.54,
+      "query_count_by_alias": {
+        "default": 1,
+        "enrolment": 12
+      },
+      "db_duration_ms_by_alias": {
+        "default": 190.05,
+        "enrolment": 887.48
+      },
+      "stage_durations_ms": {}
+    },
+    {
+      "sample": 2,
+      "kind": "commercial",
+      "lineage": "native",
+      "run": 1,
+      "selection": 0,
+      "mode": "navigation",
+      "raw_bytes": 207363,
+      "gzip_bytes": 15332,
+      "payload_sha256": "f6065d16195f6c93259f821e410fbce2a92f4c99ae68d10742989415d47603ea",
+      "projection": "weekly-benchmark",
+      "learner_id": "redacted",
+      "section": "",
+      "duration_ms": 1795.29,
+      "query_count": 12,
+      "db_duration_ms": 1533.37,
+      "query_count_by_alias": {
+        "default": 1,
+        "enrolment": 11
+      },
+      "db_duration_ms_by_alias": {
+        "default": 195.35,
+        "enrolment": 1338.02
+      },
+      "stage_durations_ms": {}
+    },
+    {
+      "sample": 2,
+      "kind": "commercial",
+      "lineage": "native",
+      "run": 1,
+      "selection": 1,
+      "mode": "detail",
+      "raw_bytes": 8480,
+      "gzip_bytes": 1599,
+      "payload_sha256": "9dba2f90a0cedf985fb6adf935deb9b04f12dec15190f8d5edd999f74c6e6e5e",
+      "projection": "weekly-benchmark",
+      "learner_id": "redacted",
+      "section": "",
+      "duration_ms": 1199.04,
+      "query_count": 13,
+      "db_duration_ms": 1155.07,
+      "query_count_by_alias": {
+        "default": 1,
+        "enrolment": 12
+      },
+      "db_duration_ms_by_alias": {
+        "default": 192.14,
+        "enrolment": 962.93
+      },
+      "stage_durations_ms": {}
+    },
+    {
+      "sample": 2,
+      "kind": "commercial",
+      "lineage": "native",
+      "run": 1,
+      "selection": 2,
+      "mode": "detail",
+      "raw_bytes": 8608,
+      "gzip_bytes": 1668,
+      "payload_sha256": "93cd9b22490cea6d6067de11bb5fa226265e83da20085ab19c88748703f2f560",
+      "projection": "weekly-benchmark",
+      "learner_id": "redacted",
+      "section": "",
+      "duration_ms": 1141.11,
+      "query_count": 13,
+      "db_duration_ms": 1100.2,
+      "query_count_by_alias": {
+        "default": 1,
+        "enrolment": 12
+      },
+      "db_duration_ms_by_alias": {
+        "default": 186.83,
+        "enrolment": 913.36
+      },
+      "stage_durations_ms": {}
+    },
+    {
+      "sample": 2,
+      "kind": "commercial",
+      "lineage": "native",
+      "run": 1,
+      "selection": 3,
+      "mode": "detail",
+      "raw_bytes": 8603,
+      "gzip_bytes": 1627,
+      "payload_sha256": "04835ac4c3400d1637600c7b2fc48d174f5f924941619ae75a85e3ebb842a923",
+      "projection": "weekly-benchmark",
+      "learner_id": "redacted",
+      "section": "",
+      "duration_ms": 1076.72,
+      "query_count": 13,
+      "db_duration_ms": 1034.82,
+      "query_count_by_alias": {
+        "default": 1,
+        "enrolment": 12
+      },
+      "db_duration_ms_by_alias": {
+        "default": 189.25,
+        "enrolment": 845.57
+      },
+      "stage_durations_ms": {}
+    },
+    {
+      "sample": 3,
+      "kind": "commercial",
+      "lineage": "native",
+      "run": 0,
+      "selection": 0,
+      "mode": "navigation",
+      "raw_bytes": 35103,
+      "gzip_bytes": 4232,
+      "payload_sha256": "89a8c570b4e45b9294a8bb405b950ba1cb3843861b7e5f2b70cf3956dcf78536",
+      "projection": "weekly-benchmark",
+      "learner_id": "redacted",
+      "section": "",
+      "duration_ms": 1592.23,
+      "query_count": 14,
+      "db_duration_ms": 1502.96,
+      "query_count_by_alias": {
+        "default": 2,
+        "enrolment": 12
+      },
+      "db_duration_ms_by_alias": {
+        "default": 250.36,
+        "enrolment": 1252.6
+      },
+      "stage_durations_ms": {}
+    },
+    {
+      "sample": 3,
+      "kind": "commercial",
+      "lineage": "native",
+      "run": 0,
+      "selection": 1,
+      "mode": "detail",
+      "raw_bytes": 15406,
+      "gzip_bytes": 2581,
+      "payload_sha256": "090332cf40b8dcfa2bfcbad24f830a17f55b934187831df87abe6ce90d2ebf51",
+      "projection": "weekly-benchmark",
+      "learner_id": "redacted",
+      "section": "",
+      "duration_ms": 1178.65,
+      "query_count": 14,
+      "db_duration_ms": 1139.87,
+      "query_count_by_alias": {
+        "default": 2,
+        "enrolment": 12
+      },
+      "db_duration_ms_by_alias": {
+        "default": 252.72,
+        "enrolment": 887.15
+      },
+      "stage_durations_ms": {}
+    },
+    {
+      "sample": 3,
+      "kind": "commercial",
+      "lineage": "native",
+      "run": 0,
+      "selection": 2,
+      "mode": "detail",
+      "raw_bytes": 29926,
+      "gzip_bytes": 3797,
+      "payload_sha256": "821cc1b0ff9d26ab4fb074ea937a3dba397bf73bf719729631268ed8b52025af",
+      "projection": "weekly-benchmark",
+      "learner_id": "redacted",
+      "section": "",
+      "duration_ms": 1279.54,
+      "query_count": 14,
+      "db_duration_ms": 1235.02,
+      "query_count_by_alias": {
+        "default": 2,
+        "enrolment": 12
+      },
+      "db_duration_ms_by_alias": {
+        "default": 275.04,
+        "enrolment": 959.98
+      },
+      "stage_durations_ms": {}
+    },
+    {
+      "sample": 3,
+      "kind": "commercial",
+      "lineage": "native",
+      "run": 0,
+      "selection": 3,
+      "mode": "detail",
+      "raw_bytes": 14990,
+      "gzip_bytes": 2430,
+      "payload_sha256": "58b951717ae34bc890b7401d8cff31b476b68f0df1d18f506f3235af5aef49df",
+      "projection": "weekly-benchmark",
+      "learner_id": "redacted",
+      "section": "",
+      "duration_ms": 1237.24,
+      "query_count": 14,
+      "db_duration_ms": 1201.35,
+      "query_count_by_alias": {
+        "default": 2,
+        "enrolment": 12
+      },
+      "db_duration_ms_by_alias": {
+        "default": 251.44,
+        "enrolment": 949.91
+      },
+      "stage_durations_ms": {}
+    },
+    {
+      "sample": 3,
+      "kind": "commercial",
+      "lineage": "native",
+      "run": 1,
+      "selection": 0,
+      "mode": "navigation",
+      "raw_bytes": 35103,
+      "gzip_bytes": 4232,
+      "payload_sha256": "89a8c570b4e45b9294a8bb405b950ba1cb3843861b7e5f2b70cf3956dcf78536",
+      "projection": "weekly-benchmark",
+      "learner_id": "redacted",
+      "section": "",
+      "duration_ms": 1540.29,
+      "query_count": 14,
+      "db_duration_ms": 1466.2,
+      "query_count_by_alias": {
+        "default": 2,
+        "enrolment": 12
+      },
+      "db_duration_ms_by_alias": {
+        "default": 262.16,
+        "enrolment": 1204.04
+      },
+      "stage_durations_ms": {}
+    },
+    {
+      "sample": 3,
+      "kind": "commercial",
+      "lineage": "native",
+      "run": 1,
+      "selection": 1,
+      "mode": "detail",
+      "raw_bytes": 15406,
+      "gzip_bytes": 2581,
+      "payload_sha256": "090332cf40b8dcfa2bfcbad24f830a17f55b934187831df87abe6ce90d2ebf51",
+      "projection": "weekly-benchmark",
+      "learner_id": "redacted",
+      "section": "",
+      "duration_ms": 1297.37,
+      "query_count": 14,
+      "db_duration_ms": 1271.22,
+      "query_count_by_alias": {
+        "default": 2,
+        "enrolment": 12
+      },
+      "db_duration_ms_by_alias": {
+        "default": 271.65,
+        "enrolment": 999.57
+      },
+      "stage_durations_ms": {}
+    },
+    {
+      "sample": 3,
+      "kind": "commercial",
+      "lineage": "native",
+      "run": 1,
+      "selection": 2,
+      "mode": "detail",
+      "raw_bytes": 29926,
+      "gzip_bytes": 3797,
+      "payload_sha256": "821cc1b0ff9d26ab4fb074ea937a3dba397bf73bf719729631268ed8b52025af",
+      "projection": "weekly-benchmark",
+      "learner_id": "redacted",
+      "section": "",
+      "duration_ms": 1317.6,
+      "query_count": 14,
+      "db_duration_ms": 1284.17,
+      "query_count_by_alias": {
+        "default": 2,
+        "enrolment": 12
+      },
+      "db_duration_ms_by_alias": {
+        "default": 259.15,
+        "enrolment": 1025.03
+      },
+      "stage_durations_ms": {}
+    },
+    {
+      "sample": 3,
+      "kind": "commercial",
+      "lineage": "native",
+      "run": 1,
+      "selection": 3,
+      "mode": "detail",
+      "raw_bytes": 14990,
+      "gzip_bytes": 2430,
+      "payload_sha256": "58b951717ae34bc890b7401d8cff31b476b68f0df1d18f506f3235af5aef49df",
+      "projection": "weekly-benchmark",
+      "learner_id": "redacted",
+      "section": "",
+      "duration_ms": 1246.1,
+      "query_count": 14,
+      "db_duration_ms": 1215.46,
+      "query_count_by_alias": {
+        "default": 2,
+        "enrolment": 12
+      },
+      "db_duration_ms_by_alias": {
+        "default": 252.66,
+        "enrolment": 962.81
+      },
+      "stage_durations_ms": {}
+    }
+  ],
+  "unverified": [
+    {
+      "kind": "apprenticeship",
+      "lineage": "legacy",
+      "reason": "No eligible active sample"
+    },
+    {
+      "kind": "apprenticeship",
+      "lineage": "native",
+      "reason": "No eligible active sample"
+    }
+  ]
+}

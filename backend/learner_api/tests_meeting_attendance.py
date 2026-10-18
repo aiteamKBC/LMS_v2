@@ -98,7 +98,7 @@ class MeetingAttendanceTests(SimpleTestCase):
             patch.object(absence, '_resolve_absent_attendance', return_value=8000000000000000012), \
             patch.object(absence, 'learner_profile_for_source', return_value=SimpleNamespace(coach_name='Coach', coach_email='coach@example.test')), \
             patch.object(absence, 'CoachAbsenceReport') as model, patch.object(absence.transaction, 'atomic', return_value=nullcontext()), \
-            patch.object(absence, '_serialize', return_value={'id': 1}):
+            patch.object(absence, '_send_after_commit'), patch.object(absence, '_serialize', return_value={'id': 1}):
             model.objects.filter.return_value.exists.return_value = False
             model.objects.filter.return_value.count.return_value = 0
             response = unwrap(absence.learner_absence_reports)(request, 'apprenticeship', 12)

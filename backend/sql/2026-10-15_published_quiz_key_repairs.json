@@ -1,0 +1,5644 @@
+{
+  "version": 1,
+  "scope": "Repair the 69 published quizzes found by the 2026-10-15 audit. Preserve stored learner history; no regrading.",
+  "quizIds": [
+    148,
+    154,
+    298,
+    299,
+    359,
+    361,
+    420,
+    422,
+    558,
+    662,
+    768,
+    970,
+    1100,
+    1236,
+    1272,
+    1288,
+    1521,
+    1753,
+    1762,
+    1784,
+    1798,
+    1945,
+    1960,
+    2058,
+    2189,
+    2190,
+    2291,
+    2318,
+    2400,
+    2435,
+    3008,
+    3024,
+    3084,
+    3527,
+    3671,
+    4276,
+    4277,
+    4278,
+    4324,
+    4325,
+    4326,
+    4327,
+    4328,
+    4330,
+    4418,
+    4421,
+    4423,
+    4430,
+    4432,
+    4435,
+    4439,
+    4440,
+    4441,
+    4448,
+    4450,
+    4451,
+    4452,
+    4453,
+    4456,
+    4457,
+    4755,
+    4756,
+    4762,
+    4786,
+    4792,
+    4802,
+    4806,
+    4812,
+    4815
+  ],
+  "repairs": [
+    {
+      "quizId": 148,
+      "questionId": 3863,
+      "beforeSha256": "6ab93fcd7966198ce5601f459e618de5188268d4b59a58b8349270cd1cace1fd",
+      "evidence": [
+        "https://www.humansynergistics.com/change-solutions/change-solutions-for-organizations/"
+      ],
+      "rationale": "The Organizational Culture Inventory is the named culture measurement instrument.",
+      "flags": {
+        "13159": false,
+        "13160": true,
+        "13161": false
+      }
+    },
+    {
+      "quizId": 154,
+      "questionId": 3922,
+      "beforeSha256": "d5e0671863f0ede379da92cc057d40c72af140366bf6ff903135d2a51e3158b7",
+      "evidence": [
+        "https://www.cipd.org/en/topics/reward/"
+      ],
+      "rationale": "Pay benchmarking provides a comparison for reward grading.",
+      "flags": {
+        "13335": false,
+        "13336": false,
+        "13337": true
+      }
+    },
+    {
+      "quizId": 298,
+      "questionId": 6040,
+      "beforeSha256": "bb0ccad94844b010153e9e5e824384beb5283f7fa75314a88e09bbfa26068dc7",
+      "evidence": [
+        "https://www.pmi.org/learning/library/2019/04/07/15/46/contract-procurement-management-9101"
+      ],
+      "rationale": "Coordinate purchasing priorities and a feasible schedule with the functional purchasing manager.",
+      "flags": {
+        "21152": false,
+        "21153": false,
+        "21154": true,
+        "21155": false
+      }
+    },
+    {
+      "quizId": 298,
+      "questionId": 6044,
+      "beforeSha256": "44829a8e1e492f2b7d295fd7ef04e2a73e9bc6dfd89956b7f6d24d1b8b51d289",
+      "evidence": [
+        "https://www.pmi.org/learning/library/2019/04/07/15/46/contract-procurement-management-9101"
+      ],
+      "rationale": "Use contractual quality requirements and objective quality evidence rather than verbal promises.",
+      "flags": {
+        "21169": false,
+        "21170": true,
+        "21171": false,
+        "21172": false
+      }
+    },
+    {
+      "quizId": 299,
+      "questionId": 6096,
+      "beforeSha256": "1f1192785ffab1282922ea3a0c092ac35740f91cd1990a94831084ef299b9012",
+      "evidence": [
+        "https://www.pmi.org/learning/library/what-good-project-management-effectively-successfully-5675"
+      ],
+      "rationale": "Evaluate the change and follow change control even when the initial budget appears unaffected.",
+      "flags": {
+        "21392": true,
+        "21393": false,
+        "21394": false,
+        "21395": false
+      }
+    },
+    {
+      "quizId": 299,
+      "questionId": 6139,
+      "beforeSha256": "55ab74b6e143eeb106d14c0817ef96ee7d69fb5f974fafd5a46b70ba8ef9ed19",
+      "evidence": [
+        "https://www.pmi.org/learning/library/what-good-project-management-effectively-successfully-5675"
+      ],
+      "rationale": "Clarify intended benefits with the sponsor before planning delivery.",
+      "flags": {
+        "21570": false,
+        "21571": true,
+        "21572": false,
+        "21573": false
+      }
+    },
+    {
+      "quizId": 359,
+      "questionId": 7795,
+      "beforeSha256": "b8c5ee57db531c9d0b0ee1e129747f16223b9f58680f79ba96d605e668fb2038",
+      "evidence": [
+        "https://www.qualtrics.com/en-gb/articles/strategy-research/how-to-create-a-survey/"
+      ],
+      "rationale": "A questionnaire starts from the research objective and information needs.",
+      "flags": {
+        "28275": false,
+        "28276": false,
+        "28277": false
+      },
+      "additions": [
+        {
+          "text": "Define the research objectives and the information the questionnaire must collect.",
+          "isCorrect": true
+        }
+      ]
+    },
+    {
+      "quizId": 361,
+      "questionId": 7855,
+      "beforeSha256": "2b1e4ae019f2fd89ea94bf988f065057900137790b9be38e0f79d03f18d2c461",
+      "evidence": [
+        "https://www.cim.co.uk/content-insights/articles/what-is-marketing/",
+        "Content reviewed against the question scenario and alternatives."
+      ],
+      "rationale": "The historical item has only an empty lecture placeholder and no identifiable pair of lectures. Replace it with an explicit learning-review question, retaining the original item for history.",
+      "flags": {
+        "28513": false
+      },
+      "replacement": {
+        "text": "Which approach best demonstrates learning from a recent marketing research lecture?",
+        "type": "single_choice",
+        "answers": [
+          {
+            "text": "Explain the main concept in your own words and apply it to a relevant research decision.",
+            "isCorrect": true
+          },
+          {
+            "text": "Record only the lecture date without identifying any concept.",
+            "isCorrect": false
+          },
+          {
+            "text": "Copy the slide title without explaining or applying it.",
+            "isCorrect": false
+          },
+          {
+            "text": "Assume attendance alone demonstrates understanding.",
+            "isCorrect": false
+          }
+        ]
+      }
+    },
+    {
+      "quizId": 361,
+      "questionId": 7858,
+      "beforeSha256": "099f1f59b8334fdd774aa9cce05392f5218d1f48f2830b9640bc662e2ef013a8",
+      "evidence": [
+        "https://skillsengland.education.gov.uk/apprenticeship-standards/st0883"
+      ],
+      "rationale": "Every listed S1-S10 item is a skill in the Market Research Executive standard; select all.",
+      "flags": {
+        "28516": true,
+        "28517": true,
+        "28518": true,
+        "28519": true,
+        "28520": true,
+        "28521": true,
+        "28522": true,
+        "28523": true,
+        "28524": true,
+        "28525": true
+      },
+      "type": "multiple_choice"
+    },
+    {
+      "quizId": 361,
+      "questionId": 7859,
+      "beforeSha256": "0ade40036c5a4b8f9e42d2986b0dfaa6d14b8423bb7c5e9d4af48e79bd5fe3e9",
+      "evidence": [
+        "https://skillsengland.education.gov.uk/apprenticeship-standards/st0883"
+      ],
+      "rationale": "Every listed B1-B6 item is a behaviour in the Market Research Executive standard; select all.",
+      "flags": {
+        "28526": true,
+        "28527": true,
+        "28528": true,
+        "28529": true,
+        "28530": true,
+        "28531": true
+      },
+      "type": "multiple_choice"
+    },
+    {
+      "quizId": 361,
+      "questionId": 7860,
+      "beforeSha256": "f5f4264d56f1da03265227bf57b19ac79d0dfa098a77c6f2d8c26e761b2c535c",
+      "evidence": [
+        "https://skillsengland.education.gov.uk/apprenticeship-standards/st0883"
+      ],
+      "rationale": "Every listed K1-K11 item is knowledge in the Market Research Executive standard; select all.",
+      "flags": {
+        "28532": true,
+        "28533": true,
+        "28534": true,
+        "28535": true,
+        "28536": true,
+        "28537": true,
+        "28538": true,
+        "28539": true,
+        "28540": true,
+        "28541": true,
+        "28542": true
+      },
+      "type": "multiple_choice"
+    },
+    {
+      "quizId": 420,
+      "questionId": 10279,
+      "beforeSha256": "693003e7559530233e46e5b2847c2064ae481771e43f623259f8098214ea3de8",
+      "evidence": [
+        "https://www.isc.hbs.edu/strategy/business-strategy/Pages/the-five-forces.aspx"
+      ],
+      "rationale": "The force for potential competitors entering an industry is threat of new entrants; the correct option was absent.",
+      "flags": {
+        "38251": false,
+        "38252": false,
+        "38253": false
+      },
+      "additions": [
+        {
+          "text": "Threat of new entrants.",
+          "isCorrect": true
+        }
+      ]
+    },
+    {
+      "quizId": 422,
+      "questionId": 10318,
+      "beforeSha256": "5c0f57ef5ed35d9a730e6fb7129646bc8f5ecaae3a2d4efc3d493459704763f4",
+      "evidence": [
+        "https://www.cim.co.uk/content-insights/articles/what-is-marketing/",
+        "Content reviewed against the question scenario and alternatives."
+      ],
+      "rationale": "A vision describes an intended future direction; none of the existing options states it.",
+      "flags": {
+        "38405": false,
+        "38406": false,
+        "38407": false
+      },
+      "additions": [
+        {
+          "text": "Describe the organisation's desired long-term future and direction.",
+          "isCorrect": true
+        }
+      ]
+    },
+    {
+      "quizId": 558,
+      "questionId": 13349,
+      "beforeSha256": "68df7ad2dcc1ad2ac61a3a2e1cf63039a628ced88f1c72005a8a2fb6d155a16e",
+      "evidence": [
+        "https://www.cim.co.uk/content-insights/articles/what-is-marketing/",
+        "Content reviewed against the question scenario and alternatives."
+      ],
+      "rationale": "An unresolved question-bank title is not an assessment question. Retain it for history and add a defined marketing question.",
+      "flags": {
+        "50686": false
+      },
+      "replacement": {
+        "text": "Which statement best describes the purpose of marketing?",
+        "type": "single_choice",
+        "answers": [
+          {
+            "text": "Understand customer needs and create, communicate and deliver value that supports organisational goals.",
+            "isCorrect": true
+          },
+          {
+            "text": "Limit all activity to advertising regardless of customer needs.",
+            "isCorrect": false
+          },
+          {
+            "text": "Treat every customer as identical and avoid market research.",
+            "isCorrect": false
+          },
+          {
+            "text": "Focus only on closing today's sale without considering customer value.",
+            "isCorrect": false
+          }
+        ]
+      }
+    },
+    {
+      "quizId": 662,
+      "questionId": 14788,
+      "beforeSha256": "5e34f4358245fbffc3316e45c34c2812b871850fbbc8e3546c5460ca60cafc3d",
+      "evidence": [
+        "https://www.cim.co.uk/content-insights/articles/what-is-marketing/",
+        "Content reviewed against the question scenario and alternatives."
+      ],
+      "rationale": "An unresolved question-bank title is not an assessment question. Retain it for history and add a defined marketing question.",
+      "flags": {
+        "56426": false
+      },
+      "replacement": {
+        "text": "Which statement best describes the purpose of marketing?",
+        "type": "single_choice",
+        "answers": [
+          {
+            "text": "Understand customer needs and create, communicate and deliver value that supports organisational goals.",
+            "isCorrect": true
+          },
+          {
+            "text": "Limit all activity to advertising regardless of customer needs.",
+            "isCorrect": false
+          },
+          {
+            "text": "Treat every customer as identical and avoid market research.",
+            "isCorrect": false
+          },
+          {
+            "text": "Focus only on closing today's sale without considering customer value.",
+            "isCorrect": false
+          }
+        ]
+      }
+    },
+    {
+      "quizId": 768,
+      "questionId": 16324,
+      "beforeSha256": "dbb972b602f96421ff85022bee5c6b39a14c80b2233b0dcd436f426509a3c3b8",
+      "evidence": [
+        "https://www.cim.co.uk/content-insights/articles/what-is-marketing/",
+        "Content reviewed against the question scenario and alternatives."
+      ],
+      "rationale": "An unresolved question-bank title is not an assessment question. Retain it for history and add a defined marketing question.",
+      "flags": {
+        "62563": false
+      },
+      "replacement": {
+        "text": "Which statement best describes the purpose of marketing?",
+        "type": "single_choice",
+        "answers": [
+          {
+            "text": "Understand customer needs and create, communicate and deliver value that supports organisational goals.",
+            "isCorrect": true
+          },
+          {
+            "text": "Limit all activity to advertising regardless of customer needs.",
+            "isCorrect": false
+          },
+          {
+            "text": "Treat every customer as identical and avoid market research.",
+            "isCorrect": false
+          },
+          {
+            "text": "Focus only on closing today's sale without considering customer value.",
+            "isCorrect": false
+          }
+        ]
+      }
+    },
+    {
+      "quizId": 970,
+      "questionId": 19280,
+      "beforeSha256": "6f17654155aef5fd21c903dc42c2161d28dfc130db35d4ef8c09a7f6a2c89e90",
+      "evidence": [
+        "https://www.cim.co.uk/content-insights/articles/what-is-marketing/",
+        "Content reviewed against the question scenario and alternatives."
+      ],
+      "rationale": "An unresolved question-bank title is not an assessment question. Retain it for history and add a defined marketing question.",
+      "flags": {
+        "74371": false
+      },
+      "replacement": {
+        "text": "Which statement best describes the purpose of marketing?",
+        "type": "single_choice",
+        "answers": [
+          {
+            "text": "Understand customer needs and create, communicate and deliver value that supports organisational goals.",
+            "isCorrect": true
+          },
+          {
+            "text": "Limit all activity to advertising regardless of customer needs.",
+            "isCorrect": false
+          },
+          {
+            "text": "Treat every customer as identical and avoid market research.",
+            "isCorrect": false
+          },
+          {
+            "text": "Focus only on closing today's sale without considering customer value.",
+            "isCorrect": false
+          }
+        ]
+      }
+    },
+    {
+      "quizId": 1100,
+      "questionId": 21182,
+      "beforeSha256": "2a36517ab63667778f46fd3f85ccaf780eaf6b442edab01a2c2dc3dad91b2a88",
+      "evidence": [
+        "https://www.cim.co.uk/content-insights/articles/what-is-marketing/",
+        "Content reviewed against the question scenario and alternatives."
+      ],
+      "rationale": "Segmentation groups customers with similar needs.",
+      "flags": {
+        "81961": false,
+        "81962": false,
+        "81963": true
+      }
+    },
+    {
+      "quizId": 1236,
+      "questionId": 23453,
+      "beforeSha256": "7094bb07c932bbccca49f306d77f841914ef529e175a9f20f1d5183f8e21861c",
+      "evidence": [
+        "https://scrumguides.org/scrum-guide.html"
+      ],
+      "rationale": "Unaccepted work returns to the product backlog for prioritisation.",
+      "flags": {
+        "91012": true,
+        "91013": false,
+        "91014": false,
+        "91015": false
+      }
+    },
+    {
+      "quizId": 1272,
+      "questionId": 24170,
+      "beforeSha256": "3eb757caa8595f2d1dda16809528c19ca50f6dc07c439df041f6996e8680be56",
+      "evidence": [
+        "https://www.pmi.org/learning/library/2019/04/07/15/46/contract-procurement-management-9101"
+      ],
+      "rationale": "Coordinate purchasing priorities and a feasible schedule with the functional purchasing manager.",
+      "flags": {
+        "93883": false,
+        "93884": false,
+        "93885": true,
+        "93886": false
+      }
+    },
+    {
+      "quizId": 1272,
+      "questionId": 24174,
+      "beforeSha256": "12c5c45b1e22dd0b7cb64e53b32765624a8ded5d74eb503534c84532e1489191",
+      "evidence": [
+        "https://www.pmi.org/learning/library/2019/04/07/15/46/contract-procurement-management-9101"
+      ],
+      "rationale": "Use contractual quality requirements and objective quality evidence rather than verbal promises.",
+      "flags": {
+        "93900": false,
+        "93901": true,
+        "93902": false,
+        "93903": false
+      }
+    },
+    {
+      "quizId": 1288,
+      "questionId": 24541,
+      "beforeSha256": "1e6ab0ce9f2215df68689388af7f77d5e5806fdc29ab07d99d78a79a78c9fe8a",
+      "evidence": [
+        "https://www.pmi.org/learning/library/what-good-project-management-effectively-successfully-5675"
+      ],
+      "rationale": "Evaluate the change and follow change control even when the initial budget appears unaffected.",
+      "flags": {
+        "95392": true,
+        "95393": false,
+        "95394": false,
+        "95395": false
+      }
+    },
+    {
+      "quizId": 1288,
+      "questionId": 24584,
+      "beforeSha256": "083ac113424de5757d873d735ede28bc5aad4f873f3764ced26d7a0e795d92f4",
+      "evidence": [
+        "https://www.pmi.org/learning/library/what-good-project-management-effectively-successfully-5675"
+      ],
+      "rationale": "Clarify intended benefits with the sponsor before planning delivery.",
+      "flags": {
+        "95570": false,
+        "95571": true,
+        "95572": false,
+        "95573": false
+      }
+    },
+    {
+      "quizId": 1521,
+      "questionId": 29177,
+      "beforeSha256": "5713a0962cc04e83067dd31985e37632b100194401b4d8eafd0fdce1acc57c35",
+      "evidence": [
+        "https://www.cim.co.uk/content-insights/articles/what-is-marketing/",
+        "Content reviewed against the question scenario and alternatives."
+      ],
+      "rationale": "STP belongs to strategic marketing planning, not merely pricing or content production.",
+      "flags": {
+        "113928": false,
+        "113929": false,
+        "113930": false
+      },
+      "additions": [
+        {
+          "text": "Strategic marketing planning through segmentation, targeting and positioning (STP).",
+          "isCorrect": true
+        }
+      ]
+    },
+    {
+      "quizId": 1753,
+      "questionId": 32993,
+      "beforeSha256": "3700d1aad530e6067fb763d487fb4ac6330315acc84b788621a4a0225edb9b0a",
+      "evidence": [
+        "https://www.cim.co.uk/content-insights/articles/what-is-marketing/",
+        "Content reviewed against the question scenario and alternatives."
+      ],
+      "rationale": "Loyalty pricing supports repeat purchase and retention, rather than only new-customer acquisition.",
+      "flags": {
+        "129161": false
+      },
+      "additions": [
+        {
+          "text": "Reward repeat purchasing and retain existing customers through loyalty benefits.",
+          "isCorrect": true
+        }
+      ]
+    },
+    {
+      "quizId": 1762,
+      "questionId": 33130,
+      "beforeSha256": "0fac3c45fb280684f54d160884c238fd9571f75d0b6c61ac68281f35adced0bc",
+      "evidence": [
+        "https://www.cim.co.uk/content-insights/articles/what-is-marketing/",
+        "Content reviewed against the question scenario and alternatives."
+      ],
+      "rationale": "Declining organic reach is a disadvantage, unlike the other listed benefits.",
+      "flags": {
+        "129706": false,
+        "129707": false,
+        "129708": true,
+        "129709": false
+      }
+    },
+    {
+      "quizId": 1784,
+      "questionId": 33425,
+      "beforeSha256": "1fbf9ea7d2bad6575168a30d9bba552b038961b36ae9bfb605d381da4c183c08",
+      "evidence": [
+        "https://www.cim.co.uk/content-insights/articles/what-is-marketing/",
+        "Content reviewed against the question scenario and alternatives."
+      ],
+      "rationale": "Participation in competitions and giveaways aligns with user-generated content.",
+      "flags": {
+        "130875": true,
+        "130876": false,
+        "130877": false,
+        "130878": false
+      }
+    },
+    {
+      "quizId": 1798,
+      "questionId": 33638,
+      "beforeSha256": "649d22f11ab8ee963b98678aa67811209cf901b5860a35643f79734d789a3e36",
+      "evidence": [
+        "https://www.cim.co.uk/content-insights/articles/what-is-marketing/",
+        "Content reviewed against the question scenario and alternatives."
+      ],
+      "rationale": "Declining organic reach is a disadvantage, unlike the other listed benefits.",
+      "flags": {
+        "131727": false,
+        "131728": false,
+        "131729": true,
+        "131730": false
+      }
+    },
+    {
+      "quizId": 1945,
+      "questionId": 35550,
+      "beforeSha256": "f4b42bf8a53185ccc82d76e18a53e346986b4fef9bcebad275e5038b27ba6a28",
+      "evidence": [
+        "https://www.qualtrics.com/articles/customer-experience/csat-vs-nps/"
+      ],
+      "rationale": "Relationship NPS measures broader loyalty; CSAT typically assesses a particular interaction.",
+      "flags": {},
+      "additions": [
+        {
+          "text": "Relationship NPS assesses broader loyalty and willingness to recommend; CSAT usually assesses satisfaction with a specific interaction.",
+          "isCorrect": true
+        },
+        {
+          "text": "NPS and CSAT are identical measures that always use the same question and scale.",
+          "isCorrect": false
+        },
+        {
+          "text": "NPS measures only transaction speed, while CSAT measures long-term profit.",
+          "isCorrect": false
+        },
+        {
+          "text": "CSAT can replace all behavioural and loyalty evidence.",
+          "isCorrect": false
+        }
+      ]
+    },
+    {
+      "quizId": 1960,
+      "questionId": 35777,
+      "beforeSha256": "96d17f3c662a29dbcc504b0c8096879ca449b4379adc079a3826ee1bc967e31b",
+      "evidence": [
+        "https://www.pmi.org/learning/library/what-good-project-management-effectively-successfully-5675"
+      ],
+      "rationale": "A PMO provides governance, advice and oversight rather than executing every project risk response.",
+      "flags": {
+        "140261": false,
+        "140262": true,
+        "140263": false
+      }
+    },
+    {
+      "quizId": 2058,
+      "questionId": 37564,
+      "beforeSha256": "4ae76ba490ce3eb9a1ab9701f8bc351bef7a70051dd6f549d9eed2508faadecb",
+      "evidence": [
+        "https://www.pmi.org/learning/library/tapping-tacit-knowledge-across-enterprise-7747"
+      ],
+      "rationale": "Durable, detailed project documentation captures explicit knowledge for future teams.",
+      "flags": {
+        "147350": false,
+        "147351": true,
+        "147352": false
+      }
+    },
+    {
+      "quizId": 2058,
+      "questionId": 37570,
+      "beforeSha256": "43b15e259cdfc7670787b9c8778318fe165a6b512514da481dd63dad3ebe7e9f",
+      "evidence": [
+        "https://www.pmi.org/learning/library/tapping-tacit-knowledge-across-enterprise-7747"
+      ],
+      "rationale": "Interactive knowledge transfer plus documentation retains tacit and explicit knowledge across the merger.",
+      "flags": {
+        "147369": false,
+        "147370": false,
+        "147371": false
+      },
+      "additions": [
+        {
+          "text": "Bring members of both teams together to share process knowledge and jointly document and improve the merged processes.",
+          "isCorrect": true
+        }
+      ]
+    },
+    {
+      "quizId": 2189,
+      "questionId": 39421,
+      "beforeSha256": "a971b8049eb9f5c2b7f02dc9e4e1c09a2873449aef475dcba7210bb3417d379b",
+      "evidence": [
+        "https://www.cim.co.uk/content-insights/articles/what-is-marketing/",
+        "Content reviewed against the question scenario and alternatives."
+      ],
+      "rationale": "Internal analysis exposes capability constraints and avoids over-promising.",
+      "flags": {
+        "154709": false,
+        "154710": true,
+        "154711": false,
+        "154712": false
+      }
+    },
+    {
+      "quizId": 2190,
+      "questionId": 39426,
+      "beforeSha256": "6a39ee25012379d85d359f234781abf973f433ff5e383edd26d1ba4516f9b129",
+      "evidence": [
+        "https://www.cim.co.uk/content-insights/articles/what-is-marketing/",
+        "Content reviewed against the question scenario and alternatives."
+      ],
+      "rationale": "The 5 Ms assess internal resources and operating capability.",
+      "flags": {
+        "154729": false,
+        "154730": true,
+        "154731": false,
+        "154732": false
+      }
+    },
+    {
+      "quizId": 2291,
+      "questionId": 40844,
+      "beforeSha256": "3616e8d58c33e7245b21e9849a4ae64c37f11bb2fe6846d5827b4d60dbf809f0",
+      "evidence": [
+        "https://www.cim.co.uk/content-insights/articles/what-is-marketing/",
+        "Content reviewed against the question scenario and alternatives."
+      ],
+      "rationale": "Declining organic reach is a disadvantage, unlike the other listed benefits.",
+      "flags": {
+        "160309": false,
+        "160310": false,
+        "160311": true,
+        "160312": false
+      }
+    },
+    {
+      "quizId": 2318,
+      "questionId": 41200,
+      "beforeSha256": "d1fe7b0d2055a047eea7acd8b8f0876ac747940e70f6e394fbceda03a5ec0206",
+      "evidence": [
+        "https://www.cim.co.uk/content-insights/articles/what-is-marketing/",
+        "Content reviewed against the question scenario and alternatives."
+      ],
+      "rationale": "Declining organic reach is a disadvantage, unlike the other listed benefits.",
+      "flags": {
+        "161732": false,
+        "161733": false,
+        "161734": true,
+        "161735": false
+      }
+    },
+    {
+      "quizId": 2400,
+      "questionId": 42386,
+      "beforeSha256": "3b9951ecd197ca500255b4f40fbe93c80dd1449adac3b6ca79be8cc4a5cd8be9",
+      "evidence": [
+        "https://www.cim.co.uk/content-insights/articles/what-is-marketing/",
+        "Content reviewed against the question scenario and alternatives."
+      ],
+      "rationale": "Team development continues as the team and work evolve.",
+      "flags": {
+        "166471": false,
+        "166472": true,
+        "166473": false,
+        "166474": false
+      }
+    },
+    {
+      "quizId": 2435,
+      "questionId": 43317,
+      "beforeSha256": "9c55051244520d451112d8360dc17fc83ab4799c542015abf9895ed9cceabac0",
+      "evidence": [
+        "https://www.cim.co.uk/content-insights/articles/what-is-marketing/",
+        "Content reviewed against the question scenario and alternatives."
+      ],
+      "rationale": "TikTok is the short-form, trend-led platform among these options.",
+      "flags": {
+        "170369": false,
+        "170370": true,
+        "170371": false
+      }
+    },
+    {
+      "quizId": 3008,
+      "questionId": 51206,
+      "beforeSha256": "68f9ae8fbbe287f0f2e4613d8ff302b228266b70fbd80c7b43055b53f7e64dca",
+      "evidence": [
+        "https://www.pmi.org/learning/library/what-good-project-management-effectively-successfully-5675"
+      ],
+      "rationale": "A PMO provides governance, advice and oversight rather than executing every project risk response.",
+      "flags": {
+        "201788": false,
+        "201789": true,
+        "201790": false
+      }
+    },
+    {
+      "quizId": 3024,
+      "questionId": 51477,
+      "beforeSha256": "d5d570fefe827ab128ce97cf0401341b11c73d28e13380d37e6a86c58a8f724c",
+      "evidence": [
+        "https://www.pmi.org/learning/library/phased-earned-value-analysis-7429"
+      ],
+      "rationale": "A control account integrates scope, schedule and cost.",
+      "flags": {
+        "202880": false,
+        "202881": true,
+        "202882": false,
+        "202883": false
+      }
+    },
+    {
+      "quizId": 3084,
+      "questionId": 52396,
+      "beforeSha256": "96b1ddbac3370b09aad79b7d22f5870d021d2c430bcf7eac48742c6ecdf9dc86",
+      "evidence": [
+        "https://www.pmi.org/learning/library/phased-earned-value-analysis-7429"
+      ],
+      "rationale": "A control account integrates scope, schedule and cost.",
+      "flags": {
+        "206571": false,
+        "206572": true,
+        "206573": false,
+        "206574": false
+      }
+    },
+    {
+      "quizId": 3527,
+      "questionId": 59143,
+      "beforeSha256": "148ccd9f8fe62a0584c7acb9622bcdc9f18239e08dbf8d2152b6854267d6272f",
+      "evidence": [
+        "https://www.cim.co.uk/content-insights/articles/what-is-marketing/",
+        "Content reviewed against the question scenario and alternatives."
+      ],
+      "rationale": "TikTok is the short-form, trend-led platform among these options.",
+      "flags": {
+        "233507": false,
+        "233508": true,
+        "233509": false
+      }
+    },
+    {
+      "quizId": 3671,
+      "questionId": 61834,
+      "beforeSha256": "157ae2944275dca605cd14b802b6cde67bf2fa63f08882b814936c477da03b1e",
+      "evidence": [
+        "https://www.pmi.org/learning/library/what-good-project-management-effectively-successfully-5675"
+      ],
+      "rationale": "Financial analysis compares the investment with expected benefits.",
+      "flags": {
+        "244263": true,
+        "244264": false,
+        "244265": false,
+        "244266": false
+      }
+    },
+    {
+      "quizId": 3671,
+      "questionId": 61838,
+      "beforeSha256": "7095352a8ffea7e77639215cc537cd2e6e446ccde25c02b6f6c7fa4bebb927d1",
+      "evidence": [
+        "https://www.cim.co.uk/content-insights/articles/what-is-marketing/",
+        "Content reviewed against the question scenario and alternatives."
+      ],
+      "rationale": "Integration combines relevant sources rather than isolating a single report.",
+      "flags": {
+        "244279": true,
+        "244280": false,
+        "244281": false,
+        "244282": false
+      }
+    },
+    {
+      "quizId": 4276,
+      "questionId": 73519,
+      "beforeSha256": "7802be2b14b7129a449dd5643214a228e836b92069e6b8d72edb028ede6668ad",
+      "evidence": [
+        "https://www.pmi.org/learning/library/what-good-project-management-effectively-successfully-5675"
+      ],
+      "rationale": "A systems approach identifies connected consequences across functions.",
+      "flags": {
+        "290987": false,
+        "290988": false,
+        "290989": false
+      },
+      "additions": [
+        {
+          "text": "Use a systems view to trace interdependencies across procurement, scheduling and customer delivery.",
+          "isCorrect": true
+        }
+      ]
+    },
+    {
+      "quizId": 4276,
+      "questionId": 73527,
+      "beforeSha256": "5c1891c0a9de38bd6a32f680f846f5cf7e1041f21c7f16d612a422ef3b8bf1dd",
+      "evidence": [
+        "https://www.pmi.org/learning/library/what-good-project-management-effectively-successfully-5675"
+      ],
+      "rationale": "End-to-end diagnosis finds root causes and connected operational effects.",
+      "flags": {
+        "291011": false,
+        "291012": false,
+        "291013": false
+      },
+      "additions": [
+        {
+          "text": "Find the root causes and cross-functional effects of the delay across the end-to-end process.",
+          "isCorrect": true
+        }
+      ]
+    },
+    {
+      "quizId": 4277,
+      "questionId": 73529,
+      "beforeSha256": "867a62f48d4030584c562c1c8435ee9984bb0acdb30e3dc81d9b3d5bdf4a9517",
+      "evidence": [
+        "https://www.pmi.org/learning/library/what-good-project-management-effectively-successfully-5675"
+      ],
+      "rationale": "Process ownership, measurement and governance describe BPM.",
+      "flags": {
+        "291017": false,
+        "291018": false,
+        "291019": false
+      },
+      "additions": [
+        {
+          "text": "Business Process Management (BPM).",
+          "isCorrect": true
+        }
+      ]
+    },
+    {
+      "quizId": 4277,
+      "questionId": 73531,
+      "beforeSha256": "cf99c9baab103862f34cb177d7fca9670545b10543a833ebdf54c605e6b477c4",
+      "evidence": [
+        "https://www.pmi.org/disciplined-agile/lean/practices"
+      ],
+      "rationale": "Gradual improvement is continuous process improvement, not radical reengineering.",
+      "flags": {
+        "291023": false,
+        "291024": false,
+        "291025": false
+      },
+      "additions": [
+        {
+          "text": "Continuous process improvement: incremental changes to improve the existing process.",
+          "isCorrect": true
+        }
+      ]
+    },
+    {
+      "quizId": 4277,
+      "questionId": 73533,
+      "beforeSha256": "058c76de8ad226c490ad0f72e272f8a7ebab6b6ee1a1b5ab3febb04eb9083a99",
+      "evidence": [
+        "https://www.pmi.org/disciplined-agile/lean/practices"
+      ],
+      "rationale": "Rework, waiting and unnecessary inventory are Lean waste.",
+      "flags": {
+        "291029": false,
+        "291030": false,
+        "291031": false
+      },
+      "additions": [
+        {
+          "text": "Lean waste, including defects, waiting and excess inventory.",
+          "isCorrect": true
+        }
+      ]
+    },
+    {
+      "quizId": 4277,
+      "questionId": 73534,
+      "beforeSha256": "a5b6afdb88ce4a25e0e58527a7c390c5d600dd6e0dc4695b661798b83787da3c",
+      "evidence": [
+        "https://asq.org/quality-resources/total-quality-management"
+      ],
+      "rationale": "TQM involves the whole organisation in preventing defects and improving quality.",
+      "flags": {
+        "291032": false,
+        "291033": false,
+        "291034": false
+      },
+      "additions": [
+        {
+          "text": "Total Quality Management (TQM).",
+          "isCorrect": true
+        }
+      ]
+    },
+    {
+      "quizId": 4277,
+      "questionId": 73535,
+      "beforeSha256": "6956da5bd48dc9351bd9c083a77a8fa6d97d8456cecd8df32cc1f51bc58edd97",
+      "evidence": [
+        "https://1prd-dxp.cips.org/intelligence-hub/supply-chain-management/supply-chain-collaboration"
+      ],
+      "rationale": "Supplier collaboration, visibility and lead times are supply-chain concerns.",
+      "flags": {
+        "291035": false,
+        "291036": false,
+        "291037": false
+      },
+      "additions": [
+        {
+          "text": "Supply Chain Management.",
+          "isCorrect": true
+        }
+      ]
+    },
+    {
+      "quizId": 4277,
+      "questionId": 73537,
+      "beforeSha256": "751a9c21f4d3ab2aeb247447974696a210bc01bb8f503d5ec36e854e2e717e38",
+      "evidence": [
+        "https://www.ellenmacarthurfoundation.org/topics/circular-economy-introduction/overview"
+      ],
+      "rationale": "Reuse, recovery and lifecycle value are circular-economy principles.",
+      "flags": {
+        "291041": false,
+        "291042": false,
+        "291043": false
+      },
+      "additions": [
+        {
+          "text": "Circular economy principles.",
+          "isCorrect": true
+        }
+      ]
+    },
+    {
+      "quizId": 4278,
+      "questionId": 73541,
+      "beforeSha256": "c07202decee1be70c6805cf827766323834b1de8fded578bf945cc9cddc917d3",
+      "evidence": [
+        "https://www.pmi.org/learning/library/what-good-project-management-effectively-successfully-5675"
+      ],
+      "rationale": "Value-chain analysis examines activities that together create customer value.",
+      "flags": {
+        "291053": false,
+        "291054": false,
+        "291055": false
+      },
+      "additions": [
+        {
+          "text": "Value Chain Analysis.",
+          "isCorrect": true
+        }
+      ]
+    },
+    {
+      "quizId": 4278,
+      "questionId": 73543,
+      "beforeSha256": "cce32dbcb0398b7d6016050adb69177e7485bc3b37c572b1a0dbcee50ab0dfe9",
+      "evidence": [
+        "https://asq.org/quality-resources/sixsigma/tools"
+      ],
+      "rationale": "The five stated phases spell DMAIC.",
+      "flags": {
+        "291059": false,
+        "291060": false,
+        "291061": false
+      },
+      "additions": [
+        {
+          "text": "Six Sigma DMAIC: Define, Measure, Analyse, Improve and Control.",
+          "isCorrect": true
+        }
+      ]
+    },
+    {
+      "quizId": 4278,
+      "questionId": 73544,
+      "beforeSha256": "d51d531dc14fb1b4fe591c0188f0484776ac84ed7621398d870a2fa39d16ceb9",
+      "evidence": [
+        "https://www.pmi.org/disciplined-agile/lean/practices"
+      ],
+      "rationale": "Waiting and inventory are addressed by Lean waste reduction.",
+      "flags": {
+        "291062": false,
+        "291063": false,
+        "291064": false
+      },
+      "additions": [
+        {
+          "text": "Lean process improvement to remove waste and improve flow.",
+          "isCorrect": true
+        }
+      ]
+    },
+    {
+      "quizId": 4278,
+      "questionId": 73545,
+      "beforeSha256": "a9f51635d1d435fd84e804245f930cec6884eae6ee597ca43ae3ca08d538bc6a",
+      "evidence": [
+        "https://1prd-dxp.cips.org/intelligence-hub/supply-chain-management/supply-chain-collaboration"
+      ],
+      "rationale": "Supplier disruption and delivery planning are supply-chain management.",
+      "flags": {
+        "291065": false,
+        "291066": false,
+        "291067": false
+      },
+      "additions": [
+        {
+          "text": "Supply Chain Management.",
+          "isCorrect": true
+        }
+      ]
+    },
+    {
+      "quizId": 4278,
+      "questionId": 73547,
+      "beforeSha256": "db811fcc9c92fc1d141299bc60e4d38a8602d3ded1eb9108c0c71236d40c4f51",
+      "evidence": [
+        "https://www.ellenmacarthurfoundation.org/topics/circular-economy-introduction/overview"
+      ],
+      "rationale": "Repair, reuse and recovery retain product and material value in a circular economy.",
+      "flags": {
+        "291071": false,
+        "291072": false,
+        "291073": false
+      },
+      "additions": [
+        {
+          "text": "Circular economy principles.",
+          "isCorrect": true
+        }
+      ]
+    },
+    {
+      "quizId": 4324,
+      "questionId": 74293,
+      "beforeSha256": "883bb0bbc9c546d90a7822122a67dae84144a0a8791529abbdb676dd24018325",
+      "type": "single_choice",
+      "flags": {
+        "294054": false,
+        "294055": true,
+        "294056": false,
+        "294057": false
+      },
+      "evidence": [
+        "Identical authored question 74405 in quiz 4326"
+      ],
+      "rationale": "Recover the unambiguous key from a valid authored copy with the same question and options."
+    },
+    {
+      "quizId": 4324,
+      "questionId": 74294,
+      "beforeSha256": "ab3467693e0a0495299dd1670069f678b9c4e6b1d920d9e3d9e60aa9b0185d45",
+      "type": "single_choice",
+      "flags": {
+        "294058": false,
+        "294059": true,
+        "294060": false,
+        "294061": false
+      },
+      "evidence": [
+        "Identical authored question 74406 in quiz 4326"
+      ],
+      "rationale": "Recover the unambiguous key from a valid authored copy with the same question and options."
+    },
+    {
+      "quizId": 4324,
+      "questionId": 74295,
+      "beforeSha256": "6745cf62aac2db7d6b7368016a17bb1323a3ec6415faa814695b946f3e3fa945",
+      "type": "single_choice",
+      "flags": {
+        "294062": true,
+        "294063": false,
+        "294064": false,
+        "294065": false
+      },
+      "evidence": [
+        "Identical authored question 74407 in quiz 4326"
+      ],
+      "rationale": "Recover the unambiguous key from a valid authored copy with the same question and options."
+    },
+    {
+      "quizId": 4324,
+      "questionId": 74296,
+      "beforeSha256": "e37a20718add8f9999e4a1967b9bd88926ac53d5941937fbc3eb9a5a78802e55",
+      "type": "single_choice",
+      "flags": {
+        "294066": false,
+        "294067": true,
+        "294068": false,
+        "294069": false
+      },
+      "evidence": [
+        "Identical authored question 74408 in quiz 4326"
+      ],
+      "rationale": "Recover the unambiguous key from a valid authored copy with the same question and options."
+    },
+    {
+      "quizId": 4324,
+      "questionId": 74297,
+      "beforeSha256": "3b300a9315122eaf61320ea1bd50e74ef134c4dcd23ed313ebcdc59c8c753523",
+      "type": "single_choice",
+      "flags": {
+        "294070": false,
+        "294071": true,
+        "294072": false,
+        "294073": false
+      },
+      "evidence": [
+        "Identical authored question 74409 in quiz 4326"
+      ],
+      "rationale": "Recover the unambiguous key from a valid authored copy with the same question and options."
+    },
+    {
+      "quizId": 4324,
+      "questionId": 74298,
+      "beforeSha256": "117070db7469ba8784d6ce2e121349a5743dbc6e698ca9acdd643e7f7f366ee6",
+      "type": "single_choice",
+      "flags": {
+        "294074": false,
+        "294075": true,
+        "294076": false,
+        "294077": false
+      },
+      "evidence": [
+        "Identical authored question 74410 in quiz 4326"
+      ],
+      "rationale": "Recover the unambiguous key from a valid authored copy with the same question and options."
+    },
+    {
+      "quizId": 4324,
+      "questionId": 74299,
+      "beforeSha256": "dcef92cc35fe1f39b0da6e0709fe829c8ad1486ba27acd16ae61e19ff00c39ff",
+      "type": "single_choice",
+      "flags": {
+        "294078": false,
+        "294079": false,
+        "294080": true,
+        "294081": false
+      },
+      "evidence": [
+        "Identical authored question 74411 in quiz 4326"
+      ],
+      "rationale": "Recover the unambiguous key from a valid authored copy with the same question and options."
+    },
+    {
+      "quizId": 4324,
+      "questionId": 74300,
+      "beforeSha256": "f8d8e1d35d0f3dbd7c0d2fa0695af736f1f3e9654f03ac4790331cc3dd62dbd4",
+      "type": "single_choice",
+      "flags": {
+        "294082": false,
+        "294083": true,
+        "294084": false,
+        "294085": false
+      },
+      "evidence": [
+        "Identical authored question 74412 in quiz 4326"
+      ],
+      "rationale": "Recover the unambiguous key from a valid authored copy with the same question and options."
+    },
+    {
+      "quizId": 4324,
+      "questionId": 74301,
+      "beforeSha256": "63d687ac3a4115882a5d25146d850a2b663c81348a6e36cbf6076ae02d7e266a",
+      "type": "single_choice",
+      "flags": {
+        "294086": false,
+        "294087": true,
+        "294088": false,
+        "294089": false
+      },
+      "evidence": [
+        "Identical authored question 74413 in quiz 4326"
+      ],
+      "rationale": "Recover the unambiguous key from a valid authored copy with the same question and options."
+    },
+    {
+      "quizId": 4324,
+      "questionId": 74302,
+      "beforeSha256": "83aa080720f2fdce0b5f01ceb28e2b3bcdcbbeb0a1cb9216104d9cfbfd269be9",
+      "type": "single_choice",
+      "flags": {
+        "294090": false,
+        "294091": false,
+        "294092": true,
+        "294093": false
+      },
+      "evidence": [
+        "Identical authored question 74414 in quiz 4326"
+      ],
+      "rationale": "Recover the unambiguous key from a valid authored copy with the same question and options."
+    },
+    {
+      "quizId": 4324,
+      "questionId": 74303,
+      "beforeSha256": "a1386f94babe970eff2a9766d7413cdcbb4f582444ba57c8b389e16f4d5cbed8",
+      "type": "single_choice",
+      "flags": {
+        "294094": false,
+        "294095": false,
+        "294096": true,
+        "294097": false
+      },
+      "evidence": [
+        "Identical authored question 74415 in quiz 4326"
+      ],
+      "rationale": "Recover the unambiguous key from a valid authored copy with the same question and options."
+    },
+    {
+      "quizId": 4324,
+      "questionId": 74304,
+      "beforeSha256": "99fe94b3a312f6cdfea8f0e4bf333ba8a574402ea9e1637e64129e79ce891be0",
+      "type": "single_choice",
+      "flags": {
+        "294098": false,
+        "294099": true,
+        "294100": false,
+        "294101": false
+      },
+      "evidence": [
+        "Identical authored question 74416 in quiz 4326"
+      ],
+      "rationale": "Recover the unambiguous key from a valid authored copy with the same question and options."
+    },
+    {
+      "quizId": 4324,
+      "questionId": 74305,
+      "beforeSha256": "2a29f438aa8127e207a53f7cb164f58da51a0a0546eb66e673a45512f606e43a",
+      "type": "single_choice",
+      "flags": {
+        "294102": false,
+        "294103": true,
+        "294104": false,
+        "294105": false
+      },
+      "evidence": [
+        "Identical authored question 74417 in quiz 4326"
+      ],
+      "rationale": "Recover the unambiguous key from a valid authored copy with the same question and options."
+    },
+    {
+      "quizId": 4324,
+      "questionId": 74306,
+      "beforeSha256": "a295c0ca6e73ffdc8e80c5030a6184ca9c5ebe006882054b8151b295a4d5e563",
+      "type": "single_choice",
+      "flags": {
+        "294106": false,
+        "294107": true,
+        "294108": false,
+        "294109": false
+      },
+      "evidence": [
+        "Identical authored question 74418 in quiz 4326"
+      ],
+      "rationale": "Recover the unambiguous key from a valid authored copy with the same question and options."
+    },
+    {
+      "quizId": 4324,
+      "questionId": 74307,
+      "beforeSha256": "69b3494ef4a953ae63bf70e39d3baec9f27f4685ba515dd1dab6d3e5930f04e4",
+      "type": "single_choice",
+      "flags": {
+        "294110": false,
+        "294111": true,
+        "294112": false,
+        "294113": false
+      },
+      "evidence": [
+        "Identical authored question 74419 in quiz 4326"
+      ],
+      "rationale": "Recover the unambiguous key from a valid authored copy with the same question and options."
+    },
+    {
+      "quizId": 4324,
+      "questionId": 74308,
+      "beforeSha256": "5a0408e422ba392e899c363130a9ec18f861c346539663169dbddb424034c994",
+      "type": "single_choice",
+      "flags": {
+        "294114": false,
+        "294115": true,
+        "294116": false,
+        "294117": false
+      },
+      "evidence": [
+        "Identical authored question 74420 in quiz 4326"
+      ],
+      "rationale": "Recover the unambiguous key from a valid authored copy with the same question and options."
+    },
+    {
+      "quizId": 4324,
+      "questionId": 74309,
+      "beforeSha256": "9bdcc3606a821945ad0ad905be8e8c52e372dc3a7c886e3e9b3d242b0148a858",
+      "type": "single_choice",
+      "flags": {
+        "294118": false,
+        "294119": false,
+        "294120": true,
+        "294121": false
+      },
+      "evidence": [
+        "Identical authored question 74421 in quiz 4326"
+      ],
+      "rationale": "Recover the unambiguous key from a valid authored copy with the same question and options."
+    },
+    {
+      "quizId": 4324,
+      "questionId": 74310,
+      "beforeSha256": "478cbb55c3fc734286db9cfcb202d04803769e38b2cc2757f33fc8799636aa50",
+      "type": "single_choice",
+      "flags": {
+        "294122": false,
+        "294123": true,
+        "294124": false,
+        "294125": false
+      },
+      "evidence": [
+        "Identical authored question 74422 in quiz 4326"
+      ],
+      "rationale": "Recover the unambiguous key from a valid authored copy with the same question and options."
+    },
+    {
+      "quizId": 4324,
+      "questionId": 74311,
+      "beforeSha256": "5882db6794f5761579f39a31415e7bb6e5bc7a7ccd3fd3791b676a8ab0cfda86",
+      "type": "single_choice",
+      "flags": {
+        "294126": false,
+        "294127": false,
+        "294128": true,
+        "294129": false
+      },
+      "evidence": [
+        "Identical authored question 74423 in quiz 4326"
+      ],
+      "rationale": "Recover the unambiguous key from a valid authored copy with the same question and options."
+    },
+    {
+      "quizId": 4324,
+      "questionId": 74312,
+      "beforeSha256": "67e440d4ef1148064f810188861b78f3f72d5b016a7311a093831480528085c4",
+      "type": "single_choice",
+      "flags": {
+        "294130": false,
+        "294131": false,
+        "294132": true,
+        "294133": false
+      },
+      "evidence": [
+        "Identical authored question 74424 in quiz 4326"
+      ],
+      "rationale": "Recover the unambiguous key from a valid authored copy with the same question and options."
+    },
+    {
+      "quizId": 4324,
+      "questionId": 74313,
+      "beforeSha256": "b0a8a22ccbbdb646b2c55982083e24a2e3c7df89e0c112b3a71989ee7f10c182",
+      "evidence": [
+        "https://www.ibm.com/think/topics/big-data-analytics"
+      ],
+      "rationale": "Inaccurate, duplicated and incomplete CRM data damages veracity.",
+      "flags": {
+        "294134": false,
+        "294135": false,
+        "294136": false,
+        "294137": true
+      }
+    },
+    {
+      "quizId": 4324,
+      "questionId": 74314,
+      "beforeSha256": "fe148d757b8d342d43108d724e525f87220c28506113ae27a05cb494f23a2421",
+      "evidence": [
+        "https://www.ibm.com/think/topics/big-data-analytics"
+      ],
+      "rationale": "Volume alone does not make data useful or predictive.",
+      "flags": {
+        "294138": false,
+        "294139": true,
+        "294140": false,
+        "294141": false
+      }
+    },
+    {
+      "quizId": 4324,
+      "questionId": 74315,
+      "beforeSha256": "0641052532ee18bcdb84063a260bdc06f450999163920b0e8a65e98a105ba3b2",
+      "evidence": [
+        "https://www.ibm.com/think/topics/big-data-analytics"
+      ],
+      "rationale": "The delayed report has a data-timeliness/velocity problem.",
+      "flags": {
+        "294142": false,
+        "294143": true,
+        "294144": false,
+        "294145": false
+      }
+    },
+    {
+      "quizId": 4324,
+      "questionId": 74316,
+      "beforeSha256": "c43e87278c36651027b621175e585f63a1f1e88c35eddd020257e528566fcdf0",
+      "evidence": [
+        "https://www.ibm.com/think/topics/big-data-analytics"
+      ],
+      "rationale": "Free-form review text is unstructured data.",
+      "flags": {
+        "294146": false,
+        "294147": true,
+        "294148": false,
+        "294149": false
+      }
+    },
+    {
+      "quizId": 4324,
+      "questionId": 74317,
+      "beforeSha256": "b36c0f44d6d3b5cdf443f3900c6e8e2a6a713dca68a9352c97ad222597fc0138",
+      "type": "single_choice",
+      "flags": {
+        "294150": false,
+        "294151": true,
+        "294152": false,
+        "294153": false
+      },
+      "evidence": [
+        "Identical authored question 74429 in quiz 4326"
+      ],
+      "rationale": "Recover the unambiguous key from a valid authored copy with the same question and options."
+    },
+    {
+      "quizId": 4324,
+      "questionId": 74318,
+      "beforeSha256": "414c6873a2ad7467209f7e9c4e952147183f445b39832be9cde8dd6223044759",
+      "type": "single_choice",
+      "flags": {
+        "294154": false,
+        "294155": false,
+        "294156": true,
+        "294157": false
+      },
+      "evidence": [
+        "Identical authored question 74430 in quiz 4326"
+      ],
+      "rationale": "Recover the unambiguous key from a valid authored copy with the same question and options."
+    },
+    {
+      "quizId": 4324,
+      "questionId": 74319,
+      "beforeSha256": "1590e5dedaf2ef1fc1393335da91750ca0a796316e181fb20b52f5f1d7f3fb88",
+      "type": "single_choice",
+      "flags": {
+        "294158": false,
+        "294159": false,
+        "294160": false,
+        "294161": true
+      },
+      "evidence": [
+        "Identical authored question 74431 in quiz 4326"
+      ],
+      "rationale": "Recover the unambiguous key from a valid authored copy with the same question and options."
+    },
+    {
+      "quizId": 4324,
+      "questionId": 74320,
+      "beforeSha256": "5b0183ac0d091e26c3e4559ffb51ec9bfc398959e4b4fc8d1de96f938ef8dd21",
+      "type": "single_choice",
+      "flags": {
+        "294162": true,
+        "294163": false,
+        "294164": false,
+        "294165": false
+      },
+      "evidence": [
+        "Identical authored question 74432 in quiz 4326"
+      ],
+      "rationale": "Recover the unambiguous key from a valid authored copy with the same question and options."
+    },
+    {
+      "quizId": 4324,
+      "questionId": 74321,
+      "beforeSha256": "d1de341b551894a7bb67f551fdf7e622c1c807dc098c2e409f41f86fea478047",
+      "evidence": [
+        "https://www.ibm.com/think/topics/data-quality"
+      ],
+      "rationale": "Foundational CRM data quality is a prerequisite for reliable rollout.",
+      "flags": {
+        "294166": true,
+        "294167": false,
+        "294168": false,
+        "294169": false
+      }
+    },
+    {
+      "quizId": 4324,
+      "questionId": 74322,
+      "beforeSha256": "5f127c7b169569e95f208e0deddcdeecbe832e6cb16acb8665038d1e07534d86",
+      "evidence": [
+        "https://www.ibm.com/think/topics/data-quality"
+      ],
+      "rationale": "Common definitions and consistent attribution are prerequisites for orchestration.",
+      "flags": {
+        "294170": true,
+        "294171": false,
+        "294172": false,
+        "294173": false
+      }
+    },
+    {
+      "quizId": 4324,
+      "questionId": 74323,
+      "beforeSha256": "94e097f6f95fc3365d52be335f4df46cd0c0dc8dd67413e272f999793c1029e9",
+      "evidence": [
+        "https://www.ibm.com/think/topics/data-quality"
+      ],
+      "rationale": "Govern data quality instead of assuming more records improve accuracy.",
+      "flags": {
+        "294174": true,
+        "294175": false,
+        "294176": false,
+        "294177": false
+      }
+    },
+    {
+      "quizId": 4324,
+      "questionId": 74324,
+      "beforeSha256": "e353b5dc8d68a58ce768bb62a786aa36eb9b2ecc12796cf121a015b365686a71",
+      "evidence": [
+        "https://www.ibm.com/think/topics/data-quality"
+      ],
+      "rationale": "Fix the actual data and journey problem before buying a new tool.",
+      "flags": {
+        "294178": true,
+        "294179": false,
+        "294180": false,
+        "294181": false
+      }
+    },
+    {
+      "quizId": 4324,
+      "questionId": 74325,
+      "beforeSha256": "9e955739b01f39233b8a10d55e34289537eb565d3c729ab344841d6f6a6da770",
+      "type": "single_choice",
+      "flags": {
+        "294182": false,
+        "294183": false,
+        "294184": true,
+        "294185": false
+      },
+      "evidence": [
+        "Identical authored question 74437 in quiz 4326"
+      ],
+      "rationale": "Recover the unambiguous key from a valid authored copy with the same question and options."
+    },
+    {
+      "quizId": 4324,
+      "questionId": 74326,
+      "beforeSha256": "1b647d437dc2a450ec5cb6577b517f4aa08324b6eac7de6498678ce7d8f11994",
+      "type": "single_choice",
+      "flags": {
+        "294186": false,
+        "294187": false,
+        "294188": false,
+        "294189": true
+      },
+      "evidence": [
+        "Identical authored question 74438 in quiz 4326"
+      ],
+      "rationale": "Recover the unambiguous key from a valid authored copy with the same question and options."
+    },
+    {
+      "quizId": 4324,
+      "questionId": 74327,
+      "beforeSha256": "066d07ae6ac1b266422189e8c79e599f2db04fe6a9a5d89fe29f5880b80b601c",
+      "type": "single_choice",
+      "flags": {
+        "294190": false,
+        "294191": false,
+        "294192": true,
+        "294193": false
+      },
+      "evidence": [
+        "Identical authored question 74439 in quiz 4326"
+      ],
+      "rationale": "Recover the unambiguous key from a valid authored copy with the same question and options."
+    },
+    {
+      "quizId": 4324,
+      "questionId": 74328,
+      "beforeSha256": "83abee3f9a05e13714bacb3c56c1d6bece977a1e441308400c006af8ef161214",
+      "type": "single_choice",
+      "flags": {
+        "294194": false,
+        "294195": false,
+        "294196": true,
+        "294197": false
+      },
+      "evidence": [
+        "Identical authored question 74440 in quiz 4326"
+      ],
+      "rationale": "Recover the unambiguous key from a valid authored copy with the same question and options."
+    },
+    {
+      "quizId": 4324,
+      "questionId": 74329,
+      "beforeSha256": "b125b19019198b5ac02c64401cf8f0562f6ddd83ffb38ae44b1bb41884df39d0",
+      "evidence": [
+        "https://www.cim.co.uk/content-insights/articles/what-is-marketing/",
+        "Content reviewed against the question scenario and alternatives."
+      ],
+      "rationale": "Assess the full customer journey rather than crediting one isolated touchpoint.",
+      "flags": {
+        "294198": false,
+        "294199": false,
+        "294200": true,
+        "294201": false
+      }
+    },
+    {
+      "quizId": 4324,
+      "questionId": 74330,
+      "beforeSha256": "aa8fc5443cf0beaaa31dd65f9591e35474f7af01eb177ce1d1f8600a44c6d927",
+      "evidence": [
+        "https://www.cim.co.uk/content-insights/articles/what-is-marketing/",
+        "Content reviewed against the question scenario and alternatives."
+      ],
+      "rationale": "Adjust relevance and timing in response to complaints and unsubscribes.",
+      "flags": {
+        "294202": false,
+        "294203": false,
+        "294204": true,
+        "294205": false
+      }
+    },
+    {
+      "quizId": 4324,
+      "questionId": 74331,
+      "beforeSha256": "652e35bdae9ace91d3977eb7bfe371ad28c4f7cb6f62262cfcce8e3d4884686a",
+      "evidence": [
+        "https://www.cim.co.uk/content-insights/articles/what-is-marketing/",
+        "Content reviewed against the question scenario and alternatives."
+      ],
+      "rationale": "Evaluate lead quality, expectations and retention as well as lead volume.",
+      "flags": {
+        "294206": false,
+        "294207": false,
+        "294208": false,
+        "294209": true
+      }
+    },
+    {
+      "quizId": 4324,
+      "questionId": 74332,
+      "beforeSha256": "1313555c3b8418867afc80ae6ea1fe57e966e358886ae86c31fb13481cce7b10",
+      "evidence": [
+        "https://www.cim.co.uk/content-insights/articles/what-is-marketing/",
+        "Content reviewed against the question scenario and alternatives."
+      ],
+      "rationale": "Triangulate survey, behavioural and review evidence.",
+      "flags": {
+        "294210": false,
+        "294211": true,
+        "294212": false,
+        "294213": false
+      }
+    },
+    {
+      "quizId": 4324,
+      "questionId": 74333,
+      "beforeSha256": "19d12bca4a328e9687a8998a7f52a5c846144a45840f8c027bfbba5f6b0ca0b5",
+      "type": "single_choice",
+      "flags": {
+        "294214": false,
+        "294215": true,
+        "294216": false,
+        "294217": false
+      },
+      "evidence": [
+        "Identical authored question 74445 in quiz 4326"
+      ],
+      "rationale": "Recover the unambiguous key from a valid authored copy with the same question and options."
+    },
+    {
+      "quizId": 4324,
+      "questionId": 74334,
+      "beforeSha256": "2735857a54d8730f9265a627b50f2f6b0b300d169a74967d174d3acc6155b54a",
+      "type": "single_choice",
+      "flags": {
+        "294218": true,
+        "294219": false,
+        "294220": false,
+        "294221": false
+      },
+      "evidence": [
+        "Identical authored question 74446 in quiz 4326"
+      ],
+      "rationale": "Recover the unambiguous key from a valid authored copy with the same question and options."
+    },
+    {
+      "quizId": 4324,
+      "questionId": 74335,
+      "beforeSha256": "a137f29e50b4f982118af18c752dcc30bc2972a4e355d6fede816452ea5f9cb1",
+      "type": "single_choice",
+      "flags": {
+        "294222": false,
+        "294223": false,
+        "294224": true,
+        "294225": false
+      },
+      "evidence": [
+        "Identical authored question 74447 in quiz 4326"
+      ],
+      "rationale": "Recover the unambiguous key from a valid authored copy with the same question and options."
+    },
+    {
+      "quizId": 4324,
+      "questionId": 74336,
+      "beforeSha256": "a9b54499c33911712177f1bd276ce240eb5ea799d02ace597d4bd879d7c48758",
+      "type": "single_choice",
+      "flags": {
+        "294226": true,
+        "294227": false,
+        "294228": false,
+        "294229": false
+      },
+      "evidence": [
+        "Identical authored question 74448 in quiz 4326"
+      ],
+      "rationale": "Recover the unambiguous key from a valid authored copy with the same question and options."
+    },
+    {
+      "quizId": 4324,
+      "questionId": 74337,
+      "beforeSha256": "1bec35621910443d729b0b3a5b380f3facd83decb566a2fabb78cf76e50daab9",
+      "type": "single_choice",
+      "flags": {
+        "294230": false,
+        "294231": false,
+        "294232": true,
+        "294233": false
+      },
+      "evidence": [
+        "Identical authored question 74449 in quiz 4326"
+      ],
+      "rationale": "Recover the unambiguous key from a valid authored copy with the same question and options."
+    },
+    {
+      "quizId": 4324,
+      "questionId": 74338,
+      "beforeSha256": "07fe02471413a2751efd7c9325fc1795e45c1d82fe7081ee5b811afba7c38377",
+      "type": "single_choice",
+      "flags": {
+        "294234": true,
+        "294235": false,
+        "294236": false,
+        "294237": false
+      },
+      "evidence": [
+        "Identical authored question 74450 in quiz 4326"
+      ],
+      "rationale": "Recover the unambiguous key from a valid authored copy with the same question and options."
+    },
+    {
+      "quizId": 4324,
+      "questionId": 74339,
+      "beforeSha256": "b88fadddf2c85bef64bf8a6806f2671a5cfd4d46cf82af1a74868d2cb81b05d5",
+      "type": "single_choice",
+      "flags": {
+        "294238": false,
+        "294239": false,
+        "294240": false,
+        "294241": true
+      },
+      "evidence": [
+        "Identical authored question 74451 in quiz 4326"
+      ],
+      "rationale": "Recover the unambiguous key from a valid authored copy with the same question and options."
+    },
+    {
+      "quizId": 4324,
+      "questionId": 74340,
+      "beforeSha256": "d1b8a9f4106d668e39174f9854203f37e1ba719e9a7cfd2969f900b45240ae55",
+      "type": "single_choice",
+      "flags": {
+        "294242": false,
+        "294243": true,
+        "294244": false,
+        "294245": false
+      },
+      "evidence": [
+        "Identical authored question 74452 in quiz 4326"
+      ],
+      "rationale": "Recover the unambiguous key from a valid authored copy with the same question and options."
+    },
+    {
+      "quizId": 4324,
+      "questionId": 74341,
+      "beforeSha256": "ae3e62e435e54e2d4826d82faa44e6dbae548f2630b345970e4439495c4a8732",
+      "evidence": [
+        "https://www.cim.co.uk/content-insights/articles/what-is-marketing/",
+        "Content reviewed against the question scenario and alternatives."
+      ],
+      "rationale": "Modern marketing identifies and satisfies needs while creating organisational value.",
+      "flags": {
+        "294246": false,
+        "294247": true,
+        "294248": false,
+        "294249": false
+      }
+    },
+    {
+      "quizId": 4324,
+      "questionId": 74342,
+      "beforeSha256": "75ba5e1aa72af5dbde2df50f3682c5ecf8e4bd39465d9ca0a8cbf23a300f491e",
+      "evidence": [
+        "https://www.cim.co.uk/content-insights/articles/what-is-marketing/",
+        "Content reviewed against the question scenario and alternatives."
+      ],
+      "rationale": "Insight, competition and long-term objectives describe strategic market analysis.",
+      "flags": {
+        "294250": false,
+        "294251": false,
+        "294252": true,
+        "294253": false
+      }
+    },
+    {
+      "quizId": 4324,
+      "questionId": 74343,
+      "beforeSha256": "7049890fdb5ff88e2d90fad238300a84f9e6d6db687f49b1ed305717514830af",
+      "evidence": [
+        "https://www.cim.co.uk/content-insights/articles/what-is-marketing/",
+        "Content reviewed against the question scenario and alternatives."
+      ],
+      "rationale": "Marketing shapes demand and sales converts it into transactions.",
+      "flags": {
+        "294254": true,
+        "294255": false,
+        "294256": false,
+        "294257": false
+      }
+    },
+    {
+      "quizId": 4324,
+      "questionId": 74344,
+      "beforeSha256": "46904a1f16232a9a3e261612b67ddf4bff955f84dde1652c21fea412d9180618",
+      "evidence": [
+        "https://www.cim.co.uk/content-insights/articles/what-is-marketing/",
+        "Content reviewed against the question scenario and alternatives."
+      ],
+      "rationale": "The option follows the CIM management-process definition.",
+      "flags": {
+        "294258": false,
+        "294259": true,
+        "294260": false,
+        "294261": false
+      }
+    },
+    {
+      "quizId": 4324,
+      "questionId": 74345,
+      "beforeSha256": "c6986fdb8258f84221a7551d24f267aa1cc763317b772ac1f2c5375fb9c23a55",
+      "type": "single_choice",
+      "flags": {
+        "294262": false,
+        "294263": true,
+        "294264": false,
+        "294265": false
+      },
+      "evidence": [
+        "Identical authored question 74457 in quiz 4326"
+      ],
+      "rationale": "Recover the unambiguous key from a valid authored copy with the same question and options."
+    },
+    {
+      "quizId": 4324,
+      "questionId": 74346,
+      "beforeSha256": "10234af038ce80d96ecea6d1c003619c3df1e94cae44eca577556ac81e5b8728",
+      "type": "single_choice",
+      "flags": {
+        "294266": false,
+        "294267": true,
+        "294268": false,
+        "294269": false
+      },
+      "evidence": [
+        "Identical authored question 74458 in quiz 4326"
+      ],
+      "rationale": "Recover the unambiguous key from a valid authored copy with the same question and options."
+    },
+    {
+      "quizId": 4324,
+      "questionId": 74347,
+      "beforeSha256": "06df813acf21f84eff6e4dbf2a1b0a146d6c5c81d5117819ded01fc82283033d",
+      "type": "single_choice",
+      "flags": {
+        "294270": true,
+        "294271": false,
+        "294272": false,
+        "294273": false
+      },
+      "evidence": [
+        "Identical authored question 74459 in quiz 4326"
+      ],
+      "rationale": "Recover the unambiguous key from a valid authored copy with the same question and options."
+    },
+    {
+      "quizId": 4324,
+      "questionId": 74348,
+      "beforeSha256": "e4d0dd0cc686b907bb2c90a843f407778b72244d3e5d3c5f80932a2366073f4d",
+      "type": "single_choice",
+      "flags": {
+        "294274": true,
+        "294275": false,
+        "294276": false,
+        "294277": false
+      },
+      "evidence": [
+        "Identical authored question 74460 in quiz 4326"
+      ],
+      "rationale": "Recover the unambiguous key from a valid authored copy with the same question and options."
+    },
+    {
+      "quizId": 4325,
+      "questionId": 74349,
+      "beforeSha256": "869327ab40b9803e9ad07a230f49a4b69ed5b25f1bb1be450e1b6e5a514d359d",
+      "type": "single_choice",
+      "flags": {
+        "294278": false,
+        "294279": true,
+        "294280": false,
+        "294281": false
+      },
+      "evidence": [
+        "Identical authored question 74405 in quiz 4326"
+      ],
+      "rationale": "Recover the unambiguous key from a valid authored copy with the same question and options."
+    },
+    {
+      "quizId": 4325,
+      "questionId": 74350,
+      "beforeSha256": "1c10ae640aa48a570d6f9cd58bfe7dd1ebf1650be016b92f4abccb9f23b16c5d",
+      "type": "single_choice",
+      "flags": {
+        "294282": false,
+        "294283": true,
+        "294284": false,
+        "294285": false
+      },
+      "evidence": [
+        "Identical authored question 74406 in quiz 4326"
+      ],
+      "rationale": "Recover the unambiguous key from a valid authored copy with the same question and options."
+    },
+    {
+      "quizId": 4325,
+      "questionId": 74351,
+      "beforeSha256": "e5443a61a77276a622124e846d70cdc726dba6715283f1f85972413c2c1ec6da",
+      "type": "single_choice",
+      "flags": {
+        "294286": true,
+        "294287": false,
+        "294288": false,
+        "294289": false
+      },
+      "evidence": [
+        "Identical authored question 74407 in quiz 4326"
+      ],
+      "rationale": "Recover the unambiguous key from a valid authored copy with the same question and options."
+    },
+    {
+      "quizId": 4325,
+      "questionId": 74352,
+      "beforeSha256": "a83e1d6327fb0ad6a553a28b7b12de2084ef989d7261f8550ad04fc6dff421fc",
+      "type": "single_choice",
+      "flags": {
+        "294290": false,
+        "294291": true,
+        "294292": false,
+        "294293": false
+      },
+      "evidence": [
+        "Identical authored question 74408 in quiz 4326"
+      ],
+      "rationale": "Recover the unambiguous key from a valid authored copy with the same question and options."
+    },
+    {
+      "quizId": 4325,
+      "questionId": 74353,
+      "beforeSha256": "7d558f119e74b37d5f3b316209cabb00bac97ad70e781ee189ccecbeb0a3102f",
+      "type": "single_choice",
+      "flags": {
+        "294294": false,
+        "294295": true,
+        "294296": false,
+        "294297": false
+      },
+      "evidence": [
+        "Identical authored question 74409 in quiz 4326"
+      ],
+      "rationale": "Recover the unambiguous key from a valid authored copy with the same question and options."
+    },
+    {
+      "quizId": 4325,
+      "questionId": 74354,
+      "beforeSha256": "e21f73af8797018bd2d8bc7402133eb08c6f62a5867fa80f38d718a17b8d87ba",
+      "type": "single_choice",
+      "flags": {
+        "294298": false,
+        "294299": true,
+        "294300": false,
+        "294301": false
+      },
+      "evidence": [
+        "Identical authored question 74410 in quiz 4326"
+      ],
+      "rationale": "Recover the unambiguous key from a valid authored copy with the same question and options."
+    },
+    {
+      "quizId": 4325,
+      "questionId": 74355,
+      "beforeSha256": "8c96dafd3e5237b839c81e8faa5539586db2fa3c0177fa30b8163c62b0de51e3",
+      "type": "single_choice",
+      "flags": {
+        "294302": false,
+        "294303": false,
+        "294304": true,
+        "294305": false
+      },
+      "evidence": [
+        "Identical authored question 74411 in quiz 4326"
+      ],
+      "rationale": "Recover the unambiguous key from a valid authored copy with the same question and options."
+    },
+    {
+      "quizId": 4325,
+      "questionId": 74356,
+      "beforeSha256": "a025bbd07c9dbdb84043ce605effc1f4578b55633cfbdb28532015acf3d746c4",
+      "type": "single_choice",
+      "flags": {
+        "294306": false,
+        "294307": true,
+        "294308": false,
+        "294309": false
+      },
+      "evidence": [
+        "Identical authored question 74412 in quiz 4326"
+      ],
+      "rationale": "Recover the unambiguous key from a valid authored copy with the same question and options."
+    },
+    {
+      "quizId": 4325,
+      "questionId": 74357,
+      "beforeSha256": "d5c42b8a477e8f3384466dec222e6b3f9631909e03c5bc0ec0c9d3084bad7a5a",
+      "type": "single_choice",
+      "flags": {
+        "294310": false,
+        "294311": true,
+        "294312": false,
+        "294313": false
+      },
+      "evidence": [
+        "Identical authored question 74413 in quiz 4326"
+      ],
+      "rationale": "Recover the unambiguous key from a valid authored copy with the same question and options."
+    },
+    {
+      "quizId": 4325,
+      "questionId": 74358,
+      "beforeSha256": "5389d4b426477bd5b463cca036a5a3f7c99d455f804faaa62d10505f12346962",
+      "type": "single_choice",
+      "flags": {
+        "294314": false,
+        "294315": false,
+        "294316": true,
+        "294317": false
+      },
+      "evidence": [
+        "Identical authored question 74414 in quiz 4326"
+      ],
+      "rationale": "Recover the unambiguous key from a valid authored copy with the same question and options."
+    },
+    {
+      "quizId": 4325,
+      "questionId": 74359,
+      "beforeSha256": "c2022c608838e082ba1897344f8a35125b12b54f25342f81b09bcd64f40e4de1",
+      "type": "single_choice",
+      "flags": {
+        "294318": false,
+        "294319": false,
+        "294320": true,
+        "294321": false
+      },
+      "evidence": [
+        "Identical authored question 74415 in quiz 4326"
+      ],
+      "rationale": "Recover the unambiguous key from a valid authored copy with the same question and options."
+    },
+    {
+      "quizId": 4325,
+      "questionId": 74360,
+      "beforeSha256": "0df6e29b8b0fe8681f73bcff1e7c37d2f2dfa4ad28ac53c689b653fde0a6b23c",
+      "type": "single_choice",
+      "flags": {
+        "294322": false,
+        "294323": true,
+        "294324": false,
+        "294325": false
+      },
+      "evidence": [
+        "Identical authored question 74416 in quiz 4326"
+      ],
+      "rationale": "Recover the unambiguous key from a valid authored copy with the same question and options."
+    },
+    {
+      "quizId": 4325,
+      "questionId": 74361,
+      "beforeSha256": "6b51d63f5767d50f1ba5c1ae43a80835cd717dc5bef7752f9f6c28f56df8d84e",
+      "type": "single_choice",
+      "flags": {
+        "294326": false,
+        "294327": true,
+        "294328": false,
+        "294329": false
+      },
+      "evidence": [
+        "Identical authored question 74417 in quiz 4326"
+      ],
+      "rationale": "Recover the unambiguous key from a valid authored copy with the same question and options."
+    },
+    {
+      "quizId": 4325,
+      "questionId": 74362,
+      "beforeSha256": "5bef0cbc9bed5ef14fcf9b39581701e72d9702306901e79d5ee40a2c23c45035",
+      "type": "single_choice",
+      "flags": {
+        "294330": false,
+        "294331": true,
+        "294332": false,
+        "294333": false
+      },
+      "evidence": [
+        "Identical authored question 74418 in quiz 4326"
+      ],
+      "rationale": "Recover the unambiguous key from a valid authored copy with the same question and options."
+    },
+    {
+      "quizId": 4325,
+      "questionId": 74363,
+      "beforeSha256": "5226795f53ad33f9635c83f1451bcae0284ec24ec95edee815ec234f4bdc9439",
+      "type": "single_choice",
+      "flags": {
+        "294334": false,
+        "294335": true,
+        "294336": false,
+        "294337": false
+      },
+      "evidence": [
+        "Identical authored question 74419 in quiz 4326"
+      ],
+      "rationale": "Recover the unambiguous key from a valid authored copy with the same question and options."
+    },
+    {
+      "quizId": 4325,
+      "questionId": 74364,
+      "beforeSha256": "b1794ffe6b235a83bcf17048dfc31d423ec1ab377494018ec0eb1a7d115f4e3b",
+      "type": "single_choice",
+      "flags": {
+        "294338": false,
+        "294339": true,
+        "294340": false,
+        "294341": false
+      },
+      "evidence": [
+        "Identical authored question 74420 in quiz 4326"
+      ],
+      "rationale": "Recover the unambiguous key from a valid authored copy with the same question and options."
+    },
+    {
+      "quizId": 4325,
+      "questionId": 74365,
+      "beforeSha256": "411b36510deb5f043f5b72905a35673ae168f66e395ae9a98af90c37eaf1458a",
+      "type": "single_choice",
+      "flags": {
+        "294342": false,
+        "294343": false,
+        "294344": true,
+        "294345": false
+      },
+      "evidence": [
+        "Identical authored question 74421 in quiz 4326"
+      ],
+      "rationale": "Recover the unambiguous key from a valid authored copy with the same question and options."
+    },
+    {
+      "quizId": 4325,
+      "questionId": 74366,
+      "beforeSha256": "ee66e12147ffc34c9060c448df7830e1d3e1ebd5c0d03ba3cb5ebf7f2f147537",
+      "type": "single_choice",
+      "flags": {
+        "294346": false,
+        "294347": true,
+        "294348": false,
+        "294349": false
+      },
+      "evidence": [
+        "Identical authored question 74422 in quiz 4326"
+      ],
+      "rationale": "Recover the unambiguous key from a valid authored copy with the same question and options."
+    },
+    {
+      "quizId": 4325,
+      "questionId": 74367,
+      "beforeSha256": "07ba03cd31c9e1dbc03290589240c819ecf564fab5ab6ff532a9fafef67a9e45",
+      "type": "single_choice",
+      "flags": {
+        "294350": false,
+        "294351": false,
+        "294352": true,
+        "294353": false
+      },
+      "evidence": [
+        "Identical authored question 74423 in quiz 4326"
+      ],
+      "rationale": "Recover the unambiguous key from a valid authored copy with the same question and options."
+    },
+    {
+      "quizId": 4325,
+      "questionId": 74368,
+      "beforeSha256": "a011c967d93cc3c49e10c1cfa01e2b3174e9c25c1713f91dcbe07c88a69b4d12",
+      "type": "single_choice",
+      "flags": {
+        "294354": false,
+        "294355": false,
+        "294356": true,
+        "294357": false
+      },
+      "evidence": [
+        "Identical authored question 74424 in quiz 4326"
+      ],
+      "rationale": "Recover the unambiguous key from a valid authored copy with the same question and options."
+    },
+    {
+      "quizId": 4325,
+      "questionId": 74369,
+      "beforeSha256": "2f225f341f9b26f9449ae5d5472cf00865d4d69021d4ac0e6b32b519a94e023c",
+      "evidence": [
+        "https://www.ibm.com/think/topics/big-data-analytics"
+      ],
+      "rationale": "Inaccurate, duplicated and incomplete CRM data damages veracity.",
+      "flags": {
+        "294358": false,
+        "294359": false,
+        "294360": false,
+        "294361": true
+      }
+    },
+    {
+      "quizId": 4325,
+      "questionId": 74370,
+      "beforeSha256": "51a382f308fcd170242ad6b68c054713de350578a457e9ea932920c0f446746a",
+      "evidence": [
+        "https://www.ibm.com/think/topics/big-data-analytics"
+      ],
+      "rationale": "Volume alone does not make data useful or predictive.",
+      "flags": {
+        "294362": false,
+        "294363": true,
+        "294364": false,
+        "294365": false
+      }
+    },
+    {
+      "quizId": 4325,
+      "questionId": 74371,
+      "beforeSha256": "64e3ed2cffd7332286b894f2c17b5ff166f86ab5edd8a4193550e649b2dba851",
+      "evidence": [
+        "https://www.ibm.com/think/topics/big-data-analytics"
+      ],
+      "rationale": "The delayed report has a data-timeliness/velocity problem.",
+      "flags": {
+        "294366": false,
+        "294367": true,
+        "294368": false,
+        "294369": false
+      }
+    },
+    {
+      "quizId": 4325,
+      "questionId": 74372,
+      "beforeSha256": "0af6ba7c863ddccbb03a7b735e4eb333c4447bcc9314da8fc03303f952711d08",
+      "evidence": [
+        "https://www.ibm.com/think/topics/big-data-analytics"
+      ],
+      "rationale": "Free-form review text is unstructured data.",
+      "flags": {
+        "294370": false,
+        "294371": true,
+        "294372": false,
+        "294373": false
+      }
+    },
+    {
+      "quizId": 4325,
+      "questionId": 74373,
+      "beforeSha256": "998cb29b199a8b37edbb327d6ae7251bb7b4901c3df4f58872dd112d0dc013e8",
+      "type": "single_choice",
+      "flags": {
+        "294374": false,
+        "294375": true,
+        "294376": false,
+        "294377": false
+      },
+      "evidence": [
+        "Identical authored question 74429 in quiz 4326"
+      ],
+      "rationale": "Recover the unambiguous key from a valid authored copy with the same question and options."
+    },
+    {
+      "quizId": 4325,
+      "questionId": 74374,
+      "beforeSha256": "40ecfa3f18b9f8c3382fdbe42e95e2564aea00faa6ed8f445afca51c63e7607e",
+      "type": "single_choice",
+      "flags": {
+        "294378": false,
+        "294379": false,
+        "294380": true,
+        "294381": false
+      },
+      "evidence": [
+        "Identical authored question 74430 in quiz 4326"
+      ],
+      "rationale": "Recover the unambiguous key from a valid authored copy with the same question and options."
+    },
+    {
+      "quizId": 4325,
+      "questionId": 74375,
+      "beforeSha256": "f09e40f22450bdceff914c30b082125487e1bf71775c0d5ac75c93f03a48151a",
+      "type": "single_choice",
+      "flags": {
+        "294382": false,
+        "294383": false,
+        "294384": false,
+        "294385": true
+      },
+      "evidence": [
+        "Identical authored question 74431 in quiz 4326"
+      ],
+      "rationale": "Recover the unambiguous key from a valid authored copy with the same question and options."
+    },
+    {
+      "quizId": 4325,
+      "questionId": 74376,
+      "beforeSha256": "d29a6dbeb27fa5c1e275b7837fb34b9bd929473b57d19956fb3887e5a7c5f36c",
+      "type": "single_choice",
+      "flags": {
+        "294386": true,
+        "294387": false,
+        "294388": false,
+        "294389": false
+      },
+      "evidence": [
+        "Identical authored question 74432 in quiz 4326"
+      ],
+      "rationale": "Recover the unambiguous key from a valid authored copy with the same question and options."
+    },
+    {
+      "quizId": 4325,
+      "questionId": 74377,
+      "beforeSha256": "67143b89e1cda0ca9ca9e0388eddc3330dc0dbd4d18fb17552b6dff9fd7f2540",
+      "evidence": [
+        "https://www.ibm.com/think/topics/data-quality"
+      ],
+      "rationale": "Foundational CRM data quality is a prerequisite for reliable rollout.",
+      "flags": {
+        "294390": true,
+        "294391": false,
+        "294392": false,
+        "294393": false
+      }
+    },
+    {
+      "quizId": 4325,
+      "questionId": 74378,
+      "beforeSha256": "8245bd5ae31c61ba8279b6f2cc7745deb6596989b964dcbb2007bc8a483397dc",
+      "evidence": [
+        "https://www.ibm.com/think/topics/data-quality"
+      ],
+      "rationale": "Common definitions and consistent attribution are prerequisites for orchestration.",
+      "flags": {
+        "294394": true,
+        "294395": false,
+        "294396": false,
+        "294397": false
+      }
+    },
+    {
+      "quizId": 4325,
+      "questionId": 74379,
+      "beforeSha256": "99eec46d08c13f9f2e9cbe82851a1f06f5eee0715fce6956e93028c993b980af",
+      "evidence": [
+        "https://www.ibm.com/think/topics/data-quality"
+      ],
+      "rationale": "Govern data quality instead of assuming more records improve accuracy.",
+      "flags": {
+        "294398": true,
+        "294399": false,
+        "294400": false,
+        "294401": false
+      }
+    },
+    {
+      "quizId": 4325,
+      "questionId": 74380,
+      "beforeSha256": "a32c4237b6e4a4346a94d4d6b2674d9e1a813db41e87c909b72c528cde9b2e24",
+      "evidence": [
+        "https://www.ibm.com/think/topics/data-quality"
+      ],
+      "rationale": "Fix the actual data and journey problem before buying a new tool.",
+      "flags": {
+        "294402": true,
+        "294403": false,
+        "294404": false,
+        "294405": false
+      }
+    },
+    {
+      "quizId": 4325,
+      "questionId": 74381,
+      "beforeSha256": "48a2c1e0cdbf9ff5056131183f252877343baf71bbf7dd9fb3e247b3296c9ab2",
+      "type": "single_choice",
+      "flags": {
+        "294406": false,
+        "294407": false,
+        "294408": true,
+        "294409": false
+      },
+      "evidence": [
+        "Identical authored question 74437 in quiz 4326"
+      ],
+      "rationale": "Recover the unambiguous key from a valid authored copy with the same question and options."
+    },
+    {
+      "quizId": 4325,
+      "questionId": 74382,
+      "beforeSha256": "b3ec521a1c17e9b69ce44ae8b61c9691f03066eee5ad14d41b1585f8e26f3c35",
+      "type": "single_choice",
+      "flags": {
+        "294410": false,
+        "294411": false,
+        "294412": false,
+        "294413": true
+      },
+      "evidence": [
+        "Identical authored question 74438 in quiz 4326"
+      ],
+      "rationale": "Recover the unambiguous key from a valid authored copy with the same question and options."
+    },
+    {
+      "quizId": 4325,
+      "questionId": 74383,
+      "beforeSha256": "84219eded1c1d8e1e590b13be67a7c729ae4ae28b5ebb2af062209ba0ba51f96",
+      "type": "single_choice",
+      "flags": {
+        "294414": false,
+        "294415": false,
+        "294416": true,
+        "294417": false
+      },
+      "evidence": [
+        "Identical authored question 74439 in quiz 4326"
+      ],
+      "rationale": "Recover the unambiguous key from a valid authored copy with the same question and options."
+    },
+    {
+      "quizId": 4325,
+      "questionId": 74384,
+      "beforeSha256": "2f71f6414864a0da8ab3ebcb2158b97d82dbc226ae239d8220161b70a9bc9bab",
+      "type": "single_choice",
+      "flags": {
+        "294418": false,
+        "294419": false,
+        "294420": true,
+        "294421": false
+      },
+      "evidence": [
+        "Identical authored question 74440 in quiz 4326"
+      ],
+      "rationale": "Recover the unambiguous key from a valid authored copy with the same question and options."
+    },
+    {
+      "quizId": 4325,
+      "questionId": 74385,
+      "beforeSha256": "ce0f65a0b765ae374af3da9ee1c2d2d713e9fbfef453e99d2e2132ffea3cf214",
+      "evidence": [
+        "https://www.cim.co.uk/content-insights/articles/what-is-marketing/",
+        "Content reviewed against the question scenario and alternatives."
+      ],
+      "rationale": "Assess the full customer journey rather than crediting one isolated touchpoint.",
+      "flags": {
+        "294422": false,
+        "294423": false,
+        "294424": true,
+        "294425": false
+      }
+    },
+    {
+      "quizId": 4325,
+      "questionId": 74386,
+      "beforeSha256": "3e69e68ef708aac6585c4970b86419d52793ae7d1fdbd6ba966cf1c74af1bd36",
+      "evidence": [
+        "https://www.cim.co.uk/content-insights/articles/what-is-marketing/",
+        "Content reviewed against the question scenario and alternatives."
+      ],
+      "rationale": "Adjust relevance and timing in response to complaints and unsubscribes.",
+      "flags": {
+        "294426": false,
+        "294427": false,
+        "294428": true,
+        "294429": false
+      }
+    },
+    {
+      "quizId": 4325,
+      "questionId": 74387,
+      "beforeSha256": "d061261e37b24beef71c8eb48822d389a379e89fd45af64a4b5b76694a68b93d",
+      "evidence": [
+        "https://www.cim.co.uk/content-insights/articles/what-is-marketing/",
+        "Content reviewed against the question scenario and alternatives."
+      ],
+      "rationale": "Evaluate lead quality, expectations and retention as well as lead volume.",
+      "flags": {
+        "294430": false,
+        "294431": false,
+        "294432": false,
+        "294433": true
+      }
+    },
+    {
+      "quizId": 4325,
+      "questionId": 74388,
+      "beforeSha256": "59cdbf1692cdf6ceda39591a06b286601974aa6587d7cdc95f787d4b1539b36d",
+      "evidence": [
+        "https://www.cim.co.uk/content-insights/articles/what-is-marketing/",
+        "Content reviewed against the question scenario and alternatives."
+      ],
+      "rationale": "Triangulate survey, behavioural and review evidence.",
+      "flags": {
+        "294434": false,
+        "294435": true,
+        "294436": false,
+        "294437": false
+      }
+    },
+    {
+      "quizId": 4325,
+      "questionId": 74389,
+      "beforeSha256": "eb90be398af79fd66e42a3bd46e2240d5a08c958b8f7eb6acc059347579f6151",
+      "type": "single_choice",
+      "flags": {
+        "294438": false,
+        "294439": true,
+        "294440": false,
+        "294441": false
+      },
+      "evidence": [
+        "Identical authored question 74445 in quiz 4326"
+      ],
+      "rationale": "Recover the unambiguous key from a valid authored copy with the same question and options."
+    },
+    {
+      "quizId": 4325,
+      "questionId": 74390,
+      "beforeSha256": "947df520a73060fb4d42f664a9d75bb32148f91f805bf366debae08be4f0db25",
+      "type": "single_choice",
+      "flags": {
+        "294442": true,
+        "294443": false,
+        "294444": false,
+        "294445": false
+      },
+      "evidence": [
+        "Identical authored question 74446 in quiz 4326"
+      ],
+      "rationale": "Recover the unambiguous key from a valid authored copy with the same question and options."
+    },
+    {
+      "quizId": 4325,
+      "questionId": 74391,
+      "beforeSha256": "693cb0d067f7c602dbdaff2c90bad0c3877169b35426686d384a411a5de5229a",
+      "type": "single_choice",
+      "flags": {
+        "294446": false,
+        "294447": false,
+        "294448": true,
+        "294449": false
+      },
+      "evidence": [
+        "Identical authored question 74447 in quiz 4326"
+      ],
+      "rationale": "Recover the unambiguous key from a valid authored copy with the same question and options."
+    },
+    {
+      "quizId": 4325,
+      "questionId": 74392,
+      "beforeSha256": "44421c7e8c652063370057005448062071d1503f65c1e78462e9937ede9ad2a5",
+      "type": "single_choice",
+      "flags": {
+        "294450": true,
+        "294451": false,
+        "294452": false,
+        "294453": false
+      },
+      "evidence": [
+        "Identical authored question 74448 in quiz 4326"
+      ],
+      "rationale": "Recover the unambiguous key from a valid authored copy with the same question and options."
+    },
+    {
+      "quizId": 4325,
+      "questionId": 74393,
+      "beforeSha256": "9acf27c2608c4d7f18ffee21eb938f2c1fd4a993b8dbe3f39594167c78054a18",
+      "type": "single_choice",
+      "flags": {
+        "294454": false,
+        "294455": false,
+        "294456": true,
+        "294457": false
+      },
+      "evidence": [
+        "Identical authored question 74449 in quiz 4326"
+      ],
+      "rationale": "Recover the unambiguous key from a valid authored copy with the same question and options."
+    },
+    {
+      "quizId": 4325,
+      "questionId": 74394,
+      "beforeSha256": "ce0decf870d2b0b55db4292cb6bf640771af05f00053031885202eb1ce2e3e8b",
+      "type": "single_choice",
+      "flags": {
+        "294458": true,
+        "294459": false,
+        "294460": false,
+        "294461": false
+      },
+      "evidence": [
+        "Identical authored question 74450 in quiz 4326"
+      ],
+      "rationale": "Recover the unambiguous key from a valid authored copy with the same question and options."
+    },
+    {
+      "quizId": 4325,
+      "questionId": 74395,
+      "beforeSha256": "0c40a687c811c27374769cda2e7a44199f77361f74715e2f2d5be8a893b1c05b",
+      "type": "single_choice",
+      "flags": {
+        "294462": false,
+        "294463": false,
+        "294464": false,
+        "294465": true
+      },
+      "evidence": [
+        "Identical authored question 74451 in quiz 4326"
+      ],
+      "rationale": "Recover the unambiguous key from a valid authored copy with the same question and options."
+    },
+    {
+      "quizId": 4325,
+      "questionId": 74396,
+      "beforeSha256": "aa108462a73ba40690ff0c06626e6be0739d0e34dda06dd2ce71ffc3156d21e4",
+      "type": "single_choice",
+      "flags": {
+        "294466": false,
+        "294467": true,
+        "294468": false,
+        "294469": false
+      },
+      "evidence": [
+        "Identical authored question 74452 in quiz 4326"
+      ],
+      "rationale": "Recover the unambiguous key from a valid authored copy with the same question and options."
+    },
+    {
+      "quizId": 4325,
+      "questionId": 74397,
+      "beforeSha256": "b234df45dacc64b58292c2f6fdd9a784f80060f1caf8f890d3bfdc152b7c02d8",
+      "evidence": [
+        "https://www.cim.co.uk/content-insights/articles/what-is-marketing/",
+        "Content reviewed against the question scenario and alternatives."
+      ],
+      "rationale": "Modern marketing identifies and satisfies needs while creating organisational value.",
+      "flags": {
+        "294470": false,
+        "294471": true,
+        "294472": false,
+        "294473": false
+      }
+    },
+    {
+      "quizId": 4325,
+      "questionId": 74398,
+      "beforeSha256": "b76528701c5cdf1dba6020e06682edb4bba400718b7d4b285f95363a64dd1ca8",
+      "evidence": [
+        "https://www.cim.co.uk/content-insights/articles/what-is-marketing/",
+        "Content reviewed against the question scenario and alternatives."
+      ],
+      "rationale": "Insight, competition and long-term objectives describe strategic market analysis.",
+      "flags": {
+        "294474": false,
+        "294475": false,
+        "294476": true,
+        "294477": false
+      }
+    },
+    {
+      "quizId": 4325,
+      "questionId": 74399,
+      "beforeSha256": "85606343d3451a85cf31ce23409da896f57923c998c30cefbc99b4313fb82bc7",
+      "evidence": [
+        "https://www.cim.co.uk/content-insights/articles/what-is-marketing/",
+        "Content reviewed against the question scenario and alternatives."
+      ],
+      "rationale": "Marketing shapes demand and sales converts it into transactions.",
+      "flags": {
+        "294478": true,
+        "294479": false,
+        "294480": false,
+        "294481": false
+      }
+    },
+    {
+      "quizId": 4325,
+      "questionId": 74400,
+      "beforeSha256": "ef2878cc51b7b861fb1bbe2756da76d2ef0572807ca2781976cc3b80ea03beff",
+      "evidence": [
+        "https://www.cim.co.uk/content-insights/articles/what-is-marketing/",
+        "Content reviewed against the question scenario and alternatives."
+      ],
+      "rationale": "The option follows the CIM management-process definition.",
+      "flags": {
+        "294482": false,
+        "294483": true,
+        "294484": false,
+        "294485": false
+      }
+    },
+    {
+      "quizId": 4325,
+      "questionId": 74401,
+      "beforeSha256": "f76cd9b2f67d3eded6431b68fe6ff4a0cab59e7a9d225aede71443dc44afd04a",
+      "type": "single_choice",
+      "flags": {
+        "294486": false,
+        "294487": true,
+        "294488": false,
+        "294489": false
+      },
+      "evidence": [
+        "Identical authored question 74457 in quiz 4326"
+      ],
+      "rationale": "Recover the unambiguous key from a valid authored copy with the same question and options."
+    },
+    {
+      "quizId": 4325,
+      "questionId": 74402,
+      "beforeSha256": "60a805d091c9022177c43262779489cc7f41c37750722aa46a6a61811d522541",
+      "type": "single_choice",
+      "flags": {
+        "294490": false,
+        "294491": true,
+        "294492": false,
+        "294493": false
+      },
+      "evidence": [
+        "Identical authored question 74458 in quiz 4326"
+      ],
+      "rationale": "Recover the unambiguous key from a valid authored copy with the same question and options."
+    },
+    {
+      "quizId": 4325,
+      "questionId": 74403,
+      "beforeSha256": "a290c4bb9c6637ea628de8fb01553c2f5e4d9aa893f58f4511d001c24397f069",
+      "type": "single_choice",
+      "flags": {
+        "294494": true,
+        "294495": false,
+        "294496": false,
+        "294497": false
+      },
+      "evidence": [
+        "Identical authored question 74459 in quiz 4326"
+      ],
+      "rationale": "Recover the unambiguous key from a valid authored copy with the same question and options."
+    },
+    {
+      "quizId": 4325,
+      "questionId": 74404,
+      "beforeSha256": "39ffd889d7bcd223ca77bf6a8a28e49148d9d4b78453632dd27dc7112128db5c",
+      "type": "single_choice",
+      "flags": {
+        "294498": true,
+        "294499": false,
+        "294500": false,
+        "294501": false
+      },
+      "evidence": [
+        "Identical authored question 74460 in quiz 4326"
+      ],
+      "rationale": "Recover the unambiguous key from a valid authored copy with the same question and options."
+    },
+    {
+      "quizId": 4326,
+      "questionId": 74425,
+      "beforeSha256": "21fcfc7c3860da526828075815b6060b106c1a64bbf8216b55785d3dd3b9e39d",
+      "evidence": [
+        "https://www.ibm.com/think/topics/big-data-analytics"
+      ],
+      "rationale": "Inaccurate, duplicated and incomplete CRM data damages veracity.",
+      "flags": {
+        "294582": false,
+        "294583": false,
+        "294584": false,
+        "294585": true
+      }
+    },
+    {
+      "quizId": 4326,
+      "questionId": 74426,
+      "beforeSha256": "9eb8288df83920045dfb3fa0378978cd985fcd62b92614c311f4def44fddab9a",
+      "evidence": [
+        "https://www.ibm.com/think/topics/big-data-analytics"
+      ],
+      "rationale": "Volume alone does not make data useful or predictive.",
+      "flags": {
+        "294586": false,
+        "294587": true,
+        "294588": false,
+        "294589": false
+      }
+    },
+    {
+      "quizId": 4326,
+      "questionId": 74427,
+      "beforeSha256": "46ede6f02a269a679a5143220a6f4697316795e041c9bf270fe147279a8470bf",
+      "evidence": [
+        "https://www.ibm.com/think/topics/big-data-analytics"
+      ],
+      "rationale": "The delayed report has a data-timeliness/velocity problem.",
+      "flags": {
+        "294590": false,
+        "294591": true,
+        "294592": false,
+        "294593": false
+      }
+    },
+    {
+      "quizId": 4326,
+      "questionId": 74428,
+      "beforeSha256": "ee4bc6e8c27640d1500fca43ceb417c3aead25fd144fd06da7c2f6d3696c8e26",
+      "evidence": [
+        "https://www.ibm.com/think/topics/big-data-analytics"
+      ],
+      "rationale": "Free-form review text is unstructured data.",
+      "flags": {
+        "294594": false,
+        "294595": true,
+        "294596": false,
+        "294597": false
+      }
+    },
+    {
+      "quizId": 4326,
+      "questionId": 74433,
+      "beforeSha256": "7e50eee2fe69e0f1cd1f49bf583deb2e123e174d90011010afd985eca001543c",
+      "evidence": [
+        "https://www.ibm.com/think/topics/data-quality"
+      ],
+      "rationale": "Foundational CRM data quality is a prerequisite for reliable rollout.",
+      "flags": {
+        "294614": true,
+        "294615": false,
+        "294616": false,
+        "294617": false
+      }
+    },
+    {
+      "quizId": 4326,
+      "questionId": 74434,
+      "beforeSha256": "c561a4464744e7b4cef2a205539a1df1a471abdca3929badc70eec660236c592",
+      "evidence": [
+        "https://www.ibm.com/think/topics/data-quality"
+      ],
+      "rationale": "Common definitions and consistent attribution are prerequisites for orchestration.",
+      "flags": {
+        "294618": true,
+        "294619": false,
+        "294620": false,
+        "294621": false
+      }
+    },
+    {
+      "quizId": 4326,
+      "questionId": 74435,
+      "beforeSha256": "547f4be56b0993000b9249283ea5ed16b606515e3c906fdbc02dfdc34649c72b",
+      "evidence": [
+        "https://www.ibm.com/think/topics/data-quality"
+      ],
+      "rationale": "Govern data quality instead of assuming more records improve accuracy.",
+      "flags": {
+        "294622": true,
+        "294623": false,
+        "294624": false,
+        "294625": false
+      }
+    },
+    {
+      "quizId": 4326,
+      "questionId": 74436,
+      "beforeSha256": "25ab5c7bd45d6b771c0c725ac2c5eceabd01e7d5a98dd86aef27d2f4d295c8a3",
+      "evidence": [
+        "https://www.ibm.com/think/topics/data-quality"
+      ],
+      "rationale": "Fix the actual data and journey problem before buying a new tool.",
+      "flags": {
+        "294626": true,
+        "294627": false,
+        "294628": false,
+        "294629": false
+      }
+    },
+    {
+      "quizId": 4326,
+      "questionId": 74441,
+      "beforeSha256": "dcc7ee7cc6a9fb4a95f13ee716037fe5dd25b7901c5955850b8b9939815e53bd",
+      "evidence": [
+        "https://www.cim.co.uk/content-insights/articles/what-is-marketing/",
+        "Content reviewed against the question scenario and alternatives."
+      ],
+      "rationale": "Assess the full customer journey rather than crediting one isolated touchpoint.",
+      "flags": {
+        "294646": false,
+        "294647": false,
+        "294648": true,
+        "294649": false
+      }
+    },
+    {
+      "quizId": 4326,
+      "questionId": 74442,
+      "beforeSha256": "d9c44190b7360e7a7f705ab63137fe4c989408004489924d120046099fa202af",
+      "evidence": [
+        "https://www.cim.co.uk/content-insights/articles/what-is-marketing/",
+        "Content reviewed against the question scenario and alternatives."
+      ],
+      "rationale": "Adjust relevance and timing in response to complaints and unsubscribes.",
+      "flags": {
+        "294650": false,
+        "294651": false,
+        "294652": true,
+        "294653": false
+      }
+    },
+    {
+      "quizId": 4326,
+      "questionId": 74443,
+      "beforeSha256": "adb0dc0cea8c71b969fb0414cb57a9172d3a3f77a5f2c624d96985640f13e4e5",
+      "evidence": [
+        "https://www.cim.co.uk/content-insights/articles/what-is-marketing/",
+        "Content reviewed against the question scenario and alternatives."
+      ],
+      "rationale": "Evaluate lead quality, expectations and retention as well as lead volume.",
+      "flags": {
+        "294654": false,
+        "294655": false,
+        "294656": false,
+        "294657": true
+      }
+    },
+    {
+      "quizId": 4326,
+      "questionId": 74444,
+      "beforeSha256": "f0bc72483fdacf4ebdaaa6b1436d75bef9e86ee4fda58301638c7a6d2626379f",
+      "evidence": [
+        "https://www.cim.co.uk/content-insights/articles/what-is-marketing/",
+        "Content reviewed against the question scenario and alternatives."
+      ],
+      "rationale": "Triangulate survey, behavioural and review evidence.",
+      "flags": {
+        "294658": false,
+        "294659": true,
+        "294660": false,
+        "294661": false
+      }
+    },
+    {
+      "quizId": 4326,
+      "questionId": 74453,
+      "beforeSha256": "a241aae13e50b5b3b790b95b86d70306f9ae45a0103872c1da21396141d3230a",
+      "evidence": [
+        "https://www.cim.co.uk/content-insights/articles/what-is-marketing/",
+        "Content reviewed against the question scenario and alternatives."
+      ],
+      "rationale": "Modern marketing identifies and satisfies needs while creating organisational value.",
+      "flags": {
+        "294694": false,
+        "294695": true,
+        "294696": false,
+        "294697": false
+      }
+    },
+    {
+      "quizId": 4326,
+      "questionId": 74454,
+      "beforeSha256": "23db22d3c897b9e2e70cda97bdf054ee11a9838777edd1e49572eb907f1e8246",
+      "evidence": [
+        "https://www.cim.co.uk/content-insights/articles/what-is-marketing/",
+        "Content reviewed against the question scenario and alternatives."
+      ],
+      "rationale": "Insight, competition and long-term objectives describe strategic market analysis.",
+      "flags": {
+        "294698": false,
+        "294699": false,
+        "294700": true,
+        "294701": false
+      }
+    },
+    {
+      "quizId": 4326,
+      "questionId": 74455,
+      "beforeSha256": "b3a29872d2c80bed90734c214e70637abd500479b9e88129b532cd53c7a73bef",
+      "evidence": [
+        "https://www.cim.co.uk/content-insights/articles/what-is-marketing/",
+        "Content reviewed against the question scenario and alternatives."
+      ],
+      "rationale": "Marketing shapes demand and sales converts it into transactions.",
+      "flags": {
+        "294702": true,
+        "294703": false,
+        "294704": false,
+        "294705": false
+      }
+    },
+    {
+      "quizId": 4326,
+      "questionId": 74456,
+      "beforeSha256": "77e6d74659d5266cceec01f897b05004d305e3a45fe58cdd6f64cbbd65f67c93",
+      "evidence": [
+        "https://www.cim.co.uk/content-insights/articles/what-is-marketing/",
+        "Content reviewed against the question scenario and alternatives."
+      ],
+      "rationale": "The option follows the CIM management-process definition.",
+      "flags": {
+        "294706": false,
+        "294707": true,
+        "294708": false,
+        "294709": false
+      }
+    },
+    {
+      "quizId": 4327,
+      "questionId": 74461,
+      "beforeSha256": "2a1024ebd85654073ac8e8da5026322075f1cba47c1253269cf26142c033232a",
+      "type": "single_choice",
+      "flags": {
+        "294726": false,
+        "294727": true,
+        "294728": false,
+        "294729": false
+      },
+      "evidence": [
+        "Identical authored question 74405 in quiz 4326"
+      ],
+      "rationale": "Recover the unambiguous key from a valid authored copy with the same question and options."
+    },
+    {
+      "quizId": 4327,
+      "questionId": 74462,
+      "beforeSha256": "c9a598c1504b5edfc6104c0220e7b575e936268802ccf3788cd454d7f06b8a4f",
+      "type": "single_choice",
+      "flags": {
+        "294730": false,
+        "294731": true,
+        "294732": false,
+        "294733": false
+      },
+      "evidence": [
+        "Identical authored question 74406 in quiz 4326"
+      ],
+      "rationale": "Recover the unambiguous key from a valid authored copy with the same question and options."
+    },
+    {
+      "quizId": 4327,
+      "questionId": 74463,
+      "beforeSha256": "81ebe73c393ab230d08bef2332e6ef2ed4194989754d6eb484ea4fd9ecef1124",
+      "type": "single_choice",
+      "flags": {
+        "294734": true,
+        "294735": false,
+        "294736": false,
+        "294737": false
+      },
+      "evidence": [
+        "Identical authored question 74407 in quiz 4326"
+      ],
+      "rationale": "Recover the unambiguous key from a valid authored copy with the same question and options."
+    },
+    {
+      "quizId": 4327,
+      "questionId": 74464,
+      "beforeSha256": "d524c03be7ccea221b092149cb0ebf84459704be58e127b3c4ecdd8d11ec6bec",
+      "type": "single_choice",
+      "flags": {
+        "294738": false,
+        "294739": true,
+        "294740": false,
+        "294741": false
+      },
+      "evidence": [
+        "Identical authored question 74408 in quiz 4326"
+      ],
+      "rationale": "Recover the unambiguous key from a valid authored copy with the same question and options."
+    },
+    {
+      "quizId": 4327,
+      "questionId": 74465,
+      "beforeSha256": "b86088ae622c0248712fc4f6c7b87178c06b645a4bfdd1e55a134b2ee0f8c4e2",
+      "type": "single_choice",
+      "flags": {
+        "294742": false,
+        "294743": true,
+        "294744": false,
+        "294745": false
+      },
+      "evidence": [
+        "Identical authored question 74409 in quiz 4326"
+      ],
+      "rationale": "Recover the unambiguous key from a valid authored copy with the same question and options."
+    },
+    {
+      "quizId": 4327,
+      "questionId": 74466,
+      "beforeSha256": "bdbecd415b1f76c1b9c64e670c09a9ee50f8e52df3368518d3dd578c64eb8787",
+      "type": "single_choice",
+      "flags": {
+        "294746": false,
+        "294747": true,
+        "294748": false,
+        "294749": false
+      },
+      "evidence": [
+        "Identical authored question 74410 in quiz 4326"
+      ],
+      "rationale": "Recover the unambiguous key from a valid authored copy with the same question and options."
+    },
+    {
+      "quizId": 4327,
+      "questionId": 74467,
+      "beforeSha256": "d32e15ac99dca904d2008d0b2350c5660c60c98f80ba583cafa9099cdfc9deb7",
+      "type": "single_choice",
+      "flags": {
+        "294750": false,
+        "294751": false,
+        "294752": true,
+        "294753": false
+      },
+      "evidence": [
+        "Identical authored question 74411 in quiz 4326"
+      ],
+      "rationale": "Recover the unambiguous key from a valid authored copy with the same question and options."
+    },
+    {
+      "quizId": 4327,
+      "questionId": 74468,
+      "beforeSha256": "5ef0bff9544f6457566c3efe15a52fe5dc77ae4405a5123c2c3d6b47bb9539ee",
+      "type": "single_choice",
+      "flags": {
+        "294754": false,
+        "294755": true,
+        "294756": false,
+        "294757": false
+      },
+      "evidence": [
+        "Identical authored question 74412 in quiz 4326"
+      ],
+      "rationale": "Recover the unambiguous key from a valid authored copy with the same question and options."
+    },
+    {
+      "quizId": 4327,
+      "questionId": 74469,
+      "beforeSha256": "939eecf2207da0fa6b1bf2a6a84a9366e2d7730afec6de07868d624840d0e518",
+      "type": "single_choice",
+      "flags": {
+        "294758": false,
+        "294759": true,
+        "294760": false,
+        "294761": false
+      },
+      "evidence": [
+        "Identical authored question 74413 in quiz 4326"
+      ],
+      "rationale": "Recover the unambiguous key from a valid authored copy with the same question and options."
+    },
+    {
+      "quizId": 4327,
+      "questionId": 74470,
+      "beforeSha256": "f5f28db28567ffc7be5d50b4768f510482856181721d8098fba3ac382b65d794",
+      "type": "single_choice",
+      "flags": {
+        "294762": false,
+        "294763": false,
+        "294764": true,
+        "294765": false
+      },
+      "evidence": [
+        "Identical authored question 74414 in quiz 4326"
+      ],
+      "rationale": "Recover the unambiguous key from a valid authored copy with the same question and options."
+    },
+    {
+      "quizId": 4327,
+      "questionId": 74471,
+      "beforeSha256": "efbcb1814e99d2ffc2364cc5a1ee3d6285ae70a4fdb66889f31f44148576e82b",
+      "type": "single_choice",
+      "flags": {
+        "294766": false,
+        "294767": false,
+        "294768": true,
+        "294769": false
+      },
+      "evidence": [
+        "Identical authored question 74415 in quiz 4326"
+      ],
+      "rationale": "Recover the unambiguous key from a valid authored copy with the same question and options."
+    },
+    {
+      "quizId": 4327,
+      "questionId": 74472,
+      "beforeSha256": "88e0156cd54cc530a80eb8fd1eb687779687a9e0cc12a90f56fd82163c0c2b80",
+      "type": "single_choice",
+      "flags": {
+        "294770": false,
+        "294771": true,
+        "294772": false,
+        "294773": false
+      },
+      "evidence": [
+        "Identical authored question 74416 in quiz 4326"
+      ],
+      "rationale": "Recover the unambiguous key from a valid authored copy with the same question and options."
+    },
+    {
+      "quizId": 4327,
+      "questionId": 74473,
+      "beforeSha256": "094167d56daa7c9457b0a54b29357af4fae091b621991a8b587b1401ba07409d",
+      "type": "single_choice",
+      "flags": {
+        "294774": false,
+        "294775": true,
+        "294776": false,
+        "294777": false
+      },
+      "evidence": [
+        "Identical authored question 74417 in quiz 4326"
+      ],
+      "rationale": "Recover the unambiguous key from a valid authored copy with the same question and options."
+    },
+    {
+      "quizId": 4327,
+      "questionId": 74474,
+      "beforeSha256": "1116e146794a9e1be672d21a21760ccdb7a834493f70d496d9e10f0ed2f54e66",
+      "type": "single_choice",
+      "flags": {
+        "294778": false,
+        "294779": true,
+        "294780": false,
+        "294781": false
+      },
+      "evidence": [
+        "Identical authored question 74418 in quiz 4326"
+      ],
+      "rationale": "Recover the unambiguous key from a valid authored copy with the same question and options."
+    },
+    {
+      "quizId": 4327,
+      "questionId": 74475,
+      "beforeSha256": "10674e3e6752ac206c800b657339ad6136afb1e03b16b01c39708a3bb4d2f738",
+      "type": "single_choice",
+      "flags": {
+        "294782": false,
+        "294783": true,
+        "294784": false,
+        "294785": false
+      },
+      "evidence": [
+        "Identical authored question 74419 in quiz 4326"
+      ],
+      "rationale": "Recover the unambiguous key from a valid authored copy with the same question and options."
+    },
+    {
+      "quizId": 4327,
+      "questionId": 74476,
+      "beforeSha256": "e6ec20c4a024518b8c02f3e29a44f7f6fa8a2012065c8b5498bc513a12b5514b",
+      "type": "single_choice",
+      "flags": {
+        "294786": false,
+        "294787": true,
+        "294788": false,
+        "294789": false
+      },
+      "evidence": [
+        "Identical authored question 74420 in quiz 4326"
+      ],
+      "rationale": "Recover the unambiguous key from a valid authored copy with the same question and options."
+    },
+    {
+      "quizId": 4327,
+      "questionId": 74477,
+      "beforeSha256": "ad361f25f7e0e19d72cae30943616fb7013260074a470503b38f7eed4c3023ba",
+      "type": "single_choice",
+      "flags": {
+        "294790": false,
+        "294791": false,
+        "294792": true,
+        "294793": false
+      },
+      "evidence": [
+        "Identical authored question 74421 in quiz 4326"
+      ],
+      "rationale": "Recover the unambiguous key from a valid authored copy with the same question and options."
+    },
+    {
+      "quizId": 4327,
+      "questionId": 74478,
+      "beforeSha256": "7b4d1c5f96fb028d6e276ff36e2f7488ae241fd2fcb28bb8ffa800fb64b625c6",
+      "type": "single_choice",
+      "flags": {
+        "294794": false,
+        "294795": true,
+        "294796": false,
+        "294797": false
+      },
+      "evidence": [
+        "Identical authored question 74422 in quiz 4326"
+      ],
+      "rationale": "Recover the unambiguous key from a valid authored copy with the same question and options."
+    },
+    {
+      "quizId": 4327,
+      "questionId": 74479,
+      "beforeSha256": "88f84606d41647deff75c31fe4a5697d8f5a581667f740fd0bc36a83ac7198b1",
+      "type": "single_choice",
+      "flags": {
+        "294798": false,
+        "294799": false,
+        "294800": true,
+        "294801": false
+      },
+      "evidence": [
+        "Identical authored question 74423 in quiz 4326"
+      ],
+      "rationale": "Recover the unambiguous key from a valid authored copy with the same question and options."
+    },
+    {
+      "quizId": 4327,
+      "questionId": 74480,
+      "beforeSha256": "d7c9844e7a44316e762c9ab3f505ecaa794c44bf3e72a5d214953ef7850fc1c3",
+      "type": "single_choice",
+      "flags": {
+        "294802": false,
+        "294803": false,
+        "294804": true,
+        "294805": false
+      },
+      "evidence": [
+        "Identical authored question 74424 in quiz 4326"
+      ],
+      "rationale": "Recover the unambiguous key from a valid authored copy with the same question and options."
+    },
+    {
+      "quizId": 4327,
+      "questionId": 74481,
+      "beforeSha256": "4f508877885f201d300a7b57e350c14205048b9096dc860d823ab6fe6d545d91",
+      "evidence": [
+        "https://www.ibm.com/think/topics/big-data-analytics"
+      ],
+      "rationale": "Inaccurate, duplicated and incomplete CRM data damages veracity.",
+      "flags": {
+        "294806": false,
+        "294807": false,
+        "294808": false,
+        "294809": true
+      }
+    },
+    {
+      "quizId": 4327,
+      "questionId": 74482,
+      "beforeSha256": "d1029640bff5a2b37b2b177ad177fa9e04549325117131593e2e68a7557b60b7",
+      "evidence": [
+        "https://www.ibm.com/think/topics/big-data-analytics"
+      ],
+      "rationale": "Volume alone does not make data useful or predictive.",
+      "flags": {
+        "294810": false,
+        "294811": true,
+        "294812": false,
+        "294813": false
+      }
+    },
+    {
+      "quizId": 4327,
+      "questionId": 74483,
+      "beforeSha256": "fec6bcc1e97da10401ec95979f1a6137a831320567bcb4b91c75448cc0500326",
+      "evidence": [
+        "https://www.ibm.com/think/topics/big-data-analytics"
+      ],
+      "rationale": "The delayed report has a data-timeliness/velocity problem.",
+      "flags": {
+        "294814": false,
+        "294815": true,
+        "294816": false,
+        "294817": false
+      }
+    },
+    {
+      "quizId": 4327,
+      "questionId": 74484,
+      "beforeSha256": "f43c3fcaad5325ef554f3b79b3b515626b35eb2526b1eb444922c7fd90c6069b",
+      "evidence": [
+        "https://www.ibm.com/think/topics/big-data-analytics"
+      ],
+      "rationale": "Free-form review text is unstructured data.",
+      "flags": {
+        "294818": false,
+        "294819": true,
+        "294820": false,
+        "294821": false
+      }
+    },
+    {
+      "quizId": 4327,
+      "questionId": 74485,
+      "beforeSha256": "0a34e5fe958bfb76698ccf5e807f65e9943d075e8880880dfed42d941c2e75d7",
+      "type": "single_choice",
+      "flags": {
+        "294822": false,
+        "294823": true,
+        "294824": false,
+        "294825": false
+      },
+      "evidence": [
+        "Identical authored question 74429 in quiz 4326"
+      ],
+      "rationale": "Recover the unambiguous key from a valid authored copy with the same question and options."
+    },
+    {
+      "quizId": 4327,
+      "questionId": 74486,
+      "beforeSha256": "19d41ee75ec12d224bb647109c8513ecaad1f2d1201d110798996971fe580071",
+      "type": "single_choice",
+      "flags": {
+        "294826": false,
+        "294827": false,
+        "294828": true,
+        "294829": false
+      },
+      "evidence": [
+        "Identical authored question 74430 in quiz 4326"
+      ],
+      "rationale": "Recover the unambiguous key from a valid authored copy with the same question and options."
+    },
+    {
+      "quizId": 4327,
+      "questionId": 74487,
+      "beforeSha256": "692e0fd142e3b01001377cab54672cdf3f62c2f3bfed60be871efb676edb7c15",
+      "type": "single_choice",
+      "flags": {
+        "294830": false,
+        "294831": false,
+        "294832": false,
+        "294833": true
+      },
+      "evidence": [
+        "Identical authored question 74431 in quiz 4326"
+      ],
+      "rationale": "Recover the unambiguous key from a valid authored copy with the same question and options."
+    },
+    {
+      "quizId": 4327,
+      "questionId": 74488,
+      "beforeSha256": "a181aa8db2d05e159d532a240d00dcbabc41afc5ac6b059344170c7e03112037",
+      "type": "single_choice",
+      "flags": {
+        "294834": true,
+        "294835": false,
+        "294836": false,
+        "294837": false
+      },
+      "evidence": [
+        "Identical authored question 74432 in quiz 4326"
+      ],
+      "rationale": "Recover the unambiguous key from a valid authored copy with the same question and options."
+    },
+    {
+      "quizId": 4327,
+      "questionId": 74489,
+      "beforeSha256": "55eebe262592a0137e3000882e223c4f50e6ca1f6fe3de3b0c18d97333bd9d17",
+      "evidence": [
+        "https://www.ibm.com/think/topics/data-quality"
+      ],
+      "rationale": "Foundational CRM data quality is a prerequisite for reliable rollout.",
+      "flags": {
+        "294838": true,
+        "294839": false,
+        "294840": false,
+        "294841": false
+      }
+    },
+    {
+      "quizId": 4327,
+      "questionId": 74490,
+      "beforeSha256": "269535990ddfb47e7e8a022216f90c75eb728963488973103ad3f572ac7c508e",
+      "evidence": [
+        "https://www.ibm.com/think/topics/data-quality"
+      ],
+      "rationale": "Common definitions and consistent attribution are prerequisites for orchestration.",
+      "flags": {
+        "294842": true,
+        "294843": false,
+        "294844": false,
+        "294845": false
+      }
+    },
+    {
+      "quizId": 4327,
+      "questionId": 74491,
+      "beforeSha256": "625de1eea334a30973825bac3bf0522f25e6e67705284d4ec9c94dbee42362f4",
+      "evidence": [
+        "https://www.ibm.com/think/topics/data-quality"
+      ],
+      "rationale": "Govern data quality instead of assuming more records improve accuracy.",
+      "flags": {
+        "294846": true,
+        "294847": false,
+        "294848": false,
+        "294849": false
+      }
+    },
+    {
+      "quizId": 4327,
+      "questionId": 74492,
+      "beforeSha256": "83f77d21be371f2d957966c7326f2b26d62d6fa35a516a255a0d6e4b0494252b",
+      "evidence": [
+        "https://www.ibm.com/think/topics/data-quality"
+      ],
+      "rationale": "Fix the actual data and journey problem before buying a new tool.",
+      "flags": {
+        "294850": true,
+        "294851": false,
+        "294852": false,
+        "294853": false
+      }
+    },
+    {
+      "quizId": 4327,
+      "questionId": 74493,
+      "beforeSha256": "0cbbf2a8200e1426236ca057f9177ff2918a4169c12d40f9b38cd6ea535b12dc",
+      "type": "single_choice",
+      "flags": {
+        "294854": false,
+        "294855": false,
+        "294856": true,
+        "294857": false
+      },
+      "evidence": [
+        "Identical authored question 74437 in quiz 4326"
+      ],
+      "rationale": "Recover the unambiguous key from a valid authored copy with the same question and options."
+    },
+    {
+      "quizId": 4327,
+      "questionId": 74494,
+      "beforeSha256": "a8271741b93a03f480e55d87608e2fdf03a0a39663e027cc82f20f46f5348e4c",
+      "type": "single_choice",
+      "flags": {
+        "294858": false,
+        "294859": false,
+        "294860": false,
+        "294861": true
+      },
+      "evidence": [
+        "Identical authored question 74438 in quiz 4326"
+      ],
+      "rationale": "Recover the unambiguous key from a valid authored copy with the same question and options."
+    },
+    {
+      "quizId": 4327,
+      "questionId": 74495,
+      "beforeSha256": "c55ef21fd37deab991f3b94fb71181476dfd94858e849c4e455560fa1cf66b38",
+      "type": "single_choice",
+      "flags": {
+        "294862": false,
+        "294863": false,
+        "294864": true,
+        "294865": false
+      },
+      "evidence": [
+        "Identical authored question 74439 in quiz 4326"
+      ],
+      "rationale": "Recover the unambiguous key from a valid authored copy with the same question and options."
+    },
+    {
+      "quizId": 4327,
+      "questionId": 74496,
+      "beforeSha256": "30ac9a8e3828e6affe374e2f6fef56ac70152b170227d7790d8dee7e314d6093",
+      "type": "single_choice",
+      "flags": {
+        "294866": false,
+        "294867": false,
+        "294868": true,
+        "294869": false
+      },
+      "evidence": [
+        "Identical authored question 74440 in quiz 4326"
+      ],
+      "rationale": "Recover the unambiguous key from a valid authored copy with the same question and options."
+    },
+    {
+      "quizId": 4327,
+      "questionId": 74497,
+      "beforeSha256": "2ff2eb4b27173dad277ff2d112112ba503c5bca5ec118026a2e4bd20cac8a54b",
+      "evidence": [
+        "https://www.cim.co.uk/content-insights/articles/what-is-marketing/",
+        "Content reviewed against the question scenario and alternatives."
+      ],
+      "rationale": "Assess the full customer journey rather than crediting one isolated touchpoint.",
+      "flags": {
+        "294870": false,
+        "294871": false,
+        "294872": true,
+        "294873": false
+      }
+    },
+    {
+      "quizId": 4327,
+      "questionId": 74498,
+      "beforeSha256": "978a22d342e2df200a13fe83141b863cdb818740e5de779860ab333ac8dc5fe2",
+      "evidence": [
+        "https://www.cim.co.uk/content-insights/articles/what-is-marketing/",
+        "Content reviewed against the question scenario and alternatives."
+      ],
+      "rationale": "Adjust relevance and timing in response to complaints and unsubscribes.",
+      "flags": {
+        "294874": false,
+        "294875": false,
+        "294876": true,
+        "294877": false
+      }
+    },
+    {
+      "quizId": 4327,
+      "questionId": 74499,
+      "beforeSha256": "5d9d06dce62983d45cb41a684a73956926bbdd2aa54307c57632fe678b04b013",
+      "evidence": [
+        "https://www.cim.co.uk/content-insights/articles/what-is-marketing/",
+        "Content reviewed against the question scenario and alternatives."
+      ],
+      "rationale": "Evaluate lead quality, expectations and retention as well as lead volume.",
+      "flags": {
+        "294878": false,
+        "294879": false,
+        "294880": false,
+        "294881": true
+      }
+    },
+    {
+      "quizId": 4327,
+      "questionId": 74500,
+      "beforeSha256": "1f50c7a5781d09a6f42990aa18e1df6475437ec0a796c892c1c830830812982d",
+      "evidence": [
+        "https://www.cim.co.uk/content-insights/articles/what-is-marketing/",
+        "Content reviewed against the question scenario and alternatives."
+      ],
+      "rationale": "Triangulate survey, behavioural and review evidence.",
+      "flags": {
+        "294882": false,
+        "294883": true,
+        "294884": false,
+        "294885": false
+      }
+    },
+    {
+      "quizId": 4327,
+      "questionId": 74501,
+      "beforeSha256": "95a22e1e5754f353b3072cb57044b1f496d9d4a73058a7db04db0569862be076",
+      "type": "single_choice",
+      "flags": {
+        "294886": false,
+        "294887": true,
+        "294888": false,
+        "294889": false
+      },
+      "evidence": [
+        "Identical authored question 74445 in quiz 4326"
+      ],
+      "rationale": "Recover the unambiguous key from a valid authored copy with the same question and options."
+    },
+    {
+      "quizId": 4327,
+      "questionId": 74502,
+      "beforeSha256": "2ae16bd3516b37bb39f75a8e2884e3177078dac34673cd51fd308044645343c4",
+      "type": "single_choice",
+      "flags": {
+        "294890": true,
+        "294891": false,
+        "294892": false,
+        "294893": false
+      },
+      "evidence": [
+        "Identical authored question 74446 in quiz 4326"
+      ],
+      "rationale": "Recover the unambiguous key from a valid authored copy with the same question and options."
+    },
+    {
+      "quizId": 4327,
+      "questionId": 74503,
+      "beforeSha256": "ad1f97c8a3549571fb3e7a3823e28652211277f2b2cc6653e52e6335b636e9a7",
+      "type": "single_choice",
+      "flags": {
+        "294894": false,
+        "294895": false,
+        "294896": true,
+        "294897": false
+      },
+      "evidence": [
+        "Identical authored question 74447 in quiz 4326"
+      ],
+      "rationale": "Recover the unambiguous key from a valid authored copy with the same question and options."
+    },
+    {
+      "quizId": 4327,
+      "questionId": 74504,
+      "beforeSha256": "aada55a1cd77cbfc4443755e08c73299c5c55f1bb87110bdedaa2baeec16d0c4",
+      "type": "single_choice",
+      "flags": {
+        "294898": true,
+        "294899": false,
+        "294900": false,
+        "294901": false
+      },
+      "evidence": [
+        "Identical authored question 74448 in quiz 4326"
+      ],
+      "rationale": "Recover the unambiguous key from a valid authored copy with the same question and options."
+    },
+    {
+      "quizId": 4327,
+      "questionId": 74505,
+      "beforeSha256": "a40d14a90c9542a3e536a071da91e15706802340e80570c87d7d0f52a5bed9af",
+      "type": "single_choice",
+      "flags": {
+        "294902": false,
+        "294903": false,
+        "294904": true,
+        "294905": false
+      },
+      "evidence": [
+        "Identical authored question 74449 in quiz 4326"
+      ],
+      "rationale": "Recover the unambiguous key from a valid authored copy with the same question and options."
+    },
+    {
+      "quizId": 4327,
+      "questionId": 74506,
+      "beforeSha256": "259fc950f035757f1a1dc4437639e2cdfce2e3ae0945b0b6f262ae5b02e050ab",
+      "type": "single_choice",
+      "flags": {
+        "294906": true,
+        "294907": false,
+        "294908": false,
+        "294909": false
+      },
+      "evidence": [
+        "Identical authored question 74450 in quiz 4326"
+      ],
+      "rationale": "Recover the unambiguous key from a valid authored copy with the same question and options."
+    },
+    {
+      "quizId": 4327,
+      "questionId": 74507,
+      "beforeSha256": "f1482e8342fd00e902348da7d0136e5fba9e7d8cd348e7b6688aa2fe3b20f70e",
+      "type": "single_choice",
+      "flags": {
+        "294910": false,
+        "294911": false,
+        "294912": false,
+        "294913": true
+      },
+      "evidence": [
+        "Identical authored question 74451 in quiz 4326"
+      ],
+      "rationale": "Recover the unambiguous key from a valid authored copy with the same question and options."
+    },
+    {
+      "quizId": 4327,
+      "questionId": 74508,
+      "beforeSha256": "6d07444ac4457bc173a584c43567e1266099ab839568c8fc6e3b04038843171d",
+      "type": "single_choice",
+      "flags": {
+        "294914": false,
+        "294915": true,
+        "294916": false,
+        "294917": false
+      },
+      "evidence": [
+        "Identical authored question 74452 in quiz 4326"
+      ],
+      "rationale": "Recover the unambiguous key from a valid authored copy with the same question and options."
+    },
+    {
+      "quizId": 4327,
+      "questionId": 74509,
+      "beforeSha256": "0c109f67b55a9684dfae95755275c4a756df840090a1b3c8b0c46d5804b8bc4c",
+      "evidence": [
+        "https://www.cim.co.uk/content-insights/articles/what-is-marketing/",
+        "Content reviewed against the question scenario and alternatives."
+      ],
+      "rationale": "Modern marketing identifies and satisfies needs while creating organisational value.",
+      "flags": {
+        "294918": false,
+        "294919": true,
+        "294920": false,
+        "294921": false
+      }
+    },
+    {
+      "quizId": 4327,
+      "questionId": 74510,
+      "beforeSha256": "1f0211e34dc13833d36ec442cb121ae31d2b3a351855fe32491f7ad3d30313eb",
+      "evidence": [
+        "https://www.cim.co.uk/content-insights/articles/what-is-marketing/",
+        "Content reviewed against the question scenario and alternatives."
+      ],
+      "rationale": "Insight, competition and long-term objectives describe strategic market analysis.",
+      "flags": {
+        "294922": false,
+        "294923": false,
+        "294924": true,
+        "294925": false
+      }
+    },
+    {
+      "quizId": 4327,
+      "questionId": 74511,
+      "beforeSha256": "e911113aa922c34b0de41435ae9585ea4be33948612a1a82c0d9e3a44779345b",
+      "evidence": [
+        "https://www.cim.co.uk/content-insights/articles/what-is-marketing/",
+        "Content reviewed against the question scenario and alternatives."
+      ],
+      "rationale": "Marketing shapes demand and sales converts it into transactions.",
+      "flags": {
+        "294926": true,
+        "294927": false,
+        "294928": false,
+        "294929": false
+      }
+    },
+    {
+      "quizId": 4327,
+      "questionId": 74512,
+      "beforeSha256": "ff5c335a94a5bd409123a35b3df83128e0e162fde54705a7b7f09a612a5e8f65",
+      "evidence": [
+        "https://www.cim.co.uk/content-insights/articles/what-is-marketing/",
+        "Content reviewed against the question scenario and alternatives."
+      ],
+      "rationale": "The option follows the CIM management-process definition.",
+      "flags": {
+        "294930": false,
+        "294931": true,
+        "294932": false,
+        "294933": false
+      }
+    },
+    {
+      "quizId": 4327,
+      "questionId": 74513,
+      "beforeSha256": "1d87c5af9da83d8c1795a5e3ec09f28a871fdddb6300c9166af471530ffe9b22",
+      "type": "single_choice",
+      "flags": {
+        "294934": false,
+        "294935": true,
+        "294936": false,
+        "294937": false
+      },
+      "evidence": [
+        "Identical authored question 74457 in quiz 4326"
+      ],
+      "rationale": "Recover the unambiguous key from a valid authored copy with the same question and options."
+    },
+    {
+      "quizId": 4327,
+      "questionId": 74514,
+      "beforeSha256": "12a77a5c616ad08c5415fe5288a13c0d14fcad5783292cc5bb21583fbb749470",
+      "type": "single_choice",
+      "flags": {
+        "294938": false,
+        "294939": true,
+        "294940": false,
+        "294941": false
+      },
+      "evidence": [
+        "Identical authored question 74458 in quiz 4326"
+      ],
+      "rationale": "Recover the unambiguous key from a valid authored copy with the same question and options."
+    },
+    {
+      "quizId": 4327,
+      "questionId": 74515,
+      "beforeSha256": "9361c05d0ef02e82568b038c3773efb7d64ab0fee2d125094e5c90f3658a715a",
+      "type": "single_choice",
+      "flags": {
+        "294942": true,
+        "294943": false,
+        "294944": false,
+        "294945": false
+      },
+      "evidence": [
+        "Identical authored question 74459 in quiz 4326"
+      ],
+      "rationale": "Recover the unambiguous key from a valid authored copy with the same question and options."
+    },
+    {
+      "quizId": 4327,
+      "questionId": 74516,
+      "beforeSha256": "d1c219fef5ca6802f30cc4ca3ff5a0cdb0d5a0fc07cf1c2a2b818496810b943f",
+      "type": "single_choice",
+      "flags": {
+        "294946": true,
+        "294947": false,
+        "294948": false,
+        "294949": false
+      },
+      "evidence": [
+        "Identical authored question 74460 in quiz 4326"
+      ],
+      "rationale": "Recover the unambiguous key from a valid authored copy with the same question and options."
+    },
+    {
+      "quizId": 4328,
+      "questionId": 74520,
+      "beforeSha256": "c91033183b1dc387f2636b92ca17063b0bb3977c3c3cd5b6d2b69416cd05dd8b",
+      "type": "matching",
+      "flags": {},
+      "evidence": [
+        "Identical authored question 96668 in quiz 5636"
+      ],
+      "rationale": "Recover the unambiguous key from a valid authored copy with the same question and options.",
+      "additions": [
+        {
+          "text": "200 -> OK",
+          "isCorrect": true
+        },
+        {
+          "text": "400 -> Bad Request",
+          "isCorrect": true
+        },
+        {
+          "text": "403 -> Forbidden",
+          "isCorrect": true
+        },
+        {
+          "text": "404 -> Not Found",
+          "isCorrect": true
+        }
+      ]
+    },
+    {
+      "quizId": 4328,
+      "questionId": 74521,
+      "beforeSha256": "4f215f6861b80f75e28bb1e67c3a8a01855cb4c18bc13930c8cda657b708167d",
+      "type": "image_matching",
+      "flags": {},
+      "evidence": [
+        "Identical authored question 96669 in quiz 5636"
+      ],
+      "rationale": "Recover the unambiguous key from a valid authored copy with the same question and options. Render the three geometric shapes inline because the reference uses missing relative image files.",
+      "additions": [
+        {
+          "text": "{\"kind\":\"image_matching_pair\",\"imageUrl\":\"data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAxMDAgMTAwIj48ZyBmaWxsPSIjNmQyOGQ5Ij48Y2lyY2xlIGN4PSI1MCIgY3k9IjUwIiByPSIzNSIvPjwvZz48L3N2Zz4=\",\"label\":\"Image A\",\"match\":\"Circle\"}",
+          "isCorrect": true
+        },
+        {
+          "text": "{\"kind\":\"image_matching_pair\",\"imageUrl\":\"data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAxMDAgMTAwIj48ZyBmaWxsPSIjNmQyOGQ5Ij48cmVjdCB4PSIxNSIgeT0iMTUiIHdpZHRoPSI3MCIgaGVpZ2h0PSI3MCIvPjwvZz48L3N2Zz4=\",\"label\":\"Image B\",\"match\":\"Square\"}",
+          "isCorrect": true
+        },
+        {
+          "text": "{\"kind\":\"image_matching_pair\",\"imageUrl\":\"data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAxMDAgMTAwIj48ZyBmaWxsPSIjNmQyOGQ5Ij48cG9seWdvbiBwb2ludHM9IjUwLDEyIDkwLDg1IDEwLDg1Ii8+PC9nPjwvc3ZnPg==\",\"label\":\"Image C\",\"match\":\"Triangle\"}",
+          "isCorrect": true
+        }
+      ]
+    },
+    {
+      "quizId": 4328,
+      "questionId": 74522,
+      "beforeSha256": "43967b6d6894be429cb9a74314884037329119b7dd27172d097fb3dc93cdc981",
+      "type": "keywords",
+      "flags": {},
+      "evidence": [
+        "Identical authored question 96670 in quiz 5636"
+      ],
+      "rationale": "Recover the unambiguous key from a valid authored copy with the same question and options.",
+      "additions": [
+        {
+          "text": "red",
+          "isCorrect": true
+        },
+        {
+          "text": "amber",
+          "isCorrect": true
+        },
+        {
+          "text": "green",
+          "isCorrect": true
+        }
+      ]
+    },
+    {
+      "quizId": 4328,
+      "questionId": 74523,
+      "beforeSha256": "f65a4f5c321290e52f4170083bdcb38853c3b5ed56c1baf1006a2a61384a1bfe",
+      "type": "fill_gap",
+      "flags": {},
+      "evidence": [
+        "Identical authored question 96671 in quiz 5636"
+      ],
+      "rationale": "Recover the unambiguous key from a valid authored copy with the same question and options.",
+      "additions": [
+        {
+          "text": "answer",
+          "isCorrect": true
+        },
+        {
+          "text": "answer key",
+          "isCorrect": true
+        }
+      ]
+    },
+    {
+      "quizId": 4328,
+      "questionId": 74524,
+      "beforeSha256": "3850973c0c92f9ea60cfb38c01dcec6208dc7d12de559627fe968a0a681ce883",
+      "type": "ordering",
+      "flags": {},
+      "evidence": [
+        "Identical authored question 96672 in quiz 5636"
+      ],
+      "rationale": "Recover the unambiguous key from a valid authored copy with the same question and options.",
+      "additions": [
+        {
+          "text": "Open the published quiz",
+          "isCorrect": true
+        },
+        {
+          "text": "Choose or enter answers",
+          "isCorrect": true
+        },
+        {
+          "text": "Submit the quiz",
+          "isCorrect": true
+        },
+        {
+          "text": "Review the result or feedback",
+          "isCorrect": true
+        }
+      ]
+    },
+    {
+      "quizId": 4330,
+      "questionId": 74535,
+      "beforeSha256": "74feb767a3720847684085bda1ee180f80ec0ffd66b2e321f075f15e38b720a1",
+      "type": "single_choice",
+      "flags": {
+        "295000": false,
+        "295001": true,
+        "295002": false,
+        "295003": false
+      },
+      "evidence": [
+        "Identical authored question 74405 in quiz 4326"
+      ],
+      "rationale": "Recover the unambiguous key from a valid authored copy with the same question and options."
+    },
+    {
+      "quizId": 4330,
+      "questionId": 74536,
+      "beforeSha256": "0948972829d6d0330fedac9d28c01886f10e82e6716594d39e77917f89669a34",
+      "type": "single_choice",
+      "flags": {
+        "295004": false,
+        "295005": true,
+        "295006": false,
+        "295007": false
+      },
+      "evidence": [
+        "Identical authored question 74406 in quiz 4326"
+      ],
+      "rationale": "Recover the unambiguous key from a valid authored copy with the same question and options."
+    },
+    {
+      "quizId": 4330,
+      "questionId": 74537,
+      "beforeSha256": "58b397a38012130ecaeb946fa738ac386a17a8280e666b7a41359a712016811c",
+      "type": "single_choice",
+      "flags": {
+        "295008": true,
+        "295009": false,
+        "295010": false,
+        "295011": false
+      },
+      "evidence": [
+        "Identical authored question 74407 in quiz 4326"
+      ],
+      "rationale": "Recover the unambiguous key from a valid authored copy with the same question and options."
+    },
+    {
+      "quizId": 4330,
+      "questionId": 74538,
+      "beforeSha256": "926cbcf7cbaa124f672f9f6a6bdd04974e6524566be830acead841fc17493732",
+      "type": "single_choice",
+      "flags": {
+        "295012": false,
+        "295013": true,
+        "295014": false,
+        "295015": false
+      },
+      "evidence": [
+        "Identical authored question 74408 in quiz 4326"
+      ],
+      "rationale": "Recover the unambiguous key from a valid authored copy with the same question and options."
+    },
+    {
+      "quizId": 4330,
+      "questionId": 74539,
+      "beforeSha256": "c652f8dde9f4909cd5f99a38af0e36f14085b4b159a1b2986b655c91f5eb0b15",
+      "type": "single_choice",
+      "flags": {
+        "295016": false,
+        "295017": true,
+        "295018": false,
+        "295019": false
+      },
+      "evidence": [
+        "Identical authored question 74409 in quiz 4326"
+      ],
+      "rationale": "Recover the unambiguous key from a valid authored copy with the same question and options."
+    },
+    {
+      "quizId": 4330,
+      "questionId": 74540,
+      "beforeSha256": "2f872ee0d12d3d9f3a59e5dff0f10a2d9ba89a8287959e1b3ec3730ddbc3eb38",
+      "type": "single_choice",
+      "flags": {
+        "295020": false,
+        "295021": true,
+        "295022": false,
+        "295023": false
+      },
+      "evidence": [
+        "Identical authored question 74410 in quiz 4326"
+      ],
+      "rationale": "Recover the unambiguous key from a valid authored copy with the same question and options."
+    },
+    {
+      "quizId": 4330,
+      "questionId": 74541,
+      "beforeSha256": "f8b142065b5b1c5aaada3f68d7187c149784db19034a7956dcd0a8f4efa31df8",
+      "type": "single_choice",
+      "flags": {
+        "295024": false,
+        "295025": false,
+        "295026": true,
+        "295027": false
+      },
+      "evidence": [
+        "Identical authored question 74411 in quiz 4326"
+      ],
+      "rationale": "Recover the unambiguous key from a valid authored copy with the same question and options."
+    },
+    {
+      "quizId": 4330,
+      "questionId": 74542,
+      "beforeSha256": "23e18a35b467a6907c98431fbfe7a50a96d5a4fcf6b5109863cd92b3a6ccb33b",
+      "type": "single_choice",
+      "flags": {
+        "295028": false,
+        "295029": true,
+        "295030": false,
+        "295031": false
+      },
+      "evidence": [
+        "Identical authored question 74412 in quiz 4326"
+      ],
+      "rationale": "Recover the unambiguous key from a valid authored copy with the same question and options."
+    },
+    {
+      "quizId": 4330,
+      "questionId": 74543,
+      "beforeSha256": "1f1eb4bfdfc5d0ea4b9ea90bb4f51217d6615f2856eb96b9fb7d908a34920e60",
+      "type": "single_choice",
+      "flags": {
+        "295032": false,
+        "295033": true,
+        "295034": false,
+        "295035": false
+      },
+      "evidence": [
+        "Identical authored question 74413 in quiz 4326"
+      ],
+      "rationale": "Recover the unambiguous key from a valid authored copy with the same question and options."
+    },
+    {
+      "quizId": 4330,
+      "questionId": 74544,
+      "beforeSha256": "80370966390e79730a81562bcd514ed0d5e1780fb6f2c021b05681decff21b45",
+      "type": "single_choice",
+      "flags": {
+        "295036": false,
+        "295037": false,
+        "295038": true,
+        "295039": false
+      },
+      "evidence": [
+        "Identical authored question 74414 in quiz 4326"
+      ],
+      "rationale": "Recover the unambiguous key from a valid authored copy with the same question and options."
+    },
+    {
+      "quizId": 4330,
+      "questionId": 74545,
+      "beforeSha256": "83d732606dfd97fbcb0cdd9688bb0d10089a1371f13a2bdc9538ba76d7b637dc",
+      "type": "single_choice",
+      "flags": {
+        "295040": false,
+        "295041": false,
+        "295042": true,
+        "295043": false
+      },
+      "evidence": [
+        "Identical authored question 74415 in quiz 4326"
+      ],
+      "rationale": "Recover the unambiguous key from a valid authored copy with the same question and options."
+    },
+    {
+      "quizId": 4330,
+      "questionId": 74546,
+      "beforeSha256": "1b31764f525999b0c42ccb67e1fb8feb3b5028b663e65c27fb2fe8d70a82681a",
+      "type": "single_choice",
+      "flags": {
+        "295044": false,
+        "295045": true,
+        "295046": false,
+        "295047": false
+      },
+      "evidence": [
+        "Identical authored question 74416 in quiz 4326"
+      ],
+      "rationale": "Recover the unambiguous key from a valid authored copy with the same question and options."
+    },
+    {
+      "quizId": 4330,
+      "questionId": 74547,
+      "beforeSha256": "12e29d6e44ddadd387600a947e7c369ae4de8b2f91b3a086ac1a3d70102c6be0",
+      "type": "single_choice",
+      "flags": {
+        "295048": false,
+        "295049": true,
+        "295050": false,
+        "295051": false
+      },
+      "evidence": [
+        "Identical authored question 74417 in quiz 4326"
+      ],
+      "rationale": "Recover the unambiguous key from a valid authored copy with the same question and options."
+    },
+    {
+      "quizId": 4330,
+      "questionId": 74548,
+      "beforeSha256": "28712e0ff957b7f89ac43268660ffc1220a2f013d6f615ccd00b6fc8feae4b30",
+      "type": "single_choice",
+      "flags": {
+        "295052": false,
+        "295053": true,
+        "295054": false,
+        "295055": false
+      },
+      "evidence": [
+        "Identical authored question 74418 in quiz 4326"
+      ],
+      "rationale": "Recover the unambiguous key from a valid authored copy with the same question and options."
+    },
+    {
+      "quizId": 4330,
+      "questionId": 74549,
+      "beforeSha256": "3f63c132c9a22e4acacce8c586a8e5978a730c9cd11577d35f77ebd012fc2494",
+      "type": "single_choice",
+      "flags": {
+        "295056": false,
+        "295057": true,
+        "295058": false,
+        "295059": false
+      },
+      "evidence": [
+        "Identical authored question 74419 in quiz 4326"
+      ],
+      "rationale": "Recover the unambiguous key from a valid authored copy with the same question and options."
+    },
+    {
+      "quizId": 4330,
+      "questionId": 74550,
+      "beforeSha256": "5c369a43b2696d070a19f52483b524b7c45fec6ebb3bdd55fffcf6cb4022acf1",
+      "type": "single_choice",
+      "flags": {
+        "295060": false,
+        "295061": true,
+        "295062": false,
+        "295063": false
+      },
+      "evidence": [
+        "Identical authored question 74420 in quiz 4326"
+      ],
+      "rationale": "Recover the unambiguous key from a valid authored copy with the same question and options."
+    },
+    {
+      "quizId": 4330,
+      "questionId": 74551,
+      "beforeSha256": "b1dfd343a6866b9913a514311bd7a8f4fdcab7ec08c289464f4eaf2fb00fc4c9",
+      "type": "single_choice",
+      "flags": {
+        "295064": false,
+        "295065": false,
+        "295066": true,
+        "295067": false
+      },
+      "evidence": [
+        "Identical authored question 74421 in quiz 4326"
+      ],
+      "rationale": "Recover the unambiguous key from a valid authored copy with the same question and options."
+    },
+    {
+      "quizId": 4330,
+      "questionId": 74552,
+      "beforeSha256": "e783315757b298ebf793304f2061f1e9e2082d8c5cafc223a3cf0fa94036a45f",
+      "type": "single_choice",
+      "flags": {
+        "295068": false,
+        "295069": true,
+        "295070": false,
+        "295071": false
+      },
+      "evidence": [
+        "Identical authored question 74422 in quiz 4326"
+      ],
+      "rationale": "Recover the unambiguous key from a valid authored copy with the same question and options."
+    },
+    {
+      "quizId": 4330,
+      "questionId": 74553,
+      "beforeSha256": "e88c0d54608a7b0a63ee40c344830cbe828c80335e1f115db72b339aa6cc8538",
+      "type": "single_choice",
+      "flags": {
+        "295072": false,
+        "295073": false,
+        "295074": true,
+        "295075": false
+      },
+      "evidence": [
+        "Identical authored question 74423 in quiz 4326"
+      ],
+      "rationale": "Recover the unambiguous key from a valid authored copy with the same question and options."
+    },
+    {
+      "quizId": 4330,
+      "questionId": 74554,
+      "beforeSha256": "db2bb2a7f90379894747c70a224ba7a1b3097f59bb185629024e50af941784cc",
+      "type": "single_choice",
+      "flags": {
+        "295076": false,
+        "295077": false,
+        "295078": true,
+        "295079": false
+      },
+      "evidence": [
+        "Identical authored question 74424 in quiz 4326"
+      ],
+      "rationale": "Recover the unambiguous key from a valid authored copy with the same question and options."
+    },
+    {
+      "quizId": 4330,
+      "questionId": 74555,
+      "beforeSha256": "6416e281aad4e39c1a6afc15c91a8d1d98cef50d063f6a4e417c88407ed29545",
+      "evidence": [
+        "https://www.ibm.com/think/topics/big-data-analytics"
+      ],
+      "rationale": "Inaccurate, duplicated and incomplete CRM data damages veracity.",
+      "flags": {
+        "295080": false,
+        "295081": false,
+        "295082": false,
+        "295083": true
+      }
+    },
+    {
+      "quizId": 4330,
+      "questionId": 74556,
+      "beforeSha256": "16df0df6cfcc38727bb16ef7e8936ead5766eb0da80da5605dd41c2ab308578a",
+      "evidence": [
+        "https://www.ibm.com/think/topics/big-data-analytics"
+      ],
+      "rationale": "Volume alone does not make data useful or predictive.",
+      "flags": {
+        "295084": false,
+        "295085": true,
+        "295086": false,
+        "295087": false
+      }
+    },
+    {
+      "quizId": 4330,
+      "questionId": 74557,
+      "beforeSha256": "b08380273488704424ec5b23272c297b0bc87741ddc08479d016ef519cbc7bf8",
+      "evidence": [
+        "https://www.ibm.com/think/topics/big-data-analytics"
+      ],
+      "rationale": "The delayed report has a data-timeliness/velocity problem.",
+      "flags": {
+        "295088": false,
+        "295089": true,
+        "295090": false,
+        "295091": false
+      }
+    },
+    {
+      "quizId": 4330,
+      "questionId": 74558,
+      "beforeSha256": "7d79069ea15d1bb8a361d48f3915dff6ca881f003d289fce65695c0253044c61",
+      "evidence": [
+        "https://www.ibm.com/think/topics/big-data-analytics"
+      ],
+      "rationale": "Free-form review text is unstructured data.",
+      "flags": {
+        "295092": false,
+        "295093": true,
+        "295094": false,
+        "295095": false
+      }
+    },
+    {
+      "quizId": 4330,
+      "questionId": 74559,
+      "beforeSha256": "6e0da113bcaf7713cffbd75038fb9234dde3a8d8f67a646d4278892db8ff2eaa",
+      "type": "single_choice",
+      "flags": {
+        "295096": false,
+        "295097": true,
+        "295098": false,
+        "295099": false
+      },
+      "evidence": [
+        "Identical authored question 74429 in quiz 4326"
+      ],
+      "rationale": "Recover the unambiguous key from a valid authored copy with the same question and options."
+    },
+    {
+      "quizId": 4330,
+      "questionId": 74560,
+      "beforeSha256": "8edf1e5998a7bf086df81686d129f3877940f4b2fa209fb2619d487a8d9f28f1",
+      "type": "single_choice",
+      "flags": {
+        "295100": false,
+        "295101": false,
+        "295102": true,
+        "295103": false
+      },
+      "evidence": [
+        "Identical authored question 74430 in quiz 4326"
+      ],
+      "rationale": "Recover the unambiguous key from a valid authored copy with the same question and options."
+    },
+    {
+      "quizId": 4330,
+      "questionId": 74561,
+      "beforeSha256": "d66a2146eaafd6c1cecf2dad0f026ce761386216a33f09279bfa994eae9018c4",
+      "type": "single_choice",
+      "flags": {
+        "295104": false,
+        "295105": false,
+        "295106": false,
+        "295107": true
+      },
+      "evidence": [
+        "Identical authored question 74431 in quiz 4326"
+      ],
+      "rationale": "Recover the unambiguous key from a valid authored copy with the same question and options."
+    },
+    {
+      "quizId": 4330,
+      "questionId": 74562,
+      "beforeSha256": "8d738d78be3263232346a9391ac15065529e064b03a756672be2b7636aacc28a",
+      "type": "single_choice",
+      "flags": {
+        "295108": true,
+        "295109": false,
+        "295110": false,
+        "295111": false
+      },
+      "evidence": [
+        "Identical authored question 74432 in quiz 4326"
+      ],
+      "rationale": "Recover the unambiguous key from a valid authored copy with the same question and options."
+    },
+    {
+      "quizId": 4330,
+      "questionId": 74563,
+      "beforeSha256": "27bea3d344c0fc401ed3bc58afee87c15466f6da6860802852f694c21e1b964f",
+      "evidence": [
+        "https://www.ibm.com/think/topics/data-quality"
+      ],
+      "rationale": "Foundational CRM data quality is a prerequisite for reliable rollout.",
+      "flags": {
+        "295112": true,
+        "295113": false,
+        "295114": false,
+        "295115": false
+      }
+    },
+    {
+      "quizId": 4330,
+      "questionId": 74564,
+      "beforeSha256": "aa5bd61e8a1ccdf47337a6a519cc56a6fac8c9223bf8b041385aefdeca5ac96e",
+      "evidence": [
+        "https://www.ibm.com/think/topics/data-quality"
+      ],
+      "rationale": "Common definitions and consistent attribution are prerequisites for orchestration.",
+      "flags": {
+        "295116": true,
+        "295117": false,
+        "295118": false,
+        "295119": false
+      }
+    },
+    {
+      "quizId": 4330,
+      "questionId": 74565,
+      "beforeSha256": "75fb118106cf62f76a822ca39ee4af63eb7954dc90200a24d3ad1229674049e2",
+      "evidence": [
+        "https://www.ibm.com/think/topics/data-quality"
+      ],
+      "rationale": "Govern data quality instead of assuming more records improve accuracy.",
+      "flags": {
+        "295120": true,
+        "295121": false,
+        "295122": false,
+        "295123": false
+      }
+    },
+    {
+      "quizId": 4330,
+      "questionId": 74566,
+      "beforeSha256": "a320aa382fe576d3c0adb6b7852cc6b1875c97a5369dc9823063a454e3745075",
+      "evidence": [
+        "https://www.ibm.com/think/topics/data-quality"
+      ],
+      "rationale": "Fix the actual data and journey problem before buying a new tool.",
+      "flags": {
+        "295124": true,
+        "295125": false,
+        "295126": false,
+        "295127": false
+      }
+    },
+    {
+      "quizId": 4330,
+      "questionId": 74567,
+      "beforeSha256": "15a56b8a85a350eba19f59fc6da039bd3844fba6ccaafd083ac1d085bc83965f",
+      "type": "single_choice",
+      "flags": {
+        "295128": false,
+        "295129": false,
+        "295130": true,
+        "295131": false
+      },
+      "evidence": [
+        "Identical authored question 74437 in quiz 4326"
+      ],
+      "rationale": "Recover the unambiguous key from a valid authored copy with the same question and options."
+    },
+    {
+      "quizId": 4330,
+      "questionId": 74568,
+      "beforeSha256": "e13ce7a6189ac42da69894c8389794c3e028e98a77b666b8cfaf0fdda7de3751",
+      "type": "single_choice",
+      "flags": {
+        "295132": false,
+        "295133": false,
+        "295134": false,
+        "295135": true
+      },
+      "evidence": [
+        "Identical authored question 74438 in quiz 4326"
+      ],
+      "rationale": "Recover the unambiguous key from a valid authored copy with the same question and options."
+    },
+    {
+      "quizId": 4330,
+      "questionId": 74569,
+      "beforeSha256": "9a1cab67e8563d4beff62dfa35edb1cabda40a841ba68459e3ac8060d69ac1f5",
+      "type": "single_choice",
+      "flags": {
+        "295136": false,
+        "295137": false,
+        "295138": true,
+        "295139": false
+      },
+      "evidence": [
+        "Identical authored question 74439 in quiz 4326"
+      ],
+      "rationale": "Recover the unambiguous key from a valid authored copy with the same question and options."
+    },
+    {
+      "quizId": 4330,
+      "questionId": 74570,
+      "beforeSha256": "461089bc82378563a9b963a2ba23f3035da98723d907463e1783509968b849fb",
+      "type": "single_choice",
+      "flags": {
+        "295140": false,
+        "295141": false,
+        "295142": true,
+        "295143": false
+      },
+      "evidence": [
+        "Identical authored question 74440 in quiz 4326"
+      ],
+      "rationale": "Recover the unambiguous key from a valid authored copy with the same question and options."
+    },
+    {
+      "quizId": 4330,
+      "questionId": 74571,
+      "beforeSha256": "c95c8d5f56a395dbb8905c999b32c092afb7eb228c476c4387ea8100206e30f0",
+      "evidence": [
+        "https://www.cim.co.uk/content-insights/articles/what-is-marketing/",
+        "Content reviewed against the question scenario and alternatives."
+      ],
+      "rationale": "Assess the full customer journey rather than crediting one isolated touchpoint.",
+      "flags": {
+        "295144": false,
+        "295145": false,
+        "295146": true,
+        "295147": false
+      }
+    },
+    {
+      "quizId": 4330,
+      "questionId": 74572,
+      "beforeSha256": "8806012ef13ebcc3c855c936106a2dd4770b413338a1610e7b22c4e9e2af3f0a",
+      "evidence": [
+        "https://www.cim.co.uk/content-insights/articles/what-is-marketing/",
+        "Content reviewed against the question scenario and alternatives."
+      ],
+      "rationale": "Adjust relevance and timing in response to complaints and unsubscribes.",
+      "flags": {
+        "295148": false,
+        "295149": false,
+        "295150": true,
+        "295151": false
+      }
+    },
+    {
+      "quizId": 4330,
+      "questionId": 74573,
+      "beforeSha256": "721bac2f0600f0a10ba3d56a190411b9e93550f2711beeced1090035895b1057",
+      "evidence": [
+        "https://www.cim.co.uk/content-insights/articles/what-is-marketing/",
+        "Content reviewed against the question scenario and alternatives."
+      ],
+      "rationale": "Evaluate lead quality, expectations and retention as well as lead volume.",
+      "flags": {
+        "295152": false,
+        "295153": false,
+        "295154": false,
+        "295155": true
+      }
+    },
+    {
+      "quizId": 4330,
+      "questionId": 74574,
+      "beforeSha256": "365d91359dc0884d78712c37946dc3cfc6009e79ee76b17dc229f3d4c263a995",
+      "evidence": [
+        "https://www.cim.co.uk/content-insights/articles/what-is-marketing/",
+        "Content reviewed against the question scenario and alternatives."
+      ],
+      "rationale": "Triangulate survey, behavioural and review evidence.",
+      "flags": {
+        "295156": false,
+        "295157": true,
+        "295158": false,
+        "295159": false
+      }
+    },
+    {
+      "quizId": 4330,
+      "questionId": 74575,
+      "beforeSha256": "f6d66a27c94a4a3e3f710e7eb3db485695b8a5e731e53125cc2b6fa178ea260b",
+      "type": "single_choice",
+      "flags": {
+        "295160": false,
+        "295161": true,
+        "295162": false,
+        "295163": false
+      },
+      "evidence": [
+        "Identical authored question 74445 in quiz 4326"
+      ],
+      "rationale": "Recover the unambiguous key from a valid authored copy with the same question and options."
+    },
+    {
+      "quizId": 4330,
+      "questionId": 74576,
+      "beforeSha256": "107865b4d762ef634c94252e4d769147d406be5677df38f19ae01702271c65e7",
+      "type": "single_choice",
+      "flags": {
+        "295164": true,
+        "295165": false,
+        "295166": false,
+        "295167": false
+      },
+      "evidence": [
+        "Identical authored question 74446 in quiz 4326"
+      ],
+      "rationale": "Recover the unambiguous key from a valid authored copy with the same question and options."
+    },
+    {
+      "quizId": 4330,
+      "questionId": 74577,
+      "beforeSha256": "66c7ec371df1f8986e792cac4d00e6094c746366c16f4ae15b59934f10bee470",
+      "type": "single_choice",
+      "flags": {
+        "295168": false,
+        "295169": false,
+        "295170": true,
+        "295171": false
+      },
+      "evidence": [
+        "Identical authored question 74447 in quiz 4326"
+      ],
+      "rationale": "Recover the unambiguous key from a valid authored copy with the same question and options."
+    },
+    {
+      "quizId": 4330,
+      "questionId": 74578,
+      "beforeSha256": "240d9bdd12cc14783a3be09d419867da8d300fba0277a00deb9cd7410de8770c",
+      "type": "single_choice",
+      "flags": {
+        "295172": true,
+        "295173": false,
+        "295174": false,
+        "295175": false
+      },
+      "evidence": [
+        "Identical authored question 74448 in quiz 4326"
+      ],
+      "rationale": "Recover the unambiguous key from a valid authored copy with the same question and options."
+    },
+    {
+      "quizId": 4330,
+      "questionId": 74579,
+      "beforeSha256": "11f5cce064747165cedf2d8ea64b26feb8d197782a726af149f3eb7f3e088de2",
+      "type": "single_choice",
+      "flags": {
+        "295176": false,
+        "295177": false,
+        "295178": true,
+        "295179": false
+      },
+      "evidence": [
+        "Identical authored question 74449 in quiz 4326"
+      ],
+      "rationale": "Recover the unambiguous key from a valid authored copy with the same question and options."
+    },
+    {
+      "quizId": 4330,
+      "questionId": 74580,
+      "beforeSha256": "2dde44ffad3883f6e44e17095f7c426d654f000258f7b3103cbd9416e5dda195",
+      "type": "single_choice",
+      "flags": {
+        "295180": true,
+        "295181": false,
+        "295182": false,
+        "295183": false
+      },
+      "evidence": [
+        "Identical authored question 74450 in quiz 4326"
+      ],
+      "rationale": "Recover the unambiguous key from a valid authored copy with the same question and options."
+    },
+    {
+      "quizId": 4330,
+      "questionId": 74581,
+      "beforeSha256": "9ad9bd20bd51290cbb4c50d9bf88e163069ee2b8b06fa4fc2b4c5d60e04f9b04",
+      "type": "single_choice",
+      "flags": {
+        "295184": false,
+        "295185": false,
+        "295186": false,
+        "295187": true
+      },
+      "evidence": [
+        "Identical authored question 74451 in quiz 4326"
+      ],
+      "rationale": "Recover the unambiguous key from a valid authored copy with the same question and options."
+    },
+    {
+      "quizId": 4330,
+      "questionId": 74582,
+      "beforeSha256": "7349e8a1990514dcdcc28e56e89a396e92d00c0b7567b20ee7742464a043ff32",
+      "type": "single_choice",
+      "flags": {
+        "295188": false,
+        "295189": true,
+        "295190": false,
+        "295191": false
+      },
+      "evidence": [
+        "Identical authored question 74452 in quiz 4326"
+      ],
+      "rationale": "Recover the unambiguous key from a valid authored copy with the same question and options."
+    },
+    {
+      "quizId": 4330,
+      "questionId": 74583,
+      "beforeSha256": "143e9e2058566aff382179ea7df590501f32734fde64277e4754d52bb83160c9",
+      "evidence": [
+        "https://www.cim.co.uk/content-insights/articles/what-is-marketing/",
+        "Content reviewed against the question scenario and alternatives."
+      ],
+      "rationale": "Modern marketing identifies and satisfies needs while creating organisational value.",
+      "flags": {
+        "295192": false,
+        "295193": true,
+        "295194": false,
+        "295195": false
+      }
+    },
+    {
+      "quizId": 4330,
+      "questionId": 74584,
+      "beforeSha256": "d3ecf7f1372c48f3ad9d09282a26de5c061bfad8471cbd7b7eea2056318cdd82",
+      "evidence": [
+        "https://www.cim.co.uk/content-insights/articles/what-is-marketing/",
+        "Content reviewed against the question scenario and alternatives."
+      ],
+      "rationale": "Insight, competition and long-term objectives describe strategic market analysis.",
+      "flags": {
+        "295196": false,
+        "295197": false,
+        "295198": true,
+        "295199": false
+      }
+    },
+    {
+      "quizId": 4330,
+      "questionId": 74585,
+      "beforeSha256": "01cb19d196055c7ab6bbde99d77331142edf752d83766992b6a24502b5ba90d4",
+      "evidence": [
+        "https://www.cim.co.uk/content-insights/articles/what-is-marketing/",
+        "Content reviewed against the question scenario and alternatives."
+      ],
+      "rationale": "Marketing shapes demand and sales converts it into transactions.",
+      "flags": {
+        "295200": true,
+        "295201": false,
+        "295202": false,
+        "295203": false
+      }
+    },
+    {
+      "quizId": 4330,
+      "questionId": 74586,
+      "beforeSha256": "7e198e67b7965bff434261f037122f5b13a2489107795a94617c28fd5f3bf1c1",
+      "evidence": [
+        "https://www.cim.co.uk/content-insights/articles/what-is-marketing/",
+        "Content reviewed against the question scenario and alternatives."
+      ],
+      "rationale": "The option follows the CIM management-process definition.",
+      "flags": {
+        "295204": false,
+        "295205": true,
+        "295206": false,
+        "295207": false
+      }
+    },
+    {
+      "quizId": 4330,
+      "questionId": 74587,
+      "beforeSha256": "8af56fbe913203f01b0c70a13303aa04ff5b67d4a4b52930ab3e06d3a368b3a9",
+      "type": "single_choice",
+      "flags": {
+        "295208": false,
+        "295209": true,
+        "295210": false,
+        "295211": false
+      },
+      "evidence": [
+        "Identical authored question 74457 in quiz 4326"
+      ],
+      "rationale": "Recover the unambiguous key from a valid authored copy with the same question and options."
+    },
+    {
+      "quizId": 4330,
+      "questionId": 74588,
+      "beforeSha256": "6cffa07e06ff760e5e4ed8b8c166ff87bdb26133a807a9391211082dc5058601",
+      "type": "single_choice",
+      "flags": {
+        "295212": false,
+        "295213": true,
+        "295214": false,
+        "295215": false
+      },
+      "evidence": [
+        "Identical authored question 74458 in quiz 4326"
+      ],
+      "rationale": "Recover the unambiguous key from a valid authored copy with the same question and options."
+    },
+    {
+      "quizId": 4330,
+      "questionId": 74589,
+      "beforeSha256": "ca9bce58f5a291fe95470ffec6a3e50feb5727ffd690ecff6e623004ba084b55",
+      "type": "single_choice",
+      "flags": {
+        "295216": true,
+        "295217": false,
+        "295218": false,
+        "295219": false
+      },
+      "evidence": [
+        "Identical authored question 74459 in quiz 4326"
+      ],
+      "rationale": "Recover the unambiguous key from a valid authored copy with the same question and options."
+    },
+    {
+      "quizId": 4330,
+      "questionId": 74590,
+      "beforeSha256": "a81da5f6bff67e2f2b5a6a99211775c4d2105a78d396e254c257b9be877de727",
+      "type": "single_choice",
+      "flags": {
+        "295220": true,
+        "295221": false,
+        "295222": false,
+        "295223": false
+      },
+      "evidence": [
+        "Identical authored question 74460 in quiz 4326"
+      ],
+      "rationale": "Recover the unambiguous key from a valid authored copy with the same question and options."
+    },
+    {
+      "quizId": 4418,
+      "questionId": 76288,
+      "beforeSha256": "fbf2533b914cf11159393656b42a22e13cab3d194f9e4d1cad15e08c73164963",
+      "evidence": [
+        "https://www.cim.co.uk/content-insights/articles/what-is-marketing/",
+        "Content reviewed against the question scenario and alternatives."
+      ],
+      "rationale": "Analysis combines internal and external evidence.",
+      "flags": {
+        "296250": true,
+        "296251": false,
+        "296252": false,
+        "296253": false
+      }
+    },
+    {
+      "quizId": 4418,
+      "questionId": 76299,
+      "beforeSha256": "114bbbb9e688c3b0b68222f7458a48a113bece9553fb5c5f39c06b3b74601830",
+      "evidence": [
+        "https://sostac.org/wp-content/uploads/2020/09/SOSTAC_Basic_Manual_V3.4_Sep_2020.pdf"
+      ],
+      "rationale": "SOSTAC provides the full stated planning sequence.",
+      "flags": {
+        "296294": true,
+        "296295": false,
+        "296296": false,
+        "296297": false
+      }
+    },
+    {
+      "quizId": 4421,
+      "questionId": 76350,
+      "beforeSha256": "00a9d9b3284caefdce8bc4264da89a929b32a9d642b78464d088b8e9591e554b",
+      "evidence": [
+        "https://www.cim.co.uk/content-insights/articles/what-is-marketing/",
+        "Content reviewed against the question scenario and alternatives."
+      ],
+      "rationale": "The USP should express the distinctive customer benefit and accessibility.",
+      "flags": {
+        "296498": true,
+        "296499": false,
+        "296500": false,
+        "296501": false
+      }
+    },
+    {
+      "quizId": 4421,
+      "questionId": 76356,
+      "beforeSha256": "47dce3c4fa439840b3fd01bc251ab39de01c0aa4921de5ee10ed58bb0cbf4f1b",
+      "evidence": [
+        "https://www.cim.co.uk/content-insights/articles/what-is-marketing/",
+        "Content reviewed against the question scenario and alternatives."
+      ],
+      "rationale": "SWOT distinguishes internal strengths/weaknesses from external opportunities/threats.",
+      "flags": {
+        "296522": true,
+        "296523": false,
+        "296524": false,
+        "296525": false
+      }
+    },
+    {
+      "quizId": 4423,
+      "questionId": 76384,
+      "beforeSha256": "7caa8ff3e39552544a43af3c65cefb7c34e88abf32f1341e7dc7ef166e91c646",
+      "evidence": [
+        "https://www.cim.co.uk/content-insights/articles/what-is-marketing/",
+        "Content reviewed against the question scenario and alternatives."
+      ],
+      "rationale": "Sales divided by spend is 5:1, but a profit ROI cannot be inferred from revenue alone. Add an accurate option without overwriting old options.",
+      "flags": {
+        "296634": false,
+        "296635": false,
+        "296636": false,
+        "296637": false
+      },
+      "additions": [
+        {
+          "text": "Expected sales are five times campaign spend (5:1). Profit-based ROI requires incremental profit and cost data; sales revenue alone does not establish ROI.",
+          "isCorrect": true
+        }
+      ]
+    },
+    {
+      "quizId": 4430,
+      "questionId": 76523,
+      "beforeSha256": "7542faad9d193dc9948f50a2cde8898a9255cbbb9b27fe3d998704b2ee4ed6b8",
+      "evidence": [
+        "https://www.cim.co.uk/content-insights/articles/what-is-marketing/",
+        "Content reviewed against the question scenario and alternatives."
+      ],
+      "rationale": "Match the message to the persona needs and frustrations.",
+      "flags": {
+        "297190": true,
+        "297191": false,
+        "297192": false,
+        "297193": false
+      }
+    },
+    {
+      "quizId": 4430,
+      "questionId": 76528,
+      "beforeSha256": "49ccc2d8ff9bd81a43d846a922ca7e7261adba0d3e6823e634df7285abf26e16",
+      "evidence": [
+        "https://www.cim.co.uk/content-insights/articles/what-is-marketing/",
+        "Content reviewed against the question scenario and alternatives."
+      ],
+      "rationale": "Personas inform content and product decisions using customer evidence.",
+      "flags": {
+        "297210": true,
+        "297211": false,
+        "297212": false,
+        "297213": false
+      }
+    },
+    {
+      "quizId": 4432,
+      "questionId": 76574,
+      "beforeSha256": "c2ac46cdbbe835f6cb5130459646142e7d22c93e21d6964202511df819aa9255",
+      "evidence": [
+        "https://www.cim.co.uk/content-insights/articles/what-is-marketing/",
+        "Content reviewed against the question scenario and alternatives."
+      ],
+      "rationale": "Use trusted channels and reassurance for cautious adopters.",
+      "flags": {
+        "297394": true,
+        "297395": false,
+        "297396": false,
+        "297397": false
+      }
+    },
+    {
+      "quizId": 4435,
+      "questionId": 76627,
+      "beforeSha256": "96a6d44349c97173bf4251cf75f53eb0148f4f3bfcb39293986cadc4d54b1654",
+      "evidence": [
+        "https://www.cim.co.uk/content-insights/articles/what-is-marketing/",
+        "Content reviewed against the question scenario and alternatives."
+      ],
+      "rationale": "Structured quantitative measurement supports a numerical change estimate.",
+      "flags": {
+        "297606": true,
+        "297607": false,
+        "297608": false,
+        "297609": false
+      }
+    },
+    {
+      "quizId": 4439,
+      "questionId": 76705,
+      "beforeSha256": "820c58279231907484508f5db54a8f106ebfdc43d0b6a3387ec7d8f8c1b7b0a4",
+      "evidence": [
+        "https://www.cim.co.uk/content-insights/articles/what-is-marketing/",
+        "Content reviewed against the question scenario and alternatives."
+      ],
+      "rationale": "Netnography studies online communities in their relevant context.",
+      "flags": {
+        "297918": true,
+        "297919": false,
+        "297920": false,
+        "297921": false
+      }
+    },
+    {
+      "quizId": 4440,
+      "questionId": 76725,
+      "beforeSha256": "16c7d05b3d7caec28e84257aa11ba7d07f00902c3bd0d6c50fe4f984dff48f21",
+      "evidence": [
+        "https://www.cim.co.uk/content-insights/articles/what-is-marketing/",
+        "Content reviewed against the question scenario and alternatives."
+      ],
+      "rationale": "Internal behavioural funnel evidence diagnoses searches without purchases.",
+      "flags": {
+        "297998": true,
+        "297999": false,
+        "298000": false,
+        "298001": false
+      }
+    },
+    {
+      "quizId": 4441,
+      "questionId": 76746,
+      "beforeSha256": "ee15ac95e4ce3231984d858b06762fbbf3fcccb4a84898e4178581f20c021779",
+      "evidence": [
+        "https://www.cim.co.uk/content-insights/articles/what-is-marketing/",
+        "Content reviewed against the question scenario and alternatives."
+      ],
+      "rationale": "A sector regulator supplies consumer-finance and regulatory context.",
+      "flags": {
+        "298082": true,
+        "298083": false,
+        "298084": false,
+        "298085": false
+      }
+    },
+    {
+      "quizId": 4441,
+      "questionId": 76756,
+      "beforeSha256": "3f18719f758874e7316d2980ef85ca645b166450c1113705d27bd3406948a750",
+      "evidence": [
+        "https://www.cim.co.uk/content-insights/articles/what-is-marketing/",
+        "Content reviewed against the question scenario and alternatives."
+      ],
+      "rationale": "Combine current, relevant external evidence rather than relying on one stale source.",
+      "flags": {
+        "298122": true,
+        "298123": false,
+        "298124": false,
+        "298125": false
+      }
+    },
+    {
+      "quizId": 4448,
+      "questionId": 76896,
+      "beforeSha256": "52b6123cc9cfc82ddae39f881ae2bba4700112a1f33311febff7812f80ad9a18",
+      "evidence": [
+        "https://www.cim.co.uk/content-insights/articles/what-is-marketing/",
+        "Content reviewed against the question scenario and alternatives."
+      ],
+      "rationale": "Premium positioning requires consistent signals across all seven Ps.",
+      "flags": {
+        "298682": true,
+        "298683": false,
+        "298684": false,
+        "298685": false
+      }
+    },
+    {
+      "quizId": 4450,
+      "questionId": 76933,
+      "beforeSha256": "e58878304de9f7024ffa83fd7b269c24bed01ec50c9fdc8eec99dbd0d59c9746",
+      "evidence": [
+        "https://www.cim.co.uk/content-insights/articles/what-is-marketing/",
+        "Content reviewed against the question scenario and alternatives."
+      ],
+      "rationale": "Brand equity adds value through awareness, perceived quality, loyalty and associations.",
+      "flags": {
+        "298830": true,
+        "298831": false,
+        "298832": false,
+        "298833": false
+      }
+    },
+    {
+      "quizId": 4451,
+      "questionId": 76956,
+      "beforeSha256": "e314602810a065e6c7f6ab6e27ba9206d8e791d436182fa5906cefea452d5c54",
+      "evidence": [
+        "https://www.cim.co.uk/content-insights/articles/what-is-marketing/",
+        "Content reviewed against the question scenario and alternatives."
+      ],
+      "rationale": "Iterative learning must coexist with a viable business case and a stop decision.",
+      "flags": {
+        "298922": true,
+        "298923": false,
+        "298924": false,
+        "298925": false
+      }
+    },
+    {
+      "quizId": 4452,
+      "questionId": 76975,
+      "beforeSha256": "75de9406a46c0b7b2a7180376bdcbd0f21af93d6b26483df523fc3cf2828f88d",
+      "evidence": [
+        "https://www.cim.co.uk/content-insights/articles/what-is-marketing/",
+        "Content reviewed against the question scenario and alternatives."
+      ],
+      "rationale": "Customers can perceive scarcity-driven price increases as unfair.",
+      "flags": {
+        "298998": true,
+        "298999": false,
+        "299000": false,
+        "299001": false
+      }
+    },
+    {
+      "quizId": 4453,
+      "questionId": 76990,
+      "beforeSha256": "45e4c03e7fe6e4f009031ece7ba4cc590e020030237bd99d38920aac8baf4ceb",
+      "evidence": [
+        "https://www.cim.co.uk/content-insights/articles/what-is-marketing/",
+        "Content reviewed against the question scenario and alternatives."
+      ],
+      "rationale": "Price monitoring software collects competitor prices and comparisons.",
+      "flags": {
+        "299058": true,
+        "299059": false,
+        "299060": false,
+        "299061": false
+      }
+    },
+    {
+      "quizId": 4453,
+      "questionId": 76996,
+      "beforeSha256": "fc2a136a5c5c6de17279b4d79e9baf860c862c4cd9c9529076aaf7b9903c0581",
+      "evidence": [
+        "https://www.cim.co.uk/content-insights/articles/what-is-marketing/",
+        "Content reviewed against the question scenario and alternatives."
+      ],
+      "rationale": "Demand/supply-sensitive fares are dynamic pricing.",
+      "flags": {
+        "299082": true,
+        "299083": false,
+        "299084": false,
+        "299085": false
+      }
+    },
+    {
+      "quizId": 4456,
+      "questionId": 77052,
+      "beforeSha256": "0310d2bc4fa3d0c68340a62ddad4f8f9b8971f2dedce9e49aede0e3f81e68db3",
+      "evidence": [
+        "https://www.cim.co.uk/content-insights/articles/what-is-marketing/",
+        "Content reviewed against the question scenario and alternatives."
+      ],
+      "rationale": "Personalised packaging encourages relevance and social engagement.",
+      "flags": {
+        "299306": true,
+        "299307": false,
+        "299308": false,
+        "299309": false
+      }
+    },
+    {
+      "quizId": 4456,
+      "questionId": 77057,
+      "beforeSha256": "2a35de809b92d96cf08a872411c685b66de026ed1215e816f49dabb6488b08d5",
+      "evidence": [
+        "https://www.cim.co.uk/content-insights/articles/what-is-marketing/",
+        "Content reviewed against the question scenario and alternatives."
+      ],
+      "rationale": "Values-led promotion can strengthen overall brand reputation.",
+      "flags": {
+        "299326": true,
+        "299327": false,
+        "299328": false,
+        "299329": false
+      }
+    },
+    {
+      "quizId": 4457,
+      "questionId": 77068,
+      "beforeSha256": "679fde960675020ce5e14cbc735ed08c09f4efc872aeaac4d16d1e6155bff088",
+      "evidence": [
+        "https://www.cim.co.uk/content-insights/articles/what-is-marketing/",
+        "Content reviewed against the question scenario and alternatives."
+      ],
+      "rationale": "A marketing calendar coordinates dates and owners across channels.",
+      "flags": {
+        "299370": true,
+        "299371": false,
+        "299372": false,
+        "299373": false
+      }
+    },
+    {
+      "quizId": 4755,
+      "questionId": 81163,
+      "beforeSha256": "d0f03451730e47283b1c389a230e6b72433909361e37a65fa55dc6c06e27ae96",
+      "evidence": [
+        "https://www.gov.uk/service-manual/design/map-a-users-whole-problem"
+      ],
+      "rationale": "Consistent policies and shared knowledge resolve contradictory instructions.",
+      "flags": {
+        "311158": true,
+        "311159": false,
+        "311160": false,
+        "311161": false
+      }
+    },
+    {
+      "quizId": 4756,
+      "questionId": 81171,
+      "beforeSha256": "738771f4d0971840d090597265fa564db1c05b359b3aff740f3b9c506a50a9f4",
+      "evidence": [
+        "https://www.gov.uk/service-manual/design/map-a-users-whole-problem"
+      ],
+      "rationale": "A service landscape maps the wider ecosystem and gaps between organisations.",
+      "flags": {
+        "311190": true,
+        "311191": false,
+        "311192": false,
+        "311193": false
+      }
+    },
+    {
+      "quizId": 4762,
+      "questionId": 81293,
+      "beforeSha256": "e0cfc976fa3941d43e1ef511ba438ef6e79cbee268f5f053a1e58013eb387b71",
+      "evidence": [
+        "https://www.gov.uk/service-manual/design/map-a-users-whole-problem"
+      ],
+      "rationale": "An experience map helps frame the whole problem before narrowing the scope.",
+      "flags": {
+        "311278": true,
+        "311279": false,
+        "311280": false,
+        "311281": false
+      }
+    },
+    {
+      "quizId": 4762,
+      "questionId": 81302,
+      "beforeSha256": "f04d7d2d883c2977ef9b1008084fc6ff326ae1cf12f392937000b76db7684105",
+      "evidence": [
+        "https://www.gov.uk/service-manual/design/map-a-users-whole-problem"
+      ],
+      "rationale": "Stage KPIs, governance and owners make improvement measurable and accountable.",
+      "flags": {
+        "311314": true,
+        "311315": false,
+        "311316": false,
+        "311317": false
+      }
+    },
+    {
+      "quizId": 4786,
+      "questionId": 81728,
+      "beforeSha256": "bf416f91b2d5ea690dee34367bd53283f73f5af7c4ca44734734bbaa12569dad",
+      "evidence": [
+        "https://support.google.com/analytics/answer/9358801"
+      ],
+      "rationale": "The GA4 BigQuery export supplies raw event and user-level data for joins and analysis.",
+      "flags": {
+        "311838": true,
+        "311839": false,
+        "311840": false,
+        "311841": false
+      }
+    },
+    {
+      "quizId": 4792,
+      "questionId": 81836,
+      "beforeSha256": "b1f4aa192a9bfa49c2fa0209e3ba84791bf7f4392f70016ee1c7761a73546b44",
+      "evidence": [
+        "https://www.gov.uk/service-manual/design/map-a-users-whole-problem"
+      ],
+      "rationale": "A defensible insight includes evidence, uncertainty, alternatives and a testable recommendation.",
+      "flags": {
+        "311930": true,
+        "311931": false,
+        "311932": false,
+        "311933": false
+      }
+    },
+    {
+      "quizId": 4792,
+      "questionId": 81847,
+      "beforeSha256": "ce8e0228ffe689884615ca9f3548cd45aaafc8fb9bd1fb6e23c50129538bbfd4",
+      "evidence": [
+        "https://www.gov.uk/service-manual/design/map-a-users-whole-problem"
+      ],
+      "rationale": "A decision plan connects evidence selection, validation, analysis, action, ethics and measurement.",
+      "flags": {
+        "311974": true,
+        "311975": false,
+        "311976": false,
+        "311977": false
+      }
+    },
+    {
+      "quizId": 4802,
+      "questionId": 82035,
+      "beforeSha256": "04d9a22cea0e0ff6eed45ec74a9d6caea4bce13531351d48fcdac746f4f9d2a5",
+      "evidence": [
+        "https://www.ibm.com/think/topics/data-quality"
+      ],
+      "rationale": "Freshness checks with escalation ownership detect stale input data.",
+      "flags": {
+        "312026": true,
+        "312027": false,
+        "312028": false,
+        "312029": false
+      }
+    },
+    {
+      "quizId": 4806,
+      "questionId": 82112,
+      "beforeSha256": "dd6851739ddb9b300cd3576c49ac91575037fffea6d99b6f60f97e4d89d7e620",
+      "evidence": [
+        "https://ico.org.uk/for-organisations/uk-gdpr-guidance-and-resources/lawful-basis/"
+      ],
+      "rationale": "A new use of personal data needs a defensible lawful basis and purpose assessment.",
+      "flags": {
+        "312174": true,
+        "312175": false,
+        "312176": false,
+        "312177": false
+      }
+    },
+    {
+      "quizId": 4806,
+      "questionId": 82120,
+      "beforeSha256": "2ad226b13dba52c00d5b3a0852c84b584153e2e83f4c19b65025dc8f3dc0501b",
+      "evidence": [
+        "https://www.gov.uk/service-manual/design/map-a-users-whole-problem"
+      ],
+      "rationale": "Fix the operational process responsible for the handoff failure.",
+      "flags": {
+        "312206": true,
+        "312207": false,
+        "312208": false,
+        "312209": false
+      }
+    },
+    {
+      "quizId": 4812,
+      "questionId": 82242,
+      "beforeSha256": "e217285e1133e786cc1ec1189877ccc2d0e1a379b632e6b113473e525c8fc032",
+      "evidence": [
+        "https://www.gov.uk/service-manual/design/map-a-users-whole-problem"
+      ],
+      "rationale": "A decision package needs evidence, prioritised pain points, hypotheses, owners and evaluation.",
+      "flags": {
+        "312294": true,
+        "312295": false,
+        "312296": false,
+        "312297": false
+      }
+    },
+    {
+      "quizId": 4815,
+      "questionId": 82276,
+      "beforeSha256": "8601902d737d04f24663ecf7a5dd5edef5ed6f71448fccd63d7c72346a1abec5",
+      "evidence": [
+        "https://www.gov.uk/service-manual/design/map-a-users-whole-problem"
+      ],
+      "rationale": "An insight-gap matrix links beliefs, evidence, confidence, gaps and decisions.",
+      "flags": {
+        "312330": true,
+        "312331": false,
+        "312332": false,
+        "312333": false
+      }
+    },
+    {
+      "quizId": 4815,
+      "questionId": 82281,
+      "beforeSha256": "77dbaa136b4e02be58bf43510a0c691fa64df38c6db77ab2f8bb3eda7f1bbcaa",
+      "evidence": [
+        "https://www.gov.uk/service-manual/design/map-a-users-whole-problem"
+      ],
+      "rationale": "Separate observations, impact, hypotheses and confidence from the recommended next tests.",
+      "flags": {
+        "312350": true,
+        "312351": false,
+        "312352": false,
+        "312353": false
+      }
+    }
+  ]
+}

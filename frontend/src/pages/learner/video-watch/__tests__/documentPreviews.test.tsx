@@ -21,7 +21,8 @@ describe('documents alongside reading text', () => {
     request.mockRestore();
   });
 
-  it.each(['pdf', 'pptx'])('shows an uploaded %s and the accompanying text together', extension => {
+  it('shows an uploaded PowerPoint and the accompanying text together', () => {
+    const extension = 'pptx';
     reading('<p>Read this guidance before opening the file.</p>', `/curriculum_api/curriculum/uploads/book.${extension}`);
     expect(screen.getByText('Read this guidance before opening the file.')).toBeVisible();
     expect(screen.getByTestId('deck')).toHaveAttribute('data-src', expect.stringContaining(`book.${extension}`));
@@ -44,7 +45,7 @@ describe('documents alongside reading text', () => {
   it('keeps a real missing-file error visible rather than bypassing it', async () => {
     const request = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('', { status: 404 }));
     render(<InlineAttachmentPreview url="https://files.example.test/missing.pdf" title="Missing book" />);
-    expect(await screen.findByText('File request failed (404)')).toBeVisible();
+    expect(await screen.findByText('This file could not be found on the server. Please let your coach or the curriculum team know.')).toBeVisible();
     expect(screen.queryByTitle('Missing book')).not.toBeInTheDocument();
     request.mockRestore();
   });

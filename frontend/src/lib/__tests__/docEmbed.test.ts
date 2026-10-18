@@ -71,9 +71,62 @@ describe('resolveDocEmbed', () => {
     expect(resolveDocEmbed('https://partner.example.com/deck.pptx', PUBLIC).mode).toBe('office');
   });
 
-  it('cannot render a legacy .ppt, so it falls back to the Office viewer', () => {
-    expect(resolveDocEmbed('/uploads/old.ppt', PUBLIC).mode).toBe('office');
+  it('cannot render a legacy .ppt, so it falls back to the Office preview', () => {
+    expect(resolveDocEmbed('/curriculum_api/curriculum/uploads/m/c/old.ppt', PUBLIC))
+      .toEqual({ mode: 'native', src: `${PUBLIC}/curriculum_api/curriculum/uploads/m/c/old.ppt?preview=1` });
+    expect(resolveDocEmbed('https://partner.example.com/old.ppt', PUBLIC).mode).toBe('office');
     expect(resolveDocEmbed('/uploads/old.ppt', LOCAL).mode).toBe('unavailable');
+  });
+
+  it.each(['rtf', 'odt', 'pps', 'xlsm', 'ods', 'odp', 'dotx'])('sends an uploaded .%s to the Office preview', extension => {
+    expect(resolveDocEmbed(`/curriculum_api/curriculum/uploads/m/c/brief.${extension}`, PUBLIC))
+      .toEqual({ mode: 'native', src: `${PUBLIC}/curriculum_api/curriculum/uploads/m/c/brief.${extension}?preview=1` });
+  });
+
+  it('never hands Office a same-site link it would need our session to fetch', () => {
+    // The learner's "File not found" screen: Office downloads the URL from
+    // Microsoft's servers, and every path on this site sits behind a sign-in.
+    expect(resolveDocEmbed('/learner_api/media/legacy-attachment/42/', PUBLIC).mode).toBe('unavailable');
+    expect(resolveDocEmbed('/uploads/old.ppt', PUBLIC).mode).toBe('unavailable');
+  });
+
+  it('judges an extension-less protected link by its authored file name', () => {
+    const legacy = '/learner_api/media/legacy-attachment/42/';
+    expect(resolveDocEmbed(legacy, PUBLIC, 'Week 3 slides.pptx'))
+      .toEqual({ mode: 'deck', src: `${PUBLIC}${legacy}` });
+    expect(resolveDocEmbed(legacy, PUBLIC, 'handout.pdf'))
+      .toEqual({ mode: 'native', src: `${PUBLIC}${legacy}` });
+    expect(resolveDocEmbed(legacy, PUBLIC, 'notes.doc').mode).toBe('unavailable');
+  });
+
+  it('uses Drive’s own preview for Google Drive file links', () => {
+    for (const link of [
+      'https://drive.google.com/file/d/1AbCdEfGhIjKlMn/view?usp=sharing',
+      'https://drive.google.com/open?id=1AbCdEfGhIjKlMn',
+      'https://drive.google.com/uc?export=download&id=1AbCdEfGhIjKlMn',
+    ]) {
+      expect(resolveDocEmbed(link, PUBLIC))
+        .toEqual({ mode: 'native', src: 'https://drive.google.com/file/d/1AbCdEfGhIjKlMn/preview' });
+    }
+  });
+
+  it('uses the read-only preview for Google Sheets', () => {
+    expect(resolveDocEmbed('https://docs.google.com/spreadsheets/d/SHEET789/edit#gid=0', PUBLIC))
+      .toEqual({ mode: 'native', src: 'https://docs.google.com/spreadsheets/d/SHEET789/preview' });
+  });
+
+  it('does not send SharePoint or OneDrive links to the Office viewer', () => {
+    for (const link of [
+      'https://kbc.sharepoint.com/:w:/s/curriculum/EaBcD?e=xyz',
+      'https://kbc-my.sharepoint.com/personal/someone/Documents/brief.docx',
+      'https://1drv.ms/w/s!AbCd',
+      'https://onedrive.live.com/view.aspx?resid=ABC',
+    ]) {
+      const embed = resolveDocEmbed(link, PUBLIC);
+      expect(embed.mode).toBe('unavailable');
+      if (embed.mode !== 'unavailable') throw new Error('expected unavailable');
+      expect(embed.reason).toMatch(/SharePoint\/OneDrive/);
+    }
   });
 
   it('tells the reader a legacy deck is the reason, not just the server', () => {
@@ -122,9 +175,9 @@ describe('resolveDocEmbed', () => {
     expect(resolveDocEmbed('javascript:alert(1)', PUBLIC).mode).toBe('unavailable');
   });
 
-  it('tolerates free-text junk by letting the Office viewer answer for it', () => {
+  it('says so for free-text junk instead of showing Office’s “File not found”', () => {
     // Authored URLs are a plain text field. Junk resolves as a relative path on
-    // a public origin; the viewer shows its own message, as it always did.
-    expect(resolveDocEmbed('not a url at all', PUBLIC).mode).toBe('office');
+    // this site, which the Office viewer can never fetch.
+    expect(resolveDocEmbed('not a url at all', PUBLIC).mode).toBe('unavailable');
   });
 });

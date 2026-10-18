@@ -32,7 +32,7 @@ def azure_configured() -> bool:
     return bool(settings.AZURE_STORAGE_ACCOUNT and settings.AZURE_STORAGE_KEY)
 
 
-def _service_client(upload_block_bytes=None, retry_total=None) -> BlobServiceClient:
+def _service_client(upload_block_bytes=None, retry_total=None, download_chunk_bytes=None) -> BlobServiceClient:
     options = {}
     if upload_block_bytes:
         options.update({
@@ -45,6 +45,11 @@ def _service_client(upload_block_bytes=None, retry_total=None) -> BlobServiceCli
             'retry_connect': retry_total,
             'retry_read': retry_total,
             'retry_status': retry_total,
+        })
+    if download_chunk_bytes is not None:
+        options.update({
+            'max_single_get_size': download_chunk_bytes,
+            'max_chunk_get_size': download_chunk_bytes,
         })
     return BlobServiceClient(
         account_url=f"https://{settings.AZURE_STORAGE_ACCOUNT}.blob.core.windows.net",
@@ -74,6 +79,7 @@ def upload_to_quarantine(file_obj, blob_name, content_type):
 def upload_blob(
     file_obj, container, blob_name, content_type, overwrite=True,
     upload_block_bytes=None, max_concurrency=2, retry_total=None, progress_hook=None,
+    read_timeout=None,
 ):
     """Write directly to `container`, bypassing the quarantine lifecycle.
 
@@ -91,7 +97,7 @@ def upload_blob(
         content_settings=ContentSettings(content_type=content_type or "application/octet-stream"),
         max_concurrency=max_concurrency,
         connection_timeout=AZURE_UPLOAD_CONNECTION_TIMEOUT_SECONDS,
-        read_timeout=AZURE_UPLOAD_READ_TIMEOUT_SECONDS,
+        read_timeout=read_timeout or AZURE_UPLOAD_READ_TIMEOUT_SECONDS,
         **({'progress_hook': progress_hook} if progress_hook is not None else {}),
     )
     return blob_name
@@ -168,7 +174,7 @@ def delete_blob(container, blob_name):
     )
 
 
-def get_read_sas(container, blob_name, *, content_disposition=None, ttl_minutes=None) -> str:
+def get_read_sas(container, blob_name, *, content_disposition=None, content_type=None, ttl_minutes=None) -> str:
     """Build a short-lived read-only URL for an explicitly authorised blob."""
     token = generate_blob_sas(
         account_name=settings.AZURE_STORAGE_ACCOUNT,
@@ -178,6 +184,7 @@ def get_read_sas(container, blob_name, *, content_disposition=None, ttl_minutes=
         permission=BlobSasPermissions(read=True),
         expiry=datetime.now(timezone.utc) + timedelta(minutes=settings.AZURE_SAS_TTL_MINUTES if ttl_minutes is None else min(720, max(1, int(ttl_minutes)))),
         content_disposition=content_disposition,
+        content_type=content_type,
     )
     return f"{blob_url(container, blob_name)}?{token}"
 

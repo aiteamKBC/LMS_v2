@@ -1,11 +1,14 @@
+import type { CanonicalModuleProgress } from '@/api/moduleProgress';
+import { moduleMeasures } from './progress';
 import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { ArrowRight, CalendarDays, ChevronLeft, ChevronRight, Clock3, Equal, FileText, GraduationCap, RefreshCw, Target, TrendingDown, TrendingUp, Video } from 'lucide-react';
 import type { LearnerKind } from '@/api/learnerDetail';
 import type { TrainingPlanDashboard, PlanReview } from '@/api/trainingPlanDashboard';
 import type { LearnerCalendarEvent } from '@/api/learnerCalendar';
-import { fetchAttendanceWorkspace, peekAttendanceWorkspace, type AttendanceLecture } from '@/api/attendanceLectures';
+import { fetchAttendanceWorkspace, peekAttendanceWorkspace, type AttendanceLecture, type AttendanceWorkspace } from '@/api/attendanceLectures';
 import { invalidateLearnerReads } from '@/api/learnerRead';
+import { learningReflectionStatusKey, loadLearningReflectionStatuses, type LearningReflectionStatusMap } from '@/api/reflectionSubmission';
 import { useLiveLearnerRead } from '@/hooks/useLiveLearnerRead';
 import { coachFetch } from '@/lib/coachFetch';
 import type { Subject } from '../my-learning/SubjectWorkspace';
@@ -33,11 +36,21 @@ type Props = {
   programmeStartDate?: string | null; programmeEndDate?: string | null;
   activityOverviewOnly?: boolean;
   timelineOnly?: boolean;
+  /** Module timeline, module overview and progress panels, without the monthly plan.
+   * overviewOnly keeps progress; trainingOnly keeps the timeline and module overview. */
+  cardsOnly?: boolean;
+  simpleModuleOverview?: boolean;
+  canOpenCalendar?: boolean;
   monthlyOnly?: boolean;
   trainingOnly?: boolean;
   overviewOnly?: boolean;
   showOtjChart?: boolean;
+  wholeProgrammeRings?: boolean;
+  programmeProgress?: CanonicalModuleProgress[];
   programmeSnapshot?: ProgrammeProgressSnapshot;
+  targetAsOfToday?: number | null;
+  /** Supplied by the dedicated Dashboard Monthly response; other callers retain their own read. */
+  attendanceWorkspace?: AttendanceWorkspace;
 };
 
 type TimelineModule = ReturnType<typeof buildPlanModules>[number];
@@ -45,6 +58,10 @@ type TimelineModuleMonthData = TimelineModule & {
   monthlyActivities?: PlanActivitySummary[];
   ksbCodesByMonth?: Record<string, string[]>;
 };
+
+const readAssignmentStatuses = (kind: LearnerKind, learnerId: string, signal?: AbortSignal, fresh = false) =>
+  loadLearningReflectionStatuses({ learnerKind: kind, learnerId }, { signal, revalidate: fresh });
+const peekAssignmentStatuses = (): LearningReflectionStatusMap | undefined => undefined;
 
 function bookingEvent(review: PlanReview): LearnerCalendarEvent {
   return {
@@ -71,11 +88,12 @@ function catchupAction(row: AttendanceLecture): string | null {
 }
 
 /** Weekly learning and monthly coaching share the dashboard above the linked module panels. */
-export function TrainingPlanDetails({ data, subjects, kind, learnerId, onRefresh, refreshing = false,
+export function TrainingPlanDetails({ data: baseData, subjects, kind, learnerId, onRefresh, refreshing = false,
   onRetryContract, initialSubjectId = '', initialMonth = '', canOpenActivities = true, weeklyFocus, programmeStartDate, programmeEndDate,
-  activityOverviewOnly = false, timelineOnly = false, monthlyOnly = false, trainingOnly = false, overviewOnly = false,
-  showOtjChart = true, programmeSnapshot }: Props) {
-  const modules = useMemo(() => buildPlanModules(subjects, data), [subjects, data]);
+  activityOverviewOnly = false, timelineOnly = false, cardsOnly = false, canOpenCalendar = true, simpleModuleOverview = false,
+  monthlyOnly = false, trainingOnly = false, overviewOnly = false,
+  showOtjChart = true, wholeProgrammeRings = false, programmeSnapshot, programmeProgress, targetAsOfToday, attendanceWorkspace }: Props) {
+  const baseModules = useMemo(() => buildPlanModules(subjects, baseData), [subjects, baseData]);
   const [now, setNow] = useState(Date.now);
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 30_000);
@@ -83,18 +101,18 @@ export function TrainingPlanDetails({ data, subjects, kind, learnerId, onRefresh
   }, []);
   const today = new Date(now).toLocaleDateString('en-CA', { timeZone: 'Europe/London' });
   const thisMonth = today.slice(0, 7);
-  const programmeStart = dateKey(programmeStartDate) || modules.map(module => dateKey(module.start)).filter(Boolean).sort()[0] || '';
+  const programmeStart = dateKey(programmeStartDate) || baseModules.map(module => dateKey(module.start)).filter(Boolean).sort()[0] || '';
   // The learner-detail bound can lag behind the current contract/activity
   // projection.  Keep it as a lower-priority bound when the payload already
   // contains a later valid month, so an absent URL month defaults to the real
   // current month instead of being clamped into stale history.
   const payloadEndMonths = [
-    ...Object.keys(data.months),
-    ...data.actual.map(row => row.month),
-    ...data.reviews.map(review => reviewDate(review).slice(0, 7)),
+    ...Object.keys(baseData.months),
+    ...baseData.actual.map(row => row.month),
+    ...baseData.reviews.map(review => reviewDate(review).slice(0, 7)),
   ].filter(month => /^\d{4}-(0[1-9]|1[0-2])$/.test(month));
   const payloadEnd = payloadEndMonths.sort().at(-1);
-  const moduleEnd = modules.map(module => dateKey(moduleVisualEnd(module))).filter(Boolean).sort().at(-1);
+  const moduleEnd = baseModules.map(module => dateKey(moduleVisualEnd(module))).filter(Boolean).sort().at(-1);
   const programmeEnd = [dateKey(programmeEndDate), moduleEnd, payloadEnd ? `${payloadEnd}-28` : '']
     .filter(Boolean).sort().at(-1) || '';
   const minMonth = programmeStart.slice(0, 7);
@@ -110,6 +128,8 @@ export function TrainingPlanDetails({ data, subjects, kind, learnerId, onRefresh
   // to a month the user requested directly.
   const initialSelectedMonth = explicitMonth || clampMonth(thisMonth);
   const [selectedMonth, setSelectedMonth] = useState(initialSelectedMonth);
+  const data = baseData;
+  const modules = baseModules;
   const [selectedId, setSelectedId] = useState(initialSubjectId);
   const [bookingReview, setBookingReview] = useState<PlanReview | null>(null);
   const [absenceLecture, setAbsenceLecture] = useState<AttendanceLecture | null>(null);
@@ -117,7 +137,11 @@ export function TrainingPlanDetails({ data, subjects, kind, learnerId, onRefresh
   const [catchupBooking, setCatchupBooking] = useState<LearnerCalendarEvent | null>(null);
   const [catchupBusy, setCatchupBusy] = useState(false);
   const [catchupError, setCatchupError] = useState('');
-  const attendance = useLiveLearnerRead(kind, learnerId, monthlyOnly && canOpenActivities, fetchAttendanceWorkspace, peekAttendanceWorkspace);
+  const attendanceRead = useLiveLearnerRead(kind, learnerId, monthlyOnly && canOpenActivities && attendanceWorkspace === undefined, fetchAttendanceWorkspace, peekAttendanceWorkspace);
+  const attendance = attendanceWorkspace === undefined ? attendanceRead
+    : { data: attendanceWorkspace, loading: refreshing, error: '', refresh: onRefresh };
+  const assignmentStatuses = useLiveLearnerRead(kind, learnerId, monthlyOnly && canOpenActivities,
+    readAssignmentStatuses, peekAssignmentStatuses);
   const monthData = (module: TimelineModule) => module as TimelineModuleMonthData;
   useEffect(() => {
     setSelectedMonth(current => {
@@ -171,6 +195,26 @@ export function TrainingPlanDetails({ data, subjects, kind, learnerId, onRefresh
   const assignmentHref = (moduleId: string, componentId?: string | null, weekTitle?: string | null) => componentId
     ? `/learner/component/${kind}/${learnerId}/${encodeURIComponent(componentId)}?week=${encodeURIComponent(weekTitle || '')}`
     : subjectHref(moduleId);
+  const monthlySubmissionHref = (activity: PlanActivitySummary) => {
+    const params = new URLSearchParams();
+    if (/^\d{4}-\d{2}/.test(activity.date)) params.set('month', activity.date.slice(0, 7));
+    if (activity.componentId) params.set('assignment', activity.componentId);
+    const query = params.toString();
+    return `/learner/monthly-submission/${kind}/${encodeURIComponent(learnerId)}${query ? `?${query}` : ''}`;
+  };
+  const assignmentStatus = (activity: PlanActivitySummary) => activity.componentId
+      ? assignmentStatuses.data?.[learningReflectionStatusKey('assignment', activity.componentId)]
+      : undefined;
+  const assignmentCompleted = (activity: PlanActivitySummary) =>
+    activity.completed || ['accepted', 'completed'].includes(assignmentStatus(activity) || '');
+  const assignmentAction = (activity: PlanActivitySummary) => {
+    if (assignmentCompleted(activity)) return 'View';
+    const status = assignmentStatus(activity);
+    if (status === 'draft') return 'Continue';
+    if (['submitted_for_tutor_review', 'submitted', 'pending_review', 'partial'].includes(status || '')) return 'View';
+    if (['referred', 'returned', 'rejected'].includes(status || '')) return 'Revise';
+    return 'Start';
+  };
   const selectMonth = (key: string) => { if (!key) return; setSelectedMonth(clampMonth(key)); setSelectedId(''); };
   const shiftMonth = (step: number) => { const date = new Date(`${selectedMonth}-01T12:00:00Z`); date.setUTCMonth(date.getUTCMonth() + step); selectMonth(date.toISOString().slice(0, 7)); };
   const canGoPrevious = !minMonth || selectedMonth > minMonth;
@@ -249,15 +293,17 @@ export function TrainingPlanDetails({ data, subjects, kind, learnerId, onRefresh
       </section>
       <section className={board.card} aria-label="Assignments this month">
         <h3 className={board.cardTitle}>Assignments</h3>
+        {assignmentStatuses.error && <p role="alert" className={board.hint}>Assignment progress could not refresh. <button type="button" className={board.retry} onClick={assignmentStatuses.refresh}>Retry assignment progress</button></p>}
         <div className={board.assignments}>{monthAssignments.length ? monthAssignments.slice(0, 2).map(({ module, activity }) => {
-          const assignmentPercent = activity.completed ? 100 : 0;
+          const completed = assignmentCompleted(activity);
+          const assignmentPercent = completed ? 100 : 0;
           return <article key={`${module.id}:${activity.id}`} className={board.assignment}>
             <div className={board.assignmentHead}><span className={board.assignmentIcon}><FileText size={18} /></span><div><strong>{activity.title}</strong><small>{activity.weekTitle || module.title}</small></div></div>
             <div className={board.assignmentStats}>
               <div><span>Required hours</span><b>{hours(activity.expectedHours)} hrs</b></div>
-              <div><span>Achieved hours</span><b>{activity.completed ? hours(activity.expectedHours) : '0'} hrs</b></div>
+              <div><span>Achieved hours</span><b>{completed ? hours(activity.expectedHours) : '0'} hrs</b></div>
               <div className={board.assignmentProgress}><span>Progress</span><i role="img" aria-label={`${assignmentPercent}% complete`} style={{ '--assignment-progress': `${assignmentPercent}%` } as CSSProperties}><b>{assignmentPercent}%</b></i></div>
-              {canOpenActivities ? <Link className={board.primaryAction} to={assignmentHref(module.id, activity.componentId, activity.weekTitle)}>{activity.completed ? 'View' : 'Start'}<ArrowRight size={15} aria-hidden="true" /></Link> : <State value={activity.completed ? 'Completed' : 'Not started'} />}
+              {canOpenActivities ? <Link className={board.primaryAction} to={monthlySubmissionHref(activity)}>{assignmentAction(activity)}<ArrowRight size={15} aria-hidden="true" /></Link> : <State value={completed ? 'Completed' : 'Not started'} />}
             </div>
           </article>;
         }) : <p className={board.empty}>No assignments found for this month.</p>}</div>
@@ -290,8 +336,15 @@ export function TrainingPlanDetails({ data, subjects, kind, learnerId, onRefresh
       </table></div> : <p className={board.empty}>No lectures scheduled for this month.</p>}
     </section>
   </section>;
+  const programmeRows = programmeProgress?.map(row => {
+    const module = modules.find(item => item.id === row.id);
+    const measures = module ? moduleMeasures(module, data) : [];
+    return { id: row.id, title: row.title, value: row.percent, start: module?.start,
+      available: measures.filter(measure => measure.value != null).length, measureCount: measures.length };
+  });
   const progressCharts = <ProgressCharts modules={modules} selected={selected} data={data} onModuleSelect={module => setSelectedId(module.id)}
-    programmeStartMonth={minMonth} programmeEndMonth={maxMonth} programmeSnapshot={programmeSnapshot} showOtjChart={showOtjChart} />;
+    programmeRows={programmeRows} programmeStartMonth={minMonth} programmeEndMonth={maxMonth} programmeSnapshot={programmeSnapshot} showOtjChart={showOtjChart}
+    wholeProgrammeRings={wholeProgrammeRings} targetAsOfToday={targetAsOfToday} />;
   // Off-the-job hours summary for the sidebar beside Monthly focus. Values come
   // from the same month-by-month source the OTJH chart below uses, so the card
   // agrees with it. Minimum required and Forecast are not carried by the learner
@@ -306,11 +359,23 @@ export function TrainingPlanDetails({ data, subjects, kind, learnerId, onRefresh
   const otjSummaryCard = showOtjSummary
     ? <OtjHoursSummary plannedIlr={otjPlanned} submitted={otjSubmitted} completed={otjCompleted} minimumRequired={null} forecast={null} />
     : null;
+  const moduleTimeline = <ModuleTimeline canOpenActivities={canOpenActivities} canOpenCalendar={canOpenCalendar} data={data} modules={modules} kind={kind} learnerId={learnerId} today={today}
+    programmeStartDate={programmeStartDate} detailsMode="overview" selectedMonth={selectedMonth} selectedId={selected?.id}
+    onMonthChange={selectMonth} onModuleSelect={module => setSelectedId(module.id)} />;
+  const moduleOverview = <ModuleOverview module={selected} hasModules={modules.length > 0} coachName={data.coach.name}
+    href={selected ? subjectHref(selected.id) : ""} canOpenActivities={canOpenActivities} showSchedule={!trainingOnly} simple={simpleModuleOverview} />;
   if (timelineOnly) {
+    return <div className={`${styles.root} ${layout.root}`}>{moduleTimeline}</div>;
+  }
+  if (cardsOnly) {
     return <div className={`${styles.root} ${layout.root}`}>
-      <ModuleTimeline canOpenActivities={canOpenActivities} data={data} modules={modules} kind={kind} learnerId={learnerId} today={today}
-        programmeStartDate={programmeStartDate} detailsMode="overview" selectedMonth={selectedMonth} selectedId={selected?.id}
-        onMonthChange={selectMonth} onModuleSelect={module => setSelectedId(module.id)} />
+      {/* Training uses the learner dashboard's stacked layout: the timeline
+          takes the full row and the focused module follows beneath it. */}
+      {!overviewOnly && <div className={`${layout.cards} ${trainingOnly ? layout.trainingCards : ''}`}>
+        <div className={layout.learningVisuals}>{moduleTimeline}</div>
+        {moduleOverview}
+      </div>}
+      {!trainingOnly && <div className={layout.cardsBelow}>{progressCharts}</div>}
     </div>;
   }
   const showMonthly = !trainingOnly && !overviewOnly;
@@ -407,12 +472,10 @@ export function TrainingPlanDetails({ data, subjects, kind, learnerId, onRefresh
     </>}
     <div className={`${layout.cards} ${activityOverviewOnly ? layout.activityOverviewCards : ''} ${trainingOnly ? layout.trainingCards : ''}`}>
       <div className={layout.learningVisuals}>
-      {!activityOverviewOnly && <ModuleTimeline canOpenActivities={canOpenActivities} data={data} modules={modules} kind={kind} learnerId={learnerId} today={today}
-        programmeStartDate={programmeStartDate} detailsMode="overview" selectedMonth={selectedMonth} selectedId={selected?.id} onMonthChange={selectMonth} onModuleSelect={module => setSelectedId(module.id)} />}
+      {!activityOverviewOnly && moduleTimeline}
       {!trainingOnly && progressCharts}
       </div>
-      {!activityOverviewOnly && <ModuleOverview module={selected} hasModules={modules.length > 0} coachName={data.coach.name}
-        href={selected ? subjectHref(selected.id) : ""} canOpenActivities={canOpenActivities} showSchedule={!trainingOnly} />}
+      {!activityOverviewOnly && moduleOverview}
     </div>
     </section>}
     {canOpenActivities && bookingReview && <MeetingBookingDialog

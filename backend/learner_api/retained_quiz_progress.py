@@ -109,9 +109,19 @@ def attach_quiz_slots(detail, attempts, slots):
     return detail
 
 
-def retain_quiz_progress(detail):
+def retain_quiz_progress(detail, *, completed_only=False, strict=False):
+    """Attach historical quiz slots needed by this projection.
+
+    Compact learner summaries calculate completion only. Failed attempts remain
+    in ``quizAttempts`` for history, but resolving their former curriculum slot
+    cannot change a module's completed count. Avoiding that history lookup is
+    important for large plans: it otherwise has to inspect every revision of
+    every quiz component assigned to the learner.
+    """
     detail['retiredQuizComponents'] = []
     attempts = unmatched_quiz_attempts(detail)
+    if completed_only:
+        attempts = [attempt for attempt in attempts if attempt.get('passed') is True]
     if not attempts:
         return detail
     module_ids = sorted({_text(c.get('moduleId')) for c in detail.get('components') or []
@@ -122,6 +132,8 @@ def retain_quiz_progress(detail):
     try:
         slots = read_quiz_slots(module_ids, quiz_ids)
     except DatabaseError as exc:
+        if strict:
+            raise
         # The plan still renders from current links, as it did before.
         logger.warning('Could not resolve earlier quiz placements: %s', exc)
         return detail

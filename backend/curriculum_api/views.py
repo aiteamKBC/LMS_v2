@@ -24,6 +24,7 @@ from urllib.parse import urlparse
 from zoneinfo import ZoneInfo
 
 from django.conf import settings
+from django.core import signing
 from django.core.cache import cache
 from django.core.files.base import ContentFile
 from django.core.files.storage import default_storage
@@ -33,16 +34,22 @@ from django.http import FileResponse, Http404, HttpResponse, HttpResponseNotModi
 from django.utils.text import get_valid_filename
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET
+from django.views.decorators.gzip import gzip_page
 from django.views.decorators.clickjacking import xframe_options_sameorigin
 from login.permissions import require_role
 from .weekly_schedule import module_weekly_schedule, merged_weekly_schedule
 from .teams_weekly_calendar import calendar_groups, save_weekday_calendar, stored_calendar_series, graph_event_utc
+from .teams_options_retry import microsoft_update_summary
 from .session_overrides import apply_session_overrides, override_clock, session_overrides
+from .session_artifact_placement import recording_matches_occurrence
+from .attendance_identity import keep_directory_lookup, resolve_directory_accounts
 from .teams_calendar_checks import (CalendarMismatch, attendee_differences, attendees_already_match, calendar_targets, event_organizer_address,
-                                    graph_calendar_time, local_calendar_recurrence, publish_attendees, safe_teams_join_url,
+                                    graph_calendar_time, local_calendar_recurrence, publish_attendees, remove_attendees_silently,
+                                    safe_teams_join_url,
                                     dropped_sessions_sentence, sessions_a_rewrite_would_drop,
                                     unconfirmed_attendee_detail, utc_datetime, verify_calendar)
 
+from learner_api.ksb_exclusions import and_not_excluded
 from learner_api.progress_rules import (
     progress_achievement_status,
     progress_counts_as_achieved,
@@ -52,6 +59,7 @@ from learner_api.constants import PROGRAMME_STATUS_CHOICES
 
 from . import pptx_slides
 from . import schema_gate
+from . import shared_build
 from . import versioning
 from . import upload_storage
 from . import tutor_notifications
@@ -66,6 +74,10 @@ from .ksb_coverage import (
     normalise_code as coverage_normalise_code,
 )
 from .learner_ksb_sync import sync_progress_ksbs
+from .http_cache import (
+    conditional_json_response, encode_json_bytes, encode_json_entry, encode_json_error_entry, entry_payload,
+    plain_json_response, query_flag, query_list, query_value,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -117,6 +129,7 @@ CURRICULUM_EPOCH_TABLE = 'cache_epoch'
 SHARED_EPOCH_POLL_SECONDS = 3.0
 _SHARED_EPOCH_STATE = {'value': None, 'checked_at': 0.0}
 _SHARED_EPOCH_LOCK = threading.Lock()
+_SHARED_EPOCH_REFRESH_LOCK = threading.Lock()
 _CURRICULUM_EPOCH_TABLE_READY = False
 # Per-thread: a write in this request has invalidated, and one shared bump is
 # owed once the request is through. Deduped because invalidate_curriculum_cache()
@@ -447,19 +460,36 @@ def shared_curriculum_epoch():
         checked_at = _SHARED_EPOCH_STATE['checked_at']
     if value is not None and now - checked_at < SHARED_EPOCH_POLL_SECONDS:
         return value
-    if not ensure_curriculum_epoch_table():
-        return local_shared_curriculum_epoch()
-    try:
-        with transaction.atomic():
-            epoch = read_shared_curriculum_epoch_row()
-    except Exception:
-        logger.warning('Unable to read the shared curriculum epoch.', exc_info=True)
-        # The last value this process saw beats 0: answering 0 would read as
-        # "everybody rolled back", retiring every warm payload in the process
-        # over one unavailable read.
-        return value if value is not None else local_shared_curriculum_epoch()
-    remember_shared_curriculum_epoch(epoch)
-    return epoch
+    # Concurrent page requests share one refresh. The short state lock stays
+    # free while SQL runs, so writes can still publish their new generation.
+    with _SHARED_EPOCH_REFRESH_LOCK:
+        with _SHARED_EPOCH_LOCK:
+            value = _SHARED_EPOCH_STATE['value']
+            checked_at = _SHARED_EPOCH_STATE['checked_at']
+        if value is not None and time.monotonic() - checked_at < SHARED_EPOCH_POLL_SECONDS:
+            return value
+        if not ensure_curriculum_epoch_table():
+            return local_shared_curriculum_epoch()
+        try:
+            # A standalone SELECT needs no BEGIN/COMMIT round trips. Inside a
+            # caller's transaction retain the savepoint: a failed SELECT must
+            # not poison that caller's transaction.
+            needs_savepoint = connection.in_atomic_block or not connection.get_autocommit()
+            guard = transaction.atomic() if needs_savepoint else contextlib.nullcontext()
+            with guard:
+                epoch = read_shared_curriculum_epoch_row()
+        except Exception:
+            logger.warning('Unable to read the shared curriculum epoch.', exc_info=True)
+            with _SHARED_EPOCH_LOCK:
+                latest = _SHARED_EPOCH_STATE['value']
+            return latest if latest is not None else local_shared_curriculum_epoch()
+        with _SHARED_EPOCH_LOCK:
+            # A local write may have published a newer epoch during the read.
+            if _SHARED_EPOCH_STATE['checked_at'] != checked_at:
+                return _SHARED_EPOCH_STATE['value']
+            _SHARED_EPOCH_STATE['value'] = epoch
+            _SHARED_EPOCH_STATE['checked_at'] = time.monotonic()
+        return epoch
 
 
 def write_shared_curriculum_epoch_bump():
@@ -661,30 +691,63 @@ def cached_curriculum_value(key, factory, force=False, ttl=None, shared=True):
                 if entry and entry['expires_at'] > now and entry.get('shared_epoch') == shared_epoch:
                     return entry['value']
 
-        with _CURRICULUM_CACHE_LOCK:
-            epoch = _CURRICULUM_CACHE_EPOCH
+        # The lock above covers this process only. When the shared cache is
+        # really shared (Redis), another worker may already be running this
+        # exact build; wait for its result rather than run a second copy
+        # against the database. See shared_build for every way this falls back
+        # to building here. A force caller has just written and wants its own
+        # state back, so it never waits on a build that may predate the write.
+        shared_key = shared_curriculum_cache_key(key, shared_epoch)
+        build_token = None
+        if shared and not force:
+            for _attempt in range(2):
+                acquired, build_token = shared_build.try_acquire(cache, shared_key)
+                if acquired:
+                    break
+                waited, holder_gone = shared_build.wait_for_value(cache, shared_key)
+                if waited is not None:
+                    with _CURRICULUM_CACHE_LOCK:
+                        _CURRICULUM_CACHE[key] = {
+                            'expires_at': datetime.now().timestamp() + ttl,
+                            'shared_epoch': shared_epoch,
+                            'value': waited,
+                        }
+                    return waited
+                if not holder_gone:
+                    # Waited the full window: build here, without the lock.
+                    break
 
-        # An exception propagates without storing anything, so failures are never
-        # cached.
-        value = factory()
+        try:
+            with _CURRICULUM_CACHE_LOCK:
+                epoch = _CURRICULUM_CACHE_EPOCH
 
-        with _CURRICULUM_CACHE_LOCK:
-            # Only publish if no write invalidated the cache while we were building.
-            if epoch == _CURRICULUM_CACHE_EPOCH and shared_epoch == shared_curriculum_epoch():
-                _CURRICULUM_CACHE[key] = {
-                    'expires_at': datetime.now().timestamp() + ttl,
-                    'shared_epoch': shared_epoch,
-                    'value': value,
-                }
-                if shared:
-                    try:
-                        cache.set(
-                            shared_curriculum_cache_key(key, shared_epoch),
-                            value,
-                            timeout=ttl,
-                        )
-                    except Exception:
-                        logger.warning('Unable to populate shared curriculum payload cache.', exc_info=True)
+            # An exception propagates without storing anything, so failures are never
+            # cached.
+            value = factory()
+
+            # Network I/O must not hold the global cache lock: a slow epoch
+            # read or shared-cache write would stall hits for unrelated keys.
+            current_shared_epoch = shared_curriculum_epoch()
+            with _CURRICULUM_CACHE_LOCK:
+                # Only publish if no write invalidated the cache while we were building.
+                publish = epoch == _CURRICULUM_CACHE_EPOCH and shared_epoch == current_shared_epoch
+                if publish:
+                    _CURRICULUM_CACHE[key] = {
+                        'expires_at': datetime.now().timestamp() + ttl,
+                        'shared_epoch': shared_epoch,
+                        'value': value,
+                    }
+            if publish and shared:
+                # This key includes the generation: a concurrent invalidation
+                # retires it even if this network write finishes afterwards.
+                try:
+                    cache.set(shared_key, value, timeout=ttl)
+                except Exception:
+                    logger.warning('Unable to populate shared curriculum payload cache.', exc_info=True)
+        finally:
+            # After publishing, so a waiter that sees the lock gone finds the
+            # value already there.
+            shared_build.release(cache, shared_key, build_token)
     return value
 
 
@@ -1255,6 +1318,11 @@ TEAMS_LOBBY_VALUES = {
     'everyone': 'everyone',
     'organizer': 'organizer',
 }
+# Only the people invited skip the lobby. A learner taken off a calendar keeps
+# the join link they were sent -- removal is silent and never cancels -- so it
+# is the lobby, not the link, that stops them walking straight back in. The
+# per-weekday calendar read this name before it existed here.
+DEFAULT_TEAMS_LOBBY_BYPASS = 'invited'
 
 
 def ensure_live_sessions_table():
@@ -1386,6 +1454,12 @@ def provision_live_session_tracking_tables():
             cursor.execute(f"alter table {live_sessions} add column presenters {json_type} not null default '[]'")
         if connection.vendor != 'postgresql' and 'co_organizers' not in column_names(LIVE_SESSIONS_TABLE):
             cursor.execute(f"alter table {live_sessions} add column co_organizers {json_type} not null default '[]'")
+        # The meeting ID and passcode under the join link (teams_dial_in.py).
+        for column in ('join_meeting_code', 'join_passcode', 'dial_in_join_url'):
+            if connection.vendor == 'postgresql':
+                cursor.execute(f"alter table {live_sessions} add column if not exists {column} text not null default ''")
+            elif column not in column_names(LIVE_SESSIONS_TABLE):
+                cursor.execute(f"alter table {live_sessions} add column {column} text not null default ''")
         cursor.execute(f'''
             create table if not exists {occurrences} (
                 id varchar(128) primary key, live_session_id varchar(128) not null,
@@ -1660,9 +1734,14 @@ def replace_live_session_occurrences(live_session_id, payload, utc_start, durati
         if rows:
             # Rows no planned session kept remain audit history. A parked row
             # stays in the negative range so it cannot block a future active
-            # session from reclaiming its former positive number.
+            # session from reclaiming its former positive number. They are
+            # 'superseded' -- "not in plan, still on Teams" -- and never
+            # 'cancelled': nobody pressed Cancel, and the Teams slot is still
+            # there until somebody does. A row already cancelled stays cancelled.
             for row in unclaimed:
-                values = {'status': 'cancelled', 'updated_at': now}
+                if clean_str(row.get('status')).lower() in {'cancelled', 'canceled'}:
+                    continue
+                values = {'status': 'superseded', 'updated_at': now}
                 update_authoring_rows(LIVE_SESSION_OCCURRENCES_TABLE, 'id = %s', [clean_str(row.get('id'))], values)
     return rows
 
@@ -1674,7 +1753,7 @@ def saved_live_session_occurrences(live_session_id):
     planned items ``replace_live_session_occurrences`` returns carry neither an
     id nor a stored start, so handing those to the walk matched no component.
     """
-    return authoring_fetch_all(LIVE_SESSION_OCCURRENCES_TABLE, "live_session_id = %s and status <> 'cancelled'",
+    return authoring_fetch_all(LIVE_SESSION_OCCURRENCES_TABLE, "live_session_id = %s and status not in ('cancelled', 'superseded')",
                                [live_session_id], 'session_number')
 
 
@@ -2358,6 +2437,7 @@ def apply_teams_occurrence_shifts(
     invited_people,
     meeting_options=None,
     existing_occurrences=None,
+    missing=None,
 ):
     """Move the plain weekly Graph occurrences onto the wizard's shifted dates.
 
@@ -2367,10 +2447,14 @@ def apply_teams_occurrence_shifts(
     shifted dates on both calls, and skipping the reconciliation leaves Teams showing
     sessions on the very holidays the wizard moved them off.
 
-    Returns `(warnings, recreated)`. A recurrence occurrence that Microsoft has
-    already deleted cannot be restored inside the series. In that one case a
-    standalone online event is created without recipients, given the same meeting
-    options, and returned so its real event/link identity can be persisted.
+    Returns `(warnings, recreated, stale)`. ``recreated`` holds only standalone
+    replacements that ALREADY exist (moved and re-configured on their own
+    events). A planned session whose occurrence Microsoft no longer lists in the
+    series is never re-created here: a new event is a new join link, and quietly
+    creating one is how learners ended up split across two rooms. It is appended
+    to ``missing`` (when the caller passes a list) and reported as "Missing from
+    Teams -- resolution required"; only the explicit, confirmed Calendar health
+    resolution may create a replacement.
     """
     from coach_api.views import microsoft_graph_request
 
@@ -2401,7 +2485,7 @@ def apply_teams_occurrence_shifts(
         # series spans more weekly slots than there are sessions.
         sorted_targets = sorted(target_occurrences, key=lambda item: item['session_number'])
         series_event_id = urllib_parse.unquote(event_key)
-        active_statuses = {'cancelled', 'canceled', 'declined', 'deleted', 'removed'}
+        active_statuses = {'cancelled', 'canceled', 'declined', 'deleted', 'removed', 'superseded'}
         standalone_rows = [
             row for row in (existing_occurrences or [])
             if clean_str(row.get('graph_event_id'))
@@ -2607,27 +2691,15 @@ def apply_teams_occurrence_shifts(
             target_key = teams_calendar_minute_key(target['start'])
             if target_key in master_keys or int(target['session_number']) in standalone_numbers:
                 continue
-            transaction_seed = f'{series_event_id}:{target["session_number"]}:{target_key}'
-            transaction_id = hashlib.sha256(transaction_seed.encode('utf-8')).hexdigest()
-            # The intended roster goes on at creation, silently. Publishing it
-            # afterwards used to be the only way people reached a recovered
-            # session, and that publish was gated on the author having asked for
-            # email -- so an author who chose not to email got a session with
-            # nobody on it. Membership is settled here, once, whatever the
-            # notification choice is.
-            recreated = microsoft_graph_request(
-                'POST',
-                f'users/{owner_key}/events',
-                payload=teams_single_occurrence_payload(
-                    title, target, invited_people, transaction_id,
-                ),
-                extra_headers=GRAPH_SILENT_INVITE_HEADERS,
-            )
-            standalone = teams_standalone_occurrence_meeting(
-                owner_key, recreated, target, invited_people, meeting_options,
-            )
-            warnings.extend(standalone.pop('warnings'))
-            recreated_details.append(standalone)
+            # Reported, never re-created. See the docstring: a save must not
+            # mint a second join link for a session learners already hold one for.
+            if missing is not None:
+                missing.append({
+                    'sessionNumber': int(target['session_number']),
+                    'startDateTimeUtc': target['start'].isoformat(),
+                    'endDateTimeUtc': target['end'].isoformat(),
+                    'reason': 'not_in_recurring_series',
+                })
     except RuntimeError as exc:
         logger.warning('Unable to reconcile individual Teams event instances: %s', exc)
         warnings.append({
@@ -2726,6 +2798,10 @@ def publish_teams_calendar_attendees(
         )
 
     if force:
+        if announce:
+            # Whoever this announced write drops is taken off silently first, so
+            # Exchange sends them no cancellation; the people who stay still hear.
+            event, _removed = remove_attendees_silently(request, owner_key, event, attendees)
         if needs_force_patch(event):
             request(
                 'PATCH',
@@ -2747,6 +2823,8 @@ def publish_teams_calendar_attendees(
             'GET', f'users/{owner_key}/events/{urllib_parse.quote(event_id, safe="")}',
         )
         if force:
+            if announce:
+                standalone, _removed = remove_attendees_silently(request, owner_key, standalone, attendees)
             if needs_force_patch(standalone):
                 request(
                     'PATCH',
@@ -2970,6 +3048,8 @@ def apply_teams_meeting_options(
     co_organizers=(),
     online_meeting_id='',
     meeting=None,
+    groups=None,
+    live_session_id='',
 ):
     """Apply this deployment's meeting policy to the onlineMeeting behind an event.
 
@@ -2981,28 +3061,44 @@ def apply_teams_meeting_options(
     skips it opens with nothing recording, no transcript afterwards, and every
     guest a presenter.
 
+    ``groups`` limits the PATCH to the option groups that need sending (see
+    teams_meeting_options_policy); None sends all of them, as every caller
+    creating a meeting does. An empty set sends nothing and reports applied.
+
     Returns ``(applied, meeting, warnings)`` and never raises. The calendar
     invitation is real work already done, and these options need
     OnlineMeetings.ReadWrite.All plus an application access policy on the
-    organizer that a deployment may not have granted yet.
+    organizer that a deployment may not have granted yet. Every refusal is
+    kept by teams_graph_failure_log (``live_session_id`` names the series).
     """
     from coach_api.views import microsoft_graph_request
+    from .teams_graph_failure_log import OPTIONS_PATCH, OPTIONS_RESOLVE, record_graph_failure
+    from .teams_meeting_options_policy import ALL_GROUPS, graph_error_details, meeting_options_patch
 
+    groups = set(ALL_GROUPS) if groups is None else set(groups)
     resolved = meeting if isinstance(meeting, dict) else {}
+    if not groups:
+        # Nothing about how this meeting runs changed: no Graph call at all.
+        return True, resolved, []
     meeting_id = clean_str(online_meeting_id) or clean_str(resolved.get('id'))
     if not meeting_id and join_url:
         try:
             resolved = teams_online_meeting_from_join_url(organizer, join_url) or {}
         except RuntimeError as exc:
             logger.warning('Unable to resolve the onlineMeeting behind a Teams event: %s', exc)
+            record_graph_failure(OPTIONS_RESOLVE, str(exc), live_session_id=live_session_id, organizer=organizer,
+                                 organizer_object_id=teams_online_meeting_owner_id(organizer, join_url),
+                                 groups=groups)
             return False, resolved, [{
                 'code': 'teams_meeting_options_not_applied',
                 'message': (
-                    'The Teams link was created, but its online meeting could not be resolved, so the recording, '
-                    'transcription and lobby options were not applied. Grant OnlineMeetings.ReadWrite.All and an '
-                    'application access policy to the organizer.'
+                    'The Teams link was created and saved, but Microsoft has not exposed its meeting options yet. '
+                    'Recording, transcription and lobby settings remain pending; open the calendar review to retry.'
                 ),
-                'detail': str(exc),
+                # The raw Graph refusal is kept in teams_graph_failures for
+                # diagnosis. It is not shown as a permissions verdict here:
+                # Graph can return the same 403 briefly after creating an event.
+                'detail': '',
             }]
         meeting_id = clean_str(resolved.get('id'))
     if not meeting_id:
@@ -3018,51 +3114,15 @@ def apply_teams_meeting_options(
     lobby_choice = clean_str(lobby_bypass).lower() or 'invited'
     if lobby_choice not in TEAMS_LOBBY_VALUES:
         lobby_choice = 'invited'
-    recording_choice = clean_str(recording).lower() or 'none'
     # Never `list(...)` these: a caller that passes the stored JSON text instead
     # of a parsed list would have it split into characters here.
-    co_organizer_emails = teams_series_email_list(co_organizers)
-    co_organizer_set = set(co_organizer_emails)
-    presenter_emails = [
-        email for email in teams_series_email_list(presenters)
-        if email not in co_organizer_set
-    ]
-    presenter_set = set(presenter_emails)
-    attendee_emails = [
-        email for email in teams_series_email_list(attendees)
-        if email not in co_organizer_set and email not in presenter_set
-    ]
-    roster = [*co_organizer_emails, *presenter_emails, *attendee_emails]
-    patch = {
-        'lobbyBypassSettings': {
-            'scope': TEAMS_LOBBY_VALUES[lobby_choice],
-            'isDialInBypassEnabled': False,
-        },
-        'allowRecording': recording_choice != 'none',
-        'recordAutomatically': recording_choice != 'none',
-        'allowTranscription': recording_choice == 'record-transcribe',
-        'meetingSpokenLanguageTag': clean_str(spoken_language) or 'en-GB',
-    }
-    # The roster goes on the meeting whether or not anyone presents: it is what
-    # tells Teams these people belong to this meeting rather than being guests who
-    # found the link. `allowedPresenters` stays at the tenant default until a
-    # presenter is actually named, because naming nobody would mute the tutor too.
-    if roster:
-        patch['participants'] = {
-            'attendees': [
-                {
-                    'upn': email,
-                    'role': (
-                        'coorganizer' if email in co_organizer_set
-                        else 'presenter' if email in presenter_set
-                        else 'attendee'
-                    ),
-                }
-                for email in roster
-            ],
-        }
-    if presenter_emails or co_organizer_emails:
-        patch['allowedPresenters'] = 'roleIsPresenter'
+    patch = meeting_options_patch(
+        groups, recording=recording, lobby_scope=TEAMS_LOBBY_VALUES[lobby_choice],
+        spoken_language=spoken_language, attendees=teams_series_email_list(attendees),
+        presenters=teams_series_email_list(presenters), co_organizers=teams_series_email_list(co_organizers),
+    )
+    if not patch:
+        return True, resolved, []
     meeting_path = teams_meeting_base_path(organizer, meeting_id, join_url)
     organizer_object_id = teams_online_meeting_owner_id(organizer, join_url)
     try:
@@ -3085,6 +3145,8 @@ def apply_teams_meeting_options(
             meeting_id,
             exc,
         )
+        record_graph_failure(OPTIONS_PATCH, str(exc), live_session_id=live_session_id, online_meeting_id=meeting_id,
+                             organizer=organizer, organizer_object_id=organizer_object_id, groups=groups)
         return False, resolved, [{
             'code': 'teams_meeting_options_not_applied',
             'message': (
@@ -3092,11 +3154,16 @@ def apply_teams_meeting_options(
                 'and presenter options. Check the Graph error detail for the exact cause.'
             ),
             'detail': str(exc),
+            'groups': sorted(groups),
+            'graphError': graph_error_details(str(exc)),
+            'organizer': clean_str(organizer),
+            'organizerObjectId': organizer_object_id,
+            'failureLogged': True,
         }]
     return True, resolved, []
 
 
-def teams_standalone_occurrence_meeting(owner_key, event, target, invited_people, meeting_options):
+def teams_standalone_occurrence_meeting(owner_key, event, target, invited_people, meeting_options, groups=None):
     """Give an occurrence recreated on its own event the options its series has.
 
     Graph builds a fresh onlineMeeting for a fresh event, at the tenant defaults,
@@ -3129,6 +3196,7 @@ def teams_standalone_occurrence_meeting(owner_key, event, target, invited_people
             attendees=invited_people,
             presenters=options.get('presenters') or [],
             co_organizers=options.get('co_organizers') or [],
+            groups=groups,
         )
         warnings.extend(option_warnings)
         online_meeting_id = clean_str((meeting or {}).get('id'))
@@ -3139,6 +3207,38 @@ def teams_standalone_occurrence_meeting(owner_key, event, target, invited_people
         'online_meeting_id': online_meeting_id,
         'warnings': warnings,
     }
+
+
+def refresh_standalone_occurrence_options(owner_key, series_event_id, occurrences, invited_people, meeting_options, groups=None):
+    """Re-apply roles and options to sessions restored on events of their own.
+
+    The people-only counterpart of the standalone half of
+    ``apply_teams_occurrence_shifts``: the same onlineMeeting options, and
+    nothing else. It never reads or writes a date, never moves an event and
+    never creates one -- a people-only save must leave the schedule exactly as
+    Microsoft holds it. Returns ``(warnings, details)`` in that function's shape.
+    ``groups`` is the option groups this save changed; empty sends nothing.
+    """
+    warnings, details = [], []
+    if groups is not None and not groups:
+        return warnings, details
+    series_event_id = clean_str(series_event_id)
+    for row in occurrences or []:
+        standalone_id = clean_str(row.get('graph_event_id'))
+        if not standalone_id or standalone_id == series_event_id:
+            continue
+        if clean_str(row.get('status')).lower() in ('cancelled', 'canceled', 'superseded'):
+            continue
+        event = {'id': standalone_id, 'onlineMeeting': {'joinUrl': clean_str(row.get('join_url'))}}
+        detail = teams_standalone_occurrence_meeting(
+            owner_key, event, {'session_number': row.get('session_number')}, invited_people, meeting_options,
+            groups=groups,
+        )
+        warnings.extend(detail.pop('warnings'))
+        if not detail.get('online_meeting_id'):
+            detail['online_meeting_id'] = clean_str(row.get('online_meeting_id'))
+        details.append(detail)
+    return warnings, details
 
 
 def persist_recreated_occurrence_details(live_session_id, recreated_details):
@@ -3375,6 +3475,9 @@ def curriculum_teams_meeting(request):
     }
     recreated_details = []
     leftover_slots = []
+    # Planned sessions the new series does not hold. Reported, never re-created
+    # on events of their own -- see apply_teams_occurrence_shifts.
+    missing_occurrences = []
     # Graph has just built a plain weekly series. Move its occurrences onto the
     # wizard's holiday-shifted dates now, otherwise the calendar keeps sessions on
     # holidays the wizard already moved them off and the two disagree from day one.
@@ -3391,6 +3494,7 @@ def curriculum_teams_meeting(request):
             teams_shifted_occurrence_targets(payload, duration),
             invited_people,
             meeting_options,
+            missing=missing_occurrences,
         )
         # Never deleted: the weekly filler a gap leaves behind is reported and
         # left on Teams. See flag_teams_occurrence_leftovers.
@@ -3417,6 +3521,7 @@ def curriculum_teams_meeting(request):
         attendees=invited_people,
         presenters=presenters,
         co_organizers=co_organizers,
+        live_session_id=live_session_id,
     )
     for option_warning in option_warnings:
         message = clean_str(option_warning.get('message'))
@@ -3431,8 +3536,9 @@ def curriculum_teams_meeting(request):
     try:
         if warnings or not settings_applied:
             raise RuntimeError('The calendar or meeting options could not be verified. Invitations remain pending.')
+        from .teams_calendar_integrity import without_missing
         event = verify_teams_calendar_with_standalones(
-            microsoft_graph_request, owner_key, event_id, targets, join_url,
+            microsoft_graph_request, owner_key, event_id, without_missing(targets, missing_occurrences), join_url,
             repeat != 'none', recreated_details,
         )
         publish_teams_calendar_attendees(
@@ -3441,7 +3547,7 @@ def curriculum_teams_meeting(request):
         )
         # Publishing must not resurrect deleted slots or change the shared link.
         event = verify_teams_calendar_with_standalones(
-            microsoft_graph_request, owner_key, event_id, targets, join_url,
+            microsoft_graph_request, owner_key, event_id, without_missing(targets, missing_occurrences), join_url,
             repeat != 'none', recreated_details,
             expected_attendees=event_payload['attendees'],
         )
@@ -3450,10 +3556,13 @@ def curriculum_teams_meeting(request):
             event_id=event_id, join_url=join_url,
         )
         persist_recreated_occurrence_details(live_session_id, recreated_details)
+        from .teams_calendar_integrity import record_reconcile
+        record_reconcile(live_session_id, missing_occurrences, module_catalogue_id=resolved_catalogue_id or '',
+                         source='Teams calendar created')
         occurrence_rows = authoring_fetch_all(
             LIVE_SESSION_OCCURRENCES_TABLE,
-            'live_session_id = %s and status != %s',
-            [live_session_id, 'cancelled'],
+            "live_session_id = %s and status not in ('cancelled', 'superseded')",
+            [live_session_id],
             'session_number asc',
         )
         tracked_occurrences = len(occurrence_rows)
@@ -3461,6 +3570,9 @@ def curriculum_teams_meeting(request):
             'warnings': json_db_value([]), 'online_meeting_id': meeting_id,
             'meeting_options_url': meeting_options_url, 'join_url': join_url, 'updated_at': datetime.utcnow(),
         })
+        from .teams_dial_in import remember_teams_dial_in
+        remember_teams_dial_in({'id': live_session_id, 'join_url': join_url, 'online_meeting_id': meeting_id,
+                                'organizer_email': organizer}, graph_meeting)
         # Persist component links before returning, even if the browser has
         # stopped waiting. Only verified occurrences may be attached.
         if resolved_catalogue_id:
@@ -3520,6 +3632,9 @@ def curriculum_teams_meeting(request):
         # Slots on Teams that are not module sessions. Kept apart from
         # `warnings`, which hold back the creation emails: nothing failed.
         'leftoverSlots': (event.get('unplannedInstances') or []) or leftover_slots,
+        # Planned sessions the series does not hold: resolution required in
+        # Calendar health. No separate meeting was created for any of them.
+        'missingOccurrences': missing_occurrences,
     }, status=201)
 
 
@@ -3767,16 +3882,47 @@ def held_schedule_snapshot(live_session_id):
     """The series' live sessions as they are stored right now, for a change notice."""
     from .teams_schedule_notice import schedule_snapshot
     return schedule_snapshot(authoring_fetch_all(
-        LIVE_SESSION_OCCURRENCES_TABLE, "live_session_id = %s and status <> 'cancelled'", [live_session_id],
+        LIVE_SESSION_OCCURRENCES_TABLE, "live_session_id = %s and status not in ('cancelled', 'superseded')", [live_session_id],
     ))
 
 
-def with_schedule_change_notice(response, live_session_id, before):
-    """Add a signed before/after record to a successful schedule update.
+def teams_series_invited(series):
+    """Everyone a stored calendar row invites, in any role, lower-cased."""
+    return {email.lower() for email in teams_series_email_list(
+        [series.get('organizer_email')], series.get('attendees'), series.get('presenters'), series.get('co_organizers'))}
+
+
+def with_schedule_change_notice(response, live_session_id, before, request=None, notify=False, series_before=None):
+    """Add a signed before/after record to a successful schedule update, and send its emails.
 
     The update overwrites the occurrence rows, so this is the last moment the
-    dates learners were told about still exist. The notice is only a record:
-    nothing is emailed unless the author asks for it with this token.
+    dates learners were told about still exist. The emails go from the server,
+    as the create's do, so closing the browser cannot lose them:
+
+    * ``scheduleEmail`` -- the change email to everyone on the calendar, when
+      the author chose to tell them (``notify``).
+    * ``addedEmail`` -- the full schedule to the people this save put on the
+      calendar and nobody else, read from the stored roster before and after.
+
+    Only for a caller who may send mail; anybody else gets the notice alone and
+    the browser's own request meets the schedule-email endpoint's refusal. A
+    mail problem rides beside the saved calendar, never in place of it, and the
+    browser can retry it through the same ledger without emailing anyone twice.
+
+    The two audiences never overlap. Somebody this save added was never told the
+    old dates, so a "was / now" describes nothing they knew: they get the full
+    schedule and are left out of the change email.
+
+    The update itself decides whether there was anything to announce. Its body
+    carries ``announced`` (False when the dates did not really change -- a retry
+    of an update that already landed, or an invitation-only edit) and
+    ``changeId``, the stable name of the logical change, which becomes the
+    notice's ledger key so a retry of the same change is never emailed twice.
+
+    The added people's full schedule goes under a key of its own per save,
+    never the calendar's creation key: somebody removed and later added back is
+    a new membership and must be sent the schedule again, while a retry of the
+    same add finds them already on the stored roster and adds nobody.
     """
     from .teams_schedule_notice import issue_change_notice
     if getattr(response, 'status_code', 0) != 200:
@@ -3787,7 +3933,25 @@ def with_schedule_change_notice(response, live_session_id, before):
         return response
     if not (isinstance(body, dict) and body.get('updated')):
         return response
-    body['changeNotice'] = issue_change_notice(live_session_id, before, held_schedule_snapshot(live_session_id))
+    if body.get('announced') is False:
+        notify = False
+    body['changeNotice'] = issue_change_notice(live_session_id, before, held_schedule_snapshot(live_session_id),
+                                               notice_id=clean_str(body.get('changeId')) or None)
+    from .teams_week_meeting import may_send_schedule_email
+    if request is not None and may_send_schedule_email(request):
+        from .teams_schedule_delivery import send_change_emails, send_creation_emails
+        added = []
+        if series_before is not None:
+            saved = authoring_fetch_all(LIVE_SESSIONS_TABLE, 'id = %s', [live_session_id])
+            was = teams_series_invited(series_before)
+            added = sorted(teams_series_invited(saved[0]) - was) if saved else []
+        if notify and body['changeNotice']:
+            body['scheduleEmail'] = send_change_emails(live_session_id, body['changeNotice'], exclude=added)
+        if added:
+            added_key = uuid.uuid4().hex
+            body['addedPeople'] = added
+            body['addedEmailKey'] = added_key
+            body['addedEmail'] = send_creation_emails(live_session_id, added=added, key=f'{live_session_id}+{added_key}')
     return JsonResponse(body, status=response.status_code)
 
 
@@ -3829,6 +3993,10 @@ def curriculum_teams_meeting_schedule(request, live_session_id):
     # invited, while newly added people are forwarded separately after the
     # calendar is verified.
     notify_attendees = False if people_only else bool(payload.get('notifyAttendees'))
+    # "Save invitations" only saves who is invited. It sends nothing to anybody:
+    # no Microsoft invitation or forward, and no LMS email -- not even to the
+    # people it adds. Only ever on a people-only save.
+    invitations_only = people_only and bool(payload.get('invitationsOnly'))
     series = series_rows[0]
     schedule_before = held_schedule_snapshot(live_session_id)
     # Omitted options retain their saved values for schedule-only callers.
@@ -3844,7 +4012,8 @@ def curriculum_teams_meeting_schedule(request, live_session_id):
     except (TypeError, ValueError) as exc:
         return json_error(str(exc), status=400)
     if stored_calendar_series(series) or weekday_groups:
-        return with_schedule_change_notice(save_weekday_calendar(payload, graph_settings, series), live_session_id, schedule_before)
+        return with_schedule_change_notice(save_weekday_calendar(payload, graph_settings, series), live_session_id, schedule_before,
+                                           request=None if invitations_only else request, notify=notify_attendees, series_before=series)
 
     # The stored organizer, never the caller's. This event already exists on one
     # mailbox, and asking Graph for it on another is a 404 that would strand a
@@ -3932,6 +4101,14 @@ def curriculum_teams_meeting_schedule(request, live_session_id):
         {'sessionNumber': item['session_number'], 'startDateTimeUtc': item['start'].isoformat(),
          'durationMinutes': int((item['end'] - item['start']).total_seconds() / 60)} for item in targets
     ]}
+    # The logical change this request asks for, named by its content. A retry of
+    # the same request after a timeout carries the same id until the LMS has
+    # saved the result; see teams_update_guard.
+    from .teams_schedule_notice import same_schedule
+    from .teams_update_guard import (claim_announcement, finish_announcement, graph_failure_outcome,
+                                     logical_change_id, targets_snapshot)
+    requested_schedule = targets_snapshot(targets)
+    change_id = logical_change_id(live_session_id, schedule_before, requested_schedule, invited_people, title)
     event_patch = {
         'subject': title,
         'hideAttendees': True,
@@ -3942,13 +4119,23 @@ def curriculum_teams_meeting_schedule(request, live_session_id):
 
     owner_key = urllib_parse.quote(organizer, safe='')
     event_key = urllib_parse.quote(event_id, safe='')
-    current_occurrences = authoring_fetch_all(
+    # Every row still holding a Teams slot, including "not in plan" ones: the
+    # drop guard must see them all. The rest of the update works on the planned.
+    slot_rows = authoring_fetch_all(
         LIVE_SESSION_OCCURRENCES_TABLE,
         'live_session_id = %s and status != %s',
         [live_session_id, 'cancelled'],
         'session_number asc',
     )
+    current_occurrences = [row for row in slot_rows if clean_str(row.get('status')).lower() != 'superseded']
     dates_already_verified = False
+    # Sessions the last save already reported missing from the series. They are
+    # under review in Calendar health, so their absence is not re-read as drift
+    # here -- which would otherwise refuse every invitation save and rewrite the
+    # series on every schedule save while the review is pending.
+    from .teams_calendar_integrity import known_missing_numbers, record_reconcile, without_missing
+    known_missing = [{'sessionNumber': number} for number in known_missing_numbers(live_session_id)]
+    missing_occurrences = []
     try:
         current = microsoft_graph_request('GET', f'users/{owner_key}/events/{event_key}')
         if current.get('isCancelled'):
@@ -3958,12 +4145,23 @@ def curriculum_teams_meeting_schedule(request, live_session_id):
             return json_error('The Microsoft join link differs from the saved calendar. Review it before continuing.', status=409)
         try:
             current = verify_teams_calendar_with_standalones(
-                microsoft_graph_request, owner_key, event_id, targets, current_join,
+                microsoft_graph_request, owner_key, event_id, without_missing(targets, known_missing), current_join,
                 repeat != 'none', current_occurrences,
             )
             dates_already_verified = True
-        except CalendarMismatch:
-            pass  # A known difference is the reason to update. Read failures still abort.
+        except CalendarMismatch as mismatch:
+            # A known difference is the reason to update. Read failures still abort.
+            if people_only:
+                # Except on a people-only save, which must never touch a date.
+                # Repairing the drift here would move, or re-create, sessions
+                # as a side effect of saving who is invited. Nothing has been
+                # written yet; the author updates the schedule on its own.
+                return json_error(
+                    'The Teams calendar dates no longer match the dates saved here, so the invitations were not '
+                    'saved. Nothing was changed in Teams. Update the Teams calendar dates first, then save the '
+                    'invitations again.',
+                    status=409, code='teams_schedule_drift', detail=str(mismatch), liveSessionId=live_session_id,
+                )
         if payload.get('peopleOnly'):
             # Saving people must not reapply a series pattern and revive cancelled slots.
             event = current
@@ -3985,7 +4183,7 @@ def curriculum_teams_meeting_schedule(request, live_session_id):
             # a cancellation Exchange emails to everyone, that nobody pressed
             # Cancel for. Refuse and name it instead.
             dropped = sessions_a_rewrite_would_drop(
-                targets, repeat != 'none', current_occurrences, graph_timezone_iana(graph_settings),
+                targets, repeat != 'none', slot_rows, graph_timezone_iana(graph_settings),
             )
             if dropped:
                 return json_error(
@@ -4001,6 +4199,8 @@ def curriculum_teams_meeting_schedule(request, live_session_id):
             event = microsoft_graph_request('GET', f'users/{owner_key}/events/{event_key}')
     except RuntimeError as exc:
         logger.warning('Unable to update Module Builder Teams event schedule: %s', exc)
+        from .teams_graph_failure_log import EVENT_SAVE, record_graph_failure
+        record_graph_failure(EVENT_SAVE, str(exc), live_session_id=live_session_id, organizer=organizer)
         return json_error('Microsoft Teams could not update the meeting schedule.', status=502, detail=str(exc))
 
     meeting_options = {
@@ -4011,37 +4211,105 @@ def curriculum_teams_meeting_schedule(request, live_session_id):
         'presenters': presenters,
         'co_organizers': co_organizers,
     }
+    # Is there a date change to announce at all? Against both sides: the dates
+    # the LMS last saved (what learners were told) and what Microsoft holds now.
+    # A retry of an update that already landed finds both equal to the request
+    # and announces nothing; a people-only save never announces.
+    dates_changed = not people_only and (
+        not dates_already_verified or not same_schedule(schedule_before, requested_schedule)
+    )
+    announce = notify_attendees and dates_changed
+    # How the meeting runs is its own operation, sent only for what changed (or
+    # a previous save could not apply). A save of who is invited sends none of
+    # it: re-sending unchanged lobby/recording/roles there turned a missing
+    # organiser permission into a failed invitation save.
+    from .teams_meeting_options_policy import (ALL_GROUPS as ALL_OPTION_GROUPS, json_list, option_groups_to_apply,
+                                              pending_option_groups, pending_warning, remaining_pending,
+                                              reported_failure, stored_options as saved_meeting_options)
+    stored_options = saved_meeting_options(series)
+    saved_warnings = json_list(series.get('warnings'))
+    pending_options = pending_option_groups(saved_warnings)
+    option_groups = option_groups_to_apply(
+        stored_options, meeting_options, pending_options,
+        new_meeting=not people_only and not clean_str(series.get('online_meeting_id')),
+        retry_pending=not people_only,
+    )
     warnings, recreated_details, stale_deletions, leftover_slots = [], [], [], []
-    if repeat != 'none':
+    if repeat != 'none' and not people_only:
         # `current_occurrences` is what makes the cleanup provable: the LMS's own
         # occurrence rows, carrying each session's number and the date this
         # calendar last recorded for it. Nothing is deleted from the shape of the
         # target list alone.
+        #
+        # Never on a people-only save: this is the step that moves sessions and
+        # re-creates a missing one, and saving who is invited must not do
+        # either. Its dates were verified unchanged above.
         warnings, recreated_details, stale_deletions = apply_teams_occurrence_shifts(
             owner_key, event_key, title,
             teams_shifted_occurrence_targets(payload, duration), invited_people,
-            meeting_options, current_occurrences,
+            meeting_options, current_occurrences, missing=missing_occurrences,
+        )
+    elif people_only:
+        # The sessions already restored on events of their own keep the series'
+        # roles and options -- options only, no date is read or written.
+        warnings, recreated_details = refresh_standalone_occurrence_options(
+            owner_key, event_id, current_occurrences, invited_people, meeting_options, groups=option_groups,
         )
 
     join_url = clean_str((event.get('onlineMeeting') or {}).get('joinUrl')) or clean_str(series.get('join_url'))
-    # Re-applied on every save, not only when the people change. Graph resets an
-    # onlineMeeting's options to the tenant defaults whenever it hands out a new
-    # one, so a series that was only ever configured at creation quietly loses its
-    # automatic recording, its transcript and its presenter roles later on.
-    _applied, graph_meeting, option_warnings = apply_teams_meeting_options(
-        organizer,
-        join_url,
-        recording=meeting_options['recording'],
-        lobby_bypass=meeting_options['lobby_bypass'],
-        spoken_language=meeting_options['spoken_language'],
-        attendees=invited_people,
-        presenters=presenters,
-        co_organizers=co_organizers,
-        online_meeting_id=series.get('online_meeting_id'),
-    )
-    warnings.extend(option_warnings)
+    # Only the changed (or still unapplied) option groups, and no call at all
+    # when there are none. A meeting Microsoft hands out afresh -- a session
+    # recreated on its own event -- is configured in full by
+    # apply_teams_occurrence_shifts; the series meeting keeps its id.
+    _applied, graph_meeting, option_warnings = True, {}, []
+    if option_groups:
+        _applied, graph_meeting, option_warnings = apply_teams_meeting_options(
+            organizer,
+            join_url,
+            recording=meeting_options['recording'],
+            lobby_bypass=meeting_options['lobby_bypass'],
+            spoken_language=meeting_options['spoken_language'],
+            attendees=invited_people,
+            presenters=presenters,
+            co_organizers=co_organizers,
+            online_meeting_id=series.get('online_meeting_id'),
+            groups=option_groups,
+            live_session_id=live_session_id,
+        )
+        if not _applied and not option_warnings:
+            option_warnings = [{'code': 'teams_meeting_options_not_applied', 'groups': sorted(option_groups),
+                                'message': 'Microsoft did not apply this meeting\u2019s options.', 'detail': ''}]
+    # A refused options PATCH on a meeting that already exists is reported, not
+    # fatal: the invitation and the dates are separate operations and still go
+    # ahead. A meeting this save created (a session recreated on its own event)
+    # still stops the save, so nobody is invited to one still at the tenant
+    # defaults -- the same rule as creating a calendar.
+    option_failures = list(option_warnings)
+    if people_only:
+        # Standalone sessions refreshed here already existed.
+        option_failures += [item for item in warnings
+                            if isinstance(item, dict) and item.get('code') == 'teams_meeting_options_not_applied']
+        warnings = [item for item in warnings if item not in option_failures]
+    # What became of Microsoft's own announcement, for the result and the guard.
+    claim = ''
+    announcement = 'silent' if dates_changed else 'not_needed'
+    announced_writes = {'count': 0}
+
+    def announcing_request(method, path, *, payload=None, extra_headers=None):
+        """Counts every announced write that reached -- or may have reached -- Microsoft."""
+        announced = method == 'PATCH' and not extra_headers
+        try:
+            result = microsoft_graph_request(method, path, payload=payload, extra_headers=extra_headers)
+        except RuntimeError as exc:
+            if announced and graph_failure_outcome(exc) == 'unknown':
+                announced_writes['count'] += 1
+            raise
+        if announced:
+            announced_writes['count'] += 1
+        return result
+
     try:
-        if warnings or not _applied:
+        if warnings:
             # Say what Microsoft actually refused. Every warning already carries
             # Graph's own message and detail; raising a generic sentence here
             # threw that away, so the dialog -- and the row this is recorded on
@@ -4060,7 +4328,20 @@ def curriculum_teams_meeting_schedule(request, live_session_id):
             source='update_reconcile',
         )
         occurrence_details = recreated_details or current_occurrences
-        if not notify_attendees:
+        # A session missing from the series is reported, not verified: nothing
+        # was created for it, so there is nothing of it on Teams to confirm.
+        shifts_ran = repeat != 'none' and not people_only
+        verifiable_targets = without_missing(targets, missing_occurrences if shifts_ran else known_missing)
+        if announce:
+            # Claimed durably BEFORE Microsoft is asked. An earlier attempt at
+            # this same change -- one whose response was lost to a timeout --
+            # already holds the claim, and its announcement is not repeated:
+            # Graph cannot say whether that write reached anyone, so it is
+            # reported, never sent twice.
+            claim = claim_announcement(live_session_id, change_id)
+            announcement = 'already_attempted' if claim == 'attempted' else 'sent'
+        announce_now = announce and claim != 'attempted'
+        if not announce_now:
             # An author who chose not to email still gets a structurally correct
             # calendar. The write is the narrow attendees-only patch under the
             # silent preference, and it is skipped outright when the list already
@@ -4072,30 +4353,32 @@ def curriculum_teams_meeting_schedule(request, live_session_id):
                 occurrence_details, title=title, silent=True,
             )
         event = verify_teams_calendar_with_standalones(
-            microsoft_graph_request, owner_key, event_id, targets, join_url,
+            microsoft_graph_request, owner_key, event_id, verifiable_targets, join_url,
             repeat != 'none', occurrence_details,
             # The author who is emailing has not published the list yet; that
             # branch checks the people on its own final pass below.
-            expected_attendees=None if notify_attendees else calendar_attendees,
+            expected_attendees=None if announce_now else calendar_attendees,
         )
         # Keep the saved attendee/presenter/co-organizer roles in the online
         # meeting. The admin review flow opts in to email with notifyAttendees=true.
-        if notify_attendees:
+        if announce_now:
             # Only notify after the organizer's master and every exception have
             # been reconciled and verified. Updating the master then lets
             # Exchange send the final series/exception state to attendees; it
             # also avoids telling learners about a half-applied repair.
             publish_teams_calendar_attendees(
-                microsoft_graph_request, owner_key, event, calendar_attendees,
+                announcing_request, owner_key, event, calendar_attendees,
                 occurrence_details, force=True, title=title,
-                dates_unchanged=bool(payload.get('peopleOnly')),
             )
             event = verify_teams_calendar_with_standalones(
-                microsoft_graph_request, owner_key, event_id, targets, join_url,
+                microsoft_graph_request, owner_key, event_id, verifiable_targets, join_url,
                 repeat != 'none', occurrence_details,
                 expected_attendees=calendar_attendees,
             )
-        if not notify_attendees and newly_invited:
+        # The people this save adds are on the announced write when there is
+        # one -- including an earlier attempt's, which carried this same list --
+        # so only a save that announces nothing forwards the meeting to them.
+        if not announce and newly_invited and not invitations_only:
             # After verification: nobody is invited to a calendar Microsoft has
             # not confirmed, and a half-applied repair is not what a learner
             # should be looking at in their first invitation.
@@ -4106,16 +4389,38 @@ def curriculum_teams_meeting_schedule(request, live_session_id):
                 comment=f'You have been added to {title}.',
             ))
     except RuntimeError as exc:
+        if claim == 'claimed':
+            # Never asked, or refused outright: a retry may announce. Anything
+            # that may have reached Microsoft keeps the claim.
+            finish_announcement(live_session_id, change_id,
+                                outcome='unknown' if announced_writes['count'] else 'failed')
+        # Keep the unapplied-options marker: this failed save wrote no options.
+        unapplied = set(pending_options) | {group for item in option_failures for group in (item.get('groups') or option_groups)}
+        saved_marker = next((item for item in saved_warnings if isinstance(item, dict)
+                             and item.get('code') == 'teams_meeting_options_not_applied'), None) or {}
+        requested_settings = ({key: meeting_options[key] for key in ('recording', 'lobby_bypass', 'spoken_language')}
+                              if 'settings' in option_groups else saved_marker.get('requested'))
         update_authoring_rows(LIVE_SESSIONS_TABLE, 'id = %s', [live_session_id], {
-            'warnings': json_db_value([*warnings, {'code': 'teams_calendar_unverified', 'message': str(exc)}]),
+            'warnings': json_db_value([*warnings, {'code': 'teams_calendar_unverified', 'message': str(exc)},
+                                       *([pending_warning(unapplied, (option_failures or [{}])[0], requested_settings)]
+                                         if unapplied else [])]),
             'updated_at': datetime.utcnow(),
         })
         # `errors` is the field the curriculum client already appends to the
         # sentence it shows, so the reason travels all the way to the dialog
         # instead of living only in this row's `warnings` column.
-        return json_error('Microsoft did not confirm the reviewed calendar. Requested dates have not been marked as synchronized.',
-                          status=502, detail=str(exc), partial=True, liveSessionId=live_session_id,
-                          errors=[warning for warning in warnings if isinstance(warning, dict)] or [str(exc)])
+        verification_required = claim == 'attempted' or bool(announced_writes['count'])
+        return json_error(
+            ('Microsoft did not confirm the reviewed calendar. Requested dates have not been marked as synchronized. '
+             'Microsoft may already have sent this update to the invitees, so it will not be announced again; '
+             'check the calendar in Outlook before retrying.') if verification_required else
+            'Microsoft did not confirm the reviewed calendar. Requested dates have not been marked as synchronized.',
+            status=502, detail=str(exc), partial=True, liveSessionId=live_session_id,
+            code='teams_update_verification_required' if verification_required else 'teams_calendar_unverified',
+            verificationRequired=verification_required,
+            errors=[warning for warning in [*warnings, *option_failures] if isinstance(warning, dict)] or [str(exc)])
+    if claim == 'claimed':
+        finish_announcement(live_session_id, change_id, outcome='accepted')
     occurrence_rows = authoring_fetch_all(LIVE_SESSION_OCCURRENCES_TABLE, 'live_session_id = %s', [live_session_id]) if payload.get('peopleOnly') else replace_live_session_occurrences(
         live_session_id,
         payload,
@@ -4127,17 +4432,34 @@ def curriculum_teams_meeting_schedule(request, live_session_id):
         join_url=join_url,
     )
     persist_recreated_occurrence_details(live_session_id, recreated_details)
+    if repeat != 'none' and not people_only:
+        record_reconcile(live_session_id, missing_occurrences,
+                         module_catalogue_id=clean_str(series.get('module_catalogue_id')), source='Teams calendar update')
     if recreated_details:
         occurrence_rows = authoring_fetch_all(
             LIVE_SESSION_OCCURRENCES_TABLE,
-            'live_session_id = %s and status != %s',
-            [live_session_id, 'cancelled'],
+            "live_session_id = %s and status not in ('cancelled', 'superseded')",
+            [live_session_id],
             'session_number asc',
         )
+    failed_groups = {group for item in option_failures for group in (item.get('groups') or option_groups or ALL_OPTION_GROUPS)}
+    still_pending = remaining_pending(pending_options, option_groups, failed_groups)
+    previous_pending = next((item for item in saved_warnings if isinstance(item, dict)
+                             and item.get('code') == 'teams_meeting_options_not_applied'), None)
+    # A refused settings change keeps what the author asked for, so Retry can send it.
+    requested_settings = ({key: meeting_options[key] for key in ('recording', 'lobby_bypass', 'spoken_language')}
+                          if 'settings' in failed_groups else (previous_pending or {}).get('requested'))
+    stored_option_warnings = ([pending_warning(still_pending, (option_failures or [previous_pending])[0], requested_settings)]
+                              if still_pending else [])
+    # The LMS keeps the settings Microsoft last accepted: a refused lobby or
+    # recording change is not saved as if it had happened. Roles are also the
+    # invitation list, which Microsoft did accept, so they are saved and the
+    # unapplied role change stays marked for a retry.
+    saved_option_updates = {} if 'settings' in failed_groups else option_updates
     series_update = {
-        **option_updates,
+        **saved_option_updates,
         'hide_attendees': True,
-        'warnings': json_db_value([]),
+        'warnings': json_db_value(stored_option_warnings),
         'online_meeting_id': clean_str(graph_meeting.get('id')) or clean_str(series.get('online_meeting_id')),
         'module_title': title,
         'start_datetime': utc_start,
@@ -4177,121 +4499,46 @@ def curriculum_teams_meeting_schedule(request, live_session_id):
             'presenters': presenters,
             'coOrganizers': co_organizers,
         },
-        'warnings': warnings,
+        'warnings': [*warnings, *[reported_failure(item) for item in option_failures]],
+        # The onlineMeeting options, reported apart from the invitation: which
+        # groups this save sent, whether Microsoft took them, and what is still
+        # unapplied from this or an earlier save.
+        'optionGroupsSent': sorted(option_groups),
+        'optionsApplied': not option_failures,
+        'optionsPending': sorted(still_pending),
+        'partial': bool(option_failures),
         'leftoverSlots': (event.get('unplannedInstances') or []) or leftover_slots,
-    }), live_session_id, schedule_before)
+        # Whether this save carried a date change to announce, and what Microsoft
+        # was asked: 'sent', 'already_attempted' (an earlier attempt at this same
+        # change asked; not repeated), 'silent' (the author chose no notice) or
+        # 'not_needed' (no date changed). A request, not proof of delivery.
+        'announced': announce,
+        'microsoftUpdate': announcement,
+        'retryGuard': 'unavailable' if claim == 'unguarded' else 'on',
+        'changeId': change_id,
+        # Planned sessions missing from the recurring series: resolution
+        # required in Calendar health. No separate meeting was created.
+        'missingOccurrences': missing_occurrences,
+    }), live_session_id, schedule_before, request=None if invitations_only else request, notify=notify_attendees,
+        series_before=series)
 
 
 @csrf_exempt
 def curriculum_teams_meeting_occurrence_schedule(request, live_session_id, session_number):
-    """Move one session of a live-session series to a date/time of its own.
+    """Retired: moving one session goes through the calendar's Edit session action.
 
-    Only that occurrence moves; the rest of the series and the module's default
-    time are left exactly as they are. The tracked occurrence row is the source
-    of truth for which instant and duration to move, so the caller sends only the
-    new start (and an optional duration override).
+    This route used to move one session in Microsoft silently -- no announced
+    update to the people invited and no LMS change email -- and nothing in the
+    LMS called it any more. Left in place it was a way round every rule the
+    calendar actions keep: the review, the forced Microsoft notice, the change
+    email after Microsoft confirms, and the action record. It now refuses
+    before reading or writing anything, and says where the move belongs.
     """
-    from coach_api.views import has_graph_credentials
-
-    ensure_live_session_tracking_tables()
-    if request.method != 'PATCH':
-        return json_error('Method not allowed.', status=405)
-    series_rows = authoring_fetch_all(LIVE_SESSIONS_TABLE, 'id = %s', [live_session_id])
-    if not series_rows:
-        return json_error('Live session series not found.', status=404)
-    try:
-        session_number = int(session_number)
-    except (TypeError, ValueError):
-        return json_error('A valid session number is required.', status=400)
-    occurrence_rows = authoring_fetch_all(
-        LIVE_SESSION_OCCURRENCES_TABLE,
-        'live_session_id = %s and session_number = %s',
-        [live_session_id, session_number],
+    return json_error(
+        'Moving one session is done with the Edit session action on the Teams calendar, which tells the '
+        'people invited. This older route no longer changes Teams.',
+        status=410, code='use_calendar_action', liveSessionId=clean_str(live_session_id),
     )
-    if not occurrence_rows:
-        return json_error('That session is not tracked for this series.', status=404)
-    if not has_graph_credentials():
-        return json_error('Microsoft Graph credentials are not configured.', status=503)
-
-    payload = json_body(request)
-    if not isinstance(payload, dict):
-        return json_error('A valid JSON body is required.')
-    new_start = parse_graph_datetime(payload.get('startDateTimeUtc'))
-    if not new_start:
-        return json_error('A valid meeting start date and time is required.', status=400)
-    if new_start.tzinfo is not None:
-        new_start = new_start.astimezone(timezone.utc).replace(tzinfo=None)
-
-    non_delivery_reason = teams_non_delivery_reason(
-        [{'session_number': session_number, 'start': new_start.replace(tzinfo=timezone.utc)}],
-        graph_timezone_iana(teams_schedule_settings({}, series=series_rows[0])),
-    )
-    if non_delivery_reason:
-        return json_error(non_delivery_reason, status=400, code='non_delivery_date')
-
-    series = series_rows[0]
-    occurrence = occurrence_rows[0]
-    # Keep the session's own length by default: only a caller that means to change
-    # it sends a duration, so nudging the time never quietly reshapes the meeting.
-    start_at = parse_graph_datetime(occurrence.get('scheduled_start'))
-    end_at = parse_graph_datetime(occurrence.get('scheduled_end'))
-    if start_at and end_at and end_at > start_at:
-        default_duration = int((end_at - start_at).total_seconds() // 60) or 60
-    else:
-        default_duration = parse_int(series.get('duration_minutes'), 60) or 60
-    duration = max(15, min(1440, parse_int(payload.get('durationMinutes'), default_duration) or default_duration))
-
-    join_url, online_meeting_id, event_id, warnings = reschedule_single_live_session_occurrence(
-        series, occurrence, new_start, duration,
-    )
-
-    # Only persist a time Teams actually adopted. The helper moves the recurring
-    # instance or reports one of the hard-failure codes below -- in which case Teams still
-    # runs the session at the old time, so writing the new one here would make
-    # the LMS claim a slot that does not exist and read as a success.
-    warning_codes = {clean_str(item.get('code')) for item in warnings}
-    hard_failures = warning_codes & {
-        'teams_occurrence_not_moved',
-        'teams_occurrence_missing_event',
-        'teams_occurrence_not_found',
-    }
-    if hard_failures:
-        message = next(
-            (clean_str(item.get('message')) for item in warnings if clean_str(item.get('code')) in hard_failures),
-            'Microsoft Teams could not move this session.',
-        )
-        return json_error(message, status=502, warnings=warnings, updated=False)
-
-    now = datetime.utcnow()
-    update = {
-        'scheduled_start': new_start,
-        'scheduled_end': new_start + timedelta(minutes=duration),
-        'updated_at': now,
-    }
-    if event_id:
-        update['graph_event_id'] = event_id
-    if join_url:
-        update['join_url'] = join_url
-    if online_meeting_id:
-        update['online_meeting_id'] = online_meeting_id
-    update_authoring_rows(
-        LIVE_SESSION_OCCURRENCES_TABLE,
-        'live_session_id = %s and session_number = %s',
-        [live_session_id, session_number],
-        update,
-    )
-    return JsonResponse({
-        'updated': True,
-        'occurrence': {
-            'liveSessionId': live_session_id,
-            'sessionNumber': session_number,
-            'startDateTimeUtc': utc_iso_value(new_start),
-            'durationMinutes': duration,
-            'joinUrl': join_url,
-            'eventId': event_id,
-        },
-        'warnings': warnings,
-    })
 
 
 def upsert_live_session_artifact(occurrence, artifact_type, artifact):
@@ -4327,6 +4574,12 @@ def upsert_live_session_artifact(occurrence, artifact_type, artifact):
     # LMS visibility, including a toggle committed while discovery was running.
     with transaction.atomic(), connection.cursor() as cursor:
         lock = ' FOR UPDATE' if connection.vendor == 'postgresql' else ''
+        if lock:
+            # Two syncs of one meeting (a retry overlapping a worker) both find
+            # no row for a new id and would both insert. One session's artifacts
+            # of one type are written one at a time; the lock ends with the transaction.
+            cursor.execute('SELECT pg_advisory_xact_lock(hashtext(%s))',
+                           [f"live-session-artifact|{occurrence['id']}|{artifact_type}"])
         cursor.execute(f'SELECT metadata FROM {authoring_table_name(LIVE_SESSION_ARTIFACTS_TABLE)} '
                        'WHERE occurrence_id=%s AND artifact_type=%s AND graph_artifact_id=%s' + lock,
                        [occurrence['id'], artifact_type, graph_id])
@@ -4364,13 +4617,30 @@ def upsert_live_session_artifact(occurrence, artifact_type, artifact):
 def _same_artifact_under_new_graph_id(cursor, lock, payload):
     """(row id, metadata) of this occurrence's artifact for the same call and recording window.
 
-    Graph has returned one recording under a second id on a later sync; matching
-    only on graph_artifact_id then saved and archived it twice.
+    Graph has returned one recording under a second id on a later sync, and two
+    ids for one recording in the same listing; matching only on
+    graph_artifact_id then saved and archived it twice. Microsoft's content
+    correlation id names the recording itself (one per recording, shared by no
+    other in production), so it matches even when the timing is reported with a
+    different precision -- but never across calls, which keeps two recordings of
+    one session apart.
     """
+    table = authoring_table_name(LIVE_SESSION_ARTIFACTS_TABLE)
+    correlation = clean_str(payload.get('content_correlation_id'))
+    if correlation:
+        cursor.execute(
+            f'SELECT id, metadata FROM {table} WHERE occurrence_id=%s AND artifact_type=%s '
+            "AND content_correlation_id=%s AND (call_id=%s OR call_id='' OR call_id IS NULL OR %s='') "
+            'ORDER BY created_at LIMIT 1' + lock,
+            [payload['occurrence_id'], payload['artifact_type'], correlation, payload['call_id'], payload['call_id']],
+        )
+        row = cursor.fetchone()
+        if row:
+            return row
     if not payload['call_id'] or not payload['created_datetime']:
         return None
     cursor.execute(
-        f'SELECT id, metadata FROM {authoring_table_name(LIVE_SESSION_ARTIFACTS_TABLE)} '
+        f'SELECT id, metadata FROM {table} '
         'WHERE occurrence_id=%s AND artifact_type=%s AND call_id=%s AND created_datetime=%s '
         'AND end_datetime IS NOT DISTINCT FROM %s ORDER BY created_at LIMIT 1' + lock,
         [payload['occurrence_id'], payload['artifact_type'], payload['call_id'],
@@ -4486,7 +4756,7 @@ def curriculum_teams_meeting_artifacts(request, live_session_id):
             logger.warning('Unable to backfill onlineMeeting ID for %s: %s', live_session_id, exc)
             return json_error(
                 'The Teams meeting exists, but Microsoft Graph cannot resolve it for tracking. '
-                'Grant OnlineMeetings.Read.All and an application access policy to the organizer, then retry.',
+                'Retry after Microsoft finishes publishing the meeting. If it continues, check the organizer access policy.',
                 status=409,
                 detail=str(exc),
             )
@@ -4531,6 +4801,9 @@ def curriculum_teams_meeting_artifacts(request, live_session_id):
     # the loaded row in step with it, or the grouping below reads the blank value
     # the row was loaded with and asks Graph for nothing at all.
     series['online_meeting_id'] = meeting_id
+    # The meeting ID and passcode shown under the join link, once per link.
+    from .teams_dial_in import remember_teams_dial_in
+    remember_teams_dial_in(series)
     errors = []
     if any(clean_str(row.get('join_url')) not in ('', join_url) and not clean_str(row.get('online_meeting_id')) for row in occurrences):
         errors.append('A weekday series has no online meeting ID yet. Update the calendar to retry its Teams configuration.')
@@ -4541,7 +4814,14 @@ def curriculum_teams_meeting_artifacts(request, live_session_id):
     # can be an event of its own with an online meeting of its own (see
     # apply_teams_occurrence_shifts). Asking the series for that session's
     # attendance, transcript or recording returns nothing at all.
+    from .teams_calendar_integrity import (
+        completion_to_reopen, note_completion, note_premature_run, note_reopened_by_sync,
+        run_not_delivery, run_replaces_stored, stored_run_is_delivery,
+    )
     for base, group in live_session_meeting_groups(series, occurrences):
+        # The delivery run each session was given by this sync. Kept apart from
+        # the loaded rows so report bindings below still read what was stored.
+        delivered = {}
         launches = live_session_join_launches(group)
         try:
             response = {'value': collection(microsoft_graph_request, f'{base}/attendanceReports', get_graph_settings()['base_url'])}
@@ -4571,7 +4851,9 @@ def curriculum_teams_meeting_artifacts(request, live_session_id):
                 if (not getattr(request, 'session_result_force', False) and stored_end
                         and (now - stored_end.replace(tzinfo=None)).total_seconds() > 48 * 3600
                         and clean_str(occurrence.get('attendance_report_id')) == report_id
-                        and expected_count >= 0 and len(matching) >= expected_count):
+                        and expected_count >= 0 and len(matching) >= expected_count
+                        # A saved test open is judged again, never trusted for being old.
+                        and stored_run_is_delivery(occurrence)):
                     continue
                 report_key = urllib_parse.quote(report_id, safe='')
                 detail = microsoft_graph_request('GET', f'{base}/attendanceReports/{report_key}?$expand=attendanceRecords')
@@ -4580,17 +4862,45 @@ def curriculum_teams_meeting_artifacts(request, live_session_id):
                     microsoft_graph_request, f'{base}/attendanceReports/{report_key}/attendanceRecords', get_graph_settings()['base_url'])
                 if not parse_graph_datetime(detail.get('meetingEndDateTime')):
                     continue  # an ongoing report cannot establish absence
+                run_start = parse_graph_datetime(detail.get('meetingStartDateTime'))
+                run_end = parse_graph_datetime(detail.get('meetingEndDateTime'))
+                participants = int(detail.get('totalParticipantCount') or len(records))
+                current = {**occurrence, **delivered.get(occurrence['id'], {})}
+                not_delivery = run_not_delivery(current, run_start, run_end, participants)
+                if not_delivery:
+                    # Somebody opened the meeting for something other than this
+                    # session -- a fresh link being tried before it, another day's
+                    # use after it, one person checking the room. That is not
+                    # delivery: it neither completes the session nor gives it
+                    # attendance. What an earlier sync already stored is left as it is.
+                    note_premature_run(series, occurrence, report_id, run_start, run_end,
+                                       job_id=clean_str(getattr(request, 'session_result_job_id', '')),
+                                       reason=not_delivery)
+                    continue
                 with transaction.atomic():
                     returned_report_ids.add(report_id)
-                    update_authoring_rows(LIVE_SESSION_OCCURRENCES_TABLE, 'id = %s', [occurrence['id']], {
-                        'attendance_report_id': report_id,
-                        'participant_count': int(detail.get('totalParticipantCount') or len(records)),
-                        'actual_start': parse_graph_datetime(detail.get('meetingStartDateTime')),
-                        'actual_end': parse_graph_datetime(detail.get('meetingEndDateTime')),
-                        'status': 'completed',
-                        'artifacts_synced_at': now,
-                        'last_sync_error': '',
-                    })
+                    if run_replaces_stored(current, report_id, run_start, run_end, participants):
+                        delivery = {
+                            'attendance_report_id': report_id,
+                            'participant_count': participants,
+                            'actual_start': run_start,
+                            'actual_end': run_end,
+                            'status': 'completed',
+                        }
+                        update_authoring_rows(LIVE_SESSION_OCCURRENCES_TABLE, 'id = %s', [occurrence['id']], {
+                            **delivery, 'artifacts_synced_at': now, 'last_sync_error': '',
+                        })
+                        if clean_str(current.get('status')).lower() != 'completed':
+                            note_completion(series, occurrence, report_id, run_start, run_end,
+                                            job_id=clean_str(getattr(request, 'session_result_job_id', '')))
+                        delivered[occurrence['id']] = delivery
+                    else:
+                        # A smaller run of a session already delivered (a reconnect,
+                        # a second room): its attendance is kept below, but the run
+                        # that delivered the session stays its saved run.
+                        update_authoring_rows(LIVE_SESSION_OCCURRENCES_TABLE, 'id = %s', [occurrence['id']], {
+                            'artifacts_synced_at': now, 'last_sync_error': '',
+                        })
                     for record in records:
                         display_name, identity_id = attendance_identity(record)
                         display_name = display_name or attendance_display_name(record)
@@ -4625,6 +4935,8 @@ def curriculum_teams_meeting_artifacts(request, live_session_id):
                             'attendanceReportEnd': clean_str(detail.get('meetingEndDateTime') or report.get('meetingEndDateTime')),
                         }
                         merged_raw = graph_item_with_occurrence_link(merged_raw, occurrence, launch)
+                        # Keep an earlier directory lookup of the same account (read-only identity check).
+                        merged_raw = keep_directory_lookup(existing_raw, merged_raw)
                         authoring_upsert(LIVE_SESSION_ATTENDANCE_TABLE, ['id'], {
                             'id': attendance_id,
                             'occurrence_id': occurrence['id'],
@@ -4658,6 +4970,10 @@ def curriculum_teams_meeting_artifacts(request, live_session_id):
                     source_ids = set(source_ids) if isinstance(source_ids, list) else set()
                     if source_ids & returned_report_ids:
                         authoring_delete(LIVE_SESSION_ATTENDANCE_TABLE, 'id = %s', [existing_id])
+                if occurrence['id'] in delivered:
+                    # This sync saved the session's delivery run just now; a stored
+                    # report that has since moved elsewhere must not clear it.
+                    continue
                 stored_report_id = clean_str(occurrence.get('attendance_report_id'))
                 if stored_report_id in returned_report_ids and stored_report_id not in assigned_reports_by_occurrence.get(occurrence['id'], set()):
                     update_authoring_rows(LIVE_SESSION_OCCURRENCES_TABLE, 'id = %s', [occurrence['id']], {
@@ -4667,6 +4983,19 @@ def curriculum_teams_meeting_artifacts(request, live_session_id):
                         'actual_end': None,
                         'status': 'scheduled',
                     })
+                elif completion_to_reopen(occurrence):
+                    # Completed by a test open before it was due: the session has
+                    # not happened yet. Its attendance rows and Teams meeting stay
+                    # exactly as they are; the event keeps what the row held.
+                    update_authoring_rows(LIVE_SESSION_OCCURRENCES_TABLE, 'id = %s', [occurrence['id']], {
+                        'attendance_report_id': '',
+                        'participant_count': 0,
+                        'actual_start': None,
+                        'actual_end': None,
+                        'status': 'scheduled',
+                    })
+                    note_reopened_by_sync(series, occurrence,
+                                          job_id=clean_str(getattr(request, 'session_result_job_id', '')))
         except RuntimeError as exc:
             errors.append(f'Attendance: {exc}')
 
@@ -4674,15 +5003,34 @@ def curriculum_teams_meeting_artifacts(request, live_session_id):
             try:
                 response = {'value': collection(microsoft_graph_request, f'{base}/{endpoint}', get_graph_settings()['base_url'])}
                 for artifact in response.get('value') or []:
-                    timestamp = (
-                        parse_graph_datetime(artifact.get('endDateTime'))
-                        or parse_graph_datetime(artifact.get('createdDateTime'))
-                    )
+                    primary_time = 'createdDateTime' if artifact_type == 'recording' else 'endDateTime'
+                    fallback_time = 'endDateTime' if artifact_type == 'recording' else 'createdDateTime'
+                    timestamp = parse_graph_datetime(artifact.get(primary_time)) or parse_graph_datetime(artifact.get(fallback_time))
                     existing_artifacts = authoring_fetch_all(LIVE_SESSION_ARTIFACTS_TABLE,
                         'artifact_type = %s AND graph_artifact_id = %s', [artifact_type, clean_str(artifact.get('id'))])
                     existing_ids = {row['occurrence_id'] for row in existing_artifacts}
                     stored = next((row for row in group if row['id'] in existing_ids), None)
+                    correlation = clean_str(artifact.get('contentCorrelationId'))
+                    if not stored and correlation:
+                        # The same recording saved before under another Graph id stays
+                        # on the session it was filed under.
+                        same = authoring_fetch_all(LIVE_SESSION_ARTIFACTS_TABLE,
+                            'artifact_type = %s AND content_correlation_id = %s', [artifact_type, correlation])
+                        same_ids = {row['occurrence_id'] for row in same}
+                        stored = next((row for row in group if row['id'] in same_ids), None)
                     occurrence, launch = (stored, None) if stored else launch_linked_live_occurrence(group, timestamp, launches)
+                    if (artifact_type == 'recording' and occurrence and not stored
+                            and not recording_matches_occurrence(artifact, occurrence, linked_by_launch=bool(launch))):
+                        continue
+                    if occurrence and not stored and launch is None and run_not_delivery(
+                            occurrence, parse_graph_datetime(artifact.get('createdDateTime')) or timestamp, timestamp):
+                        # Matched only as the nearest scheduled session, yet recorded
+                        # outside it -- another day's use of the link (a week with no
+                        # session, a session booked on its own meeting). Filing it
+                        # under that week would be wrong; it waits for a person.
+                        logger.info('Teams %s %s is outside every session of this meeting; not filed.',
+                                    artifact_type, clean_str(artifact.get('id'))[-12:])
+                        continue
                     linked_artifact = graph_item_with_occurrence_link(artifact, occurrence, launch) if occurrence else artifact
                     if occurrence:
                         remove_artifact_from_wrong_occurrences(group, occurrence, artifact_type, linked_artifact)
@@ -4696,6 +5044,24 @@ def curriculum_teams_meeting_artifacts(request, live_session_id):
                         )
             except RuntimeError as exc:
                 errors.append(f'{artifact_type.title()}: {exc}')
+
+    # Identity check only: look up the email behind signed-in college accounts
+    # so staff can compare it with the LMS email. Reads the directory, writes
+    # nothing to Microsoft and leaves attendance seconds and status untouched.
+    try:
+        lookup = resolve_directory_accounts(
+            [row for occurrence in occurrences
+             for row in authoring_fetch_all(LIVE_SESSION_ATTENDANCE_TABLE, 'occurrence_id = %s', [occurrence['id']])],
+            graph_request=microsoft_graph_request,
+            save_raw=lambda row, raw: update_authoring_rows(
+                LIVE_SESSION_ATTENDANCE_TABLE, 'id = %s', [row['id']], {'raw_data': json_db_value(raw)}),
+            home_tenant=get_graph_settings().get('tenant_id') or '',
+        )
+        synced['accountsLookedUp'] = lookup['resolved'] + lookup['notFound']
+        if lookup['denied']:
+            logger.warning('Teams account check: Microsoft refused the directory lookup (User.Read.All).')
+    except Exception:
+        logger.exception('Teams account check: directory lookup failed; attendance is unaffected.')
 
     try:
         from learner_api.teams_attendance import sync_verified_teams_attendance_reporting
@@ -6523,13 +6889,18 @@ def soft_delete_programme_authoring_structure(identifier, programme=None, config
 RESTORE_NULLABLE_COLUMNS = ('deleted_at', 'deleted_by', 'deleted_via_parent')
 
 
-def restore_rows_via_parent(table, parent_id):
+def restore_rows_via_parent(table, parent_id, bounds=None):
     """Undo one soft-delete cascade, and only that one.
 
     Rows are matched on ``deleted_via_parent``, the marker
     ``soft_delete_programme_authoring_structure`` stamps on everything it takes
     down. A cohort archived on its own carries an empty marker, so restoring the
     programme leaves it archived rather than silently reviving it.
+
+    ``bounds`` -- ``module_archive_event_bounds`` of the parent -- narrows the
+    match to rows stamped in the same moment as the parent's own archive. Rows
+    left stamped by an earlier archive of the same parent (one later undone by a
+    save rather than a restore) are not part of this cascade and stay deleted.
     """
     if not has_column(table, 'deleted_via_parent'):
         return []
@@ -6538,10 +6909,15 @@ def restore_rows_via_parent(table, parent_id):
         payload['is_archived'] = False
     if has_column(table, 'status') and table in {'cohorts'}:
         payload['status'] = 'active'
+    where_sql = f'{quote_ident("deleted_via_parent")} = %s'
+    where_params = [parent_id]
+    if bounds is not None and has_column(table, 'deleted_at'):
+        where_sql += f' and {quote_ident("deleted_at")} between %s and %s'
+        where_params += [bounds[0], bounds[1]]
     rows = update_rows(
         table,
-        f'{quote_ident("deleted_via_parent")} = %s',
-        [parent_id],
+        where_sql,
+        where_params,
         payload,
         allow_null_columns=RESTORE_NULLABLE_COLUMNS,
     )
@@ -7142,6 +7518,8 @@ def curriculum_teams_meeting_join(request, live_session_id, occurrence_id):
     series = series_rows[0] if series_rows else {}
     if series.get('status') == 'cancelled' or occurrence.get('status') == 'cancelled':
         return json_error('This Teams session has been cancelled.', status=410)
+    if occurrence.get('status') == 'superseded':
+        return json_error('This Teams session is no longer part of the module plan.', status=410)
     join_url = clean_str(occurrence.get('join_url')) or clean_str(series.get('join_url'))
     parsed = urlparse(join_url)
     hostname = (parsed.hostname or '').lower()
@@ -7355,6 +7733,30 @@ def ksb_profile_required_codes(profile):
             *parse_json_value(profile.get('behaviour_codes'), []),
         ]
     ])
+
+
+def applied_standard_required_codes(config, cache):
+    """Required codes of the standard a programme applies, or None.
+
+    A programme whose ksb_profile_source_id names a standard
+    ('standard:st0596-v1-0') is counted against that standard, never against a
+    manual profile matched by its name: the name match kept Marketing Executive
+    and Marketing Manager on their profiles' counts after both moved to
+    standards, and gave 0 to programmes no profile names. None means the
+    programme applies no standard (or it is not in standard_ksbs), so the
+    caller keeps the profile match. ``cache`` is per build, keyed by standard.
+    """
+    source = clean_str((config or {}).get('ksb_profile_source_id'))
+    if not source.lower().startswith('standard:'):
+        return None
+    standard_id = clean_str(source.split(':', 1)[1]).lower()
+    if standard_id not in cache:
+        cache[standard_id] = unique([
+            coverage_normalise_code(definition.get('code'))
+            for definition in standard_required_ksbs(standard_id)
+            if coverage_normalise_code(definition.get('code'))
+        ])
+    return cache[standard_id] or None
 
 
 def ksb_profile_source_id(profile):
@@ -7640,7 +8042,7 @@ def curriculum_module_from_authoring_payload(payload):
     }
 
 
-def programme_authoring_modules(programme, config=None):
+def programme_authoring_module_rows(programme, config=None):
     programme_ids = {
         clean_str(programme.get('id')),
         clean_str(programme.get('sourceId')),
@@ -7667,13 +8069,20 @@ def programme_authoring_modules(programme, config=None):
             continue
         if row_programme_name and row_programme_name in programme_names:
             rows.append(row)
+    return rows
+
+
+def programme_authoring_modules(programme, config=None, *, module_rows=None, child_rows=None):
+    rows = programme_authoring_module_rows(programme, config) if module_rows is None else module_rows
     modules = []
     # One batched read for the whole programme. The per-module reader issues seven
     # queries each, so a 122-module programme spent 854 round trips (~105s) here.
     # get_authoring_structure_payloads() returns the identical payload in seven
     # queries total -- the two are compared field by field before this swap.
     payloads_by_id = get_authoring_structure_payloads(
-        [clean_str(row.get('module_catalogue_id')) for row in rows]
+        [clean_str(row.get('module_catalogue_id')) for row in rows],
+        component_columns=CATALOGUE_SUMMARY_COMPONENT_COLUMNS,
+        **({'child_rows': child_rows} if child_rows is not None else {}),
     )
     for row in rows:
         module_id = clean_str(row.get('module_catalogue_id'))
@@ -7807,11 +8216,16 @@ def is_actual_delivery_row(row, program_configs_by_id):
     return bool(actual_group_identity(row, cohort['id']))
 
 
-def authoring_modules_as_training_rows(*, ensure_tables=True):
+def authoring_modules_as_training_rows(*, ensure_tables=True, module_rows=None, group_rows=None, cohort_rows=None):
     try:
-        module_rows = authoring_fetch_all(AUTHORING_MODULES_TABLE, ensure_tables=ensure_tables)
-        group_rows = {clean_str(row.get('group_id')): row for row in authoring_fetch_all(GROUPS_TABLE, ensure_tables=ensure_tables)}
-        cohort_rows = {clean_str(row.get('cohort_id')): row for row in authoring_fetch_all(COHORT_AUTHORING_DETAILS_TABLE, ensure_tables=ensure_tables)}
+        if module_rows is None:
+            module_rows = authoring_fetch_all(AUTHORING_MODULES_TABLE, ensure_tables=ensure_tables)
+        if group_rows is None:
+            group_rows = authoring_fetch_all(GROUPS_TABLE, ensure_tables=ensure_tables)
+        if cohort_rows is None:
+            cohort_rows = authoring_fetch_all(COHORT_AUTHORING_DETAILS_TABLE, ensure_tables=ensure_tables)
+        group_rows = {clean_str(row.get('group_id')): row for row in group_rows}
+        cohort_rows = {clean_str(row.get('cohort_id')): row for row in cohort_rows}
     except (Exception, AssertionError):
         logger.debug('Could not build fallback training rows from authoring tables.', exc_info=True)
         return []
@@ -7867,10 +8281,12 @@ def authoring_modules_as_training_rows(*, ensure_tables=True):
     return rows
 
 
-def authoring_modules_as_catalogue_rows():
+def authoring_modules_as_catalogue_rows(*, module_rows=None, week_rows=None):
     try:
-        module_rows = authoring_fetch_all(AUTHORING_MODULES_TABLE)
-        week_rows = authoring_fetch_all(AUTHORING_WEEKS_TABLE)
+        if module_rows is None:
+            module_rows = authoring_fetch_all(AUTHORING_MODULES_TABLE)
+        if week_rows is None:
+            week_rows = authoring_fetch_all(AUTHORING_WEEKS_TABLE)
     except (Exception, AssertionError):
         logger.debug('Could not build fallback module catalogue rows from authoring tables.', exc_info=True)
         return []
@@ -8529,17 +8945,26 @@ def build_staff_user_profile_collection(role, visibility='operational'):
     training_rows = get_training_rows()
     if visibility != 'all':
         training_rows = [row for row in training_rows if is_operational_training_row(row)]
+    # Tutor profiles only expose module identities/dates/status. Week titles
+    # and group statistics cannot affect those fields. Legacy catalogues keep
+    # their existing resolver, including non-authoring identifiers.
+    catalogue = (
+        authoring_modules_as_catalogue_rows(week_rows=[])
+        if role == 'tutor' and not table_exists('Modules') else get_module_rows()
+    )
     modules = build_modules(
-        get_module_rows(),
+        catalogue,
         training_rows,
         get_program_config_rows(),
         include_unused=visibility == 'all',
     )
-    _, groups = build_cohorts_and_groups(
-        training_rows,
-        get_program_config_rows(),
-        include_archived=visibility == 'all',
-    )
+    groups = []
+    if role != 'tutor':
+        _, groups = build_cohorts_and_groups(
+            training_rows,
+            get_program_config_rows(),
+            include_archived=visibility == 'all',
+        )
     return build_staff_profiles(profile_rows, role, modules, groups)
 
 
@@ -9055,7 +9480,7 @@ def _empty_programme_structure_counts():
 
 
 @scoped_curriculum_read
-def authoring_programme_structure_counts():
+def authoring_programme_structure_counts(*, source=None):
     """Cohorts, groups, modules and weeks per programme, from the rows that own them.
 
     A programme's card and the programme's own workspace have to answer with the
@@ -9102,7 +9527,7 @@ def authoring_programme_structure_counts():
 
     for table, key in ((COHORT_AUTHORING_DETAILS_TABLE, 'cohorts'), (GROUPS_TABLE, 'groups')):
         try:
-            for row in authoring_fetch_all(table):
+            for row in (source[key] if source is not None else authoring_fetch_all(table)):
                 if not is_countable(row):
                     continue
                 counts = counts_for(row)
@@ -9118,7 +9543,7 @@ def authoring_programme_structure_counts():
     # table is read in full and the database is remote.
     week_counts_by_module = Counter()
     try:
-        for row in active_week_rows(authoring_fetch_all(
+        for row in active_week_rows(source['weeks'] if source is not None else authoring_fetch_all(
             AUTHORING_WEEKS_TABLE,
             columns=['module_catalogue_id', 'deleted_at', 'is_programme_deleted', 'library_state'],
         )):
@@ -9129,7 +9554,7 @@ def authoring_programme_structure_counts():
         logger.debug('Authored week counts are not available yet.', exc_info=True)
 
     try:
-        for row in safe_authoring_module_rows():
+        for row in (source['modules'] if source is not None else safe_authoring_module_rows()):
             # A module archived on its own is soft-deleted, so programme_deleted_row
             # covers it; `status` on a module row is draft/published, not archived.
             if programme_deleted_row(row):
@@ -9163,7 +9588,7 @@ def programme_structure_counts(programme, by_id=None, by_name=None):
     return by_name.get(normalise(programme.get('name')))
 
 
-def build_programmes(training_rows, program_configs, ksb_profiles, include_config_only=False, only_stats_for_ids=None):
+def build_programmes(training_rows, program_configs, ksb_profiles, include_config_only=False, only_stats_for_ids=None, *, include_learner_counts=True, include_structure_counts=True, structure_counts=None, learner_counts=None):
     configs_by_id = program_config_by_id(program_configs)
     grouped = defaultdict(list)
     group_meta = {}
@@ -9171,7 +9596,10 @@ def build_programmes(training_rows, program_configs, ksb_profiles, include_confi
     # Cohorts, groups, modules and weeks all come from the same read of the
     # tables that own them, so the card cannot disagree with the programme's own
     # page about any of the four.
-    structure_counts_by_id, structure_counts_by_name = authoring_programme_structure_counts()
+    structure_counts_by_id, structure_counts_by_name = structure_counts if structure_counts is not None else (
+        authoring_programme_structure_counts() if include_structure_counts else ({}, {})
+    )
+    standard_codes = {}
 
     display_program_configs = unique_program_configs_for_display(program_configs)
     row_programme_names = set()
@@ -9239,7 +9667,9 @@ def build_programmes(training_rows, program_configs, ksb_profiles, include_confi
             if key not in order:
                 order[key] = len(order)
 
-    programme_learner_counts_by_id, programme_learner_counts_by_name = active_learner_programme_counts()
+    programme_learner_counts_by_id, programme_learner_counts_by_name = learner_counts if learner_counts is not None else (
+        active_learner_programme_counts() if include_learner_counts else ({}, {})
+    )
     programmes = []
     for key, rows in sorted(grouped.items(), key=lambda item: order.get(item[0], 999)):
         meta = group_meta.get(key, {})
@@ -9261,7 +9691,9 @@ def build_programmes(training_rows, program_configs, ksb_profiles, include_confi
             row_group = actual_group_identity(row, row_cohort['id']) if row_cohort else None
             if row_group:
                 group_keys.add(row_group['id'])
-        required_ksb_codes = ksb_profile_required_codes(profile)
+        required_ksb_codes = applied_standard_required_codes(config, standard_codes)
+        if required_ksb_codes is None:
+            required_ksb_codes = ksb_profile_required_codes(profile)
         ksb_total = len(required_ksb_codes)
         profile_source = ksb_profile_source_id(profile) if profile else ''
         config_archived = is_archived_program_config(config)
@@ -9393,7 +9825,7 @@ def active_learner_programme_counts():
 def programme_component_ksb_mapping_count(programme_id, required_codes=None):
     """Distinct required KSBs actually mapped to this programme's components."""
     try:
-        module_rows, _week_rows, _component_rows, mapping_rows = authoring_scope_data('programme', programme_id)
+        module_rows, _week_rows, _component_rows, mapping_rows = authoring_scope_data('programme', programme_id, stats_only=True)
     except Exception as exc:
         logger.warning('Could not count programme component KSB mappings for %s: %s', programme_id, exc)
         return 0
@@ -9450,7 +9882,7 @@ def programme_learner_ksb_progress(programme_id, required_codes=None):
         'learnerKsbCodesTotal': 0,
     }
     try:
-        module_rows, week_rows, component_rows, mapping_rows = authoring_scope_data('programme', programme_id)
+        module_rows, week_rows, component_rows, mapping_rows = authoring_scope_data('programme', programme_id, stats_only=True)
     except Exception as exc:
         logger.warning('Could not load authoring scope for programme KSB progress %s: %s', programme_id, exc)
         return empty
@@ -9466,6 +9898,7 @@ def programme_learner_ksb_progress(programme_id, required_codes=None):
             week_rows,
             component_rows,
             include_mapping_only=not bool(required_ksbs),
+            totals_only=True,
         )
     except Exception as exc:
         logger.warning('Could not build coverage for programme KSB progress %s: %s', programme_id, exc)
@@ -9500,7 +9933,7 @@ def programme_learner_ksb_progress(programme_id, required_codes=None):
         # Totals only: this returns a percentage and four counts, never a row.
         # See learner_progress_ksb_totals() for why the drill-down read is the
         # wrong one to ask here.
-        progress_totals = learner_progress_ksb_totals(learner_ids, list(expected))
+        progress_totals = learner_progress_ksb_totals(learner_ids, list(expected), compact=True)
     except Exception as exc:
         logger.warning('Could not load learner KSB consumption for programme %s: %s', programme_id, exc)
         return result
@@ -9612,7 +10045,7 @@ def active_learner_delivery_counts():
     return dict(cohort_counts), dict(group_counts)
 
 
-def build_cohorts_and_groups(training_rows=None, program_configs=None, include_archived=False):
+def build_cohorts_and_groups(training_rows=None, program_configs=None, include_archived=False, *, include_learner_counts=True, source=None):
     """Build the cohort/group overview directly from the normalized tables.
 
     Cohorts come from ``curriculum.cohorts`` and groups from ``curriculum.groups``.
@@ -9621,10 +10054,12 @@ def build_cohorts_and_groups(training_rows=None, program_configs=None, include_a
     accepted for backwards compatibility with existing callers but is ignored:
     the normalized tables are the only source of truth.
     """
-    module_rows = safe_authoring_module_rows()
+    module_rows = safe_authoring_module_rows() if source is None else source['modules']
     if not include_archived:
         module_rows = [row for row in module_rows if not programme_deleted_row(row)]
-    cohort_learner_counts, group_learner_counts = active_learner_delivery_counts()
+    cohort_learner_counts, group_learner_counts = (
+        active_learner_delivery_counts() if include_learner_counts else ({}, {})
+    )
     modules_by_group = defaultdict(list)
     modules_by_cohort = defaultdict(list)
     for module in module_rows:
@@ -9645,7 +10080,8 @@ def build_cohorts_and_groups(training_rows=None, program_configs=None, include_a
         return sum(parse_int(row.get('sessions_number'), 0) for row in rows)
 
     cohorts = []
-    for detail in cohort_authoring_detail_rows():
+    cohort_details = cohort_authoring_detail_rows() if source is None else source['cohorts']
+    for detail in cohort_details:
         if programme_deleted_row(detail):
             continue
         if not include_archived and detail_is_archived(detail):
@@ -9690,7 +10126,8 @@ def build_cohorts_and_groups(training_rows=None, program_configs=None, include_a
 
     groups = []
     seen_group_ids = set()
-    for detail in group_authoring_detail_rows():
+    group_details = group_authoring_detail_rows() if source is None else source['groups']
+    for detail in group_details:
         if programme_deleted_row(detail):
             continue
         if not include_archived and detail_is_archived(detail):
@@ -11665,7 +12102,7 @@ def prefer_authoring_module_sessions(training_sessions, authoring_sessions, auth
     return [*authoring_sessions, *filtered_training]
 
 
-def build_ksb_data(ksb_profiles, modules, training_rows):
+def build_ksb_data(ksb_profiles, modules, training_rows, *, summary_only=False):
     module_names_by_code = defaultdict(set)
     for module in modules:
         for code in module.get('ksbCodes', []):
@@ -11706,7 +12143,7 @@ def build_ksb_data(ksb_profiles, modules, training_rows):
             })
 
         entries = []
-        for item in normalised_items:
+        for item in ([] if summary_only else normalised_items):
             code = item['fullCode']
             raw_code = item['code']
             mapped_modules = sorted(module_names_by_code.get(code, []) or module_names_by_code.get(raw_code, []))
@@ -11791,7 +12228,12 @@ def build_ksb_data(ksb_profiles, modules, training_rows):
             'standard': profile.get('name') or '',
             'notes': profile.get('description') or '',
             'status': 'published' if profile.get('is_active') else 'archived',
-            'ksbs': entries,
+            **({
+                'ksbCount': len(normalised_items),
+                'knowledgeCount': sum(item['type'] == 'K' for item in normalised_items),
+                'skillCount': sum(item['type'] == 'S' for item in normalised_items),
+                'behaviourCount': sum(item['type'] == 'B' for item in normalised_items),
+            } if summary_only else {'ksbs': entries}),
         })
     return frameworks, sets
 
@@ -11821,12 +12263,16 @@ def build_curriculum_payload(visibility='operational', compact=False, force=Fals
         return build_curriculum_payload_from_rows(rows, visibility, compact=compact)
 
 
-def build_curriculum_payload_from_rows(rows, visibility='operational', compact=False):
+def build_curriculum_payload_from_rows(rows, visibility='operational', compact=False, *, home_summary=False, module_list=False, delivery_source=None, programme_list=False):
     with curriculum_read_scope():
-        return _build_curriculum_payload_from_rows(rows, visibility, compact=compact)
+        return _build_curriculum_payload_from_rows(rows, visibility, compact=compact, home_summary=home_summary, module_list=module_list, delivery_source=delivery_source, programme_list=programme_list)
 
 
-def _build_curriculum_payload_from_rows(rows, visibility='operational', compact=False):
+def _build_curriculum_payload_from_rows(rows, visibility='operational', compact=False, *, home_summary=False, module_list=False, delivery_source=None, programme_list=False):
+    # Only the dedicated Home projection opts in. Its intermediate rows are not
+    # cached as an overview: other pages still need the counts/library details.
+    if (home_summary or module_list or programme_list) and not compact:
+        raise ValueError('The Home summary requires compact source rows.')
     training_rows = rows['training'] if visibility == 'all' else [row for row in rows['training'] if is_operational_training_row(row)]
     ksb_profiles = rows['ksb_profiles'] if visibility == 'all' else [profile for profile in rows['ksb_profiles'] if profile.get('is_active')]
     authoring_modules = rows['authoring_modules'] if visibility == 'all' else [
@@ -11855,6 +12301,10 @@ def _build_curriculum_payload_from_rows(rows, visibility='operational', compact=
         # fills its cards in behind the list. See _programme_ksb_stats for the
         # placeholder every programme gets here.
         only_stats_for_ids=frozenset(),
+        include_learner_counts=not (home_summary or module_list),
+        # A module list only uses programme identities for visibility. Its own
+        # week/content figures are calculated by the module enrichment below.
+        include_structure_counts=not (home_summary or module_list),
     )
     if visibility != 'all':
         # Delivery rows can outlive an authoring module's archive row. In that
@@ -11899,11 +12349,22 @@ def _build_curriculum_payload_from_rows(rows, visibility='operational', compact=
         # Full enrichment can append authoring-only rows and carry archive
         # status from the authoring summary, so apply the rule again.
         modules = [module for module in modules if not is_archived_module_summary(module)]
-    attach_module_assignment_counts(modules)
+    if programme_list:
+        # The legacy programme-count fallback needs these identities, not module
+        # learner assignments, cohort calendars or the complete KSB library.
+        return {'schema': CURRICULUM_SCHEMA, 'programmes': programmes, 'modules': modules}
+    if not home_summary:
+        attach_module_assignment_counts(modules)
+    if module_list:
+        # Programme metadata above is needed for the existing visibility rules;
+        # cohorts, group learner counts and the KSB library are not list inputs.
+        return {'schema': CURRICULUM_SCHEMA, 'modules': modules}
     cohorts, groups = build_cohorts_and_groups(
         training_rows,
         rows['program_configs'],
         include_archived=visibility == 'all',
+        include_learner_counts=not home_summary,
+        **({'source': delivery_source} if delivery_source is not None else {}),
     )
     if compact:
         sessions = []
@@ -11938,7 +12399,7 @@ def _build_curriculum_payload_from_rows(rows, visibility='operational', compact=
     # the user has to be able to see in order to attach it. Filtering the library
     # by programme linkage made a newly-created framework vanish on save.
     # `is_active` above is the intended soft-delete for a profile.
-    frameworks, ksb_profiles = build_ksb_data(ksb_profiles, modules, training_rows)
+    frameworks, ksb_profiles = ([], []) if home_summary else build_ksb_data(ksb_profiles, modules, training_rows)
 
     # Bank holidays have no archived state -- nobody authors or retires them --
     # so every visibility sees the same calendar.
@@ -13297,12 +13758,9 @@ def compact_module_list_rows(modules):
     module row later stays out of this response until somebody puts it in that
     set deliberately.
 
-    It projects an already-built row rather than building a smaller one from
-    scratch, because the rows it is handed are not private to this endpoint. They
-    come out of the `modules:<visibility>:enriched` cache, which the non-compact
-    response serves verbatim, so assembling them differently for compact callers
-    would mean either a second enrichment pass or changing what every other
-    caller gets. Copies rather than edits, for the same reason.
+    Copies rather than edits: full consumers can share the source dictionaries.
+    The compact endpoint also has its own list-only builder/cache, which avoids
+    constructing component edit payloads while retaining this exact contract.
     """
     return [
         {
@@ -13795,6 +14253,13 @@ def find_existing_authoring_catalogue_id_for_payload(payload):
         )
         for row in rows:
             if normalise(row.get('title')) != normalise(title):
+                continue
+            # An archived module is not "the same module" a create is asking
+            # for. Adopting it handed a fresh copy the archived row's id, the
+            # next save cleared the archive on the module row alone, and the
+            # weeks archived with it stayed stamped with that id -- so the
+            # module then ran with two sets of weeks.
+            if module_withdrawn_on_its_own(row):
                 continue
             if not identity_values_match_context([row.get('programme_id'), row.get('programme_name')], programme_values):
                 continue
@@ -15867,6 +16332,10 @@ COMPONENT_SETTINGS_SCHEMA = {
         'uploadSource': '',
         'assignmentFileName': '',
         'assignmentFileUrl': '',
+        # Read by learner_api.assignment_settings: the title learners are given,
+        # and whether this is the eight-step monthly assignment.
+        'learnerTitle': '',
+        'isMonthlyAssignment': False,
     },
     'checkpoint': {
         **BASE_COMPONENT_SETTINGS,
@@ -16101,6 +16570,7 @@ def validate_module_authoring_payload(payload):
     source_cache = {}
     if not clean_str(payload.get('title') or payload.get('name')):
         errors.append({'path': 'title', 'message': 'Module title is required.'})
+    errors.extend(partial_read_errors(payload))
     raw_weeks = payload.get('weekStructure')
     if raw_weeks is None:
         raw_weeks = payload.get('weeks')
@@ -16116,6 +16586,7 @@ def validate_module_authoring_payload(payload):
             continue
         if not clean_str(week.get('title')):
             errors.append({'path': f'weekStructure.{week_index}.title', 'message': f'Week {week_index + 1} needs a title.'})
+        errors.extend(partial_read_errors(week, f'weekStructure.{week_index}'))
         components = week.get('components') or []
         if not isinstance(components, list):
             errors.append({'path': f'weekStructure.{week_index}.components', 'message': 'Components must be a list.'})
@@ -16125,6 +16596,7 @@ def validate_module_authoring_payload(payload):
                 errors.append({'path': f'weekStructure.{week_index}.components.{component_index}', 'message': 'Component must be an object.'})
                 continue
             errors.extend(validate_component_authoring_payload(component, f'weekStructure.{week_index}.components.{component_index}'))
+            errors.extend(partial_read_errors(component, f'weekStructure.{week_index}.components.{component_index}'))
             component_mappings = component.get('ksbMappings') or []
             errors.extend(validate_mapping_duplicates(component_mappings, f'weekStructure.{week_index}.components.{component_index}.ksbMappings'))
             for mapping_index, mapping in enumerate(component_mappings):
@@ -16795,9 +17267,39 @@ def sort_rows_by_updated_at_desc(rows):
     )
 
 
-def component_builder_rows(module_catalogue_ids=None):
-    ensure_module_authoring_tables()
+def component_builder_rows(module_catalogue_ids=None, omit_content=False):
+    """The component builder rows, whole; or with ``omit_content``, exactly as
+    component_rows_without_content() would project them, with the long text
+    stripped in the database where it can be (live_component_rows_without_content).
+    """
     catalogue_ids = [clean_str(value) for value in (module_catalogue_ids or []) if clean_str(value)]
+    stripped_rows = live_component_rows_without_content(catalogue_ids) if omit_content else None
+    if stripped_rows is None:
+        rows = _component_builder_rows(catalogue_ids)
+        return component_rows_without_content(rows) if omit_content else rows
+    db_omitted_by_id = {
+        str(row.get('id')): list(row.pop(COMPONENT_DB_OMITTED_KEYS_COLUMN, None) or [])
+        for row in stripped_rows
+    }
+    projected = []
+    for row in _component_builder_rows(catalogue_ids, stripped_rows):
+        db_omitted = db_omitted_by_id.get(str(row.get('id'))) or []
+        # Anything the database could not strip (a settings document stored
+        # as a JSON string) is still taken out here, so the result never
+        # depends on which path removed the text.
+        row = component_rows_without_content([row])[0]
+        omitted = [
+            key for key in COMPONENT_CONTENT_SETTING_KEYS
+            if key in db_omitted or key in (row.get(COMPONENT_SETTINGS_OMITTED_FLAG) or [])
+        ]
+        if omitted:
+            row = {**row, COMPONENT_SETTINGS_OMITTED_FLAG: omitted}
+        projected.append(row)
+    return projected
+
+
+def _component_builder_rows(catalogue_ids, component_rows=None):
+    ensure_module_authoring_tables()
     where_sql = ''
     params = []
     if catalogue_ids:
@@ -16808,7 +17310,11 @@ def component_builder_rows(module_catalogue_ids=None):
     # of the identical rows made the programme detail build fetch every
     # component for the programme twice -- ~28 s of a 64 s build. Ordering the
     # list is this reader's own concern, not the database's.
-    component_rows = active_component_rows(authoring_fetch_all(AUTHORING_COMPONENTS_TABLE, where_sql, params, 'display_order, id'))
+    # Paged and live-only on the database side; see live_component_rows_paged.
+    # Same arguments as the structure reader, so a detail build shares the read.
+    if component_rows is None:
+        component_rows = live_component_rows_paged(catalogue_ids or None, 'display_order, id')
+    component_rows = active_component_rows(component_rows)
     component_rows = sort_rows_by_updated_at_desc(component_rows)
     module_rows = authoring_fetch_all(AUTHORING_MODULES_TABLE, where_sql, params) if catalogue_ids else authoring_fetch_all(AUTHORING_MODULES_TABLE)
     week_rows = active_week_rows(authoring_fetch_all(AUTHORING_WEEKS_TABLE, where_sql, params) if catalogue_ids else authoring_fetch_all(AUTHORING_WEEKS_TABLE))
@@ -17096,6 +17602,11 @@ def save_component_builder_payload(payload, component_id=None):
             'path': 'type',
             'message': 'This component type has been removed from the module builder.',
         }])
+    # Settings merge key by key below, so a missing key keeps the stored value;
+    # refused anyway, so a partial read can never be the source of a save.
+    partial_errors = partial_read_errors(payload)
+    if partial_errors:
+        raise ModuleAuthoringValidationError(partial_errors)
     component_id = canonical_authoring_id('COMP', component_id or payload.get('id'))
     module_catalogue_id, week_id, week_number = component_context_for_payload(payload)
     duration_minutes = max(0, parse_int(payload.get('duration'), 0))
@@ -17384,6 +17895,11 @@ def apply_shared_teams_settings_to_weeks(module, weeks):
                     if key in SHARED_TEAMS_DELIVERY_SETTING_KEYS and value not in (None, '')
                 },
             }
+            # A shared card opens the source's meeting. Its displayed clock
+            # must travel with that identity even when reading weeks differ.
+            for key in ('sessionDate', 'sessionTime', 'durationMinutes'):
+                if source.get(key) not in (None, ''):
+                    merged[key] = source[key]
             own_link = clean_str(current.get('liveSessionLinkOverride'))
             if own_link:
                 merged['liveSessionUrl'] = own_link
@@ -18006,7 +18522,7 @@ def curriculum_module_teams_meeting_restore(request, module_catalogue_id):
     # order, which is the same pairing the Teams page shows its rows in.
     occurrence_rows = authoring_fetch_all(
         LIVE_SESSION_OCCURRENCES_TABLE,
-        "live_session_id = %s and status <> 'cancelled'",
+        "live_session_id = %s and status not in ('cancelled', 'superseded')",
         [clean_str(sessions[0].get('id'))],
         'session_number asc',
     )
@@ -18233,7 +18749,7 @@ def curriculum_module_teams_links_replace(request, module_catalogue_id):
 #: `replace_live_session_occurrences` marks a shrunk series' trailing rows
 #: `cancelled` rather than deleting them, so counting those as extras would
 #: report every shortened module as out of sync forever.
-TEAMS_OFF_CALENDAR_OCCURRENCE_STATUSES = {'cancelled', 'canceled', 'declined', 'deleted', 'removed'}
+TEAMS_OFF_CALENDAR_OCCURRENCE_STATUSES = {'cancelled', 'canceled', 'declined', 'deleted', 'removed', 'superseded'}
 
 #: How many differing dates a verdict names before it stops listing them. The
 #: badge only needs the count; the list is for the drawer that shows them.
@@ -18617,6 +19133,9 @@ def curriculum_teams_meeting_summary(request):
             'moduleTitle': clean_str(row.get('module_title')),
             'calendarSeries': stored_calendar_series(row),
             'verificationPending': bool(parse_json_value(row.get('warnings'), [])),
+            # Saved / pending / failed for the meeting options, from the saved
+            # marker; read only, no Graph call (see teams_options_retry).
+            'microsoftUpdate': microsoft_update_summary(row.get('warnings')),
             'joinUrl': clean_str(row.get('join_url')),
             'webLink': clean_str(row.get('web_link')),
             'meetingOptionsUrl': clean_str(row.get('meeting_options_url')),
@@ -19087,11 +19606,12 @@ STRUCTURE_REVISION_SOURCES = (
 )
 
 
-def module_structure_revision(module_catalogue_id):
+def module_structure_revision(module_catalogue_id, *, source_rows=None):
     """Fingerprint of everything a structure PATCH would replace.
 
-    Six indexed single-module reads. A module that is not stored fingerprints as
-    the empty structure, so a first save of a fresh draft is never a conflict.
+    Six indexed single-module reads, or the exact source rows already read for
+    an editor GET. PATCH always uses fresh reads. A module that is not stored
+    fingerprints as the empty structure, so a fresh draft is never a conflict.
 
     Rows are sorted by their own key rather than trusted in database order: a
     fingerprint that depended on which order Postgres happened to return the
@@ -19102,14 +19622,35 @@ def module_structure_revision(module_catalogue_id):
         return ''
     ensure_module_authoring_tables()
     material = []
+    # Match the payload reader's queries, including ordering, so its read scope
+    # reuses these rows. Excluding timestamps in SQL gave the revision a separate
+    # memo key and downloaded all component content twice on every fresh open.
+    payload_order = {
+        'weeks': 'display_order, week_number, id',
+        'components': 'display_order, id',
+        'mappings': 'created_at, id',
+    }
     for label, table, keep, sort_column in STRUCTURE_REVISION_SOURCES:
         try:
-            rows = authoring_fetch_all(
-                table,
-                'module_catalogue_id = %s',
-                [catalogue_id],
-                exclude_columns=STRUCTURE_REVISION_VOLATILE_COLUMNS,
-            )
+            if source_rows is not None:
+                rows = source_rows[table]
+            elif connection.vendor == 'postgresql' and table in (AUTHORING_COMPONENTS_TABLE, AUTHORING_KSB_MAPPINGS_TABLE):
+                from .authoring_read_transport import compact_authoring_rows
+                # Verify every current row in SQL, sharing only unchanged raw
+                # content with the editor read. This remains a fresh revision,
+                # including external writes that never bump the response epoch.
+                rows = compact_authoring_rows(
+                    table, 'module_catalogue_id = %s', [catalogue_id],
+                    'display_order, id' if table == AUTHORING_COMPONENTS_TABLE else 'created_at, id',
+                    reuse_unchanged=True,
+                )
+            else:
+                rows = authoring_fetch_all(
+                    table,
+                    'module_catalogue_id = %s',
+                    [catalogue_id],
+                    order_sql=payload_order.get(label, ''),
+                )
         except Exception:
             # A table that cannot be read must not fail the request it was asked
             # about. Returning '' turns the guard off for this save rather than
@@ -19120,6 +19661,14 @@ def module_structure_revision(module_catalogue_id):
             return ''
         if keep:
             rows = keep(rows)
+        # Copy rather than mutate: the payload still needs the complete rows.
+        # The fingerprint's material remains identical to the previous SQL
+        # projection, including columns introduced by future migrations.
+        rows = [
+            {key: value for key, value in row.items()
+             if key not in STRUCTURE_REVISION_VOLATILE_COLUMNS}
+            for row in rows
+        ]
         material.append([
             label,
             sorted(rows, key=lambda row: clean_str(row.get(sort_column))),
@@ -19136,7 +19685,7 @@ def module_structure_revision(module_catalogue_id):
 STRUCTURE_REVISION_UNAVAILABLE = 'unverified'
 
 
-def structure_payload_with_revision(build_payload, module_catalogue_id):
+def structure_payload_with_revision(build_payload, module_catalogue_id, *, source_rows=None):
     """Build a structure payload and stamp the revision it was built from.
 
     The revision is read BEFORE the payload, and that order is the whole point.
@@ -19161,7 +19710,9 @@ def structure_payload_with_revision(build_payload, module_catalogue_id):
     written the structure itself and needs the revision of its own write uses
     ``stamp_revision_after_write``.
     """
-    revision = module_structure_revision(module_catalogue_id) or STRUCTURE_REVISION_UNAVAILABLE
+    revision = module_structure_revision(
+        module_catalogue_id, **({'source_rows': source_rows} if source_rows is not None else {}),
+    ) or STRUCTURE_REVISION_UNAVAILABLE
     payload = build_payload()
     if not payload:
         return payload
@@ -19551,7 +20102,38 @@ def module_archive_parent_markers(module_row, module_catalogue_id):
     return {marker for marker in markers if marker}
 
 
-def row_in_module_archive(row, markers):
+# One archive writes all of its rows inside a single request. The same window
+# decides which deleted children learners may see (curriculum_api.week_visibility)
+# and which recordings stay with an archived module (recordings_library).
+MODULE_ARCHIVE_EVENT_WINDOW = timedelta(minutes=5)
+
+
+def stamp_datetime(value):
+    """A stored ``deleted_at`` as a datetime, or None when it is not one."""
+    if isinstance(value, datetime):
+        return value
+    text = clean_str(value)
+    if not text:
+        return None
+    try:
+        return datetime.fromisoformat(text.replace('Z', '+00:00'))
+    except ValueError:
+        return None
+
+
+def module_archive_event_bounds(module_row):
+    """The (earliest, latest) ``deleted_at`` a child of this archive can carry.
+
+    None when the module carries no usable stamp, which leaves the marker as the
+    only test -- exactly the behaviour before the window existed.
+    """
+    archived_at = stamp_datetime((module_row or {}).get('deleted_at'))
+    if archived_at is None:
+        return None
+    return archived_at - MODULE_ARCHIVE_EVENT_WINDOW, archived_at + MODULE_ARCHIVE_EVENT_WINDOW
+
+
+def row_in_module_archive(row, markers, bounds=None):
     """Would restoring this module bring this child row back?
 
     A live row is kept -- the caller is reading an archived module, but a child
@@ -19560,13 +20142,56 @@ def row_in_module_archive(row, markers):
     component deleted by hand before the module was archived stays out: reading
     an archived module must show what a restore returns, not everything the table
     has ever held under that id.
+
+    ``bounds`` (``module_archive_event_bounds``) also requires the row to have
+    been archived in the same moment as the module. A module once archived and
+    then brought back by a save keeps the children of that earlier archive
+    stamped with its id; they belong to no archive the module is in now.
     """
     if not curriculum_row_effectively_deleted(row):
         return True
-    return clean_str(row.get('deleted_via_parent')) in markers
+    if clean_str(row.get('deleted_via_parent')) not in markers:
+        return False
+    if bounds is None:
+        return True
+    deleted_at = stamp_datetime(row.get('deleted_at'))
+    if deleted_at is None:
+        return True
+    try:
+        return bounds[0] <= deleted_at <= bounds[1]
+    except TypeError:
+        # Naive against aware: the two stamps came from different writers.
+        # Fall back to the marker rather than guess an offset.
+        return True
 
 
-def get_authoring_structure_payload(module_catalogue_id, include_archived=False):
+def read_module_structure_with_revision(module_catalogue_id):
+    """Read each owned row once for both the editable payload and its guard.
+
+    A revision and payload assembled from the same rows cannot certify newer
+    data than the editor received. PATCH still fingerprints fresh database rows
+    before accepting a save. Reused raw rows are verified against their current
+    SQL fingerprints on every rebuild, independently of response-cache epochs.
+    """
+    from .authoring_read_transport import compact_authoring_rows
+    orders = {
+        AUTHORING_WEEKS_TABLE: 'display_order, week_number, id',
+        AUTHORING_COMPONENTS_TABLE: 'display_order, id',
+        AUTHORING_KSB_MAPPINGS_TABLE: 'created_at, id',
+    }
+    source_rows = {
+        table: compact_authoring_rows(
+            table, 'module_catalogue_id = %s', [module_catalogue_id], orders.get(table, sort_column),
+            reuse_unchanged=table in (AUTHORING_COMPONENTS_TABLE, AUTHORING_KSB_MAPPINGS_TABLE),
+        ) for _label, table, _keep, sort_column in STRUCTURE_REVISION_SOURCES
+    }
+    return structure_payload_with_revision(
+        lambda: get_authoring_structure_payload(module_catalogue_id, source_rows=source_rows),
+        module_catalogue_id, source_rows=source_rows,
+    )
+
+
+def get_authoring_structure_payload(module_catalogue_id, include_archived=False, *, source_rows=None):
     """The module's authored structure.
 
     ``include_archived`` is for reading a module that is *in* the archive. The
@@ -19577,7 +20202,12 @@ def get_authoring_structure_payload(module_catalogue_id, include_archived=False)
     see ``row_in_module_archive``. Nothing else about the payload changes, so the
     archive renders the same shape the builder does.
     """
-    module_rows = authoring_fetch_all(AUTHORING_MODULES_TABLE, 'module_catalogue_id = %s', [module_catalogue_id])
+    def owned_rows(table, order=''):
+        if source_rows is not None:
+            return source_rows[table]
+        return authoring_fetch_all(table, 'module_catalogue_id = %s', [module_catalogue_id], order)
+
+    module_rows = owned_rows(AUTHORING_MODULES_TABLE)
     if not module_rows:
         return None
     module = module_rows[0]
@@ -19588,34 +20218,35 @@ def get_authoring_structure_payload(module_catalogue_id, include_archived=False)
     delivery_module = module_delivery_row(module, group_row)
     group_coach_name = clean_str(group_row.get('coach_name'))
     is_programme_deleted = programme_deleted_row(module) or programme_deleted_row(group_row)
-    stored_week_rows = authoring_fetch_all(AUTHORING_WEEKS_TABLE, 'module_catalogue_id = %s', [module_catalogue_id], 'display_order, week_number, id')
-    stored_component_rows = authoring_fetch_all(AUTHORING_COMPONENTS_TABLE, 'module_catalogue_id = %s', [module_catalogue_id], 'display_order, id')
-    stored_mapping_rows = authoring_fetch_all(AUTHORING_KSB_MAPPINGS_TABLE, 'module_catalogue_id = %s', [module_catalogue_id], 'created_at, id')
+    stored_week_rows = owned_rows(AUTHORING_WEEKS_TABLE, 'display_order, week_number, id')
+    stored_component_rows = owned_rows(AUTHORING_COMPONENTS_TABLE, 'display_order, id')
+    stored_mapping_rows = owned_rows(AUTHORING_KSB_MAPPINGS_TABLE, 'created_at, id')
     if include_archived:
         # The type and library exclusions stay: a retired component type and a
         # detached library row are not this module's content either way, and a
         # restore does not make them so.
         markers = module_archive_parent_markers(module, module_catalogue_id)
+        bounds = module_archive_event_bounds(module)
         week_rows = [
             row for row in stored_week_rows
-            if not is_library_row(row) and row_in_module_archive(row, markers)
+            if not is_library_row(row) and row_in_module_archive(row, markers, bounds)
         ]
         component_rows = [
             row for row in stored_component_rows
             if not is_retired_component_type(row.get('type'))
             and not is_library_row(row)
-            and row_in_module_archive(row, markers)
+            and row_in_module_archive(row, markers, bounds)
         ]
         mapping_source_rows = [
-            row for row in stored_mapping_rows if row_in_module_archive(row, markers)
+            row for row in stored_mapping_rows if row_in_module_archive(row, markers, bounds)
         ]
     else:
         week_rows = active_week_rows(stored_week_rows)
         component_rows = active_component_rows(stored_component_rows)
         mapping_source_rows = active_mapping_rows(stored_mapping_rows)
     mapping_rows = mappings_with_inferred_sources(mapping_source_rows, module_rows)
-    completion_rows = authoring_fetch_all(AUTHORING_COMPLETION_TABLE, 'module_catalogue_id = %s', [module_catalogue_id])
-    advanced_rows = authoring_fetch_all(AUTHORING_ADVANCED_TABLE, 'module_catalogue_id = %s', [module_catalogue_id])
+    completion_rows = owned_rows(AUTHORING_COMPLETION_TABLE)
+    advanced_rows = owned_rows(AUTHORING_ADVANCED_TABLE)
 
     mappings_by_week = defaultdict(list)
     mappings_by_component = defaultdict(list)
@@ -19785,7 +20416,166 @@ def structure_payloads_cache_key(module_catalogue_ids, **options):
     return f'module-structure-payloads:{flags}:{len(catalogue_ids)}:{ids_digest}'
 
 
-def get_authoring_structure_payloads(module_catalogue_ids, include_staff=True, include_quality=True, include_extra=True):
+# Rows per statement for full-width reads of curriculum.components.
+#
+# A full row carries settings_json, and one programme can own ~17k live
+# components (~36 MB of settings). Read in one statement that ran past the
+# database's 15s statement timeout -- the server counts the time spent pushing
+# rows to a remote client -- so the programme detail build failed every time
+# and, failing, was never cached. Pages of this size finish in a few seconds
+# each.
+COMPONENT_FULL_READ_PAGE_ROWS = 2000
+
+
+def live_component_rows_paged(module_ids=None, order_sql='display_order, id'):
+    """Every column of the live component rows of ``module_ids`` (all when None), in pages.
+
+    Returns the same rows, in the same order, that
+    ``active_component_rows(authoring_fetch_all(components, 'module_catalogue_id in (...)', ids, order_sql))``
+    would -- callers still apply that filter -- by two changes to how they are
+    fetched:
+
+    * Soft-deleted rows are left out by the query (Postgres only). They are a
+      third of the table and the Python filter drops them anyway: a non-null
+      ``deleted_at`` timestamp is always truthy and ``is not true`` is exactly
+      truthy() on a boolean, so the SQL drops a subset of what
+      active_component_rows() drops, never more. sqlite (tests) can hold an
+      empty-string ``deleted_at`` that the Python filter treats as live, so the
+      filter is not applied there.
+    * The read is paged with LIMIT/OFFSET over the caller's ``order_sql``. The
+      order must be total -- ``id`` is the primary key and ends the default --
+      so the pages concatenate into exactly the single statement's order, in the
+      database's own collation, which Python could not reproduce by re-sorting.
+
+    The ids are de-duplicated and sorted before the memoised read, so the
+    structure reader and the component-builder reader of one detail build share
+    one fetch whatever order each holds its ids in; the row order comes from
+    ``order_sql`` alone.
+    """
+    ids = None if module_ids is None else tuple(sorted({clean_str(value) for value in module_ids if clean_str(value)}))
+    if ids is not None and not ids:
+        return []
+    return _live_component_rows_paged(ids, order_sql)
+
+
+@scoped_curriculum_read
+def _live_component_rows_paged(module_ids, order_sql):
+    clauses = []
+    params = []
+    if module_ids is not None:
+        clauses.append(f'module_catalogue_id in ({", ".join(["%s"] * len(module_ids))})')
+        params = list(module_ids)
+    if connection.vendor == 'postgresql':
+        if has_column(AUTHORING_COMPONENTS_TABLE, 'deleted_at'):
+            clauses.append(f'{quote_ident("deleted_at")} is null')
+        if has_column(AUTHORING_COMPONENTS_TABLE, 'is_programme_deleted'):
+            clauses.append(f'{quote_ident("is_programme_deleted")} is not true')
+    where = ' and '.join(f'({clause})' for clause in clauses)
+    rows = []
+    seen_ids = set()
+    offset = 0
+    while True:
+        page = authoring_fetch_all(
+            AUTHORING_COMPONENTS_TABLE, where, params,
+            f'{order_sql} limit {COMPONENT_FULL_READ_PAGE_ROWS} offset {offset}',
+        )
+        for row in page:
+            # A row inserted between two pages shifts the offset by one and can
+            # repeat the previous page's last row; never return it twice.
+            row_id = str(row.get('id'))
+            if row_id in seen_ids:
+                continue
+            seen_ids.add(row_id)
+            rows.append(row)
+        if len(page) < COMPONENT_FULL_READ_PAGE_ROWS:
+            return rows
+        offset += COMPONENT_FULL_READ_PAGE_ROWS
+
+
+# Carries, per row, which content keys the database stripped from settings_json.
+COMPONENT_DB_OMITTED_KEYS_COLUMN = 'settings_content_omitted__'
+
+
+def live_component_rows_without_content(module_ids):
+    """``live_component_rows_paged(module_ids)`` with the authored long text
+    (COMPONENT_CONTENT_SETTING_KEYS) stripped from ``settings_json`` by Postgres.
+
+    ``omit=content`` used to drop that text in Python, after the database had
+    already shipped it: ~24 MB of the components table's 39 MB is settings_json,
+    nearly all of it these keys, and the largest programme holds ~17k of the
+    table's ~18k rows. Stripping in the query keeps it on the database side.
+
+    Each row also carries COMPONENT_DB_OMITTED_KEYS_COLUMN: the stripped keys
+    whose value was not empty, in COMPONENT_CONTENT_SETTING_KEYS order -- what
+    component_rows_without_content() would have named.
+
+    Returns None where this read does not apply (not Postgres, no module ids,
+    no settings_json column); the caller then takes the full read.
+    """
+    ids = tuple(sorted({clean_str(value) for value in (module_ids or []) if clean_str(value)}))
+    if not ids or connection.vendor != 'postgresql':
+        return None
+    ensure_module_authoring_tables()
+    columns = column_names(AUTHORING_COMPONENTS_TABLE)
+    if 'settings_json' not in columns:
+        return None
+    keys = list(COMPONENT_CONTENT_SETTING_KEYS)
+    settings = f'component.{quote_ident("settings_json")}::jsonb'
+    omitted = f'omitted.{quote_ident(COMPONENT_DB_OMITTED_KEYS_COLUMN)}'
+    select_list = ', '.join(f'component.{quote_ident(column)}' for column in sorted(columns - {'settings_json'}))
+    # Only non-empty values go, as in component_rows_without_content(): an
+    # empty one stays in settings and is not named as omitted.
+    select_list += (
+        f", case when jsonb_typeof({settings}) = 'object' then {settings} - {omitted} else {settings} end"
+        f' as {quote_ident("settings_json")}, {omitted}'
+    )
+    omitted_keys = (
+        f"select case when jsonb_typeof({settings}) = 'object' then array("
+        f'select entry.key from jsonb_each({settings}) as entry'
+        f' where entry.key = any(%s::text[])'
+        f""" and entry.value not in ('null'::jsonb, '""'::jsonb, '[]'::jsonb, '{{}}'::jsonb)"""
+        f' order by array_position(%s::text[], entry.key)'
+        f') else array[]::text[] end as {quote_ident(COMPONENT_DB_OMITTED_KEYS_COLUMN)}'
+    )
+    # Same filter as _live_component_rows_paged: live rows of these modules only.
+    clauses = [f'component.module_catalogue_id in ({", ".join(["%s"] * len(ids))})']
+    if 'deleted_at' in columns:
+        clauses.append(f'component.{quote_ident("deleted_at")} is null')
+    if 'is_programme_deleted' in columns:
+        clauses.append(f'component.{quote_ident("is_programme_deleted")} is not true')
+    where = ' and '.join(f'({clause})' for clause in clauses)
+    table = f'{authoring_table_name(AUTHORING_COMPONENTS_TABLE)} as component'
+    # The order first, from the ids alone, then the rows in id batches. Paging
+    # the row query with LIMIT/OFFSET made Postgres sort -- and so strip --
+    # every row ahead of the offset again on each page: ~21 s for the largest
+    # programme against ~10 s for the same rows read once each.
+    with connection.cursor() as cursor:
+        cursor.execute(f'select component.id from {table} where {where} order by component.display_order, component.id', list(ids))
+        ordered_ids = [row[0] for row in cursor.fetchall()]
+    rows_by_id = {}
+    for start in range(0, len(ordered_ids), COMPONENT_FULL_READ_PAGE_ROWS):
+        batch = ordered_ids[start:start + COMPONENT_FULL_READ_PAGE_ROWS]
+        with connection.cursor() as cursor:
+            cursor.execute(
+                f'select {select_list} from {table} cross join lateral ({omitted_keys}) as omitted'
+                f' where ({where}) and component.id in ({", ".join(["%s"] * len(batch))})',
+                [keys, keys, *ids, *batch],
+            )
+            for row in rows_as_dicts(cursor):
+                rows_by_id[row.get('id')] = row
+    # A row archived between the two reads is simply absent; one added is not
+    # in the order and waits for the next read, as it would on a later page.
+    return [rows_by_id[row_id] for row_id in ordered_ids if row_id in rows_by_id]
+
+
+def get_authoring_structure_payloads(
+    module_catalogue_ids,
+    include_staff=True,
+    include_quality=True,
+    include_extra=True,
+    component_columns=None,
+    child_rows=None,
+):
     catalogue_ids = unique([clean_str(value) for value in (module_catalogue_ids or []) if clean_str(value)])
     if not catalogue_ids:
         return {}
@@ -19795,11 +20585,27 @@ def get_authoring_structure_payloads(module_catalogue_ids, include_staff=True, i
         return {}
 
     found_ids = [clean_str(row.get('module_catalogue_id')) for row in module_rows if clean_str(row.get('module_catalogue_id'))]
+    wanted_ids = set(found_ids)
     placeholders = ', '.join(['%s'] * len(found_ids))
     week_rows = active_week_rows(authoring_fetch_all(AUTHORING_WEEKS_TABLE, f'module_catalogue_id in ({placeholders})', found_ids, 'display_order, week_number, id'))
-    component_rows = active_component_rows(authoring_fetch_all(AUTHORING_COMPONENTS_TABLE, f'module_catalogue_id in ({placeholders})', found_ids, 'display_order, id'))
+    if child_rows is not None:
+        component_rows = active_component_rows([
+            row for row in child_rows['components'] if clean_str(row.get('module_catalogue_id')) in wanted_ids
+        ])
+    elif component_columns is None:
+        component_rows = active_component_rows(live_component_rows_paged(found_ids, 'display_order, id'))
+    else:
+        component_rows = active_component_rows(authoring_fetch_all(
+            AUTHORING_COMPONENTS_TABLE,
+            f'module_catalogue_id in ({placeholders})',
+            found_ids,
+            'display_order, id',
+            columns=component_columns,
+        ))
     mapping_rows = mappings_with_inferred_sources(
-        active_mapping_rows(authoring_fetch_all(AUTHORING_KSB_MAPPINGS_TABLE, f'module_catalogue_id in ({placeholders})', found_ids, 'created_at, id')),
+        active_mapping_rows([
+            row for row in child_rows['mappings'] if clean_str(row.get('module_catalogue_id')) in wanted_ids
+        ] if child_rows is not None else authoring_fetch_all(AUTHORING_KSB_MAPPINGS_TABLE, f'module_catalogue_id in ({placeholders})', found_ids, 'created_at, id')),
         module_rows,
     )
     completion_rows = authoring_fetch_all(AUTHORING_COMPLETION_TABLE, f'module_catalogue_id in ({placeholders})', found_ids) if include_extra else []
@@ -20035,6 +20841,82 @@ def get_authoring_structure_payloads(module_catalogue_ids, include_staff=True, i
     return payloads
 
 
+def live_authoring_rows_sql(table, flag_columns):
+    """A where clause that drops rows the Python active_*_rows() filters drop.
+
+    Only ever a subset of what those filters drop, never more: ``deleted_at`` is
+    a timestamp and ``is_programme_deleted`` a boolean, so ``is null`` and
+    ``is not true`` are exactly row_has_deleted_at() and truthy(), and
+    ``library_state <> 'library'`` misses only padded spellings that
+    is_library_row() would still catch. Callers keep running the Python filter
+    on what comes back, which is what makes the two agree row for row. Columns
+    the table does not have are left out, as authoring_fetch_all() leaves them
+    out of its select list.
+    """
+    clauses = []
+    params = []
+    for column in flag_columns:
+        if not has_column(table, column):
+            continue
+        name = quote_ident(column)
+        if column == 'deleted_at':
+            # sqlite (tests) has no timestamp type, so an empty string can be
+            # stored there; row_has_deleted_at() reads it as not deleted.
+            clauses.append(f'{name} is null' if connection.vendor == 'postgresql' else f"({name} is null or {name} = '')")
+        elif column == 'library_state':
+            clauses.append(f'({name} is null or {name} <> %s)')
+            params.append(LIBRARY_STATE_DETACHED)
+        else:
+            clauses.append(f'({name} is null or {name} = %s)')
+            params.append(False)
+    return ' and '.join(clauses), params
+
+
+def authoring_module_content_counts():
+    """``(lesson_counts, ksb_counts)`` per module catalogue id, without row reads.
+
+    The same two figures authoring_catalogue_summaries() derives from every
+    component and mapping row, grouped by the database instead: the live
+    components of each module (retired types and detached rows excluded, as
+    active_component_rows() excludes them) and the distinct KSB codes on its live
+    mappings. A few hundred grouped rows cross the network instead of ~90k.
+    """
+    lesson_counts = Counter()
+    component_flags = ('deleted_at', 'is_programme_deleted', 'library_state')
+    where_sql, params = live_authoring_rows_sql(AUTHORING_COMPONENTS_TABLE, component_flags)
+    group_columns = [
+        quote_ident(column)
+        for column in ('module_catalogue_id', 'type', 'library_state')
+        if has_column(AUTHORING_COMPONENTS_TABLE, column)
+    ]
+    query = (
+        f'select {", ".join(group_columns)}, count(*) as {quote_ident("row_count")} '
+        f'from {authoring_table_name(AUTHORING_COMPONENTS_TABLE)}'
+        + (f' where {where_sql}' if where_sql else '')
+        + f' group by {", ".join(group_columns)}'
+    )
+    for row in fetch_all(query, params):
+        if is_retired_component_type(row.get('type')) or is_library_row(row):
+            continue
+        lesson_counts[str(row.get('module_catalogue_id'))] += parse_int(row.get('row_count'), 0)
+
+    ksb_codes = defaultdict(set)
+    where_sql, params = live_authoring_rows_sql(
+        AUTHORING_KSB_MAPPINGS_TABLE, ('deleted_at', 'is_programme_deleted', 'is_deleted'),
+    )
+    query = (
+        f'select {quote_ident("module_catalogue_id")}, {quote_ident("ksb_code")} '
+        f'from {authoring_table_name(AUTHORING_KSB_MAPPINGS_TABLE)}'
+        + (f' where {where_sql}' if where_sql else '')
+        + f' group by {quote_ident("module_catalogue_id")}, {quote_ident("ksb_code")}'
+    )
+    for row in fetch_all(query, params):
+        code = clean_str(row.get('ksb_code'))
+        if code:
+            ksb_codes[str(row.get('module_catalogue_id'))].add(code)
+    return dict(lesson_counts), {catalogue_id: len(codes) for catalogue_id, codes in ksb_codes.items()}
+
+
 # Every component column authoring_catalogue_summaries() reads, plus the three
 # the active-row filters need (deleted_at, is_programme_deleted, library_state).
 # settings_json and ksb_mappings are excluded on purpose - see the call site.
@@ -20048,18 +20930,52 @@ CATALOGUE_SUMMARY_COMPONENT_COLUMNS = (
 )
 
 
-def authoring_catalogue_summaries(include_programme_deleted=False):
+def authoring_catalogue_summaries(include_programme_deleted=False, include_content=True, *, list_only=False):
+    """Per-module authoring summaries, keyed by module catalogue id.
+
+    ``include_content=False`` is for a caller that only counts modules. It skips
+    the two heaviest reads in the curriculum -- every component and every KSB
+    mapping, ~28 MB between them on a remote database -- and fills in only the
+    two content figures best_authoring_summary() ranks candidates by,
+    ``lessonCount`` and ``ksbCount``, from grouped reads. Everything else
+    content-derived (week components, quiz count, OTJH, session names, KSB codes,
+    and ``deliveryWeeks``, which reads the week components) is left empty or
+    unresolved, so such a summary must never stand in for a full one.
+    """
+    content_counts = None
     try:
         module_rows = authoring_fetch_all(AUTHORING_MODULES_TABLE, order_sql='updated_at desc, title')
         week_rows = active_week_rows(authoring_fetch_all(AUTHORING_WEEKS_TABLE))
-        # Narrow deliberately. This builds per-module summaries and week outlines
-        # and never reads settings_json (24 MB across this table) or ksb_mappings
-        # - the summary sets 'ksbMappings': [] outright. With select * this one
-        # call dominated every non-compact overview request.
-        component_rows = active_component_rows(authoring_fetch_all(
-            AUTHORING_COMPONENTS_TABLE, columns=CATALOGUE_SUMMARY_COMPONENT_COLUMNS,
-        ))
-        mapping_rows = active_mapping_rows(authoring_fetch_all(AUTHORING_KSB_MAPPINGS_TABLE))
+        if include_content and list_only and connection.vendor == 'postgresql':
+            from .catalogue_summary_reads import grouped_catalogue_content_rows
+            component_rows, mapping_rows = grouped_catalogue_content_rows()
+        elif include_content:
+            # Narrow deliberately. This builds per-module summaries and week outlines
+            # and never reads settings_json (24 MB across this table) or ksb_mappings
+            # - the summary sets 'ksbMappings': [] outright. With select * this one
+            # call dominated every non-compact overview request.
+            #
+            # Soft-deleted and detached rows are dropped by the query as well as by
+            # active_component_rows(): they are about a third of the table and were
+            # crossing the network only to be thrown away here.
+            where_sql, params = live_authoring_rows_sql(
+                AUTHORING_COMPONENTS_TABLE, ('deleted_at', 'is_programme_deleted', 'library_state'),
+            )
+            component_rows = active_component_rows(authoring_fetch_all(
+                AUTHORING_COMPONENTS_TABLE, where_sql, params,
+                columns=(
+                    ('id', 'module_catalogue_id', 'week_id', 'type', 'title', 'expected_otjh',
+                     'deleted_at', 'is_programme_deleted', 'library_state')
+                    if list_only else CATALOGUE_SUMMARY_COMPONENT_COLUMNS
+                ),
+            ))
+            mapping_rows = active_mapping_rows(authoring_fetch_all(
+                AUTHORING_KSB_MAPPINGS_TABLE,
+                **({'columns': ('module_catalogue_id', 'ksb_code', 'deleted_at', 'is_programme_deleted', 'is_deleted', 'isDeleted', 'isProgrammeDeleted')} if list_only else {}),
+            ))
+        else:
+            component_rows, mapping_rows = [], []
+            content_counts = authoring_module_content_counts()
     except Exception:
         logger.exception('Unable to read module authoring catalogue rows.')
         return {}
@@ -20161,13 +21077,23 @@ def authoring_catalogue_summaries(include_programme_deleted=False):
         component_id = clean_str(row.get('id'))
         week_id = clean_str(row.get('week_id'))
         component_type = normalise_component_type(row.get('type'))
-        summary['lessonCount'] += 1
-        summary['totalOtjhMinutes'] += otjh_rounded_minutes(row.get('expected_otjh'))
+        row_count = parse_int(row.get('row_count'), 1) if list_only else 1
+        summary['lessonCount'] += row_count
+        summary['totalOtjhMinutes'] += otjh_rounded_minutes(row.get('expected_otjh')) * row_count
         summary['totalOtjh'] = otjh_hours_from_minutes(summary['totalOtjhMinutes'])
         if component_type == 'quiz':
-            summary['quizCount'] += 1
+            summary['quizCount'] += row_count
         if component_type == 'live_session':
-            summary['sessionNames'].append(row.get('title') or '')
+            summary['sessionNames'].extend([row.get('title') or ''] * row_count)
+        if list_only:
+            # Delivery-week detection needs only the live-session count per
+            # week. Do not construct every discarded component's edit payload.
+            if component_type == 'live_session':
+                for week in summary['weekStructure']:
+                    if clean_str(week.get('id')) == week_id:
+                        week.setdefault('components', []).extend({'type': 'live-session'} for _ in range(row_count))
+                        break
+            continue
         for week in summary['weekStructure']:
             if clean_str(week.get('id')) != week_id:
                 continue
@@ -20213,6 +21139,12 @@ def authoring_catalogue_summaries(include_programme_deleted=False):
         summary['weeks'] = authored_week_count
         summary['weeksNumber'] = authored_week_count
         summary['deliveryWeeks'] = module_delivery_week_count(module_rows_by_catalogue_id.get(catalogue_id, {}), summary['weekStructure'])
+
+    if content_counts is not None:
+        lesson_counts, ksb_counts = content_counts
+        for catalogue_id, summary in summaries.items():
+            summary['lessonCount'] = lesson_counts.get(catalogue_id, 0)
+            summary['ksbCount'] = ksb_counts.get(catalogue_id, 0)
 
     # The tutor is already on the module row. The coach belongs to the group, so
     # it is read from the group rather than from the person: staff carry no
@@ -20302,7 +21234,7 @@ def saved_authoring_catalogue_items():
     return items
 
 
-def enrich_curriculum_modules_with_authoring_details(modules):
+def enrich_curriculum_modules_with_authoring_details(modules, *, child_rows=None):
     module_ids = unique([
         clean_str(module.get('moduleCatalogueId') or module.get('catalogueId') or module.get('moduleId') or module.get('structureId'))
         for module in modules or []
@@ -20315,6 +21247,8 @@ def enrich_curriculum_modules_with_authoring_details(modules):
         include_staff=False,
         include_quality=False,
         include_extra=False,
+        component_columns=CATALOGUE_SUMMARY_COMPONENT_COLUMNS,
+        **({'child_rows': child_rows} if child_rows is not None else {}),
     )
     enriched = []
     for module in modules or []:
@@ -20388,9 +21322,12 @@ def best_authoring_summary(candidates):
     return max(candidates, key=authoring_summary_score)
 
 
-def enrich_modules_with_authoring(modules, include_programme_deleted=False):
+def enrich_modules_with_authoring(modules, include_programme_deleted=False, include_content=True, *, list_only=False):
     try:
-        authoring_by_id = authoring_catalogue_summaries(include_programme_deleted=include_programme_deleted)
+        authoring_by_id = authoring_catalogue_summaries(
+            include_programme_deleted=include_programme_deleted, include_content=include_content,
+            **({'list_only': True} if list_only else {}),
+        )
         authoring_by_training_source = {
             clean_str(summary.get('sourceId')): summary
             for summary in authoring_by_id.values()
@@ -20615,10 +21552,13 @@ def authoring_row_delivery_signature(row):
     })
 
 
-def dedupe_authoring_module_rows(module_rows, mapping_rows=None, component_rows=None, week_rows=None):
-    mapping_counts = Counter(clean_str(row.get('module_catalogue_id')) for row in (mapping_rows or []))
-    component_counts = Counter(clean_str(row.get('module_catalogue_id')) for row in (component_rows or []))
-    week_counts = Counter(clean_str(row.get('module_catalogue_id')) for row in (week_rows or []))
+def dedupe_authoring_module_rows(module_rows, mapping_rows=None, component_rows=None, week_rows=None, *, counts=None):
+    if counts is None:
+        mapping_counts = Counter(clean_str(row.get('module_catalogue_id')) for row in (mapping_rows or []))
+        component_counts = Counter(clean_str(row.get('module_catalogue_id')) for row in (component_rows or []))
+        week_counts = Counter(clean_str(row.get('module_catalogue_id')) for row in (week_rows or []))
+    else:
+        mapping_counts, component_counts, week_counts = counts
     selected = {}
     order = {}
     for index, row in enumerate(module_rows):
@@ -20703,7 +21643,7 @@ def programme_summary_is_archived(programme):
     )
 
 
-def enrich_programmes_with_module_counts(programmes, modules, modules_enriched=False, include_archived=False):
+def enrich_programmes_with_module_counts(programmes, modules, modules_enriched=False, include_archived=False, *, include_structure_counts=True):
     all_modules = modules if modules_enriched else enrich_modules_with_authoring(modules)
     live_modules = [module for module in all_modules if not is_archived_module_summary(module)]
     # `include_archived` is what keeps archived PROGRAMMES in the list, for the
@@ -20716,7 +21656,9 @@ def enrich_programmes_with_module_counts(programmes, modules, modules_enriched=F
     # deleting it removes nothing.
     enriched_modules = all_modules if include_archived else live_modules
     archived_keys = set() if include_archived else archived_programme_keys()
-    structure_counts_by_id, structure_counts_by_name = authoring_programme_structure_counts()
+    structure_counts_by_id, structure_counts_by_name = (
+        authoring_programme_structure_counts() if include_structure_counts else ({}, {})
+    )
     enriched_programmes = []
     existing_programme_keys = set()
     for programme in programmes:
@@ -20732,7 +21674,7 @@ def enrich_programmes_with_module_counts(programmes, modules, modules_enriched=F
         # and anything it derives differently is a card that disagrees with the
         # page. The arithmetic below still answers for a legacy programme that
         # has no authoring rows, whose count arrives as len(delivery_rows).
-        if programme_structure_counts(programme, structure_counts_by_id, structure_counts_by_name):
+        if not include_structure_counts or programme_structure_counts(programme, structure_counts_by_id, structure_counts_by_name):
             enriched_programmes.append(programme)
             continue
         countable_modules = all_modules if programme_summary_is_archived(programme) else live_modules
@@ -21252,6 +22194,11 @@ def merge_partial_module_structure(stored, payload):
     return {**module_fields, 'weekStructure': weeks}
 
 
+MODULE_ARCHIVED_SAVE_REFUSED = (
+    'This module is archived, so this save was not applied. Restore it from View archive to edit it again.'
+)
+
+
 def save_module_authoring_structure(module_catalogue_id, payload, *, repair_links=True, write_changed_only=False):
     """Persist one module's structure.
 
@@ -21273,6 +22220,18 @@ def save_module_authoring_structure(module_catalogue_id, payload, *, repair_link
     module_catalogue_id = unique_module_catalogue_id(module_catalogue_id or payload.get('catalogueId') or payload.get('moduleCatalogueId'))
     existing_module_rows = authoring_fetch_all(AUTHORING_MODULES_TABLE, 'module_catalogue_id = %s', [module_catalogue_id]) if module_catalogue_id else []
     existing_module_row = existing_module_rows[0] if existing_module_rows else {}
+    # An editor that still believes an archived module is live sends
+    # `isProgrammeDeleted: false` (the Builder derives it from the copy it
+    # loaded). Honouring that cleared the archive on the module row alone: the
+    # weeks and components archived with it kept their stamp, and the save wrote
+    # a second set beside them. Restore is the only way back out of the archive.
+    if (module_withdrawn_on_its_own(existing_module_row)
+            and ('isProgrammeDeleted' in payload or 'is_programme_deleted' in payload)
+            and not truthy(payload.get('isProgrammeDeleted') or payload.get('is_programme_deleted'))):
+        raise ModuleAuthoringValidationError([{
+            'path': 'isProgrammeDeleted',
+            'message': MODULE_ARCHIVED_SAVE_REFUSED,
+        }])
     # Validation above has already rejected a non-list weekStructure/weeks, so the
     # list form is the only thing that can reach here.
     has_explicit_weeks = 'weekStructure' in payload or 'weeks' in payload
@@ -21671,7 +22630,7 @@ def save_module_authoring_structure(module_catalogue_id, payload, *, repair_link
     calendars = authoring_fetch_all(LIVE_SESSIONS_TABLE, "module_catalogue_id = %s and status = 'active'", [module_catalogue_id])
     if calendars and stored_calendar_series(calendars[0]):
         calendar = calendars[0]
-        occurrences = authoring_fetch_all(LIVE_SESSION_OCCURRENCES_TABLE, "live_session_id = %s and status <> 'cancelled'", [calendar['id']], 'session_number')
+        occurrences = authoring_fetch_all(LIVE_SESSION_OCCURRENCES_TABLE, "live_session_id = %s and status not in ('cancelled', 'superseded')", [calendar['id']], 'session_number')
         attach_teams_meeting_to_module_weeks(module_catalogue_id, calendar, live_session_row_to_component_settings(calendar), occurrences)
     result = get_authoring_structure_payload(module_catalogue_id)
     result['qualityChecklist'] = checklist
@@ -22696,27 +23655,16 @@ def curriculum_programmes(request):
             if shared.stale:
                 enqueue_curriculum_home_refresh(visibility, reason='stale-read')
             return response
-    payload = cached_curriculum_value(
-        f'overview:{visibility}:compact',
-        lambda: build_curriculum_payload(visibility, compact=True, force=force),
+    from .programme_list import build_programme_list
+    # Consult the list cache before doing any source work. A programme cache hit
+    # must not first rebuild a missing/expired overview and its unrelated trees.
+    programmes = cached_curriculum_value(
+        f'programmes:{visibility}:with-module-counts',
+        lambda: build_programme_list(visibility, force=force),
         force=force,
     )
-    # Both enrichments read the authoring tables, so they share one read scope
-    # rather than each paying for its own round trips. Read-only: the payload
-    # above is already built and cached by the time this opens.
-    with curriculum_read_scope():
-        enriched_modules = cached_curriculum_value(
-            f'modules:{visibility}:enriched',
-            lambda: enrich_modules_with_authoring(payload['modules'], include_programme_deleted=visibility == 'all'),
-            force=force,
-        )
-        programmes = cached_curriculum_value(
-            f'programmes:{visibility}:with-module-counts',
-            lambda: enrich_programmes_with_module_counts(payload['programmes'], enriched_modules, modules_enriched=True, include_archived=visibility == 'all'),
-            force=force,
-        )
     response = curriculum_collection_response(
-        payload,
+        {'schema': CURRICULUM_SCHEMA},
         'programmes',
         programmes,
     )
@@ -22752,33 +23700,51 @@ PROGRAMME_KSB_STAT_FIELDS = (
 
 
 def build_programme_ksb_stats(identifier, visibility):
-    # Which programme this identifier means is already answered by the list
-    # payload: since the stats came out of it, its `programmes` are exactly the
-    # no-stats build the detail endpoint does a first pass for. Reading it here
-    # instead means one build_programmes per request rather than two, and thirty
-    # cards asking at once share one cached payload instead of rebuilding the
-    # whole list thirty times over.
-    payload = cached_curriculum_value(
-        f'overview:{visibility}:compact',
-        lambda: build_curriculum_payload(visibility, compact=True),
-    )
-    resolved = find_programme(payload, identifier)
-    if not resolved:
-        return None
-    with curriculum_read_scope():
-        curriculum_rows = get_cached_curriculum_rows(compact=True)
-        training_rows = curriculum_rows['training'] if visibility == 'all' else [
-            row for row in curriculum_rows['training']
+    # Scoped to the one programme asked for, end to end.
+    #
+    # It used to resolve the identifier through the whole list payload
+    # (overview:<visibility>:compact) -- every programme, module, cohort and
+    # group in the system, ~10s cold -- and then compute the stats inside a
+    # plain read scope, where authoring_child_rows_for_modules() deliberately
+    # reads weeks, components and KSB mappings for EVERY programme (the shared
+    # read that pays off for a list build). For one programme that was ~80s
+    # against the remote database: the whole ksb_mappings table, every
+    # component, to count one programme's codes.
+    #
+    # Now the identifier is resolved by the same no-stats build_programmes()
+    # call the list payload makes (same rows, same visibility filters, so
+    # find_programme() lands on the same programme), and the stats run in a
+    # targeted scope: child rows are read for this programme's modules only.
+    # Both build_programmes() calls share one memo. Only programme identity,
+    # visibility and KSB definitions are needed; module/week catalogues and
+    # programme structure/learner counts cannot affect these statistics.
+    with curriculum_read_scope(targeted_child_reads=True):
+        training_rows = get_training_rows()
+        ksb_profiles = get_ksb_profile_rows()
+        program_configs = get_program_config_rows()
+        training_rows = training_rows if visibility == 'all' else [
+            row for row in training_rows
             if is_operational_training_row(row)
         ]
-        ksb_profiles = curriculum_rows['ksb_profiles'] if visibility == 'all' else [
-            profile for profile in curriculum_rows['ksb_profiles']
+        ksb_profiles = ksb_profiles if visibility == 'all' else [
+            profile for profile in ksb_profiles
             if profile.get('is_active')
         ]
+        resolved = find_programme({'programmes': build_programmes(
+            training_rows, program_configs, ksb_profiles,
+            include_config_only=visibility == 'all',
+            only_stats_for_ids=frozenset(),
+            include_learner_counts=False,
+            include_structure_counts=False,
+        )}, identifier)
+        if not resolved:
+            return None
         programmes = build_programmes(
-            training_rows, curriculum_rows['program_configs'], ksb_profiles,
+            training_rows, program_configs, ksb_profiles,
             include_config_only=visibility == 'all',
             only_stats_for_ids={clean_str(resolved.get('sourceId'))},
+            include_learner_counts=False,
+            include_structure_counts=False,
         )
     programme = find_programme({'programmes': programmes}, identifier)
     if not programme:
@@ -22794,14 +23760,18 @@ def curriculum_programme_ksb_stats(request, programme_id):
     visibility = curriculum_visibility(request)
     identifier = clean_str(programme_id)
     force = request_bypasses_curriculum_cache(request)
-    stats = cached_curriculum_value(
-        f'programme-ksb-stats:{visibility}:{identifier}',
-        lambda: build_programme_ksb_stats(identifier, visibility),
+    def build_entry():
+        stats = build_programme_ksb_stats(identifier, visibility)
+        if not stats:
+            return encode_json_error_entry('Programme not found.', status=404)
+        return encode_json_entry(stats)
+
+    entry = cached_curriculum_value(
+        f'programme-ksb-stats-response:{visibility}:{identifier}',
+        build_entry,
         force=force,
     )
-    if not stats:
-        return json_error('Programme not found.', status=404)
-    return JsonResponse(stats)
+    return conditional_json_response(request, entry)
 
 
 @require_GET
@@ -22811,7 +23781,31 @@ def curriculum_programme_tree_detail(request, identifier):
     # The KSB learner-progress aggregates are comparatively expensive on a cold
     # read. Keep the detail document responsive and let the client hydrate these
     # optional figures through the dedicated ksb-stats endpoint.
-    defer_stats = truthy(request.GET.get('defer_stats') or request.GET.get('deferStats'))
+    defer_stats = query_flag(request, 'deferStats')
+    # ``omit=components`` drops ``flat.components`` from the document. The
+    # programme page replaces that list with its own /components/ read the
+    # moment it arrives, so for it the copy here was the largest part of the
+    # response -- every component of the programme with its settings, a second
+    # time -- serialised, compressed and parsed for nothing. Opt-in: every other
+    # caller still gets the full document.
+    #
+    # ``omit=tree`` drops the nested ``cohorts -> groups -> modules`` view. It
+    # repeats every module, weekStructure and all, that ``flat.modules``
+    # already carries -- over half the document -- and the programme page reads
+    # only ``flat``. The free-course pages walk the nested tree, so it stays in
+    # the default response.
+    #
+    # ``omit=weekComponents`` sends each module's ``weekStructure`` as an
+    # outline: every week with its own fields, but no ``components`` -- see
+    # module_rows_with_week_outline. Those components and their settings are
+    # ~97% of the document on a large programme (75 of 78 MB for
+    # PROG-PCP-L6), and the programme page reads only the week titles and
+    # order. An editor or a Teams push re-reads the module's whole structure
+    # from the module's own endpoint before it acts, as it always has.
+    omit = query_list(request, 'omit')
+    include_components = 'components' not in omit
+    include_tree = 'tree' not in omit
+    include_week_components = 'weekComponents' not in omit
     # Read-only endpoint: repair runs with allow_writes=False (a no-op), so nothing
     # here mutates curriculum data. Invalidating the shared cache from this GET
     # wiped every cached payload on each wizard open, forcing the programmes list
@@ -22819,32 +23813,168 @@ def curriculum_programme_tree_detail(request, identifier):
     # Write paths still invalidate, which is what keeps this data fresh.
     repair_curriculum_parent_links(programme_id, allow_writes=False)
 
-    def build_detail_payload():
-        return build_curriculum_programme_tree_detail_payload(
-            identifier, visibility, include_stats=not defer_stats
+    def build_detail_entry():
+        payload = build_curriculum_programme_tree_detail_payload(
+            identifier, visibility, include_stats=not defer_stats,
+            include_components=include_components, include_tree=include_tree,
+            include_week_components=include_week_components,
         )
+        if not payload:
+            return encode_json_error_entry('Programme not found.', status=404)
+        return encode_json_entry(payload)
 
-    payload = cached_curriculum_value(
-        f'programme-detail:{visibility}:{clean_str(identifier)}:{"nostats" if defer_stats else "stats"}',
-        build_detail_payload,
+    # The encoded response is what is cached (see http_cache): the same key
+    # inputs and TTL as the payload cache it replaces, so freshness is
+    # unchanged; a hit no longer re-serialises the document, and a client that
+    # already holds the current body is answered 304.
+    entry = cached_curriculum_value(
+        f'programme-detail-response:{visibility}:{clean_str(identifier)}:'
+        f'{"nostats" if defer_stats else "stats"}:{"components" if include_components else "nocomponents"}:'
+        f'{"tree" if include_tree else "notree"}:{"weeks" if include_week_components else "weekoutline"}',
+        build_detail_entry,
     )
-    if not payload:
-        return json_error('Programme not found.', status=404)
-    return JsonResponse(payload)
+    return conditional_json_response(request, entry)
 
 
-def build_curriculum_programme_tree_detail_payload(identifier, visibility, include_stats=True):
+# The programme page reads the detail document in two parts, fetched side by
+# side. ``shell`` is the programme with its cohorts and groups -- enough to
+# draw the header and the Cohorts and Groups tabs -- and stops before the
+# modules, which are the slowest part of the build. ``modules`` is the modules
+# (week outline, no components) and the planned sessions. Neither carries the
+# KSB stats; those come from ksb-stats. The /detail/ document is unchanged for
+# its other callers.
+PROGRAMME_DETAIL_SECTIONS = ('shell', 'modules')
+
+
+@gzip_page
+@require_GET
+def curriculum_programme_detail_section(request, identifier, section):
+    if section not in PROGRAMME_DETAIL_SECTIONS:
+        return JsonResponse({'error': 'Unknown programme detail section.'}, status=404)
+    visibility = curriculum_visibility(request)
+    workspace_view = section == 'modules' and request.GET.get('view') == 'workspace'
+    programme_id = clean_str(identifier)
+    repair_curriculum_parent_links(programme_id, allow_writes=False)
+
+    def build_section_entry():
+        payload = build_curriculum_programme_tree_detail_payload(
+            identifier, visibility, include_stats=False, include_components=False,
+            include_tree=False, include_week_components=False, section=section,
+            **({'workspace_view': True} if workspace_view else {}),
+        )
+        if not payload:
+            return encode_json_error_entry('Programme not found.', status=404)
+        if workspace_view:
+            payload = programme_modules_workspace_payload(payload)
+        return encode_json_entry(payload)
+
+    entry = cached_curriculum_value(
+        f'programme-detail-{section}-response:{visibility}:{clean_str(identifier)}'
+        + (':workspace-v1' if workspace_view else ''),
+        build_section_entry,
+        force=request_bypasses_curriculum_cache(request),
+    )
+    return conditional_json_response(request, entry)
+
+
+# Marks what ``omit=weekComponents`` left out, so nothing mistakes an outline
+# for a module's structure. A week without its ``components`` saved back as a
+# structure would withdraw every component on it; validate_module_authoring_
+# payload refuses any payload that still carries either marker.
+WEEK_OUTLINE_MODULE_FLAG = 'weekStructureOutline'
+WEEK_OUTLINE_WEEK_FLAG = 'componentsOmitted'
+
+
+# ProgrammeDetailPage reads these for rows, scope matching, deep links and
+# moduleFormTarget(). Keep every form seed: an omitted schedule/holiday/image
+# would otherwise be saved back as an empty value. Editing components reads
+# their own endpoint; authoring metadata and mapping trees have no reader here.
+PROGRAMME_WORKSPACE_MODULE_FIELDS = frozenset({
+    'id', 'moduleId', 'moduleCatalogueId', 'deliveryModuleId', 'structureId',
+    'sourceId', 'sourceType', 'catalogueId', 'relatedCatalogueIds', 'name',
+    'programmeId', 'programme', 'cohortId', 'cohort', 'groupId', 'group',
+    'weeks', 'sessionsNumber', 'ksbCount', 'lessons', 'quizzes', 'assignments',
+    'status', 'authoringStatus', 'deliveryStatus', 'isProgrammeDeleted',
+    'startDate', 'endDate', 'weeklySchedule', 'sessionHolidays', 'deliveryWeeks',
+    'weekDays', 'startTime', 'endTime', 'notes', 'color', 'coverImage',
+    'tutor', 'coach', 'ksbCodes', 'lastUpdated', 'weekStructureOutline',
+})
+PROGRAMME_WORKSPACE_WEEK_FIELDS = frozenset({
+    'id', 'weekNumber', 'number', 'title', 'displayOrder', 'componentsOmitted',
+})
+
+
+def programme_modules_workspace_payload(payload):
+    """Opt-in display/edit metadata, leaving the full detail contract intact.
+
+    Project after duplicate selection and all calculations, so removing rich
+    authoring fields cannot change which module wins or any displayed counts.
+    Planned sessions stay intact: the workspace uses their dates and warnings.
+    """
+    modules = []
+    for module in payload['flat']['modules']:
+        item = {key: value for key, value in module.items() if key in PROGRAMME_WORKSPACE_MODULE_FIELDS}
+        if isinstance(module.get('weekStructure'), list):
+            item['weekStructure'] = [
+                {**{key: value for key, value in week.items() if key in PROGRAMME_WORKSPACE_WEEK_FIELDS},
+                 WEEK_OUTLINE_WEEK_FLAG: True}
+                if isinstance(week, dict) else week
+                for week in module['weekStructure']
+            ]
+            item[WEEK_OUTLINE_MODULE_FLAG] = True
+        modules.append(item)
+    return {**payload, 'flat': {**payload['flat'], 'modules': modules}}
+
+
+def module_rows_with_week_outline(modules):
+    """The modules with each ``weekStructure`` week reduced to its own fields.
+
+    Drops only the week's ``components`` -- the key, not its value: an empty
+    list would say the week has none. The week is marked ``componentsOmitted``
+    and the module ``weekStructureOutline``. Copies rather than edits: the
+    module dicts come from shared, cached builders.
+    """
+    projected = []
+    for module in modules:
+        weeks = module.get('weekStructure')
+        if not isinstance(weeks, list):
+            projected.append(module)
+            continue
+        projected.append({
+            **module,
+            'weekStructure': [
+                {
+                    **{key: value for key, value in week.items() if key != 'components'},
+                    WEEK_OUTLINE_WEEK_FLAG: True,
+                } if isinstance(week, dict) else week
+                for week in weeks
+            ],
+            WEEK_OUTLINE_MODULE_FLAG: True,
+        })
+    return projected
+
+
+def build_curriculum_programme_tree_detail_payload(identifier, visibility, include_stats=True, include_components=True, include_tree=True, include_week_components=True, section=None, *, workspace_view=False):
     # Same reason build_curriculum_payload() opens a read scope: build_programmes()
     # re-reads authoring modules, programmes, cohorts, groups and ksb_profiles in
     # full once per programme, so without the scope this detail build issued ~250
     # round trips to Neon (~18-30s) instead of ~40 (~3s). The scope is read-only
     # and reentrant, so a caller that already opened one keeps its own lifetime.
-    with curriculum_read_scope():
-        return _build_curriculum_programme_tree_detail_payload(identifier, visibility, include_stats)
+    #
+    # Targeted: this answers for one programme, so the KSB stats (when asked
+    # for) read that programme's weeks/components/mappings rather than the
+    # whole tables -- see authoring_child_rows_for_modules.
+    with curriculum_read_scope(targeted_child_reads=True):
+        return _build_curriculum_programme_tree_detail_payload(identifier, visibility, include_stats, include_components, include_tree, include_week_components, section, **({'workspace_view': True} if workspace_view else {}))
 
 
-def _build_curriculum_programme_tree_detail_payload(identifier, visibility, include_stats=True):
-    curriculum_rows = get_curriculum_rows(compact=True)
+def _build_curriculum_programme_tree_detail_payload(identifier, visibility, include_stats=True, include_components=True, include_tree=True, include_week_components=True, section=None, *, workspace_view=False):
+    # The process-wide rows cache the list payloads share (epoch-checked, 60s
+    # TTL) rather than a fresh read of every table: opening a programme straight
+    # after the programme list no longer reads the same rows a second time.
+    # Nothing below mutates them -- the builders only read rows and emit new
+    # dicts, exactly as the list payload relies on.
+    curriculum_rows = get_cached_curriculum_rows(compact=True)
     training_rows = curriculum_rows['training'] if visibility == 'all' else [
         row for row in curriculum_rows['training']
         if is_operational_training_row(row)
@@ -22869,15 +23999,15 @@ def _build_curriculum_programme_tree_detail_payload(identifier, visibility, incl
     resolved_programme = find_programme({'programmes': cheap_programmes}, identifier)
     if not resolved_programme:
         return None
+    # Without stats the second pass is the first pass again -- the same call
+    # with the same arguments -- so its result is reused instead of rebuilt.
     programmes = build_programmes(
         training_rows,
         curriculum_rows['program_configs'],
         ksb_profiles,
         include_config_only=visibility == 'all',
-        only_stats_for_ids=(
-            {clean_str(resolved_programme.get('sourceId'))} if include_stats else frozenset()
-        ),
-    )
+        only_stats_for_ids={clean_str(resolved_programme.get('sourceId'))},
+    ) if include_stats else cheap_programmes
     programme = find_programme({'programmes': programmes}, identifier)
     if not programme:
         return None
@@ -22951,6 +24081,17 @@ def _build_curriculum_programme_tree_detail_payload(identifier, visibility, incl
         if group.get('cohortId') in cohort_ids and belongs_to_selected_programme(group)
     ] + config_groups, ['id', 'groupId', 'group_id'])
     group_ids = {group.get('id') for group in groups if group.get('id')}
+    if section == 'shell':
+        return {
+            'schema': CURRICULUM_SCHEMA,
+            'programme': programme,
+            'flat': {
+                'cohorts': cohorts,
+                'groups': groups,
+                'groupIds': sorted(group_ids, key=str),
+                'weekTemplates': config_week_templates,
+            },
+        }
 
     modules = build_modules(
         curriculum_rows['modules'],
@@ -22958,9 +24099,21 @@ def _build_curriculum_programme_tree_detail_payload(identifier, visibility, incl
         program_configs,
         include_unused=False,
     )
+    # Both representations participate in the existing richness-based selection.
+    # Share their raw child rows, not their differently-shaped payloads, so the
+    # chosen module and every schedule/count stay exactly as before.
+    child_rows = None
+    authoring_rows = None
+    if workspace_view:
+        from .programme_workspace_reads import programme_structure_child_rows
+        authoring_rows = programme_authoring_module_rows(programme, config)
+        child_rows = programme_structure_child_rows([
+            *[clean_str(module.get('moduleCatalogueId') or module.get('catalogueId') or module.get('moduleId') or module.get('structureId')) for module in modules],
+            *[clean_str(row.get('module_catalogue_id')) for row in authoring_rows],
+        ])
     modules = unique_curriculum_items([
-        *enrich_curriculum_modules_with_authoring_details(modules),
-        *programme_authoring_modules(programme, config),
+        *enrich_curriculum_modules_with_authoring_details(modules, **({'child_rows': child_rows} if workspace_view else {})),
+        *programme_authoring_modules(programme, config, **({'module_rows': authoring_rows, 'child_rows': child_rows} if workspace_view else {})),
         *programme_config_modules(config),
     ], ['moduleCatalogueId', 'catalogueId', 'moduleId', 'structureId', 'id'])
     # `get_curriculum_rows(compact=True)` deliberately returns no holidays, to
@@ -22990,10 +24143,22 @@ def _build_curriculum_programme_tree_detail_payload(identifier, visibility, incl
             or module.get('id')
         )
     ])
-    components = component_builder_rows(module_catalogue_ids)
+    components = component_builder_rows(module_catalogue_ids) if include_components else None
+    # After every count above is derived from the full structure: the outline
+    # changes what is sent, never what is computed.
+    if not include_week_components:
+        modules = module_rows_with_week_outline(modules)
+    if section == 'modules':
+        return {
+            'schema': CURRICULUM_SCHEMA,
+            'flat': {
+                'modules': modules,
+                'sessions': sessions,
+            },
+        }
 
     nested_cohorts = []
-    for cohort in cohorts:
+    for cohort in (cohorts if include_tree else []):
         nested_groups = []
         for group in [item for item in groups if item.get('cohortId') == cohort['id']]:
             group_modules = [
@@ -23006,14 +24171,16 @@ def _build_curriculum_programme_tree_detail_payload(identifier, visibility, incl
     return {
         'schema': CURRICULUM_SCHEMA,
         'programme': programme,
-        'cohorts': nested_cohorts,
+        **({'cohorts': nested_cohorts} if include_tree else {}),
         'flat': {
             'cohorts': cohorts,
             'groups': groups,
-            'groupIds': list(group_ids),
+            # Sorted: a set's iteration order differs between worker processes,
+            # which gave the same document a different ETag on each worker.
+            'groupIds': sorted(group_ids, key=str),
             'modules': modules,
             'sessions': sessions,
-            'components': components,
+            **({'components': components} if include_components else {}),
             'weekTemplates': config_week_templates,
         },
     }
@@ -23245,6 +24412,12 @@ def curriculum_programme_detail(request, identifier):
             # programme_id (and every relationship) unchanged.
             if name and normalise(name) != normalise(config.get('name')):
                 propagate_programme_name(clean_str(config.get('program_id') or key_value), name)
+            # Learner records carry the name too; renamed through their profile's
+            # programme id, never moved. See placement_rename.
+            from .placement_rename import propagate_programme_name_to_learners
+            propagate_programme_name_to_learners(
+                programme_config_id(config) or clean_str(key_value), clean_str(config.get('name')), name,
+            )
 
     invalidate_curriculum_cache()
     # Read after the commit, so the token handed back is the one a reader would
@@ -23432,6 +24605,8 @@ def upsert_programme_for_tree(payload):
         update_rows('programmes', f'{quote_ident(key_column)} = %s', [key_value], updates, allow_null_columns=['required_otjh'])
         source_id = programme_config_id(config) or clean_str(key_value)
         propagate_programme_name(source_id, name)
+        from .placement_rename import propagate_programme_name_to_learners
+        propagate_programme_name_to_learners(source_id, clean_str(config.get('name')), name)
         return {
             'id': source_id,
             'sourceId': source_id,
@@ -23836,16 +25011,50 @@ def curriculum_programme_cohort_collection(request, programme_id):
     return create_curriculum_cohort(body)
 
 
+@gzip_page
+@require_GET
+def curriculum_delivery_scope(request):
+    visibility = curriculum_visibility(request)
+
+    def build():
+        with curriculum_read_scope():
+            cohorts, groups = build_cohorts_and_groups(
+                include_archived=visibility == 'all',
+            )
+            return {'cohorts': cohorts, 'groups': groups}
+
+    return JsonResponse(cached_curriculum_value(
+        f'delivery-scope:{visibility}', build, force=request_bypasses_curriculum_cache(request),
+    ))
+
+
+@gzip_page
 @require_GET
 def curriculum_modules(request):
     visibility = curriculum_visibility(request)
     bypass_cache = request_bypasses_curriculum_cache(request)
+    compact = clean_str(request.GET.get('compact')).lower() in {'1', 'true', 'yes'}
     # One scope around both stages. The enrichment re-reads four of the tables
     # the payload build has already read, and outside a scope there is no memo
     # for it to hit, so a cold build scanned each of them twice. Nested inside,
     # build_curriculum_payload()'s own scope reuses this one.
     with curriculum_read_scope():
-        if bypass_cache:
+        if compact:
+            def build_list():
+                rows = get_cached_curriculum_rows(compact=True, force=bypass_cache)
+                source = build_curriculum_payload_from_rows(rows, visibility, compact=True, module_list=True)
+                enriched = enrich_modules_with_authoring(
+                    source['modules'], include_programme_deleted=visibility == 'all', list_only=True,
+                )
+                if visibility != 'all':
+                    enriched = [item for item in enriched if not programme_deleted_row(item) and not is_archived_module_summary(item)]
+                return compact_module_list_rows(enriched)
+
+            payload = {'schema': CURRICULUM_SCHEMA}
+            modules = cached_curriculum_value(
+                f'modules:{visibility}:list-v2', build_list, force=bypass_cache,
+            )
+        elif bypass_cache:
             payload = build_curriculum_payload(visibility, compact=True, force=True)
             modules = enrich_modules_with_authoring(payload['modules'], include_programme_deleted=visibility == 'all')
         else:
@@ -23869,8 +25078,6 @@ def curriculum_modules(request):
     # Filtering below still works: programmeId, cohortId, groupId and status are
     # all in the whitelist, so the projection cannot make a filter silently
     # match nothing.
-    if clean_str(request.GET.get('compact')).lower() in {'1', 'true', 'yes'}:
-        modules = compact_module_list_rows(modules)
     filters = {
         'programmeId': clean_str(request.GET.get('programme_id') or request.GET.get('programmeId')),
         'cohortId': clean_str(request.GET.get('cohort_id') or request.GET.get('cohortId')),
@@ -23903,6 +25110,11 @@ def curriculum_module_collection(request):
     if is_authoring_request:
         requested_catalogue_id = first_clean_payload_value(payload, 'catalogueId', 'moduleCatalogueId', 'module_catalogue_id')
         module_catalogue_id = find_existing_authoring_catalogue_id_for_payload(payload) or unique_module_catalogue_id(requested_catalogue_id)
+        if module_withdrawn_on_its_own(authoring_module_exists(module_catalogue_id)):
+            # A create never lands on an archived module; see
+            # find_existing_authoring_catalogue_id_for_payload. Restoring one
+            # is the archive's Restore, which brings its weeks back with it.
+            module_catalogue_id = unique_module_catalogue_id()
         module_payload = {
             'catalogueId': module_catalogue_id,
             'programmeId': payload.get('programmeId') or payload.get('programme') or payload.get('programmeName'),
@@ -24308,12 +25520,10 @@ def curriculum_module_structure(request, module_catalogue_id):
                     # recomputing, so a module authored a moment later is not
                     # missing until the TTL runs out.
                     #
-                    # A no-cache request rebuilds. The Module Builder sends one
-                    # every time it opens a module, and it means it: the
-                    # workspace saves the WHOLE structure back, so a stale read
-                    # here is not a stale screen, it is the next save writing
-                    # pre-edit weeks and components over the stored ones. This
-                    # endpoint was the one read path that ignored the header.
+                    # Explicit no-cache requests (e.g. conflict recovery) rebuild.
+                    # Normal editor opens revalidate against this write-invalidated
+                    # cache. A cached payload keeps its own revision below, so a
+                    # stale editor can never silently overwrite a newer revision.
                     #
                     # The revision is stamped INSIDE the factory, so it is
                     # cached with the payload it describes rather than computed
@@ -24323,10 +25533,7 @@ def curriculum_module_structure(request, module_catalogue_id):
                     # replacing the stored weeks with the cached ones.
                     payload = cached_curriculum_value(
                         f'module-structure:{resolved_catalogue_id}',
-                        lambda: structure_payload_with_revision(
-                            lambda: get_authoring_structure_payload(resolved_catalogue_id),
-                            resolved_catalogue_id,
-                        ),
+                        lambda: read_module_structure_with_revision(resolved_catalogue_id),
                         force=bypass_cache,
                     )
                 else:
@@ -24841,6 +26048,10 @@ def convert_module_to_free_course(module_catalogue_id, *, free_programme_id='FRE
     if not structure:
         raise LookupError('Module not found.')
     course_title = clean_str(structure.get('title')) or 'Untitled course'
+    if mode == 'move' and module_future_teams_sessions(module_catalogue_id):
+        # Moving archives the source module, and an archive never leaves a
+        # running Teams calendar behind it (see module_teams_calendar_block_response).
+        raise ValueError(MODULE_TEAMS_CALENDAR_BLOCKS_ARCHIVE)
 
     free_programme_id = clean_str(free_programme_id) or 'FREE-COURSES'
     with transaction.atomic(), versioning.source('module-to-free-course'):
@@ -24979,16 +26190,107 @@ def curriculum_module_session_plan(request, module_catalogue_id):
     })
 
 
+# The authored long text in a component's settings: the body of a reading, a
+# video's transcript, a lesson, speaker notes, an assignment brief, and the
+# imported legacy copy. 47 of the 84 MB a programme page's /components/ read
+# carried for PROG-PCP-L6, and that page shows them only in its KSB placement
+# preview -- which loads the full component when it opens. Listed by name
+# rather than whitelisting what the page reads, so a setting nobody listed
+# here is never silently dropped.
+COMPONENT_CONTENT_SETTING_KEYS = (
+    'readingContent', 'transcript', 'lessonContent', 'speakerNotes',
+    'assignmentBrief', 'legacySettings',
+)
+COMPONENT_SETTINGS_OMITTED_FLAG = 'settingsOmitted'
+
+
+def component_rows_without_content(rows):
+    """Component rows with the authored long text taken out of ``settings``.
+
+    A row that lost anything says which keys in ``settingsOmitted``, so its
+    settings are never mistaken for the whole of them; a row without that key
+    is complete. Empty values stay where they are (nothing to save, and no
+    reason to make a reader fetch the row again). Copies rather than edits:
+    the rows may be a cached list other responses share.
+    """
+    projected = []
+    for row in rows:
+        settings = row.get('settings')
+        omitted = [
+            key for key in COMPONENT_CONTENT_SETTING_KEYS
+            if isinstance(settings, dict) and settings.get(key) not in (None, '', [], {})
+        ]
+        if not omitted:
+            projected.append(row)
+            continue
+        projected.append({
+            **row,
+            'settings': {key: value for key, value in settings.items() if key not in omitted},
+            COMPONENT_SETTINGS_OMITTED_FLAG: omitted,
+        })
+    return projected
+
+
+def partial_read_errors(payload, path=''):
+    """Refuse a save built from a partial read (see the two projections above).
+
+    A component carrying ``settingsOmitted`` lacks text the stored row holds,
+    and a week or module marked as an outline lacks every component. Saved as
+    they are, a full structure save would withdraw that content. Nothing in
+    the frontend sends either; this is the server's own guarantee.
+    """
+    errors = []
+    if not isinstance(payload, dict):
+        return errors
+    prefix = f'{path}.' if path else ''
+    if payload.get(COMPONENT_SETTINGS_OMITTED_FLAG):
+        errors.append({
+            'path': f'{prefix}settings',
+            'message': 'This component was loaded without its full content. Reload it before saving.',
+        })
+    if payload.get(WEEK_OUTLINE_MODULE_FLAG) or payload.get(WEEK_OUTLINE_WEEK_FLAG):
+        errors.append({
+            'path': f'{prefix}weekStructure' if payload.get(WEEK_OUTLINE_MODULE_FLAG) else f'{prefix}components',
+            'message': 'This module was loaded as an outline without its components. Reload it before saving.',
+        })
+    return errors
+
+
 @csrf_exempt
 def curriculum_component_collection(request):
     if request.method == 'GET':
         try:
             raw_ids = request.GET.get('module_catalogue_ids') or request.GET.get('moduleCatalogueIds') or ''
             module_catalogue_ids = [clean_str(value) for value in raw_ids.split(',') if clean_str(value)]
+            # ``omit=content``: see component_rows_without_content. Opt-in; any
+            # other caller still gets every setting.
+            omit_content = 'content' in query_list(request, 'omit')
+            project = component_rows_without_content if omit_content else (lambda rows: rows)
             if module_catalogue_ids:
-                return curriculum_results_response(component_builder_rows(module_catalogue_ids), request=request)
+                if query_value(request, 'page') or query_value(request, 'pageSize'):
+                    return curriculum_results_response(component_builder_rows(module_catalogue_ids, omit_content=omit_content), request=request)
+                # The programme page reads every component of the programme
+                # here on each open -- ~17k rows with their settings for the
+                # largest programme -- and nothing cached it. The rows are
+                # authoring data, written only through curriculum handlers
+                # that bump the epoch, so any edit retires this at once. The
+                # one input that bumps nothing is the Skills England list a
+                # mapping's source is inferred from (standard_ksbs, changed by
+                # manual import), hence the same 60s bound coverage keeps.
+                # Keyed on the sorted, de-duped id set: order never changes
+                # the rows.
+                ids = sorted({value for value in module_catalogue_ids})
+                digest = hashlib.sha256('\x1f'.join(ids).encode()).hexdigest()[:32]
+                entry = cached_curriculum_value(
+                    f'components-response:{"nocontent" if omit_content else "full"}:{len(ids)}:{digest}',
+                    lambda: encode_json_bytes(
+                        curriculum_results_response(component_builder_rows(module_catalogue_ids, omit_content=omit_content)).content,
+                    ),
+                    ttl=60,
+                )
+                return conditional_json_response(request, entry)
             return curriculum_results_response(
-                cached_curriculum_value('components:builder', component_builder_rows),
+                project(cached_curriculum_value('components:builder', component_builder_rows)),
                 request=request,
             )
         except Exception:
@@ -25403,6 +26705,56 @@ def curriculum_presentation_slides(request):
     return JsonResponse(deck)
 
 
+#: Formats the ``?preview=1`` page hands to Microsoft's Office Online viewer.
+#: The learner page parses .docx/.xlsx itself and renders decks in-house, so in
+#: practice this is the formats nothing in the browser can read.
+OFFICE_PREVIEW_EXTENSIONS = frozenset({
+    '.doc', '.docx', '.docm', '.dot', '.dotx', '.rtf', '.odt',
+    '.xls', '.xlsx', '.xlsm', '.ods',
+    '.ppt', '.pptx', '.pptm', '.pps', '.ppsx', '.odp',
+})
+OFFICE_PREVIEW_SALT = 'curriculum.office-preview'
+#: Long enough for Office to fetch the file once the frame loads; the link is
+#: minted per page view, so nothing holds it for longer.
+OFFICE_PREVIEW_MAX_AGE_SECONDS = 15 * 60
+
+
+def office_preview_link(relative_path):
+    """A session-free link to one upload, for Office Online to fetch.
+
+    Microsoft's servers download the file themselves and carry no LMS session,
+    so the normal upload URL is refused at the API gate. The token names exactly
+    one file and expires, which is the same promise an Azure SAS URL makes for a
+    file that has a blob copy. The file name rides along because Office decides
+    how to open a document from the URL's extension.
+    """
+    token = signing.dumps(relative_path, salt=OFFICE_PREVIEW_SALT, compress=True)
+    return f'/curriculum_api/office-preview/{token}/{urllib_parse.quote(Path(relative_path).name)}'
+
+
+@require_GET
+def curriculum_office_preview_file(request, token, filename):
+    """Serve the upload an ``office_preview_link`` token names, without a session."""
+    try:
+        relative_path = signing.loads(token, salt=OFFICE_PREVIEW_SALT, max_age=OFFICE_PREVIEW_MAX_AGE_SECONDS)
+    except signing.BadSignature:
+        raise Http404('File not found.')
+    if (not isinstance(relative_path, str)
+            or not relative_path.startswith(f'{COMPONENT_UPLOAD_ROOT}/')
+            or '..' in relative_path.split('/')):
+        raise Http404('File not found.')
+    opened = upload_storage.open_stream(relative_path)
+    if opened is None:
+        raise Http404('File not found.')
+    stream, total_size, content_type = opened
+    response = FileResponse(stream, as_attachment=False, filename=Path(relative_path).name)
+    response['Content-Length'] = str(total_size)
+    response['Content-Type'] = content_type or mimetypes.guess_type(relative_path)[0] or 'application/octet-stream'
+    response['Cache-Control'] = 'private, no-store'
+    response['X-Robots-Tag'] = 'noindex, nofollow'
+    return response
+
+
 @require_GET
 @xframe_options_sameorigin
 def curriculum_uploaded_file(request, path):
@@ -25430,16 +26782,19 @@ def curriculum_uploaded_file(request, path):
     # database continues to store the stable LMS path without any token.
     preview_requested = clean_str(request.GET.get('preview')).lower() in {'1', 'true', 'yes'}
     extension = Path(relative_path).suffix.lower()
-    office_extensions = {'.doc', '.docx', '.docm', '.xls', '.xlsx', '.ppt', '.pptx', '.pptm'}
-    if preview_requested and extension in office_extensions:
-        if not upload_storage.exists(relative_path):
+    if preview_requested and extension in OFFICE_PREVIEW_EXTENSIONS:
+        probe = upload_storage.open_stream(relative_path, offset=0, length=1)
+        if probe is None:
             raise Http404('File not found.')
+        if not probe[1]:
+            raise Http404('This file is empty on the server. Ask the curriculum team to upload it again.')
         source_url = upload_storage.signed_read_url(relative_path)
         if not source_url:
-            # Local-development fallback.  It works when this Django origin is
-            # publicly reachable; Office Online will show its own error when it
-            # is a localhost/private address.
-            source_url = request.build_absolute_uri(request.path)
+            # No Azure copy to sign: the file is still on this server's disk.
+            # Microsoft fetches without the learner's session, so it gets a
+            # short-lived signed link to this one file. Handing it the normal
+            # upload URL made Office show "File not found" for every such file.
+            source_url = request.build_absolute_uri(office_preview_link(relative_path))
         viewer_url = (
             'https://view.officeapps.live.com/op/embed.aspx?src='
             f'{urllib_parse.quote(source_url, safe="")}'
@@ -25469,6 +26824,15 @@ def curriculum_uploaded_file(request, path):
     if probe is None:
         raise Http404('File not found.')
     _discard, total_size, content_type = probe
+    if not total_size:
+        # Some imported legacy files are zero-byte placeholders. The importer
+        # kept the original source, which the legacy attachment proxy can still
+        # fetch; anything else is genuinely missing and must say so rather than
+        # hand the viewer an empty "document".
+        legacy = re.match(r'_legacy_files/([0-9]{1,20})/', path)
+        if legacy:
+            return HttpResponseRedirect(f'/learner_api/media/legacy-attachment/{legacy.group(1)}/')
+        raise Http404('This file is empty on the server. Ask the curriculum team to upload it again.')
 
     # An <audio> element seeking a podcast, and a PDF viewer jumping to a page,
     # both do it with a byte range; without this they can only play or render
@@ -25499,6 +26863,9 @@ def curriculum_uploaded_file(request, path):
         or mimetypes.guess_type(relative_path)[0]
         or 'application/octet-stream'
     )
+    if response['Content-Type'].lower().startswith('video/'):
+        from config.video_streaming import video_chunks
+        response.streaming_content = video_chunks(request, stream)
     if requested:
         response['Content-Range'] = f'bytes {offset}-{offset + length - 1}/{total_size}'
     return response
@@ -25515,7 +26882,7 @@ COMPONENT_HEAVY_COLUMNS = ('settings_json',)
 # JSON/text fields made the shared scan exceed the request statement timeout.
 COMPONENT_KSB_SCOPE_COLUMNS = (
     'id', 'week_id', 'module_catalogue_id', 'type', 'title', 'expected_otjh',
-    'is_programme_deleted', 'deleted_at', 'library_state',
+    'points', 'display_order', 'is_programme_deleted', 'deleted_at', 'library_state',
 )
 
 
@@ -25558,13 +26925,19 @@ def authoring_child_rows_for_modules(table, module_ids, *, columns=None, exclude
 
 
 @scoped_curriculum_read
-def authoring_scope_data(scope='', identifier=''):
-    """Module/week/component/mapping rows for a scope.
+def authoring_scope_module_rows(scope='', identifier=''):
+    """The authoring module rows a scope resolves to, and nothing beneath them.
 
-    The component read excludes settings_json for every caller, deliberately:
-    each one either feeds ksb_coverage.py (which never reads it) or only counts
-    the rows. Keeping one column set means all callers share a single memoised
-    read inside curriculum_read_scope() instead of one scan per variant.
+    The first half of authoring_scope_data(), on its own. A caller that only
+    needs to know which modules a scope covers -- programme_identity_candidates()
+    reads their programme names -- used to call authoring_scope_data() and throw
+    away the weeks, components and KSB mappings it read for them: on a
+    programme with ~17k live components that was ~50s of a learner-roster read,
+    paid twice per request, to learn a handful of names.
+
+    Not deduplicated: authoring_scope_data() dedupes programme, cohort and group
+    scopes by delivery signature using the child rows it reads afterwards, so a
+    caller that needs that exact set must still go through it.
     """
     ensure_module_authoring_tables()
     module_rows = authoring_fetch_all(AUTHORING_MODULES_TABLE)
@@ -25680,23 +27053,60 @@ def authoring_scope_data(scope='', identifier=''):
                 )
             )
         ]
+    return module_rows
+
+
+@scoped_curriculum_read
+def authoring_scope_data(scope='', identifier='', *, stats_only=False):
+    """Module/week/component/mapping rows for a scope.
+
+    The component read excludes settings_json for every caller, deliberately:
+    each one either feeds ksb_coverage.py (which never reads it) or only counts
+    the rows. Programme summary statistics opt into grouped count/weight facts;
+    full coverage callers keep their shared detailed column set.
+    """
+    if stats_only and scope != 'programme':
+        raise ValueError('Stats-only authoring rows require a programme scope.')
+    ensure_module_authoring_tables()
+    module_rows = authoring_scope_module_rows(scope, identifier)
+    ident = clean_str(identifier)
 
     module_ids = [clean_str(row.get('module_catalogue_id')) for row in module_rows if clean_str(row.get('module_catalogue_id'))]
     if not module_ids:
         return [], [], [], []
 
-    week_rows = active_week_rows(authoring_child_rows_for_modules(AUTHORING_WEEKS_TABLE, module_ids))
-    component_rows = active_component_rows(authoring_child_rows_for_modules(
-        AUTHORING_COMPONENTS_TABLE, module_ids,
-        # This feeds only ksb_coverage.py and the active-row filters.  A narrow
-        # allow-list is intentional: legacy JSON/text columns are large and a
-        # newly-added component body must not silently enter this aggregate.
-        columns=COMPONENT_KSB_SCOPE_COLUMNS,
-    ))
-    mapping_rows = active_mapping_rows(authoring_child_rows_for_modules(AUTHORING_KSB_MAPPINGS_TABLE, module_ids))
+    # Summary stats use child rows to rank duplicate module deliveries, then
+    # weights/source identities only. Preserve all filter flags, without titles,
+    # descriptions, schedules or other drill-down metadata.
+    deletion_fields = ('deleted_at', 'is_programme_deleted', 'is_deleted', 'isDeleted', 'isProgrammeDeleted')
+    counts = None
+    if stats_only and connection.vendor == 'postgresql':
+        from .ksb_stats_reads import grouped_scope_rows
+        week_rows, component_rows, mapping_rows = grouped_scope_rows(module_ids)
+        counts = []
+        for rows in (mapping_rows, component_rows, week_rows):
+            counter = Counter()
+            for row in rows:
+                counter[clean_str(row.get('module_catalogue_id'))] += row['_stats_count']
+            counts.append(counter)
+    else:
+        week_rows = active_week_rows(authoring_child_rows_for_modules(
+            AUTHORING_WEEKS_TABLE, module_ids,
+            **({'columns': ('module_catalogue_id', 'library_state', *deletion_fields)} if stats_only else {}),
+        ))
+        component_rows = active_component_rows(authoring_child_rows_for_modules(
+            AUTHORING_COMPONENTS_TABLE, module_ids,
+            # Full coverage also excludes component bodies and other large JSON.
+            columns=(('module_catalogue_id', 'type', 'is_programme_deleted', 'deleted_at', 'library_state')
+                     if stats_only else COMPONENT_KSB_SCOPE_COLUMNS),
+        ))
+        mapping_rows = active_mapping_rows(authoring_child_rows_for_modules(
+            AUTHORING_KSB_MAPPINGS_TABLE, module_ids,
+            **({'columns': ('module_catalogue_id', 'component_id', 'ksb_code', 'source_type', 'source_id', 'weight', *deletion_fields)} if stats_only else {}),
+        ))
 
     if scope in {'programme', 'cohort', 'group'}:
-        module_rows = dedupe_authoring_module_rows(module_rows, mapping_rows, component_rows, week_rows)
+        module_rows = dedupe_authoring_module_rows(module_rows, mapping_rows, component_rows, week_rows, **({'counts': counts} if counts is not None else {}))
         module_ids = {clean_str(row.get('module_catalogue_id')) for row in module_rows if clean_str(row.get('module_catalogue_id'))}
         week_rows = [row for row in week_rows if clean_str(row.get('module_catalogue_id')) in module_ids]
         component_rows = [row for row in component_rows if clean_str(row.get('module_catalogue_id')) in module_ids]
@@ -25842,7 +27252,10 @@ def required_ksbs_for_request(request, module_rows, scope='', identifier=''):
 
 
 def _coverage_response_uncached(request, scope='', identifier=''):
-    module_rows, week_rows, component_rows, mapping_rows = authoring_scope_data(scope, identifier)
+    summary_only = scope == 'programme' and request.GET.get('view') == 'summary'
+    module_rows, week_rows, component_rows, mapping_rows = authoring_scope_data(
+        scope, identifier, **({'stats_only': True} if summary_only else {}),
+    )
     if identifier and scope == 'group' and not module_rows:
         # A group that exists but carries no modules yet is empty, not missing.
         # Existence is the groups table, not the module rows.
@@ -25855,14 +27268,20 @@ def _coverage_response_uncached(request, scope='', identifier=''):
         mapping_rows = mappings_with_inferred_sources(mapping_rows, module_rows)
     source_type, source_id, source_origin = resolve_coverage_source(request, module_rows, scope, identifier)
     required_ksbs = [] if actual_mappings_only else required_ksbs_for_resolved_source(source_type, source_id, source_origin)
-    coverage = build_coverage(
-        required_ksbs,
-        mapping_rows,
-        module_rows,
-        week_rows,
-        component_rows,
-        include_mapping_only=actual_mappings_only or not bool(required_ksbs),
-    )
+    if summary_only:
+        from .ksb_coverage import build_coverage_summary
+        coverage = build_coverage_summary(
+            required_ksbs, mapping_rows, include_mapping_only=actual_mappings_only or not bool(required_ksbs),
+        )
+    else:
+        coverage = build_coverage(
+            required_ksbs,
+            mapping_rows,
+            module_rows,
+            week_rows,
+            component_rows,
+            include_mapping_only=actual_mappings_only or not bool(required_ksbs),
+        )
     if not actual_mappings_only:
         coverage = annotate_coverage_sources(coverage)
     return JsonResponse({
@@ -25878,30 +27297,59 @@ def _coverage_response_uncached(request, scope='', identifier=''):
     })
 
 
-def coverage_response(request, scope='', identifier=''):
-    """Serve coverage from the epoch-aware curriculum cache.
+def coverage_entry(request, scope='', identifier=''):
+    """The encoded coverage response for a scope, from the epoch-aware cache.
 
-    Coverage is read-only and rebuilt from authoring rows, so caching the
-    successful JSON payload prevents simultaneous programme-page requests from
-    each scanning the same modules, weeks, components and mappings. Writes bump
-    the shared curriculum epoch and invalidate this value automatically.
+    Coverage is read-only and rebuilt from authoring rows, so caching it
+    prevents simultaneous programme-page requests from each scanning the same
+    modules, weeks, components and mappings. What is cached is the encoded
+    response (http_cache): the JSON exactly as the view produced it, its gzip
+    form and an ETag. An error response is cached with its status, as before.
+
+    TTL: still 60s, deliberately. Most of what this reads is written only
+    through curriculum handlers, which bump the shared epoch and retire the
+    entry at once (modules, weeks, components, KSB mappings, programme configs,
+    KSB profiles). The exception is the Skills England requirement list: it is
+    read straight from standard_ksbs at build time, and that table changes by
+    manual SQL import, which bumps nothing. The 60s expiry is what bounds how
+    long coverage can lag such an import, so it stays until the import path
+    invalidates the curriculum cache itself.
     """
+    # Read exactly as _coverage_response_uncached() reads them, so a key can
+    # never name a different source from the one its document was built for.
     source_type = clean_str(request.GET.get('source_type') or request.GET.get('sourceType')).lower()
     source_id = clean_str(request.GET.get('source_id') or request.GET.get('sourceId'))
     actual = '1' if truthy(request.GET.get('actual_mappings') or request.GET.get('actualMappings')) else '0'
-    key = f'ksb-coverage:{scope or "all"}:{clean_str(identifier)}:{source_type}:{source_id}:{actual}'
+    key = f'ksb-coverage-response:{scope or "all"}:{clean_str(identifier)}:{source_type}:{source_id}:{actual}'
+    if scope == 'programme' and request.GET.get('view') == 'summary':
+        key += ':summary-v1'
 
     def build():
-        response = _coverage_response_uncached(request, scope, identifier)
-        if response.status_code != 200:
-            return {'error': response.content.decode('utf-8', errors='replace'), 'status': response.status_code}
-        return {'payload': json.loads(response.content)}
+        # One targeted read scope per build. Without it every helper below
+        # re-read its parent table in full -- curriculum.modules, the training
+        # rows, the programme configs, the KSB profiles -- once per caller, a
+        # remote round trip each. Child reads stay on the targeted
+        # ``module_catalogue_id in (...)`` query exactly as they were outside a
+        # scope, so the rows are the same; only the repeats go.
+        with curriculum_read_scope(targeted_child_reads=True):
+            response = _coverage_response_uncached(request, scope, identifier)
+        return encode_json_bytes(response.content, status=response.status_code)
 
-    cached = cached_curriculum_value(key, build, ttl=60)
-    if cached.get('status'):
-        payload = json.loads(cached['error'])
-        return JsonResponse(payload, status=cached['status'])
-    return JsonResponse(cached['payload'])
+    return cached_curriculum_value(key, build, ttl=60)
+
+
+def coverage_response(request, scope='', identifier=''):
+    """Coverage as a plain, uncompressed response.
+
+    For the in-process callers that parse the document (the KSB trace and the
+    readiness check). The endpoints themselves use coverage_endpoint_response.
+    """
+    return plain_json_response(coverage_entry(request, scope, identifier))
+
+
+def coverage_endpoint_response(request, scope='', identifier=''):
+    """Coverage for an HTTP client: gzip when accepted, 304 when unchanged."""
+    return conditional_json_response(request, coverage_entry(request, scope, identifier))
 
 
 @scoped_curriculum_read
@@ -25973,17 +27421,29 @@ def programme_identity_candidates(programme_id):
     )
     if config:
         candidates.extend(unique([config.get('name'), config.get('sub'), config.get('standard')]))
-    module_rows = authoring_scope_data('programme', programme_id)[0]
+    # Only the modules' programme names are wanted here, so the module rows are
+    # read without the weeks, components and mappings authoring_scope_data()
+    # would fetch beneath them. Its signature dedupe is not needed either: the
+    # signature includes the normalised programme name, and callers only ever
+    # compare normalise(candidate), so the set of names that can match is the
+    # same. Rows without a catalogue id are skipped, as authoring_scope_data()
+    # returns none for them.
+    module_rows = [
+        row for row in authoring_scope_module_rows('programme', programme_id)
+        if clean_str(row.get('module_catalogue_id'))
+    ]
     candidates.extend(unique(row.get('programme_name') for row in module_rows))
     return [value for value in unique(candidates) if value]
 
 
 def assigned_learners_for_programme(programme_id, lifecycle_status=''):
+    # Read once: both the placement query and the name filter below need the
+    # same candidates, and resolving them reads the programme's module rows.
+    candidates = programme_identity_candidates(programme_id)
     if connection.vendor != 'postgresql' or not learner_schema_table_exists('learners'):
         canonical_rows = []
     else:
         canonical_rows = []
-        candidates = programme_identity_candidates(programme_id)
         if not candidates:
             return []
         candidate_keys = [normalise(value) for value in candidates if normalise(value)]
@@ -26059,7 +27519,6 @@ def assigned_learners_for_programme(programme_id, lifecycle_status=''):
         except Exception as exc:
             logger.warning('Could not load assigned learners for programme %s: %s', programme_id, exc)
             canonical_rows = []
-    candidates = programme_identity_candidates(programme_id)
     if not candidates:
         return []
     candidate_keys = [normalise(value) for value in candidates if normalise(value)]
@@ -26419,7 +27878,7 @@ def learner_progress_ksb_totals(learner_ids, programme_ksb_codes):
                         upper(btrim(k.ksb_code)) as code,
                         coalesce(k.weight, 0) as weight
                     from "Learner"."learner_progress_entries" p
-                    join "Learner"."learner_progress_ksbs" k on k.progress_id = p.id
+                    join "Learner"."learner_progress_ksbs" k on k.progress_id = p.id{and_not_excluded('k', connection)}
                     where p.learner_id = any(%s)
                       -- upper(btrim(...)) is ksb_coverage.normalise_code() in
                       -- SQL, so a stored code that differs only in case or
@@ -26533,7 +27992,9 @@ def learner_progress_ksb_consumption(learner_ids, programme_ksb_codes, component
                 from "Learner"."learner_progress_entries" p
                 -- LEFT, not inner: a completed component with no KSB snapshot is
                 -- still off-the-job hours the learner did. See the docstring.
-                left join "Learner"."learner_progress_ksbs" k on k.progress_id = p.id
+                -- Rows the KSB standards migration registered as not counting
+                -- drop out of the join; the activity and its hours stay.
+                left join "Learner"."learner_progress_ksbs" k on k.progress_id = p.id''' + and_not_excluded('k', connection) + '''
                 left join curriculum.components c on c.id = p.component_ref
                 left join curriculum.weeks w on w.id = c.week_id
                 left join curriculum.modules m
@@ -26675,7 +28136,7 @@ def learner_progress_ksb_consumption(learner_ids, programme_ksb_codes, component
     )
 
 
-def learner_progress_ksb_totals(learner_ids, programme_ksb_codes):
+def learner_progress_ksb_totals(learner_ids, programme_ksb_codes, *, compact=False):
     """Return only the achieved KSB totals needed by programme summary cards.
 
     ``learner_progress_ksb_consumption`` deliberately returns the full learner
@@ -26702,6 +28163,14 @@ def learner_progress_ksb_totals(learner_ids, programme_ksb_codes):
     if not code_filter:
         return {}
 
+    if compact:
+        from .ksb_stats_reads import progress_totals
+        try:
+            return progress_totals(learner_ids, code_filter)
+        except Exception as exc:
+            logger.warning('Could not load compact learner progress KSB totals: %s', exc)
+            return {}
+
     totals = defaultdict(lambda: defaultdict(float))
     try:
         with connection.cursor() as cursor:
@@ -26711,7 +28180,7 @@ def learner_progress_ksb_totals(learner_ids, programme_ksb_codes):
                        p.component_ref, p.passed, p.submitted_at,
                        k.ksb_code, coalesce(max(k.weight), 0) as weight
                 from "Learner"."learner_progress_entries" p
-                join "Learner"."learner_progress_ksbs" k on k.progress_id = p.id
+                join "Learner"."learner_progress_ksbs" k on k.progress_id = p.id''' + and_not_excluded('k', connection) + '''
                 where p.learner_id = any(%s)
                   -- KSB snapshots are normalised to upper-case on every write.
                   -- Keep the indexed column bare so PostgreSQL can use
@@ -27288,6 +28757,111 @@ def learner_activity_trace(progress_rows, excluded_progress_rows, reflection_row
         activities.values(),
         key=lambda entry: (str(entry.get('learnerId') or ''), -int(entry.get('progressId') or 0)),
     )
+
+
+def learner_activity_plan(learners, component_rows, module_rows, week_rows,
+                          activities, plan, learner_plans=None):
+    """Project authored components onto every learner assigned to the scope.
+
+    The historical activity trace contains rows only after a learner has made
+    progress. This separate, in-memory projection keeps assigned components
+    visible as ``not_started`` without manufacturing progress records or doing
+    one query per learner/component.
+    """
+    learners = list(learners or [])
+    component_rows = list(component_rows or [])
+    module_rows = list(module_rows or [])
+    week_rows = list(week_rows or [])
+    learner_plans = learner_plans or learner_plans_for_scope(plan or {}, learners)
+    modules_by_id = {
+        clean_str(row.get('module_catalogue_id')): row
+        for row in module_rows if clean_str(row.get('module_catalogue_id'))
+    }
+    weeks_by_id = {
+        clean_str(row.get('id')): row
+        for row in week_rows if clean_str(row.get('id'))
+    }
+    by_learner_component = defaultdict(list)
+    for activity in activities or []:
+        learner_id = activity.get('learnerId')
+        component_id = clean_str(activity.get('componentId'))
+        if learner_id in (None, '') or not component_id:
+            continue
+        if activity.get('scopeStatus') not in (None, '', 'in_scope', 'unfiltered', 'lineage'):
+            continue
+        by_learner_component[(str(learner_id), component_id)].append(activity)
+
+    def component_group_key(module):
+        group_id = clean_str(module.get('group_id'))
+        if group_id:
+            key = (plan or {}).get('groupKeyById', {}).get(group_id)
+            if key:
+                return key
+        return normalise(module.get('group_name') or group_id)
+
+    def include_component(learner, learner_plan, module):
+        basis = clean_str((learner_plan or {}).get('basis'))
+        if basis in {'module', 'scope'}:
+            return True
+        if basis == 'none':
+            return False
+        return component_group_key(module) == learner_plan_group_key(plan or {}, learner)
+
+    rows = []
+    for learner in learners:
+        learner_id = learner.get('id')
+        learner_plan = learner_plans.get(learner_id) or learner_authored_plan(plan or {}, learner)
+        for component in component_rows:
+            component_id = clean_str(component.get('id'))
+            module_id = clean_str(component.get('module_catalogue_id'))
+            module = modules_by_id.get(module_id, {})
+            if not component_id or not include_component(learner, learner_plan, module):
+                continue
+            linked = list(by_learner_component.get((str(learner_id), component_id), ()))
+            linked.sort(key=lambda item: (
+                clean_str(item.get('submittedAt')),
+                int(item.get('progressId') or 0) if str(item.get('progressId') or '').isdigit() else 0,
+            ), reverse=True)
+            latest = linked[0] if linked else {}
+            statuses = {clean_str(item.get('progressStatus')).lower() for item in linked}
+            calculated_status = (
+                'completed' if 'achieved' in statuses else
+                'in_progress' if statuses else 'not_started'
+            )
+            try:
+                points = int(component.get('points')) if component.get('points') not in (None, '') else 0
+            except (TypeError, ValueError):
+                points = 0
+            week_id = clean_str(component.get('week_id'))
+            week = weeks_by_id.get(week_id, {})
+            rows.append({
+                'activityPlanId': f'{learner_id}:{component_id}',
+                'learnerId': learner_id,
+                'learnerName': learner.get('name') or '',
+                'email': learner.get('email') or '',
+                'cohort': learner.get('cohort') or '',
+                'group': learner.get('group') or '',
+                'componentId': component_id,
+                'componentTitle': component.get('title') or '',
+                'componentType': frontend_component_type(component.get('type')),
+                'moduleCatalogueId': module_id,
+                'module': module.get('title') or '',
+                'weekId': week_id,
+                'week': week.get('title') or '',
+                'displayOrder': parse_int(component.get('display_order'), 0),
+                'expectedOtjh': otjh_number(component.get('expected_otjh')),
+                'points': points,
+                'calculatedStatus': calculated_status,
+                'displayStatus': calculated_status,
+                'statusSource': 'calculated',
+                'progressId': latest.get('progressId'),
+                'progressIds': [item.get('progressId') for item in linked if item.get('progressId') not in (None, '')],
+                'progressStatus': latest.get('progressStatus') or '',
+                'submittedAt': latest.get('submittedAt') or '',
+                'countsTowardAchievement': any(item.get('countsTowardAchievement') for item in linked) if linked else None,
+                'source': 'curriculum_component',
+            })
+    return rows
 
 
 def merge_ksb_totals(*sources):
@@ -28030,6 +29604,9 @@ def _scope_learner_ksb_impact_payload(request, scope, identifier):
     )
     learners = apply_reflection_otjh_to_learners(learners, reflection_rows)
     learner_plans = learner_plans_for_scope(plan, learners)
+    activity_plan = learner_activity_plan(
+        learners, component_rows, module_rows, week_rows, activities, plan, learner_plans,
+    )
     learner_consumption = learner_consumption_payload(
         learners,
         coverage.get('items', []),
@@ -28080,6 +29657,8 @@ def _scope_learner_ksb_impact_payload(request, scope, identifier):
         'learnerKsbConsumption': learner_consumption,
         'learnerActivities': activities,
         'learnerActivityCount': len(activities),
+        'learnerActivityPlan': activity_plan,
+        'learnerActivityPlanCount': len(activity_plan),
         'ksbAchievementPolicy': {
             'achievedWeightSource': 'learner_progress_ksbs',
             'reflectionKsbRole': 'supplementary_evidence',
@@ -28146,6 +29725,27 @@ def _scope_learner_roster_payload_uncached(request, scope, identifier):
         if cohort_name and group_name:
             by_group[f'{cohort_name}||{group_name}'] += 1
 
+    # Bulk Attendance only needs the placement identity to intersect this
+    # roster with the KBC directory. Avoid serialising hours, coaching and
+    # progress fields for that screen; the compact projection keeps the same
+    # endpoint contract for every other caller while making its response much
+    # smaller over the remote database connection.
+    compact = truthy(request.GET.get('compact'))
+    assigned_learners = learners
+    if compact:
+        assigned_learners = [
+            {
+                'id': row.get('id'),
+                'name': row.get('name') or '',
+                'email': row.get('email') or '',
+                'cohort': row.get('cohort') or '',
+                'group': row.get('group') or '',
+                'cohortId': row.get('cohortId') or '',
+                'groupId': row.get('groupId') or '',
+            }
+            for row in learners
+        ]
+
     return {
         'scope': scope,
         'identifier': identifier,
@@ -28155,29 +29755,48 @@ def _scope_learner_roster_payload_uncached(request, scope, identifier):
         'source': 'enrolment',
         'editable': False,
         'assignedLearnerCount': len(learners),
-        'assignedLearners': learners,
+        'assignedLearners': assigned_learners,
         'countsByCohort': dict(by_cohort),
         'countsByGroup': dict(by_group),
     }
 
 
 def scope_learner_roster_payload(request, scope, identifier):
-    """Cached roster projection keyed by every narrowing filter.
+    """Cached roster projection keyed by every narrowing filter, as a dict.
 
-    Learner placement writes invalidate the curriculum epoch, so this avoids
-    repeating the schema probes and placement joins while preserving freshness.
+    Avoids repeating the schema probes and placement joins for 30s. The HTTP
+    views serve scope_learner_roster_response() instead; this decoded form is
+    for in-process callers.
+    """
+    return entry_payload(scope_learner_roster_entry(request, scope, identifier))
+
+
+def scope_learner_roster_entry(request, scope, identifier):
+    """The encoded roster response, keyed by scope and every narrowing filter.
+
+    The 30s TTL stays exactly as it was, deliberately. Placements are written
+    by enrolment and the hours on each row by learner/hours code, and neither
+    bumps the curriculum epoch, so the TTL is the only thing bounding how stale
+    this can be. Caching the encoded form changes how a hit is served (no
+    re-serialisation, 304 when unchanged), not when the data is re-read.
     """
     scope = clean_str(scope) or 'programme'
     identifier = clean_str(identifier)
     learner_status = clean_str(request.GET.get('learnerStatus') or request.GET.get('status')).lower()
     cohort = normalise(clean_str(request.GET.get('cohort')))
     group = normalise(clean_str(request.GET.get('group')))
-    key = f'learner-roster:{scope}:{identifier}:{learner_status}:{cohort}:{group}'
+    compact = '1' if truthy(request.GET.get('compact')) else '0'
+    key = f'learner-roster-response:{scope}:{identifier}:{learner_status}:{cohort}:{group}:{compact}'
     return cached_curriculum_value(
         key,
-        lambda: _scope_learner_roster_payload_uncached(request, scope, identifier),
+        lambda: encode_json_entry(_scope_learner_roster_payload_uncached(request, scope, identifier)),
         ttl=30,
     )
+
+
+def scope_learner_roster_response(request, scope, identifier):
+    """The roster for an HTTP client: gzip when accepted, 304 when unchanged."""
+    return conditional_json_response(request, scope_learner_roster_entry(request, scope, identifier))
 
 
 @require_GET
@@ -28265,27 +29884,27 @@ def curriculum_module_meeting_invitees(request, module_catalogue_id):
 
 @require_GET
 def curriculum_programme_learner_roster(request, programme_id):
-    return JsonResponse(scope_learner_roster_payload(request, 'programme', programme_id))
+    return scope_learner_roster_response(request, 'programme', programme_id)
 
 
 @require_GET
 def curriculum_cohort_learner_roster(request, cohort_id):
-    return JsonResponse(scope_learner_roster_payload(request, 'cohort', cohort_id))
+    return scope_learner_roster_response(request, 'cohort', cohort_id)
 
 
 @require_GET
 def curriculum_group_learner_roster(request, group_id):
-    return JsonResponse(scope_learner_roster_payload(request, 'group', group_id))
+    return scope_learner_roster_response(request, 'group', group_id)
 
 
 @require_GET
 def curriculum_module_learner_roster(request, module_catalogue_id):
-    return JsonResponse(scope_learner_roster_payload(request, 'module', module_catalogue_id))
+    return scope_learner_roster_response(request, 'module', module_catalogue_id)
 
 
 @require_GET
 def curriculum_week_learner_roster(request, week_id):
-    return JsonResponse(scope_learner_roster_payload(request, 'week', week_id))
+    return scope_learner_roster_response(request, 'week', week_id)
 
 
 @require_GET
@@ -28513,6 +30132,12 @@ def curriculum_group_learner_ksb_impact(request, group_id):
 @require_GET
 def curriculum_module_learner_ksb_impact(request, module_catalogue_id):
     payload, error = scope_learner_ksb_impact_payload(request, 'module', module_catalogue_id)
+    if not error and request.GET.get('moduleProgress') == '1':
+        from .learner_activity_status import enrich
+        try:
+            enrich(payload, getattr(request, 'login_account', None))
+        except (SchemaNotProvisioned, DatabaseError):
+            return json_error('Activity status storage is unavailable. Apply curriculum migration 0070.', status=503)
     return error or JsonResponse(payload)
 
 
@@ -28552,7 +30177,7 @@ def curriculum_scope_learner_roster(request):
         )
     if not identifier:
         return json_error('An identifier is required.')
-    return JsonResponse(scope_learner_roster_payload(request, scope, identifier))
+    return scope_learner_roster_response(request, scope, identifier)
 
 
 @csrf_exempt
@@ -28771,32 +30396,32 @@ def curriculum_ksb_mapping_detail(request, mapping_id):
 
 @require_GET
 def curriculum_ksb_coverage(request):
-    return coverage_response(request)
+    return coverage_endpoint_response(request)
 
 
 @require_GET
 def curriculum_week_ksb_coverage(request, week_id):
-    return coverage_response(request, 'week', week_id)
+    return coverage_endpoint_response(request, 'week', week_id)
 
 
 @require_GET
 def curriculum_module_ksb_coverage(request, module_catalogue_id):
-    return coverage_response(request, 'module', module_catalogue_id)
+    return coverage_endpoint_response(request, 'module', module_catalogue_id)
 
 
 @require_GET
 def curriculum_programme_ksb_coverage(request, programme_id):
-    return coverage_response(request, 'programme', programme_id)
+    return coverage_endpoint_response(request, 'programme', programme_id)
 
 
 @require_GET
 def curriculum_cohort_ksb_coverage(request, cohort_id):
-    return coverage_response(request, 'cohort', cohort_id)
+    return coverage_endpoint_response(request, 'cohort', cohort_id)
 
 
 @require_GET
 def curriculum_group_ksb_coverage(request, group_id):
-    return coverage_response(request, 'group', group_id)
+    return coverage_endpoint_response(request, 'group', group_id)
 
 
 @require_GET
@@ -28930,6 +30555,11 @@ def curriculum_module_detail(request, identifier):
             # deletes read it: a bare DELETE still archives.
             if request_wants_permanent_delete(request):
                 return permanent_module_delete_response(existing_authoring)
+            # Never archive past a running Teams calendar, and never cancel it
+            # on the author's behalf: they cancel it, then archive.
+            blocked = module_teams_calendar_block_response(module_catalogue_id)
+            if blocked is not None:
+                return blocked
             delete_module_authoring_structure(module_catalogue_id)
             log_curriculum_decision(
                 'module.archive', outcome='soft_deleted', entity_id=module_catalogue_id,
@@ -29257,8 +30887,46 @@ def curriculum_ksb_framework_detail(request, identifier):
     return JsonResponse({'updated': True, 'id': identifier})
 
 
+@gzip_page
+@require_GET
+def curriculum_ksb_set_definitions(request, identifier):
+    # A single profile's definitions, independently of curriculum coverage.
+    # Keep archived assigned sources readable when visibility=all is requested.
+    rows = fetch_all(
+        f'select * from {table_name("ksb_profiles")} where cast(id as text) = %s or ksb_profile_id = %s',
+        [identifier, identifier],
+    )
+    if not rows:
+        # Older rows can have a generated public id rather than a stored one.
+        rows = [row for row in get_ksb_profile_rows() if ksb_profile_source_id(row) == identifier]
+    profile = next((row for row in rows if ksb_profile_source_id(row) == identifier or clean_str(row.get('id')) == identifier), None)
+    if profile is None or (curriculum_visibility(request) != 'all' and not profile.get('is_active')):
+        return json_error('KSB profile not found.', status=404)
+    result = build_ksb_data([profile], [], [])[1][0]
+    fields = {'id', 'code', 'rawCode', 'fullCode', 'parentCode', 'parentId', 'displayOrder', 'title', 'description', 'type'}
+    result['ksbs'] = [{key: value for key, value in entry.items() if key in fields} for entry in result['ksbs']]
+    return JsonResponse(result)
+
+
+@gzip_page
 @require_GET
 def curriculum_ksb_sets(request):
+    if request.GET.get('view') == 'summary':
+        visibility = curriculum_visibility(request)
+
+        def build():
+            profiles = get_ksb_profile_rows()
+            if visibility != 'all':
+                profiles = [row for row in profiles if row.get('is_active')]
+            # This list needs identities, programme links and definition counts,
+            # not the curriculum tree or per-definition coverage/activity data.
+            return build_ksb_data(profiles, [], [], summary_only=True)[1]
+
+        results = cached_curriculum_value(
+            f'ksb-source-summaries:{visibility}', build,
+            force=request_bypasses_curriculum_cache(request),
+        )
+        return curriculum_collection_response({'schema': CURRICULUM_SCHEMA}, 'ksbSets', results)
     return curriculum_collection_response(get_cached_payload(request, compact=True), 'ksbSets')
 
 
@@ -29766,15 +31434,22 @@ def curriculum_cohort_detail(request, identifier):
     # what it was -- silently, because nothing here compared the two.
     expected_revision = requested_expected_revision(request, payload)
     # One transaction around the check and the write; see lock_record_row.
-    with transaction.atomic():
-        if expected_revision:
-            lock_record_row(COHORT_AUTHORING_DETAILS_TABLE, 'cohort_id = %s', [cohort_id])
-            current_revision = cohort_record_revision(cohort_id)
-            if current_revision != expected_revision:
-                return record_conflict_response(
-                    expected_revision, current_revision, cohort=cohort_conflict_record(cohort_id),
-                )
-        update_cohort_fields(cohort_id, updates, allow_null_columns=tuple(nullable))
+    from .cohort_rename import CohortRenameConflict, propagate_cohort_name
+    try:
+        with transaction.atomic():
+            if expected_revision or 'cohort_name' in updates:
+                lock_record_row(COHORT_AUTHORING_DETAILS_TABLE, 'cohort_id = %s', [cohort_id])
+            if expected_revision:
+                current_revision = cohort_record_revision(cohort_id)
+                if current_revision != expected_revision:
+                    return record_conflict_response(
+                        expected_revision, current_revision, cohort=cohort_conflict_record(cohort_id),
+                    )
+            if 'cohort_name' in updates:
+                propagate_cohort_name(fetch_cohort_row(cohort_id), updates['cohort_name'])
+            update_cohort_fields(cohort_id, updates, allow_null_columns=tuple(nullable))
+    except CohortRenameConflict as exc:
+        return json_error(str(exc), status=409)
     invalidate_curriculum_cache()
     # Read after the commit, so the token handed back is the one a reader would
     # fingerprint now rather than one a rollback could take away.
@@ -30214,6 +31889,10 @@ def curriculum_group_detail(request, identifier):
                     expected_revision, current_revision, group=group_conflict_record(group_id),
                 )
         updated_group = update_group_fields(group_id, updates) or group_row
+        if 'group_name' in updates:
+            # Inside this save's transaction, from the row as it was before it.
+            from .placement_rename import propagate_group_name_to_learners
+            propagate_group_name_to_learners(group_row, updates['group_name'])
         module_delivery_updates = {
             key: updates[key]
             for key in ('session_week_day', 'session_start_time', 'session_end_time')
@@ -30922,8 +32601,12 @@ def curriculum_module_restore(request, identifier):
         # Matched on the marker this module's own archive stamped, so only that
         # cascade comes back: a component deleted by hand beforehand stays
         # deleted rather than being resurrected by an unrelated restore.
+        # ...and only rows that archive stamped: an earlier archive of this
+        # same module, undone by a save, left its children stamped with this
+        # id too, and they are not part of what is being restored.
+        bounds = module_archive_event_bounds(module_row)
         restored = {
-            table: len(restore_rows_via_parent(table, catalogue_id))
+            table: len(restore_rows_via_parent(table, catalogue_id, bounds))
             for table in MODULE_CHILD_AUTHORING_TABLES
         }
         update_rows(
@@ -30948,6 +32631,69 @@ def curriculum_module_restore(request, identifier):
     })
 
 
+MODULE_TEAMS_CALENDAR_BLOCKS_ARCHIVE = (
+    'This module has an active Teams calendar with future sessions. Cancel the Teams calendar before archiving '
+    'the module.'
+)
+
+
+def module_future_teams_sessions(module_catalogue_id, now=None):
+    """Future Teams sessions still standing on this module's calendars.
+
+    Every calendar the module owns -- its module series and its additional week
+    meetings -- that has not been cancelled, and every session on it that has
+    not been cancelled and has not ended yet. A session marked "not in plan"
+    ('superseded') counts: its Teams slot is still in everyone's calendar, which
+    is exactly what an archive must not leave running unseen. Past sessions
+    never block: their attendance and history stay where they are.
+
+    Read-only. Archiving never cancels anything; the author does, with Cancel.
+    """
+    now = utc_datetime(now or datetime.utcnow())
+    series_rows = authoring_fetch_all(
+        LIVE_SESSIONS_TABLE, "module_catalogue_id = %s and coalesce(status, '') not in ('cancelled', 'canceled')",
+        [clean_str(module_catalogue_id)],
+    )
+    standing = []
+    for series in series_rows:
+        rows = authoring_fetch_all(
+            LIVE_SESSION_OCCURRENCES_TABLE, "live_session_id = %s and coalesce(status, '') not in ('cancelled', 'canceled')",
+            [clean_str(series.get('id'))],
+        )
+        if not rows and series.get('start_datetime'):
+            # A calendar with no occurrence rows still has its own start.
+            start = parse_graph_datetime(series.get('start_datetime'))
+            minutes = parse_int(series.get('duration_minutes'), 60) or 60
+            rows = [{'session_number': 1, 'scheduled_start': start,
+                     'scheduled_end': start + timedelta(minutes=minutes) if start else None}]
+        for row in rows:
+            ends = row.get('scheduled_end') or row.get('scheduled_start')
+            if ends and utc_datetime(ends) > now:
+                standing.append({'liveSessionId': clean_str(series.get('id')),
+                                 'sessionNumber': row.get('session_number'),
+                                 'startDateTimeUtc': utc_iso_value(parse_graph_datetime(row.get('scheduled_start')))})
+    return standing
+
+
+def module_teams_calendar_block_response(module_catalogue_id):
+    """409 when the module still has future Teams sessions, else None. Fails closed."""
+    try:
+        standing = module_future_teams_sessions(module_catalogue_id)
+    except DatabaseError:
+        logger.warning('Teams sessions of module %s could not be read before archiving.', module_catalogue_id)
+        return json_error(
+            'The module’s Teams calendar could not be checked, so it was not archived. Try again.',
+            status=503, reason='module-teams-calendar-unchecked', deleted=False,
+        )
+    if not standing:
+        return None
+    return json_error(
+        MODULE_TEAMS_CALENDAR_BLOCKS_ARCHIVE, status=409, reason='module-has-active-teams-calendar',
+        code='module_has_active_teams_calendar', deleted=False,
+        liveSessionIds=sorted({item['liveSessionId'] for item in standing}), futureSessions=len(standing),
+    )
+
+
 def permanent_module_delete_response(module_row):
     """HTTP outcome of a permanent module delete: the module and all its authoring."""
     catalogue_id = clean_str(module_row.get('module_catalogue_id'))
@@ -30956,6 +32702,11 @@ def permanent_module_delete_response(module_row):
             'Archive the module before deleting it permanently.',
             status=409, reason='module-not-archived', deleted=False, permanent=False, id=catalogue_id,
         )
+    # A module archived before this check existed can still own a running
+    # calendar; deleting it would orphan that calendar's rows for good.
+    blocked = module_teams_calendar_block_response(catalogue_id)
+    if blocked is not None:
+        return blocked
 
     try:
         with transaction.atomic():
@@ -32286,7 +34037,7 @@ def tutor_workspace_next_session_by_module(module_ids):
           on session.id = occurrence.live_session_id
         where session.module_catalogue_id in ({placeholders})
           and coalesce(session.status, '') <> 'superseded'
-          and coalesce(occurrence.status, '') <> 'cancelled'
+          and coalesce(occurrence.status, '') not in ('cancelled', 'superseded')
           and occurrence.scheduled_end >= %s
         order by occurrence.scheduled_start
     """

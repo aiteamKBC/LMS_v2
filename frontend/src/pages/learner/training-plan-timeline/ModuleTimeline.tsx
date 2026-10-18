@@ -3,18 +3,21 @@ import { Link } from 'react-router-dom';
 import { ArrowRight, CalendarDays, CheckCircle2, LocateFixed, Maximize2, MessageSquareText, Minimize2 } from 'lucide-react';
 import type { TrainingPlanDashboard } from '@/api/trainingPlanDashboard';
 import { Modal } from '@/pages/users/components/Modal';
-import { barPosition, dateKey, moduleVisualEnd, reviewDate, sessionDay, timelineMonthKeys, timelinePeriodYear, timelineWeekKeys, timelineYears, type TimelineModule, weeklyPosition } from './model';
+import { barPosition, dateKey, moduleVisualEnd, reviewDate, sessionDay, timelineMonthKeys, timelinePeriodYear, timelineWeekKeys, timelineYears, type DisplayTimelineModule, weeklyPosition } from './model';
 import { dateLabel, moduleStatus, monthLabel } from './presentation';
 import { TimelineInspector } from './TimelineInspector';
 import styles from './trainingPlan.module.css';
 import layout from './ModuleTimeline.module.css';
 
-type Props = {
-  data: TrainingPlanDashboard; modules: TimelineModule[]; kind: string; learnerId: string;
+type Props<T extends DisplayTimelineModule> = {
+  data: TrainingPlanDashboard; modules: T[]; kind: string; learnerId: string;
   today: string; selectedMonth: string; selectedId?: string; canOpenActivities?: boolean;
+  /** Review markers link to the learner's calendar; off for viewers who cannot open it. */
+  canOpenCalendar?: boolean;
   detailsMode?: 'inspector' | 'overview';
   programmeStartDate?: string | null;
-  onMonthChange: (month: string) => void; onModuleSelect: (module: TimelineModule) => void;
+  detailLoading?: boolean; detailError?: string; onRetryDetail?: () => void;
+  onMonthChange: (month: string) => void; onModuleSelect: (module: T) => void;
 };
 
 type TimelineView = 'month' | 'week';
@@ -25,7 +28,7 @@ const WEEKDAY_INDEX: Record<string, number> = {
   saturday: 6, sat: 6,
 };
 
-function firstScheduledDeliveryDate(module: TimelineModule) {
+function firstScheduledDeliveryDate(module: DisplayTimelineModule) {
   const start = dateKey(module.start);
   if (!start) return '';
   const days = (module.detail?.session_week_day || '').split(',')
@@ -38,7 +41,7 @@ function firstScheduledDeliveryDate(module: TimelineModule) {
   return startDate.toISOString().slice(0, 10);
 }
 
-export function ModuleTimeline({ data, modules, kind, learnerId, today, selectedMonth, selectedId, onMonthChange, onModuleSelect, canOpenActivities = true, detailsMode = 'inspector', programmeStartDate }: Props) {
+export function ModuleTimeline<T extends DisplayTimelineModule>({ data, modules, kind, learnerId, today, selectedMonth, selectedId, onMonthChange, onModuleSelect, canOpenActivities = true, canOpenCalendar = true, detailsMode = 'inspector', programmeStartDate, detailLoading = false, detailError, onRetryDetail }: Props<T>) {
   const [fullscreen, setFullscreen] = useState(false);
   const [inspectedId, setInspectedId] = useState('');
   const [jumpId, setJumpId] = useState('');
@@ -75,7 +78,7 @@ export function ModuleTimeline({ data, modules, kind, learnerId, today, selected
     : '';
   const selectedPlannedDeliveryStart = anchorModule ? firstScheduledDeliveryDate(anchorModule) : '';
   const selectedStart = dateKey(anchorModule?.start);
-  const weekAnchor = selectedPlannedDeliveryStart || selectedActualSessionStart || selectedCurriculumStart || selectedStart
+  const weekAnchor = anchorModule?.weekAnchor || selectedPlannedDeliveryStart || selectedActualSessionStart || selectedCurriculumStart || selectedStart
     || firstPlannedDeliveryStart || firstActualSessionStart || firstCurriculumStart || firstModuleStart || programmeStart
     || `${year}-${String(startMonth + 1).padStart(2, '0')}-01`;
   const weeks = timelineWeekKeys(year, startMonth, weekAnchor);
@@ -143,7 +146,7 @@ export function ModuleTimeline({ data, modules, kind, learnerId, today, selected
       trigger?.focus({ preventScroll: true });
     });
   };
-  const inspect = (module: TimelineModule, trigger?: HTMLButtonElement) => {
+  const inspect = (module: T, trigger?: HTMLButtonElement) => {
     saveScroll();
     lastTrigger.current = trigger || null;
     setInspectedId(module.id); onModuleSelect(module); setNotice('');
@@ -262,12 +265,19 @@ export function ModuleTimeline({ data, modules, kind, learnerId, today, selected
           {!modules.length && <p className={layout.empty}>Your modules will appear here when they are assigned.</p>}
           {!!reviewDays.length && <div className={layout.reviewRow}><div className={layout.reviewLabel}><CalendarDays size={15} /><strong>Coaching reviews</strong><span>{reviewDays.reduce((sum, day) => sum + day.items.length, 0)}</span></div><div className={layout.track}>
             {columns.map(key => <span key={key} className={layout.monthCell} />)}
-            {reviewDays.map(day => <Link key={day.date} className={layout.reviewMarker} to={calendarHref(day.items[0].eventKey)} style={{ left: `clamp(14px, ${positionFor(day.date, day.date)?.left || 0}%, calc(100% - 14px))` }}
-              aria-label={`${day.items.map(review => review.title).join(', ')} on ${dateLabel(day.date)}`} title={`${dateLabel(day.date)} · ${day.items.map(review => `${review.title}: ${reviewStatus(review)}`).join(' · ')}`}><CalendarDays size={13} />{day.items.length > 1 && <small>{day.items.length}</small>}</Link>)}
+            {reviewDays.map(day => {
+              const marker = { className: layout.reviewMarker, style: { left: `clamp(14px, ${positionFor(day.date, day.date)?.left || 0}%, calc(100% - 14px))` },
+                'aria-label': `${day.items.map(review => review.title).join(', ')} on ${dateLabel(day.date)}`,
+                title: `${dateLabel(day.date)} · ${day.items.map(review => `${review.title}: ${reviewStatus(review)}`).join(' · ')}` };
+              const content = <><CalendarDays size={13} />{day.items.length > 1 && <small>{day.items.length}</small>}</>;
+              return canOpenCalendar
+                ? <Link key={day.date} to={calendarHref(day.items[0].eventKey)} {...marker}>{content}</Link>
+                : <span key={day.date} role="img" {...marker}>{content}</span>;
+            })}
           </div></div>}
         </div>
       </div>
-      {inspected && <TimelineInspector module={inspected} coach={data.coach.name} href={canOpenActivities ? subjectHref(inspected.id) : undefined} onClose={closeInspector} />}
+      {inspected && detailLoading ? <aside className={layout.inspector} role="status">Loading module details?</aside> : inspected && detailError ? <aside className={layout.inspector} role="alert">{detailError} <button type="button" onClick={onRetryDetail}>Retry module details</button></aside> : inspected && <TimelineInspector module={inspected} coach={data.coach.name} href={canOpenActivities ? subjectHref(inspected.id) : undefined} onClose={closeInspector} />}
     </div>
   </section>;
   return fullscreen ? <><div aria-hidden="true" style={{ height: placeholderHeight.current }} /><Modal title="Programme timeline" size="max-w-none" className={layout.fullscreen} onClose={() => { saveScroll(); setFullscreen(false); }} returnFocusRef={fullButton}>

@@ -46,7 +46,7 @@ export function ImageMatchingPairFields({
           <img
             src={pair.imageUrl}
             alt={pair.left || 'Matching prompt image'}
-            className="h-28 w-full rounded-lg border border-[#e2e8f0] object-cover bg-[#f8fafc]"
+            className="h-40 w-full rounded-lg border border-[#e2e8f0] object-contain bg-[#f8fafc]"
           />
         ) : (
           <div className="flex h-28 w-full flex-col items-center justify-center rounded-lg border border-dashed border-[#d8dde6] bg-[#f8fafc] px-3 text-center">

@@ -1,5 +1,5 @@
 vi.mock('@/api/extraActivities', () => ({ useExtraActivities: () => ({ activities: [], loading: false, error: '', refresh: vi.fn() }) }));
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AssignmentSubmissionWizard } from './AssignmentSubmissionWizard';
@@ -60,16 +60,17 @@ function confirmLearning() {
   for (const name of learningDeclarations) fireEvent.click(screen.getByRole('checkbox', { name }));
 }
 describe('monthly assignment drafts', () => {
-  it('keeps a partially accepted topic locked without repeating its question', async () => {
+  it('keeps a partially accepted topic locked and shows the question it answered', async () => {
     vi.mocked(loadLearningReflectionSubmission).mockResolvedValue({
       status: 'partial', assignmentTopicId: '2', assignmentQuestion: 'The original Topic 2 question.',
       assignmentAnswer: 'The submitted topic answer.',
       monthlyAssignment: emptyMonthlyAssignment([], '2026-10'),
     } as Awaited<ReturnType<typeof loadLearningReflectionSubmission>>);
-    render(<AssignmentSubmissionWizard {...props} assignmentTopicId="2" questionText="A later edited question." />);
+    render(<AssignmentSubmissionWizard {...props} assignmentTopicId="2" questionText="A later edited question." onShowInstructions={vi.fn()} />);
     await screen.findByDisplayValue('The submitted topic answer.');
-    expect(screen.queryByText('Assignment question')).not.toBeInTheDocument();
-    expect(screen.queryByText('The original Topic 2 question.')).not.toBeInTheDocument();
+    expect(within(screen.getByRole('region', { name: 'Assignment question' })).getByText('The original Topic 2 question.')).toBeVisible();
+    expect(screen.queryByText('A later edited question.')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '1 Instructions' })).toBeEnabled();
     expect(screen.getByLabelText(/Your answer \(/)).toBeDisabled();
     expect(screen.queryByRole('button', { name: 'Save draft' })).not.toBeInTheDocument();
     cleanup();
@@ -128,6 +129,33 @@ describe('monthly assignment drafts', () => {
       expect(screen.getByLabelText(/Your answer \(/)).toHaveValue('My unfinished answer stays here.');
       expect(props.onSubmitProgress).not.toHaveBeenCalled();
     });
+  });
+
+  it('keeps the question, instructions and resources in view on later steps and lets a draft reopen the instructions', async () => {
+    const onShowInstructions = vi.fn();
+    render(<AssignmentSubmissionWizard {...props} assignmentTopicId="1" instructionsHtml="<p>Use the <strong>STAR</strong> format.</p>"
+      resourceLinks={[{ label: 'Reading list', url: 'https://example.test/reading' }]} onShowInstructions={onShowInstructions} />);
+    fireEvent.click(await screen.findByRole('button', { name: /Impact & employer benefit/ }));
+    expect(screen.getByText(/Step 6 of 9/)).toBeVisible();
+    const brief = screen.getByText('Assignment brief & instructions').closest('details')!;
+    expect(brief).toHaveAttribute('open');
+    expect(within(within(brief).getByRole('region', { name: 'Assignment question' })).getByText('Describe your work.')).toBeVisible();
+    expect(within(brief).getByRole('region', { name: 'Instructions' })).toHaveTextContent('Use the STAR format.');
+    expect(within(within(brief).getByRole('region', { name: 'Resources' })).getByRole('link', { name: /Reading list/ }))
+      .toHaveAttribute('href', 'https://example.test/reading');
+    const instructions = screen.getByRole('button', { name: '1 Instructions' });
+    expect(instructions).toBeEnabled();
+    fireEvent.click(instructions);
+    expect(onShowInstructions).toHaveBeenCalledTimes(1);
+  });
+
+  it('shows no instructions or resources headings when an assignment has neither', async () => {
+    render(<AssignmentSubmissionWizard {...props} />);
+    await screen.findByText('Step 1 of 8 — Assignment answer');
+    expect(screen.getByRole('region', { name: 'Assignment question' })).toHaveTextContent('Describe your work.');
+    expect(screen.queryByRole('region', { name: 'Instructions' })).toBeNull();
+    expect(screen.queryByRole('region', { name: 'Resources' })).toBeNull();
+    expect(screen.queryByRole('button', { name: '1 Instructions' })).toBeNull();
   });
 
   it('seeds a new submission with its Training Plan month', async () => {
@@ -309,12 +337,32 @@ describe('monthly assignment drafts', () => {
 });
 
 
-it('previews a question attachment inside the answer step without downloading it', async () => {
+it('opens the question attachment automatically inside the answer step without downloading it', async () => {
   render(<AssignmentSubmissionWizard {...props} questionText="" questionFileUrl="/curriculum_api/curriculum/uploads/brief.pdf" questionFileName="brief.pdf" />);
   expect(await screen.findByText('Preview the attached file for your assignment question.')).toBeVisible();
-  fireEvent.click(screen.getByRole('button', { name: 'View file' }));
   expect(await screen.findByTestId('question-preview')).toHaveAttribute('data-url', '/curriculum_api/curriculum/uploads/brief.pdf');
   expect(screen.getByRole('button', { name: 'Hide preview' })).toHaveAttribute('aria-expanded', 'true');
+});
+
+it.each(['commercial', 'apprenticeship'] as const)('previews both %s instruction PDFs once and keeps the answer when one is hidden', async kind => {
+  const files = ['brief', 'guidance'].map(name => ({ url: `/curriculum_api/curriculum/uploads/${name}.pdf`, fileName: `${name}.pdf` }));
+  render(<AssignmentSubmissionWizard {...props} kind={kind} questionFileUrl={files[0].url} questionFileName={files[0].fileName}
+    questionFiles={files} questionHtml={`<p>Read both documents.</p><a href="${files[1].url}">Guidance PDF</a>`} />);
+  const previews = await screen.findAllByTestId('question-preview');
+  expect(previews.map(preview => preview.getAttribute('data-url'))).toEqual(files.map(file => file.url));
+  const answer = screen.getByRole('textbox', { name: /Your answer/ });
+  fireEvent.change(answer, { target: { value: 'My draft answer stays here.' } });
+  const attachments = screen.getAllByRole('region', { name: 'Assignment attachment' });
+  fireEvent.click(within(attachments[0]).getByRole('button', { name: 'Hide preview' }));
+  expect(within(attachments[0]).queryByTestId('question-preview')).toBeNull();
+  expect(within(attachments[1]).getByTestId('question-preview')).toBeVisible();
+  expect(answer).toHaveValue('My draft answer stays here.');
+  expect(screen.getAllByRole('link', { name: 'Download file' }).map(link => link.getAttribute('href'))).toEqual(files.map(file => file.url));
+});
+
+it('previews instruction links even when there is no primary attachment', async () => {
+  render(<AssignmentSubmissionWizard {...props} questionHtml={'<a href="/instructions.pdf">Instructions PDF</a><a href="/worksheet.pdf">Worksheet PDF</a>'} />);
+  expect((await screen.findAllByTestId('question-preview')).map(preview => preview.getAttribute('data-url'))).toEqual(['/instructions.pdf', '/worksheet.pdf']);
 });
 
 it.each(['commercial', 'apprenticeship'] as const)('requires every learning declaration for %s submission even when server checks pass', async kind => {

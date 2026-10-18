@@ -1,5 +1,4 @@
 import { coachFetch } from '@/lib/coachFetch';
-import { publishCrossTabWrite, subscribeCrossTabWrites } from '@/lib/crossTabWrites';
 
 export type CurriculumStatus = 'active' | 'draft' | 'archived' | 'published' | 'planned' | 'completed' | string;
 
@@ -385,8 +384,18 @@ export interface CurriculumModule {
     title: string;
     displayOrder?: number;
     ksbMappings?: CurriculumComponent['ksbMappings'];
+    /** Absent from an outline (see `weekStructureOutline`): not an empty week. */
     components?: CurriculumComponent[];
+    /** Set on every week of an outline: its `components` were not sent. */
+    componentsOmitted?: boolean;
   }>;
+  /**
+   * Set when `weekStructure` is an outline -- weeks without their components,
+   * from a programme detail read with `omitWeekComponents`. Read the module's
+   * own structure before editing or pushing it; the server refuses a save
+   * that still carries this flag.
+   */
+  weekStructureOutline?: boolean;
   /**
    * The calendar session count — `weeks` x the group's delivery days per week.
    * This is what the session dates, the tutor clash check and the Teams series
@@ -498,6 +507,14 @@ export interface CurriculumComponent {
   deletedAt?: string | null;
   deletedViaParent?: string;
   settings?: Record<string, unknown>;
+  /**
+   * The settings keys a `fetchCurriculumComponents({ omitContent: true })` read
+   * left out of `settings` -- authored long text such as `readingContent` or
+   * `transcript`. Absent means `settings` is complete. A row carrying it is
+   * for display only: load the full component before showing that text or
+   * saving it (the server refuses a save that still carries this).
+   */
+  settingsOmitted?: string[];
 }
 
 /** Where a reusable component currently lives. */
@@ -567,6 +584,20 @@ export interface CurriculumKsbSet {
   status?: string;
   ksbs: CurriculumKsbEntry[];
 }
+
+/** List metadata; definitions are deliberately absent until a source is opened. */
+export type CurriculumKsbSetSummary = Omit<CurriculumKsbSet, 'ksbs'> & {
+  ksbs?: never;
+  ksbCount: number;
+  knowledgeCount: number;
+  skillCount: number;
+  behaviourCount: number;
+};
+
+export type CurriculumKsbDefinition = Pick<CurriculumKsbEntry,
+  'id' | 'code' | 'rawCode' | 'fullCode' | 'parentCode' | 'parentId' | 'displayOrder' | 'title' | 'description' | 'type'>;
+
+export type CurriculumKsbSourceDefinitions = Omit<CurriculumKsbSet, 'ksbs'> & { ksbs: CurriculumKsbDefinition[] };
 
 export interface CurriculumKsbFramework {
   id: string;
@@ -1207,6 +1238,91 @@ export interface CurriculumLearnerActivity {
   evidenceCount: number;
 }
 
+/** Authored activity for one assigned learner, including not-started rows. */
+export interface CurriculumLearnerActivityPlanItem {
+  lectureDate?: string | null;
+  logState?: CurriculumActivityLogState;
+  canChangeStatus?: boolean;
+  activityPlanId: string;
+  learnerId: number | string;
+  learnerName: string;
+  email: string;
+  cohort: string;
+  group: string;
+  componentId: string;
+  componentTitle: string;
+  componentType: string;
+  moduleCatalogueId: string;
+  module: string;
+  weekId: string;
+  week: string;
+  displayOrder: number;
+  expectedOtjh: number | null;
+  points: number;
+  calculatedStatus: 'completed' | 'in_progress' | 'not_started' | string;
+  displayStatus: 'completed' | 'in_progress' | 'not_started' | string;
+  statusSource: 'calculated' | string;
+  progressId: number | null;
+  progressIds: Array<number | string>;
+  progressStatus: string;
+  submittedAt: string;
+  countsTowardAchievement: boolean | null;
+  source: 'curriculum_component' | string;
+}
+
+export interface CurriculumActivityLogState {
+  revision: number;
+  snapshotHash: string;
+  displayStatus: string | null;
+  calculatedStatus: string;
+  statusSource: string;
+  actualOtjh: number | null;
+  acceptedOtjh: number | null;
+  unallocatedAcceptedRecords?: number;
+  hoursSource: string;
+  startedAt: string | null;
+  endedAt: string | null;
+  progressId: number | null;
+  accepted: boolean | null;
+  multipleRecordedAllocations?: boolean;
+  timeEntryMode?: 'input' | 'timestamp';
+  activityDate?: string | null;
+  attendanceMode?: 'attended' | 'recording' | null;
+  lectureDate?: string | null;
+}
+
+export type CurriculumActivityCompletionTime = { durationSeconds: number; attendanceMode?: 'attended' | 'recording' } & (
+  { timeEntryMode: 'input'; activityDate: string }
+  | { timeEntryMode: 'timestamp'; startedAt: string }
+);
+
+export interface CurriculumActivityStatusHistory {
+  revision: number; actor_id: number; reason: string; created_at: string; displayStatus: string;
+}
+
+export async function fetchCurriculumActivityStatusHistory(moduleId: string, learnerId: string, componentId: string, signal?: AbortSignal): Promise<{ history: CurriculumActivityStatusHistory[] }> {
+  const path = `/curriculum/modules/${encodeURIComponent(moduleId)}/learners/${encodeURIComponent(learnerId)}/activities/${encodeURIComponent(componentId)}/status/`;
+  const response = await coachFetch(`${API_BASE_URL}${path}`, { signal });
+  const data = await response.json();
+  if (!response.ok) throw new CurriculumApiError(data?.error || 'Unable to load status history.', response.status, path, data);
+  return data;
+}
+
+export async function saveCurriculumActivityStatus(moduleId: string, learnerId: string, componentId: string, body: {
+  displayStatus: 'completed' | 'not_started'; expectedRevision: number; snapshotHash: string;
+  durationSeconds?: number; startedAt?: string; timeEntryMode?: 'input' | 'timestamp'; activityDate?: string;
+  attendanceMode?: 'attended' | 'recording';
+}): Promise<{ state: CurriculumActivityLogState }> {
+  const path = `/curriculum/modules/${encodeURIComponent(moduleId)}/learners/${encodeURIComponent(learnerId)}/activities/${encodeURIComponent(componentId)}/status/`;
+  mutationEpoch += 1;
+  applyMutationInvalidation(path);
+  const response = await coachFetch(`${API_BASE_URL}${path}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  const data = await response.json();
+  if (!response.ok) throw new CurriculumApiError(data?.error || 'Unable to save activity status.', response.status, path, data);
+  clearCurriculumGetCache();
+  return data;
+}
+
 // Learner placements are owned by the enrolment team. Curriculum reads this
 // roster to show who is arriving in a cohort/group and never writes to it.
 export interface CurriculumScopeLearnerRosterResponse {
@@ -1226,6 +1342,11 @@ export interface CurriculumScopeLearnerRosterResponse {
 export type CurriculumProgrammeLearnerRosterResponse = CurriculumScopeLearnerRosterResponse;
 
 export interface CurriculumScopeLearnerKsbImpactResponse {
+  activityLogOtjh?: {
+    learners: Array<{ learnerId: number | string; plannedOtjh: number; achievedOtjh: number | null; unallocatedAcceptedRecords?: number }>;
+    achievedTotal: number | null; plannedTotal: number; source: string;
+    unallocatedAcceptedRecords?: number;
+  };
   scope: CurriculumLearnerScope | string;
   identifier: string;
   lineage: CurriculumScopeLineage;
@@ -1243,6 +1364,8 @@ export interface CurriculumScopeLearnerKsbImpactResponse {
   learnerKsbConsumption: CurriculumLearnerKsbConsumption[];
   learnerActivities?: CurriculumLearnerActivity[];
   learnerActivityCount?: number;
+  learnerActivityPlan?: CurriculumLearnerActivityPlanItem[];
+  learnerActivityPlanCount?: number;
   ksbAchievementPolicy?: {
     achievedWeightSource: string;
     reflectionKsbRole: string;
@@ -1494,6 +1617,8 @@ export interface CurriculumTeamsMeetingSummary {
    */
   syncState?: 'in-sync' | 'out-of-sync' | 'no-sessions' | 'unverified';
   syncReasons?: string[];
+  /** Saved / pending / failed for the meeting options; read with readMicrosoftUpdate. */
+  microsoftUpdate?: unknown;
   expectedOccurrenceCount?: number;
   differingOccurrenceCount?: number;
   missingFromTeams?: string[];
@@ -1595,6 +1720,9 @@ export interface LiveSessionArtifactsResponse {
  */
 const OFF_CALENDAR_OCCURRENCE_STATUSES = new Set([
   'cancelled', 'canceled', 'declined', 'deleted', 'removed',
+  // "Not in plan": a session a new plan left on Teams. Not cancelled -- its
+  // Teams slot stands until somebody cancels it -- but not a planned session.
+  'superseded',
 ]);
 
 /** The tracked occurrences that still stand for a meeting on the calendar. */
@@ -2297,6 +2425,19 @@ export interface CurriculumProgrammeDetail {
   };
 }
 
+/** The programme with its cohorts and groups -- the detail document up to the modules. */
+export interface CurriculumProgrammeDetailShell {
+  schema: string;
+  programme: CurriculumProgramme;
+  flat: Pick<CurriculumProgrammeDetail['flat'], 'cohorts' | 'groups' | 'groupIds' | 'weekTemplates'>;
+}
+
+/** The programme's modules (each weekStructure an outline) and planned sessions. */
+export interface CurriculumProgrammeDetailModules {
+  schema: string;
+  flat: Pick<CurriculumProgrammeDetail['flat'], 'modules' | 'sessions'>;
+}
+
 export interface CurriculumSessionPlanPreview {
   sessions: Array<{ sessionNumber: number; date: string; day: string; startTime?: string; endTime?: string; durationMinutes?: number; skippedHolidays: string[] }>;
   skippedHolidays: string[];
@@ -2622,7 +2763,10 @@ const READ_POST_TTL_MS = 30_000;
 const READ_POST_MAX_ENTRIES = 60;
 
 function isReadOnlyPost(method: string, path: string): boolean {
-  return method === 'POST' && path.startsWith('/curriculum/preview/');
+  return method === 'POST' && (
+    path.startsWith('/curriculum/preview/')
+    || path === '/curriculum/migrated-review-templates/preview/'
+  );
 }
 
 export function clearCurriculumGetCache() {
@@ -2713,319 +2857,17 @@ function applyMutationInvalidation(path: string): void {
   }
 }
 
-const CURRICULUM_WRITE_SCOPE = 'curriculum';
-
-// A page that wants to re-read when somebody else writes. Only remote writes
-// reach these listeners: the tab that saved already refreshes itself on the
-// save path, and firing here too would double every post-save read.
-const remoteWriteListeners = new Set<(path: string) => void>();
-
-/**
- * The path a listener is given when the write was made outside this browser and
- * only the epoch poll knows about it. There is no path to report -- the counter
- * says that something changed, not what -- so a listener that filters on paths
- * must let this one through.
- */
+/** Retained for existing hook imports; remote curriculum tracking is disabled. */
 export const UNKNOWN_WRITE_PATH = '*';
 
-export function subscribeCurriculumRemoteWrites(listener: (path: string) => void): () => void {
-  remoteWriteListeners.add(listener);
-  startEpochPolling();
-  return () => {
-    remoteWriteListeners.delete(listener);
-    if (!remoteWriteListeners.size) stopEpochPolling();
-  };
-}
-
-function notifyRemoteWrite(path: string): void {
-  remoteWriteListeners.forEach(listener => {
-    try { listener(path); } catch { /* one bad listener must not stop the rest */ }
-  });
-}
-
-// ---------------------------------------------------------------------------
-// Noticing a write made on somebody else's machine.
-//
-// BroadcastChannel reaches the other tabs of this browser and no further, so a
-// colleague saving in another country changes nothing here: the only trigger
-// left is the reader coming back to the tab, and a tab that is simply left in
-// the foreground never fires it. Both screens then sit there quietly stale.
-//
-// So the server is asked, on a timer, for the one number that moves on every
-// write -- the same counter invalidate_curriculum_cache() bumps. It is a Redis
-// read with no database behind it, which is what makes polling it affordable at
-// all; a real payload could not be asked for this often.
-//
-// One timer for the whole tab, however many hooks are subscribed, and only
-// while the tab is visible: a backgrounded tab re-reads when it is looked at
-// again, and polling it in the meantime buys nothing.
-// ---------------------------------------------------------------------------
-
-const EPOCH_PATH = '/curriculum/cache-epoch/';
-// 2s. This interval used to be a freshness setting; now that the curriculum
-// editors merge a write into an open screen rather than announcing it, it is
-// how long a colleague's typing takes to appear in front of somebody else. A
-// reader waits half the interval on average, so this is ~1s -- the point at
-// which two people on one module stop feeling like two people on two copies.
-// Tabs of the same browser hear each other through BroadcastChannel and do not
-// wait for this at all.
-// What it costs is one authenticated request per open tab: the shared epoch
-// read (Redis where it is configured, otherwise the one-row counter table),
-// plus the single indexed LoginSession lookup every request pays. The
-// last_seen_at write is throttled to 5 minutes (login/sessions.py), so polling
-// faster adds reads, never writes.
-//
-// This is the floor. Below it the request rate buys nothing a person can
-// perceive and starts being felt by the database -- and note what it does NOT
-// buy at any speed: the epoch says only that curriculum changed, so a screen
-// still has to read the record to find out what. That read has its own, longer
-// floor per workspace (LIVE_SYNC_MIN_INTERVAL_MS in the module builder), which
-// is what keeps a busy hour elsewhere in the LMS from becoming a rebuild every
-// two seconds. Making co-editing feel faster than this means pushing the
-// change itself, not asking for it more often.
-// Exported so the tests can advance their fake clock by one tick of whatever
-// this is set to, rather than encoding the number and quietly meaning
-// something else the next time it moves.
-export const EPOCH_POLL_INTERVAL_MS = 2_000;
-// The endpoint ships with the backend, and the frontend can be deployed ahead of
-// it. Rather than call a missing URL every few seconds for the life of the tab,
-// give up after a few failures and leave the return-to-tab refresh to cover it.
-const EPOCH_POLL_MAX_FAILURES = 3;
-// A hung read would otherwise leave the in-flight guard set for good and stop
-// the tab polling for the rest of its life.
-const EPOCH_READ_TIMEOUT_MS = 10_000;
-
-let epochPollTimer: ReturnType<typeof setInterval> | null = null;
-let epochVisibilityBound = false;
-let lastSeenEpoch: number | null = null;
-let epochFailures = 0;
-let epochPollingAbandoned = false;
-let epochReadInFlight = false;
-let quietResyncPending = false;
-
-function isDocumentVisible(): boolean {
-  return typeof document === 'undefined'
-    || typeof document.visibilityState !== 'string'
-    || document.visibilityState === 'visible';
-}
-
 /**
- * `missing` separates the two ways this can fail, because only one of them is a
- * reason to stop asking. A 404 means the backend does not have the endpoint --
- * the frontend was deployed ahead of it -- and no amount of retrying will
- * conjure it up. A dropped connection or a 502 means the server is restarting,
- * which is exactly when a tab must keep its place and carry on afterwards.
+ * Remote refresh is disabled application-wide by product request. Keep the
+ * subscription interface for existing screens without polling, timers or
+ * cross-tab listeners. Local saves still invalidate their own caches below.
  */
-type EpochRead = { epoch: number | null; missing: boolean; changes: EpochChange[] };
-
-/**
- * One entry from the server's log of what moved the counter: the path that was
- * written, and the span of epochs `(lo, hi]` that write accounts for.
- *
- * Advisory. The counter is the fact; this is how a client avoids having to treat
- * every write in the estate as "reload everything". An old backend sends none,
- * a busy one may have dropped the oldest, and both cases have the same answer --
- * see `changedPathsSince`.
- */
-type EpochChange = { path: string; lo: number; hi: number };
-
-function parseEpochChanges(value: unknown): EpochChange[] {
-  if (!Array.isArray(value)) return [];
-  const parsed: EpochChange[] = [];
-  for (const entry of value) {
-    if (!entry || typeof entry !== 'object') continue;
-    const { path, lo, hi } = entry as { path?: unknown; lo?: unknown; hi?: unknown };
-    if (typeof path !== 'string') continue;
-    const low = Number(lo);
-    const high = Number(hi);
-    if (!Number.isFinite(low) || !Number.isFinite(high) || high <= low) continue;
-    parsed.push({ path, lo: low, hi: high });
-  }
-  return parsed;
+export function subscribeCurriculumRemoteWrites(_listener: (path: string) => void): () => void {
+  return () => {};
 }
-
-/**
- * The paths written between `previous` and `current`, or null when the log does
- * not account for all of it.
- *
- * Null is the important half. The log is written without a lock, so a busy
- * moment can drop an entry, and an entry that never arrives looks exactly like
- * an epoch nobody wrote in. Refreshing only the paths that *are* named would
- * then quietly skip the one that went missing, which is the stale screen this
- * whole mechanism exists to prevent. So every epoch in the span has to be
- * spoken for; one gap and the caller falls back to refreshing the lot.
- */
-function changedPathsSince(previous: number, current: number, changes: EpochChange[]): string[] | null {
-  if (!changes.length) return null;
-  const paths = new Set<string>();
-  for (let epoch = previous + 1; epoch <= current; epoch += 1) {
-    const owner = changes.find(change => change.lo < epoch && epoch <= change.hi);
-    if (!owner) return null;
-    paths.add(owner.path);
-  }
-  return [...paths];
-}
-
-async function readCurriculumEpoch(): Promise<EpochRead> {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), EPOCH_READ_TIMEOUT_MS);
-  try {
-    const response = await fetch(`${API_BASE_URL}${EPOCH_PATH}`, {
-      cache: 'no-store',
-      signal: controller.signal,
-    });
-    if (!response.ok) {
-      // 404/405/501: this build of the backend does not serve the counter.
-      return {
-        epoch: null,
-        missing: response.status === 404 || response.status === 405 || response.status === 501,
-        changes: [],
-      };
-    }
-    const payload = await response.json() as { epoch?: unknown; changes?: unknown };
-    const epoch = Number(payload?.epoch);
-    // A 200 that is not a number is a proxy or a login page answering in the
-    // endpoint's place, which is the deployment gap again rather than a blip.
-    return Number.isFinite(epoch)
-      ? { epoch, missing: false, changes: parseEpochChanges(payload?.changes) }
-      : { epoch: null, missing: true, changes: [] };
-  } catch {
-    return { epoch: null, missing: false, changes: [] };
-  } finally {
-    clearTimeout(timeout);
-  }
-}
-
-/**
- * @param quiet Record where the counter has got to without telling anybody --
- *   used when the caller knows a refresh is already happening, so that the poll
- *   does not ask for the same data a second time.
- */
-async function pollEpoch(quiet = false): Promise<void> {
-  if (epochPollingAbandoned || !isDocumentVisible()) return;
-  if (epochReadInFlight) {
-    // A quiet caller must not simply be dropped. Its whole job is to record the
-    // counter our own write moved, and losing it makes the next tick read that
-    // write back as though a stranger had made it.
-    if (quiet) quietResyncPending = true;
-    return;
-  }
-  epochReadInFlight = true;
-  try {
-    const read = await readCurriculumEpoch();
-    if (read.epoch === null) {
-      // A server that is merely down does not count towards giving up: it comes
-      // back, and a tab left open across a deploy should still be live after it.
-      if (!read.missing) return;
-      epochFailures += 1;
-      if (epochFailures >= EPOCH_POLL_MAX_FAILURES) {
-        epochPollingAbandoned = true;
-        stopEpochPolling();
-      }
-      return;
-    }
-    epochFailures = 0;
-    const previous = lastSeenEpoch;
-    lastSeenEpoch = read.epoch;
-    // The first read establishes where the counter is; there is nothing to
-    // compare it against yet, and treating it as a change would refresh every
-    // page the moment it mounted.
-    if (quiet || previous === null || previous === read.epoch) return;
-    // Somebody wrote. Every GET this tab has in flight was started before we
-    // knew that, so no skipCache caller may reuse one.
-    mutationEpoch += 1;
-    // The counter moving backwards means the server's cache was restarted under
-    // us; nothing about our own entries can be trusted against a fresh count.
-    const written = read.epoch > previous
-      ? changedPathsSince(previous, read.epoch, read.changes)
-      : null;
-    if (written) {
-      // The server said what was written, so throw away that and no more. This
-      // is the same invalidation the writing tab applied, arriving by a longer
-      // road.
-      written.forEach(path => {
-        applyMutationInvalidation(path);
-        notifyRemoteWrite(path);
-      });
-      return;
-    }
-    // No usable account of what changed -- an older backend, or a log that has
-    // moved on past us. Guessing which pages are safe to leave alone is exactly
-    // how a stale screen happens, so everything goes.
-    multiTierCache.clear();
-    clearPreviewReads();
-    notifyRemoteWrite(UNKNOWN_WRITE_PATH);
-  } finally {
-    epochReadInFlight = false;
-    if (quietResyncPending) {
-      quietResyncPending = false;
-      void pollEpoch(true);
-    }
-  }
-}
-
-function startEpochPolling(): void {
-  if (epochPollingAbandoned || typeof window === 'undefined') return;
-  if (!epochVisibilityBound && typeof document !== 'undefined') {
-    epochVisibilityBound = true;
-    document.addEventListener('visibilitychange', () => {
-      if (!remoteWriteListeners.size) return;
-      // Coming back to the tab already triggers a re-read of its own, so this
-      // only catches the counter up. Without it the next tick would see the
-      // jump that happened while the tab was hidden and read everything twice.
-      if (isDocumentVisible()) void pollEpoch(true);
-    });
-  }
-  if (epochPollTimer) return;
-  epochPollTimer = setInterval(() => { void pollEpoch(); }, EPOCH_POLL_INTERVAL_MS);
-  // Establish the starting value straight away rather than 25s from now.
-  void pollEpoch(true);
-}
-
-function stopEpochPolling(): void {
-  if (!epochPollTimer) return;
-  clearInterval(epochPollTimer);
-  epochPollTimer = null;
-}
-
-/**
- * Catch the counter up after a write this browser already knows about, without
- * refreshing anything for it.
- *
- * Our own save moves the server counter too, so without this the tab would poll,
- * see the jump it caused itself, and re-read everything a second time. The delay
- * lets the write commit -- the epoch is bumped on_commit -- before the value is
- * recorded. Nothing is missed by staying quiet: the refresh that follows a save
- * reads current server state, which includes anything a colleague committed in
- * the same moment.
- */
-function scheduleQuietEpochResync(): void {
-  if (epochPollingAbandoned || typeof window === 'undefined') return;
-  if (!remoteWriteListeners.size) return;
-  window.setTimeout(() => { void pollEpoch(true); }, 1_500);
-}
-
-/** Test seam: forgets the counter and stops the timer. */
-export function resetCurriculumEpochPolling(): void {
-  stopEpochPolling();
-  lastSeenEpoch = null;
-  epochFailures = 0;
-  epochPollingAbandoned = false;
-  epochReadInFlight = false;
-  quietResyncPending = false;
-}
-
-subscribeCrossTabWrites(write => {
-  if (write.scope !== CURRICULUM_WRITE_SCOPE) return;
-  // The write landed in another tab, so every GET this tab has in flight was
-  // started before it. Bump the epoch for the same reason the local branch does.
-  mutationEpoch += 1;
-  applyMutationInvalidation(write.path);
-  notifyRemoteWrite(write.path);
-  // This browser has already dealt with the write, so the poll must not treat
-  // the counter moving as news.
-  scheduleQuietEpochResync();
-});
 
 async function fetchJson<T>(path: string, init?: CurriculumRequestInit): Promise<T> {
   const method = (init?.method || 'GET').toUpperCase();
@@ -3077,13 +2919,6 @@ async function fetchJson<T>(path: string, init?: CurriculumRequestInit): Promise
     // must not reuse it.
     mutationEpoch += 1;
     applyMutationInvalidation(path);
-    // The other tabs of this browser hold their own copy of these caches and
-    // cannot see the call that just happened, so they kept serving pre-write
-    // rows until their TTL lapsed. Tell them what was written.
-    publishCrossTabWrite(CURRICULUM_WRITE_SCOPE, path);
-    // Our own write moves the server's counter as well; record it quietly so the
-    // epoch poll does not read everything back a second time for our own save.
-    scheduleQuietEpochResync();
     return fetchJsonUncached<T>(path, init);
   }
 
@@ -3111,11 +2946,11 @@ async function fetchJson<T>(path: string, init?: CurriculumRequestInit): Promise
   const sharedInit = init?.signal ? { ...init, signal: undefined } : init;
   const inFlight = multiTierCache.getInFlight(path) as Promise<T> | undefined;
   const inFlightIsFresh = inFlight !== undefined
-    && (!init?.skipCache || multiTierCache.getInFlightEpoch(path) === mutationEpoch);
+    && multiTierCache.getInFlightEpoch(path) === mutationEpoch;
   const existing = inFlightIsFresh ? inFlight : undefined;
-
+  const askedAt = mutationEpoch;
   const pending = existing || fetchJsonUncached<T>(path, sharedInit).then(value => {
-    if (!init?.skipCache) {
+    if (!init?.skipCache && askedAt === mutationEpoch) {
       // Tag cache entries with entity type for targeted invalidation
       let entityType: string | undefined;
       let entityId: string | undefined;
@@ -3127,7 +2962,8 @@ async function fetchJson<T>(path: string, init?: CurriculumRequestInit): Promise
         entityType = 'programme';
       } else if (path.includes('/cohorts/')) {
         entityType = 'cohort';
-      } else if (path.includes('/groups/')) {
+      } else if (path.includes('/groups/') || path.includes('/delivery-scope/')) {
+        // Scope is a cohort/group list; the same writes must expire it.
         entityType = 'group';
       } else if (path.includes('/modules/')) {
         entityType = 'module';
@@ -3198,7 +3034,21 @@ function retryDelay(attempt: number): Promise<void> {
  * `isRetryableError` decides what counts: 408/429/5xx and network failures yes,
  * every 4xx and any caller abort no.
  */
-async function fetchJsonUncached<T>(path: string, init?: CurriculumRequestInit): Promise<T> {
+// Serialize expensive programme statistics across all consumers in this tab.
+// This runs below GET deduplication, so identical callers share one queued read.
+// The timeout starts only when a request reaches the front of the queue.
+let programmeStatsTail: Promise<unknown> = Promise.resolve();
+
+function fetchJsonUncached<T>(path: string, init?: CurriculumRequestInit): Promise<T> {
+  if ((init?.method || 'GET').toUpperCase() === 'GET' && /\/programmes\/[^/]+\/ksb-stats\//.test(path)) {
+    const pending = programmeStatsTail.then(() => fetchJsonWithRetries<T>(path, init));
+    programmeStatsTail = pending.then(() => undefined, () => undefined);
+    return pending;
+  }
+  return fetchJsonWithRetries<T>(path, init);
+}
+
+async function fetchJsonWithRetries<T>(path: string, init?: CurriculumRequestInit): Promise<T> {
   const method = (init?.method || 'GET').toUpperCase();
   if (!isRetryableRequest(method, path)) return fetchJsonOnce<T>(path, init);
   for (let attempt = 0; ; attempt += 1) {
@@ -3321,10 +3171,13 @@ export function fetchCurriculumModules(signal?: AbortSignal, options: {
   return fetchCollection<CurriculumModule>(`/curriculum/modules/${suffix}`, { signal, skipCache: options.skipCache, revalidate: options.revalidate, timeoutMs: 60000 });
 }
 
-export function fetchCurriculumComponents(signal?: AbortSignal, options: { moduleCatalogueIds?: string[]; page?: number; pageSize?: number; skipCache?: boolean; revalidate?: boolean } = {}): Promise<CurriculumComponent[]> {
+// `omitContent` leaves each component's authored long text out of `settings`
+// and names what was left out in `settingsOmitted`; see CurriculumComponent.
+export function fetchCurriculumComponents(signal?: AbortSignal, options: { moduleCatalogueIds?: string[]; page?: number; pageSize?: number; omitContent?: boolean; skipCache?: boolean; revalidate?: boolean } = {}): Promise<CurriculumComponent[]> {
   const query = new URLSearchParams();
   const moduleCatalogueIds = (options.moduleCatalogueIds || []).filter(Boolean);
   if (moduleCatalogueIds.length) query.set('module_catalogue_ids', moduleCatalogueIds.join(','));
+  if (options.omitContent) query.set('omit', 'content');
   if (options.page) query.set('page', String(options.page));
   if (options.pageSize) query.set('page_size', String(options.pageSize));
   const suffix = query.toString() ? `?${query.toString()}` : '';
@@ -3424,10 +3277,9 @@ export function fetchProgrammeKsbStats(id: string, signal?: AbortSignal, options
   const query = new URLSearchParams();
   if (options.visibility === 'all') query.set('visibility', 'all');
   const suffix = query.toString() ? `?${query.toString()}` : '';
-  // 30s like the other curriculum reads: the first caller after a write pays the
-  // programme's authoring-tree read, and a shorter budget aborts a request the
-  // server is still answering.
-  return fetchJson<ProgrammeKsbStats>(`/curriculum/programmes/${encodeURIComponent(id)}/ksb-stats/${suffix}`, { signal, revalidate: options.revalidate, timeoutMs: 30000 });
+  // A cold statistics calculation against the remote database can exceed 30s.
+  // Keep a finite limit, measured from dispatch rather than time in the queue.
+  return fetchJson<ProgrammeKsbStats>(`/curriculum/programmes/${encodeURIComponent(id)}/ksb-stats/${suffix}`, { signal, revalidate: options.revalidate, timeoutMs: 120000 });
 }
 
 export function fetchCurriculumGroups(signal?: AbortSignal): Promise<CurriculumGroup[]> {
@@ -3461,13 +3313,13 @@ export function fetchCurriculumKsbCoverage(params: { sourceType?: string; source
   return fetchJson<CurriculumKsbCoverageResponse>(`/curriculum/ksb-coverage/${suffix}`, { signal, timeoutMs: 60000 });
 }
 
-export function fetchCurriculumProgrammeKsbCoverage(programmeId: string, params: { sourceType?: string; sourceId?: string; actualMappings?: boolean } = {}, signal?: AbortSignal): Promise<CurriculumKsbCoverageResponse> {
+export function fetchCurriculumProgrammeKsbCoverage(programmeId: string, params: { sourceType?: string; sourceId?: string; actualMappings?: boolean; revalidate?: boolean } = {}, signal?: AbortSignal): Promise<CurriculumKsbCoverageResponse> {
   const query = new URLSearchParams();
   if (params.sourceType) query.set('source_type', params.sourceType);
   if (params.sourceId) query.set('source_id', params.sourceId);
   if (params.actualMappings) query.set('actual_mappings', '1');
   const suffix = query.toString() ? `?${query.toString()}` : '';
-  return fetchJson<CurriculumKsbCoverageResponse>(`/curriculum/programmes/${encodeURIComponent(programmeId)}/ksb-coverage/${suffix}`, { signal, timeoutMs: 60000 });
+  return fetchJson<CurriculumKsbCoverageResponse>(`/curriculum/programmes/${encodeURIComponent(programmeId)}/ksb-coverage/${suffix}`, { signal, revalidate: params.revalidate, timeoutMs: 60000 });
 }
 
 // Kept as named entry points because the Programme workspace reads them by
@@ -3525,16 +3377,18 @@ function scopePath(
 export function fetchCurriculumScopeLearnerRoster(
   scope: CurriculumLearnerScope,
   identifier: string,
-  params: { cohort?: string; group?: string; learnerStatus?: string } = {},
+  params: { cohort?: string; group?: string; learnerStatus?: string; revalidate?: boolean } = {},
   signal?: AbortSignal,
+  options: { timeoutMs?: number; compact?: boolean } = {},
 ): Promise<CurriculumScopeLearnerRosterResponse> {
   const query = new URLSearchParams();
   if (params.cohort) query.set('cohort', params.cohort);
   if (params.group) query.set('group', params.group);
   if (params.learnerStatus) query.set('learnerStatus', params.learnerStatus);
+  if (options.compact) query.set('compact', 'true');
   return fetchJson<CurriculumScopeLearnerRosterResponse>(
     scopePath(SCOPE_ROSTER_PATHS, '/curriculum/learner-roster/', scope, identifier, query),
-    { signal, timeoutMs: 60000 },
+    { signal, revalidate: params.revalidate, timeoutMs: options.timeoutMs ?? 60000 },
   );
 }
 
@@ -3548,17 +3402,49 @@ export function fetchCurriculumScopeLearnerRoster(
 export function fetchCurriculumScopeLearnerKsbImpact(
   scope: CurriculumLearnerScope,
   identifier: string,
-  params: { sourceType?: string; sourceId?: string; learnerStatus?: string } = {},
+  params: { sourceType?: string; sourceId?: string; learnerStatus?: string; moduleProgress?: boolean } = {},
   signal?: AbortSignal,
 ): Promise<CurriculumScopeLearnerKsbImpactResponse> {
   const query = new URLSearchParams();
   if (params.sourceType) query.set('source_type', params.sourceType);
   if (params.sourceId) query.set('source_id', params.sourceId);
   if (params.learnerStatus) query.set('learnerStatus', params.learnerStatus);
+  if (params.moduleProgress) query.set('moduleProgress', '1');
   return fetchJson<CurriculumScopeLearnerKsbImpactResponse>(
     scopePath(SCOPE_IMPACT_PATHS, '/curriculum/learner-ksb-impact/', scope, identifier, query),
     { signal },
   );
+}
+
+export interface CurriculumKsbCoverageSummaryResponse {
+  scope: string;
+  identifier: string;
+  source?: CurriculumKsbCoverageSource;
+  view: 'summary';
+  items: Array<{
+    code: string; title: string; description?: string; coverage_key: string;
+    source_type: string; source_id: string; source_name?: string; source_label?: string;
+    raw_total_weight: number; occurrence_count: number;
+  }>;
+}
+
+export function fetchCurriculumProgrammeKsbCoverageSummary(programmeId: string, params: { sourceType?: string; sourceId?: string; revalidate?: boolean } = {}, signal?: AbortSignal): Promise<CurriculumKsbCoverageSummaryResponse> {
+  const query = new URLSearchParams({ view: 'summary' });
+  if (params.sourceType) query.set('source_type', params.sourceType);
+  if (params.sourceId) query.set('source_id', params.sourceId);
+  return fetchJson<CurriculumKsbCoverageSummaryResponse>(`/curriculum/programmes/${encodeURIComponent(programmeId)}/ksb-coverage/?${query}`, { signal, revalidate: params.revalidate, timeoutMs: 60000 });
+}
+
+export function fetchCurriculumDeliveryScope(signal?: AbortSignal): Promise<Pick<CurriculumOverview, 'cohorts' | 'groups'>> {
+  return fetchJson<Pick<CurriculumOverview, 'cohorts' | 'groups'>>('/curriculum/delivery-scope/', { signal, timeoutMs: 30000 });
+}
+
+export function fetchCurriculumKsbSetSummaries(signal?: AbortSignal): Promise<CurriculumKsbSetSummary[]> {
+  return fetchCollection<CurriculumKsbSetSummary>('/curriculum/ksb-sets/?view=summary&visibility=all', { signal });
+}
+
+export function fetchCurriculumKsbSourceDefinitions(id: string, signal?: AbortSignal): Promise<CurriculumKsbSourceDefinitions> {
+  return fetchJson<CurriculumKsbSourceDefinitions>(`/curriculum/ksb-sets/${encodeURIComponent(id)}/definitions/?visibility=all`, { signal });
 }
 
 function ksbAchievementQuery(params: CurriculumKsbAchievementFilters = {}) {
@@ -3712,6 +3598,22 @@ export function fetchLiveSessionArtifacts(
   );
 }
 
+/** The meeting ID and passcode Teams prints under `link`, one of the series'
+ *  own join links. Read from Microsoft on first ask, then stored; blanks when
+ *  Microsoft cannot say. Staff only. */
+export type TeamsMeetingDialIn = { joinUrl: string; meetingId: string; passcode: string };
+
+export function fetchTeamsMeetingDialIn(
+  liveSessionId: string,
+  link: string,
+  options: { signal?: AbortSignal } = {},
+): Promise<TeamsMeetingDialIn> {
+  return fetchJson<TeamsMeetingDialIn>(
+    `/curriculum/teams-meetings/${encodeURIComponent(liveSessionId)}/dial-in/?link=${encodeURIComponent(link)}`,
+    { signal: options.signal, skipCache: true },
+  );
+}
+
 /** Absolute URL that streams a transcript/recording artifact's content (proxied
  *  from Graph server-side). Same-origin + cookie auth, so it can be used directly
  *  as an `href` / `download` / media `src`. */
@@ -3781,12 +3683,50 @@ export function fetchCurriculumOverview(signal?: AbortSignal, options: { compact
   return fetchJson<CurriculumOverview>(`/curriculum/overview/${options.compact ? '?compact=true' : ''}`, { signal, skipCache: options.skipCache, revalidate: options.revalidate, timeoutMs: options.timeoutMs ?? 30000 });
 }
 
-export function fetchCurriculumProgrammeDetail(id: string, signal?: AbortSignal, options: { visibility?: 'all' | 'operational'; deferStats?: boolean; skipCache?: boolean; revalidate?: boolean; timeoutMs?: number } = {}): Promise<CurriculumProgrammeDetail> {
+// `omitComponents` leaves `flat.components` out of the response, for a caller
+// that reads the components through fetchCurriculumComponents anyway.
+// `omitTree` leaves out the nested `cohorts` view, which repeats every module of
+// `flat.modules`; with it the response has no `cohorts` at all, so only a caller
+// that reads `flat` alone may ask for it. On a large programme each of the two
+// is a large share of the document. `omitWeekComponents` sends every module's
+// `weekStructure` as an outline -- weeks without components, flagged
+// `weekStructureOutline` -- for a caller that reads week titles and order only.
+// Parameters are sent in camelCase; the server still accepts the old snake_case
+// spellings.
+export function fetchCurriculumProgrammeDetail(id: string, signal?: AbortSignal, options: { visibility?: 'all' | 'operational'; deferStats?: boolean; omitComponents?: boolean; omitTree?: boolean; omitWeekComponents?: boolean; skipCache?: boolean; revalidate?: boolean; timeoutMs?: number } = {}): Promise<CurriculumProgrammeDetail> {
   const query = new URLSearchParams();
   if (options.visibility === 'all') query.set('visibility', 'all');
-  if (options.deferStats) query.set('defer_stats', '1');
+  if (options.deferStats) query.set('deferStats', '1');
+  const omit = [
+    options.omitComponents ? 'components' : '',
+    options.omitTree ? 'tree' : '',
+    options.omitWeekComponents ? 'weekComponents' : '',
+  ].filter(Boolean);
+  if (omit.length) query.set('omit', omit.join(','));
   const suffix = query.toString() ? `?${query.toString()}` : '';
   return fetchJson<CurriculumProgrammeDetail>(`/curriculum/programmes/${encodeURIComponent(id)}/detail/${suffix}`, { signal, skipCache: options.skipCache, revalidate: options.revalidate, timeoutMs: options.timeoutMs ?? 60000 });
+}
+
+// The detail document in two parts, for a page that draws the programme, its
+// cohorts and groups before the modules -- the slowest part of the build --
+// arrive. Both leave out the KSB stats (see fetchProgrammeKsbStats) and the
+// components; the modules' weekStructure is an outline, as with
+// `omitWeekComponents`.
+type ProgrammeDetailSectionOptions = { visibility?: 'all' | 'operational'; skipCache?: boolean; revalidate?: boolean; timeoutMs?: number };
+
+function programmeDetailSectionPath(id: string, section: 'shell' | 'modules', visibility?: 'all' | 'operational') {
+  const suffix = visibility === 'all' ? '?visibility=all' : '';
+  return `/curriculum/programmes/${encodeURIComponent(id)}/detail/${section}/${suffix}`;
+}
+
+export function fetchCurriculumProgrammeDetailShell(id: string, signal?: AbortSignal, options: ProgrammeDetailSectionOptions = {}): Promise<CurriculumProgrammeDetailShell> {
+  return fetchJson<CurriculumProgrammeDetailShell>(programmeDetailSectionPath(id, 'shell', options.visibility), { signal, skipCache: options.skipCache, revalidate: options.revalidate, timeoutMs: options.timeoutMs ?? 60000 });
+}
+
+export function fetchCurriculumProgrammeDetailModules(id: string, signal?: AbortSignal, options: ProgrammeDetailSectionOptions & { view?: 'workspace' } = {}): Promise<CurriculumProgrammeDetailModules> {
+  let path = programmeDetailSectionPath(id, 'modules', options.visibility);
+  if (options.view === 'workspace') path += `${path.includes('?') ? '&' : '?'}view=workspace`;
+  return fetchJson<CurriculumProgrammeDetailModules>(path, { signal, skipCache: options.skipCache, revalidate: options.revalidate, timeoutMs: options.timeoutMs ?? 60000 });
 }
 
 export { fetchCurriculumOverview as fetchCurriculumOverviewBundle };

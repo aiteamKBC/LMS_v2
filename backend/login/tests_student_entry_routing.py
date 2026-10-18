@@ -9,10 +9,10 @@ from . import microsoft_sso as sso
 
 
 class StudentEntryRoutingTests(SimpleTestCase):
-    def callback(self, role, requested):
+    def callback(self, role, requested, download=None, staff_allowed=False):
         nonce = "test-browser-nonce"
         state = signing.dumps(
-            {"next": requested, "n": sso.hash_token(nonce)}, salt=sso.STATE_SALT,
+            {"next": requested, "n": sso.hash_token(nonce), "download": download}, salt=sso.STATE_SALT,
         )
         request = RequestFactory().get("/login_api/microsoft/callback/", {
             "code": "test-code", "state": state,
@@ -30,6 +30,7 @@ class StudentEntryRoutingTests(SimpleTestCase):
             patch.object(sso, "issue_session", return_value=("test-session", None, 3600)),
             patch.object(sso, "record"),
             patch.object(sso, "frontend_base_url", return_value="http://localhost:3000"),
+            patch.object(sso, "staff_download_allowed", return_value=staff_allowed),
         ):
             return sso.callback(request)
 
@@ -51,3 +52,27 @@ class StudentEntryRoutingTests(SimpleTestCase):
                     self.assertEqual(response.status_code, 302)
                     self.assertEqual(response["Location"], "http://localhost:3000/")
                     self.assertIn("kbc_session", response.cookies)
+
+    def test_explicit_android_download_returns_a_learner_to_the_download_page(self):
+        response = self.callback("learner", "https://evil.test", "android")
+        self.assertEqual(response["Location"], "http://localhost:3000/login?download=android")
+        self.assertIn("kbc_session", response.cookies)
+
+    def test_download_intent_cannot_redirect_other_roles_or_choose_a_url(self):
+        for role, intent, destination in (
+            ("staff", "android", "/"), ("employer", "android", "/"),
+            ("learner", "https://evil.test", "/learner/home"),
+            ("learner", "//evil.test", "/learner/home"),
+        ):
+            with self.subTest(role=role, intent=intent):
+                self.assertEqual(self.callback(role, "", intent)["Location"],
+                                 "http://localhost:3000" + destination)
+
+    def test_explicit_download_returns_authorised_admins_and_coaches_only(self):
+        for role in ("admin", "staff"):
+            with self.subTest(role=role):
+                response = self.callback(role, "//evil.test", "android", staff_allowed=True)
+                self.assertEqual(response["Location"], "http://localhost:3000/login?download=android")
+                self.assertIn("kbc_session", response.cookies)
+                self.assertEqual(self.callback(role, "", staff_allowed=True)["Location"],
+                                 "http://localhost:3000/")

@@ -24,18 +24,17 @@ import { RowsSkeleton } from '@/components/feature/Skeletons';
 //
 // Step 1 — the modules. Two sections, left to right in the order the decision is
 // made: the modules this learner is assigned, then the modules taught to the
-// same cohort as whichever of theirs is selected. The alternatives are
-// cohort-wide, not group-wide: a cohort runs several groups, and a learner being
-// moved is usually being moved between them.
+// same programme as whichever of theirs is selected, across all its cohorts
+// and groups. Only the selected learner's module is changed.
 //
 // Step 2 — the progress. A learner part-way through a module has work recorded
 // against its components, and that work has to land somewhere in the module they
-// are joining. Weeks pair by position — week 1 with week 1 — because that is
-// what makes them equivalent, but which component matches which is a judgement,
-// so it is asked rather than guessed. The server suggests the obvious pairing
-// and anything left unmatched stays where it is.
+// are joining. Weeks match by stable id or one exact lesson title before
+// falling back to delivery position. Components match by shared id first,
+// otherwise by one exact cleaned title + type match. Ambiguous rows stay
+// unmatched.
 //
-// The write has its own endpoint, which re-runs the cohort walk and moves plan
+// The write has its own endpoint, which re-runs the programme lookup and moves plan
 // and progress in one transaction — see module_shift.py.
 // ============================================================================
 
@@ -53,6 +52,9 @@ const emptyNote = 'px-3 py-8 text-center text-[12px] text-foreground-400';
 const selectClass =
   'w-full rounded-lg border border-foreground-200 bg-background-50 px-2 py-1 text-[11px] ' +
   'text-foreground-800 focus:border-primary-400 outline-none transition-smooth cursor-pointer';
+const moduleSearchClass =
+  'block w-full rounded-lg border border-foreground-200 bg-background-50 py-2 pl-8 pr-3 text-[12px] ' +
+  'text-foreground-800 placeholder:text-foreground-400 focus:border-primary-400 outline-none transition-smooth';
 
 /** "2 h · 15 pts · 26 Aug 2026" — what a learner has banked on a component. */
 function progressSummary(component: ShiftComponent): string {
@@ -74,6 +76,34 @@ function reviewLabel(component: ShiftComponent): string {
   const who = review.reviewedBy ? ` by ${review.reviewedBy}` : '';
   const note = review.feedback ? ' · with feedback' : '';
   return `${marked.charAt(0).toUpperCase()}${marked.slice(1)}${who}${note}`;
+}
+
+/** Mirror the server's conservative visible-title cleanup for picker options. */
+function componentTitleKey(value: string): string {
+  return value
+    .normalize('NFKC')
+    .replace(/\u00a0/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLocaleLowerCase('en');
+}
+
+/** Automatic matches stay conservative; staff can review other same-type targets. */
+function isAutomaticComponentMatch(source: ShiftComponent, target: ShiftComponent): boolean {
+  if (source.componentId === target.componentId) return true;
+  const sourceTitle = componentTitleKey(source.title);
+  return (
+    source.type === target.type &&
+    Boolean(sourceTitle) &&
+    componentTitleKey(target.title) === sourceTitle
+  );
+}
+
+/** Search the visible module metadata without changing the selected module. */
+function moduleMatchesSearch(module: LearningPlanModule, query: string): boolean {
+  const needle = componentTitleKey(query);
+  if (!needle) return true;
+  return componentTitleKey(`${module.moduleTitle} ${module.groupName || ''}`).includes(needle);
 }
 
 /** One module in either list of step 1: title, then where it sits and when. */
@@ -127,9 +157,9 @@ function ModuleRow({
 }
 
 /**
- * One week of the module being left, beside the week in the same position of the
- * module being joined. Collapsed to its heading until opened, since a module can
- * run two dozen weeks and only some hold progress.
+ * One week of the module being left, beside its matched week in the module being
+ * joined. Collapsed to its heading until opened, since a module can run two
+ * dozen weeks and only some hold progress.
  */
 function WeekPair({
   pair,
@@ -149,9 +179,9 @@ function WeekPair({
 }) {
   const progressed = pair.from.components.filter((c) => c.progress);
   const targets = pair.to?.components || [];
-  /** The components this one may be matched to: the same type, nothing else. */
-  const sameType = (component: ShiftComponent) =>
-    targets.filter((t) => t.type === component.type);
+  /** Staff may manually choose a same-type component, but only in the paired week. */
+  const selectableTargets = (component: ShiftComponent) =>
+    targets.filter((target) => target.type === component.type);
   // Which target each progressed component was mapped onto, so the right-hand
   // column can show what is about to land on it.
   const landing = new Map<string, ShiftComponent>();
@@ -189,6 +219,12 @@ function WeekPair({
             </p>
             {pair.from.components.map((component) => {
               const summary = progressSummary(component);
+              const selectedTarget = targets.find(
+                (target) => target.componentId === mapping[component.componentId],
+              );
+              const isManualMatch = Boolean(
+                selectedTarget && !isAutomaticComponentMatch(component, selectedTarget),
+              );
               return (
                 <div
                   key={component.componentId}
@@ -200,7 +236,7 @@ function WeekPair({
                 >
                   <p className="text-[12px] text-foreground-900">{component.title}</p>
                   <p className="text-[11px] text-foreground-400">
-                    {component.type}
+                    {component.type} · ID {component.componentId}
                     {summary && ` · ${summary}`}
                   </p>
                   {/* The marking state moves with the work, so it is shown
@@ -220,17 +256,14 @@ function WeekPair({
                         className={selectClass}
                         value={mapping[component.componentId] || ''}
                         onChange={(e) => onMap(component.componentId, e.target.value)}
-                        disabled={sameType(component).length === 0}
+                        disabled={selectableTargets(component).length === 0}
                       >
                         <option value="">
-                          {sameType(component).length === 0
-                            ? `No ${component.type || 'matching'} to move this to`
-                            : 'Leave this progress where it is'}
+                          {selectableTargets(component).length === 0
+                            ? 'No component of the same type in the paired week'
+                            : 'Archive this progress'}
                         </option>
-                        {/* Like for like only: a watched video is evidence of
-                            watching a video, so only the week's videos are
-                            offered. The server refuses a crossed type too. */}
-                        {sameType(component).map((target) => (
+                        {selectableTargets(component).map((target) => (
                           <option
                             key={target.componentId}
                             value={target.componentId}
@@ -241,10 +274,17 @@ function WeekPair({
                                 landing.get(target.componentId)?.componentId !== component.componentId)
                             }
                           >
-                            {target.title} ({target.type})
+                            {target.title} ({target.type} · ID {target.componentId})
+                            {!isAutomaticComponentMatch(component, target) ? ' — manual match' : ''}
                           </option>
                         ))}
                       </select>
+                      {isManualMatch && (
+                        <span className="mt-1 block text-[11px] font-medium text-amber-700">
+                          Manual match: the titles differ. Confirm this is the equivalent component
+                          before shifting.
+                        </span>
+                      )}
                     </label>
                   )}
                 </div>
@@ -260,7 +300,7 @@ function WeekPair({
             {!pair.to ? (
               <p className="text-[12px] text-foreground-400">
                 The module being joined has no week {pair.order}, so this week&rsquo;s progress
-                cannot be moved. It stays where it is.
+                cannot be moved and will be archived.
               </p>
             ) : targets.length === 0 ? (
               <p className="text-[12px] text-foreground-400">
@@ -277,7 +317,9 @@ function WeekPair({
                     }`}
                   >
                     <p className="text-[12px] text-foreground-900">{target.title}</p>
-                    <p className="text-[11px] text-foreground-400">{target.type}</p>
+                    <p className="text-[11px] text-foreground-400">
+                      {target.type} · ID {target.componentId}
+                    </p>
                     {incoming && (
                       <p className="text-[11px] font-medium text-emerald-700">
                         <i className="ri-arrow-left-line mr-1" />
@@ -301,11 +343,13 @@ export function ShiftModuleModal({ learnerId, learnerName, onClose, onSaved }: P
   const [plan, setPlan] = useState<LearningPlanModule[] | null>(null);
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
+  const [assignedSearch, setAssignedSearch] = useState('');
+  const [programmeSearch, setProgrammeSearch] = useState('');
   const [options, setOptions] = useState<ModuleShiftOptions | null>(null);
   const [loadingOptions, setLoadingOptions] = useState(false);
   const [progress, setProgress] = useState<ModuleShiftProgress | null>(null);
   const [loadingProgress, setLoadingProgress] = useState(false);
-  // fromComponentId -> toComponentId. Missing or '' means "leave it alone".
+  // fromComponentId -> toComponentId. Missing or '' means "archive it".
   const [mapping, setMapping] = useState<Record<string, string>>({});
   const [openWeeks, setOpenWeeks] = useState<number[]>([]);
   const [saving, setSaving] = useState(false);
@@ -319,7 +363,7 @@ export function ShiftModuleModal({ learnerId, learnerName, onClose, onSaved }: P
         const res = await fetchLearningPlan(learnerId);
         if (cancelled) return;
         setPlan(res.plan);
-        // A single module is not a choice, so it selects itself and the cohort
+        // A single module is not a choice, so it selects itself and the programme
         // list loads without a click.
         if (res.plan.length === 1) setFrom(res.plan[0].moduleId);
       } catch (err) {
@@ -334,16 +378,19 @@ export function ShiftModuleModal({ learnerId, learnerName, onClose, onSaved }: P
     };
   }, [learnerId]);
 
-  // The cohort's modules, refetched whenever the module being moved changes —
-  // each one can resolve to a different cohort.
+  // The programme's modules, refetched whenever the module being moved changes —
+  // each one can resolve to a different programme.
   useEffect(() => {
     if (!from) {
       setOptions(null);
       return;
     }
     let cancelled = false;
+    setError('');
+    setOptions(null);
     setLoadingOptions(true);
     setTo('');
+    setProgrammeSearch('');
     (async () => {
       try {
         const res = await fetchModuleShiftOptions(from);
@@ -351,7 +398,7 @@ export function ShiftModuleModal({ learnerId, learnerName, onClose, onSaved }: P
       } catch (err) {
         if (!cancelled) {
           setOptions(null);
-          setError(err instanceof Error ? err.message : 'Could not load the cohort’s modules.');
+          setError(err instanceof Error ? err.message : 'Could not load the programme’s modules.');
         }
       } finally {
         if (!cancelled) setLoadingOptions(false);
@@ -368,6 +415,14 @@ export function ShiftModuleModal({ learnerId, learnerName, onClose, onSaved }: P
   const choices = useMemo(
     () => (options?.modules || []).filter((m) => m.moduleId !== from),
     [options, from],
+  );
+  const visiblePlan = useMemo(
+    () => (plan || []).filter((m) => moduleMatchesSearch(m, assignedSearch)),
+    [plan, assignedSearch],
+  );
+  const visibleChoices = useMemo(
+    () => choices.filter((m) => moduleMatchesSearch(m, programmeSearch)),
+    [choices, programmeSearch],
   );
 
   const fromModule = (plan || []).find((m) => m.moduleId === from);
@@ -388,8 +443,8 @@ export function ShiftModuleModal({ learnerId, learnerName, onClose, onSaved }: P
     try {
       const res = await fetchModuleShiftProgress(learnerId, from, to);
       setProgress(res);
-      // Start from the server's suggestion — same position, or the only
-      // component of that type — and let it be overridden per component.
+      // Start from the server's safe suggestion: same component id, otherwise
+      // one exact cleaned-title + type match. Ambiguous rows stay unmatched.
       setMapping(
         Object.fromEntries(res.suggested.map((s) => [s.fromComponentId, s.toComponentId])),
       );
@@ -410,11 +465,15 @@ export function ShiftModuleModal({ learnerId, learnerName, onClose, onSaved }: P
     try {
       const res = await shiftModule(learnerId, from, to, mappings);
       const moved = res.progressMoved || 0;
+      const archived = res.progressArchived || 0;
       const reviews = res.reviewsMoved || 0;
       const kept = res.reviewsKept || 0;
       const detail = [
         `${fromModule?.moduleTitle || 'Module'} → ${toModule?.moduleTitle || 'module'}`,
         moved ? `${moved} progress ${moved === 1 ? 'entry' : 'entries'} moved` : '',
+        archived
+          ? `${archived} progress ${archived === 1 ? 'entry' : 'entries'} archived`
+          : '',
         reviews ? `${reviews} ${reviews === 1 ? 'review' : 'reviews'} moved` : '',
         // Named rather than silent: a review that stayed behind is one the
         // component joined already had, and someone may need to reconcile them.
@@ -525,15 +584,31 @@ export function ShiftModuleModal({ learnerId, learnerName, onClose, onSaved }: P
                 Assigned modules
                 {plan && <span className="ml-1 font-normal text-foreground-400">({plan.length})</span>}
               </p>
+              {plan !== null && plan.length > 0 && (
+                <label className="relative block border-t border-foreground-200/50 p-2">
+                  <span className="sr-only">Search assigned modules</span>
+                  <i className="ri-search-line pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-[13px] text-foreground-400" />
+                  <input
+                    type="search"
+                    className={moduleSearchClass}
+                    value={assignedSearch}
+                    onChange={(event) => setAssignedSearch(event.target.value)}
+                    placeholder="Search module or group…"
+                    aria-label="Search assigned modules"
+                  />
+                </label>
+              )}
               {plan === null ? (
                 <div className="p-3">
                   <RowsSkeleton rows={3} avatar={false} />
                 </div>
               ) : plan.length === 0 ? (
                 <p className={emptyNote}>This learner has no modules to shift from yet.</p>
+              ) : visiblePlan.length === 0 ? (
+                <p className={emptyNote}>No assigned modules match that search.</p>
               ) : (
                 <div className="max-h-72 overflow-y-auto">
-                  {plan.map((m) => (
+                  {visiblePlan.map((m) => (
                     <ModuleRow
                       key={m.moduleId}
                       module={m}
@@ -545,31 +620,33 @@ export function ShiftModuleModal({ learnerId, learnerName, onClose, onSaved }: P
               )}
             </div>
 
-            {/* 2 — everything the same cohort is taught, whichever group teaches it. */}
+            {/* 2 — everything in the same programme, across cohorts and groups. */}
             <div className={cardClass}>
               <p className={sectionTitle}>
-                Cohort modules
-                {options?.cohort.name && (
+                Programme modules
+                {options?.programme.name && (
                   <span className="ml-1 font-normal text-foreground-400">
-                    &mdash; {options.cohort.name}
+                    &mdash; {options.programme.name}
                   </span>
                 )}
               </p>
               {!from ? (
                 <p className={emptyNote}>
-                  Pick one of the learner&rsquo;s modules first — its cohort decides what can be
+                  Pick one of the learner&rsquo;s modules first — its programme decides what can be
                   offered here.
                 </p>
               ) : loadingOptions ? (
                 <div className="p-3">
                   <RowsSkeleton rows={3} avatar={false} />
                 </div>
-              ) : options?.reason ? (
+              ) : !options ? (
+                <p className={emptyNote}>Module options could not be loaded.</p>
+              ) : options.reason ? (
                 // Says why there is nothing here, rather than looking broken.
                 <p className={emptyNote}>{options.reason}</p>
               ) : choices.length === 0 ? (
                 <p className={emptyNote}>
-                  {options?.cohort.name || 'This cohort'} teaches no other modules.
+                  {options?.programme.name || 'This programme'} teaches no other modules.
                 </p>
               ) : (
                 <>
@@ -579,23 +656,39 @@ export function ShiftModuleModal({ learnerId, learnerName, onClose, onSaved }: P
                       {options.groups.join(', ')}
                     </p>
                   )}
-                  <div className="max-h-72 overflow-y-auto">
-                    {choices.map((m) => {
-                      // Already on the plan: the plan holds a module once, so
-                      // shifting onto it would drop one rather than swap it.
-                      const already = assigned.has(m.moduleId);
-                      return (
-                        <ModuleRow
-                          key={m.moduleId}
-                          module={m}
-                          selected={m.moduleId === to}
-                          disabled={already}
-                          disabledNote={already ? 'Already assigned to this learner' : undefined}
-                          onSelect={() => setTo(m.moduleId)}
-                        />
-                      );
-                    })}
-                  </div>
+                  <label className="relative block p-2">
+                    <span className="sr-only">Search programme modules</span>
+                    <i className="ri-search-line pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-[13px] text-foreground-400" />
+                    <input
+                      type="search"
+                      className={moduleSearchClass}
+                      value={programmeSearch}
+                      onChange={(event) => setProgrammeSearch(event.target.value)}
+                      placeholder="Search module or group…"
+                      aria-label="Search programme modules"
+                    />
+                  </label>
+                  {visibleChoices.length === 0 ? (
+                    <p className={emptyNote}>No programme modules match that search.</p>
+                  ) : (
+                    <div className="max-h-72 overflow-y-auto">
+                      {visibleChoices.map((m) => {
+                        // Already on the plan: the plan holds a module once, so
+                        // shifting onto it would drop one rather than swap it.
+                        const already = assigned.has(m.moduleId);
+                        return (
+                          <ModuleRow
+                            key={m.moduleId}
+                            module={m}
+                            selected={m.moduleId === to}
+                            disabled={already}
+                            disabledNote={already ? 'Already assigned to this learner' : undefined}
+                            onSelect={() => setTo(m.moduleId)}
+                          />
+                        );
+                      })}
+                    </div>
+                  )}
                 </>
               )}
             </div>
@@ -609,10 +702,13 @@ export function ShiftModuleModal({ learnerId, learnerName, onClose, onSaved }: P
         ) : progress && progress.weeks.length > 0 ? (
           <div className="space-y-3">
             <p className="text-[12px] text-foreground-500">
-              Each week the learner has worked in, beside the week in the same position of{' '}
-              <strong className="text-foreground-800">{toModule?.moduleTitle}</strong>. Open a week
-              to match its completed components — like for like, so a video only matches a video.
-              Anything left unmatched stays where it is.
+              Each week the learner has worked in, beside its matching lesson in{' '}
+              <strong className="text-foreground-800">{toModule?.moduleTitle}</strong>. Exact lesson
+              titles can match even when cohort calendars use different week numbers. Open a week
+              to review its completed components. Automatic component matches use the same ID, or
+              one exact title and type match. When titles differ, you can manually choose a
+              same-type component in the paired week. Unmatched progress is archived and
+              removed from active completion, achieved hours and KSB totals.
             </p>
             {progress.weeks.map((pair) => (
               <WeekPair

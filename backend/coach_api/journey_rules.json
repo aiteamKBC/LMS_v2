@@ -1,0 +1,6 @@
+{
+  "native": [["completed", "completed"], ["started", "in-progress"]],
+  "module": [["allCompleted", "completed"], ["started", "in-progress"], ["unavailable", "unavailable"]],
+  "default": "not-started",
+  "historicalStartedStatuses": ["started", "in_progress", "submitted", "failed", "completed", "passed"]
+}

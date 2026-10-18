@@ -24,14 +24,17 @@ function useWatchTracking(video: RefObject<HTMLVideoElement | null>, seriesId: s
   const pending = useRef(0);
   const lastPosition = useRef<number | null>(null);
   const [saved, setSaved] = useState<{ watchedSeconds: number; durationSeconds: number } | null>(null);
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [saveError, setSaveError] = useState('');
   const csrfToken = useRef('');
   const fileId = file.id, kind = learner?.kind, learnerId = learner?.id;
   useEffect(() => {
     if (!enabled || !kind || !learnerId) return;
+    pending.current = 0; lastPosition.current = null; setSaved(null); setElapsedSeconds(0); setSaveError('');
     const controller = new AbortController();
     void loadRecordingWatch(seriesId, file, { kind, id: learnerId }, controller.signal).then(state => {
       csrfToken.current = state.csrfToken || '';
+      setElapsedSeconds(current => Math.max(current, state.watchedSeconds || 0));
       if (state.watchedSeconds > 0) setSaved(state);
     }).catch(reason => { if (!controller.signal.aborted) setSaveError(reason instanceof Error ? reason.message : 'Viewing time is unavailable.'); });
     return () => controller.abort();
@@ -49,7 +52,11 @@ function useWatchTracking(video: RefObject<HTMLVideoElement | null>, seriesId: s
       watchedSeconds: seconds,
       position: Math.floor(element?.currentTime || 0),
       duration: Number.isFinite(element?.duration) ? Math.floor(element?.duration || 0) : 0,
-    }, csrfToken.current, keepalive).then(result => { setSaved(result); setSaveError(''); })
+    }, csrfToken.current, keepalive).then(result => {
+      setSaved(result);
+      setElapsedSeconds(current => Math.max(current, result.watchedSeconds + pending.current));
+      setSaveError('');
+    })
       // Viewing time is informational: never interrupt playback, but say it was not saved.
       .catch(reason => setSaveError(reason instanceof Error ? reason.message : 'Viewing time could not be saved.'));
   };
@@ -61,12 +68,15 @@ function useWatchTracking(video: RefObject<HTMLVideoElement | null>, seriesId: s
     return () => { window.clearInterval(timer); window.removeEventListener('pagehide', leave); report.current(true); };
   }, [enabled]);
   return {
-    saved, saveError,
+    saved, saveError, elapsedSeconds,
     onPlayedTime: () => {
       const element = video.current;
       if (!enabled || !element) return;
       const step = element.currentTime - (lastPosition.current ?? element.currentTime);
-      if (!element.paused && !element.seeking && step > 0 && step <= MAX_PLAYED_STEP_SECONDS) pending.current += step;
+      if (!element.paused && !element.seeking && step > 0 && step <= MAX_PLAYED_STEP_SECONDS) {
+        pending.current += step;
+        setElapsedSeconds(current => current + step);
+      }
       lastPosition.current = element.currentTime;
     },
     onSeeked: () => { lastPosition.current = video.current?.currentTime ?? null; },
@@ -74,11 +84,17 @@ function useWatchTracking(video: RefObject<HTMLVideoElement | null>, seriesId: s
   };
 }
 
-export function SessionRecordingPlayer({ seriesId, file, transcripts, learner, label, trackWatch = false }: {
+export function SessionRecordingPlayer({ seriesId, file, transcripts, learner, label, sourceUrl, trackWatch = false, onWatchTimeChange, onPlayingChange }: {
   seriesId: string; file: SessionFile; transcripts: SessionFile[]; learner?: SessionLearner; label: string; trackWatch?: boolean;
+  sourceUrl?: string;
+  onWatchTimeChange?: (seconds: number) => void;
+  onPlayingChange?: (playing: boolean) => void;
 }) {
   const video = useRef<HTMLVideoElement>(null);
   const watch = useWatchTracking(video, seriesId, file, learner, trackWatch);
+  useEffect(() => {
+    if (trackWatch) onWatchTimeChange?.(Math.floor(watch.elapsedSeconds));
+  }, [trackWatch, watch.elapsedSeconds, onWatchTimeChange]);
   const panel = useRef<HTMLDivElement>(null);
   const [cues, setCues] = useState<TranscriptCue[]>([]);
   const [time, setTime] = useState(0);
@@ -134,9 +150,13 @@ export function SessionRecordingPlayer({ seriesId, file, transcripts, learner, l
   };
   return <div className="space-y-3">
     <video ref={video} controls playsInline preload="none" className="aspect-video w-full rounded-xl bg-black"
-      src={sessionFileUrl(seriesId, file, learner)} aria-label={label}
+      src={sourceUrl || sessionFileUrl(seriesId, file, learner)} aria-label={label}
+      onPlaying={() => onPlayingChange?.(true)}
+      onWaiting={() => onPlayingChange?.(false)}
+      onSeeking={() => onPlayingChange?.(false)}
       onTimeUpdate={() => { readTime(); watch.onPlayedTime(); }} onSeeked={() => { readTime(); watch.onSeeked(); }}
-      onLoadedMetadata={readTime} onPause={() => { readTime(); watch.onStop(); }} onEnded={watch.onStop} />
+      onLoadedMetadata={readTime} onPause={() => { readTime(); watch.onStop(); onPlayingChange?.(false); }}
+      onEnded={() => { watch.onStop(); onPlayingChange?.(false); }} />
     {trackWatch && (watch.saveError
       ? <p role="status" className="text-xs text-amber-800">{watch.saveError}</p>
       : watch.saved && <p role="status" className="text-xs font-semibold text-primary-700">{watchedText(watch.saved)}</p>)}

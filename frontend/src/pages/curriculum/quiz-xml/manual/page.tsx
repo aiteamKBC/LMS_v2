@@ -1,6 +1,7 @@
 import { FormEvent, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { AppIcon } from '@/components/feature/AppIcon';
+import { QuizQuestionImageField } from '@/components/feature/QuizQuestionImageField';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { ThemedSelect } from '@/components/feature/ThemedSelect';
 import { ImageMatchingPairFields } from '@/components/feature/ImageMatchingPairFields';
@@ -92,6 +93,7 @@ interface ManualSettings {
 interface ManualQuestion {
   id: number;
   text: string;
+  imageUrl?: string;
   questionType: QuestionType;
   explanation: string;
   answers: {
@@ -217,6 +219,7 @@ export default function ManualQuizPage() {
   const [weeks, setWeeks] = useState<WeekItem[]>([]);
   const [weeksState, setWeeksState] = useState<WeekLoadState>('idle');
   const [saving, setSaving] = useState(false);
+  const [readingQuestionImage, setReadingQuestionImage] = useState(false);
   const [pageError, setPageError] = useState('');
 
   useEffect(() => {
@@ -372,7 +375,7 @@ export default function ManualQuizPage() {
 
   const saveManualQuiz = async (event?: FormEvent) => {
     event?.preventDefault();
-    if (saving) return;
+    if (saving || readingQuestionImage) return;
     const validationMessage = validateQuiz();
     if (validationMessage) {
       setPageError(validationMessage);
@@ -433,7 +436,7 @@ export default function ManualQuizPage() {
             <button type="button" onClick={addQuestion} className="h-10 px-4 rounded-lg bg-white border border-primary-200 text-primary-700 text-sm font-semibold hover:bg-primary-50">
               <AppIcon className="ri-add-line mr-1"></AppIcon>Add question
             </button>
-            <button type="submit" disabled={saving} className="h-10 px-5 rounded-lg bg-[#5b2dbb] text-white text-sm font-semibold hover:bg-[#4c1d95] disabled:opacity-60 disabled:cursor-wait">
+            <button type="submit" disabled={saving || readingQuestionImage} className="h-10 px-5 rounded-lg bg-[#5b2dbb] text-white text-sm font-semibold hover:bg-[#4c1d95] disabled:opacity-60 disabled:cursor-wait">
               {saving ? 'Saving...' : 'Save Manual Quiz'}
             </button>
           </div>
@@ -516,6 +519,10 @@ export default function ManualQuizPage() {
                     </div>
                     <textarea value={activeQuestion.text} onChange={event => updateQuestion(activeQuestion.id, { text: event.target.value })} className="w-full min-h-36 rounded-xl border border-[#d8dde6] bg-white p-4 text-sm outline-none focus:border-[#8b5cf6] focus:ring-2 focus:ring-[#ede9fe]" placeholder="Write the question learners will answer" />
                   </div>
+
+                  <QuizQuestionImageField key={activeQuestion.id} imageUrl={activeQuestion.imageUrl}
+                    onChange={imageUrl => updateQuestion(activeQuestion.id, { imageUrl })}
+                    disabled={saving || readingQuestionImage} onBusyChange={setReadingQuestionImage} />
 
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                     <div>
@@ -659,7 +666,7 @@ export default function ManualQuizPage() {
             <button type="button" onClick={addQuestion} className="px-4 py-2 rounded-lg bg-white border border-primary-200 text-primary-700 text-sm font-semibold hover:bg-primary-50">
               <AppIcon className="ri-add-line mr-1"></AppIcon>Add question
             </button>
-            <button type="submit" disabled={saving} className="px-5 py-2 rounded-lg bg-[#5b2dbb] text-white text-sm font-semibold hover:bg-[#4c1d95] disabled:opacity-60 disabled:cursor-wait">
+            <button type="submit" disabled={saving || readingQuestionImage} className="px-5 py-2 rounded-lg bg-[#5b2dbb] text-white text-sm font-semibold hover:bg-[#4c1d95] disabled:opacity-60 disabled:cursor-wait">
               {saving ? 'Saving...' : 'Save Manual Quiz'}
             </button>
           </div>

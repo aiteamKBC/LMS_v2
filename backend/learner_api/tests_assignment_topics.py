@@ -64,11 +64,55 @@ class AssignmentTopicTests(SimpleTestCase):
 
     def test_legacy_question_and_file_are_retained_without_cloning_to_other_topics(self):
         topics = topics_from_settings({"assignmentBrief": "Legacy question", "assignmentFileUrl": "/curriculum_api/curriculum/uploads/brief.pdf"})
-        self.assertEqual(len(topics), 3)
+        self.assertEqual([topic["id"] for topic in topics], ["1"])
         self.assertEqual(topics[0]["question"], "Legacy question")
         self.assertEqual(len(topics[0]["resources"]), 1)
-        self.assertEqual(topics[1]["question"], "")
-        self.assertEqual(topics[2]["resources"], [])
+
+    def test_an_assignment_without_topics_keeps_topic_one_before_it_has_content(self):
+        self.assertEqual([topic["id"] for topic in topics_from_settings({})], ["1"])
+        self.assertEqual(topics_from_settings({"assignmentTopics": ""})[0]["question"], "")
+
+    def test_only_configured_topics_are_offered_and_keep_their_ids(self):
+        topics = definitions(json.dumps([
+            {"id": "1", "name": "Unused", "question": "<p>&nbsp;</p>", "instructions": "", "resources": []},
+            {"id": "2", "name": "Planning", "question": "Explain your plan"},
+            {"id": "3", "instructions": "Use the attached template"}]))
+        self.assertEqual([topic["id"] for topic in topics], ["2", "3"])
+        self.assertEqual(topics[1]["instructions"], "Use the attached template")
+
+    def test_empty_topic_slots_fall_back_to_the_legacy_brief(self):
+        topics = topics_from_settings({"assignmentBrief": "Legacy question", "submissionInstructions": "Submit a report",
+                                       "assignmentTopics": json.dumps([{"id": identity} for identity in "123"])})
+        self.assertEqual([(topic["id"], topic["question"], topic["instructions"]) for topic in topics],
+                         [("1", "Legacy question", "Submit a report")])
+
+    def test_saved_work_on_a_topic_the_author_emptied_stays_editable(self):
+        cursor = self.cursor([("2", "draft")])
+        cursor.fetchone.return_value = ({"assignmentTopics": [{"id": "1", "question": "Question one"}]},)
+        cursor.fetchall.return_value = [("2", "draft", json.dumps({"assignmentTopicName": "Planning", "assignmentQuestion": "Original"}))]
+        payload = self.payload()
+        self.assertEqual(prepare_topic_save(cursor, payload), "2")
+        self.assertEqual((payload["assignmentTopicName"], payload["assignmentQuestion"]), ("Planning", "Original"))
+        cursor.fetchall.return_value = []
+        with self.assertRaisesMessage(ValueError, "not available"):
+            prepare_topic_save(cursor, self.payload())
+
+    def test_topic_saves_use_the_title_learners_were_given(self):
+        cursor = self.cursor()
+        cursor.fetchone.return_value = ({"learnerTitle": "  Month 3:  Marketing plan ", "assignmentBrief": "Question"},)
+        payload = {**self.payload(identity="1"), "activityTitle": "Imported legacy title"}
+        prepare_topic_save(cursor, payload)
+        self.assertEqual(payload["activityTitle"], "Month 3: Marketing plan")
+        cursor.fetchone.return_value = ({"assignmentBrief": "Question"},)
+        payload = {**self.payload(identity="1"), "activityTitle": "Curriculum title"}
+        prepare_topic_save(cursor, payload)
+        self.assertEqual(payload["activityTitle"], "Curriculum title")
+
+    def test_coach_queue_title_omits_an_empty_topic_name(self):
+        from .reflection_submissions import _activity_title
+        self.assertEqual(_activity_title({"activityTitle": "Plan"}, ""), "Plan")
+        self.assertEqual(_activity_title({"activityTitle": "Plan", "assignmentTopicName": " "}, "1"), "Plan - Topic 1")
+        self.assertEqual(_activity_title({"activityTitle": "Plan", "assignmentTopicName": "Budget"}, "2"), "Plan - Topic 2: Budget")
 
     def test_unsafe_resources_are_not_exposed(self):
         topics = definitions([{"id": "1", "resources": [{"url": "javascript:alert(1)"}, {"url": "/curriculum_api/curriculum/uploads/a.mp4"}]}])
@@ -226,15 +270,20 @@ class SharedTopicCoachingTests(SimpleTestCase):
             prepare_topic_save(self.booked_cursor(), payload)
         self.assertEqual(payload["monthlyAssignment"]["meetingKey"], "shared-mcm")
 
-    def test_cancelled_unowned_wrong_type_and_out_of_window_meetings_are_not_inherited(self):
-        from datetime import date
-        for record in (None, self.meeting(status="cancelled"), self.meeting(event_type="review"),
-                       self.meeting(scheduled_date=date(2026, 10, 15))):
+    def test_cancelled_unowned_and_wrong_type_meetings_are_not_inherited(self):
+        for record in (None, self.meeting(status="cancelled"), self.meeting(event_type="review")):
             with self.subTest(record=record):
                 payload = self.booking_payload()
                 with patch("learner_api.calendar._learner_calendar_record", return_value=record):
                     prepare_topic_save(self.booked_cursor(), payload)
                 self.assertEqual(payload["monthlyAssignment"]["meetingKey"], "")
+
+    def test_meeting_on_any_date_is_inherited(self):
+        from datetime import date
+        payload = self.booking_payload()
+        with patch("learner_api.calendar._learner_calendar_record", return_value=self.meeting(scheduled_date=date(2026, 10, 15))):
+            prepare_topic_save(self.booked_cursor(), payload)
+        self.assertNotEqual(payload["monthlyAssignment"]["meetingKey"], "")
 
     def test_completed_and_rescheduled_meetings_still_satisfy_other_topics(self):
         from datetime import date

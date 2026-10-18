@@ -12,6 +12,84 @@ from .tests_overview_week import native, old
 START, END = date(2026, 9, 3), date(2026, 9, 13)
 
 
+class HomeLiveHoursTests(SimpleTestCase):
+    def read(self, *, actual=0, planned=175, records=(), credits=None, unavailable=False, modules=None):
+        source = SimpleNamespace(pk=7, _canonical_profile={'id': 70})
+        credits = ([{'componentId': 'LIVE-1', 'moduleId': 'M1', 'hours': 2},
+                    {'componentId': 'LIVE-2', 'moduleId': 'M1', 'hours': 2}]
+                   if credits is None else credits)
+        lectures = [{'session_date': START, 'attendance_status': 'present'}]
+        metrics = {'otjh': {'actual': actual, 'planned': planned},
+                   'programme': {'completed': 0, 'total': 0, 'status': 'empty'}}
+        with patch('learner_api.home_progress.connections', {'enrolment': MagicMock()}), \
+             patch('learner_api.home_progress.rows', return_value=[]), \
+             patch('learner_api.home_progress._group_dates', return_value=(START, END, 'learner')), \
+             patch('learner_api.home_progress.lecture_register', return_value=lectures,
+                   side_effect=DatabaseError('offline') if unavailable else None) as register, \
+             patch('learner_api.live_session_progress.read_live_credits', return_value=credits) as read, \
+             patch('learner_api.module_progress.canonical_module_progress', return_value=modules or []) as catalogue, \
+             patch('learner_api.home_progress.canonical_learning.entries_for', return_value=list(records)) as entries, \
+             patch('learner_api.home_progress.plan_planned_hours', return_value=175):
+            result = read_home_progress(source, 'commercial', [], [], [], [('M1', 'Synthetic')], END,
+                                       canonical_metrics=metrics)
+        register.assert_called_once()
+        self.assertEqual(catalogue.call_args.args[0], source)
+        self.assertEqual(catalogue.call_args.args[1].enrolment_id, source.pk)
+        self.assertEqual(catalogue.call_args.args[1].pk, 70)
+        if not unavailable:
+            read.assert_called_once_with(source, module_ids=['M1'], register=lectures)
+        else:
+            read.assert_not_called()
+        self.assertEqual(metrics['otjh']['actual'], actual)
+        return result, entries
+
+    def test_verified_live_hours_reach_home_actual_and_percentage(self):
+        result, entries = self.read()
+        self.assertEqual(result['otjh']['actual'], 4)
+        self.assertEqual(result['otjh']['percent'], 2.29)
+        self.assertEqual(result['otjh']['submitted'], 0)
+        entries.assert_called_once_with({'id': 70}, lineage_only=True)
+
+    def test_existing_hours_are_topped_up_once_and_other_work_is_preserved(self):
+        records = [{'component_ref': 'LIVE-1', 'accepted': True, 'actual_seconds': 1800},
+                   {'component_ref': 'LIVE-2', 'accepted': True, 'actual_seconds': 7200},
+                   {'component_ref': 'READING', 'accepted': True, 'actual_seconds': 10800}]
+        first, _ = self.read(actual=5.5, records=records)
+        second, _ = self.read(actual=5.5, records=records)
+        self.assertEqual(first['otjh']['actual'], 7)
+        self.assertEqual(first, second)
+
+    def test_staff_zero_override_is_not_replaced_by_automatic_credit(self):
+        records = [{'component_ref': 'LIVE-1', 'accepted': True, 'actual_seconds': 0,
+                    'actual_basis': 'staff:module-progress'}]
+        result, _ = self.read(records=records)
+        self.assertEqual(result['otjh']['actual'], 2)
+
+    def test_missing_metrics_or_attendance_does_not_fabricate_hours(self):
+        result, entries = self.read(actual=None)
+        self.assertIsNone(result['otjh']['actual'])
+        self.assertIsNone(result['otjh']['percent'])
+        entries.assert_not_called()
+        result, entries = self.read(unavailable=True)
+        self.assertEqual(result['otjh']['actual'], 0)
+        self.assertIsNone(result['lectures'])
+        entries.assert_not_called()
+
+    def test_plan_fallback_uses_the_supplemented_hours(self):
+        result, _ = self.read(planned=None)
+        self.assertEqual((result['otjh']['actual'], result['otjh']['planned'], result['otjh']['percent']),
+                         (4, 175, 2.29))
+
+    def test_activities_count_the_full_my_learning_catalogue_not_saved_records(self):
+        result, _ = self.read(modules=[{'id': 'current:M1', 'completed': 2, 'total': 851},
+                                      {'id': 'current:M2', 'completed': 10, 'total': 10},
+                                      {'id': 'current:EMPTY', 'completed': 0, 'total': 0}])
+        self.assertEqual(result['activities'], {'completed': 12, 'total': 861})
+        self.assertEqual(result['modules'], {'completed': 1, 'total': 3})
+        self.assertEqual(result['assignments'], {'completed': 0, 'total': 0})
+        self.assertEqual(result['lectures'], {'completed': 1, 'total': 1})
+
+
 class HomeProgressTests(SimpleTestCase):
     def summary(self, current=(), historical=(), progress=(), submissions=(), assigned=(),
                 start=START, lectures=(), links=None, historical_hours=0):
@@ -199,11 +277,29 @@ class HomeProgressTests(SimpleTestCase):
              patch('learner_api.home_progress._group_dates', return_value=(START, END, 'learner')), \
              patch('learner_api.home_progress.rows', return_value=[]), \
              patch('learner_api.home_progress.lecture_register', return_value=[]), \
+             patch('learner_api.home_progress.plan_planned_hours', return_value=None), \
+             patch('learner_api.home_progress.canonical_learning.profile', return_value=None), \
              patch('learner_api.home_progress.canonical_learning.metrics', return_value=canonical) as metrics:
             result = read_home_progress(source, 'commercial', [], [], [], [], END)
         self.assertEqual(result['otjh']['actual'], 12.5)
         self.assertIsNone(result['otjh']['percent'])
         metrics.assert_called_once_with(499)
+
+    def test_home_planned_falls_back_to_the_learning_plan_without_an_ssot_plan(self):
+        connection = MagicMock()
+        source = SimpleNamespace(pk=499, aptem_id=None, _canonical_profile={'id': 7})
+        with patch('learner_api.home_progress.connections', {'enrolment': connection}), \
+             patch('learner_api.home_progress._group_dates', return_value=(START, END, 'learner')), \
+             patch('learner_api.home_progress.rows', return_value=[]), \
+             patch('learner_api.home_progress.lecture_register', return_value=[]), \
+             patch('learner_api.home_progress.plan_planned_hours', return_value=200) as plan, \
+             patch('learner_api.home_progress.canonical_learning.metrics',
+                   return_value={'otjh': {'actual': 12.5, 'planned': None}}):
+            result = read_home_progress(source, 'commercial', [], [], [], [], END)
+        plan.assert_called_once_with(source, {'id': 7})
+        self.assertEqual(result['otjh']['planned'], 200)
+        self.assertEqual(result['otjh']['percent'], 6.25)
+        self.assertEqual(result['otjh']['missingPlannedActivities'], 0)
 
     def test_home_endpoint_keeps_route_enrolment_and_ignores_query_identity(self):
         model = MagicMock()

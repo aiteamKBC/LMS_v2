@@ -1,4 +1,5 @@
 import json
+import copy
 import csv
 import html
 import io
@@ -25,6 +26,10 @@ from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
 
 from .models import QuizAnswer, QuizPackage, QuizQuestion
+from .question_images import validate_question_image
+from .answer_keys import choice_key_error, choice_label, quiz_publication_error
+from .key_readiness import quiz_requires_valid_key
+from .intake import InvalidQuizIntake, intake_error, key_indexes
 from learner_api.models import LearnerProfile
 
 logger = logging.getLogger(__name__)
@@ -48,6 +53,10 @@ QUIZ_STATUSES = {"draft", "published", "pending", "validating", "trash", "privat
 ASSESSMENT_TYPES = {"quiz", "checkpoint"}
 
 
+_TABLE_EXISTS_CACHE = set()
+_COLUMN_EXISTS_CACHE = set()
+
+
 def _quote_ident(value):
     return '"' + str(value).replace('"', '""') + '"'
 
@@ -57,6 +66,11 @@ def _curriculum_table_name(table):
 
 
 def _curriculum_table_exists(table):
+    # Cached like curriculum_api.views.table_exists: the list endpoints ask the
+    # same question hundreds of times per request. Only "exists" is cached, so a
+    # table created later is still found and a failed probe is retried.
+    if table in _TABLE_EXISTS_CACHE:
+        return True
     try:
         with connection.cursor() as cursor:
             cursor.execute(
@@ -69,12 +83,17 @@ def _curriculum_table_exists(table):
                 """,
                 [table],
             )
-            return bool(cursor.fetchone())
+            exists = bool(cursor.fetchone())
     except Exception:
         return False
+    if exists:
+        _TABLE_EXISTS_CACHE.add(table)
+    return exists
 
 
 def _curriculum_column_exists(table, column):
+    if (table, column) in _COLUMN_EXISTS_CACHE:
+        return True
     try:
         with connection.cursor() as cursor:
             cursor.execute(
@@ -88,9 +107,12 @@ def _curriculum_column_exists(table, column):
                 """,
                 [table, column],
             )
-            return bool(cursor.fetchone())
+            exists = bool(cursor.fetchone())
     except Exception:
         return False
+    if exists:
+        _COLUMN_EXISTS_CACHE.add((table, column))
+    return exists
 
 
 def _first_existing_curriculum_table(*tables):
@@ -106,6 +128,11 @@ def _curriculum_table_name(table):
 
 
 def _curriculum_table_exists(table):
+    # Cached like curriculum_api.views.table_exists: the list endpoints ask the
+    # same question hundreds of times per request. Only "exists" is cached, so a
+    # table created later is still found and a failed probe is retried.
+    if table in _TABLE_EXISTS_CACHE:
+        return True
     try:
         with connection.cursor() as cursor:
             cursor.execute(
@@ -118,9 +145,12 @@ def _curriculum_table_exists(table):
                 """,
                 [table],
             )
-            return bool(cursor.fetchone())
+            exists = bool(cursor.fetchone())
     except Exception:
         return False
+    if exists:
+        _TABLE_EXISTS_CACHE.add(table)
+    return exists
 
 
 def _training_plan_table_exists():
@@ -410,6 +440,14 @@ def _format_size(size):
     return f"{size} B"
 
 
+QUIZ_PICKER_FIELDS = {
+    'id': 'id', 'title': 'title', 'programmeId': 'programme_id',
+    'programme': 'programme', 'module': 'module', 'weekId': 'week_id',
+    'questions': 'questions', 'status': 'status', 'assessmentType': 'assessment_type',
+    'duration': 'duration', 'passingGrade': 'passing_grade',
+}
+
+
 def _serialize_quiz(quiz):
     return {
         "id": quiz.id,
@@ -673,54 +711,39 @@ def _question_allocation_instruction(source_files, question_count):
 
 def _normalise_generated_questions(data, default_type="single_choice"):
     raw_questions = data.get("questions", []) if isinstance(data, dict) else []
+    if not isinstance(raw_questions, list):
+        raise InvalidQuizIntake("AI questions must be a list.")
     normalised = []
     for question_index, item in enumerate(raw_questions):
         if not isinstance(item, dict):
-            continue
+            raise InvalidQuizIntake(f"Question {question_index + 1}: Expected a question object.")
         text = str(item.get("question") or item.get("text") or "").strip()
-        if not text:
-            continue
         question_type = _normalise_question_type(item.get("type") or default_type)
         raw_options = item.get("options") if isinstance(item.get("options"), list) else []
-        options = [str(option).strip() for option in raw_options if str(option).strip()]
+        if any(not isinstance(option, str) for option in raw_options):
+            raise InvalidQuizIntake(f"Question {question_index + 1}: Answer options must be text.")
+        options = [option.strip() for option in raw_options]
         correct_answer = str(item.get("correct_answer") or item.get("correctAnswer") or "").strip()
         explanation = str(item.get("explanation") or item.get("feedback") or "").strip()
 
-        if question_type == "true_false" and len(options) < 2:
-            options = ["True", "False"]
         if question_type in {"matching", "image_matching"} and not options:
-            pair_source = correct_answer or explanation
+            pair_source = correct_answer
             if "|" in pair_source:
                 pair_source = pair_source.split("|", 1)[1]
             options = [part.strip() for part in re.split(r"\s*(?:;|\n)\s*", pair_source) if part.strip()]
         if question_type == "keywords" and not options:
-            keyword_source = correct_answer or explanation
+            keyword_source = correct_answer
             if "|" in keyword_source:
                 keyword_source = keyword_source.split("|", 1)[1]
             options = [part.strip() for part in re.split(r"\s*(?:,|;|\n|\|)\s*", keyword_source) if part.strip()]
         if question_type == "fill_gap" and not options and correct_answer:
             options = [correct_answer]
-        if question_type == "ordering" and not correct_answer:
-            correct_answer = ", ".join(chr(65 + index) for index in range(len(options)))
-        if question_type in {"single_choice", "multiple_choice", "true_false"} and not options:
-            continue
-
-        correct_indexes = set(range(len(options))) if question_type in {"matching", "image_matching", "keywords", "ordering"} else {0}
-        if correct_answer:
-            correct_indexes = set()
-            correct_tokens = [token.strip() for token in re.split(r"[,;/]", correct_answer) if token.strip()]
-            for token in correct_tokens or [correct_answer]:
-                lower_correct = token.lower()
-                for index, option in enumerate(options):
-                    if option.lower() == lower_correct:
-                        correct_indexes.add(index)
-                letter_index = _correct_answer_index(token)
-                if 0 <= letter_index < len(options):
-                    correct_indexes.add(letter_index)
-            if question_type in {"matching", "image_matching", "keywords", "ordering"} and not correct_indexes:
-                correct_indexes = set(range(len(options)))
-            if not correct_indexes:
-                correct_indexes = {0}
+        parsed = _question_from_parts(text, options, correct_answer, question_type=question_type)
+        if question_type in {"ordering", "fill_gap"}:
+            options = [answer["text"] for answer in parsed["answers"]]
+            correct_indexes = set(range(len(options)))
+        else:
+            correct_indexes = {answer["sort_order"] for answer in parsed["answers"] if answer["is_correct"]}
 
         answers = [
             {
@@ -2025,12 +2048,18 @@ def _sync_quiz_assignment_counts(quizzes):
     except Exception:
         pass
 
+    # Quizzes of one programme share the same module options; read them once
+    # per programme, and give each quiz its own copy.
+    module_options_by_programme = {}
     for quiz in quizzes:
         quiz_id = str(quiz.id)
         count = len(linked_module_ids.get(quiz_id, set())) or len(linked_component_ids.get(quiz_id, set()))
         group_count = len(linked_group_names.get(quiz_id, set()))
         if not count:
-            module_options = _quiz_module_options(quiz)
+            programme_key = (str(quiz.programme_id or "").strip(), str(quiz.programme or "").strip())
+            if programme_key not in module_options_by_programme:
+                module_options_by_programme[programme_key] = _quiz_module_options(quiz)
+            module_options = copy.deepcopy(module_options_by_programme[programme_key])
             inferred_module_ids = _infer_quiz_module_link_ids(quiz, module_options)
             count = len(inferred_module_ids)
             if inferred_module_ids:
@@ -2231,7 +2260,7 @@ def _normalise_correct_answer(value):
     if value is None:
         return ""
     text = str(value).strip()
-    match = re.match(r"^([A-Z])(?:[\).:\s]|$)", text, flags=re.IGNORECASE)
+    match = re.fullmatch(r"([A-Z])(?:\s*[\).:\-\u2013\u2014]\s*.*)?", text, flags=re.IGNORECASE)
     return match.group(1).upper() if match else text.lower()
 
 
@@ -2246,27 +2275,38 @@ def _correct_answer_index(value):
 
 def _question_from_parts(text, options, correct_answer="", explanation="", question_type="single_choice"):
     question_type = _normalise_question_type(question_type or "single_choice")
-    cleaned_options = [str(option).strip() for option in options if option is not None and str(option).strip()]
-    correct_tokens = [
-        _normalise_correct_answer(token)
-        for token in re.split(r"[,;/|]", str(correct_answer or ""))
-        if str(token).strip()
-    ]
-    correct_keys = set(correct_tokens)
-    correct_key = next(iter(correct_keys), "")
     answers = []
-    for index, option in enumerate(cleaned_options):
+    option_positions = []
+    for index, raw_option in enumerate(options):
+        option = str(raw_option or "").strip()
+        if not option:
+            continue
         letter = chr(65 + index)
-        number = str(index + 1)
-        option_key = _normalise_correct_answer(option)
+        # Only remove an explicit marker for this option's position. Natural
+        # text such as 'A private memo' and 'X (Twitter)' is not a marker.
+        option = re.sub(rf"^{letter}[\).:]\s+", "", option, flags=re.IGNORECASE).strip()
         answers.append({
-            "text": re.sub(r"^[A-Z][\).:\s]+", "", option, flags=re.IGNORECASE).strip(),
-            "is_correct": bool({letter, number, option_key, option.lower()} & correct_keys),
+            "text": option,
+            "is_correct": False,
             "sort_order": index,
         })
+        option_positions.append(index)
 
-    if answers and correct_key and not any(answer["is_correct"] for answer in answers):
-        answers[0]["is_correct"] = True
+    key_text = str(correct_answer or "").strip()
+    # Preserve original positions when blank CSV columns precede a keyed option.
+    padded = [""] * len(options)
+    for index, answer in enumerate(answers):
+        padded[option_positions[index]] = answer["text"]
+    selected = key_indexes(padded, key_text, ordered=question_type == "ordering", multiple=question_type == "multiple_choice")
+    if question_type == "ordering":
+        answers = [dict(text=padded[position], is_correct=True, sort_order=index)
+                   for index, position in enumerate(selected)]
+    elif question_type == "fill_gap":
+        answers = [dict(text=answer["text"], is_correct=True, sort_order=index)
+                   for index, answer in enumerate(a for a in answers if a["sort_order"] in selected)]
+    else:
+        for answer in answers:
+            answer["is_correct"] = question_type in {"matching", "image_matching", "keywords"} or answer["sort_order"] in selected
 
     return {
         "text": text.strip(),
@@ -2433,7 +2473,7 @@ def _parse_questions_from_xml(root):
                 image_url = direct_child_text(pair_node, "image", "image_url", "imageUrl")
                 label = direct_child_text(pair_node, "display", "label") or left
                 if not right or not (left or image_url or label):
-                    continue
+                    raise InvalidQuizIntake("Matching pairs need both a prompt/image and an answer.")
                 if question_type == "image_matching" and image_url:
                     options.append(json.dumps({
                         "kind": "image_matching_pair",
@@ -2459,7 +2499,9 @@ def _parse_questions_from_xml(root):
             )]
             if not options:
                 option_nodes = descendants(question_node, "option")
-                options = ["".join(node.itertext()).strip() for node in option_nodes if "".join(node.itertext()).strip()]
+                has_markers = any(node.get("correct") is not None or node.get("fraction") is not None for node in option_nodes)
+                options = ["".join(node.itertext()).strip() for node in option_nodes
+                           if "".join(node.itertext()).strip() and (not has_markers or marked_correct(node))]
             correct_indexes = list(range(len(options)))
         elif question_type == "ordering":
             item_nodes = descendants(question_node, "item")
@@ -2472,8 +2514,9 @@ def _parse_questions_from_xml(root):
             order_ids = [value.strip() for value in re.split(r"[,;|]", correct_order) if value.strip()]
             if order_ids:
                 by_id = {item_id: value for item_id, value in items}
-                options = [by_id[item_id] for item_id in order_ids if item_id in by_id]
-                options.extend(value for item_id, value in items if item_id not in order_ids)
+                if len(by_id) != len(items) or len(order_ids) != len(items) or set(order_ids) != set(by_id):
+                    raise InvalidQuizIntake("The correct order must contain every item exactly once.")
+                options = [by_id[item_id] for item_id in order_ids]
             else:
                 options = [value for _item_id, value in items]
             correct_indexes = list(range(len(options)))
@@ -2582,52 +2625,23 @@ def _extract_excel_questions(uploaded_file):
 
     uploaded_file.seek(0)
     workbook = load_workbook(uploaded_file, read_only=True, data_only=True)
-    sheet = workbook.active
-    rows = list(sheet.iter_rows(values_only=True))
-    if not rows:
-        return []
-
-    headers = [str(value).strip().lower() if value is not None else "" for value in rows[0]]
-    header_map = {header: index for index, header in enumerate(headers)}
-
-    def get(row, *names):
-        for name in names:
-            if name in header_map and header_map[name] < len(row):
-                return row[header_map[name]]
-        return None
-
-    parsed = []
-    detected_title = ""
-    metadata = {}
-    for row in rows[1:]:
-        question_text = get(row, "question", "question_title", "question title", "question_text", "question text", "stem")
-        if not question_text:
-            continue
-        detected_title = detected_title or str(get(row, "quiz_title", "quiz title") or "").strip()
-        metadata.setdefault("programme", str(get(row, "course_name", "course name") or "").strip())
-        metadata.setdefault("module", str(get(row, "section_name", "section name") or "").strip())
-        options = [
-            get(row, "option_1", "option 1", "option_a", "option a", "a"),
-            get(row, "option_2", "option 2", "option_b", "option b", "b"),
-            get(row, "option_3", "option 3", "option_c", "option c", "c"),
-            get(row, "option_4", "option 4", "option_d", "option d", "d"),
-            get(row, "option_5", "option 5", "option_e", "option e"),
-        ]
-        correct_answer = get(row, "correct_answer", "correct answer", "answer", "correct")
-        explanation_index = _correct_answer_index(correct_answer)
-        explanation_names = ["question explanation"]
-        if explanation_index > 0:
-            explanation_names = [f"question explanation_{explanation_index}", f"question_explanation_{explanation_index}"]
-        explanation = get(row, *explanation_names, "explanation", "feedback") or ""
-        question_type = str(get(row, "question_type", "question type") or "single_choice").strip()
-        parsed.append(_question_from_parts(str(question_text), options, correct_answer, str(explanation), question_type))
-    return parsed, detected_title, metadata
+    try:
+        output = io.StringIO()
+        writer = csv.writer(output)
+        writer.writerows(workbook.active.iter_rows(values_only=True))
+        return _extract_csv_questions(io.BytesIO(output.getvalue().encode("utf-8")))
+    finally:
+        workbook.close()
+        uploaded_file.seek(0)
 
 
 def _extract_csv_questions(uploaded_file):
     text = _decode_uploaded_text(uploaded_file)
-    reader = csv.DictReader(text.splitlines())
+    reader = csv.DictReader(io.StringIO(text))
     rows = list(reader)
+    for index, row in enumerate(rows, 2):
+        if None in row and any(str(value or "").strip() for value in row[None]):
+            raise InvalidQuizIntake(f"CSV row {index}: Too many columns. Quote text containing commas.")
     parsed = []
     detected_title = ""
     metadata = {}
@@ -2642,6 +2656,8 @@ def _extract_csv_questions(uploaded_file):
             question_text = _clean_csv_text(normalised.get("question_text") or normalised.get("question") or "")
             option_text = _clean_csv_text(normalised.get("option_text") or normalised.get("answer_text") or "")
             if not question_id or not question_text or not option_text:
+                if any(str(value or "").strip() for value in normalised.values()):
+                    raise InvalidQuizIntake("Each grouped answer row needs question_id, question_text and option_text.")
                 continue
             item = grouped.setdefault(question_id, {
                 "text": question_text,
@@ -2651,6 +2667,8 @@ def _extract_csv_questions(uploaded_file):
                 "explanation": _clean_csv_text(normalised.get("explanation") or normalised.get("feedback") or ""),
                 "title": str(normalised.get("quiz_title") or normalised.get("title") or "").strip(),
             })
+            if item["text"] != question_text or item["type"] != _normalise_question_type(normalised.get("question_type") or "single_choice"):
+                raise InvalidQuizIntake(f"Question {question_id}: Grouped rows disagree on question text or type.")
             answer_index = len(item["options"])
             item["options"].append(option_text)
             if _csv_truthy(normalised.get("is_correct")):
@@ -2661,7 +2679,12 @@ def _extract_csv_questions(uploaded_file):
         for item in grouped.values():
             detected_title = detected_title or item["title"]
             correct_answer = ", ".join(item["correct_letters"])
-            parsed.append(_question_from_parts(item["text"], item["options"], correct_answer, item["explanation"], item["type"]))
+            if item["type"] == "keywords":
+                accepted = [option for index, option in enumerate(item["options"])
+                            if chr(65 + index) in item["correct_letters"]]
+                parsed.append(_question_from_parts(item["text"], accepted, "", item["explanation"], item["type"]))
+            else:
+                parsed.append(_question_from_parts(item["text"], item["options"], correct_answer, item["explanation"], item["type"]))
         uploaded_file.seek(0)
         return parsed, detected_title, metadata
 
@@ -2684,6 +2707,8 @@ def _extract_csv_questions(uploaded_file):
 
         question_text = _clean_csv_text(get("question title", "question", "question_text", "question text", "stem"))
         if not question_text:
+            if any(get(key) for key in ("option_a", "option_b", "option_c", "option_d", "a", "b", "option 1", "correct_answer", "matching_pairs", "keywords", "ordering_items")):
+                raise InvalidQuizIntake("A row with answers needs question text; no rows were imported.")
             continue
         detected_title = detected_title or str(get("quiz_title", "quiz title", "title")).strip()
         metadata.setdefault("programme", str(get("programme", "course_name", "course name")).strip())
@@ -2699,16 +2724,19 @@ def _extract_csv_questions(uploaded_file):
         correct_answer = get("correct_answer", "correct answer", "answer", "correct")
         if question_type in {"matching", "image_matching"}:
             pairs = get("matching_pairs", "matching pairs")
-            options = [item.strip().replace(" = ", " -> ") for item in re.split(r"\s*\|\s*", pairs) if item.strip()]
+            if pairs:
+                options = [item.strip().replace(" = ", " -> ") for item in re.split(r"\s*\|\s*", pairs) if item.strip()]
             correct_answer = correct_answer or ", ".join(chr(65 + index) for index in range(len(options)))
         elif question_type == "keywords":
             keywords = get("keywords")
-            options = [item.strip() for item in re.split(r"\s*[;|]\s*", keywords) if item.strip()]
+            if keywords:
+                options = [item.strip() for item in re.split(r"\s*[;|]\s*", keywords) if item.strip()]
             correct_answer = correct_answer or ", ".join(chr(65 + index) for index in range(len(options)))
         elif question_type == "ordering":
             ordering_items = get("ordering_items", "ordering items")
-            options = [item.strip() for item in re.split(r"\s*(?:>|;|\|)\s*", ordering_items) if item.strip()]
-            correct_answer = correct_answer or ", ".join(chr(65 + index) for index in range(len(options)))
+            if ordering_items:
+                options = [item.strip() for item in re.split(r"\s*(?:>|;|\|)\s*", ordering_items) if item.strip()]
+                correct_answer = correct_answer or ", ".join(chr(65 + index) for index in range(len(options)))
         elif question_type == "fill_gap" and not any(str(option or "").strip() for option in options) and correct_answer:
             options = [correct_answer]
         explanation_index = _correct_answer_index(correct_answer)
@@ -2738,8 +2766,8 @@ def _validate_xml(uploaded_file):
                 "module": record_node.findtext("Section_Name") or "",
             }
         return True, "", questions, title.strip(), parsed_questions, metadata
-    except ElementTree.ParseError as exc:
-        return False, f"XML parse error: {exc}", 0, "", [], {}
+    except (ElementTree.ParseError, InvalidQuizIntake) as exc:
+        return False, f"XML validation error: {exc}", 0, "", [], {}
     finally:
         uploaded_file.seek(0)
 
@@ -2966,7 +2994,10 @@ def _clean_csv_text(value):
 
 
 def _csv_truthy(value):
-    return str(value or "").strip().lower() in {"yes", "true", "1", "y", "correct"}
+    flag = str(value or "").strip().lower()
+    if flag not in {"yes", "true", "1", "y", "correct", "no", "false", "0", "n", "incorrect", ""}:
+        raise InvalidQuizIntake("Use true/false or 1/0 for is_correct.")
+    return flag in {"yes", "true", "1", "y", "correct"}
 
 
 def _save_questions(quiz, questions):
@@ -2974,6 +3005,7 @@ def _save_questions(quiz, questions):
         question_record = QuizQuestion.objects.create(
             quiz=quiz,
             question_text=question["text"],
+            image_url=question.get("image_url", ""),
             question_type=question.get("question_type", quiz.default_question_type),
             points=max(int(question.get("points") or 1), 1),
             explanation=question.get("explanation", ""),
@@ -3029,6 +3061,12 @@ def _seed_quizzes():
         )
 
 
+def _knowledge_finish(knowledge_meta, questions):
+    from knowledge_base.integration import finish
+
+    return finish(knowledge_meta, questions)
+
+
 @csrf_exempt
 @require_http_methods(["POST"])
 def generate_ai_questions(request):
@@ -3061,6 +3099,19 @@ def generate_ai_questions(request):
         or payload.get("custom_prompt")
         or ""
     ).strip()
+    # Retrieval and image loading only run when books are selected.
+    knowledge_meta = None
+    from knowledge_base import quiz_images
+    from knowledge_base.integration import KnowledgeBaseUnavailable, merge_into_source, requested_book_ids
+    if requested_book_ids(payload):
+        try:
+            source_text, knowledge_meta = merge_into_source(
+                payload, source_text, topic, user=getattr(getattr(request, "user", None), "email", "") or "")
+        except KnowledgeBaseUnavailable as exc:
+            return JsonResponse({"error": str(exc)}, status=400)
+        except Exception:
+            logger.exception("Could not load Knowledge Base generation sources")
+            return JsonResponse({"error": "Book sources or images could not be loaded. Please try again."}, status=503)
     if not source_text and not topic:
         unreadable_note = f" Unreadable files: {', '.join(unreadable_files)}." if unreadable_files else ""
         return JsonResponse({
@@ -3082,6 +3133,8 @@ def generate_ai_questions(request):
     source_file_count = len(source_files)
     source_allocation = _question_allocation_instruction(source_files, question_count)
 
+    book_images = knowledge_meta.get("_images", []) if knowledge_meta else []
+    generation_types = AI_GENERATION_QUESTION_TYPES - ({"image_matching"} if len(book_images) < 2 else set())
     schema = {
         "type": "object",
         "additionalProperties": False,
@@ -3095,7 +3148,7 @@ def generate_ai_questions(request):
                     "additionalProperties": False,
                     "properties": {
                         "question": {"type": "string"},
-                        "type": {"type": "string", "enum": sorted(AI_GENERATION_QUESTION_TYPES)},
+                        "type": {"type": "string", "enum": sorted(generation_types)},
                         "options": {
                             "type": "array",
                             "minItems": 2,
@@ -3172,7 +3225,9 @@ Rules:
 - For single_choice questions, provide 4 plausible options and exactly one correct answer.
 - For multiple_choice questions, provide 4 plausible options and exactly 2 or 3 correct answers. The correct_answer field must list all correct option letters or exact option texts separated by commas, for example "A, C" or "A, B, D". Do not create multiple_choice questions with only one correct answer.
 - For matching questions, write the stem as a matching task and put every correct pair in options using "left -> right" format, for example "Instagram -> visual discovery". Do not put the pairs only in explanation.
-- For image_matching questions, write a visual/image-selection style stem and put every image/concept match in options using "image placeholder -> concept" format if no actual image assets exist.
+- Use image_matching ONLY when at least two actual book images are attached. Otherwise use text matching. Never invent images, placeholders, URLs or image IDs.
+- For image_matching, inspect the attached images and use only their exact BOOK_IMAGE identifiers in options: "BOOK_IMAGE_123 -> concept". Use distinct images within each question. Do not use an image whose labels reveal its answer, and do not force an image question when the visuals do not support it. Never mention image IDs in the question or explanation.
+- Only image_matching displays images to learners. All other question types must be self-contained in text and must never ask learners to inspect an image, chart, diagram or figure that is not displayed with their question.
 - For keywords questions, ask learners to provide or identify key terms; put every accepted keyword or short concept as a separate option. Do not put accepted keywords only in explanation.
 - For fill_gap questions, include one clear blank using "____" in the stem; options should be possible gap completions and correct_answer must be the exact correct completion.
 - For ordering questions, ask learners to sequence a process; options should be steps and correct_answer should state the correct ordered sequence.
@@ -3205,7 +3260,7 @@ Rules:
                     "role": "system",
                     "content": "You generate assessment questions and return only structured JSON.",
                 },
-                {"role": "user", "content": prompt},
+                {"role": "user", "content": quiz_images.prompt_content(prompt, book_images)},
             ],
             text={
                 "format": {
@@ -3219,6 +3274,12 @@ Rules:
         raw_text = response.output_text
         generated = json.loads(raw_text)
         questions = _normalise_generated_questions(generated, "single_choice")
+        image_sources = quiz_images.resolve(questions, book_images)
+        error = intake_error([{**q, "type": q["questionType"]} for q in questions])
+        if error:
+            raise InvalidQuizIntake(error)
+        if knowledge_meta is not None:
+            knowledge_meta["questionImages"] = image_sources
         if not questions:
             return JsonResponse({"error": "AI did not return usable questions."}, status=502)
         return JsonResponse({
@@ -3230,8 +3291,11 @@ Rules:
                 "questionType": "mixed",
                 "readableFiles": readable_files,
                 "unreadableFiles": unreadable_files,
+                **({"knowledgeBase": _knowledge_finish(knowledge_meta, questions)} if knowledge_meta else {}),
             },
         })
+    except (quiz_images.InvalidImageQuestion, InvalidQuizIntake) as exc:
+        return JsonResponse({"error": str(exc)}, status=502)
     except json.JSONDecodeError:
         return JsonResponse({"error": "AI returned invalid JSON."}, status=502)
     except Exception as exc:
@@ -3269,6 +3333,14 @@ def quizzes(request):
                 queryset = queryset.filter(status=status)
         if query:
             queryset = queryset.filter(title__icontains=query)
+        if request.GET.get('view') == 'picker':
+            # The authoring picker only links a quiz and displays its summary.
+            # It does not use assignment counts, uploaded content or settings;
+            # computing those here reads every linked curriculum component.
+            return JsonResponse({'results': [
+                {name: row[column] for name, column in QUIZ_PICKER_FIELDS.items()}
+                for row in queryset.values(*QUIZ_PICKER_FIELDS.values())
+            ]})
         quizzes_to_serialize = _sync_quiz_assignment_counts(queryset)
         if status == "trash":
             quizzes_to_serialize = [_sync_quiz_assignment_count(quiz) for quiz in quizzes_to_serialize]
@@ -3301,6 +3373,17 @@ def quizzes(request):
             valid = False
             message = message or "File uploaded, but no questions were detected. Use columns like Question Title, Option 1-5, and Answer."
         default_question_type = _default_question_type_from_questions(parsed_questions, request.POST.get("questionType") or "single_choice")
+        publication_error = intake_error([
+            {"text": question.get("text"), "type": question.get("question_type"), "answers": [
+                {"text": answer["text"], "isCorrect": answer["is_correct"]}
+                for answer in question.get("answers", [])
+            ]} for question in parsed_questions
+        ]) if parsed_questions or package_type != "scorm" else None
+        if publication_error:
+            valid = False
+            message = publication_error
+        if not valid:
+            return JsonResponse({"error": message or "Fix the uploaded quiz before saving it."}, status=400)
         try:
             duration = int(request.POST.get("duration") or 60)
         except (TypeError, ValueError):
@@ -3340,6 +3423,10 @@ def quizzes(request):
     except json.JSONDecodeError:
         return JsonResponse({"error": "Invalid JSON body"}, status=400)
 
+    # Empty authoring shells stay drafts; complete initial batches are validated below.
+    if _clean_quiz_status(payload.get("status"), "draft") == "published" and "initialQuestions" not in payload:
+        return JsonResponse({"error": quiz_publication_error([])}, status=400)
+
     manual_title = payload.get("title", "Untitled Quiz")
     manual_programme = payload.get("programme", "")
     manual_module = payload.get("module", "")
@@ -3349,24 +3436,58 @@ def quizzes(request):
     manual_week_id = payload.get("weekId") or _build_week_id(manual_programme_id, manual_week_value)
     manual_question_type = _normalise_question_type(payload.get("questionType") or "single_choice")
 
-    quiz = QuizPackage.objects.create(
-        title=manual_title,
-        programme_id=manual_programme_id or "",
-        module=manual_module,
-        programme=manual_programme,
-        version=payload.get("version", "v1.0"),
-        questions=int(payload.get("questions") or 0),
-        default_question_type=manual_question_type,
-        assessment_type=_clean_assessment_type(payload.get("assessmentType"), "quiz"),
-        week_id=manual_week_id,
-        status=_clean_quiz_status(payload.get("status"), "draft"),
-        package_type=payload.get("packageType", "xml"),
-        schema_valid=bool(payload.get("schemaValid", True)),
-        mapped_components=int(payload.get("mappedComponents") or 0),
-        author=payload.get("author", "Curriculum Team"),
-        linked_courses=int(payload.get("linkedCourses") or 0),
-    )
+    initial = payload.get("initialQuestions")
+    prepared = []
+    if "initialQuestions" in payload:
+        if not isinstance(initial, list) or any(not isinstance(q, dict) for q in initial):
+            return JsonResponse({"error": "initialQuestions must be a list of question objects."}, status=400)
+        error = intake_error([{**q, "type": _normalise_question_type(q.get("questionType"))} for q in initial])
+        if error:
+            return JsonResponse({"error": error}, status=400)
+        try:
+            prepared = [{"text": q["text"], "question_type": _normalise_question_type(q.get("questionType")),
+                         "image_url": validate_question_image(q.get("imageUrl")),
+                         "explanation": q.get("explanation") or "", "answers": [
+                             {"text": a["text"], "is_correct": a["isCorrect"], "sort_order": i}
+                             for i, a in enumerate(q["answers"])]} for q in initial]
+        except ValueError as exc:
+            return JsonResponse({"error": str(exc)}, status=400)
+        manual_question_type = prepared[0]["question_type"]
+    with transaction.atomic():
+        quiz = QuizPackage.objects.create(
+            title=manual_title,
+            programme_id=manual_programme_id or "",
+            module=manual_module,
+            programme=manual_programme,
+            version=payload.get("version", "v1.0"),
+            questions=len(initial) if initial is not None else int(payload.get("questions") or 0),
+            default_question_type=manual_question_type,
+            assessment_type=_clean_assessment_type(payload.get("assessmentType"), "quiz"),
+            week_id=manual_week_id,
+            status=_clean_quiz_status(payload.get("status"), "draft"),
+            published_at=timezone.now() if _clean_quiz_status(payload.get("status"), "draft") == "published" else None,
+            package_type=payload.get("packageType", "xml"),
+            schema_valid=bool(payload.get("schemaValid", True)),
+            mapped_components=int(payload.get("mappedComponents") or 0),
+            author=payload.get("author", "Curriculum Team"),
+            linked_courses=int(payload.get("linkedCourses") or 0),
+        )
+        if prepared:
+            _save_questions(quiz, prepared)
     return JsonResponse(_serialize_quiz(_sync_quiz_assignment_count(quiz)), status=201)
+
+
+@csrf_exempt
+@require_http_methods(["POST"])
+def create_quiz_with_questions(request):
+    """A complete creation request cannot become an empty authoring shell."""
+    try:
+        payload = json.loads(request.body or "{}")
+    except json.JSONDecodeError:
+        return JsonResponse({"error": "Invalid JSON body"}, status=400)
+    if not isinstance(payload, dict) or "initialQuestions" not in payload:
+        return JsonResponse({"error": "Provide the complete question list when creating this quiz."}, status=400)
+    return quizzes(request)
 
 
 def _parse_grade_percent(value):
@@ -3414,6 +3535,7 @@ def _quiz_question_lookup(quiz_id):
     for question in questions:
         question_lookup[question.id] = {
             "text": question.question_text,
+            "imageUrl": question.image_url,
             "type": question.question_type,
             "possible": question.points,
         }
@@ -3431,15 +3553,16 @@ def _serialize_attempt_for_student(attempt, question_lookup, answer_lookup):
         except (TypeError, ValueError):
             pass
         question_meta = question_lookup.get(question_id) or {}
-        chosen_answer = question.get("chosenAnswer")
-        correct_answer = question.get("correctAnswer")
-        if chosen_answer is None:
+        chosen_answer = question.get("chosenText", question.get("chosenAnswer"))
+        correct_answer = question.get("correctText", question.get("correctAnswer"))
+        if chosen_answer is None and "chosenText" not in question:
             chosen_answer = _answer_label(question.get("chosenAnswerId"), answer_lookup)
-        if correct_answer is None:
+        if correct_answer is None and "correctText" not in question:
             correct_answer = _answer_label(question.get("correctAnswerId"), answer_lookup)
         questions.append({
             "number": index,
-            "text": question.get("text") or question_meta.get("text") or "",
+            "text": question.get("questionText") or question.get("text") or question_meta.get("text") or "",
+            "imageUrl": question.get("imageUrl", question_meta.get("imageUrl", "")),
             "type": question.get("type") or question_meta.get("type") or "",
             "chosenAnswer": chosen_answer,
             "correctAnswer": correct_answer,
@@ -3546,9 +3669,14 @@ def quiz_students(request, pk):
 @csrf_exempt
 @require_http_methods(["PATCH", "DELETE"])
 def quiz_detail(request, pk):
+    with transaction.atomic():
+        return _quiz_detail_locked(request, pk)
+
+
+def _quiz_detail_locked(request, pk):
     _ensure_quiz_assessment_type_column()
     try:
-        quiz = QuizPackage.objects.get(pk=pk)
+        quiz = QuizPackage.objects.select_for_update().get(pk=pk)
     except QuizPackage.DoesNotExist:
         raise Http404
 
@@ -3565,6 +3693,13 @@ def quiz_detail(request, pk):
         status = _clean_quiz_status(payload["status"], "")
         if not status:
             return JsonResponse({"error": "Unsupported quiz status"}, status=400)
+        if status == "published":
+            questions = QuizQuestion.objects.filter(quiz_id=quiz.id, is_archived=False).prefetch_related("answers")
+            prepared = [_question_key_payload(question) for question in questions]
+            # Standalone SCORM content keeps its existing launch workflow.
+            error = quiz_publication_error(prepared) if prepared or quiz.package_type != "scorm" else None
+            if error:
+                return JsonResponse({"error": error}, status=400)
         quiz.status = status
 
     for field in ["title", "module", "programme", "version", "author"]:
@@ -3721,6 +3856,12 @@ def quiz_course_links(request, pk):
                 return JsonResponse({"error": f"Select a delivery week for {module_name} before saving."}, status=400)
 
         with transaction.atomic():
+            quiz = QuizPackage.objects.select_for_update().get(pk=pk)
+            if selected_ids and quiz.package_type != "scorm":
+                active = QuizQuestion.objects.filter(quiz_id=quiz.id, is_archived=False).prefetch_related("answers")
+                error = quiz_publication_error([_question_key_payload(question) for question in active])
+                if error:
+                    return JsonResponse({"error": error}, status=400)
             with connection.cursor() as cursor:
                 cursor.execute("delete from curriculum.quiz_course_links where quiz_id = %s", [quiz.id])
                 for assignment in selected_assignments:
@@ -4107,6 +4248,7 @@ def _quiz_preview_payload(quiz, include_archived=False):
             "id": question.id,
             "text": question.question_text,
             "questionType": question.question_type,
+            "imageUrl": question.image_url,
             "explanation": question.explanation,
             "isArchived": question.is_archived,
             "answers": [
@@ -4192,6 +4334,7 @@ def question_bank(request):
             key,
             question.question_type,
             " ".join((question.question_text or "").split()).strip().lower(),
+            question.image_url,
         )
         linked_quizzes = question_usage_by_signature.setdefault(signature, {})
         linked_quizzes[question.quiz_id] = {
@@ -4212,12 +4355,14 @@ def question_bank(request):
             key,
             question.question_type,
             " ".join((question.question_text or "").split()).strip().lower(),
+            question.image_url,
         )
 
         questions.append({
             "id": question.id,
             "text": question.question_text,
             "questionType": question.question_type,
+            "imageUrl": question.image_url,
             "explanation": question.explanation,
             "programme": programme_name,
             "programmeKey": key,
@@ -4264,6 +4409,15 @@ def question_bank(request):
     })
 
 
+def _question_key_payload(question):
+    return {
+        "type": question.question_type,
+        "isArchived": question.is_archived,
+        "answers": [{"text": answer.answer_text, "isCorrect": answer.is_correct}
+                    for answer in question.answers.all()],
+    }
+
+
 @csrf_exempt
 @require_http_methods(["POST"])
 def add_question_to_quiz(request, question_id):
@@ -4288,6 +4442,14 @@ def add_question_to_quiz(request, question_id):
         except QuizPackage.DoesNotExist:
             return JsonResponse({"error": "Target quiz not found"}, status=404)
 
+        if quiz_requires_valid_key(target_quiz):
+            existing = QuizQuestion.objects.filter(quiz_id=target_quiz.id, is_archived=False).prefetch_related("answers")
+            candidate = _question_key_payload(source_question)
+            candidate["isArchived"] = False
+            error = quiz_publication_error([*(_question_key_payload(q) for q in existing), candidate])
+            if error:
+                return JsonResponse({"error": error}, status=400)
+
         next_sort_order = (
             QuizQuestion.objects
             .filter(quiz=target_quiz)
@@ -4299,6 +4461,7 @@ def add_question_to_quiz(request, question_id):
         new_question = QuizQuestion.objects.create(
             quiz=target_quiz,
             question_text=source_question.question_text,
+            image_url=source_question.image_url,
             question_type=source_question.question_type,
             points=source_question.points,
             sort_order=next_sort_order,
@@ -4330,12 +4493,20 @@ def add_question_to_quiz(request, question_id):
 
 @csrf_exempt
 def quiz_questions(request, pk):
+    if request.method == "GET":
+        return _quiz_questions_locked(request, pk)
+    with transaction.atomic():
+        return _quiz_questions_locked(request, pk)
+
+
+def _quiz_questions_locked(request, pk):
     _ensure_quiz_assessment_type_column()
     if request.method not in {"GET", "POST", "PATCH"}:
         return JsonResponse({"error": "Method not allowed"}, status=405)
 
     try:
-        quiz = QuizPackage.objects.get(pk=pk)
+        quiz_manager = QuizPackage.objects if request.method == "GET" else QuizPackage.objects.select_for_update()
+        quiz = quiz_manager.get(pk=pk)
     except QuizPackage.DoesNotExist:
         raise Http404
 
@@ -4351,34 +4522,102 @@ def quiz_questions(request, pk):
     if not isinstance(questions, list):
         return JsonResponse({"error": "questions must be a list"}, status=400)
 
+    # Validate the complete batch before changing any questions or answers.
+    for index, question in enumerate(questions, start=1):
+        if not isinstance(question, dict):
+            return JsonResponse({"error": "Each question must be an object"}, status=400)
+        if "imageUrl" in question:
+            try:
+                question["imageUrl"] = validate_question_image(question["imageUrl"])
+            except ValueError as exc:
+                return JsonResponse({"error": f"Question {index}: {exc}"}, status=400)
+
+    requires_key = quiz_requires_valid_key(quiz)
     existing_questions = {
         question.id: question
         for question in QuizQuestion.objects.filter(quiz_id=quiz.id).prefetch_related("answers")
     }
+    for index, question in enumerate(questions, 1):
+        existing = existing_questions.get(question.get("id"))
+        if "answers" not in question and "questionType" not in question:
+            continue
+        answers = question.get("answers")
+        if answers is None:
+            answers = [{"text": a.answer_text, "isCorrect": a.is_correct} for a in existing.answers.all()] if existing else []
+        if not isinstance(answers, list) or any(not isinstance(a, dict) for a in answers):
+            return JsonResponse({"error": f"Question {index}: answers must be a list of objects."}, status=400)
+        error = choice_key_error(
+            question.get("questionType") or (existing.question_type if existing else quiz.default_question_type),
+            [answer for answer in answers if str(answer.get("text") or "").strip()],
+            strict_duplicates=True, require_key=requires_key and not question.get("isArchived", getattr(existing, "is_archived", False)),
+        )
+        if error:
+            return JsonResponse({"error": f"Question {index}: {error}"}, status=400)
     remove_missing = bool(payload.get("removeMissing"))
     if remove_missing and len(questions) == 1 and len(existing_questions) > 1:
         return JsonResponse({
             "error": "Refusing to replace a multi-question quiz with one question. Reload the editor and try again.",
         }, status=409)
 
+    if requires_key:
+        effective = {qid: _question_key_payload(q) for qid, q in existing_questions.items()}
+        submitted = []
+        for question in questions:
+            candidate = dict(effective.get(question.get("id"), {"type": quiz.default_question_type, "answers": []}))
+            if "questionType" in question:
+                candidate["type"] = question["questionType"] or quiz.default_question_type
+            if "answers" in question and question["answers"] is not None:
+                candidate["answers"] = [a for a in question["answers"] if str(a.get("text") or "").strip()]
+            if "isArchived" in question:
+                candidate["isArchived"] = bool(question["isArchived"])
+            effective.pop(question.get("id"), None)
+            submitted.append(candidate)
+        error = quiz_publication_error(submitted + ([] if remove_missing else list(effective.values())))
+        if error:
+            return JsonResponse({"error": error}, status=400)
+
     seen_question_ids = set()
     with transaction.atomic():
         for question_index, question in enumerate(questions):
             question_id = question.get("id")
             question_record = existing_questions.get(question_id)
+            replace_answers = True
             if question_record:
-                question_record.question_text = question.get("text", "").strip() or "Untitled question"
-                question_record.question_type = question.get("questionType") or quiz.default_question_type
-                question_record.explanation = question.get("explanation", "")
-                question_record.is_archived = bool(question.get("isArchived"))
                 question_record.sort_order = question_index
-                question_record.save(update_fields=["question_text", "question_type", "explanation", "is_archived", "sort_order", "updated_at"])
-                question_record.answers.all().delete()
+                update_fields = ["sort_order", "updated_at"]
+                if "text" in question:
+                    question_record.question_text = question["text"].strip() or "Untitled question"
+                    update_fields.append("question_text")
+                if "questionType" in question:
+                    question_record.question_type = question["questionType"] or quiz.default_question_type
+                    update_fields.append("question_type")
+                if "explanation" in question:
+                    question_record.explanation = question["explanation"]
+                    update_fields.append("explanation")
+                if "isArchived" in question:
+                    question_record.is_archived = bool(question["isArchived"])
+                    update_fields.append("is_archived")
+                if "imageUrl" in question:
+                    question_record.image_url = question["imageUrl"]
+                    update_fields.append("image_url")
+                question_record.save(update_fields=update_fields)
+                # An image-only edit must keep answer identities used by past attempts.
+                existing_answers = list(question_record.answers.all())
+                submitted_answers = question.get("answers")
+                replace_answers = submitted_answers is not None and [
+                    (answer.id, answer.answer_text, answer.is_correct)
+                    for answer in existing_answers
+                ] != [
+                    (answer.get("id"), answer.get("text", "").strip(), bool(answer.get("isCorrect")))
+                    for answer in submitted_answers
+                    if answer.get("text", "").strip()
+                ]
                 seen_question_ids.add(question_record.id)
             else:
                 question_record = QuizQuestion.objects.create(
                     quiz=quiz,
                     question_text=question.get("text", "").strip() or "Untitled question",
+                    image_url=question.get("imageUrl", ""),
                     question_type=question.get("questionType") or quiz.default_question_type,
                     explanation=question.get("explanation", ""),
                     is_archived=bool(question.get("isArchived")),
@@ -4386,16 +4625,8 @@ def quiz_questions(request, pk):
                 )
                 seen_question_ids.add(question_record.id)
 
-            for answer_index, answer in enumerate(question.get("answers", [])):
-                answer_text = answer.get("text", "").strip()
-                if not answer_text:
-                    continue
-                QuizAnswer.objects.create(
-                    question=question_record,
-                    answer_text=answer_text,
-                    is_correct=bool(answer.get("isCorrect")),
-                    sort_order=answer_index,
-                )
+            if replace_answers:
+                _update_question_answers(question_record, question.get("answers", []), existing_answers if question_id in existing_questions else [])
 
         if remove_missing:
             QuizQuestion.objects.filter(quiz_id=quiz.id).exclude(id__in=seen_question_ids).delete()
@@ -4413,3 +4644,31 @@ def quiz_questions(request, pk):
 
     quiz.refresh_from_db()
     return JsonResponse(_quiz_preview_payload(quiz))
+
+
+def _update_question_answers(question, answers, existing):
+    """Preserve IDs for unchanged options, including clients omitting IDs.
+
+    A changed label receives a new ID so an in-flight submission cannot silently
+    refer to a different answer. Answer keys and positions update in place.
+    """
+    remaining = {answer.id: answer for answer in existing}
+    for index, answer in enumerate(answers):
+        text = answer.get("text", "").strip()
+        if not text:
+            continue
+        record = remaining.get(answer.get("id"))
+        if record is not None and record.answer_text != text:
+            record = None
+        if record is None:
+            matches = [item for item in remaining.values() if item.answer_text == text]
+            record = matches[0] if len(matches) == 1 else None
+        if record is None:
+            QuizAnswer.objects.create(question=question, answer_text=text, is_correct=bool(answer.get("isCorrect")), sort_order=index)
+        else:
+            remaining.pop(record.id)
+            record.is_correct = bool(answer.get("isCorrect"))
+            record.sort_order = index
+            record.save(update_fields=["is_correct", "sort_order", "updated_at"])
+    if remaining:
+        question.answers.filter(id__in=list(remaining)).delete()

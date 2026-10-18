@@ -56,6 +56,17 @@ describe('Coach caseload loading', () => {
     });
   });
 
+  it.each(['commercial', 'apprenticeship'] as const)('opens the %s learner workspace by enrolment id, not the profile id', async learnerType => {
+    function Destination() {
+      return <output data-testid="destination">{useLocation().pathname}</output>;
+    }
+    render(<MemoryRouter><CoachCaseloadContent embedded embeddedLearners={[{
+      ...learner, learnerType, enrolmentId: '1002',
+    }]} /><Destination /></MemoryRouter>);
+    fireEvent.click(await screen.findByRole('button', { name: 'View' }));
+    expect(screen.getByTestId('destination')).toHaveTextContent(`/workspace/learner/${learnerType}/1002`);
+  });
+
   beforeEach(() => {
     vi.clearAllMocks();
     fetchCoachCalendarEvents.mockResolvedValue({ events: [] });

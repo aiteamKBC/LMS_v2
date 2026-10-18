@@ -1,0 +1,227 @@
+{
+  "date": "2026-10-17",
+  "branch": "coach_view",
+  "state": "Local uncommitted changes only; no push, merge, deployment, migration or database writes.",
+  "scope": "Student Dashboard Weekly Learning; existing visual design and legacy/Coach wire APIs preserved.",
+  "changed_files": [
+    "backend/coach_api/tests_weekly_learning.py",
+    "backend/coach_api/weekly_learning.py",
+    "backend/learner_api/canonical_learning.py",
+    "backend/learner_api/dashboard_weekly.py",
+    "backend/learner_api/learner_detail.py",
+    "backend/learner_api/test_dashboard_weekly_no_db.py",
+    "backend/learner_api/test_weekly_optimization_no_db.py",
+    "backend/learner_api/training_plan_dashboard.py",
+    "backend/learner_api/weekly_calendar.py",
+    "backend/learner_api/weekly_hours.py",
+    "backend/reports/weekly_learning_performance_2026-10-17.json",
+    "frontend/src/api/__tests__/weeklyLearningContract.test.ts",
+    "frontend/src/api/__tests__/weeklyMutations.test.ts",
+    "frontend/src/api/absenceReports.ts",
+    "frontend/src/api/attendanceLectures.ts",
+    "frontend/src/api/meetingAttendance.ts",
+    "frontend/src/api/reflectionSubmission.ts",
+    "frontend/src/api/studentActivity.ts",
+    "frontend/src/api/weeklyLearning.ts",
+    "frontend/src/hooks/__tests__/useWeeklyLearning.test.tsx",
+    "frontend/src/hooks/__tests__/useWeeklyLearningWeek.test.tsx",
+    "frontend/src/hooks/useWeeklyLearning.ts",
+    "frontend/src/pages/learner/__tests__/pages.test.tsx",
+    "frontend/src/pages/workspace/learner/WeeklyLearningPlan.tsx",
+    "frontend/src/pages/workspace/learner/__tests__/DashboardWeeklyLearningPlan.test.tsx",
+    "frontend/src/pages/workspace/learner/__tests__/WeeklyLearningPlan.test.tsx",
+    "frontend/src/pages/workspace/learner/weeklyPlanPresentation.ts",
+    "frontend/src/test/weeklyContractFixture.ts"
+  ],
+  "changes": [
+    "Opt-in version=2 Student contract; module titles normalized; selected metadata references navigation; selected activities only.",
+    "Direct canonical rendering; legacy schedule/progress reconstruction bypassed; memoized activity rows, KSB summary and activity table.",
+    "Hours-only SELECT replaces evidence/lineage aggregation; learner-wide minimum deduplication facts retained; existing native-save and accepted-hours rules reused.",
+    "Request-local module, week and quiz metadata reused for Student routing; repeated KSB/quiz reads avoided when metadata is available.",
+    "Student session detail reuses first-occurrence attendance evidence from navigation; one repeated session SQL statement removed.",
+    "Completion calculated once per activity; per-activity quiz-placement scans indexed; established total hours summation and rounding preserved.",
+    "Learner-targeted Weekly invalidation added after successful reflections, imported activities, lecture/meeting attendance and absence actions; existing quiz/video/component invalidation preserved.",
+    "Old responses cannot evict or prime newer cached state; account resets hide old snapshots; forced refresh remains scoped to its learner.",
+    "Week detail freshness bounded to five minutes; initial freshness remains thirty seconds; unchanged cached weeks survive navigation refresh.",
+    "Canonical present/absent/upcoming/unmarked attendance is separate from lifecycle; ended unmarked sessions no longer imply absence.",
+    "Session holidays, session overrides and weekly schedules loaded for Student planning; strict holiday read failure propagates as unavailable; cohort exclusions and overlapping date reasons retained."
+  ],
+  "metrics": [
+    {
+      "metric": "API response time",
+      "before": null,
+      "after": null,
+      "verification": "UNVERIFIED: no authenticated runtime request measured"
+    },
+    {
+      "metric": "SQL query count, complete request",
+      "before": null,
+      "after": null,
+      "verification": "UNVERIFIED: no live PostgreSQL execution"
+    },
+    {
+      "metric": "Database-call duration",
+      "before": null,
+      "after": null,
+      "verification": "UNVERIFIED: no live PostgreSQL execution"
+    },
+    {
+      "metric": "JSON response bytes",
+      "before": 22912,
+      "after": 20995,
+      "verification": "Synthetic 52-week programme with 8 selected activities; json.dumps UTF-8; not live traffic"
+    },
+    {
+      "metric": "Gzip response bytes",
+      "before": 1700,
+      "after": 1679,
+      "verification": "Same synthetic payload; gzip.compress with mtime=0; deployed compression unverified"
+    },
+    {
+      "metric": "React render duration",
+      "before": null,
+      "after": null,
+      "verification": "UNVERIFIED: no authenticated browser Profiler capture"
+    },
+    {
+      "metric": "Requests on fresh cached week revisit",
+      "before": 0,
+      "after": 0,
+      "verification": "Mocked fetch counts in focused Vitest suites; live network unverified"
+    }
+  ],
+  "additional_synthetic_evidence": [
+    {
+      "metric": "Canonical reader direct SQL execute calls",
+      "before": 7,
+      "after": 6,
+      "scope": "Mocked cursor; excludes identity, calendar, progress, ledger and routing queries"
+    },
+    {
+      "metric": "Selected quiz routing resolver direct SQL execute calls",
+      "before": 6,
+      "after": 1,
+      "scope": "Mocked cursor with reusable metadata; identical projected route and availability"
+    }
+  ],
+  "tests": {
+    "baseline_backend": {
+      "passed": 41,
+      "database_writes": false
+    },
+    "baseline_frontend": {
+      "passed": 46,
+      "files": 5
+    },
+    "backend": {
+      "status": "PASS",
+      "passed": 140,
+      "cwd": "repository root",
+      "command": "backend/.venv/Scripts/python.exe backend/manage.py test learner_api.test_weekly_optimization_no_db learner_api.test_dashboard_weekly_no_db coach_api.tests_weekly_learning learner_api.tests_weekly_hours learner_api.tests_weekly_learning learner_api.test_canonical_learning_no_db curriculum_api.tests_holiday_reading_weeks --settings=config.settings_sqlite_test --testrunner=django.test.runner.DiscoverRunner --noinput",
+      "safety": "SQLite-only settings and SimpleTestCase/mocked or AST-isolated suites; no database setup or application DB writes"
+    },
+    "frontend": {
+      "status": "PASS",
+      "passed": 144,
+      "files": 13,
+      "cwd": "frontend",
+      "command": "./node_modules/.bin/vitest.cmd run src/api/__tests__/weeklyLearningContract.test.ts src/api/__tests__/weeklyMutations.test.ts src/hooks/__tests__/useWeeklyLearning.test.tsx src/hooks/__tests__/useWeeklyLearningWeek.test.tsx src/pages/workspace/learner/__tests__/DashboardWeeklyLearningPlan.test.tsx src/pages/workspace/learner/__tests__/WeeklyLearningPlan.test.tsx src/pages/workspace/learner/__tests__/weeklyPlanHelpers.test.ts src/pages/workspace/learner/__tests__/DashboardWeeklyTab.test.tsx src/api/reflectionSubmission.test.ts src/api/__tests__/absenceReports.test.ts src/api/__tests__/learnerRead.test.ts src/api/__tests__/cachedRequest.test.ts src/features/coach/case-file/caseFileWeeklyLearning.test.tsx --maxWorkers=2"
+    },
+    "lint": {
+      "status": "PASS",
+      "scope": "All changed frontend TypeScript files and tests",
+      "cwd": "frontend",
+      "command": "./node_modules/.bin/eslint.cmd src/api/__tests__/weeklyLearningContract.test.ts src/api/__tests__/weeklyMutations.test.ts src/api/absenceReports.ts src/api/attendanceLectures.ts src/api/meetingAttendance.ts src/api/reflectionSubmission.ts src/api/studentActivity.ts src/api/weeklyLearning.ts src/hooks/__tests__/useWeeklyLearning.test.tsx src/hooks/__tests__/useWeeklyLearningWeek.test.tsx src/hooks/useWeeklyLearning.ts src/pages/learner/__tests__/pages.test.tsx src/pages/workspace/learner/WeeklyLearningPlan.tsx src/pages/workspace/learner/__tests__/DashboardWeeklyLearningPlan.test.tsx src/pages/workspace/learner/__tests__/WeeklyLearningPlan.test.tsx src/pages/workspace/learner/weeklyPlanPresentation.ts src/test/weeklyContractFixture.ts --report-unused-disable-directives --max-warnings 0"
+    },
+    "type_check": {
+      "status": "FAIL_PRE_EXISTING",
+      "command": "npm --prefix frontend run type-check",
+      "baseline": "Original unmodified checkout fails TS2307: qrcode.react missing at src/pages/engagement/events/page.tsx:18",
+      "reason": "Final-state check reports only TS2307 for missing qrcode.react at src/pages/engagement/events/page.tsx:18; same error reproduced before transfer in original unmodified checkout."
+    },
+    "build": {
+      "status": "FAIL",
+      "command": "npm --prefix frontend run build",
+      "previous_run": "Cannot resolve qrcode.react from engagement/events/page.tsx; no dependency changes made",
+      "reason": "Existing qrcode.react dependency cannot be resolved from engagement/events/page.tsx; no install or configuration workaround applied."
+    },
+    "broader_learner_pages": {
+      "status": "FAIL_PRE_EXISTING",
+      "cwd": "frontend",
+      "command": "./node_modules/.bin/vitest.cmd run src/pages/learner/__tests__/pages.test.tsx --maxWorkers=2",
+      "baseline_passed": 103,
+      "baseline_failed": 11,
+      "passed": 103,
+      "failed": 11,
+      "failures": {
+        "learner loading and recovery uses the learner start date and SSOT planned end date in the learner programme header": "TestingLibraryElementError: Unable to find an element with the text: 17 October 2027. This could be because the text is broken up by multiple elements. In this case, you can provide a function for your text matcher to make your matcher more flexible.",
+        "learner loading and recovery shows attendance counts and rate without a fixed target ('80% attendance')": "Error: Unable to find an element with the text: 8 / 10, which matches selector 'p'. This could be because the text is broken up by multiple elements. In this case, you can provide a function for your text matcher to make your matcher more flexible.",
+        "learner loading and recovery shows attendance counts and rate without a fixed target ('67% attendance')": "Error: Unable to find an element with the text: 1 / 3, which matches selector 'p'. This could be because the text is broken up by multiple elements. In this case, you can provide a function for your text matcher to make your matcher more flexible.",
+        "learner loading and recovery shows attendance counts and rate without a fixed target ('0% attendance')": "Error: Unable to find an element with the text: 0 / 3, which matches selector 'p'. This could be because the text is broken up by multiple elements. In this case, you can provide a function for your text matcher to make your matcher more flexible.",
+        "learner loading and recovery shows attendance counts and rate without a fixed target ('No attendance records yet')": "Error: Unable to find an element with the text: 0 / 0, which matches selector 'p'. This could be because the text is broken up by multiple elements. In this case, you can provide a function for your text matcher to make your matcher more flexible.",
+        "learner loading and recovery uses the canonical metrics total for completed hours": "Error: Unable to find role=\"link\" and name \"Open Programme Progress\"",
+        "learner loading and recovery keeps the canonical Actual total when the SSOT totals source fails": "Error: expect(element).toHaveTextContent()",
+        "learner loading and recovery uses canonical metrics even when Monthly Logs differs": "Error: expect(element).toHaveTextContent()",
+        "learner loading and recovery does not replace the canonical total with the Monthly Logs month sum": "Error: expect(element).toHaveTextContent()",
+        "learner loading and recovery shows an assigned programme and plan before cohort start with study open": "Error: Unable to find role=\"region\" and name \"Monthly study plan\"",
+        "learner loading and recovery opens learning using the cohort date even when the individual date and saved status are still in the future": "TestingLibraryElementError: Unable to find an element with the text: 10 September 2026. This could be because the text is broken up by multiple elements. In this case, you can provide a function for your text matcher to make your matcher more flexible."
+      },
+      "new_failure_names": []
+    },
+    "broader_current_learning": {
+      "status": "FAIL_PRE_EXISTING",
+      "passed": 19,
+      "failed": 2,
+      "command": "backend/.venv/Scripts/python.exe backend/manage.py test learner_api.test_current_learning_no_db --settings=config.settings_sqlite_test --testrunner=django.test.runner.DiscoverRunner --noinput",
+      "reason": "Both failures reproduced in original unmodified checkout: metrics test doubles reject lineage_only keyword. Tests and metrics behavior left unchanged."
+    },
+    "teams_baseline": {
+      "status": "NOT_REQUIRED",
+      "reason": "No listed Teams file or function/type/API response consumed by a listed Teams file changed"
+    },
+    "expanded_teams": {
+      "status": "NOT_REQUIRED",
+      "reason": "No Teams integration behavior changed"
+    },
+    "live_teams": {
+      "status": "NOT_RUN"
+    },
+    "postgres_integration": {
+      "status": "NOT_RUN",
+      "reason": "No verified read-only runtime target/sample supplied; no database writes authorized"
+    },
+    "authenticated_browser": {
+      "status": "NOT_RUN",
+      "reason": "No authenticated browser session supplied; UI checked through mocked rendering and markup parity"
+    },
+    "diff_review": {
+      "status": "PASS",
+      "command": "git diff --check",
+      "notes": "Only scoped source/tests and this synthetic report changed; index remains unstaged; no secrets, database writes, commits or remote writes."
+    }
+  },
+  "coverage": [
+    "Past/current/future weeks",
+    "Teaching/reading weeks",
+    "Official and college overlapping holiday ranges",
+    "Cohort exclusions",
+    "Module closures and explicit session date overrides",
+    "Present/absent/unmarked/upcoming attendance",
+    "Quiz and reflection completion rules",
+    "Accepted versus unapproved actual hours",
+    "Legacy quiz-only attribution and duplicate quiz placements",
+    "Native retry deduplication and staff corrections",
+    "Search/filter/pagination/module navigation and action routes",
+    "Join window and session end transitions",
+    "Mutation invalidation, fresh cached revisits and rapid switching",
+    "Learner/account cache isolation and stale pending responses",
+    "Legacy/Coach contract and permission regressions"
+  ],
+  "limitations": [
+    "Real-world response, SQL execution and React render timings remain unverified. Smaller gzip JSON is a minor saving; no live speedup is claimed.",
+    "Learner-wide minimal ledger identity/timing facts remain necessary for cross-module native-save deduplication.",
+    "No EXPLAIN/index measurements were performed.",
+    "Full acceptance is blocked by the recorded dependency and broader-suite failures.",
+    "No source edits were made in other dashboard tabs; no tests were weakened to hide failures."
+  ]
+}

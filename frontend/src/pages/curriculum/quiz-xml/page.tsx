@@ -1,6 +1,8 @@
 import { ChangeEvent, FormEvent, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { AppIcon } from '@/components/feature/AppIcon';
+import { QuizQuestionImage } from '@/components/feature/QuizQuestionImage';
+import { QuizQuestionImageField } from '@/components/feature/QuizQuestionImageField';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { WorkspaceHeroBanner } from '@/components/feature/WorkspaceHeroBanner';
 import { ThemedSelect } from '@/components/feature/ThemedSelect';
@@ -9,11 +11,14 @@ import { QuestionAnswersView } from '@/components/feature/QuestionTypeRenderer';
 import { roleNavMap } from '@/mocks/navigation';
 import { kbcUsers } from '@/mocks/users';
 import { useToast } from '@/hooks/useToast';
+import { KnowledgeBookPicker, KnowledgeSourcesSummary, type KnowledgeSourcesMeta } from '@/features/knowledge-base/KnowledgeBookPicker';
 import { fetchWeeks, type WeekItem } from '@/api/curriculum';
 import { formatQuizGradeRange, type QuizGradeRow, type QuizGradeSettings, useQuizGradeSettings } from '@/lib/quizGradeSettings';
 import { type QuizGeneralSettings, useQuizGeneralSettings } from '@/lib/quizGeneralSettings';
 import { convertAnswerTextForQuestionType, isPairAnswerComplete, parseQuizPairAnswer, serializeQuizPairAnswer } from '@/lib/quizPairAnswers';
 import { showCurriculumConfirm } from '@/components/feature/CurriculumSweetAlert';
+
+import { createQuizWithQuestions } from './createQuizWithQuestions';
 
 const curriculumNav = roleNavMap.curriculum;
 
@@ -68,6 +73,25 @@ function parseStatusParam(value: string | null): 'all' | QuizStatus {
   return statusOptions.some(option => option.value === value) ? value as 'all' | QuizStatus : 'all';
 }
 
+// The rest of the list controls, read back from the URL the same way.
+function parseDatePresetParam(value: string | null): DateFilterPreset {
+  return value === 'custom' || dateFilterPresets.some(option => option.value === value) ? value as DateFilterPreset : 'all';
+}
+
+function parseDayParam(value: string | null) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value || '');
+  return match ? new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3])) : null;
+}
+
+function dayParam(date: Date | null) {
+  if (!date) return '';
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+}
+
+function parsePageSizeParam(value: string | null) {
+  return pageSizeOptions.some(option => option.value === value) ? String(value) : '10';
+}
+
 interface QuizPackage {
   id: number;
   title: string;
@@ -94,6 +118,7 @@ interface QuizPackage {
 interface QuizPreviewQuestion {
   id: number;
   text: string;
+  imageUrl?: string;
   questionType: QuestionType;
   explanation: string;
   answers: {
@@ -111,6 +136,7 @@ interface QuizPreviewData {
 interface QuizStudentQuestionResult {
   number: number;
   text: string;
+  imageUrl?: string;
   type: string;
   chosenAnswer: string | null;
   correctAnswer: string | null;
@@ -268,7 +294,7 @@ const embeddedAiPromptPreview = `Create a mixed-format LMS quiz from only the su
 Core rules:
 - Use all readable files together and distribute coverage fairly across them.
 - Generate the requested number of questions where the source supports it.
-- Use mixed question types: single choice, multiple choice, true/false, matching, image matching, keywords, fill in the gap and ordering.
+- Use mixed question types: single choice, multiple choice, true/false, matching, keywords, fill in the gap and ordering. Use image matching only when actual book images are supplied; never use image placeholders.
 - Progress difficulty from easy to medium to hard across the quiz.
 - Prefer realistic workplace/admin scenarios and adult-learning assessment quality.
 - Align explanations to source concepts and KSBs where available.
@@ -856,6 +882,7 @@ function formatLinkedSummary(courses: number, groups?: number) {
 function serializeEditorQuestions(questions: QuizPreviewQuestion[]) {
   return JSON.stringify(questions.map(question => ({
     text: question.text,
+    imageUrl: question.imageUrl || '',
     questionType: question.questionType,
     explanation: question.explanation,
     answers: question.answers.map(answer => ({
@@ -874,14 +901,18 @@ export default function QuizXmlWorkspacePage() {
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
   const [bulkAction, setBulkAction] = useState('');
   const [filterStatus, setFilterStatus] = useState<'all' | QuizStatus>(() => parseStatusParam(searchParams.get('status')));
-  const [search, setSearch] = useState('');
-  const [dateFilterPreset, setDateFilterPreset] = useState<DateFilterPreset>('all');
-  const [customDateRange, setCustomDateRange] = useState<{ start: Date | null; end: Date | null }>({ start: null, end: null });
+  const [search, setSearch] = useState(() => searchParams.get('q') || '');
+  const [dateFilterPreset, setDateFilterPreset] = useState<DateFilterPreset>(() => parseDatePresetParam(searchParams.get('date')));
+  const [customDateRange, setCustomDateRange] = useState<{ start: Date | null; end: Date | null }>(() => {
+    const start = parseDayParam(searchParams.get('from'));
+    const end = parseDayParam(searchParams.get('to'));
+    return { start: start ? startOfDay(start) : null, end: end ? endOfDay(end) : null };
+  });
   const [dateFilterOpen, setDateFilterOpen] = useState(false);
   const [moreMenuOpen, setMoreMenuOpen] = useState(false);
   const [calendarViewDate, setCalendarViewDate] = useState(() => new Date());
-  const [currentPage, setCurrentPage] = useState(1);
-  const [pageSize, setPageSize] = useState('10');
+  const [currentPage, setCurrentPage] = useState(() => Math.max(1, Math.floor(Number(searchParams.get('page'))) || 1));
+  const [pageSize, setPageSize] = useState(() => parsePageSizeParam(searchParams.get('size')));
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [showCreate, setShowCreate] = useState(false);
@@ -891,6 +922,7 @@ export default function QuizXmlWorkspacePage() {
   const [form, setForm] = useState<QuizFormState>(emptyForm);
   const [savingQuiz, setSavingQuiz] = useState(false);
   const [savingManualQuiz, setSavingManualQuiz] = useState(false);
+  const [readingQuestionImage, setReadingQuestionImage] = useState(false);
   const [manualQuestions, setManualQuestions] = useState<QuizPreviewQuestion[]>(() => [createManualQuestion(1)]);
   const [openManualQuestionId, setOpenManualQuestionId] = useState<number | null>(null);
   const [gradeSettings, setGradeSettings] = useQuizGradeSettings();
@@ -920,6 +952,8 @@ export default function QuizXmlWorkspacePage() {
   const [generatorDragActive, setGeneratorDragActive] = useState(false);
   const [showPromptCustomize, setShowPromptCustomize] = useState(false);
   const [generatedQuestions, setGeneratedQuestions] = useState<QuizPreviewQuestion[]>([]);
+  const [knowledgeBookIds, setKnowledgeBookIds] = useState<string[]>([]);
+  const [knowledgeSources, setKnowledgeSources] = useState<KnowledgeSourcesMeta | null>(null);
   const [generatingQuestions, setGeneratingQuestions] = useState(false);
   const [savingGeneratedQuiz, setSavingGeneratedQuiz] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -965,13 +999,39 @@ export default function QuizXmlWorkspacePage() {
     }
   }, [searchParams, setSearchParams]);
 
+  // The search, date filter and page sit in the URL beside the status, replaced
+  // rather than pushed, so Back from a quiz editor returns to the list as it
+  // was left instead of starting the search again.
   useEffect(() => {
-    setCurrentPage(1);
-  }, [filterStatus, search, pageSize, dateFilterPreset, customDateRange.start, customDateRange.end]);
+    const next = new URLSearchParams(searchParams);
+    const custom = dateFilterPreset === 'custom';
+    ([
+      ['q', search],
+      ['date', dateFilterPreset === 'all' ? '' : dateFilterPreset],
+      ['from', custom ? dayParam(customDateRange.start) : ''],
+      ['to', custom ? dayParam(customDateRange.end) : ''],
+      ['page', currentPage > 1 ? String(currentPage) : ''],
+      ['size', pageSize === '10' ? '' : pageSize],
+    ] as const).forEach(([key, value]) => { if (value) next.set(key, value); else next.delete(key); });
+    if (next.toString() !== searchParams.toString()) setSearchParams(next, { replace: true });
+  }, [currentPage, customDateRange.end, customDateRange.start, dateFilterPreset, pageSize, search, searchParams, setSearchParams]);
 
+  // Back to the first page when a filter actually changes -- not on arrival,
+  // or a page restored from the URL would be thrown away.
+  const filterSignature = [filterStatus, search, pageSize, dateFilterPreset, dayParam(customDateRange.start), dayParam(customDateRange.end)].join('|');
+  const lastFilterSignatureRef = useRef(filterSignature);
   useEffect(() => {
+    if (lastFilterSignatureRef.current === filterSignature) return;
+    lastFilterSignatureRef.current = filterSignature;
+    setCurrentPage(1);
+  }, [filterSignature]);
+
+  // Clamped only once the list has loaded; an empty list mid-load would
+  // otherwise send a restored page back to page 1.
+  useEffect(() => {
+    if (loading) return;
     setCurrentPage(current => Math.min(current, Math.max(1, Math.ceil(quizzes.length / Number(pageSize)))));
-  }, [quizzes.length, pageSize]);
+  }, [loading, quizzes.length, pageSize]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -1193,6 +1253,8 @@ export default function QuizXmlWorkspacePage() {
     setGeneratorFiles([]);
     setGeneratorDragActive(false);
     setGeneratedQuestions([]);
+    setKnowledgeBookIds([]);
+    setKnowledgeSources(null);
     if (generatorFileInputRef.current) generatorFileInputRef.current.value = '';
   };
 
@@ -1373,7 +1435,7 @@ export default function QuizXmlWorkspacePage() {
 
   const submitManualQuiz = async (event: FormEvent) => {
     event.preventDefault();
-    if (savingManualQuiz) return;
+    if (savingManualQuiz || readingQuestionImage) return;
     const validationMessage = validateManualQuestions();
     if (validationMessage) {
       setError(validationMessage);
@@ -1383,40 +1445,26 @@ export default function QuizXmlWorkspacePage() {
     setError('');
     setSavingManualQuiz(true);
     try {
-      const createResponse = await fetch('/quiz_api/quizzes/', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          title: form.title,
-          module: form.module,
-          programme: form.programme,
-          programmeId: form.programmeId,
-          week: form.week,
-          weekId: form.weekId,
-          version: form.version,
-          questions: manualQuestions.length,
-          questionType: manualQuestions[0]?.questionType || 'single_choice',
-          status: form.status,
-          author: form.author,
-          linkedCourses: Number(form.linkedCourses || 0),
-          packageType: 'xml',
-          schemaValid: true,
-        }),
+      const created = await createQuizWithQuestions<QuizPackage>({
+        title: form.title,
+        module: form.module,
+        programme: form.programme,
+        programmeId: form.programmeId,
+        week: form.week,
+        weekId: form.weekId,
+        version: form.version,
+        questions: manualQuestions.length,
+        questionType: manualQuestions[0]?.questionType || 'single_choice',
+        status: form.status,
+        author: form.author,
+        linkedCourses: Number(form.linkedCourses || 0),
+        packageType: 'xml',
+        schemaValid: true,
+        initialQuestions: manualQuestions,
       });
-      const created = await createResponse.json().catch(() => null);
-      if (!createResponse.ok) throw new Error(created?.error || 'Could not create manual quiz');
-
-      const saveResponse = await fetch(`/quiz_api/quizzes/${created.id}/questions/`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ questions: manualQuestions, removeMissing: true }),
-      });
-      const saved = await saveResponse.json().catch(() => null);
-      if (!saveResponse.ok) throw new Error(saved?.error || 'Could not save manual questions');
-
-      setQuizzes(prev => [saved.quiz, ...prev.filter(quiz => quiz.id !== saved.quiz.id)]);
+      setQuizzes(prev => [created, ...prev.filter(quiz => quiz.id !== created.id)]);
       resetManualModal();
-      success('Quiz created', 'Manual questions were saved as a quiz draft.');
+      success('Quiz created', created.status === 'published' ? 'Questions were saved and the quiz was published.' : 'Manual questions were saved as a quiz draft.');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not save manual quiz');
     } finally {
@@ -1444,7 +1492,7 @@ export default function QuizXmlWorkspacePage() {
 
   const generateQuestions = async () => {
     setError('');
-    if (!generatorForm.topic.trim() && !generatorForm.lessonContent.trim() && generatorFiles.length === 0) {
+    if (!generatorForm.topic.trim() && !generatorForm.lessonContent.trim() && generatorFiles.length === 0 && knowledgeBookIds.length === 0) {
       setError('Add a topic, paste lesson content, or upload source files first. The embedded prompt controls how AI writes questions, but it is not lesson content.');
       return;
     }
@@ -1463,6 +1511,7 @@ export default function QuizXmlWorkspacePage() {
         body.append('week', generatorForm.week);
         body.append('weekId', generatorForm.weekId);
         body.append('questionCount', generatorForm.questionCount);
+        knowledgeBookIds.forEach(id => body.append('knowledgeBookIds', id));
         response = await fetch('/quiz_api/ai/generate-questions/', { method: 'POST', body });
       } else {
         response = await fetch('/quiz_api/ai/generate-questions/', {
@@ -1478,12 +1527,14 @@ export default function QuizXmlWorkspacePage() {
             week: generatorForm.week,
             weekId: generatorForm.weekId,
             questionCount: Number(generatorForm.questionCount || 5),
+            ...(knowledgeBookIds.length ? { knowledgeBookIds } : {}),
           }),
         });
       }
       const data = await response.json().catch(() => null);
       if (!response.ok) throw new Error(data?.error || 'Could not generate questions');
       setGeneratedQuestions(data.questions || []);
+      setKnowledgeSources(data.source?.knowledgeBase || null);
       const unreadableFiles = data.source?.unreadableFiles || [];
       if (unreadableFiles.length) {
         setError(`Generated from readable files only. These files had no extractable text: ${unreadableFiles.join(', ')}. Upload a text-based version or OCR copy to include them.`);
@@ -1501,38 +1552,25 @@ export default function QuizXmlWorkspacePage() {
     setSavingGeneratedQuiz(true);
     setError('');
     try {
-      const createResponse = await fetch('/quiz_api/quizzes/', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          title: generatorForm.title || generatorForm.topic || 'AI Generated Quiz',
-          module: generatorForm.module,
-          programme: generatorForm.programme,
-          programmeId: generatorForm.programmeId,
-          week: generatorForm.week,
-          weekId: generatorForm.weekId,
-          version: 'v1.0',
-          questions: generatedQuestions.length,
-          questionType: generatedQuestions[0]?.questionType || 'single_choice',
-          status: 'draft',
-          author: generatorForm.author,
-          linkedCourses: 0,
-          packageType: 'xml',
-          schemaValid: true,
-        }),
+      const created = await createQuizWithQuestions<QuizPackage>({
+        title: generatorForm.title || generatorForm.topic || 'AI Generated Quiz',
+        module: generatorForm.module,
+        programme: generatorForm.programme,
+        programmeId: generatorForm.programmeId,
+        week: generatorForm.week,
+        weekId: generatorForm.weekId,
+        version: 'v1.0',
+        questions: generatedQuestions.length,
+        questionType: generatedQuestions[0]?.questionType || 'single_choice',
+        status: 'draft',
+        author: generatorForm.author,
+        linkedCourses: 0,
+        packageType: 'xml',
+        schemaValid: true,
+        initialQuestions: generatedQuestions,
       });
-      const created = await createResponse.json().catch(() => null);
-      if (!createResponse.ok) throw new Error(created?.error || 'Could not create quiz');
 
-      const saveResponse = await fetch(`/quiz_api/quizzes/${created.id}/questions/`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ questions: generatedQuestions, removeMissing: true }),
-      });
-      const saved = await saveResponse.json().catch(() => null);
-      if (!saveResponse.ok) throw new Error(saved?.error || 'Could not save generated questions');
-
-      setQuizzes(prev => [saved.quiz, ...prev.filter(quiz => quiz.id !== saved.quiz.id)]);
+      setQuizzes(prev => [created, ...prev.filter(quiz => quiz.id !== created.id)]);
       resetGenerator();
       success('Quiz saved', 'Generated questions were saved as a draft quiz.');
     } catch (err) {
@@ -1667,7 +1705,8 @@ export default function QuizXmlWorkspacePage() {
   const openQuestionEditor = async (quiz: QuizPackage) => {
     // navigate, not window.location: the latter reloaded the SPA, which threw
     // away this page's loaded state and re-fetched every route chunk.
-    navigate(`/curriculum/quiz-xml/${quiz.id}/edit`);
+    // The editor's Back then steps back to this list, filters and all.
+    navigate(`/curriculum/quiz-xml/${quiz.id}/edit`, { state: { backLabel: 'Back to Quiz Workspace' } });
   };
 
   const updateEditorQuestion = (questionId: number, patch: Partial<QuizPreviewQuestion>) => {
@@ -1713,6 +1752,7 @@ export default function QuizXmlWorkspacePage() {
   };
 
   const saveQuestionEditor = async () => {
+    if (readingQuestionImage) return;
     if (!editorData) return;
     setEditorSaving(true);
     setError('');
@@ -2392,6 +2432,7 @@ export default function QuizXmlWorkspacePage() {
                                 {questionTypeOptions.find(option => option.value === question.questionType)?.label || question.questionType}
                               </span>
                             </div>
+                            <QuizQuestionImage imageUrl={question.imageUrl} />
                             <QuestionAnswersView type={question.questionType} answers={question.answers} fallbackText={question.explanation} />
                             {question.explanation && (
                               <div className="mt-5 rounded-xl border border-[#ddd2ff] bg-[#fbf9ff] px-4 py-3.5">
@@ -2537,6 +2578,7 @@ export default function QuizXmlWorkspacePage() {
                                   <div className="min-w-0">
                                     <p className="text-xs font-bold text-[#64748b] mb-1">Question {question.number}</p>
                                     <p className="text-sm font-semibold text-[#0f172a] leading-6 break-words [overflow-wrap:anywhere]">{question.text}</p>
+                                    <QuizQuestionImage imageUrl={question.imageUrl} />
                                   </div>
                                   <span className={`text-[11px] font-bold px-2.5 py-1 rounded-full shrink-0 ${question.correct ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'}`}>
                                     {question.correct ? 'Correct' : 'Incorrect'}
@@ -2614,6 +2656,10 @@ export default function QuizXmlWorkspacePage() {
                         />
                       </div>
 
+                      <QuizQuestionImageField key={activeEditorQuestion.id} imageUrl={activeEditorQuestion.imageUrl}
+                        onChange={imageUrl => updateEditorQuestion(activeEditorQuestion.id, { imageUrl })}
+                        disabled={editorSaving || readingQuestionImage} onBusyChange={setReadingQuestionImage} />
+
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                         <div>
                           <label className="block text-xs font-semibold text-foreground-500 mb-2">Question type</label>
@@ -2675,7 +2721,7 @@ export default function QuizXmlWorkspacePage() {
 
               <div className="flex items-center justify-end gap-2 p-5 border-t border-foreground-200/60">
                 <button onClick={() => setEditorData(null)} className="px-4 py-2 rounded-lg bg-background-100 text-sm font-semibold hover:bg-background-200">Close</button>
-                <button onClick={() => void saveQuestionEditor()} disabled={editorSaving || !editorDirty} className="px-5 py-2 rounded-lg bg-primary-500 text-white text-sm font-semibold hover:bg-primary-600 disabled:opacity-45 disabled:cursor-not-allowed disabled:hover:bg-primary-500">
+                <button onClick={() => void saveQuestionEditor()} disabled={editorSaving || !editorDirty || readingQuestionImage} className="px-5 py-2 rounded-lg bg-primary-500 text-white text-sm font-semibold hover:bg-primary-600 disabled:opacity-45 disabled:cursor-not-allowed disabled:hover:bg-primary-500">
                   {editorSaving ? 'Saving...' : 'Save changes'}
                 </button>
               </div>
@@ -2778,6 +2824,7 @@ export default function QuizXmlWorkspacePage() {
                     placeholder="Paste lesson text here, or upload TXT/CSV/XML/XLSX/PPTX/PDF/DOCX/SCORM ZIP files below."
                     className="w-full min-h-32 rounded-lg border border-foreground-200/60 bg-white p-3 text-sm leading-relaxed outline-none focus:border-primary-400"
                   />
+                  <KnowledgeBookPicker programme={generatorForm.programme} selected={knowledgeBookIds} onChange={setKnowledgeBookIds} />
                   <button
                     type="button"
                     onClick={() => generatorFileInputRef.current?.click()}
@@ -2847,6 +2894,8 @@ export default function QuizXmlWorkspacePage() {
                     </button>
                   </div>
 
+                  {knowledgeSources ? <KnowledgeSourcesSummary meta={knowledgeSources} /> : null}
+
                   {generatedQuestions.length === 0 ? (
                     <div className="min-h-80 flex flex-col items-center justify-center text-center">
                       <span className="w-12 h-12 rounded-2xl bg-white border border-foreground-200/60 flex items-center justify-center text-foreground-300 mb-3">
@@ -2869,6 +2918,7 @@ export default function QuizXmlWorkspacePage() {
                                   {questionTypeOptions.find(option => option.value === question.questionType)?.label}
                                 </span>
                               </div>
+                              <QuizQuestionImage imageUrl={question.imageUrl} />
                             </div>
                           </div>
                           <div className="border-t border-[#edf2f7] bg-[#fbfcff] p-4 sm:p-5">
@@ -2917,7 +2967,7 @@ export default function QuizXmlWorkspacePage() {
                   <h3 className="text-lg font-heading font-bold text-foreground-900">Create quiz manually</h3>
                   <p className="text-sm text-foreground-400">Add each question, choose its type, then mark the correct answer.</p>
                 </div>
-                <button type="button" onClick={resetManualModal} disabled={savingManualQuiz} className="w-9 h-9 rounded-lg bg-background-100 hover:bg-background-200 shrink-0 disabled:cursor-not-allowed disabled:opacity-50">
+                <button type="button" onClick={resetManualModal} disabled={savingManualQuiz || readingQuestionImage} className="w-9 h-9 rounded-lg bg-background-100 hover:bg-background-200 shrink-0 disabled:cursor-not-allowed disabled:opacity-50">
                   <AppIcon className="ri-close-line"></AppIcon>
                 </button>
               </div>
@@ -3019,6 +3069,9 @@ export default function QuizXmlWorkspacePage() {
                                   placeholder="Question text"
                                   className="w-full min-h-24 rounded-xl border border-foreground-200/60 bg-background-50 p-3 text-sm leading-relaxed outline-none focus:border-primary-400"
                                 />
+                                <QuizQuestionImageField imageUrl={question.imageUrl}
+                                  onChange={imageUrl => updateManualQuestion(question.id, { imageUrl })}
+                                  disabled={savingManualQuiz || readingQuestionImage} onBusyChange={setReadingQuestionImage} />
                                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                                   <ThemedSelect
                                     value={question.questionType}
@@ -3144,11 +3197,11 @@ export default function QuizXmlWorkspacePage() {
               <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 p-5 border-t border-foreground-200/60 bg-white">
                 <p className="text-xs text-foreground-400">The quiz will be saved with {manualQuestions.length} manual question{manualQuestions.length === 1 ? '' : 's'}.</p>
                 <div className="flex flex-col sm:flex-row gap-2">
-                  <button type="button" disabled={savingManualQuiz} onClick={addManualQuestion} className="px-4 py-2 rounded-lg bg-white border border-primary-200 text-primary-700 text-sm font-semibold hover:bg-primary-50 disabled:cursor-not-allowed disabled:opacity-60">
+                  <button type="button" disabled={savingManualQuiz || readingQuestionImage} onClick={addManualQuestion} className="px-4 py-2 rounded-lg bg-white border border-primary-200 text-primary-700 text-sm font-semibold hover:bg-primary-50 disabled:cursor-not-allowed disabled:opacity-60">
                     <AppIcon className="ri-add-line mr-1"></AppIcon>Add question
                   </button>
-                  <button type="button" disabled={savingManualQuiz} onClick={resetManualModal} className="px-4 py-2 rounded-lg bg-background-100 text-sm font-semibold hover:bg-background-200 disabled:cursor-not-allowed disabled:opacity-60">Cancel</button>
-                  <button type="submit" disabled={savingManualQuiz} className="inline-flex min-w-32 items-center justify-center gap-2 px-4 py-2 rounded-lg bg-primary-500 text-white text-sm font-semibold hover:bg-primary-600 disabled:cursor-wait disabled:opacity-70">
+                  <button type="button" disabled={savingManualQuiz || readingQuestionImage} onClick={resetManualModal} className="px-4 py-2 rounded-lg bg-background-100 text-sm font-semibold hover:bg-background-200 disabled:cursor-not-allowed disabled:opacity-60">Cancel</button>
+                  <button type="submit" disabled={savingManualQuiz || readingQuestionImage} className="inline-flex min-w-32 items-center justify-center gap-2 px-4 py-2 rounded-lg bg-primary-500 text-white text-sm font-semibold hover:bg-primary-600 disabled:cursor-wait disabled:opacity-70">
                     {savingManualQuiz && <span className="h-4 w-4 rounded-full border-2 border-white/40 border-t-white animate-spin" aria-hidden="true"></span>}
                     {savingManualQuiz ? 'Saving...' : 'Save Manual Quiz'}
                   </button>

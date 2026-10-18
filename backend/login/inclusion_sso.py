@@ -1,4 +1,4 @@
-"""Staff-only assertions for the Inclusion dashboard."""
+"""Assertions for Inclusion staff and explicitly approved QA accounts."""
 import re
 from urllib.parse import urlencode
 
@@ -9,6 +9,11 @@ from django.views.decorators.http import require_GET
 
 from .permissions import _accesses_of
 from .sessions import authenticate_request
+
+INCLUSION_QA_EMAIL_EXCEPTIONS = frozenset({
+    "emma.leavey@ofsted.gov.uk",
+    "rowaneltash2@gmail.com",
+})
 
 
 @require_GET
@@ -25,6 +30,10 @@ def authorize(request):
         return JsonResponse({"error": "Please sign in to the LMS again."}, status=401)
     accesses = _accesses_of(account)
     role = "qa" if "super-admin" in accesses else "coach" if "coach" in accesses else None
+    # Use the authenticated account, never an email supplied in the query string.
+    # This affects only the dashboard assertion; the LMS account stays a learner.
+    if (account.email or "").strip().lower() in INCLUSION_QA_EMAIL_EXCEPTIONS:
+        role = "qa"
     if not role:
         return JsonResponse({"error": "Inclusion is available to super admins and coaches only."}, status=403)
     assertion = signing.dumps({

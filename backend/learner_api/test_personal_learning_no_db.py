@@ -90,7 +90,8 @@ class PersonalLearningTests(unittest.TestCase):
         certificates._published_template = lambda _: self.template
         certificates._template_dict = lambda value: value
         self.quiz = types.ModuleType('learner_api.quizzes')
-        self.quiz._fetch_quiz = lambda _: {'title': 'Final quiz', 'passingGrade': 70, 'questions': [{'id': 1, 'text': 'Q', 'type': 'single_choice', 'points': 1}]}
+        self.quiz._fetch_quiz = lambda _: {'title': 'Final quiz', 'passingGrade': 70, 'questions': [{'id': 1, 'text': 'Q', 'type': 'single_choice', 'points': 1,
+            'answers': [{'id': 10, 'text': 'Correct', 'isCorrect': True}, {'id': 9, 'text': 'Wrong', 'isCorrect': False}]}]}
         self.quiz._grade_question = lambda q, answer: {'earned': int(answer == 10), 'possible': 1, 'correct': answer == 10}
         self.modules = {'learner_api': types.ModuleType('learner_api'), 'learner_api.personal_learning_store': self.store,
             'learner_api.time_tracking': tracking, 'learner_api.certificates': certificates, 'learner_api.quizzes': self.quiz}
@@ -194,6 +195,17 @@ class PersonalLearningTests(unittest.TestCase):
         repeated = self.ns['submit_quiz'](self.context, self.account, self.detail, '1', {'answers': {'1': 10}})
         self.assertEqual(repeated, result)
         self.assertEqual(len(self.state['progress']), 1)
+
+    def test_quiz_with_missing_answer_key_records_no_attempt(self):
+        self.detail['components'] = [{'componentId': 'Q1', 'component': 'Final quiz', 'moduleId': 'MOD-A', 'module': 'Module A', 'isQuiz': True, 'quizMeta': {'quizId': 1}}]
+        quiz = self.quiz._fetch_quiz(1)
+        for answer in quiz['questions'][0]['answers']:
+            answer['isCorrect'] = False
+        self.quiz._fetch_quiz = lambda _: quiz
+        with self.assertRaisesRegex(ValueError, 'answer key reviewed'):
+            self.ns['submit_quiz'](self.context, self.account, self.detail, '1', {'answers': {'1': 10}})
+        self.assertEqual(self.writes, 0)
+        self.assertEqual(self.state['progress'], [])
 
     def test_preview_and_incomplete_course_cannot_issue_certificate(self):
         self.cursor.fetchone.return_value = None

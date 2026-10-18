@@ -5,8 +5,10 @@
 // authored inline without leaving the page. Takes the quiz id as a prop and an
 // optional onClose (rendered as a back/close control instead of the route Link).
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { AppIcon } from '@/components/feature/AppIcon';
+import { QuizQuestionImage } from '@/components/feature/QuizQuestionImage';
+import { QuizQuestionImageField } from '@/components/feature/QuizQuestionImageField';
 import { ImageMatchingPairFields } from '@/components/feature/ImageMatchingPairFields';
 import { ThemedSelect } from '@/components/feature/ThemedSelect';
 import { QuestionAnswersView } from '@/components/feature/QuestionTypeRenderer';
@@ -83,6 +85,7 @@ interface QuizPackage {
 interface QuizQuestion {
   id: number;
   text: string;
+  imageUrl?: string;
   questionType: QuestionType;
   explanation: string;
   isArchived: boolean;
@@ -253,6 +256,7 @@ function settingsFromQuiz(quiz: QuizPackage): QuizSettingsState {
 function serializeQuestions(questions: QuizQuestion[]) {
   return JSON.stringify(questions.map(question => ({
     text: question.text,
+    imageUrl: question.imageUrl || '',
     questionType: question.questionType,
     explanation: question.explanation,
     isArchived: question.isArchived,
@@ -365,6 +369,12 @@ function normaliseCourseLinks(payload: CourseLinksState | null): CourseLinksStat
 
 export function QuizEditorPanel({ quizId, onClose, onSaved }: { quizId: string | number | undefined; onClose?: () => void; onSaved?: () => void }) {
   const { success, error: toastError } = useToast();
+  const navigate = useNavigate();
+  const location = useLocation();
+  // Opened from a filtered list (the quiz workspace or checkpoints), which names
+  // itself here: Back is then one step in history, so that list returns with its
+  // filters as they were. Opened any other way, the link opens the workspace.
+  const returnLabel = (location.state as { backLabel?: string } | null)?.backLabel || '';
   const [activeTab, setActiveTab] = useState<EditorTab>('questions');
   const [data, setData] = useState<QuizEditorData | null>(null);
   const [settings, setSettings] = useState<QuizSettingsState | null>(null);
@@ -375,6 +385,7 @@ export function QuizEditorPanel({ quizId, onClose, onSaved }: { quizId: string |
   const [courseLinksBaseline, setCourseLinksBaseline] = useState('');
   const [loading, setLoading] = useState(true);
   const [savingQuestions, setSavingQuestions] = useState(false);
+  const [readingQuestionImage, setReadingQuestionImage] = useState(false);
   const [savingSettings, setSavingSettings] = useState(false);
   const [savingCourseLinks, setSavingCourseLinks] = useState(false);
   const [savingStatus, setSavingStatus] = useState(false);
@@ -619,7 +630,7 @@ export function QuizEditorPanel({ quizId, onClose, onSaved }: { quizId: string |
   };
 
   const persistQuestionList = async (questions: QuizQuestion[], nextActiveQuestionId: number | null, title: string, message: string) => {
-    if (!data || savingQuestions) return;
+    if (!data || savingQuestions || readingQuestionImage) return;
     setSavingQuestions(true);
     try {
       const response = await fetch(`/quiz_api/quizzes/${data.quiz.id}/questions/`, {
@@ -724,6 +735,7 @@ export function QuizEditorPanel({ quizId, onClose, onSaved }: { quizId: string |
   };
 
   const saveQuestions = async () => {
+    if (readingQuestionImage) return;
     if (!data) return;
     const validationMessage = validateQuestions(data.questions);
     if (validationMessage) {
@@ -934,8 +946,12 @@ export function QuizEditorPanel({ quizId, onClose, onSaved }: { quizId: string |
                 <AppIcon className="ri-arrow-left-line mr-1"></AppIcon> Back to week
               </button>
             ) : (
-              <Link to="/curriculum/quiz-xml" className="text-xs font-semibold text-[#5b2dbb] hover:text-[#43207d]">
-                <AppIcon className="ri-arrow-left-line mr-1"></AppIcon> Back to Quiz Workspace
+              <Link to="/curriculum/quiz-xml" onClick={event => {
+                if (!returnLabel || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+                event.preventDefault();
+                navigate(-1);
+              }} className="text-xs font-semibold text-[#5b2dbb] hover:text-[#43207d]">
+                <AppIcon className="ri-arrow-left-line mr-1"></AppIcon> {returnLabel || 'Back to Quiz Workspace'}
               </Link>
             )}
             <h2 className="mt-2 text-2xl font-heading font-bold text-foreground-900">{data.quiz.title}</h2>
@@ -1046,6 +1062,10 @@ export function QuizEditorPanel({ quizId, onClose, onSaved }: { quizId: string |
                       </div>
                       <textarea value={activeQuestion.text} onChange={event => updateQuestion(activeQuestion.id, { text: event.target.value })} className="w-full min-h-36 rounded-xl border border-[#d8dde6] bg-white p-4 text-sm outline-none focus:border-[#8b5cf6] focus:ring-2 focus:ring-[#ede9fe]" />
                     </div>
+
+                    <QuizQuestionImageField key={activeQuestion.id} imageUrl={activeQuestion.imageUrl}
+                      onChange={imageUrl => updateQuestion(activeQuestion.id, { imageUrl })}
+                      disabled={savingQuestions || readingQuestionImage} onBusyChange={setReadingQuestionImage} />
 
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                       <div>
@@ -1188,7 +1208,7 @@ export function QuizEditorPanel({ quizId, onClose, onSaved }: { quizId: string |
                     </div>
 
                     <div className="flex justify-end pt-4 border-t border-[#e2e8f0]">
-                      <button onClick={() => void saveQuestions()} disabled={!questionDirty || savingQuestions} className="h-11 px-5 rounded-lg bg-[#5b2dbb] text-white text-sm font-semibold hover:bg-[#4c1d95] disabled:opacity-45 disabled:cursor-not-allowed">
+                      <button onClick={() => void saveQuestions()} disabled={!questionDirty || savingQuestions || readingQuestionImage} className="h-11 px-5 rounded-lg bg-[#5b2dbb] text-white text-sm font-semibold hover:bg-[#4c1d95] disabled:opacity-45 disabled:cursor-not-allowed">
                         {savingQuestions ? 'Saving...' : 'Save question changes'}
                       </button>
                     </div>
@@ -1611,6 +1631,7 @@ function QuestionPreviewCard({ question, questionIndex, compact = false }: { que
             <p className={`${compact ? 'text-sm' : 'text-[15px]'} font-semibold text-foreground-900 leading-relaxed`}>{question.text}</p>
             <span className="w-fit text-[10px] font-bold uppercase px-2 py-1 rounded-md bg-[#e8edf4] text-[#526173] shrink-0">{questionLabel(question.questionType)}</span>
           </div>
+          <QuizQuestionImage imageUrl={question.imageUrl} />
           <QuestionAnswersView type={question.questionType} answers={question.answers} fallbackText={question.explanation} compact={compact} className="mt-4" />
           {question.explanation && !compact && (
             <div className="mt-4 rounded-xl border border-[#e4def8] bg-[#fbf9ff] p-4">

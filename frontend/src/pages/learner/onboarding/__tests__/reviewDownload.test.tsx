@@ -7,42 +7,35 @@ import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import type { ReactNode } from 'react';
-import type { OnboardingReview } from '@/api/learnerCalendar';
+import type { OnboardingReviewSlot } from '@/api/reviewForm';
 
 vi.mock('@/components/feature/WorkspaceShell', () => ({ WorkspaceShell: ({ children }: { children: ReactNode }) => <>{children}</> }));
 vi.mock('@/hooks/useMyLearner', () => ({ useMyLearner: () => ({ kind: 'apprenticeship', id: '670' }) }));
 vi.mock('@/hooks/useLearnerNavGate', () => ({ useEnrolmentSubmitted: () => true }));
-const calendar = vi.hoisted(() => ({ fetchOnboardingReviews: vi.fn() }));
-vi.mock('@/api/learnerCalendar', () => ({
-  ...calendar,
-  bookLearnerCalendarSession: vi.fn(),
-  cancelLearnerCalendarSession: vi.fn(),
-  fetchFirstSessionSlots: vi.fn(async () => ({ slots: [] })),
-  ukOffsetForDate: () => '+01:00',
-}));
-const form = vi.hoisted(() => ({ fetchReviewForm: vi.fn() }));
-vi.mock('@/api/reviewForm', () => form);
+const form = vi.hoisted(() => ({ fetchReviewForm: vi.fn(), fetchOnboardingReviewSlots: vi.fn() }));
+vi.mock('@/api/reviewForm', async (original) => ({ ...(await original<typeof import('@/api/reviewForm')>()), ...form }));
 const doc = vi.hoisted(() => ({ downloadReviewPdf: vi.fn() }));
 vi.mock('../reviews/reviewDocument', () => doc);
 
 import OnboardingReviewsPage from '../reviews/page';
 import { REVIEW_QUESTION_LABELS } from '../reviews/questions';
 
-const event = (eventKey: string) => ({ eventKey, scheduledDate: '2026-10-01', scheduledTime: '09:00', coachName: 'Case Owner', invited: true });
-const review = (type: OnboardingReview['type'], label: string, extra: Partial<OnboardingReview>): OnboardingReview =>
-  ({ type, label, booked: true, hasForm: true, event: event(`ev-${type}`), ...extra }) as OnboardingReview;
+const unsigned = { signature: '', name: '', signedAt: null, signed: false };
+const review = (type: OnboardingReviewSlot['type'], label: string, extra: Partial<OnboardingReviewSlot>): OnboardingReviewSlot =>
+  ({ type, label, issued: true, eventKey: `ev-${type}`, signatures: { learner: unsigned, admin: unsigned, signable: false }, ...extra });
 
 const card = (label: string) => screen.getByRole('heading', { name: label }).closest('div.rounded-2xl') as HTMLElement;
 
 beforeEach(() => {
   vi.clearAllMocks();
-  calendar.fetchOnboardingReviews.mockResolvedValue({
-    caseOwner: { name: 'Case Owner', email: '' },
-    allBooked: true,
+  form.fetchOnboardingReviewSlots.mockResolvedValue({
+    programme: '',
+    allIssued: true,
+    allCompleted: false,
     reviews: [
-      review('eligibility-review', 'Eligibility Review & FS Discussion', { formStarted: true, formCompleted: true, learnerSigned: true }),
-      review('workspace', 'RPL And Experience', { formStarted: true, formCompleted: false }),
-      review('training-plan', 'Workplace Health & Safety Declaration', { formStarted: false }),
+      review('eligibility-review', 'Eligibility Review & FS Discussion', { started: true, completed: true, issuedAt: '2026-10-15T12:52:00Z', completedAt: '2026-10-15T13:05:00Z' }),
+      review('workspace', 'RPL And Experience', { started: true, completed: false, issuedAt: '2026-10-15T13:32:00Z' }),
+      review('training-plan', 'Workplace Health & Safety Declaration', { started: false }),
     ],
   });
 });
@@ -50,6 +43,24 @@ beforeEach(() => {
 function renderPage() {
   render(<MemoryRouter><OnboardingReviewsPage /></MemoryRouter>);
 }
+
+describe('issued reviews', () => {
+  it('show when they were issued, in UK time', async () => {
+    renderPage();
+    await screen.findByText('RPL And Experience');
+    expect(within(card('RPL And Experience')).getByText('Issued 15 Oct 2026, 14:32')).toBeInTheDocument();
+    // Not finished, so no completion date.
+    expect(within(card('RPL And Experience')).queryByText(/^Completed /)).not.toBeInTheDocument();
+  });
+
+  it('show when a finished review was completed', async () => {
+    renderPage();
+    await screen.findByText('Eligibility Review & FS Discussion');
+    const done = card('Eligibility Review & FS Discussion');
+    expect(within(done).getByText('Issued 15 Oct 2026, 13:52')).toBeInTheDocument();
+    expect(within(done).getByText('Completed 15 Oct 2026, 14:05')).toBeInTheDocument();
+  });
+});
 
 describe('enrolment review download', () => {
   it('is offered only on a completed review', async () => {

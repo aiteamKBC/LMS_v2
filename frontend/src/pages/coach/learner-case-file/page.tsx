@@ -1,4 +1,5 @@
-﻿import { useState } from 'react';
+import { useState } from 'react';
+import { CaseFileSessionProvider, useCaseFileSession } from '@/features/coach/case-file/hooks/CaseFileSession';
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { AppIcon } from '@/components/feature/AppIcon';
@@ -6,7 +7,7 @@ import { roleNavMap } from '@/mocks/navigation';
 import { EmptyState } from '@/pages/users/components/ui';
 import { useCoachIdentity } from '@/hooks/useCoachIdentity';
 import { DashboardTrainingPlan } from '@/pages/workspace/learner/DashboardTrainingPlan';
-import { DashboardWeeklyContent } from '@/pages/workspace/learner/tabs/DashboardWeeklyTab';
+import { CaseFileWeeklyLearningTab } from './tabs/CaseFileWeeklyLearningTab';
 import OTJHTab from './components/OTJHTab';
 import KSBsTab from './components/KSBsTab';
 import EvidenceTab from './components/EvidenceTab';
@@ -14,6 +15,7 @@ import AuditTab from '@/features/audit/AuditTab';
 import ActivityTab from './components/ActivityTab';
 import DocumentsTab from './components/DocumentsTab';
 import NetworkTab from './components/NetworkTab';
+import { CaseFileLearningPlanTab } from './tabs/CaseFileLearningPlanTab';
 import LearningPlanTab from './components/OverviewTab';
 import AssignmentsTab from './components/AssignmentsTab';
 import { RowsSkeleton } from '@/components/feature/Skeletons';
@@ -22,11 +24,12 @@ import {
   formatPercent,
   selectCaseFileOtjh,
 } from './data';
-import type { CaseFileReviewMeeting } from './types';
 import styles from './learnerCaseFile.module.css';
 import weeklyActivitiesStyles from './coachWeeklyActivities.module.css';
 import { CaseFileTabs } from './components/CaseFileTabs';
 import { LearnerCaseFileHeader } from './components/LearnerCaseFileHeader';
+import { CaseFileMonthlyFocusTab } from './tabs/CaseFileMonthlyFocusTab';
+import { CaseFileOverviewTab } from './tabs/CaseFileOverviewTab';
 import { AttendanceTab } from './tabs/AttendanceTab';
 import { ReviewsTab } from './tabs/ReviewsTab';
 import { EnrolmentDocumentsTab } from './tabs/EnrolmentDocumentsTab';
@@ -63,6 +66,18 @@ type LocationState = {
 
 export default function LearnerCaseFile() {
   const coach = useCoachIdentity();
+  const location = useLocation();
+  const [params] = useSearchParams();
+  const learnerId = params.get('id') || (location.state as LocationState | null)?.learnerId || '';
+  const identity = `${coach.email || ''}:${learnerId}`;
+  return <CaseFileSessionProvider key={identity} learnerId={learnerId} coach={coach.email || ''}>
+    <LearnerCaseFileContent />
+  </CaseFileSessionProvider>;
+}
+
+function LearnerCaseFileContent() {
+  const session = useCaseFileSession();
+  const coach = useCoachIdentity();
   const navigate = useNavigate();
   const location = useLocation();
   const [searchParams] = useSearchParams();
@@ -71,7 +86,6 @@ export default function LearnerCaseFile() {
   const requestedTab = searchParams.get('tab') || state.tab;
   const { activeTab, setActiveTab } = useLearnerProfileTabs(requestedTab);
   const [evidencePreview, setEvidencePreview] = useState<EvidencePreviewTarget | null>(null);
-  const requestedReviewId = searchParams.get('reviewId') || undefined;
   const learnerId = searchParams.get('id') || state.learnerId;
   const learnerName = state.learnerName;
   const explicitKind = parseLearnerKind(searchParams.get('kind') || state.kind);
@@ -104,22 +118,6 @@ export default function LearnerCaseFile() {
     && state.activitySnapshot.learnerId === learnerId ? state.activitySnapshot : null;
   const tableOtjh = data && state.otjhSnapshot?.learnerId === data.learnerId
     && state.otjhSnapshot.learnerId === learnerId ? state.otjhSnapshot : null;
-  const handleOpenReviewMeeting = (item: CaseFileReviewMeeting) => {
-    const returnParams = new URLSearchParams(location.search);
-    returnParams.set('id', data?.learnerId || learnerId || '');
-    returnParams.set('tab', 'reviews');
-    if (data?.kind) returnParams.set('kind', data.kind);
-    const returnTo = `${location.pathname}?${returnParams.toString()}`;
-    const detailBase = item.source === 'mcr'
-      ? '/coach/meetings'
-      : '/coach/reviews';
-    const detailKey = item.eventKey;
-
-    navigate(`${detailBase}/${encodeURIComponent(detailKey)}`, {
-      state: { returnTo },
-    });
-  };
-
   const renderTab = () => {
     if (!data) {
       return (
@@ -133,20 +131,7 @@ export default function LearnerCaseFile() {
 
     switch (activeTab) {
       case 'overview':
-        return dashboardKind ? <div className="learner-dashboard"><DashboardTrainingPlan
-            kind={dashboardKind}
-            learnerId={data.enrolmentId || data.learnerId}
-            plan={dashboardPlan}
-            programmeStartDate={data.detail?.programmeStartDate}
-            programmeEndDate={data.detail?.programmeEndDate}
-            learningActivity={data.learningActivity}
-            learnerDetail={data.detail}
-            canOpenActivities
-            showRewards={false}
-            activityOverviewOnly
-            overviewOnly
-            showOtjChart={false}
-            programmeSnapshot={{
+        return <div className="learner-dashboard"><CaseFileOverviewTab hasActivitySnapshot={Boolean(tableActivities)} snapshot={{
               overall: data.overallProgress,
               activitiesCompleted: tableActivities ? tableActivities.completed : data.activitiesCompleted ?? null,
               activitiesTotal: tableActivities ? tableActivities.total : data.activitiesTotal ?? null,
@@ -157,35 +142,19 @@ export default function LearnerCaseFile() {
               ksbAvailable: Boolean(headerKsb?.total),
               attendancePresent: caseFileAttendance.data?.present ?? null,
               attendanceTotal: caseFileAttendance.data?.sessions ?? null,
-            }}
-          /></div> : null;
+            }} /></div>;
       case 'weekly-learning':
-        return dashboardKind ? <DashboardWeeklyContent kind={dashboardKind}
-          learnerId={data.enrolmentId || data.learnerId} plan={dashboardPlan} canOpenActivities={false} /> : null;
+        return dashboardKind ? <CaseFileWeeklyLearningTab kind={dashboardKind}
+          learnerId={data.enrolmentId || data.learnerId} /> : null;
       case 'monthly-focus':
-        return dashboardKind ? <DashboardTrainingPlan
-            kind={dashboardKind}
-            learnerId={data.enrolmentId || data.learnerId}
-            plan={dashboardPlan}
-            programmeStartDate={data.detail?.programmeStartDate}
-            programmeEndDate={data.detail?.programmeEndDate}
-            learningActivity={data.learningActivity}
-            learnerDetail={data.detail}
-            canOpenActivities={false}
-            showRewards={false}
-            monthlyOnly
-          /> : null;
+        return dashboardKind ? <CaseFileMonthlyFocusTab kind={dashboardKind}
+          learnerId={data.enrolmentId || data.learnerId} startDate={data.programmeStartDate || data.startDate} endDate={data.programmeEndDate} /> : null;
       case 'progress':
         return <ProgressTab data={data} plan={dashboardPlan} otjhSnapshot={tableOtjh} onViewEvidence={setEvidencePreview} />;
       case 'attendance':
         return <AttendanceTab attendanceState={caseFileAttendance} />;
       case 'reviews':
-        return <ReviewsTab
-          data={data}
-          reviewsState={caseFileReviews}
-          onOpen={handleOpenReviewMeeting}
-          requestedReviewId={requestedReviewId}
-        />;
+        return <ReviewsTab reviewsState={caseFileReviews} />;
       case 'assignments':
         return dashboardKind && (data.enrolmentId || data.learnerId)
           ? <AssignmentsTab kind={dashboardKind} learnerId={data.enrolmentId || data.learnerId} markingState={caseFileMarking} />
@@ -195,19 +164,10 @@ export default function LearnerCaseFile() {
       case 'coach-notes':
         return <DocumentsTab data={data} />;
       case 'support':
-        return <div className="space-y-5">
-          {dashboardKind ? <DashboardTrainingPlan
-            kind={dashboardKind}
-            learnerId={data.enrolmentId || data.learnerId}
-            plan={dashboardPlan}
-            programmeStartDate={data.detail?.programmeStartDate}
-            programmeEndDate={data.detail?.programmeEndDate}
-            learningActivity={data.learningActivity}
-            learnerDetail={data.detail}
-            canOpenActivities
-            showRewards={false}
-            timelineOnly
-          /> : null}
+        return session ? <CaseFileLearningPlanTab /> : <div className="space-y-5">
+          {dashboardKind ? <DashboardTrainingPlan kind={dashboardKind} learnerId={data.enrolmentId || data.learnerId}
+            plan={dashboardPlan} programmeStartDate={data.programmeStartDate} programmeEndDate={data.programmeEndDate}
+            learningActivity={data.learningActivity} learnerDetail={data.detail} canOpenActivities={false} showRewards={false} timelineOnly /> : null}
           <LearningPlanTab data={data} ksbSummary={headerKsb || undefined} onOpenNotes={() => setActiveTab('coach-notes')} />
         </div>;
       case 'otjh':

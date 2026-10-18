@@ -26,6 +26,27 @@ function attendanceState() {
 }
 
 describe('AttendanceTab session history pagination', () => {
+  it('uses backend totals and asks for server filters/pages while displaying reasons', () => {
+    const setSelection = vi.fn();
+    const state = {
+      data: { sessions: 46, present: 23, absent: 23, sessionHistory: [
+        { id: 'last', title: 'Last lesson', date: '2026-10-06', status: 'absent', reason: 'Transport' },
+      ] }, loading: false, error: null, retry: vi.fn(), invalidate: vi.fn(), setSelection,
+      selection: { search: '', status: 'all', month: 'all', page: '1', pageSize: '20' },
+      projection: { summary: { outstandingAbsences: 23 }, months: ['2026-10', '2026-09'],
+        pagination: { page: 1, pageSize: 20, total: 46, hasMore: true } },
+    } as never;
+    render(<AttendanceTab attendanceState={state} />);
+    expect(screen.getByText('23 / 46')).toBeInTheDocument();
+    expect(screen.getByText('Transport')).toBeInTheDocument();
+    expect(screen.getByText('46 of 46 sessions')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Next page' }));
+    expect(setSelection.mock.calls[0][0]({ page: '1' }).page).toBe('2');
+    fireEvent.change(screen.getByLabelText('Month'), { target: { value: '2026-09' } });
+    expect(setSelection.mock.calls[1][0]({ page: '2' })).toMatchObject({ page: '1', month: '2026-09' });
+    fireEvent.change(screen.getByPlaceholderText('Search session or reason'), { target: { value: 'Transport' } });
+    expect(setSelection.mock.calls[2][0]({ page: '2' })).toMatchObject({ page: '1', search: 'Transport' });
+  });
   it('shows 15 sessions per page and resets to page one when filters change', () => {
     render(<AttendanceTab attendanceState={attendanceState()} />);
 

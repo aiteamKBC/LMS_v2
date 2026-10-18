@@ -114,7 +114,7 @@ export async function confirmTeamsCalendarUpdate({
   }
   if (pushed) {
     const { sessionCount, warning, outcome, sent } = pushed as TeamsCalendarPushResult;
-    if (outcome.notifyAttendees) {
+    if (outcome.notifyAttendees || outcome.addedPeople?.length) {
       // The author ticked the change email in the review: the result stays
       // open to send it and report it, instead of a notice that times out.
       await finishTeamsUpdate(outcome, sent);

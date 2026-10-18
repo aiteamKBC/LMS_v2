@@ -59,7 +59,7 @@ export interface PendingMarkingRow {
 export interface DashboardPopupContract {
   owner: { name?: string };
   summary: DashboardSummary;
-  learnerPopup: { all: DashboardPopupLearner[]; atRisk?: string[] };
+  learnerPopup: { all: DashboardPopupLearner[] };
   markingPopup: { count: number | null; items: PendingMarkingRow[] };
   meetingsPopup: Record<'pr' | 'mcm' | 'catchUps', { count: number | null; items: Array<{
     id?: string; eventKey?: string; calendarEventId?: string; enrolmentId?: string | null;

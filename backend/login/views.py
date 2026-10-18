@@ -260,6 +260,35 @@ def me(request):
         return _error(f"Database error: {exc}", 502)
 
 
+@require_GET
+def learner_action_access(request):
+    """May the signed-in account act for ``?learnerId=``? Read-only.
+
+    The learner workspace asks this to decide between its working and read-only
+    views. It answers with the rule ``permissions.learner_self_or_admin``
+    enforces on every write: the learner, an administrator, or the learner's
+    own coach, or a staff account studying its own linked enrolment.
+    """
+    from .permissions import coach_owns_learner, staff_owns_learner
+
+    account = authenticate_request(request)
+    if account is None:
+        return _error("Not authenticated.", 401, code="unauthenticated")
+    try:
+        learner_id = int(request.GET.get("learnerId", ""))
+    except (TypeError, ValueError):
+        return _error("learnerId is required.", 400)
+    can_act = learner_id > 0 and (
+        account.role == "admin"
+        or (account.role == "learner" and account.subject_id == learner_id)
+        or coach_owns_learner(account, learner_id)
+        or staff_owns_learner(account, learner_id)
+    )
+    response = JsonResponse({"canAct": bool(can_act)})
+    response["Cache-Control"] = "private, no-store"
+    return response
+
+
 # ---------------------------------------------------------------------------
 # Password management
 # ---------------------------------------------------------------------------

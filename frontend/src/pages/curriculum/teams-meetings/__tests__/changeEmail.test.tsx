@@ -99,12 +99,12 @@ it('sends the full schedule to the people an update added, without a change emai
   await pending;
 });
 
-it('says so when nobody added is a learner to send the schedule to', async () => {
+it('says so when everyone added had already been sent the schedule', async () => {
   vi.mocked(submitAddedPeopleEmails).mockResolvedValue({ total: 0, accepted: 0, queued: 0, failed: 0, uncertain: 0, status: 'complete' });
   const pending = finishTeamsUpdate({ updated: true, meeting: { liveSessionId: 'LIVE-ONE' } },
     { ...calendar, addedPeople: ['back.again@example.invalid'] });
   await resultOpen();
-  expect(screen.getByText('None to send — no people were added')).toBeVisible();
+  expect(screen.getByText('Already sent to everyone added')).toBeVisible();
   await userEvent.click(screen.getByRole('button', { name: 'Done' }));
   await pending;
 });
@@ -142,4 +142,50 @@ it('names the added people, and nothing else, in their email request', async () 
   await real('LIVE-ONE', false, '', ['new.presenter@example.invalid']);
   const sent = transport.mock.calls.find(([url]) => String(url).includes('schedule-email')) as unknown as [string, { body: string }];
   expect(JSON.parse(sent[1].body)).toEqual({ retryFailed: false, addedPeople: ['new.presenter@example.invalid'] });
+});
+
+it('shows the change email the server already sent with the update, and sends nothing from the browser', async () => {
+  const pending = finishTeamsUpdate({ updated: true, meeting: { liveSessionId: 'LIVE-ONE' }, changeNotice: 'signed', notifyAttendees: true,
+    scheduleEmail: { ...complete, total: 5, accepted: 5 } }, calendar);
+  await resultOpen();
+  expect(screen.getByText('5 of 5 submitted to Microsoft')).toBeVisible();
+  expect(submitChangeEmails).not.toHaveBeenCalled();
+  await userEvent.click(screen.getByRole('button', { name: 'Done' }));
+  await pending;
+  expect(submitChangeEmails).not.toHaveBeenCalled();
+});
+
+it('reaches only the people the server found were added, with what it already sent', async () => {
+  const pending = finishTeamsUpdate({ updated: true, meeting: { liveSessionId: 'LIVE-ONE' },
+    addedPeople: ['new@example.invalid'], addedEmail: { ...complete, total: 1, accepted: 1 } }, calendar);
+  await resultOpen();
+  expect(screen.getByText('Schedule emails to 1 added person')).toBeVisible();
+  expect(screen.getByText('1 of 1 submitted to Microsoft')).toBeVisible();
+  // Quiet for everyone already invited: no change email, no browser send.
+  expect(submitChangeEmails).not.toHaveBeenCalled();
+  expect(submitAddedPeopleEmails).not.toHaveBeenCalled();
+  await userEvent.click(screen.getByRole('button', { name: 'Done' }));
+  await pending;
+});
+
+it('reports a server email failure beside the saved calendar and retries only when asked', async () => {
+  const pending = finishTeamsUpdate({ updated: true, meeting: { liveSessionId: 'LIVE-ONE' }, changeNotice: 'signed', notifyAttendees: true,
+    scheduleEmail: { error: 'Schedule emails are not configured.', code: 'schedule_email_not_configured' } }, calendar);
+  await waitFor(() => expect(screen.getByText('Schedule emails are not configured.')).toBeVisible());
+  expect(submitChangeEmails).not.toHaveBeenCalled();
+  await userEvent.click(screen.getByRole('button', { name: 'Retry pending emails' }));
+  await waitFor(() => expect(screen.getByText('3 of 3 submitted to Microsoft')).toBeVisible());
+  expect(submitChangeEmails).toHaveBeenCalledWith('LIVE-ONE', 'signed', expect.objectContaining({ retryFailed: true }));
+  await userEvent.click(screen.getByRole('button', { name: 'Done' }));
+  await pending;
+});
+
+it('finishes from the browser what the server left queued', async () => {
+  const pending = finishTeamsUpdate({ updated: true, meeting: { liveSessionId: 'LIVE-ONE' }, changeNotice: 'signed', notifyAttendees: true,
+    scheduleEmail: { ...complete, total: 6, accepted: 4, queued: 2, status: 'pending' } }, calendar);
+  await resultOpen();
+  expect(submitChangeEmails).toHaveBeenCalledTimes(1);
+  expect(submitChangeEmails).toHaveBeenCalledWith('LIVE-ONE', 'signed', expect.objectContaining({ retryFailed: false }));
+  await userEvent.click(screen.getByRole('button', { name: 'Done' }));
+  await pending;
 });

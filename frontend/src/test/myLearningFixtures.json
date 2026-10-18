@@ -1,0 +1,380 @@
+{
+  "catalogue": {
+    "learner": {
+      "id": "7",
+      "kind": "commercial",
+      "name": "Synthetic learner",
+      "programme": "Example programme",
+      "cohort": "",
+      "group": ""
+    },
+    "summary": {
+      "current": {
+        "subjects": 2,
+        "total": 3,
+        "completed": 1,
+        "percent": 33.33
+      },
+      "previous": {
+        "subjects": 1,
+        "total": 4,
+        "completed": 2,
+        "percent": 50.0
+      },
+      "subjectCount": 3
+    },
+    "modules": [
+      {
+        "id": "current:M2",
+        "title": "Another module",
+        "source": "current",
+        "activityCount": 1,
+        "completedActivityCount": 0,
+        "progress": 0.0,
+        "status": "Upcoming",
+        "nextTitle": "C2",
+        "finalTestPassed": false,
+        "planModule": {
+          "start_date": "2026-01-01",
+          "end_date": "2026-12-31",
+          "tutor_name": "Example tutor",
+          "total_otjh": 10,
+          "educational_session_count": 2,
+          "programme_name": null,
+          "cohort_name": null,
+          "group_name": null
+        },
+        "actualHours": 0,
+        "cover": null
+      },
+      {
+        "id": "current:M1",
+        "title": "Example module",
+        "source": "current",
+        "activityCount": 2,
+        "completedActivityCount": 1,
+        "progress": 50.0,
+        "status": "In progress",
+        "nextTitle": "Final test",
+        "finalTestPassed": false,
+        "planModule": {
+          "start_date": "2026-01-01",
+          "end_date": "2026-12-31",
+          "tutor_name": "Example tutor",
+          "total_otjh": 10,
+          "educational_session_count": 2,
+          "programme_name": null,
+          "cohort_name": null,
+          "group_name": null
+        },
+        "actualHours": 1.0,
+        "cover": "https://assets.example.test/cover.png"
+      },
+      {
+        "id": "legacy:50",
+        "title": "Previous course",
+        "source": "legacy",
+        "moduleId": null,
+        "activityCount": 4,
+        "completedActivityCount": 2,
+        "progress": 50.0,
+        "status": "In progress",
+        "nextTitle": "Previous material 2",
+        "finalTestPassed": false,
+        "planModule": null,
+        "actualHours": 2,
+        "cover": null
+      }
+    ],
+    "otjh": {
+      "actual": 3.0,
+      "planned": 20.0
+    },
+    "upcoming": [],
+    "hasMoreUpcoming": false
+  },
+  "module": {
+    "subjectId": "current:M1",
+    "detail": {
+      "modules": [
+        "Example module"
+      ],
+      "components": [
+        {
+          "componentId": "C1",
+          "moduleId": "M1",
+          "module": "Example module",
+          "component": "Example reading",
+          "type": "reading",
+          "week": "Week 1",
+          "hasReadingContent": true
+        },
+        {
+          "componentId": "Q1",
+          "moduleId": "M1",
+          "module": "Example module",
+          "component": "Final test",
+          "type": "quiz",
+          "week": "Week 1",
+          "isQuiz": true,
+          "quizMeta": {
+            "quizId": 1,
+            "questions": 1
+          }
+        }
+      ],
+      "retiredQuizComponents": [],
+      "quizAttempts": [
+        {
+          "componentId": "Q1",
+          "quizId": 1,
+          "passed": false,
+          "grade": 0
+        }
+      ],
+      "videoProgress": [],
+      "componentProgress": [
+        {
+          "componentId": "C1",
+          "kind": "component"
+        }
+      ],
+      "id": "7",
+      "programme": "Example programme",
+      "cohort": "",
+      "group": "",
+      "week": [],
+      "name": "Synthetic learner"
+    },
+    "activity": null,
+    "metadata": {
+      "covers": {
+        "current:M1": "https://assets.example.test/cover.png"
+      },
+      "builder_subjects": {
+        "current:M1": {
+          "id": "M1",
+          "title": "Example module"
+        }
+      },
+      "imported_courses": {},
+      "replacement_courses": {},
+      "previous_learning_groups": {},
+      "current_subjects": [
+        {
+          "id": "M1",
+          "title": "Example module"
+        }
+      ],
+      "activity_dates": {}
+    },
+    "schedule": {
+      "modules": [
+        {
+          "id": "M1",
+          "title": "Example module",
+          "description": "",
+          "start_date": "2026-01-01",
+          "end_date": "2026-12-31",
+          "tutor_name": "Example tutor",
+          "coach_name": "",
+          "total_otjh": 10,
+          "educational_session_count": 2
+        }
+      ],
+      "moduleLinks": {
+        "current:M1": {
+          "id": "M1",
+          "title": "Example module"
+        }
+      },
+      "generatedAt": "2026-10-18T00:00:00+00:00"
+    },
+    "sessions": []
+  },
+  "legacyModule": {
+    "subjectId": "legacy:50",
+    "detail": {
+      "modules": [],
+      "components": [],
+      "retiredQuizComponents": [],
+      "quizAttempts": [],
+      "videoProgress": [],
+      "componentProgress": [],
+      "id": "7",
+      "programme": "Example programme",
+      "cohort": "",
+      "group": "",
+      "week": [],
+      "name": "Synthetic learner"
+    },
+    "activity": {
+      "source": "canonical",
+      "source_status": "historical",
+      "progress_basis": "catalogue_activities",
+      "learner_name": "Synthetic learner",
+      "aptem_id": 7,
+      "subjects": [
+        {
+          "id": 50,
+          "name": "Previous course",
+          "module_id": null,
+          "catalogue_count": 4,
+          "accepted_hours": 2.0
+        }
+      ],
+      "count": 4,
+      "unique_activity_count": 4,
+      "module_count": 1,
+      "completed_count": 2,
+      "mapped_count": 2,
+      "planned_mapped_count": 0,
+      "actual_total": 2.0,
+      "planned_total": null,
+      "activities": [
+        {
+          "activity_id": "catalogue:50:material:1",
+          "source_activity_id": 1,
+          "group_id": 50,
+          "group_name": "Previous course",
+          "activity": "Previous material 1",
+          "category": "reading",
+          "catalogue_kind": "material",
+          "can_open_material": true,
+          "section_title": "",
+          "position": 1,
+          "date": null,
+          "month": "undated",
+          "week_start": null,
+          "week_end": null,
+          "date_source": "undated",
+          "completed": true,
+          "historical_completed": true,
+          "actual": 1.0,
+          "planned": 0,
+          "hours_mapped": true,
+          "planned_hours_mapped": false,
+          "has_result": true,
+          "status": "Completed",
+          "quiz_score": null,
+          "quiz_maximum_score": null,
+          "record_ids": [
+            "2"
+          ],
+          "source_date": null,
+          "date_needs_review": true
+        },
+        {
+          "activity_id": "catalogue:50:material:2",
+          "source_activity_id": 2,
+          "group_id": 50,
+          "group_name": "Previous course",
+          "activity": "Previous material 2",
+          "category": "reading",
+          "catalogue_kind": "material",
+          "can_open_material": true,
+          "section_title": "",
+          "position": 2,
+          "date": null,
+          "month": "undated",
+          "week_start": null,
+          "week_end": null,
+          "date_source": "undated",
+          "completed": false,
+          "historical_completed": false,
+          "actual": 0,
+          "planned": 0,
+          "hours_mapped": false,
+          "planned_hours_mapped": false,
+          "has_result": false,
+          "status": "Not started",
+          "quiz_score": null,
+          "quiz_maximum_score": null,
+          "record_ids": [],
+          "source_date": null,
+          "date_needs_review": true
+        },
+        {
+          "activity_id": "catalogue:50:quiz:3",
+          "source_activity_id": 3,
+          "group_id": 50,
+          "group_name": "Previous course",
+          "activity": "Previous quiz 3",
+          "category": "quiz",
+          "catalogue_kind": "quiz",
+          "can_open_material": false,
+          "section_title": "",
+          "position": 3,
+          "date": null,
+          "month": "undated",
+          "week_start": null,
+          "week_end": null,
+          "date_source": "undated",
+          "completed": true,
+          "historical_completed": true,
+          "actual": 1.0,
+          "planned": 0,
+          "hours_mapped": true,
+          "planned_hours_mapped": false,
+          "has_result": true,
+          "status": "Completed",
+          "quiz_score": null,
+          "quiz_maximum_score": null,
+          "record_ids": [
+            "3"
+          ],
+          "source_date": null,
+          "date_needs_review": true
+        },
+        {
+          "activity_id": "catalogue:50:material:4",
+          "source_activity_id": 4,
+          "group_id": 50,
+          "group_name": "Previous course",
+          "activity": "Previous material 4",
+          "category": "reading",
+          "catalogue_kind": "material",
+          "can_open_material": true,
+          "section_title": "",
+          "position": 4,
+          "date": null,
+          "month": "undated",
+          "week_start": null,
+          "week_end": null,
+          "date_source": "undated",
+          "completed": false,
+          "historical_completed": false,
+          "actual": 0,
+          "planned": 0,
+          "hours_mapped": false,
+          "planned_hours_mapped": false,
+          "has_result": false,
+          "status": "Not started",
+          "quiz_score": null,
+          "quiz_maximum_score": null,
+          "record_ids": [],
+          "source_date": null,
+          "date_needs_review": true
+        }
+      ],
+      "activity_sources": {},
+      "verification_status": "verified",
+      "replacement_hours": {}
+    },
+    "metadata": {
+      "covers": {},
+      "builder_subjects": {},
+      "imported_courses": {},
+      "replacement_courses": {},
+      "previous_learning_groups": {},
+      "current_subjects": [],
+      "activity_dates": {}
+    },
+    "schedule": {
+      "modules": [],
+      "moduleLinks": {},
+      "generatedAt": "2026-10-18T00:00:00+00:00"
+    },
+    "sessions": []
+  }
+}

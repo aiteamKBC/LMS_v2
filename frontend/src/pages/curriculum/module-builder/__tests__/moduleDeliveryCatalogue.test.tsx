@@ -4,6 +4,7 @@ import { createMemoryRouter, MemoryRouter, RouterProvider, useLocation } from 'r
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ReactNode } from 'react';
 import type { CurriculumCohort, CurriculumGroup, CurriculumModule, CurriculumProgramme } from '@/lib/curriculumApi';
+import { fetchCurriculumDeliveryScope, fetchCurriculumOverview } from '@/lib/curriculumApi';
 
 /**
  * The delivery side of the catalogue, which arrived here when the separate
@@ -182,6 +183,7 @@ vi.mock('@/lib/curriculumApi', async importOriginal => ({
   fetchCurriculumTutors: vi.fn(async () => [{ id: 1, name: 'Tutor One' }, { id: 2, name: 'Tutor Two' }]),
   fetchCurriculumTeamsMeetingSummaries: vi.fn(async () => []),
   fetchCurriculumOverview: vi.fn(async () => ({ programmes, cohorts, groups, modules })),
+  fetchCurriculumDeliveryScope: vi.fn(async () => ({ cohorts, groups })),
   fetchCurriculumHolidays: vi.fn(async () => []),
   fetchCurriculumScopeLearnerKsbImpact: (...args: unknown[]) => fetchCurriculumScopeLearnerKsbImpact(...args),
   updateCurriculumModule: (...args: unknown[]) => updateCurriculumModule(...(args as [])),
@@ -238,6 +240,8 @@ describe('Module Builder delivery catalogue', { timeout: 15000 }, () => {
     updateCurriculumModule.mockClear();
     updateCurriculumModuleCover.mockReset().mockResolvedValue({ updated: true });
     reload.mockClear();
+    vi.mocked(fetchCurriculumDeliveryScope).mockClear();
+    vi.mocked(fetchCurriculumOverview).mockClear();
     fetchLearnerAssignments.mockReset().mockResolvedValue({
       target: { scope: 'module', id: 'MOD-1', name: 'Data Foundations', moduleCount: 1, programmeName: 'Data Analyst' },
       learners: [],
@@ -279,6 +283,13 @@ describe('Module Builder delivery catalogue', { timeout: 15000 }, () => {
   afterEach(() => {
     vi.unstubAllGlobals();
     window.history.replaceState({}, '', '/');
+  });
+
+  it('loads filter scope without the complete overview on catalogue mount', async () => {
+    await renderCatalogue();
+    await waitFor(() => expect(fetchCurriculumDeliveryScope).toHaveBeenCalledTimes(1));
+    expect(fetchCurriculumOverview).not.toHaveBeenCalled();
+    expect(screen.getByText('Data Foundations')).toBeInTheDocument();
   });
 
   it('uploads a module image without opening or saving the delivery form', async () => {

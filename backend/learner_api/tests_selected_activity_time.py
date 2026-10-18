@@ -139,6 +139,41 @@ class SelectedActivityTimeTests(SimpleTestCase):
         self.assertAlmostEqual(completed_hours_value_from_progress([legacy, record]), 2 + 2400 / 3600)
         self.assertEqual(legacy, before)
 
+    def test_saved_timer_choice_ignores_stale_reflection_duration(self):
+        for selected, verified in ((129, 129), (317, 60), (0, 0)):
+            with self.subTest(selected=selected, verified=verified):
+                record = dict(kind="component", componentId="C1", reportedTime="50h",
+                    claimedSeconds=selected, verifiedSeconds=verified,
+                    timeTrackingSource="signed_session_capped_visible_page:timer")
+                before = deepcopy(record)
+                self.assertAlmostEqual(completed_hours_value_from_progress([record]) * 3600, selected)
+                row = dict(id=1, kind="component", component_ref="C1", component_type="powerpoint",
+                    component_link_source="direct", submitted_at="2026-10-01T12:00:00Z",
+                    reported_time="50h", claimed_seconds=selected, verified_seconds=verified,
+                    time_tracking_source=record['timeTrackingSource'])
+                projected = project_current([row], {})[0]
+                self.assertAlmostEqual(projected['actual_seconds'], selected)
+                self.assertTrue(projected['completed'])
+                self.assertEqual(record, before)
+                # Persisted/approved ledger time is not an unsynchronised save.
+                approved = {**row, 'actual_seconds': 900, 'accepted': True}
+                self.assertEqual(project_current([approved], {})[0]['actual_seconds'], 900)
+
+    def test_attempt_deduplication_compares_selected_timer_time(self):
+        record = dict(kind="component", componentId="C1", claimedSeconds=120,
+            verifiedSeconds=120, reportedTime="50h",
+            timeTrackingSource="signed_session_capped_visible_page:timer")
+        later = {**record, 'claimedSeconds': 300, 'verifiedSeconds': 300, 'reportedTime': '5 minutes'}
+        self.assertAlmostEqual(completed_hours_value_from_progress([record, later]) * 3600, 300)
+
+    def test_manual_declarations_and_unclassified_history_are_preserved(self):
+        for source in ('signed_session_capped_visible_page:input', '', 'historical_import'):
+            with self.subTest(source=source):
+                record = dict(kind="component", componentId="C1", reportedTime="30 hours",
+                    claimedSeconds=108000 if source.endswith(':input') else 60,
+                    verifiedSeconds=60, timeTrackingSource=source)
+                self.assertEqual(completed_hours_value_from_progress([record]), 30)
+
     def test_marking_receives_separate_planned_and_selected_actual_time(self):
         response, save, queue = self.submit(reported="40 minutes", planned="14h")
         self.assert_selected_duration(response, save, 2400, 300)

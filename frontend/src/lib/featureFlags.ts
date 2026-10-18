@@ -18,3 +18,11 @@
  * on against the current backend reopens A10.
  */
 export const CHAT_ENABLED = false;
+
+/**
+ * Learner feedback workspace.
+ *
+ * Local Vite development exposes the learner workspace for testing. Production
+ * keeps the Home "Coming soon" entry disabled and closes sidebar/deep links.
+ */
+export const LEARNER_FEEDBACK_ENABLED = import.meta.env.DEV;

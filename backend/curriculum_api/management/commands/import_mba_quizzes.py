@@ -33,6 +33,7 @@ from curriculum_api.management.commands.import_mba_curriculum import (
     DEFAULT_PROGRAMME, course_label, legacy_rows, parse_duration_hours,
 )
 from quiz_api.views import AI_GENERATION_QUESTION_TYPES, _normalise_question_type
+from quiz_api.answer_keys import quiz_publication_error
 
 #: Marks the quizzes this importer owns, so a re-run only replaces its own.
 AUTHOR = 'MBA legacy import'
@@ -239,6 +240,14 @@ class Command(BaseCommand):
             return
 
         prepared = self.prepare_questions(questions, title)
+        error = quiz_publication_error([
+            {"type": kind, "answers": [{"text": text, "isCorrect": correct}
+                                      for text, correct, _order in options]}
+            for _text, kind, options in prepared
+        ])
+        if error:
+            self.problems.append(f'not imported: {title[:60]} / {error}')
+            return
         if self.dry_run:
             self.stats['updated' if existing else 'quizzes'] += 1
             self.stats['questions'] += len(prepared)
@@ -338,8 +347,8 @@ class Command(BaseCommand):
                 self.stats['questions_without_options'] += 1
                 self.problems.append(f'no options: {quiz_title[:40]} / {text[:50]}')
             elif not any(is_correct for _text, is_correct, _order in options):
-                # A learner cannot pass this question; staff have to fix it in
-                # the builder, so it is imported and reported rather than hidden.
+                # Keep the source in the preparation report; publication preflight
+                # below prevents this quiz from being imported as published.
                 self.stats['questions_without_a_correct_option'] += 1
                 self.problems.append(f'no correct option: {quiz_title[:40]} / {text[:50]}')
             prepared.append((text, question_type, options))

@@ -12,11 +12,11 @@ import type { TrainingPlanDashboard } from '@/api/trainingPlanDashboard';
 const read = vi.hoisted(() => vi.fn());
 vi.mock('@/api/learnerRead', () => ({ readLearnerJson: read }));
 const rows: AptemKsbRow[] = [
-  { code: 'K1', category: 'Knowledge', description: 'Knowledge description', completed: 1, status: 'Achieved', components: [
+  { code: 'K1', category: 'Knowledge', description: 'Knowledge description', pointsAchieved: 1, totalPoints: 2, progressPercent: 50, completed: 1, status: 'Achieved', components: [
     { name: 'Completed component', status: 'Completed', achieved: true },
     { name: 'Pending component', status: 'NotStarted', achieved: false },
   ] },
-  { code: 'S1', category: 'Skills', description: 'Skill description', completed: 0, status: 'Not Achieved', components: [
+  { code: 'S1', category: 'Skills', description: 'Skill description', pointsAchieved: 0, totalPoints: 1, progressPercent: 0, completed: 0, status: 'Not Achieved', components: [
     { name: 'Skill component', status: 'InProgress', achieved: false },
   ] },
 ];
@@ -59,9 +59,11 @@ describe('Progress KSB detailed breakdown', () => {
     expect(screen.getAllByText('Knowledge')[0].closest('[data-category]')).toHaveTextContent('100%');
     expect(screen.getAllByText('Skills')[0].closest('[data-category]')).toHaveTextContent('0%');
     const row = screen.getByText('K1').closest('tr')!;
-    expect(row).toHaveTextContent('Achieved');
-    expect(row).toHaveTextContent('2 Activities');
-    expect(row).toHaveTextContent('1 completed components');
+    expect(within(row).getAllByRole('cell')).toHaveLength(5);
+    expect(screen.queryByRole('columnheader', { name: 'Status' })).not.toBeInTheDocument();
+    expect(within(row).getAllByRole('cell')[1]).toHaveTextContent('1');
+    expect(within(row).getAllByRole('cell')[2]).toHaveTextContent('2');
+    expect(row).toHaveTextContent('50%');
     fireEvent.click(within(row).getByRole('button', { name: 'View' }));
     const dialog = screen.getByRole('dialog');
     expect(within(dialog).getByText('K1')).toBeInTheDocument();
@@ -69,7 +71,11 @@ describe('Progress KSB detailed breakdown', () => {
     expect(within(dialog).getByText('Status: Completed')).toBeInTheDocument();
     expect(within(dialog).getByText('Status: NotStarted')).toBeInTheDocument();
     expect(within(dialog).getAllByText('Achieved this KSB')).toHaveLength(1);
-    expect(within(dialog).getByText('Achieved this KSB').parentElement).toHaveClass('bg-emerald-50');
+    const achievement = within(dialog).getByText('Achieved this KSB');
+    expect(achievement).toHaveClass('text-emerald-700');
+    expect(achievement.parentElement).toHaveClass('bg-white', 'border-foreground-200', 'rounded-xl', 'p-4');
+    expect(achievement.parentElement).not.toHaveClass('bg-emerald-50', 'border-emerald-300');
+    expect(within(dialog).getByText('Status: NotStarted').parentElement).toHaveClass('border-background-200', 'bg-background-50');
     fireEvent.keyDown(dialog, { key: 'Escape' });
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   });
@@ -200,7 +206,8 @@ describe('Progress KSB detailed breakdown', () => {
     expect(screen.getByText('Total KSBs').parentElement).toHaveTextContent('3');
     expect(screen.getByText('Achieved KSBs').parentElement).toHaveTextContent('1');
     expect(screen.getByText('Remaining KSBs').parentElement).toHaveTextContent('2');
-    expect(screen.getByText('B1').closest('tr')).toHaveTextContent('Not Achieved');
+    expect(screen.getByText('B1').closest('tr')).toHaveTextContent('--');
+    expect(screen.queryByRole('columnheader', { name: 'Category' })).not.toBeInTheDocument();
     fireEvent.click(within(screen.getByText('K1').closest('tr')!).getByRole('button', { name: 'View' }));
     const dialog = screen.getByRole('dialog');
     expect(within(dialog).getAllByText('Source: Progress').length).toBeGreaterThan(0);

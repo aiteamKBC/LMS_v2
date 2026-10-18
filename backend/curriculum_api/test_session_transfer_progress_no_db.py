@@ -70,13 +70,17 @@ class ProgressPersistenceTests(unittest.TestCase):
         connection = Mock(); connection.cursor.return_value = cursor
         with patch.dict(sys.modules, {'django.db': types.SimpleNamespace(connections={'default': connection})}):
             progress.save_transfer_progress('S', 'A', 'lease-1', {'phase': 'uploading'}, close_connection=True)
-        sql, values = cursor.execute.call_args.args
+        sql, values = cursor.execute.call_args_list[0].args
         self.assertIn('jsonb_set(coalesce(a.metadata::jsonb', sql)
         self.assertIn("j.state='running' AND j.lease_id=%s", sql)
         self.assertIn('a.id=%s', sql)
         self.assertIn('o.live_session_id=%s', sql)
         self.assertEqual(values[1:], ['A', 'S', 'lease-1'])
         self.assertEqual(json.loads(values[0])['leaseId'], 'lease-1')
+        heartbeat, heartbeat_params = cursor.execute.call_args_list[1].args
+        self.assertIn('SET next_attempt_at=now()', heartbeat)
+        self.assertIn("state='running' AND lease_id=%s", heartbeat)
+        self.assertEqual(heartbeat_params, ['S', 'lease-1'])
         connection.close.assert_called_once()
 
     def test_progress_endpoint_scopes_series_and_never_exposes_private_metadata(self):

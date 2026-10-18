@@ -18,6 +18,24 @@ function Location() { return <output data-testid="location">{useLocation().pathn
 afterEach(() => vi.restoreAllMocks());
 
 describe('module activity sidebar', () => {
+  it('shows a colour key and distinct type colours for the activity icons', () => {
+    const mixed: SidebarWeek[] = [{ key: 'W1', week: 'Week 1', count: 2, completed: 0, active: true, components: [
+      { title: 'Reading material', componentId: 'READ', type: 'reading', expectedOtjh: 1, contentHtml: '<p>Read</p>' },
+      { title: 'Knowledge check', componentId: 'QUIZ', type: 'quiz', isQuiz: true, expectedOtjh: null,
+        quizMeta: { quizId: 9, questions: 3, duration: null, timeUnit: null } },
+    ] }];
+    render(<MemoryRouter><ActivitySidebar weekComponents={mixed[0].components} weekTitle="Week 1" moduleTitle="Leadership"
+      weeks={mixed} completedIds={new Set()} currentComponentId="READ" routeFor={c => `/activity/${c.componentId}`} /></MemoryRouter>);
+
+    const key = screen.getByRole('region', { name: 'Activity type key' });
+    expect(within(key).getByText('Reading')).toBeVisible();
+    expect(within(key).getByText('Quiz')).toBeVisible();
+    const readingTone = document.querySelector('[data-activity-type="reading"]') as HTMLElement;
+    const quizTone = document.querySelector('[data-activity-type="quiz"]') as HTMLElement;
+    expect(readingTone.style.backgroundColor).not.toBe(quizTone.style.backgroundColor);
+    expect(readingTone.style.color).not.toBe(quizTone.style.color);
+  });
+
   it('loads month names from the matching training-plan module even when another module has the same title', async () => {
     const plan = { modules: [
       { id: 'OTHER', title: 'Leadership', start_date: '2026-01-01' },
@@ -44,6 +62,9 @@ describe('module activity sidebar', () => {
       expect(within(sidebar).getByRole('button', { name: new RegExp(`^Week ${number}\\b`) })).toBeVisible();
     }
     expect(within(sidebar).getByText('Current week')).toBeVisible();
+    expect(within(sidebar).getByRole('button', { name: /Lesson 6/ })).toHaveClass('bg-emerald-100/80');
+    expect(within(sidebar).getByText('Current week').parentElement?.parentElement)
+      .toHaveClass('border-emerald-200', 'bg-emerald-50/70');
   });
 
   it('expands another week in place and opens its chosen activity within the same learner', () => {

@@ -32,6 +32,15 @@ export function CopyInvitationLinkButton({ subjectId, name, onIssued }: {
       setLink(result.link);
       setExpiresAt(result.expiresAt);
       setState('ready');
+      // One click is enough: copy straight away. Some browsers refuse a copy
+      // that follows a network call; the link then stays on screen with its
+      // "Copy link" button, which copies on a fresh click.
+      try {
+        await navigator.clipboard.writeText(result.link);
+        setCopied(true);
+      } catch {
+        setCopied(false);
+      }
       onIssued?.();
     } catch (issueError) {
       setError(issueError instanceof Error ? issueError.message : 'Could not create the link.');
@@ -51,7 +60,9 @@ export function CopyInvitationLinkButton({ subjectId, name, onIssued }: {
   if (state === 'ready') {
     return (
       <span className="inline-flex max-w-[320px] flex-col items-start gap-1 rounded-lg border border-primary-200 bg-primary-50/60 p-2" role="group" aria-label={`Set-password link for ${name}`}>
-        <span className="text-[11px] font-semibold text-primary-800">Send this to {name} on Teams, WhatsApp or SMS</span>
+        <span className="text-[11px] font-semibold text-primary-800" role="status">
+          {copied ? `Link copied. Send it to ${name} on Teams, WhatsApp or SMS` : `Send this to ${name} on Teams, WhatsApp or SMS`}
+        </span>
         <input
           readOnly
           value={link}

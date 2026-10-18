@@ -1,6 +1,7 @@
 import type { ComponentProps } from 'react';
-import type { AssignmentTopic } from '@/lib/assignmentTopics';
+import { presentTopic, type AssignmentResourceLink, type AssignmentTopic } from '@/lib/assignmentTopics';
 import { TopicAssignment } from './TopicAssignment';
+import { AssignmentGuidance, briefLabelClass } from './AssignmentBriefSections';
 import { useEffect, useMemo, useRef, useState, type ReactNode, type SetStateAction } from 'react';
 import DOMPurify from 'dompurify';
 import type { ComponentKsbMapping, LearnerKind } from '@/api/learnerDetail';
@@ -24,6 +25,7 @@ import { AssignmentAiCheckContext } from './AssignmentAiCheckContext';
 import { useAssignmentStepCheck } from './useAssignmentStepCheck';
 import { MonthlyAnswerField, MonthlyAssignmentSteps } from './MonthlyAssignmentSteps';
 import { AssignmentAttachment } from '../monthly-submission/AssignmentAttachment';
+import { readingFiles } from './readingDownloads';
 import { assignmentTimeHours } from './AssignmentTimeEntries';
 import { HistoricalAssignmentCards } from './HistoricalAssignmentCards';
 import { useLearningStatements } from '@/hooks/useLearningStatements';
@@ -69,6 +71,9 @@ export function AssignmentSubmissionForm({
   questionText,
   questionFileUrl,
   questionFileName,
+  questionFiles,
+  instructionsHtml,
+  resourceLinks,
   ksbMappings,
   evidenceFiles,
   evidenceDetails,
@@ -99,6 +104,11 @@ export function AssignmentSubmissionForm({
   questionText?: string | null;
   questionFileUrl?: string | null;
   questionFileName?: string | null;
+  questionFiles?: readonly { url: string; fileName?: string | null }[];
+  /** Authored instructions, shown under their own heading beside the question. */
+  instructionsHtml?: string | null;
+  /** Web resources listed under the instructions. */
+  resourceLinks?: readonly AssignmentResourceLink[];
   ksbMappings: ComponentKsbMapping[];
   evidenceFiles: EvidenceRecord[];
   evidenceDetails: EvidenceTrainingPlanDetails;
@@ -120,6 +130,8 @@ export function AssignmentSubmissionForm({
   onShowInstructions?: () => void;
   onTopicSubmitted?: () => void;
 }) {
+  const questionAttachments = useMemo(() => readingFiles(questionFileUrl, questionFileName, questionHtml || '', questionFiles),
+    [questionFileUrl, questionFileName, questionHtml, questionFiles]);
   const personalStudy = parsePersonalLearning(learnerId)?.mode === 'study';
   const steps = MONTHLY_STEPS.map((label, index) => personalStudy && index === 7 ? 'Presentation' : label);
   // Imported cards retain their original storage order; display them in wizard order.
@@ -541,7 +553,8 @@ export function AssignmentSubmissionForm({
           </div>
           <div className="mt-4 h-2 overflow-hidden rounded-full bg-slate-200"><div className="h-full bg-slate-900 transition-all" style={{ width: `${(step + 1) / 8 * 100}%` }} /></div>
           <div className="mt-4 flex flex-wrap gap-2">
-            {onShowInstructions && <button type="button" disabled={!locked} onClick={onShowInstructions} className="rounded-lg border px-3 py-2 text-xs font-bold disabled:opacity-40">1 Instructions</button>}
+            {/* Always available: the saved draft or submission is unchanged by reading the instructions again. */}
+            {onShowInstructions && <button type="button" onClick={onShowInstructions} className="rounded-lg border px-3 py-2 text-xs font-bold">1 Instructions</button>}
             {steps.map((label, index) => (
               <button
                 key={label}
@@ -566,19 +579,27 @@ export function AssignmentSubmissionForm({
             </div>
           )}
 
-          {historicalContent ? <HistoricalAssignmentCards content={orderedHistoricalContent!} step={step} files={evidenceFiles} onPreviewFile={file => { setPreviewOpen(true); void openEvidence(file); }} /> : step === 0 && (
-            <div className="space-y-5">
-              {!assignmentTopicId && <div>
-                <p className="text-[10px] font-black uppercase tracking-[0.14em] text-primary-600">Assignment question</p>
+          {/* The question stays in view on every step; learners can fold it away. */}
+          {!historicalContent && <details open className="mb-5 rounded-xl border border-background-200 bg-white p-4">
+            <summary className={`cursor-pointer ${briefLabelClass}`}>Assignment brief & instructions</summary>
+            <div className="mt-3 space-y-4">
+              <section aria-label="Assignment question">
+                <p className={briefLabelClass}>Assignment question</p>
                 <div className="mt-2 rounded-xl border border-background-200 bg-background-50 p-4 text-sm leading-6 text-foreground-800">
                   {cleanQuestionHtml ? (
                     <div className="max-w-none [&_p]:mb-3 [&_ul]:list-disc [&_ul]:pl-5" dangerouslySetInnerHTML={questionInnerHtml} />
                   ) : (
-                    <p className="whitespace-pre-line">{questionText || (questionFileUrl ? 'Preview the attached file for your assignment question.' : 'Your tutor has not added the assignment question yet.')}</p>
+                    <p className="whitespace-pre-line">{questionText || (questionAttachments.length ? 'Preview the attached file for your assignment question.' : 'Your tutor has not added the assignment question yet.')}</p>
                   )}
                 </div>
-              </div>}
-              {questionFileUrl && <AssignmentAttachment key={questionFileUrl} url={questionFileUrl} fileName={questionFileName} title={title} />}
+              </section>
+              <AssignmentGuidance instructions={instructionsHtml} links={resourceLinks} />
+            </div>
+          </details>}
+
+          {historicalContent ? <HistoricalAssignmentCards content={orderedHistoricalContent!} step={step} files={evidenceFiles} onPreviewFile={file => { setPreviewOpen(true); void openEvidence(file); }} /> : step === 0 && (
+            <div className="space-y-5">
+              {questionAttachments.map(file => <AssignmentAttachment key={file.url} url={file.url} fileName={file.fileName} title={file.label || title} defaultExpanded pdfTools />)}
               <MonthlyAnswerField qualityTarget="answer" title={title} label="Your answer (at least 120 words; one point per line)" value={answers.assignmentAnswer} onChange={value => setAnswer('assignmentAnswer', value)} disabled={readOnly || submittingRef.current} rows={10} minimumWords={120} onePointPerLine generation={{ enabled: learningGeneration.canGenerate, busy: learningGeneration.generating, onGenerate: () => { if (!(answers.whatYouLearned || monthly.understood || monthly.gainedSkills) || window.confirm('Replace the three learning statements with new drafts from your answer?')) void learningGeneration.generate(); } }} />
               <p className="rounded-xl border border-blue-100 bg-blue-50 px-4 py-3 text-sm leading-6 text-blue-900">Write at least 120 words, then click Generate learning statements to draft the three fields below. Review and edit the generated text before submitting.</p>
               {learningGeneration.status && <div
@@ -765,7 +786,10 @@ export function AssignmentSubmissionForm({
 }
 
 export function AssignmentSubmissionWizard(props: ComponentProps<typeof AssignmentSubmissionForm> & { topics?: AssignmentTopic[] }) {
-  return props.topics?.length && !props.historicalReadOnly && !parsePersonalLearning(props.learnerId)
-    ? <TopicAssignment key={`${props.kind}:${props.learnerId}:${props.componentId}`} {...props} topics={props.topics} />
-    : <AssignmentSubmissionForm {...props} />;
+  if (props.topics?.length && !props.historicalReadOnly && !parsePersonalLearning(props.learnerId)) {
+    return <TopicAssignment key={`${props.kind}:${props.learnerId}:${props.componentId}`} {...props} topics={props.topics} />;
+  }
+  const only = props.topics?.length === 1 ? presentTopic(props.topics[0]) : null;
+  return <AssignmentSubmissionForm {...props} instructionsHtml={props.instructionsHtml ?? only?.instructions}
+    resourceLinks={props.resourceLinks ?? only?.links} />;
 }

@@ -1,4 +1,5 @@
-import { readLearnerJson, invalidateLearnerReads } from './learnerRead';
+import { readLearnerJson } from './learnerRead';
+import { invalidateWeeklyProgress } from './weeklyLearning';
 import type { LearnerKind } from '@/api/learnerDetail';
 
 const BASE = '/learner_api/absence-reports';
@@ -46,7 +47,7 @@ export interface AlternativeAttendanceSession {
 export interface MissedAttendanceSession {
   id: string;
   reportId?: string;
-  status?: 'absent' | 'upcoming' | 'in_progress' | 'pending';
+  status?: 'absent' | 'unmarked' | 'upcoming' | 'in_progress' | 'pending';
   sessionId: string;
   title: string;
   sessionType: string;
@@ -70,7 +71,10 @@ async function parseResponse<T>(response: Response): Promise<T> {
   try {
     data = text ? JSON.parse(text) : null;
   } catch {
-    throw new Error(`The server returned an invalid response (${response.status}).`);
+    // A gateway timeout page rather than the API's JSON: the report may still have been saved.
+    throw new Error([502, 504].includes(response.status)
+      ? 'The server took too long to respond. Please check your reports before trying again.'
+      : 'Something went wrong on our side. Please try again in a moment.');
   }
   if (!response.ok) {
     const message = data && typeof data === 'object' && 'error' in data
@@ -97,6 +101,6 @@ export async function submitAbsenceReport(
     throw new Error('Could not reach the server. Is the backend running on port 8000?');
   }
   const data = await parseResponse<LearnerAbsenceReport>(response);
-  invalidateLearnerReads();
+  invalidateWeeklyProgress(kind, learnerId);
   return data;
 }

@@ -106,29 +106,34 @@ export default function CurriculumTeamsMeetingsPage() {
     selectedId, setSelectedId, notice, setNotice, rows, selected, stats, loadTeamsState,
   } = workspace;
 
-  const [search, setSearch] = useState('');
+  const [search, setSearch] = useState(() => searchParams.get('q') || '');
   const [programmeFilter, setProgrammeFilter] = useState(searchParams.get('programme') || '');
   const [cohortFilter, setCohortFilter] = useState(searchParams.get('cohort') || '');
   const [stateFilter, setStateFilter] = useState(searchParams.get('state') || '');
 
+  // The search sits in the URL with the filters (replaced, not pushed), so Back
+  // from a module's schedule returns to the list as it was left.
   useEffect(() => {
     const next = new URLSearchParams(searchParams);
     if (programmeFilter) next.set('programme', programmeFilter); else next.delete('programme');
     if (cohortFilter) next.set('cohort', cohortFilter); else next.delete('cohort');
     if (stateFilter) next.set('state', stateFilter); else next.delete('state');
+    if (search) next.set('q', search); else next.delete('q');
     if (selectedId) next.set('module', selectedId); else next.delete('module');
     if (next.toString() !== searchParams.toString()) setSearchParams(next, { replace: true });
-  }, [cohortFilter, programmeFilter, searchParams, selectedId, setSearchParams, stateFilter]);
+  }, [cohortFilter, programmeFilter, search, searchParams, selectedId, setSearchParams, stateFilter]);
 
   const scopedCohorts = useMemo(
     () => cohortsForProgramme(cohorts, programmes, programmeFilter),
     [cohorts, programmes, programmeFilter],
   );
+  // Only once the cohorts have loaded: before that the list is empty, and a
+  // cohort restored from the URL would be dropped before it could match.
   useEffect(() => {
-    if (!cohortFilter) return;
+    if (!loaded || !cohortFilter) return;
     if (scopedCohorts.some(cohort => normaliseKey(cohort.id) === normaliseKey(cohortFilter))) return;
     setCohortFilter('');
-  }, [cohortFilter, scopedCohorts]);
+  }, [cohortFilter, loaded, scopedCohorts]);
 
   const visibleRows = useMemo(() => {
     const scoped = new Set(

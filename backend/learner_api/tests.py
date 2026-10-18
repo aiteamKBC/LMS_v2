@@ -128,6 +128,20 @@ class LearnerDetailPrefetchTests(SimpleTestCase):
         profile._prefetched_objects_cache = {"progress_entries": []}
         self.assertEqual(profile.training_plan_progress, [])
 
+    def test_soft_archived_progress_is_not_in_the_active_projection(self):
+        from django.utils import timezone
+        from .models import LearnerProgressEntry
+
+        profile = LearnerProfile(id=19)
+        archived = LearnerProgressEntry(
+            id=1, learner=profile, kind="component", component_ref="old-component",
+            deleted_at=timezone.now(),
+        )
+        archived._prefetched_objects_cache = {"ksb_links": [], "quiz_answers": []}
+        profile._prefetched_objects_cache = {"progress_entries": [archived]}
+
+        self.assertEqual(profile.training_plan_progress, [])
+
     @patch("learner_api.learner_detail.prefetch_related_objects")
     @patch("learner_api.learner_detail.learner_profile_for_source")
     def test_prefetches_the_complete_progress_graph(self, resolve_profile, prefetch):
@@ -1512,6 +1526,18 @@ class EvidenceStorageUrlTests(SimpleTestCase):
         self.assertEqual(blob_client.upload_blob.call_args.kwargs["connection_timeout"], 60)
         self.assertEqual(blob_client.upload_blob.call_args.kwargs["read_timeout"], 60)
 
+    @patch("learner_api.evidence_storage._service_client")
+    def test_direct_upload_can_extend_timeout_for_large_recordings(self, service_client):
+        evidence_storage.upload_blob(
+            BytesIO(b"synthetic-recording"), "private-recordings", "lesson.mp4", "video/mp4",
+            retry_total=4, read_timeout=180,
+        )
+
+        service_client.assert_called_once_with(upload_block_bytes=None, retry_total=4)
+        options = service_client.return_value.get_blob_client.return_value.upload_blob.call_args.kwargs
+        self.assertEqual(options["read_timeout"], 180)
+        self.assertEqual(options["connection_timeout"], 60)
+
     def test_canonical_url_round_trips_container_and_blob_name(self):
         url = blob_url(
             "evidence-quarantine",
@@ -2035,6 +2061,42 @@ class QuizSubmitWorkingRulesTests(SimpleTestCase):
         record = save.call_args.args[1]
         self.assertIsNone(record["declaredCompletedAt"])
         self.assertEqual(record["submissionValidationReason"], "")
+
+    def test_diagram_is_returned_and_snapshotted_with_the_scored_question(self):
+        quiz = self._quiz()
+        quiz["questions"][0]["imageUrl"] = "data:image/png;base64,ZGlhZ3JhbQ=="
+        save = Mock()
+        with patch.object(self, "_quiz", return_value=quiz):
+            response, _audit = self._post(save)
+        self.assertEqual(response.status_code, 200)
+        body = json.loads(response.content)
+        expected = quiz["questions"][0]["imageUrl"]
+        self.assertEqual(body["breakdown"][0]["imageUrl"], expected)
+        self.assertEqual(save.call_args.args[1]["questions"][0]["imageUrl"], expected)
+        self.assertTrue(body["passed"])
+
+    def test_new_attempt_keeps_question_and_answer_text_for_later_review(self):
+        save = Mock()
+        response, _audit = self._post(save)
+        self.assertEqual(response.status_code, 200)
+        stored = save.call_args.args[1]["questions"][0]
+        self.assertEqual(stored["questionText"], "2 + 2?")
+        self.assertEqual(stored["chosenText"], "4")
+        self.assertEqual(stored["correctText"], "4")
+        self.assertEqual(stored["possible"], 1)
+
+    def test_broken_answer_key_and_stale_selection_store_no_attempt(self):
+        for broken_key in (False, True):
+            with self.subTest(broken_key=broken_key):
+                quiz = self._quiz()
+                if broken_key:
+                    quiz["questions"][0]["answers"][0]["isCorrect"] = False
+                save = Mock()
+                with patch.object(self, "_quiz", return_value=quiz):
+                    response, audit = self._post(save, payload={"answers": {"1": 10 if broken_key else 999}})
+                self.assertEqual(response.status_code, 409)
+                save.assert_not_called()
+                audit.assert_not_called()
 
     def test_out_of_hours_submit_is_refused_and_writes_nothing(self):
         save = Mock()

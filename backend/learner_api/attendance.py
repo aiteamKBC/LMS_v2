@@ -12,6 +12,7 @@ from django.utils import timezone
 from login.permissions import learner_self_or_staff
 
 from .learner_detail import SOURCE_MODELS
+from .projection_performance import projection_call, projection_operation
 from .student_activity_access import student_activity_available
 from .teams_attendance import fetch_verified_teams_attendance_rows
 
@@ -116,32 +117,32 @@ def fetch_kbc_attendance_rows(*, aptem_id, learner_id, learner_name, learner_ema
         identity_sql = 'lower(trim("Email")) = %s'
         identity_param = email_key
 
-    with psycopg.connect(dsn, row_factory=dict_row, connect_timeout=10) as conn:
-        with conn.cursor() as cursor:
-            cursor.execute(
-                f'''
-                SELECT "key", "date", "Attendance", attendance_status,
-                       module, lecture_name, created_at AS updated_at
-                FROM public.kbc_attendance
-                WHERE {identity_sql}
-                  AND "Attendance" IN (0, 1)
-                  AND "date" IS NOT NULL
-                ORDER BY "date" DESC, "key"
-                ''',
-                [identity_param],
-            )
-            return [
-                _normalize_kbc_attendance_row(
-                    row,
-                    learner_id=learner_id,
-                    learner_name=learner_name,
-                    learner_email=learner_email,
+    with projection_operation('kbc_total'):
+        with projection_operation('kbc_connect'):
+            connection = psycopg.connect(dsn, row_factory=dict_row, connect_timeout=10)
+        with connection as conn, conn.cursor() as cursor:
+            with projection_operation('kbc_execute'):
+                cursor.execute(
+                    f'''
+                    SELECT "key", "date", "Attendance", attendance_status,
+                           module, lecture_name, created_at AS updated_at
+                    FROM public.kbc_attendance
+                    WHERE {identity_sql}
+                      AND "Attendance" IN (0, 1)
+                      AND "date" IS NOT NULL
+                    ORDER BY "date" DESC, "key"
+                    ''',
+                    [identity_param],
                 )
-                for row in cursor.fetchall()
-            ]
+            with projection_operation('kbc_fetch'):
+                rows = cursor.fetchall()
+            with projection_operation('kbc_decode'):
+                return [_normalize_kbc_attendance_row(row, learner_id=learner_id,
+                    learner_name=learner_name, learner_email=learner_email) for row in rows]
 
 
-def fetch_kbc_attendance_rows_bulk(learners):
+
+def fetch_kbc_attendance_rows_bulk(learners, *, recent_dates=None, correction_keys=()):
     """Bulk equivalent of ``fetch_kbc_attendance_rows`` for Aptem learners."""
     grouped = {}
     for item in learners or []:
@@ -156,22 +157,43 @@ def fetch_kbc_attendance_rows_bulk(learners):
         raise RuntimeError('KBC attendance database is not configured.')
     with psycopg.connect(dsn, row_factory=dict_row, connect_timeout=10) as conn:
         with conn.cursor() as cursor:
-            cursor.execute('''
+            sql = '''
                 SELECT "ID"::text AS aptem_id,"key","date","Attendance",attendance_status,
                        module,lecture_name,created_at AS updated_at
                 FROM public.kbc_attendance
                 WHERE "ID"::text=ANY(%s) AND "Attendance" IN (0,1) AND "date" IS NOT NULL
                 ORDER BY "ID"::text,"date" DESC,"key"
-            ''', [list(identities)])
+            '''
+            params = [list(identities)]
+            if recent_dates is not None:
+                # Preserve complete same-day mirror sets and explicitly edited
+                # older identities; never transfer an entire register for chips.
+                sql = '''WITH ranked AS (
+                    SELECT "ID"::text AS aptem_id,"key","date","Attendance",attendance_status,
+                        module,lecture_name,created_at AS updated_at,
+                        dense_rank() OVER (PARTITION BY "ID"::text ORDER BY "date" DESC) AS day_rank
+                    FROM public.kbc_attendance
+                    WHERE "ID"::text=ANY(%s) AND "Attendance" IN (0,1)
+                      AND "date" IS NOT NULL AND ("date"<=%s OR btrim("key"::text)=ANY(%s)
+                        OR (cardinality(%s::text[])>0 AND coalesce(btrim("key"::text),'')=''))
+                ) SELECT * FROM ranked WHERE day_rank<=%s OR btrim("key"::text)=ANY(%s)
+                    OR (cardinality(%s::text[])>0 AND coalesce(btrim("key"::text),'')='')
+                  ORDER BY aptem_id,"date" DESC,"key"'''
+                params += [timezone.localdate(), list(correction_keys), list(correction_keys),
+                           recent_dates + 1, list(correction_keys), list(correction_keys)]
+            cursor.execute(sql, params)
             rows = cursor.fetchall()
     result = []
     for row in rows:
         identity = identities.get(row['aptem_id'])
         if identity:
-            result.append(_normalize_kbc_attendance_row(
+            normalized = _normalize_kbc_attendance_row(
                 row, learner_id=identity['learner_id'], learner_name=identity['learner_name'],
                 learner_email=identity['learner_email'],
-            ))
+            )
+            if recent_dates is not None:
+                normalized['_day_rank'] = row['day_rank']
+            result.append(normalized)
     return result
 
 
@@ -299,7 +321,7 @@ def fetch_recent_kbc_attendance_rows(learners, *, limit=4):
     return result
 
 
-def _summarize_attendance(rows, *, now=None):
+def _summarize_attendance(rows, *, now=None, overview_only=False):
     """Summarize recorded attendance for sessions that have happened so far."""
     now = now or timezone.now()
 
@@ -322,6 +344,8 @@ def _summarize_attendance(rows, *, now=None):
     sessions = len(counted_rows)
     absent = sum(missed(row) for row in counted_rows)
     present = sessions - absent
+    if overview_only:
+        return {'present': present, 'sessions': sessions}
     late = sum(
         status(row) == 'late' or (row['minutes_late'] or 0) > 0
         for row in counted_rows
@@ -379,13 +403,24 @@ def _summarize_attendance(rows, *, now=None):
     }
 
 
-def combined_attendance_rows(source):
+def combined_attendance_rows(source, *, credit_projection=False, register_schedule=None):
     """Refresh KBC on every server read and merge actual Teams occurrences."""
     rows = kbc_attendance_rows(source)
     # The shared Teams reader groups reconnects by occurrence and email and
     # excludes sessions without a finished attendance report. IDs here refer
     # to LearnerProfile, so use the verified email and check enrolment linkage.
-    teams = fetch_verified_teams_attendance_rows(learner_emails=[source.email]) if source.email else []
+    options = {}
+    if credit_projection:
+        profile = getattr(source, '_case_file_profile', None)
+        owner = getattr(source, '_canonical_profile', None)
+        if (profile is not None and owner is not None
+                and str(owner['id']) == str(profile.pk)
+                and str(profile.enrolment_id) == str(source.id)):
+            options['verified_profile'] = profile
+        options['include_group_metadata'] = False
+        if register_schedule is not None:
+            options['register_schedule'] = register_schedule
+    teams = projection_call('teams_reports', fetch_verified_teams_attendance_rows, learner_emails=[source.email], **options) if source.email else []
     for row in teams:
         if str(row.get('enrolment_id')) != str(source.id):
             continue
@@ -426,7 +461,10 @@ def learner_attendance(request, kind, learner_id):
 
     try:
         # all_learners: the default manager is scoped to apprenticeship rows.
-        source = model.all_learners.only('id', 'username', 'email', 'aptem_id').get(pk=learner_id)
+        from .case_file_sources import source_for_case_file
+        source = source_for_case_file(request, kind, learner_id)
+        if source is None:
+            source = model.all_learners.only('id', 'username', 'email', 'aptem_id').get(pk=learner_id)
     except model.DoesNotExist:
         return _error('Learner not found.', 404)
     except DatabaseError:
@@ -438,8 +476,9 @@ def learner_attendance(request, kind, learner_id):
         # the KBC database table and Aptem ID, never an email or Teams merge.
         rows = kbc_attendance_rows(source) if request.GET.get('source') == 'kbc' else None
         if rows is None:
-            if getattr(source, 'email', ''):
-                # Catch-ups only: settle this learner's elapsed catch-ups first.
+            if getattr(source, 'email', '') and getattr(request, '_case_file_context', None) is None:
+                # Case File projects stored attendance without settling outcomes.
+                # Student reads retain the existing catch-up settlement path.
                 from .catchup_outcomes import sync_catchup_outcomes
                 sync_catchup_outcomes(learner_email=getattr(source, 'email', ''))
             from .attendance_lectures import lecture_register
@@ -447,4 +486,8 @@ def learner_attendance(request, kind, learner_id):
     except Exception:
         return _error('Unable to load attendance. Please try again.', 502)
 
-    return JsonResponse({'attendance': _summarize_attendance(rows)})
+    # Only the internal Overview projection omits history formatting. The
+    # register projection above remains the same read path.
+    context = getattr(request, '_case_file_context', None)
+    overview_only = context is not None and context.request.path.rstrip('/').endswith('/overview')
+    return JsonResponse({'attendance': _summarize_attendance(rows, overview_only=overview_only)})

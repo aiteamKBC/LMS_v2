@@ -8,13 +8,14 @@ import { Panel } from '@/components/ui/Panel';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import type { StatusTone } from '@/lib/statusTone';
 import styles from '../attendance.module.css';
-import { isLectureLive, lectureJoinUrl, useLectureClock } from '../liveLecture';
+import { isLectureJoinable, lectureJoinUrl, useLectureClock } from '../liveLecture';
 
 export type AttendanceFilter = 'all' | 'attended' | 'absent' | 'covered' | 'upcoming';
 const STATUS: Record<AttendanceLecture['status'], { label: string; tone: StatusTone }> = {
   completed: { label: 'Attended', tone: 'positive' }, late: { label: 'Late', tone: 'caution' },
   absent: { label: 'Missed', tone: 'critical' }, upcoming: { label: 'Upcoming', tone: 'info' },
   unmarked: { label: 'Unmarked', tone: 'neutral' },
+  awaiting_recording: { label: 'Awaiting recording', tone: 'neutral' },
   in_progress: { label: 'In progress', tone: 'info' }, pending: { label: 'Awaiting attendance', tone: 'neutral' },
 };
 const shortDate = (date: string | null | undefined) => date && /^\d{4}-\d{2}-\d{2}$/.test(date)
@@ -46,7 +47,7 @@ function lectureOutcome(row: AttendanceLecture): {
             : { label: 'Make-up needed', tone: 'caution' };
     return { madeUp, alternative, catchupBooked, detail };
   }
-  const reported = row.absenceReport && ['upcoming', 'in_progress', 'pending'].includes(row.status);
+  const reported = row.absenceReport && ['upcoming', 'in_progress', 'pending', 'unmarked'].includes(row.status);
   return { madeUp, alternative, catchupBooked: false, plan, upcomingReport: Boolean(reported),
     detail: reported ? { label: 'Absence reported', tone: 'neutral' } : null };
 }
@@ -228,7 +229,7 @@ function RecoveryPlanLink({ recovery, recordingHref }: { recovery: NonNullable<A
 
 function LectureRow({ now, row, onOpen, onReport, onCatchup }: { now: number; row: AttendanceLecture; onOpen: (row: AttendanceLecture) => void; onReport: (row: AttendanceLecture) => void; onCatchup: (row: AttendanceLecture) => void }) {
   const titleId = useId();
-  const live = isLectureLive(row, now);
+  const joinable = isLectureJoinable(row, now);
   const joinUrl = lectureJoinUrl(row);
   const date = monthKey(row.date) === 'undated' ? null : new Date(`${row.date}T00:00:00`);
   const outcome = lectureOutcome(row);
@@ -249,7 +250,8 @@ function LectureRow({ now, row, onOpen, onReport, onCatchup }: { now: number; ro
     <div className={styles.lectureContent} data-label="Key Content">{row.contentSummary || <span className={styles.unmapped}>Content not recorded</span>}</div>
     <div className={styles.lectureKsbs} data-label="KSBs"><KsbChips row={row} /></div>
     <div className={styles.lectureStatus} data-label="Status">
-      <StatusBadge {...(outcome.madeUp ? { label: 'Made up', tone: 'positive' as StatusTone } : STATUS[row.status])} />
+      <StatusBadge {...(row.attendanceBasis === 'recorded' ? { label: 'Completed by recording', tone: 'positive' as StatusTone }
+        : outcome.madeUp ? { label: 'Made up', tone: 'positive' as StatusTone } : STATUS[row.status])} />
       {outcome.detail && <StatusBadge tone={outcome.detail.tone} label={outcome.detail.label} />}
     </div>
     <div className={styles.lectureAttendanceAction} data-label="Attendance action">
@@ -268,10 +270,10 @@ function LectureRow({ now, row, onOpen, onReport, onCatchup }: { now: number; ro
         : <span className={styles.unmapped}>{row.absenceReport && !['completed', 'late'].includes(row.status) ? 'Absence reported' : '—'}</span>}
     </div>
     <div className={styles.lectureActions}>
-      {live ? joinUrl ? <a className={`primary-action ${styles.activityButton}`} href={joinUrl} target="_blank" rel="noopener noreferrer">Join session<AppIcon className="ri-video-chat-line" /></a>
+      {joinable ? joinUrl ? <a className={`primary-action ${styles.activityButton}`} href={joinUrl} target="_blank" rel="noopener noreferrer">Join session<AppIcon className="ri-video-chat-line" /></a>
         : <button type="button" className={`primary-action ${styles.activityButton}`} disabled title="The joining link is not available yet.">Join session</button>
         : <button type="button" className={`primary-action ${styles.activityButton}`} onClick={() => onOpen(row)}>Open Activities<AppIcon className="ri-arrow-right-s-line" /></button>}
-      {live && !joinUrl && <span className={styles.unmapped}>Joining link not available yet</span>}
+      {joinable && !joinUrl && <span className={styles.unmapped}>Joining link not available yet</span>}
     </div>
   </article>;
 }

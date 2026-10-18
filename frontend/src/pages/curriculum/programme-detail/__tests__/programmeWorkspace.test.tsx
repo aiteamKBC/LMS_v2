@@ -1,4 +1,4 @@
-import { render, screen, within } from '@testing-library/react';
+import { act, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { describe, expect, it, vi } from 'vitest';
@@ -9,6 +9,7 @@ import type {
   CurriculumGroup,
   CurriculumModule,
   CurriculumProgramme,
+  CurriculumProgrammeDetail,
   CurriculumSession,
 } from '@/lib/curriculumApi';
 
@@ -165,6 +166,16 @@ vi.mock('@/lib/curriculumApi', async importOriginal => ({
     cohorts: [],
     flat: { cohorts, groups, groupIds: ['GROUP-1'], modules, sessions: [], components: [] },
   })),
+  fetchCurriculumProgrammeDetailShell: vi.fn(async () => ({
+    schema: 'test',
+    programme,
+    flat: { cohorts, groups, groupIds: ['GROUP-1'], weekTemplates: [] },
+  })),
+  fetchCurriculumProgrammeDetailModules: vi.fn(async () => ({
+    schema: 'test',
+    flat: { modules, sessions: [] },
+  })),
+  fetchProgrammeKsbStats: vi.fn(async () => ({ programmeId: 'PROG-DATA' })),
   fetchCurriculumComponents: vi.fn(async () => components),
   fetchCurriculumProgrammes: vi.fn(async () => [programme]),
   fetchCurriculumCoaches: vi.fn(async () => [{ id: 1, name: 'Coach One' }, { id: 2, name: 'Coach Two' }]),
@@ -174,10 +185,19 @@ vi.mock('@/lib/curriculumApi', async importOriginal => ({
   fetchCurriculumKsbSets: vi.fn(async () => []),
   fetchCurriculumStandards: vi.fn(async () => []),
   fetchCurriculumProgrammeKsbCoverage: vi.fn(async () => null),
+  fetchCurriculumProgrammeKsbCoverageSummary: vi.fn(async () => null),
   fetchCurriculumProgrammeLearnerRoster: vi.fn(async () => ({ assignedLearners: [] })),
+  fetchCurriculumScopeLearnerRoster: vi.fn(async () => ({ assignedLearners: [] })),
   fetchCurriculumProgrammeLearnerKsbImpact: vi.fn(async () => null),
   fetchProgrammeReviews: vi.fn(async () => []),
 }));
+
+/** The page reads the detail document in two parts; serve both from one document. */
+function mockProgrammeDetailOnce(api: typeof import('@/lib/curriculumApi'), detail: CurriculumProgrammeDetail) {
+  const { modules: detailModules, sessions: detailSessions, ...shellFlat } = detail.flat;
+  vi.mocked(api.fetchCurriculumProgrammeDetailShell).mockResolvedValueOnce({ schema: detail.schema, programme: detail.programme, flat: shellFlat });
+  vi.mocked(api.fetchCurriculumProgrammeDetailModules).mockResolvedValueOnce({ schema: detail.schema, flat: { modules: detailModules, sessions: detailSessions } });
+}
 
 async function renderWorkspace() {
   const { default: ProgrammeDetailPage } = await import('../page');
@@ -205,6 +225,105 @@ async function openTab(name: RegExp) {
 }
 
 describe('Programme workspace', { timeout: 15000 }, () => {
+  it('shows KSB summary counts while modules are still pending and loads the matrix only on its tab', async () => {
+    const api = await import('@/lib/curriculumApi');
+    vi.clearAllMocks();
+    let finishModules!: (value: { schema: string; flat: { modules: CurriculumModule[]; sessions: CurriculumSession[] } }) => void;
+    vi.mocked(api.fetchCurriculumProgrammeDetailModules).mockImplementationOnce(() => new Promise(resolve => { finishModules = resolve; }));
+    vi.mocked(api.fetchCurriculumProgrammeKsbCoverageSummary).mockResolvedValueOnce({
+      view: 'summary', scope: 'programme', identifier: 'PROG-DATA', items: [
+        { code: 'K1', title: 'K1', coverage_key: 'standard|st0118|K1', source_type: 'standard', source_id: 'ST0118', raw_total_weight: 0, occurrence_count: 1 },
+        { code: 'K2', title: 'K2', coverage_key: 'standard|st0118|K2', source_type: 'standard', source_id: 'ST0118', raw_total_weight: 0, occurrence_count: 0 },
+      ],
+    } as never);
+    await renderWorkspace();
+    await screen.findByText('1/2 mapped');
+    expect(tabStrip().getByRole('button', { name: /KSB Coverage/ })).toHaveTextContent('1');
+    expect(api.fetchCurriculumProgrammeKsbCoverage).not.toHaveBeenCalled();
+    expect(api.fetchCurriculumComponents).not.toHaveBeenCalled();
+    await openTab(/KSB Coverage/);
+    await vi.waitFor(() => expect(api.fetchCurriculumProgrammeKsbCoverage).toHaveBeenCalledTimes(1));
+    await act(async () => { finishModules({ schema: 'test', flat: { modules, sessions: [] } }); });
+  });
+  it('loads only overview dependencies and does not repeat components when stats arrive', async () => {
+    const api = await import('@/lib/curriculumApi');
+    vi.clearAllMocks();
+    let finishStats!: (value: Awaited<ReturnType<typeof api.fetchProgrammeKsbStats>>) => void;
+    vi.mocked(api.fetchProgrammeKsbStats).mockImplementationOnce(() => new Promise(resolve => { finishStats = resolve; }));
+    await renderWorkspace();
+    await vi.waitFor(() => expect(api.fetchCurriculumComponents).toHaveBeenCalledTimes(1));
+    expect(api.fetchCurriculumCoaches).not.toHaveBeenCalled();
+    expect(api.fetchCurriculumTutors).not.toHaveBeenCalled();
+    expect(api.fetchCurriculumHolidays).not.toHaveBeenCalled();
+    expect(api.fetchCurriculumKsbFrameworks).not.toHaveBeenCalled();
+    expect(api.fetchCurriculumKsbSets).not.toHaveBeenCalled();
+    await act(async () => finishStats({ programmeId: 'PROG-DATA' } as Awaited<ReturnType<typeof api.fetchProgrammeKsbStats>>));
+    expect(api.fetchCurriculumComponents).toHaveBeenCalledTimes(1);
+    await openTab(/Groups/);
+    await vi.waitFor(() => expect(api.fetchCurriculumCoaches).toHaveBeenCalledTimes(1));
+    expect(api.fetchCurriculumComponents).toHaveBeenCalledTimes(1);
+    expect(api.fetchCurriculumTutors).not.toHaveBeenCalled();
+    expect(api.fetchCurriculumHolidays).not.toHaveBeenCalled();
+    await openTab(/KSB Coverage/);
+    await vi.waitFor(() => expect(api.fetchCurriculumKsbSets).toHaveBeenCalledTimes(1));
+    expect(api.fetchCurriculumComponents).toHaveBeenCalledTimes(1);
+  });
+
+  it('refreshes component contents after a return even when module IDs are unchanged', async () => {
+    const api = await import('@/lib/curriculumApi');
+    vi.clearAllMocks();
+    await renderWorkspace();
+    await vi.waitFor(() => expect(api.fetchCurriculumComponents).toHaveBeenCalledTimes(1));
+    await act(async () => { window.dispatchEvent(new Event('focus')); });
+    await vi.waitFor(() => expect(api.fetchCurriculumComponents).toHaveBeenCalledTimes(2));
+    expect(api.fetchCurriculumComponents).toHaveBeenLastCalledWith(expect.anything(), expect.objectContaining({ revalidate: true }));
+    expect(api.fetchProgrammeKsbStats).toHaveBeenLastCalledWith('PROG-DATA', undefined, expect.objectContaining({ revalidate: true }));
+  });
+
+  it('loads holiday choices only for the editor and offers retry instead of opening an incomplete form', async () => {
+    const api = await import('@/lib/curriculumApi');
+    vi.clearAllMocks();
+    vi.mocked(api.fetchCurriculumHolidays).mockRejectedValueOnce(new Error('Holiday choices unavailable'));
+    await renderWorkspace();
+    await openTab(/Cohorts/);
+    expect(api.fetchCurriculumHolidays).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByRole('button', { name: /^Add cohort$/i }));
+    await screen.findByText('Holiday choices unavailable');
+    expect(screen.queryByRole('button', { name: /^Create cohort$/i })).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    await vi.waitFor(() => expect(api.fetchCurriculumHolidays).toHaveBeenCalledTimes(2));
+    await vi.waitFor(() => expect(screen.queryByText('Loading editor options')).not.toBeInTheDocument());
+    expect(api.fetchCurriculumComponents).toHaveBeenCalledTimes(1);
+  });
+
+  it('loads the workspace module projection and retains canonical links and edit metadata', async () => {
+    const api = await import('@/lib/curriculumApi');
+    const { moduleFormTarget } = await import('@/pages/curriculum/shared/entities/moduleForm');
+    const projectedModule = {
+      ...modules[0], sourceType: 'delivery', notes: 'Saved description', color: '#123456',
+      weeklySchedule: [{ day: 'Monday', startTime: '09:00', endTime: '10:00' }],
+      sessionHolidays: ['H-1'], deliveryWeeks: 2, coverImage: 'https://example.invalid/cover.png',
+      weekStructureOutline: true,
+      weekStructure: [{ id: 'W-1', weekNumber: 1, title: 'Orientation', componentsOmitted: true }],
+    } as unknown as CurriculumModule;
+    vi.mocked(api.fetchCurriculumProgrammeDetailModules).mockResolvedValueOnce({
+      schema: 'test', flat: { modules: [projectedModule], sessions: [] },
+    });
+    await renderWorkspace();
+    expect(api.fetchCurriculumProgrammeDetailModules).toHaveBeenCalledWith(
+      'PROG-DATA', expect.anything(), expect.objectContaining({ visibility: 'all', view: 'workspace' }),
+    );
+    await openTab(/Modules/);
+    expect(await screen.findByRole('link', { name: /^Data Foundations/ })).toHaveAttribute(
+      'href', '/curriculum/module-builder?module=MOD-1&moduleTitle=Data+Foundations&programme=PROG-DATA&programmeName=Data+Analyst',
+    );
+    expect(moduleFormTarget(projectedModule)).toMatchObject({
+      id: 'MOD-1', notes: 'Saved description', color: '#123456',
+      weeklySchedule: projectedModule.weeklySchedule, sessionHolidays: ['H-1'],
+      deliveryWeeks: 2, coverImage: 'https://example.invalid/cover.png',
+    });
+  });
+
   it('opens cohort and module assignment with the correct independent scope', async () => {
     const { fetchLearnerAssignments } = await import('@/api/curriculumLearnerAssignments');
     await renderWorkspace();
@@ -339,7 +458,7 @@ describe('Programme workspace', { timeout: 15000 }, () => {
       groupId: 'GROUP-2',
       group: 'Group B',
     } as CurriculumModule;
-    vi.mocked(api.fetchCurriculumProgrammeDetail).mockResolvedValueOnce({
+    mockProgrammeDetailOnce(api, {
       schema: 'test',
       programme,
       cohorts: [],
@@ -386,7 +505,7 @@ describe('Programme workspace', { timeout: 15000 }, () => {
       status: 'scheduled',
       ksbCodes: [],
     } as CurriculumSession;
-    vi.mocked(api.fetchCurriculumProgrammeDetail).mockResolvedValueOnce({
+    mockProgrammeDetailOnce(api, {
       schema: 'test',
       programme,
       cohorts: [],
@@ -419,7 +538,7 @@ describe('Programme workspace', { timeout: 15000 }, () => {
       { ...components[0], id: 'COMP-C', type: 'PowerPoint', title: 'Slides', expectedOtjh: 0.33 },
       { ...components[0], id: 'COMP-OLD', moduleCatalogueId: '', moduleId: '', title: 'Old same-title row', expectedOtjh: 200 },
     ] as unknown as CurriculumComponent[];
-    vi.mocked(api.fetchCurriculumProgrammeDetail).mockResolvedValueOnce({
+    mockProgrammeDetailOnce(api, {
       schema: 'test',
       programme,
       cohorts: [],
@@ -444,7 +563,7 @@ describe('Programme workspace', { timeout: 15000 }, () => {
 
   it('keeps empty table structure visible and disables filters until records exist', async () => {
     const api = await import('@/lib/curriculumApi');
-    vi.mocked(api.fetchCurriculumProgrammeDetail).mockResolvedValueOnce({
+    mockProgrammeDetailOnce(api, {
       schema: 'test',
       programme,
       cohorts: [],
@@ -500,5 +619,61 @@ describe('Programme workspace', { timeout: 15000 }, () => {
     expect(screen.getByText('Intro live session')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Getting started/ })).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Join' })).toHaveAttribute('href', 'https://teams.example/meet/1');
+  });
+
+  it('builds weeks and sessions from a week outline and components read without their long text', async () => {
+    const api = await import('@/lib/curriculumApi');
+    // What the server sends for omitWeekComponents / omitContent: weeks with no
+    // `components` key, and a component whose transcript was left out.
+    const outlineModule = {
+      ...modules[0],
+      weekStructureOutline: true,
+      weekStructure: [{ id: 'WEEK-1', weekNumber: 1, title: 'Kick-off week', componentsOmitted: true }],
+    } as unknown as CurriculumModule;
+    const trimmedComponents = [
+      { ...components[0], weekId: 'WEEK-1', settingsOmitted: ['transcript'] },
+    ] as unknown as CurriculumComponent[];
+    vi.mocked(api.fetchCurriculumProgrammeDetailShell).mockClear();
+    vi.mocked(api.fetchCurriculumProgrammeDetailModules).mockClear();
+    vi.mocked(api.fetchCurriculumComponents).mockClear();
+    mockProgrammeDetailOnce(api, {
+      schema: 'test',
+      programme,
+      cohorts: [],
+      flat: { cohorts, groups, groupIds: ['GROUP-1'], modules: [outlineModule], sessions: [] },
+    });
+    vi.mocked(api.fetchCurriculumComponents).mockResolvedValueOnce(trimmedComponents);
+
+    await renderWorkspace();
+    expect(api.fetchCurriculumProgrammeDetailShell).toHaveBeenCalledWith('PROG-DATA', expect.anything(), expect.objectContaining({ visibility: 'all' }));
+    expect(api.fetchCurriculumProgrammeDetailModules).toHaveBeenCalledWith('PROG-DATA', expect.anything(), expect.objectContaining({ visibility: 'all' }));
+    await vi.waitFor(() => expect(api.fetchCurriculumComponents).toHaveBeenCalledWith(
+      expect.anything(), expect.objectContaining({ moduleCatalogueIds: ['MOD-1'], omitContent: true }),
+    ));
+    await openTab(/Sessions/);
+
+    // The week title comes from the outline; the session, its schedule and its
+    // Teams link from the trimmed component -- none of which was left out.
+    expect(await screen.findByRole('button', { name: /Kick-off week/ })).toBeInTheDocument();
+    expect(screen.getByText('Intro live session')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Join' })).toHaveAttribute('href', 'https://teams.example/meet/1');
+  });
+
+  it('draws the programme, cohorts and groups before its modules arrive', async () => {
+    const api = await import('@/lib/curriculumApi');
+    let deliverModules: (value: Awaited<ReturnType<typeof api.fetchCurriculumProgrammeDetailModules>>) => void = () => undefined;
+    vi.mocked(api.fetchCurriculumProgrammeDetailModules).mockReturnValueOnce(new Promise(resolve => { deliverModules = resolve; }));
+
+    await renderWorkspace();
+
+    // The shell alone draws the page; the module counts wait, and say so.
+    expect(tabStrip().getByRole('button', { name: /Cohorts/ })).toHaveTextContent('1');
+    expect(screen.getByRole('status', { name: 'Loading modules count' })).toBeInTheDocument();
+    await openTab(/Modules/);
+    expect(screen.getByText("Loading this programme's modules...")).toBeInTheDocument();
+
+    deliverModules({ schema: 'test', flat: { modules, sessions: [] } });
+    expect(await screen.findByRole('link', { name: /^Data Foundations/ })).toBeInTheDocument();
+    expect(screen.queryByRole('status', { name: 'Loading modules count' })).not.toBeInTheDocument();
   });
 });

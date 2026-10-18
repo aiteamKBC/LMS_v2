@@ -1,5 +1,6 @@
 import { createCachedResource } from './cachedRequest';
 import { readLearnerJson, invalidateLearnerReads } from './learnerRead';
+import { invalidateWeeklyLearning, type WeeklyProgressScope } from './weeklyLearning';
 import type { LearnerAccessGate, LearnerLearningAccess } from '@/utils/learnerAccessGate';
 // ============================================================================
 // Learner-detail API client.
@@ -11,6 +12,8 @@ import type { LearnerAccessGate, LearnerLearningAccess } from '@/utils/learnerAc
 const BASE = '/learner_api/learner-detail';
 const detailResource = createCachedResource<LearnerDetail>('learner-detail', key =>
   readLearnerJson(`${BASE}/${key.replace(':', '/')}/?content=summary`));
+const quizDetailResource = createCachedResource<LearnerDetail>('learner-quiz-detail', key =>
+  readLearnerJson(`${BASE}/${key.replace(':', '/')}/?content=quiz`));
 const componentResource = createCachedResource<LearnerDetail>('learner-component-detail', async key => {
   const [kind, id, componentId] = JSON.parse(key) as [LearnerKind, string, string];
   const detail = await detailResource.read(`${kind}:${id}`);
@@ -42,7 +45,17 @@ export interface ComponentKsbMapping {
   weight: number;
 }
 
+export interface PreviousLearningCompletion {
+  courseRef: string;
+  activityId: string;
+  sourceActivityId: number;
+  catalogueKind: 'material' | 'quiz';
+  completed: boolean;
+}
+
 export interface LearnerComponentEntry {
+  /** Exact owned source activity in a verified course replacement; no new attempt or hours. */
+  previousLearning?: PreviousLearningCompletion;
   module: string | null;
   week: string | null;
   component: string;
@@ -56,6 +69,8 @@ export interface LearnerComponentEntry {
   type?: string | null;                 // master component type, e.g. 'video', 'live_session'
   description?: string | null;
   assignmentTopics?: import('@/lib/assignmentTopics').AssignmentTopic[];
+  /** Author flag: the monthly (eight-step) assignment. See isMonthlyAssignment. */
+  monthlyAssignment?: boolean;
   assignmentBrief?: string | null;      // assignment brief authored as plain text (Module Builder)
   assignmentBriefHtml?: string | null;  // assignment brief authored as rich text (Week Builder)
   videoUrl?: string | null;             // present on video components authored with a URL
@@ -69,6 +84,9 @@ export interface LearnerComponentEntry {
   files?: import('@/lib/componentFiles').ComponentFile[];
   downloadAllowed?: boolean;            // powerpoint download flag
   reflectionPrompt?: string | null;     // authored reflection prompt / learner guidance
+  /** Completion derived from verified Teams attendance; adds no recorded hours. */
+  attendanceCompleted?: boolean;
+  attendanceCompletedAt?: string | null;
   reflectionRequired?: boolean;         // false completes the activity without the reflection flow
   /** Authored on the component: this activity must be validated by a tutor or
    *  coach. The reflection is what creates the marking record, so an activity
@@ -81,6 +99,9 @@ export interface LearnerComponentEntry {
   liveSessionUrl?: string | null;       // Microsoft Teams join URL for live sessions
   teamsSessionNumber?: number | null;
   teamsLiveSessionId?: string | null;   // curriculum.live_sessions.id for attendance/artifact sync
+  recordingSeriesId?: string | null;    // saved series owning a dated recorded event
+  recordingSessionNumber?: number | null;
+  recordingDate?: string | null;        // recording day in Europe/London
   sessionDate?: string | null;
   sessionTime?: string | null;
   sessionDateTimeUtc?: string | null;
@@ -89,6 +110,9 @@ export interface LearnerComponentEntry {
   quizMeta?: { quizId: number; questions: number | null; duration: number | null; timeUnit: string | null };
   /** A passed quiz whose slot an author has since removed from the module. */
   retired?: boolean;
+  /** Compact Weekly Learning rows only: the server's hasComponentContent
+   *  verdict, sent instead of the descriptions and briefs it reads. */
+  contentAvailable?: boolean;
 }
 export interface LearnerKsbItem {
   code: string;
@@ -97,16 +121,19 @@ export interface LearnerKsbItem {
   description: string;
 }
 
-// Slim stored per-question result — references answers by id (resolved to text
-// on display via the fetched quiz). Free-text types (fill_gap/keywords/matching)
-// have no answer id, so they carry chosenText instead.
+// New results include a text/key snapshot; older attempts may only have IDs.
 export interface LearnerQuizQuestionResult {
   questionId: number;
+  questionText?: string;
+  type?: string;
+  possible?: number;
+  imageUrl?: string;
   earned: number;
   correct: boolean;
   chosenAnswerId?: number | number[] | null;
   correctAnswerId?: number[] | null;
-  chosenText?: string | null;   // free-text answer types only
+  chosenText?: string | null;
+  correctText?: string | null;
 }
 
 export interface LearnerQuizAttempt {
@@ -167,6 +194,8 @@ export interface LearnerDetail {
   /** A Delivery apprentice who has signed all four compliance documents may book their first session. */
   firstSessionUnlocked?: boolean;
   learnerType?: LearnerKind;
+  /** Staff-owned Created_users.Attendance_type delivery classification. */
+  attendanceType?: string | null;
   programmeStartDate?: string;
   /** The learner's own recorded start, from Created_users.Learner_start_date.
    *  programmeStartDate falls back to the cohort when this is unset, so it can
@@ -311,17 +340,20 @@ export interface LearnerVideoProgress {
 }
 
 /** Remove cached learner data after a progress-changing action. */
-export function invalidateLearnerDetailCache(kind?: LearnerKind, id?: string): void {
+export function invalidateLearnerDetailCache(kind?: LearnerKind, id?: string, scope?: WeeklyProgressScope): void {
   const key = kind && id ? `${kind}:${id}` : undefined;
   detailResource.invalidate(key);
+  quizDetailResource.invalidate(key);
   componentResource.invalidate();
   summaryResource.invalidate(key);
+  invalidateWeeklyLearning(key, scope);
   invalidateLearnerReads();
 }
 
 /** Share the expensive workspace payload between learner pages. */
-export function fetchLearnerDetail(kind: LearnerKind, id: string, options: { force?: boolean; revalidate?: boolean; componentId?: string } = {}): Promise<LearnerDetail> {
+export function fetchLearnerDetail(kind: LearnerKind, id: string, options: { force?: boolean; revalidate?: boolean; componentId?: string; quizView?: boolean } = {}): Promise<LearnerDetail> {
   if (options.force) invalidateLearnerDetailCache(kind, id);
+  if (options.quizView) return quizDetailResource.read(`${kind}:${id}`, { revalidate: options.revalidate });
   if (options.componentId) return componentResource.read(JSON.stringify([kind, id, options.componentId]));
   return detailResource.read(`${kind}:${id}`, { revalidate: options.revalidate });
 }

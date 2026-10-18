@@ -35,3 +35,25 @@ it('moves focus to the selected component without stealing it while editing', ()
   view.rerender(<ComponentEditor {...props} component={{ ...component, id: 'A2' }} />);
   expect(screen.getByRole('region', { name: 'Component editor' })).toHaveFocus();
 });
+
+it('saves the title shown to learners and the monthly assignment flag as assignment settings', async () => {
+  const { normaliseComponentSettings, validateComponentAuthoring } = await import('../module-builder/componentAuthoringModel');
+  const onChange = vi.fn();
+  const component = { id: 'A1', type: 'assignment', title: 'Imported legacy title', description: '', settings: {}, expectedOtjh: 2, points: 25, groupIds: [] } as unknown as ComponentProps<typeof ComponentEditor>['component'];
+  render(<ComponentEditor component={component} onChange={onChange} onBack={vi.fn()} groupOptions={[]} weekScope={{} as ComponentProps<typeof ComponentEditor>['weekScope']} />);
+  const flag = screen.getByRole('checkbox', { name: /Monthly assignment \(8-step submission\)/ });
+  expect(flag).not.toBeChecked();
+  fireEvent.change(screen.getByLabelText('Title shown to learners'), { target: { value: 'Month 2 coach led assignment' } });
+  expect(onChange.mock.calls.at(-1)![0].settings.learnerTitle).toBe('Month 2 coach led assignment');
+  fireEvent.click(flag);
+  expect(onChange.mock.calls.at(-1)![0].settings.isMonthlyAssignment).toBe(true);
+
+  // Both survive normalisation as first-class keys: a key the schema does not
+  // declare is moved into `legacySettings`, where the learner API never reads it.
+  const saved = normaliseComponentSettings('assignment', { learnerTitle: 'Month 2 coach led assignment', isMonthlyAssignment: true });
+  expect(saved).toMatchObject({ learnerTitle: 'Month 2 coach led assignment', isMonthlyAssignment: true });
+  expect(saved.legacySettings).toBeUndefined();
+  expect(normaliseComponentSettings('assignment', {})).toMatchObject({ learnerTitle: '', isMonthlyAssignment: false });
+  expect(validateComponentAuthoring({ title: 'Assignment', type: 'assignment', expectedOtjh: 2, points: 25, reflectionRequired: false,
+    workplaceEvidenceRequired: false, settings: saved }).filter(issue => /Unsupported setting/.test(issue.message))).toEqual([]);
+});

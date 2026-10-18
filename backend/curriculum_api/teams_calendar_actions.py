@@ -431,8 +431,13 @@ def with_change_notice(live_id, result):
 
 
 def with_change_emails(live_id, result):
-    """Send cancellation notices from the server once Microsoft is confirmed."""
-    if result.get('status') != 'done' or result.get('action') != 'cancel' or not result.get('changeNotice'):
+    """Send the change or cancellation notice from the server once Microsoft is confirmed.
+
+    Every confirmed action with a notice -- a session moved as much as one
+    cancelled -- so closing the browser cannot lose the LMS email. The notice id
+    is the operation's own, so the browser's retry reaches nobody twice.
+    """
+    if result.get('status') != 'done' or not result.get('changeNotice'):
         return result
     from .teams_schedule_delivery import send_change_emails
     return {**result, 'scheduleEmail': send_change_emails(live_id, result['changeNotice'])}

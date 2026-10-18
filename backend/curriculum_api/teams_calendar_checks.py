@@ -78,8 +78,13 @@ def local_calendar_recurrence(targets, repeat, zone_name, graph_zone):
             'numberOfOccurrences': slots, 'recurrenceTimeZone': graph_zone}}
 
 
+#: Tracked sessions whose Teams slot a rewrite must never silently remove: the
+#: planned ones, the ones that ran, and the ones a new plan left on Teams.
+TEAMS_SLOT_HOLDING_STATUSES = frozenset({'scheduled', 'completed', 'superseded'})
+
+
 def sessions_a_rewrite_would_drop(targets, recurring, rows, zone_name, now=None):
-    """Future tracked sessions a new recurrence would silently take off Teams.
+    """Tracked sessions a new recurrence would silently take off Teams.
 
     Rewriting a series' recurrence regenerates its instances from the pattern:
     a session outside the new range, or on a weekday the pattern no longer
@@ -87,11 +92,12 @@ def sessions_a_rewrite_would_drop(targets, recurring, rows, zone_name, now=None)
     is a cancellation nobody pressed Cancel for, so the caller refuses the
     update and names these sessions instead.
 
-    ``rows`` are the calendar's stored occurrences. Only scheduled sessions that
-    have not started and are absent from ``targets`` count; a session that
-    already ran is history and is left alone either way.
+    ``rows`` are the calendar's stored occurrences. Past sessions count as much
+    as future ones -- a date that has gone is not a session anybody cancelled,
+    and its recording and attendance hang off that slot -- and so do sessions a
+    new plan left on Teams ("not in plan"). Only Cancel removes a session.
+    ``now`` is kept for callers; time no longer decides anything here.
     """
-    now = now or datetime.now(timezone.utc)
     zone = ZoneInfo(zone_name)
     wanted = {target['start'] for target in targets}
     local = [target['start'].astimezone(zone) for target in targets]
@@ -99,13 +105,13 @@ def sessions_a_rewrite_would_drop(targets, recurring, rows, zone_name, now=None)
     weekdays = {item.weekday() for item in local}
     dropped = []
     for row in rows or ():
-        if str(row.get('status') or 'scheduled') != 'scheduled':
+        if str(row.get('status') or 'scheduled') not in TEAMS_SLOT_HOLDING_STATUSES:
             continue
         try:
             start = utc_datetime(row.get('scheduled_start'))
         except (CalendarMismatch, TypeError, ValueError):
             continue
-        if start <= now or start in wanted:
+        if start in wanted:
             continue
         day = start.astimezone(zone)
         covered = bool(recurring and first and first <= day.date() <= last and day.weekday() in weekdays)
@@ -264,6 +270,37 @@ def unconfirmed_attendee_detail(missing, extra):
     return '; '.join(parts)
 
 
+SILENT_INVITE_HEADERS = {'Prefer': 'outlook.send-invitations="none"'}
+
+
+def remove_attendees_silently(request, owner, event, attendees):
+    """Take the people a save drops off a meeting without Microsoft telling them.
+
+    Exchange sends a cancellation to anyone removed by a write it announces, so
+    an update that emails everyone would also cancel the meeting for whoever it
+    dropped -- a cancellation nobody pressed Cancel for. Removing them first,
+    under the silent preference, leaves the announced write with only the
+    people still on the meeting. Returns the event as it now stands and
+    whether anybody was removed.
+    """
+    organizer = event_organizer_address(event)
+    wanted = attendee_addresses(attendees) | ({organizer} - {''})
+    current = [item for item in (event or {}).get('attendees') or [] if attendee_addresses([item])]
+    remaining = [item for item in current if attendee_addresses([item]) <= wanted]
+    if len(remaining) == len(current):
+        return event, False
+    payload = []
+    for item in remaining:
+        address = item.get('emailAddress') or {}
+        entry = {'address': address.get('address')}
+        if address.get('name'):
+            entry['name'] = address['name']
+        payload.append({'emailAddress': entry, 'type': item.get('type') or 'required'})
+    request('PATCH', f'users/{owner}/events/{quote(event["id"], safe="")}',
+            payload={'attendees': payload}, extra_headers=SILENT_INVITE_HEADERS)
+    return {**event, 'attendees': remaining}, True
+
+
 def publish_attendees(request, owner, event, attendees, *, extra_headers=None, always=False):
     """An attendee-only patch avoids reapplying the recurrence on people saves.
 
@@ -282,6 +319,11 @@ def publish_attendees(request, owner, event, attendees, *, extra_headers=None, a
     leave a meeting whose attendees are correct and whose attendees were never
     told -- Microsoft only delivers a meeting to someone when something is sent.
     """
+    if extra_headers is None:
+        # Announced: anybody it drops goes first, silently, and the write that
+        # follows still announces itself to everyone who stays.
+        event, removed = remove_attendees_silently(request, owner, event, attendees)
+        always = always or removed
     organizer = event_organizer_address(event)
     if not always and attendees_already_match(attendees, event.get('attendees'), organizer):
         return False
