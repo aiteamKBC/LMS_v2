@@ -296,8 +296,8 @@ def _canonical_actual_rows(owner, records=None):
     ]
 
 
-def _canonical_module_progress(records, modules):
-    """Project learner-progress-entry facts onto the assigned module ids."""
+def module_record_index(records, modules):
+    """Canonical module attribution, retaining input positions and title ambiguity."""
     by_id = {str(module['id']): module for module in modules}
     ids_by_title = defaultdict(list)
     for module_id, module in by_id.items():
@@ -305,13 +305,23 @@ def _canonical_module_progress(records, modules):
         if title:
             ids_by_title[title].append(module_id)
 
-    def module_id_for(record):
+    grouped = defaultdict(list)
+    for position,record in enumerate(records):
         direct = str(record.get('module_ref') or '').strip()
         if direct in by_id:
-            return direct
-        title = clean_text(record.get('module_title')).casefold()
-        matches = ids_by_title.get(title, [])
-        return matches[0] if len(matches) == 1 else None
+            module_id = direct
+        else:
+            title = clean_text(record.get('module_title')).casefold()
+            matches = ids_by_title.get(title, [])
+            module_id = matches[0] if len(matches) == 1 else None
+        if module_id is not None:
+            grouped[module_id].append((position,record))
+    return by_id,grouped
+
+
+def _canonical_module_progress(records, modules, *, record_index=None):
+    """Project learner-progress-entry facts onto the assigned module ids."""
+    by_id,grouped = module_record_index(records,modules) if record_index is None else record_index
 
     result = {
         module_id: {'hours': {'actual': 0}, 'ksb': {'completed': 0, 'total': 0},
@@ -319,10 +329,7 @@ def _canonical_module_progress(records, modules):
         for module_id in by_id
     }
     achieved_codes = defaultdict(set)
-    for record in records:
-        module_id = module_id_for(record)
-        if module_id is None:
-            continue
+    for module_id,record in ((mid,record) for mid,items in grouped.items() for _,record in items):
         metric = result[module_id]
         if canonical_learning.counts_as_actual(record):
             metric['hours']['actual'] += sum(
@@ -584,13 +591,13 @@ def read_dashboard(source, section=None, *, records=None, targets=None, dashboar
     # Monthly renders its board, Overview its progress cards. Only Training
     # renders module descriptions and curriculum learning outcomes. Legacy
     # callers keep their complete projection unless explicitly selecting a tab.
-    rich_modules = dashboard_tab not in ('monthly', 'overview', 'weekly')
+    rich_modules = section != 'my-learning' and dashboard_tab not in ('monthly', 'overview', 'weekly')
     owner = getattr(source, '_canonical_profile', None)
     email = str(source.email or '').strip().casefold()
     actual, modules, sessions = [], [], []
     progress_records = []
     historical = None
-    targets = targets if targets is not None else (canonical_learning.targets_for(owner) if owner is not None and section != 'weekly' else {})
+    targets = targets if targets is not None else (canonical_learning.targets_for(owner) if owner is not None and section not in ('weekly', 'my-learning') else {})
     contract_data = {
         'months': {
             month: {'label': month, 'topics': [], 'planned': hours, 'source': 'ssot'}
@@ -604,7 +611,7 @@ def read_dashboard(source, section=None, *, records=None, targets=None, dashboar
         LearnerProfile.objects.filter(enrolment_id=source.pk)
         .only(*TRAINING_PLAN_PROFILE_FIELDS)
         .first()
-        if section not in ('contract', 'learning') else None
+        if section not in ('contract', 'learning', 'my-learning') else None
     )
     with connections['enrolment'].cursor() as cur:
         if section == 'contract':
@@ -613,7 +620,7 @@ def read_dashboard(source, section=None, *, records=None, targets=None, dashboar
             # Hours and module progress read lineage, never raw evidence bodies
             # (as the canonical metrics read), so the payload JSON stays in Neon.
             progress_records = records if records is not None else canonical_learning.entries_for(owner, lineage_only=True)
-            if section != 'weekly':
+            if section not in ('weekly', 'my-learning'):
                 actual = _canonical_actual_rows(owner, progress_records)
         if section == 'weekly' and hasattr(source, '_dashboard_module_ids'):
             ids, links = source._dashboard_module_ids, {}
@@ -646,12 +653,27 @@ def read_dashboard(source, section=None, *, records=None, targets=None, dashboar
                    AND lower(replace(coalesce(c.type, ''), '-', '_'))='live_session'
                    AND ''' + visible_child_sql('c') + '''
                 ) AS live_session_count'''
+            # My Learning counts authored sessions once for the complete module
+            # set rather than executing a correlated component count per week.
+            live_join = ''
+            live_params = [ids]
+            if section == 'my-learning':
+                live_sessions = 'coalesce(live_counts.live_session_count,0) AS live_session_count'
+                live_join = '''LEFT JOIN (
+                    SELECT c.module_catalogue_id,c.week_id,count(*) AS live_session_count
+                    FROM curriculum.components c WHERE c.module_catalogue_id=ANY(%s)
+                      AND lower(replace(coalesce(c.type,''),'-','_'))='live_session'
+                      AND ''' + visible_child_sql('c') + '''
+                    GROUP BY c.module_catalogue_id,c.week_id
+                ) live_counts ON live_counts.module_catalogue_id=w.module_catalogue_id
+                    AND live_counts.week_id=w.id'''
+                live_params = [ids, ids]
             cur.execute(f'''SELECT w.id,w.module_catalogue_id,w.week_number,w.title,{outcomes_column},
                 w.holiday_note_enabled,w.holiday_note,{live_sessions}
-                FROM curriculum.weeks w
+                FROM curriculum.weeks w {live_join}
                 WHERE w.module_catalogue_id=ANY(%s)
                   AND ''' + visible_week_sql('w') + '''
-                ORDER BY w.display_order,w.week_number,w.id''', [ids])
+                ORDER BY w.display_order,w.week_number,w.id''', live_params)
             for row in rows(cur):
                 week_counts[row['module_catalogue_id']] += 1
                 outcomes = [text for text in (clean_text(o) if isinstance(o, str) else '' for o in as_list(row['learning_outcomes'])) if text]
@@ -693,6 +715,17 @@ def read_dashboard(source, section=None, *, records=None, targets=None, dashboar
             'moduleLinks': links,
             'generatedAt': datetime.now(timezone.utc).isoformat(),
         }
+    if section == 'my-learning':
+        # One owner for cards, their accepted hours and upcoming sessions. Do
+        # not build programme allocations, reviews or coach contact details.
+        module_progress = _canonical_module_progress(progress_records, modules) if owner is not None else {}
+        if module_progress:
+            from .live_session_progress import read_live_credits, supplement_module_hours
+            module_progress = supplement_module_hours(module_progress, progress_records,
+                read_live_credits(source, module_ids=[module['id'] for module in modules]))
+        return {'modules': modules, 'moduleLinks': links, 'sessions': sessions,
+                'moduleProgress': module_progress,
+                'generatedAt': datetime.now(timezone.utc).isoformat()}
     # The overview must never wait for an Azure PDF download. Older clients
     # still receive the complete response when no section was requested.
     contact = current_coach(source, profile, historical)
@@ -740,7 +773,7 @@ def training_plan_dashboard(request, kind, pk):
         # ``learning`` is the detailed weekly dashboard projection.  Keep it
         # on the same read path as overview so clients can request the weekly
         # modules/sessions without being rejected by the section guard.
-            if section not in (None, 'overview', 'learning', 'contract', 'upcoming'):
+            if section not in (None, 'overview', 'learning', 'contract', 'upcoming', 'my-learning'):
                 return JsonResponse({'error': 'Invalid training plan section.'}, status=400)
             with measurement.stage(section or 'complete'):
                 payload = read_dashboard(source, section=section)

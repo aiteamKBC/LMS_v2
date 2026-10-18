@@ -32,6 +32,7 @@ from .dashboard_weekly import dashboard_weekly
 from .dashboard_tabs import dashboard_tab
 from .dashboard_training import training_module
 from . import module_progress, extra_activities, absence_reports, apprenticeship_agreement, attendance, calendar, components, curriculum, calendar_connections, employer_portal, employers, evidence, free_courses_view, ilr_document, monthly_assignment, monthly_reports, training_plan_document, written_agreement, learner_detail, learning_plan, lms_schema, media_proxy, module_shift, quizzes, reflection_ai, reflection_submissions, review_form, student_activity, time_tracking, training_plan_view, training_plan_dashboard, videos, views
+from .my_learning import my_learning
 
 from curriculum_api import session_results
 from .session_recovery import link_catchup
@@ -232,6 +233,10 @@ urlpatterns = [
     path("rewards-summary/<str:kind>/<int:pk>/", learner_rewards_summary, name="learner-rewards-summary"),
     path("module-progress/<str:kind>/<int:pk>/", module_progress.learner_module_progress, name="module-progress"),
     path("student-activity/<str:kind>/<int:pk>/", student_activity.student_activity, name="student-activity"),
+    path('my-learning/<str:kind>/<int:pk>/', my_learning, name='my-learning-catalogue'),
+    path('my-learning/<str:kind>/<int:pk>/search/', my_learning, {'resource':'search'}, name='my-learning-search'),
+    path('my-learning/<str:kind>/<int:pk>/upcoming/', my_learning, {'resource':'upcoming'}, name='my-learning-upcoming'),
+    path('my-learning/<str:kind>/<int:pk>/modules/<path:subject_id>/', my_learning, name='my-learning-module'),
     path("student-activity/<str:kind>/<int:pk>/<int:group_id>/<int:activity_id>/attempts/", student_activity.start_subject_attempt, name="subject-attempt-start"),
     path("student-activity/<str:kind>/<int:pk>/<int:group_id>/<int:activity_id>/attempts/<uuid:attempt_id>/", student_activity.submit_subject_attempt, name="subject-attempt-submit"),
     path("subject-covers/<int:pk>/", student_activity.subject_covers, name="subject-covers"),
