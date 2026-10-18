@@ -638,7 +638,8 @@ def read_legacy_metadata(source, register):
                      a.raw #> '{{live_lms_component,ksbs}}') AS ksbs,
             EXISTS (SELECT 1 FROM "Learner".subject_activity_attempts p
               WHERE p.enrolment_id=%s AND p.aptem_id=l.aptem_id AND p.group_id=gl.group_id
-                AND p.activity_id=a.activity_id AND p.completed=true) AS new_completed
+                AND p.activity_id=a.activity_id AND p.completed=true
+                AND coalesce(p.definition->>'catalogue_kind','material')='material') AS new_completed
             FROM "Last_audit".learners l
             JOIN "Last_audit".group_learners gl ON gl.learner_id=l.learner_id
             JOIN "Last_audit".groups g ON g.group_id=gl.group_id
