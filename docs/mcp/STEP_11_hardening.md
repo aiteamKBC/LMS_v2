@@ -7,6 +7,9 @@
 11.2 Admin controls (super-admin only, inside existing staff console or a minimal Django view):
      list MCP tokens per account (client, created, last used), revoke one / revoke all for account,
      disable a client. Add a staff-console banner/setting? — not needed; env flag is the kill switch.
+     **Owner decision (Step 3 review, 2026-10-18):** "revoke all MCP tokens for an account" is required here.
+     It closes the accepted suspend→restore gap: suspension refuses tokens and revokes any family presented
+     while suspended, but a token unused during the suspension works again after restore.
 11.3 Kill-switch drill test: flip `MCP_ENABLED=0` → all MCP/OAuth 404 immediately, existing app unaffected.
 11.4 Load sanity: script firing 60 read calls/min from 5 tokens on branch; confirm DB pool OK
      (`config/db_release.py`), latency of normal app pages unchanged (use `perf/` tooling if handy).
@@ -14,6 +17,8 @@
 11.6 Observability: add MCP counters to existing `config/observability.py` logging if it supports custom fields.
 11.7 Docs: update `CLAUDE.md` gate table (`/mcp/`, `/oauth/`, `/.well-known/oauth-*` = self-authenticating),
      add `docs/MCP_OPERATIONS.md` (env vars, apply SQL, rotate/revoke, kill switch, logs to watch, cleanup command).
+     `MCP_OPERATIONS.md` must state: **a suspension related to a compromise needs a password reset before the
+     account is restored** (the reset revokes every MCP token family; restore alone does not).
 11.8 Retention: schedule `mcp_cleanup` (same mechanism as other periodic jobs in the repo).
 11.9 Full regression: run every app suite on branch (app-by-app, per CLAUDE.md), compare with Step 1 baseline.
 
