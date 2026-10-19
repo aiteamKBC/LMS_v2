@@ -56,6 +56,9 @@ export function ReviewsTab({ reviewsState }: { reviewsState: ReturnType<typeof u
 }
 
 function reviewGenerationIssueMessage(code: string) {
+  if (code === 'review_identity_unavailable') {
+    return 'This learner\'s enrolment link could not be verified. Ask an administrator to check the learner record. Existing booked meetings may still appear below.';
+  }
   if (code === 'missing_learner_start_date') {
     return 'Future reviews and monthly coaching meetings cannot be generated because the learner start date is missing. Existing scheduled records may still appear below.';
   }

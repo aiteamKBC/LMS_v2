@@ -57,6 +57,18 @@ afterEach(() => {
 });
 
 describe('MeetingBookingDialog', () => {
+  it.each(['2026-10-06', '2026-10-19'])('blocks an MCM on %s before any booking request', async day => {
+    mount(meeting());
+    const dialog = await screen.findByRole('dialog', { name: 'Book monthly coaching' });
+    const submit = within(dialog).getByRole('button', { name: 'Book session' });
+    await waitFor(() => expect(submit).toBeEnabled());
+    fireEvent.change(within(dialog).getByLabelText('Day'), { target: { value: day } });
+    expect(within(dialog).getByRole('alert')).toHaveTextContent('20th');
+    expect(submit).toBeDisabled();
+    fireEvent.submit(submit.closest('form')!);
+    expect(bookLearnerCalendarSession).not.toHaveBeenCalled();
+  });
+
   it('resolves a minimal Monthly V2 booking input against the authorized calendar', async () => {
     const event = meeting();
     mount({ id: event.id, eventKey: event.eventKey, source: event.source, title: event.title,
@@ -64,7 +76,7 @@ describe('MeetingBookingDialog', () => {
     const dialog = await screen.findByRole('dialog', { name: 'Book monthly coaching' });
     await waitFor(() => expect(within(dialog).getByRole('button', { name: 'Book session' })).toBeEnabled());
     expect(fetchLearnerCalendarEvents).toHaveBeenCalledWith('apprenticeship', '125', { revalidate: true });
-    expect(within(dialog).getByLabelText('Day')).toHaveValue('2026-10-15');
+    expect(within(dialog).getByLabelText('Day')).toHaveValue('2026-10-20');
   });
 
   it('refuses booking when a minimal card identity is absent from the authorized calendar', async () => {
@@ -92,11 +104,11 @@ describe('MeetingBookingDialog', () => {
     expect(submit).toBeDisabled();
     expect(fetchPersonalCalendarAvailability).not.toHaveBeenCalled();
 
-    fireEvent.change(within(dialog).getByLabelText('Day'), { target: { value: '2026-10-06' } });
+    fireEvent.change(within(dialog).getByLabelText('Day'), { target: { value: '2026-10-20' } });
     await waitFor(() => expect(submit).toBeEnabled());
     const [, , start, end] = vi.mocked(fetchPersonalCalendarAvailability).mock.calls.at(-1)!;
-    expect(start).toBe(new Date(2026, 9, 6, 0, 0, 0).toISOString());
-    expect(end).toBe(new Date(2026, 9, 6, 23, 59, 59).toISOString());
+    expect(start).toBe(new Date(2026, 9, 20, 0, 0, 0).toISOString());
+    expect(end).toBe(new Date(2026, 9, 20, 23, 59, 59).toISOString());
     expect(bookLearnerCalendarSession).not.toHaveBeenCalled();
   });
 

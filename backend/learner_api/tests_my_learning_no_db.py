@@ -37,6 +37,30 @@ def fake_connections():
 
 
 class MyLearningAggregateTests(SimpleTestCase):
+    def test_undated_execution_month_matches_detail_and_next_activity_preview(self):
+        from .course_catalogue_display import catalogue_display_context, display_schedule
+        course = {'id': 3, 'source_course_ref': '50', 'source_course_title': 'Old'}
+        definitions = [{'source_course_ref': '50', 'source_course_title': 'Old',
+            'source_activity_id': f'material:{ident}', 'source_activity_title': title,
+            'source_section_title': section, 'source_payload': {}}
+            for ident, title, section in [(7, 'Undated lesson', ''), (8, 'June lesson', 'June 2026')]]
+        record = {'id': 1, 'accepted': False, 'actual_seconds': 0, 'activity_status': 'in_progress',
+            'reporting_month': '2026-03', 'sources': [{'source_system': 'old_lms',
+                'source_course_ref': '50', 'source_activity_id': 'material:7'}]}
+        with patch.object(canonical, 'query', return_value=definitions):
+            rows, done, started, hours, _ = learning.course_facts({'id': 9}, [record], [course])
+        self.assertNotIn('_learner_schedule', definitions[0])
+        projected = catalogue_display_context(rows, [])
+        self.assertEqual(display_schedule(projected[0])['month'], '2026-03')
+        detail = canonical.recorded_course_items([course], projected, [record], include_catalogue=True)[0]
+        self.assertEqual(detail[0]['month'], '2026-03')
+        self.assertEqual(detail[1]['month'], '2026-06')
+        cards, _ = self.cards(native(), [course], rows, done, started, hours, records=[record])
+        card = next(card for card in cards if card['source'] == 'legacy')
+        self.assertEqual(card['nextTitle'], 'Undated lesson')
+        self.assertEqual(card['completedActivityCount'], 0)
+        self.assertEqual(card['activityCount'], 2)
+
     def cards(self, content, courses=(), definitions=(), done=None, started=None, hours=None, meta=None, records=()):
         from . import course_catalogue_display
         meta = meta or metadata()

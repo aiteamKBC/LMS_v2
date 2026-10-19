@@ -138,6 +138,10 @@ export function mayAccessRoute(path: string, account: Pick<AuthUser, 'role' | 'a
       || path === '/profile';
   }
   if (account.access === 'record-monitor') return path === '/old-otjh' || path.startsWith('/old-otjh/');
+  if (path === '/support/ticket-queue') {
+    const grants = [account.access, ...(account.accessWorkspaces ?? []).map(workspace => workspace.access)];
+    return account.role === 'admin' || (account.role === 'staff' && grants.includes('support'));
+  }
   if (['/admin/coach_directory', '/users/coach-directory', '/curriculum/coach-directory'].includes(path)) {
     const grants = [account.access, ...(account.accessWorkspaces ?? []).map(workspace => workspace.access)];
     return STAFF.includes(account.role) && grants.some(grant => ['super-admin', 'enrolment', 'curriculum'].includes(grant ?? ''));

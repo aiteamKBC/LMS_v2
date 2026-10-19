@@ -9,7 +9,7 @@ import {
   rescheduleLearnerCalendarSession, type BookingCalendarRules, type BookSessionResponse,
   type CalendarBusySlot, type LearnerCalendarEvent, type PersonalCalendarConnection,
 } from '@/api/learnerCalendar';
-import { bookingDateRestrictionMessage, firstAvailableBookingDate, isoDate, parseBookingDay } from './bookingDates';
+import { bookingDateRestrictionMessage, firstAvailableBookingDate, isoDate, mcmBookingDateRestrictionMessage, parseBookingDay } from './bookingDates';
 import styles from './meetingBooking.module.css';
 
 /** A list card supplies identity and optional initial values. The dialog
@@ -94,7 +94,7 @@ function MeetingBookingForm({ session, title, learner, rules, attendance, onClos
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
   const [revision, setRevision] = useState(0);
-  const [date, setDate] = useState(session.scheduledDate || firstAvailableBookingDate(session.targetDate || session.date, rules));
+  const [date, setDate] = useState(session.scheduledDate || firstAvailableBookingDate(session.targetDate || session.date, rules, session.source === 'mcr'));
   const [time, setTime] = useState(session.scheduledTime || '09:00');
   const [duration, setDuration] = useState(String(session.durationMinutes || 60));
   const [notes, setNotes] = useState(session.notes || '');
@@ -114,7 +114,7 @@ function MeetingBookingForm({ session, title, learner, rules, attendance, onClos
   const rescheduling = Boolean(target?.scheduledDate && target.status === 'scheduled');
   const isExisting = rescheduling || Boolean(session.scheduledDate && session.status === 'scheduled');
   const durationLocked = Boolean(session.importedReview?.id && monthly);
-  const dateRestriction = bookingDateRestrictionMessage(date, calendarRules);
+  const dateRestriction = bookingDateRestrictionMessage(date, calendarRules) || (monthly ? mcmBookingDateRestrictionMessage(date) : '');
 
   useEffect(() => {
     mounted.current = true;
@@ -161,7 +161,7 @@ function MeetingBookingForm({ session, title, learner, rules, attendance, onClos
       setCalendarRules(nextRules);
       setCalendarEvents(calendar.events);
       setConnections(Array.isArray(calendarConnections?.connections) ? calendarConnections.connections : []);
-      if (!edited.current.date) setDate(resolved.scheduledDate || firstAvailableBookingDate(resolved.targetDate || resolved.date, nextRules));
+      if (!edited.current.date) setDate(resolved.scheduledDate || firstAvailableBookingDate(resolved.targetDate || resolved.date, nextRules, resolved.source === 'mcr'));
       if (!edited.current.time) setTime(resolved.scheduledTime || '09:00');
       if (!edited.current.duration) setDuration(String(resolved.durationMinutes || 60));
       if (!edited.current.notes) setNotes(resolved.notes || '');

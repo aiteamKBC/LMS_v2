@@ -92,7 +92,9 @@ def start(enrolment_id, aptem_id, group_id, activity_id, definition):
     snapshot['catalogue_kind'] = definition.get('catalogue_kind', 'material')
     if snapshot['catalogue_kind'] not in {'material', 'quiz'}:
         raise ValueError('Invalid activity kind.')
-    with connections[ALIAS].cursor() as cur:
+    from .progress_transfer_store import lock_learner, assert_legacy_writable
+    with lock_learner(enrolment_id) as cur:
+        assert_legacy_writable(cur, enrolment_id, group_id)
         if not ready(cur):
             raise StoreUnavailable('Saving activities is not enabled yet. Please contact your learning team.')
         cur.execute(f'''INSERT INTO {ATTEMPTS}
@@ -104,8 +106,10 @@ def start(enrolment_id, aptem_id, group_id, activity_id, definition):
 
 
 def finish(enrolment_id, aptem_id, group_id, activity_id, attempt_id, answers, reading_confirmed, *, catalogue_kind='material'):
-    with transaction.atomic(using=ALIAS):
+    from .progress_transfer_store import lock_learner, assert_legacy_writable
+    with lock_learner(enrolment_id):
         with connections[ALIAS].cursor() as cur:
+            assert_legacy_writable(cur, enrolment_id, group_id)
             if not ready(cur):
                 raise StoreUnavailable('Saving activities is not enabled yet. Please contact your learning team.')
             cur.execute(f'''SELECT definition, submitted_at, score_percent, passed, completed

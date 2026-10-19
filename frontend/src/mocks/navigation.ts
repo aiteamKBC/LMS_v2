@@ -263,7 +263,6 @@ export const curriculumNavItems: SidebarNavItem[] = [
       '/curriculum/week-builder',
       '/curriculum/free-courses',
       '/curriculum/standards',
-      '/curriculum/ksb-frameworks',
       '/curriculum/quiz-xml',
       '/curriculum/knowledge-base',
       '/curriculum/question-bank',
