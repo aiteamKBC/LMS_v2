@@ -28,14 +28,17 @@ def calendar_reader():
     # before the UI turns it into a generic 502.
     deadline = time.monotonic() + 60
     with httpx.Client(base_url=base + '/', headers={'Authorization': f'Bearer {token}'}, follow_redirects=False) as client:
-        def read(path):
+        def read(path, *, prefer=''):
+            if prefer not in ('', 'include-unknown-enum-members'):
+                raise ValueError('Unsupported Microsoft read preference.')
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 raise CalendarStateError('Calendar verification took too long. Retry; no cancellation changes were applied.')
             response = None
             for attempt in range(3):
                 try:
-                    response = client.get(path, timeout=min(15, remaining))
+                    kwargs = {'headers': {'Prefer': prefer}} if prefer else {}
+                    response = client.get(path, timeout=min(15, remaining), **kwargs)
                     break
                 except httpx.HTTPError:
                     # This is a read-only request. Retrying it cannot create a

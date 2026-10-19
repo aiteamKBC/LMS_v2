@@ -26,7 +26,7 @@ const text = (value: unknown) => (value === null || value === undefined ? '' : S
  * scope reader, so their mirrored `liveSessionUrl` cannot be mistaken for the
  * module calendar here. */
 function hasTeamsMeetingLink(settings: Settings): boolean {
-  return Boolean(text(settings?.liveSessionUrl) || text(settings?.teamsMeetingUrl));
+  return Boolean(text(settings?.liveSessionLinkOverride) || text(settings?.liveSessionUrl) || text(settings?.teamsMeetingUrl));
 }
 
 /**
@@ -41,9 +41,18 @@ export function bookedOnModuleSeries(settings: Settings): boolean {
   return Boolean(text(settings?.teamsOccurrenceId) || Number(settings?.teamsSessionNumber || 0) > 0);
 }
 
-/** Whether any live session of a module is already booked on its own calendar. */
+/**
+ * Whether the module already has a main-calendar assignment. A pasted link
+ * establishes that context too, so a newly inserted blank week must choose
+ * which calendar to join. Only `bookedOnModuleSeries` confirms a booking.
+ */
 export function moduleHasBookedSeries(components: Array<{ settings?: Settings }>): boolean {
-  return components.some(component => bookedOnModuleSeries(component.settings));
+  return components.some(({ settings }) => {
+    if (text(settings?.extraTeamsMeetingUrl)) return false;
+    if (bookedOnModuleSeries(settings)) return true;
+    if (text(settings?.teamsMeetingScope).toLowerCase() === 'additional') return false;
+    return hasTeamsMeetingLink(settings);
+  });
 }
 
 /**
