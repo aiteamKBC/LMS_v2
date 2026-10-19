@@ -82,9 +82,11 @@ ACCESS_TUTOR = "tutor"
 ACCESS_SUPER_ADMIN = "super-admin"
 ACCESS_ADVANCED_ADMIN = "advanced-admin"
 ACCESS_RECORD_MONITOR = "record-monitor"
+ACCESS_SUPPORT = "support"
 
 #: Canonical order — also the order the console offers them in.
 ACCESS_CHOICES = [
+    ACCESS_SUPPORT,
     ACCESS_ENROLMENT,
     ACCESS_CURRICULUM,
     ACCESS_COACH,
@@ -96,6 +98,7 @@ ACCESS_CHOICES = [
 
 #: Human labels for the console. Kept beside the values so the two cannot drift.
 ACCESS_LABELS = {
+    ACCESS_SUPPORT: "Support access",
     ACCESS_ENROLMENT: "Enrolment access",
     ACCESS_CURRICULUM: "Curriculum access",
     ACCESS_COACH: "Coach access",
@@ -107,6 +110,7 @@ ACCESS_LABELS = {
 
 #: What each access is for, shown in the console's access picker.
 ACCESS_DESCRIPTIONS = {
+    ACCESS_SUPPORT: "Review and respond to learner support tickets in the LMS.",
     ACCESS_ENROLMENT: (
         "The enrolment workspace and every learner record. Together with Super "
         "Admin, the only access that can change enrolment data."
@@ -131,6 +135,7 @@ ACCESS_DESCRIPTIONS = {
 NO_ACCESS_ROUTE = "/access-required"
 
 ACCESS_HOME_ROUTES = {
+    ACCESS_SUPPORT: "/support/ticket-queue",
     ACCESS_ENROLMENT: "/users",
     ACCESS_CURRICULUM: "/workspace/curriculum",
     ACCESS_COACH: "/workspace/coach",
@@ -144,6 +149,7 @@ ACCESS_HOME_ROUTES = {
 #: enrolment officer's nav — the key predates the rename and is what the map
 #: still uses.
 ACCESS_NAV_ROLES = {
+    ACCESS_SUPPORT: "support",
     ACCESS_ENROLMENT: "compliance",
     ACCESS_CURRICULUM: "curriculum",
     ACCESS_COACH: "coach",

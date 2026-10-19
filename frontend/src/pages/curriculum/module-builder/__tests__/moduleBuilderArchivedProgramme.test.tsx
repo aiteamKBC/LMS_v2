@@ -105,6 +105,7 @@ vi.mock('@/lib/curriculumApi', async importOriginal => ({
   fetchCurriculumTutors: vi.fn(async () => []),
   fetchCurriculumTeamsMeetingSummaries: vi.fn(async () => []),
   fetchCurriculumOverview: vi.fn(async () => ({ programmes, cohorts: [], groups: [], modules })),
+  fetchCurriculumDeliveryScope: vi.fn(async () => ({ cohorts: [], groups: [] })),
   fetchCurriculumHolidays: vi.fn(async () => []),
 }));
 
@@ -169,7 +170,7 @@ async function openBuilderOn(moduleId: string) {
       <ModuleBuilder />
     </MemoryRouter>,
   );
-  await waitFor(() => expect(loadModuleStructure).toHaveBeenCalledWith(moduleId, { skipCache: true }));
+  await waitFor(() => expect(loadModuleStructure).toHaveBeenCalledWith(moduleId, { revalidate: true }));
   await screen.findByText('Authored Week One');
   return view;
 }

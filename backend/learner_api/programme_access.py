@@ -7,7 +7,8 @@ from django.http import JsonResponse
 from django.utils import timezone
 
 from .apprenticeship_agreement import _to_date
-from .models import EnrolmentUser, LearnerProfile
+from .models import EnrolmentUser
+from .placement_links import placement_ids
 
 
 def _month_cohort_key(value):
@@ -27,15 +28,10 @@ def _month_cohort_key(value):
 def learning_access(source):
     programme = str(getattr(source, 'programme', '') or '').strip()
     cohort = str(getattr(source, 'cohort', '') or '').strip()
-    cohort_id = str(getattr(source, 'cohort_id', '') or '').strip()
-    if not cohort_id and isinstance(source, EnrolmentUser) and source.pk:
-        # The enrolment and active profile have different primary keys. Use the
-        # explicit bridge, and never borrow an ID from a stale placement mirror.
-        ids = list(LearnerProfile.objects.using('default').filter(
-            enrolment_id=source.pk, programme=programme, cohort=cohort,
-        ).exclude(cohort_id__isnull=True).exclude(cohort_id='').values_list('cohort_id', flat=True).distinct()[:2])
-        if len(ids) == 1:
-            cohort_id = ids[0]
+    # The enrolment and active profile have different primary keys; the profile
+    # is reached through enrolment_id, never by names. A renamed cohort keeps its
+    # id, so the enrolment's old label must not decide which cohort this is.
+    cohort_id = placement_ids(source)['cohort_id']
     if cohort_id or (programme and cohort):
         # A copied individual date must not open teaching before the cohort.
         with connections['default'].cursor() as cursor:

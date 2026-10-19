@@ -33,22 +33,22 @@ describe('loading a full module structure over a slow connection', () => {
     return fetchMock;
   }
 
-  it('finishes a cold read longer than 30 seconds with its revision intact', async () => {
-    const fetchMock = delayedFetch(45_000);
+  it('finishes a cold read longer than 60 seconds with its revision intact', async () => {
+    const fetchMock = delayedFetch(75_000);
     const result = loadModuleStructure('MOD-SLOW', { skipCache: true });
     const assertion = expect(result).resolves.toMatchObject({
       title: 'Large module', structureRevision: 'revision-from-server',
     });
-    await vi.advanceTimersByTimeAsync(45_000);
+    await vi.advanceTimersByTimeAsync(75_000);
     await assertion;
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it('still aborts an unresponsive request and exposes the timeout', async () => {
-    const fetchMock = delayedFetch(90_000);
+    const fetchMock = delayedFetch(120_000);
     const result = loadModuleStructure('MOD-SLOW', { skipCache: true });
     const assertion = expect(result).rejects.toThrow('Curriculum API timed out');
-    await vi.advanceTimersByTimeAsync(60_000);
+    await vi.advanceTimersByTimeAsync(90_000);
     await assertion;
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });

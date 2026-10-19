@@ -127,9 +127,11 @@ def learning_facts(source, owner, profile, records, ids, *, selected=False, subj
     return subjects, native
 
 
-def module_rows(cur, ids, *, rich_id=None):
+def module_rows(cur, ids, *, rich_id=None, identity_metadata=None):
     """One metadata read; transfer descriptions for the focused module only."""
-    cur.execute('''SELECT m.module_catalogue_id AS id,m.title,
+    extra_columns = ',m.cover_image_url' if identity_metadata is not None else ''
+    module_visibility = " AND (m.deleted_at IS NULL OR COALESCE(m.deleted_via_parent,'')<>'')" if identity_metadata is not None else ''
+    cur.execute(f'''SELECT m.module_catalogue_id AS id,m.title{extra_columns},
         CASE WHEN m.module_catalogue_id=%s THEN m.description ELSE '' END AS description,
         m.start_date,m.end_date,m.tutor_name,
         coalesce(nullif(btrim(g.coach_name),''),m.coach_name) AS coach_name,
@@ -138,16 +140,17 @@ def module_rows(cur, ids, *, rich_id=None):
         coalesce(nullif(m.session_start_time,''),g.session_start_time) AS session_start_time,
         coalesce(nullif(m.session_end_time,''),g.session_end_time) AS session_end_time
         FROM curriculum.modules m LEFT JOIN curriculum.groups g ON g.group_id=m.group_id
-        WHERE m.module_catalogue_id=ANY(%s) ORDER BY m.title''', [rich_id, ids])
+        WHERE m.module_catalogue_id=ANY(%s){module_visibility} ORDER BY m.title''', [rich_id, ids])
     found = schedule.rows(cur)
     modules = {r['id']: schedule.plan_module(r) for r in found}
-    cur.execute('''WITH live_counts AS (
+    week_order = ',w.display_order' if identity_metadata is not None else ''
+    cur.execute(f'''WITH live_counts AS (
         SELECT c.module_catalogue_id,c.week_id,count(*) AS live_session_count
         FROM curriculum.components c WHERE c.module_catalogue_id=ANY(%s)
           AND lower(replace(coalesce(c.type,''),'-','_'))='live_session'
           AND (c.deleted_at IS NULL OR COALESCE(c.deleted_via_parent,'')<>'')
         GROUP BY c.module_catalogue_id,c.week_id
-    ) SELECT w.id,w.module_catalogue_id,w.week_number,w.title,
+    ) SELECT w.id,w.module_catalogue_id,w.week_number,w.title{week_order},
         CASE WHEN w.module_catalogue_id=%s THEN w.learning_outcomes ELSE '[]'::jsonb END AS learning_outcomes,
         w.holiday_note_enabled,w.holiday_note,
         coalesce(live_counts.live_session_count,0) AS live_session_count
@@ -157,7 +160,13 @@ def module_rows(cur, ids, *, rich_id=None):
           AND (w.deleted_at IS NULL OR COALESCE(w.deleted_via_parent,'')<>'')
         ORDER BY w.display_order,w.week_number,w.id''', [ids, rich_id, ids])
     counts, weeks = defaultdict(int), {}
-    for row in schedule.rows(cur):
+    week_rows = schedule.rows(cur)
+    if identity_metadata is not None:
+        from .student_activity import _builder_cover_url
+        identity_metadata.update(module_titles={r['id']: r['title'] for r in found},
+            weeks=[(r['id'],r['module_catalogue_id'],r['title'],r['week_number'],r.get('display_order')) for r in week_rows],
+            covers={f"current:{r['id']}": _builder_cover_url(r.get('cover_image_url')) for r in found})
+    for row in week_rows:
         mid = row['module_catalogue_id']
         counts[mid] += 1
         outcomes = [schedule.clean_text(o) for o in schedule.as_list(row['learning_outcomes']) if isinstance(o, str) and schedule.clean_text(o)]

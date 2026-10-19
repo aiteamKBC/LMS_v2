@@ -1,7 +1,16 @@
 """Reviewed and exact-name attendance matching; raw evidence is never edited."""
 from collections import defaultdict
+import re
 
 from .session_results_policy import attendance_display_name, attendance_identity, attendance_name_key, session_roster
+
+
+def attendance_bot(record):
+    """Recognize explicit note-taking assistants, not ordinary unknown guests."""
+    name = attendance_display_name(record).casefold()
+    domain = str(record.get('email') or '').strip().casefold().partition('@')[2]
+    return bool(re.search(r'\bnote[\s-]*taker\b|\b(?:fireflies\.ai|otter\.ai|fathom)\b.*\bbot\b', name)
+                or domain in {'fireflies.ai', 'otter.ai', 'fathom.video'})
 
 
 def identity_key(record):

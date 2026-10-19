@@ -259,6 +259,9 @@ class PreviewClassificationTests(SimpleTestCase):
 class HistoricalWriteGateTests(SimpleTestCase):
     def setUp(self):
         self.factory = RequestFactory()
+        storage = patch("coach_api.reconciliation_links.records_for_key", return_value=[])
+        storage.start()
+        self.addCleanup(storage.stop)
 
     @patch("coach_api.views.curriculum_review_instances.progress_review_rag_history", return_value=[])
     @patch("coach_api.views._imported_review_progress_snapshot", return_value=None)

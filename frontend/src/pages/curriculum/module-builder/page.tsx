@@ -18,7 +18,7 @@ import {
   curriculumErrorMessage,
   fetchCurriculumHolidays,
   fetchCurriculumKsbSets,
-  fetchCurriculumOverview,
+  fetchCurriculumDeliveryScope,
   fetchCurriculumScopeLearnerRoster,
   fetchCurriculumScopeLearnerKsbImpact,
   fetchCurriculumStandards,
@@ -654,7 +654,9 @@ export default function ModuleBuilder() {
     cohortId: (searchParams.get('cohort') || '').trim(),
     groupId: (searchParams.get('group') || '').trim(),
   });
-  const [search, setSearch] = useState('');
+  // Kept in the address with the filters (as `q`), so Back from a learner's
+  // progress page returns to the catalogue exactly as it was left.
+  const [search, setSearch] = useState(() => searchParams.get('q') || '');
   const [programmeFilter, setProgrammeFilter] = useState<string>(() => requestedCreateScopeRef.current.programmeName || 'All');
   // The delivery filters the Modules page used to carry. They read the module's
   // own deliveries rather than a second fetch of cohorts and groups, so the
@@ -739,8 +741,6 @@ export default function ModuleBuilder() {
     assignedLearners: CurriculumProgrammeAssignedLearner[];
   } | null>(null);
   const [dragState, setDragState] = useState<DragState>(null);
-  const [quizPackages, setQuizPackages] = useState<QuizPackageSummary[]>([]);
-  const [quizzesLoading, setQuizzesLoading] = useState(false);
   const [standards, setStandards] = useState<CurriculumStandard[]>([]);
   const [standardsLoading, setStandardsLoading] = useState(false);
   const [storageVersion, setStorageVersion] = useState(0);
@@ -942,14 +942,14 @@ export default function ModuleBuilder() {
   // The cohort and group filters below list the records themselves, not only the
   // ones a module already reaches: a programme with two cohorts and no modules
   // must still show its two cohorts, or the filter contradicts every other page.
-  // Same cached compact overview the component picker above already loads.
+  // Load the delivery scope without downloading the overview's modules/KSBs.
   const [scopeCohorts, setScopeCohorts] = useState<CurriculumCohort[]>([]);
   const [scopeGroups, setScopeGroups] = useState<CurriculumGroup[]>([]);
   // Settled either way — a failed load must not hold the cascade below forever.
   const [scopeLoaded, setScopeLoaded] = useState(false);
   useEffect(() => {
     let active = true;
-    loadCurriculumScope()
+    fetchCurriculumDeliveryScope()
       .then((scope) => {
         if (!active) return;
         setScopeCohorts(scope.cohorts);
@@ -1160,7 +1160,7 @@ export default function ModuleBuilder() {
     if (!moduleFormOpen || moduleFormScopeLoadedRef.current) return undefined;
     let active = true;
     void Promise.all([
-      fetchCurriculumOverview(undefined, { compact: true }).catch(() => null),
+      fetchCurriculumDeliveryScope().catch(() => null),
       fetchCurriculumHolidays().catch(() => [] as CurriculumHoliday[]),
     ]).then(([overview, holidays]) => {
       if (!active) return;
@@ -1385,14 +1385,45 @@ export default function ModuleBuilder() {
   // cohort and group records have landed: until then the options are the
   // deliveries alone, and a deep link to a cohort with no modules would be
   // thrown away a beat before the option that justifies it arrives.
+  // The programme option the address names, '' until the options can answer.
+  const requestedProgramme = (searchParams.get('programme') || searchParams.get('programmeId') || '').trim();
+  const requestedProgrammeOption = useMemo(() => {
+    if (!requestedProgramme) return '';
+    const requestedNormalised = normaliseDeepLinkValue(requestedProgramme);
+    // The Programme workspace links with a canonical id, not a name, so resolve
+    // the id back to its programme before matching the (name-based) options.
+    const byIdentifier = findByIdentifierThenName(
+      curriculumProgrammes,
+      requestedProgramme,
+      programme => [programme.id, programme.sourceId, programme.standard],
+      programme => [programme.name],
+      normaliseDeepLinkValue,
+    );
+    const resolvedName = normaliseDeepLinkValue(byIdentifier?.name);
+    return programmeOptions.find(option => (
+      option !== 'All' && (
+        option === requestedProgramme
+        || normaliseDeepLinkValue(option) === requestedNormalised
+        || (Boolean(resolvedName) && normaliseDeepLinkValue(option) === resolvedName)
+      )
+    )) || '';
+  }, [curriculumProgrammes, programmeOptions, requestedProgramme]);
+  // Also held while the address still names a programme the filter has not
+  // taken yet: with no programme chosen there are no cohort options, and a
+  // return to the catalogue would lose its cohort and group a beat before the
+  // programme they belong to is restored. Once everything has loaded and the
+  // name matches nothing, the check runs as before.
+  const programmeRestorePending = programmeFilter === 'All'
+    && Boolean(requestedProgramme)
+    && (loading || !curriculumProgrammes.length || Boolean(requestedProgrammeOption));
   useEffect(() => {
-    if (!scopeLoaded) return;
+    if (!scopeLoaded || programmeRestorePending) return;
     if (cohortFilter && !cohortFilterOptions.some(option => option.value === cohortFilter)) setCohortFilter('');
-  }, [cohortFilter, cohortFilterOptions, scopeLoaded]);
+  }, [cohortFilter, cohortFilterOptions, programmeRestorePending, scopeLoaded]);
   useEffect(() => {
-    if (!scopeLoaded) return;
+    if (!scopeLoaded || programmeRestorePending) return;
     if (groupFilter && !groupFilterOptions.some(option => option.value === groupFilter)) setGroupFilter('');
-  }, [groupFilter, groupFilterOptions, scopeLoaded]);
+  }, [groupFilter, groupFilterOptions, programmeRestorePending, scopeLoaded]);
 
   useEffect(() => {
     if (!filtersTouchedRef.current) return;
@@ -1402,9 +1433,10 @@ export default function ModuleBuilder() {
       ['cohort', cohortFilter],
       ['group', groupFilter],
       ['tutor', tutorFilter],
+      ['q', search],
     ] as const).forEach(([key, value]) => { if (value) next.set(key, value); else next.delete(key); });
     if (next.toString() !== searchParams.toString()) setSearchParams(next, { replace: true });
-  }, [cohortFilter, groupFilter, programmeFilter, searchParams, setSearchParams, tutorFilter]);
+  }, [cohortFilter, groupFilter, programmeFilter, search, searchParams, setSearchParams, tutorFilter]);
 
   const changeFilter = useCallback((apply: () => void) => {
     filtersTouchedRef.current = true;
@@ -1500,9 +1532,9 @@ export default function ModuleBuilder() {
     setActionMessageRetry(null);
     setNoticeAlert(null);
     try {
-      // Read fresh, never from the two-minute cache: the workspace saves the
-      // WHOLE structure back, so anything it opens stale it later writes over.
-      const remote = structureId ? await loadModuleStructure(structureId, { skipCache: true }) : null;
+      // Check with the server on every open. Its write-invalidated cache carries
+      // the payload's own revision, which the save guard checks before writing.
+      const remote = structureId ? await loadModuleStructure(structureId, { revalidate: true }) : null;
       // A stored module whose structure could not be read must not be opened.
       // `getDefaultStructure` below fabricates empty week shells for a module
       // that arrives without weeks -- right for a brand new draft, catastrophic
@@ -1665,6 +1697,18 @@ export default function ModuleBuilder() {
     }
   }, [workingModule]);
 
+  // The open learner-progress dialog is kept in the address too (`learners`,
+  // replaced rather than pushed), so Back from a learner's progress page
+  // reopens it over the same catalogue instead of starting the search again.
+  const rememberOpenLearners = useCallback((catalogueId: string) => {
+    setSearchParams(previous => {
+      const next = new URLSearchParams(previous);
+      if (catalogueId) next.set('learners', catalogueId);
+      else next.delete('learners');
+      return next;
+    }, { replace: true });
+  }, [setSearchParams]);
+
   const openLearnerAction = useCallback(async (module: ModuleBuilderListItem) => {
     const identifier = moduleLearnerIdentifier(module);
     if (!identifier) {
@@ -1702,12 +1746,25 @@ export default function ModuleBuilder() {
       }
       const impact = await fetchCurriculumScopeLearnerKsbImpact('module', identifier, { learnerStatus: 'all', moduleProgress: true });
       setLearnerProgress({ target, impact, assignedLearners });
+      rememberOpenLearners(module.catalogueId);
       return assignedCount;
     } catch (err) {
       setActionMessage(err instanceof Error ? err.message : `Unable to load learners for ${module.title}.`);
       return null;
     }
-  }, []);
+  }, [rememberOpenLearners]);
+
+  // Reopen the dialog the address names, once the catalogue it belongs to has
+  // loaded. A module that is no longer listed just drops the stale param.
+  const learnersToRestoreRef = useRef((searchParams.get('learners') || '').trim());
+  useEffect(() => {
+    const catalogueId = learnersToRestoreRef.current;
+    if (!catalogueId || loading) return;
+    learnersToRestoreRef.current = '';
+    const module = catalogueModules.find(item => item.catalogueId === catalogueId);
+    if (module) void openLearnerAction(module);
+    else rememberOpenLearners('');
+  }, [catalogueModules, loading, openLearnerAction, rememberOpenLearners]);
 
   const openProgrammeKsbMap = useCallback(async () => {
     if (programmeFilter === 'All' || programmeKsbLoading) return;
@@ -1732,34 +1789,6 @@ export default function ModuleBuilder() {
       setProgrammeKsbLoading(false);
     }
   }, [catalogueModules, curriculumProgrammes, programmeFilter, programmeKsbLoading]);
-
-  const quizzesLoadedRef = useRef(false);
-  useEffect(() => {
-    // Only a quiz-type component's editor (inside the build drawer) reads
-    // this -- the plain catalogue list never shows quiz data.
-    if (!workingModule || quizzesLoadedRef.current) return undefined;
-    quizzesLoadedRef.current = true;
-    let active = true;
-    setQuizzesLoading(true);
-    fetch('/quiz_api/quizzes/?status=all&assessmentType=quiz')
-      .then(response => {
-        if (!response.ok) throw new Error(`Unable to load quizzes (${response.status})`);
-        return response.json();
-      })
-      .then(data => {
-        if (!active) return;
-        const results = Array.isArray(data?.results) ? data.results : [];
-        setQuizPackages(results);
-      })
-      .catch(error => {
-        if (!active) return;
-        console.warn('Unable to load LMS quizzes.', error);
-      })
-      .finally(() => {
-        if (active) setQuizzesLoading(false);
-      });
-    return () => { active = false; };
-  }, [workingModule]);
 
   const standardsLoadedRef = useRef(false);
   useEffect(() => {
@@ -1794,29 +1823,9 @@ export default function ModuleBuilder() {
   }, [saveStartedAt, saving]);
 
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const requestedProgramme = (params.get('programme') || params.get('programmeId') || '').trim();
-    if (!requestedProgramme || loading || programmeFilter !== 'All') return;
-    const requestedNormalised = normaliseDeepLinkValue(requestedProgramme);
-    // The Programme workspace links with a canonical id, not a name, so resolve
-    // the id back to its programme before matching the (name-based) options.
-    const byIdentifier = findByIdentifierThenName(
-      curriculumProgrammes,
-      requestedProgramme,
-      programme => [programme.id, programme.sourceId, programme.standard],
-      programme => [programme.name],
-      normaliseDeepLinkValue,
-    );
-    const resolvedName = normaliseDeepLinkValue(byIdentifier?.name);
-    const match = programmeOptions.find(option => (
-      option !== 'All' && (
-        option === requestedProgramme
-        || normaliseDeepLinkValue(option) === requestedNormalised
-        || (Boolean(resolvedName) && normaliseDeepLinkValue(option) === resolvedName)
-      )
-    ));
-    if (match) setProgrammeFilter(match);
-  }, [curriculumProgrammes, loading, programmeFilter, programmeOptions]);
+    if (!requestedProgrammeOption || loading || programmeFilter !== 'All') return;
+    setProgrammeFilter(requestedProgrammeOption);
+  }, [loading, programmeFilter, requestedProgrammeOption]);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -3688,7 +3697,7 @@ export default function ModuleBuilder() {
             <div className="flex flex-wrap items-center gap-2">
               <div className="relative min-w-0 grow sm:w-72 sm:grow-0">
                 <AppIcon className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400 text-sm"></AppIcon>
-                <input type="text" value={search} onChange={event => setSearch(event.target.value)} placeholder="Search modules, tutors, cohorts..." className="h-10 w-full rounded-lg border border-foreground-200/70 bg-background-100 pl-9 pr-3 text-[13px] text-foreground-900 outline-none transition-smooth placeholder:text-foreground-400 focus:border-primary-300 focus:bg-background-50" />
+                <input type="text" value={search} onChange={event => { const value = event.target.value; changeFilter(() => setSearch(value)); }} placeholder="Search modules, tutors, cohorts..." className="h-10 w-full rounded-lg border border-foreground-200/70 bg-background-100 pl-9 pr-3 text-[13px] text-foreground-900 outline-none transition-smooth placeholder:text-foreground-400 focus:border-primary-300 focus:bg-background-50" />
               </div>
               <SelectMenu
                 ariaLabel="Programme"
@@ -3899,9 +3908,13 @@ export default function ModuleBuilder() {
             moduleId={learnerProgress.target.id}
             impact={learnerProgress.impact}
             assignedLearners={learnerProgress.assignedLearners}
-            onClose={() => setLearnerProgress(null)}
+            onClose={() => {
+              setLearnerProgress(null);
+              rememberOpenLearners('');
+            }}
             onAssignMore={() => {
               setLearnerProgress(null);
+              rememberOpenLearners('');
               setLearnerAssignmentTarget(learnerProgress.target);
             }}
             onRemoveLearner={async learner => {

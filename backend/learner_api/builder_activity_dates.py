@@ -46,7 +46,7 @@ COMPONENT_SCHEDULE_SETTINGS = '''jsonb_build_object(
 COMPONENT_ORDER = 'c.module_catalogue_id,c.display_order,c.id'
 
 
-def read_builder_activity_dates(cursor, module_ids, components=None):
+def read_builder_activity_dates(cursor, module_ids, components=None, *, resolved_metadata=None):
     """Use the same full week plan as Module Builder, never upload timestamps.
 
     Read empty weeks too: they still consume delivery slots. Only select the
@@ -62,22 +62,36 @@ def read_builder_activity_dates(cursor, module_ids, components=None):
         apply_module_session_plan_to_weeks, cohort_selected_holidays_by_cohort,
     )
 
-    module_fields = ('module_catalogue_id', 'start_date', 'sessions_number',
-                     'session_week_day', 'session_start_time', 'session_end_time', 'cohort_id', 'session_overrides')
-    cursor.execute('''SELECT module_catalogue_id,start_date,sessions_number,
-        session_week_day,session_start_time,session_end_time,cohort_id,to_jsonb(m)->'session_overrides'
-        FROM curriculum.modules m WHERE module_catalogue_id=ANY(%s)
-        AND (deleted_at IS NULL OR COALESCE(deleted_via_parent, '') <> '')''', [module_ids])
-    modules = {str(row[0]): dict(zip(module_fields, row)) for row in cursor.fetchall()}
-    if not modules:
-        return {}
-    ids = list(modules)
-    cursor.execute('''SELECT id,module_catalogue_id,title FROM curriculum.weeks
-        WHERE module_catalogue_id=ANY(%s)
-          AND ''' + visible_week_sql('weeks') + '''
-        ORDER BY module_catalogue_id,display_order,week_number,id''', [ids])
-    weeks = {(str(module_id), str(week_id)): {'id': str(week_id), 'title': title, 'components': []}
-             for week_id, module_id, title in cursor.fetchall()}
+    if resolved_metadata is not None and all(key in resolved_metadata for key in
+                                             ('schedule_modules', 'weeks', 'schedule_components')):
+        wanted = set(map(str, module_ids))
+        modules = {str(mid): dict(row) for mid, row in resolved_metadata['schedule_modules'].items()
+                   if str(mid) in wanted}
+        if not modules:
+            return {}
+        ids = list(modules)
+        weeks = {(str(mid), str(wid)): {'id': str(wid), 'title': title, 'components': []}
+                 for wid, mid, title, _, _ in sorted(resolved_metadata['weeks'],
+                     key=lambda row: (row[1], row[4] is None, row[4], row[3] is None, row[3], row[0])) if str(mid) in modules}
+        if components is None:
+            components = resolved_metadata['schedule_components']
+    else:
+        module_fields = ('module_catalogue_id', 'start_date', 'sessions_number',
+                         'session_week_day', 'session_start_time', 'session_end_time', 'cohort_id', 'session_overrides')
+        cursor.execute('''SELECT module_catalogue_id,start_date,sessions_number,
+            session_week_day,session_start_time,session_end_time,cohort_id,to_jsonb(m)->'session_overrides'
+            FROM curriculum.modules m WHERE module_catalogue_id=ANY(%s)
+            AND (deleted_at IS NULL OR COALESCE(deleted_via_parent, '') <> '')''', [module_ids])
+        modules = {str(row[0]): dict(zip(module_fields, row)) for row in cursor.fetchall()}
+        if not modules:
+            return {}
+        ids = list(modules)
+        cursor.execute('''SELECT id,module_catalogue_id,title FROM curriculum.weeks
+            WHERE module_catalogue_id=ANY(%s)
+              AND ''' + visible_week_sql('weeks') + '''
+            ORDER BY module_catalogue_id,display_order,week_number,id''', [ids])
+        weeks = {(str(module_id), str(week_id)): {'id': str(week_id), 'title': title, 'components': []}
+                 for week_id, module_id, title in cursor.fetchall()}
     if components is None:
         cursor.execute(f'''SELECT c.id,c.module_catalogue_id,c.week_id,c.title,c.type,
             {COMPONENT_SCHEDULE_SETTINGS}

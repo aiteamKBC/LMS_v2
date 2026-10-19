@@ -62,8 +62,10 @@ describe('feedback API write protection', () => {
 
     await feedbackApi.myForms('125');
     await feedbackApi.myDelivery(21, '125');
+    await feedbackApi.myReviewDelivery(71, '125');
 
     expect(fetchMock).toHaveBeenNthCalledWith(1, '/engagement_api/feedback/my-forms/?learnerId=125', expect.objectContaining({ credentials: 'include' }));
     expect(fetchMock).toHaveBeenNthCalledWith(2, '/engagement_api/feedback/my-deliveries/21/?learnerId=125', expect.objectContaining({ credentials: 'include' }));
+    expect(fetchMock).toHaveBeenNthCalledWith(3, '/engagement_api/feedback/my-review-deliveries/71/?learnerId=125', expect.objectContaining({ credentials: 'include' }));
   });
 });

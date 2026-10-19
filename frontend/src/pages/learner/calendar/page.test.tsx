@@ -141,6 +141,28 @@ describe('calendar event previews', () => {
     await waitFor(() => expect(save).toHaveBeenCalledWith('commercial', '125', expect.objectContaining({ scheduledDate: '2026-11-02', timezoneOffsetMinutes: 0 })));
   });
 
+  it.each(['book', 'reschedule'] as const)('enforces the MCM window when using calendar %s', async action => {
+    const mcm = event({ source: 'mcr', status: action === 'book' ? 'not-scheduled' : 'scheduled',
+      date: '2026-10-20', targetDate: '2026-10-20',
+      scheduledDate: action === 'book' ? null : '2026-10-20', scheduledTime: action === 'book' ? null : '10:00' });
+    setup([mcm], '?event=catch-up%3A1');
+    const preview = await screen.findByRole('dialog');
+    fireEvent.click(within(preview).getByRole('button', { name: action === 'book' ? /Schedule Monthly Coaching Meeting/ : 'Reschedule' }));
+    const submit = screen.getByRole('button', { name: action === 'book' ? 'Book Session' : 'Save New Time' });
+    for (const date of ['2026-10-06', '2026-10-19']) {
+      fireEvent.change(screen.getByLabelText('Date'), { target: { value: date } });
+      expect(screen.getByText(/MCM appointments are available from the 20th/)).toBeVisible();
+      expect(submit).toBeDisabled();
+      fireEvent.click(submit);
+    }
+    expect(bookLearnerCalendarSession).not.toHaveBeenCalled();
+    expect(rescheduleLearnerCalendarSession).not.toHaveBeenCalled();
+    fireEvent.change(screen.getByLabelText('Date'), { target: { value: '2026-10-20' } });
+    expect(submit).toBeEnabled();
+    fireEvent.change(screen.getByLabelText('Date'), { target: { value: '2026-11-05' } });
+    expect(submit).toBeEnabled();
+  });
+
   it.each(['Week', 'Day'])('keeps untimed and early appointments visible in %s view', async view => {
     setup([
       event({ id: 'untimed', eventKey: 'untimed', title: 'Untimed appointment', status: 'not-scheduled', scheduledTime: null, scheduledDate: null, date: '2026-12-15', targetDate: '2026-12-15' }),

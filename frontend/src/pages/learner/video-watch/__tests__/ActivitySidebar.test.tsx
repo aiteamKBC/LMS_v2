@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ActivitySidebar } from '../ActivitySidebar';
 import { componentRoute } from '../componentRoute';
 import type { SidebarWeek } from '../weekPreview';
-import { overviewSchedule } from '@/api/learnerOverview';
+import { learningSchedule } from '@/api/learnerOverview';
 import type { TrainingPlanDashboard } from '@/api/trainingPlanDashboard';
 
 const weeks: SidebarWeek[] = Array.from({ length: 10 }, (_, index) => ({
@@ -41,8 +41,8 @@ describe('module activity sidebar', () => {
       { id: 'OTHER', title: 'Leadership', start_date: '2026-01-01' },
       { id: 'M1', title: 'Leadership', start_date: '2026-08-03' },
     ] } as TrainingPlanDashboard;
-    vi.spyOn(overviewSchedule, 'peek').mockReturnValue(undefined);
-    const read = vi.spyOn(overviewSchedule, 'read').mockResolvedValue(plan);
+    vi.spyOn(learningSchedule, 'peek').mockReturnValue(undefined);
+    const read = vi.spyOn(learningSchedule, 'read').mockResolvedValue(plan);
     const assignedWeeks = weeks.map(week => ({ ...week, components: week.components.map(component => ({ ...component, moduleId: 'M1' })) }));
     render(<MemoryRouter><ActivitySidebar kind="commercial" id="132" weekComponents={assignedWeeks[5].components} weekTitle="Week 6"
       moduleTitle="Leadership" weeks={assignedWeeks} completedIds={new Set()} currentComponentId="C6" routeFor={c => `/activity/${c.componentId}`} /></MemoryRouter>);
@@ -93,8 +93,8 @@ describe('module activity sidebar', () => {
       currentComponentId={`C${active + 1}`} routeFor={c => `/activity/${c.componentId}`} /></MemoryRouter>);
 
     it('shows it against the week it was written for and no other', async () => {
-      vi.spyOn(overviewSchedule, 'peek').mockReturnValue(undefined);
-      vi.spyOn(overviewSchedule, 'read').mockResolvedValue(planWith([
+      vi.spyOn(learningSchedule, 'peek').mockReturnValue(undefined);
+      vi.spyOn(learningSchedule, 'read').mockResolvedValue(planWith([
         { slotNumber: 3, date: '2026-09-11', sessionNumber: 3, type: 'live-session', holidays: [], weekId: 'WK3' },
         { slotNumber: 9, date: '2026-10-02', sessionNumber: 9, type: 'live-session', holidays: [], weekId: 'WK9', holidayNote: NOTE },
       ]));
@@ -106,8 +106,8 @@ describe('module activity sidebar', () => {
     });
 
     it('repeats it in the current-week card when that week is the one open', async () => {
-      vi.spyOn(overviewSchedule, 'peek').mockReturnValue(undefined);
-      vi.spyOn(overviewSchedule, 'read').mockResolvedValue(planWith([
+      vi.spyOn(learningSchedule, 'peek').mockReturnValue(undefined);
+      vi.spyOn(learningSchedule, 'read').mockResolvedValue(planWith([
         { slotNumber: 9, date: '2026-10-02', sessionNumber: 9, type: 'live-session', holidays: [], weekId: 'WK9', holidayNote: NOTE },
       ]));
       renderSidebar(8);
@@ -117,8 +117,8 @@ describe('module activity sidebar', () => {
     });
 
     it('shows nothing when the team published no hint for any week', async () => {
-      vi.spyOn(overviewSchedule, 'peek').mockReturnValue(undefined);
-      const read = vi.spyOn(overviewSchedule, 'read').mockResolvedValue(planWith([
+      vi.spyOn(learningSchedule, 'peek').mockReturnValue(undefined);
+      const read = vi.spyOn(learningSchedule, 'read').mockResolvedValue(planWith([
         { slotNumber: 9, date: '2026-10-02', sessionNumber: 9, type: 'live-session', holidays: [], weekId: 'WK9' },
       ]));
       renderSidebar(8);

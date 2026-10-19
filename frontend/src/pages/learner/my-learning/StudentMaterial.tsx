@@ -100,9 +100,9 @@ export function Media({ value, kind, title, fileName, canEmbed = true, onEnded }
     sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-downloads allow-presentation" allow="autoplay; fullscreen; picture-in-picture" allowFullScreen />{original}</section>;
 }
 
-export function StudentMaterial({ kind, learnerId, groupId, activityId, completed = false, onProgress, readOnly = false, baseUrl, reviewQuiz = false }: {
+export function StudentMaterial({ kind, learnerId, groupId, activityId, completed = false, onProgress, readOnly = false, baseUrl, reviewQuiz = false, catalogueQuiz = false }: {
   kind: string; learnerId: string; groupId: number; activityId: number; completed?: boolean;
-  onProgress?: (result: SubjectAttemptResult) => void; readOnly?: boolean; baseUrl?: string; reviewQuiz?: boolean;
+  onProgress?: (result: SubjectAttemptResult) => void; readOnly?: boolean; baseUrl?: string; reviewQuiz?: boolean; catalogueQuiz?: boolean;
 }) {
   const [data, setData] = useState<SubjectMaterial | null>(null);
   const [error, setError] = useState('');
@@ -116,7 +116,8 @@ export function StudentMaterial({ kind, learnerId, groupId, activityId, complete
   const completionHintId = useId();
   const base = baseUrl || `/learner_api/student-activity/${encodeURIComponent(kind)}/${encodeURIComponent(learnerId)}`;
   const attempts = `${base}/${groupId}/${activityId}/attempts/`;
-  const materialUrl = `${base}/?group_id=${groupId}&activity_id=${activityId}${reviewQuiz ? '&catalogue_kind=quiz' : ''}`;
+  const quizQuery = catalogueQuiz || reviewQuiz ? '?catalogue_kind=quiz' : '';
+  const materialUrl = `${base}/?group_id=${groupId}&activity_id=${activityId}${catalogueQuiz || reviewQuiz ? '&catalogue_kind=quiz' : ''}`;
   useEffect(() => {
     const controller = new AbortController();
     setData(null); setError(''); setAttemptId(null); setAnswers({}); setConfirmed(false); setResult(''); setSavedResult(null);
@@ -130,7 +131,7 @@ export function StudentMaterial({ kind, learnerId, groupId, activityId, complete
     if (readOnly || reviewQuiz || !data || busy || !data.can_attempt || !data.persistence_ready || !data.available || !data.quiz?.ready) return;
     setBusy(true); setError(''); setResult('');
     try {
-      const response = await post<{ attempt_id: string; definition: Partial<SubjectMaterial> }>(attempts, {});
+      const response = await post<{ attempt_id: string; definition: Partial<SubjectMaterial> }>(`${attempts}${quizQuery}`, {});
       setData({ ...data, ...response.definition }); setAttemptId(response.attempt_id); setAnswers({});
     } catch (failure) { setError(failure instanceof Error ? failure.message : 'Could not start the attempt.'); }
     finally { setBusy(false); }
@@ -141,11 +142,11 @@ export function StudentMaterial({ kind, learnerId, groupId, activityId, complete
     try {
       let id = attemptId;
       if (!id && !data.quiz) {
-        const response = await post<{ attempt_id: string }>(attempts, {});
+        const response = await post<{ attempt_id: string }>(`${attempts}${quizQuery}`, {});
         id = response.attempt_id; setAttemptId(id);
       }
       if (!id) throw new Error('Start the quiz before submitting.');
-      const saved = await post<SubjectAttemptResult>(`${attempts}${id}/`, { answers, reading_confirmed: data.quiz ? confirmed : true });
+      const saved = await post<SubjectAttemptResult>(`${attempts}${id}/${quizQuery}`, { answers, reading_confirmed: data.quiz ? confirmed : true });
       setResult(saved.score_percent == null ? 'Activity completed.' : `Attempt saved: ${Number(saved.score_percent).toFixed(0)}% · ${saved.passed ? 'Passed' : 'Not passed'}. Your highest score is kept.`);
       setSavedResult(saved);
       setAttemptId(null); setAnswers({});
@@ -165,6 +166,7 @@ export function StudentMaterial({ kind, learnerId, groupId, activityId, complete
   const displayedAnswers = attemptId ? answers : previousSelections(data);
   const reviewing = !attemptId && (data.history.length > 0 || data.historical.answers.length > 0);
   const isComplete = completed || data.completed || savedResult?.completed || data.history.some((attempt) => attempt.completed);
+  const reviewOnly = readOnly || reviewQuiz || (catalogueQuiz && isComplete);
   const answered = quiz?.questions.every((question) => (answers[question.id]?.length || 0) > 0) ?? true;
   const needsConfirmation = !!quiz && data.has_reading;
   const blockedReason = !data.persistence_ready
@@ -183,11 +185,11 @@ export function StudentMaterial({ kind, learnerId, groupId, activityId, complete
         <div><h4 className="text-sm font-bold text-foreground-900">Activity progress</h4>
           <p aria-live="polite" className={`mt-1 text-sm font-semibold ${isComplete ? 'text-emerald-700' : 'text-foreground-500'}`}>{isComplete ? 'Complete' : 'Not complete'}</p>
         </div>
-        {!readOnly && (quiz && !attemptId ? <button type="button" onClick={start} disabled={actionsDisabled} aria-describedby={completionHint ? completionHintId : undefined} className={actionClass}>{busy ? 'Starting…' : isComplete || data.history.length || data.historical.attempt_number ? 'Try quiz again' : 'Start quiz'}</button>
+        {!reviewOnly && (quiz && !attemptId ? <button type="button" onClick={start} disabled={actionsDisabled} aria-describedby={completionHint ? completionHintId : undefined} className={actionClass}>{busy ? 'Starting…' : isComplete || data.history.length || data.historical.attempt_number ? 'Try quiz again' : 'Start quiz'}</button>
           : (quiz || !isComplete) && <button type="button" onClick={submit} disabled={actionsDisabled || !answered || (needsConfirmation && !confirmed)} aria-describedby={completionHint ? completionHintId : undefined} className={actionClass}>{busy ? 'Saving…' : quiz ? 'Submit answers' : 'Submit & complete'}</button>
         )}
       </div>
-      {!readOnly && completionHint && <p id={completionHintId} className={`text-sm ${blockedReason ? 'text-amber-800' : 'text-foreground-500'}`}>{completionHint}</p>}
+      {!reviewOnly && completionHint && <p id={completionHintId} className={`text-sm ${blockedReason ? 'text-amber-800' : 'text-foreground-500'}`}>{completionHint}</p>}
       {needsConfirmation && !!attemptId && <label className="flex items-start gap-2 text-sm"><input type="checkbox" checked={confirmed} disabled={actionsDisabled} onChange={(event) => setConfirmed(event.target.checked)} className="mt-1 accent-primary-600" />I have completed the reading material.</label>}
       {error && <p role="alert" className="text-sm text-red-700">{error}</p>}
       {result && <p role="status" className={`rounded-xl p-3 text-sm font-semibold ${savedResult?.completed ? 'bg-emerald-50 text-emerald-800' : 'bg-amber-50 text-amber-800'}`}>{result}</p>}
@@ -199,7 +201,7 @@ export function StudentMaterial({ kind, learnerId, groupId, activityId, complete
     {quiz && <section className="space-y-4" aria-label="Activity quiz">
       <div className="flex flex-wrap items-center justify-between gap-3"><h4 className="text-lg font-bold">Quiz · {quiz.questions.length} {quiz.questions.length === 1 ? 'question' : 'questions'}</h4>{quiz.passing_percent != null && <p className="text-sm text-foreground-500">Pass mark: {Number(quiz.passing_percent).toFixed(0)}%</p>}</div>
       {quiz.body && <Html value={quiz.body} />}
-      {reviewing && <p className="rounded-xl border border-primary-100 bg-primary-50 p-3 text-sm text-primary-800">{readOnly ? 'Previous answers are shown for review.' : 'Your previous answers are selected below for review. Choose Try quiz again to start a new attempt. Answers that no longer match the current questions remain in your attempt history.'}</p>}
+      {reviewing && <p className="rounded-xl border border-primary-100 bg-primary-50 p-3 text-sm text-primary-800">{reviewOnly ? 'Previous answers are shown for review.' : 'Your previous answers are selected below for review. Choose Try quiz again to start a new attempt. Answers that no longer match the current questions remain in your attempt history.'}</p>}
       {!quiz.ready && <p role="status" className="rounded-xl bg-amber-50 p-3 text-sm text-amber-900">{quiz.message} Your previous results are kept.</p>}
       {quiz.questions.map((question, index) => <fieldset key={question.id} disabled={!attemptId || busy} className="space-y-3 rounded-xl border border-foreground-200 p-4">
         <legend className="px-2 text-sm font-bold">Question {index + 1}{question.type === 'multi_choice' ? ' · Select all that apply' : ''}</legend><Html value={question.text} />

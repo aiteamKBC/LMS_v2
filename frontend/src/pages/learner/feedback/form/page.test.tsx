@@ -8,7 +8,7 @@ import LearnerFeedbackFormPage from './page';
 
 vi.mock('@/api/feedback', async importOriginal => {
   const actual = await importOriginal<typeof import('@/api/feedback')>();
-  return { ...actual, feedbackApi: { ...actual.feedbackApi, myForm: vi.fn(), saveResponse: vi.fn() } };
+  return { ...actual, feedbackApi: { ...actual.feedbackApi, myForm: vi.fn(), saveResponse: vi.fn(), myReviewDelivery: vi.fn(), saveReviewDeliveryResponse: vi.fn() } };
 });
 vi.mock('@/hooks/useAuth', () => ({ useAuth: () => ({ auth: { account: { role: 'learner', subjectType: 'learner', subjectId: 61, learnerType: 'apprenticeship', displayName: 'Learner' } }, isInitialized: true }) }));
 vi.mock('@/hooks/useMyLearner', () => ({ useResolvedLearner: () => ({ kind: 'apprenticeship', id: '61' }) }));
@@ -33,6 +33,17 @@ describe('learner feedback automatic save', () => {
     vi.clearAllMocks();
     vi.mocked(feedbackApi.myForm).mockResolvedValue({ form });
     vi.mocked(feedbackApi.saveResponse).mockResolvedValue({ response: { id: 9, status: 'in_progress', submittedAt: null, updatedAt: '2026-09-27T10:00:00Z' } });
+    vi.mocked(feedbackApi.myReviewDelivery).mockResolvedValue({ form: {
+      ...form, formType: 'post_mcm_review', title: 'MCM feedback',
+      reviewDelivery: { id: 71, reviewType: 'Monthly Coaching Meeting', reviewName: 'October coaching', completedAt: '2026-10-19T09:00:00Z' },
+    } });
+  });
+
+  it('opens a completed-review delivery through its dedicated route', async () => {
+    render(<MemoryRouter initialEntries={['/learner/feedback/review/71?category=mcm']}><Routes><Route path="/learner/feedback/review/:reviewDeliveryId" element={<LearnerFeedbackFormPage />} /></Routes></MemoryRouter>);
+
+    expect(await screen.findByText(/October coaching · Completed/)).toBeInTheDocument();
+    expect(feedbackApi.myReviewDelivery).toHaveBeenCalledWith(71, undefined);
   });
 
   it('removes the Save button and saves an answer automatically', async () => {

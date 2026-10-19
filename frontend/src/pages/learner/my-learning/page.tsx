@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useState } from 'react';
-import { StudentActivityPanel as SubjectCardsPanel } from './SubjectWorkspace';
 export { StudentActivityPanel } from './SubjectWorkspace';
 import { DeferredStudentMaterial as StudentMaterial } from './DeferredStudentMaterial';
 import { AssignmentsTab } from './AssignmentsTab';
@@ -7,8 +6,6 @@ import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { roleNavMap } from '@/mocks/navigation';
 import { useLearnerDetailParam } from '@/hooks/useLearnerDetailParam';
-import { useLearnerMetrics } from '@/hooks/useLearnerMetrics';
-import { useStudentActivity } from '@/hooks/useStudentActivity';
 import { useResolvedLearner } from '@/hooks/useMyLearner';
 import { useLearnerWorkspaceAccess } from '@/hooks/useLearnerWorkspaceAccess';
 import { RowsSkeleton } from '@/components/feature/Skeletons';
@@ -27,10 +24,10 @@ import { EmptyState, EmptyStateAction } from '@/components/ui/EmptyState';
 import { EMPTY_VALUE } from '@/lib/format';
 import type { LearnerKind } from '@/api/learnerDetail';
 import { LearningHero } from './LearningCatalogue';
-import { useLiveLearnerRead } from '@/hooks/useLiveLearnerRead';
 import { useAuth } from '@/hooks/useAuth';
-import { learningSchedule, overviewSchedule } from '@/api/learnerOverview';
 import learningStyles from './SubjectWorkspace.module.css';
+import { useMyLearningCatalogue } from '@/api/myLearning';
+import { CompactModules } from './CompactModules';
 
 const learnerNav = roleNavMap.learner;
 
@@ -74,7 +71,6 @@ export default function MyLearningPage({ view = 'catalogue' }: { view?: 'catalog
     }
     return item;
   }), [id, kind, reviewAccount]);
-  const { isRealMode, real, loading, loadError, refresh } = useLearnerDetailParam(kind, id);
   const { canProgress, showReadOnlyNotice } = useLearnerWorkspaceAccess(id);
 
   const requestedTab = new URLSearchParams(location.search).get('tab');
@@ -92,6 +88,8 @@ export default function MyLearningPage({ view = 'catalogue' }: { view?: 'catalog
   const requestedMode = new URLSearchParams(location.search).get('mode');
   const mode = view === 'map' ? 'courses' : requestedMode === 'free' ? 'free' : 'courses';
   const courseParams = new URLSearchParams(location.search);
+  const { isRealMode, real, loading, loadError, refresh } = useLearnerDetailParam(kind, id, false, isInitialized && tab !== 'modules');
+  const catalogue = useMyLearningCatalogue(kind as LearnerKind | undefined, id, isInitialized && tab === 'modules' && mode === 'courses');
   const subjectOpen = view === 'catalogue' && mode === 'courses' && tab === 'modules'
     && !!(courseParams.get('subject') || courseParams.get('module') || courseParams.get('activity'));
   const setMode = (next: string) => {
@@ -105,7 +103,7 @@ export default function MyLearningPage({ view = 'catalogue' }: { view?: 'catalog
 
   const subtitle = real
     ? [real.programme, real.name, real.cohort ? `Cohort ${real.cohort}` : ''].filter(Boolean).join(' · ')
-    : '';
+    : catalogue.data ? [catalogue.data.learner.programme, catalogue.data.learner.name, catalogue.data.learner.cohort ? `Cohort ${catalogue.data.learner.cohort}` : ''].filter(Boolean).join(' \u00b7 ') : '';
 
   const tabs: PageTabItem[] = [
     { value: 'modules', label: 'Modules' },
@@ -121,8 +119,8 @@ export default function MyLearningPage({ view = 'catalogue' }: { view?: 'catalog
       workspaceLabel={learnerNav.workspaceLabel}
       pageTitle={view === 'map' ? 'Learner’s Map' : 'My Learning'}
       pageSubtitle={subtitle}
-      userName={real?.name || 'Learner'}
-      userRole={real?.programme ? `${real.programme} Learner` : 'Learner'}
+      userName={real?.name || catalogue.data?.learner.name || 'Learner'}
+      userRole={(real?.programme || catalogue.data?.learner.programme) ? `${real?.programme || catalogue.data?.learner.programme} Learner` : 'Learner'}
       breadcrumbCurrentLabel={view === 'map' ? 'Learner’s Map' : 'My Learning'}
     >
       <PageContainer><div className={learningStyles.learningPage}>
@@ -153,7 +151,7 @@ export default function MyLearningPage({ view = 'catalogue' }: { view?: 'catalog
               {view === 'catalogue' && !subjectOpen && <PageTabs className={learningStyles.catalogueTabs} items={tabs} value={tab} onChange={(v) => setTab(v as TabKey)} label="My Learning section" />}
 
               {tab === 'modules' ? (
-                <ModulesTab key={`${kind}:${id}`} real={real} loading={loading} loadError={loadError} kind={kind} id={id} showReadOnlyNotice={showReadOnlyNotice} view={view} onRefresh={refresh} />
+                <CompactModules key={`${kind}:${id}`} kind={kind as LearnerKind | undefined} id={id} catalogue={catalogue.data} loading={catalogue.loading} error={catalogue.error} refresh={catalogue.refresh} showReadOnlyNotice={showReadOnlyNotice} view={view} />
               ) : (
                 tab === 'assignments' ? <AssignmentsTab key={`${kind}:${id}`} kind={kind} id={id} real={real} loading={loading} loadError={loadError} onRetry={refresh} canTake={canTake} /> :
                 <QuizzesTab real={real} loading={loading} loadError={loadError} kind={kind} id={id} canTake={canTake} navigate={navigate} onRetry={refresh} />
@@ -166,60 +164,6 @@ export default function MyLearningPage({ view = 'catalogue' }: { view?: 'catalog
   );
 }
 
-/* ═══════════════════════════════════════════════════════
-   MODULES TAB — the old Training Plan, reused and tightened
-   ═══════════════════════════════════════════════════════ */
-export function ModulesTab({ real, loading, loadError, kind, id, showReadOnlyNotice, view = 'catalogue', onRefresh }: {
-  real: ReturnType<typeof useLearnerDetailParam>['real'];
-  loading: boolean;
-  loadError: string | null;
-  kind?: LearnerKind;
-  id?: string;
-  showReadOnlyNotice?: boolean;
-  view?: 'catalogue' | 'map'; onRefresh?: () => void;
-}) {
-  const activityAvailable = !!real?.studentActivityAvailable;
-  const activity = useStudentActivity(kind, id, !loading && !loadError && activityAvailable);
-  const activityData = activityAvailable ? activity.data : null;
-  // Get the actual subjects on screen before starting the secondary source
-  // reads. Their failure must never hold up the materials.
-  const primaryReady = !!real && !loading && (!activityAvailable || !!activityData);
-  const metrics = useLearnerMetrics(kind, id, primaryReady);
-  const schedule = useLiveLearnerRead(kind, id, primaryReady, learningSchedule.read, learningSchedule.peek);
-  const upcomingSchedule = useLiveLearnerRead(kind, id, primaryReady && view === 'catalogue', overviewSchedule.read, overviewSchedule.peek);
-
-  return (
-    <div className="space-y-3">
-      {schedule.error && view === 'map' && <p role="alert" className="text-sm text-amber-800">The current module schedule could not be loaded. Choose a module below. <button onClick={schedule.refresh} className="font-semibold underline">Retry schedule</button></p>}
-      {upcomingSchedule.error && view === 'catalogue' && <p role="alert" className="text-sm text-amber-800">Upcoming sessions could not be loaded. <button onClick={upcomingSchedule.refresh} className="font-semibold underline">Retry sessions</button></p>}
-      {metrics.error && <p role="alert" className="text-sm text-amber-800">{metrics.error} <button onClick={metrics.refresh} className="font-semibold underline">Retry programme totals</button></p>}
-      {showReadOnlyNotice && (
-        <div className="flex items-start gap-2.5 rounded-xl border border-primary-200/70 bg-primary-50/60 px-3.5 py-2.5">
-          <AppIcon className="ri-eye-line mt-0.5 shrink-0 text-[15px] text-primary-600" />
-          <p className="text-[12px] leading-snug text-foreground-600">
-            <span className="font-semibold text-foreground-800">Viewing read-only.</span>{' '}
-            The learner or an administrator can complete activities, upload evidence or submit reflections.
-          </p>
-        </div>
-      )}
-      <SubjectCardsPanel
-        metrics={metrics.data}
-        view={view} schedule={schedule.data} scheduleLoading={schedule.loading} upcomingSessions={upcomingSchedule.data?.sessions}
-        moduleProgress={upcomingSchedule.data?.moduleProgress}
-        kind={kind} learnerId={id} real={real}
-        data={activityData ?? null}
-        loading={loading || (activityAvailable && activity.loading)}
-        error={loadError || activity.error || null}
-        onRetry={() => { if (activity.error) activity.refresh(); if (loadError) onRefresh?.(); }}
-        onProgress={() => { activity.refresh(); metrics.refresh(); }}
-      />
-    </div>
-  );
-}
-
-/* ═══════════════════════════════════════════════════════
-   QUIZZES TAB — compact filterable list, replacing the big cards
-   ═══════════════════════════════════════════════════════ */
 type QuizFilter = 'all' | 'todo' | 'completed' | 'failed' | 'unavailable';
 
 export function QuizzesTab({ real, loading, loadError, kind, id, canTake, navigate, onRetry }: {

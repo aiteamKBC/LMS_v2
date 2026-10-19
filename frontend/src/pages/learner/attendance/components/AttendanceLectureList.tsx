@@ -1,6 +1,6 @@
 import { useId, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import type { AttendanceLecture } from '@/api/attendanceLectures';
+import { isMadeUpLecture, isManuallyConfirmedLecture, type AttendanceLecture } from '@/api/attendanceLectures';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { PageTabs, type PageTabItem } from '@/components/ui/PageTabs';
@@ -28,11 +28,15 @@ function lectureOutcome(row: AttendanceLecture): {
 } {
   const method = row.recovery?.method;
   const alternative = method === 'alternative';
-  const madeUp = row.status === 'absent' && row.effectiveAttendance === 1;
+  const madeUp = isMadeUpLecture(row);
   const when = shortDate(row.recovery?.date);
   if (madeUp) {
     return { madeUp, alternative, catchupBooked: false,
       detail: { label: alternative ? 'Alternative session' : when ? `Catch-up · ${when}` : 'Catch-up', tone: 'neutral' } };
+  }
+  if (isManuallyConfirmedLecture(row)) {
+    return { madeUp: false, alternative: false, catchupBooked: false,
+      detail: { label: 'Attendance confirmed manually', tone: 'neutral' } };
   }
   // The learner's chosen make-up plan for a reported lecture that has not happened yet.
   const plan = alternative ? 'Alternative session booked'

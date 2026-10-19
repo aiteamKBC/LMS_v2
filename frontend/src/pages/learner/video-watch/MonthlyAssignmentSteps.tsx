@@ -193,10 +193,6 @@ export function MonthlyAssignmentSteps({ step, data, onChange, answers, onAnswer
   const patch = (value: Partial<MonthlyAssignment>) => onChange(current => ({ ...current, ...value }));
   const field = (key: keyof MonthlyAssignment, label: string, minimumWords = 0, qualityTarget?: string) => <MonthlyAnswerField qualityTarget={qualityTarget} label={label} title={title} value={String(data[key] || '')} onChange={value => patch({ [key]: value })} disabled={disabled || busy} minimumWords={minimumWords} />;
   const check = (key: keyof MonthlyAssignment, label: string, qualityTarget?: string) => <label data-quality-target={qualityTarget} tabIndex={qualityTarget ? -1 : undefined} className="flex min-h-14 cursor-pointer items-center gap-3 rounded-xl bg-slate-50 px-4 py-3"><input type="checkbox" checked={data[key] === true} disabled={disabled || busy} onChange={e => patch({ [key]: e.target.checked })} className="m-0 h-4 w-4 shrink-0 accent-blue-600 disabled:cursor-not-allowed" /><span className="min-w-0 text-sm font-medium leading-6 tracking-normal text-slate-800">{label}</span></label>;
-  const monthEnd = /^\d{4}-\d{2}$/.test(data.month) ? new Date(Number(data.month.slice(0, 4)), Number(data.month.slice(5)), 0).getDate() : 0;
-  const minBooking = `${data.month}-${String(monthEnd - 9).padStart(2, '0')}`;
-  const nextMonth = new Date(Number(data.month.slice(0, 4)), Number(data.month.slice(5)), 5);
-  const maxBooking = `${nextMonth.getFullYear()}-${String(nextMonth.getMonth() + 1).padStart(2, '0')}-05`;
   useEffect(() => {
     let active = true;
     if (historical) return;
@@ -451,7 +447,7 @@ export function MonthlyAssignmentSteps({ step, data, onChange, answers, onAnswer
     {step === 6 && <>
       {revisingRejected && <p className="rounded-xl border border-blue-200 bg-blue-50 p-3 text-sm text-blue-900">You do not need a new MCM booking when your rejected submission already has a verified booking for this submission month. The final quality checks verify this automatically.</p>}
         <h3 data-quality-target="meeting" tabIndex={-1} className="text-lg font-semibold">Coaching & presentation</h3>
-      <p className="text-sm text-slate-600">Book coaching in the submission-month window ({minBooking} to {maxBooking}) or the next-month window shown below. You can finish both tasks here and keep the whole submission as a draft until ready.</p>
+      <p className="text-sm text-slate-600">Book coaching from the 20th of a month through the 5th of the following month. You can finish both tasks here and keep the whole submission as a draft until ready.</p>
       <AssignmentCoachingBooking assignmentId={activityId} topicId={payload().assignmentTopicId} kind={kind} learnerId={learnerId} month={data.month} title={title} meetingKey={data.meetingKey} disabled={disabled || historical} onSave={onSave} onSelect={meetingKey => patch({ meetingKey })} />
       <section data-quality-target="presentation" tabIndex={-1} className="space-y-5 rounded-2xl border border-slate-200 bg-white p-4 sm:p-6">
         <div className="flex items-start gap-3"><span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary-100 text-sm font-bold text-primary-700">2</span><div><h4 className="text-base font-semibold text-slate-900">Prepare your presentation</h4><p className="mt-1 text-sm text-slate-600">Generate, review and export your slides, or upload your own MCM PowerPoint below.</p></div></div>

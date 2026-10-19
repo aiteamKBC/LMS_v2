@@ -5,6 +5,8 @@ schedule preview this shares its table/date-maths with.
 """
 import json
 from datetime import date
+from types import SimpleNamespace
+from unittest.mock import patch
 
 from django.db import connection
 from django.test import TestCase
@@ -14,6 +16,15 @@ from . import review_instances, review_schedule, review_types, reviews, views
 
 class ReviewInstancesTestCase(TestCase):
     def setUp(self):
+        # Engine fixtures represent Native learners; identity lives outside
+        # this suite's isolated Curriculum database. Exercise the real source
+        # policy against explicit Native profiles without an enrolment DB.
+        profiles = patch('learner_api.models.LearnerProfile.objects.only')
+        query = profiles.start().return_value
+        self.addCleanup(profiles.stop)
+        query.filter.side_effect = lambda **filters: SimpleNamespace(
+            first=lambda: SimpleNamespace(id=filters['pk'], enrolment_id=None, aptem_id=None),
+        )
         views.reset_schema_ready_flags()
         views.invalidate_curriculum_cache()
         self._ensure_programmes_table()
@@ -108,6 +119,53 @@ class ReviewInstancesTestCase(TestCase):
         return reviews.get_review_template_row(review_id)
 
     # ---------------------------------------------------------------- A/B
+
+    def test_aptem_identity_blocks_new_rows_and_preserves_saved_native_booking(self):
+        from inspect import unwrap
+        from django.test import RequestFactory
+        from coach_api import views as coach_views
+        from coach_api.models import CoachCalendarEvent
+        from coach_api.review_sources import ReviewCreationBlocked
+        from coach_api.test_review_source_separation import booking
+
+        review_id = self._create_review('PROG-A', name='Monthly Coaching', interval=1, unit='months')
+        template = self._template_row(review_id)
+        args = dict(learner_id=21, learner_kind='', programme_id='PROG-A',
+                    occurrence_number=1, target_date=date(2026, 11, 18))
+        instance = review_instances.ensure_review_instance(template, **args)
+        record = booking('review:21:synthetic:1', review_instance_id=instance['id'], review_template_id=review_id)
+        record.save(force_insert=True)
+        before = CoachCalendarEvent.objects.filter(pk=record.pk).values().get()
+        saved_instance = review_instances.get_review_instance(instance['id'])
+
+        with patch('learner_api.models.LearnerProfile.objects.only') as profiles:
+            profiles.return_value.filter.return_value.first.return_value = SimpleNamespace(
+                id=21, enrolment_id=None, aptem_id=9001,
+            )
+            with self.assertRaises(ReviewCreationBlocked):
+                review_instances.ensure_review_instance(template, **{**args, 'occurrence_number': 2})
+            with self.assertRaises(ReviewCreationBlocked):
+                review_instances.create_learner_review_addition(
+                    review_template_id=review_id, programme_id='PROG-A', learner_id=21,
+                    target_date=date(2026, 12, 18),
+                )
+            self.assertEqual(review_instances.ensure_review_instance(template, **args), saved_instance)
+            with patch.object(coach_views, 'authenticated_coach_email', return_value=record.owner_email), \
+                 patch.object(coach_views, 'find_generated_timetable_event', side_effect=AssertionError('Historical read regenerated a review')), \
+                 patch.object(coach_views, 'synchronize_reserved_calendar_event', side_effect=AssertionError('Historical read contacted Graph')):
+                response = unwrap(coach_views.coach_review_instance_for_event)(RequestFactory().post(
+                    '/', data=json.dumps({'eventKey': record.event_key}), content_type='application/json',
+                ))
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(json.loads(response.content), {'instanceId': instance['id']})
+
+        self.assertEqual(CoachCalendarEvent.objects.filter(pk=record.pk).values().get(), before)
+        self.assertEqual(review_instances.get_review_instance(instance['id']), saved_instance)
+        with connection.cursor() as cursor:
+            for table, expected in ((review_instances.REVIEW_INSTANCES_TABLE, 1),
+                                    (review_instances.LEARNER_REVIEW_ADDITIONS_TABLE, 0)):
+                cursor.execute(f'SELECT COUNT(*) FROM {views.authoring_table_name(table)} WHERE learner_id = %s', [21])
+                self.assertEqual(cursor.fetchone()[0], expected)
 
     def test_monthly_review_occurrences_match_worked_example(self):
         review_id = self._create_review('PROG-A', name='Monthly Coaching Meeting', interval=1, unit='months')

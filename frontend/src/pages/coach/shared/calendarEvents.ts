@@ -90,6 +90,7 @@ export interface CoachCalendarEvent {
   effectiveLmsStatus?: string;
   calendarEventId?: string;
   calendarEventKey?: string | null;
+  reconciledReview?: boolean;
   formEventKey?: string;
   reviewerName?: string | null;
   hasReviewForm?: boolean;

@@ -368,11 +368,16 @@ class MigratedPreviewTests(SimpleTestCase):
             self.assertFalse(result["booking"]["conflict"])
             self.assertFalse(result["booking"]["canBook"])
             self.assertEqual(result["booking"]["eventKey"], "imported-review:A-7")
+            self.assertFalse(result["booking"]["canReschedule"])
             saved.status = "scheduled"
             result = self._get()
             self.assertEqual(result["localStatus"], "scheduled")
             self.assertFalse(result["booking"]["canAttach"])
             self.assertTrue(result["booking"]["booked"])
+            self.assertTrue(result["booking"]["canReschedule"])
+            for status in ("in-progress", "awaiting-signature", "completed"):
+                saved.status = status
+                self.assertFalse(self._get().get("booking", {}).get("canReschedule", False))
         self.templates.assert_not_called()
 
     def test_missing_programme_all_families_can_preview_and_initialize_global(self):
@@ -520,6 +525,14 @@ class MigratedPreviewTests(SimpleTestCase):
                 self.assertEqual(response.status_code, 403)
                 self.assertEqual(json.loads(response.content)["code"], "coach_view_as_read_only")
         definition.assert_not_called()
+        request = RequestFactory().patch(
+            "/coach_api/coach/reviews/imported-review%3AA-7/book?viewAsCoach=coach@example.invalid",
+            data=json.dumps({"scheduledTime": "12:00"}), content_type="application/json",
+        )
+        response = views.coach_review_instance_book(request, "imported-review:A-7")
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(json.loads(response.content)["code"], "coach_view_as_read_only")
+        definition.assert_not_called()
 
 
 class MigratedModelTests(TestCase):
@@ -639,6 +652,8 @@ class MigratedModelTests(TestCase):
 
 class MigratedWriteTests(TestCase):
     def setUp(self):
+        from .tests_support.persisted_fixtures import review_identity
+        review_identity(source_ids=[(407, "A-7", "Progress Review")], programme_id="P-42")
         from .migrated_templates import snapshot_for
         self.definition_json = candidate_definition(SOURCE)
         self.template = MigratedReviewTemplate.objects.create(
@@ -722,6 +737,8 @@ class MigratedBookingTests(TestCase):
     """Aptem booking uses one calendar identity and mocked Graph transport."""
 
     def setUp(self):
+        from .tests_support.persisted_fixtures import review_identity
+        review_identity(source_ids=[(409, "A-9", "Progress Review")], enrolment_id=101, programme_id="P-42")
         self.template = MigratedReviewTemplate.objects.create(
             programme_key="id:P-42", review_family="PR", name="Approved",
             definition_json=candidate_definition(SOURCE), is_active=True,

@@ -1,4 +1,5 @@
 import type { ReviewSectionDefinition } from './reviewInstances';
+import { CurriculumApiError, fetchCurriculumJson } from '@/lib/curriculumApi';
 
 export const MIGRATED_FAMILIES = ['MCM', 'PR', 'PR_SKILLS_RADAR'] as const;
 export type MigratedFamily = typeof MIGRATED_FAMILIES[number];
@@ -17,6 +18,7 @@ export interface MigratedTemplate {
   review_family: MigratedFamily; name: string; is_active: boolean; updated_at: string;
   source_metadata: { sourceReviewId?: number; aptemReviewId?: string; programme?: string; copiedFromTemplateId?: number };
   fingerprint: string;
+  statistics?: { questions: number; sections: number };
 }
 export interface TemplateDetail extends MigratedTemplate { definition: MigratedDefinition }
 export interface TemplateResolution {
@@ -28,24 +30,28 @@ export interface TemplateLibrary {
 }
 export interface TemplatePreview { sections: ReviewSectionDefinition[]; readOnly: boolean }
 
-const root = `${import.meta.env.VITE_API_BASE_URL || '/curriculum_api'}/curriculum/migrated-review-templates/`;
+const root = '/curriculum/migrated-review-templates/';
 let csrfToken = '';
 
 async function request<T>(path = '', method = 'GET', payload?: unknown, signal?: AbortSignal): Promise<T> {
   if (method !== 'GET' && !csrfToken) await listMigratedTemplates();
-  const response = await fetch(`${root}${path}`, {
-    method, credentials: 'include', cache: 'no-store', signal,
-    headers: { 'Content-Type': 'application/json', ...(method !== 'GET' ? { 'X-CSRFToken': csrfToken } : {}) },
-    body: payload === undefined ? undefined : JSON.stringify(payload),
-  });
-  const data = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    throw new Error(response.status === 403
+  try {
+    // Revalidate managed forms on every read, sharing only overlapping requests.
+    // StrictMode/unmount cancels the subscriber, not another card's transport.
+    const data = await fetchCurriculumJson<T & { csrf_token?: string }>(`${root}${path}`, {
+      method, credentials: 'include', signal, revalidate: method === 'GET',
+      headers: { 'Content-Type': 'application/json', ...(method !== 'GET' ? { 'X-CSRFToken': csrfToken } : {}) },
+      body: payload === undefined ? undefined : JSON.stringify(payload),
+    });
+    if (data.csrf_token) csrfToken = data.csrf_token;
+    return data;
+  } catch (error) {
+    if (!(error instanceof CurriculumApiError)) throw error;
+    const data = error.data as { detail?: string } | undefined;
+    throw new Error(error.status === 403
       ? 'Curriculum or administrator access is required to manage migrated templates.'
-      : data.detail || `Unable to load migrated templates (${response.status}).`);
+      : data?.detail || `Unable to load migrated templates (${error.status}).`);
   }
-  if (data.csrf_token) csrfToken = data.csrf_token;
-  return data as T;
 }
 
 export const listMigratedTemplates = (key = '', signal?: AbortSignal) =>
