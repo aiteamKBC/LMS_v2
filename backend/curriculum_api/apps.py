@@ -3,6 +3,7 @@ import sys
 
 from django.apps import AppConfig
 from django.conf import settings
+from config.management_safety import reconciliation_command
 
 
 class CurriculumApiConfig(AppConfig):
@@ -23,6 +24,9 @@ class CurriculumApiConfig(AppConfig):
         """
         from .read_model import register_curriculum_home_read_model
         register_curriculum_home_read_model()
+
+        if reconciliation_command():
+            return
 
         command = sys.argv[1] if len(sys.argv) > 1 else ''
         if command in {

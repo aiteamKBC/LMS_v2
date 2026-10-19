@@ -261,6 +261,50 @@ class ImportedReviewInstance(models.Model):
             ),
         ]
 
+class ReviewSourceReconciliation(models.Model):
+    """Explicit current authority; the calendar's Native fields remain provenance."""
+
+    learner_id = models.BigIntegerField()
+    # The Coach calendar model addresses a PostgreSQL VIEW. The migration's
+    # physical FK therefore targets Learner.coach_calendar_event, not that view.
+    calendar_event_id = models.BigIntegerField()
+    native_review_instance_id = models.CharField(max_length=128)
+    native_template_id = models.CharField(max_length=128)
+    native_event_key = models.CharField(max_length=255)
+    source_review_id = models.BigIntegerField()
+    aptem_review_id = models.CharField(max_length=128)
+    family = models.CharField(max_length=16, default="MCM")
+    overlay = models.ForeignKey(ImportedReviewInstance, on_delete=models.PROTECT)
+    status = models.CharField(max_length=16, default="APPLIED")
+    approved_by = models.BigIntegerField()
+    approved_at = models.DateTimeField()
+    reason = models.TextField()
+    reversed_by = models.BigIntegerField(null=True)
+    reversed_at = models.DateTimeField(null=True)
+    reversal_reason = models.TextField(blank=True)
+    # Hashes only: do not duplicate private meeting URLs or learner answers.
+    calendar_fingerprint = models.CharField(max_length=64)
+    overlay_fingerprint = models.CharField(max_length=64)
+    overlay_created = models.BooleanField(default=False)
+    overlay_previous_status = models.CharField(max_length=32)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = _table_name('coach_test_review_reconciliations', 'Coach"."review_source_reconciliation')
+        constraints = [
+            models.UniqueConstraint(fields=[field], condition=models.Q(status="APPLIED"), name=name)
+            for field, name in (
+                ("calendar_event_id", "review_recon_active_calendar"),
+                ("native_review_instance_id", "review_recon_active_native"),
+                ("source_review_id", "review_recon_active_source"),
+                ("overlay", "review_recon_active_overlay"),
+            )
+        ] + [
+            models.CheckConstraint(condition=models.Q(status__in=["APPLIED", "REVERSED"]), name="review_recon_valid_status"),
+            models.CheckConstraint(condition=models.Q(family="MCM"), name="review_recon_mcm_only"),
+        ]
+
+
 class MigratedReviewSignature(models.Model):
     """One immutable LMS sign-off for an imported review and participant role."""
 

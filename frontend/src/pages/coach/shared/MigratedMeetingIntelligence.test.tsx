@@ -37,7 +37,7 @@ describe('migrated meeting intelligence', () => {
     expect(api.fetch.mock.calls[1][2]).toEqual({ refresh: true });
   });
 
-  it('shows attendance, transcript status and AI summary, and saves a coach edit', async () => {
+  it.each(['scheduled', 'in-progress'])('shows saved intelligence and saves a coach edit in %s without refreshing Teams', async status => {
     const user = userEvent.setup();
     api.fetch.mockResolvedValue({
       ...empty,
@@ -53,7 +53,7 @@ describe('migrated meeting intelligence', () => {
     });
     api.save.mockResolvedValue({ answerVersion: 'after-summary', progressVersion: 'after-summary', reviewAnswers: { note: 'Saved words' }, meetingSummary: { status: 'edited', summary: { title: 'MCM recap', overview: 'Coach revision', keyPoints: [], actions: [], nextSteps: [], support: [] } } });
     const onCheckComplete = vi.fn();
-    render(<MigratedMeetingIntelligence instanceId={id} family="aptem_mcm" status="in-progress" viewAs={false} onCheckComplete={onCheckComplete} />);
+    render(<MigratedMeetingIntelligence instanceId={id} family="aptem_mcm" status={status} viewAs={false} onCheckComplete={onCheckComplete} />);
     expect(await screen.findByText('Initial recap')).toBeInTheDocument();
     expect(screen.getAllByText(/30 minutes/).length).toBeGreaterThan(0);
     expect(screen.getByText(/Synthetic learner/)).toBeInTheDocument();
@@ -65,6 +65,7 @@ describe('migrated meeting intelligence', () => {
     await user.click(screen.getByRole('button', { name: 'Save recap' }));
     await waitFor(() => expect(api.save).toHaveBeenCalledWith(id, expect.objectContaining({ overview: 'Coach revision' })));
     expect(onCheckComplete).toHaveBeenCalledWith(expect.objectContaining({ answerVersion: 'after-summary', reviewAnswers: { note: 'Saved words' } }));
+    expect(api.fetch.mock.calls.every(call => call[2]?.refresh === false)).toBe(true);
   });
 
   it('shows an inert Check Session for admin view-as and hides it on completed reviews', async () => {
