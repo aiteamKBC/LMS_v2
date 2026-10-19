@@ -25,6 +25,8 @@ import { ModernDatePicker, ModernDurationPicker, ScheduleFieldLabel, ScheduleTim
 import ProgressReviewCompletionModal from '../shared/ProgressReviewCompletionModal';
 import { reviewInstancePath, reviewInstanceRouteState } from '../shared/reviewInstanceNavigation';
 import { ReviewAge } from '../shared/ReviewAge';
+import { ReviewIdentityNotice } from '../shared/ReviewIdentityNotice';
+import type { CoachReviewGenerationIssue } from '../shared/calendarEvents';
 import {
   type CoachCalendarEvent,
   type ScheduleFormState,
@@ -995,8 +997,9 @@ export default function CoachProgressReviews({ category = 'progress-review' }: {
   const [selectedMonth, setSelectedMonth] = useState(() => monthFromQuery(searchParams.get('month')));
   const [allMonths, setAllMonths] = useState(() => searchParams.get('months') === 'all');
   const cacheKey = coachSessionKey(category, coach.email, 'all-months');
-  const initialCache = readCoachSessionCache<{ events: CoachCalendarEvent[]; ownerName: string }>(cacheKey);
+  const initialCache = readCoachSessionCache<{ events: CoachCalendarEvent[]; ownerName: string; issues?: CoachReviewGenerationIssue[] }>(cacheKey);
   const [events, setEvents] = useState<CoachCalendarEvent[]>(() => initialCache?.events || []);
+  const [issues, setIssues] = useState<CoachReviewGenerationIssue[]>(() => initialCache?.issues || []);
   const [ownerName, setOwnerName] = useState(() => initialCache?.ownerName || 'Coach');
   const [loading, setLoading] = useState(() => !initialCache);
   const [error, setError] = useState<string | null>(null);
@@ -1032,13 +1035,15 @@ export default function CoachProgressReviews({ category = 'progress-review' }: {
     if (!coach.isInitialized) return;
     if (!coach.email) {
       setEvents([]);
+      setIssues([]);
       setOwnerName(coach.name);
       setError(`Coach access is required to load ${reviewLabel}.`);
       setLoading(false);
       return;
     }
     const controller = new AbortController();
-    const cached = readCoachSessionCache<{ events: CoachCalendarEvent[]; ownerName: string }>(cacheKey);
+    const cached = readCoachSessionCache<{ events: CoachCalendarEvent[]; ownerName: string; issues?: CoachReviewGenerationIssue[] }>(cacheKey);
+    setIssues(cached?.issues || []);
 
     const loadReviews = async () => {
       if (cached) {
@@ -1055,7 +1060,9 @@ export default function CoachProgressReviews({ category = 'progress-review' }: {
           includeSchedulerQueues: false,
         });
         const reviews = sortEvents(normalizeResolvedReviews((data.events || []).filter(event => reviewCategory(event) === category)));
-        writeCoachSessionCache(cacheKey, { events: reviews, ownerName: data.owner?.name || coach.name });
+        const nextIssues = data.reviewGenerationIssues || [];
+        writeCoachSessionCache(cacheKey, { events: reviews, ownerName: data.owner?.name || coach.name, issues: nextIssues });
+        setIssues(nextIssues);
         setEvents(reviews);
         setOwnerName(data.owner?.name || coach.name);
       } catch (err) {
@@ -1187,6 +1194,10 @@ export default function CoachProgressReviews({ category = 'progress-review' }: {
   };
 
   const openScheduleModal = (event: CoachCalendarEvent) => {
+    if (event.reviewSource === 'aptem' || event.aptemReviewId) {
+      navigate(`${listPath}/${encodeURIComponent(eventIdentity(event))}`, { state: { returnTo: listUrl() } });
+      return;
+    }
     setScheduleForm(scheduleDefaults(event));
     setActionError(null);
     setActionNotice(event.syncWarning || null);
@@ -1366,6 +1377,7 @@ export default function CoachProgressReviews({ category = 'progress-review' }: {
           <img src="/coach-meetings-calendar.webp" alt="" aria-hidden="true" width={312} height={312} />
         </section>
         {error ? <EmptyState variant="error" title={`Unable to load ${reviewLabel}.`} description={error} /> : null}
+        <ReviewIdentityNotice issues={issues} />
         <section className={styles.controlsCard} aria-label={otherReviews ? 'Review filters and summary' : 'Progress review filters and summary'}>
           <div className={styles.toolbar}>
             <div className={styles.monthNav} aria-label="Review month"><button type="button" onClick={() => changeMonth(addMonths(selectedMonth, -1))} aria-label="Previous month"><AppIcon className="ri-arrow-left-s-line text-xl" /></button><span>{selectedMonthLabel}</span><button type="button" onClick={() => changeMonth(addMonths(selectedMonth, 1))} aria-label="Next month"><AppIcon className="ri-arrow-right-s-line text-xl" /></button></div>

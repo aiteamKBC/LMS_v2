@@ -2356,11 +2356,17 @@ def coach_learner_personal_calendar_conflicts(
     scheduled_time: time,
     duration_minutes: int,
     timezone_offset_minutes: int = 0,
+    *, exclude_record=None,
 ) -> bool:
     identity = learner_calendar_source_identity(learner)
     if not identity:
         return False
     kind, source_id = identity
+    exclusion = {} if exclude_record is None else {
+        "exclude_scheduled_date": exclude_record.scheduled_date,
+        "exclude_scheduled_time": exclude_record.scheduled_time,
+        "exclude_duration_minutes": exclude_record.duration_minutes,
+    }
     return personal_calendar_booking_conflicts(
         kind,
         source_id,
@@ -2368,6 +2374,7 @@ def coach_learner_personal_calendar_conflicts(
         scheduled_time,
         duration_minutes,
         timezone_offset_minutes,
+        **exclusion,
     )
 
 
@@ -2733,6 +2740,14 @@ def apply_latest_learning_activity(payload: dict, activity: dict | None) -> dict
     return payload
 
 
+class ReviewEnrolmentIdentityUnavailable(DatabaseError):
+    """A successful identity lookup found missing referenced enrolment rows."""
+
+    def __init__(self, profile_ids):
+        super().__init__("Review enrolment identity unavailable")
+        self.profile_ids = frozenset(profile_ids)
+
+
 def fetch_caseload_aptem_ids(learners, *, strict=False) -> dict[int, int]:
     """LearnerProfile id -> Aptem id, loading only the columns that needs.
 
@@ -2742,6 +2757,7 @@ def fetch_caseload_aptem_ids(learners, *, strict=False) -> dict[int, int]:
     Aptem bridge, so this deferred-column variant keeps the dashboard's first
     paint from paying for columns nobody reads.
     """
+    learners = list(learners or [])
     profile_ids_by_enrolment = {
         int(learner.enrolment_id): int(learner.id)
         for learner in learners or []
@@ -2763,8 +2779,14 @@ def fetch_caseload_aptem_ids(learners, *, strict=False) -> dict[int, int]:
         logger.warning("Could not resolve caseload Aptem ids: %s", exc)
         return {}
 
-    if strict and set(profile_ids_by_enrolment) - {int(pk) for pk, _ in pairs}:
-        raise DatabaseError("Review enrolment identity unavailable")
+    missing_enrolments = set(profile_ids_by_enrolment) - {int(pk) for pk, _ in pairs}
+    if strict and missing_enrolments:
+        raise ReviewEnrolmentIdentityUnavailable(
+            int(learner.id) for learner in learners
+            if getattr(learner, "id", None) is not None
+            and getattr(learner, "enrolment_id", None) is not None
+            and int(learner.enrolment_id) in missing_enrolments
+        )
     aptem_by_profile: dict[int, int] = {}
     for enrolment_id, aptem_id in pairs:
         profile_id = profile_ids_by_enrolment.get(int(enrolment_id))
@@ -10056,7 +10078,16 @@ def resolve_coach_review_events(
     source_schedule_rows: tuple[dict, dict] | None = None,
 ) -> dict:
     """An Aptem identity always owns its imported Review source, even if empty."""
-    aptem_by_profile, identity_conflicts = resolve_effective_aptem_ids(learners, strict=True)
+    unavailable_profiles: frozenset[int] = frozenset()
+    try:
+        aptem_by_profile, identity_conflicts = resolve_effective_aptem_ids(learners, strict=True)
+    except ReviewEnrolmentIdentityUnavailable as exc:
+        # A missing linked row affects only its learners. Keep them out of both
+        # source branches; an unknown identity must never become Native fallback.
+        # Real query/connection failures still propagate to the caller.
+        unavailable_profiles = exc.profile_ids
+        learners = [row for row in learners if int(row.id) not in unavailable_profiles]
+        aptem_by_profile, identity_conflicts = resolve_effective_aptem_ids(learners, strict=True)
     aptem_reviews_available = True
     try:
         aptem_events, aptem_contributors = fetch_aptem_review_events(
@@ -10087,6 +10118,10 @@ def resolve_coach_review_events(
         {"learnerId": str(profile_id), "code": "aptem_identity_conflict"}
         for profile_id in sorted(identity_conflicts)
     ]
+    issues.extend(
+        {"learnerId": str(profile_id), "code": "review_identity_unavailable"}
+        for profile_id in sorted(unavailable_profiles)
+    )
     if not aptem_reviews_available:
         issues.extend(
             {"learnerId": str(profile_id), "code": "aptem_reviews_unavailable"}
@@ -10755,10 +10790,18 @@ def reserve_coach_calendar_booking(
         raise
 
 
+CALENDAR_GRAPH_SYNC_FIELDS = [
+    "sync_state", "last_graph_sync_error", "graph_event_id", "graph_organizer_email",
+    "meeting_provider", "meeting_link", "graph_web_link", "updated_at",
+]
+
+
 def finalize_calendar_graph_sync(record: CoachCalendarEvent, warning: str) -> None:
     record.sync_state = CoachCalendarEvent.SYNC_SYNCED
     record.last_graph_sync_error = public_graph_sync_warning(warning)
-    record.save()
+    # Graph I/O runs outside locks. A concurrent submission may have advanced
+    # the review; never save stale lifecycle/answers/booking fields over it.
+    record.save(update_fields=CALENDAR_GRAPH_SYNC_FIELDS)
 
 
 class CalendarSyncInProgress(RuntimeError):
@@ -10951,7 +10994,7 @@ def synchronize_reserved_calendar_event(
         warning = warning or TEAMS_SYNC_LINK_MISSING_MESSAGE
         record.sync_state = CoachCalendarEvent.SYNC_FAILED
         record.last_graph_sync_error = public_graph_sync_warning(warning)
-        record.save()
+        record.save(update_fields=CALENDAR_GRAPH_SYNC_FIELDS)
         logger.warning(
             "coach_calendar_graph_sync_failed",
             extra={
@@ -15263,9 +15306,16 @@ def _imported_review_definition(owner_email: str, event_key: str, *, preview_onl
             and calendar.graph_event_id and calendar_record_has_launch_url(calendar)
             and calendar.status in {CoachCalendarEvent.STATUS_SCHEDULED, CoachCalendarEvent.STATUS_IN_PROGRESS}
         )
+        from .migrated_rescheduling import can_reschedule
         definition["booking"] = {
             "booked": booked,
             "conflict": booking_conflict or bool(calendar and not association_valid),
+            "canReschedule": bool(
+                association_valid and not booking_conflict and not preview_only
+                and migrated_form and booking_template
+                and snapshot_assignment_valid(saved_instance, family, local_programme_key)
+                and can_reschedule(saved_instance, calendar)
+            ),
             "canAttach": bool(
                 booked and migrated_form and saved_instance and booking_template
                 and snapshot_assignment_valid(saved_instance, family, local_programme_key)
@@ -15388,10 +15438,13 @@ def coach_review_instance_local_status(request, instance_id):
 @coach_access_required
 def coach_review_instance_book(request, instance_id):
     """Book one imported review by its Aptem identity, never by a native occurrence."""
-    if request.method != "POST":
+    if request.method not in {"POST", "PATCH"}:
         return JsonResponse({"detail": "Method not allowed."}, status=405)
     if not instance_id.startswith("imported-review:"):
         return coach_error(request, code="BOOKING_CONFLICT", message="Only imported reviews can use this booking action.", status=409)
+    if request.method == "PATCH":
+        from .migrated_rescheduling import reschedule
+        return reschedule(request, instance_id)
     owner_email = authenticated_coach_email(request).strip().casefold()
     definition = _imported_review_definition(owner_email, instance_id)
     if not definition:

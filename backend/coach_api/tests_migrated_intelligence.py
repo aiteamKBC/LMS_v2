@@ -174,20 +174,35 @@ class MigratedMeetingIntelligenceTests(SimpleTestCase):
         self.assertEqual(json.loads(result.content)["code"], "GRAPH_PERMISSION_ERROR")
         persist.assert_not_called()
 
-    def test_edit_requires_in_progress_and_generated_summary(self):
-        self.overlay.meeting_intelligence = {"summary": {"title": "Original", "overview": "Initial"}}
+    def test_summary_edit_allows_scheduled_without_starting_and_retains_provenance(self):
         request = self.factory.patch("/", data=json.dumps({"summary": {"title": "Edited", "overview": "Coach edit"}}), content_type="application/json")
         request.login_account = SimpleNamespace(email="coach@example.invalid")
         with patch("coach_api.migrated_intelligence_views._association", return_value=(self.overlay, self.record, {})), \
              patch("coach_api.migrated_intelligence_views.transaction.atomic", return_value=nullcontext()), \
              patch("coach_api.migrated_intelligence_views.ImportedReviewInstance.objects.select_for_update") as locked:
             locked.return_value.get.return_value = self.overlay
-            result = inspect.unwrap(migrated_review_summary)(request, ID)
-            self.assertEqual(result.status_code, 200)
-            self.assertEqual(self.overlay.meeting_intelligence["summaryStatus"], "edited")
-            self.overlay.status = ImportedReviewInstance.STATUS_COMPLETED
-            result = inspect.unwrap(migrated_review_summary)(request, ID)
-            self.assertEqual(result.status_code, 409)
+            for status in ("scheduled", "in-progress"):
+                with self.subTest(status=status):
+                    self.overlay.status = status
+                    original = {"title": "Original", "overview": "Initial"}
+                    self.overlay.meeting_intelligence = {"summary": original, "summaryStatus": "ready"}
+                    result = inspect.unwrap(migrated_review_summary)(request, ID)
+                    self.assertEqual(result.status_code, 200)
+                    self.assertEqual(self.overlay.meeting_intelligence["summaryStatus"], "edited")
+                    self.assertEqual(self.overlay.meeting_intelligence["aiSummaryOriginal"], original)
+                    self.assertEqual(self.overlay.status, status)
+                    self.assertEqual(self.overlay.answers, {})
+                    self.overlay.save.assert_called_with(update_fields=["meeting_intelligence", "updated_at"])
+            for status in ("not-scheduled", "awaiting-signature", "completed"):
+                with self.subTest(status=status):
+                    self.overlay.status = status
+                    self.overlay.save.reset_mock()
+                    self.assertEqual(inspect.unwrap(migrated_review_summary)(request, ID).status_code, 409)
+                    self.overlay.save.assert_not_called()
+            self.overlay.status = "scheduled"
+            self.overlay.meeting_intelligence = {}
+            self.assertEqual(inspect.unwrap(migrated_review_summary)(request, ID).status_code, 409)
+            self.overlay.save.assert_not_called()
 
     def test_source_completed_or_unowned_review_is_not_available(self):
         with patch("coach_api.migrated_intelligence_views._association", return_value=(None, None, None)), \

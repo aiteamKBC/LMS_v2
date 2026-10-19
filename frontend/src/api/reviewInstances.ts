@@ -198,6 +198,7 @@ export interface ReviewInstanceFormDefinition {
     booked: boolean;
     conflict: boolean;
     canAttach?: boolean;
+    canReschedule?: boolean;
     canBook: boolean;
     eventKey: string | null;
     scheduledDate: string | null;
@@ -399,6 +400,26 @@ export async function bookMigratedReview(instanceId: string, slot: {
   if (!response.ok) {
     const data = await response.json().catch(() => ({}));
     throw new Error(data.message || data.detail || 'The meeting could not be booked.');
+  }
+  return readJsonResponse<ReviewInstanceFormDefinition>(response);
+}
+
+export async function rescheduleMigratedReview(
+  instanceId: string,
+  slot: Parameters<typeof bookMigratedReview>[1],
+  booking: NonNullable<ReviewInstanceFormDefinition['booking']>,
+) {
+  const response = await coachFetch(`${instanceUrl(instanceId)}/book`, {
+    method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ...slot, expectedBooking: {
+      scheduledDate: booking.scheduledDate,
+      scheduledTime: booking.scheduledTime,
+      durationMinutes: booking.durationMinutes,
+    } }),
+  });
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    throw new Error(data.message || data.detail || 'The meeting could not be rescheduled.');
   }
   return readJsonResponse<ReviewInstanceFormDefinition>(response);
 }

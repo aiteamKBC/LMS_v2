@@ -1,6 +1,7 @@
 """Operator-selected association only. Never writes calendar, Native or Aptem evidence."""
 import hashlib
 import json
+import os
 
 from django.db import connection, connections, transaction, IntegrityError
 from django.utils import timezone
@@ -13,7 +14,9 @@ from .reconciliation_schema import require_reconciliation_schema
 
 
 class ReconciliationConflict(ValueError):
-    pass
+    def __init__(self, message, *, code="OTHER_BLOCKED"):
+        super().__init__(message)
+        self.code = code
 
 
 def fingerprint(value):
@@ -41,7 +44,12 @@ def require_same_database():
     # use default, which must address the same DB as the imported read paths.
     if connection.vendor == "postgresql":
         other = connections["enrolment"].settings_dict
-        if any(connection.settings_dict.get(k) != other.get(k) for k in ("ENGINE", "HOST", "PORT", "NAME", "USER")):
+        # An omitted PostgreSQL port uses libpq's PGPORT/default. Compare
+        # effective ports without treating a different target as equivalent.
+        def target(config):
+            port = config.get("PORT") or os.environ.get("PGPORT") or "5432"
+            return tuple(config.get(k) for k in ("ENGINE", "HOST", "NAME", "USER")) + (str(port),)
+        if target(connection.settings_dict) != target(other):
             raise ReconciliationConflict("Default and enrolment must address the same database for reconciliation.")
 
 
@@ -114,7 +122,7 @@ def _empty_native(record, instance):
             or engine.get_review_instance_signatures(instance["id"])
             or has_history(engine.REVIEW_INSTANCE_MANUAL_OVERRIDES_TABLE)
             or has_history(engine.REVIEW_INSTANCE_REOPENS_TABLE)):
-        raise ReconciliationConflict("Native review contains work or lifecycle evidence; specialist review is required.")
+        raise ReconciliationConflict("Native review contains work or lifecycle evidence; specialist review is required.", code="INVALID_NATIVE_STATE")
 
 
 def _source_event(profile, source):
@@ -127,12 +135,12 @@ def _source_event(profile, source):
 def _empty_overlay(overlay):
     if (overlay.status not in {"not-scheduled", "scheduled"} or overlay.answers or overlay.progress_snapshot
             or overlay.completed_at or overlay.meeting_intelligence):
-        raise ReconciliationConflict("Continuation already has work; specialist review is required.")
+        raise ReconciliationConflict("Continuation already has work; specialist review is required.", code="OVERLAY_CONFLICT")
     if MigratedReviewSignature.objects.filter(overlay=overlay).exists() or MigratedReviewDocument.objects.filter(overlay=overlay).exists():
-        raise ReconciliationConflict("Continuation already has signed or published evidence.")
+        raise ReconciliationConflict("Continuation already has signed or published evidence.", code="OVERLAY_CONFLICT")
 
 
-def _inspect(calendar_event_id, source_review_id, *, lock=False):
+def _inspect(calendar_event_id, source_review_id, *, lock=False, learners=None):
     from curriculum_api import review_instances as engine, reviews, review_types
     from .migrated_reviews import review_family, initial_local_status
     from .review_sources import linked_booking
@@ -144,17 +152,17 @@ def _inspect(calendar_event_id, source_review_id, *, lock=False):
             or record.event_type != "mcr" or not record.scheduled_date or not record.scheduled_time
             or record.status != "scheduled" or record.sync_state != "synced"
             or not record.graph_event_id or not record.meeting_link or not record.graph_organizer_email):
-        raise ReconciliationConflict("A verified, unstarted Native MCM booking with preserved meeting identity is required.")
+        raise ReconciliationConflict("A verified, unstarted Native MCM booking with preserved meeting identity is required.", code="INVALID_NATIVE_STATE")
     instance = engine.get_review_instance(record.review_instance_id, for_update=lock)
     if (not instance or instance.get("learner_id") != record.learner_id
             or instance.get("calendar_event_id") != record.pk
             or instance.get("review_template_id") != record.review_template_id
             or str(instance.get("coach_email", "")).casefold() != record.owner_email.casefold()):
-        raise ReconciliationConflict("Native booking ownership/provenance is inconsistent.")
+        raise ReconciliationConflict("Native booking ownership/provenance is inconsistent.", code="INVALID_OWNERSHIP")
     template = reviews.get_review_template_row(record.review_template_id, include_deleted=True)
     type_row = review_types.get_review_type(template.get("review_type_id")) if template else None
     if not type_row or type_row.get("code") != "mcm":
-        raise ReconciliationConflict("The Native template family must be MCM.")
+        raise ReconciliationConflict("The Native template family must be MCM.", code="INVALID_NATIVE_STATE")
     _empty_native(record, instance)
     profile, decision = read_profile(record.learner_id, lock=lock)
     source = read_source(source_review_id, lock=lock)
@@ -164,30 +172,31 @@ def _inspect(calendar_event_id, source_review_id, *, lock=False):
             or (source_aptem_id and source_aptem_id != str(decision.aptem_id))
             or (data.get("aptem_review_id") and str(data["aptem_review_id"]) != str(source["aptem_review_id"]))
             or ((data.get("live_odata") or {}).get("Id") and str(data["live_odata"]["Id"]) != str(source["aptem_review_id"]))):
-        raise ReconciliationConflict("Source review learner/Aptem identity does not match.")
+        raise ReconciliationConflict("Source review learner/Aptem identity does not match.", code="INVALID_OWNERSHIP")
     if review_family(source["review_type"]) != "MCM":
         raise ReconciliationConflict("Only the exact MCM source family is supported.")
     if source.get("completed_date") or not initial_local_status(source.get("status")):
-        raise ReconciliationConflict("The Aptem source is historical or already started.")
+        raise ReconciliationConflict("The Aptem source is historical or already started.", code="LIFECYCLE_CONFLICT")
     event = _source_event(profile, source)
     overlays = list(ImportedReviewInstance.objects.filter(source_review_id=source["id"]))
     overlay = overlays[0] if overlays else None
     if overlay and (overlay.learner_id != profile.id or overlay.owner_email.casefold() != record.owner_email.casefold()
                     or overlay.event_key != event["eventKey"] or not overlay.template_snapshot):
-        raise ReconciliationConflict("The existing overlay has an incompatible identity.")
+        raise ReconciliationConflict("The existing overlay has an incompatible identity.", code="OVERLAY_CONFLICT")
     if overlay:
         _empty_overlay(overlay)
     # Include every owner: another coach's booking is still a conflict.
     records = list(CoachCalendarEvent.objects.filter(event_type="mcr"))
     existing = linked_booking(event, records, overlay, reconciliations=[])
     if existing and existing.pk != record.pk:
-        raise ReconciliationConflict(f"Source already has incompatible calendar booking {existing.pk}.")
+        raise ReconciliationConflict(f"Source already has incompatible calendar booking {existing.pk}.", code="IMPORTED_CALENDAR_CONFLICT")
     if links.active_links(source_review_id=source["id"]).exclude(calendar_event_id=record.pk).exists():
-        raise ReconciliationConflict("Another applied booking already claims this source review.")
+        raise ReconciliationConflict("Another applied booking already claims this source review.", code="SOURCE_REUSE_CONFLICT")
     current = links.active_links(calendar_event_id=record.pk).first()
     if current and current.source_review_id != source["id"]:
-        raise ReconciliationConflict("Booking is already reconciled to another source; reverse it first.")
-    definition = _imported_review_definition(record.owner_email, event["eventKey"])
+        raise ReconciliationConflict("Booking is already reconciled to another source; reverse it first.", code="NATIVE_ALREADY_MAPPED")
+    definition = _imported_review_definition(record.owner_email, event["eventKey"],
+                                            **({"learners": learners} if learners is not None else {}))
     if (not definition or str((definition.get("historicalReview") or {}).get("id")) != str(source["id"])
             or definition.get("instance", {}).get("learnerId") != profile.id
             or (not overlay and not definition.get("canInitialize"))
@@ -219,7 +228,7 @@ def preview(*, calendar_event_id, source_review_id, actor_id):
                     "dependencies": dependency_counts(record) if record else {}, "changes": []}
 
 
-def apply(*, calendar_event_id, source_review_id, actor_id, reason):
+def apply(*, calendar_event_id, source_review_id, actor_id, reason, validate_locked=None):
     actor = require_operator(actor_id)
     if not str(reason or "").strip():
         raise ReconciliationConflict("An explicit approval reason is required.")
@@ -239,6 +248,10 @@ def apply(*, calendar_event_id, source_review_id, actor_id, reason):
                         raise ReconciliationConflict("Booking already has another applied source.")
                     return {"status": "APPLIED", "id": current.pk, "idempotent": True}
             record, source, overlay, definition, _ = _inspect(calendar_event_id, source_review_id, lock=True)
+            # Explicit batch policies recheck their candidate set only after
+            # the canonical parent/Native/source locks, before any pair write.
+            if validate_locked is not None:
+                validate_locked(record, source)
             before = calendar_fingerprint(record)
             created = False
             if overlay is None:

@@ -18,7 +18,7 @@ from django.views.decorators.http import require_GET, require_POST
 from coach_api.auth import coach_access_required
 from coach_api.migrated_completion_views import _coach_review
 from coach_api.models import CoachCalendarEvent, ImportedReviewInstance
-from coach_api.migrated_reviews import meeting_summary_field
+from coach_api.migrated_reviews import SCHEDULED_WORK_STATUSES, meeting_summary_field
 from coach_api.migrated_summary_binding import answer_version, binding_state, populate_answer, preserve_original
 from coach_api.migrated_summary_generation import apply_suggestion, summary_binding_response
 from coach_api.migrated_template_sync import active_answers, snapshot_fingerprint
@@ -282,8 +282,8 @@ def migrated_review_summary(request, review_id):
     summary = normalize_meeting_summary_payload(payload["summary"], record.event_type)
     with transaction.atomic():
         locked = ImportedReviewInstance.objects.select_for_update().get(pk=overlay.pk)
-        if locked.status != ImportedReviewInstance.STATUS_IN_PROGRESS:
-            return JsonResponse({"detail": "Only in-progress migrated summaries can be edited."}, status=409)
+        if locked.status not in SCHEDULED_WORK_STATUSES:
+            return JsonResponse({"detail": "Only scheduled or in-progress migrated summaries can be edited."}, status=409)
         if snapshot_fingerprint(locked.template_snapshot) != snapshot_fingerprint(overlay.template_snapshot):
             return JsonResponse({"detail": "The review template changed. Reopen the review before editing its summary.", "code": "template_sync_changed"}, status=409)
         try:

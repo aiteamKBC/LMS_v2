@@ -13,7 +13,7 @@ from PIL import Image as PillowImage, UnidentifiedImageError
 from django.db import transaction
 from django.utils import timezone
 
-from .migrated_reviews import validate_answers
+from .migrated_reviews import SCHEDULED_WORK_STATUSES, validate_answers
 from .migrated_template_sync import active_answers, preserve_inactive_answers
 from .models import ImportedReviewInstance, MigratedReviewDocument, MigratedReviewSignature
 
@@ -53,8 +53,8 @@ def signature_states(overlay):
 
 
 def submit(overlay, answers):
-    if overlay.status != ImportedReviewInstance.STATUS_IN_PROGRESS:
-        raise ValueError("Only an in-progress migrated review can be submitted.")
+    if overlay.status not in SCHEDULED_WORK_STATUSES:
+        raise ValueError("Only a scheduled or in-progress migrated review can be submitted.")
     validate_answers(overlay.template_snapshot, answers, completing=True)
     overlay.signature_requirements = requirements_for_family(overlay.migrated_template.review_family)
     overlay.answers = preserve_inactive_answers(overlay.template_snapshot, overlay.answers or {}, answers)
