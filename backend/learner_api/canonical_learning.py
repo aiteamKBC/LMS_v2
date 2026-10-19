@@ -293,6 +293,12 @@ def entries_for(owner, *, overview_only=False, entry_ids=None, lineage_only=Fals
             item['expected_otjh'] = float(record['journal_planned_hours'])
             item['journal_planned_hours'] = float(record['journal_planned_hours'])
         loaded.append(item)
+    transfer_state = None
+    if owner.get('progress_transfer_active'):
+        from .progress_transfer_store import read_state
+        from .progress_transfer_policy import frozen_records
+        transfer_state = read_state(owner['enrolment_id'], include_records=True)
+        loaded = frozen_records(loaded, transfer_state, entry_ids=entry_ids)
     with projection_stage('ledger_reconcile'):
         current = current_records(owner, loaded)
     with projection_stage('ledger_completion'):
@@ -303,10 +309,8 @@ def entries_for(owner, *, overview_only=False, entry_ids=None, lineage_only=Fals
             # retained in the journal learner view only.
             for record in result:
                 record['completed'] = counts_as_completed(record)
-    if owner.get('progress_transfer_active'):
-        from .progress_transfer_store import read_state
-        from .progress_transfer_policy import frozen_records
-        result = frozen_records(result, read_state(owner['enrolment_id'], include_records=True), entry_ids=entry_ids)
+    if transfer_state is not None:
+        result = frozen_records(result, transfer_state, entry_ids=entry_ids)
     return result
 
 
@@ -830,6 +834,8 @@ def source_subjects(learner_id, summarize, *, owner=None, records=None, overview
         jsonb_build_object('quiz_id',a.source_payload->'quiz_id',
             'activity_id',a.source_payload->'activity_id','parent_activity_id',a.source_payload->'parent_activity_id',
             'section_title',a.source_payload->'section_title',
+            'section_order',coalesce(a.source_payload->'section_order',a.source_payload#>'{live_catalogue_recovery,section_order}'),
+            'component_order',coalesce(a.source_payload->'component_order',a.source_payload#>'{live_catalogue_recovery,component_order}'),
             'created_at',a.source_payload->'created_at','created_at_utc',a.source_payload->'created_at_utc') AS source_payload,
         EXISTS (SELECT 1 FROM curriculum.source_materials m
             WHERE m.material_id=a.source_material_id AND m.source_system=a.source_system

@@ -4,6 +4,7 @@ import { roleNavMap } from '@/mocks/navigation';
 
 import { loadSupportTickets, updateSupportTicket, ticketDate, TICKET_CATEGORIES, type SupportTicket } from '@/api/supportTickets';
 import { useAuth } from '@/hooks/useAuth';
+import TicketAttachments from '@/components/support/TicketAttachments';
 
 const supportConfig = roleNavMap.support;
 
@@ -179,6 +180,7 @@ export default function SupportTicketQueue() {
                 {/* Description */}
                 <div className="bg-background-100/70 rounded-lg p-3 mb-4">
                   <p className="text-[12px] text-foreground-600 leading-relaxed">{selectedTicket.description}</p>
+                  <TicketAttachments ticketId={selectedTicket.id} attachments={selectedTicket.attachments} staff />
                 </div>
 
                 <div className="flex items-center gap-2 mb-4">
@@ -199,6 +201,7 @@ export default function SupportTicketQueue() {
                           <span className="text-[9px] text-foreground-400">{ticketDate(r.timestamp)}</span>
                         </div>
                         <p className="text-[11px] text-foreground-600">{r.body}</p>
+                        <TicketAttachments ticketId={selectedTicket.id} attachments={r.attachments} staff />
                       </div>
                     ))}
                   </div>

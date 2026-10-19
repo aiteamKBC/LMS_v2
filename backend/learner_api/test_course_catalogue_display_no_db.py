@@ -9,6 +9,36 @@ from unittest.mock import Mock
 
 
 class CourseDisplayTests(unittest.TestCase):
+    def test_stored_section_identity_survives_different_upload_dates_and_missing_export(self):
+        for index, row in enumerate(self.definitions[:2]):
+            row.update(source_section_ref='12', source_section_title='Week 04: Delivery',
+                       source_payload={'section_order': 6 if index == 0 else None,
+                                       'component_order': index + 1, 'created_at': f'2026-09-{index + 1:02}'})
+        before = copy.deepcopy(self.definitions)
+        items = self.project([])
+        self.assertEqual([item['source_section']['id'] for item in items[:2]], ['12', '12'])
+        self.assertEqual([item['source_section']['order'] for item in items[:2]], [6, 6])
+        self.assertEqual([item['source_section']['component_order'] for item in items[:2]], [1, 2])
+        self.assertEqual(self.definitions, before)
+
+    def test_conflicting_and_foreign_section_metadata_cannot_merge_owned_content(self):
+        self.definitions[0].update(source_section_ref='1', source_section_title='Original')
+        items = self.project([self.placement(10, 'Other', 2), self.placement(20, 'Foreign', course=99)])
+        self.assertNotIn('source_section', items[0])
+        self.assertNotIn('source_section', items[2])
+        self.assertEqual(len(items), 4)
+
+    def test_section_zero_is_not_a_real_week_and_linked_pair_inherits_exact_section(self):
+        parent, quiz = self.definitions[:2]
+        parent.update(source_section_ref='0', source_payload={'quiz_id': 10}, material_available=True)
+        quiz.update(source_section_ref='7', source_section_title='Week 02: Principles',
+                    source_payload={'activity_id': 10, 'section_order': 4, 'component_order': 2})
+        items = self.project([])
+        self.assertEqual(items[0]['source_section'], items[1]['source_section'])
+        self.assertEqual(items[0]['source_section']['id'], '7')
+        quiz['source_payload']['activity_id'] = 99
+        self.assertNotIn('source_section', self.project([])[0])
+
     def setUp(self):
         self.scope = adapter(Mock())
         self.courses = [{'source_course_ref': '50', 'source_course_title': 'Course'}]

@@ -60,6 +60,7 @@ export interface ActivitySidebarProps {
 
 const ACTIVITY_TONES: Record<string, { background: string; border: string; color: string }> = {
   reading: { background: '#e8f4ff', border: '#bfdbfe', color: '#0369a1' },
+  'reading+quiz': { background: '#e8f4ff', border: '#bfdbfe', color: '#0369a1' },
   video: { background: '#f3e8ff', border: '#ddd6fe', color: '#7e22ce' },
   podcast: { background: '#fce7f3', border: '#fbcfe8', color: '#be185d' },
   quiz: { background: '#fff4d6', border: '#f5d98b', color: '#a16207' },
@@ -75,12 +76,13 @@ const ACTIVITY_TONES: Record<string, { background: string; border: string; color
 
 const ACTIVITY_LABELS: Record<string, string> = {
   reading: 'Reading', video: 'Video', podcast: 'Podcast', quiz: 'Quiz', assignment: 'Assignment',
+  'reading+quiz': 'Reading + Quiz',
   powerpoint: 'PowerPoint', reflection: 'Reflection', 'live-session': 'Live session', recording: 'Recording',
   evidence: 'Evidence', document: 'Document', activity: 'Activity',
 };
 
 function sidebarActivityMeta(component: JourneyComponent) {
-  const raw = component.isQuiz ? 'quiz' : String(component.type || '').trim().toLowerCase().replace(/[\s_]+/g, '-');
+  const raw = component.isQuiz ? 'quiz' : String(component.type || '').trim().toLowerCase().replace(/\s*\+\s*/g, '+').replace(/[\s_]+/g, '-');
   const key = raw === 'audio' ? 'podcast'
     : ['presentation', 'slides', 'ppt'].includes(raw) ? 'powerpoint'
       : ['live-session', 'live'].includes(raw) ? 'live-session'
@@ -92,7 +94,7 @@ function sidebarActivityMeta(component: JourneyComponent) {
   const label = ACTIVITY_LABELS[key];
   const titleIsLabel = titleMeta.label.trim().toLowerCase() === label.toLowerCase();
   const detail = titleMeta.detail || (!titleIsLabel ? component.title : null);
-  const resource = resourceTypeMeta(key.replace('-', ' '));
+  const resource = resourceTypeMeta(key === 'reading+quiz' ? 'reading' : key.replace('-', ' '));
   return { key, label, detail, icon: resource.icon, tone: ACTIVITY_TONES[key] };
 }
 
@@ -134,15 +136,15 @@ export function ActivitySidebar({
   // Moving to another activity collapses the list: what was expanded belonged
   // to the page the learner was reading, not the one they opened.
   useEffect(() => {
-    setExpandedWeek(null);
-  }, [currentComponentId, currentQuizId]);
+    if (!onSelectWeek) setExpandedWeek(null);
+  }, [currentComponentId, currentQuizId, onSelectWeek]);
 
   const weekDoneCount = weekComponents.filter((c) => isComponentComplete(c, completedIds)).length;
   const activeWeekIndex = weeks.findIndex((w) => w.active);
-  const currentWeekLabel = activeWeekIndex < 0 ? weekTitle : weekDisplayLabel(weeks, activeWeekIndex);
+  const currentWeekLabel = currentWeekKey !== undefined || activeWeekIndex < 0 ? weekTitle : weekDisplayLabel(weeks, activeWeekIndex);
   const isCurrentWeek = (week: SidebarWeek) => currentWeekKey === undefined ? week.active : week.key === currentWeekKey;
   const weekHeading = currentWeekKey === null ? 'Week activities'
-    : currentWeekKey === undefined || weeks.some(week => week.active && isCurrentWeek(week)) ? 'Current week' : 'Selected week';
+    : 'Current week';
   const contentAvailableFor = canOpen || hasComponentContent;
   const openableFor = canOpen || ((c: JourneyComponent) => hasComponentContent(c) && isNavigableComponent(c));
   const hasUnavailableContent = weekComponents.some((c) => !contentAvailableFor(c));
@@ -272,7 +274,7 @@ export function ActivitySidebar({
               // week can be opened, whether or not its activities can be
               // started yet.
               const viewable = !!onSelectWeek || w.count > 0;
-              const expanded = !onSelectWeek && viewable && weekKey === expandedWeek;
+              const expanded = viewable && weekKey === expandedWeek;
               const weekNote = w.weekId ? holidayNotes.get(w.weekId) : undefined;
               return (
                 <li key={weekKey}>
@@ -280,9 +282,12 @@ export function ActivitySidebar({
                   <button
                     disabled={!viewable}
                     aria-label={`${weekDisplayLabel(weeks, index)}, ${w.count} components${isCurrentWeek(w) ? ', Current' : weekComplete ? ', Done' : ''}`}
-                    aria-expanded={!onSelectWeek && viewable ? expanded : undefined}
+                    aria-expanded={viewable ? expanded : undefined}
                     aria-current={onSelectWeek && w.active ? 'step' : undefined}
-                    onClick={() => onSelectWeek ? onSelectWeek(w) : setExpandedWeek(toggleExpandedWeek(expandedWeek, weekKey))}
+                    onClick={() => {
+                      setExpandedWeek(toggleExpandedWeek(expandedWeek, weekKey));
+                      if (!w.count) onSelectWeek?.(w);
+                    }}
                     className={`w-full flex items-center gap-2.5 px-4 py-2.5 text-left transition-colors ${
                       !viewable
                         ? 'cursor-not-allowed bg-primary-50/70 opacity-55'
@@ -318,7 +323,7 @@ export function ActivitySidebar({
                       <AppIcon className="ri-lock-line shrink-0 text-sm text-foreground-400" />
                     ) : (
                       <AppIcon
-                        className={`shrink-0 text-sm text-primary-500 ri-arrow-${onSelectWeek ? 'right' : expanded ? 'up' : 'down'}-s-line`}
+                        className={`shrink-0 text-sm text-primary-500 ri-arrow-${expanded ? 'up' : 'down'}-s-line`}
                       />
                     )}
                   </button>

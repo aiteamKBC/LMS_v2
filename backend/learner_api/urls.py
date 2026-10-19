@@ -42,8 +42,10 @@ from .session_recovery import link_catchup
 urlpatterns = [
     path('support/tickets/', support_tickets.learner_tickets),
     path('support/tickets/<uuid:ticket_id>/', support_tickets.learner_ticket),
+    path('support/tickets/<uuid:ticket_id>/attachments/<uuid:attachment_id>/', support_tickets.learner_attachment),
     path('support/queue/', support_tickets.staff_tickets),
     path('support/queue/<uuid:ticket_id>/', support_tickets.staff_ticket),
+    path('support/queue/<uuid:ticket_id>/attachments/<uuid:attachment_id>/', support_tickets.staff_attachment),
     path('progress-transfer/requests/', progress_transfer.admin_requests),
     path('progress-transfer/requests/<uuid:request_id>/', progress_transfer.admin_requests),
     path('progress-transfer/<str:kind>/<int:pk>/', progress_transfer.learner_request),

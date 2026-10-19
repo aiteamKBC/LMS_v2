@@ -18,6 +18,24 @@ function Location() { return <output data-testid="location">{useLocation().pathn
 afterEach(() => vi.restoreAllMocks());
 
 describe('module activity sidebar', () => {
+  it('expands catalogue weeks in place without replacing the current week or navigating', () => {
+    const select = vi.fn();
+    render(<MemoryRouter><ActivitySidebar weekComponents={weeks[5].components} weekTitle="Week 6" moduleTitle="Module"
+      weeks={weeks} completedIds={new Set()} currentComponentId="C6" currentWeekKey="W6"
+      onSelectWeek={select} routeFor={c => `/activity/${c.componentId}`} /><Location /></MemoryRouter>);
+    const button = screen.getByRole('button', { name: /^Week 9\b/ });
+    fireEvent.click(button);
+    expect(button).toHaveAttribute('aria-expanded', 'true');
+    expect(within(button.closest('li')!).getByRole('button', { name: /Lesson 9/ })).toBeVisible();
+    expect(screen.getByRole('heading', { name: 'Week 6' })).toBeVisible();
+    expect(screen.getByRole('button', { name: /Lesson 6/ })).toBeVisible();
+    expect(select).not.toHaveBeenCalled();
+    expect(screen.getByTestId('location')).toHaveTextContent('/');
+    fireEvent.click(button);
+    expect(button).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.queryByRole('button', { name: /Lesson 9/ })).not.toBeInTheDocument();
+  });
+
   it('shows a colour key and distinct type colours for the activity icons', () => {
     const mixed: SidebarWeek[] = [{ key: 'W1', week: 'Week 1', count: 2, completed: 0, active: true, components: [
       { title: 'Reading material', componentId: 'READ', type: 'reading', expectedOtjh: 1, contentHtml: '<p>Read</p>' },

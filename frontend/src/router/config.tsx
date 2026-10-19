@@ -275,6 +275,7 @@ const SafeguardingQAAudit = lazyRoute(() => import("@/pages/safeguarding/qa-audi
 const SafeguardingReferrals = lazyRoute(() => import("@/pages/safeguarding/referrals/page"));
 const SafeguardingReports = lazyRoute(() => import("@/pages/safeguarding/reports/page"));
 const SessionCalendarPage = lazyRoute(() => import("../pages/curriculum/session-calendar/page"));
+const ProgressTransfersPage = lazyRoute(() => import("../pages/curriculum/progress-transfers/page"));
 const StarredMessagesPage = lazyRoute(() => import("../pages/starred-messages/page"));
 const SupportDashboard = lazyRoute(() => import("@/pages/workspace/support/page"));
 const SupportEscalations = lazyRoute(() => import("@/pages/support/escalations/page"));
@@ -1106,6 +1107,10 @@ const routes: RouteObject[] = [
   {
     path: "/curriculum/bulk-attendance",
     element: <CurriculumBulkAttendance />,
+  },
+  {
+    path: "/curriculum/progress-transfers",
+    element: <ProgressTransfersPage />,
   },
   {
     path: "/curriculum/quality",
