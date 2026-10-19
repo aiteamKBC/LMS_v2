@@ -7,7 +7,6 @@ import { CardGridSkeleton } from '@/components/feature/Skeletons';
 import { ProgrammeFormDrawer } from '@/pages/curriculum/shared/entities/forms';
 import { WEEKEND_DAYS, WEEKEND_HINT } from '@/pages/curriculum/shared/entities/ui';
 import { CurriculumStructureWizard, type StructureWizardCreated, type StructureWizardRecordStep } from '@/pages/curriculum/shared/entities/structureWizard';
-import { ensureSharedEmptyKsbProfile, SHARED_EMPTY_KSB_PROFILE_NAME } from '@/pages/curriculum/shared/entities/programmeKsbProfile';
 import { formatProgrammeLevel, sortEntities, visibleNotes, PROGRAMME_SORT_OPTIONS } from '@/pages/curriculum/shared/entities/model';
 import { SelectMenu } from '@/components/feature/SelectField';
 import { showCurriculumAlert, showCurriculumConfirm } from '@/components/feature/CurriculumSweetAlert';
@@ -935,33 +934,10 @@ export default function CurriculumProgrammes() {
     })().catch(err => console.warn('Unable to refresh KSB Source state after unapply.', err));
   };
 
-  // Park a programme on the one shared empty profile, so it has a source at all
-  // while its real standard is still to be authored. One profile, not one per
-  // programme: the same placeholder is reused, and the assignment goes through
-  // the ordinary apply path so linking and the module cascade behave identically.
-  const [parkingKsbProfileFor, setParkingKsbProfileFor] = useState('');
-  const assignSharedEmptyKsbProfile = async (programme: CurriculumProgramme) => {
-    const key = programme.sourceId || programme.id;
-    setParkingKsbProfileFor(key);
-    try {
-      const { frameworkId, sets } = await ensureSharedEmptyKsbProfile(ksbSets, fetchCurriculumKsbSetSummaries);
-      setKsbSets(sets);
-      await applyProgrammeKsbSource(programme, `profile:${frameworkId}`, { sets });
-    } catch (err) {
-      await showProgrammeSwalToast(
-        'Unable to assign the empty KSB profile',
-        err instanceof Error ? err.message : 'The empty KSB profile could not be assigned.',
-        'error',
-      );
-    } finally {
-      setParkingKsbProfileFor('');
-    }
-  };
-
   // A new programme has no KSB source, and cannot be mapped or measured without
-  // one. So the create hands it straight to the picker — where the shared empty
-  // profile is one of the options — rather than leaving the reader to notice the
-  // gap on the card later. An edit passes nothing and changes nothing.
+  // one. So the create hands it straight to the picker rather than leaving the
+  // reader to notice the gap on the card later. An edit passes nothing and
+  // changes nothing.
   const handleProgrammeSaved = async (result?: { programme: CurriculumProgramme }) => {
     // On the list before the rebuild comes back: the card is the confirmation
     // that the programme exists, and waiting for a multi-table refresh to prove
@@ -1163,51 +1139,26 @@ export default function CurriculumProgrammes() {
                 </p>
                 <p className="mt-0.5 text-[12px] leading-5 text-amber-800">
                   {programmesWithEmptyKsbSource.length === programmesMissingKsbSource.length
-                    ? `Their applied source holds no KSB codes. Author each programme’s real knowledge, skills and behaviours on the KSB Frameworks page and apply that profile — while they sit on “${SHARED_EMPTY_KSB_PROFILE_NAME}” there is nothing for their modules to map to and coverage stays at 0%.`
+                    ? 'Their applied source holds no KSB codes. Apply each programme’s GOV.UK standard — until then there is nothing for their modules to map to and coverage stays at 0%.'
                     : 'Until a KSB source is applied and filled in there are no codes for their modules to map to, coverage stays at 0% and learner KSB progress cannot be measured.'}
                 </p>
               </div>
             </div>
             <div className="flex shrink-0 flex-wrap items-center gap-1.5">
-              {/* A programme with no source can be parked on the shared empty
-                  profile here; one already parked there needs a real profile
-                  authored, which is a different page. */}
-              {programmesWithEmptyKsbSource.length > 0 && (
-                <button
-                  type="button"
-                  onClick={() => navigate('/curriculum/ksb-frameworks')}
-                  className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-amber-400 bg-white px-2.5 text-[11px] font-bold text-amber-900 transition-smooth hover:bg-amber-100"
-                >
-                  <AppIcon className="ri-list-check-2 text-sm"></AppIcon>
-                  Author a KSB profile
-                </button>
-              )}
               {programmesMissingKsbSource
                 .filter(entry => !entry.source?.value)
                 .slice(0, MISSING_KSB_SOURCE_SHORTCUTS)
                 .map(({ programme }) => (
-                  <span key={programme.id} className="inline-flex items-center gap-1.5">
-                    <button
-                      type="button"
-                      disabled={Boolean(parkingKsbProfileFor)}
-                      title={`Park ${programme.name} on the shared "${SHARED_EMPTY_KSB_PROFILE_NAME}" until its real standard is authored.`}
-                      onClick={() => void assignSharedEmptyKsbProfile(programme)}
-                      className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-[#9D6912] px-2.5 text-[11px] font-bold text-white transition-smooth hover:bg-[#80550E] disabled:cursor-not-allowed disabled:opacity-60"
-                    >
-                      <AppIcon className={parkingKsbProfileFor === (programme.sourceId || programme.id)
-                        ? 'ri-loader-4-line animate-spin text-sm'
-                        : 'ri-add-line text-sm'}></AppIcon>
-                      Assign empty profile to {programme.name}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setApplyProgramme(programme)}
-                      className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-amber-400 bg-white px-2.5 text-[11px] font-bold text-amber-900 transition-smooth hover:bg-amber-100"
-                    >
-                      <AppIcon className="ri-node-tree text-sm"></AppIcon>
-                      Choose a source
-                    </button>
-                  </span>
+                  <button
+                    key={programme.id}
+                    type="button"
+                    title={`Apply the GOV.UK standard for ${programme.name}.`}
+                    onClick={() => setApplyProgramme(programme)}
+                    className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-amber-400 bg-white px-2.5 text-[11px] font-bold text-amber-900 transition-smooth hover:bg-amber-100"
+                  >
+                    <AppIcon className="ri-node-tree text-sm"></AppIcon>
+                    Choose a source
+                  </button>
                 ))}
               {programmesMissingKsbSource.length > MISSING_KSB_SOURCE_SHORTCUTS && (
                 <span className="text-[11px] font-bold text-amber-800">
@@ -1608,7 +1559,6 @@ export default function CurriculumProgrammes() {
         {applyProgramme && (
           <ApplyProgrammeKsbSourceModal
             programme={applyProgramme}
-            ksbSets={ksbSets}
             standards={standards}
             sourcesLoading={ksbSourcesLoading}
             sourcesError={ksbSourcesError}
@@ -2205,7 +2155,6 @@ function ProgrammeKsbSourceColumn({ title, count, items, tone }: { title: string
 
 function ApplyProgrammeKsbSourceModal({
   programme,
-  ksbSets,
   standards,
   sourcesLoading,
   sourcesError,
@@ -2217,7 +2166,6 @@ function ApplyProgrammeKsbSourceModal({
   onRetry,
 }: {
   programme: CurriculumProgramme;
-  ksbSets: ProgrammeKsbSet[];
   standards: CurriculumStandard[];
   sourcesLoading: boolean;
   sourcesError: string | null;
@@ -2228,20 +2176,13 @@ function ApplyProgrammeKsbSourceModal({
   onUnapply: () => void;
   onRetry: () => void;
 }) {
-  const [sourceKind, setSourceKind] = useState<'profile' | 'standard'>(currentSource.kind === 'standard' ? 'standard' : 'profile');
-  const profileOptions = useMemo(() => ksbSets.map(set => ({
-    value: `profile:${ksbSourceIdForProgrammeCard(set)}`,
-    title: set.standard || set.programmeName || 'KSB profile',
-    subtitle: `${set.programmeName || 'No programme'} - ${ksbSetCount(set)} KSBs`,
-    detail: ksbSetCountsLabel(set),
-  })).filter(option => option.value !== 'profile:'), [ksbSets]);
-  const standardOptions = useMemo(() => standards.map(standard => ({
+  // KSBs come from the GOV.UK standards only: manual profiles are not offered.
+  const options = useMemo(() => standards.map(standard => ({
     value: `standard:${standard.id}`,
     title: standard.name,
     subtitle: `${standard.code || standard.standardRef || 'Standard'} - ${standard.level || 'Level not set'}`,
     detail: `${standard.knowledge || 0} K / ${standard.skills || 0} S / ${standard.behaviours || 0} B`,
   })), [standards]);
-  const options = sourceKind === 'profile' ? profileOptions : standardOptions;
   // Only a source that is genuinely applied may start selected. Pre-selecting a
   // name-match guess (or the first option) made programmes with no applied KSB
   // Source open this modal looking like a source had already been chosen, while
@@ -2252,7 +2193,7 @@ function ApplyProgrammeKsbSourceModal({
   const [selectedSource, setSelectedSource] = useState(appliedSelection);
   useEffect(() => {
     setSelectedSource(appliedSelection);
-  }, [appliedSelection, sourceKind]);
+  }, [appliedSelection]);
   const selectedOption = options.find(option => option.value === selectedSource);
   const selectedIsCurrent = Boolean(currentSource.value && selectedSource === currentSource.value);
 
@@ -2268,20 +2209,13 @@ function ApplyProgrammeKsbSourceModal({
           <div>
             <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-primary-200">Apply KSB Source</p>
             <h3 className="mt-2 text-xl font-heading font-bold text-white">{programme.name}</h3>
-            <p className="mt-1 text-[12px] font-semibold text-white/70">Choose the profile or standard this programme must be measured against.</p>
+            <p className="mt-1 text-[12px] font-semibold text-white/70">Choose the GOV.UK standard this programme must be measured against.</p>
           </div>
           <button type="button" onClick={onClose} className="flex h-9 w-9 items-center justify-center rounded-xl bg-white/10 text-white transition-smooth hover:bg-white/15" aria-label="Close KSB Source">
             <AppIcon className="ri-close-line text-lg"></AppIcon>
           </button>
         </div>
         <div className="min-h-0 flex-1 overflow-auto p-5">
-          <div className="mb-4 grid grid-cols-2 gap-1 rounded-xl bg-background-100 p-1">
-            {(['profile', 'standard'] as const).map(kind => (
-              <button key={kind} type="button" onClick={() => setSourceKind(kind)} className={`h-10 rounded-lg text-[12px] font-black transition-smooth ${sourceKind === kind ? 'bg-background-50 text-foreground-950 shadow-sm' : 'text-foreground-500 hover:text-foreground-800'}`}>
-                {kind === 'profile' ? 'KSB profile' : 'KSB standard'}
-              </button>
-            ))}
-          </div>
           <div className="grid gap-3">
             {options.map(option => {
               const selected = option.value === selectedSource;
@@ -2320,7 +2254,7 @@ function ApplyProgrammeKsbSourceModal({
             )}
             {!sourcesLoading && !sourcesError && !options.length && (
               <div className="rounded-xl border border-dashed border-foreground-200 bg-background-100 p-6 text-center">
-                <p className="text-sm font-bold text-foreground-800">No {sourceKind === 'profile' ? 'KSB profiles' : 'KSB standards'} available</p>
+                <p className="text-sm font-bold text-foreground-800">No KSB standards available</p>
                 <p className="mt-1 text-[12px] text-foreground-500">Add the source first, then come back to apply it to this programme.</p>
               </div>
             )}
@@ -2334,8 +2268,10 @@ function ApplyProgrammeKsbSourceModal({
           {!selectedOption && options.length > 0 && (
             <div className="mt-4 rounded-xl border border-amber-100 bg-amber-50 px-4 py-3 text-[12px] font-semibold text-amber-800">
               {currentSource.value
-                ? `The applied KSB Source for this programme is a ${currentSource.kind === 'standard' ? 'KSB standard' : 'KSB profile'}. Switch tabs to see it, or pick a ${sourceKind === 'profile' ? 'KSB profile' : 'KSB standard'} to replace it.`
-                : `No KSB Source is applied to this programme yet. Select a ${sourceKind === 'profile' ? 'KSB profile' : 'KSB standard'} above to apply one.`}
+                ? (currentSource.kind === 'standard'
+                  ? 'The applied KSB standard is not in this list. Pick a KSB standard to replace it.'
+                  : 'This programme still applies a manual KSB profile, which is no longer used. Pick its KSB standard to replace it.')
+                : 'No KSB Source is applied to this programme yet. Select a KSB standard above to apply one.'}
             </div>
           )}
         </div>

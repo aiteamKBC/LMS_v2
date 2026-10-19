@@ -6,6 +6,7 @@ import type { ReactNode } from 'react';
 import type {
   CurriculumCohort,
   CurriculumComponent,
+  CurriculumComponentSummaryRow,
   CurriculumGroup,
   CurriculumModule,
   CurriculumProgramme,
@@ -136,6 +137,35 @@ const components = [
   },
 ] as unknown as CurriculumComponent[];
 
+/**
+ * What /components/summary/ answers for a component list: the server's
+ * buckets, written out here independently of the page, so the Overview is
+ * tested against the same input whichever of the two reads it was built from.
+ */
+function summaryOf(rows: CurriculumComponent[]): CurriculumComponentSummaryRow[] {
+  const buckets = new Map<string, CurriculumComponentSummaryRow>();
+  rows.forEach(row => {
+    const moduleCatalogueId = String(row.moduleCatalogueId || '');
+    const key = [moduleCatalogueId, row.weekId || '', row.week, row.weekTitle, row.module, row.programme].join('|');
+    const bucket = buckets.get(key) || {
+      moduleCatalogueId, moduleId: String(row.moduleId || moduleCatalogueId), weekId: String(row.weekId || ''),
+      week: String(row.week || ''), weekTitle: String(row.weekTitle || ''), module: String(row.module || ''),
+      programme: String(row.programme || ''), count: 0, publishedCount: 0, otjhMinutes: 0,
+      displayOrder: null, title: '',
+    };
+    bucket.count += 1;
+    bucket.publishedCount += row.status === 'published' ? 1 : 0;
+    bucket.otjhMinutes += Math.max(0, Math.round((Number(row.expectedOtjh) || 0) * 60));
+    const order = Number(row.displayOrder ?? 0);
+    if (bucket.displayOrder === null || order < bucket.displayOrder) {
+      bucket.displayOrder = order;
+      bucket.title = String(row.title || '');
+    }
+    buckets.set(key, bucket);
+  });
+  return [...buckets.values()];
+}
+
 vi.mock('@/components/feature/WorkspaceShell', () => ({
   WorkspaceShell: ({ children }: { children: ReactNode }) => <div>{children}</div>,
 }));
@@ -177,6 +207,7 @@ vi.mock('@/lib/curriculumApi', async importOriginal => ({
   })),
   fetchProgrammeKsbStats: vi.fn(async () => ({ programmeId: 'PROG-DATA' })),
   fetchCurriculumComponents: vi.fn(async () => components),
+  fetchCurriculumComponentSummary: vi.fn(async () => summaryOf(components)),
   fetchCurriculumProgrammes: vi.fn(async () => [programme]),
   fetchCurriculumCoaches: vi.fn(async () => [{ id: 1, name: 'Coach One' }, { id: 2, name: 'Coach Two' }]),
   fetchCurriculumTutors: vi.fn(async () => [{ id: 3, name: 'Tutor One' }]),
@@ -190,7 +221,27 @@ vi.mock('@/lib/curriculumApi', async importOriginal => ({
   fetchCurriculumScopeLearnerRoster: vi.fn(async () => ({ assignedLearners: [] })),
   fetchCurriculumProgrammeLearnerKsbImpact: vi.fn(async () => null),
   fetchProgrammeReviews: vi.fn(async () => []),
+  // Inert like the real one; a test that needs a remote write captures the listener.
+  subscribeCurriculumRemoteWrites: vi.fn(() => () => {}),
 }));
+
+/**
+ * Moves the clock the page reads its return-refresh interval from. Restored by
+ * the returned function; the timers themselves keep running for real.
+ */
+function skewClock() {
+  const realNow = Date.now.bind(Date);
+  let skew = 0;
+  const spy = vi.spyOn(Date, 'now').mockImplementation(() => realNow() + skew);
+  return {
+    advance(ms: number) { skew += ms; },
+    restore() { spy.mockRestore(); },
+  };
+}
+
+async function returnToTab() {
+  await act(async () => { window.dispatchEvent(new Event('focus')); });
+}
 
 /** The page reads the detail document in two parts; serve both from one document. */
 function mockProgrammeDetailOnce(api: typeof import('@/lib/curriculumApi'), detail: CurriculumProgrammeDetail) {
@@ -251,14 +302,18 @@ describe('Programme workspace', { timeout: 15000 }, () => {
     let finishStats!: (value: Awaited<ReturnType<typeof api.fetchProgrammeKsbStats>>) => void;
     vi.mocked(api.fetchProgrammeKsbStats).mockImplementationOnce(() => new Promise(resolve => { finishStats = resolve; }));
     await renderWorkspace();
-    await vi.waitFor(() => expect(api.fetchCurriculumComponents).toHaveBeenCalledTimes(1));
+    // The Overview's figures come from the summary; the full component list is
+    // left for a tab that lists components.
+    await vi.waitFor(() => expect(api.fetchCurriculumComponentSummary).toHaveBeenCalledTimes(1));
+    expect(api.fetchCurriculumComponents).not.toHaveBeenCalled();
     expect(api.fetchCurriculumCoaches).not.toHaveBeenCalled();
     expect(api.fetchCurriculumTutors).not.toHaveBeenCalled();
     expect(api.fetchCurriculumHolidays).not.toHaveBeenCalled();
     expect(api.fetchCurriculumKsbFrameworks).not.toHaveBeenCalled();
     expect(api.fetchCurriculumKsbSets).not.toHaveBeenCalled();
     await act(async () => finishStats({ programmeId: 'PROG-DATA' } as Awaited<ReturnType<typeof api.fetchProgrammeKsbStats>>));
-    expect(api.fetchCurriculumComponents).toHaveBeenCalledTimes(1);
+    expect(api.fetchCurriculumComponentSummary).toHaveBeenCalledTimes(1);
+    expect(api.fetchCurriculumComponents).not.toHaveBeenCalled();
     await openTab(/Groups/);
     await vi.waitFor(() => expect(api.fetchCurriculumCoaches).toHaveBeenCalledTimes(1));
     expect(api.fetchCurriculumComponents).toHaveBeenCalledTimes(1);
@@ -273,11 +328,167 @@ describe('Programme workspace', { timeout: 15000 }, () => {
     const api = await import('@/lib/curriculumApi');
     vi.clearAllMocks();
     await renderWorkspace();
+    await vi.waitFor(() => expect(api.fetchCurriculumComponentSummary).toHaveBeenCalledTimes(1));
+    // A tab that lists components has asked for the full list, so a return
+    // refreshes both reads. (One return: the hook throttles a second.)
+    await openTab(/Modules/);
     await vi.waitFor(() => expect(api.fetchCurriculumComponents).toHaveBeenCalledTimes(1));
-    await act(async () => { window.dispatchEvent(new Event('focus')); });
-    await vi.waitFor(() => expect(api.fetchCurriculumComponents).toHaveBeenCalledTimes(2));
+    // Past the quiet spell that follows the first load.
+    const clock = skewClock();
+    try {
+      clock.advance(31_000);
+      await returnToTab();
+      await vi.waitFor(() => expect(api.fetchCurriculumComponents).toHaveBeenCalledTimes(2));
+      await vi.waitFor(() => expect(api.fetchCurriculumComponentSummary).toHaveBeenCalledTimes(2));
+    } finally {
+      clock.restore();
+    }
     expect(api.fetchCurriculumComponents).toHaveBeenLastCalledWith(expect.anything(), expect.objectContaining({ revalidate: true }));
+    expect(api.fetchCurriculumComponentSummary).toHaveBeenLastCalledWith(expect.anything(), expect.objectContaining({ revalidate: true }));
     expect(api.fetchProgrammeKsbStats).toHaveBeenLastCalledWith('PROG-DATA', undefined, expect.objectContaining({ revalidate: true }));
+  });
+
+  it('does not re-read on a return within 30 seconds of the last read', async () => {
+    const api = await import('@/lib/curriculumApi');
+    vi.clearAllMocks();
+    await renderWorkspace();
+    await vi.waitFor(() => expect(api.fetchCurriculumComponentSummary).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect(api.fetchCurriculumScopeLearnerRoster).toHaveBeenCalledTimes(1));
+    const clock = skewClock();
+    try {
+      // Clicking between DevTools and the page: a burst of returns, seconds apart.
+      for (let i = 0; i < 5; i += 1) {
+        clock.advance(5_000);
+        await returnToTab();
+      }
+      expect(api.fetchCurriculumProgrammeDetailShell).toHaveBeenCalledTimes(1);
+      expect(api.fetchCurriculumProgrammeDetailModules).toHaveBeenCalledTimes(1);
+      expect(api.fetchProgrammeKsbStats).toHaveBeenCalledTimes(1);
+      expect(api.fetchCurriculumComponentSummary).toHaveBeenCalledTimes(1);
+      expect(api.fetchCurriculumScopeLearnerRoster).toHaveBeenCalledTimes(1);
+      // 30s after the first load settled: exactly one round.
+      clock.advance(6_000);
+      await returnToTab();
+      await vi.waitFor(() => expect(api.fetchCurriculumComponentSummary).toHaveBeenCalledTimes(2));
+      expect(api.fetchCurriculumProgrammeDetailShell).toHaveBeenCalledTimes(2);
+      expect(api.fetchCurriculumProgrammeDetailModules).toHaveBeenCalledTimes(2);
+      expect(api.fetchProgrammeKsbStats).toHaveBeenCalledTimes(2);
+      await vi.waitFor(() => expect(api.fetchCurriculumScopeLearnerRoster).toHaveBeenCalledTimes(2));
+    } finally {
+      clock.restore();
+    }
+  });
+
+  it('does not start a second round on a return while one is still in flight', async () => {
+    const api = await import('@/lib/curriculumApi');
+    vi.clearAllMocks();
+    await renderWorkspace();
+    await vi.waitFor(() => expect(api.fetchCurriculumComponentSummary).toHaveBeenCalledTimes(1));
+    let finishModules!: (value: { schema: string; flat: { modules: CurriculumModule[]; sessions: CurriculumSession[] } }) => void;
+    vi.mocked(api.fetchCurriculumProgrammeDetailModules).mockImplementationOnce(() => new Promise(resolve => { finishModules = resolve; }));
+    const clock = skewClock();
+    try {
+      clock.advance(31_000);
+      await returnToTab();
+      expect(api.fetchCurriculumProgrammeDetailShell).toHaveBeenCalledTimes(2);
+      // The modules are still on their way: later returns, however far apart, wait.
+      clock.advance(60_000);
+      await returnToTab();
+      clock.advance(60_000);
+      await returnToTab();
+      expect(api.fetchCurriculumProgrammeDetailShell).toHaveBeenCalledTimes(2);
+      expect(api.fetchCurriculumProgrammeDetailModules).toHaveBeenCalledTimes(2);
+      await act(async () => { finishModules({ schema: 'test', flat: { modules, sessions: [] } }); });
+      // The modules stay on screen through the silent read, with no skeleton left behind.
+      expect(screen.getByRole('heading', { name: 'Data Analyst' })).toBeInTheDocument();
+      expect(screen.queryByRole('status', { name: 'Loading modules count' })).not.toBeInTheDocument();
+    } finally {
+      clock.restore();
+    }
+  });
+
+  it('keeps the newer read when an older one answers last', async () => {
+    const api = await import('@/lib/curriculumApi');
+    vi.clearAllMocks();
+    const listeners: Array<(path: string) => void> = [];
+    vi.mocked(api.subscribeCurriculumRemoteWrites).mockImplementation(listener => {
+      listeners.push(listener);
+      return () => {};
+    });
+    await renderWorkspace();
+    await vi.waitFor(() => expect(api.fetchCurriculumComponentSummary).toHaveBeenCalledTimes(1));
+    let finishStaleShell!: (value: Awaited<ReturnType<typeof api.fetchCurriculumProgrammeDetailShell>>) => void;
+    vi.mocked(api.fetchCurriculumProgrammeDetailShell)
+      .mockImplementationOnce(() => new Promise(resolve => { finishStaleShell = resolve; }))
+      .mockResolvedValueOnce({ schema: 'test', programme: { ...programme, name: 'Data Analyst Renamed' }, flat: { cohorts, groups, groupIds: ['GROUP-1'], weekTemplates: [] } } as never);
+    const clock = skewClock();
+    try {
+      clock.advance(31_000);
+      await returnToTab();
+      // A write from elsewhere lands while the return read is still out.
+      await act(async () => { listeners.forEach(listener => listener('*')); });
+      expect(await screen.findByRole('heading', { name: 'Data Analyst Renamed' })).toBeInTheDocument();
+      await act(async () => {
+        finishStaleShell({ schema: 'test', programme, flat: { cohorts, groups, groupIds: ['GROUP-1'], weekTemplates: [] } } as never);
+      });
+      expect(screen.getByRole('heading', { name: 'Data Analyst Renamed' })).toBeInTheDocument();
+      expect(screen.queryByRole('heading', { name: 'Data Analyst' })).not.toBeInTheDocument();
+    } finally {
+      clock.restore();
+      vi.mocked(api.subscribeCurriculumRemoteWrites).mockImplementation(() => () => {});
+    }
+  });
+
+  it('shows the same Overview figures from the component summary as from the full component list', async () => {
+    const api = await import('@/lib/curriculumApi');
+    vi.clearAllMocks();
+    const base = components[0];
+    const authored = [
+      { ...base, id: 'A-1', weekId: 'W-1', week: 'Week 1', weekTitle: 'Getting started', expectedOtjh: 0.33, status: 'published', displayOrder: 2 },
+      { ...base, id: 'A-2', weekId: 'W-1', week: 'Week 1', weekTitle: 'Getting started', expectedOtjh: 0.33, status: 'draft', displayOrder: 1 },
+      { ...base, id: 'A-3', weekId: 'W-3', week: 'Week 3', weekTitle: 'Week 3', expectedOtjh: 0.025, status: 'draft', displayOrder: 1 },
+      // No authored week matches: placed by the number in its label.
+      { ...base, id: 'A-4', weekId: 'W-GONE', week: 'Week 5', weekTitle: 'Week 5', expectedOtjh: 1.5, status: 'published', displayOrder: 1 },
+      // Another module's component never counts here.
+      { ...base, id: 'X-1', moduleCatalogueId: 'MOD-OTHER', moduleId: 'MOD-OTHER', expectedOtjh: 50, status: 'published' },
+    ] as unknown as CurriculumComponent[];
+    const outlined = [{
+      ...modules[0],
+      weeks: 3,
+      weekStructure: [
+        { id: 'W-1', weekNumber: 1, title: 'Getting started' },
+        { id: 'W-2', weekNumber: 2, title: 'An empty week' },
+        { id: 'W-3', weekNumber: 3, title: '' },
+      ],
+    }] as unknown as CurriculumModule[];
+    mockProgrammeDetailOnce(api, {
+      schema: 'test', programme, cohorts: [],
+      flat: { cohorts, groups, groupIds: ['GROUP-1'], modules: outlined, sessions: [], components: [] },
+    });
+    vi.mocked(api.fetchCurriculumComponentSummary).mockResolvedValueOnce(summaryOf(authored));
+    vi.mocked(api.fetchCurriculumComponents).mockResolvedValueOnce(authored);
+
+    await renderWorkspace();
+    const readiness = () => screen.getByText('Authored OTJH').parentElement?.parentElement?.textContent;
+    // 4 weeks (1, 2, 3 and the label-placed 5); 4 components; 20+20+2+90 minutes.
+    await vi.waitFor(() => expect(readiness()).toContain('Components4'));
+    const fromSummary = {
+      readiness: readiness(),
+      hero: screen.getByText(/\d+ components$/).textContent,
+      empty: screen.getByText(/weeks? (has|have) no content/).textContent,
+    };
+    expect(fromSummary.readiness).toContain('Weeks4');
+    expect(fromSummary.readiness).toContain('Authored OTJH2h 12m');
+    expect(fromSummary.hero).toBe('4 components');
+    expect(fromSummary.empty).toBe('1 week has no content');
+    expect(api.fetchCurriculumComponents).not.toHaveBeenCalled();
+
+    await openTab(/Modules/);
+    await vi.waitFor(() => expect(api.fetchCurriculumComponents).toHaveBeenCalledTimes(1));
+    await openTab(/Overview/);
+    await vi.waitFor(() => expect(readiness()).toBe(fromSummary.readiness));
+    expect(screen.getByText(/\d+ components$/).textContent).toBe(fromSummary.hero);
+    expect(screen.getByText(/weeks? (has|have) no content/).textContent).toBe(fromSummary.empty);
   });
 
   it('loads holiday choices only for the editor and offers retry instead of opening an incomplete form', async () => {
@@ -519,9 +730,10 @@ describe('Programme workspace', { timeout: 15000 }, () => {
       },
     });
     // The page reads components from their own endpoint, not from the detail
-    // payload, so "no components have been authored" has to be said to both or
-    // the assertion is only ever winning a race with the second read.
-    vi.mocked(api.fetchCurriculumComponents).mockResolvedValueOnce([]);
+    // payload, so "no components have been authored" has to be said to it or
+    // the assertion is only ever winning a race with that read. The Overview
+    // reads the summary; the full list is not requested on this tab at all.
+    vi.mocked(api.fetchCurriculumComponentSummary).mockResolvedValueOnce([]);
 
     await renderWorkspace();
 
@@ -647,10 +859,11 @@ describe('Programme workspace', { timeout: 15000 }, () => {
     await renderWorkspace();
     expect(api.fetchCurriculumProgrammeDetailShell).toHaveBeenCalledWith('PROG-DATA', expect.anything(), expect.objectContaining({ visibility: 'all' }));
     expect(api.fetchCurriculumProgrammeDetailModules).toHaveBeenCalledWith('PROG-DATA', expect.anything(), expect.objectContaining({ visibility: 'all' }));
+    // Requested when the Sessions tab opens; the Overview reads the summary.
+    await openTab(/Sessions/);
     await vi.waitFor(() => expect(api.fetchCurriculumComponents).toHaveBeenCalledWith(
       expect.anything(), expect.objectContaining({ moduleCatalogueIds: ['MOD-1'], omitContent: true }),
     ));
-    await openTab(/Sessions/);
 
     // The week title comes from the outline; the session, its schedule and its
     // Teams link from the trimmed component -- none of which was left out.
