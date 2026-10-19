@@ -154,6 +154,46 @@ describe('calendar event previews', () => {
     expect(screen.getByRole('scrollbar', { name: 'Calendar status filters scrollbar' })).toHaveAttribute('aria-valuemax', '600');
   });
 
+  it('filters Aptem types independently and keeps their chips across months', async () => {
+    const imported = (type: string, title: string, date: string) => aptemPlan(type, {
+      id: title, eventKey: `imported-review:${title}`, reviewId: title, title,
+      source: type === 'Monthly Coaching Meeting' ? 'mcr' : 'progress-review',
+      date, targetDate: date, scheduledDate: date,
+      importedReview: {
+        id: title, aptemReviewId: title, name: title, type, reviewerName: 'Sample coach',
+        plannedDate: date, plannedTime: null, completedDate: null,
+        status: 'not-scheduled', extractionStatus: 'complete', detailsAvailable: false, sections: [],
+      },
+    });
+    setup([
+      imported('Personal Support Plan', 'Support plan conversation', isoDate),
+      imported('Monthly Coaching Meeting', 'Monthly conversation', isoDate),
+      imported('Progress Review', 'Progress conversation', isoDate),
+      imported('Progress Review (+ Skills Radar)', 'Skills conversation', '2026-10-06'),
+    ]);
+    const filters = screen.getByRole('group', { name: 'Calendar source filters' });
+    await within(filters).findByTitle('Monthly Coaching Meeting (1)');
+    expect(within(filters).getByTitle('Progress Review (1)')).toBeVisible();
+    expect(within(filters).getByTitle('Personal Support Plan (1)')).toBeVisible();
+    expect(within(filters).getByTitle('Progress Review (+ Skills Radar) (0)')).toBeVisible();
+
+    fireEvent.click(within(filters).getByTitle('Monthly Coaching Meeting (1)'));
+    expect(screen.getAllByRole('button', { name: /Monthly conversation/ }).length).toBeGreaterThan(0);
+    expect(screen.queryByRole('button', { name: /Progress conversation/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Support plan conversation/ })).not.toBeInTheDocument();
+
+    fireEvent.click(within(filters).getByTitle('Progress Review (1)'));
+    expect(screen.getAllByRole('button', { name: /Progress conversation/ }).length).toBeGreaterThan(0);
+    expect(screen.queryByRole('button', { name: /Monthly conversation/ })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Next month' }));
+    expect(within(filters).getByTitle('Monthly Coaching Meeting (0)')).toBeVisible();
+    expect(within(filters).getByTitle('Progress Review (0)')).toBeVisible();
+    fireEvent.click(within(filters).getByTitle('Progress Review (+ Skills Radar) (1)'));
+    expect(screen.getByRole('button', { name: /Skills conversation/ })).toBeVisible();
+    expect(bookLearnerCalendarSession).not.toHaveBeenCalled();
+    expect(rescheduleLearnerCalendarSession).not.toHaveBeenCalled();
+  });
+
   it('shows a written, colour-coded status on month cards', async () => {
     setup();
     const statusBadges = await screen.findAllByLabelText('Scheduled status');

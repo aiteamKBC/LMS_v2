@@ -13,6 +13,7 @@ import {
   countBySource,
   filterBySource,
   learnerEventSource,
+  learnerSourceMeta,
   reviewTypeBuckets,
 } from '../reviewTypeFilters';
 
@@ -77,6 +78,73 @@ const support = () => event({ title: 'Support', source: 'student-support' });
 const other = () => event({ title: 'Other session', source: 'other' });
 const personal = () => event({ title: 'Dentist', club: 'Personal', type: 'Personal' });
 const busy = () => event({ title: 'Busy', type: 'Busy' });
+
+const imported = (type: string, overrides: Partial<CalendarEvent> = {}) => event({
+  source: type === 'Monthly Coaching Meeting' ? 'mcr' : 'progress-review',
+  reviewTypeName: type,
+  importedReview: {
+    id: '41', aptemReviewId: 'sample-41', name: 'Imported conversation', type,
+    reviewerName: 'Sample coach', plannedDate: '2026-09-10', plannedTime: null,
+    completedDate: null, status: 'not-scheduled', extractionStatus: 'complete',
+    detailsAvailable: false, sections: [],
+  },
+  ...overrides,
+});
+
+describe('Aptem review types without Curriculum IDs', () => {
+  const types = ['Personal Support Plan', 'Monthly Coaching Meeting', 'Progress Review', 'Progress Review (+ Skills Radar)'];
+
+  it('offers a distinct named filter for every imported type', () => {
+    const events = types.map(type => imported(type));
+    const buckets = reviewTypeBuckets(events);
+    expect(buckets.map(bucket => bucket.label).sort()).toEqual([...types].sort());
+    expect(new Set(buckets.map(bucket => bucket.key)).size).toBe(types.length);
+    for (const item of events) {
+      expect(filterBySource(events, learnerEventSource(item))).toEqual([item]);
+    }
+  });
+
+  it('groups occurrences by their imported type, independently of title and review ID', () => {
+    const first = imported('Progress Review', { title: 'First conversation' });
+    const second = imported('Progress Review', { title: 'Renamed conversation' });
+    second.importedReview = { ...second.importedReview!, id: '42', aptemReviewId: 'sample-42' };
+    const events = [imported('Personal Support Plan'), first, second];
+    const options = buildSourceFilters(events);
+    expect(countBySource(events, options)[learnerEventSource(first)]).toBe(2);
+    expect(filterBySource(events, learnerEventSource(first))).toEqual([first, second]);
+  });
+
+  it('keeps labels and keys stable when events arrive in a different order', () => {
+    const events = types.map(type => imported(type));
+    expect(reviewTypeBuckets([...events].reverse())).toEqual(reviewTypeBuckets(events));
+    for (const item of events) {
+      const bucket = reviewTypeBuckets(events).find(option => option.key === learnerEventSource(item))!;
+      expect(learnerSourceMeta(item)).toEqual({ label: bucket.label, short: bucket.label, dot: bucket.dot });
+      expect(item.reviewTypeId).toBeUndefined();
+    }
+  });
+
+  it('retains empty imported type filters while counts reflect only the visible events', () => {
+    const events = types.map(type => imported(type));
+    const options = buildSourceFilters(events);
+    const counts = countBySource([events[0]], options);
+    expect(counts.all).toBe(1);
+    expect(counts[learnerEventSource(events[0])]).toBe(1);
+    events.slice(1).forEach(item => expect(counts[learnerEventSource(item)]).toBe(0));
+    expect(options.filter(option => option.isReviewType)).toHaveLength(4);
+  });
+
+  it('preserves native IDs and keeps unclassified reviews separate from imported types', () => {
+    const native = progressReview();
+    const aptem = imported('Progress Review');
+    const unknown = event({ source: 'review', reviewTypeName: 'Legacy review' });
+    const assigned = imported('Progress Review', { reviewTypeId: native.reviewTypeId });
+    expect(learnerEventSource(native)).toBe('review:REVT-PROGRESS_REVIEW');
+    expect(learnerEventSource(assigned)).toBe(learnerEventSource(native));
+    expect(learnerEventSource(unknown)).toBe('review:');
+    expect(new Set([native, aptem, unknown].map(learnerEventSource)).size).toBe(3);
+  });
+});
 
 describe('bucketing one event', () => {
   it('puts an MCM event in the Monthly Coaching Meeting bucket', () => {

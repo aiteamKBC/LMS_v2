@@ -56,6 +56,20 @@ def _mirror_status(overlay):
         CoachCalendarEvent.objects.filter(pk=calendar.pk).update(**update)
 
 
+@transaction.atomic
+def _sign_and_complete(overlay, role, *, account, signature):
+    """Caller holds learner/calendar/overlay locks; all writes succeed together.
+
+    The savepoint also rolls back the signature if completion fails and the
+    endpoint catches the validation error to return a conflict response.
+    """
+    sign(overlay, role, account=account, signature=signature)
+    signed = set(overlay.migrated_signatures.values_list("role", flat=True))
+    if not (set(required_roles(overlay)) - signed):
+        complete(overlay)
+        _mirror_status(overlay)
+
+
 @coach_access_required
 @require_POST
 def migrated_review_submit(request, review_id):
@@ -101,19 +115,30 @@ def migrated_review_coach_sign(request, review_id):
     if payload is None:
         return JsonResponse({"detail": "Invalid JSON object."}, status=400)
     with transaction.atomic():
-        overlay = _locked_overlay(owner, definition)
+        overlay = _locked_overlay(owner, definition, lock_calendar=True)
         if not overlay:
             return JsonResponse({"detail": "Migrated review association mismatch."}, status=409)
         try:
-            sign(overlay, "advisor", account=account, signature=payload.get("signature"))
+            _sign_and_complete(overlay, "advisor", account=account, signature=payload.get("signature"))
         except ValueError as exc:
             return JsonResponse({"detail": str(exc)}, status=409)
     return _response(owner, review_id)
 
 
-def _party_overlay(review_id, account, *, lock=False):
+def _party_overlay(review_id, account, *, lock=False, lock_calendar=False):
     if not review_id.startswith("imported-review:") or account.role not in {"learner", "employer"}:
         return None
+    if lock_calendar:
+        if not lock:
+            raise ValueError("Calendar locking requires an overlay lock.")
+        owned = _party_overlay(review_id, account)
+        if owned is None:
+            return None
+        # Match submission, rescheduling and reconciliation lock order.
+        from coach_api.views import lock_learner_calendar
+        lock_learner_calendar(owned.learner_id)
+        booking_for_overlay(owned, lock=True)
+        # Revalidate the participant's ownership after acquiring parent locks.
     # The template FK is nullable. Locking a row through select_related would
     # include an outer join, which PostgreSQL cannot lock with FOR UPDATE.
     query = ImportedReviewInstance.objects
@@ -193,12 +218,12 @@ def migrated_review_party_sign(request, review_id):
     if payload is None:
         return JsonResponse({"detail": "Invalid JSON object."}, status=400)
     with transaction.atomic():
-        overlay = _party_overlay(review_id, account, lock=True)
+        overlay = _party_overlay(review_id, account, lock=True, lock_calendar=True)
         if not overlay:
             return JsonResponse({"detail": "Review not found for this account."}, status=404)
         role = "participant" if account.role == "learner" else "employer"
         try:
-            sign(overlay, role, account=account, signature=payload.get("signature"))
+            _sign_and_complete(overlay, role, account=account, signature=payload.get("signature"))
         except ValueError as exc:
             return JsonResponse({"detail": str(exc)}, status=409)
     return JsonResponse({"signed": True, "role": role})
