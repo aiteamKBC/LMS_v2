@@ -9,13 +9,17 @@ export function TemplateStatistics({ template }: { template: MigratedTemplate })
   const [counts, setCounts] = useState<ReturnType<typeof definitionCounts> | null>(null);
   const [failed, setFailed] = useState(false);
   useEffect(() => {
+    if (template.statistics) {
+      setCounts(template.statistics); setFailed(false);
+      return;
+    }
     let cancelled = false;
     setCounts(null); setFailed(false);
     void getMigratedTemplate(template.id).then(detail => {
       if (!cancelled) setCounts(definitionCounts(detail.definition));
     }).catch(() => { if (!cancelled) setFailed(true); });
     return () => { cancelled = true; };
-  }, [template.id, template.updated_at]);
+  }, [template.id, template.updated_at, template.statistics]);
   return <div className="mt-4 space-y-1 text-xs text-foreground-500">
     {counts ? <p className="flex flex-wrap gap-x-4 gap-y-1" title="Includes conditional questions. Headings are not counted as questions.">
       <span><strong className="text-foreground-800">{counts.questions}</strong> {counts.questions === 1 ? 'question' : 'questions'}</span>

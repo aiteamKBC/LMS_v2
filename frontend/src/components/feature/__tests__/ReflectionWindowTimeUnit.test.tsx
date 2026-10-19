@@ -14,7 +14,7 @@ import { ReflectionWindow } from '../ReflectionWindow';
 // AppIcon is a global auto-import in the app build; supply it for tests.
 (globalThis as Record<string, unknown>).AppIcon = ({ className }: { className?: string }) => <i className={className} />;
 
-afterEach(() => { cleanup(); vi.clearAllMocks(); });
+afterEach(() => { cleanup(); localStorage.clear(); vi.clearAllMocks(); });
 
 const view = (props: Partial<Parameters<typeof ReflectionWindow>[0]> = {}) => render(
   <ReflectionWindow
@@ -91,4 +91,35 @@ it('preserves the recorded hours of an accepted reflection when reopened', async
   expect(field).toBeDisabled();
   expect(screen.queryByLabelText('Selected activity time')).not.toBeInTheDocument();
   expect(mocks.save).not.toHaveBeenCalled();
+});
+
+
+it('saves incomplete answers as a server draft without completing the activity', async () => {
+  mocks.load.mockResolvedValue(null);
+  mocks.save.mockResolvedValue({ status: 'draft' });
+  const onSubmit = vi.fn();
+  view({ onSubmit });
+  const draft = screen.getByRole('button', { name: 'Save draft' });
+  await waitFor(() => expect(draft).toBeEnabled());
+  fireEvent.change(screen.getByPlaceholderText('Type or use the microphone...'), { target: { value: 'My unfinished answer' } });
+  fireEvent.click(draft);
+  await waitFor(() => expect(mocks.save).toHaveBeenCalledWith(expect.objectContaining({
+    submissionMode: 'draft', learningReflection: 'My unfinished answer',
+    learnerId: 'learner-1', activityId: 'quiz-1',
+  })));
+  expect(await screen.findByRole('button', { name: 'Draft saved' })).toBeEnabled();
+  expect(onSubmit).not.toHaveBeenCalled();
+});
+
+it('restores unsaved answers and the active section after reopening', async () => {
+  mocks.load.mockResolvedValue(null);
+  const first = view();
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Save draft' })).toBeEnabled());
+  fireEvent.change(screen.getByPlaceholderText('Type or use the microphone...'), { target: { value: 'Keep this answer' } });
+  openOtjh();
+  first.unmount();
+  view();
+  await waitFor(() => expect(screen.getByLabelText('Actual time spent (hours)')).toBeEnabled());
+  fireEvent.click(screen.getByRole('button', { name: /^Learning$/ }));
+  expect(screen.getByPlaceholderText('Type or use the microphone...')).toHaveValue('Keep this answer');
 });

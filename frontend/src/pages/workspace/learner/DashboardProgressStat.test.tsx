@@ -13,6 +13,17 @@ function renderStat(percent: number | null) {
 }
 
 describe('DashboardProgressStat', () => {
+  it('shows placeholders instead of provisional figures while loading', () => {
+    render(
+      <MemoryRouter>
+        <DashboardProgressStat href="/learner/otjh" label="OTJ Hours" value="Loading..." summary="— / — h" percent={null} accent="yellow" loading />
+      </MemoryRouter>,
+    );
+    expect(screen.getByRole('link', { name: 'Open OTJ Hours' })).toHaveAttribute('aria-busy', 'true');
+    expect(screen.getByRole('status')).toHaveTextContent('Loading OTJ Hours…');
+    expect(screen.queryByText('— / — h')).not.toBeInTheDocument();
+  });
+
   it.each([
     [49, 'red'],
     [50, 'yellow'],

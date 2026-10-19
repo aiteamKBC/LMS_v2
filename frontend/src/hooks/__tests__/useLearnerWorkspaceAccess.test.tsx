@@ -13,8 +13,8 @@
  * another learner reaching this learner's plan, and the fail-closed window
  * before the session has resolved.
  */
-import { describe, it, expect, vi } from 'vitest';
-import { renderHook } from '@testing-library/react';
+import { afterEach, describe, it, expect, vi } from 'vitest';
+import { renderHook, waitFor } from '@testing-library/react';
 import type { AuthUser } from '@/api/auth';
 
 const authState = vi.fn();
@@ -82,6 +82,35 @@ describe('useLearnerWorkspaceAccess', () => {
     expect(access('56')).toEqual({ canProgress: false, showReadOnlyNotice: true });
   });
 
+  it.each(['commercial', 'apprenticeship'])('lets staff study their own linked %s record without changing roles', (learnerRecordKind) => {
+    const account: AuthUser = { ...ADMIN, role: 'staff', learnerRecordId: 56, learnerRecordKind };
+    signedIn(account);
+    expect(access('56')).toEqual({ canProgress: true, showReadOnlyNotice: false });
+    expect(access(56).canProgress).toBe(true);
+    expect(access('19')).toEqual({ canProgress: false, showReadOnlyNotice: true });
+    expect(account.role).toBe('staff');
+    expect(account.subjectId).toBe(13);
+  });
+
+  it('does not mistake a staff subject id for their learner id', () => {
+    signedIn({ ...ADMIN, role: 'staff', subjectId: 56, learnerRecordId: 19 });
+    expect(access('56').canProgress).toBe(false);
+  });
+
+  it('requires a resolved staff identity and a valid linked learner', () => {
+    const account: AuthUser = { ...ADMIN, role: 'staff', learnerRecordId: 56 };
+    signedIn(account, false);
+    expect(access('56')).toEqual({ canProgress: false, showReadOnlyNotice: false });
+    for (const learnerRecordId of [undefined, null, 0, -1]) {
+      signedIn({ ...account, learnerRecordId });
+      expect(access(learnerRecordId).canProgress).toBe(false);
+    }
+    signedIn({ ...account, role: 'employer', subjectType: 'employer' });
+    expect(access('56').canProgress).toBe(false);
+    signedIn({ ...account, subjectType: 'learner' });
+    expect(access('56').canProgress).toBe(false);
+  });
+
   it('does not enable admin actions until both session and learner are resolved', () => {
     signedIn(ADMIN, false);
     expect(access('56').canProgress).toBe(false);
@@ -107,6 +136,48 @@ describe('useLearnerWorkspaceAccess', () => {
     // must not be told they are read-only before anyone knows that they are.
     signedIn(null, false);
     expect(access('56')).toEqual({ canProgress: false, showReadOnlyNotice: false });
+  });
+
+  describe('a coach', () => {
+    // Each case uses its own account id: answers are shared for the page session.
+    const coach = (id: number): AuthUser => ({ ...ADMIN, id, role: 'staff', access: 'coach', accesses: ['coach'] });
+    const answer = (body: unknown, ok = true) => vi.stubGlobal('fetch', vi.fn(async () => ({ ok, json: async () => body })));
+    afterEach(() => vi.unstubAllGlobals());
+
+    it('works for a learner the server confirms is on their caseload', async () => {
+      answer({ canAct: true });
+      signedIn(coach(101));
+      const { result } = renderHook(() => useLearnerWorkspaceAccess('56'));
+      // Pending: still read-only, but no notice flashes before the answer.
+      expect(result.current).toEqual({ canProgress: false, showReadOnlyNotice: false });
+      await waitFor(() => expect(result.current).toEqual({ canProgress: true, showReadOnlyNotice: false }));
+      expect(fetch).toHaveBeenCalledWith('/login_api/learner-action-access/?learnerId=56', { credentials: 'include' });
+    });
+
+    it('stays read-only for somebody else’s learner, or when the server cannot answer', async () => {
+      for (const [id, body, ok] of [[102, { canAct: false }, true], [103, { error: 'down' }, false]] as const) {
+        answer(body, ok);
+        signedIn(coach(id));
+        const { result } = renderHook(() => useLearnerWorkspaceAccess('56'));
+        await waitFor(() => expect(result.current).toEqual({ canProgress: false, showReadOnlyNotice: true }));
+      }
+    });
+
+    it('asks once for every component on the page', async () => {
+      answer({ canAct: true });
+      signedIn(coach(104));
+      const first = renderHook(() => useLearnerWorkspaceAccess('56'));
+      const second = renderHook(() => useLearnerWorkspaceAccess('56'));
+      await waitFor(() => expect(first.result.current.canProgress && second.result.current.canProgress).toBe(true));
+      expect(fetch).toHaveBeenCalledTimes(1);
+    });
+
+    it('is never asked about for staff without coach access', () => {
+      answer({ canAct: true });
+      signedIn({ ...ADMIN, id: 105, role: 'staff', access: 'tutor', accesses: ['tutor'] });
+      expect(access('56')).toEqual({ canProgress: false, showReadOnlyNotice: true });
+      expect(fetch).not.toHaveBeenCalled();
+    });
   });
 
   it('leaves the landing page demo preview alone', () => {

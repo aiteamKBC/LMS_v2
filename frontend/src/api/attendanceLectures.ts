@@ -1,8 +1,9 @@
 import type { LearnerKind } from './learnerDetail';
 import type { LearnerAttendance } from './learnerAttendance';
-import { invalidateLearnerReads, peekLearnerJson, readLearnerJson } from './learnerRead';
+import { peekLearnerJson, readLearnerJson } from './learnerRead';
+import { invalidateWeeklyProgress } from './weeklyLearning';
 
-export type LectureStatus = 'completed' | 'late' | 'absent' | 'upcoming' | 'in_progress' | 'pending' | 'unmarked';
+export type LectureStatus = 'completed' | 'late' | 'absent' | 'upcoming' | 'in_progress' | 'pending' | 'unmarked' | 'awaiting_recording';
 export interface LectureActivity {
   id: string; title: string; type: string; completed: boolean;
   href?: string; groupId?: number; activityId?: number;
@@ -24,6 +25,7 @@ export interface AttendanceLecture {
   effectiveAttendanceStatus?: string;
   effectiveAttendance?: 0 | 1 | null;
   finalOutcome?: string;
+  attendanceBasis?: 'recorded' | 'awaiting_recording' | null;
   updatedAt: string | null; canReportAbsence: boolean; excused?: boolean;
   absenceReport: { id: number; status: string } | null;
   recovery?: {
@@ -59,18 +61,30 @@ export function attendanceWorkspaceForDisplay(data: AttendanceWorkspace): Attend
   return { ...data, lectures: data.lectures.map(row => {
     if ((row.status as string) !== 'present') return row;
     const raw = row.rawStatus || row.rawAttendanceStatus;
-    const status: LectureStatus = raw === 'absent' && row.effectiveAttendance === 1 ? 'absent'
+    const status: LectureStatus = row.attendanceBasis === 'recorded' ? 'completed'
+      : raw === 'absent' && row.effectiveAttendance === 1 ? 'absent'
       : raw === 'late' ? 'late' : 'completed';
     return { ...row, status };
   }) };
 }
+// One display object per cached payload. A page peeks on every render until its
+// read settles; a new object each time looked like new data and re-rendered in a loop.
+const displayed = new WeakMap<AttendanceWorkspace, AttendanceWorkspace>();
+function displayWorkspace(data: AttendanceWorkspace): AttendanceWorkspace {
+  let display = displayed.get(data);
+  if (!display) {
+    display = attendanceWorkspaceForDisplay(data);
+    displayed.set(data, display);
+  }
+  return display;
+}
 export const peekAttendanceWorkspace = (kind: LearnerKind, id: string) => {
   const data = peekLearnerJson<AttendanceWorkspace>(url(kind, id));
-  return data ? attendanceWorkspaceForDisplay(data) : data;
+  return data ? displayWorkspace(data) : data;
 };
 export async function fetchAttendanceWorkspace(kind: LearnerKind, id: string, signal?: AbortSignal, fresh = false) {
   const data = await readLearnerJson<AttendanceWorkspace>(url(kind, id), { ttlMs: 30_000, signal, revalidate: fresh });
-  return attendanceWorkspaceForDisplay(data);
+  return displayWorkspace(data);
 }
 export async function confirmAttendance(kind: LearnerKind, id: string, lectureId: string): Promise<{
   lectureId: string; status: 'completed'; creditedMinutes: number; creditedHours: number; alreadyRecorded: boolean;
@@ -88,7 +102,7 @@ export async function confirmAttendance(kind: LearnerKind, id: string, lectureId
       !Number.isFinite(result?.creditedMinutes) || result.creditedMinutes <= 0 || !Number.isFinite(result?.creditedHours)) {
     throw new Error('Attendance could not be confirmed. Please refresh the page and try again.');
   }
-  invalidateLearnerReads();
+  invalidateWeeklyProgress(kind, id);
   return result;
 }
 export type SavedAttendanceMode = Pick<AttendanceMode, 'mode' | 'requestedMode'>;
@@ -108,6 +122,6 @@ export async function updateAttendanceMode(kind: LearnerKind, id: string, mode: 
   });
   const result = await response.json();
   if (!response.ok) throw new Error(result.error || 'Could not update attendance mode.');
-  invalidateLearnerReads();
+  invalidateWeeklyProgress(kind, id);
   return result;
 }

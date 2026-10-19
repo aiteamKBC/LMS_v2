@@ -15,9 +15,596 @@ from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest import mock
 
-from django.test import RequestFactory, SimpleTestCase
+from django.test import RequestFactory, SimpleTestCase, override_settings
 
-from . import hooks, permissions, services, views
+from . import feedback, feedback_delivery, hooks, permissions, services, views
+
+
+@override_settings(LEARNER_FEEDBACK_ENABLED=True)
+class FeedbackValidationTests(SimpleTestCase):
+    def test_disabled_feedback_is_hidden_from_learner_but_not_staff_preview(self):
+        with self.settings(LEARNER_FEEDBACK_ENABLED=False):
+            with _patched(_account(role='learner', subject_type='learner')):
+                response = feedback.learner_forms(RequestFactory().get('/'))
+            self.assertEqual(response.status_code, 404)
+
+            with _patched(_account(role='staff', subject_type='staff')):
+                self.assertFalse(feedback._learner_feedback_disabled(RequestFactory().get('/')))
+
+    def test_feedback_section_icon_is_validated_and_preserved(self):
+        sections = feedback._validated_sections([{
+            'title': 'Your experience', 'icon': 'ri-star-line', 'questions': [],
+        }])
+        fallback = feedback._validated_sections([{
+            'title': 'Comments', 'icon': 'untrusted-icon-class', 'questions': [],
+        }])
+
+        self.assertEqual(sections[0]['icon'], 'ri-star-line')
+        self.assertEqual(fallback[0]['icon'], 'ri-file-list-3-line')
+
+    def test_post_lecture_delivery_requires_finalized_attendance(self):
+        occurrence = feedback_delivery.LectureOccurrence(key='OCC-1', module_catalogue_id='MOD-1')
+        with self.assertRaisesMessage(ValueError, 'finalized'):
+            feedback_delivery.sync_post_lecture_feedback(occurrence, [], attendance_finalized=False)
+
+    def test_post_lecture_delivery_contract_is_idempotent_by_occurrence_and_learner(self):
+        occurrence = feedback_delivery.LectureOccurrence(
+            key='OCC-1', module_catalogue_id='MOD-1', title='Lecture 1',
+        )
+        learner = SimpleNamespace(id=7, username='Synthetic Learner', email='', programme='Data')
+        form = SimpleNamespace(id=3, due_date=None)
+        delivery = SimpleNamespace(id=11)
+        atomic = mock.MagicMock()
+        atomic.__enter__.return_value = atomic
+        stale_recipients = mock.MagicMock()
+        stale_recipients.exclude.return_value.update.return_value = 0
+        with (
+            mock.patch.object(feedback_delivery.EnrolmentUser.all_learners, 'filter', return_value=[learner]),
+            mock.patch.object(feedback_delivery, '_form_for_occurrence', return_value=form),
+            mock.patch.object(feedback_delivery.FeedbackDelivery.objects, 'update_or_create', return_value=(delivery, True)) as delivery_upsert,
+            mock.patch.object(feedback_delivery.FeedbackDeliveryRecipient.objects, 'update_or_create', return_value=(mock.Mock(), True)) as recipient_upsert,
+            mock.patch.object(feedback_delivery.FeedbackDeliveryRecipient.objects, 'filter', return_value=stale_recipients),
+            mock.patch.object(feedback_delivery.transaction, 'atomic', return_value=atomic),
+        ):
+            result = feedback_delivery.sync_post_lecture_feedback(
+                occurrence, [feedback_delivery.Attendee('7', 'ATT-7')], attendance_finalized=True,
+            )
+
+        delivery_upsert.assert_called_once_with(occurrence_key='OCC-1', defaults=mock.ANY)
+        self.assertIs(delivery_upsert.call_args.kwargs['defaults']['form'], form)
+        recipient_upsert.assert_called_once_with(delivery=delivery, learner_id='7', defaults=mock.ANY)
+        self.assertEqual(result['deliveryIds'], [11])
+        self.assertEqual(result['recipientsMatched'], 1)
+
+    def test_finalized_curriculum_attendance_delivers_only_to_present_learners(self):
+        rows = [
+            ('OCC-1', 'MOD-1', 'Foundations', 'PROG-1', 'Data', 'COHORT-1', 'September', 'GROUP-1', 'Group A', 2,
+             datetime(2026, 9, 23, 9), datetime(2026, 9, 23, 10),
+             'REPORT-1', 41, 'Present Learner', 'present', 7),
+            ('OCC-1', 'MOD-1', 'Foundations', 'PROG-1', 'Data', 'COHORT-1', 'September', 'GROUP-1', 'Group A', 2,
+             datetime(2026, 9, 23, 9), datetime(2026, 9, 23, 10),
+             'REPORT-1', 42, 'Absent Learner', 'absent', 8),
+        ]
+        cursor = mock.MagicMock()
+        cursor.__enter__.return_value = cursor
+        cursor.description = [(name,) for name in (
+            'occurrence_id', 'module_catalogue_id', 'module_title', 'programme_id', 'programme_name',
+            'cohort_id', 'cohort_name', 'group_id', 'group_name',
+            'session_number', 'scheduled_start', 'session_end', 'attendance_report_id',
+            'attendance_id', 'learner_name', 'attendance_status', 'learner_id',
+        )]
+        cursor.fetchall.return_value = rows
+        sync_result = {
+            'deliveryIds': [11], 'formsMatched': 1, 'recipientsMatched': 1,
+            'recipientsRevoked': 0, 'missingLearnerIds': [],
+        }
+        fake_connection = SimpleNamespace(cursor=mock.Mock(return_value=cursor))
+        with (
+            mock.patch.object(feedback_delivery, 'connection', fake_connection),
+            mock.patch.object(feedback_delivery, 'sync_post_lecture_feedback', return_value=sync_result) as sync,
+        ):
+            result = feedback_delivery.sync_post_lecture_feedback_from_attendance(occurrence_ids=['OCC-1'])
+
+        occurrence, attendees = sync.call_args.args
+        self.assertEqual(occurrence.key, 'OCC-1')
+        self.assertEqual(occurrence.module_catalogue_id, 'MOD-1')
+        self.assertEqual(occurrence.title, 'Foundations - Session 2')
+        self.assertEqual(occurrence.programme_id, 'PROG-1')
+        self.assertEqual(occurrence.cohort_name, 'September')
+        self.assertEqual(occurrence.group_name, 'Group A')
+        self.assertEqual([item.learner_id for item in attendees], ['7'])
+        self.assertEqual(attendees[0].learner_name, 'Present Learner')
+        self.assertEqual(attendees[0].programme, 'Data')
+        self.assertTrue(sync.call_args.kwargs['attendance_finalized'])
+        self.assertEqual(result['recipientsMatched'], 1)
+        self.assertIn('o.id = ANY(%s)', cursor.execute.call_args.args[0])
+
+    def test_attendance_sync_reports_unmatched_present_email_without_creating_recipient(self):
+        cursor = mock.MagicMock()
+        cursor.__enter__.return_value = cursor
+        cursor.description = [(name,) for name in (
+            'occurrence_id', 'module_catalogue_id', 'module_title', 'programme_id', 'programme_name',
+            'cohort_id', 'cohort_name', 'group_id', 'group_name',
+            'session_number', 'scheduled_start', 'session_end', 'attendance_report_id',
+            'attendance_id', 'learner_name', 'attendance_status', 'learner_id',
+        )]
+        cursor.fetchall.return_value = [(
+            'OCC-2', 'MOD-2', 'Analytics', 'PROG-1', 'Data', 'COHORT-1', 'September', 'GROUP-1', 'Group A', 1,
+            datetime(2026, 9, 23, 9), datetime(2026, 9, 23, 10),
+            'REPORT-2', 55, 'Unknown Learner', 'present', None,
+        )]
+        sync_result = {
+            'deliveryIds': [], 'formsMatched': 0, 'recipientsMatched': 0,
+            'recipientsRevoked': 0, 'missingLearnerIds': [],
+        }
+        fake_connection = SimpleNamespace(cursor=mock.Mock(return_value=cursor))
+        with (
+            mock.patch.object(feedback_delivery, 'connection', fake_connection),
+            mock.patch.object(feedback_delivery, 'sync_post_lecture_feedback', return_value=sync_result) as sync,
+        ):
+            result = feedback_delivery.sync_post_lecture_feedback_from_attendance()
+
+        self.assertEqual(sync.call_args.args[1], [])
+        self.assertEqual(result['unmatchedPresentAttendees'], 1)
+
+    def test_curriculum_scope_options_reads_only_the_linked_hierarchy(self):
+        rows = [
+            ('PROG-1', 'Data', 'COHORT-1', 'September', 'GROUP-1', 'Group A', 'MOD-1', 'Foundations'),
+            ('PROG-1', 'Data', 'COHORT-1', 'September', 'GROUP-1', 'Group A', 'MOD-2', 'Analytics'),
+        ]
+        cursor = mock.MagicMock()
+        cursor.__enter__.return_value = cursor
+        cursor.fetchall.return_value = rows
+        fake_connection = SimpleNamespace(cursor=mock.Mock(return_value=cursor))
+        with mock.patch.object(feedback, 'connection', fake_connection):
+            options = feedback._curriculum_scope_options()
+
+        self.assertEqual(options['programmes'], [{'id': 'PROG-1', 'name': 'Data'}])
+        self.assertEqual(options['cohorts'], [{'id': 'COHORT-1', 'name': 'September', 'programmeId': 'PROG-1'}])
+        self.assertEqual(len(options['modules']), 2)
+        sql = cursor.execute.call_args.args[0].lower()
+        self.assertIn('from "curriculum"."modules"', sql)
+        self.assertNotIn('build_curriculum_payload', sql)
+
+    def test_post_lecture_scope_requires_a_valid_linked_hierarchy(self):
+        form = SimpleNamespace(
+            pk=None, form_type='general', delivery_scope='manual', programme_id='', programme_name='',
+            cohort_id='', cohort_name='', group_id='', group_name='',
+            module_catalogue_id='', module_name='',
+        )
+        options = {
+            'programmes': [{'id': 'PROG-1', 'name': 'Data'}],
+            'cohorts': [{'id': 'COHORT-1', 'name': 'September', 'programmeId': 'PROG-1'}],
+            'groups': [{'id': 'GROUP-1', 'name': 'Group A', 'programmeId': 'PROG-1', 'cohortId': 'COHORT-1'}],
+            'modules': [{'id': 'MOD-1', 'name': 'Foundations', 'programmeId': 'PROG-1', 'cohortId': 'COHORT-1', 'groupId': 'GROUP-1'}],
+        }
+        with mock.patch.object(feedback, '_curriculum_scope_options', return_value=options):
+            feedback._apply_curriculum_scope(form, {
+                'formType': 'post_lecture', 'programmeId': 'PROG-1',
+                'deliveryScope': 'module',
+                'cohortId': 'COHORT-1', 'groupId': 'GROUP-1', 'moduleCatalogueId': 'MOD-1',
+            })
+        self.assertEqual(form.form_type, 'post_lecture')
+        self.assertEqual(form.module_catalogue_id, 'MOD-1')
+        self.assertEqual(form.module_name, 'Foundations')
+
+    def test_post_lecture_scope_rejects_a_module_from_another_group(self):
+        form = SimpleNamespace(pk=None, form_type='general', delivery_scope='manual')
+        options = {
+            'programmes': [{'id': 'PROG-1', 'name': 'Data'}],
+            'cohorts': [{'id': 'COHORT-1', 'name': 'September', 'programmeId': 'PROG-1'}],
+            'groups': [{'id': 'GROUP-1', 'name': 'Group A', 'programmeId': 'PROG-1', 'cohortId': 'COHORT-1'}],
+            'modules': [{'id': 'MOD-1', 'name': 'Foundations', 'programmeId': 'PROG-1', 'cohortId': 'COHORT-1', 'groupId': 'GROUP-2'}],
+        }
+        with mock.patch.object(feedback, '_curriculum_scope_options', return_value=options):
+            with self.assertRaisesMessage(ValueError, 'no longer valid'):
+                feedback._apply_curriculum_scope(form, {
+                    'formType': 'post_lecture', 'programmeId': 'PROG-1',
+                    'deliveryScope': 'module',
+                    'cohortId': 'COHORT-1', 'groupId': 'GROUP-1', 'moduleCatalogueId': 'MOD-1',
+                })
+
+    def test_unchanged_scope_payload_is_not_treated_as_a_retarget(self):
+        form = SimpleNamespace(
+            form_type='post_lecture', delivery_scope='module', programme_id='PROG-1', cohort_id='COHORT-1',
+            group_id='GROUP-1', module_catalogue_id='MOD-1',
+        )
+        self.assertFalse(feedback._curriculum_scope_changed(form, {
+            'formType': 'post_lecture', 'programmeId': 'PROG-1',
+            'deliveryScope': 'module',
+            'cohortId': 'COHORT-1', 'groupId': 'GROUP-1', 'moduleCatalogueId': 'MOD-1',
+        }))
+
+    def test_all_modules_scope_does_not_require_curriculum_selection(self):
+        form = SimpleNamespace(
+            pk=None, form_type='general', delivery_scope='manual',
+            programme_id='OLD', programme_name='Old', cohort_id='OLD', cohort_name='Old',
+            group_id='OLD', group_name='Old', module_catalogue_id='OLD', module_name='Old',
+        )
+        with mock.patch.object(feedback, '_curriculum_scope_options') as options:
+            feedback._apply_curriculum_scope(form, {
+                'formType': 'post_lecture', 'deliveryScope': 'all_modules',
+            })
+        options.assert_not_called()
+        self.assertEqual(form.delivery_scope, 'all_modules')
+        self.assertEqual(form.module_catalogue_id, '')
+
+    def test_existing_delivery_keeps_the_template_version_used_by_that_lecture(self):
+        historical = SimpleNamespace(id=4, version=1)
+        existing = SimpleNamespace(form=historical)
+        with mock.patch.object(feedback_delivery.FeedbackDelivery.objects, 'select_related') as selected:
+            selected.return_value.filter.return_value.first.return_value = existing
+            chosen = feedback_delivery._form_for_occurrence('OCC-1', 'MOD-1')
+        self.assertIs(chosen, historical)
+
+    def test_module_template_overrides_all_modules_template(self):
+        module_form = SimpleNamespace(id=8)
+        global_form = SimpleNamespace(id=7)
+        module_query = mock.MagicMock()
+        module_query.order_by.return_value.first.return_value = module_form
+        global_query = mock.MagicMock()
+        global_query.order_by.return_value.first.return_value = global_form
+        available = mock.MagicMock()
+        available.filter.side_effect = [module_query, global_query]
+        with (
+            mock.patch.object(feedback_delivery.FeedbackDelivery.objects, 'select_related') as selected,
+            mock.patch.object(feedback_delivery.FeedbackForm.objects, 'filter', return_value=available),
+        ):
+            selected.return_value.filter.return_value.first.return_value = None
+            chosen = feedback_delivery._form_for_occurrence('OCC-2', 'MOD-1')
+        self.assertIs(chosen, module_form)
+        self.assertEqual(available.filter.call_count, 1)
+
+    def test_all_modules_template_is_used_when_module_has_no_override(self):
+        global_form = SimpleNamespace(id=7)
+        module_query = mock.MagicMock()
+        module_query.order_by.return_value.first.return_value = None
+        global_query = mock.MagicMock()
+        global_query.order_by.return_value.first.return_value = global_form
+        available = mock.MagicMock()
+        available.filter.side_effect = [module_query, global_query]
+        with (
+            mock.patch.object(feedback_delivery.FeedbackDelivery.objects, 'select_related') as selected,
+            mock.patch.object(feedback_delivery.FeedbackForm.objects, 'filter', return_value=available),
+        ):
+            selected.return_value.filter.return_value.first.return_value = None
+            chosen = feedback_delivery._form_for_occurrence('OCC-3', 'MOD-2')
+        self.assertIs(chosen, global_form)
+        self.assertEqual(available.filter.call_count, 2)
+
+    def test_editing_a_used_post_lecture_form_creates_the_next_version(self):
+        previous = feedback.FeedbackForm(
+            id=10, title='Lecture feedback', form_type='post_lecture',
+            delivery_scope='all_modules', template_key='5e60c23d-36c7-4d3c-ada4-0fe47dc9bbee',
+            version=1, is_current=True, description='', instructions='', status='published',
+            created_by='Staff', anonymous_responses=False, allow_save_continue=True,
+            allow_edit_after_submission=False,
+        )
+        saved = []
+
+        def save(instance, *args, **kwargs):
+            if instance is not previous:
+                instance.pk = instance.id = 11
+                saved.append(instance)
+
+        query = mock.MagicMock()
+        query.get.side_effect = lambda **kwargs: previous if not saved else saved[0]
+        atomic = mock.MagicMock()
+        atomic.__enter__.return_value = atomic
+        request = RequestFactory().patch(
+            '/', data=json.dumps({'title': 'Updated feedback', 'sections': []}),
+            content_type='application/json',
+        )
+        with (
+            mock.patch.object(feedback, '_forms_queryset', return_value=query),
+            mock.patch.object(feedback, '_form_has_history', return_value=True),
+            mock.patch.object(feedback, '_apply_metadata', side_effect=lambda form, payload: setattr(form, 'title', payload['title'])),
+            mock.patch.object(feedback, '_replace_structure') as replace_structure,
+            mock.patch.object(feedback, '_post_lecture_publish_conflict', return_value=False),
+            mock.patch.object(feedback, 'actor_name', return_value='Editor'),
+            mock.patch.object(feedback, 'form_dict', return_value={'id': 11, 'version': 2}),
+            mock.patch.object(feedback.FeedbackForm, 'save', autospec=True, side_effect=save),
+            mock.patch.object(feedback.transaction, 'atomic', return_value=atomic),
+        ):
+            response = feedback.form_detail.__wrapped__(request, pk=10)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(previous.is_current)
+        self.assertEqual(saved[0].version, 2)
+        self.assertEqual(saved[0].template_key, previous.template_key)
+        self.assertIs(saved[0].previous_version, previous)
+        self.assertEqual(saved[0].status, 'published')
+        replace_structure.assert_called_once_with(saved[0], [])
+
+    def test_feedback_csrf_endpoint_issues_a_token(self):
+        response = feedback.csrf_token(RequestFactory().get('/engagement_api/feedback/csrf/'))
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(json.loads(response.content)['csrfToken'])
+
+    def test_recipient_rows_show_attendance_learner_lecture_and_response(self):
+        form = SimpleNamespace(id=19, form_type='post_lecture', template_key='template-1')
+        delivery_form = SimpleNamespace(version=1)
+        delivery = SimpleNamespace(
+            id=3, occurrence_key='martech-2026-09-24',
+            session_title='Martech - Thur - Session 1', module_name='Martech - Thur',
+            starts_at=datetime(2026, 9, 24, 9, 30, tzinfo=timezone.utc),
+            form=delivery_form,
+        )
+        recipient = SimpleNamespace(
+            id=5, delivery=delivery, delivery_id=3, learner_id='7', learner_name='Synthetic Learner',
+            programme='Marketing', assigned_at=datetime(2026, 9, 24, tzinfo=timezone.utc), due_date=None,
+        )
+        learner = SimpleNamespace(id=7, username='Synthetic Learner', email='learner@example.test', programme='Marketing')
+        response = SimpleNamespace(delivery_id=3, learner_id='7', status='completed')
+        family_query = mock.MagicMock()
+        family_query.values_list.return_value = [19]
+        recipient_query = mock.MagicMock()
+        recipient_query.filter.return_value.order_by.return_value = [recipient]
+        assignment_query = mock.MagicMock()
+        assignment_query.order_by.return_value = []
+        learner_query = mock.MagicMock()
+        learner_query.filter.return_value = [learner]
+        with (
+            mock.patch.object(feedback.FeedbackForm.objects, 'filter', return_value=family_query),
+            mock.patch.object(feedback.FeedbackDeliveryRecipient.objects, 'select_related', return_value=recipient_query),
+            mock.patch.object(feedback.FeedbackAssignment.objects, 'filter', return_value=assignment_query),
+            mock.patch.object(feedback.EnrolmentUser.all_learners, 'all', return_value=learner_query),
+            mock.patch.object(feedback.FeedbackResponse.objects, 'filter', return_value=[response]),
+        ):
+            rows = feedback._form_recipient_rows(form)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]['learnerName'], 'Synthetic Learner')
+        self.assertEqual(rows[0]['email'], 'learner@example.test')
+        self.assertEqual(rows[0]['deliveryId'], 3)
+        self.assertEqual(rows[0]['occurrenceKey'], 'martech-2026-09-24')
+        self.assertEqual(rows[0]['sessionTitle'], 'Martech - Thur - Session 1')
+        self.assertEqual(rows[0]['sessionStartsAt'], '2026-09-24T09:30:00+00:00')
+        self.assertEqual(rows[0]['source'], 'attendance')
+        self.assertEqual(rows[0]['responseStatus'], 'completed')
+
+    def test_recipient_rows_show_event_learners_and_guests_with_event_context(self):
+        form = SimpleNamespace(id=31, form_type='post_event', template_key='template-2', due_date=None, version=1)
+        event = SimpleNamespace(
+            id=8, title='Leadership Day', location='Main Hall',
+            event_date=datetime(2026, 9, 29).date(),
+        )
+        learner_recipient = SimpleNamespace(
+            id=44, event=event, learner_id='7', attendee_name='Synthetic Learner',
+            attendee_email='learner@example.test', invitation_sent_at=None,
+            updated_at=datetime(2026, 9, 29, 10, tzinfo=timezone.utc),
+        )
+        guest_recipient = SimpleNamespace(
+            id=45, event=event, learner_id='', attendee_name='Guest Attendee',
+            attendee_email='guest@example.test', invitation_sent_at=None,
+            updated_at=datetime(2026, 9, 29, 10, 5, tzinfo=timezone.utc),
+        )
+        learner = SimpleNamespace(id=7, username='Synthetic Learner', email='learner@example.test', programme='Marketing')
+        completed = SimpleNamespace(
+            form_id=31, delivery_id=None, event_recipient_id=44,
+            learner_id='7', status='completed',
+        )
+        empty_delivery_query = mock.MagicMock()
+        empty_delivery_query.filter.return_value.order_by.return_value = []
+        empty_assignment_query = mock.MagicMock()
+        empty_assignment_query.order_by.return_value = []
+        event_query = mock.MagicMock()
+        event_query.filter.return_value.distinct.return_value.order_by.return_value = [guest_recipient, learner_recipient]
+        learner_query = mock.MagicMock()
+        learner_query.filter.return_value = [learner]
+        with (
+            mock.patch.object(feedback.FeedbackDeliveryRecipient.objects, 'select_related', return_value=empty_delivery_query),
+            mock.patch.object(feedback.FeedbackAssignment.objects, 'filter', return_value=empty_assignment_query),
+            mock.patch.object(feedback.FeedbackEventRecipient.objects, 'select_related', return_value=event_query),
+            mock.patch.object(feedback.EnrolmentUser.all_learners, 'all', return_value=learner_query),
+            mock.patch.object(feedback.FeedbackResponse.objects, 'filter', return_value=[completed]),
+        ):
+            rows = feedback._form_recipient_rows(form)
+
+        self.assertEqual([row['learnerName'] for row in rows], ['Guest Attendee', 'Synthetic Learner'])
+        self.assertEqual(rows[0]['sourceType'], 'event')
+        self.assertEqual(rows[0]['sourceKey'], 'event:8')
+        self.assertEqual(rows[0]['recipientType'], 'guest')
+        self.assertEqual(rows[1]['programme'], 'Marketing')
+        self.assertEqual(rows[1]['recipientType'], 'learner')
+        self.assertEqual(rows[1]['responseStatus'], 'completed')
+
+        sources = feedback._recipient_source_summaries(rows)
+        self.assertEqual(sources, [{
+            'key': 'event:8', 'type': 'event', 'label': 'Event attendance',
+            'title': 'Leadership Day', 'subtitle': 'Main Hall', 'startsAt': '2026-09-29',
+            'assignedCount': 2, 'responseCount': 1,
+        }])
+
+    def test_recipient_lecture_summaries_group_counts_and_sort_newest_first(self):
+        rows = [
+            {'deliveryId': 3, 'occurrenceKey': 'older', 'sessionTitle': 'Session 1', 'moduleName': 'Martech', 'sessionStartsAt': '2026-09-17T09:30:00+00:00', 'responseStatus': 'completed'},
+            {'deliveryId': 3, 'occurrenceKey': 'older', 'sessionTitle': 'Session 1', 'moduleName': 'Martech', 'sessionStartsAt': '2026-09-17T09:30:00+00:00', 'responseStatus': 'not_started'},
+            {'deliveryId': 4, 'occurrenceKey': 'newer', 'sessionTitle': 'Session 2', 'moduleName': 'Martech', 'sessionStartsAt': '2026-09-24T09:30:00+00:00', 'responseStatus': 'completed'},
+            {'deliveryId': None, 'occurrenceKey': '', 'sessionTitle': '', 'moduleName': '', 'sessionStartsAt': None, 'responseStatus': 'not_started'},
+        ]
+
+        summaries = feedback._recipient_lecture_summaries(rows)
+
+        self.assertEqual([item['deliveryId'] for item in summaries], [4, 3])
+        self.assertEqual(summaries[0]['assignedCount'], 1)
+        self.assertEqual(summaries[0]['responseCount'], 1)
+        self.assertEqual(summaries[1]['assignedCount'], 2)
+        self.assertEqual(summaries[1]['responseCount'], 1)
+
+    def test_staff_can_filter_form_recipients_by_lecture(self):
+        form = SimpleNamespace(id=19)
+        rows = [
+            {'key': 'delivery-3-1', 'deliveryId': 3, 'occurrenceKey': 'older', 'sessionTitle': 'Session 1', 'moduleName': 'Martech', 'sessionStartsAt': '2026-09-17T09:30:00+00:00', 'learnerName': 'First Learner', 'email': 'first@example.test', 'programme': 'Marketing', 'responseStatus': 'completed'},
+            {'key': 'delivery-4-2', 'deliveryId': 4, 'occurrenceKey': 'newer', 'sessionTitle': 'Session 2', 'moduleName': 'Martech', 'sessionStartsAt': '2026-09-24T09:30:00+00:00', 'learnerName': 'Second Learner', 'email': 'second@example.test', 'programme': 'Marketing', 'responseStatus': 'not_started'},
+        ]
+        with (
+            _patched(_account(role='staff')),
+            mock.patch.object(feedback.FeedbackForm.objects, 'get', return_value=form),
+            mock.patch.object(feedback, '_form_recipient_rows', return_value=rows),
+        ):
+            response = feedback.form_recipients(RequestFactory().get('/?deliveryId=4'), pk=19)
+
+        self.assertEqual(response.status_code, 200)
+        payload = json.loads(response.content)
+        self.assertEqual([item['key'] for item in payload['recipients']], ['delivery-4-2'])
+        self.assertEqual(payload['total'], 1)
+        self.assertEqual([item['deliveryId'] for item in payload['lectures']], [4, 3])
+
+    def test_learner_cannot_view_form_recipient_names(self):
+        with _patched(_account(role='learner')):
+            response = feedback.form_recipients(RequestFactory().get('/'), pk=19)
+        self.assertEqual(response.status_code, 403)
+
+    def test_staff_can_list_all_versions_newest_first(self):
+        current = SimpleNamespace(id=20, template_key='template-1')
+        historical = SimpleNamespace(id=19)
+        versions_query = mock.MagicMock()
+        versions_query.order_by.return_value = [current, historical]
+        with (
+            _patched(_account(role='staff')),
+            mock.patch.object(feedback.FeedbackForm.objects, 'get', return_value=current),
+            mock.patch.object(feedback.FeedbackForm.objects, 'filter', return_value=versions_query) as filtered,
+            mock.patch.object(feedback, '_form_version_dict', side_effect=[{'id': 20, 'version': 2}, {'id': 19, 'version': 1}]),
+        ):
+            response = feedback.form_versions(RequestFactory().get('/'), pk=20)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(json.loads(response.content)['versions'], [
+            {'id': 20, 'version': 2}, {'id': 19, 'version': 1},
+        ])
+        filtered.assert_called_once_with(template_key='template-1')
+        versions_query.order_by.assert_called_once_with('-version', '-id')
+
+    def test_learner_cannot_view_form_versions(self):
+        with _patched(_account(role='learner')):
+            response = feedback.form_versions(RequestFactory().get('/'), pk=20)
+        self.assertEqual(response.status_code, 403)
+
+    def test_staff_view_as_sees_attendance_recipient_delivery(self):
+        form = SimpleNamespace(
+            id=19, title='Lecture feedback', description='Tell us about the lecture',
+            due_date=None,
+        )
+        delivery = SimpleNamespace(
+            id=21, form=form, session_title='Martech - Thur - Session 1',
+            module_name='Martech - Thur',
+            starts_at=datetime(2026, 9, 17, 9, tzinfo=timezone.utc),
+        )
+        recipient = SimpleNamespace(
+            delivery=delivery, delivery_id=21,
+            assigned_at=datetime(2026, 9, 17, 10, tzinfo=timezone.utc),
+            due_date=None,
+        )
+        forms_query = mock.MagicMock()
+        forms_query.filter.return_value = forms_query
+        forms_query.distinct.return_value = forms_query
+        forms_query.__iter__.return_value = iter([])
+        recipient_query = mock.MagicMock()
+        recipient_query.filter.return_value = recipient_query
+        recipient_query.order_by.return_value = [recipient]
+        event_recipient_query = mock.MagicMock()
+        event_recipient_query.filter.return_value = event_recipient_query
+        event_recipient_query.distinct.return_value = event_recipient_query
+        event_recipient_query.order_by.return_value = []
+        with (
+            _patched(_account(role='staff', subject_type='staff')),
+            mock.patch.object(feedback, '_forms_queryset', return_value=forms_query),
+            mock.patch.object(feedback.FeedbackResponse.objects, 'filter', side_effect=[[], []]),
+            mock.patch.object(feedback.FeedbackDeliveryRecipient.objects, 'select_related', return_value=recipient_query),
+            mock.patch.object(feedback.FeedbackEventRecipient.objects, 'select_related', return_value=event_recipient_query),
+        ):
+            response = feedback.learner_forms(RequestFactory().get('/?learnerId=61'))
+
+        self.assertEqual(response.status_code, 200)
+        body = json.loads(response.content)
+        self.assertEqual(len(body['forms']), 1)
+        self.assertEqual(body['forms'][0]['deliveryId'], 21)
+        self.assertEqual(body['forms'][0]['formType'], 'post_lecture')
+        self.assertEqual(body['forms'][0]['moduleName'], 'Martech - Thur')
+        self.assertEqual(body['forms'][0]['sessionTitle'], 'Martech - Thur - Session 1')
+
+    def test_staff_feedback_preview_requires_an_explicit_learner(self):
+        with _patched(_account(role='staff', subject_type='staff')):
+            response = feedback.learner_forms(RequestFactory().get('/'))
+        self.assertEqual(response.status_code, 400)
+
+    def test_learner_event_feedback_is_listed_with_event_recipient_identity(self):
+        event = SimpleNamespace(id=8, title='Leadership Day')
+        form = SimpleNamespace(id=31, title='Event feedback', description='Tell us more', due_date=None)
+        event_recipient = SimpleNamespace(
+            id=44, event=event, invitation_sent_at=datetime(2026, 9, 29, 10, tzinfo=timezone.utc),
+            updated_at=datetime(2026, 9, 29, 9, tzinfo=timezone.utc),
+        )
+        forms_query = mock.MagicMock()
+        forms_query.filter.return_value = forms_query
+        forms_query.distinct.return_value = forms_query
+        forms_query.__iter__.return_value = iter([])
+        delivery_query = mock.MagicMock()
+        delivery_query.filter.return_value = delivery_query
+        delivery_query.order_by.return_value = []
+        event_recipient_query = mock.MagicMock()
+        event_recipient_query.filter.return_value = event_recipient_query
+        event_recipient_query.distinct.return_value = event_recipient_query
+        event_recipient_query.order_by.return_value = [event_recipient]
+        campaign_query = mock.MagicMock()
+        campaign_query.filter.return_value = campaign_query
+        campaign_query.order_by.return_value = [SimpleNamespace(form=form)]
+        with (
+            _patched(_account(role='learner', subject_type='learner', subject_id='61')),
+            mock.patch.object(feedback, '_forms_queryset', return_value=forms_query),
+            mock.patch.object(feedback.FeedbackResponse.objects, 'filter', side_effect=[[], [], []]),
+            mock.patch.object(feedback.FeedbackDeliveryRecipient.objects, 'select_related', return_value=delivery_query),
+            mock.patch.object(feedback.FeedbackEventRecipient.objects, 'select_related', return_value=event_recipient_query),
+            mock.patch.object(feedback.FeedbackEventCampaign.objects, 'select_related', return_value=campaign_query),
+        ):
+            response = feedback.learner_forms(RequestFactory().get('/'))
+
+        self.assertEqual(response.status_code, 200)
+        item = json.loads(response.content)['forms'][0]
+        self.assertEqual(item['eventRecipientId'], 44)
+        self.assertEqual(item['formType'], 'post_event')
+        self.assertEqual(item['moduleName'], '')
+        self.assertEqual(item['sessionTitle'], 'Leadership Day')
+        self.assertEqual(
+            event_recipient_query.filter.call_args.kwargs['invite_status__in'],
+            ['pending', 'sent'],
+        )
+
+    def test_staff_feedback_preview_cannot_submit_for_the_learner(self):
+        with _patched(_account(role='staff', subject_type='staff')):
+            response = feedback.learner_response_save(RequestFactory().post('/'), delivery_id=21)
+        self.assertEqual(response.status_code, 403)
+
+    def test_structure_rejects_unknown_question_type(self):
+        with self.assertRaisesMessage(ValueError, 'unsupported type'):
+            feedback._validated_sections([{
+                'title': 'Learning',
+                'questions': [{'type': 'executable_code', 'text': 'Run this?', 'config': {}}],
+            }])
+
+    def test_choice_question_requires_two_options(self):
+        with self.assertRaisesMessage(ValueError, 'at least two options'):
+            feedback._validated_sections([{
+                'title': 'Learning',
+                'questions': [{'type': 'single_choice', 'text': 'Choose', 'config': {'options': ['Only']}}],
+            }])
+
+    def test_answer_validation_enforces_question_configuration(self):
+        question = SimpleNamespace(question_type='rating', config={'min': 1, 'max': 5})
+        self.assertTrue(feedback._valid_answer(question, 5))
+        self.assertFalse(feedback._valid_answer(question, 6))
+        question = SimpleNamespace(question_type='dropdown', config={'options': ['Good', 'Poor']})
+        self.assertTrue(feedback._valid_answer(question, 'Good'))
+        self.assertFalse(feedback._valid_answer(question, 'Injected option'))
+
+    def test_contact_and_photo_answer_types_are_validated(self):
+        name = SimpleNamespace(question_type='name', config={})
+        email = SimpleNamespace(question_type='email', config={})
+        photo = SimpleNamespace(question_type='photo_upload', config={})
+        self.assertTrue(feedback._valid_answer(name, {'firstName': 'Ava', 'lastName': 'Jones'}))
+        self.assertFalse(feedback._valid_answer(email, 'not-an-email'))
+        self.assertTrue(feedback._valid_answer(email, 'ava@example.com'))
+        self.assertTrue(feedback._valid_answer(photo, {'uploadId': '5e60c23d-36c7-4d3c-ada4-0fe47dc9bbee'}))
 
 
 def _account(*, role="learner", subject_type="learner", subject_id=61, display_name="Daniel Walsh", email="daniel@kbc.test"):

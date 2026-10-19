@@ -3,7 +3,7 @@ import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { AppIcon } from '@/components/feature/AppIcon';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { roleNavMap } from '@/mocks/navigation';
-import { fetchLearnerMeetingArtifacts, learnerMeetingArtifactContentUrl, saveLearnerEventReviewAnswers, signLearnerProgressReview, type LearnerCalendarEvent } from '@/api/learnerCalendar';
+import { downloadLearnerMcmPdf, fetchLearnerMeetingArtifacts, learnerMeetingArtifactContentUrl, saveLearnerEventReviewAnswers, signLearnerProgressReview, type LearnerCalendarEvent } from '@/api/learnerCalendar';
 import { useLinkedLearner } from '@/hooks/useMyLearner';
 import { useLearnerWorkspaceAccess } from '@/hooks/useLearnerWorkspaceAccess';
 import { useReviewSessions } from './useReviewSessions';
@@ -13,6 +13,8 @@ import type { MeetingAttendance } from '@/api/meetingAttendance';
 import { useCoachingReviewDefinitions } from '../monthly-coaching/useCoachingReviewDefinitions';
 import { LearnerReviewInstanceForm, useLearnerReviewInstance } from './LearnerReviewInstanceForm';
 import ReviewsHome from '../progress-reviews/ReviewsHome';
+import { ImportedReviewSections } from '../progress-reviews/page';
+import { ReviewPdfDownload } from '@/components/reviews/ReviewPdfDownload';
 import { reviewsListHref } from '../progress-reviews/reviewPresentation';
 import styles from '../progress-reviews/progressReviews.module.css';
 import { RowsSkeleton } from '@/components/feature/Skeletons';
@@ -41,6 +43,7 @@ function formatTime(value?: string | null): string {
 
 export function curriculumReviewTitle(review?: LearnerCalendarEvent | null): string {
   if (!review) return 'Review';
+  if (review.importedReview) return review.importedReview.name || review.title || 'Review';
   const name = review.title || review.reviewTypeName || 'Review';
   const occurrence = review.occurrenceNumber ?? review.sequence;
   if (!review.reviewTemplateId) return name;
@@ -63,7 +66,7 @@ function CurriculumReviewsList() {
   });
 
   return <WorkspaceShell role="learner" roleLabel={learnerNav.label} navItems={learnerNav.items}
-    workspaceLabel={learnerNav.workspaceLabel} pageTitle="Reviews" pageSubtitle="Curriculum reviews and previous records"
+    workspaceLabel={learnerNav.workspaceLabel} pageTitle="Reviews" pageSubtitle="Programme reviews and previous records"
     userName={learner?.name || 'Learner'} userRole={learner?.programme ? `${learner.programme} Learner` : 'Learner'}>
     <main className="page-container min-w-0 w-full space-y-4 p-3 md:p-6">
       {error && <div role="alert" className="rounded-xl border border-red-200 bg-red-50 p-4 text-base text-red-700">{error}<button type="button" onClick={refresh} className="ml-3 min-h-12 font-bold underline">Try again</button></div>}
@@ -109,21 +112,28 @@ export function CurriculumReviewPage() {
   };
 
   return <WorkspaceShell role="learner" roleLabel={learnerNav.label} navItems={learnerNav.items}
-    workspaceLabel={learnerNav.workspaceLabel} pageTitle="Reviews" pageSubtitle="Curriculum review details"
+    workspaceLabel={learnerNav.workspaceLabel} pageTitle="Reviews" pageSubtitle="Review details"
     userName={learner?.name || 'Learner'} userRole={learner?.programme ? `${learner.programme} Learner` : 'Learner'}>
     <div className={`page-container ${styles.page} min-w-0 w-full space-y-4 p-3 md:p-6`}>
       {error && <div role="alert" className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">{error}<button type="button" onClick={refresh} className="ml-3 font-bold underline">Try again</button></div>}
       <button type="button" onClick={() => navigate(reviewsListHref(myLearner, listParams, basePath))} className="inline-flex h-9 items-center gap-2 self-start rounded-xl border border-primary-200 bg-primary-50 px-3.5 text-xs font-bold text-primary-700 shadow-sm transition hover:bg-primary-100"><AppIcon className="ri-arrow-left-line" />Back to Reviews</button>
       {loading ? <div className="rounded-xl border border-background-200 bg-white p-5"><RowsSkeleton rows={5} /></div> : !selected ? <section className="rounded-xl border border-background-200 bg-white p-6"><h1 className="text-xl font-bold text-foreground-900">Review not found</h1><p className="mt-2 text-sm text-foreground-500">This review is no longer available for this learner.</p></section> : <>
         <section className="rounded-2xl border border-primary-100 bg-white p-5 shadow-sm">
-          <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-primary-600">Curriculum Review</p>
+          <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-primary-600">{selected.importedReview ? 'Saved review' : 'Curriculum Review'}</p>
           <h1 className="mt-2 text-2xl font-bold text-primary-800">{curriculumReviewTitle(selected)}</h1>
           <p className="mt-1 text-sm text-foreground-500">{formatDate(selected.scheduledDate || selected.targetDate || selected.date)} · {formatTime(selected.scheduledTime)}</p>
           <div className="mt-4 grid gap-3 sm:grid-cols-3"><div><small className="text-xs text-foreground-500">Reviewer / Coach</small><p className="font-bold">{selected.coachName || 'Not assigned yet'}</p></div><div><small className="text-xs text-foreground-500">Review type</small><p className="font-bold">{selected.reviewTypeName || 'Curriculum Review'}</p></div><div><small className="text-xs text-foreground-500">Status</small><p className="font-bold capitalize">{selected.status.replaceAll('-', ' ')}</p></div></div>
           {selected.meetingLink && <a className="mt-4 inline-flex items-center gap-2 rounded-lg bg-primary-700 px-4 py-2 text-xs font-bold text-white" href={selected.meetingLink} target="_blank" rel="noopener noreferrer"><AppIcon className="ri-video-chat-line" />Join meeting</a>}
         </section>
         {selected.meetingLink && <CoachMeetingArtifactsPanel event={{ ...selected, eventKey }} fetchArtifacts={loadArtifacts} contentUrl={artifactContentUrl} showAttendance={false} visibleArtifactTypes={['recording']} className="border-primary-100 bg-primary-50/30" />}
-        {instance.loading ? <div className="rounded-xl border border-background-200 bg-white p-5"><RowsSkeleton rows={5} /></div> : instance.error ? <p role="alert" className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">{instance.error}<button type="button" onClick={instance.refresh} className="ml-2 underline">Retry review</button></p> : instance.definition ? <LearnerReviewInstanceForm definition={instance.definition} onSign={canProgress ? saveSignature : undefined} signatoryName={learner?.name || 'Learner'} onSaveAnswers={answers => saveLearnerEventReviewAnswers(myLearner.kind, myLearner.id, eventKey, answers)} /> : <section className="rounded-xl border border-background-200 bg-white p-5 text-sm text-foreground-500">This review form is not available yet.</section>}
+        {selected.importedReview ? <section className="rounded-xl border border-background-200 bg-white p-5 space-y-4">
+          <ReviewPdfDownload availability={{ available: true, reason: '' }} label="Download PDF" onDownload={() => downloadLearnerMcmPdf(myLearner.kind, myLearner.id, eventKey)} />
+          {selected.importedReview.sections.map(section => <section key={section.id}>
+            <h2 className="mb-3 text-sm font-bold text-foreground-900">{section.name.replace(/\s+(completed|incomplete)$/i, '').trim()}</h2>
+            <ImportedReviewSections review={{ ...selected.importedReview!, sections: [section] }} />
+          </section>)}
+          {!selected.importedReview.sections.length && <p className="text-sm text-foreground-500">Detailed questions and answers have not been imported for this review yet.</p>}
+        </section> : instance.loading ? <div className="rounded-xl border border-background-200 bg-white p-5"><RowsSkeleton rows={5} /></div> : instance.error ? <p role="alert" className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">{instance.error}<button type="button" onClick={instance.refresh} className="ml-2 underline">Retry review</button></p> : instance.definition ? <LearnerReviewInstanceForm definition={instance.definition} onSign={canProgress ? saveSignature : undefined} signatoryName={learner?.name || 'Learner'} onSaveAnswers={answers => saveLearnerEventReviewAnswers(myLearner.kind, myLearner.id, eventKey, answers)} /> : <section className="rounded-xl border border-background-200 bg-white p-5 text-sm text-foreground-500">This review form is not available yet.</section>}
       </>}
     </div>
   </WorkspaceShell>;

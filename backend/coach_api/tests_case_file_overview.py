@@ -6,6 +6,7 @@ from unittest.mock import MagicMock, patch
 from django.test import SimpleTestCase
 
 from coach_api.case_file import build_overview, read_overview_learning, merge_overview_subjects
+from coach_api.overview_modules import project_module_overview, read_overview_modules
 from learner_api import canonical_learning
 
 
@@ -15,7 +16,11 @@ class CaseFileOverviewTests(SimpleTestCase):
         context.profile = SimpleNamespace(enrolment_id=201, aptem_id=aptem, start_date=None, end_date=None)
         context.source = SimpleNamespace(start_date='2026-01-01', end_date='2026-01-11')
         context.parallel.side_effect = lambda readers: {name: reader() for name, reader in readers.items()}
-        context.payload.return_value = {'attendance': {'present': 1, 'sessions': 3}}
+        context.payload.side_effect = lambda resource: {
+            'summary': {'attendance': {'present': 1, 'sessions': 3}},
+            'week': {'planSubjects': []},
+            'schedule': {'modules': [], 'sessions': [], 'moduleLinks': {}, 'actual': [], 'actualAvailable': False},
+        }[resource]
         return context
 
     def render(self, *, today=date(2026, 1, 6), actual=12, planned=100, subjects=None, activity=None):
@@ -25,10 +30,48 @@ class CaseFileOverviewTests(SimpleTestCase):
                    'ksb': {'completed': 1, 'total': 4, 'percent': 25, 'historicalCompleted': 1}}
         with patch('coach_api.case_file.read_overview_learning', return_value=(metrics, activity)), \
              patch('learner_api.module_progress.canonical_module_progress', return_value=self.shared_rows(subjects or [], activity)), \
+             patch('coach_api.overview_modules.read_overview_catalogue', return_value={'modules': [], 'moduleLinks': {}}), \
+             patch('coach_api.overview_modules.read_overview_modules', side_effect=AssertionError('No bulk module details')), \
              patch('coach_api.views.timezone.localdate', return_value=today):
             result = build_overview(context)
         context.payload.assert_called_once_with('summary')
         return result
+
+    def test_module_projection_preserves_learner_facts_without_content_or_meeting_links(self):
+        component = {'moduleId': 'M1', 'module': 'Synthetic', 'componentId': 'C1',
+                     'component': 'Synthetic activity', 'expectedOtjh': 2}
+        completion = {'kind': 'component', 'componentId': 'C1', 'componentType': 'reading'}
+        progress = {'M1': {'attendance': {'attended': 0, 'total': 12},
+                          'hours': {'actual': 4.9}, 'ksb': {'completed': 15, 'total': 15}}}
+        parts = {'schedule': {'modules': [{'id': 'M1', 'title': 'Synthetic', 'total_otjh': 83,
+                                           'description': 'private content', 'curriculumSlots': ['unused']}],
+                              'sessions': [{'id': 'S1', 'moduleId': 'M1', 'attended': None,
+                                            'joinUrl': 'https://example.test/private'}],
+                              'moduleLinks': {'legacy:1': {'id': 'M1', 'title': 'Synthetic'}},
+                              'actual': [], 'actualAvailable': False, 'moduleProgress': progress,
+                              'reviews': ['private'], 'coach': {'email': 'private@example.test'}}}
+        result = project_module_overview(
+            {'modules': ['Synthetic'], 'components': [{**component, 'contentHtml': 'private content'}],
+             'componentProgress': [{**completion, 'feedback': 'private feedback'}]},
+            None, {}, parts['schedule'])
+        self.assertEqual(result['learning']['detail']['components'], [component])
+        self.assertEqual(result['learning']['detail']['componentProgress'], [completion])
+        self.assertEqual(result['moduleProgress'], progress)
+        self.assertEqual(result['modules'], [{'id': 'M1', 'title': 'Synthetic', 'total_otjh': 83}])
+        self.assertEqual(result['sessions'], [{'id': 'S1', 'moduleId': 'M1', 'attended': None}])
+        self.assertEqual(result['moduleLinks'], parts['schedule']['moduleLinks'])
+        self.assertFalse(result['actualAvailable'])
+        self.assertNotIn('reviews', result)
+        self.assertNotIn('coach', result)
+
+    def test_missing_module_summaries_fail_instead_of_presenting_an_empty_plan(self):
+        context = SimpleNamespace(source=SimpleNamespace(pk=201),
+                                  profile=SimpleNamespace(pk=101, enrolment_id=201))
+        with patch('coach_api.overview_modules.canonical_learning.require_profile', return_value={'id': 101}), \
+             patch('learner_api.learner_detail.build_learner_detail',
+                   side_effect=ValueError('Module summaries could not be loaded')), \
+             self.assertRaisesRegex(ValueError, 'Module summaries could not be loaded'):
+            read_overview_modules(context)
 
     @staticmethod
     def shared_rows(subjects, activity):
@@ -73,14 +116,15 @@ class CaseFileOverviewTests(SimpleTestCase):
                 self.assertEqual(hours['percent'], percent)
                 self.assertEqual(hours['planned'], planned)
 
-    def test_historical_records_deduplicate_and_suppress_only_mapped_native_module(self):
+    def test_historical_and_current_module_progress_are_both_visible(self):
         activity = {'progress_basis': 'catalogue_activities',
                     'subjects': [{'id': 1, 'name': 'Recorded', 'module_id': 'M1', 'total': 4, 'completed': 1},
                                  {'id': 2, 'name': 'Unstarted', 'module_id': 'M3', 'total': 3, 'completed': 0}]}
         subjects = [{'id': 'current:M1', 'title': 'Mapped', 'total': 3, 'completed': 3},
                     {'id': 'current:M2', 'title': 'Native', 'total': 3, 'completed': 1}]
         rows = self.render(subjects=subjects, activity=activity)['programmeProgress']
-        self.assertEqual(rows, [{'id': 'current:M2', 'title': 'Native', 'percent': 33.33},
+        self.assertEqual(rows, [{'id': 'current:M1', 'title': 'Mapped', 'percent': 100},
+                                {'id': 'current:M2', 'title': 'Native', 'percent': 33.33},
                                 {'id': 'legacy:1', 'title': 'Recorded', 'percent': 25},
                                 {'id': 'legacy:2', 'title': 'Unstarted', 'percent': 0}])
         self.assertTrue(all(set(row) == {'id', 'title', 'percent'} for row in rows))

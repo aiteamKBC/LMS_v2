@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 import type { TrainingPlanDashboard, PlanReview } from '@/api/trainingPlanDashboard';
 import { fetchAttendanceWorkspace, peekAttendanceWorkspace, type AttendanceLecture, type AttendanceWorkspace } from '@/api/attendanceLectures';
+import { loadLearningReflectionStatuses } from '@/api/reflectionSubmission';
 import type { LearnerCalendarEvent } from '@/api/learnerCalendar';
 import { coachFetch } from '@/lib/coachFetch';
 import type { PlanSubjectSummary } from '@/api/learnerOverview';
@@ -14,6 +15,10 @@ vi.mock('../reviews/MeetingBookingDialog', () => ({
   default: ({ title }: { title: string }) => <div role="dialog" aria-label="Calendar booking">{title}</div>,
 }));
 vi.mock('@/api/attendanceLectures', () => ({ fetchAttendanceWorkspace: vi.fn(), peekAttendanceWorkspace: vi.fn() }));
+vi.mock('@/api/reflectionSubmission', async original => ({
+  ...await original<typeof import('@/api/reflectionSubmission')>(),
+  loadLearningReflectionStatuses: vi.fn(),
+}));
 vi.mock('@/lib/coachFetch', () => ({ coachFetch: vi.fn() }));
 vi.mock('../attendance/components/AbsenceReportDialog', () => ({
   default: ({ children, onClose, title = 'Report Absence' }: { children: React.ReactNode; onClose: () => void; title?: string }) =>
@@ -98,6 +103,7 @@ beforeEach(() => {
   vi.setSystemTime(new Date('2026-09-10T08:00:00Z'));
   vi.mocked(fetchAttendanceWorkspace).mockResolvedValue({ lectures: [] } as unknown as AttendanceWorkspace);
   vi.mocked(peekAttendanceWorkspace).mockReturnValue(undefined);
+  vi.mocked(loadLearningReflectionStatuses).mockResolvedValue({});
   vi.mocked(coachFetch).mockReset();
 });
 afterEach(() => {
@@ -108,6 +114,40 @@ afterEach(() => {
 });
 
 describe('Dashboard training plan controls', () => {
+  it('keeps progress in employer Overview and only the timeline and module details in Learning plan', () => {
+    const data = fixture();
+    const panel = (overview: boolean) => <MemoryRouter><TrainingPlanDetails
+      data={data} subjects={summarySubjects} kind="commercial" learnerId="125"
+      onRefresh={vi.fn()} onRetryContract={vi.fn()} canOpenActivities={false} canOpenCalendar={false}
+      cardsOnly overviewOnly={overview} trainingOnly={!overview} simpleModuleOverview={overview}
+    /></MemoryRouter>;
+    const view = render(panel(true));
+
+    expect(screen.getByRole('region', { name: 'Module progress' })).toBeVisible();
+    expect(screen.getByRole('region', { name: 'Programme module progress' })).toBeVisible();
+    expect(screen.queryByRole('region', { name: 'Module timeline' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('region', { name: 'Module overview' })).not.toBeInTheDocument();
+
+    view.rerender(panel(false));
+
+    const timeline = screen.getByRole('region', { name: 'Module timeline' });
+    const overview = screen.getByRole('region', { name: 'Module overview' });
+    expect(timeline).toBeVisible();
+    expect(overview).toBeVisible();
+    expect(timeline.parentElement?.parentElement).toHaveClass(/trainingCards/);
+    expect(timeline.compareDocumentPosition(overview) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(within(overview).getByText('Builder description')).toBeVisible();
+    expect(within(overview).getByRole('heading', { name: /Learning activities/ })).toBeVisible();
+    expect(screen.queryByRole('region', { name: 'Module progress' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('region', { name: 'Programme module progress' })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Show Marketing overview' }));
+    expect(within(screen.getByRole('region', { name: 'Module overview' })).getByRole('heading', { name: 'Marketing' })).toBeVisible();
+
+    view.rerender(panel(true));
+    expect(screen.getByRole('region', { name: 'Programme module progress' })).toBeVisible();
+    expect(screen.queryByRole('region', { name: 'Module timeline' })).not.toBeInTheDocument();
+  });
+
   it('renders server module percentages without recalculating from local cards or changing measure captions', () => {
     render(<MemoryRouter><TrainingPlanDetails data={fixture()} subjects={summarySubjects} kind="commercial" learnerId="125"
       onRefresh={vi.fn()} onRetryContract={vi.fn()} activityOverviewOnly overviewOnly programmeProgress={[
@@ -181,7 +221,7 @@ describe('Dashboard training plan controls', () => {
       }} /></MemoryRouter>);
     const chart = within(screen.getByRole('region', { name: 'Whole programme progress' }));
     expect(chart.getByText('0 / 4 sessions attended')).toBeVisible();
-    expect(chart.getByText('3 / 7 completed across all modules')).toBeVisible();
+    expect(chart.getByText('No activities assigned')).toBeVisible();
     expect(chart.getByText('22.5 / 80.4 hours')).toBeVisible();
     expect(chart.queryByText('Reviews')).not.toBeInTheDocument();
     expect(chart.getByRole('img')).not.toHaveAccessibleDescription(/reviews/i);
@@ -227,10 +267,10 @@ describe('Dashboard training plan controls', () => {
   it('renders programme modules as selectable cards with a visible progress track', () => {
     renderBoard(fixture(), summarySubjects, vi.fn(), undefined, undefined, true);
     const programme = within(screen.getByRole('region', { name: 'Programme module progress' }));
-    const marketing = programme.getByRole('button', { name: 'Marketing: 42.86% overall progress' });
+    const marketing = programme.getByRole('button', { name: 'Marketing (Previous learning): 42.86% overall progress' });
     const directSpans = marketing.querySelectorAll(':scope > span');
     expect(directSpans).toHaveLength(3);
-    expect(directSpans[0]).toHaveTextContent('Marketing42.86%');
+    expect(directSpans[0]).toHaveTextContent('Marketing (Previous learning)42.86%');
     expect(directSpans[1].firstElementChild).toHaveStyle({ width: '42.86%' });
     expect(directSpans[2]).toHaveTextContent('2 of 4 measures available');
     expect(marketing).toHaveAttribute('aria-pressed', 'true');
@@ -346,6 +386,38 @@ describe('Dashboard training plan controls', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Exit full screen' }));
     expect(screen.queryByRole('complementary')).not.toBeInTheDocument();
     expect(screen.getByRole('combobox', { name: 'Focus module' })).toHaveValue('current:NEW');
+  });
+
+  it('shows achieved KSBs without curriculum mappings and changes them with the selected module', () => {
+    const data = fixture();
+    data.moduleProgress = {
+      M10: { attendance: { attended: 0, total: 0 }, hours: { actual: 1 },
+        ksb: { completed: 3, total: 4, achievedCodes: ['K1', 'S2'] } },
+      NEW: { attendance: { attended: 0, total: 0 }, hours: { actual: 0 },
+        ksb: { completed: 0, total: 1, achievedCodes: [] } },
+    };
+    renderBoard(data, summarySubjects.map(subject => ({ ...subject, ksbCodes: [] })));
+    const panel = within(screen.getByRole('region', { name: 'Module overview' }));
+    const achieved = within(panel.getByRole('group', { name: 'Achieved KSBs' }));
+    expect(achieved.getByText('K1')).toBeVisible();
+    expect(achieved.getByText('S2')).toBeVisible();
+    expect(achieved.getByRole('heading', { name: 'Achieved KSBs (2)' })).toBeVisible();
+    expect(panel.queryByText('No KSBs mapped yet.')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'New module' }));
+    expect(panel.getByText('No KSBs achieved yet.')).toBeVisible();
+    expect(panel.queryByRole('group', { name: 'Achieved KSBs' })).not.toBeInTheDocument();
+    expect(panel.queryByText('K1')).not.toBeInTheDocument();
+  });
+
+  it('does not treat mapped or completed activity KSBs as accepted evidence when achievement is unavailable', () => {
+    renderBoard(fixture(), summarySubjects);
+    const panel = within(screen.getByRole('region', { name: 'Module overview' }));
+    expect(panel.getByText('Achieved KSBs are not available yet.')).toBeVisible();
+    expect(panel.queryByText('No KSBs achieved yet.')).not.toBeInTheDocument();
+    expect(panel.queryByRole('group', { name: 'Achieved KSBs' })).not.toBeInTheDocument();
+    fireEvent.click(panel.getByText('View 2 mapped KSBs'));
+    expect(panel.getByText('K1')).toBeVisible();
+    expect(panel.getByText('S4')).toBeVisible();
   });
 
   it('restores module plan facts and mapped KSBs from compact summaries', () => {
@@ -672,7 +744,7 @@ describe('dashboard Monthly Plan tab layout', () => {
     <Route path="*" element={<Destination />} />
   </Routes></MemoryRouter>);
 
-  it('shows the monthly metrics strip, reviews, assignments and lectures from the same data', () => {
+  it('shows the monthly metrics strip, reviews, assignments and lectures from the same data', async () => {
     renderMonthly(fixture(), summarySubjects);
     const monthly = within(screen.getByRole('region', { name: 'Monthly study plan' }));
     expect(monthly.getByRole('heading', { name: 'September 2026' })).toBeVisible();
@@ -686,7 +758,8 @@ describe('dashboard Monthly Plan tab layout', () => {
     const essay = monthly.getByText('Professional Practice Essay').closest('article')!;
     expect(within(essay).getByText('Required hours').parentElement).toHaveTextContent('10 hrs');
     expect(within(essay).getByLabelText('0% complete')).toBeVisible();
-    expect(within(essay).getByRole('link', { name: 'Start' })).toHaveAttribute('href', '/learner/component/commercial/125/essay?week=Assignment%201');
+    await waitFor(() => expect(within(essay).getByRole('link', { name: 'Start' })).toHaveAttribute(
+      'href', '/learner/monthly-submission/commercial/125?month=2026-09&assignment=essay'));
     const lectures = within(monthly.getByRole('region', { name: 'Lectures this month' }));
     expect(lectures.getAllByRole('columnheader').map(cell => cell.textContent)).toEqual(['Date', 'Time', 'Session', 'Tutor', 'Duration', 'Join']);
     expect(lectures.getByText('Attended session')).toBeVisible();

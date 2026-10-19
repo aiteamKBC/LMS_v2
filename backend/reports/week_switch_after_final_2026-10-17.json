@@ -1,0 +1,3165 @@
+{
+  "scope": "read-only projection; all aliases wrapped; no HTTP/auth/browser timing",
+  "module_id": "MOD-20260921085217095815146F2085A499",
+  "records": [
+    {
+      "run": 0,
+      "week": 2,
+      "projection": "week-switch",
+      "kind": "commercial",
+      "learner_id": "redacted",
+      "section": "",
+      "duration_ms": 1942.66,
+      "query_count": 16,
+      "db_duration_ms": 1832.68,
+      "query_count_by_alias": {
+        "default": 3,
+        "enrolment": 13
+      },
+      "db_duration_ms_by_alias": {
+        "default": 364.98,
+        "enrolment": 1467.7
+      },
+      "stage_durations_ms": {},
+      "raw_bytes": 7282,
+      "gzip_bytes": 1483,
+      "activities": 17,
+      "queries": [
+        {
+          "alias": "enrolment",
+          "sql": "SELECT \"enrolment\".\"Created_users\".\"id\", \"enrolment\".\"Created_users\".\"Learner_type\", \"enrolment\".\"Created_users\".\"Username\", \"enrolment\".\"Created_users\".\"Email\", \"enrolment\".\"Created_users\".\"Programme\", \"enrolment\".\"Created_users\".\"Cohort\", \"enrolment\".\"Created_users\".\"Group\", \"enrolment\".\"Created_users\".\"aptem_id\", (CASE WHEN jsonb_typeof(\"Training_plan\"::jsonb)='array' THEN\n              (SELECT coalesce(jsonb_agg(jsonb_build_object('moduleId',item->>'moduleId',\n                'assignmentMode',item->>'assignmentMode')), '[]'::jsonb)\n               FROM jsonb_array_elements(\"Training_plan\"::jsonb) item WHERE jsonb_typeof(item)='object')\n              ELSE NULL END) AS \"_weekly_training_plan\", (CASE WHEN jsonb_typeof(\"Learning_plan\"::jsonb)='array' THEN\n              (SELECT coalesce(jsonb_agg(jsonb_build_object('moduleId',item->>'moduleId',\n                'assignmentMode',item->>'assignmentMode')), '[]'::jsonb)\n               FROM jsonb_array_elements(\"Learning_plan\"::jsonb) item WHERE jsonb_typeof(item)='object')\n              ELSE NULL END) AS \"_weekly_learning_plan\" FROM \"enrolment\".\"Created_users\" WHERE \"enrolment\".\"Created_users\".\"id\" = %s LIMIT 21",
+          "ms": 122.233,
+          "rows": 1,
+          "callers": [
+            {
+              "file": "compiler.py",
+              "function": "execute_sql",
+              "line": 1624
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 122
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 79
+            },
+            {
+              "file": "utils.py",
+              "function": "_execute_with_wrappers",
+              "line": 92
+            },
+            {
+              "file": "benchmark_week_switch.py",
+              "function": "execute",
+              "line": 61
+            }
+          ]
+        },
+        {
+          "alias": "enrolment",
+          "sql": "SELECT l.id,l.enrolment_id,l.aptem_id,l.programme_id,l.full_name AS name,\n        l.programme,l.coach_name,l.coach_email,l.email,l.start_date,l.end_date,l.learner_type,\n        u.id AS account_record_id,u.\"Email\" AS account_email,u.aptem_id AS account_aptem_id,\n        u.\"Planned_hours\" AS programme_planned_hours\n        FROM \"Learner\".learners l\n        LEFT JOIN enrolment.\"Created_users\" u ON u.id=l.enrolment_id\n        WHERE l.enrolment_id=%s",
+          "ms": 73.481,
+          "rows": 1,
+          "callers": [
+            {
+              "file": "repository.py",
+              "function": "_query_rows",
+              "line": 70
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 122
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 79
+            },
+            {
+              "file": "utils.py",
+              "function": "_execute_with_wrappers",
+              "line": 92
+            },
+            {
+              "file": "benchmark_week_switch.py",
+              "function": "execute",
+              "line": 61
+            }
+          ]
+        },
+        {
+          "alias": "enrolment",
+          "sql": "SELECT \"Learner\".\"learners\".\"id\", \"Learner\".\"learners\".\"enrolment_id\" FROM \"Learner\".\"learners\" WHERE \"Learner\".\"learners\".\"enrolment_id\" = %s ORDER BY \"Learner\".\"learners\".\"id\" ASC LIMIT 1",
+          "ms": 69.246,
+          "rows": 1,
+          "callers": [
+            {
+              "file": "compiler.py",
+              "function": "execute_sql",
+              "line": 1624
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 122
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 79
+            },
+            {
+              "file": "utils.py",
+              "function": "_execute_with_wrappers",
+              "line": 92
+            },
+            {
+              "file": "benchmark_week_switch.py",
+              "function": "execute",
+              "line": 61
+            }
+          ]
+        },
+        {
+          "alias": "default",
+          "sql": "\nSELECT module_ids\nFROM curriculum.groups\nWHERE group_name = %s AND (programme_name = %s OR programme_id = %s)\n  AND deleted_at IS NULL\n  AND COALESCE(is_programme_deleted, FALSE) = FALSE\nORDER BY\n    -- jsonb_array_length() errors on a scalar, and this column is not\n    -- guaranteed to hold an array -- the parsing in _group_module_ids allows\n    -- for a string too. Anything that is not an array sorts as empty.\n    jsonb_array_length(\n        CASE WHEN jsonb_typeof(module_ids) = 'array'\n             THEN module_ids ELSE '[]'::jsonb END\n    ) DESC,\n    updated_at DESC NULLS LAST,\n    created_at DESC NULLS LAST,\n    group_id\nLIMIT 1\n",
+          "ms": 82.42,
+          "rows": 1,
+          "callers": [
+            {
+              "file": "learning_plan.py",
+              "function": "_rows",
+              "line": 62
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 122
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 79
+            },
+            {
+              "file": "utils.py",
+              "function": "_execute_with_wrappers",
+              "line": 92
+            },
+            {
+              "file": "benchmark_week_switch.py",
+              "function": "execute",
+              "line": 61
+            }
+          ]
+        },
+        {
+          "alias": "enrolment",
+          "sql": "\n        SELECT DISTINCT c.curriculum_module_ref AS module_id\n        FROM \"Learner\".learner_source_course_memberships membership\n        JOIN curriculum.source_courses c ON c.id=membership.source_course_id\n        WHERE membership.learner_id=%s AND membership.deleted_at IS NULL\n          AND c.deleted_at IS NULL AND nullif(c.curriculum_module_ref,'') IS NOT NULL\n        ORDER BY c.curriculum_module_ref",
+          "ms": 87.877,
+          "rows": 7,
+          "callers": [
+            {
+              "file": "repository.py",
+              "function": "_query_rows",
+              "line": 70
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 122
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 79
+            },
+            {
+              "file": "utils.py",
+              "function": "_execute_with_wrappers",
+              "line": 92
+            },
+            {
+              "file": "benchmark_week_switch.py",
+              "function": "execute",
+              "line": 61
+            }
+          ]
+        },
+        {
+          "alias": "enrolment",
+          "sql": "SELECT m.module_catalogue_id AS id,m.title,m.start_date,m.end_date,\n            m.weeks_number,m.sessions_number,m.cohort_id,\n            to_jsonb(m)->'session_holidays' AS session_holidays,\n            to_jsonb(m)->'session_overrides' AS session_overrides,\n            to_jsonb(m)->'weekly_schedule' AS weekly_schedule,\n            coalesce(nullif(m.session_week_day,''),g.session_week_day) AS session_week_day,\n            coalesce(nullif(m.session_start_time,''),g.session_start_time) AS session_start_time,\n            coalesce(nullif(m.session_end_time,''),g.session_end_time) AS session_end_time\n            FROM curriculum.modules m LEFT JOIN curriculum.groups g ON g.group_id=m.group_id\n            WHERE m.module_catalogue_id=ANY(%s) ORDER BY m.title",
+          "ms": 91.857,
+          "rows": 8,
+          "callers": [
+            {
+              "file": "weekly_learning.py",
+              "function": "read_weekly_learning",
+              "line": 141
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 122
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 79
+            },
+            {
+              "file": "utils.py",
+              "function": "_execute_with_wrappers",
+              "line": 92
+            },
+            {
+              "file": "benchmark_week_switch.py",
+              "function": "execute",
+              "line": 61
+            }
+          ]
+        },
+        {
+          "alias": "enrolment",
+          "sql": "SELECT id,module_catalogue_id,week_number,title,holiday_note_enabled,holiday_note,display_order\n            FROM curriculum.weeks WHERE module_catalogue_id=ANY(%s) AND (weeks.deleted_at IS NULL OR EXISTS (SELECT 1 FROM curriculum.modules archived_module WHERE archived_module.module_catalogue_id=weeks.module_catalogue_id AND archived_module.deleted_at IS NOT NULL AND COALESCE(weeks.deleted_via_parent, '') <> '' AND weeks.deleted_via_parent IN (archived_module.module_catalogue_id, archived_module.deleted_via_parent) AND weeks.deleted_at BETWEEN archived_module.deleted_at - interval '5 minutes' AND archived_module.deleted_at + interval '5 minutes'))\n            ORDER BY display_order,week_number,id",
+          "ms": 79.752,
+          "rows": 16,
+          "callers": [
+            {
+              "file": "weekly_learning.py",
+              "function": "read_weekly_learning",
+              "line": 153
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 122
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 79
+            },
+            {
+              "file": "utils.py",
+              "function": "_execute_with_wrappers",
+              "line": 92
+            },
+            {
+              "file": "benchmark_week_switch.py",
+              "function": "execute",
+              "line": 61
+            }
+          ]
+        },
+        {
+          "alias": "default",
+          "sql": "select table_name from information_schema.tables where table_schema = %s",
+          "ms": 75.993,
+          "rows": 92,
+          "callers": [
+            {
+              "file": "schema_gate.py",
+              "function": "_fetch_names",
+              "line": 181
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 122
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 79
+            },
+            {
+              "file": "utils.py",
+              "function": "_execute_with_wrappers",
+              "line": 92
+            },
+            {
+              "file": "benchmark_week_switch.py",
+              "function": "execute",
+              "line": 61
+            }
+          ]
+        },
+        {
+          "alias": "default",
+          "sql": "SELECT 'cohort' AS source,to_jsonb(c) AS payload FROM \"curriculum\".\"cohorts\" c WHERE \"cohort_id\" in (%s) UNION ALL SELECT 'england',to_jsonb(h) FROM \"curriculum\".\"england_holidays\" h UNION ALL SELECT 'authored',to_jsonb(h) FROM \"curriculum\".\"holidays\" h",
+          "ms": 206.583,
+          "rows": 122,
+          "callers": [
+            {
+              "file": "views.py",
+              "function": "fetch_all",
+              "line": 894
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 122
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 79
+            },
+            {
+              "file": "utils.py",
+              "function": "_execute_with_wrappers",
+              "line": 92
+            },
+            {
+              "file": "benchmark_week_switch.py",
+              "function": "execute",
+              "line": 61
+            }
+          ]
+        },
+        {
+          "alias": "enrolment",
+          "sql": "SELECT c.id,c.week_id,c.module_catalogue_id,c.type,\n            coalesce(l.quiz_id, CASE WHEN c.settings_json->>'linkedQuizId' ~ '^[0-9]+$'\n                THEN (c.settings_json->>'linkedQuizId')::bigint END) AS quiz_id,\n            EXISTS(SELECT 1 FROM curriculum.quizzes q WHERE q.id=coalesce(l.quiz_id,\n                CASE WHEN c.settings_json->>'linkedQuizId' ~ '^[0-9]+$'\n                THEN (c.settings_json->>'linkedQuizId')::bigint END)) AS is_quiz,\n            CASE WHEN lower(replace(c.type,'-','_')) <> 'video' THEN true ELSE\n              coalesce(btrim(c.settings_json->>'videoUrl'),'') <> '' OR coalesce(btrim(c.settings_json->>'readingContent'),'') <> '' OR coalesce(btrim(c.settings_json->>'podcastUrl'),'') <> '' OR coalesce(btrim(c.settings_json->>'audioUrl'),'') <> '' OR coalesce(btrim(c.settings_json->>'liveSessionUrl'),'') <> '' OR coalesce(btrim(c.settings_json->>'teamsMeetingUrl'),'') <> '' OR coalesce(btrim(c.settings_json->>'resourceUrl'),'') <> '' OR coalesce(btrim(c.settings_json->>'presentationUrl'),'') <> '' OR coalesce(btrim(c.settings_json->>'externalUrl'),'') <> '' OR coalesce(btrim(c.settings_json->>'fileUrl'),'') <> '' OR coalesce(btrim(c.settings_json->>'uploadedFileUrl'),'') <> '' OR coalesce(btrim(c.settings_json->>'url'),'') <> '' OR coalesce(c.settings_json->>'embedCode','') ~* '<iframe[^>]+src=[\"'']([^\"'']+)[\"'']' OR\n              coalesce(btrim(c.live_sessions_link),'') <> '' END AS has_content\n            FROM curriculum.components c LEFT JOIN curriculum.quiz_component_links l ON l.component_id=c.id\n            JOIN curriculum.modules cm ON cm.module_catalogue_id=c.module_catalogue_id\n            WHERE c.module_catalogue_id=ANY(%s) AND (c.deleted_at IS NULL OR EXISTS (SELECT 1 FROM curriculum.modules archived_module WHERE archived_module.module_catalogue_id=c.module_catalogue_id AND archived_module.deleted_at IS NOT NULL AND COALESCE(c.deleted_via_parent, '') <> '' AND c.deleted_via_parent IN (archived_module.module_catalogue_id, archived_module.deleted_via_parent) AND c.deleted_at BETWEEN archived_module.deleted_at - interval '5 minutes' AND archived_module.deleted_at + interval '5 minutes'))\n            AND (cm.deleted_at IS NULL OR COALESCE(cm.deleted_via_parent,'') <> '') AND coalesce(btrim(cm.title),'') <> ''\n             AND (c.week_id=%s OR l.quiz_id IS NOT NULL\n                OR c.settings_json->>'linkedQuizId' ~ '^[0-9]+$')\n            ORDER BY c.week_id,c.display_order,c.id",
+          "ms": 118.937,
+          "rows": 56,
+          "callers": [
+            {
+              "file": "weekly_learning.py",
+              "function": "read_weekly_learning",
+              "line": 202
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 122
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 79
+            },
+            {
+              "file": "utils.py",
+              "function": "_execute_with_wrappers",
+              "line": 92
+            },
+            {
+              "file": "benchmark_week_switch.py",
+              "function": "execute",
+              "line": 61
+            }
+          ]
+        },
+        {
+          "alias": "enrolment",
+          "sql": "SELECT \"Learner\".\"learner_progress_entries\".\"kind\" AS \"kind\", \"Learner\".\"learner_progress_entries\".\"component_ref\" AS \"component_ref\", \"Learner\".\"learner_progress_entries\".\"quiz_ref\" AS \"quiz_ref\", \"Learner\".\"learner_progress_entries\".\"passed\" AS \"passed\", \"Learner\".\"learner_progress_entries\".\"submitted_at\" AS \"submitted_at\" FROM \"Learner\".\"learner_progress_entries\" WHERE (\"Learner\".\"learner_progress_entries\".\"learner_id\" = %s AND \"Learner\".\"learner_progress_entries\".\"kind\" IN (%s, %s, %s, %s) AND (\"Learner\".\"learner_progress_entries\".\"component_ref\" IN (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) OR \"Learner\".\"learner_progress_entries\".\"kind\" = %s)) ORDER BY \"Learner\".\"learner_progress_entries\".\"entry_order\" ASC, \"Learner\".\"learner_progress_entries\".\"id\" ASC",
+          "ms": 115.992,
+          "rows": 40,
+          "callers": [
+            {
+              "file": "compiler.py",
+              "function": "execute_sql",
+              "line": 1624
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 122
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 79
+            },
+            {
+              "file": "utils.py",
+              "function": "_execute_with_wrappers",
+              "line": 92
+            },
+            {
+              "file": "benchmark_week_switch.py",
+              "function": "execute",
+              "line": 61
+            }
+          ]
+        },
+        {
+          "alias": "enrolment",
+          "sql": "WITH markers AS (\n            SELECT s.module_catalogue_id,coalesce(o.status,s.status) AS status,coalesce(o.scheduled_start,s.start_datetime) AS start,\n              coalesce(o.scheduled_end,coalesce(o.scheduled_start,s.start_datetime) + s.duration_minutes * interval '1 minute') AS finish,\n              CASE WHEN coalesce(o.attendance_report_id,'')='' THEN NULL ELSE EXISTS(\n                SELECT 1 FROM curriculum.live_session_attendance a WHERE a.occurrence_id=o.id\n                AND lower(btrim(a.email))=%s AND a.total_attendance_seconds>0) END AS attended ,s.id AS session_id,s.module_catalogue_id AS module_id,s.module_title,\n              s.start_datetime,s.duration_minutes,s.join_url AS series_join_url,s.status AS series_status,\n              o.id AS occurrence_id,o.scheduled_start,o.scheduled_end,o.join_url\n              FROM curriculum.live_sessions s LEFT JOIN curriculum.live_session_occurrences o ON o.live_session_id=s.id\n              WHERE s.module_catalogue_id=ANY(%s) AND lower(s.status) NOT IN ('cancelled','deleted','failed','superseded')\n              AND (o.id IS NULL AND coalesce(s.repeat_pattern,'') IN ('','none') OR o.id IS NOT NULL\n                   AND lower(o.status) NOT IN ('cancelled','deleted','failed','superseded')) AND (coalesce(o.scheduled_start,s.start_datetime) AT TIME ZONE 'UTC' AT TIME ZONE 'Europe/London')::date=%s::date\n            ), dated AS (\n              SELECT *, (start AT TIME ZONE 'UTC' AT TIME ZONE 'Europe/London')::date AS day FROM markers WHERE start IS NOT NULL\n            ) SELECT DISTINCT ON (module_catalogue_id,day) module_catalogue_id,day,attended,start,finish,status,session_id,module_id,module_title,start_datetime,duration_minutes,\n              series_join_url,series_status,occurrence_id,scheduled_start,scheduled_end,join_url\n              FROM dated ORDER BY module_catalogue_id,day,start",
+          "ms": 107.209,
+          "rows": 1,
+          "callers": [
+            {
+              "file": "weekly_learning.py",
+              "function": "read_weekly_learning",
+              "line": 250
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 122
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 79
+            },
+            {
+              "file": "utils.py",
+              "function": "_execute_with_wrappers",
+              "line": 92
+            },
+            {
+              "file": "benchmark_week_switch.py",
+              "function": "execute",
+              "line": 61
+            }
+          ]
+        },
+        {
+          "alias": "enrolment",
+          "sql": "SELECT c.id,c.title,c.type,c.ksb_mappings,\n            CASE WHEN jsonb_typeof(c.settings_json->'durationMinutes')='number'\n                THEN c.settings_json->>'durationMinutes' END AS duration_minutes,\n            q.title AS quiz_title,q.duration AS quiz_duration,q.time_unit AS quiz_time_unit,\n            l.quiz_id AS linked_quiz_id,q.id AS resolved_quiz_id,q.questions AS quiz_questions\n            FROM curriculum.components c LEFT JOIN curriculum.quiz_component_links l ON l.component_id=c.id\n            LEFT JOIN curriculum.quizzes q ON q.id=coalesce(l.quiz_id,\n                CASE WHEN c.settings_json->>'linkedQuizId' ~ '^[0-9]+$' THEN (c.settings_json->>'linkedQuizId')::bigint END)\n            WHERE c.id=ANY(%s) ORDER BY c.display_order,c.id",
+          "ms": 106.378,
+          "rows": 17,
+          "callers": [
+            {
+              "file": "weekly_learning.py",
+              "function": "read_weekly_learning",
+              "line": 297
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 122
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 79
+            },
+            {
+              "file": "utils.py",
+              "function": "_execute_with_wrappers",
+              "line": 92
+            },
+            {
+              "file": "benchmark_week_switch.py",
+              "function": "execute",
+              "line": 61
+            }
+          ]
+        },
+        {
+          "alias": "enrolment",
+          "sql": "SELECT component_id,ksb_code FROM curriculum.ksb_mappings\n            WHERE component_id=ANY(%s) AND (ksb_mappings.deleted_at IS NULL OR EXISTS (SELECT 1 FROM curriculum.modules archived_module WHERE archived_module.module_catalogue_id=ksb_mappings.module_catalogue_id AND archived_module.deleted_at IS NOT NULL AND COALESCE(ksb_mappings.deleted_via_parent, '') <> '' AND ksb_mappings.deleted_via_parent IN (archived_module.module_catalogue_id, archived_module.deleted_via_parent) AND ksb_mappings.deleted_at BETWEEN archived_module.deleted_at - interval '5 minutes' AND archived_module.deleted_at + interval '5 minutes')) ORDER BY component_id,ksb_code",
+          "ms": 90.747,
+          "rows": 0,
+          "callers": [
+            {
+              "file": "weekly_learning.py",
+              "function": "read_weekly_learning",
+              "line": 309
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 122
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 79
+            },
+            {
+              "file": "utils.py",
+              "function": "_execute_with_wrappers",
+              "line": 92
+            },
+            {
+              "file": "benchmark_week_switch.py",
+              "function": "execute",
+              "line": 61
+            }
+          ]
+        },
+        {
+          "alias": "enrolment",
+          "sql": "SELECT progress.id,progress.learner_id,progress.kind,progress.module_ref,progress.module_title,progress.component_ref,progress.component_type,progress.quiz_ref,progress.passed,progress.reported_time,progress.submitted_at,progress.started_at,progress.time_tracking_source,progress.claimed_seconds,progress.verified_seconds,progress.source_system,progress.component_link_source,progress.actual_seconds,progress.accepted,\n        to_jsonb(progress)->>'actual_basis' AS actual_basis,\n        CASE WHEN jsonb_typeof(progress.source_payload)='object' THEN\n          jsonb_build_object('original_source_ref',progress.source_payload->'original_source_ref')\n          ELSE progress.source_payload END AS source_payload,\n        CASE WHEN EXISTS(SELECT 1 FROM \"Learner\".learner_activity_reporting_segments s\n          WHERE s.progress_id=progress.id AND s.learner_id=progress.learner_id)\n          THEN '[{}]'::jsonb ELSE '[]'::jsonb END AS segments\n        FROM \"Learner\".learner_progress_entries progress\n        WHERE progress.learner_id=%s AND progress.deleted_at IS NULL\n        ORDER BY progress.reporting_month,progress.reporting_started_at NULLS LAST,progress.id",
+          "ms": 280.542,
+          "rows": 231,
+          "callers": [
+            {
+              "file": "repository.py",
+              "function": "_query_rows",
+              "line": 70
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 122
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 79
+            },
+            {
+              "file": "utils.py",
+              "function": "_execute_with_wrappers",
+              "line": 92
+            },
+            {
+              "file": "benchmark_week_switch.py",
+              "function": "execute",
+              "line": 61
+            }
+          ]
+        },
+        {
+          "alias": "enrolment",
+          "sql": "SELECT id, week_id, module_catalogue_id, type, title, CASE WHEN regexp_replace(regexp_replace(coalesce(description,''),'<[^>]*>','','g'),'&nbsp;|[\t\n\u000b\f\r \u00a0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]','','g')<>'' THEN 'content' ELSE '' END AS description, jsonb_build_object('resourceUrl',settings_json->'resourceUrl','presentationUrl',settings_json->'presentationUrl','externalUrl',settings_json->'externalUrl','fileUrl',settings_json->'fileUrl','uploadedFileUrl',settings_json->'uploadedFileUrl','url',settings_json->'url','linkedQuizId',settings_json->'linkedQuizId','videoUrl',settings_json->'videoUrl','embedCode',settings_json->'embedCode','podcastUrl',settings_json->'podcastUrl','audioUrl',settings_json->'audioUrl','liveSessionUrl',settings_json->'liveSessionUrl','teamsMeetingUrl',settings_json->'teamsMeetingUrl','teamsLiveSessionId',settings_json->'teamsLiveSessionId','teamsSessionNumber',settings_json->'teamsSessionNumber','recordingSeriesId',settings_json->'recordingSeriesId','recordingSessionNumber',settings_json->'recordingSessionNumber','recordingDate',settings_json->'recordingDate','sessionDate',settings_json->'sessionDate','sessionTime',settings_json->'sessionTime','sessionDateTimeUtc',settings_json->'sessionDateTimeUtc','durationMinutes',settings_json->'durationMinutes','learnerTitle',settings_json->'learnerTitle','isMonthlyAssignment',settings_json->'isMonthlyAssignment','assignmentTopics',settings_json->'assignmentTopics','assignmentBrief',settings_json->'assignmentBrief','assignmentContent',settings_json->'assignmentContent','submissionInstructions',settings_json->'submissionInstructions','assignmentFileUrl',settings_json->'assignmentFileUrl','assignmentFileName',settings_json->'assignmentFileName','uploadedFileName',settings_json->'uploadedFileName','reflectionPrompt',settings_json->'reflectionPrompt','podcastReflectionQuestion',settings_json->'podcastReflectionQuestion','readingReflectionPrompts',settings_json->'readingReflectionPrompts','learnerGuidance',settings_json->'learnerGuidance','sourceType',settings_json->'sourceType','resourceSource',settings_json->'resourceSource','fileSource',settings_json->'fileSource') || jsonb_build_object('_readingContentAvailable',coalesce(regexp_replace(settings_json->>'readingContent','<[^>]*>|&nbsp;|\\s','','g'),'')<>'') AS settings_json, live_sessions_link, display_order, ksb_mappings, reflection_required, \"Reflection_Question\", tutor_validation_required FROM curriculum.components WHERE module_catalogue_id = ANY(%s) AND week_id = ANY(%s) AND (components.deleted_at IS NULL OR EXISTS (SELECT 1 FROM curriculum.modules archived_module WHERE archived_module.module_catalogue_id=components.module_catalogue_id AND archived_module.deleted_at IS NOT NULL AND COALESCE(components.deleted_via_parent, '') <> '' AND components.deleted_via_parent IN (archived_module.module_catalogue_id, archived_module.deleted_via_parent) AND components.deleted_at BETWEEN archived_module.deleted_at - interval '5 minutes' AND archived_module.deleted_at + interval '5 minutes')) ORDER BY week_id, display_order, id",
+          "ms": 123.57,
+          "rows": 17,
+          "callers": [
+            {
+              "file": "learner_detail.py",
+              "function": "_resolve_from_master",
+              "line": 1510
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 122
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 79
+            },
+            {
+              "file": "utils.py",
+              "function": "_execute_with_wrappers",
+              "line": 92
+            },
+            {
+              "file": "benchmark_week_switch.py",
+              "function": "execute",
+              "line": 61
+            }
+          ]
+        }
+      ],
+      "payload_sha256": "ccaacfe8f2d12e48246acf9b1a0118d1941e206a388deb1f1f23a89b6c0757d6"
+    },
+    {
+      "run": 0,
+      "week": 3,
+      "projection": "week-switch",
+      "kind": "commercial",
+      "learner_id": "redacted",
+      "section": "",
+      "duration_ms": 1756.34,
+      "query_count": 15,
+      "db_duration_ms": 1708.82,
+      "query_count_by_alias": {
+        "default": 2,
+        "enrolment": 13
+      },
+      "db_duration_ms_by_alias": {
+        "default": 315.26,
+        "enrolment": 1393.56
+      },
+      "stage_durations_ms": {},
+      "raw_bytes": 7609,
+      "gzip_bytes": 1481,
+      "activities": 18,
+      "queries": [
+        {
+          "alias": "enrolment",
+          "sql": "SELECT \"enrolment\".\"Created_users\".\"id\", \"enrolment\".\"Created_users\".\"Learner_type\", \"enrolment\".\"Created_users\".\"Username\", \"enrolment\".\"Created_users\".\"Email\", \"enrolment\".\"Created_users\".\"Programme\", \"enrolment\".\"Created_users\".\"Cohort\", \"enrolment\".\"Created_users\".\"Group\", \"enrolment\".\"Created_users\".\"aptem_id\", (CASE WHEN jsonb_typeof(\"Training_plan\"::jsonb)='array' THEN\n              (SELECT coalesce(jsonb_agg(jsonb_build_object('moduleId',item->>'moduleId',\n                'assignmentMode',item->>'assignmentMode')), '[]'::jsonb)\n               FROM jsonb_array_elements(\"Training_plan\"::jsonb) item WHERE jsonb_typeof(item)='object')\n              ELSE NULL END) AS \"_weekly_training_plan\", (CASE WHEN jsonb_typeof(\"Learning_plan\"::jsonb)='array' THEN\n              (SELECT coalesce(jsonb_agg(jsonb_build_object('moduleId',item->>'moduleId',\n                'assignmentMode',item->>'assignmentMode')), '[]'::jsonb)\n               FROM jsonb_array_elements(\"Learning_plan\"::jsonb) item WHERE jsonb_typeof(item)='object')\n              ELSE NULL END) AS \"_weekly_learning_plan\" FROM \"enrolment\".\"Created_users\" WHERE \"enrolment\".\"Created_users\".\"id\" = %s LIMIT 21",
+          "ms": 125.399,
+          "rows": 1,
+          "callers": [
+            {
+              "file": "compiler.py",
+              "function": "execute_sql",
+              "line": 1624
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 122
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 79
+            },
+            {
+              "file": "utils.py",
+              "function": "_execute_with_wrappers",
+              "line": 92
+            },
+            {
+              "file": "benchmark_week_switch.py",
+              "function": "execute",
+              "line": 61
+            }
+          ]
+        },
+        {
+          "alias": "enrolment",
+          "sql": "SELECT l.id,l.enrolment_id,l.aptem_id,l.programme_id,l.full_name AS name,\n        l.programme,l.coach_name,l.coach_email,l.email,l.start_date,l.end_date,l.learner_type,\n        u.id AS account_record_id,u.\"Email\" AS account_email,u.aptem_id AS account_aptem_id,\n        u.\"Planned_hours\" AS programme_planned_hours\n        FROM \"Learner\".learners l\n        LEFT JOIN enrolment.\"Created_users\" u ON u.id=l.enrolment_id\n        WHERE l.enrolment_id=%s",
+          "ms": 70.499,
+          "rows": 1,
+          "callers": [
+            {
+              "file": "repository.py",
+              "function": "_query_rows",
+              "line": 70
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 122
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 79
+            },
+            {
+              "file": "utils.py",
+              "function": "_execute_with_wrappers",
+              "line": 92
+            },
+            {
+              "file": "benchmark_week_switch.py",
+              "function": "execute",
+              "line": 61
+            }
+          ]
+        },
+        {
+          "alias": "enrolment",
+          "sql": "SELECT \"Learner\".\"learners\".\"id\", \"Learner\".\"learners\".\"enrolment_id\" FROM \"Learner\".\"learners\" WHERE \"Learner\".\"learners\".\"enrolment_id\" = %s ORDER BY \"Learner\".\"learners\".\"id\" ASC LIMIT 1",
+          "ms": 62.572,
+          "rows": 1,
+          "callers": [
+            {
+              "file": "compiler.py",
+              "function": "execute_sql",
+              "line": 1624
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 122
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 79
+            },
+            {
+              "file": "utils.py",
+              "function": "_execute_with_wrappers",
+              "line": 92
+            },
+            {
+              "file": "benchmark_week_switch.py",
+              "function": "execute",
+              "line": 61
+            }
+          ]
+        },
+        {
+          "alias": "default",
+          "sql": "\nSELECT module_ids\nFROM curriculum.groups\nWHERE group_name = %s AND (programme_name = %s OR programme_id = %s)\n  AND deleted_at IS NULL\n  AND COALESCE(is_programme_deleted, FALSE) = FALSE\nORDER BY\n    -- jsonb_array_length() errors on a scalar, and this column is not\n    -- guaranteed to hold an array -- the parsing in _group_module_ids allows\n    -- for a string too. Anything that is not an array sorts as empty.\n    jsonb_array_length(\n        CASE WHEN jsonb_typeof(module_ids) = 'array'\n             THEN module_ids ELSE '[]'::jsonb END\n    ) DESC,\n    updated_at DESC NULLS LAST,\n    created_at DESC NULLS LAST,\n    group_id\nLIMIT 1\n",
+          "ms": 66.939,
+          "rows": 1,
+          "callers": [
+            {
+              "file": "learning_plan.py",
+              "function": "_rows",
+              "line": 62
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 122
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 79
+            },
+            {
+              "file": "utils.py",
+              "function": "_execute_with_wrappers",
+              "line": 92
+            },
+            {
+              "file": "benchmark_week_switch.py",
+              "function": "execute",
+              "line": 61
+            }
+          ]
+        },
+        {
+          "alias": "enrolment",
+          "sql": "\n        SELECT DISTINCT c.curriculum_module_ref AS module_id\n        FROM \"Learner\".learner_source_course_memberships membership\n        JOIN curriculum.source_courses c ON c.id=membership.source_course_id\n        WHERE membership.learner_id=%s AND membership.deleted_at IS NULL\n          AND c.deleted_at IS NULL AND nullif(c.curriculum_module_ref,'') IS NOT NULL\n        ORDER BY c.curriculum_module_ref",
+          "ms": 124.861,
+          "rows": 7,
+          "callers": [
+            {
+              "file": "repository.py",
+              "function": "_query_rows",
+              "line": 70
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 122
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 79
+            },
+            {
+              "file": "utils.py",
+              "function": "_execute_with_wrappers",
+              "line": 92
+            },
+            {
+              "file": "benchmark_week_switch.py",
+              "function": "execute",
+              "line": 61
+            }
+          ]
+        },
+        {
+          "alias": "enrolment",
+          "sql": "SELECT m.module_catalogue_id AS id,m.title,m.start_date,m.end_date,\n            m.weeks_number,m.sessions_number,m.cohort_id,\n            to_jsonb(m)->'session_holidays' AS session_holidays,\n            to_jsonb(m)->'session_overrides' AS session_overrides,\n            to_jsonb(m)->'weekly_schedule' AS weekly_schedule,\n            coalesce(nullif(m.session_week_day,''),g.session_week_day) AS session_week_day,\n            coalesce(nullif(m.session_start_time,''),g.session_start_time) AS session_start_time,\n            coalesce(nullif(m.session_end_time,''),g.session_end_time) AS session_end_time\n            FROM curriculum.modules m LEFT JOIN curriculum.groups g ON g.group_id=m.group_id\n            WHERE m.module_catalogue_id=ANY(%s) ORDER BY m.title",
+          "ms": 103.06,
+          "rows": 8,
+          "callers": [
+            {
+              "file": "weekly_learning.py",
+              "function": "read_weekly_learning",
+              "line": 141
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 122
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 79
+            },
+            {
+              "file": "utils.py",
+              "function": "_execute_with_wrappers",
+              "line": 92
+            },
+            {
+              "file": "benchmark_week_switch.py",
+              "function": "execute",
+              "line": 61
+            }
+          ]
+        },
+        {
+          "alias": "enrolment",
+          "sql": "SELECT id,module_catalogue_id,week_number,title,holiday_note_enabled,holiday_note,display_order\n            FROM curriculum.weeks WHERE module_catalogue_id=ANY(%s) AND (weeks.deleted_at IS NULL OR EXISTS (SELECT 1 FROM curriculum.modules archived_module WHERE archived_module.module_catalogue_id=weeks.module_catalogue_id AND archived_module.deleted_at IS NOT NULL AND COALESCE(weeks.deleted_via_parent, '') <> '' AND weeks.deleted_via_parent IN (archived_module.module_catalogue_id, archived_module.deleted_via_parent) AND weeks.deleted_at BETWEEN archived_module.deleted_at - interval '5 minutes' AND archived_module.deleted_at + interval '5 minutes'))\n            ORDER BY display_order,week_number,id",
+          "ms": 102.247,
+          "rows": 16,
+          "callers": [
+            {
+              "file": "weekly_learning.py",
+              "function": "read_weekly_learning",
+              "line": 153
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 122
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 79
+            },
+            {
+              "file": "utils.py",
+              "function": "_execute_with_wrappers",
+              "line": 92
+            },
+            {
+              "file": "benchmark_week_switch.py",
+              "function": "execute",
+              "line": 61
+            }
+          ]
+        },
+        {
+          "alias": "default",
+          "sql": "SELECT 'cohort' AS source,to_jsonb(c) AS payload FROM \"curriculum\".\"cohorts\" c WHERE \"cohort_id\" in (%s) UNION ALL SELECT 'england',to_jsonb(h) FROM \"curriculum\".\"england_holidays\" h UNION ALL SELECT 'authored',to_jsonb(h) FROM \"curriculum\".\"holidays\" h",
+          "ms": 248.34,
+          "rows": 122,
+          "callers": [
+            {
+              "file": "views.py",
+              "function": "fetch_all",
+              "line": 894
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 122
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 79
+            },
+            {
+              "file": "utils.py",
+              "function": "_execute_with_wrappers",
+              "line": 92
+            },
+            {
+              "file": "benchmark_week_switch.py",
+              "function": "execute",
+              "line": 61
+            }
+          ]
+        },
+        {
+          "alias": "enrolment",
+          "sql": "SELECT c.id,c.week_id,c.module_catalogue_id,c.type,\n            coalesce(l.quiz_id, CASE WHEN c.settings_json->>'linkedQuizId' ~ '^[0-9]+$'\n                THEN (c.settings_json->>'linkedQuizId')::bigint END) AS quiz_id,\n            EXISTS(SELECT 1 FROM curriculum.quizzes q WHERE q.id=coalesce(l.quiz_id,\n                CASE WHEN c.settings_json->>'linkedQuizId' ~ '^[0-9]+$'\n                THEN (c.settings_json->>'linkedQuizId')::bigint END)) AS is_quiz,\n            CASE WHEN lower(replace(c.type,'-','_')) <> 'video' THEN true ELSE\n              coalesce(btrim(c.settings_json->>'videoUrl'),'') <> '' OR coalesce(btrim(c.settings_json->>'readingContent'),'') <> '' OR coalesce(btrim(c.settings_json->>'podcastUrl'),'') <> '' OR coalesce(btrim(c.settings_json->>'audioUrl'),'') <> '' OR coalesce(btrim(c.settings_json->>'liveSessionUrl'),'') <> '' OR coalesce(btrim(c.settings_json->>'teamsMeetingUrl'),'') <> '' OR coalesce(btrim(c.settings_json->>'resourceUrl'),'') <> '' OR coalesce(btrim(c.settings_json->>'presentationUrl'),'') <> '' OR coalesce(btrim(c.settings_json->>'externalUrl'),'') <> '' OR coalesce(btrim(c.settings_json->>'fileUrl'),'') <> '' OR coalesce(btrim(c.settings_json->>'uploadedFileUrl'),'') <> '' OR coalesce(btrim(c.settings_json->>'url'),'') <> '' OR coalesce(c.settings_json->>'embedCode','') ~* '<iframe[^>]+src=[\"'']([^\"'']+)[\"'']' OR\n              coalesce(btrim(c.live_sessions_link),'') <> '' END AS has_content\n            FROM curriculum.components c LEFT JOIN curriculum.quiz_component_links l ON l.component_id=c.id\n            JOIN curriculum.modules cm ON cm.module_catalogue_id=c.module_catalogue_id\n            WHERE c.module_catalogue_id=ANY(%s) AND (c.deleted_at IS NULL OR EXISTS (SELECT 1 FROM curriculum.modules archived_module WHERE archived_module.module_catalogue_id=c.module_catalogue_id AND archived_module.deleted_at IS NOT NULL AND COALESCE(c.deleted_via_parent, '') <> '' AND c.deleted_via_parent IN (archived_module.module_catalogue_id, archived_module.deleted_via_parent) AND c.deleted_at BETWEEN archived_module.deleted_at - interval '5 minutes' AND archived_module.deleted_at + interval '5 minutes'))\n            AND (cm.deleted_at IS NULL OR COALESCE(cm.deleted_via_parent,'') <> '') AND coalesce(btrim(cm.title),'') <> ''\n             AND (c.week_id=%s OR l.quiz_id IS NOT NULL\n                OR c.settings_json->>'linkedQuizId' ~ '^[0-9]+$')\n            ORDER BY c.week_id,c.display_order,c.id",
+          "ms": 77.425,
+          "rows": 57,
+          "callers": [
+            {
+              "file": "weekly_learning.py",
+              "function": "read_weekly_learning",
+              "line": 202
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 122
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 79
+            },
+            {
+              "file": "utils.py",
+              "function": "_execute_with_wrappers",
+              "line": 92
+            },
+            {
+              "file": "benchmark_week_switch.py",
+              "function": "execute",
+              "line": 61
+            }
+          ]
+        },
+        {
+          "alias": "enrolment",
+          "sql": "SELECT \"Learner\".\"learner_progress_entries\".\"kind\" AS \"kind\", \"Learner\".\"learner_progress_entries\".\"component_ref\" AS \"component_ref\", \"Learner\".\"learner_progress_entries\".\"quiz_ref\" AS \"quiz_ref\", \"Learner\".\"learner_progress_entries\".\"passed\" AS \"passed\", \"Learner\".\"learner_progress_entries\".\"submitted_at\" AS \"submitted_at\" FROM \"Learner\".\"learner_progress_entries\" WHERE (\"Learner\".\"learner_progress_entries\".\"learner_id\" = %s AND \"Learner\".\"learner_progress_entries\".\"kind\" IN (%s, %s, %s, %s) AND (\"Learner\".\"learner_progress_entries\".\"component_ref\" IN (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) OR \"Learner\".\"learner_progress_entries\".\"kind\" = %s)) ORDER BY \"Learner\".\"learner_progress_entries\".\"entry_order\" ASC, \"Learner\".\"learner_progress_entries\".\"id\" ASC",
+          "ms": 78.373,
+          "rows": 40,
+          "callers": [
+            {
+              "file": "compiler.py",
+              "function": "execute_sql",
+              "line": 1624
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 122
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 79
+            },
+            {
+              "file": "utils.py",
+              "function": "_execute_with_wrappers",
+              "line": 92
+            },
+            {
+              "file": "benchmark_week_switch.py",
+              "function": "execute",
+              "line": 61
+            }
+          ]
+        },
+        {
+          "alias": "enrolment",
+          "sql": "WITH markers AS (\n            SELECT s.module_catalogue_id,coalesce(o.status,s.status) AS status,coalesce(o.scheduled_start,s.start_datetime) AS start,\n              coalesce(o.scheduled_end,coalesce(o.scheduled_start,s.start_datetime) + s.duration_minutes * interval '1 minute') AS finish,\n              CASE WHEN coalesce(o.attendance_report_id,'')='' THEN NULL ELSE EXISTS(\n                SELECT 1 FROM curriculum.live_session_attendance a WHERE a.occurrence_id=o.id\n                AND lower(btrim(a.email))=%s AND a.total_attendance_seconds>0) END AS attended ,s.id AS session_id,s.module_catalogue_id AS module_id,s.module_title,\n              s.start_datetime,s.duration_minutes,s.join_url AS series_join_url,s.status AS series_status,\n              o.id AS occurrence_id,o.scheduled_start,o.scheduled_end,o.join_url\n              FROM curriculum.live_sessions s LEFT JOIN curriculum.live_session_occurrences o ON o.live_session_id=s.id\n              WHERE s.module_catalogue_id=ANY(%s) AND lower(s.status) NOT IN ('cancelled','deleted','failed','superseded')\n              AND (o.id IS NULL AND coalesce(s.repeat_pattern,'') IN ('','none') OR o.id IS NOT NULL\n                   AND lower(o.status) NOT IN ('cancelled','deleted','failed','superseded')) AND (coalesce(o.scheduled_start,s.start_datetime) AT TIME ZONE 'UTC' AT TIME ZONE 'Europe/London')::date=%s::date\n            ), dated AS (\n              SELECT *, (start AT TIME ZONE 'UTC' AT TIME ZONE 'Europe/London')::date AS day FROM markers WHERE start IS NOT NULL\n            ) SELECT DISTINCT ON (module_catalogue_id,day) module_catalogue_id,day,attended,start,finish,status,session_id,module_id,module_title,start_datetime,duration_minutes,\n              series_join_url,series_status,occurrence_id,scheduled_start,scheduled_end,join_url\n              FROM dated ORDER BY module_catalogue_id,day,start",
+          "ms": 70.428,
+          "rows": 1,
+          "callers": [
+            {
+              "file": "weekly_learning.py",
+              "function": "read_weekly_learning",
+              "line": 250
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 122
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 79
+            },
+            {
+              "file": "utils.py",
+              "function": "_execute_with_wrappers",
+              "line": 92
+            },
+            {
+              "file": "benchmark_week_switch.py",
+              "function": "execute",
+              "line": 61
+            }
+          ]
+        },
+        {
+          "alias": "enrolment",
+          "sql": "SELECT c.id,c.title,c.type,c.ksb_mappings,\n            CASE WHEN jsonb_typeof(c.settings_json->'durationMinutes')='number'\n                THEN c.settings_json->>'durationMinutes' END AS duration_minutes,\n            q.title AS quiz_title,q.duration AS quiz_duration,q.time_unit AS quiz_time_unit,\n            l.quiz_id AS linked_quiz_id,q.id AS resolved_quiz_id,q.questions AS quiz_questions\n            FROM curriculum.components c LEFT JOIN curriculum.quiz_component_links l ON l.component_id=c.id\n            LEFT JOIN curriculum.quizzes q ON q.id=coalesce(l.quiz_id,\n                CASE WHEN c.settings_json->>'linkedQuizId' ~ '^[0-9]+$' THEN (c.settings_json->>'linkedQuizId')::bigint END)\n            WHERE c.id=ANY(%s) ORDER BY c.display_order,c.id",
+          "ms": 67.866,
+          "rows": 18,
+          "callers": [
+            {
+              "file": "weekly_learning.py",
+              "function": "read_weekly_learning",
+              "line": 297
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 122
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 79
+            },
+            {
+              "file": "utils.py",
+              "function": "_execute_with_wrappers",
+              "line": 92
+            },
+            {
+              "file": "benchmark_week_switch.py",
+              "function": "execute",
+              "line": 61
+            }
+          ]
+        },
+        {
+          "alias": "enrolment",
+          "sql": "SELECT component_id,ksb_code FROM curriculum.ksb_mappings\n            WHERE component_id=ANY(%s) AND (ksb_mappings.deleted_at IS NULL OR EXISTS (SELECT 1 FROM curriculum.modules archived_module WHERE archived_module.module_catalogue_id=ksb_mappings.module_catalogue_id AND archived_module.deleted_at IS NOT NULL AND COALESCE(ksb_mappings.deleted_via_parent, '') <> '' AND ksb_mappings.deleted_via_parent IN (archived_module.module_catalogue_id, archived_module.deleted_via_parent) AND ksb_mappings.deleted_at BETWEEN archived_module.deleted_at - interval '5 minutes' AND archived_module.deleted_at + interval '5 minutes')) ORDER BY component_id,ksb_code",
+          "ms": 140.957,
+          "rows": 0,
+          "callers": [
+            {
+              "file": "weekly_learning.py",
+              "function": "read_weekly_learning",
+              "line": 309
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 122
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 79
+            },
+            {
+              "file": "utils.py",
+              "function": "_execute_with_wrappers",
+              "line": 92
+            },
+            {
+              "file": "benchmark_week_switch.py",
+              "function": "execute",
+              "line": 61
+            }
+          ]
+        },
+        {
+          "alias": "enrolment",
+          "sql": "SELECT progress.id,progress.learner_id,progress.kind,progress.module_ref,progress.module_title,progress.component_ref,progress.component_type,progress.quiz_ref,progress.passed,progress.reported_time,progress.submitted_at,progress.started_at,progress.time_tracking_source,progress.claimed_seconds,progress.verified_seconds,progress.source_system,progress.component_link_source,progress.actual_seconds,progress.accepted,\n        to_jsonb(progress)->>'actual_basis' AS actual_basis,\n        CASE WHEN jsonb_typeof(progress.source_payload)='object' THEN\n          jsonb_build_object('original_source_ref',progress.source_payload->'original_source_ref')\n          ELSE progress.source_payload END AS source_payload,\n        CASE WHEN EXISTS(SELECT 1 FROM \"Learner\".learner_activity_reporting_segments s\n          WHERE s.progress_id=progress.id AND s.learner_id=progress.learner_id)\n          THEN '[{}]'::jsonb ELSE '[]'::jsonb END AS segments\n        FROM \"Learner\".learner_progress_entries progress\n        WHERE progress.learner_id=%s AND progress.deleted_at IS NULL\n        ORDER BY progress.reporting_month,progress.reporting_started_at NULLS LAST,progress.id",
+          "ms": 184.967,
+          "rows": 231,
+          "callers": [
+            {
+              "file": "repository.py",
+              "function": "_query_rows",
+              "line": 70
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 122
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 79
+            },
+            {
+              "file": "utils.py",
+              "function": "_execute_with_wrappers",
+              "line": 92
+            },
+            {
+              "file": "benchmark_week_switch.py",
+              "function": "execute",
+              "line": 61
+            }
+          ]
+        },
+        {
+          "alias": "enrolment",
+          "sql": "SELECT id, week_id, module_catalogue_id, type, title, CASE WHEN regexp_replace(regexp_replace(coalesce(description,''),'<[^>]*>','','g'),'&nbsp;|[\t\n\u000b\f\r \u00a0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]','','g')<>'' THEN 'content' ELSE '' END AS description, jsonb_build_object('resourceUrl',settings_json->'resourceUrl','presentationUrl',settings_json->'presentationUrl','externalUrl',settings_json->'externalUrl','fileUrl',settings_json->'fileUrl','uploadedFileUrl',settings_json->'uploadedFileUrl','url',settings_json->'url','linkedQuizId',settings_json->'linkedQuizId','videoUrl',settings_json->'videoUrl','embedCode',settings_json->'embedCode','podcastUrl',settings_json->'podcastUrl','audioUrl',settings_json->'audioUrl','liveSessionUrl',settings_json->'liveSessionUrl','teamsMeetingUrl',settings_json->'teamsMeetingUrl','teamsLiveSessionId',settings_json->'teamsLiveSessionId','teamsSessionNumber',settings_json->'teamsSessionNumber','recordingSeriesId',settings_json->'recordingSeriesId','recordingSessionNumber',settings_json->'recordingSessionNumber','recordingDate',settings_json->'recordingDate','sessionDate',settings_json->'sessionDate','sessionTime',settings_json->'sessionTime','sessionDateTimeUtc',settings_json->'sessionDateTimeUtc','durationMinutes',settings_json->'durationMinutes','learnerTitle',settings_json->'learnerTitle','isMonthlyAssignment',settings_json->'isMonthlyAssignment','assignmentTopics',settings_json->'assignmentTopics','assignmentBrief',settings_json->'assignmentBrief','assignmentContent',settings_json->'assignmentContent','submissionInstructions',settings_json->'submissionInstructions','assignmentFileUrl',settings_json->'assignmentFileUrl','assignmentFileName',settings_json->'assignmentFileName','uploadedFileName',settings_json->'uploadedFileName','reflectionPrompt',settings_json->'reflectionPrompt','podcastReflectionQuestion',settings_json->'podcastReflectionQuestion','readingReflectionPrompts',settings_json->'readingReflectionPrompts','learnerGuidance',settings_json->'learnerGuidance','sourceType',settings_json->'sourceType','resourceSource',settings_json->'resourceSource','fileSource',settings_json->'fileSource') || jsonb_build_object('_readingContentAvailable',coalesce(regexp_replace(settings_json->>'readingContent','<[^>]*>|&nbsp;|\\s','','g'),'')<>'') AS settings_json, live_sessions_link, display_order, ksb_mappings, reflection_required, \"Reflection_Question\", tutor_validation_required FROM curriculum.components WHERE module_catalogue_id = ANY(%s) AND week_id = ANY(%s) AND (components.deleted_at IS NULL OR EXISTS (SELECT 1 FROM curriculum.modules archived_module WHERE archived_module.module_catalogue_id=components.module_catalogue_id AND archived_module.deleted_at IS NOT NULL AND COALESCE(components.deleted_via_parent, '') <> '' AND components.deleted_via_parent IN (archived_module.module_catalogue_id, archived_module.deleted_via_parent) AND components.deleted_at BETWEEN archived_module.deleted_at - interval '5 minutes' AND archived_module.deleted_at + interval '5 minutes')) ORDER BY week_id, display_order, id",
+          "ms": 184.991,
+          "rows": 18,
+          "callers": [
+            {
+              "file": "learner_detail.py",
+              "function": "_resolve_from_master",
+              "line": 1510
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 122
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 79
+            },
+            {
+              "file": "utils.py",
+              "function": "_execute_with_wrappers",
+              "line": 92
+            },
+            {
+              "file": "benchmark_week_switch.py",
+              "function": "execute",
+              "line": 61
+            }
+          ]
+        }
+      ],
+      "payload_sha256": "d8f4838578b454b48e753ba97d76956b51076056d820a40bcb2526e1397e1299"
+    },
+    {
+      "run": 0,
+      "week": 2,
+      "projection": "week-switch",
+      "kind": "commercial",
+      "learner_id": "redacted",
+      "section": "",
+      "duration_ms": 1546.85,
+      "query_count": 15,
+      "db_duration_ms": 1500.9,
+      "query_count_by_alias": {
+        "default": 2,
+        "enrolment": 13
+      },
+      "db_duration_ms_by_alias": {
+        "default": 347.17,
+        "enrolment": 1153.74
+      },
+      "stage_durations_ms": {},
+      "raw_bytes": 7282,
+      "gzip_bytes": 1483,
+      "activities": 17,
+      "queries": [
+        {
+          "alias": "enrolment",
+          "sql": "SELECT \"enrolment\".\"Created_users\".\"id\", \"enrolment\".\"Created_users\".\"Learner_type\", \"enrolment\".\"Created_users\".\"Username\", \"enrolment\".\"Created_users\".\"Email\", \"enrolment\".\"Created_users\".\"Programme\", \"enrolment\".\"Created_users\".\"Cohort\", \"enrolment\".\"Created_users\".\"Group\", \"enrolment\".\"Created_users\".\"aptem_id\", (CASE WHEN jsonb_typeof(\"Training_plan\"::jsonb)='array' THEN\n              (SELECT coalesce(jsonb_agg(jsonb_build_object('moduleId',item->>'moduleId',\n                'assignmentMode',item->>'assignmentMode')), '[]'::jsonb)\n               FROM jsonb_array_elements(\"Training_plan\"::jsonb) item WHERE jsonb_typeof(item)='object')\n              ELSE NULL END) AS \"_weekly_training_plan\", (CASE WHEN jsonb_typeof(\"Learning_plan\"::jsonb)='array' THEN\n              (SELECT coalesce(jsonb_agg(jsonb_build_object('moduleId',item->>'moduleId',\n                'assignmentMode',item->>'assignmentMode')), '[]'::jsonb)\n               FROM jsonb_array_elements(\"Learning_plan\"::jsonb) item WHERE jsonb_typeof(item)='object')\n              ELSE NULL END) AS \"_weekly_learning_plan\" FROM \"enrolment\".\"Created_users\" WHERE \"enrolment\".\"Created_users\".\"id\" = %s LIMIT 21",
+          "ms": 70.332,
+          "rows": 1,
+          "callers": [
+            {
+              "file": "compiler.py",
+              "function": "execute_sql",
+              "line": 1624
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 122
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 79
+            },
+            {
+              "file": "utils.py",
+              "function": "_execute_with_wrappers",
+              "line": 92
+            },
+            {
+              "file": "benchmark_week_switch.py",
+              "function": "execute",
+              "line": 61
+            }
+          ]
+        },
+        {
+          "alias": "enrolment",
+          "sql": "SELECT l.id,l.enrolment_id,l.aptem_id,l.programme_id,l.full_name AS name,\n        l.programme,l.coach_name,l.coach_email,l.email,l.start_date,l.end_date,l.learner_type,\n        u.id AS account_record_id,u.\"Email\" AS account_email,u.aptem_id AS account_aptem_id,\n        u.\"Planned_hours\" AS programme_planned_hours\n        FROM \"Learner\".learners l\n        LEFT JOIN enrolment.\"Created_users\" u ON u.id=l.enrolment_id\n        WHERE l.enrolment_id=%s",
+          "ms": 63.882,
+          "rows": 1,
+          "callers": [
+            {
+              "file": "repository.py",
+              "function": "_query_rows",
+              "line": 70
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 122
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 79
+            },
+            {
+              "file": "utils.py",
+              "function": "_execute_with_wrappers",
+              "line": 92
+            },
+            {
+              "file": "benchmark_week_switch.py",
+              "function": "execute",
+              "line": 61
+            }
+          ]
+        },
+        {
+          "alias": "enrolment",
+          "sql": "SELECT \"Learner\".\"learners\".\"id\", \"Learner\".\"learners\".\"enrolment_id\" FROM \"Learner\".\"learners\" WHERE \"Learner\".\"learners\".\"enrolment_id\" = %s ORDER BY \"Learner\".\"learners\".\"id\" ASC LIMIT 1",
+          "ms": 62.526,
+          "rows": 1,
+          "callers": [
+            {
+              "file": "compiler.py",
+              "function": "execute_sql",
+              "line": 1624
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 122
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 79
+            },
+            {
+              "file": "utils.py",
+              "function": "_execute_with_wrappers",
+              "line": 92
+            },
+            {
+              "file": "benchmark_week_switch.py",
+              "function": "execute",
+              "line": 61
+            }
+          ]
+        },
+        {
+          "alias": "default",
+          "sql": "\nSELECT module_ids\nFROM curriculum.groups\nWHERE group_name = %s AND (programme_name = %s OR programme_id = %s)\n  AND deleted_at IS NULL\n  AND COALESCE(is_programme_deleted, FALSE) = FALSE\nORDER BY\n    -- jsonb_array_length() errors on a scalar, and this column is not\n    -- guaranteed to hold an array -- the parsing in _group_module_ids allows\n    -- for a string too. Anything that is not an array sorts as empty.\n    jsonb_array_length(\n        CASE WHEN jsonb_typeof(module_ids) = 'array'\n             THEN module_ids ELSE '[]'::jsonb END\n    ) DESC,\n    updated_at DESC NULLS LAST,\n    created_at DESC NULLS LAST,\n    group_id\nLIMIT 1\n",
+          "ms": 91.309,
+          "rows": 1,
+          "callers": [
+            {
+              "file": "learning_plan.py",
+              "function": "_rows",
+              "line": 62
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 122
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 79
+            },
+            {
+              "file": "utils.py",
+              "function": "_execute_with_wrappers",
+              "line": 92
+            },
+            {
+              "file": "benchmark_week_switch.py",
+              "function": "execute",
+              "line": 61
+            }
+          ]
+        },
+        {
+          "alias": "enrolment",
+          "sql": "\n        SELECT DISTINCT c.curriculum_module_ref AS module_id\n        FROM \"Learner\".learner_source_course_memberships membership\n        JOIN curriculum.source_courses c ON c.id=membership.source_course_id\n        WHERE membership.learner_id=%s AND membership.deleted_at IS NULL\n          AND c.deleted_at IS NULL AND nullif(c.curriculum_module_ref,'') IS NOT NULL\n        ORDER BY c.curriculum_module_ref",
+          "ms": 64.106,
+          "rows": 7,
+          "callers": [
+            {
+              "file": "repository.py",
+              "function": "_query_rows",
+              "line": 70
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 122
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 79
+            },
+            {
+              "file": "utils.py",
+              "function": "_execute_with_wrappers",
+              "line": 92
+            },
+            {
+              "file": "benchmark_week_switch.py",
+              "function": "execute",
+              "line": 61
+            }
+          ]
+        },
+        {
+          "alias": "enrolment",
+          "sql": "SELECT m.module_catalogue_id AS id,m.title,m.start_date,m.end_date,\n            m.weeks_number,m.sessions_number,m.cohort_id,\n            to_jsonb(m)->'session_holidays' AS session_holidays,\n            to_jsonb(m)->'session_overrides' AS session_overrides,\n            to_jsonb(m)->'weekly_schedule' AS weekly_schedule,\n            coalesce(nullif(m.session_week_day,''),g.session_week_day) AS session_week_day,\n            coalesce(nullif(m.session_start_time,''),g.session_start_time) AS session_start_time,\n            coalesce(nullif(m.session_end_time,''),g.session_end_time) AS session_end_time\n            FROM curriculum.modules m LEFT JOIN curriculum.groups g ON g.group_id=m.group_id\n            WHERE m.module_catalogue_id=ANY(%s) ORDER BY m.title",
+          "ms": 81.82,
+          "rows": 8,
+          "callers": [
+            {
+              "file": "weekly_learning.py",
+              "function": "read_weekly_learning",
+              "line": 141
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 122
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 79
+            },
+            {
+              "file": "utils.py",
+              "function": "_execute_with_wrappers",
+              "line": 92
+            },
+            {
+              "file": "benchmark_week_switch.py",
+              "function": "execute",
+              "line": 61
+            }
+          ]
+        },
+        {
+          "alias": "enrolment",
+          "sql": "SELECT id,module_catalogue_id,week_number,title,holiday_note_enabled,holiday_note,display_order\n            FROM curriculum.weeks WHERE module_catalogue_id=ANY(%s) AND (weeks.deleted_at IS NULL OR EXISTS (SELECT 1 FROM curriculum.modules archived_module WHERE archived_module.module_catalogue_id=weeks.module_catalogue_id AND archived_module.deleted_at IS NOT NULL AND COALESCE(weeks.deleted_via_parent, '') <> '' AND weeks.deleted_via_parent IN (archived_module.module_catalogue_id, archived_module.deleted_via_parent) AND weeks.deleted_at BETWEEN archived_module.deleted_at - interval '5 minutes' AND archived_module.deleted_at + interval '5 minutes'))\n            ORDER BY display_order,week_number,id",
+          "ms": 65.445,
+          "rows": 16,
+          "callers": [
+            {
+              "file": "weekly_learning.py",
+              "function": "read_weekly_learning",
+              "line": 153
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 122
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 79
+            },
+            {
+              "file": "utils.py",
+              "function": "_execute_with_wrappers",
+              "line": 92
+            },
+            {
+              "file": "benchmark_week_switch.py",
+              "function": "execute",
+              "line": 61
+            }
+          ]
+        },
+        {
+          "alias": "default",
+          "sql": "SELECT 'cohort' AS source,to_jsonb(c) AS payload FROM \"curriculum\".\"cohorts\" c WHERE \"cohort_id\" in (%s) UNION ALL SELECT 'england',to_jsonb(h) FROM \"curriculum\".\"england_holidays\" h UNION ALL SELECT 'authored',to_jsonb(h) FROM \"curriculum\".\"holidays\" h",
+          "ms": 255.87,
+          "rows": 122,
+          "callers": [
+            {
+              "file": "views.py",
+              "function": "fetch_all",
+              "line": 894
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 122
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 79
+            },
+            {
+              "file": "utils.py",
+              "function": "_execute_with_wrappers",
+              "line": 92
+            },
+            {
+              "file": "benchmark_week_switch.py",
+              "function": "execute",
+              "line": 61
+            }
+          ]
+        },
+        {
+          "alias": "enrolment",
+          "sql": "SELECT c.id,c.week_id,c.module_catalogue_id,c.type,\n            coalesce(l.quiz_id, CASE WHEN c.settings_json->>'linkedQuizId' ~ '^[0-9]+$'\n                THEN (c.settings_json->>'linkedQuizId')::bigint END) AS quiz_id,\n            EXISTS(SELECT 1 FROM curriculum.quizzes q WHERE q.id=coalesce(l.quiz_id,\n                CASE WHEN c.settings_json->>'linkedQuizId' ~ '^[0-9]+$'\n                THEN (c.settings_json->>'linkedQuizId')::bigint END)) AS is_quiz,\n            CASE WHEN lower(replace(c.type,'-','_')) <> 'video' THEN true ELSE\n              coalesce(btrim(c.settings_json->>'videoUrl'),'') <> '' OR coalesce(btrim(c.settings_json->>'readingContent'),'') <> '' OR coalesce(btrim(c.settings_json->>'podcastUrl'),'') <> '' OR coalesce(btrim(c.settings_json->>'audioUrl'),'') <> '' OR coalesce(btrim(c.settings_json->>'liveSessionUrl'),'') <> '' OR coalesce(btrim(c.settings_json->>'teamsMeetingUrl'),'') <> '' OR coalesce(btrim(c.settings_json->>'resourceUrl'),'') <> '' OR coalesce(btrim(c.settings_json->>'presentationUrl'),'') <> '' OR coalesce(btrim(c.settings_json->>'externalUrl'),'') <> '' OR coalesce(btrim(c.settings_json->>'fileUrl'),'') <> '' OR coalesce(btrim(c.settings_json->>'uploadedFileUrl'),'') <> '' OR coalesce(btrim(c.settings_json->>'url'),'') <> '' OR coalesce(c.settings_json->>'embedCode','') ~* '<iframe[^>]+src=[\"'']([^\"'']+)[\"'']' OR\n              coalesce(btrim(c.live_sessions_link),'') <> '' END AS has_content\n            FROM curriculum.components c LEFT JOIN curriculum.quiz_component_links l ON l.component_id=c.id\n            JOIN curriculum.modules cm ON cm.module_catalogue_id=c.module_catalogue_id\n            WHERE c.module_catalogue_id=ANY(%s) AND (c.deleted_at IS NULL OR EXISTS (SELECT 1 FROM curriculum.modules archived_module WHERE archived_module.module_catalogue_id=c.module_catalogue_id AND archived_module.deleted_at IS NOT NULL AND COALESCE(c.deleted_via_parent, '') <> '' AND c.deleted_via_parent IN (archived_module.module_catalogue_id, archived_module.deleted_via_parent) AND c.deleted_at BETWEEN archived_module.deleted_at - interval '5 minutes' AND archived_module.deleted_at + interval '5 minutes'))\n            AND (cm.deleted_at IS NULL OR COALESCE(cm.deleted_via_parent,'') <> '') AND coalesce(btrim(cm.title),'') <> ''\n             AND (c.week_id=%s OR l.quiz_id IS NOT NULL\n                OR c.settings_json->>'linkedQuizId' ~ '^[0-9]+$')\n            ORDER BY c.week_id,c.display_order,c.id",
+          "ms": 78.071,
+          "rows": 56,
+          "callers": [
+            {
+              "file": "weekly_learning.py",
+              "function": "read_weekly_learning",
+              "line": 202
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 122
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 79
+            },
+            {
+              "file": "utils.py",
+              "function": "_execute_with_wrappers",
+              "line": 92
+            },
+            {
+              "file": "benchmark_week_switch.py",
+              "function": "execute",
+              "line": 61
+            }
+          ]
+        },
+        {
+          "alias": "enrolment",
+          "sql": "SELECT \"Learner\".\"learner_progress_entries\".\"kind\" AS \"kind\", \"Learner\".\"learner_progress_entries\".\"component_ref\" AS \"component_ref\", \"Learner\".\"learner_progress_entries\".\"quiz_ref\" AS \"quiz_ref\", \"Learner\".\"learner_progress_entries\".\"passed\" AS \"passed\", \"Learner\".\"learner_progress_entries\".\"submitted_at\" AS \"submitted_at\" FROM \"Learner\".\"learner_progress_entries\" WHERE (\"Learner\".\"learner_progress_entries\".\"learner_id\" = %s AND \"Learner\".\"learner_progress_entries\".\"kind\" IN (%s, %s, %s, %s) AND (\"Learner\".\"learner_progress_entries\".\"component_ref\" IN (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) OR \"Learner\".\"learner_progress_entries\".\"kind\" = %s)) ORDER BY \"Learner\".\"learner_progress_entries\".\"entry_order\" ASC, \"Learner\".\"learner_progress_entries\".\"id\" ASC",
+          "ms": 78.175,
+          "rows": 40,
+          "callers": [
+            {
+              "file": "compiler.py",
+              "function": "execute_sql",
+              "line": 1624
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 122
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 79
+            },
+            {
+              "file": "utils.py",
+              "function": "_execute_with_wrappers",
+              "line": 92
+            },
+            {
+              "file": "benchmark_week_switch.py",
+              "function": "execute",
+              "line": 61
+            }
+          ]
+        },
+        {
+          "alias": "enrolment",
+          "sql": "WITH markers AS (\n            SELECT s.module_catalogue_id,coalesce(o.status,s.status) AS status,coalesce(o.scheduled_start,s.start_datetime) AS start,\n              coalesce(o.scheduled_end,coalesce(o.scheduled_start,s.start_datetime) + s.duration_minutes * interval '1 minute') AS finish,\n              CASE WHEN coalesce(o.attendance_report_id,'')='' THEN NULL ELSE EXISTS(\n                SELECT 1 FROM curriculum.live_session_attendance a WHERE a.occurrence_id=o.id\n                AND lower(btrim(a.email))=%s AND a.total_attendance_seconds>0) END AS attended ,s.id AS session_id,s.module_catalogue_id AS module_id,s.module_title,\n              s.start_datetime,s.duration_minutes,s.join_url AS series_join_url,s.status AS series_status,\n              o.id AS occurrence_id,o.scheduled_start,o.scheduled_end,o.join_url\n              FROM curriculum.live_sessions s LEFT JOIN curriculum.live_session_occurrences o ON o.live_session_id=s.id\n              WHERE s.module_catalogue_id=ANY(%s) AND lower(s.status) NOT IN ('cancelled','deleted','failed','superseded')\n              AND (o.id IS NULL AND coalesce(s.repeat_pattern,'') IN ('','none') OR o.id IS NOT NULL\n                   AND lower(o.status) NOT IN ('cancelled','deleted','failed','superseded')) AND (coalesce(o.scheduled_start,s.start_datetime) AT TIME ZONE 'UTC' AT TIME ZONE 'Europe/London')::date=%s::date\n            ), dated AS (\n              SELECT *, (start AT TIME ZONE 'UTC' AT TIME ZONE 'Europe/London')::date AS day FROM markers WHERE start IS NOT NULL\n            ) SELECT DISTINCT ON (module_catalogue_id,day) module_catalogue_id,day,attended,start,finish,status,session_id,module_id,module_title,start_datetime,duration_minutes,\n              series_join_url,series_status,occurrence_id,scheduled_start,scheduled_end,join_url\n              FROM dated ORDER BY module_catalogue_id,day,start",
+          "ms": 69.736,
+          "rows": 1,
+          "callers": [
+            {
+              "file": "weekly_learning.py",
+              "function": "read_weekly_learning",
+              "line": 250
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 122
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 79
+            },
+            {
+              "file": "utils.py",
+              "function": "_execute_with_wrappers",
+              "line": 92
+            },
+            {
+              "file": "benchmark_week_switch.py",
+              "function": "execute",
+              "line": 61
+            }
+          ]
+        },
+        {
+          "alias": "enrolment",
+          "sql": "SELECT c.id,c.title,c.type,c.ksb_mappings,\n            CASE WHEN jsonb_typeof(c.settings_json->'durationMinutes')='number'\n                THEN c.settings_json->>'durationMinutes' END AS duration_minutes,\n            q.title AS quiz_title,q.duration AS quiz_duration,q.time_unit AS quiz_time_unit,\n            l.quiz_id AS linked_quiz_id,q.id AS resolved_quiz_id,q.questions AS quiz_questions\n            FROM curriculum.components c LEFT JOIN curriculum.quiz_component_links l ON l.component_id=c.id\n            LEFT JOIN curriculum.quizzes q ON q.id=coalesce(l.quiz_id,\n                CASE WHEN c.settings_json->>'linkedQuizId' ~ '^[0-9]+$' THEN (c.settings_json->>'linkedQuizId')::bigint END)\n            WHERE c.id=ANY(%s) ORDER BY c.display_order,c.id",
+          "ms": 213.919,
+          "rows": 17,
+          "callers": [
+            {
+              "file": "weekly_learning.py",
+              "function": "read_weekly_learning",
+              "line": 297
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 122
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 79
+            },
+            {
+              "file": "utils.py",
+              "function": "_execute_with_wrappers",
+              "line": 92
+            },
+            {
+              "file": "benchmark_week_switch.py",
+              "function": "execute",
+              "line": 61
+            }
+          ]
+        },
+        {
+          "alias": "enrolment",
+          "sql": "SELECT component_id,ksb_code FROM curriculum.ksb_mappings\n            WHERE component_id=ANY(%s) AND (ksb_mappings.deleted_at IS NULL OR EXISTS (SELECT 1 FROM curriculum.modules archived_module WHERE archived_module.module_catalogue_id=ksb_mappings.module_catalogue_id AND archived_module.deleted_at IS NOT NULL AND COALESCE(ksb_mappings.deleted_via_parent, '') <> '' AND ksb_mappings.deleted_via_parent IN (archived_module.module_catalogue_id, archived_module.deleted_via_parent) AND ksb_mappings.deleted_at BETWEEN archived_module.deleted_at - interval '5 minutes' AND archived_module.deleted_at + interval '5 minutes')) ORDER BY component_id,ksb_code",
+          "ms": 65.669,
+          "rows": 0,
+          "callers": [
+            {
+              "file": "weekly_learning.py",
+              "function": "read_weekly_learning",
+              "line": 309
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 122
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 79
+            },
+            {
+              "file": "utils.py",
+              "function": "_execute_with_wrappers",
+              "line": 92
+            },
+            {
+              "file": "benchmark_week_switch.py",
+              "function": "execute",
+              "line": 61
+            }
+          ]
+        },
+        {
+          "alias": "enrolment",
+          "sql": "SELECT progress.id,progress.learner_id,progress.kind,progress.module_ref,progress.module_title,progress.component_ref,progress.component_type,progress.quiz_ref,progress.passed,progress.reported_time,progress.submitted_at,progress.started_at,progress.time_tracking_source,progress.claimed_seconds,progress.verified_seconds,progress.source_system,progress.component_link_source,progress.actual_seconds,progress.accepted,\n        to_jsonb(progress)->>'actual_basis' AS actual_basis,\n        CASE WHEN jsonb_typeof(progress.source_payload)='object' THEN\n          jsonb_build_object('original_source_ref',progress.source_payload->'original_source_ref')\n          ELSE progress.source_payload END AS source_payload,\n        CASE WHEN EXISTS(SELECT 1 FROM \"Learner\".learner_activity_reporting_segments s\n          WHERE s.progress_id=progress.id AND s.learner_id=progress.learner_id)\n          THEN '[{}]'::jsonb ELSE '[]'::jsonb END AS segments\n        FROM \"Learner\".learner_progress_entries progress\n        WHERE progress.learner_id=%s AND progress.deleted_at IS NULL\n        ORDER BY progress.reporting_month,progress.reporting_started_at NULLS LAST,progress.id",
+          "ms": 158.444,
+          "rows": 231,
+          "callers": [
+            {
+              "file": "repository.py",
+              "function": "_query_rows",
+              "line": 70
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 122
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 79
+            },
+            {
+              "file": "utils.py",
+              "function": "_execute_with_wrappers",
+              "line": 92
+            },
+            {
+              "file": "benchmark_week_switch.py",
+              "function": "execute",
+              "line": 61
+            }
+          ]
+        },
+        {
+          "alias": "enrolment",
+          "sql": "SELECT id, week_id, module_catalogue_id, type, title, CASE WHEN regexp_replace(regexp_replace(coalesce(description,''),'<[^>]*>','','g'),'&nbsp;|[\t\n\u000b\f\r \u00a0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]','','g')<>'' THEN 'content' ELSE '' END AS description, jsonb_build_object('resourceUrl',settings_json->'resourceUrl','presentationUrl',settings_json->'presentationUrl','externalUrl',settings_json->'externalUrl','fileUrl',settings_json->'fileUrl','uploadedFileUrl',settings_json->'uploadedFileUrl','url',settings_json->'url','linkedQuizId',settings_json->'linkedQuizId','videoUrl',settings_json->'videoUrl','embedCode',settings_json->'embedCode','podcastUrl',settings_json->'podcastUrl','audioUrl',settings_json->'audioUrl','liveSessionUrl',settings_json->'liveSessionUrl','teamsMeetingUrl',settings_json->'teamsMeetingUrl','teamsLiveSessionId',settings_json->'teamsLiveSessionId','teamsSessionNumber',settings_json->'teamsSessionNumber','recordingSeriesId',settings_json->'recordingSeriesId','recordingSessionNumber',settings_json->'recordingSessionNumber','recordingDate',settings_json->'recordingDate','sessionDate',settings_json->'sessionDate','sessionTime',settings_json->'sessionTime','sessionDateTimeUtc',settings_json->'sessionDateTimeUtc','durationMinutes',settings_json->'durationMinutes','learnerTitle',settings_json->'learnerTitle','isMonthlyAssignment',settings_json->'isMonthlyAssignment','assignmentTopics',settings_json->'assignmentTopics','assignmentBrief',settings_json->'assignmentBrief','assignmentContent',settings_json->'assignmentContent','submissionInstructions',settings_json->'submissionInstructions','assignmentFileUrl',settings_json->'assignmentFileUrl','assignmentFileName',settings_json->'assignmentFileName','uploadedFileName',settings_json->'uploadedFileName','reflectionPrompt',settings_json->'reflectionPrompt','podcastReflectionQuestion',settings_json->'podcastReflectionQuestion','readingReflectionPrompts',settings_json->'readingReflectionPrompts','learnerGuidance',settings_json->'learnerGuidance','sourceType',settings_json->'sourceType','resourceSource',settings_json->'resourceSource','fileSource',settings_json->'fileSource') || jsonb_build_object('_readingContentAvailable',coalesce(regexp_replace(settings_json->>'readingContent','<[^>]*>|&nbsp;|\\s','','g'),'')<>'') AS settings_json, live_sessions_link, display_order, ksb_mappings, reflection_required, \"Reflection_Question\", tutor_validation_required FROM curriculum.components WHERE module_catalogue_id = ANY(%s) AND week_id = ANY(%s) AND (components.deleted_at IS NULL OR EXISTS (SELECT 1 FROM curriculum.modules archived_module WHERE archived_module.module_catalogue_id=components.module_catalogue_id AND archived_module.deleted_at IS NOT NULL AND COALESCE(components.deleted_via_parent, '') <> '' AND components.deleted_via_parent IN (archived_module.module_catalogue_id, archived_module.deleted_via_parent) AND components.deleted_at BETWEEN archived_module.deleted_at - interval '5 minutes' AND archived_module.deleted_at + interval '5 minutes')) ORDER BY week_id, display_order, id",
+          "ms": 81.694,
+          "rows": 17,
+          "callers": [
+            {
+              "file": "learner_detail.py",
+              "function": "_resolve_from_master",
+              "line": 1510
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 122
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 79
+            },
+            {
+              "file": "utils.py",
+              "function": "_execute_with_wrappers",
+              "line": 92
+            },
+            {
+              "file": "benchmark_week_switch.py",
+              "function": "execute",
+              "line": 61
+            }
+          ]
+        }
+      ],
+      "payload_sha256": "ccaacfe8f2d12e48246acf9b1a0118d1941e206a388deb1f1f23a89b6c0757d6"
+    },
+    {
+      "run": 1,
+      "week": 2,
+      "projection": "week-switch",
+      "kind": "commercial",
+      "learner_id": "redacted",
+      "section": "",
+      "duration_ms": 2047.57,
+      "query_count": 15,
+      "db_duration_ms": 1998.97,
+      "query_count_by_alias": {
+        "default": 2,
+        "enrolment": 13
+      },
+      "db_duration_ms_by_alias": {
+        "default": 432.42,
+        "enrolment": 1566.56
+      },
+      "stage_durations_ms": {},
+      "raw_bytes": 7282,
+      "gzip_bytes": 1483,
+      "activities": 17,
+      "queries": [
+        {
+          "alias": "enrolment",
+          "sql": "SELECT \"enrolment\".\"Created_users\".\"id\", \"enrolment\".\"Created_users\".\"Learner_type\", \"enrolment\".\"Created_users\".\"Username\", \"enrolment\".\"Created_users\".\"Email\", \"enrolment\".\"Created_users\".\"Programme\", \"enrolment\".\"Created_users\".\"Cohort\", \"enrolment\".\"Created_users\".\"Group\", \"enrolment\".\"Created_users\".\"aptem_id\", (CASE WHEN jsonb_typeof(\"Training_plan\"::jsonb)='array' THEN\n              (SELECT coalesce(jsonb_agg(jsonb_build_object('moduleId',item->>'moduleId',\n                'assignmentMode',item->>'assignmentMode')), '[]'::jsonb)\n               FROM jsonb_array_elements(\"Training_plan\"::jsonb) item WHERE jsonb_typeof(item)='object')\n              ELSE NULL END) AS \"_weekly_training_plan\", (CASE WHEN jsonb_typeof(\"Learning_plan\"::jsonb)='array' THEN\n              (SELECT coalesce(jsonb_agg(jsonb_build_object('moduleId',item->>'moduleId',\n                'assignmentMode',item->>'assignmentMode')), '[]'::jsonb)\n               FROM jsonb_array_elements(\"Learning_plan\"::jsonb) item WHERE jsonb_typeof(item)='object')\n              ELSE NULL END) AS \"_weekly_learning_plan\" FROM \"enrolment\".\"Created_users\" WHERE \"enrolment\".\"Created_users\".\"id\" = %s LIMIT 21",
+          "ms": 65.594,
+          "rows": 1,
+          "callers": [
+            {
+              "file": "compiler.py",
+              "function": "execute_sql",
+              "line": 1624
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 122
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 79
+            },
+            {
+              "file": "utils.py",
+              "function": "_execute_with_wrappers",
+              "line": 92
+            },
+            {
+              "file": "benchmark_week_switch.py",
+              "function": "execute",
+              "line": 61
+            }
+          ]
+        },
+        {
+          "alias": "enrolment",
+          "sql": "SELECT l.id,l.enrolment_id,l.aptem_id,l.programme_id,l.full_name AS name,\n        l.programme,l.coach_name,l.coach_email,l.email,l.start_date,l.end_date,l.learner_type,\n        u.id AS account_record_id,u.\"Email\" AS account_email,u.aptem_id AS account_aptem_id,\n        u.\"Planned_hours\" AS programme_planned_hours\n        FROM \"Learner\".learners l\n        LEFT JOIN enrolment.\"Created_users\" u ON u.id=l.enrolment_id\n        WHERE l.enrolment_id=%s",
+          "ms": 116.371,
+          "rows": 1,
+          "callers": [
+            {
+              "file": "repository.py",
+              "function": "_query_rows",
+              "line": 70
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 122
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 79
+            },
+            {
+              "file": "utils.py",
+              "function": "_execute_with_wrappers",
+              "line": 92
+            },
+            {
+              "file": "benchmark_week_switch.py",
+              "function": "execute",
+              "line": 61
+            }
+          ]
+        },
+        {
+          "alias": "enrolment",
+          "sql": "SELECT \"Learner\".\"learners\".\"id\", \"Learner\".\"learners\".\"enrolment_id\" FROM \"Learner\".\"learners\" WHERE \"Learner\".\"learners\".\"enrolment_id\" = %s ORDER BY \"Learner\".\"learners\".\"id\" ASC LIMIT 1",
+          "ms": 98.513,
+          "rows": 1,
+          "callers": [
+            {
+              "file": "compiler.py",
+              "function": "execute_sql",
+              "line": 1624
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 122
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 79
+            },
+            {
+              "file": "utils.py",
+              "function": "_execute_with_wrappers",
+              "line": 92
+            },
+            {
+              "file": "benchmark_week_switch.py",
+              "function": "execute",
+              "line": 61
+            }
+          ]
+        },
+        {
+          "alias": "default",
+          "sql": "\nSELECT module_ids\nFROM curriculum.groups\nWHERE group_name = %s AND (programme_name = %s OR programme_id = %s)\n  AND deleted_at IS NULL\n  AND COALESCE(is_programme_deleted, FALSE) = FALSE\nORDER BY\n    -- jsonb_array_length() errors on a scalar, and this column is not\n    -- guaranteed to hold an array -- the parsing in _group_module_ids allows\n    -- for a string too. Anything that is not an array sorts as empty.\n    jsonb_array_length(\n        CASE WHEN jsonb_typeof(module_ids) = 'array'\n             THEN module_ids ELSE '[]'::jsonb END\n    ) DESC,\n    updated_at DESC NULLS LAST,\n    created_at DESC NULLS LAST,\n    group_id\nLIMIT 1\n",
+          "ms": 202.111,
+          "rows": 1,
+          "callers": [
+            {
+              "file": "learning_plan.py",
+              "function": "_rows",
+              "line": 62
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 122
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 79
+            },
+            {
+              "file": "utils.py",
+              "function": "_execute_with_wrappers",
+              "line": 92
+            },
+            {
+              "file": "benchmark_week_switch.py",
+              "function": "execute",
+              "line": 61
+            }
+          ]
+        },
+        {
+          "alias": "enrolment",
+          "sql": "\n        SELECT DISTINCT c.curriculum_module_ref AS module_id\n        FROM \"Learner\".learner_source_course_memberships membership\n        JOIN curriculum.source_courses c ON c.id=membership.source_course_id\n        WHERE membership.learner_id=%s AND membership.deleted_at IS NULL\n          AND c.deleted_at IS NULL AND nullif(c.curriculum_module_ref,'') IS NOT NULL\n        ORDER BY c.curriculum_module_ref",
+          "ms": 113.682,
+          "rows": 7,
+          "callers": [
+            {
+              "file": "repository.py",
+              "function": "_query_rows",
+              "line": 70
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 122
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 79
+            },
+            {
+              "file": "utils.py",
+              "function": "_execute_with_wrappers",
+              "line": 92
+            },
+            {
+              "file": "benchmark_week_switch.py",
+              "function": "execute",
+              "line": 61
+            }
+          ]
+        },
+        {
+          "alias": "enrolment",
+          "sql": "SELECT m.module_catalogue_id AS id,m.title,m.start_date,m.end_date,\n            m.weeks_number,m.sessions_number,m.cohort_id,\n            to_jsonb(m)->'session_holidays' AS session_holidays,\n            to_jsonb(m)->'session_overrides' AS session_overrides,\n            to_jsonb(m)->'weekly_schedule' AS weekly_schedule,\n            coalesce(nullif(m.session_week_day,''),g.session_week_day) AS session_week_day,\n            coalesce(nullif(m.session_start_time,''),g.session_start_time) AS session_start_time,\n            coalesce(nullif(m.session_end_time,''),g.session_end_time) AS session_end_time\n            FROM curriculum.modules m LEFT JOIN curriculum.groups g ON g.group_id=m.group_id\n            WHERE m.module_catalogue_id=ANY(%s) ORDER BY m.title",
+          "ms": 95.431,
+          "rows": 8,
+          "callers": [
+            {
+              "file": "weekly_learning.py",
+              "function": "read_weekly_learning",
+              "line": 141
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 122
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 79
+            },
+            {
+              "file": "utils.py",
+              "function": "_execute_with_wrappers",
+              "line": 92
+            },
+            {
+              "file": "benchmark_week_switch.py",
+              "function": "execute",
+              "line": 61
+            }
+          ]
+        },
+        {
+          "alias": "enrolment",
+          "sql": "SELECT id,module_catalogue_id,week_number,title,holiday_note_enabled,holiday_note,display_order\n            FROM curriculum.weeks WHERE module_catalogue_id=ANY(%s) AND (weeks.deleted_at IS NULL OR EXISTS (SELECT 1 FROM curriculum.modules archived_module WHERE archived_module.module_catalogue_id=weeks.module_catalogue_id AND archived_module.deleted_at IS NOT NULL AND COALESCE(weeks.deleted_via_parent, '') <> '' AND weeks.deleted_via_parent IN (archived_module.module_catalogue_id, archived_module.deleted_via_parent) AND weeks.deleted_at BETWEEN archived_module.deleted_at - interval '5 minutes' AND archived_module.deleted_at + interval '5 minutes'))\n            ORDER BY display_order,week_number,id",
+          "ms": 90.733,
+          "rows": 16,
+          "callers": [
+            {
+              "file": "weekly_learning.py",
+              "function": "read_weekly_learning",
+              "line": 153
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 122
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 79
+            },
+            {
+              "file": "utils.py",
+              "function": "_execute_with_wrappers",
+              "line": 92
+            },
+            {
+              "file": "benchmark_week_switch.py",
+              "function": "execute",
+              "line": 61
+            }
+          ]
+        },
+        {
+          "alias": "default",
+          "sql": "SELECT 'cohort' AS source,to_jsonb(c) AS payload FROM \"curriculum\".\"cohorts\" c WHERE \"cohort_id\" in (%s) UNION ALL SELECT 'england',to_jsonb(h) FROM \"curriculum\".\"england_holidays\" h UNION ALL SELECT 'authored',to_jsonb(h) FROM \"curriculum\".\"holidays\" h",
+          "ms": 230.319,
+          "rows": 122,
+          "callers": [
+            {
+              "file": "views.py",
+              "function": "fetch_all",
+              "line": 894
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 122
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 79
+            },
+            {
+              "file": "utils.py",
+              "function": "_execute_with_wrappers",
+              "line": 92
+            },
+            {
+              "file": "benchmark_week_switch.py",
+              "function": "execute",
+              "line": 61
+            }
+          ]
+        },
+        {
+          "alias": "enrolment",
+          "sql": "SELECT c.id,c.week_id,c.module_catalogue_id,c.type,\n            coalesce(l.quiz_id, CASE WHEN c.settings_json->>'linkedQuizId' ~ '^[0-9]+$'\n                THEN (c.settings_json->>'linkedQuizId')::bigint END) AS quiz_id,\n            EXISTS(SELECT 1 FROM curriculum.quizzes q WHERE q.id=coalesce(l.quiz_id,\n                CASE WHEN c.settings_json->>'linkedQuizId' ~ '^[0-9]+$'\n                THEN (c.settings_json->>'linkedQuizId')::bigint END)) AS is_quiz,\n            CASE WHEN lower(replace(c.type,'-','_')) <> 'video' THEN true ELSE\n              coalesce(btrim(c.settings_json->>'videoUrl'),'') <> '' OR coalesce(btrim(c.settings_json->>'readingContent'),'') <> '' OR coalesce(btrim(c.settings_json->>'podcastUrl'),'') <> '' OR coalesce(btrim(c.settings_json->>'audioUrl'),'') <> '' OR coalesce(btrim(c.settings_json->>'liveSessionUrl'),'') <> '' OR coalesce(btrim(c.settings_json->>'teamsMeetingUrl'),'') <> '' OR coalesce(btrim(c.settings_json->>'resourceUrl'),'') <> '' OR coalesce(btrim(c.settings_json->>'presentationUrl'),'') <> '' OR coalesce(btrim(c.settings_json->>'externalUrl'),'') <> '' OR coalesce(btrim(c.settings_json->>'fileUrl'),'') <> '' OR coalesce(btrim(c.settings_json->>'uploadedFileUrl'),'') <> '' OR coalesce(btrim(c.settings_json->>'url'),'') <> '' OR coalesce(c.settings_json->>'embedCode','') ~* '<iframe[^>]+src=[\"'']([^\"'']+)[\"'']' OR\n              coalesce(btrim(c.live_sessions_link),'') <> '' END AS has_content\n            FROM curriculum.components c LEFT JOIN curriculum.quiz_component_links l ON l.component_id=c.id\n            JOIN curriculum.modules cm ON cm.module_catalogue_id=c.module_catalogue_id\n            WHERE c.module_catalogue_id=ANY(%s) AND (c.deleted_at IS NULL OR EXISTS (SELECT 1 FROM curriculum.modules archived_module WHERE archived_module.module_catalogue_id=c.module_catalogue_id AND archived_module.deleted_at IS NOT NULL AND COALESCE(c.deleted_via_parent, '') <> '' AND c.deleted_via_parent IN (archived_module.module_catalogue_id, archived_module.deleted_via_parent) AND c.deleted_at BETWEEN archived_module.deleted_at - interval '5 minutes' AND archived_module.deleted_at + interval '5 minutes'))\n            AND (cm.deleted_at IS NULL OR COALESCE(cm.deleted_via_parent,'') <> '') AND coalesce(btrim(cm.title),'') <> ''\n             AND (c.week_id=%s OR l.quiz_id IS NOT NULL\n                OR c.settings_json->>'linkedQuizId' ~ '^[0-9]+$')\n            ORDER BY c.week_id,c.display_order,c.id",
+          "ms": 188.959,
+          "rows": 56,
+          "callers": [
+            {
+              "file": "weekly_learning.py",
+              "function": "read_weekly_learning",
+              "line": 202
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 122
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 79
+            },
+            {
+              "file": "utils.py",
+              "function": "_execute_with_wrappers",
+              "line": 92
+            },
+            {
+              "file": "benchmark_week_switch.py",
+              "function": "execute",
+              "line": 61
+            }
+          ]
+        },
+        {
+          "alias": "enrolment",
+          "sql": "SELECT \"Learner\".\"learner_progress_entries\".\"kind\" AS \"kind\", \"Learner\".\"learner_progress_entries\".\"component_ref\" AS \"component_ref\", \"Learner\".\"learner_progress_entries\".\"quiz_ref\" AS \"quiz_ref\", \"Learner\".\"learner_progress_entries\".\"passed\" AS \"passed\", \"Learner\".\"learner_progress_entries\".\"submitted_at\" AS \"submitted_at\" FROM \"Learner\".\"learner_progress_entries\" WHERE (\"Learner\".\"learner_progress_entries\".\"learner_id\" = %s AND \"Learner\".\"learner_progress_entries\".\"kind\" IN (%s, %s, %s, %s) AND (\"Learner\".\"learner_progress_entries\".\"component_ref\" IN (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) OR \"Learner\".\"learner_progress_entries\".\"kind\" = %s)) ORDER BY \"Learner\".\"learner_progress_entries\".\"entry_order\" ASC, \"Learner\".\"learner_progress_entries\".\"id\" ASC",
+          "ms": 105.834,
+          "rows": 40,
+          "callers": [
+            {
+              "file": "compiler.py",
+              "function": "execute_sql",
+              "line": 1624
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 122
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 79
+            },
+            {
+              "file": "utils.py",
+              "function": "_execute_with_wrappers",
+              "line": 92
+            },
+            {
+              "file": "benchmark_week_switch.py",
+              "function": "execute",
+              "line": 61
+            }
+          ]
+        },
+        {
+          "alias": "enrolment",
+          "sql": "WITH markers AS (\n            SELECT s.module_catalogue_id,coalesce(o.status,s.status) AS status,coalesce(o.scheduled_start,s.start_datetime) AS start,\n              coalesce(o.scheduled_end,coalesce(o.scheduled_start,s.start_datetime) + s.duration_minutes * interval '1 minute') AS finish,\n              CASE WHEN coalesce(o.attendance_report_id,'')='' THEN NULL ELSE EXISTS(\n                SELECT 1 FROM curriculum.live_session_attendance a WHERE a.occurrence_id=o.id\n                AND lower(btrim(a.email))=%s AND a.total_attendance_seconds>0) END AS attended ,s.id AS session_id,s.module_catalogue_id AS module_id,s.module_title,\n              s.start_datetime,s.duration_minutes,s.join_url AS series_join_url,s.status AS series_status,\n              o.id AS occurrence_id,o.scheduled_start,o.scheduled_end,o.join_url\n              FROM curriculum.live_sessions s LEFT JOIN curriculum.live_session_occurrences o ON o.live_session_id=s.id\n              WHERE s.module_catalogue_id=ANY(%s) AND lower(s.status) NOT IN ('cancelled','deleted','failed','superseded')\n              AND (o.id IS NULL AND coalesce(s.repeat_pattern,'') IN ('','none') OR o.id IS NOT NULL\n                   AND lower(o.status) NOT IN ('cancelled','deleted','failed','superseded')) AND (coalesce(o.scheduled_start,s.start_datetime) AT TIME ZONE 'UTC' AT TIME ZONE 'Europe/London')::date=%s::date\n            ), dated AS (\n              SELECT *, (start AT TIME ZONE 'UTC' AT TIME ZONE 'Europe/London')::date AS day FROM markers WHERE start IS NOT NULL\n            ) SELECT DISTINCT ON (module_catalogue_id,day) module_catalogue_id,day,attended,start,finish,status,session_id,module_id,module_title,start_datetime,duration_minutes,\n              series_join_url,series_status,occurrence_id,scheduled_start,scheduled_end,join_url\n              FROM dated ORDER BY module_catalogue_id,day,start",
+          "ms": 105.07,
+          "rows": 1,
+          "callers": [
+            {
+              "file": "weekly_learning.py",
+              "function": "read_weekly_learning",
+              "line": 250
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 122
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 79
+            },
+            {
+              "file": "utils.py",
+              "function": "_execute_with_wrappers",
+              "line": 92
+            },
+            {
+              "file": "benchmark_week_switch.py",
+              "function": "execute",
+              "line": 61
+            }
+          ]
+        },
+        {
+          "alias": "enrolment",
+          "sql": "SELECT c.id,c.title,c.type,c.ksb_mappings,\n            CASE WHEN jsonb_typeof(c.settings_json->'durationMinutes')='number'\n                THEN c.settings_json->>'durationMinutes' END AS duration_minutes,\n            q.title AS quiz_title,q.duration AS quiz_duration,q.time_unit AS quiz_time_unit,\n            l.quiz_id AS linked_quiz_id,q.id AS resolved_quiz_id,q.questions AS quiz_questions\n            FROM curriculum.components c LEFT JOIN curriculum.quiz_component_links l ON l.component_id=c.id\n            LEFT JOIN curriculum.quizzes q ON q.id=coalesce(l.quiz_id,\n                CASE WHEN c.settings_json->>'linkedQuizId' ~ '^[0-9]+$' THEN (c.settings_json->>'linkedQuizId')::bigint END)\n            WHERE c.id=ANY(%s) ORDER BY c.display_order,c.id",
+          "ms": 91.934,
+          "rows": 17,
+          "callers": [
+            {
+              "file": "weekly_learning.py",
+              "function": "read_weekly_learning",
+              "line": 297
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 122
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 79
+            },
+            {
+              "file": "utils.py",
+              "function": "_execute_with_wrappers",
+              "line": 92
+            },
+            {
+              "file": "benchmark_week_switch.py",
+              "function": "execute",
+              "line": 61
+            }
+          ]
+        },
+        {
+          "alias": "enrolment",
+          "sql": "SELECT component_id,ksb_code FROM curriculum.ksb_mappings\n            WHERE component_id=ANY(%s) AND (ksb_mappings.deleted_at IS NULL OR EXISTS (SELECT 1 FROM curriculum.modules archived_module WHERE archived_module.module_catalogue_id=ksb_mappings.module_catalogue_id AND archived_module.deleted_at IS NOT NULL AND COALESCE(ksb_mappings.deleted_via_parent, '') <> '' AND ksb_mappings.deleted_via_parent IN (archived_module.module_catalogue_id, archived_module.deleted_via_parent) AND ksb_mappings.deleted_at BETWEEN archived_module.deleted_at - interval '5 minutes' AND archived_module.deleted_at + interval '5 minutes')) ORDER BY component_id,ksb_code",
+          "ms": 66.198,
+          "rows": 0,
+          "callers": [
+            {
+              "file": "weekly_learning.py",
+              "function": "read_weekly_learning",
+              "line": 309
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 122
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 79
+            },
+            {
+              "file": "utils.py",
+              "function": "_execute_with_wrappers",
+              "line": 92
+            },
+            {
+              "file": "benchmark_week_switch.py",
+              "function": "execute",
+              "line": 61
+            }
+          ]
+        },
+        {
+          "alias": "enrolment",
+          "sql": "SELECT progress.id,progress.learner_id,progress.kind,progress.module_ref,progress.module_title,progress.component_ref,progress.component_type,progress.quiz_ref,progress.passed,progress.reported_time,progress.submitted_at,progress.started_at,progress.time_tracking_source,progress.claimed_seconds,progress.verified_seconds,progress.source_system,progress.component_link_source,progress.actual_seconds,progress.accepted,\n        to_jsonb(progress)->>'actual_basis' AS actual_basis,\n        CASE WHEN jsonb_typeof(progress.source_payload)='object' THEN\n          jsonb_build_object('original_source_ref',progress.source_payload->'original_source_ref')\n          ELSE progress.source_payload END AS source_payload,\n        CASE WHEN EXISTS(SELECT 1 FROM \"Learner\".learner_activity_reporting_segments s\n          WHERE s.progress_id=progress.id AND s.learner_id=progress.learner_id)\n          THEN '[{}]'::jsonb ELSE '[]'::jsonb END AS segments\n        FROM \"Learner\".learner_progress_entries progress\n        WHERE progress.learner_id=%s AND progress.deleted_at IS NULL\n        ORDER BY progress.reporting_month,progress.reporting_started_at NULLS LAST,progress.id",
+          "ms": 255.538,
+          "rows": 231,
+          "callers": [
+            {
+              "file": "repository.py",
+              "function": "_query_rows",
+              "line": 70
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 122
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 79
+            },
+            {
+              "file": "utils.py",
+              "function": "_execute_with_wrappers",
+              "line": 92
+            },
+            {
+              "file": "benchmark_week_switch.py",
+              "function": "execute",
+              "line": 61
+            }
+          ]
+        },
+        {
+          "alias": "enrolment",
+          "sql": "SELECT id, week_id, module_catalogue_id, type, title, CASE WHEN regexp_replace(regexp_replace(coalesce(description,''),'<[^>]*>','','g'),'&nbsp;|[\t\n\u000b\f\r \u00a0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]','','g')<>'' THEN 'content' ELSE '' END AS description, jsonb_build_object('resourceUrl',settings_json->'resourceUrl','presentationUrl',settings_json->'presentationUrl','externalUrl',settings_json->'externalUrl','fileUrl',settings_json->'fileUrl','uploadedFileUrl',settings_json->'uploadedFileUrl','url',settings_json->'url','linkedQuizId',settings_json->'linkedQuizId','videoUrl',settings_json->'videoUrl','embedCode',settings_json->'embedCode','podcastUrl',settings_json->'podcastUrl','audioUrl',settings_json->'audioUrl','liveSessionUrl',settings_json->'liveSessionUrl','teamsMeetingUrl',settings_json->'teamsMeetingUrl','teamsLiveSessionId',settings_json->'teamsLiveSessionId','teamsSessionNumber',settings_json->'teamsSessionNumber','recordingSeriesId',settings_json->'recordingSeriesId','recordingSessionNumber',settings_json->'recordingSessionNumber','recordingDate',settings_json->'recordingDate','sessionDate',settings_json->'sessionDate','sessionTime',settings_json->'sessionTime','sessionDateTimeUtc',settings_json->'sessionDateTimeUtc','durationMinutes',settings_json->'durationMinutes','learnerTitle',settings_json->'learnerTitle','isMonthlyAssignment',settings_json->'isMonthlyAssignment','assignmentTopics',settings_json->'assignmentTopics','assignmentBrief',settings_json->'assignmentBrief','assignmentContent',settings_json->'assignmentContent','submissionInstructions',settings_json->'submissionInstructions','assignmentFileUrl',settings_json->'assignmentFileUrl','assignmentFileName',settings_json->'assignmentFileName','uploadedFileName',settings_json->'uploadedFileName','reflectionPrompt',settings_json->'reflectionPrompt','podcastReflectionQuestion',settings_json->'podcastReflectionQuestion','readingReflectionPrompts',settings_json->'readingReflectionPrompts','learnerGuidance',settings_json->'learnerGuidance','sourceType',settings_json->'sourceType','resourceSource',settings_json->'resourceSource','fileSource',settings_json->'fileSource') || jsonb_build_object('_readingContentAvailable',coalesce(regexp_replace(settings_json->>'readingContent','<[^>]*>|&nbsp;|\\s','','g'),'')<>'') AS settings_json, live_sessions_link, display_order, ksb_mappings, reflection_required, \"Reflection_Question\", tutor_validation_required FROM curriculum.components WHERE module_catalogue_id = ANY(%s) AND week_id = ANY(%s) AND (components.deleted_at IS NULL OR EXISTS (SELECT 1 FROM curriculum.modules archived_module WHERE archived_module.module_catalogue_id=components.module_catalogue_id AND archived_module.deleted_at IS NOT NULL AND COALESCE(components.deleted_via_parent, '') <> '' AND components.deleted_via_parent IN (archived_module.module_catalogue_id, archived_module.deleted_via_parent) AND components.deleted_at BETWEEN archived_module.deleted_at - interval '5 minutes' AND archived_module.deleted_at + interval '5 minutes')) ORDER BY week_id, display_order, id",
+          "ms": 172.789,
+          "rows": 17,
+          "callers": [
+            {
+              "file": "learner_detail.py",
+              "function": "_resolve_from_master",
+              "line": 1510
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 122
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 79
+            },
+            {
+              "file": "utils.py",
+              "function": "_execute_with_wrappers",
+              "line": 92
+            },
+            {
+              "file": "benchmark_week_switch.py",
+              "function": "execute",
+              "line": 61
+            }
+          ]
+        }
+      ],
+      "payload_sha256": "ccaacfe8f2d12e48246acf9b1a0118d1941e206a388deb1f1f23a89b6c0757d6"
+    },
+    {
+      "run": 1,
+      "week": 3,
+      "projection": "week-switch",
+      "kind": "commercial",
+      "learner_id": "redacted",
+      "section": "",
+      "duration_ms": 1625.85,
+      "query_count": 15,
+      "db_duration_ms": 1582.52,
+      "query_count_by_alias": {
+        "default": 2,
+        "enrolment": 13
+      },
+      "db_duration_ms_by_alias": {
+        "default": 252.98,
+        "enrolment": 1329.54
+      },
+      "stage_durations_ms": {},
+      "raw_bytes": 7609,
+      "gzip_bytes": 1481,
+      "activities": 18,
+      "queries": [
+        {
+          "alias": "enrolment",
+          "sql": "SELECT \"enrolment\".\"Created_users\".\"id\", \"enrolment\".\"Created_users\".\"Learner_type\", \"enrolment\".\"Created_users\".\"Username\", \"enrolment\".\"Created_users\".\"Email\", \"enrolment\".\"Created_users\".\"Programme\", \"enrolment\".\"Created_users\".\"Cohort\", \"enrolment\".\"Created_users\".\"Group\", \"enrolment\".\"Created_users\".\"aptem_id\", (CASE WHEN jsonb_typeof(\"Training_plan\"::jsonb)='array' THEN\n              (SELECT coalesce(jsonb_agg(jsonb_build_object('moduleId',item->>'moduleId',\n                'assignmentMode',item->>'assignmentMode')), '[]'::jsonb)\n               FROM jsonb_array_elements(\"Training_plan\"::jsonb) item WHERE jsonb_typeof(item)='object')\n              ELSE NULL END) AS \"_weekly_training_plan\", (CASE WHEN jsonb_typeof(\"Learning_plan\"::jsonb)='array' THEN\n              (SELECT coalesce(jsonb_agg(jsonb_build_object('moduleId',item->>'moduleId',\n                'assignmentMode',item->>'assignmentMode')), '[]'::jsonb)\n               FROM jsonb_array_elements(\"Learning_plan\"::jsonb) item WHERE jsonb_typeof(item)='object')\n              ELSE NULL END) AS \"_weekly_learning_plan\" FROM \"enrolment\".\"Created_users\" WHERE \"enrolment\".\"Created_users\".\"id\" = %s LIMIT 21",
+          "ms": 126.225,
+          "rows": 1,
+          "callers": [
+            {
+              "file": "compiler.py",
+              "function": "execute_sql",
+              "line": 1624
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 122
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 79
+            },
+            {
+              "file": "utils.py",
+              "function": "_execute_with_wrappers",
+              "line": 92
+            },
+            {
+              "file": "benchmark_week_switch.py",
+              "function": "execute",
+              "line": 61
+            }
+          ]
+        },
+        {
+          "alias": "enrolment",
+          "sql": "SELECT l.id,l.enrolment_id,l.aptem_id,l.programme_id,l.full_name AS name,\n        l.programme,l.coach_name,l.coach_email,l.email,l.start_date,l.end_date,l.learner_type,\n        u.id AS account_record_id,u.\"Email\" AS account_email,u.aptem_id AS account_aptem_id,\n        u.\"Planned_hours\" AS programme_planned_hours\n        FROM \"Learner\".learners l\n        LEFT JOIN enrolment.\"Created_users\" u ON u.id=l.enrolment_id\n        WHERE l.enrolment_id=%s",
+          "ms": 133.232,
+          "rows": 1,
+          "callers": [
+            {
+              "file": "repository.py",
+              "function": "_query_rows",
+              "line": 70
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 122
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 79
+            },
+            {
+              "file": "utils.py",
+              "function": "_execute_with_wrappers",
+              "line": 92
+            },
+            {
+              "file": "benchmark_week_switch.py",
+              "function": "execute",
+              "line": 61
+            }
+          ]
+        },
+        {
+          "alias": "enrolment",
+          "sql": "SELECT \"Learner\".\"learners\".\"id\", \"Learner\".\"learners\".\"enrolment_id\" FROM \"Learner\".\"learners\" WHERE \"Learner\".\"learners\".\"enrolment_id\" = %s ORDER BY \"Learner\".\"learners\".\"id\" ASC LIMIT 1",
+          "ms": 62.584,
+          "rows": 1,
+          "callers": [
+            {
+              "file": "compiler.py",
+              "function": "execute_sql",
+              "line": 1624
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 122
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 79
+            },
+            {
+              "file": "utils.py",
+              "function": "_execute_with_wrappers",
+              "line": 92
+            },
+            {
+              "file": "benchmark_week_switch.py",
+              "function": "execute",
+              "line": 61
+            }
+          ]
+        },
+        {
+          "alias": "default",
+          "sql": "\nSELECT module_ids\nFROM curriculum.groups\nWHERE group_name = %s AND (programme_name = %s OR programme_id = %s)\n  AND deleted_at IS NULL\n  AND COALESCE(is_programme_deleted, FALSE) = FALSE\nORDER BY\n    -- jsonb_array_length() errors on a scalar, and this column is not\n    -- guaranteed to hold an array -- the parsing in _group_module_ids allows\n    -- for a string too. Anything that is not an array sorts as empty.\n    jsonb_array_length(\n        CASE WHEN jsonb_typeof(module_ids) = 'array'\n             THEN module_ids ELSE '[]'::jsonb END\n    ) DESC,\n    updated_at DESC NULLS LAST,\n    created_at DESC NULLS LAST,\n    group_id\nLIMIT 1\n",
+          "ms": 64.538,
+          "rows": 1,
+          "callers": [
+            {
+              "file": "learning_plan.py",
+              "function": "_rows",
+              "line": 62
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 122
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 79
+            },
+            {
+              "file": "utils.py",
+              "function": "_execute_with_wrappers",
+              "line": 92
+            },
+            {
+              "file": "benchmark_week_switch.py",
+              "function": "execute",
+              "line": 61
+            }
+          ]
+        },
+        {
+          "alias": "enrolment",
+          "sql": "\n        SELECT DISTINCT c.curriculum_module_ref AS module_id\n        FROM \"Learner\".learner_source_course_memberships membership\n        JOIN curriculum.source_courses c ON c.id=membership.source_course_id\n        WHERE membership.learner_id=%s AND membership.deleted_at IS NULL\n          AND c.deleted_at IS NULL AND nullif(c.curriculum_module_ref,'') IS NOT NULL\n        ORDER BY c.curriculum_module_ref",
+          "ms": 63.371,
+          "rows": 7,
+          "callers": [
+            {
+              "file": "repository.py",
+              "function": "_query_rows",
+              "line": 70
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 122
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 79
+            },
+            {
+              "file": "utils.py",
+              "function": "_execute_with_wrappers",
+              "line": 92
+            },
+            {
+              "file": "benchmark_week_switch.py",
+              "function": "execute",
+              "line": 61
+            }
+          ]
+        },
+        {
+          "alias": "enrolment",
+          "sql": "SELECT m.module_catalogue_id AS id,m.title,m.start_date,m.end_date,\n            m.weeks_number,m.sessions_number,m.cohort_id,\n            to_jsonb(m)->'session_holidays' AS session_holidays,\n            to_jsonb(m)->'session_overrides' AS session_overrides,\n            to_jsonb(m)->'weekly_schedule' AS weekly_schedule,\n            coalesce(nullif(m.session_week_day,''),g.session_week_day) AS session_week_day,\n            coalesce(nullif(m.session_start_time,''),g.session_start_time) AS session_start_time,\n            coalesce(nullif(m.session_end_time,''),g.session_end_time) AS session_end_time\n            FROM curriculum.modules m LEFT JOIN curriculum.groups g ON g.group_id=m.group_id\n            WHERE m.module_catalogue_id=ANY(%s) ORDER BY m.title",
+          "ms": 66.3,
+          "rows": 8,
+          "callers": [
+            {
+              "file": "weekly_learning.py",
+              "function": "read_weekly_learning",
+              "line": 141
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 122
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 79
+            },
+            {
+              "file": "utils.py",
+              "function": "_execute_with_wrappers",
+              "line": 92
+            },
+            {
+              "file": "benchmark_week_switch.py",
+              "function": "execute",
+              "line": 61
+            }
+          ]
+        },
+        {
+          "alias": "enrolment",
+          "sql": "SELECT id,module_catalogue_id,week_number,title,holiday_note_enabled,holiday_note,display_order\n            FROM curriculum.weeks WHERE module_catalogue_id=ANY(%s) AND (weeks.deleted_at IS NULL OR EXISTS (SELECT 1 FROM curriculum.modules archived_module WHERE archived_module.module_catalogue_id=weeks.module_catalogue_id AND archived_module.deleted_at IS NOT NULL AND COALESCE(weeks.deleted_via_parent, '') <> '' AND weeks.deleted_via_parent IN (archived_module.module_catalogue_id, archived_module.deleted_via_parent) AND weeks.deleted_at BETWEEN archived_module.deleted_at - interval '5 minutes' AND archived_module.deleted_at + interval '5 minutes'))\n            ORDER BY display_order,week_number,id",
+          "ms": 64.992,
+          "rows": 16,
+          "callers": [
+            {
+              "file": "weekly_learning.py",
+              "function": "read_weekly_learning",
+              "line": 153
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 122
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 79
+            },
+            {
+              "file": "utils.py",
+              "function": "_execute_with_wrappers",
+              "line": 92
+            },
+            {
+              "file": "benchmark_week_switch.py",
+              "function": "execute",
+              "line": 61
+            }
+          ]
+        },
+        {
+          "alias": "default",
+          "sql": "SELECT 'cohort' AS source,to_jsonb(c) AS payload FROM \"curriculum\".\"cohorts\" c WHERE \"cohort_id\" in (%s) UNION ALL SELECT 'england',to_jsonb(h) FROM \"curriculum\".\"england_holidays\" h UNION ALL SELECT 'authored',to_jsonb(h) FROM \"curriculum\".\"holidays\" h",
+          "ms": 188.457,
+          "rows": 122,
+          "callers": [
+            {
+              "file": "views.py",
+              "function": "fetch_all",
+              "line": 894
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 122
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 79
+            },
+            {
+              "file": "utils.py",
+              "function": "_execute_with_wrappers",
+              "line": 92
+            },
+            {
+              "file": "benchmark_week_switch.py",
+              "function": "execute",
+              "line": 61
+            }
+          ]
+        },
+        {
+          "alias": "enrolment",
+          "sql": "SELECT c.id,c.week_id,c.module_catalogue_id,c.type,\n            coalesce(l.quiz_id, CASE WHEN c.settings_json->>'linkedQuizId' ~ '^[0-9]+$'\n                THEN (c.settings_json->>'linkedQuizId')::bigint END) AS quiz_id,\n            EXISTS(SELECT 1 FROM curriculum.quizzes q WHERE q.id=coalesce(l.quiz_id,\n                CASE WHEN c.settings_json->>'linkedQuizId' ~ '^[0-9]+$'\n                THEN (c.settings_json->>'linkedQuizId')::bigint END)) AS is_quiz,\n            CASE WHEN lower(replace(c.type,'-','_')) <> 'video' THEN true ELSE\n              coalesce(btrim(c.settings_json->>'videoUrl'),'') <> '' OR coalesce(btrim(c.settings_json->>'readingContent'),'') <> '' OR coalesce(btrim(c.settings_json->>'podcastUrl'),'') <> '' OR coalesce(btrim(c.settings_json->>'audioUrl'),'') <> '' OR coalesce(btrim(c.settings_json->>'liveSessionUrl'),'') <> '' OR coalesce(btrim(c.settings_json->>'teamsMeetingUrl'),'') <> '' OR coalesce(btrim(c.settings_json->>'resourceUrl'),'') <> '' OR coalesce(btrim(c.settings_json->>'presentationUrl'),'') <> '' OR coalesce(btrim(c.settings_json->>'externalUrl'),'') <> '' OR coalesce(btrim(c.settings_json->>'fileUrl'),'') <> '' OR coalesce(btrim(c.settings_json->>'uploadedFileUrl'),'') <> '' OR coalesce(btrim(c.settings_json->>'url'),'') <> '' OR coalesce(c.settings_json->>'embedCode','') ~* '<iframe[^>]+src=[\"'']([^\"'']+)[\"'']' OR\n              coalesce(btrim(c.live_sessions_link),'') <> '' END AS has_content\n            FROM curriculum.components c LEFT JOIN curriculum.quiz_component_links l ON l.component_id=c.id\n            JOIN curriculum.modules cm ON cm.module_catalogue_id=c.module_catalogue_id\n            WHERE c.module_catalogue_id=ANY(%s) AND (c.deleted_at IS NULL OR EXISTS (SELECT 1 FROM curriculum.modules archived_module WHERE archived_module.module_catalogue_id=c.module_catalogue_id AND archived_module.deleted_at IS NOT NULL AND COALESCE(c.deleted_via_parent, '') <> '' AND c.deleted_via_parent IN (archived_module.module_catalogue_id, archived_module.deleted_via_parent) AND c.deleted_at BETWEEN archived_module.deleted_at - interval '5 minutes' AND archived_module.deleted_at + interval '5 minutes'))\n            AND (cm.deleted_at IS NULL OR COALESCE(cm.deleted_via_parent,'') <> '') AND coalesce(btrim(cm.title),'') <> ''\n             AND (c.week_id=%s OR l.quiz_id IS NOT NULL\n                OR c.settings_json->>'linkedQuizId' ~ '^[0-9]+$')\n            ORDER BY c.week_id,c.display_order,c.id",
+          "ms": 93.67,
+          "rows": 57,
+          "callers": [
+            {
+              "file": "weekly_learning.py",
+              "function": "read_weekly_learning",
+              "line": 202
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 122
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 79
+            },
+            {
+              "file": "utils.py",
+              "function": "_execute_with_wrappers",
+              "line": 92
+            },
+            {
+              "file": "benchmark_week_switch.py",
+              "function": "execute",
+              "line": 61
+            }
+          ]
+        },
+        {
+          "alias": "enrolment",
+          "sql": "SELECT \"Learner\".\"learner_progress_entries\".\"kind\" AS \"kind\", \"Learner\".\"learner_progress_entries\".\"component_ref\" AS \"component_ref\", \"Learner\".\"learner_progress_entries\".\"quiz_ref\" AS \"quiz_ref\", \"Learner\".\"learner_progress_entries\".\"passed\" AS \"passed\", \"Learner\".\"learner_progress_entries\".\"submitted_at\" AS \"submitted_at\" FROM \"Learner\".\"learner_progress_entries\" WHERE (\"Learner\".\"learner_progress_entries\".\"learner_id\" = %s AND \"Learner\".\"learner_progress_entries\".\"kind\" IN (%s, %s, %s, %s) AND (\"Learner\".\"learner_progress_entries\".\"component_ref\" IN (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) OR \"Learner\".\"learner_progress_entries\".\"kind\" = %s)) ORDER BY \"Learner\".\"learner_progress_entries\".\"entry_order\" ASC, \"Learner\".\"learner_progress_entries\".\"id\" ASC",
+          "ms": 78.611,
+          "rows": 40,
+          "callers": [
+            {
+              "file": "compiler.py",
+              "function": "execute_sql",
+              "line": 1624
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 122
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 79
+            },
+            {
+              "file": "utils.py",
+              "function": "_execute_with_wrappers",
+              "line": 92
+            },
+            {
+              "file": "benchmark_week_switch.py",
+              "function": "execute",
+              "line": 61
+            }
+          ]
+        },
+        {
+          "alias": "enrolment",
+          "sql": "WITH markers AS (\n            SELECT s.module_catalogue_id,coalesce(o.status,s.status) AS status,coalesce(o.scheduled_start,s.start_datetime) AS start,\n              coalesce(o.scheduled_end,coalesce(o.scheduled_start,s.start_datetime) + s.duration_minutes * interval '1 minute') AS finish,\n              CASE WHEN coalesce(o.attendance_report_id,'')='' THEN NULL ELSE EXISTS(\n                SELECT 1 FROM curriculum.live_session_attendance a WHERE a.occurrence_id=o.id\n                AND lower(btrim(a.email))=%s AND a.total_attendance_seconds>0) END AS attended ,s.id AS session_id,s.module_catalogue_id AS module_id,s.module_title,\n              s.start_datetime,s.duration_minutes,s.join_url AS series_join_url,s.status AS series_status,\n              o.id AS occurrence_id,o.scheduled_start,o.scheduled_end,o.join_url\n              FROM curriculum.live_sessions s LEFT JOIN curriculum.live_session_occurrences o ON o.live_session_id=s.id\n              WHERE s.module_catalogue_id=ANY(%s) AND lower(s.status) NOT IN ('cancelled','deleted','failed','superseded')\n              AND (o.id IS NULL AND coalesce(s.repeat_pattern,'') IN ('','none') OR o.id IS NOT NULL\n                   AND lower(o.status) NOT IN ('cancelled','deleted','failed','superseded')) AND (coalesce(o.scheduled_start,s.start_datetime) AT TIME ZONE 'UTC' AT TIME ZONE 'Europe/London')::date=%s::date\n            ), dated AS (\n              SELECT *, (start AT TIME ZONE 'UTC' AT TIME ZONE 'Europe/London')::date AS day FROM markers WHERE start IS NOT NULL\n            ) SELECT DISTINCT ON (module_catalogue_id,day) module_catalogue_id,day,attended,start,finish,status,session_id,module_id,module_title,start_datetime,duration_minutes,\n              series_join_url,series_status,occurrence_id,scheduled_start,scheduled_end,join_url\n              FROM dated ORDER BY module_catalogue_id,day,start",
+          "ms": 74.756,
+          "rows": 1,
+          "callers": [
+            {
+              "file": "weekly_learning.py",
+              "function": "read_weekly_learning",
+              "line": 250
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 122
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 79
+            },
+            {
+              "file": "utils.py",
+              "function": "_execute_with_wrappers",
+              "line": 92
+            },
+            {
+              "file": "benchmark_week_switch.py",
+              "function": "execute",
+              "line": 61
+            }
+          ]
+        },
+        {
+          "alias": "enrolment",
+          "sql": "SELECT c.id,c.title,c.type,c.ksb_mappings,\n            CASE WHEN jsonb_typeof(c.settings_json->'durationMinutes')='number'\n                THEN c.settings_json->>'durationMinutes' END AS duration_minutes,\n            q.title AS quiz_title,q.duration AS quiz_duration,q.time_unit AS quiz_time_unit,\n            l.quiz_id AS linked_quiz_id,q.id AS resolved_quiz_id,q.questions AS quiz_questions\n            FROM curriculum.components c LEFT JOIN curriculum.quiz_component_links l ON l.component_id=c.id\n            LEFT JOIN curriculum.quizzes q ON q.id=coalesce(l.quiz_id,\n                CASE WHEN c.settings_json->>'linkedQuizId' ~ '^[0-9]+$' THEN (c.settings_json->>'linkedQuizId')::bigint END)\n            WHERE c.id=ANY(%s) ORDER BY c.display_order,c.id",
+          "ms": 196.461,
+          "rows": 18,
+          "callers": [
+            {
+              "file": "weekly_learning.py",
+              "function": "read_weekly_learning",
+              "line": 297
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 122
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 79
+            },
+            {
+              "file": "utils.py",
+              "function": "_execute_with_wrappers",
+              "line": 92
+            },
+            {
+              "file": "benchmark_week_switch.py",
+              "function": "execute",
+              "line": 61
+            }
+          ]
+        },
+        {
+          "alias": "enrolment",
+          "sql": "SELECT component_id,ksb_code FROM curriculum.ksb_mappings\n            WHERE component_id=ANY(%s) AND (ksb_mappings.deleted_at IS NULL OR EXISTS (SELECT 1 FROM curriculum.modules archived_module WHERE archived_module.module_catalogue_id=ksb_mappings.module_catalogue_id AND archived_module.deleted_at IS NOT NULL AND COALESCE(ksb_mappings.deleted_via_parent, '') <> '' AND ksb_mappings.deleted_via_parent IN (archived_module.module_catalogue_id, archived_module.deleted_via_parent) AND ksb_mappings.deleted_at BETWEEN archived_module.deleted_at - interval '5 minutes' AND archived_module.deleted_at + interval '5 minutes')) ORDER BY component_id,ksb_code",
+          "ms": 69.333,
+          "rows": 0,
+          "callers": [
+            {
+              "file": "weekly_learning.py",
+              "function": "read_weekly_learning",
+              "line": 309
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 122
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 79
+            },
+            {
+              "file": "utils.py",
+              "function": "_execute_with_wrappers",
+              "line": 92
+            },
+            {
+              "file": "benchmark_week_switch.py",
+              "function": "execute",
+              "line": 61
+            }
+          ]
+        },
+        {
+          "alias": "enrolment",
+          "sql": "SELECT progress.id,progress.learner_id,progress.kind,progress.module_ref,progress.module_title,progress.component_ref,progress.component_type,progress.quiz_ref,progress.passed,progress.reported_time,progress.submitted_at,progress.started_at,progress.time_tracking_source,progress.claimed_seconds,progress.verified_seconds,progress.source_system,progress.component_link_source,progress.actual_seconds,progress.accepted,\n        to_jsonb(progress)->>'actual_basis' AS actual_basis,\n        CASE WHEN jsonb_typeof(progress.source_payload)='object' THEN\n          jsonb_build_object('original_source_ref',progress.source_payload->'original_source_ref')\n          ELSE progress.source_payload END AS source_payload,\n        CASE WHEN EXISTS(SELECT 1 FROM \"Learner\".learner_activity_reporting_segments s\n          WHERE s.progress_id=progress.id AND s.learner_id=progress.learner_id)\n          THEN '[{}]'::jsonb ELSE '[]'::jsonb END AS segments\n        FROM \"Learner\".learner_progress_entries progress\n        WHERE progress.learner_id=%s AND progress.deleted_at IS NULL\n        ORDER BY progress.reporting_month,progress.reporting_started_at NULLS LAST,progress.id",
+          "ms": 217.665,
+          "rows": 231,
+          "callers": [
+            {
+              "file": "repository.py",
+              "function": "_query_rows",
+              "line": 70
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 122
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 79
+            },
+            {
+              "file": "utils.py",
+              "function": "_execute_with_wrappers",
+              "line": 92
+            },
+            {
+              "file": "benchmark_week_switch.py",
+              "function": "execute",
+              "line": 61
+            }
+          ]
+        },
+        {
+          "alias": "enrolment",
+          "sql": "SELECT id, week_id, module_catalogue_id, type, title, CASE WHEN regexp_replace(regexp_replace(coalesce(description,''),'<[^>]*>','','g'),'&nbsp;|[\t\n\u000b\f\r \u00a0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]','','g')<>'' THEN 'content' ELSE '' END AS description, jsonb_build_object('resourceUrl',settings_json->'resourceUrl','presentationUrl',settings_json->'presentationUrl','externalUrl',settings_json->'externalUrl','fileUrl',settings_json->'fileUrl','uploadedFileUrl',settings_json->'uploadedFileUrl','url',settings_json->'url','linkedQuizId',settings_json->'linkedQuizId','videoUrl',settings_json->'videoUrl','embedCode',settings_json->'embedCode','podcastUrl',settings_json->'podcastUrl','audioUrl',settings_json->'audioUrl','liveSessionUrl',settings_json->'liveSessionUrl','teamsMeetingUrl',settings_json->'teamsMeetingUrl','teamsLiveSessionId',settings_json->'teamsLiveSessionId','teamsSessionNumber',settings_json->'teamsSessionNumber','recordingSeriesId',settings_json->'recordingSeriesId','recordingSessionNumber',settings_json->'recordingSessionNumber','recordingDate',settings_json->'recordingDate','sessionDate',settings_json->'sessionDate','sessionTime',settings_json->'sessionTime','sessionDateTimeUtc',settings_json->'sessionDateTimeUtc','durationMinutes',settings_json->'durationMinutes','learnerTitle',settings_json->'learnerTitle','isMonthlyAssignment',settings_json->'isMonthlyAssignment','assignmentTopics',settings_json->'assignmentTopics','assignmentBrief',settings_json->'assignmentBrief','assignmentContent',settings_json->'assignmentContent','submissionInstructions',settings_json->'submissionInstructions','assignmentFileUrl',settings_json->'assignmentFileUrl','assignmentFileName',settings_json->'assignmentFileName','uploadedFileName',settings_json->'uploadedFileName','reflectionPrompt',settings_json->'reflectionPrompt','podcastReflectionQuestion',settings_json->'podcastReflectionQuestion','readingReflectionPrompts',settings_json->'readingReflectionPrompts','learnerGuidance',settings_json->'learnerGuidance','sourceType',settings_json->'sourceType','resourceSource',settings_json->'resourceSource','fileSource',settings_json->'fileSource') || jsonb_build_object('_readingContentAvailable',coalesce(regexp_replace(settings_json->>'readingContent','<[^>]*>|&nbsp;|\\s','','g'),'')<>'') AS settings_json, live_sessions_link, display_order, ksb_mappings, reflection_required, \"Reflection_Question\", tutor_validation_required FROM curriculum.components WHERE module_catalogue_id = ANY(%s) AND week_id = ANY(%s) AND (components.deleted_at IS NULL OR EXISTS (SELECT 1 FROM curriculum.modules archived_module WHERE archived_module.module_catalogue_id=components.module_catalogue_id AND archived_module.deleted_at IS NOT NULL AND COALESCE(components.deleted_via_parent, '') <> '' AND components.deleted_via_parent IN (archived_module.module_catalogue_id, archived_module.deleted_via_parent) AND components.deleted_at BETWEEN archived_module.deleted_at - interval '5 minutes' AND archived_module.deleted_at + interval '5 minutes')) ORDER BY week_id, display_order, id",
+          "ms": 82.421,
+          "rows": 18,
+          "callers": [
+            {
+              "file": "learner_detail.py",
+              "function": "_resolve_from_master",
+              "line": 1510
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 122
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 79
+            },
+            {
+              "file": "utils.py",
+              "function": "_execute_with_wrappers",
+              "line": 92
+            },
+            {
+              "file": "benchmark_week_switch.py",
+              "function": "execute",
+              "line": 61
+            }
+          ]
+        }
+      ],
+      "payload_sha256": "d8f4838578b454b48e753ba97d76956b51076056d820a40bcb2526e1397e1299"
+    },
+    {
+      "run": 1,
+      "week": 2,
+      "projection": "week-switch",
+      "kind": "commercial",
+      "learner_id": "redacted",
+      "section": "",
+      "duration_ms": 2564.98,
+      "query_count": 15,
+      "db_duration_ms": 2526.7,
+      "query_count_by_alias": {
+        "default": 2,
+        "enrolment": 13
+      },
+      "db_duration_ms_by_alias": {
+        "default": 463.32,
+        "enrolment": 2063.38
+      },
+      "stage_durations_ms": {},
+      "raw_bytes": 7282,
+      "gzip_bytes": 1483,
+      "activities": 17,
+      "queries": [
+        {
+          "alias": "enrolment",
+          "sql": "SELECT \"enrolment\".\"Created_users\".\"id\", \"enrolment\".\"Created_users\".\"Learner_type\", \"enrolment\".\"Created_users\".\"Username\", \"enrolment\".\"Created_users\".\"Email\", \"enrolment\".\"Created_users\".\"Programme\", \"enrolment\".\"Created_users\".\"Cohort\", \"enrolment\".\"Created_users\".\"Group\", \"enrolment\".\"Created_users\".\"aptem_id\", (CASE WHEN jsonb_typeof(\"Training_plan\"::jsonb)='array' THEN\n              (SELECT coalesce(jsonb_agg(jsonb_build_object('moduleId',item->>'moduleId',\n                'assignmentMode',item->>'assignmentMode')), '[]'::jsonb)\n               FROM jsonb_array_elements(\"Training_plan\"::jsonb) item WHERE jsonb_typeof(item)='object')\n              ELSE NULL END) AS \"_weekly_training_plan\", (CASE WHEN jsonb_typeof(\"Learning_plan\"::jsonb)='array' THEN\n              (SELECT coalesce(jsonb_agg(jsonb_build_object('moduleId',item->>'moduleId',\n                'assignmentMode',item->>'assignmentMode')), '[]'::jsonb)\n               FROM jsonb_array_elements(\"Learning_plan\"::jsonb) item WHERE jsonb_typeof(item)='object')\n              ELSE NULL END) AS \"_weekly_learning_plan\" FROM \"enrolment\".\"Created_users\" WHERE \"enrolment\".\"Created_users\".\"id\" = %s LIMIT 21",
+          "ms": 73.606,
+          "rows": 1,
+          "callers": [
+            {
+              "file": "compiler.py",
+              "function": "execute_sql",
+              "line": 1624
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 122
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 79
+            },
+            {
+              "file": "utils.py",
+              "function": "_execute_with_wrappers",
+              "line": 92
+            },
+            {
+              "file": "benchmark_week_switch.py",
+              "function": "execute",
+              "line": 61
+            }
+          ]
+        },
+        {
+          "alias": "enrolment",
+          "sql": "SELECT l.id,l.enrolment_id,l.aptem_id,l.programme_id,l.full_name AS name,\n        l.programme,l.coach_name,l.coach_email,l.email,l.start_date,l.end_date,l.learner_type,\n        u.id AS account_record_id,u.\"Email\" AS account_email,u.aptem_id AS account_aptem_id,\n        u.\"Planned_hours\" AS programme_planned_hours\n        FROM \"Learner\".learners l\n        LEFT JOIN enrolment.\"Created_users\" u ON u.id=l.enrolment_id\n        WHERE l.enrolment_id=%s",
+          "ms": 78.937,
+          "rows": 1,
+          "callers": [
+            {
+              "file": "repository.py",
+              "function": "_query_rows",
+              "line": 70
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 122
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 79
+            },
+            {
+              "file": "utils.py",
+              "function": "_execute_with_wrappers",
+              "line": 92
+            },
+            {
+              "file": "benchmark_week_switch.py",
+              "function": "execute",
+              "line": 61
+            }
+          ]
+        },
+        {
+          "alias": "enrolment",
+          "sql": "SELECT \"Learner\".\"learners\".\"id\", \"Learner\".\"learners\".\"enrolment_id\" FROM \"Learner\".\"learners\" WHERE \"Learner\".\"learners\".\"enrolment_id\" = %s ORDER BY \"Learner\".\"learners\".\"id\" ASC LIMIT 1",
+          "ms": 94.51,
+          "rows": 1,
+          "callers": [
+            {
+              "file": "compiler.py",
+              "function": "execute_sql",
+              "line": 1624
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 122
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 79
+            },
+            {
+              "file": "utils.py",
+              "function": "_execute_with_wrappers",
+              "line": 92
+            },
+            {
+              "file": "benchmark_week_switch.py",
+              "function": "execute",
+              "line": 61
+            }
+          ]
+        },
+        {
+          "alias": "default",
+          "sql": "\nSELECT module_ids\nFROM curriculum.groups\nWHERE group_name = %s AND (programme_name = %s OR programme_id = %s)\n  AND deleted_at IS NULL\n  AND COALESCE(is_programme_deleted, FALSE) = FALSE\nORDER BY\n    -- jsonb_array_length() errors on a scalar, and this column is not\n    -- guaranteed to hold an array -- the parsing in _group_module_ids allows\n    -- for a string too. Anything that is not an array sorts as empty.\n    jsonb_array_length(\n        CASE WHEN jsonb_typeof(module_ids) = 'array'\n             THEN module_ids ELSE '[]'::jsonb END\n    ) DESC,\n    updated_at DESC NULLS LAST,\n    created_at DESC NULLS LAST,\n    group_id\nLIMIT 1\n",
+          "ms": 87.985,
+          "rows": 1,
+          "callers": [
+            {
+              "file": "learning_plan.py",
+              "function": "_rows",
+              "line": 62
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 122
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 79
+            },
+            {
+              "file": "utils.py",
+              "function": "_execute_with_wrappers",
+              "line": 92
+            },
+            {
+              "file": "benchmark_week_switch.py",
+              "function": "execute",
+              "line": 61
+            }
+          ]
+        },
+        {
+          "alias": "enrolment",
+          "sql": "\n        SELECT DISTINCT c.curriculum_module_ref AS module_id\n        FROM \"Learner\".learner_source_course_memberships membership\n        JOIN curriculum.source_courses c ON c.id=membership.source_course_id\n        WHERE membership.learner_id=%s AND membership.deleted_at IS NULL\n          AND c.deleted_at IS NULL AND nullif(c.curriculum_module_ref,'') IS NOT NULL\n        ORDER BY c.curriculum_module_ref",
+          "ms": 91.714,
+          "rows": 7,
+          "callers": [
+            {
+              "file": "repository.py",
+              "function": "_query_rows",
+              "line": 70
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 122
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 79
+            },
+            {
+              "file": "utils.py",
+              "function": "_execute_with_wrappers",
+              "line": 92
+            },
+            {
+              "file": "benchmark_week_switch.py",
+              "function": "execute",
+              "line": 61
+            }
+          ]
+        },
+        {
+          "alias": "enrolment",
+          "sql": "SELECT m.module_catalogue_id AS id,m.title,m.start_date,m.end_date,\n            m.weeks_number,m.sessions_number,m.cohort_id,\n            to_jsonb(m)->'session_holidays' AS session_holidays,\n            to_jsonb(m)->'session_overrides' AS session_overrides,\n            to_jsonb(m)->'weekly_schedule' AS weekly_schedule,\n            coalesce(nullif(m.session_week_day,''),g.session_week_day) AS session_week_day,\n            coalesce(nullif(m.session_start_time,''),g.session_start_time) AS session_start_time,\n            coalesce(nullif(m.session_end_time,''),g.session_end_time) AS session_end_time\n            FROM curriculum.modules m LEFT JOIN curriculum.groups g ON g.group_id=m.group_id\n            WHERE m.module_catalogue_id=ANY(%s) ORDER BY m.title",
+          "ms": 104.671,
+          "rows": 8,
+          "callers": [
+            {
+              "file": "weekly_learning.py",
+              "function": "read_weekly_learning",
+              "line": 141
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 122
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 79
+            },
+            {
+              "file": "utils.py",
+              "function": "_execute_with_wrappers",
+              "line": 92
+            },
+            {
+              "file": "benchmark_week_switch.py",
+              "function": "execute",
+              "line": 61
+            }
+          ]
+        },
+        {
+          "alias": "enrolment",
+          "sql": "SELECT id,module_catalogue_id,week_number,title,holiday_note_enabled,holiday_note,display_order\n            FROM curriculum.weeks WHERE module_catalogue_id=ANY(%s) AND (weeks.deleted_at IS NULL OR EXISTS (SELECT 1 FROM curriculum.modules archived_module WHERE archived_module.module_catalogue_id=weeks.module_catalogue_id AND archived_module.deleted_at IS NOT NULL AND COALESCE(weeks.deleted_via_parent, '') <> '' AND weeks.deleted_via_parent IN (archived_module.module_catalogue_id, archived_module.deleted_via_parent) AND weeks.deleted_at BETWEEN archived_module.deleted_at - interval '5 minutes' AND archived_module.deleted_at + interval '5 minutes'))\n            ORDER BY display_order,week_number,id",
+          "ms": 111.955,
+          "rows": 16,
+          "callers": [
+            {
+              "file": "weekly_learning.py",
+              "function": "read_weekly_learning",
+              "line": 153
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 122
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 79
+            },
+            {
+              "file": "utils.py",
+              "function": "_execute_with_wrappers",
+              "line": 92
+            },
+            {
+              "file": "benchmark_week_switch.py",
+              "function": "execute",
+              "line": 61
+            }
+          ]
+        },
+        {
+          "alias": "default",
+          "sql": "SELECT 'cohort' AS source,to_jsonb(c) AS payload FROM \"curriculum\".\"cohorts\" c WHERE \"cohort_id\" in (%s) UNION ALL SELECT 'england',to_jsonb(h) FROM \"curriculum\".\"england_holidays\" h UNION ALL SELECT 'authored',to_jsonb(h) FROM \"curriculum\".\"holidays\" h",
+          "ms": 375.345,
+          "rows": 122,
+          "callers": [
+            {
+              "file": "views.py",
+              "function": "fetch_all",
+              "line": 894
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 122
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 79
+            },
+            {
+              "file": "utils.py",
+              "function": "_execute_with_wrappers",
+              "line": 92
+            },
+            {
+              "file": "benchmark_week_switch.py",
+              "function": "execute",
+              "line": 61
+            }
+          ]
+        },
+        {
+          "alias": "enrolment",
+          "sql": "SELECT c.id,c.week_id,c.module_catalogue_id,c.type,\n            coalesce(l.quiz_id, CASE WHEN c.settings_json->>'linkedQuizId' ~ '^[0-9]+$'\n                THEN (c.settings_json->>'linkedQuizId')::bigint END) AS quiz_id,\n            EXISTS(SELECT 1 FROM curriculum.quizzes q WHERE q.id=coalesce(l.quiz_id,\n                CASE WHEN c.settings_json->>'linkedQuizId' ~ '^[0-9]+$'\n                THEN (c.settings_json->>'linkedQuizId')::bigint END)) AS is_quiz,\n            CASE WHEN lower(replace(c.type,'-','_')) <> 'video' THEN true ELSE\n              coalesce(btrim(c.settings_json->>'videoUrl'),'') <> '' OR coalesce(btrim(c.settings_json->>'readingContent'),'') <> '' OR coalesce(btrim(c.settings_json->>'podcastUrl'),'') <> '' OR coalesce(btrim(c.settings_json->>'audioUrl'),'') <> '' OR coalesce(btrim(c.settings_json->>'liveSessionUrl'),'') <> '' OR coalesce(btrim(c.settings_json->>'teamsMeetingUrl'),'') <> '' OR coalesce(btrim(c.settings_json->>'resourceUrl'),'') <> '' OR coalesce(btrim(c.settings_json->>'presentationUrl'),'') <> '' OR coalesce(btrim(c.settings_json->>'externalUrl'),'') <> '' OR coalesce(btrim(c.settings_json->>'fileUrl'),'') <> '' OR coalesce(btrim(c.settings_json->>'uploadedFileUrl'),'') <> '' OR coalesce(btrim(c.settings_json->>'url'),'') <> '' OR coalesce(c.settings_json->>'embedCode','') ~* '<iframe[^>]+src=[\"'']([^\"'']+)[\"'']' OR\n              coalesce(btrim(c.live_sessions_link),'') <> '' END AS has_content\n            FROM curriculum.components c LEFT JOIN curriculum.quiz_component_links l ON l.component_id=c.id\n            JOIN curriculum.modules cm ON cm.module_catalogue_id=c.module_catalogue_id\n            WHERE c.module_catalogue_id=ANY(%s) AND (c.deleted_at IS NULL OR EXISTS (SELECT 1 FROM curriculum.modules archived_module WHERE archived_module.module_catalogue_id=c.module_catalogue_id AND archived_module.deleted_at IS NOT NULL AND COALESCE(c.deleted_via_parent, '') <> '' AND c.deleted_via_parent IN (archived_module.module_catalogue_id, archived_module.deleted_via_parent) AND c.deleted_at BETWEEN archived_module.deleted_at - interval '5 minutes' AND archived_module.deleted_at + interval '5 minutes'))\n            AND (cm.deleted_at IS NULL OR COALESCE(cm.deleted_via_parent,'') <> '') AND coalesce(btrim(cm.title),'') <> ''\n             AND (c.week_id=%s OR l.quiz_id IS NOT NULL\n                OR c.settings_json->>'linkedQuizId' ~ '^[0-9]+$')\n            ORDER BY c.week_id,c.display_order,c.id",
+          "ms": 622.984,
+          "rows": 56,
+          "callers": [
+            {
+              "file": "weekly_learning.py",
+              "function": "read_weekly_learning",
+              "line": 202
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 122
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 79
+            },
+            {
+              "file": "utils.py",
+              "function": "_execute_with_wrappers",
+              "line": 92
+            },
+            {
+              "file": "benchmark_week_switch.py",
+              "function": "execute",
+              "line": 61
+            }
+          ]
+        },
+        {
+          "alias": "enrolment",
+          "sql": "SELECT \"Learner\".\"learner_progress_entries\".\"kind\" AS \"kind\", \"Learner\".\"learner_progress_entries\".\"component_ref\" AS \"component_ref\", \"Learner\".\"learner_progress_entries\".\"quiz_ref\" AS \"quiz_ref\", \"Learner\".\"learner_progress_entries\".\"passed\" AS \"passed\", \"Learner\".\"learner_progress_entries\".\"submitted_at\" AS \"submitted_at\" FROM \"Learner\".\"learner_progress_entries\" WHERE (\"Learner\".\"learner_progress_entries\".\"learner_id\" = %s AND \"Learner\".\"learner_progress_entries\".\"kind\" IN (%s, %s, %s, %s) AND (\"Learner\".\"learner_progress_entries\".\"component_ref\" IN (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) OR \"Learner\".\"learner_progress_entries\".\"kind\" = %s)) ORDER BY \"Learner\".\"learner_progress_entries\".\"entry_order\" ASC, \"Learner\".\"learner_progress_entries\".\"id\" ASC",
+          "ms": 79.628,
+          "rows": 40,
+          "callers": [
+            {
+              "file": "compiler.py",
+              "function": "execute_sql",
+              "line": 1624
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 122
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 79
+            },
+            {
+              "file": "utils.py",
+              "function": "_execute_with_wrappers",
+              "line": 92
+            },
+            {
+              "file": "benchmark_week_switch.py",
+              "function": "execute",
+              "line": 61
+            }
+          ]
+        },
+        {
+          "alias": "enrolment",
+          "sql": "WITH markers AS (\n            SELECT s.module_catalogue_id,coalesce(o.status,s.status) AS status,coalesce(o.scheduled_start,s.start_datetime) AS start,\n              coalesce(o.scheduled_end,coalesce(o.scheduled_start,s.start_datetime) + s.duration_minutes * interval '1 minute') AS finish,\n              CASE WHEN coalesce(o.attendance_report_id,'')='' THEN NULL ELSE EXISTS(\n                SELECT 1 FROM curriculum.live_session_attendance a WHERE a.occurrence_id=o.id\n                AND lower(btrim(a.email))=%s AND a.total_attendance_seconds>0) END AS attended ,s.id AS session_id,s.module_catalogue_id AS module_id,s.module_title,\n              s.start_datetime,s.duration_minutes,s.join_url AS series_join_url,s.status AS series_status,\n              o.id AS occurrence_id,o.scheduled_start,o.scheduled_end,o.join_url\n              FROM curriculum.live_sessions s LEFT JOIN curriculum.live_session_occurrences o ON o.live_session_id=s.id\n              WHERE s.module_catalogue_id=ANY(%s) AND lower(s.status) NOT IN ('cancelled','deleted','failed','superseded')\n              AND (o.id IS NULL AND coalesce(s.repeat_pattern,'') IN ('','none') OR o.id IS NOT NULL\n                   AND lower(o.status) NOT IN ('cancelled','deleted','failed','superseded')) AND (coalesce(o.scheduled_start,s.start_datetime) AT TIME ZONE 'UTC' AT TIME ZONE 'Europe/London')::date=%s::date\n            ), dated AS (\n              SELECT *, (start AT TIME ZONE 'UTC' AT TIME ZONE 'Europe/London')::date AS day FROM markers WHERE start IS NOT NULL\n            ) SELECT DISTINCT ON (module_catalogue_id,day) module_catalogue_id,day,attended,start,finish,status,session_id,module_id,module_title,start_datetime,duration_minutes,\n              series_join_url,series_status,occurrence_id,scheduled_start,scheduled_end,join_url\n              FROM dated ORDER BY module_catalogue_id,day,start",
+          "ms": 185.115,
+          "rows": 1,
+          "callers": [
+            {
+              "file": "weekly_learning.py",
+              "function": "read_weekly_learning",
+              "line": 250
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 122
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 79
+            },
+            {
+              "file": "utils.py",
+              "function": "_execute_with_wrappers",
+              "line": 92
+            },
+            {
+              "file": "benchmark_week_switch.py",
+              "function": "execute",
+              "line": 61
+            }
+          ]
+        },
+        {
+          "alias": "enrolment",
+          "sql": "SELECT c.id,c.title,c.type,c.ksb_mappings,\n            CASE WHEN jsonb_typeof(c.settings_json->'durationMinutes')='number'\n                THEN c.settings_json->>'durationMinutes' END AS duration_minutes,\n            q.title AS quiz_title,q.duration AS quiz_duration,q.time_unit AS quiz_time_unit,\n            l.quiz_id AS linked_quiz_id,q.id AS resolved_quiz_id,q.questions AS quiz_questions\n            FROM curriculum.components c LEFT JOIN curriculum.quiz_component_links l ON l.component_id=c.id\n            LEFT JOIN curriculum.quizzes q ON q.id=coalesce(l.quiz_id,\n                CASE WHEN c.settings_json->>'linkedQuizId' ~ '^[0-9]+$' THEN (c.settings_json->>'linkedQuizId')::bigint END)\n            WHERE c.id=ANY(%s) ORDER BY c.display_order,c.id",
+          "ms": 74.047,
+          "rows": 17,
+          "callers": [
+            {
+              "file": "weekly_learning.py",
+              "function": "read_weekly_learning",
+              "line": 297
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 122
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 79
+            },
+            {
+              "file": "utils.py",
+              "function": "_execute_with_wrappers",
+              "line": 92
+            },
+            {
+              "file": "benchmark_week_switch.py",
+              "function": "execute",
+              "line": 61
+            }
+          ]
+        },
+        {
+          "alias": "enrolment",
+          "sql": "SELECT component_id,ksb_code FROM curriculum.ksb_mappings\n            WHERE component_id=ANY(%s) AND (ksb_mappings.deleted_at IS NULL OR EXISTS (SELECT 1 FROM curriculum.modules archived_module WHERE archived_module.module_catalogue_id=ksb_mappings.module_catalogue_id AND archived_module.deleted_at IS NOT NULL AND COALESCE(ksb_mappings.deleted_via_parent, '') <> '' AND ksb_mappings.deleted_via_parent IN (archived_module.module_catalogue_id, archived_module.deleted_via_parent) AND ksb_mappings.deleted_at BETWEEN archived_module.deleted_at - interval '5 minutes' AND archived_module.deleted_at + interval '5 minutes')) ORDER BY component_id,ksb_code",
+          "ms": 71.232,
+          "rows": 0,
+          "callers": [
+            {
+              "file": "weekly_learning.py",
+              "function": "read_weekly_learning",
+              "line": 309
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 122
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 79
+            },
+            {
+              "file": "utils.py",
+              "function": "_execute_with_wrappers",
+              "line": 92
+            },
+            {
+              "file": "benchmark_week_switch.py",
+              "function": "execute",
+              "line": 61
+            }
+          ]
+        },
+        {
+          "alias": "enrolment",
+          "sql": "SELECT progress.id,progress.learner_id,progress.kind,progress.module_ref,progress.module_title,progress.component_ref,progress.component_type,progress.quiz_ref,progress.passed,progress.reported_time,progress.submitted_at,progress.started_at,progress.time_tracking_source,progress.claimed_seconds,progress.verified_seconds,progress.source_system,progress.component_link_source,progress.actual_seconds,progress.accepted,\n        to_jsonb(progress)->>'actual_basis' AS actual_basis,\n        CASE WHEN jsonb_typeof(progress.source_payload)='object' THEN\n          jsonb_build_object('original_source_ref',progress.source_payload->'original_source_ref')\n          ELSE progress.source_payload END AS source_payload,\n        CASE WHEN EXISTS(SELECT 1 FROM \"Learner\".learner_activity_reporting_segments s\n          WHERE s.progress_id=progress.id AND s.learner_id=progress.learner_id)\n          THEN '[{}]'::jsonb ELSE '[]'::jsonb END AS segments\n        FROM \"Learner\".learner_progress_entries progress\n        WHERE progress.learner_id=%s AND progress.deleted_at IS NULL\n        ORDER BY progress.reporting_month,progress.reporting_started_at NULLS LAST,progress.id",
+          "ms": 327.391,
+          "rows": 231,
+          "callers": [
+            {
+              "file": "repository.py",
+              "function": "_query_rows",
+              "line": 70
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 122
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 79
+            },
+            {
+              "file": "utils.py",
+              "function": "_execute_with_wrappers",
+              "line": 92
+            },
+            {
+              "file": "benchmark_week_switch.py",
+              "function": "execute",
+              "line": 61
+            }
+          ]
+        },
+        {
+          "alias": "enrolment",
+          "sql": "SELECT id, week_id, module_catalogue_id, type, title, CASE WHEN regexp_replace(regexp_replace(coalesce(description,''),'<[^>]*>','','g'),'&nbsp;|[\t\n\u000b\f\r \u00a0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]','','g')<>'' THEN 'content' ELSE '' END AS description, jsonb_build_object('resourceUrl',settings_json->'resourceUrl','presentationUrl',settings_json->'presentationUrl','externalUrl',settings_json->'externalUrl','fileUrl',settings_json->'fileUrl','uploadedFileUrl',settings_json->'uploadedFileUrl','url',settings_json->'url','linkedQuizId',settings_json->'linkedQuizId','videoUrl',settings_json->'videoUrl','embedCode',settings_json->'embedCode','podcastUrl',settings_json->'podcastUrl','audioUrl',settings_json->'audioUrl','liveSessionUrl',settings_json->'liveSessionUrl','teamsMeetingUrl',settings_json->'teamsMeetingUrl','teamsLiveSessionId',settings_json->'teamsLiveSessionId','teamsSessionNumber',settings_json->'teamsSessionNumber','recordingSeriesId',settings_json->'recordingSeriesId','recordingSessionNumber',settings_json->'recordingSessionNumber','recordingDate',settings_json->'recordingDate','sessionDate',settings_json->'sessionDate','sessionTime',settings_json->'sessionTime','sessionDateTimeUtc',settings_json->'sessionDateTimeUtc','durationMinutes',settings_json->'durationMinutes','learnerTitle',settings_json->'learnerTitle','isMonthlyAssignment',settings_json->'isMonthlyAssignment','assignmentTopics',settings_json->'assignmentTopics','assignmentBrief',settings_json->'assignmentBrief','assignmentContent',settings_json->'assignmentContent','submissionInstructions',settings_json->'submissionInstructions','assignmentFileUrl',settings_json->'assignmentFileUrl','assignmentFileName',settings_json->'assignmentFileName','uploadedFileName',settings_json->'uploadedFileName','reflectionPrompt',settings_json->'reflectionPrompt','podcastReflectionQuestion',settings_json->'podcastReflectionQuestion','readingReflectionPrompts',settings_json->'readingReflectionPrompts','learnerGuidance',settings_json->'learnerGuidance','sourceType',settings_json->'sourceType','resourceSource',settings_json->'resourceSource','fileSource',settings_json->'fileSource') || jsonb_build_object('_readingContentAvailable',coalesce(regexp_replace(settings_json->>'readingContent','<[^>]*>|&nbsp;|\\s','','g'),'')<>'') AS settings_json, live_sessions_link, display_order, ksb_mappings, reflection_required, \"Reflection_Question\", tutor_validation_required FROM curriculum.components WHERE module_catalogue_id = ANY(%s) AND week_id = ANY(%s) AND (components.deleted_at IS NULL OR EXISTS (SELECT 1 FROM curriculum.modules archived_module WHERE archived_module.module_catalogue_id=components.module_catalogue_id AND archived_module.deleted_at IS NOT NULL AND COALESCE(components.deleted_via_parent, '') <> '' AND components.deleted_via_parent IN (archived_module.module_catalogue_id, archived_module.deleted_via_parent) AND components.deleted_at BETWEEN archived_module.deleted_at - interval '5 minutes' AND archived_module.deleted_at + interval '5 minutes')) ORDER BY week_id, display_order, id",
+          "ms": 147.7,
+          "rows": 17,
+          "callers": [
+            {
+              "file": "learner_detail.py",
+              "function": "_resolve_from_master",
+              "line": 1510
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 122
+            },
+            {
+              "file": "utils.py",
+              "function": "execute",
+              "line": 79
+            },
+            {
+              "file": "utils.py",
+              "function": "_execute_with_wrappers",
+              "line": 92
+            },
+            {
+              "file": "benchmark_week_switch.py",
+              "function": "execute",
+              "line": 61
+            }
+          ]
+        }
+      ],
+      "payload_sha256": "ccaacfe8f2d12e48246acf9b1a0118d1941e206a388deb1f1f23a89b6c0757d6"
+    }
+  ]
+}

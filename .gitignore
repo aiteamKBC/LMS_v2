@@ -269,7 +269,7 @@ $RECYCLE.BIN/
 /frontend/*.mp4
 /screenshots/
 /frontend/screenshots/
-
+.baseline-head-tmp
 # One-off backfill / migration completion markers
 /backend/*_DONE.txt
 
@@ -312,11 +312,14 @@ $RECYCLE.BIN/
 # the shared working policy. Everything else at the repository root is local.
 /*
 !/.gitignore
+!/.easignore
 !/AGENTS.md
 !/README.md
 !/AI_marking_prompt.MD
 !/backend/
 !/frontend/
+!/mobile/
+!/.gitattributes
 
 # performance diagnostics — local only
 /backend/perf/

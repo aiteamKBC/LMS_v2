@@ -1,8 +1,16 @@
 """Low-overhead, PII-free timing for learner read projections."""
-from contextlib import ExitStack, contextmanager
+from contextlib import ExitStack, contextmanager, nullcontext
+from contextvars import ContextVar
+from functools import wraps
+from ipaddress import ip_address
 import logging
-from time import perf_counter
+import os
+import sys
+from time import perf_counter, thread_time
+from urllib.parse import urlsplit
+from uuid import UUID, uuid4
 
+from django.conf import settings
 from django.db import connections
 
 
@@ -99,3 +107,131 @@ def measure_projection(projection, *, kind, learner_id, section=None):
             raise
         else:
             measurement.emit()
+
+
+# The existing stage/execute-wrapper mechanism, opt-in for one local request.
+# No SQL, parameters, identities or response values enter this context.
+_local_projection = ContextVar('local_projection_stages', default=None)
+LOCAL_STAGES = frozenset({
+    'dispatch', 'source', 'owner', 'profile', 'assignments', 'ledger',
+    'ledger_read', 'ledger_reconcile', 'ledger_completion', 'module_metadata',
+    'native_learning', 'native_progress', 'native_content', 'native_quizzes',
+    'retained_quizzes', 'attendance_completion', 'live_credits', 'memberships',
+    'subject_metadata', 'replacement_settings', 'activity_dates', 'historical_facts',
+    'historical_placements', 'card_aggregation', 'module_hours', 'covers',
+    'programme_hours', 'upcoming', 'serialize', 'replacement_reconcile', 'other',
+})
+
+
+def projection_stage(name):
+    """Request-local stages; disabled callers allocate no timing/SQL collector."""
+    measurement = _local_projection.get()
+    return measurement.stage(name) if measurement is not None else nullcontext()
+
+
+def _local_trace_allowed(request):
+    # A request header/query cannot enable diagnostics. Require an explicitly
+    # opted-in DEBUG runserver process bound to, and accessed on, loopback.
+    if os.environ.get('LMS_MY_LEARNING_TRACE') != '1' or not settings.DEBUG or 'runserver' not in sys.argv:
+        return False
+    try:
+        peer = ip_address(request.META.get('REMOTE_ADDR', ''))
+        server = request.META.get('SERVER_NAME', '').strip('[]').lower()
+        host = urlsplit('//'+request.META.get('HTTP_HOST', server))
+        return (peer.is_loopback and server in {'localhost','127.0.0.1','::1'}
+                and host.hostname in {'localhost','127.0.0.1','::1'} and not host.username)
+    except (ValueError, TypeError):
+        return False
+
+
+class LocalProjectionPerformance(ProjectionPerformance):
+    """Bounded exclusive stage timings, using the existing SQL wrapper hook.
+
+    execute time is client driver wall time, not PostgreSQL execution time.
+    Thread CPU outside execute includes Python and C extensions (e.g. fetch
+    decoding). Unattributed wall time may include acquisition, fetch, direct
+    psycopg calls, cache I/O or scheduling; it is never labelled Python time.
+    """
+    def __init__(self, request_id):
+        self.request_id = str(UUID(str(request_id)))
+        self.rows = {}
+        self.frames = []
+        self.started = perf_counter()
+
+    def _row(self, name):
+        return self.rows.setdefault(name, {'elapsed':0.0, 'cpu':0.0, 'execute_cpu':0.0, 'database':{}})
+
+    @contextmanager
+    def stage(self, name):
+        name = name if name in LOCAL_STAGES else 'other'
+        frame = {'name':name,'start':perf_counter(),'cpu_start':thread_time(),'children':0.0,'child_cpu':0.0}
+        self.frames.append(frame)
+        try:
+            yield
+        finally:
+            elapsed,cpu = perf_counter()-frame['start'],thread_time()-frame['cpu_start']
+            self.frames.pop()
+            row = self._row(name)
+            row['elapsed'] += max(0.0,elapsed-frame['children'])
+            row['cpu'] += max(0.0,cpu-frame['child_cpu'])
+            if self.frames:
+                self.frames[-1]['children'] += elapsed
+                self.frames[-1]['child_cpu'] += cpu
+
+    def execute_for(self, alias, execute, sql, params, many, context):
+        row = self._row(self.frames[-1]['name'] if self.frames else 'dispatch')
+        # Aliases originate only in configured Django wrappers; cap collector
+        # growth even for an unusual dynamically configured connection set.
+        if alias not in row['database'] and len(row['database']) >= 16:
+            alias = 'other'
+        database = row['database'].setdefault(alias, {'calls':0,'seconds':0.0})
+        started,cpu_started = perf_counter(),thread_time()
+        try:
+            return execute(sql,params,many,context)
+        finally:
+            database['calls'] += 1
+            database['seconds'] += perf_counter()-started
+            row['execute_cpu'] += thread_time()-cpu_started
+
+    def emit(self):
+        stages=[]
+        for name,row in self.rows.items():
+            execute = sum(item['seconds'] for item in row['database'].values())
+            processing_cpu = max(0.0,row['cpu']-row['execute_cpu'])
+            stages.append({
+                'stage':name,'elapsed_ms':round(row['elapsed']*1000,3),
+                'processing_cpu_ms':round(processing_cpu*1000,3),
+                'unattributed_wall_ms':round(max(0.0,row['elapsed']-execute-processing_cpu)*1000,3),
+                'database':[{'alias':alias,'sql_calls':item['calls'],'client_execute_ms':round(item['seconds']*1000,3)}
+                    for alias,item in sorted(row['database'].items())],
+                'connection_acquisition_ms':'UNMEASURED',
+                'postgresql_server_execution_ms':'UNMEASURED',
+            })
+        log.info('projection_stage %s', {'request_id':self.request_id,
+            'elapsed_ms':round((perf_counter()-self.started)*1000,3),
+            'serialization_ms':round(self.rows['serialize']['elapsed']*1000,3) if 'serialize' in self.rows else 'UNMEASURED',
+            'stages':stages})
+
+
+def local_catalogue_trace(view):
+    """Wrap authorization through serialization for the initial catalogue only."""
+    @wraps(view)
+    def wrapped(request,*args,**kwargs):
+        if kwargs.get('subject_id') is not None or kwargs.get('resource') is not None or not _local_trace_allowed(request):
+            return view(request,*args,**kwargs)
+        try:
+            request_id = str(UUID(str(getattr(request,'request_id',''))))
+        except (ValueError,TypeError,AttributeError):
+            request_id = str(uuid4())
+        measurement = LocalProjectionPerformance(request_id)
+        token = _local_projection.set(measurement)
+        try:
+            with ExitStack() as stack:
+                for connection in connections.all():
+                    stack.enter_context(connection.execute_wrapper(measurement.wrapper(connection.alias)))
+                with measurement.stage('dispatch'):
+                    return view(request,*args,**kwargs)
+        finally:
+            _local_projection.reset(token)
+            measurement.emit()
+    return wrapped

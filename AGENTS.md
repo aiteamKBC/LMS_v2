@@ -10,9 +10,9 @@ Before editing, give the teammate a short scope note containing:
 
 - **Scope:** affected screen, user role, likely files, and downstream features.
 
-- **Restrictions:** no agent commits, pushes, pulls, or PRs; database/schema/data changes are allowed when required by the task; preserve unrelated work; Teams checks are required.
+- **Restrictions:** work in the current working folder on the teammate's current branch; do not create or switch branches or create worktrees unless explicitly requested; retain required tests, pull-request review and deployment from merged main; no direct production source edits; preserve unrelated work; database/schema/data changes are allowed when required by the task; Teams checks only if a Teams file (section 5) is edited.
 
-- **Validation:** Teams baseline plus tests for the changed feature and shared dependencies.
+- **Validation:** tests for the changed feature and shared dependencies, plus the Teams baseline only when a Teams file is edited.
 
 Keep reminders short. Repeat the relevant restrictions when a follow-up changes scope. Do not turn each message into a long checklist.
 
@@ -70,9 +70,9 @@ Question bank (use only the questions whose answers are missing):
 
 | Expected result | "After this action, what result should the user see?" | Offer concrete outcomes from the task, or ask one short free-text question |
 
-Ask the Teams intent question when Teams involvement is plausible or the intended scope is unclear. An unrelated task does not need a repeated Teams permission question; Teams regression tests remain mandatory. If the teammate selects a Teams behavior change without describing it, ask which behavior should change before editing it.
+Ask the Teams intent question when Teams involvement is plausible or the intended scope is unclear. An unrelated task does not need a Teams question or Teams tests. If the teammate selects a Teams behavior change without describing it, ask which behavior should change before editing it.
 
-After the answers, give a brief scope recap: "I will change [outcome] for [workflow]. Connected effects: [known impact]. Required checks: Teams baseline and [feature checks]." Proceed with the already-authorized scope without an extra generic "shall I continue?" prompt.
+After the answers, give a brief scope recap: "I will change [outcome] for [workflow]. Connected effects: [known impact]. Required checks: [feature checks] (+ Teams baseline if a Teams file is edited)." Proceed with the already-authorized scope without an extra generic "shall I continue?" prompt.
 
 Reopen the questionnaire when a new request changes the outcome, a shared dependency requires behavior changes outside the agreed scope, or investigation reveals a business decision. Ask only about the new decision. Do not interrupt at every file edit, tool call, or routine implementation choice.
 
@@ -92,13 +92,19 @@ While required answers are pending, continue independent read-only investigation
 
 ## 2. Git and concurrent work
 
-- Do not create commits.
+- From 13 October 2026, the owner authorizes scoped commits, pushes to existing branches, pull requests and merges into main for requested work in https://github.com/aiteamKBC/LMS_v2. This authorization does not permit automatically creating a branch for each feature. Respect repository permissions, required reviews and checks; never bypass protections or force-push main.
 
-- Do not push or pull from remotes.
+- From 17 October 2026, work on the teammate's current branch in the current working folder. Do not create a new branch or worktree for a feature, fix, or other task, and do not switch branches, unless the teammate explicitly requests that action. This replaces the earlier requirement to use an isolated checkout and a new feature branch for each task. Keep the change focused; report its scope, test evidence and affected areas in the applicable pull request so the team can review and coordinate.
 
-- Do not create, update, or merge pull requests.
+- Do not edit production application source directly. Deploy only the reviewed change after it is merged into main. Before merging, recheck the latest main and rerun affected checks after resolving conflicts.
 
-- The project owner manually handles commits, pushes, pulls, and pull requests.
+- Deploy one release at a time. On the verified server checkout /var/www/LMS_v2 (case-sensitive), check the remote, current branch, deployed commit and working tree first. Stop if there are unexplained local modifications or untracked application files; preserve and reconcile them through an existing development branch instead of resetting, cleaning or stashing teammates' work. Creating or switching to a different branch still requires the teammate's explicit request.
+
+- Once the checkout is safe and the intended main revision is confirmed, run git pull --ff-only origin main. From /var/www/LMS_v2/frontend run npm run build. Only after a successful build and any reviewed required migration steps, restart the backend services with systemctl restart 'lms-*.service'. The quoted wildcard contains no backslash.
+
+- Before a schema-changing release, verify the database target, backup/restore point and migration plan. Keep the previous commit/build and rollback procedure. After deployment verify service health and affected learner workflows; record the PR, merge commit, deployed commit, build and check results.
+
+- This workflow is ongoing authorization for the requested scope, not permission to include unrelated changes, expose credentials or learner data, or bypass required checks. Do not push secrets, private runtime files, learner data or the entire local work/memory folder into this public repository.
 
 - Read-only Git commands such as status, diffs, and history are allowed.
 
@@ -106,7 +112,7 @@ While required answers are pending, continue independent read-only investigation
 
 - Never reset, clean, discard, stash, overwrite, or revert another person's changes to get a clean baseline.
 
-- Prefer one task per separate working folder. If multiple agents share a folder, avoid overlapping writes; clarify ownership when concurrent edits affect the same code.
+- Keep tasks in the current working folder; do not create a separate checkout automatically. If multiple agents share a folder, avoid overlapping writes; clarify ownership when concurrent edits affect the same code.
 
 - Recheck relevant files before editing and the diff before finishing. If unexpected changes appear, preserve them and resolve overlapping ownership with the teammate.
 
@@ -192,27 +198,53 @@ Use this map to identify affected areas. It is a starting point, not an exhausti
 
 - Keep secrets and personal learner data out of logs, fixtures, screenshots, generated documents, and final responses. Use synthetic examples.
 
-## 5. Teams is a mandatory regression boundary
+## 5. Teams regression checks (only when Teams files are edited)
 
-Teams protection applies even when the task mentions a different screen.
+Teams tests run **only when a task edits one of the Teams files listed below**. Questions, explanations, read-only investigation, documentation, and edits anywhere else do **not** run the Teams tests.
 
-### Direct and indirect change triggers
+### Teams files (the trigger list)
 
-Treat changes to any of the following as Teams-impacting until dependency inspection establishes otherwise:
+Editing any of these files means the Teams checks apply:
 
-- `backend/curriculum_api/views.py`: meeting endpoints, occurrence shifts, meeting options, module/session planning, delivery metadata, summaries, and sync verdicts share this file.
+Backend:
 
-- `backend/coach_api/views.py`: Microsoft Graph transport, calendar booking, meeting options, and imported curriculum helpers.
+- `backend/curriculum_api/views.py` (meeting endpoints, occurrence shifts, meeting options, session planning, sync verdicts)
 
-- `backend/learner_api/teams_attendance.py`, `attendance.py`, `calendar_connections.py`, and learner calendar/attendance consumers.
+- `backend/coach_api/views.py` (Microsoft Graph transport, calendar booking, meeting options)
 
-- Teams management commands under curriculum and learner APIs; inspect them, do not run live synchronization to validate a code edit.
+- `backend/learner_api/teams_attendance.py`
 
-- `frontend/src/pages/curriculum/teams-meetings/`, `module-builder/TeamsMeetingModal.tsx`, and `module-builder/moduleAuthoringData.ts`.
+- `backend/learner_api/attendance.py`
 
-- `frontend/src/pages/curriculum/shared/entities/teamsCalendarPush.ts`, `teamsCalendarNotice.ts`, module/cohort/group forms, session calendar, and module workspace.
+- `backend/learner_api/calendar_connections.py`
 
-- Coach/learner booking clients, `frontend/src/lib/curriculumApi.ts`, shared date/time functions, authentication, caching, API routing, Graph settings, and relevant dependencies.
+- `backend/curriculum_api/management/commands/`: `reapply_teams_meeting_options.py`, `sync_teams_meeting_artifacts.py`, `backfill_mcm_meeting_summary_fields.py`, `map_mcm_meeting_summary_field.py` (inspect only; never run live sync to validate an edit)
+
+- `backend/learner_api/management/commands/`: `sync_teams_attendance_reporting.py`, `apply_graph_organizer_column.py`
+
+Frontend:
+
+- `frontend/src/pages/curriculum/teams-meetings/` (whole folder)
+
+- `frontend/src/pages/curriculum/module-builder/TeamsMeetingModal.tsx`, `WeekTeamsMeetingForm.tsx`, `LiveSessionScheduleEditor.tsx`, `PlaceWeekDrawer.tsx`, `moduleAuthoringData.ts`
+
+- `frontend/src/pages/curriculum/module-workspace/ModuleSessions.tsx`
+
+- `frontend/src/pages/curriculum/session-calendar/` (whole folder)
+
+- `frontend/src/pages/curriculum/shared/entities/teamsCalendarPush.ts`, `teamsCalendarNotice.ts`, `sessionShiftPreview.tsx`
+
+- `frontend/src/pages/coach/shared/calendarEvents.ts`
+
+- `frontend/src/api/learnerCalendar.ts`
+
+- `frontend/src/lib/curriculumApi.ts`
+
+- `frontend/src/lib/format.ts` (business time-zone / date formatting)
+
+- `frontend/package.json` `test:teams` script and the test files it runs
+
+If a task edits a file **not** on this list, do not run the Teams tests. The one exception: if the edit changes a function, type, or API response that a listed Teams file imports or calls, treat it as a Teams edit and say so in the scope note.
 
 ### Teams invariants
 
@@ -234,13 +266,13 @@ Unless explicitly changed by the agreed task, preserve and test:
 
 8. Accurate sync status: local save success is not proof that Microsoft accepted every update.
 
-### Required check on every prompt
+### When to run the Teams checks
 
-- For every teammate prompt handled in this repository, run the frontend Teams baseline below before the final handoff when the environment permits. This includes screenshot tasks, unrelated features, documentation, and read-only requests. A prompt solely answering a pending clarification stays within the current task; do not launch duplicate concurrent runs.
+- **Do not** run the Teams tests for questions, explanations, read-only investigation, screenshots that are only being diagnosed, documentation/policy edits, or edits to files outside the Teams file list.
 
-- For editing tasks, establish a baseline before edits and run it again after the final edit. Re-run after any subsequent relevant change. Do not reuse a result from a different working-tree state as current evidence.
+- **Do** run the frontend Teams baseline when the task edits a Teams file. Run it once after the final edit (not before edits, and not again on every follow-up message). Re-run only if a Teams file is edited again afterwards. Do not launch duplicate concurrent runs.
 
-- Run the baseline **plus affected feature tests**. A green Teams suite does not validate unrelated LMS features.
+- Teams tests do not replace feature tests: run the baseline **plus affected feature tests**. A green Teams suite does not validate unrelated LMS features.
 
 - For direct or indirect Teams changes, also require the expanded backend checks and applicable Teams invariants. Frontend-only success does not satisfy the full Teams change gate.
 
@@ -294,7 +326,7 @@ If no safe verified execution path exists, list the affected suites as blocked a
 
 - For authorization changes, cover allowed and forbidden users and affected role/learner-type variants. For shared APIs/components, test callers beyond the page in the screenshot.
 
-- For documentation/policy-only edits, verify references and commands and run the mandatory Teams baseline. Do not add implementation-mirroring tests just for prose changes.
+- For documentation/policy-only edits, verify references and commands. Do not run the Teams baseline, and do not add implementation-mirroring tests just for prose changes.
 
 - Record exact commands, outcomes, test counts, and whether failures existed before your edits. Do not label a failure pre-existing without evidence.
 
@@ -316,9 +348,9 @@ Changed: <outcome and files>
 
 Scope: <agreed scope; any explicitly authorized expansion>
 
-Teams baseline: PASS / FAIL / BLOCKED - <command and result>
+Teams baseline: PASS / FAIL / BLOCKED / NOT REQUIRED (no Teams file edited) - <command and result>
 
-Expanded Teams checks: PASS / FAIL / BLOCKED / NOT APPLICABLE - <reason>
+Expanded Teams checks: PASS / FAIL / BLOCKED / NOT REQUIRED - <reason>
 
 Feature checks: <commands and results>
 

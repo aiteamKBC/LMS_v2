@@ -1,18 +1,17 @@
 import { learnerRecordedDates } from '@/lib/learnerRecordedDates';
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { ClipboardList, FileText, Monitor } from 'lucide-react';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { roleNavMap } from '@/mocks/navigation';
-import { useLearnerSummaryParam } from '@/hooks/useLearnerSummaryParam';
+import { useDashboardHeader } from '@/hooks/useDashboardHeader';
 import { useAuth } from '@/hooks/useAuth';
 import { useResolvedLearner } from '@/hooks/useMyLearner';
 import { type LearnerKind } from '@/api/learnerDetail';
 import { isOwnLearnerRecord } from '@/api/auth';
-import { useFreshUserRedirect, useOnboardingRedirect } from '@/hooks/useOnboardingRedirect';
+import { isFreshStatus, isOnboardingStatus, useFreshUserRedirect, useOnboardingRedirect } from '@/hooks/useOnboardingRedirect';
 import { useFirstLoginDetailsRedirect } from '@/hooks/useFirstLoginDetailsRedirect';
 import { syncLearnerStatus } from '@/hooks/useLearnerNavGate';
-import { useLearnerAttendance } from '@/hooks/useLearnerAttendance';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { PageSkeleton } from '@/components/feature/Skeletons';
 import { LearnerLoadError } from '@/components/feature/LearnerLoadError';
@@ -23,17 +22,14 @@ import { canViewAssignedProgramme, waitingCopy } from '@/utils/learnerAccessGate
 import { displayValue, EMPTY_VALUE } from '@/lib/format';
 import overviewStyles from './Overview.module.css';
 import { DashboardTabs } from './DashboardTabs';
-import { learnerHeaderPlan, learnerModuleHref } from './learnerHeaderPlan';
-import { useDashboardPlan } from './useDashboardPlan';
-import { useLearnerMetrics } from '@/hooks/useLearnerMetrics';
-import { upcomingEvents, upcomingReviewOrMcm } from '@/pages/learner/home/homeData';
+import { initialDashboardTab, type DashboardTabId } from './initialDashboardTab';
+import { learnerModuleHref } from './learnerHeaderPlan';
+import { useDashboardTabsData } from '@/hooks/useDashboardTabsData';
+import { headerItems } from './headerItems';
 import type { SeasonCardProps } from '@/components/lightswind/seasonal-hover-cards';
-import { useLearnerDetailParam } from '@/hooks/useLearnerDetailParam';
-import { learnerLiveSessionHref } from './liveSessionRoute';
 import type { LearnerCalendarEvent } from '@/api/learnerCalendar';
 import MeetingBookingDialog from '@/pages/learner/reviews/MeetingBookingDialog';
 import { dashboardOtjhProgress } from './dashboardOtjhProgress';
-import { useUnifiedLearningSummary } from '@/pages/learner/my-learning/SubjectWorkspace';
 
 function formatProgrammeStartDate(value?: string | null): string {
   if (!value) return '';
@@ -60,7 +56,8 @@ export default function LearnerOverview() {
   const learnerNav = useMemo(() => ({ ...roleNavMap.learner, items: roleNavMap.learner.items.map(item => item.id === 'learner-home'
     ? { ...item, href: workspaceHome } : item.id === 'learner-overview'
       ? { ...item, href: `${workspaceHome}/dashboard` } : item) }), [workspaceHome]);
-  const { isRealMode, real, loading, loadError, refresh } = useLearnerSummaryParam(kind, id);
+  const headerRead = useDashboardHeader(kind, id);
+  const { isRealMode, real, loading, loadError, refresh } = headerRead;
   const { auth, canSeeNavItem } = useAuth();
   // "Reviewing" means somebody else's record, opened by staff from the
   // enrolment workspace: full menu, no progression gates, nothing saved.
@@ -85,23 +82,38 @@ export default function LearnerOverview() {
     && !real.studentActivityAvailable && !hasAssignedProgramme;
   const skipPreStartData = isRealMode && (!real || isCommercialPreStart);
   const learnerKind: LearnerKind | null = kind === 'commercial' || kind === 'apprenticeship' ? kind : null;
-  const dashboardPlan = useDashboardPlan(learnerKind, id, isRealMode && !skipPreStartData);
-  const learnerDetailRead = useLearnerDetailParam(kind, id);
-  // Programme and KSB cards share the canonical metrics with My Learning.
-  // Actual combines retained Audit hours and measured LMS completions once.
-  // Migrated Planned hours use the retained Aptem total.
-  const metrics = useLearnerMetrics(learnerKind, id, isRealMode && !skipPreStartData, 'learner-overview');
-  const unifiedLearning = useUnifiedLearningSummary(learnerDetailRead.real, learnerKind, id,
-    isRealMode && !skipPreStartData && !!learnerDetailRead.real);
-  const scheduleRead = dashboardPlan.schedule;
+  // A fresh or onboarding learner is shown the waiting page or sent to their
+  // enrolment (the redirects below), so the dashboard reads would go unused.
+  const leavesDashboard = !reviewingLearner && (isFreshStatus(real?.programmeStatus)
+    || (kind !== 'commercial' && isOnboardingStatus(real?.programmeStatus)));
+  // Staff reviewing another learner are exempt from the learner progression
+  // redirects. The canonical Header verifies identity before tabs are mounted.
+  const dashboardDataEnabled = isRealMode && !!real && !loadError && (reviewingLearner || !skipPreStartData) && !leavesDashboard;
+  // Reads used only by tabs that are not open start when such a tab is first
+  // opened; the page keeps them afterwards, so revisiting a tab does not refetch.
+  const [openedTabs, setOpenedTabs] = useState<ReadonlySet<DashboardTabId>>(() => new Set([initialDashboardTab()]));
+  const [activeTab, setActiveTab] = useState<DashboardTabId>(initialDashboardTab);
+  const openTab = useCallback((tab: DashboardTabId) => {
+    setActiveTab(tab);
+    setOpenedTabs(current => current.has(tab) ? current : new Set(current).add(tab));
+  }, []);
+  const overviewOpened = openedTabs.has('overview');
+  const tabData = useDashboardTabsData(learnerKind, id, dashboardDataEnabled && !headerRead.accessFailure, openedTabs, activeTab);
+  const dashboardPlan = tabData.overview.plan;
+  const metrics = { data: tabData.overview.payload?.metrics ?? null,
+    loading: tabData.overview.loading, error: tabData.overview.error, refresh: tabData.overview.refresh };
+  const metricsLoading = metrics.loading || (dashboardDataEnabled && !overviewOpened);
+  const scheduleRead = { data: headerRead.data, loading: headerRead.loading, error: headerRead.error, refresh: headerRead.refresh };
   const [now, setNow] = useState(Date.now);
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 30_000);
     return () => window.clearInterval(timer);
   }, []);
 
-  const attendanceRead = useLearnerAttendance(learnerKind, id, isRealMode && !skipPreStartData);
-  const { data: attendance, loading: attendanceLoading } = attendanceRead;
+  const attendanceRead = { data: tabData.overview.payload?.attendance ?? null,
+    loading: tabData.overview.loading, error: tabData.overview.error, refresh: tabData.overview.refresh };
+  const { data: attendance } = attendanceRead;
+  const attendanceLoading = attendanceRead.loading || (dashboardDataEnabled && !overviewOpened);
   /* ── Onboarding learners land on their enrolment wizard, not the overview ──
      Gated on `!loading` so a not-yet-loaded status never reads as "not onboarding". */
   const redirectingToOnboarding = useOnboardingRedirect(real?.programmeStatus, isRealMode && !loading && !reviewingLearner, kind);
@@ -148,35 +160,44 @@ export default function LearnerOverview() {
   const headerDescription = heroProgramme || undefined;
   const programmeStartDate = real?.learnerStartDate
     ?? real?.learningAccess?.startDate
-    ?? dashboardPlan.data?.programmeStartDate
-    ?? real?.programmeStartDate;
+    ?? tabData.overview.payload?.programmeStartDate;
   const programmeEndDate = dashboardPlan.plannedEndDate
-    ?? real?.programmeEndDate
-    ?? dashboardPlan.data?.programmeEndDate
+    ?? tabData.overview.payload?.programmeEndDate
     ?? real?.learnerEndDate;
   const recordedDates = learnerRecordedDates(real);
   const startDateDisplay = formatProgrammeStartDate(recordedDates.start) || (loading ? 'Loading…' : EMPTY_VALUE);
   const plannedEndDisplay = formatProgrammeStartDate(recordedDates.end) || (loading ? 'Loading…' : EMPTY_VALUE);
-  const plan = learnerHeaderPlan(scheduleRead.data?.modules || [], knownLearner || {},
-    new Date(now).toLocaleDateString('en-CA', { timeZone: 'Europe/London' }));
+  const plan = { label: headerRead.data?.moduleLabel || 'Module', modules: headerRead.data?.modules || [] };
+  const initialWeeklyModuleId = headerRead.data?.initialWeeklyModuleId || undefined;
   const planPlaceholder = scheduleRead.loading ? 'Loading...' : scheduleRead.error ? 'Unavailable' : EMPTY_VALUE;
-  const coachDisplayName = scheduleRead.data?.coach.name || (scheduleRead.data ? 'Not yet assigned' : planPlaceholder);
-  const continueLearningHref = learnerModuleHref(kind, id, plan.modules[0]?.id, scheduleRead.data?.moduleLinks);
+  const moduleHref = (moduleId?: string) => learnerModuleHref(kind, id, moduleId, undefined,
+    headerRead.data?.modules.find(module => module.id === moduleId)?.subjectId);
+  const continueLearningHref = moduleHref(plan.modules[0]?.id);
 
   // "Your next action" reuses the training-plan module already resolved above; the
   // other two cards share the same nearest-lecture/nearest-assignment selection
   // Student Home uses, so all three destinations and empty-state copy stay in sync.
-  const weekRead = dashboardPlan.week;
-  const events = useMemo(() => upcomingEvents(scheduleRead.data, weekRead.data, new Date(now)),
-    [scheduleRead.data, weekRead.data, now]);
-  const [nextLecture, nextAssignment] = events;
-  const nextReviewOrMcm = useMemo(() => upcomingReviewOrMcm(scheduleRead.data, new Date(now)),
-    [scheduleRead.data, now]);
+  const weekRead = { loading: headerRead.loading };
+  const { lecture: nextLecture, assignment: nextAssignment, review: nextReviewOrMcm } = useMemo(
+    () => headerItems(headerRead.data, now), [headerRead.data, now]);
+  const { data: headerData, refresh: refreshHeader } = headerRead;
+  const expiredHeaderSelection = useRef<string | null>(null);
+  useEffect(() => {
+    const data = headerData;
+    if (!data) return;
+    const sessionExpired = !!data.nextLiveSession && !nextLecture.date;
+    const reviewExpired = !!data.nextReview && !nextReviewOrMcm;
+    const assignmentExpired = !!data.nextAssignment && !nextAssignment.date;
+    if (!sessionExpired && !reviewExpired && !assignmentExpired) return;
+    const selection = JSON.stringify([kind, id, data.nextLiveSession, data.nextReview, data.nextAssignment]);
+    if (expiredHeaderSelection.current === selection) return;
+    expiredHeaderSelection.current = selection;
+    // The compact Header holds one candidate per card. When its time passes,
+    // ask for its successor rather than keeping full future histories in memory.
+    refreshHeader();
+  }, [headerData, refreshHeader, id, kind, nextLecture.date, nextReviewOrMcm, nextAssignment.date]);
   const [bookingSession, setBookingSession] = useState<LearnerCalendarEvent | null>(null);
-  const nextLectureActivityHref = learnerLiveSessionHref(learnerDetailRead.real, nextLecture, kind, id)
-    || (nextLecture.moduleId
-      ? learnerModuleHref(kind, id, nextLecture.moduleId, scheduleRead.data?.moduleLinks)
-      : continueLearningHref);
+  const nextLectureActivityHref = nextLecture.href || continueLearningHref;
   const reviewOrMcmHref = nextReviewOrMcm && kind && id
     ? `/learner/calendar?kind=${encodeURIComponent(kind)}&learner=${encodeURIComponent(id)}&event=${encodeURIComponent(nextReviewOrMcm.eventKey)}${nextReviewOrMcm.scheduledDate ? '' : '&action=schedule'}`
     : '/learner/calendar';
@@ -199,13 +220,13 @@ export default function LearnerOverview() {
       scheduledDate: nextReviewOrMcm.scheduledDate,
       scheduledTime: nextReviewOrMcm.scheduledTime,
       durationMinutes: 60,
-      coachName: scheduleRead.data?.coach.name || '',
-      coachEmail: scheduleRead.data?.coach.email || '',
+      coachName: headerRead.data?.coach?.name || '',
+      coachEmail: headerRead.data?.coach?.email || '',
       meetingProvider: 'teams',
       meetingLink: nextReviewOrMcm.meetingLink || '',
       notes: '',
     };
-  }, [nextReviewOrMcm, scheduleRead.data?.coach.email, scheduleRead.data?.coach.name]);
+  }, [nextReviewOrMcm, headerRead.data?.coach?.name, headerRead.data?.coach?.email]);
   const reviewActionHref = nextReviewOrMcm?.scheduledDate
     ? reviewPageHref
     : nextReviewOrMcm ? (reviewBookingSession ? undefined : reviewOrMcmHref) : reviewOrMcmHref;
@@ -254,10 +275,6 @@ export default function LearnerOverview() {
       imageAlt: 'Assignment due soon artwork',
     },
   ];
-  const programme = metrics.data?.programme;
-  const programmeProgressPercent = programme?.percent ?? null;
-  const programmeProgressValue = programmeProgressPercent == null ? EMPTY_VALUE : `${programmeProgressPercent}%`;
-  const programmeProgressSummary = programme?.total != null ? `${programme.completed} / ${programme.total}` : EMPTY_VALUE;
 
   const attendanceReady = !!attendance || (!attendanceLoading && !attendanceRead.error);
   const attendanceSessions = attendance?.sessions ?? (attendanceReady ? 0 : null);
@@ -279,9 +296,9 @@ export default function LearnerOverview() {
     metrics.data?.otjh.targetToDate,
   );
   const otjTargetValue = otjTargetHours != null ? `${otjTargetHours.toFixed(2)} h`
-    : metrics.loading ? 'Loading…' : 'Unavailable';
+    : metricsLoading ? 'Loading…' : 'Unavailable';
   const otjActualValue = otjActualHours != null ? `${otjActualHours.toFixed(2)} h`
-    : metrics.loading ? 'Loading...' : 'Unavailable';
+    : metricsLoading ? 'Loading...' : 'Unavailable';
   const ksb = metrics.data?.ksb;
   const ksbPercent = ksb?.percent ?? null;
   const ksbValue = ksbPercent == null ? EMPTY_VALUE : `${ksbPercent}%`;
@@ -309,8 +326,16 @@ export default function LearnerOverview() {
   }
 
   if (isRealMode && (loading || redirectingToOnboarding || checkingFirstLogin)) {
-    // Only the small identity read gates the page; cards load independently.
+    // The canonical Header verifies access before mounting protected tabs.
     return <PageSkeleton workspaceRole="learner" />;
+  }
+
+  if (loadError || !real || headerRead.accessFailure) {
+    return <WorkspaceShell role="learner" roleLabel={learnerNav.label} navItems={learnerNav.items}
+      workspaceLabel={learnerNav.workspaceLabel} pageTitle="Dashboard" userName="Learner" userRole="Learner">
+      <LearnerLoadError error={loadError || headerRead.accessFailure || 'Could not verify your Dashboard access.'}
+        onRetry={() => { refresh(); }} />
+    </WorkspaceShell>;
   }
 
   /* ================================================================
@@ -415,7 +440,7 @@ export default function LearnerOverview() {
       userRole={heroProgramme ? `${heroProgramme} Learner` : 'Learner'}
     >
       <PageContainer className={`${overviewStyles.overview} learner-dashboard`}>
-        {loadError && <LearnerLoadError error={loadError} onRetry={refresh} />}
+        {headerRead.error && <LearnerLoadError error={headerRead.error} onRetry={headerRead.refresh} />}
         {startDatePending && (
           <div role="status" className="rounded-xl border border-primary-200 bg-primary-50 px-4 py-3 text-sm text-foreground-700">
             <p className="font-semibold">{real?.learningAccess?.startDate || real?.accessGate?.startDate
@@ -441,15 +466,15 @@ export default function LearnerOverview() {
           cohort={displayCohort}
           moduleLabel={plan.label}
           modules={plan.modules.map(module => ({ id: module.id, title: module.title,
-            href: learnerModuleHref(kind, id, module.id, scheduleRead.data?.moduleLinks) }))}
+            href: moduleHref(module.id) }))}
           modulePlaceholder={planPlaceholder}
           allModulesHref={programmeProgressHref}
           actionCards={actionCards}
           employer={knownLearner?.employer || EMPTY_VALUE}
           organization={knownLearner?.organization || EMPTY_VALUE}
-          coach={coachDisplayName}
-          coachEmail={scheduleRead.data?.coach.email}
-          coachPhone={scheduleRead.data?.coach.phone}
+          coach={headerRead.data?.coach?.name || 'Not yet assigned'}
+          coachEmail={headerRead.data?.coach?.email}
+          coachPhone={headerRead.data?.coach?.phone ?? undefined}
           status={displayValue(knownLearner?.programmeStatus)}
           startDate={startDateDisplay}
           plannedEnd={plannedEndDisplay}
@@ -464,7 +489,7 @@ export default function LearnerOverview() {
           learner={{ kind, id }}
           rules={null}
           onClose={() => setBookingSession(null)}
-          onBooked={() => { setBookingSession(null); dashboardPlan.refresh(); }}
+          onBooked={() => { setBookingSession(null); headerRead.refresh(); dashboardPlan.refresh(); }}
         />}
 
         {metrics.error && <div role="alert" className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm">
@@ -475,14 +500,12 @@ export default function LearnerOverview() {
           <button className="ml-2 font-semibold underline" onClick={attendanceRead.refresh}>Retry attendance</button>
         </div>}
         <DashboardTabs kind={learnerKind} learnerId={id} plan={dashboardPlan} programmeStartDate={programmeStartDate} programmeEndDate={programmeEndDate}
-          canOpenRewards={!reviewingLearner} real={real || undefined} canSeeNavItem={canSeeNavItem} pageError={loadError}
-          learningSubjects={unifiedLearning.summary?.subjects}
-          learningSubjectsLoading={isRealMode && !skipPreStartData && (!learnerDetailRead.real || unifiedLearning.loading)}
-          learningSubjectsError={unifiedLearning.error}
-          onRetryLearningSubjects={unifiedLearning.retry}
-          metrics={{ programmeValue: programmeProgressValue, programmeSummary: programmeProgressSummary, programmePercent: programmeProgressPercent,
-            attendanceValue, attendanceSummary, attendanceTotalValue, attendancePercent, otjActualValue, otjSummary: `${otjActualHours?.toFixed(2) ?? EMPTY_VALUE} / ${otjTargetHours?.toFixed(2) ?? EMPTY_VALUE} h`,
-            otjTargetValue, otjTargetHours, otjPercent, ksbValue, ksbSummary, ksbPercent }} />
+          initialWeeklyModuleId={initialWeeklyModuleId}
+          canOpenRewards={!reviewingLearner} real={real || undefined} canSeeNavItem={canSeeNavItem} pageError={loadError} onTabOpen={openTab}
+          tabData={tabData} monthlyDataEnabled={dashboardDataEnabled}
+          metrics={{ attendanceValue, attendanceSummary, attendanceTotalValue, attendancePercent, otjActualValue, otjSummary: `${otjActualHours?.toFixed(2) ?? EMPTY_VALUE} / ${otjTargetHours?.toFixed(2) ?? EMPTY_VALUE} h`,
+            otjTargetValue, otjTargetHours, otjPercent, ksbValue, ksbSummary, ksbPercent,
+            attendanceLoading: attendanceLoading && !attendance, metricsLoading: metricsLoading && !metrics.data }} />
       </PageContainer>
     </WorkspaceShell>
   );

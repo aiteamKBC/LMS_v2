@@ -11,6 +11,7 @@ import {
   type EngagementPointsRule as PointsRule, type EngagementPointsGrant,
 } from '@/api/engagement';
 import { RuleCardSkeletonGrid } from '@/pages/engagement/EngagementSkeletons';
+import LearningPointsSettings from './LearningPointsSettings';
 
 const engagementNav = roleNavMap.engagement;
 
@@ -278,6 +279,8 @@ export default function PointsRulesPage() {
           stats={[{ label: 'Active', value: String(activeRules) }, { label: 'Points', value: totalPoints.toLocaleString() }, { label: 'Categories', value: String(categories.length) }]}
         />
 
+        <LearningPointsSettings />
+        <p className="text-sm text-foreground-600">The learning policy above replaces fixed quiz, reading, video, audio and PowerPoint awards for new activity after activation. The rules and logs below retain earlier awards and other engagement activities.</p>
         {/* Quick access */}
         <div className="flex items-center gap-2 flex-wrap">
           <span className="text-[11px] font-semibold text-foreground-500 mr-1">Quick access:</span>
@@ -349,11 +352,12 @@ export default function PointsRulesPage() {
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 stagger-children">
           {filtered.map(rule => {
             const band = pointsBand(rule.points);
+            const calculated = ['accepted_learning_hour_v2','first_submitted_quiz_v2','verified_learning_bonus_v2'].includes(rule.key||'');
             return (
               <div key={rule.id} className={`bg-background-50 rounded-xl border border-foreground-200/60 p-4 card-premium hover:border-primary-200/50 transition-smooth ${rule.active ? '' : 'opacity-60 bg-background-100/40'}`}>
                 <div className="flex items-center gap-3 mb-3">
                   <div className={`rounded-full flex items-center justify-center shrink-0 ${band.wrap}`}>
-                    <span className={`font-bold ${band.text}`}>{rule.points}</span>
+                    <span className={`font-bold ${band.text}`}>{calculated?'ƒ':rule.points}</span>
                   </div>
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-1.5 min-w-0">
@@ -362,7 +366,7 @@ export default function PointsRulesPage() {
                     </div>
                     <div className="flex items-center gap-1.5 flex-wrap mt-0.5">
                       <span className="text-[8px] font-semibold px-1.5 py-0.5 rounded-full bg-secondary-100 text-secondary-700">{rule.category}</span>
-                      <button onClick={() => toggleActive(rule)} className={`text-[8px] font-semibold px-1.5 py-0.5 rounded-full cursor-pointer transition-smooth ${rule.active ? 'bg-emerald-100 text-emerald-700 hover:bg-emerald-200' : 'bg-foreground-100 text-foreground-500 hover:bg-foreground-200'}`}>
+                      <button disabled={calculated} onClick={() => toggleActive(rule)} className={`text-[8px] font-semibold px-1.5 py-0.5 rounded-full cursor-pointer transition-smooth ${rule.active ? 'bg-emerald-100 text-emerald-700 hover:bg-emerald-200' : 'bg-foreground-100 text-foreground-500 hover:bg-foreground-200'}`}>
                         {rule.active ? 'Active' : 'Inactive'}
                       </button>
                     </div>
@@ -375,8 +379,8 @@ export default function PointsRulesPage() {
                   <span>{rule.totalPointsAwarded} pts awarded</span>
                 </div>
                 <div className="flex items-center gap-2">
-                  <button onClick={() => openEditModal(rule)} className="flex-1 px-3 py-1.5 bg-primary-500 text-white rounded-lg text-[10px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap">
-                    <AppIcon className="ri-edit-line mr-1"></AppIcon> Edit
+                  <button onClick={() => calculated?document.getElementById('learning-points-title')?.scrollIntoView({behavior:'smooth'}):openEditModal(rule)} className="flex-1 px-3 py-1.5 bg-primary-500 text-white rounded-lg text-[10px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap">
+                    <AppIcon className="ri-edit-line mr-1"></AppIcon> {calculated?'Configure above':'Edit'}
                   </button>
                   <button onClick={() => setStatsRuleId(rule.id)} className="flex-1 px-3 py-1.5 bg-secondary-50 border border-secondary-200/50 text-secondary-700 rounded-lg text-[10px] font-medium hover:bg-secondary-100 transition-smooth cursor-pointer whitespace-nowrap">
                     <AppIcon className="ri-bar-chart-line mr-1"></AppIcon> Stats

@@ -52,22 +52,38 @@ def actual_time_seconds(value):
         return None
 
 
+def is_unsynchronised_direct_save(record):
+    """A current LMS save that no sync or reconciliation has given seconds yet.
+
+    Imported/normalised seconds (including zero) and reporting segments remain
+    authoritative, so those rows are never unsynchronised.
+    """
+    return (record.get('component_link_source') in {'direct', 'quiz_ref'}
+            and not record.get('source_system') and record.get('actual_seconds') is None
+            and not record.get('segments'))
+
+
 def project_current(records, markings):
     """Project unsynchronised direct saves using the existing time/pass rules.
 
-    Imported/normalised seconds (including zero) and reporting segments remain
-    authoritative. Planned duration is never substituted for recorded time.
+    Planned duration is never substituted for recorded time.
     """
     result, native = [], {}
     retained = {source_reference(p) for p in records if p.get('source_system')}
+    # A staff hours correction is scoped to one activity. Retain every attempt
+    # as evidence, but do not add native attempt time to the corrected ledger
+    # allocation. No other activity's dedupe policy changes.
+    manual_keys = {(p.get('learner_id'), p.get('component_ref')) for p in records
+                   if p.get('actual_basis') == 'staff:module-progress'
+                   and p.get('actual_seconds') is not None and p.get('component_ref')}
     for original in records:
         p = dict(original)
-        if (p.get('component_link_source') not in {'direct', 'quiz_ref'}
-                or p.get('source_system') or p.get('actual_seconds') is not None
-                or p.get('segments')):
+        if not is_unsynchronised_direct_save(p):
             result.append(p)
             continue
         if p.get('kind') == 'activity_event' or not p.get('submitted_at'):
+            continue
+        if (p.get('learner_id'), p.get('component_ref')) in manual_keys:
             continue
         if f"progress:{p['id']}" in retained:
             continue
@@ -108,25 +124,49 @@ def source_reference(record):
 def merge_attempts(records, attempts):
     """Use saved course attempts for completion, never manufacture their hours."""
     result = [dict(p) for p in records]
+    # One record can be reached through several lineage links. Index positions,
+    # preserving original row order and merging each matching row only once.
+    by_route = {}
+    for index, p in enumerate(result):
+        source_ref = source_reference(p)
+        routes, typed_courses = set(), set()
+        for link in [*(p.get('sources') or []), *(p.get('historical_components') or [])]:
+            if link.get('source_system') == 'old_lms':
+                course = str(link.get('source_course_ref'))
+                typed_courses.add(course)
+                activity = link.get('source_activity_id')
+                if isinstance(activity, str):
+                    if activity.startswith('material:'):
+                        routes.add(f"la:{course}:{activity[9:]}")
+                    elif activity.startswith('quiz:'):
+                        routes.add(f"subject:quiz:{course}:{activity[5:]}")
+        # Typed lineage overrides a historical untyped reference for that
+        # course only. A quiz and a material can share the same numeric id.
+        if isinstance(source_ref, str):
+            parts = source_ref.split(':')
+            course = (parts[1] if len(parts) == 3 and parts[0] == 'la' else
+                      parts[2] if len(parts) == 4 and parts[:2] == ['subject', 'quiz'] else None)
+            if course is not None and course not in typed_courses:
+                routes.add(source_ref)
+        for route in routes:
+            by_route.setdefault(route, []).append(index)
     for attempt in attempts:
-        ref = f"la:{attempt['group_id']}:{attempt['activity_id']}"
-        matches = []
-        for p in result:
-            linked = source_reference(p) == ref or any(
-                link.get('source_system') == 'old_lms'
-                and str(link.get('source_course_ref')) == str(attempt['group_id'])
-                and link.get('source_activity_id') == f"material:{attempt['activity_id']}"
-                for link in [*(p.get('sources') or []), *(p.get('historical_components') or [])])
-            if linked:
-                matches.append(p)
+        catalogue_kind = attempt.get('catalogue_kind', 'material')
+        ref = f"{'la' if catalogue_kind == 'material' else 'subject:quiz'}:{attempt['group_id']}:{attempt['activity_id']}"
+        route = {'source_system': 'old_lms', 'source_course_ref': str(attempt['group_id']),
+                 'source_activity_id': f"{catalogue_kind}:{attempt['activity_id']}"}
+        matches = [result[index] for index in by_route.get(ref, ())]
         if not matches:
             at = instant(attempt['submitted_at'])
-            matches = [{'id': f"subject:{attempt['group_id']}:{attempt['activity_id']}",
+            record_id = (f"subject:{attempt['group_id']}:{attempt['activity_id']}" if catalogue_kind == 'material'
+                         else f"subject:quiz:{attempt['group_id']}:{attempt['activity_id']}")
+            matches = [{'id': record_id,
                 'component_title': attempt.get('title'), 'kind': 'quiz', 'accepted': False,
-                'actual_seconds': None, 'ksbs': [], 'sources': [], 'segments': [],
+                'actual_seconds': None, 'ksbs': [], 'sources': [route], 'segments': [],
                 'source_payload': {'original_source_ref': ref},
                 'reporting_month': at.strftime('%Y-%m'), 'reporting_started_at': at}]
             result.extend(matches)
+            by_route.setdefault(ref,[]).append(len(result)-1)
         for p in matches:
             p['completed'] = bool(p.get('completed', p.get('accepted')) or attempt['completed'])
             if attempt.get('best_percent') is not None:
@@ -164,6 +204,21 @@ def merge_submissions(records, submissions):
     return result
 
 
+def attempts_relation_exists():
+    """Whether the Aptem attempts table exists; a found table is remembered.
+
+    Schema does not change under a running process. An absent answer is
+    asked again, so a table provisioned later is still picked up.
+    """
+    if getattr(attempts_relation_exists, 'present', False):
+        return True
+    present = bool(query('SELECT to_regclass(%s) AS name',
+                         ['"Learner".subject_activity_attempts'])[0]['name'])
+    if present:
+        attempts_relation_exists.present = True
+    return present
+
+
 def current_records(owner, records):
     submissions = query('''SELECT id,component_ref,progress_entry_id,status,actual_time_hours,
         submitted_at,activity_type,activity_title,module_title,ksb_codes,
@@ -173,15 +228,15 @@ def current_records(owner, records):
         ORDER BY submitted_at NULLS FIRST,id''', [str(owner['enrolment_id']), owner.get('learner_type')])
     markings = {str(s['component_ref']): s for s in submissions if s.get('component_ref')}
     projected = merge_submissions(project_current(records, markings), submissions)
-    if not owner.get('aptem_id') or not query('SELECT to_regclass(%s) AS name',
-            ['"Learner".subject_activity_attempts'])[0]['name']:
+    if not owner.get('aptem_id') or not attempts_relation_exists():
         return projected
-    attempts = query('''SELECT group_id,activity_id,bool_or(completed) AS completed,
+    attempts = query('''SELECT group_id,activity_id,
+        coalesce(definition->>'catalogue_kind','material') AS catalogue_kind,bool_or(completed) AS completed,
         max(score_percent) AS best_percent,max(submitted_at) AS submitted_at,
         max(definition->>'title') AS title
         FROM "Learner".subject_activity_attempts
         WHERE enrolment_id=%s AND aptem_id=%s AND submitted_at IS NOT NULL
-        GROUP BY group_id,activity_id''', [owner['enrolment_id'], owner['aptem_id']])
+        GROUP BY group_id,activity_id,coalesce(definition->>'catalogue_kind','material')''', [owner['enrolment_id'], owner['aptem_id']])
     return merge_attempts(projected, attempts)
 
 
@@ -251,11 +306,12 @@ def current_records_bulk(owners, records_by_learner_id):
     placeholders = ','.join(['(%s,%s)'] * len(attempt_pairs))
     params = [value for pair in attempt_pairs for value in pair]
     attempts = query(f'''SELECT enrolment_id,aptem_id,group_id,activity_id,
+        coalesce(definition->>'catalogue_kind','material') AS catalogue_kind,
         bool_or(completed) AS completed,max(score_percent) AS best_percent,
         max(submitted_at) AS submitted_at,max(definition->>'title') AS title
         FROM "Learner".subject_activity_attempts
         WHERE (enrolment_id,aptem_id) IN ({placeholders}) AND submitted_at IS NOT NULL
-        GROUP BY enrolment_id,aptem_id,group_id,activity_id''', params)
+        GROUP BY enrolment_id,aptem_id,group_id,activity_id,coalesce(definition->>'catalogue_kind','material')''', params)
     attempts_by_identity = {pair: [] for pair in attempt_pairs}
     for attempt in attempts:
         key = (int(attempt['enrolment_id']), int(attempt['aptem_id']))

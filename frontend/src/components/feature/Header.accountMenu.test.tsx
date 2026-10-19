@@ -64,4 +64,35 @@ describe('learner account menu', () => {
     await userEvent.click(button);
     expect(within(screen.getByRole('menu')).queryByRole('menuitem', { name: 'My Profile' })).not.toBeInTheDocument();
   });
+
+  it('uses learner header styling without changing employer account behaviour', async () => {
+    render(<MemoryRouter>
+      <Header role="employer" appearance="learner" workspaceLabel="Employer" pageTitle="My learners" onOpenSearch={() => {}} />
+    </MemoryRouter>);
+
+    expect(document.querySelector('.kbc-workspace-topbar')).toHaveClass('kbc-learner-header');
+    expect(document.querySelector('.kbc-learner-header-pattern')).toBeInTheDocument();
+    const button = screen.getByRole('button', { name: 'Account menu' });
+    expect(button.querySelector('.kbc-topbar-user-name')).toHaveTextContent('Employer');
+    await userEvent.click(button);
+    expect(within(screen.getByRole('menu')).queryByRole('menuitem', { name: 'My Profile' })).not.toBeInTheDocument();
+  });
+
+  it('uses the shared learner and coach header treatment for curriculum', () => {
+    render(<MemoryRouter>
+      <Header role="curriculum" workspaceLabel="Curriculum Designer" pageTitle="Programmes" onOpenSearch={() => {}} />
+    </MemoryRouter>);
+
+    expect(document.querySelector('.kbc-workspace-topbar')).toHaveClass('kbc-learner-header');
+    expect(document.querySelector('.kbc-learner-header-pattern')).toBeInTheDocument();
+  });
+
+  it('keeps the coach account menu above the scrolling page content', async () => {
+    showHeader('coach');
+
+    const topbar = document.querySelector('.kbc-workspace-topbar');
+    expect(topbar).toHaveClass('z-40', 'overflow-visible');
+    await userEvent.click(screen.getByRole('button', { name: 'Account menu' }));
+    expect(screen.getByRole('menu')).toHaveClass('z-50');
+  });
 });

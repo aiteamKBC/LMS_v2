@@ -12,6 +12,7 @@ vi.mock('@/features/knowledge-base/api', async importOriginal => ({
   fetchBooks: vi.fn(),
   fetchWorkerStatus: vi.fn(),
   fetchBook: vi.fn(),
+  renameBook: vi.fn(),
   retryBuild: vi.fn(),
   acceptBuild: vi.fn(),
   uploadBook: vi.fn(),
@@ -55,12 +56,25 @@ describe('Knowledge Base page', () => {
     expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument();
   });
 
-  it('shows no actions other than Details for a ready book', async () => {
+  it('shows only Rename and Details for a ready book', async () => {
     vi.mocked(api.fetchBooks).mockResolvedValue([book()]);
     render(<KnowledgeBasePage />);
     await screen.findByText('Marketing Strategy & Planning');
     expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Accept with gaps' })).not.toBeInTheDocument();
+  });
+
+  it('renames a book in place', async () => {
+    vi.mocked(api.fetchBooks).mockResolvedValue([book({ title: 'STRATEGY_PLANNING', status: 'queued' })]);
+    vi.mocked(api.renameBook).mockResolvedValue({ id: 'b1', title: 'Marketing Strategy & Planning' });
+    render(<KnowledgeBasePage />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Rename' }));
+    const input = screen.getByRole('textbox', { name: 'Book title' });
+    expect(input).toHaveValue('STRATEGY_PLANNING');
+    fireEvent.change(input, { target: { value: '  Marketing Strategy & Planning ' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(api.renameBook).toHaveBeenCalledWith('b1', 'Marketing Strategy & Planning'));
+    await waitFor(() => expect(screen.queryByRole('textbox', { name: 'Book title' })).not.toBeInTheDocument());
   });
 
   it('warns when books are queued but the worker is not running', async () => {

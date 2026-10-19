@@ -14,14 +14,12 @@ import { AllCoachesCalendar } from './AllCoachesCalendar';
 import { DashboardMeetingActions } from './DashboardMeetingActions';
 import type { DirectoryCoach } from '@/api/coachDirectory';
 import { cn } from '@/lib/cn';
-import { ATTENDANCE_EXPECTED_RATE, ATTENDANCE_MINIMUM_RATE } from '@/lib/format';
-import { toneStyle, type StatusTone } from '@/lib/statusTone';
+import { type StatusTone } from '@/lib/statusTone';
 import { isVisibleCaseloadLearner, otjhProgressAsOfToday, parseDisplayDate } from '@/pages/coach/caseload/lib/format';
 import styles from '@/pages/workspace/coach/dashboard.module.css';
 import modalStyles from './LearnerCaseloadModal.module.css';
 import markingStyles from './PendingMarkingModal.module.css';
 import { CoachCaseloadContent } from '@/pages/coach/caseload/page';
-import { CaseloadLoading } from '@/pages/coach/caseload/components/CaseloadStates';
 import caseloadStyles from '@/pages/coach/caseload/caseload.module.css';
 import { SectionHeader } from '@/components/ui/SectionHeader';
 import { StatusBadge } from '@/components/ui/StatusBadge';
@@ -39,12 +37,9 @@ import {
   formatDateLabel,
   formatTimeLabel as calendarTimeLabel,
   formatTimeRangeLabel,
-  isAtRiskEvent,
   isCompletedEvent,
-  needsScheduling,
   parseLocalDate,
   sortEvents,
-  startOfDay,
   statusLabel,
 } from '@/pages/coach/shared/calendarEvents';
 import { clearDashboardLearnerPageCache, fetchCoachDashboard, fetchDashboardSection } from '../api/dashboardApi';
@@ -53,7 +48,7 @@ import { getCurrentWorkWeekRange, getNextWorkWeekRange, isEventThisWeek, useDash
 
 const coachNav = roleNavMap.coach;
 
-type DashboardKpi = 'caseload' | 'active' | 'on-break' | 'on-track' | 'at-risk' | 'need-attention' | 'completed' | 'epa' | 'evidence' | 'reviews' | 'pending-marking' | 'pr-week' | 'mcm-week' | 'catch-ups-week';
+type DashboardKpi = 'caseload' | 'at-risk' | 'pending-marking' | 'pr-week' | 'mcm-week' | 'catch-ups-week';
 type CoachDashboardTab = 'learners' | 'meetings' | 'risk';
 type OtjhStatusKey = 'at-risk' | 'need-attention' | 'on-track' | 'unknown';
 type PerformanceStatus = 'on-track' | 'at-risk' | 'high' | 'new-starter';
@@ -167,27 +162,6 @@ interface CaseloadApiResponse {
   learners?: CaseloadApiLearner[];
 }
 
-interface MonthlyRiskPoint {
-  month: string;
-  label: string;
-  count: number;
-  available?: boolean;
-}
-
-interface CoachAssignedGroup {
-  id: string;
-  name: string;
-  programmeId?: string;
-  programme: string;
-  cohortId?: string;
-  cohort: string;
-  coach: string;
-  status: string;
-  schedule: string;
-  startDate?: string;
-  endDate?: string;
-}
-
 interface WeeklyCounts { progressReviews: number; monthlyCoaching: number; catchUps: number; reviewsAvailable: boolean }
 interface DashboardTotals {
   totalLearners: number;
@@ -204,20 +178,15 @@ interface CoachDashboardApiResponse extends CaseloadApiResponse {
   popupWeekEvents?: CoachCalendarEvent[];
   totals?: DashboardTotals;
   weeklyCounts?: WeeklyCounts;
-  monthlyRisk?: MonthlyRiskPoint[] | null;
   // Attendance is not a separate dataset: the backend overlays the one
   // canonical figure directly onto each learners[] entry
   // (attendanceRate/attendanceRateAvailable/attendanceLastSession*).
-  reviewHistory?: {
-    learners?: ReviewHistoryApiLearner[];
-  };
   meetings?: {
     events?: CoachCalendarEvent[];
     summary?: { progressReviewRows?: number; mcrRows?: number; learnersWithDates?: number; reviewAnchorSkipped?: number; reviewAnchorSkipReasons?: Record<string, number> };
     reviewGenerationIssues?: Array<{ learnerId?: string; code?: string }>;
   };
   marking?: MarkingQueueResponse;
-  assignedGroups?: CoachAssignedGroup[];
   errors?: Record<string, string>;
 }
 
@@ -225,15 +194,12 @@ interface CachedCoachDashboard {
   popupLearners?: DashboardPopupLearner[];
   popupWeekEvents?: CoachCalendarEvent[];
   totals?: DashboardTotals;
-  weeklyCounts?: WeeklyCounts;
   ownerName: string;
   learners: CoachLearner[];
-  monthlyRisk: MonthlyRiskPoint[] | null;
   calendarEvents: CoachCalendarEvent[];
   calendarPreviewEvents: CoachCalendarEvent[];
   liveSessionEvents: CoachCalendarEvent[];
   evidenceQueue: EvidenceQueueLearner[];
-  markingThisWeek: number | undefined;
   reviewGenerationAvailable: boolean;
   calendarError: string | null;
 }
@@ -254,13 +220,6 @@ export function clearCoachDashboardSessionCache() {
   clearDashboardLearnerPageCache();
 }
 
-interface ReviewHistoryApiLearner {
-  id: string;
-  aptemId?: string | null;
-  mcm?: ImportedReview[];
-  reviews?: ImportedReview[];
-}
-
 function displayValue(value?: string | number | null): string {
   if (value === null || value === undefined) return EMPTY_VALUE;
   const text = String(value).trim();
@@ -279,8 +238,6 @@ function normalizeIdentity(value?: string | number | null): string {
     .replace(/[^a-z0-9]+/g, '');
 }
 
-
-
 function toNumber(value?: number | string | null): number {
   if (typeof value === 'number') return Number.isFinite(value) ? value : 0;
   if (typeof value === 'string') {
@@ -298,16 +255,6 @@ const compactDecimalFormat = new Intl.NumberFormat('en-GB', {
 
 function formatCompactDecimal(value: number): string {
   return compactDecimalFormat.format(value);
-}
-
-function normalizeMonthlyRisk(points?: MonthlyRiskPoint[] | null): MonthlyRiskPoint[] | null {
-  if (!Array.isArray(points)) return null;
-  return points.slice(-6).map(point => ({
-    month: displayValue(point.month),
-    label: displayValue(point.label),
-    count: Math.max(0, Math.round(toNumber(point.count))),
-    available: point.available !== false,
-  }));
 }
 
 function clampPercent(value?: number | string | null, preservePrecision = false): number {
@@ -380,22 +327,6 @@ function isRiskInsightsLearner(learner: CoachLearner): boolean {
     || status.startsWith('withdrawn')
     || status.startsWith('enteredepa')
   ));
-}
-
-function isOnBreakLearner(learner: CoachLearner): boolean {
-  return normalizedProgramStatus(learner).includes('break');
-}
-
-// Finished the programme. Matched on the canonical "Completed" status from
-// learner_api.constants, the value enrolment actually writes -- unlike the
-// gateway stage this replaced, which was never a programme status the platform
-// set, so that card could only ever read zero.
-function isCompletedLearner(learner: CoachLearner): boolean {
-  return normalizedProgramStatus(learner) === 'completed';
-}
-
-function isEpaLearner(learner: CoachLearner): boolean {
-  return normalizedProgramStatus(learner) === 'epa';
 }
 
 const OTJH_STATUS_META: Record<OtjhStatusKey, { label: string; sub: string; tone: StatusTone }> = {
@@ -493,106 +424,11 @@ function normalizeLearner(learner: CaseloadApiLearner, index: number): CoachLear
   };
 }
 
-/** KSB as the learner's own workspace shows it: the number of distinct codes
- *  evidenced. Falls back to the curriculum percentage for learners with no
- *  audit mapping, and to "--" when neither figure exists. */
-function ksbCellValue(learner: CoachLearner): string {
-  if (learner.ksbEvidencedCount != null) return `${learner.ksbEvidencedCount}`;
-  return learner.ksbProgressAvailable ? `${learner.ksbProgress}%` : EMPTY_VALUE;
-}
-
-
-function eventBelongsToLearner(event: CoachCalendarEvent, learner: CoachLearner) {
-  const learnerId = normalizeIdentity(learner.id);
-  return Boolean(learnerId && normalizeIdentity(event.learnerId) === learnerId);
-}
-
-function latestCompletedSessionDate(
-  learner: CoachLearner,
-  events: CoachCalendarEvent[],
-  matchesType: (event: CoachCalendarEvent) => boolean = () => true,
-) {
-  const latest = events
-    .filter(event => isCompletedEvent(event) && matchesType(event) && eventBelongsToLearner(event, learner))
-    .map(event => eventDisplayDate(event))
-    .map(value => ({ value, date: parseLocalDate(value) }))
-    .filter((entry): entry is { value: string; date: Date } => Boolean(entry.date))
-    .sort((a, b) => b.date.getTime() - a.date.getTime())[0];
-  return latest?.value;
-}
-
 function formatCompletedSessionDate(value?: string | null) {
   const date = parseLocalDate(value);
   return date
     ? new Intl.DateTimeFormat('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }).format(date)
     : displayValue(value);
-}
-
-function mergeAttendanceRates(
-  learners: CoachLearner[],
-  events: CoachCalendarEvent[],
-): CoachLearner[] {
-  return learners.map((learner): CoachLearner => {
-    // Attendance is already joined onto this learner server-side by stable
-    // id (see coach_dashboard/apply_attendance_summary) -- no client-side
-    // matching by name/email against a separate dataset.
-    const hasAttendance = Boolean(learner.attendanceRateAvailable);
-    const attendanceDate = hasAttendance ? parseLocalDate(learner.attendanceLastSessionDate) : undefined;
-    const completedEventDate = latestCompletedSessionDate(learner, events);
-    const parsedCompletedEventDate = parseLocalDate(completedEventDate);
-    const learningActivityDate = parseLocalDate(learner.lastActivityDate);
-    const latestAttendanceDate = parsedCompletedEventDate
-      && (!attendanceDate || parsedCompletedEventDate.getTime() > attendanceDate.getTime())
-      ? parsedCompletedEventDate
-      : attendanceDate;
-    const attendanceIsLatestActivity = Boolean(
-      latestAttendanceDate
-      && (!learningActivityDate || latestAttendanceDate.getTime() > learningActivityDate.getTime()),
-    );
-    const lastSession = parsedCompletedEventDate
-      && (!attendanceDate || parsedCompletedEventDate.getTime() > attendanceDate.getTime())
-      ? formatDateLabel(completedEventDate)
-      : displayValue(learner.attendanceLastSession) !== EMPTY_VALUE
-        ? displayValue(learner.attendanceLastSession)
-        : formatDateLabel(learner.attendanceLastSessionDate);
-
-    return {
-      ...learner,
-      // Use the latest completed occurrence across coaching, progress reviews
-      // and live sessions. Future, in-progress and cancelled events are not
-      // contacts, and the caseload payload's owner name is intentionally ignored.
-      lastContact: lastSession,
-      lastActivity: attendanceIsLatestActivity ? lastSession : learner.lastActivity,
-      lastActivityDate: attendanceIsLatestActivity
-        ? (parsedCompletedEventDate && latestAttendanceDate === parsedCompletedEventDate ? completedEventDate : learner.attendanceLastSessionDate || null)
-        : learner.lastActivityDate,
-      lastActivityLabel: attendanceIsLatestActivity ? 'Attendance' : learner.lastActivityLabel,
-      // The calendar payload is intentionally windowed for performance. The
-      // backend learner fields come from the unbounded shared resolved Review
-      // history and therefore remain authoritative for these two columns.
-      lastMcm: formatCompletedSessionDate(learner.lastMcm),
-      lastPr: formatCompletedSessionDate(learner.lastPr),
-    };
-  });
-}
-
-function mergeReviewHistory(learners: CoachLearner[], historyLearners: ReviewHistoryApiLearner[]): CoachLearner[] {
-  const byId = new Map(
-    historyLearners
-      .map((item) => [normalizeIdentity(item.id), item] as const)
-      .filter(([id]) => Boolean(id)),
-  );
-
-  return learners.map((learner) => {
-    const history = byId.get(normalizeIdentity(learner.id));
-    if (!history) return learner;
-    return {
-      ...learner,
-      aptemId: history.aptemId || null,
-      mcmReviews: Array.isArray(history.mcm) ? history.mcm : [],
-      reviews: Array.isArray(history.reviews) ? history.reviews : [],
-    };
-  });
 }
 
 function mergeEvidenceQueueIntoLearners(learners: CoachLearner[], queue: EvidenceQueueLearner[]): CoachLearner[] {
@@ -763,16 +599,6 @@ function enrichLearnerSchedule(learners: CoachLearner[], events: CoachCalendarEv
   });
 }
 
-function isWithinNextDays(event: CoachCalendarEvent, daysAhead: number) {
-  const date = parseLocalDate(eventDisplayDate(event));
-  if (!date || isCompletedEvent(event)) return false;
-  const today = new Date();
-  const start = new Date(today.getFullYear(), today.getMonth(), today.getDate());
-  const end = new Date(start);
-  end.setDate(start.getDate() + daysAhead);
-  return date.getTime() >= start.getTime() && date.getTime() <= end.getTime();
-}
-
 function isFutureCalendarEvent(event: CoachCalendarEvent) {
   const date = parseLocalDate(eventDisplayDate(event));
   if (!date) return false;
@@ -854,191 +680,6 @@ function eventTypeLabel(event: CoachCalendarEvent) {
   if (reviewCategory(event) === 'progress-review') return eventPeriodLabel(event);
   if (event.source === 'mcr') return 'Monthly Coaching';
   return displayValue(event.title);
-}
-
-
-/* ═══════════════════════════════════════════════════════════
-   Priority model
-   ───────────────────────────────────────────────────────────
-   One ordered list decides who a coach opens first:
-     At Risk → Overdue Review → Poor Attendance → Missing Evidence
-   Every reason is derived from a field the dashboard API already returns, so
-   the badge on a row and the count on a tab can never disagree, and the answer
-   to "why?" travels with the verdict instead of being re-guessed per panel.
-   ═══════════════════════════════════════════════════════════ */
-type PriorityKey = 'at-risk' | 'overdue-review' | 'poor-attendance' | 'missing-evidence';
-
-const PRIORITY_ORDER: PriorityKey[] = ['at-risk', 'overdue-review', 'poor-attendance', 'missing-evidence'];
-
-const PRIORITY_RANK: Record<PriorityKey, number> = {
-  'at-risk': 0,
-  'overdue-review': 1,
-  'poor-attendance': 2,
-  'missing-evidence': 3,
-};
-
-// The priority vocabulary is five ranked reasons; StatusTone carries risk in
-// four bands. `at-risk` and `overdue-review` both read as `critical` — both are
-// "act now" severities, and the label text (not a second red shade) is what
-// tells them apart.
-interface PriorityReason {
-  key: PriorityKey;
-  label: string;
-  detail?: string;
-}
-
-interface LearnerPriority {
-  reasons: PriorityReason[];
-  primary: PriorityReason | null;
-  keys: Set<PriorityKey>;
-  /** Sort weight, highest = open this learner first. */
-  urgency: number;
-}
-
-interface OverdueSignal {
-  review: boolean;
-  coaching: boolean;
-  label: string;
-}
-
-function otjhPercentFor(learner: CoachLearner): number | null {
-  const progress = otjhProgressAsOfToday(learner);
-  return progress.percent === null ? null : clampPercent(progress.percent);
-}
-
-function otjhVarianceLabel(learner: CoachLearner): string {
-  const progress = otjhProgressAsOfToday(learner);
-  if (progress.deltaHours === null) return EMPTY_VALUE;
-  if (learner.otjhVariance !== undefined && learner.otjhVariance !== null) {
-    const variance = Math.round(learner.otjhVariance * 10) / 10;
-    return `${variance > 0 ? '+' : ''}${variance}h`;
-  }
-  const variance = Math.round(progress.deltaHours * 10) / 10;
-  return `${variance > 0 ? '+' : ''}${variance}h`;
-}
-
-/** Scheduled but already past, or still needing a date after its target passed. */
-function isOverdueEvent(event: CoachCalendarEvent, referenceDate = new Date()) {
-  if (isCompletedEvent(event) || event.status === 'cancelled') return false;
-  if (needsScheduling(event)) return isAtRiskEvent(event, referenceDate);
-  const date = parseLocalDate(eventDisplayDate(event));
-  return Boolean(date && date.getTime() < startOfDay(referenceDate).getTime());
-}
-
-function buildOverdueMap(learners: CoachLearner[], events: CoachCalendarEvent[]): Map<string, OverdueSignal> {
-  const overdueEvents = events.filter(event => isOverdueEvent(event));
-  const map = new Map<string, OverdueSignal>();
-  if (!overdueEvents.length) return map;
-
-  learners.forEach(learner => {
-    const matches = overdueEvents.filter(event => eventMatchesLearner(event, learner));
-    const review = matches.find(event => reviewCategory(event) === 'progress-review');
-    const coaching = matches.find(event => event.source === 'mcr');
-    if (!review && !coaching) return;
-    map.set(learner.id, {
-      review: Boolean(review),
-      coaching: Boolean(coaching),
-      label: formatDateLabel(eventTargetDate(review || coaching)),
-    });
-  });
-
-  return map;
-}
-
-function buildLearnerPriority(learner: CoachLearner, overdue?: OverdueSignal): LearnerPriority {
-  const reasons: PriorityReason[] = [];
-  const otjhStatus = canonicalOtjhStatus(learner);
-  const otjhPercent = otjhPercentFor(learner);
-
-  if (otjhStatus === 'at-risk') {
-    reasons.push({
-      key: 'at-risk',
-      label: learner.recentFlag || learner.riskFlags[0] || 'Flagged at risk',
-      detail: otjhPercent !== null
-        ? `${otjhPercent}% of expected off-the-job hours`
-        : 'Immediate coaching action needed',
-    });
-  }
-
-  if (overdue?.review) {
-    reasons.push({
-      key: 'overdue-review',
-      label: 'Progress review overdue',
-      detail: overdue.label !== EMPTY_VALUE ? `Was due ${overdue.label}` : undefined,
-    });
-  } else if (overdue?.coaching) {
-    reasons.push({
-      key: 'overdue-review',
-      label: 'Coaching session overdue',
-      detail: overdue.label !== EMPTY_VALUE ? `Was due ${overdue.label}` : undefined,
-    });
-  }
-
-  if (learner.attendanceRateAvailable && learner.attendanceRate < ATTENDANCE_EXPECTED_RATE) {
-    reasons.push({
-      key: 'poor-attendance',
-      label: `Attendance ${learner.attendanceRate}%`,
-      detail: learner.attendanceRate < ATTENDANCE_MINIMUM_RATE
-        ? `Below the ${ATTENDANCE_MINIMUM_RATE}% minimum`
-        : `Below the ${ATTENDANCE_EXPECTED_RATE}% expected level`,
-    });
-  }
-
-  if (learner.evidenceCountAvailable) {
-    if (learner.evidenceCompletedCount === 0) {
-      reasons.push({
-        key: 'missing-evidence',
-        label: 'No evidence accepted yet',
-        detail: learner.evidenceCount > 0
-          ? `${learner.evidenceCount} awaiting your review`
-          : 'Nothing submitted on record',
-      });
-    } else if (learner.evidenceCount > 0) {
-      reasons.push({
-        key: 'missing-evidence',
-        label: `${learner.evidenceCount} evidence awaiting review`,
-        detail: `${learner.evidenceCompletedCount} accepted so far`,
-      });
-    }
-  }
-
-  reasons.sort((left, right) => PRIORITY_RANK[left.key] - PRIORITY_RANK[right.key]);
-  const primary = reasons[0] || null;
-  // Tier dominates the sort, then how many signals fired, then how far behind
-  // on hours — so the learner to open first genuinely sits at the top.
-  const tierWeight = primary ? (PRIORITY_ORDER.length - PRIORITY_RANK[primary.key]) * 1000 : 0;
-
-  return {
-    reasons,
-    primary,
-    keys: new Set(reasons.map(reason => reason.key)),
-    urgency: tierWeight + reasons.length * 50 + (100 - (otjhPercent ?? 100)),
-  };
-}
-
-/**
- * Tone for a percentage against this page's own warning/success thresholds —
- * the same three-way split every metric on this page already used under the
- * name `toneFromPercent`, now returning the shared `StatusTone` vocabulary
- * instead of a locally-invented one.
- */
-function percentTone(value?: number | null, warningThreshold = 50, successThreshold = 75): StatusTone {
-  if (value === null || value === undefined || !Number.isFinite(value)) return 'neutral';
-  if (value >= successThreshold) return 'positive';
-  if (value >= warningThreshold) return 'caution';
-  return 'critical';
-}
-
-/** The avatar ring colour: OTJH risk first, then programme stage. */
-function learnerAvatarTone(learner: CoachLearner): StatusTone {
-  const otjhStatus = canonicalOtjhStatus(learner);
-  if (otjhStatus === 'at-risk') return 'critical';
-  if (otjhStatus === 'need-attention') return 'caution';
-  const programmeStatus = normalizedProgramStatus(learner);
-  if (programmeStatus === 'completed') return 'positive';
-  if (programmeStatus === 'gateway') return 'brand';
-  if (programmeStatus === 'epa') return 'info';
-  return 'neutral';
 }
 
 /* ═══════════════════════════════════════════════════════════
@@ -1124,23 +765,6 @@ function MetricCardSkeleton() {
   </div>;
 }
 
-function LearnerTableSkeleton() {
-  return <div className={styles.fullWidthCaseload}>
-    <section className={`${caseloadStyles.page} ${caseloadStyles.embedded}`}>
-      <header className={`${caseloadStyles.pageHeader} flex flex-wrap items-center justify-between gap-4`}>
-        <div className={caseloadStyles.titleGroup}>
-          <LoadingBlock className="h-[46px] w-[46px] rounded-xl" />
-          <div className={caseloadStyles.title}><h1>All Learners</h1><LoadingBlock className="mt-1 h-3 w-52" /></div>
-        </div>
-        <LoadingBlock className="h-9 w-[104px] rounded-md" />
-      </header>
-      <section className={caseloadStyles.panel}>
-        <CaseloadLoading rows={7} />
-      </section>
-    </section>
-  </div>;
-}
-
 type RiskInsightTone = 'warning' | 'critical';
 
 function riskTone(value: number, warningAt: number, criticalAt: number): RiskInsightTone | null {
@@ -1165,6 +789,17 @@ function strongerTone(left: RiskInsightTone | null, right: RiskInsightTone | nul
 
 function RiskStatus({ tone }: { tone: RiskInsightTone }) {
   return <span className={styles.riskStatus} data-tone={tone}>{tone === 'critical' ? 'Critical' : 'Warning'}</span>;
+}
+
+function learnerAvatarTone(learner: CoachLearner): StatusTone {
+  const otjhStatus = canonicalOtjhStatus(learner);
+  if (otjhStatus === 'at-risk') return 'critical';
+  if (otjhStatus === 'need-attention') return 'caution';
+  const programmeStatus = normalizedProgramStatus(learner);
+  if (programmeStatus === 'completed') return 'positive';
+  if (programmeStatus === 'gateway') return 'brand';
+  if (programmeStatus === 'epa') return 'info';
+  return 'neutral';
 }
 
 function RiskLearner({ learner }: { learner: CoachLearner }) {
@@ -1311,7 +946,6 @@ export default function CoachDashboard() {
   // same filter to the caseload list when the coach wants to keep working there.
   const [summaryReload, setSummaryReload] = useState(0);
   const [sectionReload, setSectionReload] = useState(0);
-  const [weeklyCounts, setWeeklyCounts] = useState<WeeklyCounts | undefined>(() => initialDashboard?.weeklyCounts);
   const [totals, setTotals] = useState<DashboardTotals | undefined>(() => initialDashboard?.totals);
   const [popupWeekEvents, setPopupWeekEvents] = useState<CoachCalendarEvent[] | undefined>(() => initialDashboard?.popupWeekEvents);
   const [popupLearners, setPopupLearners] = useState<DashboardPopupLearner[]>(() => initialDashboard?.popupLearners || []);
@@ -1320,16 +954,13 @@ export default function CoachDashboard() {
   const [riskLearners, setRiskLearners] = useState<CoachLearner[]>([]);
   const [riskError, setRiskError] = useState<string | null>(null);
   const [riskLoading, setRiskLoading] = useState(false);
-  const [kpiFilter, setKpiFilter] = useState<DashboardKpi | null>(null);
   const [selectedKpi, setSelectedKpi] = useState<DashboardKpi | null>(null);
   const [ownerName, setOwnerName] = useState(() => initialDashboard?.ownerName || 'Coach');
   const [learners, setLearners] = useState<CoachLearner[]>(() => initialDashboard?.learners || []);
-  const [monthlyRisk, setMonthlyRisk] = useState<MonthlyRiskPoint[] | null>(() => initialDashboard?.monthlyRisk || null);
   const [calendarEvents, setCalendarEvents] = useState<CoachCalendarEvent[]>(() => initialDashboard?.calendarEvents || []);
   const [calendarPreviewEvents, setCalendarPreviewEvents] = useState<CoachCalendarEvent[]>(() => initialDashboard?.calendarPreviewEvents || []);
   const [liveSessionEvents, setLiveSessionEvents] = useState<CoachCalendarEvent[]>(() => initialDashboard?.liveSessionEvents || []);
   const [evidenceQueue, setEvidenceQueue] = useState<EvidenceQueueLearner[]>(() => initialDashboard?.evidenceQueue || []);
-  const [markingThisWeek, setMarkingThisWeek] = useState<number | undefined>(() => initialDashboard?.markingThisWeek);
   const [reviewGenerationAvailable, setReviewGenerationAvailable] = useState(() => initialDashboard?.reviewGenerationAvailable ?? true);
   const [loading, setLoading] = useState(() => !initialDashboard);
   const [loadWarning, setLoadWarning] = useState<string | null>(null);
@@ -1409,13 +1040,10 @@ export default function CoachDashboard() {
     setLoadedCoachEmail(cached ? authenticatedCoachEmail : null);
     setOwnerName(cached?.ownerName || authenticatedCoachName);
     setLearners(cached?.learners || []);
-    setMonthlyRisk(cached?.monthlyRisk || null);
-    setWeeklyCounts(cached?.weeklyCounts);
     setTotals(cached?.totals);
     setPopupWeekEvents(cached?.popupWeekEvents);
     setPopupLearners(cached?.popupLearners || []);
     setEvidenceQueue(cached?.evidenceQueue || []);
-    setMarkingThisWeek(cached?.markingThisWeek);
     setReviewGenerationAvailable(cached?.reviewGenerationAvailable ?? true);
     setCalendarEvents(cached?.calendarEvents || []);
     setCalendarPreviewEvents(cached?.calendarPreviewEvents || []);
@@ -1447,28 +1075,24 @@ export default function CoachDashboard() {
           }).map(normalizeEvidenceQueueLearner));
         const nextLearners = mergeEvidenceQueueIntoLearners((dashboard.learners || []).map(normalizeLearner), queueItems);
         const nextOwnerName = optionalDisplayValue(dashboard.owner?.name) || authenticatedCoachName;
-        const nextMarking = dashboard.marking?.summary?.pendingItems === undefined
-          ? undefined : toNumber(dashboard.marking.summary.pendingItems);
         const previous = dashboardSessionCache.get(cacheKey);
         const available = dashboard.weeklyCounts?.reviewsAvailable ?? reviewScheduleAvailable(
           dashboard.meetings?.summary, dashboard.meetings?.events || [], dashboard.meetings?.reviewGenerationIssues || [],
         );
         dashboardSessionCache.set(cacheKey, {
-          ownerName: nextOwnerName, learners: nextLearners, monthlyRisk: null,
+          ownerName: nextOwnerName, learners: nextLearners,
           popupLearners: dashboard.popupLearners,
-          weeklyCounts: dashboard.weeklyCounts, totals: dashboard.totals, popupWeekEvents: dashboard.popupWeekEvents,
+          totals: dashboard.totals, popupWeekEvents: dashboard.popupWeekEvents,
           calendarEvents: previous?.calendarEvents || [], calendarPreviewEvents: previous?.calendarPreviewEvents || [],
           liveSessionEvents: previous?.liveSessionEvents || [], evidenceQueue: queueItems,
-          markingThisWeek: nextMarking, reviewGenerationAvailable: available, calendarError: previous?.calendarError || null,
+          reviewGenerationAvailable: available, calendarError: previous?.calendarError || null,
         });
         setOwnerName(nextOwnerName);
         setLearners(nextLearners);
-        setWeeklyCounts(dashboard.weeklyCounts);
         setTotals(dashboard.totals);
         setPopupWeekEvents(dashboard.popupWeekEvents);
         setPopupLearners(dashboard.popupLearners || []);
         setEvidenceQueue(queueItems);
-        setMarkingThisWeek(nextMarking);
         setReviewGenerationAvailable(available);
       } catch (error) {
         if (controller.signal.aborted) return;
@@ -1484,7 +1108,7 @@ export default function CoachDashboard() {
     return () => controller.abort();
   }, [authenticatedCoachEmail, authenticatedCoachName, cacheKey, coach.canChooseCoach, isInitialized, summaryReload]);
 
-  const meetingKpiSelected = selectedKpi === 'pr-week' || selectedKpi === 'mcm-week' || selectedKpi === 'catch-ups-week' || selectedKpi === 'reviews';
+  const meetingKpiSelected = selectedKpi === 'pr-week' || selectedKpi === 'mcm-week' || selectedKpi === 'catch-ups-week';
   const needsMeetings = activeDashboardTab === 'meetings' || (meetingKpiSelected && popupWeekEvents === undefined);
 
   useEffect(() => {
@@ -1566,10 +1190,6 @@ export default function CoachDashboard() {
     () => selectAtRiskPopupLearners(popupLearners),
     [popupLearners],
   );
-  const needAttentionLearners = useMemo(
-    () => activeLearners.filter(learner => canonicalOtjhStatus(learner) === 'need-attention'),
-    [activeLearners],
-  );
   const evidenceLearners = useMemo(
     () => evidenceQueue
       .filter(learner => learner.pendingEvidence > 0)
@@ -1622,8 +1242,6 @@ export default function CoachDashboard() {
     return Array.from(grouped.entries()).map(([date, events]) => ({ date, events }));
   }, [upcomingScheduleEvents]);
 
-  /* ── Today / Needs Action ── */
-  /* ── This Week ── */
   const weekEvents = useMemo(
     () => [...activeCalendarEvents, ...liveSessionEvents]
       .filter(event => event.status !== 'cancelled' && isEventThisWeek(event)),
@@ -1645,8 +1263,7 @@ export default function CoachDashboard() {
 
   const scrollToAttention = () => scrollToSection('learner-caseload');
 
-  const openCaseloadFilter = (filter: DashboardKpi) => {
-    setKpiFilter(filter);
+  const openCaseloadFilter = () => {
     scrollToAttention();
   };
 
@@ -1811,36 +1428,13 @@ export default function CoachDashboard() {
           evidenceQueue={evidenceLearners}
           pendingEvidence={pendingEvidence}
           onClose={() => setSelectedKpi(null)}
-          onFilter={(filter) => {
+          onFilter={() => {
             setSelectedKpi(null);
-            openCaseloadFilter(filter);
+            openCaseloadFilter();
           }}
         />
       )}
     </WorkspaceShell>
-  );
-}
-
-function DashboardLoadingSkeleton() {
-  return (
-    <div aria-label="Loading coach dashboard" role="status" className="min-w-0">
-      <span className="sr-only">Loading coach dashboard data</span>
-      <div className={styles.loadingDashboard} aria-hidden="true">
-        <section className={styles.metrics}>{Array.from({ length: 6 }, (_, index) => <MetricCardSkeleton key={index} />)}</section>
-        <section className={styles.dashboardTabs}>
-          <div className={styles.dashboardTabList}>
-            {COACH_DASHBOARD_TABS.map(tab => (
-              <span key={tab.id} className={styles.dashboardTab} aria-current={tab.id === 'learners' ? 'page' : undefined}>
-                {tab.label}
-              </span>
-            ))}
-          </div>
-          <div className={styles.dashboardTabPanel}>
-            <LearnerTableSkeleton />
-          </div>
-        </section>
-      </div>
-    </div>
   );
 }
 
@@ -1869,71 +1463,6 @@ function DashboardMetric({ kind, label, value, note, icon, tone, onClick }: {
   );
 }
 
-function MonthlyRiskChart({ points, unavailable }: { points: MonthlyRiskPoint[] | null; unavailable: boolean }) {
-  if (unavailable || !points?.length || points.some(point => point.available === false)) {
-    return <div className={styles.unavailableChart}>
-      <AppIcon name="ri-line-chart-line" aria-hidden="true" />
-      <p>History not available</p><span>Monthly risk data is not available yet.</span>
-    </div>;
-  }
-
-  const highestCount = Math.max(...points.map(point => point.count), 1);
-  return <div className={styles.monthlyRiskChart}>
-    <ol className={styles.monthlyBars} aria-label="Learners at risk at each month end">
-      {points.map(point => (
-        <li key={point.month} aria-label={`${point.label}: ${point.count} learners at risk`}>
-          <strong>{point.count}</strong>
-          <span className={styles.monthlyBarTrack} aria-hidden="true">
-            <span
-              className={styles.monthlyBar}
-              data-empty={point.count === 0}
-              style={{ height: `${point.count ? Math.max(12, point.count / highestCount * 100) : 4}%` }}
-            />
-          </span>
-          <small>{point.label}</small>
-        </li>
-      ))}
-    </ol>
-  </div>;
-}
-
-function OtjhDistribution({ learners, unavailable }: { learners: CoachLearner[]; unavailable: boolean }) {
-  const statuses: { key: OtjhStatusKey; label: string; color: string }[] = [
-    { key: 'at-risk', label: 'At Risk', color: '#e51e50' },
-    { key: 'need-attention', label: 'Need Attention', color: '#e4a400' },
-    { key: 'on-track', label: 'On Track', color: '#249b61' },
-    { key: 'unknown', label: 'Unavailable', color: '#9895ab' },
-  ];
-  const total = learners.length;
-  let cursor = 0;
-  const segments = statuses.map(status => {
-    const count = learners.filter(learner => canonicalOtjhStatus(learner) === status.key).length;
-    const percent = total ? count / total * 100 : 0;
-    const start = cursor;
-    cursor += percent;
-    return { ...status, count, percent, stop: `${status.color} ${start}% ${cursor}%` };
-  });
-  return <>
-    <div className={styles.distribution}>
-      <div className={styles.donut} style={{ background: unavailable || !total ? 'var(--kbc-border)' : `conic-gradient(${segments.map(segment => segment.stop).join(', ')})` }} aria-hidden="true">
-        <div className={styles.donutCenter}><strong>{unavailable ? EMPTY_VALUE : total}</strong><span>active learners</span></div>
-      </div>
-      <ul className={styles.legend} aria-label="Active learners by OTJH status">
-        {segments.map(segment => <li key={segment.key}>
-          <span className={styles.legendDot} style={{ background: segment.color }} aria-hidden="true" />
-          <span>{segment.label}</span>
-          <strong>{unavailable ? EMPTY_VALUE : `${segment.count} (${Math.round(segment.percent)}%)`}</strong>
-        </li>)}
-      </ul>
-    </div>
-    <p className={styles.chartNote}><AppIcon name="ri-info-i" aria-hidden="true" /><span>{unavailable ? 'OTJH data is not available.' : `${total} active learners grouped by their current OTJH status.`}</span></p>
-  </>;
-}
-
-/* ═══════════════════════════════════════════════════════════
-   Priority filter tabs — "All" plus the five ranked reasons,
-   in priority order, hiding whichever have nothing in them.
-   ═══════════════════════════════════════════════════════════ */
 /* ═══════════════════════════════════════════════════════════
    Compact learner rows retain the support reasons and four
    existing metrics inside keyboard-accessible details.
@@ -1967,7 +1496,7 @@ function KpiDetailModal({ type, loading, error, onRetry, learners, popupLearners
   const isCaseload = type === 'caseload';
   const isPendingMarking = type === 'pending-marking';
   const [markingProgramme, setMarkingProgramme] = useState('');
-  const isLightweightPopup = isCaseload || type === 'at-risk' || type === 'need-attention' || type === 'on-track';
+  const isLightweightPopup = isCaseload || type === 'at-risk';
   useEffect(() => {
     if (!isCaseload && !isPendingMarking) return;
     const previousFocus = document.activeElement;
@@ -1992,15 +1521,7 @@ function KpiDetailModal({ type, loading, error, onRetry, learners, popupLearners
   };
   const meta: Record<DashboardKpi, { title: string; subtitle: string; icon: string; iconStyle: string }> = {
     caseload: { title: 'Learner caseload', subtitle: 'All learners currently assigned to you', icon: 'ri-group-line', iconStyle: 'bg-primary-100 text-primary-600' },
-    active: { title: 'Active learners', subtitle: 'Learners currently active on their programme', icon: 'ri-user-follow-line', iconStyle: 'bg-emerald-100 text-emerald-600' },
-    'on-break': { title: 'Paused learners', subtitle: 'Learners whose programme is currently paused', icon: 'ri-pause-line', iconStyle: 'bg-amber-100 text-amber-600' },
-    'on-track': { title: 'Learners on track', subtitle: 'Learners currently meeting their OTJH target', icon: 'ri-checkbox-circle-line', iconStyle: 'bg-emerald-100 text-emerald-600' },
     'at-risk': { title: 'Learners at risk', subtitle: 'Learners requiring immediate coaching action', icon: 'ri-alarm-warning-line', iconStyle: 'bg-red-100 text-red-600' },
-    'need-attention': { title: 'Learners needing attention', subtitle: 'Learners who need targeted support this week', icon: 'ri-error-warning-line', iconStyle: 'bg-amber-100 text-amber-600' },
-    completed: { title: 'Completed learners', subtitle: 'Learners who have finished the programme', icon: 'ri-verified-badge-line', iconStyle: 'bg-green-100 text-green-700' },
-    epa: { title: 'EPA learners', subtitle: 'Learners currently at the end-point assessment stage', icon: 'ri-award-line', iconStyle: 'bg-secondary-100 text-secondary-700' },
-    evidence: { title: 'Evidence awaiting review', subtitle: 'Evidence submissions and review status', icon: 'ri-file-search-line', iconStyle: 'bg-secondary-100 text-secondary-600' },
-    reviews: { title: 'Upcoming reviews', subtitle: 'Progress reviews scheduled in the next 14 days', icon: 'ri-file-chart-line', iconStyle: 'bg-primary-100 text-primary-600' },
     'pending-marking': { title: 'Pending marking', subtitle: 'Submissions currently waiting for your review', icon: 'ri-file-list-3-line', iconStyle: 'bg-primary-50 text-primary-700' },
     'pr-week': { title: 'Progress reviews this week', subtitle: formatWeekRangeLabel(), icon: 'ri-focus-3-line', iconStyle: 'bg-amber-100 text-amber-700' },
     'mcm-week': { title: 'Monthly coaching this week', subtitle: formatWeekRangeLabel(), icon: 'ri-history-line', iconStyle: 'bg-amber-100 text-amber-700' },
@@ -2009,36 +1530,15 @@ function KpiDetailModal({ type, loading, error, onRetry, learners, popupLearners
   const current = meta[type];
   const filterForType: Partial<Record<DashboardKpi, DashboardKpi>> = {
     caseload: 'caseload',
-    active: 'active',
-    'on-break': 'on-break',
-    'on-track': 'on-track',
     'at-risk': 'at-risk',
-    'need-attention': 'need-attention',
-    completed: 'completed',
-    epa: 'epa',
   };
-  const modalLearners = type === 'caseload'
-    ? learners
-    : type === 'active'
-      ? learners.filter(isActiveLearner)
-      : type === 'on-break'
-        ? learners.filter(isOnBreakLearner)
-      : type === 'completed'
-        ? learners.filter(isCompletedLearner)
-      : type === 'epa'
-        ? learners.filter(isEpaLearner)
-      : [];
   const lightweightLearners = type === 'at-risk'
     ? selectAtRiskPopupLearners(popupLearners)
-    : type === 'on-track' || type === 'need-attention'
-      ? popupLearners.filter(learner => learner.otjh.ragStatus === type)
-      : popupLearners;
-  const reviews = sortEvents(calendarEvents.filter(event => reviewCategory(event) === 'progress-review' && isWithinNextDays(event, 14)));
+    : popupLearners;
   const searchedLearners = lightweightLearners.filter(learner =>
     (statusFilter === 'all' || learner.otjh.ragStatus === statusFilter)
     && `${learner.name} ${learner.programme} ${learner.group}`.toLocaleLowerCase().includes(search.trim().toLocaleLowerCase()),
   );
-  const evidenceLearners = evidenceQueue;
   const markingProgrammes = [...new Set(evidenceQueue.map(learner => learner.programme).filter(value => value && value !== EMPTY_VALUE))].sort();
   const searchedMarkingLearners = evidenceQueue.filter(learner =>
     (!markingProgramme || learner.programme === markingProgramme)
@@ -2046,13 +1546,7 @@ function KpiDetailModal({ type, loading, error, onRetry, learners, popupLearners
   );
   const weeklyEventSource = type === 'pr-week' ? 'progress-review' : type === 'mcm-week' ? 'mcr' : type === 'catch-ups-week' ? 'catch-up' : null;
   const weeklyDetails = weeklyEventSource ? sortEvents(weekEvents.filter(event => reviewCategory(event) === weeklyEventSource)) : [];
-  const detailCount = type === 'evidence' || type === 'pending-marking'
-    ? pendingEvidence
-    : type === 'reviews'
-      ? reviews.length
-      : weeklyEventSource
-        ? weeklyDetails.length
-        : isLightweightPopup ? lightweightLearners.length : modalLearners.length;
+  const detailCount = isPendingMarking ? pendingEvidence : weeklyEventSource ? weeklyDetails.length : lightweightLearners.length;
 
   useEffect(() => {
     const previousOverflow = document.body.style.overflow;
@@ -2189,56 +1683,9 @@ function KpiDetailModal({ type, loading, error, onRetry, learners, popupLearners
             </ul>
             {!searchedLearners.length && <EmptyState icon="ri-search-line" title="No learners found" description="Try another search or status filter." />}
           </>}
-          {(type === 'active' || type === 'on-break' || type === 'completed' || type === 'epa') && (
-            <div className="space-y-3.5">
-              {modalLearners.map(learner => {
-                const status = OTJH_STATUS_META[canonicalOtjhStatus(learner)];
-                const otjhProgress = otjhProgressAsOfToday(learner);
-                const otjh = otjhProgress.targetHours !== null && otjhProgress.targetHours > 0
-                  ? `${otjhProgress.actualHours}/${otjhProgress.targetHours}`
-                  : EMPTY_VALUE;
-                return (
-                  <button
-                    key={learner.id}
-                    type="button"
-                    onClick={() => openLearnerProfile(learner)}
-                    className="group grid w-full gap-4 rounded-2xl border border-foreground-200/80 bg-background-50 p-4 text-left shadow-sm transition-colors hover:border-primary-200 focus:outline-none focus:ring-2 focus:ring-primary-300 focus:ring-offset-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:p-5 lg:grid-cols-[minmax(0,1fr)_minmax(320px,0.72fr)_auto] lg:items-center"
-                    title={`Open ${learner.name}'s profile`}
-                    aria-label={`Open ${learner.name}'s profile`}
-                  >
-                    <div className="flex min-w-0 items-center gap-3.5">
-                      <LearnerAvatar name={learner.name} initials={learner.initials} tone={learnerAvatarTone(learner)} size="lg" />
-                      <div className="min-w-0">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <span className="truncate text-sm font-bold text-foreground-900 transition-colors group-hover:text-primary-700 sm:text-[15px]">{learner.name}</span>
-                          {type === 'active' || type === 'on-break' ? (
-                            <StatusBadge tone={isActiveLearner(learner) ? 'positive' : 'caution'} label={displayValue(learner.rawProgramStatus)} size="sm" />
-                          ) : type === 'completed' || type === 'epa' ? (
-                            <StatusBadge tone={type === 'completed' ? 'positive' : 'info'} label={type === 'completed' ? 'Completed' : 'EPA'} size="sm" />
-                          ) : (
-                            <StatusBadge tone={status.tone} label={status.label} size="sm" />
-                          )}
-                        </div>
-                        <p className="mt-1 truncate text-xs text-foreground-500">{learner.programme} <span className="text-foreground-300">·</span> {learner.group}</p>
-                      </div>
-                    </div>
-                    <div className="grid min-w-0 grid-cols-3 gap-2 text-center sm:col-span-2 lg:col-span-1 lg:min-w-[320px]">
-                      <ModalMiniMetric label="OTJH" value={otjh} />
-                      <ModalMiniMetric label="KSB" value={ksbCellValue(learner)} />
-                      <ModalMiniMetric label="Attendance" value={learner.attendanceRateAvailable ? `${learner.attendanceRate}%` : EMPTY_VALUE} tone={percentTone(learner.attendanceRateAvailable ? learner.attendanceRate : null, ATTENDANCE_MINIMUM_RATE, ATTENDANCE_EXPECTED_RATE)} />
-                    </div>
-                    <span className="hidden h-10 w-10 items-center justify-center rounded-lg bg-background-100 text-foreground-400 transition-colors group-hover:bg-primary-50 group-hover:text-primary-700 sm:flex"><AppIcon className="ri-arrow-right-s-line text-xl"></AppIcon></span>
-                  </button>
-                );
-              })}
-              {!modalLearners.length && (
-                <EmptyState icon={current.icon} title="No learners in this status" description="This list will update automatically when learner data changes." />
-              )}
-            </div>
-          )}
 
           {isPendingMarking && <>
-            <p className={markingStyles.resultCount} role="status">Showing {searchedMarkingLearners.length} of {evidenceLearners.length} learners</p>
+            <p className={markingStyles.resultCount} role="status">Showing {searchedMarkingLearners.length} of {evidenceQueue.length} learners</p>
             <ul className={markingStyles.list} aria-label="Learners awaiting marking">
               {searchedMarkingLearners.map(learner => {
                 const caseloadMatch = learners.find(candidate => candidate.id === learner.learnerId);
@@ -2271,50 +1718,9 @@ function KpiDetailModal({ type, loading, error, onRetry, learners, popupLearners
               })}
             </ul>
             {!searchedMarkingLearners.length && <EmptyState icon="ri-file-search-line"
-              title={evidenceLearners.length ? 'No learners found' : 'No evidence awaiting review'}
-              description={evidenceLearners.length ? 'Try another search or programme filter.' : 'Learners will appear here when submitted evidence needs marking.'} />}
+              title={evidenceQueue.length ? 'No learners found' : 'No evidence awaiting review'}
+              description={evidenceQueue.length ? 'Try another search or programme filter.' : 'Learners will appear here when submitted evidence needs marking.'} />}
           </>}
-
-          {type === 'evidence' && (
-            <div className="space-y-3">
-              {evidenceLearners.map(learner => {
-                // The marking queue has no learnerType of its own -- cross-reference the
-                // caseload list already loaded on this page instead of guessing.
-                const caseloadMatch = learners.find(candidate => candidate.id === learner.learnerId);
-                return (
-                <Link
-                  key={learner.id}
-                  to={`/coach/learner-case-file?id=${encodeURIComponent(learner.learnerId)}&tab=evidence`}
-                  state={{
-                    learnerId: learner.learnerId,
-                    learnerName: learner.learner,
-                    tab: 'evidence',
-                    ...(caseloadMatch?.learnerType ? { kind: caseloadMatch.learnerType } : {}),
-                    ...(caseloadMatch?.enrolmentId ? { enrolmentId: caseloadMatch.enrolmentId } : {}),
-                  }}
-                  onClick={onClose}
-                  className="flex items-center gap-3 rounded-2xl border border-foreground-200/70 bg-background-50 px-4 py-3 shadow-sm transition-colors hover:border-secondary-200 hover:bg-secondary-50/30"
-                >
-                  <LearnerAvatar name={learner.learner} initials={learner.initials} tone="brand" />
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate text-[13px] font-semibold text-foreground-900">{learner.learner}</p>
-                    <p className="mt-0.5 truncate text-[12px] text-foreground-400">{learner.programme} · {learner.group}</p>
-
-                  </div>
-                  <div className="text-right">
-                    <p className="text-sm font-bold text-secondary-700">{learner.pendingEvidence} / {learner.totalEvidence}</p>
-                    <p className="text-[12px] text-foreground-400">Pending / Total</p>
-                    {learner.isOverdue && <p className="mt-0.5 text-[12px] font-semibold text-red-600">Overdue</p>}
-                  </div>
-                  <AppIcon className="ri-arrow-right-s-line text-foreground-300"></AppIcon>
-                </Link>
-                );
-              })}
-              {!evidenceLearners.length && (
-                <EmptyState icon="ri-file-search-line" title="No evidence awaiting review" description="Learners will appear here when submitted evidence needs marking." />
-              )}
-            </div>
-          )}
 
           {weeklyEventSource && type !== 'mcm-week' && type !== 'pr-week' && (
             <div className="space-y-2">
@@ -2340,36 +1746,13 @@ function KpiDetailModal({ type, loading, error, onRetry, learners, popupLearners
             </div>
           )}
 
-          {type === 'reviews' && (
-            <div className="space-y-2">
-              {reviews.map(event => {
-                const date = eventDisplayDate(event);
-                return (
-                  <div key={event.eventKey || event.id} className="flex items-center gap-3 rounded-lg border border-foreground-100 p-3">
-                    <span className="flex h-10 w-10 shrink-0 flex-col items-center justify-center rounded-lg bg-primary-50 text-primary-700">
-                      <span className="text-[12px] font-bold uppercase">{formatCalendarMonth(date)}</span>
-                      <span className="text-sm font-bold leading-none">{formatCalendarDayNumber(date)}</span>
-                    </span>
-                    <div className="min-w-0 flex-1">
-                      <p className="truncate text-[13px] font-semibold text-foreground-900">{displayValue(event.learner)}</p>
-                      <p className="mt-0.5 text-[12px] text-foreground-400">{formatTimeLabel(event)} · {eventTypeLabel(event)}</p>
-                    </div>
-                    <AppIcon className="ri-arrow-right-s-line text-foreground-300"></AppIcon>
-                  </div>
-                );
-              })}
-              {!reviews.length && (
-                <EmptyState icon="ri-calendar-check-line" title="No reviews due" description="There are no progress reviews scheduled in the next 14 days." />
-              )}
-            </div>
-          )}
         </div>
 
         <footer className={cn("sticky bottom-0 z-10 flex shrink-0 flex-wrap items-center justify-end gap-2.5 border-t border-foreground-100 bg-background-50 px-5 py-4 sm:px-7", isPendingMarking && markingStyles.footer)}>
           <button type="button" onClick={onClose} className="rounded-xl border border-foreground-200 bg-background-50 px-4 py-2.5 text-xs font-semibold text-foreground-700 shadow-sm transition-colors hover:bg-background-100 focus:outline-none focus:ring-2 focus:ring-primary-300 focus:ring-offset-2">Close</button>
           {filterForType[type] && <button type="button" onClick={() => onFilter(filterForType[type]!)} className="primary-action rounded-xl bg-primary-600 px-4 py-2.5 text-xs font-semibold text-white shadow-sm transition-colors hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-300 focus:ring-offset-2">View in caseload list</button>}
-          {(type === 'evidence' || type === 'pending-marking') && <Link to="/coach/marking-queue" onClick={onClose} className="primary-action rounded-xl bg-primary-600 px-4 py-2.5 text-xs font-semibold text-white shadow-sm transition-colors hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-300 focus:ring-offset-2">Open marking queue</Link>}
-          {type === 'reviews' && <Link to="/coach/progress-reviews" onClick={onClose} className="primary-action rounded-xl bg-primary-600 px-4 py-2.5 text-xs font-semibold text-white shadow-sm transition-colors hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-300 focus:ring-offset-2">Open reviews</Link>}
+          {type === 'pending-marking' && <Link to="/coach/marking-queue" onClick={onClose} className="primary-action rounded-xl bg-primary-600 px-4 py-2.5 text-xs font-semibold text-white shadow-sm transition-colors hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-300 focus:ring-offset-2">Open marking queue</Link>}
+
           {type === 'pr-week' && <Link to="/coach/progress-reviews" onClick={onClose} className="primary-action rounded-xl bg-primary-600 px-4 py-2.5 text-xs font-semibold text-white shadow-sm transition-colors hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-300 focus:ring-offset-2">Open progress reviews</Link>}
           {type === 'mcm-week' && <Link to="/coach/monthly-coaching" onClick={onClose} className="primary-action rounded-xl bg-primary-600 px-4 py-2.5 text-xs font-semibold text-white shadow-sm transition-colors hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-300 focus:ring-offset-2">Open monthly coaching</Link>}
           {type === 'catch-ups-week' && <Link to="/coach/timetable" onClick={onClose} className="primary-action rounded-xl bg-primary-600 px-4 py-2.5 text-xs font-semibold text-white shadow-sm transition-colors hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-300 focus:ring-offset-2">Open timetable</Link>}
@@ -2443,20 +1826,6 @@ export function CompactWeeklyMeetingDetails({
           <EmptyState icon={emptyIcon} title="Nothing scheduled this week" description="There are no matching sessions in the current week." />
         )}
       </div>
-    </div>
-  );
-}
-
-function ModalMiniMetric({ label, value, tone = 'neutral' }: { label: string; value: string; tone?: StatusTone }) {
-  const style = toneStyle(tone);
-  const toneClass = tone === 'neutral'
-    ? 'border-foreground-200/60 bg-background-50 text-foreground-800'
-    : cn(style.border, style.bg, style.text);
-
-  return (
-    <div className={cn('min-w-0 rounded-lg border px-2 py-2.5 sm:px-3', toneClass)}>
-      <p className="truncate text-xs font-bold leading-none sm:text-sm">{value}</p>
-      <p className="mt-1.5 truncate text-[12px] font-semibold uppercase tracking-[0.08em] opacity-70">{label}</p>
     </div>
   );
 }

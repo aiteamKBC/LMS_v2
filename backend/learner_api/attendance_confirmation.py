@@ -33,11 +33,22 @@ def read_confirmations(learner_id):
 
 def apply_confirmations(register, confirmations):
     from .attendance_lectures import _aware, session_key
-    return [{**r, 'attendance_status': 'present', 'minutes_late': 0,
-             'attendance_confirmed': True, 'credited_minutes': saved['seconds'] / 60,
-             'updated_at': _aware(saved['submitted_at'])}
-            if (saved := confirmations.get(f"{session_key(r)}-{r['session_date'].isoformat()}")) else r
-            for r in register]
+    result = []
+    for row in register:
+        saved = confirmations.get(f"{session_key(row)}-{row['session_date'].isoformat()}")
+        if not saved:
+            result.append(row)
+            continue
+        details = saved.get('details') or {}
+        if isinstance(details, str):
+            details = json.loads(details)
+        extra = {'raw_attendance_status': row.get('raw_attendance_status') or row['attendance_status'],
+                 'effective_attendance_status': 'present', 'effective_attendance': 1,
+                 'final_outcome': 'present'} if details.get('staffConfirmed') else {}
+        result.append({**row, **extra, 'attendance_status': 'present', 'minutes_late': 0,
+                       'attendance_confirmed': True, 'credited_minutes': saved['seconds'] / 60,
+                       'updated_at': _aware(saved['submitted_at'])})
+    return result
 
 
 def confirmation_payload(lecture_id, seconds, *, already_recorded=False):

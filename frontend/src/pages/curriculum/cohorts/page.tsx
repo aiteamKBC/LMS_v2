@@ -81,10 +81,10 @@ export default function CurriculumCohortsPage() {
     programmes, cohorts, groups, holidays, loading, loaded, refreshing, error, reload, applyLocal,
   } = useCurriculumEntities({ includeHolidays: true });
 
-  const [search, setSearch] = useState('');
+  const [search, setSearch] = useState(() => searchParams.get('q') || '');
   const [programmeFilter, setProgrammeFilter] = useState(searchParams.get('programme') || '');
-  const [yearFilter, setYearFilter] = useState('');
-  const [sort, setSort] = useState('');
+  const [yearFilter, setYearFilter] = useState(() => searchParams.get('year') || '');
+  const [sort, setSort] = useState(() => searchParams.get('sort') || '');
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [editing, setEditing] = useState<CurriculumCohort | null>(null);
   // The guided run: this same cohort form, then the group and module ones, for a
@@ -101,16 +101,21 @@ export default function CurriculumCohortsPage() {
   useEffect(() => () => window.clearTimeout(highlightTimer.current), []);
 
   // Keep the programme scope and the archive view in the URL so a filtered list
-  // can be linked to — the Programme workspace's Cohorts tab hands off here.
+  // can be linked to — the Programme workspace's Cohorts tab hands off here —
+  // and the search, year and sort with them, so Back from a cohort returns to
+  // the list as it was left. Replaced, so they add no Back steps of their own.
   useEffect(() => {
     const next = new URLSearchParams(searchParams);
-    if (programmeFilter) next.set('programme', programmeFilter);
-    else next.delete('programme');
-    if (showArchived) next.set('view', 'archive');
-    else next.delete('view');
+    ([
+      ['programme', programmeFilter],
+      ['q', search],
+      ['year', yearFilter],
+      ['sort', sort],
+      ['view', showArchived ? 'archive' : ''],
+    ] as const).forEach(([key, value]) => { if (value) next.set(key, value); else next.delete(key); });
     if (next.toString() === searchParams.toString()) return;
     setSearchParams(next, { replace: true });
-  }, [programmeFilter, searchParams, setSearchParams, showArchived]);
+  }, [programmeFilter, search, searchParams, setSearchParams, showArchived, sort, yearFilter]);
 
   // Nothing is read until the archive is actually opened; see useCurriculumArchive.
   const archived = useCurriculumArchive(fetchArchivedCurriculumCohorts, showArchived);

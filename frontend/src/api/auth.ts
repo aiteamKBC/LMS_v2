@@ -266,8 +266,9 @@ export async function apiLogout(): Promise<void> {
  * Throws `AuthError` with code `sso_unconfigured` (503) when the deployment has
  * no Microsoft app registration wired up.
  */
-export async function apiMicrosoftStart(): Promise<string> {
-  const data = await request<{ authorizationUrl: string }>('/microsoft/start/');
+export async function apiMicrosoftStart(download?: 'android'): Promise<string> {
+  const path = download === 'android' ? '/microsoft/start/?download=android' : '/microsoft/start/';
+  const data = await request<{ authorizationUrl: string }>(path);
   return data.authorizationUrl;
 }
 

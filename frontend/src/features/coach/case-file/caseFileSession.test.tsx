@@ -11,6 +11,7 @@ import { useLearnerProfile } from '@/features/coach/learner-profile/hooks/useLea
 import type { CaseFileTabId } from '@/pages/coach/learner-case-file/components/caseFileTabs.config';
 
 const transport = vi.hoisted(() => vi.fn());
+vi.mock('@/hooks/useCoachIdentity', () => ({ useCoachIdentity: () => ({ email: 'coach@example.test' }) }));
 vi.mock('@/lib/coachFetch', () => ({ coachFetch: transport }));
 
 const shell = {
@@ -30,21 +31,21 @@ describe('Case File session request lifecycle', () => {
     clearAllCachedResources();
     transport.mockReset();
     transport.mockImplementation(async (url: string) => {
-      const body = url.endsWith('/profile') ? shell : url.endsWith('/overview') ? { wholeProgrammeProgress: summary.metrics, programmeProgress: [] }
+      const body = url.includes('/weekly-learning') ? { modules: [], weeks: [], selectedWeek: null } : url.endsWith('/profile') ? shell : url.endsWith('/overview') ? { wholeProgrammeProgress: summary.metrics, programmeProgress: [] }
         : url.includes('/attendance') ? { summary: { sessions: 2, present: 1, absent: 1, attendanceRate: 50, outstandingAbsences: 1 }, sessions: [{ id: 'session-1', date: '2026-09-01', title: 'Synthetic session', status: 'absent', reason: null }], months: ['2026-09'], pagination: { page: 1, pageSize: 20, total: 1, hasMore: false } }
         : {};
       return new Response(JSON.stringify(body), { status: 200 });
     });
   });
 
-  it('deduplicates concurrent reads and keeps settled data beyond the old TTL', async () => {
+  it('deduplicates concurrent review reads and expires them after 60 seconds', async () => {
     const before = Date.now();
     const reads = await Promise.all([caseFileRead('coach-a', '101', 'reviews'), caseFileRead('coach-a', '101', 'reviews')]);
     expect(reads[0]).toBe(reads[1]);
     vi.spyOn(Date, 'now').mockReturnValue(before + 90_000);
     try { await caseFileRead('coach-a', '101', 'reviews'); }
     finally { vi.restoreAllMocks(); }
-    expect(transport).toHaveBeenCalledTimes(1);
+    expect(transport).toHaveBeenCalledTimes(2);
   });
 
   it('separates coach, learner and selected-month cache keys', async () => {

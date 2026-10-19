@@ -65,6 +65,18 @@ ROLE_LEARNER = "learner"
 ROLE_CHOICES = (ROLE_ADMIN, ROLE_STAFF, ROLE_EMPLOYER, ROLE_LEARNER)
 
 
+class AdvancedAdminLearnerScope(models.Model):
+    """Aptem IDs explicitly approved for the Advanced Admin workspace."""
+
+    aptem_id = models.TextField(primary_key=True)
+    programme_code = models.CharField(max_length=3)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        managed = False
+        db_table = 'login"."Advanced_admin_learner_scope'
+
+
 class LoginAccount(models.Model):
     """One sign-in identity — login."Login_accounts".
 

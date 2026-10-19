@@ -27,13 +27,16 @@ export async function caseFileSectionRead<T>(scope: string, learnerId: string, s
   }
   const { resource, ...selection } = params;
   const query: Record<string, string> = {};
+  if (section === 'overview' && selection.moduleId) query.moduleId = selection.moduleId;
   if (section === 'attendance') {
     for (const [key, value] of Object.entries(selection)) {
       if (value && !(['status', 'month'].includes(key) && value === 'all')
         && !(key === 'page' && value === '1') && !(key === 'pageSize' && value === '20')) query[key] = value;
     }
   }
-  if (section === 'weekly-learning' && selection.week) query.week = selection.week;
+  if (section === 'weekly-learning') {
+    if (selection.week) query.week = selection.week;
+  }
   if (section === 'monthly-focus') {
     const requested = new URLSearchParams(window.location.search).get('month');
     query.month = selection.month || (requested && /^\d{4}-(0[1-9]|1[0-2])$/.test(requested) ? requested

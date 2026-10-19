@@ -151,6 +151,21 @@ class AttendanceConfirmationTests(SimpleTestCase):
         self.assertEqual(len(rows), 1)
         self.assertEqual((rows[0]['source_ref'], rows[0]['actual_hours']), ('attendance:occ-1', 2))
 
+    def test_staff_confirmation_preserves_raw_report_and_projects_only_its_exact_occurrence(self):
+        from .tests_attendance_lectures import register_row
+        record = register_row(source='microsoft-teams', session_id='occ-1', module_catalogue_id='m',
+                              session_date=date(2026, 9, 14), effective_attendance_status='absent', effective_attendance=0)
+        saved = {self.lecture['id']: {'seconds': 9000, 'submitted_at': timezone.now(), 'details': {'staffConfirmed': True}}}
+        rows = confirmation.apply_confirmations([record, {**record, 'session_id': 'occ-2'}], saved)
+        self.assertEqual(record['attendance_status'], 'absent')
+        self.assertEqual(rows[0]['raw_attendance_status'], 'absent')
+        self.assertEqual(rows[0]['effective_attendance_status'], 'present')
+        self.assertEqual(rows[0]['credited_minutes'], 150)
+        self.assertEqual(rows[1]['attendance_status'], 'absent')
+        lecture = build_lectures(rows, {}, [], [], 'apprenticeship', 12)[0]
+        self.assertEqual((lecture['rawStatus'], lecture['effectiveStatus'], lecture['creditedMinutes']), ('absent', 'present', 150))
+        self.assertEqual(lecture['status'], 'present')
+
     def test_cancelled_occurrence_stays_excluded_even_with_confirmation(self):
         from .tests_attendance_lectures import register_row
         enrolment_id, learner_profile_id = self.source.id, 901

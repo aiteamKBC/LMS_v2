@@ -1,28 +1,35 @@
 import { useState, useEffect } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
-import { AuthError, PasswordSetupRequired, apiAuthHealth, apiMicrosoftStart } from '@/api/auth';
+import { AuthError, PasswordSetupRequired, apiMicrosoftStart, type AuthUser } from '@/api/auth';
 import { AppIcon } from '@/components/feature/AppIcon';
 // Shared with RequireAuth, so the page you are sent to after signing in and
 // the page you are sent back to when refused are decided by one definition.
 import { postLoginRouteFor } from '@/lib/routeAccess';
 import styles from './page.module.css';
+import AndroidInstaller from './AndroidInstaller';
 
 const BOOK_IMAGE_URL = '/login-open-book.png';
 const SIDEBAR_LOGO_URL = 'https://jokdxsdbxorzciulkdyl.supabase.co/storage/v1/object/public/images/16480272afc94729b2911a62d1bbf85d.webp';
+
+// UI visibility only. The download endpoint checks the current server account
+// and the coach's live staff grants before serving any bytes.
+function canDownloadAndroid(account: AuthUser | null) {
+  return !!account && (account.role === 'learner' || account.role === 'admin'
+    || (account.role === 'staff' && account.subjectType === 'staff'
+      && (account.access === 'coach' || account.accesses?.includes('coach'))));
+}
 
 export default function LoginPage() {
   const { login, auth, isInitialized } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
+  const androidDownload = new URLSearchParams(location.search).get('download') === 'android';
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [rememberMe, setRememberMe] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [ssoLoading, setSsoLoading] = useState(false);
-  // Undefined until the health check answers, so the button is not flashed in
-  // and then taken away on a deployment that has no provider configured.
-  const [ssoAvailable, setSsoAvailable] = useState<boolean | undefined>(undefined);
 
   // A refused Microsoft sign-in comes back with ?sso_error=... . Lift it into
   // the form's error box, then strip it so a refresh cannot resurrect it.
@@ -36,15 +43,6 @@ export default function LoginPage() {
     navigate({ pathname: location.pathname, search: rest ? `?${rest}` : '' }, { replace: true });
   }, [location.search, location.pathname, navigate]);
 
-  // Only show Microsoft sign-in when the backend confirms it is configured.
-  useEffect(() => {
-    let cancelled = false;
-    apiAuthHealth()
-      .then((health) => { if (!cancelled) setSsoAvailable(!!health.microsoftSso?.configured); })
-      .catch(() => { if (!cancelled) setSsoAvailable(false); });
-    return () => { cancelled = true; };
-  }, []);
-
   // Bounce an already-signed-in visitor to their console after the server
   // session has been resolved.
   //
@@ -55,8 +53,9 @@ export default function LoginPage() {
   // and round again.
   useEffect(() => {
     if (!isInitialized || !auth.account) return;
+    if (androidDownload && canDownloadAndroid(auth.account)) return;
     navigate(postLoginRouteFor(auth.account), { replace: true });
-  }, [isInitialized, auth.account, navigate]);
+  }, [isInitialized, auth.account, androidDownload, navigate]);
 
   const handleLogin = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -79,10 +78,15 @@ export default function LoginPage() {
     setIsLoading(true);
     try {
       const account = await login(email, password, rememberMe);
+      if (androidDownload && canDownloadAndroid(account)) {
+        setIsLoading(false);
+        return;
+      }
       navigate(postLoginRouteFor(account), { replace: true });
     } catch (err) {
       if (err instanceof PasswordSetupRequired) {
-        navigate(err.setPasswordPath, { replace: true, state: { firstSignIn: true } });
+        const path = androidDownload ? `${err.setPasswordPath}&download=android` : err.setPasswordPath;
+        navigate(path, { replace: true, state: { firstSignIn: true } });
         return;
       }
       setError(
@@ -100,7 +104,7 @@ export default function LoginPage() {
     try {
       // This is a full navigation so Microsoft can return to the callback that
       // creates the server session cookie.
-      window.location.href = await apiMicrosoftStart();
+      window.location.href = await (androidDownload ? apiMicrosoftStart('android') : apiMicrosoftStart());
     } catch (err) {
       setError(
         err instanceof AuthError
@@ -110,6 +114,24 @@ export default function LoginPage() {
       setSsoLoading(false);
     }
   };
+
+  if (androidDownload && isInitialized && canDownloadAndroid(auth.account)) {
+    return (
+      <main className={styles.downloadPage}>
+        <section className={styles.downloadCard} aria-labelledby="download-heading">
+          <img src={SIDEBAR_LOGO_URL} alt="Kent Business College" width="88" />
+          <h1 id="download-heading">Get KBC Learn for Android</h1>
+          <p>You are signed in. Download the test app, open the downloaded file and follow your phone’s installation steps.</p>
+          <AndroidInstaller />
+          <p>After installation, sign in to the app with your usual LMS account.</p>
+          {auth.account?.role === 'admin' && <p>Administrator download access does not add a learner or coach role. Use an existing learner or coach account to test those app screens.</p>}
+          <button className={styles.microsoftButton} onClick={() => navigate(postLoginRouteFor(auth.account!), { replace: true })}>
+            Go to my workspace
+          </button>
+        </section>
+      </main>
+    );
+  }
 
   return (
     <main className={styles.page}>
@@ -139,7 +161,7 @@ export default function LoginPage() {
 
             <header className={styles.intro}>
               <h1 id="login-heading">Welcome back</h1>
-              <p>Sign in to your workspace</p>
+              <p>{androidDownload ? 'Sign in to download KBC Learn for Android' : 'Sign in to your workspace'}</p>
             </header>
 
             <form onSubmit={handleLogin} className={styles.form} noValidate={false}>
@@ -240,7 +262,9 @@ export default function LoginPage() {
               </button>
             </form>
 
-              {ssoAvailable && (
+              {/* Always offered. On a deployment without a Microsoft app
+                  registration, the click reports "not configured" in the
+                  error box above rather than the button silently vanishing. */}
                 <div className={styles.ssoBlock}>
                 <div className={styles.divider} aria-hidden="true">
                   <span />
@@ -276,7 +300,6 @@ export default function LoginPage() {
                   Use your work account. You must already have access to this platform.
                 </p>
                 </div>
-              )}
 
             <footer className={styles.secureFooter}>
               <span>

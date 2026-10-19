@@ -104,6 +104,8 @@ class BulkEndpointTests(SimpleTestCase):
             mock = patch(target, return_value=value).start()
             if target.endswith('delivery_occurrences'):
                 self.occurrences = mock
+            elif target.endswith('context_profiles'):
+                self.profiles = value
         patch('coach_api.bulk_attendance.transaction.atomic', side_effect=lambda **kwargs: nullcontext()).start()
         self.writer = patch('coach_api.bulk_attendance.write_records', return_value=[]).start()
         self.addCleanup(patch.stopall)
@@ -115,7 +117,7 @@ class BulkEndpointTests(SimpleTestCase):
 
     def test_context_and_lock_are_required(self):
         self.assertEqual(self.call(self.request()).status_code, 200)
-        self.occurrences.assert_called_once_with('p', 'g', 'occ', lock=True)
+        self.occurrences.assert_called_once_with('p', 'g', 'occ', lock=True, profiles=list(self.profiles.values()))
 
     def test_view_as_cannot_write(self):
         with patch('coach_api.views.is_coach_view_as', return_value=True):
@@ -179,7 +181,8 @@ class BulkPersistenceTests(TestCase):
         def contract(source, learner_profile_id):
             adjustment = bulk.CoachAttendanceSourceAdjustment.objects.get(
                 learner_id=learner_profile_id, source_id='morning')
-            return {'history': [{'learnerId': str(learner_profile_id), 'source': 'microsoft-teams',
+            return {'recentAttendance': [{'sessionDate': '2026-09-01', 'status': adjustment.status}],
+                    'history': [{'learnerId': str(learner_profile_id), 'source': 'microsoft-teams',
                                  'sourceId': 'morning', 'sessionId': 'teams:morning',
                                  'sessionDate': '2026-09-01', 'status': adjustment.status, 'counted': True}]}
 
@@ -203,6 +206,7 @@ class BulkPersistenceTests(TestCase):
                     self.assertEqual(result['sessionOccurrenceId'], 'morning')
                     self.assertEqual(result['status'], status)
                     self.assertEqual(result['attendanceRecord']['status'], status)
+                    self.assertEqual(result['recent'], [{'date': '2026-09-01', 'status': status}])
                     self.assertEqual(result['attendanceRecord']['sessionId'], 'teams:morning')
                     self.assertEqual(result['version'], bulk.current_row(self.profiles['42'], 'morning')[2])
                     self.assertEqual(bulk.CoachAttendanceSourceAdjustment.objects.count(), 1)
@@ -265,6 +269,7 @@ class BulkPersistedOccurrenceReadTests(TestCase):
             cursor.execute('DETACH DATABASE curriculum')
 
     def setUp(self):
+        self.assigned_modules = patch.object(bulk, 'assigned_module_ids', return_value=[]).start()
         start = datetime(2026, 9, 1, 10, tzinfo=timezone.utc)
         for group in ('group-a', 'group-b'):
             module = bulk.ModuleAuthoringModule.objects.using('enrolment').create(
@@ -292,6 +297,61 @@ class BulkPersistedOccurrenceReadTests(TestCase):
             params['sessionOccurrenceId'] = occurrence
         request = RequestFactory().get('/coach_api/coach/attendance/bulk', params)
         return unwrap(bulk.coach_bulk_attendance)(request)
+
+    def test_dedicated_sessions_resolves_selected_aptem_group_via_assigned_module_ids(self):
+        from . import attendance_loading as loading
+        programme = 'PROG-MM-L6'
+        imported_group = 'APTEM-GROUP-8172be55ba04030ef4719b1f6d15ab94'
+        bulk.ModuleAuthoringModule.objects.using('enrolment').update(programme_id=programme)
+        # Both delivery groups have the same title; only the selected learners'
+        # saved module ID is a relationship to this imported attendance group.
+        self.assigned_modules.return_value = ['module-group-a']
+        context = (self.profiles, [{'id': key} for key in self.profiles],
+                   {'id': programme, 'name': 'Synthetic programme'},
+                   {'id': imported_group, 'name': 'Synthetic group', 'cohort': 'Synthetic cohort'})
+        request = RequestFactory().get('/coach_api/coach/attendance/sessions',
+                                      {'programmeId': programme, 'groupId': imported_group})
+        with patch.object(loading, 'selected_context', return_value=context):
+            # Three bulk delivery queries, independent of learner count. The
+            # saved-plan query is tested separately with its own transport mock.
+            with self.assertNumQueries(3, using='enrolment'):
+                response = unwrap(loading.coach_attendance_sessions)(request)
+        self.assertEqual(response.status_code, 200)
+        sessions = json.loads(response.content)['sessions']
+        self.assertEqual([row['id'] for row in sessions], ['occurrence-group-a'])
+        self.assertEqual(set(sessions[0]), {'id', 'date', 'title', 'time', 'status'})
+        self.assertEqual(sessions[0]['status'], 'completed')
+        self.assigned_modules.assert_called_once_with(list(self.profiles.values()))
+        # The same mapping validates the chosen occurrence in the old write/read
+        # transport, so the dropdown does not list an unselectable session.
+        detail = RequestFactory().get('/coach_api/coach/attendance/bulk', {
+            'programmeId': programme, 'groupId': imported_group,
+            'sessionOccurrenceId': sessions[0]['id']})
+        self.assertEqual(unwrap(bulk.coach_bulk_attendance)(detail).status_code, 200)
+
+    def test_assigned_module_in_another_programme_is_excluded(self):
+        self.assigned_modules.return_value = ['module-group-b']
+        bulk.ModuleAuthoringModule.objects.using('enrolment').filter(
+            pk='module-group-b').update(programme_id='another-programme')
+        rows = bulk.delivery_occurrences('programme', 'imported-group', profiles=list(self.profiles.values()))
+        self.assertEqual(rows, [])
+
+    def test_same_title_without_saved_assignment_does_not_match_imported_group(self):
+        self.assertEqual(bulk.delivery_occurrences('programme', 'imported-group',
+            profiles=list(self.profiles.values())), [])
+
+    def test_mapped_occurrence_uses_existing_post_gate_and_rejects_other_group(self):
+        self.assigned_modules.return_value = ['module-group-a']
+        with patch('coach_api.views.is_coach_view_as', return_value=False), \
+                patch.object(bulk, 'write_records', return_value=[]) as writer:
+            for occurrence, status in [('occurrence-group-a', 200), ('occurrence-group-b', 409)]:
+                request = RequestFactory().post('/coach_api/coach/attendance/bulk', json.dumps({
+                    'programmeId': 'programme', 'groupId': 'imported-group',
+                    'sessionOccurrenceId': occurrence,
+                    'records': [{'learnerId': '42', 'status': 'present', 'version': 'version'}],
+                }), content_type='application/json')
+                self.assertEqual(unwrap(bulk.coach_bulk_attendance)(request).status_code, status)
+            writer.assert_called_once()
 
     def test_listed_persisted_id_round_trips_to_detail_with_eligible_statuses(self):
         listing = self.get()

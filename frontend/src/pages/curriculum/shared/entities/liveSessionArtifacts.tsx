@@ -450,22 +450,25 @@ export function LiveSessionArtifactsPanel({
   session,
   occurrenceId,
   sessionNumber,
+  moduleId,
 }: {
   session: LiveSessionArtifactTarget;
   /** Saved identity takes precedence over the component's editable schedule. */
   occurrenceId?: string;
   sessionNumber?: number;
+  moduleId?: string;
 }) {
   if (!session.liveSessionId) return null;
   if (typeof sessionNumber === 'number' && Number.isInteger(sessionNumber) && sessionNumber > 0) {
-    return <SessionResults key={`${session.liveSessionId}:${sessionNumber}`} seriesId={session.liveSessionId} sessionNumber={sessionNumber} />;
+    return <SessionResults key={`${session.liveSessionId}:${sessionNumber}`} seriesId={session.liveSessionId} sessionNumber={sessionNumber} moduleId={moduleId} />;
   }
-  return <OccurrenceSessionResults key={`${session.liveSessionId}:${occurrenceId || session.dateIso}`} session={session} occurrenceId={occurrenceId} />;
+  return <OccurrenceSessionResults key={`${session.liveSessionId}:${occurrenceId || session.dateIso}`} session={session} occurrenceId={occurrenceId} moduleId={moduleId} />;
 }
 
-function OccurrenceSessionResults({ session, occurrenceId }: {
+function OccurrenceSessionResults({ session, occurrenceId, moduleId }: {
   session: LiveSessionArtifactTarget;
   occurrenceId?: string;
+  moduleId?: string;
 }) {
   const [state, setState] = useState<ArtifactState>({ status: 'loading' });
   const [revision, setRevision] = useState(0);
@@ -492,7 +495,7 @@ function OccurrenceSessionResults({ session, occurrenceId }: {
 
   const sessionNumber = state.status === 'ready' ? state.occurrence?.session_number : undefined;
   if (typeof sessionNumber === 'number' && Number.isInteger(sessionNumber) && sessionNumber > 0) {
-    return <SessionResults seriesId={session.liveSessionId} sessionNumber={sessionNumber} />;
+    return <SessionResults seriesId={session.liveSessionId} sessionNumber={sessionNumber} moduleId={moduleId} />;
   }
 
   return (
@@ -540,7 +543,7 @@ export function ModuleLiveSessionResults({ moduleId, date, unmatched }: {
   const matches = state.status === 'ready' ? matchModuleSessionsByDate(state.data, date) : [];
   if (matches.length === 1) {
     const [match] = matches;
-    return <SessionResults key={`${match.seriesId}:${match.sessionNumber}`} seriesId={match.seriesId} sessionNumber={match.sessionNumber} />;
+    return <SessionResults key={`${match.seriesId}:${match.sessionNumber}`} seriesId={match.seriesId} sessionNumber={match.sessionNumber} moduleId={moduleId} />;
   }
 
   return (

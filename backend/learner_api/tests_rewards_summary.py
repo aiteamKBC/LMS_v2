@@ -15,12 +15,14 @@ class RewardsSummaryTests(SimpleTestCase):
         with patch.dict('learner_api.rewards_summary.SOURCE_MODELS', {'commercial': model}), \
              patch('learner_api.rewards_summary.points_summary', return_value={'learnerId': '125', 'earned': 400, 'committed': 150, 'balance': 250}) as summary, \
              patch('learner_api.rewards_summary.Reward') as rewards:
-            rewards.objects.filter.return_value.order_by.return_value.__getitem__.return_value = [reward]
+            query = rewards.objects.filter.return_value
+            query.only.return_value.order_by.return_value.__getitem__.return_value = [reward]
             response = learner_rewards_summary.__wrapped__.__wrapped__(RequestFactory().get('/?learnerId=999'), 'commercial', 125)
         model.all_learners.filter.assert_called_once_with(pk=125)
         summary.assert_called_once_with('125')
         self.assertTrue(rewards.objects.filter.call_args.kwargs['active'])
         self.assertIn('stock__gt', rewards.objects.filter.call_args.kwargs)
+        query.only.assert_called_once_with('id', 'name', 'description', 'points', 'category', 'stock', 'total_claimed')
         self.assertEqual(json.loads(response.content)['rewards'][0]['remaining'], 3)
         self.assertEqual(response['Cache-Control'], 'private, no-store')
 

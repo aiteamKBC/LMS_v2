@@ -743,7 +743,7 @@ class LearnerProfile(models.Model):
         prefetched = getattr(self, "_prefetched_objects_cache", {})
         entries = prefetched.get("progress_entries")
         if entries is None:
-            entries = self.progress_entries.prefetch_related(
+            entries = self.progress_entries.filter(deleted_at__isnull=True).prefetch_related(
                 "ksb_links",
                 "quiz_answers__chosen_answers",
                 "quiz_answers__correct_answers",
@@ -759,7 +759,7 @@ class LearnerProfile(models.Model):
                 "quiz_answers__correct_answers",
             )
         for entry in entries:
-            if entry.kind == "activity_event":
+            if entry.kind == "activity_event" or entry.deleted_at is not None:
                 continue
             record = {
                 "kind": entry.kind,
@@ -834,6 +834,8 @@ class LearnerProfile(models.Model):
                 record["questions"] = [
                     {
                         "questionId": answer.question_ref,
+                        **(answer.result_snapshot or {}),
+                        **({"imageUrl": answer.question_image_url} if answer.question_image_url is not None else {}),
                         # Built from the prefetched rows rather than .exists(),
                         # which would issue its own query per answer and undo
                         # the prefetch above.
@@ -1102,6 +1104,9 @@ class LearnerProgressEntry(models.Model):
     component_link_status = models.TextField(blank=True, default='')
     legacy_component_ref = models.TextField(null=True, blank=True)
     component_link_source = models.TextField(blank=True, default='')
+    # Soft-deleted progress remains as historical evidence but is excluded from
+    # active learner progress, hours and KSB projections.
+    deleted_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         managed = False
@@ -1132,6 +1137,10 @@ class LearnerQuizAnswer(models.Model):
     progress = models.ForeignKey(LearnerProgressEntry, on_delete=models.CASCADE, related_name="quiz_answers")
     position = models.PositiveIntegerField()
     question_ref = models.BigIntegerField()
+    # NULL means a legacy attempt without a snapshot; '' means no image was shown.
+    question_image_url = models.TextField(null=True, blank=True)
+    # New attempts retain the reviewed text/key even if the quiz changes later.
+    result_snapshot = models.JSONField(null=True, blank=True)
     chosen_answer_ref = models.BigIntegerField(null=True, blank=True)
     is_correct = models.BooleanField(null=True, blank=True)
     earned = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
@@ -1350,11 +1359,15 @@ class EnrolmentReview(models.Model):
     """
 
     STATUS_BOOKED = "booked"
+    # Issued by the enrolment team from the learner's board: a review with no
+    # calendar booking behind it (see review_form.issue_onboarding_review).
+    STATUS_ISSUED = "issued"
     STATUS_CANCELLED = "cancelled"
     STATUS_COMPLETED = "completed"
 
     STATUS_CHOICES = [
         (STATUS_BOOKED, "Booked"),
+        (STATUS_ISSUED, "Issued"),
         (STATUS_CANCELLED, "Cancelled"),
         (STATUS_COMPLETED, "Completed"),
     ]

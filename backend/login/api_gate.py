@@ -52,7 +52,7 @@ import time
 import os
 
 from django.db import DatabaseError
-from django.http import JsonResponse
+from django.http import JsonResponse, HttpResponseRedirect
 
 from .sessions import (
     authenticate_request,
@@ -211,7 +211,34 @@ def rule_for(path):
     # Exact path only: the learner's attendance APIs still require a session.
     if path == '/learner_api/attendance-mode/review/':
         return None
+    # A post-event attendee arrives from an emailed, high-entropy bearer link.
+    # The view validates only a hash and exposes forms for that token's event;
+    # keeping this narrow prefix public lets guests respond without opening any
+    # other Engagement endpoint.
+    if path.startswith('/engagement_api/feedback/public-event/'):
+        return None
+    if path.startswith('/engagement_api/feedback/public-session/'):
+        return None
+    if path.startswith('/engagement_api/feedback/public-rsvp/'):
+        return None
+    if path.startswith('/engagement_api/event-check-in/'):
+        return None
     if path.startswith(('/learner_api/certificates/verify/', '/learner_api/personal-learning/verify/')):
+        return None
+    # The public apprenticeship application (/apprenticeship_application) is
+    # filled in by people with no account yet. Exact path only: the view accepts
+    # a POST that inserts one new row and returns nothing that is stored.
+    # The same page reads the questions it asks (the published layout, which
+    # holds no answers and no names) and checks postcodes as they are typed.
+    if path in (
+        '/enrolment_api/public/apprenticeship-application/',
+        '/enrolment_api/public/eligibility-form-layout/',
+        '/enrolment_api/public/postcode-lookup/',
+    ):
+        return None
+    # Fetched by Microsoft's Office Online servers, which carry no session. The
+    # view authenticates on a signed, 15-minute token naming one upload.
+    if path.startswith('/curriculum_api/office-preview/'):
         return None
     from old_otjh.gate import is_transition_path
     if is_transition_path(path):
@@ -284,6 +311,19 @@ def refusal_for(path, account, *, django_user_is_authenticated=False, method='GE
     """
     if account is not None and getattr(account, '_staff_access_unavailable', False):
         return _unavailable()
+    if account is not None and getattr(account, '_staff_access', None) == 'advanced-admin':
+        # This grant has a learner allowlist of its own. The coarse ``staff``
+        # role would otherwise admit it to older staff prefixes whose views
+        # predate access grants. Keep the exception independent of the regular
+        # role gate so batch requests and ungated prefixes cannot bypass it.
+        account_paths = {
+            '/login_api/me/', '/login_api/logout/', '/login_api/change-password/',
+            '/login_api/forgot-password/', '/login_api/reset/',
+            '/login_api/reset-password/', '/login_api/login/',
+            '/login_api/health/',
+        }
+        if not path.startswith('/login_api/advanced-admin/') and path not in account_paths:
+            return _forbidden(['advanced-admin'])
     if account is not None and getattr(account, '_staff_access', None) == 'record-monitor':
         from old_otjh.gate import is_transition_path
         # Applies to batch children too. Record endpoints enforce read-only
@@ -340,6 +380,17 @@ class ApiSessionGateMiddleware:
                 method=request.method,
             )
             if refusal is not None:
+                # Only the human-facing APK link gets a sign-in journey. API
+                # clients retain their 401 contract; no protected view is run.
+                if (refusal.status_code == 401
+                        and request.method == "GET"
+                        and request.path_info == "/learner_api/mobile/download/android/"
+                        and "text/html" in request.headers.get("Accept", "")
+                        and request.headers.get("X-Requested-With") != "XMLHttpRequest"):
+                    response = HttpResponseRedirect("/login?download=android")
+                    response["Cache-Control"] = "private, no-store"
+                    response["Vary"] = "Accept, Cookie, X-Requested-With"
+                    return response
                 return refusal
 
         return self.get_response(request)

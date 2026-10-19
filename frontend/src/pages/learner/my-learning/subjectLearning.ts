@@ -8,15 +8,16 @@ import { learnerHeaderPlan } from '@/pages/workspace/learner/learnerHeaderPlan';
 import { dateKey, weekKey } from '@/pages/learner/training-plan-timeline/model';
 import { hasComponentContent } from '@/utils/learnerJourney';
 
-export type LearningWeek = { id: string; label: string; title: string; start: string | null; end: string | null; activities: SubjectEntry[];
+export type LearningWeek = { id: string; label: string; title: string; start: string | null; end: string | null; month?: string; activities: SubjectEntry[];
   /** The authored curriculum week (curriculum.weeks.id) this card stands for, when it has one. */
   weekId?: string };
 export const learningToday = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Europe/London' });
 export const learningDate = (date: string) => new Date(`${date.slice(0, 10)}T12:00:00Z`).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' });
-export const subjectPercent = (subject: Subject) => subject.activities.length ? Math.round(subject.activities.filter(a => a.completed).length / subject.activities.length * 10000) / 100 : 0;
+export const subjectPercent = (subject: Subject) => subject.card ? subject.card.progress : subject.activities.length ? Math.round(subject.activities.filter(a => a.completed).length / subject.activities.length * 10000) / 100 : 0;
 
 /** Enrolment remains visible before any learning has started. */
 export function subjectLearningStatus(subject: Subject): 'Completed' | 'In progress' | 'Upcoming' {
+  if (subject.card) return subject.card.status;
   if (subject.activities.length && subject.activities.every(activity => activity.completed)) return 'Completed';
   const started = subject.activities.some(activity => {
     const legacy = activity.legacy;
@@ -29,10 +30,10 @@ export function subjectLearningStatus(subject: Subject): 'Completed' | 'In progr
 }
 
 export function certificateEligible(subject: Subject, template: CertificateTemplateSummary | null) {
-  const total = subject.activities.length;
-  const completed = subject.activities.filter(activity => activity.completed).length;
+  const total = subject.card?.activityCount ?? subject.activities.length;
+  const completed = subject.card?.completedActivityCount ?? subject.activities.filter(activity => activity.completed).length;
   const percent = total ? Math.round(completed / total * 10000) / 100 : 0;
-  const finalTestPassed = subject.activities.some(activity => {
+  const finalTestPassed = subject.card?.finalTestPassed ?? subject.activities.some(activity => {
     const component = activity.native;
     return component?.isQuiz
       && (component.title || '').toLowerCase().includes('final')
@@ -79,10 +80,13 @@ export function subjectWeeks(subject: Subject): LearningWeek[] {
     const special = source === 'introduction' ? 'introduction' : source === 'extra_activity' ? 'extra' : '';
     const { start, end } = activityWeekRange(entry);
     const label = entry.week || entry.legacy?.section_title || '';
+    const month = /^\d{4}-(0[1-9]|1[0-2])$/.test(entry.schedule.month || '') ? entry.schedule.month! : undefined;
     const key = special === 'introduction' ? special : special === 'extra' ? `extra:${label}`
-      : start || entry.native?.weekId || label || 'undated';
-    const group = groups.get(key) || { id: key, label: special === 'introduction' ? 'Introduction' : special === 'extra' ? 'Extra activities' : '',
-      title: label, start: special ? null : start, end: special ? null : end, activities: [] };
+      : start || entry.native?.weekId || (month ? `${month}:${label || 'activities'}` : label || 'undated');
+    const monthLabel = !special && !start && month
+      ? new Date(`${month}-01T12:00:00Z`).toLocaleDateString('en-GB', { month: 'long', year: 'numeric', timeZone: 'UTC' }) : '';
+    const group = groups.get(key) || { id: key, label: special === 'introduction' ? 'Introduction' : special === 'extra' ? 'Extra activities' : monthLabel,
+      title: label, start: special ? null : start, end: special ? null : end, month: special ? undefined : month, activities: [] };
     group.activities.push(entry);
     // A calendar week can hold activities from more than one authored week; the
     // first one named owns the card, matching the title it already carries.
@@ -90,9 +94,9 @@ export function subjectWeeks(subject: Subject): LearningWeek[] {
     if (!special && end && (!group.end || end > group.end)) group.end = end;
     groups.set(key, group);
   }
-  const rank = (week: LearningWeek) => week.id === 'introduction' ? -1 : week.id.startsWith('extra:') ? 2 : week.start ? 0 : 1;
+  const rank = (week: LearningWeek) => week.id === 'introduction' ? -1 : week.id.startsWith('extra:') ? 2 : week.start || week.month ? 0 : 1;
   let number = 0;
-  return [...groups.values()].sort((a, b) => rank(a) - rank(b) || (a.start || a.id).localeCompare(b.start || b.id, undefined, { numeric: true })).map(week => {
+  return [...groups.values()].sort((a, b) => rank(a) - rank(b) || (a.start || a.month || a.id).localeCompare(b.start || b.month || b.id, undefined, { numeric: true }) || a.id.localeCompare(b.id, undefined, { numeric: true })).map(week => {
     const activities = [...week.activities].sort((a, b) => (a.schedule.date || '').localeCompare(b.schedule.date || '') || a.position - b.position);
     const label = week.label || (week.id === 'undated' ? 'Undated activities' : (number++, /^week\s*\d+/i.exec(week.title)?.[0] || `Week ${number}`));
     const title = week.title && !/^week\s*\d+\s*$/i.test(week.title) ? week.title
@@ -126,9 +130,14 @@ export function resolveLearningSubject(subjects: Subject[], requested?: string |
   if (!requested) return undefined;
   const exact = subjects.find(s => s.id === requested);
   if (exact) return exact;
+  const unified = subjects.filter(s => s.replacementCourseRef === requested);
+  if (unified.length === 1) return unified[0];
   const moduleId = requested.replace(/^current:/, '');
+  const importedCourse = metadata?.imported_courses?.[`current:${moduleId}`];
+  const original = importedCourse && subjects.find(s => s.id === importedCourse && s.source === 'legacy');
+  if (original) return original;
   const links = { ...metadata?.builder_subjects, ...schedule?.moduleLinks };
-  const matches = subjects.filter(s => links[s.id]?.id === moduleId || s.activities.some(a => a.native?.moduleId === moduleId)
+  const matches = subjects.filter(s => links[s.id]?.id === moduleId || s.moduleId === moduleId || s.activities.some(a => a.native?.moduleId === moduleId)
     || s.activities.some(a => a.legacy && Object.values(metadata?.activity_sources || {}).some(source => source.module_id === moduleId && source.group_id === a.legacy!.group_id)));
   if (matches.length === 1) return matches[0];
   const title = metadata?.current_subjects?.find(s => s.id === moduleId)?.title || schedule?.modules?.find(m => m.id === moduleId)?.title;
@@ -144,9 +153,13 @@ type LearningPlanSelection = {
 /** Only the assigned training-plan teaching period can make a module current.
  * Keep the header's placement rules and its next/previous choices, but preserve
  * that distinction instead of labelling every fallback as current. */
-export function learningPlanSelection(subjects: Subject[], real: LearnerDetail | null, metadata?: CoverMetadata | null, schedule?: LearningSchedule | null, today = learningToday()): LearningPlanSelection {
+export function learningPlanSelection(subjects: Subject[], real: Pick<LearnerDetail, 'programme' | 'cohort' | 'group'> | null, metadata?: CoverMetadata | null, schedule?: LearningSchedule | null, today = learningToday()): LearningPlanSelection {
   if (!schedule) return { status: 'unavailable', entries: [] };
-  const plan = learnerHeaderPlan(schedule.modules || [], real || {}, today);
+  const normalise = (value?: string | null) => (value || '').trim().toLowerCase();
+  const fields = [['programme_name', real?.programme], ['cohort_name', real?.cohort], ['group_name', real?.group]] as const;
+  const compatible = (schedule.modules || []).filter(module => fields.every(([key, expected]) =>
+    !normalise(expected) || !normalise(module[key]) || normalise(module[key]) === normalise(expected)));
+  const plan = learnerHeaderPlan(compatible, real || {}, today);
   const first = plan.modules[0];
   if (!first) return { status: 'empty', entries: [] };
   const start = dateKey(first.start_date), end = dateKey(first.end_date);
@@ -159,15 +172,15 @@ export function learningPlanSelection(subjects: Subject[], real: LearnerDetail |
   return { status, entries };
 }
 
-export function currentLearningSubject(subjects: Subject[], real: LearnerDetail | null, metadata?: CoverMetadata | null, schedule?: LearningSchedule | null, today = learningToday()) {
+export function currentLearningSubject(subjects: Subject[], real: Pick<LearnerDetail, 'programme' | 'cohort' | 'group'> | null, metadata?: CoverMetadata | null, schedule?: LearningSchedule | null, today = learningToday()) {
   const selection = learningPlanSelection(subjects, real, metadata, schedule, today);
   return selection.status === 'current' ? selection.entries[0]?.subject : undefined;
 }
 
 /** Continue with an unfinished current module, then the next dated module,
  * then any remaining subject when the plan has no usable dates. */
-export function recommendedLearningSubject(subjects: Subject[], real: LearnerDetail | null, metadata?: CoverMetadata | null, schedule?: LearningSchedule | null, today = learningToday()) {
-  const hasRemaining = (subject: Subject) => subject.activities.some(activity => !activity.completed);
+export function recommendedLearningSubject(subjects: Subject[], real: Pick<LearnerDetail, 'programme' | 'cohort' | 'group'> | null, metadata?: CoverMetadata | null, schedule?: LearningSchedule | null, today = learningToday()) {
+  const hasRemaining = (subject: Subject) => subject.card ? subject.card.completedActivityCount < subject.card.activityCount : subject.activities.some(activity => !activity.completed);
   const selection = learningPlanSelection(subjects, real, metadata, schedule, today);
   const planned = selection.entries.find(entry => hasRemaining(entry.subject))?.subject;
   if (['current', 'next'].includes(selection.status) && planned) return planned;
@@ -211,4 +224,33 @@ export function learningHref(view: 'catalogue' | 'map', kind?: string, learnerId
   if (subject) query.set('subject', subject);
   if (week) query.set('week', week);
   return `${path}${query.size ? `?${query}` : ''}`;
+}
+
+export function groupSubjectActivities(activities: SubjectEntry[]) {
+  const months = new Map<string, Map<string, SubjectEntry[]>>();
+  for (const activity of activities) {
+    const introduction = activity.schedule.date_source === 'introduction';
+    const extra = activity.schedule.date_source === 'extra_activity';
+    const month = introduction ? 'introduction' : extra ? 'extra' : activity.schedule.month || activity.schedule.date?.slice(0, 7) || 'undated';
+    const week = extra ? activity.legacy?.section_title || activity.week || 'Additional activities' : activity.schedule.week_start || activity.week || 'undated';
+    if (!months.has(month)) months.set(month, new Map());
+    const weeks = months.get(month)!;
+    if (!weeks.has(week)) weeks.set(week, []);
+    weeks.get(week)!.push(activity);
+  }
+  const rank = (month: string) => month === 'introduction' ? -1 : month === 'extra' ? 2 : month === 'undated' ? 1 : 0;
+  return [...months].sort(([a], [b]) => rank(a) - rank(b) || a.localeCompare(b)).map(([month, weeks]) => ({
+    month, weeks: [...weeks].sort(([a], [b]) => a.localeCompare(b, undefined, { numeric: true })).map(([week, items]) => ({
+      week, activities: [...items].sort((a, b) => (a.schedule.date || '').localeCompare(b.schedule.date || '') || a.position - b.position || a.title.localeCompare(b.title)),
+    })),
+  }));
+}
+
+export function nativeHref(entry: SubjectEntry, kind?: string, learnerId?: string) {
+  const component = entry.native;
+  if (!component || !kind || !learnerId || !hasComponentContent(component)) return null;
+  const path = component.isQuiz && component.quizMeta ? `quiz/${kind}/${learnerId}/${component.quizMeta.quizId}`
+    : component.type === 'video' && component.videoUrl && component.componentId ? `video/${kind}/${learnerId}/${component.componentId}`
+      : component.componentId ? `component/${kind}/${learnerId}/${component.componentId}` : null;
+  return path ? `/learner/${path}?week=${encodeURIComponent(entry.week || '')}` : null;
 }

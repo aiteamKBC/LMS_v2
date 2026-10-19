@@ -20,6 +20,7 @@ there exactly as before.
 from __future__ import annotations
 
 import logging
+import mimetypes
 import shutil
 import tempfile
 from threading import Lock
@@ -158,6 +159,7 @@ def exists(relative_path) -> bool:
 
 
 STREAM_CHUNK_BYTES = 262144
+VIDEO_DOWNLOAD_CHUNK_BYTES = 1024 * 1024
 
 
 def _bounded_file_stream(path, offset, length):
@@ -189,7 +191,11 @@ def open_stream(relative_path, offset=0, length=None):
         return _bounded_file_stream(path, offset, max(span, 0)), total, ''
     if not azure_enabled():
         return None
-    client = evidence_storage._service_client().get_blob_client(
+    media_type = mimetypes.guess_type(str(relative_path))[0] or ''
+    # download_blob() reads its initial range before returning a downloader.
+    # The default 32 MiB delays video headers and metadata even with chunks().
+    options = {'download_chunk_bytes': VIDEO_DOWNLOAD_CHUNK_BYTES} if media_type.startswith('video/') else {}
+    client = evidence_storage._service_client(**options).get_blob_client(
         container_name(), blob_name_for(relative_path),
     )
     try:

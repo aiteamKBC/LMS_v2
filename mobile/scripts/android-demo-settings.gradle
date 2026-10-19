@@ -1,0 +1,10 @@
+// Build-only Windows path normalisation for Expo native module outputs.
+def physicalDemoRoot = System.getenv('KBC_DEPENDENCY_ROOT')
+if (physicalDemoRoot) {
+  rootProject.children.each { descriptor ->
+    def directory = descriptor.projectDir.absolutePath
+    if (directory.startsWith(physicalDemoRoot + File.separator)) {
+      descriptor.projectDir = new File(rootDir.parentFile.absolutePath + directory.substring(physicalDemoRoot.length()))
+    }
+  }
+}

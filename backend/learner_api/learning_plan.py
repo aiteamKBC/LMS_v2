@@ -46,6 +46,7 @@ from .constants import DELIVERY_PROGRAMME_STATUS
 from .learner_progression import advance_learner
 from .mappers import _normalize_free_courses, _s, get_training_plan, stored_training_plan, training_plan_field
 from .models import EnrolmentUser
+from .placement_links import placement_ids
 
 logger = logging.getLogger(__name__)
 
@@ -131,18 +132,28 @@ _LIVE_MODULE_SQL = """
 """
 
 
-def _programme_modules(programme):
-    """Every module on this programme, whichever group teaches it."""
-    if not programme:
+def _programme_modules(programme, programme_id=""):
+    """Every module on this programme, whichever group teaches it.
+
+    ``programme_id``, when the learner's placement holds one, decides alone: a
+    renamed programme keeps its id, and the old name may by then be another
+    programme's.
+    """
+    programme_id = _s(programme_id)
+    if programme_id:
+        where, params = "AND programme_id = %s", [programme_id]
+    elif programme:
+        where, params = "AND (programme_name = %s OR programme_id = %s)", [programme, programme]
+    else:
         return []
     return [
         _module_payload(r)
         for r in _rows(
-            _LIVE_MODULE_SQL + """
-              AND (programme_name = %s OR programme_id = %s)
+            _LIVE_MODULE_SQL + f"""
+              {where}
             ORDER BY group_name, title
             """,
-            [programme, programme],
+            params,
         )
     ]
 
@@ -371,8 +382,22 @@ def group_module_ids_bulk(pairs, source=None):
     return {pair: found.get(pair, []) for pair in wanted}
 
 
-def _group_module_ids(programme, group, source=None):
+GROUP_PRESET_BY_ID_SQL = """
+SELECT module_ids
+FROM {source}
+WHERE group_id = %s
+  AND deleted_at IS NULL
+  AND COALESCE(is_programme_deleted, FALSE) = FALSE
+"""
+
+
+def _group_module_ids(programme, group, source=None, group_id=""):
     """The module ids preset on the learner's group.
+
+    ``group_id``, when the learner's placement holds one, names the group
+    exactly: no rename can detach it and no namesake in another cohort can
+    stand in for it. Everything below describes the name lookup a learner
+    without one still falls back to.
 
     A group is identified here by name and programme, but that pair is not
     unique: the same group name recurs in every cohort of a programme, so
@@ -398,9 +423,13 @@ def _group_module_ids(programme, group, source=None):
 
     Cohort-blindness itself is unfixed; this only stops it being random.
     """
-    if not group:
+    group_id = _s(group_id)
+    if group_id:
+        rows = _rows(GROUP_PRESET_BY_ID_SQL.format(source=source or GROUP_PRESET_SOURCE), [group_id])
+    elif group:
+        rows = _group_preset_rows(programme, group, source)
+    else:
         return []
-    rows = _group_preset_rows(programme, group, source)
     if not rows:
         return []
     # Shared with group_module_ids_bulk so the two cannot read the same column
@@ -408,6 +437,19 @@ def _group_module_ids(programme, group, source=None):
     module_ids = _module_ids_from_column(rows[0].get("module_ids"))
     manual_ids = _manual_roster_module_ids(module_ids)
     return [module_id for module_id in module_ids if module_id not in manual_ids]
+
+
+def learner_programme_modules(learner):
+    """`_programme_modules` for one learner, by their placement's programme id."""
+    return _programme_modules(_s(learner.programme), placement_ids(learner)["programme_id"])
+
+
+def learner_group_module_ids(learner):
+    """`_group_module_ids` for one learner, by their placement's group id."""
+    return _group_module_ids(
+        _s(learner.programme), _s(getattr(learner, "group", "")),
+        group_id=placement_ids(learner)["group_id"],
+    )
 
 
 def _saved_modules(learner):
@@ -639,10 +681,10 @@ def _serialize(learner):
     programme = _s(learner.programme)
     group = _s(learner.group)
 
-    catalogue = _programme_modules(programme)
+    catalogue = learner_programme_modules(learner)
     by_id = {m["moduleId"]: m for m in catalogue}
 
-    preset_ids = _group_module_ids(programme, group)
+    preset_ids = learner_group_module_ids(learner)
     preset = [by_id[i] for i in preset_ids if i in by_id]
 
     # A saved plan wins; an unsaved learner starts from their group's preset so
@@ -857,7 +899,7 @@ def learning_plan(request, pk):
     # "Reset to group default" the way back: it puts the preset on screen, and
     # saving it clears the freeze.
     try:
-        programme_catalogue = {m["moduleId"] for m in _programme_modules(programme)}
+        programme_catalogue = {m["moduleId"] for m in learner_programme_modules(learner)}
     except DatabaseError as exc:
         logger.exception("learning_plan: programme catalogue lookup failed")
         return _error(f"Database error: {exc}", 502)
@@ -865,7 +907,7 @@ def learning_plan(request, pk):
     # left in groups.module_ids for a module that no longer exists would
     # otherwise pin every plan to explicit forever.
     inheritable = [
-        i for i in _group_module_ids(programme, _s(learner.group))
+        i for i in learner_group_module_ids(learner)
         if i in programme_catalogue
     ]
     overrides_group = any(i not in seen for i in inheritable)
@@ -940,17 +982,31 @@ def _plan_entries(learner):
 
 
 def _preset_ids_for(learner, cache):
-    """The learner's group preset, cached per (programme, group).
+    """The learner's group preset, cached per group id, else per (programme, group).
 
     A learner with no saved plan is *shown* their group's preset — see
     ``_serialize`` — so that preset is their effective plan. Assigning one
     module has to keep it: writing only the ticked module would silently drop
     every other module their group teaches.
     """
-    key = (_s(learner.programme), _s(learner.group))
+    group_id = placement_ids(learner)["group_id"]
+    key = ("group_id", group_id) if group_id else (_s(learner.programme), _s(learner.group))
     if key not in cache:
-        cache[key] = _group_module_ids(*key)
+        cache[key] = (
+            _group_module_ids("", "", group_id=group_id) if group_id else _group_module_ids(*key)
+        )
     return cache[key]
+
+
+def request_preset_cache(learner):
+    """The group-preset cache a reader shares across one request, else a fresh one.
+
+    A Dashboard tab resolves the effective plan in several shared helpers; each
+    passing ``{}`` re-reads the same (programme, group) preset. ``read_tab``
+    installs one dict on its request-scoped source so the preset is read once.
+    """
+    cache = getattr(learner, '_plan_preset_cache', None)
+    return cache if cache is not None else {}
 
 
 def _effective_plan_ids(learner, preset_cache):

@@ -1,9 +1,22 @@
-import { fireEvent, render, screen, within } from '@testing-library/react';
+import { fireEvent, render, screen, within, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import * as api from '@/api/studentActivity';
+import { currentLearningWeek, subjectWeeks } from './subjectLearning';
+import { groupSubjectActivities } from './subjectLearning';
 import type { LearnerDetail } from '@/api/learnerDetail';
 import type { StudentActivityItem, StudentActivityResponse } from '@/api/studentActivity';
-import { buildUnifiedLearningSummary, StudentActivityPanel, subjectsFrom } from './SubjectWorkspace';
+import { StudentActivityPanel } from './SubjectWorkspace';
+import { buildUnifiedLearningSummary, subjectsFrom } from './learningSummary';
+
+vi.mock('./DeferredStudentMaterial', () => ({
+  DeferredStudentMaterial: ({ groupId, activityId, reviewQuiz, readOnly }: { groupId: number; activityId: number; reviewQuiz?: boolean; readOnly?: boolean }) =>
+    <div>{reviewQuiz && readOnly ? 'Saved quiz review' : 'Source material'} {groupId}/{activityId}</div>,
+}));
+vi.mock('@/api/learnerCertificates', () => ({
+  fetchLearnerCertificateTemplate: vi.fn().mockResolvedValue({ template: null, csrfToken: '' }),
+  issueLearnerModuleCertificate: vi.fn(),
+}));
 
 const activity = (course: number, kind: string, id: number): StudentActivityItem => ({
   activity_id: `record:${course}:${id}`, source_activity_id: 10, group_id: course,
@@ -38,12 +51,150 @@ const catalogueData: StudentActivityResponse = {
 };
 
 describe('full historical course catalogue', () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it.each(['commercial', 'apprenticeship'])('opens completed standalone quizzes for read-only review (%s)', async kind => {
+    vi.spyOn(api, 'subjectRequest').mockResolvedValue({ covers: {} });
+    render(<MemoryRouter initialEntries={['/?activity=catalogue:1:quiz:10']}><StudentActivityPanel data={catalogueData}
+      kind={kind} learnerId="77" loading={false} error={null} onRetry={vi.fn()} /></MemoryRouter>);
+    const row = within(await screen.findByRole('group', { name: 'quiz 1 activity' }));
+    expect(row.getByText('Complete')).toBeVisible();
+    expect(row.getByText('Saved quiz review 1/10')).toBeVisible();
+    expect(row.queryByText('Content not available yet')).not.toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole('region', { name: 'Your subjects' })).toHaveAttribute('aria-busy', 'false'));
+    fireEvent.click(row.getByRole('button', { name: 'Close quiz' }));
+    expect(row.queryByText('Saved quiz review 1/10')).not.toBeInTheDocument();
+    fireEvent.click(row.getByRole('button', { name: 'View quiz' }));
+    expect(row.getByText('Saved quiz review 1/10')).toBeVisible();
+    expect(row.getByText('Complete')).toBeVisible();
+    expect(row.getByText(/OTJH: 18m/)).toBeVisible();
+  });
+
+  it.each(['commercial', 'apprenticeship'])('keeps headline statistics with the displayed catalogue despite different programme totals (%s)', async kind => {
+    vi.spyOn(api, 'subjectRequest').mockResolvedValue({ covers: {}, current_subjects: [
+      { id: 'HISTORY', title: 'Course 1' }, { id: 'CURRENT', title: 'Current course' },
+    ] });
+    const real = { modules: ['Course 1', 'Current course'], components: [
+      { moduleId: 'HISTORY', module: 'Course 1', componentId: 'COPY', component: 'Imported snapshot', type: 'reading' },
+      { moduleId: 'CURRENT', module: 'Current course', componentId: 'C1', component: 'Current reading', type: 'reading' },
+    ], componentProgress: [{ componentId: 'C1', kind: 'reading', passed: true }], quizAttempts: [] } as unknown as LearnerDetail;
+    const view = (incoming: StudentActivityResponse, loading = false) => <MemoryRouter>
+      <StudentActivityPanel kind={kind} learnerId="77" data={incoming} real={real} loading={loading} error={null} onRetry={vi.fn()}
+        metrics={{ migrated: true, programme: { completed: 90, total: 90, percent: 100, status: 'ready' },
+          ksb: { completed: 0, total: 0, percent: null, status: 'empty' },
+          otjh: { historical: 12.5, new: 0, actual: 12.5, planned: 80 } }} />
+    </MemoryRouter>;
+    const { rerender } = render(view(catalogueData));
+    await screen.findByText('5 subjects · 8 activities');
+    const stat = (label: string) => within(screen.getByText(label).parentElement!);
+    expect(stat('Current subjects').getByText('2')).toBeVisible();
+    expect(stat('Learning activities').getByText('2')).toBeVisible();
+    expect(stat('Completed activities').getByText('1')).toBeVisible();
+    expect(stat('Current learning plan progress').getByText('50%')).toBeVisible();
+    expect(screen.getByRole('progressbar', { name: 'Current learning plan progress' })).toHaveAttribute('aria-valuenow', '50');
+    expect(stat('Recorded OTJH').getByText('12h 30m')).toBeVisible();
+    expect(stat('Planned OTJH').getByText('80h')).toBeVisible();
+
+    fireEvent.change(screen.getByRole('combobox', { name: 'Status' }), { target: { value: 'new' } });
+    expect(stat('Learning activities').getByText('2')).toBeVisible();
+    expect(stat('Completed activities').getByText('1')).toBeVisible();
+
+    const refreshed = { ...catalogueData, activities: catalogueData.activities.map(item =>
+      item.activity_id === 'catalogue:1:material:20' ? { ...item, completed: true } : item) };
+    rerender(view(refreshed, true));
+    expect(stat('Completed activities').getByText('1')).toBeVisible();
+    rerender(view(refreshed));
+    expect(stat('Completed activities').getByText('1')).toBeVisible();
+    expect(stat('Current learning plan progress').getByText('50%')).toBeVisible();
+    expect(screen.getByText('1 of 2 activities completed')).toBeVisible();
+    expect(screen.getByRole('region', { name: 'Previous learning progress' })).toHaveTextContent('4 of 6');
+  });
+
+  it('keeps loaded catalogue statistics available when programme metrics are unavailable', () => {
+    render(<MemoryRouter><StudentActivityPanel data={catalogueData} metrics={null} loading={false} error={null} onRetry={vi.fn()} /></MemoryRouter>);
+    expect(screen.getByText('3 subjects · 6 activities')).toBeVisible();
+    expect(screen.getByRole('region', { name: 'Previous learning progress' })).toHaveTextContent('3 of 6');
+    expect(screen.getByText('0 of 0 activities completed')).toBeVisible();
+    expect(screen.getByRole('progressbar', { name: 'Current learning plan progress' })).toHaveAttribute('aria-valuenow', '0');
+  });
+
+  it('does not populate an empty catalogue with historical programme totals', () => {
+    render(<MemoryRouter><StudentActivityPanel data={{ ...catalogueData, subjects: [], activities: [] }} loading={false} error={null} onRetry={vi.fn()}
+      metrics={{ migrated: true, programme: { completed: 90, total: 90, percent: 100, status: 'ready' },
+        ksb: { completed: 0, total: 0, percent: null, status: 'empty' }, otjh: { historical: 0, new: 0, actual: 0, planned: 0 } }} />
+    </MemoryRouter>);
+    expect(screen.getByText('0 subjects · 0 activities')).toBeVisible();
+    expect(screen.getByText('0 of 0 activities completed')).toBeVisible();
+    expect(screen.getByRole('progressbar', { name: 'Current learning plan progress' })).toHaveAttribute('aria-valuenow', '0');
+  });
+
+  it('keeps month-only source placements distinct and chronological on the learning map', () => {
+    const recovered = { ...catalogueData, activities: [
+      { ...pending(1, 10), month: '2026-09', date_source: 'section_month' },
+      { ...pending(1, 20), month: '2026-04', date_source: 'section_month' },
+      { ...pending(1, 30), month: '2026-03', date_source: 'section_month' },
+      { ...pending(1, 40), month: 'undated', date_needs_review: true },
+    ] };
+    const subject = subjectsFrom(recovered, null)[0];
+    const weeks = subjectWeeks(subject);
+    expect(weeks.map(week => week.activities.map(item => item.legacy?.source_activity_id))).toEqual([[30], [20], [10], [40]]);
+    expect(weeks.slice(0, 3).map(week => week.label)).toEqual(['March 2026', 'April 2026', 'September 2026']);
+    expect(weeks.every(week => week.start === null && week.end === null)).toBe(true);
+    expect(currentLearningWeek(subject, '2026-04-15')).toBeUndefined();
+    expect(groupSubjectActivities(subject.activities).map(group => group.month)).toEqual(['2026-03', '2026-04', '2026-09', 'undated']);
+  });
+
+  it.each(['commercial', 'apprenticeship'])('shows a sourced month without describing its activities as awaiting a date (%s)', async kind => {
+    vi.spyOn(api, 'subjectRequest').mockResolvedValue({ covers: {} });
+    const recovered = { ...catalogueData, activities: [
+      { ...pending(1, 10), month: '2026-03', date_source: 'section_month' },
+    ] };
+    render(<MemoryRouter initialEntries={['/?subject=legacy%3A1']}><StudentActivityPanel data={recovered}
+      kind={kind} learnerId="77" loading={false} error={null} onRetry={vi.fn()} /></MemoryRouter>);
+    const sidebar = within(await screen.findByRole('complementary', { name: 'Module activities' }));
+    expect(sidebar.getByRole('heading', { name: 'March 2026' })).toBeVisible();
+    expect(sidebar.getByRole('button', { name: /^March 2026.*1 components/ })).toHaveAttribute('aria-current', 'step');
+    expect(screen.getByRole('group', { name: 'Pending lesson 1-10 activity' })).toBeVisible();
+    expect(screen.queryByText('Activities awaiting a date')).not.toBeInTheDocument();
+    expect(screen.queryByText('Undated activities')).not.toBeInTheDocument();
+  });
+
+  it('uses recovered source months and introduction consistently in the catalogue and map', () => {
+    const recovered = { ...catalogueData, activities: [
+      { ...pending(1, 10), month: 'undated', date_source: 'introduction' },
+      { ...pending(1, 20), month: '2026-03', date: '2026-03-06', date_source: 'section_title', week_start: '2026-03-02', week_end: '2026-03-08' },
+      { ...pending(1, 30), month: 'undated', date_needs_review: true },
+    ] };
+    const subject = subjectsFrom(recovered, null)[0];
+    expect(groupSubjectActivities(subject.activities).map(group => group.month)).toEqual(['introduction', '2026-03', 'undated']);
+    expect(subjectWeeks(subject).map(week => week.id)).toEqual(['introduction', '2026-03-02', 'undated']);
+    expect(subject.activities.every(item => !item.completed)).toBe(true);
+  });
+
+  it.each(['commercial', 'apprenticeship'])('links a recovered quiz source to the exact parent in its course (%s)', async kind => {
+    vi.spyOn(api, 'subjectRequest').mockResolvedValue({ covers: {} });
+    const recovered = { ...catalogueData, activities: catalogueData.activities.map(item => item.catalogue_kind === 'quiz' && item.group_id === 1
+      ? { ...item, completed: false, source_material_activity_id: 'catalogue:1:material:20' } : item) };
+    render(<MemoryRouter initialEntries={['/?activity=catalogue:1:quiz:10']}><StudentActivityPanel data={recovered}
+      kind={kind} learnerId="77" loading={false} error={null} onRetry={vi.fn()} /></MemoryRouter>);
+    const row = within(await screen.findByRole('group', { name: 'quiz 1 activity' }));
+    expect(row.getByRole('link', { name: 'View source material' })).toHaveAttribute('href',
+      `/learner/my-learning/${kind}/77?subject=legacy%3A1&activity=catalogue%3A1%3Amaterial%3A20`);
+    expect(row.queryByText('Content not available yet')).not.toBeInTheDocument();
+    expect(row.getByText('Not complete')).toBeVisible();
+    expect(row.queryByRole('button', { name: 'Open activity' })).not.toBeInTheDocument();
+    fireEvent.click(row.getByRole('link', { name: 'View source material' }));
+    expect(await screen.findByText('Source material 1/20')).toBeVisible();
+    expect(screen.queryByText('Source material 1/10')).not.toBeInTheDocument();
+    expect(screen.queryByText('Source material 2/20')).not.toBeInTheDocument();
+  });
+
   it('counts every component, preserving distinct quiz/material and course identities', () => {
     const result = buildUnifiedLearningSummary(catalogueData, null);
     expect(result.subjects.map(subject => subject.activities.length)).toEqual([3, 2, 1]);
-    expect(result.activityCount).toBe(6);
-    expect(result.completedActivityCount).toBe(3);
-    expect(result.percent).toBe(50);
+    expect(result.activityCount).toBe(0);
+    expect(result.completedActivityCount).toBe(0);
+    expect(result.previousLearning).toEqual({ activityCount: 6, completedActivityCount: 3, percent: 50 });
   });
 
   it('keeps the full imported catalogue separate from a duplicate Builder snapshot', () => {
@@ -55,7 +206,7 @@ describe('full historical course catalogue', () => {
       { id: 'CURRENT', title: 'Current KSBs' }, { id: 'HISTORY', title: 'Course 1' },
     ] });
     expect(result.find(subject => subject.id === 'legacy:1')?.activities).toHaveLength(3);
-    expect(result.some(subject => subject.id === 'current:HISTORY')).toBe(false);
+    expect(result.find(subject => subject.id === 'current:HISTORY')?.activities).toHaveLength(1);
     expect(result.find(subject => subject.id === 'current:CURRENT')?.activities).toHaveLength(1);
   });
 
@@ -65,12 +216,12 @@ describe('full historical course catalogue', () => {
     expect(within(card).getByText('1 of 3 completed')).toBeVisible();
     expect(within(card).getByText('33.33%')).toBeVisible();
     expect(within(card).getByText('In progress')).toBeVisible();
-    expect(within(card).getByText(/Accepted time: 18m/)).toBeVisible();
+    expect(within(card).getByText('Completed 18m')).toBeVisible();
+    expect(within(card).queryByText(/Accepted time:/)).not.toBeInTheDocument();
     expect(screen.queryByText(/Recorded activities only/)).not.toBeInTheDocument();
     expect(within(screen.getByRole('button', { name: /Unstarted course.*Open subject/ })).getByText('0 of 1 completed')).toBeVisible();
     fireEvent.click(card);
-    fireEvent.click(screen.getByRole('button', { name: 'Expand Undated activities' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Expand Undated activities, Activities awaiting a date' }));
+    expect(screen.getByRole('complementary', { name: 'Module activities' })).toBeVisible();
     expect(await screen.findByRole('group', { name: 'quiz 1 activity' })).toHaveTextContent('Complete');
     expect(screen.getByRole('group', { name: 'Pending lesson 1-10 activity' })).toHaveTextContent('Not complete');
     expect(screen.getByRole('group', { name: 'Pending lesson 1-20 activity' })).toHaveTextContent('Not complete');
@@ -87,8 +238,9 @@ describe('recorded historical course progress', () => {
   it('keeps quiz/material namespaces and placements in different courses', () => {
     const result = buildUnifiedLearningSummary(data, null);
     expect(result.subjects.map(s => s.activities.length)).toEqual([1, 2]);
-    expect(result.completedActivityCount).toBe(3);
-    expect(result.percent).toBe(100);
+    expect(result.previousLearning?.completedActivityCount).toBe(3);
+    expect(result.percent).toBe(0);
+    expect(result.previousLearning?.percent).toBe(100);
   });
 
   it('does not mix historical catalogue components into recorded progress or duplicate the current module', () => {
@@ -102,13 +254,14 @@ describe('recorded historical course progress', () => {
     expect(result.filter(s => s.title === 'Current KSBs')).toHaveLength(1);
     expect(result.find(s => s.id === 'legacy:1')?.activities).toHaveLength(1);
     expect(result.find(s => s.id === 'current:CURRENT')?.activities).toHaveLength(1);
-    expect(result.some(s => s.id === 'current:HISTORY')).toBe(false);
+    expect(result.find(s => s.id === 'current:HISTORY')?.activities).toHaveLength(1);
   });
 
-  it('shows the catalogue separately from the recorded denominator and accepted time', () => {
+  it('shows the catalogue separately from the recorded denominator without repeating accepted time', () => {
     render(<MemoryRouter><StudentActivityPanel data={data} loading={false} error={null} onRetry={vi.fn()} /></MemoryRouter>);
     expect(screen.getByText(/Recorded activities only.*Full catalogue: 265/)).toBeVisible();
-    expect(screen.getByText(/Accepted time: 18m/)).toBeVisible();
+    expect(screen.getByText('Completed 18m')).toBeVisible();
+    expect(screen.queryByText(/Accepted time:/)).not.toBeInTheDocument();
     expect(screen.getByText('1 of 1 completed')).toBeVisible();
   });
 });

@@ -74,6 +74,16 @@ ENGLAND_WALES_BANK_HOLIDAYS = {
 COVERED_YEARS = frozenset(range(2024, 2029))
 
 
+def mcm_booking_date_restriction(day: date) -> BookingDateRestriction | None:
+    """MCM appointments run from the 20th through the following month's 5th."""
+    if 5 < day.day < 20:
+        return BookingDateRestriction(
+            "mcm-booking-window",
+            "MCM appointments are available from the 20th of each month through the 5th of the following month.",
+        )
+    return None
+
+
 def booking_date_restriction(
     day: date | None, *, today: date | None = None, allow_sunday: bool = False
 ) -> BookingDateRestriction | None:

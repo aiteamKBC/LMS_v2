@@ -26,23 +26,15 @@
   gap: 14px;
 }
 /* Loading skeleton: sits on the loaded layout classes and only sizes the placeholders. */
-.loadingDashboard { display: grid; gap: 18px; min-width: 0; }
 .metricSkeletonIcon { grid-area: icon; width: 44px; height: 44px; border-radius: 11px; }
 .metricSkeletonLabel { grid-area: label; width: 78%; height: 15px; }
 .metricSkeletonValue { grid-area: value; width: 58%; height: 38px; }
 .metricSkeletonNote { grid-area: note; width: 88%; height: 13px; }
-.meetingDateSkeleton { width: 108px; height: 58px; }
-.donutSkeleton { background: var(--kbc-border); }
-.monthlyBarSkeleton { width: min(28px, 72%); border-radius: 5px 5px 2px 2px; }
 
 .welcome { display: flex; justify-content: space-between; align-items: center; gap: 24px; padding: 4px 4px 6px; }
 .dashboard .welcome h1 { margin: 0; color: var(--dashboard-heading); font-size: clamp(23px, 2vw, 30px); line-height: 1.3; font-weight: 750; letter-spacing: -.7px; }
 .welcome h1 span { display: inline-block; margin-left: 6px; font-size: .85em; }
 .welcome > div > p { margin-top: 6px; font-size: 16px; line-height: 1.5; color: var(--kbc-muted); }
-.welcomeQuote { flex-shrink: 0; text-align: right; color: var(--kbc-muted); }
-.welcomeQuote p { font-size: 14px; font-style: italic; }
-.welcomeQuote cite { display: block; margin-top: 3px; font-size: 11px; font-style: normal; }
-.welcomeQuote::after { content: ''; display: block; width: 58px; height: 3px; margin: 8px 0 0 auto; border-radius: 2px; background: #e5b432; }
 
 .metric {
   position: relative;
@@ -81,8 +73,6 @@ button.metric:hover { border-color: var(--dashboard-accent); box-shadow: 0 10px 
 :global([data-theme="dark"]) .metric[data-tone="critical"] .metricIcon { color: #ff94b0; background: #492338; }
 :global([data-theme="dark"]) .metric[data-kind="caseload"],
 :global([data-theme="dark"]) .metric[data-kind="marking"] { background: var(--kbc-surface); }
-
-.riskLayout { display: grid; grid-template-columns: minmax(0, 1.65fr) minmax(340px, 1fr); gap: 16px; align-items: stretch; }
 .fullWidthCaseload { width: 100%; min-width: 0; scroll-margin-top: 1rem; }
 .dashboardTabs { display: grid; gap: 14px; min-width: 0; }
 .dashboardTabList { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); overflow: hidden; border: 1px solid #e6e0f1; border-radius: 14px; background: var(--kbc-surface); box-shadow: 0 2px 8px rgb(79 45 127 / 6%); }
@@ -130,7 +120,6 @@ button.metric:hover { border-color: var(--dashboard-accent); box-shadow: 0 10px 
 :global([data-theme="dark"]) .dueActivitiesArtwork svg:first-child,
 :global([data-theme="dark"]) .dueActivitiesSecondaryAction,
 :global([data-theme="dark"]) .dueActivitySectionActions .iconButton { background: rgb(30 52 77 / 92%); }
-.learnersPanel { height: 100%; }
 .charts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; min-width: 0; }
 .riskInsights { display: grid; gap: 14px; min-width: 0; }
 .riskInsightToggle { display: grid; width: 48px; height: 48px; place-items: center; padding: 0; border: 1px solid var(--kbc-border); border-radius: 14px; background: var(--kbc-surface); color: var(--kbc-muted); cursor: pointer; transition: border-color 150ms, color 150ms, background-color 150ms; }
@@ -180,7 +169,6 @@ button.metric:hover { border-color: var(--dashboard-accent); box-shadow: 0 10px 
 .table tbody tr:last-child td { border-bottom: 0; }
 .table tbody tr:hover { background: var(--kbc-purple-wash); }
 .table caption { text-align: left; }
-.learnersTable { min-width: 760px; }
 .meetingsTable { --meeting-card-border: #cec4de; --meeting-date-background: lavender; min-width: 1080px; border-collapse: separate; border-spacing: 0 4px; }
 :global([data-theme="dark"]) .meetingsTable { --meeting-card-border: var(--coach-dark-border); --meeting-date-background: var(--coach-dark-hover); }
 .dashboard .meetingsTable tbody tr { transition: background-color .16s ease, transform .16s ease; }
@@ -195,19 +183,10 @@ button.metric:hover { border-color: var(--dashboard-accent); box-shadow: 0 10px 
 .subtle { display: block; max-width: 240px; color: var(--kbc-muted); font-size: 13px; line-height: 1.5; overflow-wrap: anywhere; }
 .groupName { display: block; min-width: 65px; max-width: 140px; color: var(--kbc-muted); overflow-wrap: anywhere; }
 .lastContact { color: var(--kbc-muted); }
-.dashboard .learnersTable :global(.ui-status-badge) { padding: 8px 12px; border-color: transparent; }
-.dashboard .learnersTable .varianceBadge { min-width: 78px; justify-content: center; font-size: 16px; line-height: 1.25; font-weight: 750; font-variant-numeric: tabular-nums; }
-.rowDetails summary { cursor: pointer; display: flex; align-items: center; gap: 4px; width: fit-content; }
-.rowDetails summary::after { content: '+'; color: var(--dashboard-accent); }
-.rowDetails[open] summary::after { content: '−'; }
-.rowDetails summary::-webkit-details-marker { display: none; }
-.rowDetails[open] { min-width: 210px; }
-.rowDetails p { margin-top: 7px; color: var(--kbc-muted); font-size: 11px; }
 .detailMetrics { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; margin-top: 12px; }
 .textButton { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 44px; padding: 10px 14px; border: 1px solid var(--kbc-border); border-radius: 6px; background: var(--kbc-surface); color: var(--dashboard-accent); font-size: 14px; font-weight: 700; white-space: nowrap; }
 .textButton:hover { background: var(--kbc-purple-soft); }
 .textButton svg { flex-shrink: 0; width: 15px; height: 15px; }
-.sectionLink { border-color: transparent; background: var(--kbc-purple-wash); padding-inline: 14px; }
 .primaryButton { background: var(--dashboard-accent); border-color: var(--dashboard-accent); color: white; }
 .primaryButton:hover { background: var(--kbc-primary-secondary); }
 :global(body) :global(.workspace-shell[data-workspace-role="coach"]) .dashboard .metric { border-radius: 14px !important; }
@@ -248,12 +227,6 @@ button.metric:hover { border-color: var(--dashboard-accent); box-shadow: 0 10px 
 .textButton:disabled { opacity: .5; cursor: not-allowed; }
 .actionMessage { margin-top: 7px; max-width: 280px; font-size: 13px; line-height: 1.5; white-space: normal; color: var(--kbc-muted); }
 .actionMessage[role="alert"] { color: #b4233e; }
-.dueActivityHeading { display: flex; align-items: center; justify-content: space-between; gap: 14px; }
-.dueActivityHeading h3 { color: var(--dashboard-heading); font-size: 16px; font-weight: 700; }
-.dueActivityHeading p { margin-top: 3px; color: var(--kbc-muted); font-size: 13px; }
-.dueActivityHeading + .notice,
-.dueActivityHeading + .tableScroll { margin-top: 14px; }
-@media (max-width: 600px) { .dueActivityHeading { align-items: flex-start; flex-direction: column; } }
 .scheduleDialog { width: min(620px, calc(100vw - 32px)); max-height: calc(100vh - 48px); margin: auto; overflow: auto; padding: 24px; border: 1px solid var(--kbc-border); border-radius: 12px; background: var(--kbc-surface, white); color: var(--kbc-text); }
 .scheduleDialog::backdrop { background: rgb(29 15 48 / 45%); }
 .scheduleDialog h2 { font-size: 20px !important; font-weight: 700; }
@@ -264,34 +237,10 @@ button.metric:hover { border-color: var(--dashboard-accent); box-shadow: 0 10px 
 
 .distribution { display: flex; align-items: center; gap: 24px; margin: 20px 4px 16px; }
 .donut { display: grid; place-items: center; width: 142px; height: 142px; flex: 0 0 142px; border-radius: 50%; }
-.donutCenter { display: flex; flex-direction: column; justify-content: center; align-items: center; width: 104px; height: 104px; border-radius: 50%; background: var(--kbc-surface); color: var(--dashboard-heading); }
-.donutCenter strong { font-size: 26px; font-weight: 750; line-height: 1.2; }
-.donutCenter span { font-size: 10px; color: var(--kbc-muted); }
 .legend { display: grid; gap: 14px; flex: 1; min-width: 0; font-size: 14px; }
 .legend li { display: grid; grid-template-columns: 8px minmax(0, 1fr) auto; align-items: center; gap: 6px; }
 .legend strong { font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; }
-.legendDot { width: 9px; height: 9px; border-radius: 50%; }
-.chartNote { display: flex; align-items: center; gap: 10px; padding: 12px 14px; border-radius: 7px; background: var(--kbc-purple-wash); color: var(--kbc-muted); font-size: 13px; line-height: 1.6; }
-.chartNote svg { flex-shrink: 0; width: 18px; height: 18px; color: var(--dashboard-accent); }
-.chartPeriod { color: var(--kbc-muted); font-size: 13px; white-space: nowrap; }
-.chartScope { padding: 8px 12px; border: 1px solid var(--kbc-border); border-radius: 6px; color: var(--kbc-muted); font-size: 13px; white-space: nowrap; }
 .monthlyRisk { display: grid; grid-template-columns: minmax(0, 1fr) 116px; gap: 12px; margin-top: 16px; }
-.monthlyRiskChart { min-width: 0; min-height: 138px; padding: 8px 8px 0; border: 1px solid var(--kbc-border); border-radius: 7px; }
-.monthlyBars { display: grid; grid-template-columns: repeat(6, minmax(34px, 1fr)); align-items: end; gap: 8px; height: 100%; min-height: 128px; margin: 0; padding: 0; list-style: none; }
-.monthlyBars li { display: grid; grid-template-rows: 20px minmax(78px, 1fr) 20px; align-items: end; justify-items: center; gap: 3px; height: 100%; min-width: 0; }
-.monthlyBars strong { color: var(--dashboard-heading); font-size: 13px; font-weight: 750; font-variant-numeric: tabular-nums; line-height: 1; }
-.monthlyBars small { color: var(--kbc-muted); font-size: 11px; font-weight: 650; line-height: 1; }
-.monthlyBarTrack { display: flex; align-items: flex-end; justify-content: center; width: 100%; height: 100%; border-bottom: 1px solid var(--kbc-border); }
-.monthlyBar { width: min(28px, 72%); min-height: 4px; border-radius: 5px 5px 2px 2px; background: linear-gradient(180deg, #f0446f 0%, #d9194c 100%); box-shadow: 0 3px 8px rgb(217 25 76 / 18%); }
-.monthlyBar[data-empty="true"] { background: var(--kbc-border); box-shadow: none; }
-.unavailableChart { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 5px; min-height: 108px; padding: 8px; border: 1px dashed var(--kbc-border); border-radius: 7px; text-align: center; }
-.unavailableChart svg { width: 22px; height: 22px; color: var(--kbc-muted); }
-.unavailableChart p { font-size: 15px; font-weight: 700; }
-.unavailableChart span { max-width: 280px; padding: 0 12px; font-size: 13px; line-height: 1.6; color: var(--kbc-muted); }
-.currentRisk { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; padding: 10px; border-radius: 7px; background: var(--kbc-purple-wash); color: var(--kbc-muted); text-align: center; }
-.currentRisk strong { color: var(--dashboard-heading); font-size: 27px; font-weight: 750; line-height: 1.2; }
-.currentRisk span { font-size: 14px; }
-.currentRisk small { margin-top: 5px; font-size: 12px; }
 
 .notice { border: 1px solid var(--kbc-border); border-radius: 8px; padding: 12px; background: var(--kbc-surface); font-size: 12px; color: var(--kbc-muted); }
 .notice[role="alert"] { background: #fff7e5; border-color: #e8ca87; color: #835517; }
@@ -303,24 +252,19 @@ button.metric:hover { border-color: var(--dashboard-accent); box-shadow: 0 10px 
 
 @media (max-width: 1350px) {
   .metrics { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-  .riskLayout { grid-template-columns: minmax(0, 1.55fr) minmax(330px, 1fr); }
   .distribution { gap: 14px; margin-inline: 0; }
   .donut { width: 118px; height: 118px; flex-basis: 118px; }
-  .donutCenter { width: 84px; height: 84px; }
 }
 
 @media (max-width: 1200px) {
   .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .riskLayout { grid-template-columns: minmax(0, 1fr); }
   .charts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .welcomeQuote { display: none; }
 }
 
 @media (max-width: 800px) {
   .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .charts { grid-template-columns: minmax(0, 1fr); }
   .donut { width: 142px; height: 142px; flex-basis: 142px; }
-  .donutCenter { width: 104px; height: 104px; }
   .distribution { justify-content: center; gap: 24px; }
   .legend { max-width: 260px; }
 }
@@ -336,7 +280,6 @@ button.metric:hover { border-color: var(--dashboard-accent); box-shadow: 0 10px 
   .welcome { padding: 0 2px 4px; }
   .welcome > div > p { font-size: 15px; }
   .metrics { grid-template-columns: minmax(0, 1fr); }
-  .loadingDashboard { gap: 14px; }
   .metric { min-height: 168px; padding: 16px; }
   .metricValue { font-size: 34px; }
   :global(.workspace-shell[data-workspace-role="coach"]) :global(.workspace-main) .dashboard .panel { padding: 14px 12px; }
@@ -355,13 +298,11 @@ button.metric:hover { border-color: var(--dashboard-accent); box-shadow: 0 10px 
   .metrics { grid-template-columns: minmax(0, 1fr); }
   .distribution { gap: 12px; }
   .donut { width: 106px; height: 106px; flex-basis: 106px; }
-  .donutCenter { width: 78px; height: 78px; }
   .legend { font-size: 10px; }
   .monthlyRisk { grid-template-columns: minmax(0, 1fr); gap: 8px; }
 }
 
 @container coach-content (max-width: 1050px) {
-  .riskLayout { grid-template-columns: minmax(0, 1fr); }
   .metrics { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
 @container coach-content (max-width: 760px) {
@@ -371,5 +312,4 @@ button.metric:hover { border-color: var(--dashboard-accent); box-shadow: 0 10px 
 @container coach-content (max-width: 480px) {
   .metrics { grid-template-columns: minmax(0, 1fr); }
   .monthlyRisk { grid-template-columns: minmax(0, 1fr); }
-  .monthlyBars { grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 4px; }
 }

@@ -66,3 +66,15 @@ describe('learner content loading', () => {
     expect(hasComponentContent({ ...reading, contentHtml: '<p>Existing full response</p>' })).toBe(true);
   });
 });
+
+
+it('loads quizzes independently from the dashboard graph and invalidates them after progress changes', async () => {
+  await fetchLearnerDetail('commercial', '101', { quizView: true });
+  await fetchLearnerDetail('commercial', '101', { quizView: true });
+  expect(vi.mocked(fetch).mock.calls.map(call => call[0])).toEqual([
+    '/learner_api/learner-detail/commercial/101/?content=quiz',
+  ]);
+  invalidateLearnerDetailCache('commercial', '101');
+  await fetchLearnerDetail('commercial', '101', { quizView: true });
+  expect(fetch).toHaveBeenCalledTimes(2);
+});

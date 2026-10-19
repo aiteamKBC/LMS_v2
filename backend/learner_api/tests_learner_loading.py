@@ -6,6 +6,8 @@ import json
 
 from django.test import SimpleTestCase, RequestFactory
 
+from curriculum_api.week_visibility import visible_child_sql, visible_week_sql
+
 from . import learner_detail as detail
 from .tests import ScriptedConnection, ScriptedCursor
 
@@ -30,15 +32,16 @@ class CompactLearnerLoadingTests(SimpleTestCase):
         self.assertNotIn('learning_plan', model.all_learners.only.call_args.args)
         graph.assert_not_called()
 
-    def build(self, compact, refreshed_ksbs):
+    def build(self, compact, refreshed_ksbs, *, quiz_view=False):
         component = {"module": "Module", "week": None, "component": "Reading",
                      "expectedOtjh": None, "contentHtml": None, "hasReadingContent": True,
                      "reflectionRequired": False, "ksbMappingCount": 0}
         profile = SimpleNamespace(ksbs=[])
         with ExitStack() as stack:
+            work = {}
             for name in ("advance_learner", "hydrate_source_training_plan", "_apply_cohort_schedule",
                          "persist_live_otjh_snapshot", "_apply_live_otjh_snapshot"):
-                stack.enter_context(patch.object(detail, name))
+                work[name] = stack.enter_context(patch.object(detail, name))
             resolve = stack.enter_context(patch.object(detail, "_active_profile_for_source", return_value=profile))
             stack.enter_context(patch("learner_api.active_users.refresh_learner_ksb_snapshot", return_value=refreshed_ksbs))
             stack.enter_context(patch.object(detail, "to_learner_detail", return_value={
@@ -53,10 +56,15 @@ class CompactLearnerLoadingTests(SimpleTestCase):
             quizzes = stack.enter_context(patch.object(
                 detail, "_append_week_quizzes", side_effect=lambda w, c, **kw: (w, c),
             ))
-            stack.enter_context(patch.object(detail, "_live_otjh_snapshot", return_value={}))
+            totals = stack.enter_context(patch.object(detail, "_live_otjh_snapshot", return_value={}))
             result = detail.build_learner_detail(
-                SimpleNamespace(programme="", attendance_type="Recorded"), 125, compact=compact,
+                SimpleNamespace(programme="", attendance_type="Recorded"), 125, compact=compact, read_only=quiz_view, quiz_view=quiz_view,
             )
+            if quiz_view:
+                totals.assert_not_called()
+                for task in work.values():
+                    if task is not work["_apply_cohort_schedule"]:
+                        task.assert_not_called()
             self.resolved_plan = master.call_args.kwargs["assigned_modules"]
             self.quiz_plan = quizzes.call_args.kwargs["assigned_modules"]
         return result, resolve.call_count
@@ -96,8 +104,10 @@ class CompactLearnerLoadingTests(SimpleTestCase):
         sql, params = execute.call_args.args
         self.assertNotIn(selected, sql)
         self.assertIn("c.module_catalogue_id=ANY(%s)", sql)
-        for table in ("c", "m", "w"):
-            self.assertIn(f"{table}.deleted_at IS NULL OR COALESCE({table}.deleted_via_parent, '') <> ''", sql)
+        self.assertIn("m.deleted_at IS NULL OR COALESCE(m.deleted_via_parent, '') <> ''", sql)
+        # A deleted week or component shows only as an archived module's own history.
+        self.assertIn(visible_child_sql("c"), sql)
+        self.assertIn(visible_week_sql("w"), sql)
         self.assertEqual(params, [selected, ["M1"]])
         self.assertEqual(result, {"componentId": "C1", "contentHtml": "<p>Selected reading</p>"})
 
@@ -110,3 +120,23 @@ class CompactLearnerLoadingTests(SimpleTestCase):
     def test_empty_assignment_needs_no_content_query(self):
         with patch.object(detail, "effective_training_plan", return_value=[]):
             self.assertIsNone(detail._reading_content(SimpleNamespace(), "C1"))
+
+    def test_quiz_read_preserves_requirements_and_results_without_dashboard_work(self):
+        result, _ = self.build(True, [], quiz_view=True)
+        self.assertIs(result['components'][0]['reflectionRequired'], False)
+        self.assertEqual(result['quizAttempts'], [{'grade': 1}])
+        self.assertEqual(self.resolved_plan, self.quiz_plan)
+
+    def test_quiz_projection_is_scoped_to_the_requested_learner(self):
+        source = SimpleNamespace()
+        model = MagicMock()
+        model.all_learners.get.return_value = source
+        with patch.object(detail, 'SOURCE_MODELS', {'commercial': model}), patch.object(
+            detail, 'build_learner_detail', return_value={'components': []}
+        ) as build:
+            response = detail.learner_detail.__wrapped__(
+                RequestFactory().get('/?content=quiz'), 'commercial', 101,
+            )
+        self.assertEqual(response.status_code, 200)
+        model.all_learners.get.assert_called_once_with(pk=101)
+        build.assert_called_once_with(source, 101, compact=True, read_only=True, quiz_view=True)

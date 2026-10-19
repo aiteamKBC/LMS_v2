@@ -92,11 +92,11 @@ export default function CurriculumGroupsPage() {
     programmes, cohorts, groups, modules, coaches, loading, loaded, refreshing, error, reload, applyLocal,
   } = useCurriculumEntities({ includeStaff: true });
 
-  const [search, setSearch] = useState('');
+  const [search, setSearch] = useState(() => searchParams.get('q') || '');
   const [programmeFilter, setProgrammeFilter] = useState(searchParams.get('programme') || '');
   const [cohortFilter, setCohortFilter] = useState(searchParams.get('cohort') || '');
-  const [coachFilter, setCoachFilter] = useState('');
-  const [sort, setSort] = useState('');
+  const [coachFilter, setCoachFilter] = useState(() => searchParams.get('coach') || '');
+  const [sort, setSort] = useState(() => searchParams.get('sort') || '');
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [editing, setEditing] = useState<CurriculumGroup | null>(null);
   // The guided run: the same group form, followed straight on by the module one,
@@ -111,13 +111,20 @@ export default function CurriculumGroupsPage() {
   const highlightTimer = useRef<number | undefined>(undefined);
   useEffect(() => () => window.clearTimeout(highlightTimer.current), []);
 
+  // Every control lives in the URL, replaced rather than pushed, so Back from a
+  // group or cohort returns to the list exactly as it was left.
   useEffect(() => {
     const next = new URLSearchParams(searchParams);
-    if (programmeFilter) next.set('programme', programmeFilter); else next.delete('programme');
-    if (cohortFilter) next.set('cohort', cohortFilter); else next.delete('cohort');
-    if (showArchived) next.set('view', 'archive'); else next.delete('view');
+    ([
+      ['programme', programmeFilter],
+      ['cohort', cohortFilter],
+      ['q', search],
+      ['coach', coachFilter],
+      ['sort', sort],
+      ['view', showArchived ? 'archive' : ''],
+    ] as const).forEach(([key, value]) => { if (value) next.set(key, value); else next.delete(key); });
     if (next.toString() !== searchParams.toString()) setSearchParams(next, { replace: true });
-  }, [cohortFilter, programmeFilter, searchParams, setSearchParams, showArchived]);
+  }, [coachFilter, cohortFilter, programmeFilter, search, searchParams, setSearchParams, showArchived, sort]);
 
   // Nothing is read until the archive is actually opened; see useCurriculumArchive.
   const archived = useCurriculumArchive(fetchArchivedCurriculumGroups, showArchived);
@@ -128,11 +135,13 @@ export default function CurriculumGroupsPage() {
     () => cohortsForProgramme(cohorts, programmes, programmeFilter),
     [cohorts, programmes, programmeFilter],
   );
+  // Only once the cohorts have loaded: before that the list is empty, and a
+  // cohort restored from the URL would be dropped before it could match.
   useEffect(() => {
-    if (!cohortFilter) return;
+    if (!loaded || !cohortFilter) return;
     if (scopedCohorts.some(cohort => normaliseKey(cohort.id) === normaliseKey(cohortFilter))) return;
     setCohortFilter('');
-  }, [cohortFilter, scopedCohorts]);
+  }, [cohortFilter, loaded, scopedCohorts]);
 
   const modulesByGroup = useMemo(() => {
     const map = new Map<string, number>();

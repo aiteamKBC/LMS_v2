@@ -2,7 +2,7 @@ import { useEffect, useState, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { AppIcon } from '@/components/feature/AppIcon';
 import type { JourneyComponent } from '@/utils/learnerJourney';
-import { componentTypeMeta, gradePercent, hasComponentContent, isComponentComplete } from '@/utils/learnerJourney';
+import { componentTypeMeta, gradePercent, hasComponentContent, isComponentComplete, resourceTypeMeta } from '@/utils/learnerJourney';
 import { overviewSchedule } from '@/api/learnerOverview';
 import { HolidayNoteHint } from '@/components/feature/HolidayNoteHint';
 import { weekHolidayNotes } from '@/pages/learner/training-plan-timeline/model';
@@ -47,8 +47,53 @@ export interface ActivitySidebarProps {
   rowExtras?: (component: JourneyComponent, completed: boolean) => ReactNode;
   /** Where each row goes. */
   routeFor: (component: JourneyComponent, week: string) => string;
+  /** Catalogue browsers can select a week without leaving their saved material. */
+  onSelectWeek?: (week: SidebarWeek) => void;
+  /** Source-specific availability; never creates native content or quiz attempts. */
+  canOpen?: (component: JourneyComponent) => boolean;
+  monthHeadingFor?: (week: SidebarWeek, index: number) => string | null;
+  /** Catalogue current week is independent of the week being reviewed; null means completed. */
+  currentWeekKey?: string | null;
   accessOpen?: boolean;
   onAccessBlocked?: () => void;
+}
+
+const ACTIVITY_TONES: Record<string, { background: string; border: string; color: string }> = {
+  reading: { background: '#e8f4ff', border: '#bfdbfe', color: '#0369a1' },
+  video: { background: '#f3e8ff', border: '#ddd6fe', color: '#7e22ce' },
+  podcast: { background: '#fce7f3', border: '#fbcfe8', color: '#be185d' },
+  quiz: { background: '#fff4d6', border: '#f5d98b', color: '#a16207' },
+  assignment: { background: '#ffe9ed', border: '#fecdd3', color: '#be123c' },
+  powerpoint: { background: '#ffeddc', border: '#fed7aa', color: '#c2410c' },
+  reflection: { background: '#e9eaff', border: '#c7d2fe', color: '#4338ca' },
+  'live-session': { background: '#e4f7ee', border: '#bbebd2', color: '#137055' },
+  recording: { background: '#e5f5f7', border: '#bae6eb', color: '#0e7490' },
+  evidence: { background: '#f1eafd', border: '#ddd0f4', color: '#6d28d9' },
+  document: { background: '#f1f5f9', border: '#dbe3ec', color: '#475569' },
+  activity: { background: '#f1f5f9', border: '#dbe3ec', color: '#475569' },
+};
+
+const ACTIVITY_LABELS: Record<string, string> = {
+  reading: 'Reading', video: 'Video', podcast: 'Podcast', quiz: 'Quiz', assignment: 'Assignment',
+  powerpoint: 'PowerPoint', reflection: 'Reflection', 'live-session': 'Live session', recording: 'Recording',
+  evidence: 'Evidence', document: 'Document', activity: 'Activity',
+};
+
+function sidebarActivityMeta(component: JourneyComponent) {
+  const raw = component.isQuiz ? 'quiz' : String(component.type || '').trim().toLowerCase().replace(/[\s_]+/g, '-');
+  const key = raw === 'audio' ? 'podcast'
+    : ['presentation', 'slides', 'ppt'].includes(raw) ? 'powerpoint'
+      : ['live-session', 'live'].includes(raw) ? 'live-session'
+        : ['recording-placeholder'].includes(raw) ? 'recording'
+          : ['workplace-evidence'].includes(raw) ? 'evidence'
+            : ['resource', 'file', 'pdf', 'word'].includes(raw) ? 'document'
+              : ACTIVITY_TONES[raw] ? raw : 'activity';
+  const titleMeta = componentTypeMeta(component.title);
+  const label = ACTIVITY_LABELS[key];
+  const titleIsLabel = titleMeta.label.trim().toLowerCase() === label.toLowerCase();
+  const detail = titleMeta.detail || (!titleIsLabel ? component.title : null);
+  const resource = resourceTypeMeta(key.replace('-', ' '));
+  return { key, label, detail, icon: resource.icon, tone: ACTIVITY_TONES[key] };
 }
 
 export function ActivitySidebar({
@@ -64,6 +109,10 @@ export function ActivitySidebar({
   completionTimeFor,
   rowExtras,
   routeFor,
+  onSelectWeek,
+  canOpen,
+  monthHeadingFor,
+  currentWeekKey,
   accessOpen = true,
   onAccessBlocked,
 }: ActivitySidebarProps) {
@@ -91,12 +140,22 @@ export function ActivitySidebar({
   const weekDoneCount = weekComponents.filter((c) => isComponentComplete(c, completedIds)).length;
   const activeWeekIndex = weeks.findIndex((w) => w.active);
   const currentWeekLabel = activeWeekIndex < 0 ? weekTitle : weekDisplayLabel(weeks, activeWeekIndex);
-  const hasUnavailableContent = weekComponents.some((c) => !hasComponentContent(c));
-  const monthHeadings = weekMonthHeadings(weeks, plannedModule?.start_date);
+  const isCurrentWeek = (week: SidebarWeek) => currentWeekKey === undefined ? week.active : week.key === currentWeekKey;
+  const weekHeading = currentWeekKey === null ? 'Week activities'
+    : currentWeekKey === undefined || weeks.some(week => week.active && isCurrentWeek(week)) ? 'Current week' : 'Selected week';
+  const contentAvailableFor = canOpen || hasComponentContent;
+  const openableFor = canOpen || ((c: JourneyComponent) => hasComponentContent(c) && isNavigableComponent(c));
+  const hasUnavailableContent = weekComponents.some((c) => !contentAvailableFor(c));
+  const monthHeadings = monthHeadingFor ? weeks.map(monthHeadingFor) : weekMonthHeadings(weeks, plannedModule?.start_date);
   // Only weeks the curriculum team published a holiday hint for appear here.
   const holidayNotes = weekHolidayNotes(plannedModule?.curriculumSlots);
   const currentWeekNote = holidayNotes.get(weeks.find(w => w.active)?.weekId
     || weekComponents.find(c => c.weekId)?.weekId || '');
+  const legendItems = [...new Map([...weekComponents, ...weeks.flatMap(week => week.components)]
+    .map(component => {
+      const meta = sidebarActivityMeta(component);
+      return [meta.key, meta] as const;
+    })).values()];
 
   /** Whether this row is the activity the host page is showing. */
   const isCurrentRow = (c: JourneyComponent) => (
@@ -107,9 +166,19 @@ export function ActivitySidebar({
 
   return (
     <aside aria-label="Module activities" className="min-w-0 space-y-4 lg:sticky lg:top-4">
+      {legendItems.length > 0 && <section aria-label="Activity type key" className="rounded-xl border border-primary-100 bg-white px-4 py-3 shadow-sm">
+        <p className="text-[10px] font-bold uppercase tracking-wider text-primary-900">Activity types</p>
+        <div className="mt-2 flex flex-wrap gap-1.5">
+          {legendItems.map(meta => <span key={meta.key} data-activity-type={meta.key}
+            className="inline-flex items-center gap-1.5 rounded-full border px-2 py-1 text-[10px] font-semibold"
+            style={{ backgroundColor: meta.tone.background, borderColor: meta.tone.border, color: meta.tone.color }}>
+            <AppIcon className={`${meta.icon} text-[11px]`} />{meta.label}
+          </span>)}
+        </div>
+      </section>}
       <div className="overflow-hidden rounded-xl border border-emerald-200 bg-emerald-50/70 shadow-sm">
         <div className="border-b border-emerald-100 px-4 py-3">
-          <p className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-primary-600">Current week</p>
+          <p className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-primary-600">{weekHeading}</p>
           <h2 className="text-sm font-heading font-bold text-primary-900">{currentWeekLabel || 'This week'}</h2>
           <p className="text-[11px] text-foreground-400 mt-0.5">
             {weekComponents.length} components{' '}
@@ -120,10 +189,10 @@ export function ActivitySidebar({
         </div>
         <ul className="divide-y divide-emerald-100">
           {weekComponents.map((c) => {
-            const cm = componentTypeMeta(c.title);
+            const cm = sidebarActivityMeta(c);
             const isCurrent = isCurrentRow(c);
-            const contentAvailable = hasComponentContent(c);
-            const navigable = contentAvailable && isNavigableComponent(c) && !isCurrent;
+            const contentAvailable = contentAvailableFor(c);
+            const navigable = openableFor(c) && !isCurrent;
             const accessBlocked = navigable && !accessOpen;
             const clickable = navigable && accessOpen;
             const attempts = c.isQuiz ? (c.quizAttempts || []) : [];
@@ -147,11 +216,12 @@ export function ActivitySidebar({
                           : clickable ? 'bg-emerald-50/30 hover:bg-emerald-100/60 cursor-pointer' : 'bg-emerald-50/30 cursor-default'
                   }`}
                 >
-                  <span className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 ${completed ? 'bg-emerald-100' : 'bg-primary-100'}`}>
-                    <AppIcon className={completed ? 'ri-check-line text-[12px] text-emerald-700' : `${cm.icon} text-[12px] text-primary-700`} />
+                  <span data-activity-type={cm.key} className="w-7 h-7 rounded-lg border flex items-center justify-center shrink-0"
+                    style={{ backgroundColor: cm.tone.background, borderColor: cm.tone.border, color: cm.tone.color }}>
+                    <AppIcon className={`${cm.icon} text-[12px]`} />
                   </span>
                   <span className="flex-1 min-w-0">
-                    <span className="block text-[9px] font-semibold uppercase tracking-wider text-foreground-400">{cm.label}</span>
+                    <span className="block text-[9px] font-semibold uppercase tracking-wider" style={{ color: cm.tone.color }}>{cm.label}</span>
                     <span className={`block text-[13px] font-semibold leading-snug truncate ${
                       isCurrent ? 'text-primary-700' : completed ? 'text-emerald-900' : 'text-primary-800'
                     }`}>
@@ -188,7 +258,7 @@ export function ActivitySidebar({
         </ul>
       </div>
 
-      {weeks.length > 1 && (
+      {(weeks.length > 1 || onSelectWeek) && (
         <div className="rounded-xl border border-primary-100 bg-white overflow-hidden">
           <div className="px-4 py-3 border-b border-primary-100">
             <h2 className="text-sm font-heading font-bold text-primary-900">{moduleTitle || 'Module'}</h2>
@@ -201,17 +271,18 @@ export function ActivitySidebar({
               // A week with nothing in it has nothing to drop down; every other
               // week can be opened, whether or not its activities can be
               // started yet.
-              const viewable = w.count > 0;
-              const expanded = viewable && weekKey === expandedWeek;
+              const viewable = !!onSelectWeek || w.count > 0;
+              const expanded = !onSelectWeek && viewable && weekKey === expandedWeek;
               const weekNote = w.weekId ? holidayNotes.get(w.weekId) : undefined;
               return (
                 <li key={weekKey}>
                   {monthHeadings[index] && <h3 className="border-b border-primary-100 bg-primary-50/80 px-4 py-2 text-[11px] font-bold uppercase tracking-wide text-primary-800">{monthHeadings[index]}</h3>}
                   <button
                     disabled={!viewable}
-                    aria-label={`${weekDisplayLabel(weeks, index)}, ${w.count} components${w.active ? ', Current' : weekComplete ? ', Done' : ''}`}
-                    aria-expanded={viewable ? expanded : undefined}
-                    onClick={() => setExpandedWeek(toggleExpandedWeek(expandedWeek, weekKey))}
+                    aria-label={`${weekDisplayLabel(weeks, index)}, ${w.count} components${isCurrentWeek(w) ? ', Current' : weekComplete ? ', Done' : ''}`}
+                    aria-expanded={!onSelectWeek && viewable ? expanded : undefined}
+                    aria-current={onSelectWeek && w.active ? 'step' : undefined}
+                    onClick={() => onSelectWeek ? onSelectWeek(w) : setExpandedWeek(toggleExpandedWeek(expandedWeek, weekKey))}
                     className={`w-full flex items-center gap-2.5 px-4 py-2.5 text-left transition-colors ${
                       !viewable
                         ? 'cursor-not-allowed bg-primary-50/70 opacity-55'
@@ -237,17 +308,17 @@ export function ActivitySidebar({
                         {w.count} components{weekComplete ? ' complete' : ''}
                       </span>
                     </span>
-                    {w.active && (
+                    {isCurrentWeek(w) && (
                       <span className="text-[10px] font-semibold text-primary-600 shrink-0">Current</span>
                     )}
-                    {weekComplete && !w.active && (
+                    {weekComplete && !isCurrentWeek(w) && (
                       <span className="text-[10px] font-semibold text-emerald-700 shrink-0">Done</span>
                     )}
                     {!viewable ? (
                       <AppIcon className="ri-lock-line shrink-0 text-sm text-foreground-400" />
                     ) : (
                       <AppIcon
-                        className={`shrink-0 text-sm text-primary-500 ri-arrow-${expanded ? 'up' : 'down'}-s-line`}
+                        className={`shrink-0 text-sm text-primary-500 ri-arrow-${onSelectWeek ? 'right' : expanded ? 'up' : 'down'}-s-line`}
                       />
                     )}
                   </button>
@@ -263,25 +334,27 @@ export function ActivitySidebar({
                   {expanded && (
                     <ul className="border-t border-primary-100 bg-primary-50/40 divide-y divide-primary-100">
                       {weekComponentRows(w, completedIds).map((row) => {
-                        const rowMeta = componentTypeMeta(row.component.title);
-                        const accessBlocked = row.openable && !accessOpen;
+                        const rowMeta = sidebarActivityMeta(row.component);
+                        const openable = canOpen ? canOpen(row.component) : row.openable;
+                        const accessBlocked = openable && !accessOpen;
                         return (
                           <li key={row.component.componentId || row.component.title}>
                             <button
                               type="button"
-                              disabled={!row.openable && !accessBlocked}
+                              disabled={!openable && !accessBlocked}
                               aria-disabled={accessBlocked || undefined}
-                              title={!row.openable ? 'Learning content is not available yet.' : undefined}
-                              onClick={() => accessBlocked ? onAccessBlocked?.() : row.openable && navigate(routeFor(row.component, w.week))}
+                              title={!openable ? 'Learning content is not available yet.' : undefined}
+                              onClick={() => accessBlocked ? onAccessBlocked?.() : openable && navigate(routeFor(row.component, w.week))}
                               className={`w-full flex items-center gap-2 pl-11 pr-4 py-2 text-left transition-colors ${
-                                row.openable && accessOpen ? 'hover:bg-primary-50 cursor-pointer' : 'cursor-not-allowed opacity-60'
+                                openable && accessOpen ? 'hover:bg-primary-50 cursor-pointer' : 'cursor-not-allowed opacity-60'
                               }`}
                             >
-                              <span className="w-6 h-6 rounded-md flex items-center justify-center shrink-0 bg-primary-100">
-                                <AppIcon className={`${rowMeta.icon} text-[11px] text-primary-700`} />
+                              <span data-activity-type={rowMeta.key} className="w-6 h-6 rounded-md border flex items-center justify-center shrink-0"
+                                style={{ backgroundColor: rowMeta.tone.background, borderColor: rowMeta.tone.border, color: rowMeta.tone.color }}>
+                                <AppIcon className={`${rowMeta.icon} text-[11px]`} />
                               </span>
                               <span className="flex-1 min-w-0">
-                                <span className="block text-[9px] font-semibold uppercase tracking-wider text-foreground-400">
+                                <span className="block text-[9px] font-semibold uppercase tracking-wider" style={{ color: rowMeta.tone.color }}>
                                   {rowMeta.label}
                                 </span>
                                 <span className={`block text-[12px] font-medium leading-snug truncate ${
@@ -292,7 +365,7 @@ export function ActivitySidebar({
                               </span>
                               {row.complete ? (
                                 <AppIcon className="ri-checkbox-circle-fill text-emerald-600 text-[13px] shrink-0" />
-                              ) : !row.openable ? (
+                              ) : !openable ? (
                                 <AppIcon className="ri-lock-line text-primary-400 text-[13px] shrink-0" />
                               ) : (
                                 <AppIcon className="ri-arrow-right-s-line text-primary-500 text-[13px] shrink-0" />

@@ -27,6 +27,10 @@ from django.db import DatabaseError, connections
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 
+from curriculum_api.week_visibility import visible_child_sql, visible_week_sql
+
+from .ksb_sources import PROFILE, STANDARD, parse_source, resolve_source
+
 
 def _conn():
     return connections["enrolment"]
@@ -133,6 +137,7 @@ def weeks(request):
         for r in _rows(
             "SELECT id, week_number, title FROM curriculum.weeks "
             "WHERE module_catalogue_id = %s "
+            f"AND {visible_week_sql('weeks')} "
             "ORDER BY week_number, display_order",
             [module],
         )
@@ -155,21 +160,53 @@ def components(request):
         for r in _rows(
             "SELECT id, type, title, expected_otjh FROM curriculum.components "
             "WHERE week_id = %s "
+            f"AND {visible_child_sql('components')} "
             "ORDER BY display_order",
             [week],
         )
     ])
 
 
-def _ksb_profile_row(programme):
-    """The KSB profile authored for a programme, or None.
+def _source_row(raw_source):
+    """The KSB list an applied source names, shaped like a ksb_profiles row.
 
-    Two links exist and both are in live use, so both are tried in order of
-    authority:
-      1. programmes.ksb_profile_source_id — set by the curriculum structure
-         wizard, holds 'profile:<KSBP-id>' (or a bare id).
-      2. ksb_profiles.programme_id / .programme_name — the older direct link,
-         still populated for profiles authored before the wizard existed.
+    A standard ('standard:st0596-v1-0') is read from curriculum.standard_ksbs.
+    A profile id is read even once archived: the programme still applies it,
+    and Skills Radar answers were given against its items.
+    """
+    kind, source_id = parse_source(raw_source)
+    if kind == PROFILE:
+        rows = _rows(
+            "SELECT id, name, ksb_items FROM curriculum.ksb_profiles "
+            "WHERE id = %s OR ksb_profile_id = %s "
+            "ORDER BY COALESCE(is_active, true) DESC LIMIT 1",
+            [source_id, source_id],
+        )
+        return rows[0] if rows else None
+    if kind == STANDARD:
+        resolved = resolve_source(raw_source, using="enrolment")
+        if not resolved.items:
+            return None
+        return {
+            "id": resolved.source_value,
+            "name": resolved.label,
+            "ksb_items": [
+                {"id": item["id"], "type": item["type"], "code": item["code"],
+                 "title": item["title"], "description": item["description"]}
+                for item in resolved.items
+            ],
+        }
+    return None
+
+
+def _ksb_profile_row(programme):
+    """The KSB list a programme applies, or None.
+
+    Two links exist, tried in order of authority:
+      1. programmes.ksb_profile_source_id — the applied source: a profile id
+         ('KSBP-...', 'profile:<id>') or a standard ('standard:st0596-v1-0').
+      2. ksb_profiles.programme_ids — discovery for a programme that applies
+         nothing; only active profiles take part.
     """
     programme = (programme or "").strip()
     if not programme:
@@ -182,22 +219,19 @@ def _ksb_profile_row(programme):
     )
     programme_id = (source[0].get("programme_id") or "") if source else ""
     raw_source = (source[0].get("ksb_profile_source_id") or "") if source else ""
-    # Stored as 'profile:<id>' by the wizard; tolerate a bare id too.
-    profile_id = raw_source.split(":", 1)[1] if ":" in raw_source else raw_source
 
-    if profile_id:
-        rows = _rows(
-            "SELECT id, name, ksb_items FROM curriculum.ksb_profiles "
-            "WHERE id = %s AND COALESCE(is_active, true) LIMIT 1",
-            [profile_id],
-        )
-        if rows:
-            return rows[0]
+    if raw_source:
+        row = _source_row(raw_source)
+        if row:
+            return row
 
+    # programme_ids holds programme ids and names side by side. (This read used
+    # programme_id / programme_name, columns ksb_profiles no longer has, so it
+    # raised for every programme without an applied source.)
     rows = _rows(
         "SELECT id, name, ksb_items FROM curriculum.ksb_profiles "
         "WHERE COALESCE(is_active, true) "
-        "  AND (programme_id = %s OR programme_name = %s) "
+        "  AND (programme_ids @> to_jsonb(%s::text) OR programme_ids @> to_jsonb(%s::text)) "
         "ORDER BY updated_at DESC NULLS LAST LIMIT 1",
         [programme_id or programme, programme],
     )
@@ -214,7 +248,17 @@ def ksb_profile_for_programme(programme):
     learner's Skills Radar answers against these same KSBs. Returns (None, []) for
     an unmapped programme so callers can say "none authored yet" rather than fail.
     """
-    row = _ksb_profile_row(programme)
+    return _profile_results(_ksb_profile_row(programme), programme)
+
+
+def ksb_profile_for_source(source_value, label=""):
+    """(standard, results) for one explicit source, e.g. the profile or standard
+    a learner's Skills Radar was answered against -- archived or not -- so a
+    signed assessment keeps its titles after the programme changes source."""
+    return _profile_results(_source_row(source_value) if source_value else None, label)
+
+
+def _profile_results(row, programme):
     if row is None:
         return None, []
 

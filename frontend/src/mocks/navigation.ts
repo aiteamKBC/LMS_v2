@@ -1,5 +1,5 @@
 import type { SidebarNavItem } from '@/components/feature/Sidebar';
-import { CHAT_ENABLED } from '@/lib/featureFlags';
+import { CHAT_ENABLED, LEARNER_FEEDBACK_ENABLED } from '@/lib/featureFlags';
 import { inclusionLoginUrl } from '@/features/inclusion/navigation';
 
 const inclusionLoginHref = inclusionLoginUrl();
@@ -23,6 +23,11 @@ export const learnerNavItems: SidebarNavItem[] = [
   // My Learning — training plan, learning journey and quizzes merged into
   // Overview/Modules/Quizzes tabs on one page.
   { id: 'learner-my-learning', label: 'My Learning', icon: 'ri-book-open-line', href: '/learner/my-learning', matchPaths: ['/learner/learning-plan'], badge: 1 },
+
+  // Published forms explicitly assigned to the signed-in learner.
+  ...(LEARNER_FEEDBACK_ENABLED
+    ? [{ id: 'learner-feedback', label: 'Feedback', icon: 'ri-survey-line', href: '/learner/feedback' }]
+    : []),
 
   // My Progress
   {
@@ -237,9 +242,16 @@ export const curriculumNavItems: SidebarNavItem[] = [
       '/curriculum/groups',
       '/curriculum/modules',
       '/curriculum/teams-meetings',
+      '/curriculum/recordings',
       '/curriculum/session-calendar',
       '/curriculum/england-holidays',
     ],
+  },
+  {
+    id: 'curriculum-bulk-attendance',
+    label: 'Bulk Attendance',
+    icon: 'ri-calendar-check-line',
+    href: '/curriculum/bulk-attendance',
   },
   {
     id: 'curriculum-library',
@@ -328,8 +340,8 @@ export const engagementNavItems: SidebarNavItem[] = [
     icon: 'ri-bar-chart-box-line',
     href: '',
     children: [
-      { id: 'engagement-reports', label: 'Reports', icon: 'ri-file-chart-line', href: '/engagement/reports' },
-      { id: 'engagement-feedbacks', label: 'Feedbacks', icon: 'ri-chat-quote-line', href: '/engagement/feedbacks' },
+      { id: 'engagement-reports', label: 'Reports', icon: 'ri-bar-chart-box-line', href: '/engagement/reports' },
+      { id: 'engagement-feedback', label: 'Feedback', icon: 'ri-survey-line', href: '/engagement/reports/feedback', matchPaths: ['/engagement/reports/feedback/create', '/engagement/reports/feedback/forms'] },
     ],
   },
 ];
@@ -797,6 +809,7 @@ function stripChatNavItems(items: SidebarNavItem[]): SidebarNavItem[] {
 }
 
 const baseRoleNavMap: Record<string, { items: SidebarNavItem[]; label: string; workspaceLabel: string }> = {
+  'advanced-admin': { items: [{ id: 'advanced-admin-learners', label: 'Learners', href: '/workspace/advanced-admin', icon: 'ri-team-line' }], label: 'Advanced Admin', workspaceLabel: 'Learner Review' },
   'record-monitor': { items: [{ id: 'record-monitor', label: 'Record monitoring', href: '/old-otjh/monitor', icon: 'ri-dashboard-line' }], label: 'Record monitor', workspaceLabel: 'Learning record monitoring' },
   learner: { items: learnerNavItems, label: 'Learner', workspaceLabel: 'Learner Workspace' },
   coach: { items: coachNavItems, label: 'Coach', workspaceLabel: 'Coach Workspace' },

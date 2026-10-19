@@ -1,7 +1,6 @@
-import type { LearnerDetail } from '@/api/learnerDetail';
 import type { HomeEvent } from '@/pages/learner/home/homeData';
 import { componentRoute } from '@/pages/learner/video-watch/componentRoute';
-import { buildLearnerJourney } from '@/utils/learnerJourney';
+import { buildLearnerJourney, type LearnerJourneySource } from '@/utils/learnerJourney';
 
 type SessionRouteEvent = Pick<HomeEvent, 'date' | 'title' | 'moduleId'>;
 
@@ -17,7 +16,7 @@ function sameDay(value: string | null | undefined, day: string): boolean {
 
 /** Build the activity-runner URL for the scheduled session's authored component. */
 export function learnerLiveSessionHref(
-  detail: LearnerDetail | null,
+  detail: LearnerJourneySource | null,
   event: SessionRouteEvent,
   kind?: string,
   learnerId?: string,

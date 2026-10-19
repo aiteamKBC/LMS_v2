@@ -1,15 +1,15 @@
-import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react';
+import { memo, useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react';
 import { AnimatedProgressCircle } from '@/components/ui/AnimatedProgressCircle';
 import { Link } from 'react-router-dom';
 import { BookOpen, CalendarDays, CalendarOff, ChevronLeft, ChevronRight, Clock3, ExternalLink, Search, Users, Video } from 'lucide-react';
 import type { LearnerKind } from '@/api/learnerDetail';
-import type { TrainingPlanDashboard } from '@/api/trainingPlanDashboard';
-import { useLearnerDetailParam } from '@/hooks/useLearnerDetailParam';
-import { buildCurriculumTimeline, type CurriculumRow } from '@/pages/learner/training-plan-timeline/model';
+import type { WeeklyLearningDetail } from '@/api/weeklyLearning';
+import { selectedNavigation, studentWeekId } from '@/api/weeklyLearningContract';
+import { useWeeklyLearning, useWeeklyLearningWeek } from '@/hooks/useWeeklyLearning';
+import type { CurriculumRow } from '@/pages/learner/training-plan-timeline/model';
 import { learningToday } from '@/pages/learner/my-learning/subjectLearning';
 import { dateLabel, ukDate, ukTime } from './overviewSchedule';
-import { learnerHeaderPlan } from './learnerHeaderPlan';
-import { completedComponentIds, formatHoursMinutes, ksbTypeCode, resourceTypeMeta, type JourneyComponent } from '@/utils/learnerJourney';
+import { formatHoursMinutes, ksbTypeCode, resourceTypeMeta, type JourneyComponent } from '@/utils/learnerJourney';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { HolidayNoteHint } from '@/components/feature/HolidayNoteHint';
 import { Panel } from '@/components/ui/Panel';
@@ -20,23 +20,24 @@ import { RowsSkeleton } from '@/components/feature/Skeletons';
 import { cn } from '@/lib/cn';
 import {
   activityActionLabel, activityExpectedTimeLabel, activityHref, activityKsbCodes, activityStatus,
-  resolveInitialWeek, weekComponents, weekExpectedHours, weekKey, weekKsbProgress, weekProgress, weekWindow, type ActivityStatus,
+  weekKey, type ActivityStatus,
 } from './weeklyPlanHelpers';
 import planLayout from '@/pages/learner/training-plan-timeline/TrainingPlanDetails.module.css';
+import { canonicalActivityRows, canonicalWeekRow } from './weeklyPlanPresentation';
 
 type SessionRow = Extract<CurriculumRow, { kind: 'session' }>;
 type ReadingWeekRow = Extract<CurriculumRow, { kind: 'reading-week' }>;
 type SessionState = 'attended' | 'missed' | 'upcoming' | 'live' | 'unscheduled' | 'unmarked' | 'cancelled';
 
 function sessionState(week: SessionRow, now: number): SessionState {
-  if (week.attended === true) return 'attended';
-  if (week.attended === false) return 'missed';
   if (!week.start) return 'unscheduled';
   const start = Date.parse(week.start);
   if (!Number.isFinite(start)) return 'unscheduled';
   if (now < start) return 'upcoming';
   const end = week.minutes != null && week.minutes > 0 ? start + week.minutes * 60_000 : null;
-  return end != null && now >= end ? 'missed' : 'live';
+  if (week.attended === true) return 'attended';
+  if (week.attended === false && end != null && now >= end) return 'missed';
+  return end != null && now >= end ? 'unmarked' : 'live';
 }
 
 const STATUS_TONE: Record<ActivityStatus, 'positive' | 'info' | 'neutral'> = {
@@ -47,47 +48,85 @@ const STATUS_LABEL: Record<ActivityStatus, string> = {
 };
 const ACTIVITY_PAGE_SIZE = 8;
 
-export function WeeklyLearningPlan({ kind, learnerId, schedule, scheduleLoading, scheduleError, canOpenActivities = true }: {
-  kind: LearnerKind; learnerId: string; schedule: TrainingPlanDashboard | null; scheduleLoading: boolean; scheduleError?: string;
+type WeeklyLearningPlanProps = {
+  kind: LearnerKind; learnerId: string;
   canOpenActivities?: boolean;
+  initialModuleId?: string | null;
+  active?: boolean;
+};
+
+/** Dashboard and My Learning render the same canonical Weekly resource. */
+export function WeeklyLearningPlan(props: WeeklyLearningPlanProps) {
+  const read = useWeeklyLearning(props.kind, props.learnerId, true, props.initialModuleId, props.active);
+  return <WeeklyLearningPlanView key={`${props.kind}:${props.learnerId}`} {...props} read={read} />;
+}
+export { WeeklyLearningPlan as DashboardWeeklyLearningPlan };
+
+function WeeklyLearningPlanView({ kind, learnerId, canOpenActivities = true, active = true, read }: WeeklyLearningPlanProps & {
+  read: { real: WeeklyLearningDetail | null; loading: boolean; loadError: string | null; refresh: () => void };
 }) {
-  const { real, loading: detailLoading, loadError: detailError, refresh: refreshDetail } = useLearnerDetailParam(kind, learnerId, true);
+  const { real, loading: scheduleLoading, loadError: scheduleError, refresh: refreshDetail } = read;
+  const detailError = scheduleError;
   const [now, setNow] = useState(Date.now);
-  useEffect(() => { const timer = window.setInterval(() => setNow(Date.now()), 30_000); return () => window.clearInterval(timer); }, []);
+  useEffect(() => {
+    if (!active) return;
+    setNow(Date.now());
+    const timer = window.setInterval(() => setNow(Date.now()), 30_000);
+    return () => window.clearInterval(timer);
+  }, [active]);
   const today = learningToday();
-
-  const candidateModules = useMemo(() => (schedule?.modules || []).filter(module => (module.curriculumSlots?.length ?? 0) > 0), [schedule]);
-  const plan = useMemo(() => learnerHeaderPlan(candidateModules, real || {}, today), [candidateModules, real, today]);
+  const candidateModules = real?.modules || [];
   const [selectedModuleId, setSelectedModuleId] = useState<string | null>(null);
+  const initialNavigation = real ? selectedNavigation(real) : undefined;
   const resolvedModuleId = (selectedModuleId && candidateModules.some(module => module.id === selectedModuleId) ? selectedModuleId : null)
-    || plan.modules[0]?.id || candidateModules[0]?.id || null;
-  const module = candidateModules.find(item => item.id === resolvedModuleId);
-
-  const weeks = useMemo(() => {
-    const sessions = (schedule?.sessions || []).filter(session => session.moduleId === resolvedModuleId);
-    return buildCurriculumTimeline(module?.curriculumSlots, sessions);
-  }, [module, schedule?.sessions, resolvedModuleId]);
+    || initialNavigation?.moduleId || candidateModules[0]?.id || null;
+  const canonicalNavigation = useMemo(() => real?.weeks.filter(week => week.moduleId === resolvedModuleId) || [], [real, resolvedModuleId]);
+  const navigationBySlot = useMemo(() => new Map(canonicalNavigation.map(week => [week.slotNumber, week])), [canonicalNavigation]);
+  const weeks = useMemo(() => canonicalNavigation.map(week => canonicalWeekRow(week,
+    real?.selectedWeek?.weekId === week.id ? real.selectedWeek.liveSession : undefined)), [canonicalNavigation, real]);
   const [selection, setSelection] = useState<{ moduleId: string; key: string } | null>(null);
-  const initialWeek = resolveInitialWeek(weeks, today);
-  const selectedWeek = (selection?.moduleId === resolvedModuleId && weeks.find(week => weekKey(week) === selection.key)) || initialWeek;
+  const initialWeek = (initialNavigation?.moduleId === resolvedModuleId ? weeks.find(week => week.slotNumber === initialNavigation.slotNumber) : undefined)
+    || weeks.find(week => navigationBySlot.get(week.slotNumber)?.status === 'current')
+    || weeks.find(week => navigationBySlot.get(week.slotNumber)?.status === 'upcoming') || weeks.at(-1);
+  const sidebarWeek = (selection?.moduleId === resolvedModuleId && weeks.find(week => weekKey(week) === selection.key)) || initialWeek;
+  const requestedNavigation = sidebarWeek ? navigationBySlot.get(sidebarWeek.slotNumber) : undefined;
+  const requestedWeekId = requestedNavigation ? studentWeekId(requestedNavigation) : null;
+  const nextWeek = selection?.moduleId === resolvedModuleId ? weeks[weeks.findIndex(week => weekKey(week) === selection.key) + 1] : undefined;
+  const nextNavigation = nextWeek ? navigationBySlot.get(nextWeek.slotNumber) : undefined;
+  const adjacentWeekId = nextNavigation ? studentWeekId(nextNavigation) : null;
+  const weekRead = useWeeklyLearningWeek(kind, learnerId, resolvedModuleId, requestedWeekId, true, real, adjacentWeekId, active);
+  const canonicalDetail = weekRead.data?.selectedWeek;
+  const canonicalWeek = weekRead.data ? selectedNavigation(weekRead.data) : undefined;
+  const selectedWeek = canonicalWeek ? canonicalWeekRow(canonicalWeek, canonicalDetail?.liveSession) : sidebarWeek;
   const selectedIndex = selectedWeek ? weeks.findIndex(week => weekKey(week) === weekKey(selectedWeek)) : -1;
-
-  const completedIds = useMemo(() => completedComponentIds(real), [real]);
   const isTeachingWeek = selectedWeek?.kind === 'session';
-  const components = isTeachingWeek ? weekComponents(real, resolvedModuleId || undefined, (selectedWeek as SessionRow).weekId, selectedWeek?.slotNumber) : [];
-  const progress = weekProgress(components, completedIds);
-  const ksbProgress = weekKsbProgress(components, completedIds);
-  const weekHours = weekExpectedHours(components, completedIds);
+  const components = useMemo(() => isTeachingWeek && canonicalDetail ? canonicalActivityRows(canonicalDetail) : [], [isTeachingWeek, canonicalDetail]);
+  const completedIds = useMemo(() => new Set(canonicalDetail?.activities.filter(activity => activity.status === 'completed').map(activity => activity.id)), [canonicalDetail]);
+  const canonical = canonicalDetail?.summary;
+  const progress = { completed: canonicalWeek?.completedActivities ?? 0, total: canonicalWeek?.totalActivities ?? 0, percent: canonicalWeek?.progress ?? 0 };
+  const ksbProgress = { achieved: canonical?.achievedKsbCount ?? 0, total: canonical?.ksbCount ?? 0,
+    percent: canonical?.ksbCount ? Math.round(canonical.achievedKsbCount / canonical.ksbCount * 10000) / 100 : 0,
+    codes: [...new Set(canonicalDetail?.activities.flatMap(activity => activity.ksbCodes))].sort() };
+  const weekHours = { plannedHours: canonical?.plannedOtjhHours ?? 0, actualHours: canonical?.otjhHours ?? null, untimed: canonical?.untimedActivities ?? 0,
+    percent: canonical?.otjhHours != null && canonical.plannedOtjhHours ? Math.round(canonical.otjhHours / canonical.plannedOtjhHours * 10000) / 100 : null };
+  const actualHours = useMemo(() => Object.fromEntries(canonicalDetail?.activities.map(activity => [activity.id, activity.actualHours]) ?? []), [canonicalDetail]);
+  const hasSchedule = !!real;
+  const windowForWeek = (index: number) => {
+    const navigation = navigationBySlot.get(weeks[index].slotNumber)!;
+    return { start: navigation.startDate, end: navigation.endDate };
+  };
 
-  // A schedule failure with nothing cached is already surfaced by the
-  // dashboard's own retry banner above this component -- a second, redundant
-  // error box here would just repeat it. Curriculum slots live only in the
-  // training-plan-dashboard payload, so there is no independent source left
-  // to fall back to the way the old, decoupled "This week" card could.
-  if (!schedule && !scheduleLoading && scheduleError) return null;
+  // A failed canonical read is different from a successful empty plan.
+  if (!hasSchedule && !scheduleLoading && scheduleError) return <div role="alert"><Panel>
+    <EmptyState variant="error" title="Could not load your weekly plan" description={scheduleError}
+      action={<button type="button" onClick={refreshDetail}>Try again</button>} />
+  </Panel></div>;
+
 
   return <section aria-label="Weekly learning plan" className={cn(planLayout.weeklyPlan, 'grid grid-cols-1 gap-3 lg:grid-cols-[240px_minmax(0,1fr)]')}>
-    {!schedule ? <WeeklyLearningPlanSkeleton /> : !candidateModules.length ? <Panel className="lg:col-span-2">
+    {hasSchedule && detailError && <div role="alert" className="lg:col-span-2">Your weekly plan could not refresh. {detailError}
+      <button type="button" onClick={refreshDetail}>Try again</button></div>}
+    {!hasSchedule ? <WeeklyLearningPlanSkeleton /> : !candidateModules.length ? <Panel className="lg:col-span-2">
       <EmptyState title="Your weekly plan will appear here" description="Once a module is assigned, its weeks and activities will show up in this space." />
     </Panel> : <>
     <aside className={cn(planLayout.weekRail, 'rounded-2xl border border-foreground-100 bg-background-50 p-3 shadow-sm')}>
@@ -114,15 +153,16 @@ export function WeeklyLearningPlan({ kind, learnerId, schedule, scheduleLoading,
       <ol className={cn(planLayout.weekList, 'mt-2.5 space-y-1')}>
         {weeks.map((week, index) => {
           const active = selectedWeek ? weekKey(week) === weekKey(selectedWeek) : false;
-          const { start, end } = weekWindow(weeks, index);
-          const state: 'past' | 'current' | 'upcoming' = start > today ? 'upcoming' : end !== null && end < today ? 'past' : 'current';
+          const { start, end } = windowForWeek(index);
+          const railNavigation = navigationBySlot.get(week.slotNumber);
+          const navigation = canonicalWeek?.id === railNavigation?.id ? canonicalWeek : railNavigation;
+          // Advance the display clock between reads; dates and evidence remain server facts.
+          const state = start > today ? 'upcoming' : end !== null && end < today ? 'past' : 'current';
           const isReadingWeek = week.kind === 'reading-week';
           const isCompleted = state === 'past';
           const isCurrent = state === 'current';
-          const weekActivityProgress = week.kind === 'session'
-            ? weekProgress(weekComponents(real, resolvedModuleId || undefined, week.weekId, week.slotNumber), completedIds)
-            : null;
-          const attendance = week.kind === 'session' ? sessionState(week, now) : null;
+          const weekActivityProgress = navigation ? { completed: navigation.completedActivities, total: navigation.totalActivities, percent: navigation.progress } : null;
+          const attendance = week.kind === 'session' ? navigation?.sessionState === 'cancelled' ? 'cancelled' : sessionState(week, now) : null;
           const markerState = isReadingWeek ? 'reading' : isCurrent && attendance !== 'attended' ? 'current' : attendance;
           const label = week.kind === 'reading-week' ? 'Reading week' : week.weekTitle || `Week ${week.sessionNumber}`;
           const subLabel = week.kind === 'reading-week' ? 'Independent study' : '';
@@ -130,7 +170,7 @@ export function WeeklyLearningPlan({ kind, learnerId, schedule, scheduleLoading,
           const stateLabel = state === 'past' ? 'Completed' : state === 'current' ? 'Current week' : 'Upcoming';
           return <li key={weekKey(week)} className="relative pl-9">
             {index < weeks.length - 1 && <span aria-hidden="true" className="absolute left-[11px] top-8 bottom-[-0.25rem] w-px bg-foreground-200" />}
-            <span role="img" aria-label={isReadingWeek ? `${label}: independent study` : `${label} session: ${attendance === 'attended' ? 'attended' : attendance === 'missed' ? 'not attended' : attendance === 'live' ? 'in progress' : attendance === 'upcoming' ? 'upcoming' : 'not scheduled'}`}
+            <span role="img" aria-label={isReadingWeek ? `${label}: independent study` : `${label} session: ${attendance === 'attended' ? 'attended' : attendance === 'missed' ? 'not attended' : attendance === 'unmarked' ? 'unmarked' : attendance === 'live' ? 'in progress' : attendance === 'upcoming' ? 'upcoming' : 'not scheduled'}`}
               data-state={markerState}
               className={cn(planLayout.weekSessionStatus, 'absolute left-0 top-2 z-10')}>
               {isReadingWeek ? <BookOpen size={13} aria-hidden="true" />
@@ -188,45 +228,51 @@ export function WeeklyLearningPlan({ kind, learnerId, schedule, scheduleLoading,
             {selectedWeek.kind === 'reading-week' ? 'Reading week' : selectedWeek.weekTitle || 'This week'}
           </h2>
           {selectedIndex >= 0 ? <p className="mt-1 text-sm font-medium text-foreground-500">
-            {(() => { const { start, end } = weekWindow(weeks, selectedIndex); return `${dateLabel(start)}${end ? ` – ${dateLabel(end)}` : ''}`; })()}
+            {(() => { const { start, end } = windowForWeek(selectedIndex); return `${dateLabel(start)}${end ? ` – ${dateLabel(end)}` : ''}`; })()}
           </p> : null}
           {selectedWeek.kind === 'session' && <HolidayNoteHint note={selectedWeek.holidayNote} className="learner-dashboard-week-note mt-2.5 min-w-0 max-w-full text-xs" />}
 
             </div>
 
-            {isTeachingWeek && <div className="grid w-full shrink-0 grid-cols-1 gap-3 sm:grid-cols-3 xl:w-[660px]">
+            {isTeachingWeek && weekRead.data && <div className="grid w-full shrink-0 grid-cols-1 gap-3 sm:grid-cols-3 xl:w-[660px]">
               <WeekStatCard label="Week progress" value={`${progress.percent}%`} percent={progress.total ? progress.percent : null} tone="bg-primary-600"
                 caption={`${progress.completed} of ${progress.total} activities`} />
               <WeekStatCard label="KSBs this week" value={ksbProgress.total ? `${ksbProgress.percent}%` : '—'}
                 percent={ksbProgress.total ? ksbProgress.percent : null} tone="bg-emerald-600"
                 caption={ksbProgress.total ? `${ksbProgress.achieved} of ${ksbProgress.total} KSBs` : 'No KSBs mapped this week'}
                 title={ksbProgress.codes.join(', ') || undefined} />
-              <WeekStatCard label="OTJH this week" value={weekHours.plannedHours ? `${weekHours.percent}%` : '—'}
+              <WeekStatCard label="OTJH this week" value={weekHours.percent != null ? `${weekHours.percent}%` : '—'}
                 percent={weekHours.plannedHours ? weekHours.percent : null} tone="bg-amber-500"
-                caption={weekHours.plannedHours
-                  ? `${formatHoursMinutes(weekHours.completedHours)} of ${formatHoursMinutes(weekHours.plannedHours)} hours${weekHours.untimed ? ` · ${weekHours.untimed} untimed` : ''}`
+                caption={weekHours.actualHours == null ? 'Recorded hours unavailable' : weekHours.plannedHours
+                  ? `${formatHoursMinutes(weekHours.actualHours)} of ${formatHoursMinutes(weekHours.plannedHours)} hours${weekHours.untimed ? ` · ${weekHours.untimed} untimed` : ''}`
                   : 'No expected time set'} />
             </div>}
           </div>
 
-          {isTeachingWeek && <section aria-labelledby="weekly-session-heading" className="mt-5">
-            {selectedWeek.start ? <LiveSessionSummary week={selectedWeek} now={now} headingId="weekly-session-heading" canJoinSession={canOpenActivities} />
+          {isTeachingWeek && weekRead.data && <section aria-labelledby="weekly-session-heading" className="mt-5">
+            {selectedWeek.start ? <LiveSessionSummary week={selectedWeek} now={now} headingId="weekly-session-heading" canJoinSession={canOpenActivities}
+              derivedState={canonicalDetail?.liveSession?.sessionState === 'cancelled' ? 'cancelled' : undefined} />
               : <p id="weekly-session-heading" className="flex min-h-[136px] items-center rounded-xl border border-foreground-100 bg-background-50 p-5 text-sm text-foreground-500">No live session is scheduled for this week.</p>}
           </section>
           }
 
           {!isTeachingWeek && <section aria-labelledby="weekly-session-heading" className="mt-5">
             <ReadingWeekPanel week={selectedWeek as ReadingWeekRow} />
+            {weekRead.error && <div role="alert">Could not load this week. {weekRead.error}
+              <button type="button" onClick={weekRead.refresh}>Try again</button></div>}
           </section>}
         </div>
 
         {isTeachingWeek && <section aria-labelledby="weekly-activities-heading" className="mt-5 overflow-hidden rounded-xl border border-foreground-100 bg-background-50 shadow-sm">
           <div>
-            {detailError && !real ? <Panel><EmptyState variant="error" title="Could not load this week's activities" description={detailError}
-              action={<button type="button" onClick={refreshDetail} className="rounded-lg bg-primary-600 px-3.5 py-2 text-xs font-semibold text-white">Try again</button>} /></Panel>
-              : detailLoading && !real ? <><ActivitiesHeading count={components.length} /><Panel><RowsSkeleton rows={3} avatar={false} /></Panel></>
-                : <ActivitiesTableModern components={components} completedIds={completedIds} kind={kind} learnerId={learnerId}
-                  week={selectedWeek.weekTitle} canOpenActivities={canOpenActivities} />}
+            {(weekRead.error) ? <Panel><EmptyState variant="error" title="Could not load this week's activities" description={(weekRead.error) || undefined}
+              action={<button type="button" onClick={weekRead.refresh} className="rounded-lg bg-primary-600 px-3.5 py-2 text-xs font-semibold text-white">Try again</button>} /></Panel>
+              : (weekRead.loading || !weekRead.data) ? <><ActivitiesHeading count={components.length} /><Panel><RowsSkeleton rows={3} avatar={false} /></Panel></>
+                : null}
+            {<div hidden={!weekRead.data || !!weekRead.error}>
+              <ActivitiesTableModern components={components} completedIds={completedIds} kind={kind} learnerId={learnerId}
+                week={selectedWeek.weekTitle} canOpenActivities={canOpenActivities} actualHours={actualHours} />
+            </div>}
           </div>
         </section>}
       </>}
@@ -400,9 +446,10 @@ function ActivitiesHeading({ count, controls }: { count: number; controls?: Reac
   </div>;
 }
 
-export function ActivitiesTableModern({ components, completedIds, kind, learnerId, week, canOpenActivities, summaries }: {
+export const ActivitiesTableModern = memo(function ActivitiesTableModern({ components, completedIds, kind, learnerId, week, canOpenActivities, summaries, actualHours }: {
   components: JourneyComponent[]; completedIds: Set<string>; kind: LearnerKind; learnerId: string; week?: string;
   canOpenActivities: boolean;
+  actualHours?: Record<string, number | null>;
   summaries?: Record<string, { status: ActivityStatus; expectedTimeLabel: string; ksbCodes: string[] }>;
 }) {
   const [query, setQuery] = useState('');
@@ -454,15 +501,15 @@ export function ActivitiesTableModern({ components, completedIds, kind, learnerI
     <ActivitiesHeading count={components.length} controls={controls} />
     {!filteredComponents.length ? <EmptyState size="sm" title="No matching activities" description="Try changing your search or filters." className="m-4" /> : <>
     <div className="max-w-full" style={{ overflowX: 'auto' }}>
-      <table className="w-full min-w-[660px] table-fixed text-left text-[10px]">
+      <table className="w-full min-w-[760px] table-fixed text-left text-[10px]">
         <caption className="sr-only">This week's learning activities</caption>
-        <colgroup><col className="w-9" /><col className="w-24" /><col /><col className="w-24" /><col className="w-32" /><col className="w-24" />{canOpenActivities && <col className="w-24" />}</colgroup>
+        <colgroup><col className="w-9" /><col className="w-24" /><col /><col className="w-24" /><col className="w-24" /><col className="w-32" /><col className="w-24" />{canOpenActivities && <col className="w-24" />}</colgroup>
         <thead className="bg-background-100/90">
           <tr>
-            {['#', 'Type', 'Title', 'Expected time', 'KSB mapping', 'Status', ...(canOpenActivities ? ['Action'] : [])].map(label => (
+            {['#', 'Type', 'Title', 'Expected time', 'Actual time', 'KSB mapping', 'Status', ...(canOpenActivities ? ['Action'] : [])].map(label => (
               <th key={label} scope="col" className={cn(
                 'px-2 py-2 text-left text-[9px] font-bold uppercase tracking-[0.05em] text-foreground-500',
-                ['Expected time', 'KSB mapping', 'Status', 'Action'].includes(label) && 'text-center',
+                ['Expected time', 'Actual time', 'KSB mapping', 'Status', 'Action'].includes(label) && 'text-center',
               )}>
                 {label}
               </th>
@@ -475,6 +522,7 @@ export function ActivitiesTableModern({ components, completedIds, kind, learnerI
             const href = canOpenActivities ? activityHref(component, week, kind, learnerId, status === 'completed') : null;
             const typeLabel = activityTypeLabel(component);
             const meta = resourceTypeMeta(component.type || typeLabel);
+            const recordedHours = actualHours?.[component.componentId || ''];
             return <tr key={component.componentId || component.title} className="border-t border-foreground-100 transition-colors hover:bg-primary-50/30">
               <td className="px-2 py-2 text-center align-middle font-semibold tabular-nums text-foreground-500">{safePage * ACTIVITY_PAGE_SIZE + index + 1}</td>
               <td className="px-2 py-2 align-middle">
@@ -490,6 +538,11 @@ export function ActivitiesTableModern({ components, completedIds, kind, learnerI
               </td>
               <td className="px-2 py-2 text-center align-middle text-[10px] font-semibold tabular-nums text-foreground-700">
                 <span className="inline-flex items-center justify-center gap-1 whitespace-nowrap"><Clock3 size={12} className="text-foreground-400" aria-hidden="true" />{summaries?.[component.componentId || '']?.expectedTimeLabel ?? activityExpectedTimeLabel(component)}</span>
+              </td>
+              <td className="px-2 py-2 text-center align-middle text-[10px] font-semibold tabular-nums text-foreground-700">
+                <span className="inline-flex items-center justify-center gap-1 whitespace-nowrap" title={recordedHours == null ? 'Recorded hours unavailable' : 'Actual recorded time'}>
+                  <Clock3 size={12} className="text-foreground-400" aria-hidden="true" />{recordedHours == null ? '—' : formatHoursMinutes(recordedHours)}
+                </span>
               </td>
               <td className="px-2 py-2 text-center align-middle"><div className="flex justify-center"><KsbChips codes={summaries?.[component.componentId || '']?.ksbCodes ?? activityKsbCodes(component)} /></div></td>
               <td className="px-2 py-2 text-center align-middle"><StatusBadge tone={STATUS_TONE[status]} label={STATUS_LABEL[status]} size="sm" showIcon={status === 'completed'} className="whitespace-nowrap text-[10px]" /></td>
@@ -512,7 +565,7 @@ export function ActivitiesTableModern({ components, completedIds, kind, learnerI
     </div>
     </>}
   </div>;
-}
+});
 
 function activityTypeLabel(component: JourneyComponent): string {
   return (component.type || 'activity').replace(/[_-]/g, ' ').replace(/\b\w/g, letter => letter.toUpperCase());

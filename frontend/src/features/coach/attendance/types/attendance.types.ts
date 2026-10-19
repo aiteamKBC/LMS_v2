@@ -74,33 +74,43 @@ export interface SourceAttendanceInput extends ManualAttendanceInput {
   sourceId: string;
 }
 
+export interface CoachAttendanceDetailRecord {
+  id: string;
+  date: string;
+  module: string;
+  title: string;
+  status: string;
+  absenceReport: { id: string; status: string; url?: string | null } | null;
+  legacyAmbiguity?: string[];
+}
+
+export interface AttendancePagination {
+  page: number;
+  pageSize: number;
+  total: number;
+  hasMore: boolean;
+}
+
 export interface CoachAttendanceDetailsPayload {
   learner?: {
     id: string;
     name: string;
     email?: string | null;
     programme?: string | null;
-    programmeId?: string | null;
     cohort?: string | null;
     group?: string | null;
-    groupId?: string | null;
-    programStatus?: string | null;
-    learnerType?: string | null;
-    enrolmentId?: string | null;
     learnerStartDate?: string | null;
     learnerEndDate?: string | null;
-    programmeStartDate?: string | null;
-    programmeEndDate?: string | null;
-    coachName?: string | null;
   };
+  coach?: { name: string; email: string };
+  tutor?: { name: string; email: string } | null;
   summary?: {
     attendanceRate?: number | null;
-    totalCounted?: number;
-    total: number;
+    sessions: number;
     present: number;
     absent: number;
-    unknown: number;
   };
-  sessions?: CoachAttendanceSession[];
+  records: CoachAttendanceDetailRecord[];
+  pagination: AttendancePagination;
 }
 

@@ -36,7 +36,7 @@ from django.views.decorators.csrf import csrf_exempt
 
 from enrolment_api.auth import employer_signing_party_error, enrolment_login_required
 
-from .learning_plan import _group_module_ids, _programme_modules, _saved_modules
+from .learning_plan import _saved_modules, learner_group_module_ids, learner_programme_modules
 from .learner_progression import advance_learner
 from .mappers import _s
 from .models import ApprenticeshipAgreement, EnrolmentUser
@@ -93,14 +93,13 @@ def _employer_address(learner):
 
 def _plan_modules(learner):
     """The learner's learning-plan modules, with hours. Group preset if unsaved."""
-    programme = _s(learner.programme)
-    catalogue = {m["moduleId"]: m for m in _programme_modules(programme)}
+    catalogue = {m["moduleId"]: m for m in learner_programme_modules(learner)}
 
     saved = _saved_modules(learner)
     if saved:
         module_ids = [_s(m.get("moduleId")) for m in saved]
     else:
-        module_ids = _group_module_ids(programme, _s(learner.group))
+        module_ids = learner_group_module_ids(learner)
     return [catalogue[i] for i in module_ids if i in catalogue]
 
 
@@ -138,15 +137,27 @@ def _group_dates(learner):
 
     Imported learners can have a complete placement without copied date fields.
     An explicit learner date always wins (it may differ from the cohort date).
+    A read-only request may stash its result as ``_resolved_group_dates``.
     """
+    resolved = getattr(learner, "__dict__", {}).get("_resolved_group_dates")
+    if resolved is not None:
+        return resolved
     start = _to_date(getattr(learner, "start_date", None))
     end = _to_date(getattr(learner, "end_date", None))
     programme = _s(getattr(learner, "programme", ""))
     cohort = _s(getattr(learner, "cohort", ""))
     if (start is None or end is None) and programme and cohort:
         from .active_users import cohort_dates
+        from .placement_links import placement_ids
 
-        cohort_start, cohort_end = cohort_dates(programme, cohort)
+        # By the cohort's id where the learner's profile holds one, so a renamed
+        # cohort still supplies the date the progression and access gate read.
+        try:
+            cohort_id = placement_ids(learner)["cohort_id"]
+        except DatabaseError:
+            logger.warning("Could not read the placement ids for learner %s", getattr(learner, "pk", "?"))
+            cohort_id = ""
+        cohort_start, cohort_end = cohort_dates(programme, cohort, cohort_id)
         if (start is None and cohort_start) or (end is None and cohort_end):
             origin = "cohort" if start is None and end is None else "learner/cohort"
             return start or cohort_start, end or cohort_end, origin

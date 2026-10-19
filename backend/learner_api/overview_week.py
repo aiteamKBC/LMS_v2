@@ -1,5 +1,6 @@
 """Small, read-only weekly overview. Never hydrates a learner or fetches content."""
 from datetime import datetime, timedelta, timezone
+import json
 import logging
 from zoneinfo import ZoneInfo
 
@@ -11,11 +12,12 @@ from django.views.decorators.http import require_GET
 
 from login.permissions import learner_self_or_staff
 from audit_api.last_audit_ledger_views import _is_completed
-from .builder_activity_dates import read_builder_activity_dates
+from .builder_activity_dates import COMPONENT_ORDER, COMPONENT_SCHEDULE_SETTINGS, read_builder_activity_dates
 from .dashboard_metrics import metrics_from_loaded, point_codes, ratio
 from .progress_rules import progress_counts_as_achieved
 from old_otjh.service import ServiceError
 from .learner_detail import SOURCE_MODELS
+from .models import LearnerProfile
 from . import canonical_learning
 from .student_activity import CURRENT_SUBJECTS_SQL, _direct_progress_records, _direct_progress_otjh
 
@@ -49,12 +51,16 @@ HOME_SUBJECTS_SQL = '''
 
 HOME_SOURCE_FIELDS = (
     'id', 'aptem_id', 'email', 'username',
+    # Read by the home card's programme period (_group_dates); deferring them
+    # cost one query each.
+    'programme', 'cohort', 'start_date', 'end_date',
 )
 from .student_activity_data import read_curriculum_schedules, apply_curriculum_schedules
 from .subject_dates import activity_schedule, as_date
 from .subject_content import clean_text
 from .training_plan_dashboard import number, rows
 from .projection_performance import measure_projection
+from curriculum_api.week_visibility import visible_child_sql, visible_week_sql
 
 log = logging.getLogger(__name__)
 UK = ZoneInfo('Europe/London')
@@ -262,8 +268,90 @@ def summarise_plan(activities, assigned, direct_hours=None):
             for subject in sorted(subjects.values(), key=lambda item: (item['title'].casefold(), item['id']))]
 
 
-def summarise_week(historical, native, progress, attempts, links, start, end):
-    activities = merged_activities(historical, native, progress, attempts, links)
+def due_date(row):
+    """A dated learning activity is not automatically a submission deadline.
+
+    Only an authored due rule can turn its week into a due date.
+    """
+    timing = str(row.get('due_timing') or '').strip().casefold()
+    return as_date(row.get('week_end')) if timing == 'end of week' else None
+
+
+# Student Home's assignment deadlines: the assignment components of the
+# learner's current plan modules, read in one round trip with the plan itself
+# and the learner's direct progress rows naming each component or its quiz.
+UPCOMING_ASSIGNMENTS_SQL = f'''SELECT c.id,c.module_catalogue_id AS module_id,c.title,c.type,
+    w.title AS section_title,c.settings_json->>'dueTiming' AS due_timing,quiz.quiz_id,
+    (SELECT coalesce(jsonb_agg(jsonb_build_object('kind',p.kind,'passed',p.passed,
+                                                  'componentId',p.component_ref,'quizId',p.quiz_ref)),'[]'::jsonb)
+     FROM "Learner".learner_progress_entries p
+     WHERE p.learner_id=%s AND p.component_link_source IN ('direct','quiz_ref') AND p.kind<>'activity_event'
+       AND (p.component_ref=c.id::text OR p.quiz_ref=quiz.quiz_id)) AS progress
+    FROM curriculum.components c JOIN curriculum.modules m ON m.module_catalogue_id=c.module_catalogue_id
+    LEFT JOIN curriculum.weeks w ON w.id=c.week_id AND w.module_catalogue_id=c.module_catalogue_id
+    CROSS JOIN LATERAL (SELECT coalesce((SELECT q.quiz_id::text FROM curriculum.quiz_component_links q
+              WHERE q.component_id=c.id ORDER BY q.id LIMIT 1),c.settings_json->>'linkedQuizId') AS quiz_id) quiz
+    WHERE c.module_catalogue_id IN (SELECT home.module_id FROM ({HOME_SUBJECTS_SQL}) home(module_id,title,current_plan)
+                                    WHERE home.current_plan)
+      AND c.type='assignment' AND {visible_child_sql('c')}
+      AND (w.id IS NULL OR {visible_week_sql('w')})'''
+
+
+# Header supplies the scheduling rows it already reads to the canonical Builder
+# planner. Empty weeks still consume slots; unrelated component bodies/metadata
+# do not influence an assignment's week date.
+HEADER_ASSIGNMENTS_SQL = UPCOMING_ASSIGNMENTS_SQL.replace('w.title AS section_title',
+    f'c.week_id,{COMPONENT_SCHEDULE_SETTINGS} AS schedule_settings,w.title AS section_title', 1) + '''
+      AND lower(regexp_replace(coalesce(c.settings_json->>'dueTiming',''),
+          '^[[:space:]]+|[[:space:]]+$','','g'))='end of week'
+    ORDER BY ''' + COMPONENT_ORDER
+
+
+def upcoming_assignment_deadlines(source, profile, today, until=None, *, header_only=False):
+    """Home's assignment deadlines due from ``today`` to ``until`` (UK dates, inclusive), earliest first.
+
+    The same rows and rule as the ``home-summary`` week deadlines: current plan
+    modules, Builder delivery dates, an authored "end of week" due rule and the
+    same completion rule, which reads only the progress rows naming these
+    assignments. Builder dates are read only for modules holding an
+    "end of week" assignment.
+
+    ``profile`` is the enrolment's ``LearnerProfile`` (None without one, so
+    there is no progress), as ``_direct_progress_records`` would resolve it.
+    """
+    # Every schedule's ``week_end`` is the Sunday of its Monday-based week
+    # (``activity_schedule``), so a range holding no Sunday has no deadlines.
+    if until is not None and not any(
+            (today + timedelta(days=offset)).weekday() == 6 for offset in range((until - today).days + 1)):
+        return []
+    with connections['enrolment'].cursor() as cur:
+        cur.execute(HEADER_ASSIGNMENTS_SQL if header_only else UPCOMING_ASSIGNMENTS_SQL,
+                    [profile.id if profile is not None else None, source.pk])
+        candidates = [row for row in rows(cur)
+                      if str(row.get('due_timing') or '').strip().casefold() == 'end of week']
+        if not candidates:
+            return []
+        options = {'components': [(row['id'], row['module_id'], row['week_id'], row['title'],
+                                   row['type'], row['schedule_settings']) for row in candidates]} if header_only else {}
+        dates = read_builder_activity_dates(cur, sorted({row['module_id'] for row in candidates}), **options)
+    due, progress = [], []
+    for row in candidates:
+        row.update(dates.get(str(row['id'])) or activity_schedule(row['title'], section_title=row['section_title']))
+        day = due_date(row)
+        # An undated or unreviewed placement is not on the learner's week at all.
+        if (as_date(row.get('date')) and not row.get('date_needs_review') and day
+                and today <= day and (until is None or day <= until)):
+            due.append(row)
+            progress.extend(json.loads(row['progress']) if isinstance(row['progress'], str) else row['progress'] or [])
+    return sorted(({'id': ':'.join(row['key']), 'title': clean_text(row.get('title')) or 'Assignment',
+                    'date': due_date(row).isoformat()}
+                   for row in merged_activities([], due, progress, set(), {}) if not row['completed']),
+                  key=lambda row: (row['date'], row['id']))
+
+
+def summarise_week(historical, native, progress, attempts, links, start, end, *, activities=None):
+    if activities is None:
+        activities = merged_activities(historical, native, progress, attempts, links)
     modules, deadlines, expected, expected_priority = {}, [], {}, {}
     undated = 0
     for row in activities:
@@ -291,11 +379,8 @@ def summarise_week(historical, native, progress, attempts, links, start, end):
             codes = point_codes(row.get('ksb_mappings')) if row.get('ksb_mappings') is not None else None
             module['ksbMappingMissing'] |= codes is None
             module['ksbCodes'].update(codes or [])
-        # A dated learning activity is not automatically a submission deadline.
-        # Only an authored due rule can turn its week into a due date.
         if row.get('type') in ('assignment', 'checkpoint') and not row['completed']:
-            timing = str(row.get('due_timing') or '').strip().casefold()
-            due = as_date(row.get('week_end')) if timing == 'end of week' else None
+            due = due_date(row)
             if due and due >= start:
                 deadlines.append({'id': ':'.join(row['key']), 'title': clean_text(row.get('title')) or 'Assignment',
                                   'type': row['type'], 'date': due.isoformat(), 'subjectId': row['subject']})
@@ -314,7 +399,7 @@ def read_overview_subjects(source, profile):
     progress = [{'kind': row['kind'], 'passed': row['passed'],
                  'componentId': row['component_ref'], 'quizId': row['quiz_ref']}
                 for row in profile.progress_entries.using('enrolment')
-                .filter(component_link_source__in=('direct', 'quiz_ref'))
+                .filter(component_link_source__in=('direct', 'quiz_ref'), deleted_at__isnull=True)
                 .exclude(kind='activity_event')
                 .values('kind', 'passed', 'component_ref', 'quiz_ref')]
     with connections['enrolment'].cursor() as cur:
@@ -328,8 +413,8 @@ def read_overview_subjects(source, profile):
             JOIN curriculum.modules m ON m.module_catalogue_id=c.module_catalogue_id
             LEFT JOIN curriculum.weeks w ON w.id=c.week_id AND w.module_catalogue_id=c.module_catalogue_id
             WHERE c.module_catalogue_id=ANY(%s)
-              AND (c.deleted_at IS NULL OR COALESCE(c.deleted_via_parent, '') <> '')
-              AND (w.id IS NULL OR w.deleted_at IS NULL OR COALESCE(w.deleted_via_parent, '') <> '')''',
+              AND ''' + visible_child_sql('c') + '''
+              AND (w.id IS NULL OR ''' + visible_week_sql('w') + ''')''',
                     [[module_id for module_id, _title in assigned]])
         native = rows(cur)
     subjects = {}
@@ -345,13 +430,58 @@ def read_overview_subjects(source, profile):
     return sorted(subjects.values(), key=lambda row: (row['title'].casefold(), row['id']))
 
 
-def read_week(source, now=None, *, home_kind=None, dashboard_kind=None):
+def component_sql(ksb_mappings, *, builder_columns=False):
+    """The plan's undeleted components (in undeleted or no weeks).
+
+    ``builder_columns`` also selects what ``read_builder_activity_dates`` reads
+    from the same rows, so it needs no second pass over the components'
+    settings. Components it would skip (deleted or missing weeks, deleted
+    modules) it still skips.
+    """
+    extra = (f''',c.week_id AS builder_week_id,{COMPONENT_SCHEDULE_SETTINGS} AS builder_settings,
+            row_number() OVER (ORDER BY {COMPONENT_ORDER}) AS builder_order''' if builder_columns else '')
+    return f'''SELECT c.id,c.module_catalogue_id AS module_id,m.title AS module_title,c.title,c.type,c.expected_otjh AS expected_hours,
+            w.title AS section_title,c.settings_json->>'dueTiming' AS due_timing,
+            {ksb_mappings} AS ksb_mappings,
+            coalesce((SELECT q.quiz_id::text FROM curriculum.quiz_component_links q
+                      WHERE q.component_id=c.id ORDER BY q.id LIMIT 1),c.settings_json->>'linkedQuizId') AS quiz_id{extra}
+            FROM curriculum.components c JOIN curriculum.modules m ON m.module_catalogue_id=c.module_catalogue_id
+            LEFT JOIN curriculum.weeks w ON w.id=c.week_id AND w.module_catalogue_id=c.module_catalogue_id
+            WHERE c.module_catalogue_id=ANY(%s) AND {visible_child_sql('c')}
+              AND (w.id IS NULL OR {visible_week_sql('w')})'''
+
+
+def builder_components(native):
+    """Take the builder columns off ``component_sql`` rows, in Module Builder order."""
+    found = sorted((row.pop('builder_order'), (row['id'], row['module_id'], row.pop('builder_week_id'),
+                                                row['title'], row['type'], row.pop('builder_settings')))
+                   for row in native)
+    return [component for _, component in found]
+
+
+def read_week(source, now=None, *, home_kind=None, dashboard_kind=None, home_summary=False, plan_only=False, monthly_hours_only=False):
+    """``home_summary`` is Student Home's compact projection of the ``home`` section.
+
+    It reads the same sources with the same rules, but fails fast on missing SSOT
+    identity and skips plan subjects, monthly OTJH and component KSB lookups.
+    """
     start, end = week_bounds(now)
     # Every active learner route is SSOT-only. Missing SSOT identity fails when
     # the canonical metrics/home projection is read below.
     historical, attempts, links = [], set(), {}
     old_hours, undated_hours = 0, 0
+    early_metrics = None
     owned_profile = getattr(source, '_case_file_profile', None)
+    if home_summary:
+        # One verified SSOT identity serves the metrics, progress and
+        # attendance reads below instead of each re-reading "Learner".learners.
+        owner = canonical_learning.require_profile(source.pk)
+        source._canonical_profile = owner
+        early_metrics = canonical_learning.metrics(source.pk, owner=owner)
+        if owned_profile is None:
+            # require_profile matched exactly one row for this enrolment, so it
+            # is the profile _direct_progress_records would otherwise look up.
+            owned_profile = LearnerProfile(id=owner['id'], enrolment_id=source.pk)
     progress = (_direct_progress_records(source.pk, profile=owned_profile) if owned_profile is not None
                 else _direct_progress_records(source.pk))
     attendance_module_ids = None
@@ -364,28 +494,53 @@ def read_week(source, now=None, *, home_kind=None, dashboard_kind=None):
         else:
             assigned = subject_rows
         module_ids = [row[0] for row in assigned]
-        cur.execute('''SELECT c.id,c.module_catalogue_id AS module_id,m.title AS module_title,c.title,c.type,c.expected_otjh AS expected_hours,
-            w.title AS section_title,c.settings_json->>'dueTiming' AS due_timing,
-            coalesce(nullif(c.ksb_mappings,'[]'::jsonb),
+        # The compact home projection returns no KSB codes, so skip the per-component lookup.
+        ksb_mappings = "'[]'::jsonb" if home_summary or monthly_hours_only else '''coalesce(nullif(c.ksb_mappings,'[]'::jsonb),
                 (SELECT jsonb_agg(jsonb_build_object('code',k.ksb_code)) FROM curriculum.ksb_mappings k
-                 WHERE k.component_id=c.id AND (k.deleted_at IS NULL OR COALESCE(k.deleted_via_parent, '') <> '')), '[]'::jsonb) AS ksb_mappings,
-            coalesce((SELECT q.quiz_id::text FROM curriculum.quiz_component_links q
-                      WHERE q.component_id=c.id ORDER BY q.id LIMIT 1),c.settings_json->>'linkedQuizId') AS quiz_id
-            FROM curriculum.components c JOIN curriculum.modules m ON m.module_catalogue_id=c.module_catalogue_id
-            LEFT JOIN curriculum.weeks w ON w.id=c.week_id AND w.module_catalogue_id=c.module_catalogue_id
-            WHERE c.module_catalogue_id=ANY(%s) AND (c.deleted_at IS NULL OR COALESCE(c.deleted_via_parent, '') <> '')
-              AND (w.id IS NULL OR w.deleted_at IS NULL OR COALESCE(w.deleted_via_parent, '') <> '')''', [module_ids])
+                 WHERE k.component_id=c.id AND ''' + visible_child_sql('k') + '''), '[]'::jsonb)'''
+        cur.execute(component_sql(ksb_mappings, builder_columns=home_summary), [module_ids])
         native = rows(cur)
         # Match My Learning's delivery calendar, including undated lesson titles,
         # empty teaching weeks and cohort holidays.
-        dates = read_builder_activity_dates(cur, module_ids)
+        cached_dates = getattr(source, '_dashboard_activity_dates', None) \
+            if (plan_only or monthly_hours_only) and not home_summary else None
+        if cached_dates is not None and cached_dates[0] == set(module_ids):
+            # The Dashboard's learning projection already read this module set.
+            dates = cached_dates[1]
+        else:
+            dates = read_builder_activity_dates(
+                cur, module_ids, **({'components': builder_components(native)} if home_summary else {}))
+            if plan_only or monthly_hours_only:
+                source._dashboard_activity_dates = (set(module_ids), dates)
         for row in native:
             row.update(dates.get(str(row['id'])) or activity_schedule(row['title'], section_title=row['section_title']))
+    # merged_activities copies its rows and nothing below mutates them, so one
+    # merge serves the week, plan, monthly and home summaries alike.
+    plan_activities = list(merged_activities(historical, native, progress, attempts, links))
+    if home_summary:
+        from .home_progress import read_home_progress
+        week = summarise_week(historical, native, progress, attempts, links, start, end,
+                              activities=plan_activities)
+        progress_card = read_home_progress(
+            source, home_kind, plan_activities, native, progress, assigned, end,
+            attendance_module_ids=attendance_module_ids, canonical_metrics=early_metrics)
+        # Week dates are always UK calendar dates; the card reads no time-zone label.
+        progress_card['period'] = {key: progress_card['period'][key] for key in ('start', 'end')}
+        return {'weekStart': start.isoformat(), 'weekEnd': end.isoformat(),
+                # Assignment deadlines are Upcoming's (training-plan-dashboard section=upcoming).
+                'modules': [{key: module[key] for key in ('id', 'title', 'weekLabels')} for module in week['modules']],
+                'homeProgress': progress_card}
+    if monthly_hours_only:
+        return monthly_otjh_summary(plan_activities, progress)
+    if plan_only:
+        return {'planSubjects': summarise_plan(plan_activities, assigned,
+                    direct_hours_by_subject(native, progress, links)),
+                'monthlyOtjh': monthly_otjh_summary(plan_activities, progress)}
     weekly_progress = [row for row in progress if (day := completion_day(row)) and start <= day <= end]
     new_hours = _direct_progress_otjh(weekly_progress)
-    plan_activities = list(merged_activities(historical, native, progress, attempts, links))
     result = {'weekStart': start.isoformat(), 'weekEnd': end.isoformat(), 'timezone': 'Europe/London',
-            **summarise_week(historical, native, progress, attempts, links, start, end),
+            **summarise_week(historical, native, progress, attempts, links, start, end,
+                             activities=plan_activities),
             'planSubjects': summarise_plan(plan_activities, assigned,
                                           direct_hours_by_subject(native, progress, links)),
             'monthlyOtjh': monthly_otjh_summary(plan_activities, progress),
@@ -410,7 +565,7 @@ def read_week(source, now=None, *, home_kind=None, dashboard_kind=None):
     if home_kind:
         from .home_progress import read_home_progress
         result['homeProgress'] = read_home_progress(source, home_kind,
-            merged_activities(historical, native, progress, attempts, links), native, progress, assigned, end,
+            plan_activities, native, progress, assigned, end,
             attendance_module_ids=attendance_module_ids, canonical_metrics=canonical_metrics)
     return result
 
@@ -426,9 +581,10 @@ def overview_week(request, kind, pk):
     read_model_status = None
     try:
         with measure_projection('overview-week', kind=kind, learner_id=pk, section=section) as measurement:
-            if section not in (None, 'home', 'dashboard'):
+            if section not in (None, 'home', 'dashboard', 'home-summary'):
                 return JsonResponse({'error': 'Invalid overview section.'}, status=400)
             home = section == 'home'
+            home_summary = section == 'home-summary'
             shared = None
             if home and getattr(settings, 'LEARNER_HOME_SHARED_READ_MODEL_ENABLED', False):
                 from .read_model import enqueue_learner_home_refresh, get_learner_home
@@ -439,14 +595,18 @@ def overview_week(request, kind, pk):
                     if shared.stale:
                         enqueue_learner_home_refresh(kind, pk, reason='stale-read')
             if shared is None:
-                fields = HOME_SOURCE_FIELDS if home else ('id', 'aptem_id', 'email')
+                fields = HOME_SOURCE_FIELDS if home or home_summary else ('id', 'aptem_id', 'email')
                 from .case_file_sources import source_for_case_file
                 source = source_for_case_file(request, kind, pk)
                 if source is None:
                     source = model.all_learners.only(*fields).get(pk=pk)
                 with measurement.stage(section or 'overview'):
-                    payload = read_week(source, home_kind=kind) if home else read_week(
-                        source, dashboard_kind=kind if section == 'dashboard' else None)
+                    if home:
+                        payload = read_week(source, home_kind=kind)
+                    elif home_summary:
+                        payload = read_week(source, home_kind=kind, home_summary=True)
+                    else:
+                        payload = read_week(source, dashboard_kind=kind if section == 'dashboard' else None)
                 if home and getattr(settings, 'LEARNER_HOME_SHARED_READ_MODEL_ENABLED', False):
                     from .read_model import enqueue_learner_home_refresh
                     enqueue_learner_home_refresh(kind, pk, reason='missing-read-model')

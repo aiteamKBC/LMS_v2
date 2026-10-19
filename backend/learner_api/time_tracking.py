@@ -34,6 +34,10 @@ ALLOWED_MODES_BY_KIND = {
 class TrackingSessionError(ValueError):
     """The timing token is absent, invalid, expired, or mismatched."""
 
+    def __init__(self, message, *, code='invalid_tracking_session'):
+        super().__init__(message)
+        self.code = code
+
 
 def component_access_is_open(at=None):
     """Learning components are available 24/7."""
@@ -129,9 +133,9 @@ def verify_tracking_session(
     try:
         claims = signing.loads(token, salt=TRACKING_SALT, max_age=TRACKING_MAX_AGE_SECONDS)
     except signing.SignatureExpired:
-        raise TrackingSessionError("The activity timing session has expired. Reopen the activity and try again.") from None
+        raise TrackingSessionError("The activity timing session has expired. Your answers and timing draft are kept.", code='expired_tracking_session') from None
     except signing.BadSignature:
-        raise TrackingSessionError("The activity timing session is invalid. Reopen the activity and try again.") from None
+        raise TrackingSessionError("The activity timing session is invalid. Your answers and timing draft are kept.", code='invalid_tracking_signature') from None
 
     expected = {
         "activityKind": activity_kind,
@@ -140,7 +144,7 @@ def verify_tracking_session(
         "learnerId": str(learner_id),
     }
     if any(str(claims.get(key, "")) != str(value) for key, value in expected.items()):
-        raise TrackingSessionError("The activity timing session does not match this learner or activity.")
+        raise TrackingSessionError("The activity timing session does not match this learner or activity.", code='tracking_identity_mismatch')
 
     counting_mode = str(claims.get("countingMode") or "")
     if counting_mode not in COUNTING_MODES:
@@ -192,4 +196,12 @@ def start_time_tracking(request):
         )
     except TrackingSessionError as exc:
         return _error(str(exc), 400)
+    from django.conf import settings
+    if getattr(settings, 'KBC_SHARED_REWARDS_READY', False) is True:
+        from .reward_tracking import capability
+        from .mobile import MobileError
+        try:
+            session['rewardTracking'] = capability(request, str(payload.get('activityKind') or ''), str(payload.get('activityId') or ''))
+        except MobileError:
+            session['rewardTracking'] = False
     return JsonResponse(session)

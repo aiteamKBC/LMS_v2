@@ -49,6 +49,7 @@ class QuizPackage(models.Model):
 class QuizQuestion(models.Model):
     quiz = models.ForeignKey(QuizPackage, on_delete=models.CASCADE, related_name="quiz_questions")
     question_text = models.TextField()
+    image_url = models.TextField(blank=True, default="")
     question_type = models.CharField(max_length=40, default="multiple_choice")
     points = models.PositiveIntegerField(default=1)
     sort_order = models.PositiveIntegerField(default=0)
