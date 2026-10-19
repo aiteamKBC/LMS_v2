@@ -46,7 +46,7 @@ export async function flushRewardObservations(session:TimeTrackingSession,activi
    response=await fetch('/learner_api/time-tracking/observations/',request);
    data=await response.json();
   }
-  if(!response.ok)throw new Error(data.error||'Your study time could not be confirmed. Please retry.');
+  if(!response.ok)throw Object.assign(new Error(data.error||'Your study time could not be confirmed. Please retry.'),{code:data.code});
   value=confirmLmsObservationEvent(value,data);save(session,value);
  }
 }
